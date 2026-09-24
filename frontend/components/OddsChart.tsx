@@ -34,6 +34,8 @@ import {
 } from "@/lib/chartTooltipViewportFit";
 import { separateLinesLabel, sourceHex, sourceLabel } from "@/lib/sourceColors";
 import { teamShortNames } from "@/lib/teamShortName";
+import { useAxisPoleFit } from "@/hooks/useAxisPoleFit";
+import { axisPoleStyle, axisLabelStyle } from "@/lib/axisPoleFit";
 import { teamTextColor } from "@/lib/teamColors";
 import { useAnalyticsContext } from "@/components/Analytics";
 import type {
@@ -1880,6 +1882,11 @@ export default function OddsChart({
     return null;
   }, [chartData, primarySeriesKey]);
 
+  // #8392 — the axis gutter gives each team name the room the other does not
+  // need. A hook, so it sits above the empty-chart return below; the raw names
+  // are its re-measure key (the printed short names are derived from them).
+  const { gutterRef: axisGutterRef, caps: axisPoleCaps } = useAxisPoleFit(homeTeam, awayTeam);
+
   // Early return for empty data across ALL sources (not just sportsbook odds)
   // If "Since Start" filter caused empty data, auto-reset to "all"
   //
@@ -2491,43 +2498,49 @@ export default function OddsChart({
             `aria-hidden` on the caret and a real sentence in `sr-only`: a
             screen reader cannot see which end of a gutter a label is at, so the
             glyph carries nothing for it and the sentence carries everything. */}
-        <div className="flex flex-col items-center justify-between py-3 shrink-0" style={{ width: 28 }}>
+        <div ref={axisGutterRef} className="flex flex-col items-center justify-between py-3 shrink-0" style={{ width: 28 }}>
           <div
             className="flex items-center gap-1"
-            style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}
+            style={axisPoleStyle(axisPoleCaps.home)}
             data-testid="chart-axis-pole"
             data-pole="home"
+            data-capped={axisPoleCaps.home !== null ? "true" : undefined}
+            title={axisPoleCaps.home !== null ? homeShort : undefined}
           >
             <span className="sr-only">
               The line rises towards {homeShort}: the top of this axis is {homeShort} at 100%.
             </span>
             {homeTeamLogo && (
-              <img src={homeTeamLogo} alt="" width={12} height={12} className="object-contain" style={{ transform: "rotate(90deg)" }} />
+              <img src={homeTeamLogo} alt="" width={12} height={12} className="object-contain shrink-0" style={{ transform: "rotate(90deg)" }} />
             )}
             <span
               aria-hidden="true"
+              data-axis-label
               className="text-[11px] font-bold uppercase tracking-wider"
-              style={{ color: teamTextColor(homeTeamColor) || "#16a34a" }}
+              style={{ color: teamTextColor(homeTeamColor) || "#16a34a", ...axisLabelStyle(axisPoleCaps.home) }}
             >
               {"↑"} {homeShort}
             </span>
           </div>
           <div
             className="flex items-center gap-1"
-            style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}
+            style={axisPoleStyle(axisPoleCaps.away)}
             data-testid="chart-axis-pole"
             data-pole="away"
+            data-capped={axisPoleCaps.away !== null ? "true" : undefined}
+            title={axisPoleCaps.away !== null ? awayShort : undefined}
           >
             <span className="sr-only">
               The line falls towards {awayShort}: the bottom of this axis is {awayShort} at 100%.
             </span>
             {awayTeamLogo && (
-              <img src={awayTeamLogo} alt="" width={12} height={12} className="object-contain" style={{ transform: "rotate(90deg)" }} />
+              <img src={awayTeamLogo} alt="" width={12} height={12} className="object-contain shrink-0" style={{ transform: "rotate(90deg)" }} />
             )}
             <span
               aria-hidden="true"
+              data-axis-label
               className="text-[11px] font-bold uppercase tracking-wider"
-              style={{ color: teamTextColor(awayTeamColor) || "#2563eb" }}
+              style={{ color: teamTextColor(awayTeamColor) || "#2563eb", ...axisLabelStyle(axisPoleCaps.away) }}
             >
               {"↓"} {awayShort}
             </span>
