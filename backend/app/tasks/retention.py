@@ -3,6 +3,36 @@ Snapshot retention — collapse consecutive identical rows to save DB space.
 
 Pure SQL implementation using window functions for constant memory usage.
 No snapshot rows are loaded into Python — all collapsing happens in the database.
+
+WIN-PROBABILITY ROWS HAVE THEIR OWN PASS (#7878, Codex card-B decision
+2026-09-24, producer option b). The chart draws `win_prob_snapshots`, and a
+consumer judges "were we watching here?" from the spacing of consecutive
+`captured_at` values — the only column that is an observation instant. The
+generic pass below merged runs of equal HOME price with no gap bound and kept
+`MIN(id)`, so a 10:00 and a 10:01 reading followed by a 12:00 one became one row
+whose `valid_until` claimed two unobserved hours; it also merged rows that
+differed in away/draw, period or score, and could keep a row that was not the
+earliest. `_collapse_winprob_partition_sql` replaces it for this table only:
+
+* **merges only raw observations** — never candle/price-history backfill
+  (`game_state.poll_type = 'history_backfill'` or `game_state.backfill`), never
+  a row with no home price, never a series' LAST row (a completed game rewrites
+  that one in place, so its value was not observed at its `captured_at`);
+* **only when the whole tuple matches** — home/away/draw, period/inning/half,
+  score, and the market/outcome identity the reading came from;
+* **only across a proven gap ≤ G** (`EVIDENCE_RESOLUTION_S`, 5 minutes): measured
+  from the previous row's proven end — its own `captured_at`, or the
+  `covered_through` of a span this same contract already stamped — to the next
+  row's `captured_at`. Exactly G merges; wider does not;
+* **keeps the earliest row** (`captured_at`, then `id`) and stamps it with
+  `game_state.evidence_span = {contract, resolution_s, covered_through}`, where
+  `covered_through` is the latest genuine member capture or validated span end.
+  A repeat pass composes stamped spans and is otherwise a no-op.
+
+It never reads `valid_until` or `reading_count` as evidence: those are closure
+and count, and a legacy row compacted before this contract carries no stamp, so
+its coverage is its own `captured_at` and nothing more. `valid_until` and
+`reading_count` keep their existing continuity meaning on the keeper.
 """
 
 import logging
@@ -32,6 +62,9 @@ _TABLE_CONFIG = {
         "sub_partition_col": "source",
         "value_col": "home_win_probability",
         "parent_table": "win_prob_snapshots",
+        # #7878: collapsed by `_collapse_winprob_partition_sql`, not the
+        # generic equal-value pass.
+        "evidence_contract": True,
     },
     "futures": {
         "table": "futures_odds_snapshots",
@@ -119,6 +152,9 @@ async def _collapse_partition_sql(session, cfg: dict, partition_id: int, cutoff:
 
     Returns (rows_deleted, keepers_updated).
     """
+    if cfg.get("evidence_contract"):
+        return await _collapse_winprob_partition_sql(session, cfg, partition_id, cutoff)
+
     tbl = cfg["table"]
     pcol = cfg["partition_col"]
     scol = cfg["sub_partition_col"]
@@ -262,9 +298,22 @@ async def _collapse_partition_sql(session, cfg: dict, partition_id: int, cutoff:
     result = await session.execute(delete_sql, {"part_id": partition_id, "cutoff": cutoff})
     rows_deleted = result.rowcount
 
-    # Step 3: Set valid_until on single rows that are followed by a different value
-    # (When a value changes, the previous keeper's valid_until should be set to the
-    # next row's captured_at, matching the Python implementation's behavior)
+    await _bridge_valid_until(session, cfg, partition_id, cutoff)
+
+    return rows_deleted, keepers_updated
+
+
+async def _bridge_valid_until(session, cfg: dict, partition_id: int, cutoff: datetime) -> None:
+    """Step 3 of both passes: close out rows whose ``valid_until`` is still NULL.
+
+    When a value changes, the previous keeper's valid_until should be set to the
+    next row's captured_at, matching the Python implementation's behavior. This
+    is continuity (closure), never evidence — see the module docstring.
+    """
+    tbl = cfg["table"]
+    pcol = cfg["partition_col"]
+    scol = cfg["sub_partition_col"]
+
     bridge_sql = text(f"""
         WITH ordered AS (
             SELECT
@@ -290,7 +339,195 @@ async def _collapse_partition_sql(session, cfg: dict, partition_id: int, cutoff:
 
     await session.execute(bridge_sql, {"part_id": partition_id, "cutoff": cutoff})
 
-    return rows_deleted, keepers_updated
+
+# ---------------------------------------------------------------------------
+# Win-probability evidence collapse (#7878)
+# ---------------------------------------------------------------------------
+
+#: Display evidence resolution G. Codex's card-B decision: this is the
+#: resolution at which two captures establish a recorded span. It is NOT a
+#: freshness SLA and NOT proof of continuous observation; a wider gap is UNKNOWN.
+EVIDENCE_RESOLUTION_S = 300
+
+#: Names the contract a stamped span was written under. A span stamped under any
+#: other contract or resolution is ignored (fails closed), so a future change to G
+#: cannot silently inherit coverage proven at a coarser resolution.
+EVIDENCE_CONTRACT = "7878.v1"
+
+#: `covered_through` is written in exactly this shape (see `to_char` below) and
+#: read back only if it matches, so a hand-edited or foreign value is never cast.
+_COVERED_THROUGH_RE = r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6}Z$"
+
+
+async def _collapse_winprob_partition_sql(
+    session, cfg: dict, partition_id: int, cutoff: datetime
+) -> tuple[int, int]:
+    """Collapse one event's win-probability rows without inventing coverage.
+
+    The rules are the module docstring's. One statement: the keeper UPDATE and the
+    DELETE are data-modifying CTEs over one snapshot, so the run grouping the
+    delete acts on is exactly the one the keepers were stamped from.
+
+    Returns (rows_deleted, keepers_updated).
+    """
+    tbl = cfg["table"]
+    pcol = cfg["partition_col"]
+    scol = cfg["sub_partition_col"]
+
+    collapse_sql = text(f"""
+        WITH series AS (
+            SELECT
+                id,
+                {scol},
+                captured_at,
+                valid_until,
+                reading_count,
+                game_state,
+                home_win_probability,
+                -- The series' last row, judged over ALL its rows (not only the
+                -- aged ones): a completed game refreshes that row in place
+                -- (#922), so its value was not observed at its captured_at.
+                LEAD(id) OVER (
+                    PARTITION BY {scol}
+                    ORDER BY captured_at, id
+                ) IS NULL AS is_series_last,
+                jsonb_build_array(
+                    home_win_probability,
+                    away_win_probability,
+                    draw_probability,
+                    game_state->'period',
+                    game_state->'inning',
+                    game_state->'inning_half',
+                    game_state->'home_score',
+                    game_state->'away_score',
+                    game_state->'market_id',
+                    game_state->'outcome_name'
+                ) AS tuple_key
+            FROM {tbl}
+            WHERE {pcol} = :part_id
+        ),
+        aged AS (
+            SELECT
+                *,
+                (
+                    home_win_probability IS NOT NULL
+                    AND NOT is_series_last
+                    AND COALESCE(game_state->>'poll_type', '') <> 'history_backfill'
+                    AND COALESCE(game_state->>'backfill', '') <> 'true'
+                ) AS eligible,
+                CASE
+                    WHEN game_state->'evidence_span'->>'contract' = CAST(:contract AS text)
+                     AND game_state->'evidence_span'->>'resolution_s' = CAST(:resolution_text AS text)
+                     AND game_state->'evidence_span'->>'covered_through' ~ CAST(:ts_re AS text)
+                    THEN GREATEST(
+                        captured_at,
+                        CAST(game_state->'evidence_span'->>'covered_through' AS timestamptz)
+                    )
+                    ELSE captured_at
+                END AS proven_end
+            FROM series
+            WHERE captured_at < :cutoff
+        ),
+        lagged AS (
+            SELECT
+                *,
+                LAG(eligible) OVER w AS prev_eligible,
+                LAG(proven_end) OVER w AS prev_end,
+                LAG(tuple_key) OVER w AS prev_tuple
+            FROM aged
+            WINDOW w AS (PARTITION BY {scol} ORDER BY captured_at, id)
+        ),
+        run_marked AS (
+            SELECT
+                *,
+                CASE
+                    WHEN NOT eligible THEN 1
+                    WHEN prev_eligible IS NOT TRUE THEN 1
+                    WHEN tuple_key IS DISTINCT FROM prev_tuple THEN 1
+                    WHEN captured_at - prev_end
+                         > make_interval(secs => CAST(:g_seconds AS double precision)) THEN 1
+                    ELSE 0
+                END AS is_new_run
+            FROM lagged
+        ),
+        run_grouped AS (
+            SELECT
+                *,
+                SUM(is_new_run) OVER (
+                    PARTITION BY {scol}
+                    ORDER BY captured_at, id
+                ) AS run_group
+            FROM run_marked
+        ),
+        keepers AS (
+            SELECT
+                {scol} AS sub_key,
+                run_group,
+                (ARRAY_AGG(id ORDER BY captured_at, id))[1] AS keeper_id,
+                MAX(COALESCE(valid_until, captured_at)) AS last_time,
+                SUM(COALESCE(reading_count, 1)) AS total_readings,
+                MAX(proven_end) AS covered_through
+            FROM run_grouped
+            GROUP BY {scol}, run_group
+            HAVING COUNT(*) > 1
+        ),
+        stamped AS (
+            UPDATE {tbl} t
+            SET valid_until = k.last_time,
+                reading_count = k.total_readings,
+                game_state = (
+                    CASE WHEN jsonb_typeof(t.game_state) = 'object'
+                         THEN t.game_state ELSE '{{}}'::jsonb END
+                ) || jsonb_build_object(
+                    'evidence_span',
+                    jsonb_build_object(
+                        'contract', CAST(:contract AS text),
+                        'resolution_s', CAST(:resolution_s AS integer),
+                        'covered_through', to_char(
+                            k.covered_through AT TIME ZONE 'UTC',
+                            'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
+                        )
+                    )
+                )
+            FROM keepers k
+            WHERE t.id = k.keeper_id
+            RETURNING t.id
+        ),
+        to_delete AS (
+            SELECT rg.id
+            FROM run_grouped rg
+            JOIN keepers k
+              ON rg.{scol} = k.sub_key
+             AND rg.run_group = k.run_group
+             AND rg.id != k.keeper_id
+        ),
+        deleted AS (
+            DELETE FROM {tbl}
+            WHERE id IN (SELECT id FROM to_delete)
+            RETURNING id
+        )
+        SELECT
+            (SELECT COUNT(*) FROM deleted) AS rows_deleted,
+            (SELECT COUNT(*) FROM stamped) AS keepers_updated
+    """)
+
+    result = await session.execute(
+        collapse_sql,
+        {
+            "part_id": partition_id,
+            "cutoff": cutoff,
+            "g_seconds": float(EVIDENCE_RESOLUTION_S),
+            "contract": EVIDENCE_CONTRACT,
+            "resolution_s": EVIDENCE_RESOLUTION_S,
+            "resolution_text": str(EVIDENCE_RESOLUTION_S),
+            "ts_re": _COVERED_THROUGH_RE,
+        },
+    )
+    rows_deleted, keepers_updated = result.one()
+
+    await _bridge_valid_until(session, cfg, partition_id, cutoff)
+
+    return int(rows_deleted or 0), int(keepers_updated or 0)
 
 
 # ---------------------------------------------------------------------------

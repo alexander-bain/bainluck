@@ -4346,6 +4346,51 @@ jobs:
             exit 1
           }
 
+      - name: "#7878 win-prob evidence collapse — provision the disposable database"
+        # Its own database for the reason the #7617 step above gives: the file
+        # drops and creates the five tables it touches.
+        run: |
+          set -o pipefail
+          python - <<'PY' >> "$GITHUB_ENV"
+          import asyncio, asyncpg
+
+          DB = "bl_evidence_collapse_7878"
+
+          async def go():
+              c = await asyncpg.connect(
+                  user="postgres", password="postgres", database="postgres",
+                  host="localhost", port=5432)
+              await c.execute(f'DROP DATABASE IF EXISTS {DB}')
+              await c.execute(f'CREATE DATABASE {DB}')
+              await c.close()
+
+          asyncio.run(go())
+          print(
+              "EVIDENCE_COLLAPSE_DATABASE_URL="
+              f"postgresql+asyncpg://postgres:postgres@localhost:5432/{DB}"
+          )
+          PY
+          echo "provisioned bl_evidence_collapse_7878"
+
+      - name: "#7878 win-prob retention keeps observation evidence (real Postgres)"
+        # The 48h collapse merged equal-home runs with no gap bound and kept
+        # MIN(id), so 10:00/10:01/12:00 became one row and a chart could no
+        # longer show the two unobserved hours honestly. The rule is one SQL
+        # statement of window functions over a JSONB tuple; only Postgres can
+        # say what it keeps. Skip detection plus a count, as for #7617.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_winprob_evidence_collapse_pg_7878.py \
+            -v -rs 2>&1 | tee /tmp/evidence7878.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/evidence7878.txt; then
+            echo "::error::#7878 evidence collapse SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]14 passed," /tmp/evidence7878.txt || {
+            echo "::error::#7878 evidence collapse did not run all fourteen cases"
+            exit 1
+          }
+
       - name: "#837 subscription slate — provision the disposable database"
         # Its own database for the reason the #7617 step above gives: this
         # contract creates and drops the six tables the slate predicate joins,
