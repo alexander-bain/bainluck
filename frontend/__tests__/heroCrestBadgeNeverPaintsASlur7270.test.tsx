@@ -215,11 +215,13 @@ describe("#7270 the repair is monotone — it may not introduce what it prevents
     expect(shippableCrestBadge("Kansas Jayhawks", null)).toBe("JAY");
   });
 
-  it("rejects a badge with a space in it, which the doubles rule can still produce", () => {
-    // `teamCrestBadge` leaves a pair to #3110's rule, which slices the raw
-    // string and yields "DE " — #4466's fragment class.
-    expect(teamCrestBadge("de Minaur / Peers", "tennis_atp")).toMatch(/\s/);
-    expect(shippableCrestBadge("de Minaur / Peers", "tennis_atp")).not.toMatch(/\s/);
+  it("paints no space for a pair whose first surname is under three letters", () => {
+    // `teamCrestBadge` once sliced the raw pair and yielded "DE " — #4466's
+    // fragment class — and this surface's whitespace test was what kept it off
+    // the hero. Since #4535 it counts letters across the space, so the hero
+    // takes the preferred badge directly.
+    expect(teamCrestBadge("de Minaur / Peers", "tennis_atp")).toBe("DEM");
+    expect(shippableCrestBadge("de Minaur / Peers", "tennis_atp")).toBe("DEM");
   });
 
   it("returns nothing rather than a censored invention when no candidate is clean", () => {
