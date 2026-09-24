@@ -155,9 +155,16 @@ export default function GamePlayCard({
   // in #2936 are made of.
   //
   // #2936 stays OPEN — this is one call site of many, not the fix for the class.
+  //
+  // #8442 — the sport goes in too. Without it the #5634 football rule never
+  // ran here, so on `/events/15305207` this card read "Hotspur 0%" under a hero
+  // and axis that both said "Tottenham Hotspur". The key was already a prop
+  // (for the clock); a readout naming the club differently from the hero above
+  // it is the same defect #2936 was, one rule later.
   const { home: homeShort, away: awayShort } = teamShortNames(
     { name: homeTeam },
     { name: awayTeam },
+    sportKey,
   );
 
   // live/055 (#2815) — THE EIGHTH INSTANCE OF THE #1620 SHAPE, and the first one
