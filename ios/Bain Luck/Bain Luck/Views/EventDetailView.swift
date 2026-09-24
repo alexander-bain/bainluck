@@ -35,12 +35,10 @@ struct EventDetailView: View {
     /// means "not measured yet", which `maximumLabelWidth` deliberately treats as
     /// UNCLAMPED, so the books column would have quietly lost the bar's floor.
     @State private var sourceRowWidth: Double = 0
-    @State private var refreshCountdown: Int = 0
     /// #1833 — the narrower of the two stacked charts' inline plots, published by
     /// each (`PageAxisPlotWidthPreferenceKey`) and handed back to both, so one
     /// page draws one clock. Only this view can see both charts.
     @State private var pageAxisPlotWidth: CGFloat = 0
-    @State private var refreshCountdownTimer: Timer?
     private var sharedChartDomain: ClosedRange<Date>? {
         guard let event = vm.event,
               let commenceTime = event.commenceTime,
@@ -244,13 +242,12 @@ struct EventDetailView: View {
                     navTitleView
                 }
                 #endif
-                // Manual-refresh ring only when a real auto-refresh is running
-                // (live). vm.load() stamps lastLoadedAt, so the countdown resets
-                // honestly on completion.
+                // #8320 — the page's ONE freshness status, and the manual
+                // refresh it has always been. Live only: no other page polls.
                 if isLive {
                     ToolbarItem(placement: .cancellationAction) {
                         Button { Task { await vm.load() } } label: {
-                            refreshRing
+                            refreshStatus
                         }
                     }
                 }
@@ -276,14 +273,12 @@ struct EventDetailView: View {
             .task {
                 await vm.load()
                 AnalyticsService.trackEventDetailView(eventId: eventId, sport: vm.event?.sport)
-                startRefreshCountdown()
             }
             .refreshable {
                 await vm.load()
             }
             .onDisappear {
                 vm.stopRefresh()
-                refreshCountdownTimer?.invalidate()
             }
     }
 
@@ -330,8 +325,6 @@ struct EventDetailView: View {
                                      homeTeamAbbrev: event.homeTeamData?.abbreviation,
                                      awayTeamAbbrev: event.awayTeamData?.abbreviation,
                                      sportKey: event.sport,
-                                     refreshCountdown: refreshCountdown,
-                                     refreshInterval: refreshInterval,
                                      refreshStreaming: vm.streamDelivering,
                                      forcedDomain: sharedChartDomain,
                                      pageAxisPlotWidth: pageAxisPlotWidth,
@@ -2087,145 +2080,65 @@ struct EventDetailView: View {
         .frame(maxWidth: .infinity)
     }
 
-    // MARK: - Refresh Countdown
+    // MARK: - Refresh Status
 
     private var refreshIndicator: RefreshIndicator {
-        Self.refreshIndicator(
-            status: vm.event?.status,
-            streamDelivering: vm.streamDelivering,
-            lastLoadedAt: vm.lastLoadedAt,
-            interval: refreshInterval,
-            now: Date())
+        Self.refreshIndicator(status: vm.event?.status, streamDelivering: vm.streamDelivering)
     }
 
+    /// #8320 — ONE freshness status for the page, in the toolbar.
+    ///
+    /// Alex, rage shake #150 on White Sox–Royals: "overcrowded and clowny". The
+    /// live page carried the same claim three times — this ring, a second ring
+    /// beside the chart title, and a green "Live" dot on the chart — plus the
+    /// hero's inning chip. A number counting to the next poll is the page's
+    /// plumbing, not something a fan reads, so the count is gone everywhere;
+    /// the poll itself (`EventRefreshPlan`) and pull-to-refresh are unchanged.
+    ///
+    /// The two live arms are drawn so they cannot be mistaken for each other:
+    /// the green dot only while the stream is DELIVERING (not merely connected
+    /// — see `EventDetailViewModel.streamDelivering`), and otherwise a plain
+    /// refresh glyph, which says what the button does and nothing about how
+    /// fresh the number is. Neither animates.
     @ViewBuilder
-    private var refreshRing: some View {
+    private var refreshStatus: some View {
         switch refreshIndicator {
         case .hidden:
             EmptyView()
         case .streaming:
             LivePushDot(diameter: 22)
-        case .countdown(let seconds):
-            let total = max(refreshInterval, 1)
-            let progress = Double(total - seconds) / Double(total)
-            let ringColor: Color = isLive ? Color(hex: "#10B981") : .secondary
-            ZStack {
-                Circle().stroke(Color.secondary.opacity(0.15), lineWidth: 2)
-                Circle().trim(from: 0, to: progress)
-                    .stroke(ringColor, style: StrokeStyle(lineWidth: 2, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
-                Text("\(seconds)")
-                    .font(.system(size: 8, weight: .bold, design: .monospaced))
-                    .foregroundStyle(.secondary)
-            }
-            .frame(width: 22, height: 22)
+        case .polling:
+            Image(systemName: "arrow.clockwise")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 22, height: 22)
+                .accessibilityLabel("Refresh")
         }
     }
 
-    /// Auto-refresh cadence in seconds. Only live events poll (the VM installs a
-    /// 30s request timer for `status == "live"` only), so this is the live cadence.
-    private var refreshInterval: Int { 30 }
-
-    /// A refresh countdown is honest ONLY when an actual auto-refresh request is
-    /// scheduled — which the VM installs for live events only. Scheduled/completed
-    /// pages perform no periodic reload, so they must not show a cycling countdown
-    /// that implies freshness work that never happens (C43 P2).
-    static func showsRefreshCountdown(status: String?) -> Bool { status == "live" }
+    /// A refresh status is honest ONLY when the page really refreshes — which
+    /// the VM does for live events only. Scheduled/completed pages perform no
+    /// periodic reload, so they carry no status at all (C43 P2).
+    static func showsRefreshStatus(status: String?) -> Bool { status == "live" }
 
     /// What the refresh control is entitled to say.
     ///
-    /// C43 established that a countdown may only appear when a request is
-    /// actually scheduled. Live push (#2687) then introduced a third state that
-    /// broke the same rule from the other side: while the stream is delivering
-    /// the VM stands the 30-second poll DOWN entirely, so `lastLoadedAt` stops
-    /// advancing, `refreshRemaining` walks to 0 — and the ring sits at a full
-    /// green circle reading "Next update: 0" for the rest of the match. The page
-    /// is the freshest it has ever been and its own chrome reads as stuck.
-    ///
-    /// So the control has three states, not two: nothing scheduled and nothing
-    /// pushed (hidden), a poll scheduled (count down to it), or a stream
-    /// delivering (say so, and count down to nothing).
+    /// C43 allowed a countdown only when a request was actually scheduled;
+    /// live push (#2687) added the stream state, because a delivering stream
+    /// stands the 30-second poll down and a countdown to it froze at 0. #8320
+    /// then took the countdown out of the reader's view entirely. What is left
+    /// is the distinction that matters to a reader: nothing refreshes (hidden),
+    /// the page is being polled (a refresh control, no promise), or updates are
+    /// being pushed (say so).
     enum RefreshIndicator: Equatable {
         case hidden
-        case countdown(Int)
+        case polling
         case streaming
     }
 
-    static func refreshIndicator(
-        status: String?,
-        streamDelivering: Bool,
-        lastLoadedAt: Date?,
-        interval: Int,
-        now: Date
-    ) -> RefreshIndicator {
-        guard showsRefreshCountdown(status: status) else { return .hidden }
-        // Order matters: a delivering stream outranks the poll clock, because
-        // the poll is not running. Asking "is the countdown zero" first would
-        // reintroduce the freeze the moment a stream connected mid-cycle.
-        if streamDelivering { return .streaming }
-        return .countdown(
-            refreshRemaining(lastLoadedAt: lastLoadedAt, interval: interval, now: now))
-    }
-
-    /// Seconds until the next scheduled auto-refresh, derived from the LAST ACTUAL
-    /// load completion (`vm.lastLoadedAt`) — never a self-resetting timer that fakes
-    /// a refresh. `nil` last-load (not loaded yet) shows the full interval.
-    static func refreshRemaining(lastLoadedAt: Date?, interval: Int, now: Date) -> Int {
-        guard let last = lastLoadedAt else { return interval }
-        let elapsed = now.timeIntervalSince(last)
-        return Int(ceil(max(0, Double(interval) - elapsed)))
-    }
-
-    private func startRefreshCountdown() {
-        refreshCountdownTimer?.invalidate()
-        // Only live pages have a scheduled refresh to count down to.
-        guard Self.showsRefreshCountdown(status: vm.event?.status) else {
-            refreshCountdown = 0
-            return
-        }
-        refreshCountdownTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
-            refreshCountdown = Self.refreshRemaining(
-                lastLoadedAt: vm.lastLoadedAt, interval: refreshInterval, now: Date())
-        }
-    }
-
-    /// Circular countdown indicator matching web's SVG ring
-    @ViewBuilder
-    private func refreshCountdownView() -> some View {
-        switch refreshIndicator {
-        case .hidden:
-            EmptyView()
-        case .streaming:
-            HStack(spacing: 6) {
-                Text("Updating live")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                LivePushDot(diameter: 28)
-            }
-        case .countdown(let seconds):
-            let progress = Double(refreshInterval - seconds) / Double(refreshInterval)
-            let ringColor: Color = isLive ? Color(hex: "#10B981") : .secondary
-            HStack(spacing: 6) {
-                if !isFinished {
-                    Text("Next update:")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-                ZStack {
-                    Circle()
-                        .stroke(Color.secondary.opacity(0.15), lineWidth: 2.5)
-                    Circle()
-                        .trim(from: 0, to: progress)
-                        .stroke(ringColor, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
-                        .rotationEffect(.degrees(-90))
-                        .animation(.linear(duration: 0.5), value: progress)
-                    Text("\(seconds)")
-                        .font(.system(size: 10, weight: .bold, design: .monospaced))
-                        .foregroundStyle(.primary)
-                }
-                .frame(width: 28, height: 28)
-            }
-        }
+    static func refreshIndicator(status: String?, streamDelivering: Bool) -> RefreshIndicator {
+        guard showsRefreshStatus(status: status) else { return .hidden }
+        return streamDelivering ? .streaming : .polling
     }
 }
 

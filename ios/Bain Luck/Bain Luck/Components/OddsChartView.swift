@@ -290,12 +290,9 @@ struct OddsChartView: View {
     /// `ScoreDifferentialChartView`, the other chart on this page, has taken the
     /// same `event.sport` since it was written.
     var sportKey: String?
-    /// Countdown seconds until next data refresh (0 = just refreshed)
-    var refreshCountdown: Int = 0
-    /// Total refresh interval in seconds
-    var refreshInterval: Int = 30
-    /// True while the live push stream is delivering, in which case the poll is
-    /// stood down and there is no next update to count down to (#2687).
+    /// True while the live push stream is delivering (#2687). Read only by the
+    /// fullscreen chart, which covers the page's toolbar and so carries the
+    /// page's one freshness status itself (#8320).
     var refreshStreaming: Bool = false
     /// Shared domain from parent — ensures OddsChart and ScoreDiffChart have identical x-axes
     var forcedDomain: ClosedRange<Date>?
@@ -387,7 +384,6 @@ struct OddsChartView: View {
          homeTeamLogo: String? = nil, awayTeamLogo: String? = nil,
          homeTeamAbbrev: String? = nil, awayTeamAbbrev: String? = nil,
          sportKey: String? = nil,
-         refreshCountdown: Int = 0, refreshInterval: Int = 30,
          refreshStreaming: Bool = false,
          forcedDomain: ClosedRange<Date>? = nil,
          pageAxisPlotWidth: CGFloat = 0,
@@ -406,8 +402,6 @@ struct OddsChartView: View {
         self.homeTeamAbbrev = homeTeamAbbrev
         self.awayTeamAbbrev = awayTeamAbbrev
         self.sportKey = sportKey
-        self.refreshCountdown = refreshCountdown
-        self.refreshInterval = refreshInterval
         self.refreshStreaming = refreshStreaming
         self.forcedDomain = forcedDomain
         self.pageAxisPlotWidth = pageAxisPlotWidth
@@ -817,9 +811,12 @@ struct OddsChartView: View {
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar {
-                if status == "live" {
+                // #8320 — fullscreen covers the page toolbar, so the page's one
+                // status travels with it: the stream dot when pushed, nothing
+                // otherwise. There is no refresh button here to draw.
+                if status == "live" && refreshStreaming {
                     ToolbarItem(placement: .cancellationAction) {
-                        refreshCountdownRing
+                        LivePushDot(diameter: 22)
                     }
                 }
                 ToolbarItem(placement: .confirmationAction) {
@@ -850,12 +847,10 @@ struct OddsChartView: View {
             // takes the space out of the only flexible child.
             .fixedSize(horizontal: false, vertical: true)
             .layoutPriority(1)
-        if status == "live" {
-            HStack(spacing: 4) {
-                Circle().fill(.green).frame(width: 6, height: 6)
-                Text("Live").font(.caption2).fontWeight(.medium).foregroundStyle(.green)
-            }
-        } else if EventState.isFinished(status) {
+        // #8320 — no "● Live" here: the hero's inning chip already says the
+        // game is on and the toolbar says how the number arrives. A third green
+        // dot two inches below them was the "clowny" Alex shook the phone at.
+        if EventState.isFinished(status) {
             HStack(spacing: 4) {
                 Circle().fill(.secondary).frame(width: 6, height: 6)
                 Text("Final").font(.caption2).fontWeight(.medium).foregroundStyle(.secondary)
@@ -865,13 +860,7 @@ struct OddsChartView: View {
 
     @ViewBuilder
     private var chartHeaderTrailingControls: some View {
-        // Refresh countdown ring — only when an actual auto-refresh request
-        // is scheduled, which the event VM installs for LIVE events only.
-        // Scheduled/completed pages perform no periodic reload, so a cycling
-        // countdown there would imply freshness work that never happens (C43 P2).
-        if status == "live" {
-            refreshCountdownRing
-        }
+        // #8320 — the refresh status lives once, in the page toolbar.
         Button {
             isFullscreen = true
         } label: {
@@ -901,40 +890,6 @@ struct OddsChartView: View {
         }
         .clipShape(Capsule())
         .overlay(Capsule().stroke(Color.secondary.opacity(0.2)))
-    }
-
-    // MARK: - Refresh Countdown Ring
-
-    @ViewBuilder
-    private var refreshCountdownRing: some View {
-        // While the stream delivers there is no scheduled request, so a ring
-        // counting to zero and stopping is chrome describing something that is
-        // not happening — the same C43 defect the countdown was introduced to
-        // fix, arriving from the push side.
-        if refreshStreaming {
-            LivePushDot(diameter: 22)
-        } else {
-            countdownRing
-        }
-    }
-
-    private var countdownRing: some View {
-        let total = max(refreshInterval, 1)
-        let progress = Double(total - refreshCountdown) / Double(total)
-        let ringColor: Color = status == "live" ? Color(hex: "#10B981") : .secondary
-
-        return ZStack {
-            Circle()
-                .stroke(Color.secondary.opacity(0.15), lineWidth: 2)
-            Circle()
-                .trim(from: 0, to: progress)
-                .stroke(ringColor, style: StrokeStyle(lineWidth: 2, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-            Text("\(refreshCountdown)")
-                .font(.system(size: 8, weight: .bold, design: .monospaced))
-                .foregroundStyle(.secondary)
-        }
-        .frame(width: 22, height: 22)
     }
 
     // MARK: - Data Filtering
