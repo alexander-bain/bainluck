@@ -150,6 +150,16 @@ _TO_WIN_RE = re.compile(r"^(?P<entity>.+?)\s+to\s+win\b")
 _TO_VERB_RE = re.compile(
     r"^(?P<entity>.+?)\s+to\s+(?P<rest>(?:" + "|".join(_QUANTITY_VERBS) + r")\b.*)$"
 )
+#: A season-total rung: "Will Travis Kelce have 874.5+ receiving yards in the
+#: 2026-27 NFL regular season?" — Polymarket's shape for a player's season
+#: ladder, one binary market per line (#2311: sixteen open Kelce/Worthy rungs
+#: keyed to no family, so the Chiefs page showed none of them).  Bound to
+#: "... season" so a single-game line never joins a season ladder.
+_SEASON_RUNG_RE = re.compile(
+    r"^will\s+(?P<entity>.+?)\s+(?:have|has|record|records|finish with)\s+"
+    r"(?P<line>\d[\d,]*(?:\.\d+)?)\+\s+(?P<unit>[a-z][a-z ]*?)\s+(?:in|during)\s+"
+    r"(?:the\s+)?.*\bseason$"
+)
 _OVER_UNDER_RE = re.compile(r"\b(?:over|under)\b")
 _NUM_RE = re.compile(r"\d[\d,\.]*\+?")
 _GENERIC_OUTCOME_RE = re.compile(
@@ -360,7 +370,39 @@ def _parse(market_name: str | None) -> tuple[str | None, str | None]:
         fk = ("over under " + unit).strip()
         return fk, entity
 
+    # 6. Season-total rung: "Will <entity> have N+ <unit> in the ... season"
+    rung = _season_rung(market_name)
+    if rung:
+        return rung[0], rung[1]
+
     return None, None
+
+
+def _season_rung(market_name: str | None) -> tuple[str, str, float, str] | None:
+    """``(family_key, entity, line, caption)`` for a season-total rung, else None.
+
+    The caption is the line a reader needs beside the player — the family is a
+    ladder, and a probability without its line says nothing.  A half line is
+    printed as the whole number it means (874.5+ yards IS 875+ yards).
+    """
+    if not market_name:
+        return None
+    cleaned = re.sub(r"\s+", " ", market_name).strip().rstrip("?").strip()
+    low = cleaned.lower()
+    m = _SEASON_RUNG_RE.match(low)
+    if not m:
+        return None
+    entity = _entity_span(cleaned, low, m)
+    unit = _family_descriptor(m.group("unit"))
+    try:
+        line = float(m.group("line").replace(",", ""))
+    except ValueError:
+        return None
+    if not entity or not unit:
+        return None
+    shown = int(line) + 1 if line % 1 == 0.5 else line
+    shown_txt = f"{int(shown):,}" if float(shown).is_integer() else f"{shown:,}"
+    return f"season {unit}", entity, line, f"{shown_txt}+ {m.group('unit').strip()}"
 
 
 def _is_generic_outcome(name: str | None) -> bool:
@@ -506,13 +548,17 @@ def _rows_for_market(market: dict, fk: str) -> list[dict]:
     if entity_from_name:
         prob, top_outcome, winner = _market_row_prob(outcomes)
         settled, result = _settled_status(market, winner)
-        return [
-            _make_row(
-                entity=entity_from_name, market_id=market_id, outcome_id=None,
-                probability=prob, source=source, group_id=group_id, market=market,
-                settled=settled, result=result, top_outcome=top_outcome,
-            )
-        ]
+        row = _make_row(
+            entity=entity_from_name, market_id=market_id, outcome_id=None,
+            probability=prob, source=source, group_id=group_id, market=market,
+            settled=settled, result=result, top_outcome=top_outcome,
+        )
+        rung = _season_rung(name)
+        if rung:
+            # Internal, consumed by :func:`_one_rung_per_entity`.
+            row["_line"] = rung[2]
+            row["top_outcome"] = rung[3]
+        return [row]
 
     # Multi-candidate market (award race): one row per meaningful outcome.
     if meaningful:
@@ -540,6 +586,55 @@ def _rows_for_market(market: dict, fk: str) -> list[dict]:
             settled=settled, result=result, top_outcome=top_outcome,
         )
     ]
+
+
+def _pick_rung(rungs: list[dict]) -> dict:
+    """The one rung that speaks for a player's season ladder.
+
+    While it trades: the priced line nearest an even call — the line the
+    market thinks the season lands on.  Once settled: the highest line that
+    hit, else the lowest line (which missed).  The other lines are the ladder
+    spam a team page must not print (#2311).
+    """
+    live = [r for r in rungs if not r.get("settled")]
+    if live:
+        return min(
+            live,
+            key=lambda r: (
+                r.get("probability") is None,
+                abs((r.get("probability") or 0.0) - 0.5),
+                r["_line"],
+            ),
+        )
+    won = [r for r in rungs if r.get("result") == "won"]
+    if won:
+        return max(won, key=lambda r: r["_line"])
+    return min(rungs, key=lambda r: r["_line"])
+
+
+def _one_rung_per_entity(rows: list[dict]) -> list[dict]:
+    """Reduce each player's season ladder to one row; other rows pass through.
+
+    The same line on two venues is merged first (bug a), so the pick compares
+    lines, not venues.  The reduced row takes its entity's first position.
+    """
+    ladders: "OrderedDict[str, OrderedDict[float, list[dict]]]" = OrderedDict()
+    out: list[dict | str] = []
+    for r in rows:
+        if "_line" not in r:
+            out.append(r)
+            continue
+        key = r["entity_key"]
+        if key not in ladders:
+            ladders[key] = OrderedDict()
+            out.append(key)
+        ladders[key].setdefault(r["_line"], []).append(r)
+    reduced: dict[str, dict] = {}
+    for key, by_line in ladders.items():
+        picked = dict(_pick_rung([_merge_rows(grp) for grp in by_line.values()]))
+        picked.pop("_line", None)
+        reduced[key] = picked
+    return [reduced[r] if isinstance(r, str) else r for r in out]
 
 
 def _merge_rows(group: list[dict]) -> dict:
@@ -630,7 +725,7 @@ def _drop_earlier_results(rows: list[dict], now: datetime | None = None) -> list
 
 def _collapse_cross_source(rows: list[dict]) -> list[dict]:
     groups: "OrderedDict[str, list[dict]]" = OrderedDict()
-    for r in rows:
+    for r in _one_rung_per_entity(rows):
         groups.setdefault(r["entity_key"], []).append(r)
     return [_merge_rows(grp) for grp in groups.values()]
 
