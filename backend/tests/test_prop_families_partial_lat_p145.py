@@ -392,7 +392,8 @@ class TestBudgetUnchanged:
 
     async def test_every_branch_sets_its_own_timeout(self):
         _r, db = await _build([FK_ROWS, OUTCOME_NAME_ROWS, MARKET_NAME_ROWS])
-        assert len(db.timeouts_set) == _N_ROSTERED, db.timeouts_set
+        # +1: the #8478 price screen, which bounds itself the same way.
+        assert len(db.timeouts_set) == _N_ROSTERED + 1, db.timeouts_set
 
     async def test_the_timeout_statement_still_says_twelve_thousand(self):
         _r, db = await _build([FK_ROWS, OUTCOME_NAME_ROWS, MARKET_NAME_ROWS])
@@ -404,7 +405,7 @@ class TestBudgetUnchanged:
         followed by a fresh `SET LOCAL`, branch 3 runs UNBOUNDED — the fix would
         have replaced a 12 s ceiling with none at all."""
         _r, db = await _build([FK_ROWS, _timeout(), MARKET_NAME_ROWS])
-        assert len(db.timeouts_set) == _N_ROSTERED, db.timeouts_set
+        assert len(db.timeouts_set) == _N_ROSTERED + 1, db.timeouts_set  # +1: #8478 screen
 
 
 # ---------------------------------------------------------------------------

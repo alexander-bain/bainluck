@@ -286,6 +286,10 @@ class TestTheReaderIsBounded:
         assert set(_reasons(payload)) == {
             f"branch_timeout:{route._BRANCH_OUTCOME_ROSTER}",
             f"branch_deferred:{route._BRANCH_MARKET_ROSTER}",
+            # #8478: the price screen runs AFTER the branches and spends the
+            # same budget, so a reader who used it all defers the screen too —
+            # an IOU the unbudgeted rebuild pays, never an overrun.
+            f"branch_deferred:{route._BRANCH_PRICE_SCREEN}",
         }
         # The cancelled probe was bounded by what was LEFT (1,990 ms), never by
         # the 12,000 ms ceiling — that difference is the ten seconds.
@@ -377,7 +381,8 @@ class TestTheBackgroundPathIsUnchanged:
             costs_ms=[10, 250, 250, 11800, 4500],
             budget_ms=None,
         )
-        assert _timeout_values(db) == [12000] * 5
+        # Five branches, then the #8478 price screen at the same ceiling.
+        assert _timeout_values(db) == [12000] * 6
 
     async def test_the_default_is_no_budget(self):
         """A producer that forgot to pass one must NOT silently become bounded.
@@ -552,7 +557,8 @@ class TestTheBudgetArithmetic:
             costs_ms=[1000, 500, 0, 0, 0],
             budget_ms=2500,
         )
-        assert _timeout_values(db) == [2500, 1500, 1000, 1000, 1000]
+        # The sixth figure is the #8478 price screen, bounded by what is left.
+        assert _timeout_values(db) == [2500, 1500, 1000, 1000, 1000, 1000]
 
     async def test_a_branch_is_skipped_below_the_floor_not_given_a_sliver(self):
         """Handing a branch 40 ms is a cancelled statement dressed as a budget."""
@@ -572,7 +578,8 @@ class TestTheBudgetArithmetic:
             costs_ms=[0, 0, 0, 0, 0],
             budget_ms=90_000,
         )
-        assert _timeout_values(db) == [12000] * 5
+        # Five branches, then the #8478 price screen, none above the ceiling.
+        assert _timeout_values(db) == [12000] * 6
 
     def test_the_reader_budget_is_the_declared_constant(self):
         assert route._READER_BUDGET_MS == 2500

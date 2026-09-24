@@ -66,8 +66,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import Text, and_, any_, literal, or_, select, text
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models import Team, FuturesMarket, FuturesOutcome
+from app.routes.futures import withheld_price_outcome_ids_for_markets
 from app.services import get_db
 from app.utils.event_concept_cache import (
     AVAILABILITY_LIVE,
@@ -89,7 +91,7 @@ from app.utils.event_concept_cache import (
     with_availability,
     write_payload,
 )
-from app.utils.prop_families import group_prop_families
+from app.utils.prop_families import group_prop_families, resolve_family_key
 from app.utils.statement_timeout import is_statement_timeout
 
 logger = logging.getLogger(__name__)
@@ -167,6 +169,12 @@ _BRANCH_OUTCOME_NAME = "outcome_name"
 _BRANCH_MARKET_NAME = "market_name"
 _BRANCH_OUTCOME_ROSTER = "outcome_roster"
 _BRANCH_MARKET_ROSTER = "market_roster"
+
+#: #8478: not a fetch branch but the step after them — the price screen the
+#: market page runs. It reports through the same two reason prefixes so the
+#: completion path treats it exactly like a branch: `branch_deferred:` is an IOU
+#: the unbudgeted rebuild pays, `branch_timeout:` is a real expiry.
+_BRANCH_PRICE_SCREEN = "price_screen"
 
 
 def _escape_like(s: str) -> str:
@@ -693,7 +701,10 @@ async def build_prop_families(
     if len(lost) + len(deferred) == len(branches):
         return _payload([]), True
 
+    screen_loss = await _withhold_refused_prices(db, by_market, budget_ms, _t0, _team_id)
     payload = _payload(group_prop_families(list(by_market.values())))
+    if screen_loss:
+        note_build_loss(payload, screen_loss, LOSS_PARTIAL)
     for _name in lost:
         # LOSS_PARTIAL, not LOSS_DEGRADED: the headline answer — this team's own
         # futures, via the FK branch — survived; what is missing is real content
@@ -708,6 +719,90 @@ async def build_prop_families(
         # reason that is expected and benign.
         note_build_loss(payload, f"{_REASON_DEFERRED}{_name}", LOSS_PARTIAL)
     return payload, False
+
+
+async def _withhold_refused_prices(
+    db: AsyncSession,
+    by_market: dict[int, dict],
+    budget_ms: int | None,
+    t0: float,
+    team_id: int,
+) -> str | None:
+    """Drop every leg whose price the market's own page refuses (#8478).
+
+    WHAT A READER SAW. The Eagles page's Next Team card read "Josh Allen —
+    Philadelphia 47%", and the same row read 47% on the 49ers, Ravens and Chiefs
+    pages: market 15475 stores ``yes_bid 0 / yes_ask 0.47`` on 26 destinations.
+    Its Championship Game MVP card printed four players at 50% each from
+    ``KXNFLSBMVP-26``, last season's game, every leg an empty book. The market
+    page serves ``probability: null`` for all of them. This route never asked.
+
+    ONE HELPER, NOT A SIXTH SPELLING. The refusal is
+    ``withheld_price_outcome_ids_for_markets`` — the five arms the market page,
+    league futures and the Discover card already share, batched to a constant
+    query count. The arms read the WHOLE field (the broken-field arm sums every
+    leg), so each market is reloaded with all its outcomes here rather than
+    judged on the team-filtered legs the branches fetched.
+
+    Only markets that can form a family are screened — a market with no family
+    key never reaches the page, so screening it is load without a reader.
+
+    WITHHOLDING, NEVER REWRITING (gotcha #21): a refused leg is removed, not
+    re-priced. A market left with no legs is removed, so a one-entity row
+    ("Malik Willis — Philadelphia") leaves the card instead of printing a dash,
+    and a family left with fewer than two entities is not emitted at all.
+
+    Returns a loss reason, or None. A failed screen FAILS OPEN — the page keeps
+    today's numbers — and says so in the envelope, so the build is partial and
+    never mistaken for full. A board the helper could not read is omitted from
+    its map and served as-is, its own documented failure direction.
+    """
+    ids = sorted(mid for mid, m in by_market.items() if resolve_family_key(m))
+    if not ids:
+        return None
+    timeout_ms = _BRANCH_TIMEOUT_MS
+    if budget_ms is not None:
+        remaining = budget_ms - int((time.monotonic() - t0) * 1000)
+        if remaining < _MIN_BRANCH_MS:
+            return f"{_REASON_DEFERRED}{_BRANCH_PRICE_SCREEN}"
+        timeout_ms = min(remaining, _BRANCH_TIMEOUT_MS)
+    try:
+        await db.execute(text(f"SET LOCAL statement_timeout = '{timeout_ms}'"))
+        markets = (
+            await db.execute(
+                select(FuturesMarket)
+                .where(FuturesMarket.id.in_(ids))
+                .options(selectinload(FuturesMarket.outcomes))
+            )
+        ).scalars().all()
+        withheld = await withheld_price_outcome_ids_for_markets(db, markets)
+    except Exception as exc:  # noqa: BLE001 — classified below, then contained
+        try:
+            await db.rollback()
+        except Exception:
+            logger.warning(
+                "prop-families: rollback after price screen failed for team %s",
+                team_id, exc_info=True,
+            )
+        if is_statement_timeout(exc):
+            logger.warning(
+                "prop-families: price screen timed out for team %s after %d ms",
+                team_id, timeout_ms,
+            )
+        else:
+            logger.exception("prop-families: price screen FAILED for team %s", team_id)
+        return f"{_REASON_TIMEOUT}{_BRANCH_PRICE_SCREEN}"
+
+    for mid, refused in withheld.items():
+        entry = by_market.get(mid)
+        if entry is None or not refused:
+            continue
+        entry["outcomes"] = [
+            o for o in entry["outcomes"] if o.get("outcome_id") not in refused
+        ]
+        if not entry["outcomes"]:
+            del by_market[mid]
+    return None
 
 
 def _stored_mirror(rc, keys: ConceptCacheKeys) -> tuple[Any, bool]:
