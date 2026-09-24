@@ -70,6 +70,14 @@ class PolymarketMarket(BaseModel):
     # Group item title (e.g., "33°F or below" for weather markets)
     group_item_title: Optional[str] = None
 
+    #: #8466 — THIS market's own ``endDate``, which is not its event's. A
+    #: date ladder is one event whose legs each end on the date they ask
+    #: about: event 1038648's "…continues through September 30?" leg ends
+    #: 09-30 while the event ends 10-31, and its Nov 30 / Dec 31 legs end
+    #: AFTER the event. None when Gamma omits it; the writer falls back to
+    #: the event's date then.
+    end_date: Optional[datetime] = None
+
     # ── Venue-authored semantic fields (CU-1 clause (4), #5273) ─────────────
     # Gamma publishes its OWN classification of what a market asks. We kept
     # none of it, so every consumer re-derived the question's shape from the
@@ -843,6 +851,7 @@ class PolymarketAPIService:
                 question=market_data.get("question", ""),
                 slug=market_data.get("slug"),
                 group_item_title=market_data.get("groupItemTitle"),
+                end_date=self._parse_timestamp(market_data.get("endDate")),
                 outcomes=outcomes,
                 outcome_prices=outcome_prices,
                 clob_token_ids=clob_token_ids,

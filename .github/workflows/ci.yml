@@ -908,6 +908,22 @@ jobs:
             exit 1
           fi
 
+      - name: "#8466 a Polymarket leg resolves on its own date, and a re-ingest repairs it (real Postgres)"
+        # #8466. Every decomposed leg was stamped with its EVENT's endDate, and
+        # the leg's on-conflict update never wrote `resolution_date`, so no
+        # re-ingest could repair one. A session double records the dict it was
+        # handed; only Postgres says what ON CONFLICT DO UPDATE left in the row,
+        # including that a SETTLED leg keeps its stored date. Wired here because
+        # this job names each PG file explicitly (the shards skip it).
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_polymarket_leg_resolution_date_8466_pg.py \
+            -v -rs 2>&1 | tee /tmp/legdate8466.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/legdate8466.txt; then
+            echo "::error::#8466 leg resolution-date gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#5024 a decided ladder's row is reachable by touch age (real Postgres)"
         # #5024. The whole change is a SQL predicate: `RECENT_FINAL_SELECT_SQL`
         # gains an OR arm that reaches a row no leg has touched inside
