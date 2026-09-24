@@ -62,6 +62,7 @@ from app.routes.feed import (
     _dedupe_futures_by_canonical,
     _fused_broaden_enabled,
     _market_runtime_filter_trace,
+    _merge_broadened_futures,
     _score_futures,
     _THIN_FUTURES_POOL_FLOOR,
 )
@@ -114,9 +115,8 @@ def _route_merge(primary: list[dict], broadened: list[dict]) -> list[dict]:
     the list a person is served rather than on an intermediate."""
     if len(primary) >= _THIN_FUTURES_POOL_FLOOR:
         return _dedupe_futures_by_canonical(list(primary))
-    seen = {(it.get("data") or {}).get("id") for it in primary}
-    added = [it for it in broadened if (it.get("data") or {}).get("id") not in seen]
-    return _dedupe_futures_by_canonical(list(primary) + added)
+    merged, _added = _merge_broadened_futures(list(primary), broadened)
+    return _dedupe_futures_by_canonical(merged)
 
 
 async def _legacy_two_pass(monkeypatch, markets) -> tuple[list[dict], list[dict]]:
