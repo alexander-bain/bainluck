@@ -27,6 +27,7 @@ from app.utils.golf_evolution_market import (
     eligible_candidates,
     select_by_settled_resolution,
     select_by_snapshot_richness,
+    select_team_match_play_evolution_market,
 )
 from app.utils.competition_identity import next_edition, resolve_competition  # #8139
 from app.utils.majors_calendar import _as_utc_date  # one parser for the calendar's dates
@@ -3713,8 +3714,28 @@ async def get_golf_tournament(
     # lives in `app.utils.golf_evolution_market` (pure, no session — ruling 005);
     # what stays here is fetching the three facts it ranks on.
     evolution_market_id = None
+    # #8381: a cup never enters the golfer ranking below — its chart is the two
+    # teams or nothing (see `select_team_match_play_evolution_market`). The
+    # outcome read only runs for a cup whose h2h list does not already name the
+    # team market, i.e. a completed cup.
+    team_match_play = is_team_match_play_key(tournament.get("key"))
+    if team_match_play:
+        cup_outcome_names: dict[int, list[str]] = {}
+        if market_ids and not select_team_side_matchup(tournament.get("h2h_matchups")):
+            cup_outcome_rows = (
+                await db.execute(
+                    select(FuturesOutcome.market_id, FuturesOutcome.name).where(
+                        FuturesOutcome.market_id.in_(market_ids)
+                    )
+                )
+            ).all()
+            for mid, oname in cup_outcome_rows:
+                cup_outcome_names.setdefault(mid, []).append(oname)
+        evolution_market_id = select_team_match_play_evolution_market(
+            tournament.get("h2h_matchups"), market_ids, cup_outcome_names
+        )
     for g in sorted_groups:
-        if g["type"] == "winner" and g["market_ids"]:
+        if not team_match_play and g["type"] == "winner" and g["market_ids"]:
             # LAT-P020/#1107: this ranking used to issue THREE queries PER candidate
             # market from inside the loop — an outcome count, a snapshot count, and a
             # graded-winner lookup. Two of the three are semi-joins against
@@ -3841,7 +3862,7 @@ async def get_golf_tournament(
                     eligible_ids, snap_counts
                 )
             break
-    if not evolution_market_id and market_ids:
+    if not evolution_market_id and market_ids and not team_match_play:
         evolution_market_id = market_ids[0]
 
     # Filter movers for this tournament

@@ -34,6 +34,12 @@ from __future__ import annotations
 import re
 from typing import Iterable, Mapping, Optional, Sequence
 
+from app.utils.golf_event_format import (
+    is_team_side_name,
+    normalize_team_side_name,
+    select_team_side_matchup,
+)
+
 # #225 Item 3: minimum resolved-winner snapshot probability for a settled winner
 # market to be preferred as the evolution (path-to-resolution) chart source. A
 # real-money market converges to ~1.0 for the champion; a stale futures market
@@ -181,3 +187,54 @@ def select_evolution_market(
     return select_by_settled_resolution(
         eligible_ids, winner_last, settled_resolve_min
     ) or select_by_snapshot_richness(eligible_ids, snap_counts)
+
+
+# Outcomes a cup's team market carries beside its two sides. Kalshi's
+# "Presidents Cup Winner" (KXPRESCUP-26) is Team USA / Team World / Tie; the
+# h2h builder drops the same words (`_build_h2h_entry`), so both roads read a
+# three-way cup market as the two-side pair it is.
+_NON_SIDE_OUTCOMES = frozenset({"tie", "draw", "halved", "yes", "no", "field", "other", "the field"})
+
+
+def is_team_side_pair(outcome_names: Iterable[str]) -> bool:
+    """True when a market's outcomes, ties aside, are exactly two DIFFERENT team sides."""
+    sides = [
+        n for n in outcome_names
+        if n and n.strip().lower() not in _NON_SIDE_OUTCOMES
+    ]
+    return (
+        len(sides) == 2
+        and all(is_team_side_name(n) for n in sides)
+        and normalize_team_side_name(sides[0]) != normalize_team_side_name(sides[1])
+    )
+
+
+def select_team_match_play_evolution_market(
+    h2h_matchups: Optional[list[dict]],
+    market_ids: Sequence[int] = (),
+    outcome_names_by_market: Optional[Mapping[int, Sequence[str]]] = None,
+) -> Optional[int]:
+    """The chart market for a team match-play event (#8381): the cup itself, or None.
+
+    A cup's story is two teams. Every golfer-shaped market a cup carries is the
+    wrong line under a Team USA / Team World hero: Kalshi's "Golfers to compete
+    in the Presidents Cup" (20 golfers) won the `market_ids[0]` fallback, and a
+    minted DataGolf "Presidents Cup - Winner" (132 golfers) would win the winner
+    ranking outright — `MIN_CONTENDER_OUTCOMES` exists to prefer exactly that
+    shape. So a cup never enters the golfer ranking; it gets this instead.
+
+    Two roads to the same market, in order:
+      1. the live listing routes the team market into `h2h_matchups`, and
+         `select_team_side_matchup` (#7985's allowlist) names it;
+      2. a completed cup has no h2h list, so the tournament's own markets are
+         read for one whose outcomes are exactly the two sides.
+    Neither found ⇒ None. An empty chart is honest; a golfer field is not.
+    """
+    matchup = select_team_side_matchup(h2h_matchups)
+    if matchup and matchup.get("market_id") is not None:
+        return int(matchup["market_id"])
+    names = outcome_names_by_market or {}
+    for mid in market_ids:
+        if is_team_side_pair(names.get(mid, ())):
+            return mid
+    return None
