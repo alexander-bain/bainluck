@@ -65,7 +65,8 @@ function render(items: PropMark[], state: PropsState): string {
   return renderToStaticMarkup(<PropsSection items={items} state={state} />);
 }
 
-const decode = (t: string) => t.replace(/&amp;/g, "&").replace(/&#x27;/g, "'").replace(/&quot;/g, '"');
+// `&amp;` last, so an escaped entity is never decoded twice.
+const decode = (t: string) => t.replace(/&#x27;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, "&");
 
 /**
  * The rows of one family in DOM order, each as its children's text joined by
