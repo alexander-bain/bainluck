@@ -896,3 +896,56 @@ describe("#7163 — one particled-surname rule, two clients", () => {
     }
   });
 });
+
+/**
+ * #5634 — the two-word nickname list, compared out of source on both clients.
+ *
+ * "Boston Red Sox" printed "Sox" on the browser's hero (`/events/15317515`,
+ * 2026-09-24) and the iPhone's `short` had the same defect from the same line.
+ * Both clients now keep a hand-measured list of nicknames whose last word alone
+ * is not the name; like every other list in this file, a token added to one
+ * client and not the other is a label the two clients print differently.
+ */
+const swiftNicknames = tokensInLiteral(
+  swiftSource,
+  /static let twoWordNicknames\s*:\s*Set<String>\s*=/,
+);
+const webNicknames = tokensInLiteral(
+  webSource,
+  /const TWO_WORD_NICKNAMES\s*:\s*ReadonlySet<string>\s*=\s*new Set\(/,
+);
+
+describe("#5634 — one two-word nickname list, two clients", () => {
+  it("both nickname sets were actually found and read", () => {
+    // Reachability: a regex that matches nothing yields [], and the comparison
+    // below would then pass having compared two empty sets.
+    expect(swiftNicknames.length).toBeGreaterThanOrEqual(41);
+    expect(webNicknames.length).toBeGreaterThanOrEqual(41);
+    expect(swiftNicknames).toContain("red sox");
+    expect(webNicknames).toContain("red sox");
+    expect(new Set(swiftNicknames).size).toBe(swiftNicknames.length);
+    expect(new Set(webNicknames).size).toBe(webNicknames.length);
+  });
+
+  it("the two nickname sets are identical", () => {
+    const swift = new Set(swiftNicknames);
+    const web = new Set(webNicknames);
+    expect([...web].filter((t) => !swift.has(t))).toEqual([]);
+    expect([...swift].filter((t) => !web.has(t))).toEqual([]);
+  });
+
+  it("both clients gate the list on a club, and after the designator refusal", () => {
+    // The browser's half is executed; the iPhone's is read out of source.
+    expect(teamShortName("Boston Red Sox")).toBe("Red Sox");
+    expect(teamShortName("Mean Green", null, "tennis_atp_us_open")).toBe("Green");
+    expect(swiftCode).toMatch(
+      /if !namesAPerson\(sportKey: sportKey\), let nickname = twoWordNickname\(parts\) \{/,
+    );
+    const swiftRefusal = swiftCode.indexOf("if isNonDistinctiveToken(last)");
+    const swiftList = swiftCode.indexOf("twoWordNickname(parts)");
+    const swiftWalk = swiftCode.indexOf("particledSurnameStart(parts)");
+    expect(swiftRefusal).toBeGreaterThan(-1);
+    expect(swiftList).toBeGreaterThan(swiftRefusal);
+    expect(swiftWalk).toBeGreaterThan(swiftList);
+  });
+});

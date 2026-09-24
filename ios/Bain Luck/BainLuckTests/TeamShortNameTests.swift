@@ -30,8 +30,10 @@ final class TeamShortNameTests: XCTestCase {
         // 5,174 of 5,559 names are unchanged by this rule; these are the shape.
         for (name, expected) in [
             ("Baltimore Orioles", "Orioles"),
-            ("Boston Red Sox", "Sox"),
-            ("Texas Tech Red Raiders", "Raiders"),
+            // #5634 — two-word nicknames keep both words ("Sox", "Raiders"
+            // until then); see `TeamShortNameTwoWordNickname5634Tests`.
+            ("Boston Red Sox", "Red Sox"),
+            ("Texas Tech Red Raiders", "Red Raiders"),
             ("Abilene Christian Wildcats", "Wildcats"),
             ("Houston Dynamo", "Dynamo"),
             ("CF Montreal", "Montreal"),
@@ -212,8 +214,10 @@ final class TeamShortNameTests: XCTestCase {
     func testTheListDoesNotBecomeARuleAboutThreeWordNames() {
         for (name, expected) in [
             ("Los Angeles Lakers", "Lakers"),
-            ("Boston Red Sox", "Sox"),
-            ("Texas Tech Red Raiders", "Raiders"),
+            // #5634 moved these two to their two-word nicknames by a separate,
+            // explicit list — still not a three-word rule: the Lakers stay.
+            ("Boston Red Sox", "Red Sox"),
+            ("Texas Tech Red Raiders", "Red Raiders"),
             ("New England Revolution", "Revolution"),
             ("Baltimore Orioles", "Orioles"),
         ] {
@@ -341,9 +345,11 @@ final class TeamShortNameTests: XCTestCase {
     /// team keeps shortening exactly as it always has.
     ///
     /// `Sox` is also the control that pins the clause at two characters: move it
-    /// to `<= 3` and "Boston Red Sox" stops shortening.
+    /// to `<= 3` and "Boston Red Sox" stops shortening. Since #5634 the label is
+    /// "Red Sox", and the control still bites — the refusal runs BEFORE the
+    /// nickname list, so a three-character clause hands back the whole name.
     func testAThreeLetterTailThatNamesTheTeamStillShortens() {
-        XCTAssertEqual(TeamShortName.short("Boston Red Sox"), "Sox")
+        XCTAssertEqual(TeamShortName.short("Boston Red Sox"), "Red Sox")
         XCTAssertEqual(TeamShortName.short("Baltimore Orioles"), "Orioles")
         XCTAssertEqual(TeamShortName.short("Ipswich Town"), "Ipswich Town")
         XCTAssertEqual(TeamShortName.short("Bradford City"), "Bradford City")
