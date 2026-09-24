@@ -174,23 +174,69 @@ def _escape_like(s: str) -> str:
     return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
-def _roster_player_names(team: Team) -> list[str]:
-    """Extract roster player names for player-prop family matching."""
-    names: list[str] = []
+#: #2311 — WHICH 40 names the cap keeps. Rosters arrive alphabetical, and only
+#: football rosters exceed the cap (32 NFL teams up to 80 names, 14 NCAAF up to
+#: 101, measured 2026-09-24), so the Chiefs searched "Alohi Gilman" through
+#: "Matt Araiza" and never searched Mahomes, Kelce, Rice or Worthy — while Kelce
+#: alone had 13 open markets naming him. The cap and its cost are unchanged; the
+#: slots go to the positions markets are written about first. Lower tier = kept
+#: first; ties keep roster order; unlisted positions sit between defense and the
+#: never-propped line (OL/LS/P).
+_FOOTBALL_POSITION_TIER: dict[str, int] = {
+    **{p: 0 for p in ("QB", "RB", "HB", "WR", "TE", "FB")},
+    **{p: 1 for p in ("PK", "K")},
+    **{p: 2 for p in ("DE", "EDGE", "DT", "DL", "NT", "LB", "OLB", "ILB", "MLB")},
+    **{p: 3 for p in ("CB", "S", "FS", "SS", "DB")},
+    **{p: 5 for p in ("OL", "OT", "OG", "G", "C", "T", "LS", "P")},
+}
+_FOOTBALL_UNLISTED_TIER = 4
+#: Codes no other sport's roster uses. "C", "G", "P", "S" all mean something
+#: else in MLB/NBA/NHL, so the tiers above apply only to a roster that carries
+#: one of these — a 41-name MLB roster must never push its catchers to the back.
+_FOOTBALL_ONLY_POSITIONS = frozenset(
+    {"QB", "WR", "TE", "RB", "LB", "CB", "OT", "OL", "DE", "DT", "LS", "EDGE"}
+)
+
+
+def _roster_name_coverage(team: Team) -> tuple[list[str], int]:
+    """Roster names searched for player-prop matching, plus the total eligible.
+
+    Returns ``(searched, total)``: at most ``_MAX_ROSTER_PATTERNS`` names, and
+    how many eligible names the roster holds. A football roster over the cap
+    is filled by ``_FOOTBALL_POSITION_TIER`` rather than alphabetically (#2311);
+    every other roster keeps its stored order, as before.
+    """
+    entries: list[tuple[str, str | None]] = []
     roster = getattr(team, "roster_players", None)
     if roster and isinstance(roster, list):
         for item in roster:
+            pos = None
             if isinstance(item, dict):
                 nm = item.get("name")
+                pos = item.get("position")
             elif isinstance(item, str):
                 nm = item
             else:
                 nm = None
             if isinstance(nm, str) and len(nm.strip()) >= 4:
-                names.append(nm.strip())
-            if len(names) >= _MAX_ROSTER_PATTERNS:
-                break
-    return names
+                entries.append(
+                    (nm.strip(), pos.strip().upper() if isinstance(pos, str) else None)
+                )
+    total = len(entries)
+    if total > _MAX_ROSTER_PATTERNS and any(
+        pos in _FOOTBALL_ONLY_POSITIONS for _, pos in entries
+    ):
+        # `sorted` is stable, so ties keep roster order.
+        entries = sorted(
+            entries,
+            key=lambda e: _FOOTBALL_POSITION_TIER.get(e[1] or "", _FOOTBALL_UNLISTED_TIER),
+        )
+    return [nm for nm, _ in entries[:_MAX_ROSTER_PATTERNS]], total
+
+
+def _roster_player_names(team: Team) -> list[str]:
+    """Extract roster player names for player-prop family matching."""
+    return _roster_name_coverage(team)[0]
 
 
 # ---------------------------------------------------------------------------
@@ -478,8 +524,9 @@ async def build_prop_families(
     _team_pats: list[str] = []
     if team.name:
         _team_pats.append(f"%{_escape_like(team.name.strip())}%")
+    _roster_names, _roster_total = _roster_name_coverage(team)
     _roster_pats: list[str] = [
-        f"%{_escape_like(player)}%" for player in _roster_player_names(team)
+        f"%{_escape_like(player)}%" for player in _roster_names
     ]
 
     def _ilike_any(col, pats: list[str]):
@@ -518,11 +565,22 @@ async def build_prop_families(
     _team_slug = getattr(team, "slug", None)
 
     def _payload(families: list) -> dict:
-        return {
+        out = {
             "team": {"id": _team_id, "name": _team_name, "slug": _team_slug},
             "families": families,
             "total_families": len(families),
         }
+        # #2311: the roster search declares itself, so "no props for this
+        # player" and "this player was never searched" are distinguishable.
+        # Machine-readable only (notice 34 keeps coverage counts off the page).
+        # Omitted for rosterless teams so their payloads are unchanged.
+        if _roster_total:
+            out["roster_search"] = {
+                "searched": len(_roster_names),
+                "total": _roster_total,
+                "truncated": len(_roster_names) < _roster_total,
+            }
+        return out
 
     # #1197 / #1239: statement_timeout stays as a backstop so any pathological
     # branch fails fast and the endpoint degrades rather than hanging the dyno to
@@ -833,6 +891,9 @@ async def get_team_prop_families(
           "team": {"id": int, "name": str, "slug": str | None},
           "families": [ {family_key, label, entity_count, sources, rows: [...]}, ... ],
           "total_families": int,
+          # #2311, only when the team has a roster: roster names searched of
+          # how many exist (the cap is _MAX_ROSTER_PATTERNS).
+          "roster_search": {"searched": int, "total": int, "truncated": bool},
           "cache": {...},   # LAT-P138: the envelope contract, additive. Carries
                             # `availability` ("live" | "stale_ok") and
                             # `created_at` — the age of the CONTENT, not of the
