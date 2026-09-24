@@ -182,6 +182,12 @@ export interface EventOutcomeInput {
    * result: `0` and `3` under the two players do not say `6-3, 6-4, 6-1`.
    */
   linescore?: { sets: [number, number][] } | null;
+  /**
+   * #5634 — the event's sport key, read only to NAME the winner: a football
+   * club keeps its whole name ("Union Berlin · WON", never "Berlin · WON").
+   * Absent keeps the shipped last-word rule.
+   */
+  sportKey?: string | null;
 }
 
 /**
@@ -325,7 +331,8 @@ export function resolveEventOutcome(
     // fires: every other branch already returns a name the team is called.
     const { home: homeShort, away: awayShort } = teamShortNames(
       { name: homeTeam },
-      { name: awayTeam }
+      { name: awayTeam },
+      input.sportKey,
     );
     return {
       winnerName: (winnerSide === "home" ? homeShort : awayShort) || team,

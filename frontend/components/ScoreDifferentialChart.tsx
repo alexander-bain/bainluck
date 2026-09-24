@@ -370,6 +370,7 @@ export default function ScoreDifferentialChart({
   const { home: homeShort, away: awayShort } = teamShortNames(
     { name: homeTeam, abbreviation: homeTeamAbbrev },
     { name: awayTeam, abbreviation: awayTeamAbbrev },
+    sportKey,
   );
 
   const unitMismatchNote = (() => {

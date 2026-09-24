@@ -881,10 +881,14 @@ describe("#7163 — one particled-surname rule, two clients", () => {
       "Los Angeles Lakers",
     ]) {
       const shipped = teamShortName(name);
+      // #5634: a soccer key now keeps a club of up to three words whole
+      // ("Los Angeles Lakers" under a La Liga key is not a real row), so the
+      // soccer arm of this control lives in
+      // `teamShortNameSoccerWholeClub5634.test.ts` (Benfica, UANL, Coruna).
       for (const key of [
         null,
         undefined,
-        "soccer_spain_la_liga",
+        "basketball_nba",
         "americanfootball_nfl",
       ]) {
         expect(teamShortName(name, null, key)).toBe(shipped);

@@ -2527,9 +2527,11 @@ export default function RelatedFutures({
   const aColor = awayTeamColor || DEFAULT_COLOR;
   // UX-1065 (#2936): the Bigger Picture section on the reported event page.
   // This is the derivation that printed "Town" against "Liverpool".
+  // #5634 — and "Lake" for Real Salt Lake: the sport keeps a club whole.
   const { home: homeShort, away: awayShort } = teamShortNames(
     { name: homeTeam },
     { name: awayTeam },
+    sportKey,
   );
 
   // Categorize futures for each team (pass team names for mismatch filtering)

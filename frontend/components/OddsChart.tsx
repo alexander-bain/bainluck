@@ -367,6 +367,12 @@ interface OddsChartProps {
    * different answers in the first place. Absent means two-sided.
    */
   awayWithheld?: boolean;
+  /**
+   * #5634 — the event's sport key, read ONLY to name the teams on the axis: a
+   * football club keeps its whole name ("UNION BERLIN", never "BERLIN"). Absent
+   * keeps the shipped last-word rule.
+   */
+  sportKey?: string | null;
 }
 
 type TimeRange = "all" | "live";
@@ -551,6 +557,7 @@ export default function OddsChart({
   awayTeamLogo,
   homeTeamAbbrev,
   awayTeamAbbrev,
+  sportKey,
   onActivePointChange,
   onRenderedDomain,
   chartStartTime,
@@ -1951,6 +1958,7 @@ export default function OddsChart({
   const { home: homeShort, away: awayShort } = teamShortNames(
     { name: homeTeam, abbreviation: homeTeamAbbrev },
     { name: awayTeam, abbreviation: awayTeamAbbrev },
+    sportKey,
   );
 
   // Y-axis tick formatter: the value is already the home win probability (0–100).

@@ -37,7 +37,14 @@ import { teamShortName, teamShortNames } from "@/lib/teamShortName";
 const TENNIS = "tennis_other";
 const MMA = "mma_mixed_martial_arts";
 /** Club sports, as production spells them. */
-const SOCCER = "soccer_portugal_primeira_liga";
+/**
+ * #5634 — a soccer key now has its own club rule (a club of up to three words
+ * keeps its whole name), so it can no longer stand in for "a club sport the
+ * particle walk must not touch". The gate controls below use this key; the
+ * soccer outputs for the same names are pinned in
+ * `teamShortNameSoccerWholeClub5634.test.ts`.
+ */
+const OTHER_CLUB = "aussierules_afl";
 const BASEBALL = "baseball_mlb";
 
 describe("#7163 — the premise: the shipped rule really does truncate", () => {
@@ -111,14 +118,14 @@ describe("#7163 — SCOPE: the gate, which is what keeps the clubs right", () =>
     ["Bourg en Bresse", "Bresse"],
     ["FC United of Manchester", "Manchester"],
   ])("a club is untouched: %s stays %s", (name, expected) => {
-    expect(teamShortName(name, null, SOCCER)).toBe(expected);
+    expect(teamShortName(name, null, OTHER_CLUB)).toBe(expected);
     expect(teamShortName(name, null, BASEBALL)).toBe(expected);
     // And identical to the rule with no sport at all.
-    expect(teamShortName(name, null, SOCCER)).toBe(teamShortName(name));
+    expect(teamShortName(name, null, OTHER_CLUB)).toBe(teamShortName(name));
   });
 
   it("a caller that does not know its sport keeps today's output", () => {
-    for (const sport of [undefined, null, "", "   ", "soccer_epl"]) {
+    for (const sport of [undefined, null, "", "   ", OTHER_CLUB]) {
       expect(teamShortName("de Minaur", null, sport)).toBe("Minaur");
     }
   });

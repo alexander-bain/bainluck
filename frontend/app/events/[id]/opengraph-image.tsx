@@ -289,6 +289,7 @@ export default async function Image({ params }: { params: { id: string } }) {
     homeScore: scoresAreTrusted ? event.home_score ?? null : null,
     awayScore: scoresAreTrusted ? event.away_score ?? null : null,
     linescore: event.linescore,
+    sportKey: event.sport_key || event.sport,
   });
   const showScore =
     scoresAreTrusted &&
