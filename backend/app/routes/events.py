@@ -8118,6 +8118,47 @@ async def search_events(
             if len(deduped_futures) >= _SEARCH_FUTURES_PAGE:
                 break
 
+    # THE STAGE BOUNDARY, AND IT IS HERE BECAUSE THE OLD ONE MEASURED TWO LANES.
+    #
+    # Until this line, `_mark("futures")` above and `_mark("headline_contenders")`
+    # below bracketed EVERYTHING between them: the re-rank, the dedup, the
+    # unbounded REFILL query, this withdrawal filter, and only then the bounded
+    # headline lane. So `headline_contenders` was never that lane's cost — it was
+    # the sum of two DB lanes with different budgets (the refill runs against the
+    # 20,000 ms request deadline, the headline lane against its own 2,000 ms
+    # bound), and reading it as one is what a stage clock is for.
+    #
+    # MEASURED COST OF NOT HAVING IT, #7243's after-check on release `ea8438fe`:
+    # 35 reads of `q=red&debug_timing=1` came back 7/7 marked on the shed reads
+    # and 28/28 unmarked on the completing ones — clean — EXCEPT one 2,004 ms read
+    # that did not mark. That row reads as a missed shed against a "≥2,000 ms
+    # marks" criterion and cost 20 extra samples to clear by hand. It was not a
+    # miss: a real shed costs the 2,000 ms bound PLUS the savepoint rollback and
+    # the timeout re-arm and therefore lands at 2,018-2,037 ms, while a merely
+    # slow COMPLETING stage can sit just under the bound and is correctly cached.
+    # With the two lanes split, that row is self-explaining instead of an
+    # anomaly, and the honest criterion — every SHED marks, no COMPLETING read
+    # marks — is readable straight off the stage clock.
+    #
+    # #8375 moved this mark up past the #6327 filter below. The filter is pure
+    # Python over rows already in memory, and the container read that now sits
+    # between them is a DB lane with its own clock (`futures_containers`).
+    _mark("futures_refill")
+
+    # #8375: a Polymarket game CONTAINER is not a market. It is the game's event
+    # row, and its "outcomes" are copies of its own sub-markets' lead legs, so
+    # `q=falcons packers` answered "Falcons vs. Packers · O/U 24.5 95%". The game
+    # is already the GAMES result and every sub-market is its own row, so nothing
+    # is lost by withholding it. The ids are read here, between the refill mark and
+    # the #6327 filter, so the read has its own stage clock and both reader lists
+    # below (the flat bucket and the families) exclude them in the SAME
+    # comprehension that withdraws the answerless cards: filter-then-slice, so
+    # rank 11 takes the slot, and no third copy of the #6327 predicate.
+    _container_parent_ids = await _search_container_parent_ids(
+        db, deduped_futures, _deadline
+    )
+    _mark("futures_containers")
+
     # #6327: withdraw the cards that can only draw dashes. The builder empties
     # their ladder (see its note); this is what stops the empty-laddered card
     # itself reaching the reader, on the surface where the defect was measured.
@@ -8157,29 +8198,8 @@ async def search_events(
     _deduped_page = deduped_futures[:_SEARCH_FUTURES_PAGE]
     futures_markets = [
         m for m in deduped_futures if not _futures_card_has_no_answer(m)
+        and m.id not in _container_parent_ids  # #8375
     ][:_SEARCH_FUTURES_PAGE]  # flat list (unchanged shape)
-    # THE STAGE BOUNDARY, AND IT IS HERE BECAUSE THE OLD ONE MEASURED TWO LANES.
-    #
-    # Until this line, `_mark("futures")` above and `_mark("headline_contenders")`
-    # below bracketed EVERYTHING between them: the re-rank, the dedup, the
-    # unbounded REFILL query, this withdrawal filter, and only then the bounded
-    # headline lane. So `headline_contenders` was never that lane's cost — it was
-    # the sum of two DB lanes with different budgets (the refill runs against the
-    # 20,000 ms request deadline, the headline lane against its own 2,000 ms
-    # bound), and reading it as one is what a stage clock is for.
-    #
-    # MEASURED COST OF NOT HAVING IT, #7243's after-check on release `ea8438fe`:
-    # 35 reads of `q=red&debug_timing=1` came back 7/7 marked on the shed reads
-    # and 28/28 unmarked on the completing ones — clean — EXCEPT one 2,004 ms read
-    # that did not mark. That row reads as a missed shed against a "≥2,000 ms
-    # marks" criterion and cost 20 extra samples to clear by hand. It was not a
-    # miss: a real shed costs the 2,000 ms bound PLUS the savepoint rollback and
-    # the timeout re-arm and therefore lands at 2,018-2,037 ms, while a merely
-    # slow COMPLETING stage can sit just under the bound and is correctly cached.
-    # With the two lanes split, that row is self-explaining instead of an
-    # anomaly, and the honest criterion — every SHED marks, no COMPLETING read
-    # marks — is readable straight off the stage clock.
-    _mark("futures_refill")
 
     # UX-P259/#2579: the tournament a player can win is reachable by their name.
     #
@@ -8485,8 +8505,14 @@ async def search_events(
     # event concepts below still read the unfiltered `deduped_futures`.
     # #3412: same predicate still, now the wider one — a family is exactly the
     # back door a half-applied withdrawal leaves open.
+    # #8375: and the container withdrawal too, or the family is its back door.
     futures_families = _compose_futures_families(
-        [m for m in deduped_futures if not _futures_card_has_no_answer(m)],
+        [
+            m
+            for m in deduped_futures
+            if not _futures_card_has_no_answer(m)
+            and m.id not in _container_parent_ids
+        ],
         expanded,
         lambda m: _formatted_by_id[m.id],
         {m.id for m in futures_markets},
@@ -28260,6 +28286,124 @@ def _futures_card_has_no_answer(market: "FuturesMarket") -> bool:
         or _futures_market_prices_only_empty_books(market)
         or _futures_board_is_mostly_unserved(market)
     )
+
+
+def _search_container_parent_candidates(markets: list) -> dict[int, tuple[str, set[str]]]:
+    """Search rows that MIGHT be a Polymarket game container (#8375) — candidates only.
+
+    Production, 2026-09-24 07:58Z, `q=falcons packers` at 390px: the ANSWERS card
+    read **"Falcons vs. Packers · O/U 24.5 95%"**. The row is 58980362, the
+    Polymarket EVENT row for the game (`external_id` 848221, `group_id`
+    ``polymarket:848221``, `event_id` 14780546, `mutually_exclusive` false).
+    Its 199 "outcomes" are its sub-markets' lead legs, each keyed on that
+    sub-market's ``condition_id``, and every sub-market is already its own row on
+    the same group. That makes it the #5273 parent that #8348 already removed
+    from `/game-markets` with the same by-id test (`_leg_copy_parent_members`).
+    Search ranked it like a market and led with its highest leg.
+
+    Three cheap conditions, all read off the row:
+
+    * ``source == 'polymarket'`` with a ``group_id``, because only a Polymarket
+      group has this shape;
+    * ``event_id`` set, because a board with no game is not a game container.
+      Measured 2026-09-24 over open rows: the leg-copy boards with no event are
+      the legitimate ones ("What will the announcers say during the Falcons vs
+      Packers game?", "VALORANT Champions 2026: Team to Make Playoffs",
+      "How many Chinook will pass Bonneville Dam…"). Of the 1,552 open
+      event-linked non-exclusive Polymarket group rows, 7 have no "vs" in
+      their name;
+    * ``mutually_exclusive is False``, because a one-winner board is a real
+      question even when each leg is also a row. "Norway vs. Denmark"
+      (Norway / Draw / Denmark) and "… - Exact Score" are ``True`` and are kept.
+
+    The verdict needs the siblings, which search has not loaded, so this returns
+    ``{id: (group_id, leg external ids)}`` for `_search_container_parents_among`.
+    A row with no outcomes, or with any leg that has no external id, cannot be
+    proved a copy and is not a candidate.
+    """
+    candidates: dict[int, tuple[str, set[str]]] = {}
+    for m in markets:
+        if (
+            m.source != "polymarket"
+            or not m.group_id
+            or m.event_id is None
+            or m.mutually_exclusive is not False
+        ):
+            continue
+        legs = [o.external_id for o in (m.outcomes or [])]
+        if not legs or not all(isinstance(e, str) and e for e in legs):
+            continue
+        candidates[m.id] = (m.group_id, set(legs))
+    return candidates
+
+
+def _search_container_parents_among(
+    candidates: dict[int, tuple[str, set[str]]],
+    sibling_rows,
+) -> set[int]:
+    """The candidates whose EVERY leg is another row on their own group (#8375).
+
+    ``sibling_rows`` is ``(id, group_id, external_id)`` for the Polymarket rows
+    whose external id is one of the candidates' legs. This is the same test as
+    `_leg_copy_parent_members`: a leg that names no row, names a row on
+    another group, or names the parent itself fails it. So a single-market parent
+    (legs ``{cond}`` and ``{cond}_side1``) is kept, and so is a parent whose
+    sub-markets were never written as rows, because it is the only place those
+    markets can be found.
+    """
+    by_group_external = {(g, e): i for i, g, e in sibling_rows}
+    return {
+        parent_id
+        for parent_id, (group_id, legs) in candidates.items()
+        if all(
+            by_group_external.get((group_id, leg)) not in (None, parent_id)
+            for leg in legs
+        )
+    }
+
+
+async def _search_container_parent_ids(
+    db: AsyncSession, markets: list, deadline: float
+) -> set[int]:
+    """Which of these search rows are Polymarket game containers (#8375).
+
+    One indexed read (``uq_futures_source_external``), issued only when a
+    candidate exists, which is nearly always zero or a few rows per search.
+    FAILS OPEN: a spent deadline or a timeout returns the empty set and the page
+    ships as it did before this fix. The page is complete, just in the old shape,
+    so it does not join ``degraded``. The read runs under a SAVEPOINT for the
+    refill lane's reason (LAT-P255/#3731): the caller still holds the live
+    ``deduped_futures`` rows, and a session rollback would expire them.
+    """
+    candidates = _search_container_parent_candidates(markets)
+    if not candidates or time.monotonic() > deadline:
+        return set()
+    leg_ids = set().union(*(legs for _, legs in candidates.values()))
+    await _apply_search_statement_timeout(db, deadline)
+    savepoint = await db.begin_nested()
+    try:
+        rows = (
+            await db.execute(
+                select(
+                    FuturesMarket.id, FuturesMarket.group_id, FuturesMarket.external_id
+                ).where(
+                    FuturesMarket.source == "polymarket",
+                    FuturesMarket.external_id.in_(leg_ids),
+                )
+            )
+        ).all()
+    except Exception as exc:  # noqa: BLE001
+        await savepoint.rollback()
+        if not _is_query_timeout(exc):
+            raise
+        logger.error(
+            "search container-parent read timed out for %d candidates; serving "
+            "them unfiltered", len(candidates)
+        )
+        await _apply_search_statement_timeout(db, deadline)
+        return set()
+    await savepoint.commit()
+    return _search_container_parents_among(candidates, rows)
 
 
 def _build_search_top_outcomes(
