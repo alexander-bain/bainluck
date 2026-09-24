@@ -83,6 +83,26 @@ nonisolated struct CalibrationCorrection: Decodable, Sendable, Identifiable {
     var id: String { date + "|" + title }
 }
 
+/// CAL-P067 item 5 / #6275: outcomes held OUT of every published curve while
+/// they are checked.
+///
+/// Web has rendered a "Held out, under review" card off this key since CAL-P067,
+/// and the server began serving it with the #6275 identity quarantine. Native had
+/// no decode for it (#8476), so the phone's curve came out shorter than the
+/// website's and never said why. A quarantine and a silent drop look identical
+/// from outside. Printing the count is the only thing that tells them apart.
+///
+/// `reason` is reader copy: the server writes it in plain words and web prints it
+/// verbatim. The machine key and the method sentence ride in `note`, which neither
+/// surface renders (standing notice 34), so it is not decoded here.
+nonisolated struct CalibrationQuarantine: Decodable, Sendable {
+    let reason: String
+    let outcomes: Int
+    let status: String?
+    /// How many markets the held outcomes came from. Web does not render it yet.
+    let markets: Int?
+}
+
 /// The date span the calibration payload covers.
 nonisolated struct CalibrationDateRange: Decodable, Sendable {
     let start: String?
@@ -179,6 +199,11 @@ nonisolated struct CalibrationData: Decodable, Sendable {
     let populationVersion: String?
     /// #2649. Optional: an older payload predates it, and absent is not healthy.
     let producer: CalibrationProducerState?
+    /// #8476. `nil` = the payload never carried the key (an older build, or the
+    /// route fallback): "we never looked". `[]` = the server checked and holds
+    /// nothing. Both render nothing, but they are different facts (gotcha #53),
+    /// so the decode keeps them apart.
+    let quarantine: [CalibrationQuarantine]?
 
     // MARK: - Partial-decode provenance (L2-231 Item 1)
 
@@ -197,6 +222,7 @@ nonisolated struct CalibrationData: Decodable, Sendable {
         case mceCiLower, mceCiUpper, mceClosingLine, mceOpeningPrice
         case generatedAt, minCategoryOutcomes, smallSampleCategories
         case corrections, dateRange, cache, populationVersion, producer
+        case quarantine
     }
 
     init(from decoder: Decoder) throws {
@@ -224,5 +250,7 @@ nonisolated struct CalibrationData: Decodable, Sendable {
         cache = try? c.decodeIfPresent(CalibrationCacheState.self, forKey: .cache)
         populationVersion = try? c.decodeIfPresent(String.self, forKey: .populationVersion)
         producer = try? c.decodeIfPresent(CalibrationProducerState.self, forKey: .producer)
+        quarantine = (try? c.decode(LossyArray<CalibrationQuarantine>.self,
+                                    forKey: .quarantine))?.elements
     }
 }

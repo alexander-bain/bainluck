@@ -131,7 +131,7 @@ struct CalibrationSurfaceView: View {
             heroSection; statCardsSection; cohortToggleBanner
             sourceComparisonSection; benchmarkSection
             calibrationChartSection; tradingActivitySection; categoryBreakdownSection
-            nicheSection; correctionsSection
+            quarantineSection; nicheSection; correctionsSection
         }
         .padding(.horizontal).padding(.bottom, 32)
         .frame(maxWidth: contentMaxWidth)
@@ -161,6 +161,9 @@ struct CalibrationSurfaceView: View {
     static let eceHook = "calibration-stat-ece"
     static let brierHook = "calibration-stat-brier"
     static let marketsHook = "calibration-stat-markets"
+    /// #8476: web's `data-testid="calibration-quarantine"`, carrying the same
+    /// total web publishes as `data-quarantine-total`.
+    static let quarantineHook = "calibration-quarantine"
 
     /// Provenance travels as ONE structured `accessibilityValue` rather than as
     /// three elements, because it describes the surface as a whole and inventing
@@ -735,6 +738,43 @@ struct CalibrationSurfaceView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
+    }
+
+    // MARK: - Held out, under review (#8476)
+
+    // Web's CAL-P067 item 5 card, at the same position (before the niche card).
+    // A held-out row is excluded from every curve in BOTH cohorts, so, like web
+    // (#7195), this card carries no cohort wording and the toggle moves nothing in it.
+    @ViewBuilder
+    private var quarantineSection: some View {
+        let held = viewModel.quarantine
+        if !held.isEmpty {
+            cardSection("Held out, under review", sub: viewModel.quarantineCaption) {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(held.enumerated()), id: \.offset) { i, q in
+                        if i > 0 { Divider() }
+                        HStack(alignment: .top, spacing: 16) {
+                            Text(q.reason)
+                                .font(.subheadline.weight(.medium))
+                                .fixedSize(horizontal: false, vertical: true)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            VStack(alignment: .trailing, spacing: 2) {
+                                Text(viewModel.quarantineCount(q.outcomes))
+                                    .font(.subheadline.weight(.semibold).monospacedDigit())
+                                Text("UNDER REVIEW")
+                                    .font(.system(size: 10, weight: .medium))
+                                    .foregroundStyle(.orange)
+                            }
+                            .fixedSize()
+                        }
+                        .padding(.vertical, 8)
+                    }
+                }
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier(Self.quarantineHook)
+            .accessibilityValue(String(viewModel.quarantineTotal))
+        }
     }
 
     // MARK: - Niche & Long-Shot (held-out categories)
