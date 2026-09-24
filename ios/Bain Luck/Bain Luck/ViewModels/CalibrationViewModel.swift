@@ -801,6 +801,32 @@ final class CalibrationViewModel: ObservableObject {
     var smallSampleTotal: Int { smallSampleCategories.reduce(0) { $0 + $1.outcomes } }
     var corrections: [CalibrationCorrection] { data?.corrections ?? [] }
 
+    // MARK: - Held out, under review (#8476)
+
+    /// Rows held out of every curve pending review, in payload order (web does not
+    /// sort them either). Empty when the payload holds nothing OR never carried the
+    /// key. Both hide the card, exactly as web's `quarantine.length > 0` gate does.
+    var quarantine: [CalibrationQuarantine] { data?.quarantine ?? [] }
+    var quarantineTotal: Int { quarantine.reduce(0) { $0 + $1.outcomes } }
+
+    /// The count in full ("2,069"), because web prints `toLocaleString()` and a
+    /// reader comparing the two screens must read the same number. `compactCount`'s
+    /// "2.1K" would not be the same number.
+    func quarantineCount(_ n: Int) -> String { Self.fmt(n) }
+
+    /// Web's caption for the card, word for word (`app/calibration/page.tsx`,
+    /// CAL-P067 item 5). Pinned against web's sentence in
+    /// `CalibrationQuarantineTests8476`, so a wording change on one surface fails
+    /// until the other follows.
+    var quarantineCaption: String {
+        let total = quarantineTotal
+        return "\(Self.fmt(total)) resolved \(total == 1 ? "outcome is" : "outcomes are") "
+            + "excluded from every curve on this page while we check them. They are not "
+            + "graded, not counted, and not deleted \u{2014} a held-out row is a stated "
+            + "exclusion we can reverse, which is the difference between a quarantine and a "
+            + "quietly shorter denominator."
+    }
+
     // MARK: - Chart point conversion (rendering only)
 
     /// Convert aggregated buckets into chart points. Point size reflects sample
