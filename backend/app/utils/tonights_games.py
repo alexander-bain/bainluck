@@ -35,13 +35,17 @@ it at a handful, and games without team media are ineligible — the same bar
 `_filter_discover_event_noise` already applies, and the reason a minor-league
 fixture must never be the first thing a reader sees. (Alex's Kalshi pass caught
 that exact failure in search: "Lehigh Valley IronPigs at Worcester Red Sox"
-outranking the actual MLB game.)
+outranking the actual MLB game.) Since #8398 a ``pro_minor`` league class is
+ineligible too, because the media bar alone let a crest-carrying minor-league game
+through.
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from typing import Any
+
+from app.utils.league_classification import get_league_class
 
 __all__ = [
     "MAX_LEAD",
@@ -122,9 +126,17 @@ def _is_eligible(
     }:
         return False
 
-    # Same bar the noise filter already applies: no logos, no lead slot. This is
-    # what keeps a minor-league fixture out of the first card.
+    # Same bar the noise filter already applies: no logos, no lead slot.
     if not (data.get("home_team_data") or data.get("away_team_data")):
+        return False
+
+    # The media bar was the stand-in for "minor league" and it leaks: one crest
+    # is enough, and a crest can come from a namesake club's row (#8398 — a live
+    # EuroLeague game, capped at 35, led Discover over MLB games starting in 30
+    # minutes because Real Madrid resolved to the football club's logo). So the
+    # rule the docstring states is checked on the league class itself. The game
+    # keeps its ranked place in the mix; only the lead slot is refused.
+    if get_league_class(data.get("sport") or "") == "pro_minor":
         return False
 
     if status == "live":
