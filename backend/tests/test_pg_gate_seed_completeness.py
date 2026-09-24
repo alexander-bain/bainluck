@@ -453,6 +453,11 @@ COVERED = (
     # MLS duplicate-club repair's strip, fold, re-run and undo. Explicit ids in a
     # `6974xxxx` band; the schema is dropped whole on teardown.
     "test_repair_6974_fold_mls_apply_restore_pg.py",
+    # #8430. Seeds `sports`, `events` and `futures_markets` by raw INSERT to
+    # put Polymarket game children in five groups behind the real
+    # `_polymarket_group_sibling_event_id`. Torn down by its own name prefix,
+    # home team and sport key — the `search-recall` database is shared.
+    "test_polymarket_group_sibling_8430_pg.py",
 )
 
 INTEGRATION_DIR = Path(__file__).parent / "integration"

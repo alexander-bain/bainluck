@@ -2635,6 +2635,10 @@ async def _try_link_market(
             if auto_event.get("container_sibling_link"):
                 stats["funnel"].setdefault("container_sibling_links", 0)
                 stats["funnel"]["container_sibling_links"] += 1
+            elif auto_event.get("group_sibling_link"):
+                # #8430: likewise not a mint — its own key, same reason.
+                stats["funnel"].setdefault("group_sibling_links", 0)
+                stats["funnel"]["group_sibling_links"] += 1
             else:
                 stats["funnel"].setdefault("auto_created_events", 0)
                 stats["funnel"]["auto_created_events"] += 1
@@ -7628,6 +7632,78 @@ async def _polymarket_container_sibling_event_id(session, market) -> Optional[in
     return sibling_event_id
 
 
+#: The `group_type` the Polymarket ingest writes on each decomposed child of a
+#: game container. Only these share a fixture by construction; see below.
+_POLYMARKET_SUB_MARKET_GROUP_TYPE = "polymarket_sub_market"
+
+
+async def _polymarket_group_sibling_event_id(session, market) -> Optional[int]:
+    """The event another child of this market's OWN Polymarket event already holds.
+
+    #8430. The ingest decomposes one Gamma game event into a child row per
+    condition (moneyline, set winner, totals, handicaps), all carrying
+    ``group_id = polymarket:{gamma event id}``. When the matcher's best candidate
+    for them was refused (#4965's venue-fixture guard, on a row left at the
+    pre-postponement date), each child fell through to CREATE on its own and each
+    minted a row: an id-less Polymarket claim never re-finds anything (ruling 048
+    / gotcha #32), and a condition id anchors as a ``market``, never a ``game``.
+    Boyer v Gorzny was minted four times per matcher run, three runs in a row.
+
+    This is the claim dereferencing through its own provider's id, not a name
+    absorption: the venue itself says these conditions are one event, and the
+    matched path (`_try_link_market`) already sweeps every child of a group onto
+    the event one of them matched. The create path is the only one that did not.
+
+    Two venue-side signals, as in #5821:
+
+    1. ``group_id`` — Polymarket's own event id. Scoped to
+       ``polymarket_sub_market`` children, which the ingest writes only for a
+       non-neg-risk multi-market GAME event.
+    2. The venue fixture instant, via :func:`_check_polymarket_fixture_reason` —
+       the same guard the matched path applies, so the sibling's row is refused
+       here exactly when it would be refused as a match.
+
+    Returns ``None`` — today's CREATE — when the group holds no linked child, or
+    holds more than one distinct event (the venue's structure disagrees with ours
+    and picking one would be a guess), or the fixture guard refuses.
+    """
+    if market.source != "polymarket":
+        return None
+    if getattr(market, "group_type", None) != _POLYMARKET_SUB_MARKET_GROUP_TYPE:
+        return None
+    group_id = getattr(market, "group_id", None)
+    if not group_id:
+        return None
+
+    from app.models.models import FuturesMarket
+
+    held = (
+        (
+            await session.execute(
+                select(FuturesMarket.event_id)
+                .where(
+                    FuturesMarket.source == "polymarket",
+                    FuturesMarket.group_id == group_id,
+                    FuturesMarket.group_type == _POLYMARKET_SUB_MARKET_GROUP_TYPE,
+                    FuturesMarket.event_id.isnot(None),
+                    FuturesMarket.id != market.id,
+                )
+                .distinct()
+                .limit(2)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if len(held) != 1:
+        return None
+
+    sibling_event_id = held[0]
+    if await _check_polymarket_fixture_reason(session, sibling_event_id, market):
+        return None
+    return sibling_event_id
+
+
 async def _create_event_from_prediction_market(session, matchup, market, now):
     """
     Auto-create an Event when a game-level prediction market has no matching Event.
@@ -7717,6 +7793,29 @@ async def _create_event_from_prediction_market(session, matchup, market, now):
             # whole effect behind an unchanged number.
             "auto_created": False,
             "container_sibling_link": True,
+        }
+
+    # #8430: the same seam, one level down — a CHILD of this market's own
+    # Polymarket event already sits on a row. Same placement argument as #5821:
+    # this invents nothing, so the create-refusal gates below do not apply.
+    group_event_id = await _polymarket_group_sibling_event_id(session, market)
+    if group_event_id is not None:
+        team_match = match_teams_to_event(
+            matchup, matchup.team_a, matchup.team_b,
+            external_id=market.external_id,
+        )
+        logger.info(
+            "Linking Polymarket child '%s' to event %d (#8430) — another child "
+            "of group %s already holds it; not minting a second row",
+            market.name, group_event_id, market.group_id,
+        )
+        return {
+            "event_id": group_event_id,
+            "home_team": matchup.team_a,
+            "away_team": matchup.team_b,
+            "yes_is_home": team_match["yes_is_home"] if team_match else True,
+            "auto_created": False,
+            "group_sibling_link": True,
         }
 
     # #3446 / CERT-2055: the same principle, the shape the other two miss.
