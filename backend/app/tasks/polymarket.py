@@ -2340,6 +2340,24 @@ def submarket_is_open(event, market) -> bool:
     )
 
 
+def submarket_resolution_date(event, market):
+    """The date a decomposed leg resolves on: its own ``endDate``, else its event's. Pure.
+
+    #8466. Every leg used to be stamped with ``event.end_date`` on the belief
+    that "decomposed sub-markets carry no per-market date". Gamma carries one
+    on every leg, and on a date ladder it is the question itself: event
+    1038648's "US x Iran ceasefire continues through September 30?" ends
+    09-30 while its event ends 10-31, so Discover printed "Resolves Oct 31,
+    2026" on a question settling a month earlier, and the Nov 30 / Dec 31
+    legs were stored as resolving BEFORE they do. A game's legs carry the
+    event's own date (Cubs-Red Sox 1058697: identical), so games do not move.
+    """
+    own = getattr(market, "end_date", None) if market is not None else None
+    if own is not None:
+        return own
+    return getattr(event, "end_date", None)
+
+
 def opening_capture_is_hindsight(event, market, resolution_date, now) -> bool:
     """Whether an opening stamped now would be a hindsight price (#2027).
 
@@ -2369,10 +2387,9 @@ def opening_capture_is_hindsight(event, market, resolution_date, now) -> bool:
     truncates ``2026-09-20T20:00Z`` to midnight and wrongly refuses a live
     market captured at noon). A pure ``date`` compares at UTC midnight.
 
-    Provenance: ``resolution_date`` at every call site is the parent
-    ``event.end_date`` — decomposed sub-markets carry no per-market date,
-    so the child check reads the parent event's date openly, not as a
-    substituted child fact.
+    Provenance: at the sub-market site ``resolution_date`` is the leg's own
+    date (``submarket_resolution_date``, #8466); at the parent-field sites it
+    is the parent row's, which is ``event.end_date``.
     """
     if getattr(event, "closed", False) or getattr(event, "archived", False):
         return True
@@ -2861,10 +2878,14 @@ async def _process_event_batch(
                         # `closed=True` sweep (or past its resolution_date)
                         # quotes the settled book, not a price — stamping it
                         # as the opening is the hindsight capture.
-                        # `resolution_date` here is the parent event.end_date:
-                        # sub-markets carry no per-market date (see helper).
+                        # #8466: the leg's OWN date, not the parent's — a leg
+                        # past its own end is hindsight even while its event
+                        # runs, and one ending after the event is not.
+                        sub_resolution_date = submarket_resolution_date(
+                            event, market
+                        )
                         _sub_hindsight = opening_capture_is_hindsight(
-                            event, market, resolution_date, now
+                            event, market, sub_resolution_date, now
                         )
                         sub_set = {
                             "name": sub_name,
@@ -2882,6 +2903,12 @@ async def _process_event_batch(
                             "volume_24h": sub_volume_24h,
                             "volume_updated_at": func.now(),
                         }
+                        # #8466: repair the leg's date on re-ingest, but only an
+                        # OPEN leg Gamma dates itself. A settled leg keeps the
+                        # date its calibration closing line was drawn against,
+                        # and a leg with no date of its own keeps what it has.
+                        if sub_open and getattr(market, "end_date", None) is not None:
+                            sub_set["resolution_date"] = market.end_date
                         # Q493: repair the sport on RE-INGEST, not only at birth.
                         # The parent's `update_set` has always carried this and
                         # the sub-market's never did, so a group whose sport was
@@ -2936,7 +2963,7 @@ async def _process_event_batch(
                             market_tier=sub_tier,
                             mutually_exclusive=True,
                             commence_time=commence_time,
-                            resolution_date=resolution_date,
+                            resolution_date=sub_resolution_date,
                             status="open" if sub_open else "resolved",
                             group_id=poly_group_id,
                             group_type="polymarket_sub_market",
