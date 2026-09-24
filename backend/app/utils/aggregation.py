@@ -963,11 +963,19 @@ def compute_aggregated_probability(
         candidates: list[tuple[str, TimestampedProb, float]] = []
 
         for source_key, (epochs, ordered) in source_scan.items():
-            # Find latest reading at or before this bucket. The cursor only
+            # Find the latest reading before this bucket ENDS. The cursor only
             # ever moves forward, so across all buckets each point is visited
             # once.
+            #
+            # #8349: the bucket is half-open, [bucket_ts, limit). A point
+            # stamped exactly on `limit` belongs to the NEXT bucket — the one
+            # its own timestamp floors to above — and nowhere earlier.
+            # Sportsbook history is keyed on the minute rounded down, so every
+            # one of its points sits exactly on a boundary: an inclusive `<=`
+            # drew the heaviest source one bucket early and rewrote the minute
+            # that had just ended whenever the next minute's point arrived.
             index = cursors[source_key]
-            while index < len(epochs) and epochs[index] <= limit:
+            while index < len(epochs) and epochs[index] < limit:
                 index += 1
             cursors[source_key] = index
 
