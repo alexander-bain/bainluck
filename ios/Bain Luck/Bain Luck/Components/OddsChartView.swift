@@ -2543,15 +2543,22 @@ struct OddsChartView: View {
     /// Charging `floor` costs at most half a label width on a domain that would
     /// have drawn three, and only inside that one band — the conservative
     /// direction, for the same reason `xAxisLabelWidth` pins the widest locale.
+    ///
+    /// `labelScale` is the axis font's size over the 9pt the widths were measured
+    /// at (#4445): a chart whose dates grow with the reader's text size charges
+    /// each label its grown width, so the ticks thin out instead of the labels
+    /// colliding. 1 — every game chart — is the unchanged rule.
     static func xAxisFits(
-        intervals: Double, plotWidth: CGFloat, style: XAxisPlan.LabelStyle
+        intervals: Double, plotWidth: CGFloat, style: XAxisPlan.LabelStyle,
+        labelScale: CGFloat = 1
     ) -> Bool {
         guard plotWidth > 0 else { return false }
         guard intervals > 0 else { return true }
         let spacing = plotWidth / CGFloat(intervals)
         let labelCount = Int(intervals.rounded(.down))
         return spacing >= xAxisRequiredSpacing(
-            labelWidth: xAxisLabelWidth(for: style), labelCount: labelCount)
+            labelWidth: xAxisLabelWidth(for: style) * max(labelScale, 1),
+            labelCount: labelCount)
     }
 
     /// Which label a stride needs.
@@ -2579,9 +2586,12 @@ struct OddsChartView: View {
     /// chart itself. Pass 0 (the default) when it is not known yet: the fit then
     /// falls back to the per-style count budget, which is what every caller used
     /// before the geometry was available.
+    ///
+    /// `labelScale` > 1 is a chart drawing its dates larger than 9pt (#4445); both
+    /// the geometric fit and the count budget charge the larger labels.
     static func xAxisPlan(
         for domain: ClosedRange<Date>, plotWidth: CGFloat = 0,
-        calendar: Calendar = .current
+        calendar: Calendar = .current, labelScale: CGFloat = 1
     ) -> XAxisPlan {
         let duration = max(domain.upperBound.timeIntervalSince(domain.lowerBound), 0)
         let spansMultipleDays = !calendar.isDate(
@@ -2592,8 +2602,10 @@ struct OddsChartView: View {
                 strideSeconds: candidate.seconds, spansMultipleDays: spansMultipleDays)
             let ticks = duration / candidate.seconds
             let fits = plotWidth > 0
-                ? xAxisFits(intervals: ticks, plotWidth: plotWidth, style: style)
-                : ticks <= Double(maxTicks(for: style))
+                ? xAxisFits(
+                    intervals: ticks, plotWidth: plotWidth, style: style,
+                    labelScale: labelScale)
+                : ticks <= Double(maxTicks(for: style)) / Double(max(labelScale, 1))
             if fits {
                 return XAxisPlan(
                     component: candidate.component, count: candidate.count, labelStyle: style)
