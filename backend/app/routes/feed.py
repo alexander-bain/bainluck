@@ -325,6 +325,38 @@ _FEED_RECYCLE_LIVE_HI = 0.88
 _THIN_FUTURES_POOL_FLOOR = 100
 
 
+def _merge_broadened_futures(
+    primary: list[dict], broadened: list[dict]
+) -> tuple[list[dict], list[dict]]:
+    """#1090's merge: the strict pool, then the broadened cards it lacks.
+
+    Returns ``(merged, added)`` where ``added`` is the broadened cards that
+    survived into ``merged``.
+
+    #4170 — THE MERGE FOLDS SAME-QUESTION TWINS ACROSS THE TWO POOLS. Each pool
+    is folded on its own inside ``_dedupe_and_cap`` (#6400), and "lacks" used to
+    mean only "a different market id". A stale venue row that only the relaxed
+    window admits is a different id from its fresh twin on the other venue, so
+    it came straight back. Production 2026-09-24 00:30Z, ``/categories/economics``
+    at 390px: Kalshi 108231 "Will OpenAI or Anthropic IPO first?" (strict
+    blocker ``stale_no_movement``, 4.6 days) printed Anthropic 91% as card 1,
+    Polymarket 115417 "Will Anthropic or OpenAI IPO first?" (strict-eligible)
+    printed Anthropic 95% as card 5 — one question, two numbers.
+
+    The strict card survives a pair: ``primary`` goes first and the fold keeps
+    the earlier card. That is #1090's own contract — the relaxed pass only fills
+    a thin page, and existing cards keep their place — and it keeps the row that
+    is still moving over the one the strict window refused as stale.
+    """
+    seen_ids = {(it.get("data") or {}).get("id") for it in primary}
+    added = [it for it in broadened if (it.get("data") or {}).get("id") not in seen_ids]
+    if not added:
+        return primary, []
+    merged = fold_same_question_cards(list(primary) + added)
+    added_ids = {id(it) for it in added}
+    return merged, [it for it in merged if id(it) in added_ids]
+
+
 def _broaden_relaxed_config(
     config: dict[str, float | bool] | None,
 ) -> dict[str, float | bool]:
@@ -5032,9 +5064,6 @@ async def get_feed(
                     # original, un-penalized score. Fires only when thin, so the
                     # in-season pipeline is untouched.
                     if len(futures_items) < _THIN_FUTURES_POOL_FLOOR:
-                        seen_ids = {
-                            (it.get("data") or {}).get("id") for it in futures_items
-                        }
                         if _fuse_broaden:
                             # LAT-P105: already built, by the pass above, for the
                             # cost of three comparisons per market. The thin-pool
@@ -5080,14 +5109,11 @@ async def get_feed(
                                     "Feed #1090 broaden: exceeded remaining budget — "
                                     "keeping primary futures (#1459)"
                                 )
-                        added = [
-                            it
-                            for it in broadened
-                            if (it.get("data") or {}).get("id") not in seen_ids
-                        ]
+                        base_n = len(futures_items)
+                        futures_items, added = _merge_broadened_futures(
+                            futures_items, broadened
+                        )
                         if added:
-                            base_n = len(futures_items)
-                            futures_items = futures_items + added
                             logger.info(
                                 "Feed #1090 broaden: thin pool %d < %d, relaxed pass "
                                 "added %d markets",

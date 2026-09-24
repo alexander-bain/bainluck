@@ -345,6 +345,29 @@ def _feed_source() -> str:
     ).read_text()
 
 
+#: #4170 — the broaden merge folds across the two pools it joins. It is a seam
+#: BETWEEN the chains, not a chain, so the per-chain counts below exclude it and
+#: `test_the_broaden_merge_folds_once` pins it on its own.
+_MERGE_SEAM = "_merge_broadened_futures"
+
+
+def _merge_seam_span(source: str) -> tuple[int, int]:
+    """Character span of the merge-seam function in ``source``."""
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.FunctionDef) and node.name == _MERGE_SEAM:
+            lines = source.splitlines(keepends=True)
+            start = sum(len(line) for line in lines[: node.lineno - 1])
+            end = sum(len(line) for line in lines[: node.end_lineno])
+            return start, end
+    raise AssertionError(f"{_MERGE_SEAM} is gone from feed.py — re-read #4170")
+
+
+def test_the_broaden_merge_folds_once():
+    source = _feed_source()
+    start, end = _merge_seam_span(source)
+    assert source[start:end].count("fold_same_question_cards(") == 1
+
+
 def test_both_dedupe_chains_in_the_feed_route_call_the_fold():
     """Two chains exist — the fused/main `_dedupe_and_cap` and the fallback in
     `_score_futures_from_base`. #6400 was reachable through either, so a fold
@@ -352,10 +375,16 @@ def test_both_dedupe_chains_in_the_feed_route_call_the_fold():
     source = _feed_source()
     tree = ast.parse(source)
 
+    seam = next(
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == _MERGE_SEAM
+    )
+    seam_lines = range(seam.lineno, seam.end_lineno + 1)
+
     diversify_calls = 0
     fold_calls = 0
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
+        if not isinstance(node, ast.Call) or node.lineno in seam_lines:
             continue
         name = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
         if name == "diversify_quality_families":
@@ -387,7 +416,11 @@ def test_each_chain_runs_the_fold_after_its_name_keyed_caps():
     chosen once scoring has ordered the cards."""
     source = _feed_source()
     diversify = _call_offsets(source, "diversify_quality_families(\n")
-    folds = _call_offsets(source, "fold_same_question_cards(")
+    seam_start, seam_end = _merge_seam_span(source)
+    folds = [
+        at for at in _call_offsets(source, "fold_same_question_cards(")
+        if not seam_start <= at < seam_end
+    ]
     # The import line is a `fold_same_question_cards,` with no paren, so every
     # offset here is a call; the AST test above is what counts them.
     assert len(diversify) == len(folds) == 2, (diversify, folds)
