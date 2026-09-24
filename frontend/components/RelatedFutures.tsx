@@ -11,6 +11,7 @@ import { teamShortName, teamShortNames } from "@/lib/teamShortName";
 import { teamTextColor } from "@/lib/teamColors";
 import { awardPriceIsStale } from "@/lib/awardPriceAge";
 import { isEventOwnMoneylineMarket } from "@/lib/eventOwnMoneyline";
+import { groupAwardsByPlayer, playerAwardKey } from "@/lib/playerAwardRows";
 import EntityImage from "./EntityImage";
 import AdvancementPath from "@/components/event/AdvancementPath";
 
@@ -1412,7 +1413,7 @@ function deduplicateAwards(futures: RelatedFuture[]): { future: RelatedFuture; s
   // Deduplicate by normalized player name + award label combo
   const dedupMap = new Map<string, { future: RelatedFuture; sources: Set<string> }>();
   for (const f of filtered) {
-    const playerKey = normalizeName(f.outcome_name);
+    const playerKey = playerAwardKey(f.outcome_name);
     const awardKey = (f.merge_group || shortAwardLabel(f.market_name, f.clean_label)).toLowerCase();
     const key = `${playerKey}::${awardKey}`;
     const existing = dedupMap.get(key);
@@ -2949,15 +2950,14 @@ export default function RelatedFutures({
                 <AdvancementPath stages={homePathEntries} testId="home-championship-path" />
 
                 {homeAwards.length > 0 && (() => {
-                  const byPlayer = new Map<string, Array<{ label: string; prob: number }>>();
-                  for (const { future: f } of homeAwards) {
-                    const name = f.outcome_name || "";
-                    if (!byPlayer.has(name)) byPlayer.set(name, []);
-                    byPlayer.get(name)!.push({ label: shortAwardLabel(f.market_name, f.clean_label), prob: f.probability || 0 });
-                  }
-                  const sorted = [...byPlayer.entries()]
-                    .map(([name, awards]) => ({ name, awards: awards.sort((a, b) => b.prob - a.prob) }))
-                    .sort((a, b) => (b.awards[0]?.prob ?? 0) - (a.awards[0]?.prob ?? 0));
+                  // #8360: one row per person, however the venues spell them.
+                  const sorted = groupAwardsByPlayer(
+                    homeAwards.map(({ future: f }) => ({
+                      name: f.outcome_name,
+                      label: shortAwardLabel(f.market_name, f.clean_label),
+                      prob: f.probability || 0,
+                    })),
+                  );
                   return (
                     <div className="mt-4">
                       <div className="text-[10px] font-semibold uppercase tracking-wide text-text-muted mb-2">PLAYER AWARDS</div>
@@ -3014,15 +3014,14 @@ export default function RelatedFutures({
                 <AdvancementPath stages={awayPathEntries} testId="away-championship-path" />
 
                 {awayAwards.length > 0 && (() => {
-                  const byPlayer = new Map<string, Array<{ label: string; prob: number }>>();
-                  for (const { future: f } of awayAwards) {
-                    const name = f.outcome_name || "";
-                    if (!byPlayer.has(name)) byPlayer.set(name, []);
-                    byPlayer.get(name)!.push({ label: shortAwardLabel(f.market_name, f.clean_label), prob: f.probability || 0 });
-                  }
-                  const sorted = [...byPlayer.entries()]
-                    .map(([name, awards]) => ({ name, awards: awards.sort((a, b) => b.prob - a.prob) }))
-                    .sort((a, b) => (b.awards[0]?.prob ?? 0) - (a.awards[0]?.prob ?? 0));
+                  // #8360: one row per person, however the venues spell them.
+                  const sorted = groupAwardsByPlayer(
+                    awayAwards.map(({ future: f }) => ({
+                      name: f.outcome_name,
+                      label: shortAwardLabel(f.market_name, f.clean_label),
+                      prob: f.probability || 0,
+                    })),
+                  );
                   return (
                     <div className="mt-4">
                       <div className="text-[10px] font-semibold uppercase tracking-wide text-text-muted mb-2">PLAYER AWARDS</div>

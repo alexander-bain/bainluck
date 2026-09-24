@@ -607,7 +607,7 @@ const FOLD_SPECIALS: [RegExp, string][] = [
   [/ß/g, "ss"],
 ];
 
-function foldForSearch(value: string): string {
+export function foldForSearch(value: string): string {
   let out = value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
   for (const [pattern, replacement] of FOLD_SPECIALS) {
     out = out.replace(pattern, replacement);
