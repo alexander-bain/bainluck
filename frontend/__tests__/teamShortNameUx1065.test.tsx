@@ -254,10 +254,11 @@ describe("UX-1065: the measured population", () => {
     expect(new Set(NAMES).size).toBe(4701);
   });
 
-  it("542 of 4,701 distinct names (11.5%) no longer print their bare last word", () => {
+  it("547 of 4,701 distinct names (11.6%) no longer print their bare last word", () => {
     const changed = NAMES.filter((n) => teamShortName(n) !== n.split(" ").pop());
-    expect(changed).toHaveLength(542);
-    expect(Math.round((changed.length / NAMES.length) * 1000) / 10).toBe(11.5);
+    // 542 until the #5634 sport-word five (named below).
+    expect(changed).toHaveLength(547);
+    expect(Math.round((changed.length / NAMES.length) * 1000) / 10).toBe(11.6);
   });
 
   /**
@@ -327,10 +328,32 @@ describe("UX-1065: the measured population", () => {
     expect(Object.keys(gained)).toHaveLength(479 - 471);
   });
 
-  it("the other 89.8% keep split-pop output byte for byte", () => {
+  /**
+   * #5634 — the five a trailing SPORT word added (shopper pass 0040: a live
+   * EuroLeague hero named Dubai Basketball "Basketball"). Named, like #4250's
+   * eight, and each keeps its whole name.
+   */
+  it("the five #5634 sport-word clubs keep their whole name", () => {
+    const gained: Record<string, string> = {
+      "Dubai Basketball": "Basketball",
+      "Paris Basketball": "Basketball",
+      "Valencia Basket": "Basket",
+      "Modo Hockey": "Hockey",
+      "TUTO Hockey": "Hockey",
+    };
+    for (const [name, wasShownAs] of Object.entries(gained)) {
+      expect(NAMES).toContain(name);
+      expect(name.split(" ").pop()).toBe(wasShownAs);
+      expect(teamShortName(name)).toBe(name);
+    }
+    expect(Object.keys(gained)).toHaveLength(547 - 542);
+  });
+
+  it("the other 88.4% keep split-pop output byte for byte", () => {
     const same = NAMES.filter((n) => teamShortName(n) === n.split(" ").pop());
-    // 4,220 until #5634 kept 61 two-word nicknames whole (named above).
-    expect(same).toHaveLength(4159);
+    // 4,220 until #5634 kept 61 two-word nicknames whole (named above), and
+    // 4,159 until its five sport-word clubs kept their whole name.
+    expect(same).toHaveLength(4154);
   });
 
   /**
