@@ -38,7 +38,7 @@ PARENT_ONLY_GROUP = "polymarket:8430004"
 STALE_GROUP = "polymarket:8430005"
 
 VENUE_START = datetime(2026, 9, 24, 17, 0, tzinfo=timezone.utc)
-SEEDED_SPORT_KEY = "tennis_other_8430"
+SEEDED_SPORT = "tennis_other_8430"
 SEEDED_HOME = "Boyer 8430"
 SEEDED_NAME_PREFIX = "8430 probe:"
 
@@ -176,7 +176,7 @@ async def seeded():
             text("DELETE FROM events WHERE home_team_name = :h"), {"h": SEEDED_HOME}
         )
         await conn.execute(
-            text("DELETE FROM sports WHERE key = :k"), {"k": SEEDED_SPORT_KEY}
+            text("DELETE FROM sports WHERE key = :k"), {"k": SEEDED_SPORT}
         )
 
     maker = async_sessionmaker(engine, expire_on_commit=False)
@@ -187,7 +187,7 @@ async def seeded():
                     "INSERT INTO sports (key, name, active) "
                     "VALUES (:k, :k, TRUE) RETURNING id"
                 ),
-                {"k": SEEDED_SPORT_KEY},
+                {"k": SEEDED_SPORT},
             )
         ).scalar()
 
@@ -262,7 +262,7 @@ async def seeded():
                 {"h": SEEDED_HOME},
             )
             await session.execute(
-                text("DELETE FROM sports WHERE key = :k"), {"k": SEEDED_SPORT_KEY}
+                text("DELETE FROM sports WHERE key = :k"), {"k": SEEDED_SPORT}
             )
             await session.commit()
     await engine.dispose()

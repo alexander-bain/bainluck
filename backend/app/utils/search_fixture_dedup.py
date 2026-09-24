@@ -70,7 +70,13 @@ from __future__ import annotations
 import unicodedata
 from typing import Any, Iterable
 
-from app.utils.event_completion import commence_time_is_a_reported_start
+from app.utils.event_completion import (
+    KALSHI_OCCURRENCE_COMMENCE_SOURCE,
+    POLYMARKET_VENUE_COMMENCE_SOURCE,
+    TICKER_DERIVED_COMMENCE_SOURCE,
+    commence_time_is_a_reported_start,
+)
+from app.utils.provider_anchor_keys import SOURCE_KALSHI, SOURCE_POLYMARKET
 from app.utils.sport_keys import is_season_variant, league_identity
 
 # Observed pair-gap in the #2623 population runs to 23h (the ghost's start time
@@ -116,6 +122,57 @@ INDIVIDUAL_SPORT_PREFIXES: tuple[str, ...] = (
     "mma_",
     "boxing_",
     "golf_",
+)
+
+
+# #8430 — AN EMPTY MARKET-BORN ROW NEVER HIDES THE PRICED ONE, AND GOES ITSELF.
+#
+# The dominance pass below prefers the FULLER NAME, which is right for the
+# #2623 population (the tournament row names "Aryna Sabalenka", the ghost only
+# "Sabalenka", and the ghost is the one with nothing behind it). It is exactly
+# backwards when the fuller-named row is itself a ghost. Measured on production
+# 2026-09-24 ~21:00Z, `/api/events/search?q=Boyer` served ONE game row:
+#
+#     15317846  Tristan Boyer v Sebastian Gorzny  polymarket_venue  no price, 0 markets
+#
+# while the match's two priced rows were both dropped by it for being
+# surname-only:
+#
+#     15317904  Boyer v Gorzny  polymarket_venue  Polymarket 75%, 14 markets
+#     15318254  Boyer v Gorzny  kalshi            Kalshi 99%
+#
+# 15317846 is one of twelve empty rows an hourly Polymarket poll minted for the
+# match (the creator is fixed in the same ship). A reader who searched the
+# player got "No price yet" for a match two venues were pricing.
+#
+# So two clauses, both narrow:
+#
+# 1. A row that is market-born AND carries nothing a card prints — no price,
+#    no score, no result — may not dominate a row that carries a price. It
+#    would hide the only copy with a number on it.
+# 2. That same empty row is dropped when a priced row for the same two
+#    participants survives on the page inside the window. Its card could only
+#    ever say "No price yet" beside the card that has the price.
+#
+# Scoped to MARKET-BORN rows on purpose. A schedule row (odds_api, espn,
+# statpal) is where the tournament chip, the avatars and eventually the score
+# live; clause 2 never hides one, however empty, so the #2623 shape — a priced
+# Kalshi ghost beside a not-yet-priced tournament row — collapses exactly as
+# before. Nothing is written: the empty row keeps its id and its page, and when
+# the event graph drains it this pass simply stops finding it.
+#
+# The set mirrors `anchor_channel.MARKET_BORN_COMMENCE_SOURCES` (Q050's drain
+# clause), built from the same utils constants rather than imported, because a
+# utils module must not import a service. `tests/test_search_empty_ghost_never_
+# hides_the_priced_row_8430.py` asserts the two agree.
+MARKET_BORN_COMMENCE_SOURCES: frozenset = frozenset(
+    {
+        SOURCE_KALSHI,
+        SOURCE_POLYMARKET,
+        TICKER_DERIVED_COMMENCE_SOURCE,
+        KALSHI_OCCURRENCE_COMMENCE_SOURCE,
+        POLYMARKET_VENUE_COMMENCE_SOURCE,
+    }
 )
 
 
@@ -270,7 +327,7 @@ class _Row:
 
     __slots__ = (
         "obj", "id", "home", "away", "commence_time", "scored", "sport_key",
-        "derived_start", "status",
+        "derived_start", "status", "priced", "empty_ghost",
     )
 
     def __init__(self, obj: Any, sport_key: Any):
@@ -293,6 +350,22 @@ class _Row:
         )
         self.status = getattr(obj, "status", None)
         self.sport_key = sport_key
+        # #8430. `win_probability_sources` is what a card's number is read
+        # from, so "priced" is exactly "the card has something to print". An
+        # empty dict (`{}`) is as unpriced as NULL.
+        self.priced = bool(getattr(obj, "win_probability_sources", None))
+        # Any one score or a `completed_at` is truth the reader would lose, so
+        # this is deliberately looser than `scored` (which wants both halves).
+        carries_truth = (
+            getattr(obj, "home_score", None) is not None
+            or getattr(obj, "away_score", None) is not None
+            or getattr(obj, "completed_at", None) is not None
+        )
+        self.empty_ghost = (
+            getattr(obj, "commence_time_source", None) in MARKET_BORN_COMMENCE_SOURCES
+            and not carries_truth
+            and not self.priced
+        )
 
     @property
     def name_length(self) -> int:
@@ -351,6 +424,9 @@ def _dominates(richer: _Row, poorer: _Row) -> bool:
         return False
     if not richer.scored and poorer.scored:
         return False
+    # #8430 clause 1: an empty market-born row never hides the priced copy.
+    if richer.empty_ghost and poorer.priced:
+        return False
 
     orientations = (
         ((richer.home, poorer.home), (richer.away, poorer.away)),
@@ -387,6 +463,45 @@ def _within_window(a: _Row, b: _Row) -> bool:
     one_side_derived = a.derived_start != b.derived_start
     hours = DERIVED_START_WINDOW_HOURS if one_side_derived else FIXTURE_TIME_WINDOW_HOURS
     return delta <= hours * 3600
+
+
+def _same_participants(ghost: _Row, keeper: _Row) -> bool:
+    """The ghost names the keeper's two participants, at least as fully.
+
+    Directional on purpose: the other direction (a short-named ghost beside a
+    fuller-named priced row) never reaches this — the dominance pass already
+    drops that ghost for the fuller name. The whole-word suffix rule is the
+    dominance test's own, so "Wang" still never pairs with "Huang".
+    """
+    return any(
+        all(_slot_at_least_as_specific(g, k)[0] for g, k in slots)
+        for slots in (
+            ((ghost.home, keeper.home), (ghost.away, keeper.away)),
+            ((ghost.home, keeper.away), (ghost.away, keeper.home)),
+        )
+    )
+
+
+def _empty_ghost_ids(groups: dict, dropped: set) -> None:
+    """#8430 clause 2: drop an empty market-born row beside a surviving priced one.
+
+    Runs AFTER the dominance pass, over its survivors only, so a priced row that
+    was itself dominated (by a scored row, say) cannot be the reason a ghost
+    goes — the page keeps whatever the dominance pass decided it would print,
+    minus cards that could only say "No price yet" beside a card with a price.
+    """
+    for group in groups.values():
+        priced = [r for r in group if r.priced and r.id not in dropped]
+        if not priced:
+            continue
+        for ghost in group:
+            if not ghost.empty_ghost:
+                continue
+            if any(
+                _within_window(ghost, keeper) and _same_participants(ghost, keeper)
+                for keeper in priced
+            ):
+                dropped.add(ghost.id)
 
 
 def _season_variant_duplicate_ids(rows: list["_Row"], dropped: set) -> None:
@@ -492,6 +607,7 @@ def duplicate_fixture_event_ids(events: Iterable[Any]) -> set:
                     dropped.add(poorer.id)
                     break
 
+    _empty_ghost_ids(groups, dropped)
     _season_variant_duplicate_ids(rows, dropped)
     return dropped
 
