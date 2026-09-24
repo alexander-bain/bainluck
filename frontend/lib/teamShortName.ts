@@ -105,6 +105,27 @@ const CLUB_TYPE_SUFFIXES: ReadonlySet<string> = new Set([
   "res",
 ]);
 
+/**
+ * #5634 — trailing words that name the club's SPORT, not the club: "Dubai
+ * Basketball" printed as "Basketball" / "BAS" on a live EuroLeague page, and
+ * "Paris Basketball" folds onto the same word. Not sport-gated like
+ * `keepsWholeClubName`, because the word is the tell whatever the league.
+ *
+ * Measured 2026-09-24 over every `teams.name` ending in a sport word
+ * (basketball, basket, hockey, volley(ball), handball, football, rugby,
+ * baseball, cricket, futsal): 5 names, and these three words are all of them —
+ * Dubai Basketball, Paris Basketball, Valencia Basket, Modo Hockey, TUTO Hockey.
+ *
+ * Kept apart from `CLUB_TYPE_SUFFIXES` because that set is compared token for
+ * token with the iPhone's `designators` and the server's copy, and the iPhone
+ * also uses its set to skip LEADING words. The iPhone half is native's (#5634).
+ */
+const SPORT_WORD_SUFFIXES: ReadonlySet<string> = new Set([
+  "basketball", // 2  Dubai Basketball, Paris Basketball
+  "basket", // 1  Valencia Basket
+  "hockey", // 2  Modo Hockey, TUTO Hockey
+]);
+
 function alphanumeric(token: string): string {
   return token.replace(/[^A-Za-z0-9]/g, "");
 }
@@ -319,6 +340,7 @@ export function isNonDistinctiveTrailingWord(token: string): boolean {
   if (bare.length === 0) return true;
   if (bare.length <= 2) return true;
   if (CLUB_TYPE_SUFFIXES.has(bare.toLowerCase())) return true;
+  if (SPORT_WORD_SUFFIXES.has(bare.toLowerCase())) return true;
   // Squad markers: "U21", "U23", and bare reserve numbers.
   if (/^u\d{1,2}$/i.test(bare)) return true;
   if (/^\d+$/.test(bare)) return true;
