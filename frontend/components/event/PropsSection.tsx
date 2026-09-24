@@ -47,6 +47,7 @@ import {
   type PropFamilyGroup,
 } from "@/lib/propFamily";
 import { propResultLabel, SETTLED_NO_GRADE_LABEL } from "@/lib/propGrade";
+import { gradedPairDecision } from "@/lib/gradedPropPair";
 import {
   renderedPercent,
   renderedOutcomeRowPercents,
@@ -272,6 +273,49 @@ function scriptPairPercents(
     byKey.set(marked[1].key, b);
   }
   return byKey;
+}
+
+/**
+ * #8230 — WHAT HIT prints one row per two-sided question; see `lib/gradedPropPair`.
+ *
+ * Decided per family, here, for the reason #5240's pair is: both legs must be in
+ * hand. Only a family whose every leg renders WHAT HIT is eligible — a settled
+ * window inside a live section (`item.settled`) counts, a live leg never does —
+ * and a `pending_label` leg is an answer of its own, so its family is left whole.
+ */
+interface GradedPairs {
+  drop: ReadonlySet<PropMark["key"]>;
+  /** The survivor's printed pregame percent, when the mark is why it survived. */
+  marks: ReadonlyMap<PropMark["key"], number>;
+}
+
+const EMPTY_GRADED_PAIRS: GradedPairs = { drop: new Set(), marks: new Map() };
+
+function gradedPairs(
+  groups: ReadonlyArray<{ name: string | null; items: PropMark[] }>,
+  state: PropsState,
+): GradedPairs {
+  const drop = new Set<PropMark["key"]>();
+  const marks = new Map<PropMark["key"], number>();
+  for (const group of groups) {
+    if (group.name == null) continue;
+    const legs = group.items;
+    if (legs.some((i) => i.pending_label?.trim())) continue;
+    if (!legs.every((i) => (i.settled ? "graded" : state) === "graded")) continue;
+    const decision = gradedPairDecision(legs);
+    if (!decision) continue;
+    drop.add(decision.drop);
+    if (decision.showMark) {
+      const keep = legs.find((i) => i.key === decision.keep)!;
+      const other = legs.find((i) => i.key === decision.drop)!;
+      // THE SCRIPT's pair rounding (#5240), which normalises a vig-carrying pair
+      // (0.925 / 0.08 prints 92, not 93) — so the number graded after the game is
+      // the number a reader saw before it.
+      const [kept] = renderedOutcomeRowPercents([keep.pregame_mark, other.pregame_mark]);
+      if (kept != null) marks.set(decision.keep, kept);
+    }
+  }
+  return drop.size === 0 ? EMPTY_GRADED_PAIRS : { drop, marks };
 }
 
 /**
@@ -631,6 +675,14 @@ export default function PropsSection({
   const groups = groupByPropFamily(rows, (item) => item.key, matchup);
   const grouped = !(groups.length === 1 && groups[0].name === null);
 
+  // #8230: a graded two-sided question keeps one leg. Decided on the whole
+  // families; every per-family decision below still reads the full `groups`.
+  const graded = gradedPairs(groups, activeState);
+  const shownGroups =
+    graded.drop.size === 0
+      ? groups
+      : groups.map((g) => ({ ...g, items: g.items.filter((i) => !graded.drop.has(i.key)) }));
+
   // #5240: decided ONCE for the whole family, here, where both legs are in hand.
   // The row is handed the finished number, not the pair — a row that had to find
   // its own sibling would be a second place this rule lives.
@@ -666,6 +718,7 @@ export default function PropsSection({
         pairedPercent={pairPercents.get(item.key)}
         pairedDivergence={divergencePairs.get(item.key)}
         displayLabel={labelOverrides.get(item.key)}
+        gradedMark={graded.marks.get(item.key)}
         blurbStatesNoGrades={blurbStatesNoGrades}
       />
     );
@@ -683,7 +736,7 @@ export default function PropsSection({
       {rows.length > 0 &&
         (grouped ? (
           <div className="space-y-4">
-            {groups.map((group, i) => (
+            {shownGroups.map((group, i) => (
               <PropFamilyBlock
                 // Index-qualified: #4866 strips per family, so two distinct
                 // families can now collapse to the same display name and a
@@ -861,6 +914,7 @@ function PropRow({
   pairedPercent,
   pairedDivergence,
   displayLabel,
+  gradedMark,
   blurbStatesNoGrades = false,
 }: {
   item: PropMark;
@@ -874,6 +928,9 @@ function PropRow({
   /** #5191: the label with the words its own header already says removed. Absent
    *  whenever the family rule refuses, and absence means "print `item.label`". */
   displayLabel?: string;
+  /** #8230: this row is the surviving leg of a graded two-sided question, chosen
+   *  because the script favoured it — the pregame percent that made it the pick. */
+  gradedMark?: number;
   /** #6129: the section's own blurb already states that nothing here is graded,
    *  so `GradedValue` owes the reader no sentence. Defaults false — a row is only
    *  quiet when the thing it would have said is written above it. */
@@ -924,7 +981,14 @@ function PropRow({
             <DivergenceValue item={item} paired={pairedDivergence} />
           )}
           {rowState === "graded" && (
-            <GradedValue item={item} blurbStatesNoGrades={blurbStatesNoGrades} />
+            <>
+              {gradedMark != null && (
+                <span className="font-mono text-sm font-semibold text-text-primary tabular-nums shrink-0">
+                  {gradedMark}%
+                </span>
+              )}
+              <GradedValue item={item} blurbStatesNoGrades={blurbStatesNoGrades} />
+            </>
           )}
         </>
       )}
