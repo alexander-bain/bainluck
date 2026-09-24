@@ -53,6 +53,19 @@ export default function WildCards() {
     );
   }
 
+  // Only an array with no rows means loaded-and-empty, and must show an honest
+  // card rather than skeletons that pulse forever — the collapse UX-P170 fixed
+  // in RainForecast (#2243). `undefined` is still loading; a non-array body is
+  // not a proved absence and keeps the skeletons.
+  if (Array.isArray(liveCards) && liveCards.length === 0) {
+    return (
+      <div className="bg-surface-card border border-surface-border rounded-2xl py-16 text-center">
+        <p className="text-text-secondary text-sm">No live wild cards right now</p>
+        <p className="text-text-muted text-xs mt-1.5">This card tracks rare, shareable weather markets.</p>
+      </div>
+    );
+  }
+
   if (!cards) {
     return (
       <div className="grid gap-3.5" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>

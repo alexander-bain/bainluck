@@ -92,6 +92,38 @@ function HurricaneTrackerSkeleton() {
   );
 }
 
+/**
+ * A subsection the endpoint answered with an empty list (#2243). Tokens only:
+ * no accent tint, because an empty card has no data for the accent to mark.
+ */
+function EventListEmpty({ title, sub, empty }: { title: string; sub: string; empty: string }) {
+  return (
+    <div className="bg-surface-card" style={{ borderRadius: 16, padding: 22 }}>
+      <h3 className="text-text-primary" style={{ fontSize: 18, fontWeight: 600, margin: 0, lineHeight: 1.2 }}>{title}</h3>
+      <span className="text-text-secondary" style={{ fontSize: 12.5 }}>{sub}</span>
+      <p className="text-text-secondary text-sm" style={{ paddingTop: 16 }}>{empty}</p>
+    </div>
+  );
+}
+
+function HurricaneTrackerEmpty() {
+  return (
+    <div className="bg-surface-card" style={{ borderRadius: 16, padding: 22 }}>
+      <p className="text-text-secondary text-sm">No live hurricane markets right now</p>
+      <p className="text-text-muted text-xs mt-1.5">This card tracks seasonal hurricane markets.</p>
+    </div>
+  );
+}
+
+/**
+ * Only an ARRAY with no rows is a proved absence. `undefined` is still
+ * loading, and a missing or malformed subsection is not the endpoint saying
+ * "nothing" — both keep the skeleton, as before (#2243).
+ */
+function isProvedEmpty(list: unknown): boolean {
+  return Array.isArray(list) && list.length === 0;
+}
+
 export default function NaturalEvents() {
   const { data: liveEvents, error } = useSWR("weather-events", fetchNaturalEvents, { refreshInterval: 3600000 });
   const events = liveEvents as { hurricane: EventMarket[]; earthquake: EventMarket[]; tornadoes: EventMarket[] } | undefined;
@@ -99,6 +131,12 @@ export default function NaturalEvents() {
   const earthquake = events?.earthquake?.length ? events.earthquake : null;
   const tornadoes = events?.tornadoes?.length ? events.tornadoes : null;
   const hurricane = events?.hurricane?.length ? events.hurricane : null;
+  // Each subsection earns its own verdict: one empty list must not blank its
+  // healthy siblings, and a skeleton that pulses forever over a 200 carrying
+  // `[]` is the collapse UX-P170 fixed in RainForecast (#2243).
+  const hurricaneEmpty = isProvedEmpty(events?.hurricane);
+  const earthquakeEmpty = isProvedEmpty(events?.earthquake);
+  const tornadoesEmpty = isProvedEmpty(events?.tornadoes);
 
   if (error && !events) {
     return (
@@ -128,6 +166,8 @@ export default function NaturalEvents() {
         <div className="grid grid-cols-1 md:grid-cols-[1.4fr_1fr] lg:grid-cols-[1.4fr_1fr_1fr] gap-3.5">
           {hurricane ? (
             <HurricaneTracker items={hurricane} />
+          ) : hurricaneEmpty ? (
+            <HurricaneTrackerEmpty />
           ) : (
             <HurricaneTrackerSkeleton />
           )}
@@ -139,6 +179,8 @@ export default function NaturalEvents() {
               items={earthquake}
               accent="#7C3AED"
             />
+          ) : earthquakeEmpty ? (
+            <EventListEmpty title="Seismic activity" sub="Earthquake threshold markets." empty="No live earthquake markets right now" />
           ) : (
             <EventListSkeleton title="Seismic activity" sub="Earthquake threshold markets." icon="&#x2299;" accent="#7C3AED" rows={5} />
           )}
@@ -150,6 +192,8 @@ export default function NaturalEvents() {
               items={tornadoes}
               accent="#F59E0B"
             />
+          ) : tornadoesEmpty ? (
+            <EventListEmpty title="Tornadoes" sub="Season-long count markets." empty="No live tornado markets right now" />
           ) : (
             <EventListSkeleton title="Tornadoes" sub="Season-long count markets." icon="&#x27F3;" accent="#F59E0B" rows={3} />
           )}
