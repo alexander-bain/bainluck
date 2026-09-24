@@ -36,9 +36,9 @@ reads and runs anywhere.
 
 USAGE (gotcha #48: detached, then verify the side effect ~60s later):
 
-    heroku run:detached -a bainluck python backend/scripts/repair_7994_close_team_matchplay_datagolf_rows.py
-    heroku run:detached -a bainluck python backend/scripts/repair_7994_close_team_matchplay_datagolf_rows.py --backup --apply
-    heroku run:detached -a bainluck python backend/scripts/repair_7994_close_team_matchplay_datagolf_rows.py --restore   # the undo
+    heroku run:detached -a bainluck python scripts/repair_7994_close_team_matchplay_datagolf_rows.py
+    heroku run:detached -a bainluck python scripts/repair_7994_close_team_matchplay_datagolf_rows.py --backup --apply
+    heroku run:detached -a bainluck python scripts/repair_7994_close_team_matchplay_datagolf_rows.py --restore   # the undo
 """
 
 import argparse
@@ -194,7 +194,7 @@ async def run(args) -> int:
         print(f"closed {len(closed)} rows: {[r.id for r in closed]}")
         print(
             "undo: heroku run:detached -a bainluck python "
-            "backend/scripts/repair_7994_close_team_matchplay_datagolf_rows.py --restore"
+            "scripts/repair_7994_close_team_matchplay_datagolf_rows.py --restore"
         )
         return 0
 
