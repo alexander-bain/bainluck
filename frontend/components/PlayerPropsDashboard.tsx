@@ -8,7 +8,7 @@ import {
   type PlayerData,
   type PlayerStat,
 } from "@/lib/playerPropsGrouping";
-import { teamCrestBadge } from "@/lib/teamShortName";
+import { shippableCrestBadge } from "@/lib/teamShortName";
 import SectionErrorBoundary from "./SectionErrorBoundary";
 
 interface PlayerPropsDashboardProps {
@@ -471,14 +471,19 @@ export default function PlayerPropsDashboard({
   // #4466/#4537 history lives. `teamCrestBadge` keeps three glyphs (so these
   // filter chips do not change width), is spelling-independent — "Paris
   // Saint-Germain" and "Paris Saint Germain" are both live and the shipped rule
-  // gave them "SAI" and "GER" on the same afternoon — and carries
-  // `UNSHIPPABLE_BADGES`, which slicing a last word to three letters cannot.
+  // gave them "SAI" and "GER" on the same afternoon.
+  //
+  // #4537 — through `shippableCrestBadge`, the event hero's helper (#7270), not
+  // bare `teamCrestBadge`. The bare helper only refuses a blocked badge it would
+  // newly INTRODUCE, so "Detroit Pistons" still came back "PIS" and "Avispa
+  // Fukuoka" "FUK" on these chips. The safe helper returns the same badge for
+  // every other name and falls back to initials for those.
   //
   // `|| "HOME"` rather than `??`: the old expression only reached its fallback
   // on a null/undefined name, so an EMPTY one labelled the chip with an empty
   // string. A filter button a reader cannot name is worse than a generic one.
-  const homeShortCode = teamCrestBadge(homeTeam) || "HOME";
-  const awayShortCode = teamCrestBadge(awayTeam) || "AWAY";
+  const homeShortCode = shippableCrestBadge(homeTeam) || "HOME";
+  const awayShortCode = shippableCrestBadge(awayTeam) || "AWAY";
 
   return (
     <div>
