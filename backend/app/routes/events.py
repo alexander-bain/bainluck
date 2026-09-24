@@ -531,8 +531,43 @@ def _futures_dedup_question_key(market) -> str:
     return f"name:{_fold_dedup_punctuation(name_lower)}"
 
 
-def _is_cross_source_repeat(market, kept_sources_by_question: dict) -> bool:
-    """True if the SAME question was already kept on this page from ANOTHER venue.
+_PERSON_SERIES_SUFFIX = re.compile(r"\(\s*person\s*\)\s*$", re.I)
+
+
+def _search_question_identity(market) -> tuple[str, bool]:
+    """The search page's question key, and whether the row is a `(Person)` series.
+
+    #8410 — `?q=senate` (390px, 2026-09-24) printed the Maine race three times:
+    Kalshi `Maine Senate winner?` (party series SENATEME-26), Kalshi
+    `Maine Senate winner? (Person)` (KXMESENATEPERSON-26) and Polymarket
+    `Maine Senate Election Winner`. `_futures_dedup_question_key` keeps all
+    three apart, by one phrase each:
+
+    * `Election Winner` — Polymarket's title for every race Kalshi calls
+      `X winner?`. Over 100 open cross-venue pairs on production (every US House
+      district, Senate and Governor race). Folded to `winner`; the caller still
+      applies it across venues only, exactly like #8378.
+    * a trailing `(Person)` — Kalshi's person series beside its party series for
+      the same race (5 open pairs: CA Governor, MI/ME/IA/AK Senate). Stripped,
+      and flagged so the caller can merge it WITHIN one venue: the suffix itself
+      names the pairing, which a bare same-venue title never does (the Urban
+      Outfitters fiscal-year pair #8378 keeps as two rows).
+
+    Search only. The shared key is untouched — `league_futures` reads it.
+    """
+    key = _futures_dedup_question_key(market)
+    if not key.startswith("name:"):
+        return key, False
+    person = bool(_PERSON_SERIES_SUFFIX.search(market.name or ""))
+    if person:
+        key = re.sub(r" person$", "", key)
+    key = re.sub(r" election champion$", " champion", key)
+    return key, person
+
+
+def _is_repeat_of_a_kept_question(market, kept_sources_by_question: dict) -> bool:
+    """True if the SAME question was already kept on this page from ANOTHER venue,
+    or from the same venue's other series of one race (#8410's `(Person)` pair).
 
     #8378 — Alex's reader, `?q=bills`: the ANSWERS card printed
     `Which bills will become law in 2026?  Housing for the 21st…  100%` twice,
@@ -557,12 +592,19 @@ def _is_cross_source_repeat(market, kept_sources_by_question: dict) -> bool:
     same-source pair is left to the tiered key exactly as before, so this rule
     can only ever remove a second venue's copy of a question already shown.
 
+    #8410 widens the key (`_search_question_identity`), never the venue rule:
+    what is recorded per kept row is (source, is-person-series), and a row is a
+    repeat only when that pair is new under a key already on the page. A second
+    venue differs in source; Kalshi's person series differs in the flag; two bare
+    same-venue titles (the fiscal-year pair) match on both and stay two rows.
+
     The caller records the kept row's source under its question key; the first
     row kept is the reranked leader, so which venue survives is the ranking's
     choice, not this function's.
     """
-    seen = kept_sources_by_question.get(_futures_dedup_question_key(market))
-    return bool(seen) and getattr(market, "source", None) not in seen
+    key, person = _search_question_identity(market)
+    seen = kept_sources_by_question.get(key)
+    return bool(seen) and (getattr(market, "source", None), person) not in seen
 
 
 def _admit_search_future(
@@ -572,17 +614,20 @@ def _admit_search_future(
 
     False = drop the row: its tiered key is already on the page (the rule since
     #993/#1769), or it is another venue's copy of a question already kept
-    (#8378). True = keep it, and record both keys so later rows are judged
+    (#8378), or another series of one race (#8410). True = keep it, and record both keys so later rows are judged
     against it. Both route loops — the window and its refill — call this, so
     the refill cannot re-admit a copy the window dropped.
     """
     dkey = _normalize_futures_dedup_key(market)
-    if dkey in seen_keys or _is_cross_source_repeat(market, kept_sources_by_question):
+    if dkey in seen_keys or _is_repeat_of_a_kept_question(
+        market, kept_sources_by_question
+    ):
         return False
     seen_keys.add(dkey)
-    kept_sources_by_question.setdefault(
-        _futures_dedup_question_key(market), set()
-    ).add(getattr(market, "source", None))
+    key, person = _search_question_identity(market)
+    kept_sources_by_question.setdefault(key, set()).add(
+        (getattr(market, "source", None), person)
+    )
     return True
 
 
@@ -8064,9 +8109,9 @@ async def search_events(
         futures_markets_raw, expanded, _resolved_sport_category
     )
     seen_search_keys: set[str] = set()
-    # #8378: question key -> venues kept, so a second venue's copy of a question
+    # #8378/#8410: question key -> (venue, person-series) kept, so a second venue's copy of a question
     # already on the page is dropped even when the two classified to different
-    # tiers. See `_is_cross_source_repeat`.
+    # tiers. See `_is_repeat_of_a_kept_question`.
     kept_sources_by_question: dict[str, set] = {}
     deduped_futures = []
     for m in reranked_futures:
