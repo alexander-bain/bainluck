@@ -2779,7 +2779,8 @@ export default function RelatedFutures({
           <h3 className="text-lg font-semibold tracking-tight">Bigger Picture</h3>
           <p className="text-sm text-text-secondary mt-0.5">Season context</p>
         </div>
-        <span className="text-[10px] text-text-muted">cross-source aggregated</span>
+        {/* #8346: no "cross-source aggregated" caption here — pipeline
+            vocabulary a reader gets nothing from (notice 34). */}
       </div>
 
       {/* Game Markets section — only show when PlayerPropsDashboard + SpecialEventMarkets
