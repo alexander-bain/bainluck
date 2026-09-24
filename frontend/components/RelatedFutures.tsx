@@ -147,12 +147,27 @@ function effectiveTier(f: RelatedFuture): number {
  * Read tail-first, that group was headed with the bare matchup, so a reader saw
  * a Yes/No question's legs under a heading that looked like the game itself. A
  * prefix that asks a question is the subject, and it is the heading.
+ *
+ * #7140: the same rule when the WHOLE name is the question and there is no
+ * colon at all — "Will Montreal Canadiens advance to the Second Round of the
+ * 2027 Stanley Cup Playoffs?". It fell to "other", so `/events/15315787` printed
+ * `OTHER (2) · No 73% · Yes 28%` twice with the question nowhere on the page.
+ * Every such question also shared the one "other" bucket, where the per-name
+ * dedup below keeps a single "Yes" and a single "No" — two questions on one
+ * side silently lost one question's legs.
+ *
+ * Only when the leg does NOT restate the question. A Kalshi binary serves the
+ * question as its own outcome name, so its tile already prints the question,
+ * and #2788 tells two such tiles apart inside the shared group; heading each one
+ * with itself would print every question twice.
  */
-function extractStatCategory(marketName: string): string {
+function extractStatCategory(marketName: string, outcomeName = ""): string {
   const question = marketName.match(/^([^:]*\?)\s*:/);
   if (question) return question[1].trim().toLowerCase();
   const colonMatch = marketName.match(/:\s*(.+?)$/i);
   if (colonMatch) return colonMatch[1].trim().toLowerCase();
+  const whole = marketName.trim();
+  if (whole.endsWith("?") && outcomeName.trim() !== whole) return whole.toLowerCase();
   return "other";
 }
 
@@ -1035,7 +1050,7 @@ function StatPropsSection({
   // Group by stat category, then build display rows
   const groups = new Map<string, StatRow[]>();
   for (const f of meaningful) {
-    const cat = extractStatCategory(f.market_name);
+    const cat = extractStatCategory(f.market_name, f.outcome_name);
     const parsed = parseStatOutcome(f.outcome_name);
     const row: StatRow = {
       playerName: parsed.playerName,
