@@ -438,6 +438,11 @@ COVERED = (
     # the real `/related-futures` handler — the one thing its mocked sibling
     # cannot see. Its fixture drops and recreates the schema, as #7501's does.
     "test_route_related_futures_team_paths_7867_pg.py",
+    # #7021. Seeds `sports`, `teams`, `events`, `futures_outcomes` and
+    # `entities` by raw INSERT, in a private schema with the real FK actions
+    # (CASCADE / SET NULL), to drive the Cardinals fold's apply, re-run and undo.
+    # Explicit ids in a `7021xxxx` band; the schema is dropped whole on teardown.
+    "test_repair_7021_fold_apply_restore_pg.py",
 )
 
 INTEGRATION_DIR = Path(__file__).parent / "integration"
