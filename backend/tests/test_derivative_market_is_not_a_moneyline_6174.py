@@ -69,6 +69,12 @@ DERIVATIVES = [
     "Al Ain FC vs. Al Nassr Club: Both Teams to Score in First Half",
     "Denver vs Kansas City: D/ST Touchdown",
     "Denver vs Kansas City: Safety",
+    # #8344 — the subject can lead instead of trail: a question, or a card
+    # followed by a subject. Both real, both open on 2026-09-24.
+    "Will there be a run scored in the first inning?: Chicago White Sox vs. Kansas City Royals",
+    "Will the game go to extra innings?: Miami Marlins vs. Chicago Cubs",
+    "Korea Open: Completed Match: Anna Bondar vs Alina Charaeva",
+    "M15 Columbia, SC, Main Draw: Completed Match: Teodor Davidov vs Michael Bassem Sobhy",
 ]
 
 
@@ -138,3 +144,11 @@ def test_a_market_with_no_matchup_keeps_yes_no():
     assert resolve("Yes", "Will it rain in Boston?") == "Yes"
     assert resolve("No", "") == "No"
     assert resolve("Yes", "Both Teams to Score") == "Yes"
+
+
+def test_the_8344_specimen():
+    """Event 15318167 / market 62155956 — a Yes/No first-inning-run question
+    headlined "Chicago White Sox Win 50%" on the Bigger Picture rail."""
+    name = "Will there be a run scored in the first inning?: Chicago White Sox vs. Kansas City Royals"
+    assert resolve("Yes", name) == "Yes", "served '…?: Chicago White Sox Win' before #8344"
+    assert resolve("No", name) == "No", "served 'Kansas City Royals Win' before #8344"

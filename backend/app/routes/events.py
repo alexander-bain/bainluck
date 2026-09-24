@@ -21285,11 +21285,23 @@ def resolve_binary_matchup_outcome_name(outcome_name: str, market_name: str) -> 
 
     A colon is only disqualifying in the TAIL. "UFC 331: Ozzy Diaz vs. Ryan Gandra"
     is a real moneyline wearing a card prefix, so the first side may contain one.
+
+    #8344: but a prefix can carry the SUBJECT too, and then it is a derivative.
+    "Will there be a run scored in the first inning?: Chicago White Sox vs. Kansas
+    City Royals" was served as "…: Chicago White Sox Win" / "Kansas City Royals
+    Win" over stored Yes/No legs. Measured 2026-09-24 over open, event-linked Yes/No
+    markets with a prefixed matchup: every one was a question ("…?:", 7) or a
+    card-then-subject ("Korea Open: Completed Match: A vs B", 14) — none was a
+    moneyline. So a prefix that asks a question, or that is itself two segments,
+    is declined; a single card segment ("UFC 331:") still resolves.
     """
     if outcome_name not in ("Yes", "No") or not market_name:
         return outcome_name
     matchup = _MONEYLINE_MATCHUP_RE.match(market_name)
     if not matchup:
+        return outcome_name
+    prefix, colon, _ = matchup.group(1).rpartition(":")
+    if colon and ("?" in prefix or ":" in prefix):
         return outcome_name
     side = matchup.group(1) if outcome_name == "Yes" else matchup.group(2)
     return f"{side.strip()} Win"

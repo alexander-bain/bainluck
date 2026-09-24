@@ -140,8 +140,16 @@ function effectiveTier(f: RelatedFuture): number {
 /**
  * Extract stat category from a stat prop market name.
  * e.g. "Boston at Golden State: Three Pointers" → "three pointers"
+ *
+ * #8344: the other venue puts the subject FIRST, as a question — "Will there be
+ * a run scored in the first inning?: Chicago White Sox vs. Kansas City Royals".
+ * Read tail-first, that group was headed with the bare matchup, so a reader saw
+ * a Yes/No question's legs under a heading that looked like the game itself. A
+ * prefix that asks a question is the subject, and it is the heading.
  */
 function extractStatCategory(marketName: string): string {
+  const question = marketName.match(/^([^:]*\?)\s*:/);
+  if (question) return question[1].trim().toLowerCase();
   const colonMatch = marketName.match(/:\s*(.+?)$/i);
   if (colonMatch) return colonMatch[1].trim().toLowerCase();
   return "other";
@@ -153,6 +161,12 @@ function extractStatCategory(marketName: string): string {
 function getStatConfig(category: string): { emoji: string; label: string } {
   // Try exact match first
   if (STAT_CATEGORIES[category]) return STAT_CATEGORIES[category];
+  // #8344: a question is its own heading — the partial match below would head
+  // any question that merely contains a stat word ("…score 10+ points?") with
+  // that word alone ("Points").
+  if (category.endsWith("?")) {
+    return { emoji: "📊", label: category.charAt(0).toUpperCase() + category.slice(1) };
+  }
   // Try partial match
   for (const [key, config] of Object.entries(STAT_CATEGORIES)) {
     if (category.includes(key) || key.includes(category)) return config;
@@ -891,6 +905,8 @@ function outcomeNamesASubject(outcomeName: string): boolean {
   if (/\b(?:vs\.?|v\.)\s/i.test(trimmed)) return false;
   // The result itself, on a three-way market that lists it beside two teams.
   if (/^(draw|tie)$/i.test(trimmed)) return false;
+  // #8344: the leg of a Yes/No question. Without this "Yes" drew a face reading "YE".
+  if (/^(yes|no)$/i.test(trimmed)) return false;
   return true;
 }
 

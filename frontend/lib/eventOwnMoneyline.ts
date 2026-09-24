@@ -77,6 +77,13 @@ function fold(value: string | null | undefined): string {
  * either in full ("Boston Red Sox") or by the short form ("Boston"), which is a whole-word prefix
  * or suffix of the full name. The space in the affix tests is load-bearing — without it "Bo" would
  * name Boston.
+ *
+ * #8344: Kalshi has a third form for a city that holds two clubs — the city, then the INITIALS of
+ * the rest ("Chicago WS", "Los Angeles D", "New York Y"). "Chicago WS vs Kansas City" was the
+ * White Sox–Royals game's own moneyline, missed here, and printed on the Bigger Picture rail as two
+ * orphan "OTHER (1)" cards. The initials must be exactly the remaining words' first letters and
+ * the city a whole-word prefix of at least one word, so a bare "WS" names nothing and "Chicago C"
+ * names the Cubs, never the White Sox.
  */
 export function labelNamesSide(
   label: string | null | undefined,
@@ -85,7 +92,19 @@ export function labelNamesSide(
   const l = fold(label);
   const t = fold(team);
   if (!l || !t) return false;
-  return l === t || t.startsWith(l + " ") || t.endsWith(" " + l);
+  if (l === t || t.startsWith(l + " ") || t.endsWith(" " + l)) return true;
+  return namesSideByCityInitials(l, t);
+}
+
+/** "chicago ws" names "chicago white sox": a city prefix plus the initials of what follows it. */
+function namesSideByCityInitials(label: string, team: string): boolean {
+  const labelWords = label.split(" ");
+  const initials = labelWords.pop() ?? "";
+  if (labelWords.length === 0 || !/^[a-z]+$/.test(initials)) return false;
+  const city = labelWords.join(" ");
+  if (!team.startsWith(city + " ")) return false;
+  const rest = team.slice(city.length + 1).split(" ");
+  return rest.map((word) => word.charAt(0)).join("") === initials;
 }
 
 /**
