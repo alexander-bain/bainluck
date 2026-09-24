@@ -138,14 +138,14 @@ describe("#4537 — discoverCrestBadge never returns an unshippable badge", () =
       "Paris Saint Germain", "Paris Saint-Germain", "New York Mets",
       "Boston Red Sox", "Ipswich Town", "Real Madrid", "Al Sadd SC",
       "Arizona State Sun Devils", "Kansas Jayhawks", "Warrington Town FC",
-      // #4535's doubles fragments keep master's value: the whitespace case is
-      // that issue's decision, not this one's.
+      // Doubles pairs follow `teamCrestBadge` too; since #4535 that is three
+      // real glyphs even for a two-letter first surname.
       "Ho / Liutarevich", "de Minaur / Peers", "Hunter / Krawczyk",
     ];
     for (const name of clean) {
       expect([name, discoverCrestBadge(name)]).toEqual([name, teamCrestBadge(name)]);
     }
-    expect(discoverCrestBadge("Ho / Liutarevich")).toBe("HO ");
+    expect(discoverCrestBadge("Ho / Liutarevich")).toBe("HOL");
     expect(discoverCrestBadge(null)).toBe("");
     expect(discoverCrestBadge("")).toBe("");
   });

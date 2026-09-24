@@ -171,11 +171,12 @@ describe("#4626 the Swift fixtures agree with the browser", () => {
  * browser-side sibling of #4625 and is filed rather than fixed in an iOS ship.
  */
 describe("#4626 the known divergence is named, not assumed away", () => {
-  it("the browser pads a two-character first side; Swift does not", () => {
-    expect(teamCrestBadge("Ho / Liutarevich")).toBe("HO ");
-    expect(teamCrestBadge("Li / Tauson")).toBe("LI ");
-    // If the browser is ever repaired, this reds and the comment above — and the
-    // issue it points at — get revisited rather than quietly rotting.
-    expect(teamCrestBadge("Ho / Liutarevich").trim().length).toBe(2);
+  // #4535 repaired the browser side the way this comment asked: it now counts
+  // letters and digits across the space, as `glyphs(ofLabel:)` does, so the
+  // three pairs above agree with Swift and the divergence is closed.
+  it("the browser no longer pads a two-character first side, and matches Swift", () => {
+    expect(teamCrestBadge("Ho / Liutarevich")).toBe("HOL");
+    expect(teamCrestBadge("Ho / Stalder")).toBe("HOS");
+    expect(teamCrestBadge("Li / Tauson")).toBe("LIT");
   });
 });
