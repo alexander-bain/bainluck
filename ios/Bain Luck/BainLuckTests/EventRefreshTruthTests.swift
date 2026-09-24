@@ -38,11 +38,15 @@ final class EventRefreshTruthTests: XCTestCase {
 
     // MARK: - refreshIndicator: three states, none of them a number
 
+    /// `pushed` defaults to true so the cases below keep asking about the
+    /// stream state alone; the #8320 cases set it explicitly.
     private func indicator(
         status: String? = "live",
-        streaming: Bool
+        streaming: Bool,
+        pushed: Bool = true
     ) -> EventDetailView.RefreshIndicator {
-        EventDetailView.refreshIndicator(status: status, streamDelivering: streaming)
+        EventDetailView.refreshIndicator(
+            status: status, streamDelivering: streaming, pushedPrice: pushed)
     }
 
     func testDeliveringStreamSaysSo() {
@@ -57,6 +61,14 @@ final class EventRefreshTruthTests: XCTestCase {
         XCTAssertNotEqual(indicator(streaming: false), .streaming)
     }
 
+    /// #8320 — the stream reports delivering on `open`, before any price. A
+    /// socket is not a price: until one has been pushed onto the page, the dot
+    /// would be claiming a delivery that has not happened.
+    func testAnOpenedStreamThatHasPushedNoPriceIsPolling() {
+        XCTAssertEqual(indicator(streaming: true, pushed: false), .polling)
+        XCTAssertEqual(indicator(streaming: false, pushed: false), .polling)
+    }
+
     func testStreamOnANonLivePageStillShowsNothing() {
         // `streamDelivering` cannot resurrect chrome on a page that has no
         // refresh at all; the VM never opens a stream off `live`, and if that
@@ -66,5 +78,6 @@ final class EventRefreshTruthTests: XCTestCase {
             XCTAssertEqual(indicator(status: status, streaming: false), .hidden, "status \(status)")
         }
         XCTAssertEqual(indicator(status: nil, streaming: true), .hidden)
+        XCTAssertEqual(indicator(status: "completed", streaming: true, pushed: false), .hidden)
     }
 }
