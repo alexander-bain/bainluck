@@ -43,6 +43,51 @@ def has_no_real_price(outcome_probabilities: "list[float | None]") -> bool:
     return max(real) < FEED_MIN_REAL_PROBABILITY
 
 
+# #8363: the two ENDS of a range ladder. A ladder has exactly one bottom range
+# ("<26m", "Under 25", "47°F or below") and one top range ("32m+", "125 or
+# more", "68°F or higher"), so these two shapes are all the rule needs to read —
+# no range widths, no units.
+_LADDER_BOTTOM_RANGE = re.compile(
+    r"^\s*[<≤]|^\s*(under|below|less than|fewer than)\b|\bor (below|less|fewer|lower)\s*$",
+    re.IGNORECASE,
+)
+_LADDER_TOP_RANGE = re.compile(
+    r"\+\s*$|^\s*[>≥]|^\s*(over|above|more than)\b|\bor (more|higher|above|greater)\s*$",
+    re.IGNORECASE,
+)
+
+
+def range_ladder_missing_middle(
+    outcome_names: "Iterable[str | None]", venue_leg_count: "object"
+) -> bool:
+    """True if a one-winner range ladder is held with ranges missing IN THE MIDDLE (#8363).
+
+    ``venue_leg_count`` is what the venue lists (Polymarket's
+    ``market_metadata['market_count']``); ``outcome_names`` are the legs we hold.
+    Holding the bottom range AND the top range but fewer legs than the venue
+    lists means every missing leg sits between them — a hole a reader reads as
+    0%. Production 2026-09-24: `"Resident Evil" 2nd Weekend Box Office` held
+    `<26m` .66 and `32m+` .50 of Polymarket's four (26-29m and 29-32m carry no
+    trade), and the card divided the pair by 1.16 to print "<26m 57% / 32m+ 43%"
+    with "More likely than not: <26m".
+
+    A field missing only a TAIL is not this rule (one end is absent, so the
+    missing legs cannot be located), nor is a candidate race whose unheld names
+    are untraded longshots (no range ends at all). An absent or unreadable count
+    answers False: no count, no claim.
+    """
+    try:
+        listed = int(venue_leg_count)  # type: ignore[call-overload]
+    except (TypeError, ValueError):
+        return False
+    names = [n for n in outcome_names if n]
+    if len(names) >= listed:
+        return False
+    return any(_LADDER_BOTTOM_RANGE.search(n) for n in names) and any(
+        _LADDER_TOP_RANGE.search(n) for n in names
+    )
+
+
 # #1574 (UX-P011): a price nobody will trade at is not a price. `current_probability`
 # is the book midpoint. When the book is 1c-bid / 99c-ask, that midpoint is an artifact
 # of an EMPTY book, not a belief — the "never-traded illiquid placeholder" phantom of
