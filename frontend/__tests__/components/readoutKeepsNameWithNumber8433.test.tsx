@@ -58,9 +58,21 @@ function markup(pt: ActiveChartPoint, awayWithheld = false) {
   );
 }
 
-/** Tags stripped, whitespace collapsed — what a reader reads. */
+/**
+ * Tags stripped, whitespace collapsed — what a reader reads. A character scan,
+ * not a `.replace` over `<...>`: that shape earns a HIGH CodeQL alert even in a
+ * test (same helper as `matchedGapCellIsUnsigned7587.test.tsx`). React emits the
+ * em-dash as the character, so no entity decode is needed.
+ */
 function text(fragment: string): string {
-  return fragment.replace(/<[^>]*>/g, "").split(/\s+/).filter(Boolean).join(" ");
+  let out = "";
+  let inTag = false;
+  for (const ch of fragment) {
+    if (ch === "<") inTag = true;
+    else if (ch === ">") inTag = false;
+    else if (!inTag) out += ch;
+  }
+  return out.split(/\s+/).filter(Boolean).join(" ");
 }
 
 /** The opening tag of the first element carrying `attr`, or throw. */
