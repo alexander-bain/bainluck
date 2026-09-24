@@ -64,6 +64,9 @@ from app.utils.feed_reasons import (
 )
 
 #: The two distinct opening instants carried by the production specimens.
+#: FEB_19 is named for its UTC day; it is 8:41pm on Feb 18 in New York and
+#: 5:41pm in Los Angeles, so the caption says "Feb 18" (#8350 — a baseline's
+#: day is read in the westernmost US zone, never the UTC day).
 FEB_19 = datetime(2026, 2, 19, 1, 41, 4, 341363, tzinfo=timezone.utc)
 APR_29 = datetime(2026, 4, 29, 21, 17, 12, 997392, tzinfo=timezone.utc)
 NOW = datetime(2026, 9, 11, 13, 45, tzinfo=timezone.utc)
@@ -401,12 +404,12 @@ def test_the_binary_card_says_down_for_a_collapsed_affirmative():
         top_surprise_opened_at=FEB_19,
         now=NOW,
     )
-    assert copy.headline == "Down 84 points since Feb 19"
-    # Feb 19 is past the news horizon from NOW, so D1 clause (a) (#4066) puts the
+    assert copy.headline == "Down 84 points since Feb 18"
+    # Feb 18 is past the news horizon from NOW, so D1 clause (a) (#4066) puts the
     # standing answer first and keeps the dated move behind it. This test's own
     # thesis is the DIRECTION word, not the clause order: both halves are still
     # here and they still agree, which is the contradiction it was written to catch.
-    assert copy.context_summary == "7% chance, down 84 points since Feb 19"
+    assert copy.context_summary == "7% chance, down 84 points since Feb 18"
     assert "down 84 points" in copy.context_summary
     assert "up 84 points" not in copy.context_summary.lower()
 
@@ -519,7 +522,7 @@ def test_a_row_whose_only_signal_is_a_lifetime_move_gets_a_caption(
         **{k: v for k, v in inputs.items() if k != "top_surprise_name"},
     )
     assert dated.strip(), f"{market_name!r} still renders no caption"
-    assert "Feb 19" in dated, (
+    assert "Feb 18" in dated, (
         "the caption must name the day the move is measured from — an undated "
         "lifetime move is what D1 clause a (#4066) refused to publish"
     )

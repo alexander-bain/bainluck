@@ -38,13 +38,13 @@ from app.utils.feed_reasons import (
 )
 
 # Read off the production feed the morning this was filed.
-FEB_19 = datetime(2026, 2, 19, tzinfo=timezone.utc)
+FEB_19 = datetime(2026, 2, 19, 12, tzinfo=timezone.utc)  # midday: same day in every US zone (#8350)
 NOW = datetime(2026, 9, 16, 6, 45, tzinfo=timezone.utc)
 
 #: `now` set so FEB_19 is three days old — inside the seven-day news horizon.
 #: This is how the suite reads the BEFORE string without a second code path:
 #: same inputs, same branch, the horizon simply has not been crossed.
-WITHIN_HORIZON_NOW = datetime(2026, 2, 22, tzinfo=timezone.utc)
+WITHIN_HORIZON_NOW = datetime(2026, 2, 22, 12, tzinfo=timezone.utc)
 
 SENATE = dict(
     market_name="Which party will win the U.S. Senate?",
