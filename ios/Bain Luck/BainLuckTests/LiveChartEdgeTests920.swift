@@ -394,6 +394,36 @@ final class LiveChartEdgeTests920: XCTestCase {
         XCTAssertFalse(vm.loading)
     }
 
+    /// Photographed 2026-09-24 on live Angels–Athletics (15317522): the chart's
+    /// own first fetch drew a 429, and for the next ~170 s the page's re-polled
+    /// history was adopted underneath a "We couldn't load that just now" that
+    /// nothing cleared — the view branches on `error` before `history`, and the
+    /// pushed live edge is gated on `error == nil` too. One failed first fetch
+    /// froze the chart, push and poll alike, for as long as the page stayed open.
+    @MainActor
+    func testAPayloadAdoptedAfterAFailedFirstLoadClearsTheError() throws {
+        let vm = OddsChartViewModel(eventId: 1)
+        vm.loading = false
+        vm.error = "We couldn't load that just now. Try again in a moment."
+
+        XCTAssertTrue(vm.adopt(try blended()))
+        XCTAssertNil(vm.error, "the adopted payload is what the chart must draw")
+        XCTAssertNotNil(vm.history)
+        XCTAssertFalse(vm.loading)
+    }
+
+    /// The control: a refused payload is not a recovery and says nothing about
+    /// the state on screen, so it leaves that state exactly as it was.
+    @MainActor
+    func testARefusedPayloadLeavesTheChartsStateAlone() throws {
+        let newer = try history(Self.blendedJSON.replacingOccurrences(of: "12:10:00Z", with: "12:40:00Z"))
+        let vm = OddsChartViewModel(eventId: 1, preloaded: newer)
+        vm.error = "sentinel"
+
+        XCTAssertFalse(vm.adopt(try blended()))
+        XCTAssertEqual(vm.error, "sentinel")
+    }
+
     @MainActor
     func testTheChartRefusesAnOlderPayloadAndKeepsTheOneOnScreen() throws {
         let newer = try history(Self.blendedJSON.replacingOccurrences(of: "12:10:00Z", with: "12:40:00Z"))
