@@ -103,6 +103,9 @@ and three of those are what stop a blanket suppression passing:
 Count: the artifact's 24 tests become 25 (24 + `test_7b`). No test is deleted
 and no assertion is loosened. Nobody may report "the untouched 24 passed".
 
+#7586 (2026-09-24) amends A1/A2 once more and adds `test_7c` / `test_7d`: 27.
+See the block above `test_7`.
+
 ── SAFETY ───────────────────────────────────────────────────────────────────
 
 This module DROPS AND RECREATES THE WHOLE SCHEMA. It therefore refuses to touch
@@ -1080,139 +1083,128 @@ _SCALE_RULING = (
 )
 
 
-def test_7_display_normalized_card_serves_no_feed_number_while_raw_detail_serves_the_dated_move():
-    """SYNTHETIC VARIANT, REAL WRITER. AMENDED — pins the 16:00Z scale ruling.
+# ── #7586 AMENDMENT (authority, 2026-09-24; Discover's ruling (b)) ───────────
+#
+# `test_7` / `test_7b` were written on an `exclusive=False` 1.40 field whose card
+# DIVIDED by 1.40 while its page printed raw, and they pinned that split as their
+# PRECONDITION. The split was #7586: the page keeps a non-exclusive field raw
+# (#199) and, under Codex's Direction B, the card now does too. So:
+#
+#   test_7 / test_7b   keep the exclusive=False fixture and now pin card 0.60 ==
+#                      page 0.60 with the dated +0.10 served on the feed — the
+#                      scale ruling's own raw arm (visible percent raw, bank raw).
+#   test_7c / test_7d  NEW: the null-movement pin moves to an exclusive=True 1.40
+#                      fixture, the population the card still normalizes. There the
+#                      page squeezes too, so the detail arm pins card == detail
+#                      (parity, taken from what the page serves) and card movement
+#                      null. No detail movement value is pinned: the page serves
+#                      none on that fixture (observed 2026-09-24, PG14 + shim), and
+#                      the invariant under test is parity, not "detail raw".
+#
+# The scale ruling itself is unchanged, and the pairs still discriminate: a blanket
+# null fails test_7/7b, a blanket raw fails test_7c/7d.
 
-    Independent (non-exclusive) legs summing to 1.40, so `_feed_display_scale`
-    divides every PRINTED percent on the CARD by 1.40. The detail route does not
-    normalize, so its percent is raw.
+
+_INDEPENDENT_QUESTION = "SYNTHETIC — Which studios announce a release delay by October 31?"
+_SPORTS_QUESTION = "SYNTHETIC — Which Harbor League clubs sign a marquee free agent?"
+
+
+def _studio_legs():
+    return [O("Studio Aster", 0.55, 0.05, obs=[(20, 0.50), (3, 0.55)]),
+            O("Studio Birch", 0.50, None), O("Studio Cedar", 0.30, None)]
+
+
+def _harbor_legs():
+    return [O("Harbor Gulls", 0.55, 0.05, obs=[(20, 0.50), (3, 0.55)]),
+            O("Pier Rats", 0.50, None), O("Dock Owls", 0.30, None)]
+
+
+def _page_value(raw_prices, name_index, *, exclusive):
+    """What the page code prints for one leg of this field — the page's own
+    normalizer, so the parity target is never a hand constant."""
+    from app.utils.outcome_display import normalize_display_probs
+
+    outs = [{"probability": p} for p in raw_prices]
+    normalize_display_probs(outs, mutually_exclusive=exclusive)
+    return outs[name_index]["probability"]
+
+
+def _named_movement_refusals(v):
+    named = {
+        0.10: "the RAW dated move, beside a percent printed at 43% — an "
+              "unsupported claim about what was displayed 24h ago",
+        0.0714: "display-display, derived by dividing the delta by TODAY's "
+                "denominator — not the historic displayed change",
+        -0.0714: "display-normalized current minus RAW basis — a sign flip",
+        0.05: "the PER-WRITE delta (new - previous write)",
+    }
+    hit = next((t for k, t in named.items() if abs(v - k) < 1e-4), None)
+    if abs(v) < TOL:
+        hit = "0 — unavailable must be null, never 0"
+    return hit or "an unnamed value"
+
+
+def test_7_non_exclusive_card_prints_the_page_value_and_serves_the_dated_move():
+    """SYNTHETIC VARIANT, REAL WRITER. AMENDED TWICE — the 16:00Z scale ruling,
+    then #7586.
+
+    Independent (non-exclusive) legs summing to 1.40. The page keeps them raw
+    (#199) and so, since #7586, does the card: every reader prints 0.60.
 
       operand            scale      value
-      current (stored)   RAW        0.60
-      basis (banked)     RAW        0.50    ← the A8 writer banks raw snapshot prices
-      current (printed)  DISPLAY    0.60/1.40 = 0.4286   (feed card only)
-      per-write delta    RAW        +0.05   (previous write 0.55)
+      current (stored)   RAW        0.60   (card and page alike)
+      basis (banked)     RAW        0.50   <- the A8 writer banks raw snapshot prices
+      per-write delta    RAW        +0.05  (previous write 0.55)
 
     What is pinned:
 
-      feed.top_outcomes[].movement           -> null   (visible percent is 43%,
-      feed.distribution_outcomes[].movement  -> null    the basis is on the raw
-                                                        scale; unsupported)
-      detail.outcomes[].probability_change_24h -> +0.10 (raw - raw; the visible
-                                                        percent there IS raw)
+      feed.top_outcomes[].movement             -> +0.10 (raw - raw; the visible
+      feed.distribution_outcomes[].movement    -> +0.10  percent IS raw)
+      detail.outcomes[].probability_change_24h -> +0.10
 
-    Every other answer is named and refused: the display-display +0.0714 and the
-    raw +0.10 on the FEED (an unsupported claim about what was displayed then),
-    the mixed-scale -0.0714 sign flip, the per-write +0.05, and a served 0.
-
-    THIS TEST IS ITS OWN DISCRIMINATING CONTROL. The detail arm requires a real
-    number in the same run in which the feed arms require null, so "return null
-    everywhere" fails here without appeal to any other test; and "keep serving
-    raw everywhere" fails on the feed arms. (test_0a/1/2_5_6/4 and the
-    unnormalized sports twin are the wider anti-suppression controls.)
+    The per-write +0.05 and a served null are refused on every reader. The
+    blanket-null patch fails here; the blanket-raw patch fails `test_7c`.
     """
-    s = _arun(_seed([M(
-        "scale", "SYNTHETIC — Which studios announce a release delay by October 31?", "entertainment",
-        [O("Studio Aster", 0.55, 0.05, obs=[(20, 0.50), (3, 0.55)]),
-         O("Studio Birch", 0.50, None), O("Studio Cedar", 0.30, None)],
-        exclusive=False)]))
+    s = _arun(_seed([M("scale", _INDEPENDENT_QUESTION, "entertainment", _studio_legs(),
+                       exclusive=False)]))
     mid, a = s.market["scale"], s.outcome[("scale", "Studio Aster")]
     _run_real_sweep()
     _require_real_bank(mid, a, 0.50)
     _poll_write(a, 0.60)
     reads = _reads(mid, category="entertainment")
 
-    # PRECONDITIONS — the fixture must actually be normalized on the card and
-    # raw on the detail route, or this test is measuring nothing.
+    # PRECONDITION + THE SHIP: the card prints the page's value (#7586).
     top = _row(reads["feed.top_outcomes"], id=a)
-    assert top["probability"] is not None
-    feed_scale = 0.60 / top["probability"]
-    assert abs(feed_scale - 1.40) < 1e-3, (
-        f"PRECONDITION: fixture expected the card's display scale to be 1.40, got {feed_scale:.4f}")
     det = _row(reads["detail.outcomes"], id=a)
-    detail_scale = 0.60 / det["probability"]
-    assert abs(detail_scale - 1.0) < 1e-3, (
-        f"PRECONDITION: the detail route is expected to print the RAW 0.60, got "
-        f"{det['probability']!r} (scale {detail_scale:.4f}). The ruling's raw-raw arm "
-        f"only applies where the visible percent is raw.")
+    page = _page_value([0.60, 0.50, 0.30], 0, exclusive=False)
+    assert abs(page - 0.60) < 1e-9, f"the page code is expected to keep this field raw, got {page!r}"
+    assert abs(det["probability"] - page) < 1e-6, (
+        f"detail printed {det['probability']!r}; the page code prints {page!r}")
+    assert abs(top["probability"] - page) < 1e-6, (
+        f"#7586: the card printed {top['probability']!r} where its page prints {page!r} "
+        f"(0.4286 is the old 1.40 divide)")
 
-    failures = []
-
-    # --- the two NORMALIZED feed readers: no number at all -------------------
-    for reader in ("feed.top_outcomes", "feed.distribution_outcomes"):
-        row = (_row(reads[reader], id=a) if reader != "feed.distribution_outcomes"
-               else _row(reads[reader], name="Studio Aster"))
-        where = f"{reader}[Studio Aster].{FEED_FIELD}"
-        assert FEED_FIELD in row, f"{where}: field absent from the wire row {sorted(row)}"
-        v = row[FEED_FIELD]
-        if v is None:
-            continue
-        if isinstance(v, (int, float)) and not isinstance(v, bool):
-            named = {
-                0.10: "the RAW dated move, beside a percent printed at 43% — an "
-                      "unsupported claim about what was displayed 24h ago",
-                0.0714: "display-display, derived by dividing the delta by TODAY's "
-                        "denominator — not the historic displayed change",
-                -0.0714: "display-normalized current minus RAW basis — a sign flip",
-                0.05: "the PER-WRITE delta (new - previous write)",
-            }
-            hit = next((t for k, t in named.items() if abs(v - k) < 1e-4), None)
-            if abs(v) < TOL:
-                hit = "0 — unavailable must be null, never 0"
-            failures.append(f"{where}: served {v:+.4f} = {hit or 'an unnamed value'}; must be null")
-        else:
-            failures.append(f"{where}: served {v!r}; must be null")
-
-    # --- the RAW detail reader: the dated move, as a number ------------------
-    where = f"detail.outcomes[Studio Aster].{DETAIL_FIELD}"
-    assert DETAIL_FIELD in det, f"{where}: field absent from the wire row {sorted(det)}"
-    dv = det[DETAIL_FIELD]
-    if dv is None:
-        failures.append(
-            f"{where}: served null. The detail percent is RAW 0.60 and the banked basis "
-            f"is RAW 0.50, so the dated +0.1000 is supported and must survive. "
-            f"Suppression is only licensed where the scales differ.")
-    elif not isinstance(dv, (int, float)) or isinstance(dv, bool):
-        failures.append(f"{where}: served {dv!r}")
-    elif abs(dv - 0.10) >= TOL:
-        why = ("the PER-WRITE delta" if abs(dv - 0.05) < TOL else
-               "display-display" if abs(dv - 0.0714) < 1e-4 else
-               "0" if abs(dv) < TOL else "an unnamed value")
-        failures.append(f"{where}: served {dv:+.4f} = {why}; the dated raw-raw move is +0.1000")
-
-    assert not failures, _SCALE_RULING + "\n  - " + "\n  - ".join(failures)
-
-    # The price and the card survive the suppression — that is the whole point
-    # of suppressing the NUMBER rather than dropping the row.
+    kinds = []
+    _check_each(
+        reads, outcome_id=a, name="Studio Aster",
+        check=lambda v, row, where: kinds.append(
+            _assert_dated(v, current=0.60, basis=0.50, per_write=0.05, where=where)),
+    )
+    assert kinds and set(kinds) == {"raw"}, kinds
     _price_is_served(reads, outcome_id=a, name="Studio Aster", raw_price=0.60)
 
 
-def test_7b_display_normalized_sports_twin_serves_no_number():
-    """SYNTHETIC VARIANT, REAL WRITER. NEW under the amendment (A2).
+def test_7b_non_exclusive_sports_twin_prints_the_page_value_and_serves_the_dated_move():
+    """SYNTHETIC VARIANT, REAL WRITER. NEW under the amendment (A2); AMENDED by #7586.
 
-    `GET /api/feed?mode=sports` builds `top_outcomes[].movement` in
-    `_score_sports_mode_futures`, which computes its own `_feed_display_scale`
-    from the same helper. The artifact's `mode=sports` fixture sums to 1.00 —
-    scale 1.0 — so it never reached the normalized branch of the twin, and a
-    patch that suppressed only on the Discover scorer would pass it.
-
-    Same fixture shape as `test_7` (0.60/0.50/0.30 = 1.40) on a sports market, so
-    the card is normalized: the `mode=sports` movement must be null.
-
-    Both of the twin's printed sites are pinned — `top_outcomes` AND the sports
-    scorer's own `discover_card.distribution_outcomes`, which is a separate copy
-    of the movement expression, not a view of the first.
-
-    Its discriminating control is the artifact's own
-    `test_adjacent_sports_mode_twin_serializer_same_counterexample`, which is
-    UNCHANGED and requires the same twin to serve +0.10 on an UNNORMALIZED card.
-    The pair cannot both pass under a blanket null or a blanket raw.
+    `GET /api/feed?mode=sports` computes its own `_feed_display_scale` in
+    `_score_sports_mode_futures`. Same fixture shape as `test_7` on a sports market:
+    the card is raw like its page, so the `mode=sports` movement is the dated +0.10
+    at BOTH of the twin's printed sites (`top_outcomes` and its own
+    `discover_card.distribution_outcomes`). Its null-arm partner is `test_7d`.
     """
-    s = _arun(_seed([M(
-        "wsn", "SYNTHETIC — Which Harbor League clubs sign a marquee free agent?", "basketball",
-        [O("Harbor Gulls", 0.55, 0.05, obs=[(20, 0.50), (3, 0.55)]),
-         O("Pier Rats", 0.50, None), O("Dock Owls", 0.30, None)],
-        source="kalshi", tier=1, exclusive=False, sport=("basketball_nba", "NBA"))]))
+    s = _arun(_seed([M("wsn", _SPORTS_QUESTION, "basketball", _harbor_legs(),
+                       source="kalshi", tier=1, exclusive=False, sport=("basketball_nba", "NBA"))]))
     mid, a = s.market["wsn"], s.outcome[("wsn", "Harbor Gulls")]
     _run_real_sweep()
     _require_real_bank(mid, a, 0.50)
@@ -1220,28 +1212,106 @@ def test_7b_display_normalized_sports_twin_serves_no_number():
 
     card = _feed_card(mid, mode="sports")
     row = _row(card["top_outcomes"], id=a)
+    assert row.get("probability") is not None, "the price must be served"
+    assert abs(row["probability"] - 0.60) < 1e-6, (
+        f"#7586: the mode=sports card printed {row['probability']!r}; its page prints 0.60")
+    _assert_dated(row.get(FEED_FIELD), current=0.60, basis=0.50, per_write=0.05,
+                  where="mode=sports feed.top_outcomes[Harbor Gulls].movement")
+
+    dist = (card.get("discover_card") or {}).get("distribution_outcomes") or []
+    drow = next((r for r in dist if (r.get("label") or r.get("name")) == "Harbor Gulls"), None)
+    if drow is None:
+        print(
+            "NOTE: the mode=sports card served no distribution row for Harbor Gulls "
+            f"(archetype served {[r.get('label') or r.get('name') for r in dist]!r}); "
+            "the distribution site of the sports scorer was NOT exercised by this run.")
+    else:
+        assert FEED_FIELD in drow, f"field {FEED_FIELD!r} absent from {sorted(drow)}"
+        _assert_dated(drow[FEED_FIELD], current=0.60, basis=0.50, per_write=0.05,
+                      where="mode=sports feed.distribution_outcomes[Harbor Gulls].movement")
+
+
+def test_7c_display_normalized_card_matches_its_page_and_serves_no_feed_number():
+    """SYNTHETIC VARIANT, REAL WRITER. NEW under #7586 — carries the scale ruling's
+    null arm that `test_7` pinned before the non-exclusive field went raw.
+
+    The same legs flagged exclusive=True: a one-winner field summing 1.40, under
+    #8224's 1.60 ceiling, so the card divides by 1.40 AND the page squeezes too.
+
+      feed.top_outcomes / distribution_outcomes probability == the page's value
+                                                (card 4dp, page 3dp: same percent)
+      feed.top_outcomes[].movement           -> null  (percent on the display
+      feed.distribution_outcomes[].movement  -> null   scale, bank on raw)
+    """
+    s = _arun(_seed([M("scalex", _INDEPENDENT_QUESTION, "entertainment", _studio_legs(),
+                       exclusive=True)]))
+    mid, a = s.market["scalex"], s.outcome[("scalex", "Studio Aster")]
+    _run_real_sweep()
+    _require_real_bank(mid, a, 0.50)
+    _poll_write(a, 0.60)
+    reads = _reads(mid, category="entertainment")
+
+    page = _page_value([0.60, 0.50, 0.30], 0, exclusive=True)
+    assert page < 0.60 - 0.05, f"PRECONDITION: the page code is expected to squeeze, got {page!r}"
+    det = _row(reads["detail.outcomes"], id=a)
+    assert abs(det["probability"] - page) < 1e-6, (
+        f"detail printed {det['probability']!r}; the page code prints {page!r}")
+
+    failures = []
+    for reader in ("feed.top_outcomes", "feed.distribution_outcomes"):
+        row = (_row(reads[reader], id=a) if reader != "feed.distribution_outcomes"
+               else _row(reads[reader], name="Studio Aster"))
+        where = f"{reader}[Studio Aster]"
+        p = row.get("probability")
+        if p is None or round(p * 100) != round(page * 100) or abs(p - page) >= 5e-4:
+            failures.append(f"{where}.probability: served {p!r}; the page prints {page!r}")
+        assert FEED_FIELD in row, f"{where}: field {FEED_FIELD!r} absent from {sorted(row)}"
+        v = row[FEED_FIELD]
+        if v is None:
+            continue
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            failures.append(f"{where}.{FEED_FIELD}: served {v:+.4f} = "
+                            f"{_named_movement_refusals(v)}; must be null")
+        else:
+            failures.append(f"{where}.{FEED_FIELD}: served {v!r}; must be null")
+
+    assert not failures, _SCALE_RULING + "\n  - " + "\n  - ".join(failures)
+    _price_is_served(reads, outcome_id=a, name="Studio Aster", raw_price=0.60)
+
+
+def test_7d_display_normalized_sports_twin_serves_no_number():
+    """SYNTHETIC VARIANT, REAL WRITER. NEW under #7586 — `test_7b`'s old null pin,
+    moved onto an exclusive=True 1.40 sports field the card still normalizes.
+    Both of the twin's printed sites must serve a null movement; the page value is
+    matched at the printed percent. Discriminating partners: `test_7b` and
+    `test_adjacent_sports_mode_twin_serializer_same_counterexample` (+0.10 there).
+    """
+    s = _arun(_seed([M("wsx", _SPORTS_QUESTION, "basketball", _harbor_legs(),
+                       source="kalshi", tier=1, exclusive=True, sport=("basketball_nba", "NBA"))]))
+    mid, a = s.market["wsx"], s.outcome[("wsx", "Harbor Gulls")]
+    _run_real_sweep()
+    _require_real_bank(mid, a, 0.50)
+    _poll_write(a, 0.60)
+
+    page = _page_value([0.60, 0.50, 0.30], 0, exclusive=True)
+    card = _feed_card(mid, mode="sports")
+    row = _row(card["top_outcomes"], id=a)
     assert row.get("probability") is not None, "the price must survive the suppression"
-    scale = 0.60 / row["probability"]
-    assert abs(scale - 1.40) < 1e-3, (
-        f"PRECONDITION: the mode=sports card was expected to be normalized by 1.40, "
-        f"got {scale:.4f} — this fixture is not exercising the normalized branch")
+    assert round(row["probability"] * 100) == round(page * 100), (
+        f"PRECONDITION: the mode=sports card printed {row['probability']!r}; the page "
+        f"code squeezes this field to {page!r} — this fixture is not normalized")
 
     failures = []
     v = row.get(FEED_FIELD)
     if v is not None:
         failures.append(
             f"mode=sports feed.top_outcomes[Harbor Gulls].{FEED_FIELD}: served {v!r} beside a "
-            f"percent printed at {row['probability']:.4f}; must be null. "
-            f"(raw dated +0.1000, display-display +0.0714, mixed -0.0714, per-write +0.05.)")
+            f"percent printed at {row['probability']:.4f}; must be null "
+            f"({_named_movement_refusals(v) if isinstance(v, (int, float)) else 'non-numeric'}).")
 
-    # The sports scorer builds its OWN `discover_card.distribution_outcomes`, a
-    # fourth printed site with its own copy of the movement expression. A rule
-    # wired into three of the four leaves this one shipping the number, so it is
-    # pinned here rather than assumed to follow its twin.
     dist = (card.get("discover_card") or {}).get("distribution_outcomes") or []
     drow = next((r for r in dist if (r.get("label") or r.get("name")) == "Harbor Gulls"), None)
     if drow is None:
-        # Not a pass by omission: say so, so nobody reads silence as coverage.
         print(
             "NOTE: the mode=sports card served no distribution row for Harbor Gulls "
             f"(archetype served {[r.get('label') or r.get('name') for r in dist]!r}); "
@@ -1254,8 +1324,7 @@ def test_7b_display_normalized_sports_twin_serves_no_number():
         failures.append(
             f"mode=sports feed.distribution_outcomes[Harbor Gulls].{FEED_FIELD}: served "
             f"{drow[FEED_FIELD]!r} beside a percent printed at {drow.get('probability')!r}; "
-            f"must be null. Its twin one line up is already silent, so this is the site a "
-            f"rule wired into three of the four printed sites leaves behind.")
+            f"must be null.")
 
     assert not failures, _SCALE_RULING + "\n  - " + "\n  - ".join(failures)
 

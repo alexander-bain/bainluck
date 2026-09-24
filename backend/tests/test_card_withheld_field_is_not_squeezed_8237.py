@@ -161,13 +161,24 @@ class TestTheNonExclusiveFieldIsLeftAlone:
     """gotcha #58 / #4079's `test_7`: dividing an independent-binary field is the
     entire reason this function exists, and the page keeps such a field raw for a
     DIFFERENT reason (#199). Widening the gate to non-ME would flip that
-    population for something the page never asserted about it."""
+    population for something the page never asserted about it.
 
-    @pytest.mark.parametrize("exclusivity", [False, None])
+    #7586 (Discover's ruling (c)): a flagged-False field now prints raw on the
+    card for the page's own #199 reason — before any withheld question is asked,
+    exactly as the page orders it — so the "still divides" arm is re-pinned on
+    `None`, and False is pinned raw beside it rather than deleted."""
+
+    @pytest.mark.parametrize("exclusivity", [None])
     def test_it_still_divides_even_with_withheld_legs(self, exclusivity):
         assert _feed_display_scale(
             _survivors(), mutually_exclusive=exclusivity, field_complete=False
         ) == pytest.approx(SURVIVING_SUM, abs=1e-9)
+
+    def test_a_flagged_non_exclusive_field_is_raw_with_or_without_withheld_legs(self):
+        for complete in (True, False):
+            assert _feed_display_scale(
+                _survivors(), mutually_exclusive=False, field_complete=complete
+            ) == pytest.approx(1.0)
 
 
 class TestTheGateIsAskedBeforeTheDrop:

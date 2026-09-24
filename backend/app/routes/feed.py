@@ -6950,7 +6950,9 @@ def _feed_display_scale(
     normalizing the former is the entire reason this function exists (gotcha #58,
     and #4079's ``test_7`` pins a 1.40-sum independent field that must keep
     dividing). Nestedness is the property that makes a sum meaningless, and only
-    the outcome list can prove it.
+    the outcome list can prove it. (Since #7586 a field FLAGGED non-exclusive is
+    raw whatever its shape — see the last section; this gate still decides for
+    ``True`` and ``None``, and still runs first.)
 
     ── #7650: AND THE DATE-SHAPED RUNGS, MEASURED AT EVERY SITE THE GATE FEEDS ──
 
@@ -7021,7 +7023,8 @@ def _feed_display_scale(
     exclusive fields and **381** non-exclusive ones.
 
     🔴 THE CEILING IS PER-CLASS, AND THE NON-EXCLUSIVE 2.0 IS DELIBERATELY LEFT
-    ALONE. Those 381 are gotcha #58's independent-binary field, which the page
+    ALONE. (Superseded for a flagged-False field by #7586 below; the 2.0 is now
+    the ``None`` arm's.) Those 381 are gotcha #58's independent-binary field, which the page
     keeps raw for a DIFFERENT and also correct reason (#199, non-ME participation
     families), and dividing them is the entire reason this function exists —
     #4079's ``test_7`` pins a 1.40-sum independent field that must keep dividing.
@@ -7093,8 +7096,40 @@ def _feed_display_scale(
     ``field_complete`` defaults True, mirroring `normalize_display_probs`'s own
     signature: every existing caller is preserved, and only a caller that KNOWS it
     had legs withheld passes False.
+
+    ── #7586: AND THE NON-EXCLUSIVE FIELD, WHICH THE PAGE NEVER DIVIDED ──
+
+    The two sections above kept a flagged non-exclusive field dividing "on
+    purpose", and that purpose was the split itself. The page's FIRST clause is
+    ``if not mutually_exclusive: return`` (#199): such a field's legs are each a
+    true probability and it prints them raw. This function divided the same legs
+    by their sum anywhere in (1.05, 2.0], so #4079's own fixture printed a leg at
+    60% on the page and 43% on the card behind it (0.60 / 1.40 = .4286) — the
+    precondition that test used to pin was the defect.
+
+    Codex's Direction B (`artifacts/other-model-7586-eligibility-finish/`
+    `CODEX-REVIEW.md`): for a proven non-exclusive family the card keeps each
+    supported leg's raw probability, as the page does. So ``False`` returns
+    ``1.0`` here, placed where the page places it — before the withheld question,
+    because the page returns for non-ME before it asks one. The ladder gate stays
+    first only because it answers ``1.0`` too; `62003056`'s per-day legs are not a
+    ladder and reach raw through this clause, never through that gate.
+
+    ``None`` is untouched and keeps today's 2.0 divide: "caller does not know" is
+    never a silently widened repair. ``True`` is untouched: #8224's ceiling,
+    #8237's gate and the one-winner squeeze all still apply.
+
+    🔴 THE MOVEMENT BESIDE THE PERCENT FOLLOWS. `_dated_movement_on_card_scale`
+    serves the dated raw-to-raw move only at scale ``1.0``, so a non-exclusive card
+    that used to print no move now prints one. That is the scale ruling's own raw
+    arm (the percent on screen is raw, the bank is raw) and it is pinned, not
+    incidental: `test_card_keeps_non_exclusive_field_raw_7586.py` and #4079's
+    amended ``test_7`` / ``test_7b``.
     """
     if _outcomes_are_cumulative_ladder(all_sorted_outcomes, question):
+        return 1.0
+    # #7586: a field the market says is NOT one winner prints raw, as the page does.
+    if mutually_exclusive is False:
         return 1.0
     # #8237: a one-winner field with withheld members is not a proved-complete
     # distribution — the page's #7103 gate, on the card's side of the same field.
@@ -7275,7 +7310,9 @@ def _normalize_feed_probabilities(
     - all_sum <= threshold  -> no normalization needed (already sane)
     - threshold < all_sum <= 2.0 -> independent binary markets (gotcha #58):
       divide each displayed outcome by all_sum so the slice shows correct
-      *relative* standing without inflating to 100%.
+      *relative* standing without inflating to 100%. Only when exclusivity is
+      unknown (or a one-winner field under #8224's ceiling): a field flagged
+      non-exclusive prints raw, as its page does (#7586).
     - all_sum > 2.0 -> threshold/cumulative outcomes (e.g. "rank 3+", "rank
       4+") that are NOT mutually exclusive.  Normalizing these flattens an
       81% leader to ~33%.  Skip entirely.

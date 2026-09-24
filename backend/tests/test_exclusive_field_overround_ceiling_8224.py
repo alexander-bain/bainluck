@@ -29,6 +29,14 @@ use detail's 1.60 for the named exclusive class, do NOT globally replace feed's 
 Measured over every open market with priced legs: 116 exclusive fields in the band
 (repaired) against 381 non-exclusive ones (which must not move).
 
+#7586 (2026-09-24, Codex Direction B, Discover's ruling (a)): a field flagged
+`mutually_exclusive=False` now prints RAW on the card, as it always did on the page —
+so the "keeps dividing" arm below is re-pinned on `None` ("caller does not know"),
+which is the arm that still carries the historical 2.0, and each test also pins
+False -> raw. Nothing was deleted; a build that lowered the ceiling for everything
+still fails every `None` assertion. `test_card_keeps_non_exclusive_field_raw_7586.py`
+owns the False arm.
+
 🔴 `TestEveryCallSiteIsWired` PINS THE SET, NOT A COUNT. #8187's lesson (trap K-C): a
 guard that asserts three NAMED call sites read a flag is green on the day a fourth
 site is shipped unwired. The rule here is "every call in feed.py to either function
@@ -132,9 +140,10 @@ class TestTheSpecimen:
         assert round(0.34 / scale, 4) == 0.3400
 
     def test_and_the_defect_is_reproduced_when_the_ceiling_is_not_applied(self):
-        """Red-first: the measured BEFORE, to the digit the reader saw."""
+        """Red-first: the measured BEFORE, to the digit the reader saw. Taken on the
+        `None` arm since #7586 — False no longer reaches the 2.0 ceiling at all."""
         scale = _feed_display_scale(
-            _legs(UCL_LEGS), UCL_QUESTION, mutually_exclusive=False
+            _legs(UCL_LEGS), UCL_QUESTION, mutually_exclusive=None
         )
         assert scale == pytest.approx(1.86)
         assert round(0.34 / scale, 4) == 0.1828
@@ -150,37 +159,55 @@ class TestTheSpecimen:
 
 class TestTheNonExclusiveCeilingIsUntouched:
     """🔴 LOAD-BEARING. A build that lowered the ceiling for everything passes
-    every assertion above and deletes gotcha #58's normalization."""
+    every assertion above and deletes gotcha #58's normalization.
+
+    Re-pinned on `None` by #7586 (Discover's ruling (a)): the 2.0 ceiling is now
+    the unknown-exclusivity arm's, and a flagged-False field prints raw like the
+    page. Each test pins both, so neither arm can move silently."""
 
     def test_the_same_legs_still_divide_when_the_field_is_not_exclusive(self):
         assert _feed_display_scale(
-            _legs(UCL_LEGS), UCL_QUESTION, mutually_exclusive=False
+            _legs(UCL_LEGS), UCL_QUESTION, mutually_exclusive=None
         ) == pytest.approx(1.86)
+        assert _feed_display_scale(
+            _legs(UCL_LEGS), UCL_QUESTION, mutually_exclusive=False
+        ) == pytest.approx(1.0)
 
     def test_the_ukraine_field_keeps_its_divisor(self):
         legs = _legs(UKRAINE_LEGS)
         assert round(sum(o.current_probability for o in legs), 4) == 1.9250
         assert _feed_display_scale(
-            legs, UKRAINE_QUESTION, mutually_exclusive=False
+            legs, UKRAINE_QUESTION, mutually_exclusive=None
         ) == pytest.approx(1.925)
+        assert _feed_display_scale(
+            legs, UKRAINE_QUESTION, mutually_exclusive=False
+        ) == pytest.approx(1.0)
 
     def test_a_non_exclusive_field_between_1_60_and_2_0_is_the_population(self):
-        """381 open markets live here; none of them may move."""
+        """381 open markets live here; unknown exclusivity keeps dividing them,
+        a flagged-False field prints raw (#7586)."""
         for total in (1.61, 1.75, 1.99, 2.0):
             legs = _flat(10, total / 10)
             assert _feed_display_scale(
+                legs, "an independent binary field", mutually_exclusive=None
+            ) == pytest.approx(total), f"unknown-exclusivity sum {total} must keep dividing"
+            assert _feed_display_scale(
                 legs, "an independent binary field", mutually_exclusive=False
-            ) == pytest.approx(total), f"non-exclusive sum {total} must keep dividing"
+            ) == pytest.approx(1.0), f"non-exclusive sum {total} must print raw"
 
     def test_4079_test_7s_independent_field_still_divides(self):
-        """The 1.40-sum independent field pinned by #4079 — below 1.60 either way."""
+        """The 1.40-sum field pinned by #4079 — below 1.60 either way. Divides for
+        None and True; raw for False since #7586."""
         legs = _flat(4, 0.35)
         assert _feed_display_scale(
-            legs, "independent", mutually_exclusive=False
+            legs, "independent", mutually_exclusive=None
         ) == pytest.approx(1.4)
         assert _feed_display_scale(
             legs, "independent", mutually_exclusive=True
         ) == pytest.approx(1.4)
+        assert _feed_display_scale(
+            legs, "independent", mutually_exclusive=False
+        ) == pytest.approx(1.0)
 
 
 class TestTheCeilingIsPerClassAtTheBoundary:
