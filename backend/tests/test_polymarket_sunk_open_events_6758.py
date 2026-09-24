@@ -554,9 +554,10 @@ class TestBoundsAndFailure:
         assert stats["events_missing_from_list"] == 45
         assert len(gamma.requests) == len(batches) + len(direct)
 
-    def test_the_per_pass_ceiling_is_thirty_gamma_calls(self):
-        total = poly._SUNK_POLY_IMMINENT_MAX + poly._SUNK_POLY_ROTATE_MAX
-        assert -(-total // poly._LINKED_POLY_ID_BATCH) == 30
+    def test_the_per_pass_ceiling_is_thirty_five_gamma_calls(self):
+        # 30 for the two arms here, plus 5 for #837's head arm (its own file).
+        total = poly._SUNK_POLY_HEAD_MAX + poly._SUNK_POLY_IMMINENT_MAX + poly._SUNK_POLY_ROTATE_MAX
+        assert -(-total // poly._LINKED_POLY_ID_BATCH) == 35
 
     @pytest.mark.asyncio
     async def test_a_429_stops_the_pass_and_keeps_the_cursor(self, monkeypatch):
