@@ -88,11 +88,50 @@ _OPEN_PAGE_SELECT_BEFORE = _norm(
 )
 
 
+#: lane1b/550: the ONE addition to the frozen text above — the event's market
+#: ids, which the write keys on. Notice 50: the control is split, never
+#: re-snapshotted — the remainder must still be the pre-#2526 bytes exactly.
+_MARKET_IDS_OUTER = "ev.markets, ev.market_ids FROM"
+_MARKET_IDS_INNER = "count(*) AS markets, array_agg(fm.id ORDER BY fm.id) AS market_ids FROM"
+
+
 async def test_the_open_scope_page_select_is_byte_unchanged(fast, monkeypatch):
     s = _Session(targets=[], remaining=0)
     _venue(monkeypatch, {})
     await rail.repair(s, apply=False)
-    assert s.target_sql == _OPEN_PAGE_SELECT_BEFORE
+    sql = s.target_sql
+    assert _MARKET_IDS_OUTER in sql and _MARKET_IDS_INNER in sql, sql
+    remainder = sql.replace(_MARKET_IDS_OUTER, "ev.markets FROM").replace(
+        _MARKET_IDS_INNER, "count(*) AS markets FROM"
+    )
+    assert remainder == _OPEN_PAGE_SELECT_BEFORE
+
+
+@pytest.mark.parametrize("scope", ["open", "not_open"])
+async def test_the_write_is_keyed_on_the_market_ids_the_page_selected(
+    fast, monkeypatch, scope
+):
+    """lane1b/550: production 2026-09-24 02:29Z — keyed on the event id alone,
+    the resolved-cohort UPDATE was a 4.7s sequential scan against its 1.0s
+    budget, so every `not_open` apply paused on its first event. The id list is
+    what lets the write plan on the primary key."""
+    s = _Session(
+        targets=[
+            _Row("943345", _Ts("2026-08-31T18:55:34+00:00"), 59939103, markets=2,
+                 market_ids=[59939103, 59939111]),
+        ],
+        remaining=40,
+        update_rowcount=2,
+    )
+    _venue(monkeypatch, {"943345": _TENNIS})
+    await rail.repair(s, apply=True, status_scope=scope)
+    assert len(s.writes) == 1, "the write never ran — the assertions below are vacuous"
+    sql, params = s.writes[0]
+    assert "fm.id = ANY(CAST(:ids AS integer[]))" in sql, sql
+    assert params["ids"] == [59939103, 59939111]
+    # The id list narrows the write; it never replaces the compare-and-set.
+    for guard in ("fm.llm_sport_category = :cat_old", "polymarket_event_id' = :eid"):
+        assert guard in sql, guard
 
 
 async def test_an_explicit_open_scope_is_the_default_scope(fast, monkeypatch):
