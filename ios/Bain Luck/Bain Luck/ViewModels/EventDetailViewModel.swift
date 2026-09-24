@@ -49,6 +49,19 @@ final class EventDetailViewModel: ObservableObject {
     /// and never to a frozen number.
     @Published private(set) var streamDelivering = false
 
+    /// #8320 — whether the stream has put a PRICE on this page since it last
+    /// started delivering.
+    ///
+    /// `streamDelivering` turns true on the stream's `open` event, before any
+    /// price has arrived — rightly for the poll, which it stands down, because
+    /// a stream that has just opened has not failed to deliver yet. It is not
+    /// evidence for a reader: native/319 photographed the green dot for up to
+    /// 90 seconds on an opened stream with no prices. So the dot reads this as
+    /// well. It is set only where a pushed price is written into the hero, and
+    /// cleared on every fall back to polling, so a rollover or a quiet market
+    /// has to push again before the page says it is being pushed to.
+    @Published private(set) var streamHasPushedPrice = false
+
     /// Every pushed blend this page has been given, at its stamped time (#920).
     ///
     /// The chart's right edge is drawn from this. Without it the stream reaches
@@ -259,6 +272,11 @@ final class EventDetailViewModel: ObservableObject {
             onDeliveringChange: { [weak self] delivering in
                 guard let self else { return }
                 self.streamDelivering = delivering
+                // Cleared on the way DOWN only. The way up follows the first
+                // frame of a resumed stream (`apply` runs before the controller
+                // reports delivering), so clearing there would erase the price
+                // that just earned it.
+                if !delivering { self.streamHasPushedPrice = false }
                 // Re-decide the poll on every transition, in BOTH directions.
                 // Only reacting to the good one would leave the page frozen the
                 // first time a stream went quiet.
@@ -317,6 +335,9 @@ final class EventDetailViewModel: ObservableObject {
             odds.homeRenderedPercent = nil
             odds.awayRenderedPercent = nil
             current.currentOdds = odds
+            // The hero now shows a pushed price — the only thing the page's
+            // stream dot may claim (#8320).
+            streamHasPushedPrice = true
         }
 
         // The same number, kept for the chart (#920). The hero renders the most

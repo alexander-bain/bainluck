@@ -332,7 +332,10 @@ struct EventDetailView: View {
                                      homeTeamAbbrev: event.homeTeamData?.abbreviation,
                                      awayTeamAbbrev: event.awayTeamData?.abbreviation,
                                      sportKey: event.sport,
-                                     refreshStreaming: vm.streamDelivering,
+                                     // #8320 — the page's one decision, so the
+                                     // fullscreen dot cannot claim a push the
+                                     // toolbar does not.
+                                     refreshStreaming: refreshIndicator == .streaming,
                                      forcedDomain: sharedChartDomain,
                                      pageAxisPlotWidth: pageAxisPlotWidth,
                                      selectedPlayPoint: $selectedPlayPoint,
@@ -2191,7 +2194,10 @@ struct EventDetailView: View {
     // MARK: - Refresh Status
 
     private var refreshIndicator: RefreshIndicator {
-        Self.refreshIndicator(status: vm.event?.status, streamDelivering: vm.streamDelivering)
+        Self.refreshIndicator(
+            status: vm.event?.status,
+            streamDelivering: vm.streamDelivering,
+            pushedPrice: vm.streamHasPushedPrice)
     }
 
     /// #8320 — ONE freshness status for the page, in the toolbar.
@@ -2244,8 +2250,15 @@ struct EventDetailView: View {
         case streaming
     }
 
-    static func refreshIndicator(status: String?, streamDelivering: Bool) -> RefreshIndicator {
+    /// `pushedPrice` (#8320): a stream that has OPENED is not a stream that has
+    /// delivered. The green dot waits for the first pushed price on the page;
+    /// until then — and after any fall back to polling — the page is honestly
+    /// being polled, whatever the socket is doing.
+    static func refreshIndicator(
+        status: String?, streamDelivering: Bool, pushedPrice: Bool
+    ) -> RefreshIndicator {
         guard showsRefreshStatus(status: status) else { return .hidden }
+        guard pushedPrice else { return .polling }
         return streamDelivering ? .streaming : .polling
     }
 }
