@@ -443,6 +443,57 @@ def project_scores(
     return round(home_score, 1), round(away_score, 1)
 
 
+def projection_contradicts_moneyline(
+    home_probability: Optional[float],
+    projected_home: Optional[float],
+    projected_away: Optional[float],
+) -> bool:
+    """True when one book's projected leader is the team its OWN moneyline makes the underdog.
+
+    #8231. ``project_scores`` reads the spread POINT and ignores its price, which
+    is only sound when the point is the book's fair line. A run line (MLB) or puck
+    line (NHL) is pinned at ±1.5 whatever the game state, and late in a decided
+    game a book will hang the -1.5 on the trailing side at long odds. Measured on
+    production, event 15316869 (Red Sox 2 - 3 Guardians), betmgm at 01:42:14Z:
+    ``home_spread = -1.5 @ +3300`` / ``away +1.5 @ -10000`` beside its own
+    moneyline at ``+900 / -2000`` (home 0.095). The point says Boston by 1.5, the
+    price and the moneyline both say Boston is nearly dead, and the settled page's
+    Score Differential chart ended on that mirror - the same book had quoted
+    ``+1.5 @ -10000`` for Boston two minutes earlier.
+
+    A projection whose leader disagrees with the same book's moneyline leader is
+    not a projection, so it is refused and the book contributes no projected
+    score. Its moneyline, spread and total are untouched. A tie on either side
+    (a pick'em point, a 0.5 moneyline) is not a contradiction, and a missing
+    input is not evidence of one.
+    """
+    if home_probability is None or projected_home is None or projected_away is None:
+        return False
+    lean = float(home_probability) - 0.5
+    margin = float(projected_home) - float(projected_away)
+    return (lean > 0 and margin < 0) or (lean < 0 and margin > 0)
+
+
+def refuse_incoherent_projections(rows: List[dict]) -> List[dict]:
+    """Null the projected pair on every served per-book row that contradicts its own moneyline.
+
+    #8231, the per-book half of ``aggregate_bookmaker_odds``: the sportsbook table
+    prints each book's projected score and the history's per-book lines carry
+    them, so the refusal has to reach the rows as well as the consensus. Reads
+    the row's already-oriented ``home_probability`` so a reversed book is judged
+    after its sides are swapped back. Mutates and returns ``rows``.
+    """
+    for row in rows:
+        if projection_contradicts_moneyline(
+            row.get("home_probability"),
+            row.get("projected_home_score"),
+            row.get("projected_away_score"),
+        ):
+            row["projected_home_score"] = None
+            row["projected_away_score"] = None
+    return rows
+
+
 # Sport-specific average totals for normalization
 SPORT_AVG_TOTALS = {
     "americanfootball_nfl": 45.0,
@@ -706,6 +757,13 @@ def aggregate_bookmaker_odds(
     home_spreads = [float(p) if p is not None else None for p in home_spreads]
     proj_home = [float(p) if p is not None else None for p in proj_home]
     proj_away = [float(p) if p is not None else None for p in proj_away]
+
+    # #8231: a book whose projected leader contradicts its own moneyline gives
+    # no projection - neither side, so the pair stays a pair.
+    for i, home_prob in enumerate(home_probs):
+        if projection_contradicts_moneyline(home_prob, proj_home[i], proj_away[i]):
+            proj_home[i] = None
+            proj_away[i] = None
 
     # Filter valid home probabilities for min/max calculation
     valid_home_probs = [p for p in home_probs if p is not None and 0 <= p <= 1]

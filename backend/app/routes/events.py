@@ -125,6 +125,7 @@ from app.utils import (
     should_highlight,
 )
 from app.utils.odds_filtering import filter_stale_bookmaker_snapshots as _filter_stale_bookmaker_snapshots
+from app.utils.odds_math import refuse_incoherent_projections
 from app.utils import period_markers as pm_source
 from app.utils.game_window import (
     filter_state_bearing_rows as _filter_state_bearing_rows,
@@ -14548,7 +14549,8 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
                     "projected_away_score": float(s.projected_away_score)
                         if s.projected_away_score else None,
                 })
-        response["bookmaker_odds"] = bookmaker_odds_list
+        # #8231: a book's projected score that crowns its own moneyline underdog is refused.
+        response["bookmaker_odds"] = refuse_incoherent_projections(bookmaker_odds_list)
 
     # Fallback: if no odds snapshots, use aggregate from alternative sources
     if "current_odds" not in response and agg_prob is not None:
@@ -24275,6 +24277,8 @@ async def get_event_odds_history(
                 "projected_home_score": float(snap.projected_home_score) if snap.projected_home_score is not None else None,
                 "projected_away_score": float(snap.projected_away_score) if snap.projected_away_score is not None else None,
             }
+            # #8231: the per-book line gets the consensus's refusal.
+            refuse_incoherent_projections([point_data])
 
             if cutoff is None or snap.captured_at >= cutoff:
                 # Normal case: use actual capture time
@@ -27597,7 +27601,8 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
                         "projected_away_score": float(s.projected_away_score)
                             if s.projected_away_score else None,
                     })
-            response["bookmaker_odds"] = bookmaker_odds_list
+            # #8231: a book's projected score that crowns its own moneyline underdog is refused.
+            response["bookmaker_odds"] = refuse_incoherent_projections(bookmaker_odds_list)
 
     # #240 Item 1: emit a single, unambiguous hero probability (the blend) so
     # clients bind to ONE number per question instead of a divergent field.
