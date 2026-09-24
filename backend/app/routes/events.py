@@ -22307,6 +22307,7 @@ async def _build_related_futures(
         build_label_identity,
         label_names_another_club,
     )
+    from app.utils.award_person_claim import outcome_claim_patterns
 
     team_index = None
     team_rows: list = []
@@ -22513,12 +22514,21 @@ async def _build_related_futures(
         # on the opponent's side rather than reaching ours through the token
         # that is the Islanders'.
         if not is_home and not is_away:
-            # Fall back to name matching on outcome (team outcomes)
-            is_home = _matches_any(outcome.name, home_patterns) and not label_names_another_club(
-                outcome.name, home_patterns, home_label_identity
+            # Fall back to name matching on outcome (team outcomes).
+            # #7867 person half: an award outcome is a PERSON, claimed by the
+            # club's roster names — a club token claims it only when it is the
+            # whole label ("Duke Watson" is not Duke's). `award_person_claim`.
+            home_claim = outcome_claim_patterns(
+                market.market_tier, outcome.name, home_patterns, home_team_patterns
             )
-            is_away = _matches_any(outcome.name, away_patterns) and not label_names_another_club(
-                outcome.name, away_patterns, away_label_identity
+            away_claim = outcome_claim_patterns(
+                market.market_tier, outcome.name, away_patterns, away_team_patterns
+            )
+            is_home = _matches_any(outcome.name, home_claim) and not label_names_another_club(
+                outcome.name, home_claim, home_label_identity
+            )
+            is_away = _matches_any(outcome.name, away_claim) and not label_names_another_club(
+                outcome.name, away_claim, away_label_identity
             )
 
         if not is_home and not is_away:
