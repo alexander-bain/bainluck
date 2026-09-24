@@ -4391,6 +4391,26 @@ jobs:
             exit 1
           }
 
+      - name: "#7878 win-prob evidence crosses the history response (real Postgres, real route)"
+        # Codex's exact-head review of PR #8438 found the producer's evidence
+        # never reached a client: the final `game_state` projection (#6546)
+        # stripped it. This gate seeds rows, runs the real retention collapse,
+        # GETs /api/events/{id}/history through the real app and reads the
+        # served JSON for every evidence kind. Shared `bl_searchtest`, reserved
+        # ids, ORM seeding. Skip detection plus a count.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_winprob_evidence_wire_7878_pg.py \
+            -v -rs 2>&1 | tee /tmp/wire7878.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/wire7878.txt; then
+            echo "::error::#7878 wire gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]2 passed," /tmp/wire7878.txt || {
+            echo "::error::#7878 wire gate did not run both cases"
+            exit 1
+          }
+
       - name: "#837 subscription slate — provision the disposable database"
         # Its own database for the reason the #7617 step above gives: this
         # contract creates and drops the six tables the slate predicate joins,

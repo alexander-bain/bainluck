@@ -41,6 +41,13 @@ from datetime import datetime, timezone
 from sqlalchemy import text
 
 from app.tasks.base import get_task_session
+# #7878: the evidence contract's constants live with its served half, so the
+# SQL that stamps a span and the route that serves it cannot drift apart.
+from app.utils.winprob_evidence import (
+    COVERED_THROUGH_RE as _COVERED_THROUGH_RE,
+    EVIDENCE_CONTRACT,
+    EVIDENCE_RESOLUTION_S,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -343,21 +350,6 @@ async def _bridge_valid_until(session, cfg: dict, partition_id: int, cutoff: dat
 # ---------------------------------------------------------------------------
 # Win-probability evidence collapse (#7878)
 # ---------------------------------------------------------------------------
-
-#: Display evidence resolution G. Codex's card-B decision: this is the
-#: resolution at which two captures establish a recorded span. It is NOT a
-#: freshness SLA and NOT proof of continuous observation; a wider gap is UNKNOWN.
-EVIDENCE_RESOLUTION_S = 300
-
-#: Names the contract a stamped span was written under. A span stamped under any
-#: other contract or resolution is ignored (fails closed), so a future change to G
-#: cannot silently inherit coverage proven at a coarser resolution.
-EVIDENCE_CONTRACT = "7878.v1"
-
-#: `covered_through` is written in exactly this shape (see `to_char` below) and
-#: read back only if it matches, so a hand-edited or foreign value is never cast.
-_COVERED_THROUGH_RE = r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6}Z$"
-
 
 async def _collapse_winprob_partition_sql(
     session, cfg: dict, partition_id: int, cutoff: datetime
