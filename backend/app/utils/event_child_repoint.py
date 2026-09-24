@@ -73,6 +73,7 @@ from typing import Any
 
 from sqlalchemy import text as sa_text
 
+from app.services.anchor_channel import duplicate_tag
 from app.utils.event_fk_inventory import derive_event_child_tables
 
 logger = logging.getLogger(__name__)
@@ -220,11 +221,85 @@ async def repoint_event_children(
         if removed:
             dropped[table] = removed
 
+    repointed.update(await _repoint_duplicate_tags(session, keep_id=keep_id, orphan_id=orphan_id))
+
     return {
         "repointed": repointed,
         "dropped_as_duplicate": dropped,
         "markets": markets,
     }
+
+
+#: Pseudo-table keys in the ``repointed`` counts for the two tag moves below. They are
+#: not tables, and are named so no reader of ``child_rows_repointed`` can take them for
+#: one.
+TAG_RETARGETED = "events.duplicate_of_tag:retargeted"
+TAG_CLEARED_ON_KEEP = "events.duplicate_of_tag:cleared_on_survivor"
+
+
+async def _repoint_duplicate_tags(session, *, keep_id: int, orphan_id: int) -> dict[str, int]:
+    """Move ``provenance:duplicate-of:<orphan>`` off the row about to be deleted. #8308.
+
+    THE POINTER THAT IS NOT A FOREIGN KEY. ``not_a_proven_duplicate`` hides every row
+    carrying ``duplicate-of:<N>`` from the one-card-per-game rails, and it cannot ask
+    whether row N still exists — it is a plain ``WHERE`` with no join, on purpose. So a
+    tag whose canonical is deleted hides its row FOREVER, and that row is usually the
+    only one left for the game. Measured on production 2026-09-23 23:40Z: Blue Jays @
+    Orioles game 2 (``15317724``) was live, 4–0, correct, and on no rail of
+    ``/api/leagues/baseball_mlb`` because it carried ``duplicate-of:15317957`` and
+    15317957 had been merged away. Every recent specimen was a doubleheader — a shared
+    StatPal fixture id is how the tag is written and also how the merge pairs rows.
+
+    ``reconcile_shared_fixture_ids`` refuses a dead canonical at WRITE time
+    (``DEAD_CANONICAL``); nothing re-checked it when the canonical died later. The merge
+    rail is the only place that knows both ids at the moment of death, so the fix lives
+    here, beside the FK moves, and inherits the rail's transaction and its authorization.
+
+    Two arms, and the first is the specimen's:
+
+    * the SURVIVOR carries ``duplicate-of:<orphan>`` — the merge has just decided the
+      tagged row is the game, so the claim that it duplicates the row it absorbed is
+      false. The element is removed.
+    * any OTHER row carries it — it still duplicates the game, whose id is now
+      ``keep``. The element is rewritten to ``duplicate-of:<keep>`` (once; a row that
+      already names ``keep`` just loses the stale element).
+
+    Only the exact element is touched: ``-`` on a JSONB array removes string elements
+    equal to the operand, and every other tag on the row is left as it was. Both
+    statements are ``@>``-scoped, which ``ix_events_event_tags`` (GIN,
+    ``jsonb_path_ops``) serves.
+    """
+    old_tag = duplicate_tag(orphan_id)
+    new_tag = duplicate_tag(keep_id)
+    moves: dict[str, int] = {}
+
+    result = await session.execute(
+        sa_text(
+            "UPDATE events SET event_tags = event_tags - CAST(:old_tag AS text) "
+            "WHERE id = :keep "
+            "AND event_tags @> jsonb_build_array(CAST(:old_tag AS text))"
+        ),
+        {"keep": keep_id, "old_tag": old_tag},
+    )
+    if cleared := _rowcount(result):
+        moves[TAG_CLEARED_ON_KEEP] = cleared
+
+    result = await session.execute(
+        sa_text(
+            "UPDATE events SET event_tags = CASE "
+            "WHEN event_tags @> jsonb_build_array(CAST(:new_tag AS text)) "
+            "THEN event_tags - CAST(:old_tag AS text) "
+            "ELSE (event_tags - CAST(:old_tag AS text)) "
+            "|| jsonb_build_array(CAST(:new_tag AS text)) END "
+            "WHERE id <> :keep AND id <> :orphan "
+            "AND event_tags @> jsonb_build_array(CAST(:old_tag AS text))"
+        ),
+        {"keep": keep_id, "orphan": orphan_id, "old_tag": old_tag, "new_tag": new_tag},
+    )
+    if retargeted := _rowcount(result):
+        moves[TAG_RETARGETED] = retargeted
+
+    return moves
 
 
 def _rows(result, orphan_id: int) -> list[dict[str, Any]]:
