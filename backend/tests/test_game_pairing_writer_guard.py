@@ -426,7 +426,14 @@ class TestTheGuardsCannotBeSilentlyRemoved:
         from app.tasks import statpal_sync
 
         src = inspect.getsource(statpal_sync._sync_statpal_schedules)
-        assert "pair_verdict(" in src, "live_by_teams is keyed on the team pair alone"
+        # #8278 moved the pairing into one helper that also separates a
+        # doubleheader's two games; the pass must still route every live row
+        # through it, and the helper must still gate on the verdict.
+        assert "_live_row_for_schedule_fixture(" in src, (
+            "live_by_teams is keyed on the team pair alone"
+        )
+        helper = inspect.getsource(statpal_sync._live_row_for_schedule_fixture)
+        assert "pair_verdict(" in helper and "Pairing.SAME" in helper
         assert "live_write_is_premature(" in src
 
     def test_statpal_live_scores_gates_the_write(self):
