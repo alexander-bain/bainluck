@@ -166,8 +166,10 @@ final class EvolutionMaximumTextDatesAndNames4445And8429Tests: XCTestCase {
 
     /// Endpoint labels must never print the same text twice (#3269's rule).
     func testEndpointLabelsAreDistinct() {
-        let start = utc.date(from: DateComponents(year: 2026, month: 9, day: 5, hour: 13))!
-        for span: TimeInterval in [3600, 5 * 3600, 20 * 3600, 86400, 7 * 86400, 200 * 86400] {
+        let start = utc.date(from: DateComponents(year: 2026, month: 9, day: 5, hour: 13, minute: 30))!
+        // 23h45m crosses midnight and ends in the SAME clock hour it began: an
+        // hour-only label would print "1 PM" twice (mutation M5, native/326).
+        for span: TimeInterval in [3600, 5 * 3600, 20 * 3600, 23.75 * 3600, 86400, 7 * 86400, 200 * 86400] {
             let hi = start.addingTimeInterval(span)
             var format = OddsChartView.XAxisPlan(
                 component: .day, count: 1,
