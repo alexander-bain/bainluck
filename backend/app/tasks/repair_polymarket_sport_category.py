@@ -408,6 +408,24 @@ STATUS_SCOPE_SQL = {
 }
 DEFAULT_STATUS_SCOPE = "open"
 
+#: #8460: how a row names the venue EVENT the rail re-asks, per scope. Most
+#: resolved rows carry ``polymarket_event_id``; 75,004 resolved `table_tennis`
+#: rows do not (production, 2026-09-24), so the ``not_open`` drain never
+#: selected them and a finished ITF match still read TABLE TENNIS while its own
+#: sibling, one row over in the same event, read TENNIS. Every one of them
+#: carries the event id in its ``group_id`` (``polymarket:{event.id}``, set at
+#: ingest), and over the 32,076 rows that carry BOTH the two never disagree.
+#: The verdict is still the venue's answer for that event id, never the name.
+#: ``open`` keeps the key the Q495–Q497 certs graded: its population held zero
+#: rows without the metadata id on the same read.
+EVENT_ID_SQL = {
+    "open": "fm.market_metadata->>'polymarket_event_id'",
+    "not_open": (
+        "COALESCE(fm.market_metadata->>'polymarket_event_id', "
+        "substring(fm.group_id from '^polymarket:([0-9]+)$'))"
+    ),
+}
+
 #: Schema of the undo record. Its OWN name, never another rail's: two rails
 #: sharing a schema string would let one rail's restore read the other's receipt
 #: and "put back" values it never wrote.
@@ -1035,6 +1053,7 @@ async def census(
     if scope is None:
         return _scope_refused(status_scope, "polymarket-sport-category-census", started)
     status_sql = STATUS_SCOPE_SQL[scope]
+    event_id_sql = EVENT_ID_SQL[scope]
     try:
         # CERT-667 (`Q496-CENSUS-SET-LOCAL`) — THIS USED TO BE A PLAIN `SET`, AND A
         # PLAIN `SET` OUTLIVES THE REQUEST THAT ISSUED IT.
@@ -1073,13 +1092,13 @@ async def census(
                     SELECT
                       (CURRENT_DATE - fm.updated_at::date) AS days_since_touch,
                       count(*)                             AS markets,
-                      count(DISTINCT fm.market_metadata->>'polymarket_event_id')
+                      count(DISTINCT {event_id_sql})
                                                            AS events
                     FROM futures_markets fm
                     WHERE fm.source = 'polymarket'
                       AND {status_sql}
                       AND fm.llm_sport_category = :cat
-                      AND fm.market_metadata->>'polymarket_event_id' IS NOT NULL
+                      AND {event_id_sql} IS NOT NULL
                     GROUP BY 1
                     ORDER BY 1
                     """,
@@ -1102,12 +1121,12 @@ async def census(
                 timeout_literal=f"'{CENSUS_STATEMENT_TIMEOUT_SECONDS}s'",
                 server_budget_s=CENSUS_STATEMENT_TIMEOUT_SECONDS,
                 sql=f"""
-                    SELECT count(DISTINCT fm.market_metadata->>'polymarket_event_id')
+                    SELECT count(DISTINCT {event_id_sql})
                     FROM futures_markets fm
                     WHERE fm.source = 'polymarket'
                       AND {status_sql}
                       AND fm.llm_sport_category = :cat
-                      AND fm.market_metadata->>'polymarket_event_id' IS NOT NULL
+                      AND {event_id_sql} IS NOT NULL
                     """,
                 params={"cat": SUSPECT_CATEGORY},
             )
@@ -1271,6 +1290,7 @@ async def repair(
     if scope is None:
         return _scope_refused(status_scope, "polymarket-sport-category", started)
     status_sql = STATUS_SCOPE_SQL[scope]
+    event_id_sql = EVENT_ID_SQL[scope]
     cap = min(int(limit or APPLY_EVENT_CAP), APPLY_EVENT_CAP)
     try:
         after_date_bound = parse_after_date(after_date)
@@ -1353,7 +1373,7 @@ async def repair(
                        ev.market_ids
                 FROM (
                   SELECT
-                    fm.market_metadata->>'polymarket_event_id' AS event_id,
+                    {event_id_sql} AS event_id,
                     max(fm.commence_time)                      AS commence_time,
                     min(fm.id)                                 AS anchor_id,
                     count(*)                                   AS markets,
@@ -1362,7 +1382,7 @@ async def repair(
                   WHERE fm.source = 'polymarket'
                     AND {status_sql}
                     AND fm.llm_sport_category = :cat
-                    AND fm.market_metadata->>'polymarket_event_id' IS NOT NULL
+                    AND {event_id_sql} IS NOT NULL
                   GROUP BY 1
                 ) ev
                 WHERE TRUE
@@ -1635,7 +1655,7 @@ async def repair(
                           AND fm.source = 'polymarket'
                           AND {status_sql}
                           AND fm.llm_sport_category = :cat_old
-                          AND fm.market_metadata->>'polymarket_event_id' = :eid
+                          AND {event_id_sql} = :eid
                         RETURNING fm.id, prev.category, fm.category
                         """,
                     params={
@@ -1781,12 +1801,12 @@ async def repair(
                 timeout_literal=str(int(count_budget_s * 1000)),
                 server_budget_s=count_budget_s,
                 sql=f"""
-                    SELECT count(DISTINCT fm.market_metadata->>'polymarket_event_id')
+                    SELECT count(DISTINCT {event_id_sql})
                     FROM futures_markets fm
                     WHERE fm.source = 'polymarket'
                       AND {status_sql}
                       AND fm.llm_sport_category = :cat
-                      AND fm.market_metadata->>'polymarket_event_id' IS NOT NULL
+                      AND {event_id_sql} IS NOT NULL
                     """,
                 params={"cat": SUSPECT_CATEGORY},
             )
