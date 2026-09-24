@@ -3135,6 +3135,23 @@ jobs:
             exit 1
           fi
 
+      - name: "#2526 sport-category rail resumes from its own cursor (real Postgres)"
+        # The rail prints `next_cursor.after_date` as a string and the dispatcher
+        # hands the string back; asyncpg binds `CAST(:after_date AS timestamptz)`
+        # as a typed parameter and refuses a `str`. On production every page
+        # after the first failed that way (2026-09-24), reported as a SELECT
+        # timeout, while every unit guard passed on a recording session that
+        # accepts any type. Proved non-vacuous before wiring: binding the raw
+        # string reds both arms with the production error.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_sport_category_cursor_resume_2526_real_postgres.py \
+            -v -rs 2>&1 | tee /tmp/cursor2526.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/cursor2526.txt; then
+            echo "::error::#2526 cursor-resume gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#8132 the D51(b) undo for the fabricated-win repair (real Postgres)"
         # The forward half of this pair is ALREADY APPLIED to 56 production
         # rows. D51(b) permitted that unattended because the repair "writes a

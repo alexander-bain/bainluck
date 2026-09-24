@@ -726,6 +726,41 @@ def _scope_refused(status_scope: Any, repair_name: str, started: float) -> dict[
     }
 
 
+def parse_after_date(raw: Any) -> Optional[datetime]:
+    """The cursor's ``after_date`` as a datetime, ``None`` when absent.
+
+    The dispatcher hands it over as the STRING this rail printed in
+    ``next_cursor``, and asyncpg binds ``CAST(:after_date AS timestamptz)`` as a
+    typed parameter that accepts only a datetime — so the raw string failed every
+    resumed page on production (#2526, 2026-09-24 00:40Z: "expected a
+    datetime.date or datetime.datetime instance, got 'str'"), reported as a
+    SELECT timeout. Page one never passes a cursor, which is why no drain of
+    this rail had ever reached page two. Same parse as the Kalshi series-tag
+    rail's ``_parse_after_date``. Raises ``ValueError`` on a malformed value.
+    """
+    if raw is None or isinstance(raw, datetime):
+        return raw
+    text_value = str(raw).strip()
+    if not text_value:
+        return None
+    if text_value.endswith("Z"):
+        text_value = text_value[:-1] + "+00:00"
+    return datetime.fromisoformat(text_value)
+
+
+def _cursor_refused(after_date: Any, repair_name: str, started: float) -> dict[str, Any]:
+    return {
+        "repair": repair_name,
+        "applied": False,
+        "terminal": "refused_cursor",
+        "reason": (
+            f"?after_date={after_date!r} is not an ISO-8601 timestamp — pass the "
+            f"`next_cursor.after_date` this rail printed. Nothing was read or written."
+        ),
+        "elapsed_s": round(time.monotonic() - started, 2),
+    }
+
+
 # ---------------------------------------------------------------------------
 # The undo receipt (D51, #2526). The shape is the leg-label rail's (#7701 rung
 # 3b, CERT-3352), which reused the single-leg rail's (CERT-851/856/1979). What
@@ -1237,6 +1272,10 @@ async def repair(
         return _scope_refused(status_scope, "polymarket-sport-category", started)
     status_sql = STATUS_SCOPE_SQL[scope]
     cap = min(int(limit or APPLY_EVENT_CAP), APPLY_EVENT_CAP)
+    try:
+        after_date_bound = parse_after_date(after_date)
+    except ValueError:
+        return _cursor_refused(after_date, "polymarket-sport-category", started)
 
     # CERT-666 (P1): the cursor starts where the OPERATOR already was, not at
     # None. A page whose very first event fails to resolve must hand back the
@@ -1259,7 +1298,7 @@ async def repair(
     keyset = ""
     if after_id is not None:
         params["after_id"] = int(after_id)
-        if after_date:
+        if after_date_bound is not None:
             # In the non-NULL region. Everything still to come is either a
             # smaller (commence_time, anchor_id) tuple, or ANY row in the NULL
             # region — because NULLS LAST sorts the whole of it after us.
@@ -1268,7 +1307,7 @@ async def repair(
                         OR (ev.commence_time, ev.anchor_id) <
                            (CAST(:after_date AS timestamptz), CAST(:after_id AS integer)) )
             """
-            params["after_date"] = after_date
+            params["after_date"] = after_date_bound
         else:
             # Already inside the NULL region: ordering there is by anchor_id
             # alone, and no non-NULL row can follow.
