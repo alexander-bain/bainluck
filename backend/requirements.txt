@@ -10,7 +10,12 @@ uvicorn[standard]>=0.27.0
 python-dotenv>=1.2.2
 
 # Database
-sqlalchemy>=2.0.50
+# #8454 (2026-09-24): SQLAlchemy 2.1.0 (PyPI 20:12Z) stopped installing greenlet,
+# which every AsyncSession path needs; every backend CI shard then failed at conftest
+# import. `[asyncio]` declares greenlet explicitly (2.0 and 2.1 alike), and `<2.1`
+# keeps a minor release with removals from arriving untested. Widen the bound by
+# testing 2.1, not by deleting it (guard: tests/test_requirements_sqlalchemy_asyncio_8454.py).
+sqlalchemy[asyncio]>=2.0.50,<2.1
 asyncpg>=0.31.0
 psycopg2-binary>=2.9.9
 alembic>=1.13.1
