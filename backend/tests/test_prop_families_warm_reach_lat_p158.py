@@ -351,33 +351,54 @@ class TestCoverageArithmeticStillHolds:
         outcomes can render a family, and no lower than the point where one
         cannot. That pins it to `group_prop_families`'s own `>= 2 distinct
         entities` rule without duplicating the rule.
+
+        #8402: a LIVE season award now emits with ONE entity (a team's lone MVP
+        candidate is a card), so the fixture is a non-award family — the rule
+        the threshold derives from. The award exception is a deliberate,
+        stated gap, pinned below: lowering the threshold to 1 to cover it would
+        overflow a warm cycle that has one team of headroom
+        (`MEASURED_UNION_TEAMS` vs the ceiling), so such a team renders on a
+        cold read instead of a warmed one.
         """
         from app.utils.prop_families import group_prop_families
 
-        def _market_with(n_outcomes):
+        def _markets_with(n_outcomes):
             return [{
-                "market_id": 10, "name": "NBA MVP", "source": "kalshi",
-                "group_id": None, "status": "open", "resolution_date": None,
-                "market_metadata": None,
-                "outcomes": [
-                    {"outcome_id": i, "name": f"Player Number{i:02d}",
-                     "probability": 0.5, "is_winner": False}
-                    for i in range(n_outcomes)
-                ],
-            }]
+                "market_id": 10 + i, "name": f"Player Number{i:02d} Next Team",
+                "source": "kalshi", "group_id": None, "status": "open",
+                "resolution_date": None, "market_metadata": None,
+                "outcomes": [{"outcome_id": i, "name": "Kansas City Chiefs",
+                              "probability": 0.5, "is_winner": False}],
+            } for i in range(n_outcomes)]
 
-        at_threshold = group_prop_families(_market_with(warm.MIN_PROPS_TO_WARM))
+        at_threshold = group_prop_families(_markets_with(warm.MIN_PROPS_TO_WARM))
         assert len(at_threshold) >= 1, (
             f"a team with exactly MIN_PROPS_TO_WARM={warm.MIN_PROPS_TO_WARM} prop "
             "outcomes renders NO family, so the threshold is admitting teams that "
             "cannot show anything"
         )
 
-        below = group_prop_families(_market_with(warm.MIN_PROPS_TO_WARM - 1))
+        below = group_prop_families(_markets_with(warm.MIN_PROPS_TO_WARM - 1))
         assert len(below) == 0, (
             f"a team with {warm.MIN_PROPS_TO_WARM - 1} outcomes already renders a "
             "family, so the threshold is EXCLUDING pages that work — this is "
             "exactly what CERT-513 blocked"
+        )
+
+        lone_award = group_prop_families([{
+            "market_id": 99, "name": "NBA MVP", "source": "kalshi",
+            "group_id": None, "status": "open", "resolution_date": None,
+            "market_metadata": None,
+            "outcomes": [{"outcome_id": 99, "name": "Player Number99",
+                          "probability": 0.5, "is_winner": False}],
+        }])
+        assert [f["family_key"] for f in lone_award] == ["mvp"], (
+            "the #8402 exception is gone or has moved: if a lone award no longer "
+            "renders, the gap this docstring states no longer exists — rewrite it"
+        )
+        assert warm.MIN_PROPS_TO_WARM == 2, (
+            "the warm threshold moved; re-derive it against the coverage ceiling, "
+            "not against the #8402 award exception"
         )
 
     def test_the_measured_union_is_covered_before_the_mirror_lapses(self):

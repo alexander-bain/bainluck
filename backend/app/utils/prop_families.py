@@ -757,6 +757,23 @@ def _collapse_cross_source(rows: list[dict]) -> list[dict]:
     return [_merge_rows(grp) for grp in groups.values()]
 
 
+# Award keys that are a single game or series, not a season.  They keep the
+# two-entity rule: "Championship Game MVP" alone is not a card a reader can use.
+_ONE_GAME_AWARDS = frozenset({"championship game mvp", "finals mvp"})
+_SEASON_AWARDS = frozenset(c for _kw, c in _STANDALONE_AWARDS) - _ONE_GAME_AWARDS
+
+
+def _is_season_award(fk: str) -> bool:
+    """A season award is a league-wide race by definition, so one runner is a card.
+
+    The team route narrows every market to the team's own players BEFORE
+    grouping, so the Chiefs hold exactly one MVP candidate and the two-entity
+    rule hid Mahomes' 8.75% (#8402).  It only ever showed because the Super Bowl
+    MVP question #8386 removed had been counting as a second player.
+    """
+    return fk in _SEASON_AWARDS or fk.endswith("of the year")
+
+
 def _family_label(fk: str) -> str:
     if fk in _LABEL_OVERRIDES:
         return _LABEL_OVERRIDES[fk]
@@ -911,7 +928,8 @@ def group_prop_families(markets: list[dict]) -> list[dict]:
         }
 
     Only families with >= 2 DISTINCT entities are emitted (a single market
-    is not a family).  Cross-source duplicate entity rows are collapsed
+    is not a family) — except a LIVE season award, which emits with one
+    (see :func:`_is_season_award`).  Cross-source duplicate entity rows are collapsed
     (bug a); settled rows are labelled settled, not live (bug b).
     """
     families: "OrderedDict[str, list[tuple[str | None, dict]]]" = OrderedDict()
@@ -934,7 +952,11 @@ def group_prop_families(markets: list[dict]) -> list[dict]:
     for emitted_key, fk, scope, rows in buckets:
         merged = _collapse_cross_source(_drop_earlier_results(rows))
         distinct = {r["entity_key"] for r in merged if r.get("entity_key")}
-        if len(distinct) < 2:
+        if len(distinct) < 2 and not (
+            distinct
+            and _is_season_award(fk)
+            and any(not r.get("settled") for r in merged)
+        ):
             continue
 
         # Settled rows sink below live rows; live rows by probability desc.
