@@ -1178,6 +1178,85 @@ def _resolve_within_one_cycle(data: dict[str, Any], other: dict[str, Any]) -> bo
     return abs((left - right).days) < _SAME_CYCLE_MAX_DAYS
 
 
+def _resolve_in_stated_year(data: dict[str, Any], other: dict[str, Any], year: int) -> bool:
+    """Do BOTH rows settle in the year the dated title names? (#8387)
+
+    The evidence removal 2 already accepts for a leading year, offered to
+    removal 3 beside :func:`_resolve_within_one_cycle`. Two consecutive annual
+    editions of one title cannot both settle inside the same calendar year the
+    title names, so this refuses exactly what the cycle window refuses on the
+    specimens that window was written for (this year's Masters beside next
+    year's; the House a half-year apart). It reaches the rows the window cannot:
+    Kalshi's catch-all Dec 31 close against Polymarket's Jul 1 on one Oscars
+    ceremony, 183 days apart and both in 2027.
+    """
+    return _resolution_year(data) == year and _resolution_year(other) == year
+
+
+#: A field market's served outcomes are its top few, so "the same priced set"
+#: is only reachable for a two-way race. A field agrees when this many are
+#: priced on each side, the leader is the same, and at least two are shared.
+_FIELD_MIN_PRICED = 3
+_FIELD_MIN_SHARED = 2
+
+
+def _priced_leader(data: dict[str, Any]) -> str | None:
+    """The name of the highest-priced outcome, lowercased, or None."""
+    best: tuple[float, str] | None = None
+    for outcome in data.get("top_outcomes") or ():
+        if not isinstance(outcome, dict) or outcome.get("probability") is None:
+            continue
+        name = str(outcome.get("name") or "").strip().lower()
+        if not name:
+            continue
+        try:
+            probability = float(outcome["probability"])
+        except (TypeError, ValueError):
+            continue
+        if best is None or probability > best[0]:
+            best = (probability, name)
+    return best[1] if best else None
+
+
+def _same_priced_outcomes(data: dict[str, Any], other: dict[str, Any]) -> bool:
+    """Removal 3's row-level second signal: do the two rows price one question?
+
+    Either the SAME priced outcome set (#6537 — the House's two parties), or,
+    for a field, the same leader among at least :data:`_FIELD_MIN_PRICED` priced
+    names on each side with :data:`_FIELD_MIN_SHARED` of them shared (#8387).
+    Set equality over the served top three is structurally unreachable for a
+    field: Polymarket spells Best Picture's runner-up "La Bola Negra" where Kalshi
+    writes "The Black Ball", and a venue's third leg is whoever it happens to
+    rank third. Two different fields rarely share a leader AND a second name;
+    when they do (Best Picture beside Best Cinematography, both led by one film),
+    the titles still differ and the matcher refuses them — this gate only ever
+    runs beside it.
+    """
+    priced = _priced_outcome_names(data)
+    other_priced = _priced_outcome_names(other)
+    if not priced or not other_priced:
+        return False
+    if priced == other_priced:
+        return True
+    if len(priced) < _FIELD_MIN_PRICED or len(other_priced) < _FIELD_MIN_PRICED:
+        return False
+    leader = _priced_leader(data)
+    return (
+        leader is not None
+        and leader == _priced_leader(other)
+        and len(priced & other_priced) >= _FIELD_MIN_SHARED
+    )
+
+
+#: An award ceremony's plural nickname (#8387). Polymarket writes "Oscars 2027:
+#: Best Picture Winner", Kalshi "Oscar Winner: Best Picture" — one ceremony, but
+#: the plural costs the pair a token on one side only. A closed vocabulary, not a
+#: plural rule: a generic "drop a trailing s" folds "World Series" onto "Serie A".
+_CEREMONY_PLURAL_RE = re.compile(
+    r"\b(oscar|grammy|emmy|tony|golden globe|bafta)s\b", re.IGNORECASE
+)
+
+
 def _priced_outcome_names(data: dict[str, Any]) -> frozenset[str]:
     """The names of the outcomes a card actually PRICES, lowercased (#6537).
 
@@ -1252,6 +1331,18 @@ def _comparison_title(data: dict[str, Any], other: dict[str, Any]) -> str:
        ``#2``, the 2027 Women's World Cup beside the 2030 men's, the U.S. House
        beside the U.S. Senate, Ankara's high temperature beside Dallas's.
 
+       #8387 widened two of the four, each by an arm with its own evidence
+       rather than a moved number: the same-edition gate also accepts both rows
+       settling in the stated year (:func:`_resolve_in_stated_year`), and the
+       outcome gate also accepts a field agreement (:func:`_same_priced_outcomes`).
+       ``_SAME_CYCLE_MAX_DAYS`` is untouched.
+
+    4. **An award ceremony's plural nickname**, always, on both sides (#8387):
+       ``Oscars`` -> ``Oscar``. A substitution, not a removal, so it can add ONE
+       shared token to a pair; ``could_be_same_question``'s floor of 2 is one
+       below the near arm's 3, so the prefilter still never hides a pair this
+       rewrite lets the matcher pair.
+
     WHY THIS IS NOT A THRESHOLD MOVE, measured on the 23 same-bundle pairs served
     on page one at 13:30 PT 2026-09-09:
 
@@ -1293,16 +1384,17 @@ def _comparison_title(data: dict[str, Any], other: dict[str, Any]) -> str:
         years = {match.group(0) for match in _ANY_YEAR_RE.finditer(title)}
         if len(years) == 1:
             year = int(years.pop())
-            priced = _priced_outcome_names(data)
             if (
                 _resolution_year(data) in (year, year + 1)
-                and _resolve_within_one_cycle(data, other)
-                and priced
-                and priced == _priced_outcome_names(other)
+                and (
+                    _resolve_within_one_cycle(data, other)
+                    or _resolve_in_stated_year(data, other, year)
+                )
+                and _same_priced_outcomes(data, other)
             ):
                 title = _ANY_YEAR_RE.sub("", title).strip()
 
-    return title
+    return _CEREMONY_PLURAL_RE.sub(lambda m: m.group(1), title)
 
 
 def _dedupe_same_question_members(
