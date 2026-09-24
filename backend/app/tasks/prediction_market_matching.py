@@ -6763,6 +6763,20 @@ async def _find_matching_event(
     # centre is 0h out of the right one, and the score decides which of two
     # same-teams rows the market lands on.
     scoring_ref = ticker_start or game_date_override
+    #
+    # #8373: a Polymarket market has no ticker date, so it used to be scored
+    # from `now` — and the NEAREST game of a series always won. Every later
+    # game of a weekend set was offered game 1, which #4965's fixture guard
+    # (rightly) refused, so it never linked: Saturday's Cubs @ Red Sox (Gamma
+    # 1053345, venue 09-26T23:15Z) was offered 15316415 (09-25T17:05Z, 30.2h
+    # apart) over its own 15316408. Score from the venue's own game instant —
+    # the same stamp the guard judges the link by. Scoring only; the windows
+    # below are unchanged, and a market with no stamp scores exactly as before.
+    if (
+        scoring_ref is None
+        and getattr(market, "source", None) == "polymarket"
+    ):
+        scoring_ref = venue_game_start(market)
     reference_time = ticker_start or game_date_override or market.commence_time or now
     if game_date_override:
         if ticker_start is not None:
