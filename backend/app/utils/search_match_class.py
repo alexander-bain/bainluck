@@ -661,6 +661,34 @@ def query_is_entity_name(query: str, names: Iterable[str | None]) -> bool:
     return any(name and tokens(name) == q_tokens for name in names)
 
 
+def query_resolves_team(query: str, ev: Evidence) -> bool:
+    """Is this team the ENTITY the query names — typed in full, or still being typed?
+
+    #4615. D107's order is "the team card, then its games, then props". The card
+    half is the team reaching `ENTITY_TEAM_KIND` (the query IS a whole owned name,
+    `yankee` -> "Yankees") or MC1B (the query is the unfinished form of one,
+    `dodg` -> "Dodgers"). This is that test, so the route can extend the same
+    verdict to the team's OWN fixtures — which `query_names_participant` cannot
+    give them: it reads `_name_tokens`, which refuses both the plural fold and a
+    prefix, and on production both queries served the game under four inning
+    props of itself.
+
+    `ev` must already carry the route's kind decision (`_typeahead_evidence`),
+    which is where `ENTITY_TEAM_KIND` is assigned. A team the query merely lands
+    on — `angel`, `new`, `york`: a token, or part of one, INSIDE a name — is not
+    resolved, and its games keep the ratified market > event relation (ruling
+    041). (`angeles` promotes the game anyway, through #4411's participant rule.)
+
+    The plural boundary (CERT-2392) is not reopened: a roster resolved only by
+    the fold while something in the set carries the query unfolded takes the
+    namesake penalty, and so does its fixture, which lands by the same fold. The
+    penalty sorts ahead of kind.
+    """
+    if ev.kind == ENTITY_TEAM_KIND:
+        return True
+    return ev.kind == "team" and match_class(query, ev) == MC1B_OWN_NAME_PREFIX
+
+
 # --- the plural namesake rule (#4411, CERT-2399) ----------------------------
 #
 # `sinner` on production led with "Counter-Strike: NIP vs Sinners - Map 1

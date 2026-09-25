@@ -2430,3 +2430,117 @@ async def test_the_dropdown_resolves_a_team_only_from_a_complete_rostered_name(
     assert ("team", "Kansas City Chiefs") not in rows, (
         f"{q!r} resolved the Chiefs from a roster without naming a player in full"
     )
+
+
+# --------------------------------------------------------------------------
+# #4615 — a resolved team's own game sits directly under the team, above its props
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+async def typeahead_with_a_team_and_its_inning_markets(seeded_db, typeahead):
+    """The `dodg` rows from production 2026-09-25 07:30Z (`6e2f96cb`).
+
+    Dodgers card, then the game's own parent market and four "Nth Inning Winner"
+    markets, then tonight's game LAST: the fixture was already in the pool, so
+    the lead-team arm never marked it, and `query_names_participant` refuses the
+    prefix `dodg` (and the fold `dodger`), so it stayed a plain `event` under
+    `futures`. Its own fixture, not `_seed`, so no other test sees a Dodgers row.
+    """
+    from sqlalchemy import select
+
+    from app.models.models import Event, FuturesMarket, FuturesOutcome, Sport, Team
+
+    _engine, maker = seeded_db
+    async with maker() as session:
+        mlb = (
+            await session.execute(select(Sport).where(Sport.key == "baseball_mlb"))
+        ).scalar_one()
+        dodgers = Team(
+            sport_id=mlb.id,
+            name="Los Angeles Dodgers",
+            abbreviation="LAD",
+            alternate_names=["Los Angeles", "Dodgers", "LAD"],
+        )
+        session.add(dodgers)
+        await session.flush()
+        session.add(
+            Event(
+                sport_id=mlb.id,
+                home_team_name="San Francisco Giants",
+                away_team_name="Los Angeles Dodgers",
+                away_team_id=dodgers.id,
+                commence_time=datetime.now(timezone.utc) + timedelta(hours=6),
+                status="scheduled",
+            )
+        )
+        parent = "Los Angeles Dodgers vs. San Francisco Giants"
+        for suffix in ("", " - 1st Inning Winner", " - 3rd Inning Winner",
+                       " - 4th Inning Winner", " - 5th Inning Winner"):
+            external_id = f"KXMLBGAME-4615{suffix.replace(' ', '')}"
+            market = FuturesMarket(
+                source="kalshi",
+                external_id=external_id,
+                name=f"{parent}{suffix}",
+                status="open",
+                llm_sport_category="baseball",
+                market_tier=3,
+                volume=50_000,
+                resolution_date=datetime.now(timezone.utc) + timedelta(days=1),
+            )
+            session.add(market)
+            await session.flush()
+            for outcome_name in ("Los Angeles Dodgers", "San Francisco Giants"):
+                session.add(
+                    FuturesOutcome(
+                        market_id=market.id,
+                        external_id=f"{external_id}:{outcome_name}",
+                        name=outcome_name,
+                        current_probability=_SEED_PRICE,
+                    )
+                )
+        await session.commit()
+
+    return typeahead
+
+
+_DODGERS_GAME = ("event", "Los Angeles Dodgers at San Francisco Giants")
+
+
+@pytest.mark.parametrize("q", ["dodg", "dodger"])
+async def test_a_resolved_teams_game_sits_directly_under_it(
+    typeahead_with_a_team_and_its_inning_markets, q
+):
+    """🔴 THE SHIP. `dodg` is the production specimen (MC1B, the unfinished alias);
+    `dodger` is the `yankee` shape (the whole alias through the plural fold)."""
+    rows = _typeahead_rows(await typeahead_with_a_team_and_its_inning_markets(q))
+    kinds = [k for k, _ in rows]
+    assert "futures" in kinds, f"{q!r}: recall moved, no inning markets: {rows!r}"
+    assert rows[:2] == [("team", "Los Angeles Dodgers"), _DODGERS_GAME], (
+        f"{q!r}: the Dodgers' game is not directly under the Dodgers: {rows!r} (#4615)"
+    )
+
+
+async def test_a_team_the_query_only_lands_on_keeps_market_before_game(
+    typeahead_with_a_team_and_its_inning_markets,
+):
+    """The control arm: the same team leads, the gate stays SHUT. `angel` lands on
+    the Dodgers only as a prefix of the token "Angeles" (MC2) — not a whole owned
+    name, not the unfinished form of one — so their game keeps ruling 041's
+    market > event, exactly as before #4615.
+
+    Not `angeles`: that is a whole word of "Los Angeles Dodgers", so #4411's
+    `query_names_participant` already promotes every Los Angeles game for it,
+    and a control there would pass or fail for a reason the gate never touched.
+    """
+    rows = _typeahead_rows(await typeahead_with_a_team_and_its_inning_markets("angel"))
+    kinds = [k for k, _ in rows]
+    # The Dodgers are still the route's lead team here (the only club `angel`
+    # reaches) even though their MC2 card falls under the page cut: forcing the
+    # gate open turns this test red, which is what proves it testifies.
+    assert _DODGERS_GAME in rows and "futures" in kinds, (
+        f"the control is dead — `angel` reached no game or no market: {rows!r}"
+    )
+    assert kinds.index("futures") < rows.index(_DODGERS_GAME), (
+        f"`angel` promoted the game over the market: {rows!r} (#4615 gate leaked)"
+    )
