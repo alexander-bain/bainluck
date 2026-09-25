@@ -289,6 +289,14 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
     # ever carried a `statpal_<home>_<away>` value — and it is reported anyway so
     # that "has never fired" stays a measured claim.
     schedule_created_refused_no_provider_id = 0
+    # #4865. Two more reasons the live-create below declines, each its own
+    # number. `..._no_anchor`: a sport that declares its live anchor field
+    # (`STATPAL_LIVE_ANCHOR_FIELD`, MLB → `odds_id`) served a live row without
+    # it, so the only id in hand is the one space that must never be written.
+    # `..._anchor_known`: the anchor names a row we already hold — the game
+    # exists, whatever its name looks like. Always present; 0 is a reading.
+    live_created_refused_no_anchor = 0
+    live_create_skipped_anchor_known = 0
     # #4307. Past fixtures this path declined to enrich because their StatPal id
     # named more than one event row. Always present; 0 is a reading, and a
     # non-zero here is a TWIN COUNT — the same population #3093/#3463 track from
@@ -969,6 +977,42 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                             live_fix.start_time.isoformat() if live_fix.start_time else None,
                         )
                         continue
+                    # ── #4865. THE ANCHOR, NOT THE LIVESCORES `id`. This used to
+                    # pass `live_fix.fixture_id` as the claim. On MLB that is
+                    # `livescores.id`, a space `season-schedule` never publishes
+                    # (see `STATPAL_LIVE_ANCHOR_FIELD`), so the minted row carried
+                    # an id no other row would ever hold and the id-keyed drain
+                    # could never pair it. The only thing standing between it and
+                    # a second row was the exact-name pre-check above, and StatPal
+                    # sometimes spells the club `St.Louis Cardinals`: 4 Cardinals
+                    # games (9/13, 9/19, 9/20, 9/23) got two rows this way, and
+                    # the 9/23 one served "No result reported" from search while
+                    # ESPN said Final 5–1. In all four, the ESPN row ALREADY held
+                    # the season-schedule id `oddsid` names — 15317596 had
+                    # `366716` from 9/18 — so an id lookup would have found it.
+                    live_claim_id = _live_anchor_id(live_fix, statpal_sport)
+                    if live_claim_id is None:
+                        live_created_refused_no_anchor += 1
+                        logger.warning(
+                            "StatPal live-create refused: %s vs %s (%s, start %s) "
+                            "carries no %s, and its livescores id is not an anchor "
+                            "for this sport (#4865, #3094).",
+                            live_fix.away_team, live_fix.home_team, our_key,
+                            live_fix.start_time.isoformat() if live_fix.start_time else None,
+                            STATPAL_LIVE_ANCHOR_FIELD.get(statpal_sport),
+                        )
+                        continue
+                    anchored = await session.execute(
+                        select(Event.id).where(
+                            Event.statpal_fixture_id == live_claim_id,
+                            Event.sport_id.in_(
+                                statpal_sport_ids.get(statpal_sport) or {sport_id}
+                            ),
+                        ).limit(1)
+                    )
+                    if anchored.scalar_one_or_none() is not None:
+                        live_create_skipped_anchor_known += 1
+                        continue
                     # #1945/Q438 — the row is created either way (the playoff gap
                     # this path exists to fill is real), but it may only be
                     # created LIVE once its own start time has arrived. Same
@@ -995,7 +1039,7 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                             live_fix.start_time.isoformat() if live_fix.start_time else None,
                             now.isoformat(),
                         )
-                    claim_id = live_fix.fixture_id
+                    claim_id = live_claim_id
                     identity = EventIdentity(
                         sport_key=our_key,
                         home_team_name=live_fix.home_team,
@@ -1182,6 +1226,9 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
         # the fabricator is unreachable rather than merely unobserved.
         "live_created_refused_no_provider_id": live_created_refused_no_provider_id,
         "schedule_created_refused_no_provider_id": schedule_created_refused_no_provider_id,
+        # #4865 — same rule: always present, 0 is a reading.
+        "live_created_refused_no_anchor": live_created_refused_no_anchor,
+        "live_create_skipped_anchor_known": live_create_skipped_anchor_known,
         # #4307 — same rule: always present, and 0 is the reading that says no
         # fixture in this window is claimed by two rows.
         "schedule_fid_collision_skipped": schedule_fid_collision_skipped,
