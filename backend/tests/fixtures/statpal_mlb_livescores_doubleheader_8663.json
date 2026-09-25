@@ -1,0 +1,655 @@
+{
+ "livescores": {
+  "sport": "baseball",
+  "tournament": {
+   "country": "usa",
+   "id": "2499",
+   "league": "USA: MLB",
+   "match": [
+    {
+     "attendance": "",
+     "broadcast": "NESN | MARQ",
+     "date": "25.09.2026",
+     "datetime_utc": "25.09.2026 17:05",
+     "formatted_date": "25.09.2026",
+     "id": "1329192887",
+     "oddsid": "366778",
+     "outs": "",
+     "status": "Top 2nd",
+     "time": "13:05",
+     "timezone": "ET",
+     "venue_id": "1294",
+     "venue_name": "Fenway Park, Boston, Massachusetts",
+     "home": {
+      "errors": "0",
+      "hits": "1",
+      "id": "2501",
+      "in1": "",
+      "in2": "",
+      "in3": "",
+      "in4": "",
+      "in5": "",
+      "in6": "",
+      "in7": "",
+      "in8": "",
+      "in9": "",
+      "name": "Boston Red Sox",
+      "r": "",
+      "totalscore": "0",
+      "innings": {
+       "inning": {
+        "hits": "1",
+        "number": "1",
+        "score": "0"
+       }
+      }
+     },
+     "away": {
+      "errors": "0",
+      "hits": "4",
+      "id": "2515",
+      "in1": "",
+      "in2": "",
+      "in3": "",
+      "in4": "",
+      "in5": "",
+      "in6": "",
+      "in7": "",
+      "in8": "",
+      "in9": "",
+      "name": "Chicago Cubs",
+      "r": "",
+      "totalscore": "3",
+      "innings": {
+       "inning": [
+        {
+         "hits": "1",
+         "number": "1",
+         "score": "1"
+        },
+        {
+         "hits": "3",
+         "number": "2",
+         "score": "2"
+        }
+       ]
+      }
+     },
+     "events": {
+      "event": [
+       {
+        "chw": "0",
+        "cle": "1",
+        "desc": "Taylor doubled to left, Suzuki scored.",
+        "inn": "1",
+        "team": "awayteam"
+       },
+       {
+        "chw": "0",
+        "cle": "3",
+        "desc": "Amaya doubled to left, Swanson scored and Busch scored.",
+        "inn": "2",
+        "team": "awayteam"
+       }
+      ]
+     },
+     "gamecast": {
+      "current_batter": {
+       "id": "4717833",
+       "name": "Pete Crow-Armstrong",
+       "stats": "0-1, K"
+      },
+      "current_pitcher": {
+       "id": "5200550",
+       "name": "Alec Gamboa",
+       "stats": "1.1 IP, 3 ER, 4 H, K, BB"
+      },
+      "stats": {
+       "balls": "0",
+       "outs": "1",
+       "strikes": "1"
+      },
+      "bases": {
+       "base1": "0",
+       "base2": "X",
+       "base3": "0"
+      }
+     },
+     "stats": {
+      "hitters": {
+       "home": {
+        "player": [
+         {
+          "at_bats": "1",
+          "average": ".239",
+          "cs": "0",
+          "doubles": "1",
+          "hit_by_pitch": "0",
+          "hits": "1",
+          "home_runs": "0",
+          "id": "5082266",
+          "name": "R. Anthony",
+          "on_base_percentage": ".330",
+          "pos": "LF",
+          "runs": "0",
+          "runs_batted_in": "0",
+          "sac_fly": "0",
+          "slugging_percentage": ".380",
+          "stolen_bases": "0",
+          "strikeouts": "0",
+          "triples": "0",
+          "walks": "0"
+         },
+         {
+          "at_bats": "1",
+          "average": ".254",
+          "cs": "0",
+          "doubles": "0",
+          "hit_by_pitch": "0",
+          "hits": "0",
+          "home_runs": "0",
+          "id": "5133511",
+          "name": "M. Gasper",
+          "on_base_percentage": ".360",
+          "pos": "C",
+          "runs": "0",
+          "runs_batted_in": "0",
+          "sac_fly": "0",
+          "slugging_percentage": ".471",
+          "stolen_bases": "0",
+          "strikeouts": "1",
+          "triples": "0",
+          "walks": "0"
+         },
+         {
+          "at_bats": "1",
+          "average": ".237",
+          "cs": "0",
+          "doubles": "0",
+          "hit_by_pitch": "0",
+          "hits": "0",
+          "home_runs": "0",
+          "id": "43677",
+          "name": "A. Rutschman",
+          "on_base_percentage": ".309",
+          "pos": "DH",
+          "runs": "0",
+          "runs_batted_in": "0",
+          "sac_fly": "0",
+          "slugging_percentage": ".415",
+          "stolen_bases": "0",
+          "strikeouts": "0",
+          "triples": "0",
+          "walks": "0"
+         },
+         {
+          "at_bats": "1",
+          "average": ".250",
+          "cs": "0",
+          "doubles": "0",
+          "hit_by_pitch": "0",
+          "hits": "0",
+          "home_runs": "0",
+          "id": "4991554",
+          "name": "W. Abreu",
+          "on_base_percentage": ".330",
+          "pos": "RF",
+          "runs": "0",
+          "runs_batted_in": "0",
+          "sac_fly": "0",
+          "slugging_percentage": ".450",
+          "stolen_bases": "0",
+          "strikeouts": "0",
+          "triples": "0",
+          "walks": "0"
+         },
+         {
+          "at_bats": "0",
+          "average": ".250",
+          "cs": "0",
+          "doubles": "0",
+          "hit_by_pitch": "0",
+          "hits": "0",
+          "home_runs": "0",
+          "id": "5009114",
+          "name": "C. Durbin",
+          "on_base_percentage": ".335",
+          "pos": "3B",
+          "runs": "0",
+          "runs_batted_in": "0",
+          "sac_fly": "0",
+          "slugging_percentage": ".382",
+          "stolen_bases": "0",
+          "strikeouts": "0",
+          "triples": "0",
+          "walks": "0"
+         },
+         {
+          "at_bats": "0",
+          "average": ".258",
+          "cs": "0",
+          "doubles": "0",
+          "hit_by_pitch": "0",
+          "hits": "0",
+          "home_runs": "0",
+          "id": "44478",
+          "name": "N. Sogard",
+          "on_base_percentage": ".342",
+          "pos": "2B",
+          "runs": "0",
+          "runs_batted_in": "0",
+          "sac_fly": "0",
+          "slugging_percentage": ".393",
+          "stolen_bases": "0",
+          "strikeouts": "0",
+          "triples": "0",
+          "walks": "0"
+         },
+         {
+          "at_bats": "0",
+          "average": ".208",
+          "cs": "0",
+          "doubles": "0",
+          "hit_by_pitch": "0",
+          "hits": "0",
+          "home_runs": "0",
+          "id": "43109",
+          "name": "J. Duran",
+          "on_base_percentage": ".265",
+          "pos": "CF",
+          "runs": "0",
+          "runs_batted_in": "0",
+          "sac_fly": "0",
+          "slugging_percentage": ".364",
+          "stolen_bases": "0",
+          "strikeouts": "0",
+          "triples": "0",
+          "walks": "0"
+         },
+         {
+          "at_bats": "0",
+          "average": ".238",
+          "cs": "0",
+          "doubles": "0",
+          "hit_by_pitch": "0",
+          "hits": "0",
+          "home_runs": "0",
+          "id": "38449",
+          "name": "A. Monasterio",
+          "on_base_percentage": ".301",
+          "pos": "1B",
+          "runs": "0",
+          "runs_batted_in": "0",
+          "sac_fly": "0",
+          "slugging_percentage": ".380",
+          "stolen_bases": "0",
+          "strikeouts": "0",
+          "triples": "0",
+          "walks": "0"
+         },
+         {
+          "at_bats": "0",
+          "average": ".237",
+          "cs": "0",
+          "doubles": "0",
+          "hit_by_pitch": "0",
+          "hits": "0",
+          "home_runs": "0",
+          "id": "35071",
+          "name": "I. Kiner-Falefa",
+          "on_base_percentage": ".312",
+          "pos": "SS",
+          "runs": "0",
+          "runs_batted_in": "0",
+          "sac_fly": "0",
+          "slugging_percentage": ".308",
+          "stolen_bases": "0",
+          "strikeouts": "0",
+          "triples": "0",
+          "walks": "0"
+         }
+        ]
+       },
+       "away": {
+        "player": [
+         {
+          "at_bats": "1",
+          "average": ".280",
+          "cs": "0",
+          "doubles": "0",
+          "hit_by_pitch": "0",
+          "hits": "0",
+          "home_runs": "0",
+          "id": "4719332",
+          "name": "P. Crow-Armstrong",
+          "on_base_percentage": ".373",
+          "pos": "CF",
+          "runs": "0",
+          "runs_batted_in": "0",
+          "sac_fly": "0",
+          "slugging_percentage": ".574",
+          "stolen_bases": "0",
+          "strikeouts": "1",
+          "triples": "0",
+          "walks": "0"
+         },
+         {
+          "at_bats": "0",
+          "average": ".270",
+          "cs": "0",
+          "doubles": "0",
+          "hit_by_pitch": "0",
+          "hits": "0",
+          "home_runs": "0",
+          "id": "4143923",
+          "name": "S. Suzuki",
+          "on_base_percentage": ".367",
+          "pos": "RF",
+          "runs": "1",
+          "runs_batted_in": "0",
+          "sac_fly": "0",
+          "slugging_percentage": ".476",
+          "stolen_bases": "0",
+          "strikeouts": "0",
+          "triples": "0",
+          "walks": "1"
+         },
+         {
+          "at_bats": "1",
+          "average": ".261",
+          "cs": "0",
+          "doubles": "0",
+          "hit_by_pitch": "0",
+          "hits": "0",
+          "home_runs": "0",
+          "id": "36385",
+          "name": "A. Bregman",
+          "on_base_percentage": ".352",
+          "pos": "DH",
+          "runs": "0",
+          "runs_batted_in": "0",
+          "sac_fly": "0",
+          "slugging_percentage": ".451",
+          "stolen_bases": "0",
+          "strikeouts": "0",
+          "triples": "0",
+          "walks": "0"
+         },
+         {
+          "at_bats": "1",
+          "average": ".277",
+          "cs": "0",
+          "doubles": "1",
+          "hit_by_pitch": "0",
+          "hits": "1",
+          "home_runs": "0",
+          "id": "34282",
+          "name": "T. Taylor",
+          "on_base_percentage": ".325",
+          "pos": "LF",
+          "runs": "0",
+          "runs_batted_in": "1",
+          "sac_fly": "0",
+          "slugging_percentage": ".507",
+          "stolen_bases": "0",
+          "strikeouts": "0",
+          "triples": "0",
+          "walks": "0"
+         },
+         {
+          "at_bats": "1",
+          "average": ".263",
+          "cs": "0",
+          "doubles": "0",
+          "hit_by_pitch": "0",
+          "hits": "0",
+          "home_runs": "0",
+          "id": "42718",
+          "name": "N. Hoerner",
+          "on_base_percentage": ".318",
+          "pos": "2B",
+          "runs": "0",
+          "runs_batted_in": "0",
+          "sac_fly": "0",
+          "slugging_percentage": ".352",
+          "stolen_bases": "0",
+          "strikeouts": "0",
+          "triples": "0",
+          "walks": "0"
+         },
+         {
+          "at_bats": "1",
+          "average": ".236",
+          "cs": "0",
+          "doubles": "1",
+          "hit_by_pitch": "0",
+          "hits": "1",
+          "home_runs": "0",
+          "id": "4869166",
+          "name": "M. Shaw",
+          "on_base_percentage": ".326",
+          "pos": "3B",
+          "runs": "0",
+          "runs_batted_in": "0",
+          "sac_fly": "0",
+          "slugging_percentage": ".418",
+          "stolen_bases": "0",
+          "strikeouts": "0",
+          "triples": "0",
+          "walks": "0"
+         },
+         {
+          "at_bats": "1",
+          "average": ".240",
+          "cs": "0",
+          "doubles": "0",
+          "hit_by_pitch": "0",
+          "hits": "1",
+          "home_runs": "0",
+          "id": "43914",
+          "name": "M. Busch",
+          "on_base_percentage": ".351",
+          "pos": "1B",
+          "runs": "1",
+          "runs_batted_in": "0",
+          "sac_fly": "0",
+          "slugging_percentage": ".394",
+          "stolen_bases": "0",
+          "strikeouts": "0",
+          "triples": "0",
+          "walks": "0"
+         },
+         {
+          "at_bats": "1",
+          "average": ".216",
+          "cs": "0",
+          "doubles": "0",
+          "hit_by_pitch": "0",
+          "hits": "0",
+          "home_runs": "0",
+          "id": "36394",
+          "name": "D. Swanson",
+          "on_base_percentage": ".299",
+          "pos": "SS",
+          "runs": "1",
+          "runs_batted_in": "0",
+          "sac_fly": "0",
+          "slugging_percentage": ".403",
+          "stolen_bases": "0",
+          "strikeouts": "0",
+          "triples": "0",
+          "walks": "0"
+         },
+         {
+          "at_bats": "1",
+          "average": ".234",
+          "cs": "0",
+          "doubles": "1",
+          "hit_by_pitch": "0",
+          "hits": "1",
+          "home_runs": "0",
+          "id": "40404",
+          "name": "M. Amaya",
+          "on_base_percentage": ".337",
+          "pos": "C",
+          "runs": "0",
+          "runs_batted_in": "2",
+          "sac_fly": "0",
+          "slugging_percentage": ".373",
+          "stolen_bases": "0",
+          "strikeouts": "0",
+          "triples": "0",
+          "walks": "0"
+         }
+        ]
+       }
+      },
+      "pitchers": {
+       "home": {
+        "player": {
+         "earned_runs": "3",
+         "earned_runs_average": "1.95",
+         "hbp": "0",
+         "hits": "4",
+         "holds": "",
+         "home_runs": "0",
+         "id": "5202049",
+         "innings_pitched": "1.1",
+         "loss": "",
+         "name": "A. Gamboa",
+         "pc-st": "33-24",
+         "runs": "3",
+         "saves": "",
+         "strikeouts": "1",
+         "walks": "1",
+         "win": ""
+        }
+       },
+       "away": {
+        "player": {
+         "earned_runs": "0",
+         "earned_runs_average": "3.21",
+         "hbp": "0",
+         "hits": "1",
+         "holds": "",
+         "home_runs": "0",
+         "id": "34326",
+         "innings_pitched": "1.0",
+         "loss": "",
+         "name": "C. Holmes",
+         "pc-st": "13-8",
+         "runs": "0",
+         "saves": "",
+         "strikeouts": "1",
+         "walks": "0",
+         "win": ""
+        }
+       }
+      }
+     },
+     "starting_pitchers": {
+      "home": {
+       "player": {
+        "id": "5202049",
+        "name": "Gamboa"
+       }
+      },
+      "away": {
+       "player": {
+        "id": "34326",
+        "name": "Holmes"
+       }
+      }
+     },
+     "umpires": {
+      "umpire": [
+       {
+        "name": "Doug Eddings",
+        "position": "Home Plate Umpire"
+       },
+       {
+        "name": "Brock  Ballou",
+        "position": "First Base Umpire"
+       },
+       {
+        "name": "Emil  Jimenez",
+        "position": "Second Base Umpire"
+       },
+       {
+        "name": "Mike Muchlinski",
+        "position": "Third Base Umpire"
+       }
+      ]
+     }
+    },
+    {
+     "attendance": "",
+     "broadcast": "",
+     "date": "25.09.2026",
+     "datetime_utc": "25.09.2026 21:30",
+     "formatted_date": "25.09.2026",
+     "id": "1329192857",
+     "oddsid": "366748",
+     "outs": "",
+     "status": "Not Started",
+     "time": "17:30",
+     "timezone": "ET",
+     "venue_id": "1294",
+     "venue_name": "Fenway Park, Boston, Massachusetts",
+     "home": {
+      "errors": "-",
+      "hits": "-",
+      "id": "2501",
+      "in1": "-",
+      "in2": "-",
+      "in3": "-",
+      "in4": "-",
+      "in5": "-",
+      "in6": "-",
+      "in7": "-",
+      "in8": "-",
+      "in9": "-",
+      "name": "Boston Red Sox",
+      "r": "-",
+      "totalscore": "0"
+     },
+     "away": {
+      "errors": "-",
+      "hits": "-",
+      "id": "2515",
+      "in1": "-",
+      "in2": "-",
+      "in3": "-",
+      "in4": "-",
+      "in5": "-",
+      "in6": "-",
+      "in7": "-",
+      "in8": "-",
+      "in9": "-",
+      "name": "Chicago Cubs",
+      "r": "-",
+      "totalscore": "0"
+     },
+     "headline": null,
+     "events": null,
+     "stats": null,
+     "starting_pitchers": {
+      "home": {
+       "player": {
+        "id": "",
+        "name": ""
+       }
+      },
+      "away": {
+       "player": {
+        "id": "",
+        "name": ""
+       }
+      }
+     },
+     "umpires": null
+    }
+   ]
+  }
+ }
+}

@@ -1591,6 +1591,10 @@ async def _sync_statpal_livescores() -> dict:
     # feed was current when we looked and stale by the time we wrote". Always
     # present; 0 is a reading, not an absence (gotcha #53).
     livescore_live_write_lost_race = 0
+    # #8663: live events with a same-clubs sibling row on the board that could
+    # not be told apart from it (a doubleheader whose rows carry no usable
+    # anchor and no nearest start). Always present; 0 is a reading.
+    livescore_sibling_refused = 0
     _now = datetime.now(timezone.utc)
 
     # Only poll sports that are likely to have live games right now.
@@ -1633,11 +1637,14 @@ async def _sync_statpal_livescores() -> dict:
                 if not live_fixtures:
                     continue
 
-                # Build lookup by team names
-                fixture_by_teams: dict[str, object] = {}
+                # Build lookup by team names. #8663: EVERY row per pair, not the
+                # last one — the board lists a doubleheader's two games under
+                # one pair, and a dict keyed on the pair kept game 2 ('Not
+                # Started', 0-0) and wrote it onto live game 1 every minute.
+                fixtures_by_teams: dict[str, list] = {}
                 for f in live_fixtures:
                     key = _fixture_match_key(f.home_team, f.away_team)
-                    fixture_by_teams[key] = f
+                    fixtures_by_teams.setdefault(key, []).append(f)
 
                 # Find our live events for ALL sport keys that map to this StatPal sport
                 matching_sport_keys = [
@@ -1663,8 +1670,20 @@ async def _sync_statpal_livescores() -> dict:
                         event.home_team_name or "",
                         event.away_team_name or "",
                     )
-                    fixture = fixture_by_teams.get(match_key)
-                    if not fixture:
+                    fixture = _live_fixture_for_event(
+                        event, fixtures_by_teams.get(match_key) or (), statpal_sport,
+                    )
+                    if fixture is None:
+                        if len(fixtures_by_teams.get(match_key) or ()) > 1:
+                            livescore_sibling_refused += 1
+                            logger.warning(
+                                "StatPal doubleheader guard: event %d (%s vs %s, "
+                                "anchor %r) matches %d board rows and none is "
+                                "provably this game — no live write (#8663)",
+                                event.id, event.home_team_name,
+                                event.away_team_name, _get_statpal_id(event),
+                                len(fixtures_by_teams[match_key]),
+                            )
                         continue
 
                     # #1945: this is the third site keyed on the team pair alone,
@@ -2021,6 +2040,8 @@ async def _sync_statpal_livescores() -> dict:
         # was overtaken mid-pass by another queue — the race the sequential
         # guard above is structurally unable to see.
         "livescore_live_write_lost_race": livescore_live_write_lost_race,
+        # #8663 — a same-clubs sibling the writer could not separate.
+        "livescore_sibling_refused": livescore_sibling_refused,
     }
 
 
@@ -2157,6 +2178,57 @@ async def _find_matching_event(session, Event, sport_id: int, fixture) -> Option
 
     # Require minimum combined score of 1.0 (both teams at least partially match)
     return best if best_score >= 1.0 else None
+
+
+def _live_fixture_for_event(event, candidates: Sequence, statpal_sport: str):
+    """Which of the board rows sharing this event's team pair is THIS game (#8663).
+
+    The 30-second livescore board lists the whole day, so a doubleheader puts
+    two rows under one team pair: on 2026-09-25 Cubs @ Red Sox game 1 (`oddsid`
+    366778, 'Top 2nd', 3-0) and game 2 (366748, 'Not Started', 0-0). The writer
+    used to keep whichever came last, and wrote game 2's 0-0 onto live game 1
+    (15318549) every minute, alternating with ESPN's true score. #8278 fixed
+    the same class on the hourly schedule pass; this is the live writer's half.
+
+    One row: returned unchanged. Nothing to separate, so no behaviour moves.
+
+    Several rows:
+      1. ANCHOR. The event's stored `statpal_fixture_id` is the schedule-space
+         id, and for a sport in `STATPAL_LIVE_ANCHOR_FIELD` (MLB: `odds_id`) the
+         live row carries the same id. Equal is this game. A row carrying a
+         DIFFERENT id is another game, refused whatever its clock says.
+      2. NEAREST START. Only when step 1 named nothing. Among the rows left
+         (no id, an undeclared sport, or an event with no anchor yet), the
+         unique row whose start is nearest the event's `commence_time`. A tie,
+         or a row with no start, cannot be named, so the write is refused.
+         Refusing costs one minute of StatPal score; guessing costs the
+         reader a score running backwards.
+    """
+    rows = list(candidates)
+    if len(rows) <= 1:
+        return rows[0] if rows else None
+
+    declared = statpal_sport in STATPAL_LIVE_ANCHOR_FIELD
+    ours = str(_get_statpal_id(event) or "").strip() or None
+    if declared and ours:
+        for row in rows:
+            if _live_anchor_id(row, statpal_sport) == ours:
+                return row
+        # Rows that carry an id and are not ours are other games.
+        rows = [r for r in rows if not _live_anchor_id(r, statpal_sport)]
+
+    start = getattr(event, "commence_time", None)
+    if start is None:
+        return None
+    timed = [r for r in rows if getattr(r, "start_time", None) is not None]
+    if not timed or len(timed) != len(rows):
+        return None
+    timed.sort(key=lambda r: abs(r.start_time - start))
+    if len(timed) > 1 and abs(timed[0].start_time - start) == abs(
+        timed[1].start_time - start
+    ):
+        return None
+    return timed[0]
 
 
 def _get_statpal_id(event) -> Optional[str]:
