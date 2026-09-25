@@ -10672,6 +10672,19 @@ async def typeahead_search(
             "_names_participant": (
                 _ta_names_participant(event) or event.id in _ta_lead_team_row_ids
             ),
+            # #8523: the player's name, on his club's own fixture, as the same
+            # private alias his club carries. The flag above promotes the KIND;
+            # it cannot lift the CLASS, and the class comes first: "Kansas City
+            # Chiefs at Miami Dolphins" holds no word of `patrick mahomes`, so
+            # the game scored MC5 and served LAST, under five novelties that
+            # list him as an outcome (MC4) — production 2026-09-25 05:5xZ. With
+            # the alias it is MC0, directly under the club. Lead-team fixtures
+            # only: that is the team the name resolved to.
+            "_aliases": (
+                [_ta_roster_alias]
+                if _ta_roster_alias and _ta_is_lead_team_fixture(event)
+                else []
+            ),
         })
 
     # 3. Futures (sports + non-sports, deduplicated)
