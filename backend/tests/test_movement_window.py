@@ -1365,6 +1365,40 @@ def test_the_bank_applies_A7s_evidentiary_bar_and_not_a_weaker_one(
     assert params["floor"] == Decimal(str(MODERATE_MOVEMENT_THRESHOLD))
 
 
+def test_the_bank_refuses_a_basis_that_was_a_last_trade_on_an_empty_book(
+    run_task,
+) -> None:
+    """#8594 — the one place A8's bar is stricter than A7's, pinned as wiring.
+
+    The row semantics (the Thune and impeachment specimens, the tight-book
+    control, the no-book and one-sided rows, the exact-rail boundary) live in
+    `tests/integration/test_movement_window_pg.py`. This pins what a double can
+    see: the rail is the feed's own constant bound as an exact Decimal, and the
+    price test filters the BASIS only — `sources` and `foreign_scale` still read
+    every observation, so a second source anywhere in the window still refuses.
+    """
+    from app.utils.feed_market_quality import FEED_PHANTOM_MIN_SPREAD
+
+    sql, params = _phase_a8(run_task()[1])
+
+    assert isinstance(params["max_spread"], Decimal), (
+        "the rail must be bound as an exact Decimal; both book columns are "
+        "numeric(5, 4) and a float 0.20 would move a book sitting on the rail"
+    )
+    assert params["max_spread"] == Decimal(str(FEED_PHANTOM_MIN_SPREAD))
+    priced = (
+        "((s.yes_bid IS NULL AND s.yes_ask IS NULL) "
+        "OR s.yes_ask - s.yes_bid < :max_spread)"
+    )
+    assert sql.count(f"FILTER (WHERE {priced})") == 2, (
+        "the basis and its instant must BOTH come from priced observations; "
+        f"one without the other banks a price with another row's stamp: {sql}"
+    )
+    assert "count(DISTINCT s.bookmaker) AS sources" in sql, (
+        f"the single-source count must still read every observation: {sql}"
+    )
+
+
 def test_the_bank_is_scoped_to_rows_a_reader_can_actually_see(run_task) -> None:
     """Only rows that MAKE a claim get evidence banked for them.
 

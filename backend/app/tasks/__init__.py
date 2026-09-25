@@ -3638,6 +3638,11 @@ def update_max_movement(self):
         # never says "today" again.
         from app.utils.futures_market_snapshot import DATED_BASIS_METADATA_KEY
 
+        # A8's price test (#8594). The empty-book rail, imported from the module
+        # that owns it for the floor's reason: a basis the sweep calls a price
+        # and a book the feed calls empty must be the same line.
+        from app.utils.feed_market_quality import FEED_PHANTOM_MIN_SPREAD
+
         # 🔴 A4's two thresholds are bound as `Decimal`, and a `float` here is a
         # REAL BUG, not a style preference. Both columns A4 compares are
         # `numeric(7, 6)`, so Postgres infers a bare parameter in
@@ -4270,7 +4275,9 @@ def update_max_movement(self):
             #     age. Deliberately the same: a basis good enough to REFUTE a
             #     claim and a basis good enough to STATE one are the same
             #     evidentiary bar, and two bars here would be two answers to
-            #     "what did this cost yesterday".
+            #     "what did this cost yesterday". ONE addition, and only in the
+            #     stating direction: the basis must have been a price, not a
+            #     last trade across an empty book — see the #8594 note below.
             #
             #     🔴 IT DOES NOT TOUCH `probability_change_24h`, AND THAT IS THE
             #     POINT. The column keeps its per-write meaning and every
@@ -4292,38 +4299,105 @@ def update_max_movement(self):
             #     seven times a day per outcome at the current poll cadence —
             #     while this task runs every ten minutes, so without it 144 runs
             #     a day would rewrite 1,495 JSONB cells apiece for no change.
+            #
+            #     🔴 THE BASIS MUST HAVE BEEN A PRICE (#8594). This is the one
+            #     place A8's bar is STRICTER than A7's, and deliberately so: A7
+            #     only ever deletes, so a junk observation can cost it a
+            #     retirement at worst, while A8 hands its basis to a card that
+            #     prints `current - basis` beside the word "today". Specimen,
+            #     2026-09-25 09:47Z: Discover page one said "John Thune down 66
+            #     points today". Every Thune snapshot for a day was 0.84 on an
+            #     11c/88c book — a stale last trade stored as the price (gotcha
+            #     #19's wide-spread fallback) — and when the book tightened to
+            #     14c/22c the stored price became 0.18. Nothing traded down 66
+            #     points; a last trade stopped being mistaken for a quote.
+            #     Second specimen: Polymarket 112926 (outcome 231225166), basis
+            #     0.74 on a 58c/88c book, "-57".
+            #
+            #     So the basis is the oldest in-window observation whose book
+            #     was inside the empty-book rail (`FEED_PHANTOM_MIN_SPREAD`, the
+            #     same rail `price_evidence._book_supports` prices with), and an
+            #     outcome with none banks nothing — the reader's existing
+            #     honest-unavailable path. A row with NO book at all (both
+            #     sides NULL: datagolf, sportsbooks) is still a basis, because
+            #     its source never publishes one and its price is its price. A
+            #     ONE-sided book is refused: the source recorded a book and it
+            #     was empty on a side, which is the wide-book case at its limit
+            #     (2,302 of 22,188 Polymarket snapshots in the hour measured,
+            #     2026-09-25 10:50Z). `sources` and `foreign_scale` still read
+            #     every observation — a second source anywhere in the window
+            #     still disqualifies, whatever its book looked like.
+            #
+            #     🔴 AND A MARKET WHOSE EVERY OUTCOME IS REFUSED LOSES ITS BANK.
+            #     A8 used to emit a row only for markets with at least one
+            #     qualifying outcome, and A9 clears only markets with no claim
+            #     at all — so a market still making a claim, whose outcomes had
+            #     all stopped qualifying, kept its OLD cell until the reader's
+            #     age bound retired it, up to a day later. Market 112926 was
+            #     exactly that on 2026-09-25: a one-outcome bank holding the
+            #     0.74 junk basis, which a refusal written only into the WHERE
+            #     would have left serving. So every in-scope market gets a row,
+            #     the evidentiary bar moves onto the aggregate as `qualifies`,
+            #     and an empty payload removes the key rather than writing an
+            #     empty cell. `dated_basis_banked` counts those removals too:
+            #     it is markets WRITTEN.
+            priced = (
+                "((s.yes_bid IS NULL AND s.yes_ask IS NULL)"
+                " OR s.yes_ask - s.yes_bid < :max_spread)"
+            )
+            max_spread = Decimal(str(FEED_PHANTOM_MIN_SPREAD))
             bank_key = DATED_BASIS_METADATA_KEY
             banked = await session.execute(
                 text(f"""
                     UPDATE futures_markets fm
                     SET market_metadata =
-                            coalesce(fm.market_metadata, '{{}}'::jsonb)
-                            || jsonb_build_object('{bank_key}', bank.payload)
+                            CASE WHEN bank.payload = '{{}}'::jsonb
+                                 THEN fm.market_metadata
+                                      - CAST('{bank_key}' AS text)
+                                 ELSE coalesce(fm.market_metadata, '{{}}'::jsonb)
+                                      || jsonb_build_object('{bank_key}', bank.payload)
+                            END
                     FROM (
                         SELECT q.market_id,
-                               jsonb_object_agg(
-                                   q.outcome_id::text,
-                                   jsonb_build_array(
-                                       round(q.basis, 6),
-                                       to_char(
-                                           q.basis_at AT TIME ZONE 'UTC',
-                                           'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+                               coalesce(
+                                   jsonb_object_agg(
+                                       q.outcome_id::text,
+                                       jsonb_build_array(
+                                           round(q.basis, 6),
+                                           to_char(
+                                               q.basis_at AT TIME ZONE 'UTC',
+                                               'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+                                           )
                                        )
-                                   )
+                                   ) FILTER (WHERE q.qualifies),
+                                   '{{}}'::jsonb
                                ) AS payload
                         FROM (
                             SELECT fo.market_id,
                                    fo.id AS outcome_id,
                                    fo.probability_change_24h AS delta,
                                    obs.basis::numeric AS basis,
-                                   obs.basis_at AS basis_at
+                                   obs.basis_at AS basis_at,
+                                   coalesce(
+                                       obs.basis IS NOT NULL
+                                       -- `IS FALSE` for A4's reason: NULL and
+                                       -- TRUE must both fail, so the fail-
+                                       -- closed intent is readable.
+                                       AND obs.foreign_scale IS FALSE
+                                       AND obs.sources = 1
+                                       AND obs.basis_at
+                                           <= now()
+                                              - (:basis_age_hours * interval '1 hour'),
+                                       false
+                                   ) AS qualifies
                             FROM futures_outcomes fo
                             JOIN futures_markets m ON m.id = fo.market_id
                             CROSS JOIN LATERAL (
                                 SELECT (array_agg(
                                             s.probability ORDER BY s.captured_at
-                                        ))[1] AS basis,
-                                       min(s.captured_at) AS basis_at,
+                                        ) FILTER (WHERE {priced}))[1] AS basis,
+                                       min(s.captured_at)
+                                           FILTER (WHERE {priced}) AS basis_at,
                                        count(DISTINCT s.bookmaker) AS sources,
                                        bool_or(
                                            s.bookmaker <> ALL(:scale_identical)
@@ -4337,15 +4411,6 @@ def update_max_movement(self):
                               AND fo.current_probability IS NOT NULL
                               AND abs(fo.probability_change_24h) >= :floor
                               AND m.status = 'open'
-                              AND obs.basis IS NOT NULL
-                              -- `IS FALSE` for A4's reason: NULL and TRUE must
-                              -- both fail, so the fail-closed intent is
-                              -- readable.
-                              AND obs.foreign_scale IS FALSE
-                              AND obs.sources = 1
-                              AND obs.basis_at
-                                  <= now()
-                                     - (:basis_age_hours * interval '1 hour')
                         ) q
                         GROUP BY q.market_id
                         ORDER BY max(abs(q.delta)) DESC
@@ -4354,6 +4419,14 @@ def update_max_movement(self):
                     WHERE fm.id = bank.market_id
                       AND (fm.market_metadata -> '{bank_key}')
                           IS DISTINCT FROM bank.payload
+                      -- An empty payload only ever REMOVES a bank (the CASE
+                      -- never writes an empty cell). Without this, every
+                      -- in-scope market with nothing to bank and no bank to
+                      -- remove would be rewritten, unchanged, every run.
+                      AND (
+                          bank.payload <> '{{}}'::jsonb
+                          OR jsonb_exists(fm.market_metadata, '{bank_key}')
+                      )
                 """),
                 {
                     "window_hours": MOVEMENT_WINDOW_HOURS,
@@ -4362,6 +4435,9 @@ def update_max_movement(self):
                     "floor": floor,
                     "batch": DATED_BASIS_BANK_BATCH,
                     "scale_identical": list(SCALE_IDENTICAL_SNAPSHOT_SOURCES),
+                    # Decimal for the floor's reason: both book columns are
+                    # `numeric(5, 4)` and a float 0.20 is not 0.20 there.
+                    "max_spread": max_spread,
                 },
             )
 

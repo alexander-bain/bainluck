@@ -188,13 +188,22 @@ async def _reset_and_seed(rows):
                 # (#4079). It is optional so those cases read unchanged, and it
                 # exists so a case can seed a vig-inclusive sportsbook row —
                 # the one thing A4 must refuse to subtract from a blend.
+                #
+                # A fourth and fifth element are the BOOK (`yes_bid`,
+                # `yes_ask`), defaulting to NULL — the no-book row every
+                # pre-#8594 case meant. They exist so a case can seed a stale
+                # last trade across an empty book, which A8 may not bank.
                 hours_ago, probability = observation[:2]
                 bookmaker = observation[2] if len(observation) > 2 else "kalshi"
+                yes_bid = observation[3] if len(observation) > 3 else None
+                yes_ask = observation[4] if len(observation) > 4 else None
                 session.add(
                     FuturesOddsSnapshot(
                         outcome_id=outcome.id,
                         bookmaker=bookmaker,
                         probability=probability,
+                        yes_bid=yes_bid,
+                        yes_ask=yes_ask,
                         captured_at=now - timedelta(hours=hours_ago),
                     )
                 )
@@ -2125,3 +2134,352 @@ def test_the_superset_identity_survives_the_contradicted_sweep() -> None:
         "the dated-direction sweep left a market maximum describing a delta it "
         f"had just cleared: {violations}"
     )
+
+
+# ---------------------------------------------------------------------------
+# #8594 — A8 banks a basis only if it was a PRICE, not a last trade across an
+# empty book.
+#
+# A7 only deletes, so a junk observation can cost it a retirement at worst. A8
+# hands its basis to a card that prints `current - basis` beside the word
+# "today", so the one place its bar is stricter than A7's is the book: the basis
+# is the oldest in-window observation whose spread sits inside the empty-book
+# rail (`FEED_PHANTOM_MIN_SPREAD`, 0.20), a row with no book at all still
+# counts, and an outcome with neither banks nothing.
+# ---------------------------------------------------------------------------
+
+
+async def _read_bank(ids) -> dict:
+    """`{label: banked cell or None}` — the A8 cell for each case's outcome."""
+    import json
+
+    from sqlalchemy import text
+
+    engine = _engine()
+    out = {}
+    async with engine.connect() as conn:
+        for label, (market_id, outcome_id) in ids.items():
+            cell = (
+                await conn.execute(
+                    text(
+                        "SELECT market_metadata -> 'dated_movement_basis' "
+                        "FROM futures_markets WHERE id = :i"
+                    ),
+                    {"i": market_id},
+                )
+            ).scalar()
+            if isinstance(cell, str):
+                cell = json.loads(cell)
+            out[label] = (cell or {}).get(str(outcome_id))
+    await engine.dispose()
+    return out
+
+
+def test_a_stale_last_trade_on_an_empty_book_is_never_banked_as_a_basis() -> None:
+    """Both production specimens, and the tight-book control beside them.
+
+    `thune` — Polymarket outcome 234680080, "Next US Senate Minority Leader?",
+    served on Discover page one 2026-09-25 09:47Z as "John Thune down 66 points
+    today". Every observation for a day was 0.84 on an 11c/88c book (a stale
+    last trade stored as the price); when the book tightened to 14c/22c the
+    price became 0.18. The only tight observation is two hours old — too fresh
+    to date a day — so nothing may be banked.
+
+    `impeachment` — Polymarket 112926 "December 31, 2027" (outcome 231225166):
+    basis 0.74 on a 58c/88c book, and the book never came inside 30c all day.
+
+    `control` — the same shape on a real book (0.60 @ 59c/61c -> 0.30 @
+    29c/31c). It must still bank 0.60, or the predicate is refusing moves rather
+    than refusing junk. Every delta here survives A4 and A7 (each claim sits
+    inside its extrema and points the way its basis does), so the bank is the
+    only thing that can silence the two specimens.
+    """
+    ids = asyncio.run(
+        _reset_and_seed(
+            [
+                (
+                    "thune",
+                    "open",
+                    1,
+                    -0.66,
+                    0.66,
+                    None,
+                    0.18,
+                    [
+                        (20, 0.84, "polymarket", 0.11, 0.88),
+                        (16, 0.84, "polymarket", 0.11, 0.87),
+                        (15, 0.84, "polymarket", 0.06, 0.85),
+                        (2, 0.18, "polymarket", 0.14, 0.22),
+                    ],
+                ),
+                (
+                    "impeachment",
+                    "open",
+                    1,
+                    -0.41,
+                    0.41,
+                    None,
+                    0.17,
+                    [
+                        (23, 0.74, "polymarket", 0.58, 0.88),
+                        (16, 0.58, "polymarket", 0.53, 0.89),
+                        (12, 0.58, "polymarket", 0.52, 0.89),
+                        (1, 0.17, "polymarket", 0.17, 0.87),
+                    ],
+                ),
+                (
+                    "control",
+                    "open",
+                    1,
+                    -0.30,
+                    0.30,
+                    None,
+                    0.30,
+                    [
+                        (20, 0.60, "polymarket", 0.59, 0.61),
+                        (1, 0.30, "polymarket", 0.29, 0.31),
+                    ],
+                ),
+            ]
+        )
+    )
+    result = _run_task()
+    after = asyncio.run(_read(ids))
+    bank = asyncio.run(_read_bank(ids))
+
+    # Preconditions: the deltas are still standing, so the bank is the arm
+    # under test and not an earlier statement that already silenced the row.
+    assert after["thune"][0] == pytest.approx(-0.66), f"got {after} / {result}"
+    assert after["impeachment"][0] == pytest.approx(-0.41), f"got {after} / {result}"
+    assert after["control"][0] == pytest.approx(-0.30), f"got {after} / {result}"
+
+    assert bank["thune"] is None, (
+        "A8 banked a basis that was a stale 0.84 last trade on an 11c/88c book, "
+        "so the card prints 'down 66 points today' about a move no book ever "
+        f"quoted. got {bank['thune']}"
+    )
+    assert bank["impeachment"] is None, (
+        "A8 banked 0.74 off a 58c/88c book; the card prints '-57'. "
+        f"got {bank['impeachment']}"
+    )
+    assert bank["control"] is not None and float(bank["control"][0]) == pytest.approx(0.60), (
+        "the tight-book control lost its basis — the predicate is refusing "
+        f"real moves, not empty books. got {bank['control']}"
+    )
+
+
+def test_the_basis_is_the_oldest_PRICED_observation_not_a_blanket_refusal() -> None:
+    """A wide early book does not cost an outcome a later, tight, dated basis.
+
+    20 h ago 0.84 on an 11c/88c book (junk); 14 h ago 0.80 on 79c/81c (a price,
+    and old enough to date a day); now 0.18. The honest dated move is 0.18 -
+    0.80, so the bank must hold 0.80 and its 14 h stamp — never 0.84, and never
+    nothing.
+    """
+    ids = asyncio.run(
+        _reset_and_seed(
+            [
+                (
+                    "late_tight",
+                    "open",
+                    1,
+                    -0.62,
+                    0.62,
+                    None,
+                    0.18,
+                    [
+                        (20, 0.84, "polymarket", 0.11, 0.88),
+                        (14, 0.80, "polymarket", 0.79, 0.81),
+                        (1, 0.18, "polymarket", 0.17, 0.19),
+                    ],
+                ),
+            ]
+        )
+    )
+    _run_task()
+    bank = asyncio.run(_read_bank(ids))
+    cell = bank["late_tight"]
+
+    assert cell is not None, "the tight 14 h observation was not banked at all"
+    assert float(cell[0]) == pytest.approx(0.80), (
+        f"the bank took the wide-book 0.84 rather than the priced 0.80. got {cell}"
+    )
+    observed = datetime.fromisoformat(cell[1].replace("Z", "+00:00"))
+    age = (datetime.now(timezone.utc) - observed).total_seconds() / 3600.0
+    assert 13.5 < age < 14.5, (
+        "the banked instant is not the priced observation's — a basis paired "
+        f"with another row's stamp dates the wrong move. age={age:.2f}h cell={cell}"
+    )
+
+
+def test_a_row_with_no_book_still_banks_and_a_one_sided_book_does_not() -> None:
+    """Where the price test draws its line on NULLs, and on the rail itself.
+
+    `no_book` — both sides NULL: the source never publishes a book, so its
+    price is its price and it banks exactly as every pre-#8594 row did.
+    `one_sided` — a bid is missing and an ask is present: the source recorded a
+    book and it was empty on a side, the wide-book case at its limit.
+    `on_the_rail` — 39c/59c, a spread of exactly 0.20, which the rail calls
+    empty (`>=`). Bound as a Decimal, so the equality is exact.
+    `inside_the_rail` — 40c/59c, 0.19, which banks. It is also what keeps the
+    three refusals honest: every case is single-source (`kalshi`, the rig's
+    default bookmaker), so a refusal here is the book and never `sources = 2`.
+    """
+    ids = asyncio.run(
+        _reset_and_seed(
+            [
+                ("no_book", "open", 1, -0.30, 0.30, None, 0.30, [(20, 0.60), (1, 0.30)]),
+                (
+                    "one_sided",
+                    "open",
+                    1,
+                    -0.30,
+                    0.30,
+                    None,
+                    0.30,
+                    [(20, 0.60, "kalshi", None, 0.61), (1, 0.30)],
+                ),
+                (
+                    "on_the_rail",
+                    "open",
+                    1,
+                    -0.30,
+                    0.30,
+                    None,
+                    0.20,
+                    [(20, 0.50, "kalshi", 0.39, 0.59), (1, 0.20)],
+                ),
+                (
+                    "inside_the_rail",
+                    "open",
+                    1,
+                    -0.30,
+                    0.30,
+                    None,
+                    0.20,
+                    [(20, 0.50, "kalshi", 0.40, 0.59), (1, 0.20)],
+                ),
+            ]
+        )
+    )
+    _run_task()
+    after = asyncio.run(_read(ids))
+    bank = asyncio.run(_read_bank(ids))
+
+    for label in ids:
+        assert after[label][0] is not None, f"precondition: {label} delta retired: {after}"
+    assert bank["no_book"] is not None and float(bank["no_book"][0]) == pytest.approx(0.60), (
+        "a row with no book stopped banking — every source that never publishes "
+        f"one just lost its dated evidence. got {bank['no_book']}"
+    )
+    assert bank["one_sided"] is None, (
+        f"a book empty on one side was banked as a price. got {bank['one_sided']}"
+    )
+    assert bank["on_the_rail"] is None, (
+        "a spread of exactly 0.20 was banked; the rail calls that book empty. "
+        f"got {bank['on_the_rail']}"
+    )
+    assert bank["inside_the_rail"] is not None, (
+        f"a 19c spread was refused — the rail moved. got {bank['inside_the_rail']}"
+    )
+
+
+def test_a_market_whose_every_outcome_is_refused_loses_its_old_bank() -> None:
+    """The refusal must reach the page on the next run, not a day later.
+
+    Market 112926, 2026-09-25: its bank held ONE cell, the 0.74 junk basis for
+    the specimen outcome. A refusal written only into A8's WHERE produces no row
+    for a market with nothing left to bank, and A9 does not touch it (the market
+    still makes a claim), so the old cell would have gone on serving "-57"
+    until the reader's age bound retired it.
+
+    `stale_bank` is that shape, seeded with the pre-fix cell. `never_banked` is
+    in claim scope with nothing to bank and no prior cell — it must not be
+    given an empty one (that would ride the size-capped load artifact for
+    nothing). `control` still banks.
+    """
+    import json
+
+    from sqlalchemy import text
+
+    ids = asyncio.run(
+        _reset_and_seed(
+            [
+                (
+                    "stale_bank",
+                    "open",
+                    1,
+                    -0.41,
+                    0.41,
+                    None,
+                    0.17,
+                    [
+                        (23, 0.74, "polymarket", 0.58, 0.88),
+                        (1, 0.17, "polymarket", 0.17, 0.87),
+                    ],
+                ),
+                (
+                    "never_banked",
+                    "open",
+                    1,
+                    -0.41,
+                    0.41,
+                    None,
+                    0.17,
+                    [
+                        (23, 0.74, "polymarket", 0.58, 0.88),
+                        (1, 0.17, "polymarket", 0.17, 0.87),
+                    ],
+                ),
+                ("control", "open", 1, -0.30, 0.30, None, 0.30, [(20, 0.60), (1, 0.30)]),
+            ]
+        )
+    )
+
+    async def _seed_old_bank():
+        engine = _engine()
+        market_id, outcome_id = ids["stale_bank"]
+        old = {
+            "other_key": "kept",
+            "dated_movement_basis": {str(outcome_id): [0.74, "2026-09-24T11:50:27Z"]},
+        }
+        async with engine.begin() as conn:
+            await conn.execute(
+                text("UPDATE futures_markets SET market_metadata = CAST(:m AS jsonb) WHERE id = :i"),
+                {"m": json.dumps(old), "i": market_id},
+            )
+        await engine.dispose()
+
+    async def _metadata(market_id):
+        engine = _engine()
+        async with engine.connect() as conn:
+            cell = (
+                await conn.execute(
+                    text("SELECT market_metadata FROM futures_markets WHERE id = :i"),
+                    {"i": market_id},
+                )
+            ).scalar()
+        await engine.dispose()
+        return json.loads(cell) if isinstance(cell, str) else cell
+
+    asyncio.run(_seed_old_bank())
+    _run_task()
+    after = asyncio.run(_read(ids))
+    stale_meta = asyncio.run(_metadata(ids["stale_bank"][0])) or {}
+    never_meta = asyncio.run(_metadata(ids["never_banked"][0])) or {}
+    bank = asyncio.run(_read_bank(ids))
+
+    assert after["stale_bank"][0] == pytest.approx(-0.41), (
+        f"precondition: the claim still stands, so A9 cannot be the arm. got {after}"
+    )
+    assert "dated_movement_basis" not in stale_meta, (
+        "a market whose every outcome is now refused kept its old bank, so the "
+        f"junk 0.74 basis keeps printing '-57'. metadata={stale_meta}"
+    )
+    assert stale_meta.get("other_key") == "kept", (
+        f"removing the bank destroyed the market's other metadata: {stale_meta}"
+    )
+    assert "dated_movement_basis" not in never_meta, (
+        f"an in-scope market with nothing to bank was given an empty cell: {never_meta}"
+    )
+    assert bank["control"] is not None, f"the control lost its basis: {bank}"
