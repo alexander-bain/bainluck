@@ -826,6 +826,35 @@ class ESPNAPIService:
             })
         return events
 
+    async def get_golf_calendar(self, league: str) -> Optional[list[dict]]:
+        """ESPN's season calendar for one golf tour, as plain dicts (#8591).
+
+        The scoreboard's ``leagues[0].calendar`` lists every event of the season,
+        not only this week's board. Each dict carries ``name`` (ESPN's label) and
+        ``start`` / ``end`` (ESPN's ISO stamps).
+
+        Returns ``[]`` when ESPN answered with no calendar and ``None`` when ESPN
+        did not answer, the same split as `get_golf_scoreboard`.
+        """
+        url = f"{ESPN_API_BASE}/golf/{league}/scoreboard"
+        try:
+            data = await self._get(url)
+        except ESPNAuthorityDark:
+            return None
+        if not data:
+            return []
+        leagues = data.get("leagues") or [{}]
+        entries: list[dict] = []
+        for c in (leagues[0] or {}).get("calendar") or []:
+            if not isinstance(c, dict):
+                continue
+            entries.append({
+                "name": c.get("label") or "",
+                "start": c.get("startDate"),
+                "end": c.get("endDate"),
+            })
+        return entries
+
     async def get_scoreboard(
         self, sport_key: str, date: Optional[str] = None
     ) -> Optional[list[ESPNEvent]]:

@@ -2617,6 +2617,103 @@ def _fill_dates_from_calendar(tournaments: list[dict], now: datetime) -> None:
         t["date_confidence"] = entry.get("date_confidence")
 
 
+# #8591 — ESPN's LPGA season calendar, for the cards DataGolf cannot date.
+# DataGolf's schedule has no LPGA, so an LPGA card never meets a schedule row and
+# the hub fell back to its earliest market commence: the NW Arkansas Championship
+# (Sep 25-27) was dated "Mon, Sep 21", the day its market opened. ESPN's lpga
+# scoreboard carries the whole season in `leagues[0].calendar` (32 events).
+# Its own cache, hourly like the DataGolf schedule; a dark ESPN retries sooner.
+_espn_lpga_calendar_cache: dict = {"data": None, "ts": 0, "ttl": 0}
+_ESPN_LPGA_CALENDAR_TTL = 3600
+_ESPN_LPGA_CALENDAR_DARK_RETRY = 300
+
+# Words that name no particular event. What is left of a card's key after these
+# (`nw_arkansas_championship_womens` -> {nw, arkansas}) must ALL appear in ESPN's
+# label ("Walmart NW Arkansas Championship pres. by P&G").
+_LPGA_GENERIC_TOKENS = frozenset({
+    "lpga", "women", "womens", "ladies", "championship", "open", "classic",
+    "tournament", "tour", "golf", "the", "of", "at", "by", "and", "pres", "presented",
+})
+# ESPN's start must sit inside [market opened - 3d, market resolves + 3d]. With
+# only one bound known, the other is 120 days away.
+_LPGA_CALENDAR_SLACK = timedelta(days=3)
+_LPGA_CALENDAR_HORIZON = timedelta(days=120)
+
+
+async def _get_espn_lpga_calendar() -> list[dict]:
+    """ESPN's LPGA season calendar (1-hour cache). `[]` when ESPN is dark."""
+    now_ts = time.time()
+    cache = _espn_lpga_calendar_cache
+    if cache["data"] is not None and (now_ts - cache["ts"]) < cache["ttl"]:
+        return cache["data"]
+
+    from app.services.espn_api import ESPNAPIService
+
+    service = ESPNAPIService(timeout=3.0, rate_limit_delay=0.0)
+    try:
+        calendar = await service.get_golf_calendar("lpga")
+    finally:
+        await service.close()
+    cache["data"] = calendar or []
+    cache["ts"] = now_ts
+    cache["ttl"] = _ESPN_LPGA_CALENDAR_TTL if calendar is not None else _ESPN_LPGA_CALENDAR_DARK_RETRY
+    return cache["data"]
+
+
+def _lpga_name_tokens(text: str) -> set[str]:
+    text = text.lower().replace("'", "").replace("\u2019", "")
+    return {w for w in re.findall(r"[a-z0-9]+", text) if len(w) >= 2 and not w.isdigit()}
+
+
+def _fill_dates_from_espn_lpga_calendar(
+    tournaments: list[dict], calendar: list[dict],
+) -> None:
+    """Give a dateless women's card its dates from ESPN's LPGA calendar. #8591.
+
+    Same contract as `_fill_dates_from_calendar`, and called at the same point
+    (after the stale filter, so a date can never revive a finished row):
+
+    1. **It fills, it never overrules.** A row with either date keeps both.
+    2. **Name AND dates must agree, and only one entry may.** Every distinctive
+       word of the card's key must be in ESPN's label, ESPN's start must fall in
+       the card's own market window, and exactly one calendar entry may pass
+       both. Two candidates or none leave the row as it was.
+    3. **It never moves a key.** LPGA is deliberately NOT added to the schedule
+       `_normalize_tournament` matches against, where a fuzzy LPGA row could pull
+       a card onto a new key (and a new URL) or cross a men's event.
+
+    `resolution_date` and `commence_time` stay as they were, as in #8139.
+    """
+    for t in tournaments:
+        if t.get("start_date") or t.get("end_date") or not t.get("is_womens"):
+            continue
+        wanted = _lpga_name_tokens((t.get("key") or "").replace("_", " ")) - _LPGA_GENERIC_TOKENS
+        if not wanted:
+            continue
+        opened = _as_utc_date(t.get("commence_time"))
+        resolves = _as_utc_date(t.get("resolution_date"))
+        if opened is None and resolves is None:
+            continue
+        lo = opened - _LPGA_CALENDAR_SLACK if opened else resolves - _LPGA_CALENDAR_HORIZON
+        hi = resolves + _LPGA_CALENDAR_SLACK if resolves else opened + _LPGA_CALENDAR_HORIZON
+        matches = []
+        for entry in calendar:
+            start = _as_utc_date(entry.get("start"))
+            if start is None or not (lo <= start <= hi):
+                continue
+            if not wanted <= _lpga_name_tokens(entry.get("name") or ""):
+                continue
+            matches.append((start, entry))
+        if len(matches) != 1:
+            continue
+        start, entry = matches[0]
+        end = _as_utc_date(entry.get("end")) or start
+        if end < start:
+            continue
+        t["start_date"] = f"{start.isoformat()}T00:00:00+00:00"
+        t["end_date"] = f"{end.isoformat()}T00:00:00+00:00"
+
+
 def _filter_stale_tournaments(tournaments: list[dict], now: datetime) -> list[dict]:
     """Remove completed or stale tournaments based on schedule/date signals."""
     now_date = now.date()
@@ -3049,6 +3146,12 @@ async def get_golf(
     # A calendar date is allowed to tell a surviving row when it is, and is not
     # allowed to be the reason a finished row survives.
     _fill_dates_from_calendar(tournaments, now)
+    # #8591 — same point, same reason: ESPN dates the LPGA cards DataGolf cannot.
+    if any(t.get("is_womens") and not (t.get("start_date") or t.get("end_date")) for t in tournaments):
+        try:
+            _fill_dates_from_espn_lpga_calendar(tournaments, await _get_espn_lpga_calendar())
+        except Exception as e:  # noqa: BLE001 — a dark ESPN must never cost the listing
+            logger.warning("ESPN LPGA calendar fill failed: %s", e)
 
     # Biggest movers
     all_movers = []
