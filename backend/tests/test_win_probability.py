@@ -813,22 +813,31 @@ class TestMLBStatModel:
         assert result is not None
         assert result > 0.99
 
-    def test_spread_affects_pregame(self):
-        """Home favored by spread should have higher base probability."""
+    def test_run_line_is_not_a_pregame_spread(self):
+        """#8613: MLB's stored spread is the ±1.5 run line, not a margin —
+        it must not move the model; the opening price does."""
         even = compute_statistical_win_prob(
             home_score=0, away_score=0,
             clock=None, period="Top 1st",
             sport_key="baseball_mlb",
             pregame_spread=0,
         )
-        favored = compute_statistical_win_prob(
+        run_line = compute_statistical_win_prob(
             home_score=0, away_score=0,
             clock=None, period="Top 1st",
             sport_key="baseball_mlb",
             pregame_spread=-1.5,
         )
-        assert even is not None and favored is not None
-        assert favored > even
+        favored = compute_statistical_win_prob(
+            home_score=0, away_score=0,
+            clock=None, period="Top 1st",
+            sport_key="baseball_mlb",
+            pregame_spread=-1.5,
+            opening_home_probability=0.62,
+        )
+        assert even is not None and run_line is not None
+        assert run_line == pytest.approx(even)
+        assert 0.62 <= favored < 0.66  # "Top 1st" = 1.5 scoreless outs in
 
     def test_extra_innings_tight(self):
         """Extra innings tied game: home has slight disadvantage in top 10th

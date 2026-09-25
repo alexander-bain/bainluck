@@ -2403,12 +2403,14 @@ async def _poll_all_odds():
                                 try:
                                     from app.utils.win_probability import (
                                         compute_statistical_win_prob,
+                                        model_pregame_spread,
                                         priorless_model_defers_to_market,
                                     )
 
-                                    pregame_spread = None
-                                    if event_obj.opening_home_spread is not None:
-                                        pregame_spread = float(event_obj.opening_home_spread)
+                                    # Not baseball's run line (#8613).
+                                    pregame_spread = model_pregame_spread(
+                                        sport_key, event_obj.opening_home_spread
+                                    )
 
                                     # #8522: no prior and a market on the row —
                                     # leave the headline to the market.
@@ -2439,6 +2441,13 @@ async def _poll_all_odds():
                                         sport_key=sport_key,
                                         pregame_spread=pregame_spread,
                                         commence_time=event_obj.commence_time,
+                                        # The ESPN writer's prior too (#8613:
+                                        # baseball's only prior is the price).
+                                        opening_home_probability=(
+                                            float(event_obj.opening_home_probability)
+                                            if event_obj.opening_home_probability is not None
+                                            else None
+                                        ),
                                     )
                                     if (stat_wp is not None and pregame_spread is None
                                             and home_score == 0 and away_score == 0

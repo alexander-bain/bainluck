@@ -259,7 +259,9 @@ def compute_baseball_win_prob(
         home_score: Current home team score
         away_score: Current away team score
         period_str: Inning string (e.g., "Top 5th", "Bot 7th", "3")
-        pregame_spread: Pregame Vegas spread (negative = home favored)
+        pregame_spread: Expected home run margin before first pitch (negative =
+                        home favored). NOT the stored run line — see
+                        ``model_pregame_spread`` (#8613).
         runs_per_half_inning: Average runs scored per half-inning (default: 0.5)
         opening_home_probability: Sportsbook consensus pregame probability
                                   (0.0-1.0). Used as prior when pregame_spread
@@ -290,7 +292,12 @@ def compute_baseball_win_prob(
         # Baseball pregame std dev: sqrt(λ_home_full + λ_away_full)
         # Full game: 9 HI each, so λ = 0.5 * 9 = 4.5 per team
         baseball_pregame_std = math.sqrt(2 * runs_per_half_inning * 9)
-        pregame_spread = _probability_to_spread(opening_home_probability, baseball_pregame_std)
+        # #8613: the opening price already includes home field, and the margin
+        # below adds it again — take it back out so first pitch reads the price.
+        pregame_spread = (
+            _probability_to_spread(opening_home_probability, baseball_pregame_std)
+            + BASEBALL_HOME_ADVANTAGE_RUNS
+        )
 
     # Pregame spread adjustment: scale by fraction of game remaining
     spread = pregame_spread if pregame_spread is not None else 0.0
@@ -584,6 +591,24 @@ def retire_priorless_model_reading(win_probability_sources: object) -> dict | No
     return {k: v for k, v in win_probability_sources.items() if k != "stat_model"}
 
 
+def model_pregame_spread(sport_key: str, opening_home_spread: object) -> float | None:
+    """The stored opening spread as the model's prior, or ``None`` when it is not one.
+
+    #8613: for baseball the stored spread is the run line — a handicap that
+    sits at ±1.5 whatever the matchup (88 of 140 MLB games in a week), not an
+    expected run margin. Read as a margin it made every favourite a 1.5-run
+    favourite: a 55% favourite opened at 73% and the model's line sat 15+
+    points above every venue all game. Baseball's prior is the opening price
+    instead; every other sport's spread is a real point spread and passes
+    through.
+    """
+    if opening_home_spread is None:
+        return None
+    if _normalize_sport_key(sport_key).startswith("baseball_"):
+        return None
+    return float(opening_home_spread)
+
+
 def compute_statistical_win_prob(
     home_score: int,
     away_score: int,
@@ -605,7 +630,8 @@ def compute_statistical_win_prob(
         sport_key: Sport key (e.g., "football_nfl")
         pregame_spread: Pregame Vegas spread (negative = home favored).
                        If None, falls back to opening_home_probability
-                       to derive an equivalent spread.
+                       to derive an equivalent spread. Ignored for
+                       baseball, where it is the run line (#8613).
         commence_time: Game start time (UTC). Used as fallback when
                       clock/period aren't available — estimates remaining
                       time from wall-clock elapsed time.
@@ -618,6 +644,7 @@ def compute_statistical_win_prob(
         Home win probability (0.0-1.0) or None if game state can't be parsed.
     """
     sport_key = _normalize_sport_key(sport_key)
+    pregame_spread = model_pregame_spread(sport_key, pregame_spread)
 
     # Baseball: use dedicated Poisson-based model when we have inning info.
     # Falls through to wall-clock fallback below if period is None.

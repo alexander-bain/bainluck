@@ -1895,12 +1895,13 @@ async def compute_and_write_stat_model(session, event, ee, sport_key, stats):
         return False
 
     try:
-        from app.utils.win_probability import compute_statistical_win_prob
+        from app.utils.win_probability import (
+            compute_statistical_win_prob,
+            model_pregame_spread,
+        )
 
-        # Use opening spread if available
-        pregame_spread = None
-        if event.opening_home_spread is not None:
-            pregame_spread = float(event.opening_home_spread)
+        # Use opening spread if available — not baseball's run line (#8613).
+        pregame_spread = model_pregame_spread(sport_key, event.opening_home_spread)
 
         # Pass opening probability as prior so the model
         # doesn't start at 50% when no spread is available.
