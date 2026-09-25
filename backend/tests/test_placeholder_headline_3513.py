@@ -55,6 +55,25 @@ population; none produces a broken sentence.
 
 The remaining 52 are the DIRECTIONAL (37), ADJECTIVE-SLOT (2) and EMBEDDED (13)
 controls below. They wait for the ingest join, which stays open on #3513.
+
+────────────────────────────────────────────────────────────────────────────
+THIRD SHIP, 2026-09-25 (discover/489): THE DIRECTIONAL LADDER, RE-ASKED.
+
+Still live at 04:1xZ, 1280px Discover shop, card 25 of the landing page and the
+H1 of the page it links to:
+
+    Meta (META) closes above ___ on September 25?
+        $710 90%   $720 90%   $730 90%   $740 88%   More likely than not: $740
+
+The directional carve-out was right that "above" cannot be DROPPED — the rungs
+are floors. It never had to keep the blank: re-asked as "How high will Meta
+(META) close on September 25?", every rung reads as a level reached, which is
+what each "above" rung is, and the card's own caption (highest rung at ≥50%)
+is only true under that reading. Census, open rows, Postgres regex
+``above\\s*(_{2,}|\\.{3,})``: 36 — 33 are three stock-ticker frames (eleven
+tickers each), all rewritten; the 3 with no price verb ("Amazon 2026 capex
+above ___?") stay byte-identical. A 1,000-row read of the resolved population:
+956 rewritten, every one to "How high will …" with no blank left.
 """
 
 import ast
@@ -118,7 +137,59 @@ CLEANED = [
 DIRECTIONAL_UNTOUCHED = [
     "Amazon 2026 capex above ___?",
     "OpenAI IPO closing market cap above ___ ?",
-    "Will Apple (AAPL) finish week of September 7 above___?",
+    "Anthropic IPO closing market cap above ___ ?",
+]
+
+# (stored name, what a reader should see) for the DIRECTIONAL rule — the three
+# stock-ticker frames, real open rows read 2026-09-25 04:2xZ. The subject keeps
+# every character it arrived with: an ampersand and digits (S&P 500), a
+# multi-word commodity (WTI Crude Oil), and the unspaced `above___?`.
+DIRECTIONAL_REWRITTEN = [
+    (
+        "Meta (META) closes above ___ on September 25?",
+        "How high will Meta (META) close on September 25?",
+    ),
+    (
+        "S&P 500 (SPY) closes above ___ on September 25?",
+        "How high will S&P 500 (SPY) close on September 25?",
+    ),
+    (
+        "WTI Crude Oil (WTI) closes above ___ on September 25?",
+        "How high will WTI Crude Oil (WTI) close on September 25?",
+    ),
+    (
+        "Will Apple (AAPL) close above ___ end of September?",
+        "How high will Apple (AAPL) close at the end of September?",
+    ),
+    (
+        "Will Opendoor (OPEN) close above ___ end of September?",
+        "How high will Opendoor (OPEN) close at the end of September?",
+    ),
+    (
+        "Will Apple (AAPL) finish week of September 7 above___?",
+        "How high will Apple (AAPL) finish the week of September 7?",
+    ),
+    (
+        "Will Amazon (AMZN) finish week of September 21 above___?",
+        "How high will Amazon (AMZN) finish the week of September 21?",
+    ),
+]
+
+# 🔴 THE DIRECTIONAL CONTROL. Each is ONE feature away from a rewritten row
+# above, and that feature is what refuses it: a comparator nobody measured
+# ("below" — zero open rows), a subject that is not a `Name (TICKER)`, a
+# comparator the frame does not name ("at"), and a trailing clause the frame
+# does not end on. `test_each_control_is_one_feature_from_firing` proves the
+# rule reaches each shape when that one feature is put back.
+DIRECTIONAL_FRAME_REFUSED = [
+    ("Meta (META) closes below ___ on September 25?", "below", "above"),
+    ("Gold closes above ___ on September 25?", "Gold ", "Gold (GC) "),
+    ("Meta (META) closes at ___ on September 25?", " at ", " above "),
+    (
+        "Will Apple (AAPL) close above ___ end of September or later?",
+        " or later?",
+        "?",
+    ),
 ]
 
 # The blank is mid-sentence with real words after it, and NO rule here reaches
@@ -127,7 +198,6 @@ DIRECTIONAL_UNTOUCHED = [
 # into "What will", and inventing one is composing copy rather than re-voicing
 # the venue's. One measured row; it keeps the hole.
 EMBEDDED_UNTOUCHED = [
-    "Will Apple (AAPL) close above ___ end of September?",
     "Will any AI model reach ___ Overall Arena Score by December 31?",
     "Nasdaq 100 (NDX) above ___ end of 2026?",
     "Claude Code Commits hit ___ by May 31?",
@@ -250,11 +320,52 @@ class TestTheDirectionalLadderIsLeftAlone:
     chance of finishing AT $305 and AT $310, which is both false and
     impossible-looking (two exact prices cannot be 92% and 84%). The ugly
     headline is the honest one until the ingest join supplies the real question.
+
+    2026-09-25: the rows with a price VERB left this list for
+    `TestTheDirectionalLadderIsReAskedAsHowHigh`, which keeps the floor
+    reading without the word. What remains has no verb to re-ask with.
     """
 
     @pytest.mark.parametrize("name", DIRECTIONAL_UNTOUCHED)
     def test_byte_identical(self, name):
         assert clean_market_display_name(name) == name
+
+
+class TestTheDirectionalLadderIsReAskedAsHowHigh:
+    """"X closes above ___ on D?" -> "How high will X close on D?".
+
+    "How high" asks for a level REACHED, so each rung under it is a floor —
+    the reading "above" gave it — and the word no longer has to be printed.
+    """
+
+    @pytest.mark.parametrize("stored,shown", DIRECTIONAL_REWRITTEN)
+    def test_the_reader_gets_the_how_high_question(self, stored, shown):
+        assert clean_market_display_name(stored) == shown
+
+    @pytest.mark.parametrize("stored,shown", DIRECTIONAL_REWRITTEN)
+    def test_no_blank_survives(self, stored, shown):
+        assert not re.search(r"_{2,}|\.{3,}", clean_market_display_name(stored))
+
+    @pytest.mark.parametrize("stored,shown", DIRECTIONAL_REWRITTEN)
+    def test_the_ticker_subject_survives_verbatim(self, stored, shown):
+        subject = re.search(r"\A(?:Will )?(.+?\([A-Z]+\))", stored).group(1)
+        assert subject in clean_market_display_name(stored)
+
+    @pytest.mark.parametrize("stored,shown", DIRECTIONAL_REWRITTEN)
+    def test_exactly_one_question_mark_and_it_is_last(self, stored, shown):
+        result = clean_market_display_name(stored)
+        assert result.count("?") == 1 and result.endswith("?")
+
+    @pytest.mark.parametrize("stored,_c,_r", DIRECTIONAL_FRAME_REFUSED)
+    def test_the_control_is_byte_identical(self, stored, _c, _r):
+        assert clean_market_display_name(stored) == stored
+
+    @pytest.mark.parametrize("stored,refused,restored", DIRECTIONAL_FRAME_REFUSED)
+    def test_each_control_is_one_feature_from_firing(self, stored, refused, restored):
+        """A control the rule could never reach would pass while testing nothing."""
+        assert stored.count(refused) == 1
+        fixed = stored.replace(refused, restored)
+        assert clean_market_display_name(fixed).startswith("How high will ")
 
 
 class TestTheEmbeddedBlankIsLeftAlone:
@@ -556,6 +667,7 @@ class TestTheDetailPageAsksTheSameQuestionAsTheCard:
                 "Netflix (NFLX) closes week of Sep 14 at ___?",
                 "Netflix (NFLX) closes week of Sep 14?",
             ),
+            DIRECTIONAL_REWRITTEN[0],  # /futures/61311441's family, 9/25 shop
         ],
     )
     def test_the_detail_payload_serves_the_cleaned_question(
@@ -627,6 +739,8 @@ class TestCleaningNeverChangesADecisionAClientMakesFromTheName:
         + ADJECTIVE_SLOT_UNTOUCHED
         + NO_PLACEHOLDER_UNTOUCHED
         + [stored for stored, _ in OBJECT_SLOT_REWRITTEN]
+        + [stored for stored, _ in DIRECTIONAL_REWRITTEN]
+        + [stored for stored, _c, _r in DIRECTIONAL_FRAME_REFUSED]
         + [
             # The live specimens, carried so the corpus cannot lose them.
             "Will Novak Djokovic announce his retirement by...?",

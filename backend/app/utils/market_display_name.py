@@ -27,12 +27,18 @@ two rules, and each one only fires on a shape that has been read end to end:
 🔴 POPULATIONS DELIBERATELY LEFT EXACTLY AS THEY ARE, because for them any
 rewrite yields a card WORSE than the one it replaces:
 
-  DIRECTIONAL (37 of the 52 open rows left) — "Amazon 2026 capex above ___?"
+  DIRECTIONAL with no verb (3 of 36 open rows, 2026-09-25) — "Amazon 2026
+      capex above ___?", "OpenAI IPO closing market cap above ___ ?".
       "above" is not a locator, it is the comparison the ladder is made of.
       The rungs $305 · 92%, $310 · 84% are only coherent as "above $305"; drop
       the word and they read as "at $305" — 92% and 84% for two different exact
       prices, which is nonsense. A truthful-but-ugly headline would become a
-      clean-looking lie, so this one waits for the join.
+      clean-looking lie, so these wait for the join.
+
+      The other 33 are the three stock-ticker templates the THIRD rule
+      (``_rewrite_directional``) reaches: they carry a price VERB, so the
+      question can be re-asked as "How high will X close …?" — a question
+      whose every answer is a floor, which is what each "above" rung is.
 
   ADJECTIVE SLOT (19 distinct names measured, 2 of them open) — "Will MrBeast
       hit ___ Billion views by June 30?", "Will USD hit ___ Iranian rials by
@@ -50,7 +56,7 @@ Applied to the live open population: 87 rows printed a hole after the trailing
 rule alone, **52 after both** (37 + 2 + 13 above). That is the honest remainder
 and it is what the ingest join is for; it is not a silent gap.
 
-All three are pinned by CONTROL tests that assert byte-identity.
+All three carve-outs are pinned by CONTROL tests that assert byte-identity.
 
 THE RULE THIS MODULE FOLLOWS: clean a name where it is **printed**, never where
 it is **interpreted**. ``feed.py`` also passes ``market.name`` into
@@ -152,6 +158,78 @@ def _rewrite_object_slot(name: str) -> str:
     return f"{head} {tail}?" if tail else f"{head}?"
 
 
+# --- the directional rule (the third half of #3513) --------------------------
+#
+# The directional carve-out above refused to DROP "above": the rungs are only
+# coherent as floors. It did not have to keep the blank, because the question
+# can be re-asked so that "above" is no longer needed to say it. Measured over
+# the open population 2026-09-25 04:2xZ (Postgres regex on
+# ``(above|below|over|under)\s*(_{2,}|\.{3,})``): 36 rows, and 33 of them are
+# exactly three stock-ticker templates, eleven tickers each:
+#
+#     Meta (META) closes above ___ on September 25?
+#     Will Meta (META) close above ___ end of September?
+#     Will Meta (META) finish week of September 21 above___?
+#
+# Each becomes "How high will Meta (META) close on September 25?". "How high"
+# asks for a LEVEL REACHED, so every rung under it reads as a floor — $710 ·
+# 90%, $740 · 88% is "at least $710", "at least $740", exactly what the venue's
+# member questions say ("Will Meta close above $710 on September 25?"). The
+# heatmap card's own caption ("More likely than not: $740" — the highest rung
+# at ≥50%) is only true under that reading, so title and caption now agree.
+#
+# Closed on purpose: only "above" (no live "below"/"over"/"under" row), only
+# these three verb frames, and the subject must be a ``Name (TICKER)`` — the
+# only subject the 33 have. "Amazon 2026 capex above ___?" has no verb to
+# re-ask with and stays byte-identical, as does anything unmeasured.
+_TICKER_SUBJECT = r"(?P<subject>[^?]+?\([A-Z][A-Z0-9.]{0,9}\))"
+
+# The date slots are the measured forms and nothing looser: "September 25"
+# (optionally ", 2026") after ``on`` / ``week of``, and a bare month
+# (optionally a year) after ``end of``. A catch-all here reached "end of
+# September or later?" in the control below.
+_DAY = r"(?P<when>[A-Z][a-z]+ \d{1,2}(?:, \d{4})?)"
+_MONTH = r"(?P<when>[A-Z][a-z]+(?: \d{4})?)"
+
+_DIRECTIONAL_FRAMES = (
+    (
+        re.compile(
+            r"\A" + _TICKER_SUBJECT + r"\s+closes\s+above\s*" + _BLANK
+            + r"\s*on\s+" + _DAY + r"\s*\?\Z"
+        ),
+        "How high will {subject} close on {when}?",
+    ),
+    (
+        re.compile(
+            r"\AWill\s+" + _TICKER_SUBJECT + r"\s+close\s+above\s*" + _BLANK
+            + r"\s*end\s+of\s+" + _MONTH + r"\s*\?\Z"
+        ),
+        "How high will {subject} close at the end of {when}?",
+    ),
+    (
+        re.compile(
+            r"\AWill\s+" + _TICKER_SUBJECT + r"\s+finish\s+week\s+of\s+"
+            + _DAY + r"\s+above\s*" + _BLANK + r"\s*\?\Z"
+        ),
+        "How high will {subject} finish the week of {when}?",
+    ),
+)
+
+
+def _rewrite_directional(name: str) -> str:
+    """Turn "X closes above ___ on D?" into "How high will X close on D?".
+
+    Returns ``name`` byte-identical unless one of the three measured frames
+    matches the whole string.
+    """
+    stripped = name.strip()
+    for pattern, template in _DIRECTIONAL_FRAMES:
+        match = pattern.match(stripped)
+        if match is not None:
+            return template.format(**match.groupdict())
+    return name
+
+
 def clean_market_display_name(name: str | None) -> str | None:
     """Return ``name`` with Polymarket's template blank gone.
 
@@ -162,18 +240,23 @@ def clean_market_display_name(name: str | None) -> str | None:
     "What will Gold (GC) hit__ by end of December?"
                                                -> "What will Gold (GC) hit by end of December?"
 
+    "Meta (META) closes above ___ on September 25?"
+                                               -> "How high will Meta (META) close on September 25?"
+
     Anything this module does not positively recognise is returned UNCHANGED
     and byte-identical — including ``None``, the empty string, a name with no
-    blank at all, an adjective-slot blank, and a directional "above" blank.
+    blank at all, an adjective-slot blank, and a directional "above" blank
+    with no price verb ("Amazon 2026 capex above ___?").
     """
     if not name:
         return name
 
-    # Two rules in order, each returning its input byte-identical when it does
-    # not recognise the shape. They cannot both fire: the trailing rule only
-    # returns a changed string with the blank already gone, and the object-slot
-    # pattern requires one.
-    return _rewrite_object_slot(_strip_trailing_blank(name))
+    # Three rules in order, each returning its input byte-identical when it
+    # does not recognise the shape. They cannot both fire: the trailing rule
+    # only returns a changed string with the blank already gone, and the
+    # object-slot and directional patterns each require one. The directional
+    # frames need "above" before the blank, which neither earlier rule accepts.
+    return _rewrite_directional(_rewrite_object_slot(_strip_trailing_blank(name)))
 
 
 def _trailing_blank_parts(name: str) -> tuple[str, str, str] | None:
