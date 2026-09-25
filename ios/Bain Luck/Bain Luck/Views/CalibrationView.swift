@@ -7,6 +7,12 @@ import SwiftUI
 /// takes the model as an `@ObservedObject` so it can also be driven from a fixed
 /// payload — see `CalibrationSurfaceView`.
 struct CalibrationView: View {
+    /// #8517 — the word a reader sees for this screen: its title, the Browse
+    /// card and the iPad sidebar entry. The website retired "Calibration" for
+    /// readers in #7738 (`frontend/app/calibration/layout.tsx` title), so the
+    /// phone uses the same word. Code names (route, tab, file) are unchanged.
+    static let readerTitle = "Accuracy"
+
     @StateObject private var viewModel = CalibrationViewModel()
 
     var body: some View { CalibrationSurfaceView(viewModel: viewModel) }
@@ -109,7 +115,7 @@ struct CalibrationSurfaceView: View {
                 .padding(.horizontal, 24)
             } else { scrollContent }
         }
-        .navigationTitle("Calibration")
+        .navigationTitle(CalibrationView.readerTitle)
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif

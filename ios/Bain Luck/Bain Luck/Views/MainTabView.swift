@@ -104,7 +104,7 @@ struct MainTabView: View {
                     // Views stay in the detail switch for deep-link support.
                     sidebarLabel("Preferences", systemImage: "gearshape")
                         .tag(AppTab.preferences)
-                    sidebarLabel("Calibration", systemImage: "chart.dots.scatter")
+                    sidebarLabel(CalibrationView.readerTitle, systemImage: "chart.dots.scatter")
                         .tag(AppTab.calibration)
                 }
             }

@@ -192,7 +192,7 @@ struct LeaguesView: View {
                 route: .futuresList
             )
             BrowseFeatureCard(
-                title: "Calibration",
+                title: CalibrationView.readerTitle,
                 subtitle: "Market track record",
                 icon: "chart.dots.scatter",
                 color: .teal,
