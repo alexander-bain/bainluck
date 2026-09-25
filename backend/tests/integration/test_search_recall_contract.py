@@ -497,6 +497,18 @@ async def _seed(session):
     # fixture by `celtcs` -> Boston Celtics above (similarity 0.294, measured).
     session.add(Team(sport_id=ncaaf.id, name="UTEP Miners", abbreviation="UTEP"))
 
+    # #8250 — the reported pair, verbatim names. For `red socks`, plain
+    # `similarity` puts Red Star first (0.357 vs 0.316) and `word_similarity` puts
+    # Boston Red Sox first (0.600 vs 0.500) — measured on local Postgres, same
+    # numbers #8155 measured on production. Without both rows the twin-agreement
+    # guard below cannot tell the two orderings apart.
+    mlb = Sport(key="baseball_mlb", name="MLB")
+    serbia = Sport(key="soccer_serbia_superliga", name="Serbian SuperLiga")
+    session.add_all([mlb, serbia])
+    await session.flush()
+    session.add(Team(sport_id=mlb.id, name="Boston Red Sox", abbreviation="BOS"))
+    session.add(Team(sport_id=serbia.id, name="Red Star", abbreviation="CZV"))
+
     for external_id, name, outcomes in _FUTURES_SEEDS:
         market = FuturesMarket(
             source="kalshi",
@@ -1355,6 +1367,52 @@ async def test_the_multi_term_correction_refuses_a_near_miss_that_clears_the_pre
         "prefilter, so the only thing that may refuse it is the multi-term "
         "word_similarity floor — this is what a deleted or lowered floor looks "
         "like (#8155)."
+    )
+
+
+#: #8250 — the multi-term population both twins must answer identically. The
+#: first two are the reported class, the third is #8155's own seeded analogue,
+#: the fourth is a real club plus an ordinary word (the floor must refuse it),
+#: and `celtcs` pins that the single-term arm did not move.
+_TWIN_CORRECTION_CASES = (
+    ("red socks", "Boston Red Sox"),
+    ("boston red socks", "Boston Red Sox"),
+    ("boston celtcs", "Boston Celtics"),
+    ("celtics roster", None),
+    ("celtcs", "Boston Celtics"),
+)
+
+
+@pytest.mark.parametrize(("q", "expected"), _TWIN_CORRECTION_CASES)
+async def test_both_fuzzy_twins_give_the_same_correction(search, typeahead, q, expected):
+    """#8250 — `/typeahead` and `/search` are twin "did you mean" fallbacks.
+
+    #8155 moved `/search`'s multi-term arm onto `word_similarity` and left the
+    dropdown on plain `similarity`, so for `red socks` the dropdown said "Showing
+    results for Red Star" while the search page said Boston Red Sox. Asserted as
+    AGREEMENT on each case and against the expected answer, so neither twin can
+    drift alone and both cannot drift together.
+    """
+    search_dym = (await search(q)).get("did_you_mean")
+    typeahead_dym = (await typeahead(q)).get("did_you_mean")
+    assert (search_dym, typeahead_dym) == (expected, expected), (
+        f"{q!r}: /search corrects to {search_dym!r}, /typeahead to "
+        f"{typeahead_dym!r}, expected {expected!r} from both (#8250)"
+    )
+
+
+async def test_the_floor_withholds_the_correction_not_the_row(typeahead):
+    """#8250 — the floor gates what the dropdown ASSERTS, not what it offers.
+
+    `celtics roster` has no correction (word_similarity 0.533 < 0.59, as on
+    `/search`), but the dropdown is a list of candidates: the Celtics row stays.
+    Removing the row would be a recall loss nobody asked for.
+    """
+    payload = await typeahead("celtics roster")
+    assert "Boston Celtics" in _typeahead_texts(payload), (
+        f"`celtics roster` lost the Boston Celtics row: "
+        f"{_typeahead_texts(payload)!r} — the #8250 floor must gate only "
+        "did_you_mean, never the fuzzy team rows"
     )
 
 
