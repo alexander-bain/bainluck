@@ -8908,11 +8908,9 @@ async def search_events(
     # teamless — and the refilled page is re-partitioned so the refill's club
     # rows land above the window's sunk ones. With the evidence disarmed every
     # row is an answer row, and this gate is byte-for-byte the old one.
-    # #8628 r2: an over-cap row is not an answer row either.
     _answer_rows = sum(
         1 for m in deduped_futures
         if not _is_teamless_sport(m, _team_sport_categories)
-        and m.id not in _over_match_cap_ids
     )
     if (
         _answer_rows < _SEARCH_FUTURES_PAGE
@@ -8924,6 +8922,18 @@ async def search_events(
             "to %d (%d answer rows); refilling from rank %d",
             len(q), len(futures_markets_raw), len(deduped_futures), _answer_rows,
             _SEARCH_FUTURES_WINDOW,
+        )
+        # #8628 r2: the gate above counts an over-cap row as an answer, so the
+        # cap never FIRES a refill that would not have run — the refill costs
+        # 2.4-4.0 s on `united` (production `dda40b8b`, 2026-09-25) against
+        # 3 ms on `city`, where it does not fire. Once it has run, its rows are
+        # already fetched, so from here the count is of rows that can lead the
+        # page and the loop below reads further into them instead of stopping
+        # on a fixture's sunk rows.
+        _answer_rows -= sum(
+            1 for m in deduped_futures
+            if m.id in _over_match_cap_ids
+            and not _is_teamless_sport(m, _team_sport_categories)
         )
         await _apply_search_statement_timeout(db, _deadline)
         # A SAVEPOINT, for the same reason the headline lane below has one

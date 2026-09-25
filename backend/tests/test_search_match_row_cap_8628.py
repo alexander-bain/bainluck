@@ -155,8 +155,23 @@ class TestTheHandlerWiring:
     def test_both_admission_loops_count_the_cap(self):
         assert self.SRC.count("if _is_over_match_cap(m, _match_counts, _query_words):") == 2
 
-    def test_an_over_cap_row_is_not_an_answer_row_in_either_count(self):
-        assert self.SRC.count("and m.id not in _over_match_cap_ids") == 2
+    def test_the_refill_gate_still_counts_an_over_cap_row(self):
+        """The cap must never FIRE a refill (2.4-4.0 s on `united`, 3 ms on
+        `city` where it does not run): the gate's count is the pre-cap one."""
+        start = self.SRC.index("    _answer_rows = sum(")
+        gate = self.SRC[start:self.SRC.index("_answer_rows < _SEARCH_FUTURES_PAGE", start)]
+        assert "_over_match_cap_ids" not in gate
+
+    def test_once_the_refill_runs_the_count_drops_the_sunk_rows(self):
+        gate = self.SRC.index("_answer_rows < _SEARCH_FUTURES_PAGE")
+        drop = self.SRC.index("_answer_rows -= sum(")
+        refill = self.SRC.index("futures_query.offset(_SEARCH_FUTURES_WINDOW)")
+        assert gate < drop < refill
+        assert "if m.id in _over_match_cap_ids" in self.SRC[drop:refill]
+
+    def test_the_refill_loop_counts_only_rows_that_lead(self):
+        loop = self.SRC[self.SRC.index("refill_rows, expanded,"):]
+        assert "and m.id not in _over_match_cap_ids\n            ):\n                _answer_rows += 1" in loop
 
     def test_the_sink_runs_outside_the_refill_branch(self):
         """The window alone can hold over-cap rows, so the sink cannot live in
