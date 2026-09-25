@@ -2375,6 +2375,97 @@ async def test_only_a_complete_rostered_name_resolves_a_team(
 # --------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# #8697 — a resolved team's games lead; a namesake from a teamless sport sinks
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+async def search_with_a_namesake_rugby_club(seeded_db, search):
+    """`?q=chiefs` on production 2026-09-25, trimmed to one of each class.
+
+        Kansas City Chiefs          NFL team — the TEAMS card resolves it
+        Exeter Chiefs v Gloucester  rugby_other, TOMORROW — led the games list
+        Miami Dolphins v KC Chiefs  NFL, in 3 days — sat second
+        Bath v Exeter Chiefs        rugby_other, in 5 days
+
+    No rugby club named Chiefs is in the teams table, which is the evidence.
+    """
+    from sqlalchemy import select
+
+    from app.models.models import Event, Sport, Team
+
+    _engine, maker = seeded_db
+    now = datetime.now(timezone.utc)
+    async with maker() as session:
+        nfl = (
+            await session.execute(
+                select(Sport).where(Sport.key == "americanfootball_nfl")
+            )
+        ).scalar_one()
+        rugby = Sport(key="rugby_other", name="rugby_other")
+        session.add(rugby)
+        await session.flush()
+        session.add(Team(sport_id=nfl.id, name="Kansas City Chiefs", abbreviation="KC"))
+        for sport_id, home, away, days in (
+            (rugby.id, "Exeter Chiefs", "Gloucester", 1),
+            (nfl.id, "Miami Dolphins", "Kansas City Chiefs", 3),
+            (rugby.id, "Bath", "Exeter Chiefs", 5),
+        ):
+            session.add(
+                Event(
+                    sport_id=sport_id,
+                    home_team_name=home,
+                    away_team_name=away,
+                    commence_time=now + timedelta(days=days),
+                    status="scheduled",
+                )
+            )
+        await session.commit()
+    return search
+
+
+def _game_pairs(payload: dict) -> list[str]:
+    return [
+        f"{r.get('home_team') or r.get('home_team_name')} v "
+        f"{r.get('away_team') or r.get('away_team_name')}"
+        for r in payload.get("results") or []
+    ]
+
+
+async def test_the_resolved_teams_game_leads_a_namesakes_rugby_match(
+    search_with_a_namesake_rugby_club,
+):
+    payload = await search_with_a_namesake_rugby_club("chiefs")
+    assert [t.get("name") for t in payload.get("teams") or []] == ["Kansas City Chiefs"]
+    games = _game_pairs(payload)
+    assert games[0] == "Miami Dolphins v Kansas City Chiefs", games
+    # Sunk, never dropped — and still in kickoff order among themselves.
+    assert games[1:] == ["Exeter Chiefs v Gloucester", "Bath v Exeter Chiefs"], games
+
+
+async def test_without_the_key_the_namesake_leads_again(
+    search_with_a_namesake_rugby_club, monkeypatch,
+):
+    """Strawman: remove the key and tomorrow's rugby match is first again —
+    the fixture reproduces the defect, so the test above testifies."""
+    from app.routes import events as events_module
+
+    monkeypatch.setattr(
+        events_module, "_event_teamless_sport_order_key", lambda *_: None
+    )
+    games = _game_pairs(await search_with_a_namesake_rugby_club("chiefs"))
+    assert games[0] == "Exeter Chiefs v Gloucester", games
+
+
+async def test_a_query_that_resolves_no_team_keeps_kickoff_order(
+    search_with_a_namesake_rugby_club,
+):
+    """`exeter` matches no team row, so the evidence is disarmed."""
+    games = _game_pairs(await search_with_a_namesake_rugby_club("exeter"))
+    assert games == ["Exeter Chiefs v Gloucester", "Bath v Exeter Chiefs"], games
+
+
 @pytest.fixture
 async def typeahead_with_a_rostered_player(search_with_a_rostered_player, typeahead):
     """`typeahead` over the same seed as `search_with_a_rostered_player`.

@@ -2164,6 +2164,47 @@ def _is_teamless_sport(m, team_categories: frozenset | None) -> bool:
     return cat in _SEARCH_SPORT_LLM_CATEGORIES and cat not in team_categories
 
 
+# #8697: an EVENT's sport category, read from its sport key's prefix — the same
+# two maps `_team_evidence_sport_categories` reads a TEAM's with, so a game and
+# a club are judged in one vocabulary.
+_EVENT_SPORT_PREFIX_CATEGORY = {
+    **SPORT_PREFIX_TO_LLM_CATEGORY,
+    **_TEAM_PREFIX_EXTRA_LLM_CATEGORY,
+}
+
+
+def _event_teamless_sport_order_key(team_categories: frozenset | None):
+    """#8697: the games-list twin of `_demote_teamless_sport`, as an ORDER BY key.
+
+    `chiefs` on production 2026-09-25: the TEAMS card resolved Kansas City
+    Chiefs, and the first GAMES card under it was Exeter Chiefs v Gloucester —
+    an unpriced English rugby match — because both teams carry "chiefs" in the
+    weight-A text, `search_rank` tied, and the tie broke by kickoff. The teams
+    table already knows no club called Chiefs plays rugby here; that is exactly
+    #7355's evidence, and this applies it to the games arm.
+
+    1 for a game whose sport NAMES a sport (`_SEARCH_SPORT_LLM_CATEGORIES`) that
+    none of the matched teams play, 0 otherwise. A key, never a filter: the
+    namesake's games stay on the page, below. An ORDER BY key and not a Python
+    partition because the events arm is paginated (see `_day_boost`'s note).
+
+    None — and the caller then adds NO key, so the compiled SQL is unchanged —
+    whenever the evidence is disarmed (`_team_evidence_sport_categories` says
+    when) or nothing would sink. A sport key whose prefix is not in the map
+    keeps its place, the same fail-open shape.
+    """
+    if not team_categories:
+        return None
+    sunk = sorted(
+        prefix
+        for prefix, cat in _EVENT_SPORT_PREFIX_CATEGORY.items()
+        if cat in _SEARCH_SPORT_LLM_CATEGORIES and cat not in team_categories
+    )
+    if not sunk:
+        return None
+    return case((func.split_part(Sport.key, "_", 1).in_(sunk), 1), else_=0)
+
+
 # Award-narrowing scope tokens. A market whose NAME carries one of these but the
 # QUERY does not is a sub-award (e.g. "Eastern Conference Finals MVP" vs the bare
 # season "MVP Winner"). Word-boundary matched so "final" inside another word can't
@@ -7069,6 +7110,69 @@ async def search_events(
     else:
         event_conditions = [_event_recall_arms[0], *event_scope_conditions]
 
+    # #8697: the teams read runs HERE, before the games ORDER BY is built,
+    # because that ORDER BY now reads which sports the matched teams play
+    # (`_event_teamless_sport_order_key`). It is the teams stage's own statement
+    # (`_search_team_rows_q`), read once: the stage below reuses these rows
+    # unless the resolved-team rescue hands it roster ids, which change its
+    # statement. A SAVEPOINT for the stage's reason; a shed read disarms the
+    # evidence (no rows) and marks `teams` degraded exactly once.
+    def _search_team_rows_q(roster_team_ids: list[int]):
+        team_rank = _team_search_rank(_q_identity).label("team_rank")
+        stmt = (
+            # `alternate_names` is SELECTed for the scorer, not for the payload — the
+            # same correction typeahead needed (spec §3). The recall arms had always
+            # FILTERED on this column while never handing it to whatever ranked the
+            # rows, so `Boston Red Sox` was only MC1 for `red sox` and lost the kind
+            # tie to any market that mentioned the Red Sox. Withholding the evidence
+            # a team would win on turns the floor into a ceiling.
+            select(Team.id, Team.name, Team.slug, Team.abbreviation,
+                   Team.logo_url_small, Team.current_record, Sport.key.label("sport_key"),
+                   Team.alternate_names, team_rank)
+            .join(Sport, Team.sport_id == Sport.id, isouter=True)
+            .where(
+                # #8523: a club the rescue resolved from a PLAYER's name joins by id
+                # — its own name shares no word with `patrick mahomes`, so the name
+                # filter alone would leave his team off the page it was found for.
+                # Non-empty only when that filter resolved nothing (the rescue's own
+                # gate), and absent otherwise: the SQL every other query compiles is
+                # unchanged.
+                or_(
+                    _build_team_search_filter(_q_identity),
+                    Team.id.in_(roster_team_ids),
+                )
+                if roster_team_ids
+                else _build_team_search_filter(_q_identity)
+            )
+            .order_by(team_rank.desc(), Team.name)
+            .limit(_SEARCH_TEAM_WINDOW)
+        )
+        if sport:
+            stmt = stmt.where(Sport.key == sport)
+        return stmt
+
+    _early_team_rows: list | None = None
+    if time.monotonic() <= _deadline:
+        _evidence_savepoint = await db.begin_nested()
+        try:
+            _early_team_rows = (await db.execute(_search_team_rows_q([]))).all()
+        except Exception as exc:  # noqa: BLE001
+            await _evidence_savepoint.rollback()
+            if not _is_query_timeout(exc):
+                raise
+            logger.warning(
+                "search teams evidence timed out (query length %d)", len(q)
+            )
+            await _apply_search_statement_timeout(db, _deadline)
+            _early_team_rows = []
+            degraded.append("teams")
+        else:
+            await _evidence_savepoint.commit()
+    _teamless_sport_key = _event_teamless_sport_order_key(
+        _team_evidence_sport_categories(_early_team_rows, _SEARCH_TEAM_WINDOW)
+    )
+    _mark("team_evidence")
+
     # Build base query - search both home and away team names
     query = (
         select(Event)
@@ -7121,6 +7225,10 @@ async def search_events(
     _day_boost = _intent_day_order_key(_intent, now)
     query = query.order_by(
         *( (_day_boost,) if _day_boost is not None else () ),
+        # #8697: below a named day (the reader's own constraint), above
+        # everything else — a namesake's LIVE game still sits under the resolved
+        # team's games. Absent when disarmed, like `_day_boost`.
+        *( (_teamless_sport_key,) if _teamless_sport_key is not None else () ),
         status_order,
         tag_boost,
         search_rank.desc(),
@@ -8796,39 +8904,14 @@ async def search_events(
     # above shows going 1 -> 0 and 2 -> 0: the filter is an AND over the terms
     # and no team owns a name containing "today", so the reader's own team
     # vanished from the page they went to find it on.
-    team_rank = _team_search_rank(_q_identity).label("team_rank")
-    team_search_q = (
-        # `alternate_names` is SELECTed for the scorer, not for the payload — the
-        # same correction typeahead needed (spec §3). The recall arms had always
-        # FILTERED on this column while never handing it to whatever ranked the
-        # rows, so `Boston Red Sox` was only MC1 for `red sox` and lost the kind
-        # tie to any market that mentioned the Red Sox. Withholding the evidence
-        # a team would win on turns the floor into a ceiling.
-        select(Team.id, Team.name, Team.slug, Team.abbreviation,
-               Team.logo_url_small, Team.current_record, Sport.key.label("sport_key"),
-               Team.alternate_names, team_rank)
-        .join(Sport, Team.sport_id == Sport.id, isouter=True)
-        .where(
-            # #8523: a club the rescue resolved from a PLAYER's name joins by id
-            # — its own name shares no word with `patrick mahomes`, so the name
-            # filter alone would leave his team off the page it was found for.
-            # Non-empty only when that filter resolved nothing (the rescue's own
-            # gate), and absent otherwise: the SQL every other query compiles is
-            # unchanged.
-            or_(
-                _build_team_search_filter(_q_identity),
-                Team.id.in_(_roster_team_ids),
-            )
-            if _roster_team_ids
-            else _build_team_search_filter(_q_identity)
-        )
-        .order_by(team_rank.desc(), Team.name)
-        .limit(_SEARCH_TEAM_WINDOW)
-    )
-    if sport:
-        team_search_q = team_search_q.where(Sport.key == sport)
+    team_search_q = _search_team_rows_q(_roster_team_ids)
     # LAT-P002/#1494 (1e): teams is a non-essential stage too.
-    if time.monotonic() > _deadline:
+    if _early_team_rows is not None and not _roster_team_ids:
+        # #8697: the evidence read above WAS this statement (no roster ids), so
+        # its rows are this stage's rows — read once. A shed evidence read left
+        # [] and already marked `teams` degraded.
+        _team_result_rows = _early_team_rows
+    elif time.monotonic() > _deadline:
         # #7355: the query text stays out of this line. The stage moved in this
         # change, and CodeQL (py/log-injection) reads a moved `%r, q` as new;
         # the length is enough to tell a long query from a short one.
