@@ -1843,6 +1843,34 @@ async def write_espn_win_probability(session, event, ee, match_method, claimed_e
 # Statistical model win probability
 # ---------------------------------------------------------------------------
 
+async def retire_priorless_stat_model(session, event, *, mirror_orm: bool) -> bool:
+    """Drop a deferring model's earlier ``stat_model`` reading from the row (#8522).
+
+    Shared by both stat-model writers (this module's ESPN path and the odds
+    poll). A key REMOVAL, not a reading — no value, no observation time — so it
+    is a PRUNE in `test_blend_source_writer_scan_5311`'s ledger, and it lives in
+    its own function so that ledger entry exempts nothing else. Core `update()`
+    (gotcha #4). ``mirror_orm`` copies the result onto the ORM row the way the
+    caller's own stamp write does, so a later stamp in the same pass does not
+    resurrect the key; the odds poll does not mirror its stamps and passes False.
+    Returns True when a key was dropped.
+    """
+    from app.models.models import Event
+    from app.utils.win_probability import retire_priorless_model_reading
+
+    retired = retire_priorless_model_reading(event.win_probability_sources)
+    if retired is None:
+        return False
+    await session.execute(
+        _sql_update(Event)
+        .where(Event.id == event.id)
+        .values(win_probability_sources=retired)
+    )
+    if mirror_orm:
+        event.win_probability_sources = retired
+    return True
+
+
 async def compute_and_write_stat_model(session, event, ee, sport_key, stats):
     """Compute statistical model win probability for live games and write snapshot.
 
@@ -1890,6 +1918,12 @@ async def compute_and_write_stat_model(session, event, ee, sport_key, stats):
             stats["stat_model_priorless_deferred"] = (
                 stats.get("stat_model_priorless_deferred", 0) + 1
             )
+            # ...and drop the reading it wrote before the market arrived,
+            # or that frozen number keeps the headline.
+            if await retire_priorless_stat_model(session, event, mirror_orm=True):
+                stats["stat_model_priorless_retired"] = (
+                    stats.get("stat_model_priorless_retired", 0) + 1
+                )
             return False
 
         # Prefer numeric period for reliability

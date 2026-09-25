@@ -1274,6 +1274,7 @@ async def _poll_all_odds():
         scores_updated = 0
         stat_model_from_poll = 0
         stat_model_priorless_deferred = 0
+        stat_model_priorless_retired = 0
         # #1981: every score write refused because the row's own commence says the
         # provider id on it names a DIFFERENT game. Counted, never silent — a guard
         # whose refusals are invisible is indistinguishable from a guard that is off.
@@ -2417,6 +2418,17 @@ async def _poll_all_odds():
                                         event_obj.win_probability_sources,
                                     ):
                                         stat_model_priorless_deferred += 1
+                                        # ...and drop the reading written before
+                                        # the market arrived, or it stays frozen
+                                        # on the headline.
+                                        from app.utils.espn_helpers import (
+                                            retire_priorless_stat_model,
+                                        )
+
+                                        if await retire_priorless_stat_model(
+                                            session, event_obj, mirror_orm=False
+                                        ):
+                                            stat_model_priorless_retired += 1
                                         continue
 
                                     stat_wp = compute_statistical_win_prob(
@@ -2557,6 +2569,7 @@ async def _poll_all_odds():
             "scores_skipped_quota": scores_skipped_quota,
             "stat_model_from_poll": stat_model_from_poll,
             "stat_model_priorless_deferred": stat_model_priorless_deferred,
+            "stat_model_priorless_retired": stat_model_priorless_retired,
             "events_closed": events_closed,
             "events_suspended": events_suspended,
             "live_gei_updated": live_gei_updated,
