@@ -1464,9 +1464,13 @@ export function computeSharedChartDomain(
     // score row stamped before the pregame margin is the mis-attribution case,
     // not a game end. (#7315: and `endCeilMs` the same at the other end — this
     // is the series both of its specimens came out of.)
+    const scoreChangeTs: number[] = [];
     for (const pt of historyData.score_history ?? []) {
       const t = new Date(pt.timestamp).getTime();
-      if (inGameWindow(t)) gameEndTs.push(t);
+      if (inGameWindow(t)) {
+        gameEndTs.push(t);
+        scoreChangeTs.push(t);
+      }
     }
 
     if (gameEndTs.length > 0) {
@@ -1486,6 +1490,24 @@ export function computeSharedChartDomain(
         const lastBetting = Math.max(...bettingTs);
         if (lastBetting > lastGameEnd && lastBetting - lastGameEnd <= MAX_EXTENSION_MS) {
           endMs = lastBetting;
+        } else if (
+          scoreChangeTs.length > 0 &&
+          lastGameEnd === Math.max(...scoreChangeTs)
+        ) {
+          // #8709 — A SCORE CHANGE IS NOT THE FINAL WHISTLE. `score_history`
+          // holds one row per CHANGE, so when it is the latest evidence its
+          // last row is when the last goal went in, and the match went on
+          // after it. /events/15314642 (Girona 2–0 Albacete): last change
+          // 19:17Z, in-play sportsbook quotes to 20:18Z, `completed_at`
+          // 20:25Z. The 10-minute cap above cut the window at 19:17Z, so the
+          // Score Differential chart (which prunes to this window) lost the
+          // whole second half while Win Probability above it ran to the end.
+          // Here the end may extend over the sportsbook tail, but only up to
+          // `completed_at`, the one column that says the game is over (#7315),
+          // so a post-final write can never stretch it. With no `completed_at`
+          // the filter below is empty (`t <= NaN`) and the window is unchanged.
+          const inPlayBetting = bettingTs.filter((t) => t > lastGameEnd && t <= caMs);
+          if (inPlayBetting.length > 0) endMs = Math.max(...inPlayBetting);
         }
       }
 
