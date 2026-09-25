@@ -29715,6 +29715,14 @@ async def _search_container_parent_ids(
                     )
                 )
             ).all()
+        # CERT-3491 follow-up: when both reads run, the second gets what is LEFT
+        # of the budget, re-derived here, not the first read's arming. A spent
+        # deadline skips it and the linked verdict still ships.
+        if unlinked and candidates:
+            if time.monotonic() > deadline:
+                unlinked = {}
+            else:
+                await _apply_search_statement_timeout(db, deadline)
         if unlinked:
             unlinked_leg_ids = set().union(*(legs for _, legs in unlinked.values()))
             named_rows = (

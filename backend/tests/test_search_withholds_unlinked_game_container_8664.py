@@ -223,3 +223,38 @@ def test_a_thin_row_without_event_id_never_reaches_the_event_arm():
     thin = SimpleNamespace(id=1, source="kalshi", group_id=None, mutually_exclusive=True, outcomes=[])
     assert _search_container_parent_candidates([thin]) == {}
     assert _search_unlinked_container_parent_candidates([thin]) == {}
+
+
+@pytest.mark.asyncio
+async def test_the_second_read_is_re_armed_with_what_is_left(monkeypatch):
+    """CERT-3491 follow-up: both arms ⇒ the timeout is re-derived before the
+    named read, not inherited from the first read's arming."""
+    arm = AsyncMock()
+    monkeypatch.setattr(events_module, "_apply_search_statement_timeout", arm)
+    linked = _market(58980362, legs=["0xaaa1"], group_id="polymarket:848221", event_id=1)
+    db = AsyncMock()
+    db.begin_nested = AsyncMock(return_value=AsyncMock())
+    db.execute = AsyncMock(
+        side_effect=[
+            _result([(61766324, "polymarket:848221", "0xaaa1")]),
+            _result(_game_siblings()),
+        ]
+    )
+    await _search_container_parent_ids(db, [linked, _container()], float("inf"))
+    assert arm.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_a_deadline_spent_by_the_first_read_skips_the_second(no_timeout, monkeypatch):
+    clock = iter([0.0, 10.0])  # entry check passes; the between-reads check is spent
+    # The ROUTE's clock only — patching `time.monotonic` itself starves the loop.
+    monkeypatch.setattr(events_module, "time", SimpleNamespace(monotonic=lambda: next(clock)))
+    linked = _market(58980362, legs=["0xaaa1"], group_id="polymarket:848221", event_id=1)
+    db = AsyncMock()
+    db.begin_nested = AsyncMock(return_value=AsyncMock())
+    db.execute = AsyncMock(
+        return_value=_result([(61766324, "polymarket:848221", "0xaaa1")])
+    )
+    got = await _search_container_parent_ids(db, [linked, _container()], deadline=5.0)
+    assert got == {58980362}
+    db.execute.assert_awaited_once()
