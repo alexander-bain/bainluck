@@ -45,7 +45,7 @@ function AnswerRow({
     <Link
       href={`/futures/${market.id}`}
       onClick={onClick}
-      className="flex items-center gap-2 px-3 py-2 hover:bg-surface-elevated transition-colors"
+      className="flex flex-wrap sm:flex-nowrap items-center gap-x-2 gap-y-0.5 px-3 py-2 hover:bg-surface-elevated transition-colors"
     >
       {/* #4583: when the card lifted the shared matchup into its header, this
           link's visible text no longer says which game it is about. Sighted
@@ -96,8 +96,25 @@ function AnswerRow({
           what it is today — the guarantee #4136 rests on. The 4px is absorbed by
           the head (`shrink-[9999]`); if the head has already collapsed the tail
           gives it up by ellipsising inside its own box, which is the designed
-          degradation and cannot reintroduce #4518's overlap. */}
-      <div className="flex-1 min-w-0 flex items-center gap-1">
+          degradation and cannot reintroduce #4518's overlap.
+
+          #7949: all of the above is the DESKTOP row. At phone width the answer
+          column leaves the question ~20 characters. The head is what gives way,
+          and on a mixed card the head is the subject: production printed
+          "Wi… ALCS in the 2026 MLB Playoffs — No 76%" (Red Sox) and
+          "Spread: New York … Baltimore Orioles 64%" (Yankees, -1.5 vs -2.5).
+          No split point fixes a line that is 20 characters wide. So below `sm`
+          the question gets its own full-width line, wrapping to two (~90
+          characters at 390px, which covers the served names measured), and
+          the answer wraps to a second line, right-aligned by `ml-auto`. head +
+          tail are concatenated there, not split: the split only exists to
+          choose which bytes a one-line truncation keeps. `hidden` is
+          display:none, so a screen reader reads exactly one copy. */}
+      <div className={`sm:hidden basis-full min-w-0 line-clamp-2 ${nameClass}`}>
+        {title.head}
+        {title.tail}
+      </div>
+      <div className="flex-1 min-w-0 flex items-center gap-1 max-sm:hidden">
         <div className={`truncate shrink-[9999] ${nameClass}`}>{title.head}</div>
         {title.tail && (
           <div className={`truncate shrink ${nameClass}`}>{title.tail}</div>
@@ -110,7 +127,7 @@ function AnswerRow({
            the name and the date clean off the card. Capped and truncatable, with
            the percentage itself pinned: the reader may lose the outcome's name,
            never the answer. */
-        <div className="flex items-center gap-1 min-w-0 max-w-[55%] text-sm">
+        <div className="flex items-center gap-1 ml-auto min-w-0 max-w-[55%] max-sm:max-w-full text-sm">
           <span className="truncate text-text-primary font-medium">{ld.name}</span>
           {/* #7320: this span used to round `ld.probability * 100` inline — a
               second copy of the rounding rule, skipping the boundary clamp that
@@ -138,7 +155,7 @@ function AnswerRow({
           )}
         </div>
       ) : (
-        <span className="text-xs text-text-muted flex-shrink-0">
+        <span className="text-xs text-text-muted flex-shrink-0 ml-auto">
           {market.outcome_count} outcome{market.outcome_count !== 1 ? "s" : ""}
         </span>
       )}
