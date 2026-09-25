@@ -4342,6 +4342,23 @@ jobs:
             echo "::error::#7640 rank repair round trip SKIPPED — the gate did not run"
             exit 1
           fi
+      - name: "#8530 UFC history repair apply/restore round trip (real Postgres)"
+        # `scripts/repair_8530_ufc_flipped_history.py` swaps home/away on the
+        # 2026-09-26 UFC card's chart history under D51(b): backup first, one-
+        # command restore. The swap is `UPDATE … FROM` the backup guarded by a
+        # row-tuple `IS NOT DISTINCT FROM` that carries genuine NULLs (most
+        # sportsbook rows have no spread), and whether that matches, re-runs as
+        # a no-op, and lets the restore spare a row written since is decided by
+        # the server. Same skip-detection as every gate here.
+        run: |
+          set -o pipefail
+          python -m pytest \
+            tests/integration/test_repair_8530_ufc_history_roundtrip_real_postgres.py \
+            -v -s -rs 2>&1 | tee /tmp/uhistrepair8530.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/uhistrepair8530.txt; then
+            echo "::error::#8530 history repair round trip SKIPPED — the gate did not run"
+            exit 1
+          fi
       - name: "#7594 canonical ownership — provision the disposable database"
         # A database of its own, for the reason the #4079 step above gives: this
         # contract builds and drops the tables the take-back touches, and
