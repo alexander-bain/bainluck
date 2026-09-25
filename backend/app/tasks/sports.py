@@ -652,6 +652,17 @@ async def _discover_events():
                                 duplicate_alerts = []
                             duplicate_alerts.extend(alerts)
 
+                    # #837: release this sport's rows BEFORE the next sport's
+                    # Odds API and ESPN calls. Since #5426 discovery stamps
+                    # `betting` on every game it sees, live ones included, and a
+                    # single commit after ~33 sports held those rows for the
+                    # whole pass: 55 s on Padres @ Dodgers (live/583, 03:05:40–
+                    # 03:06:35Z), with the live stamp re-queueing every flush
+                    # and poll_all_odds waiting 44.7 s behind the same
+                    # transaction. Nothing later in the pass needs these
+                    # writes uncommitted.
+                    await session.commit()
+
                 except Exception as e:
                     # Log but continue with other sports
                     logger.warning("Error discovering events for %s: %s", sport_key, e)
