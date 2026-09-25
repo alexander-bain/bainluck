@@ -249,12 +249,20 @@ function MarketCard({ market }: { market: LeagueMarket }) {
             Two lines, not `truncate`: the title leads with the game ("Honor of
             Kings: Talent Gaming vs Rogue Warriors (BO5) - …"), so one line at
             390px cut the second team, the half the reader needed. `break-words`
-            keeps UX-P183's guarantee that no string pushes the page sideways. */}
+            keeps UX-P183's guarantee that no string pushes the page sideways;
+            no `block`, which would override `line-clamp`'s display and let it
+            run to three. The competition line below is untouched. */}
         <div className="min-w-0">
-          {(market.event_title || market.competition) && (
+          {market.event_title ? (
             <span className="min-w-0 line-clamp-2 break-words text-[11px] font-semibold text-text-muted leading-snug">
-              {market.event_title || market.competition}
+              {market.event_title}
             </span>
+          ) : (
+            market.competition && (
+              <span className="block min-w-0 truncate text-[11px] font-semibold text-text-muted leading-snug">
+                {market.competition}
+              </span>
+            )
           )}
           <span className="block text-[14px] font-semibold text-text-primary leading-snug line-clamp-2">
             {market.name}
