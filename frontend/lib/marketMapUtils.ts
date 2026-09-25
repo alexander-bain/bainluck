@@ -1,4 +1,5 @@
 import { AGREEMENT_TOLERANCE } from "./otherMarketGroups";
+import { outcomeRowVerdict } from "@/components/futures/OutcomeRow";
 
 export function posOnRail(value: number, min: number, max: number): number {
   return Math.max(0, Math.min(100, ((value - min) / (max - min)) * 100));
@@ -456,6 +457,9 @@ export interface PeriodTotalRow {
   market_type: string;
   over_probability?: number;
   period?: string | null;
+  /** #5527: the row's own grade, read only through `outcomeRowVerdict`. */
+  is_winner?: boolean | null;
+  resolution_source?: string | null;
 }
 
 /**
@@ -556,18 +560,188 @@ export function selectGameTotalRungs<T extends GameTotalRow>(
 }
 
 /**
+ * `"Norway vs. Denmark: Denmark 1st Half O/U 1.5"` — a ONE-TEAM half total.
+ *
+ * #5527. The backend files these as `half_total` (its team test is the word
+ * "team", which Polymarket's names do not carry), so they arrived in the same
+ * pool as the game's own `"Norway vs. Denmark: 1st Half O/U 1.5"` and competed
+ * for its rung. On `/events/15194200` (Norway 3-2 Denmark, 2026-09-24) the 1H
+ * 1.5 threshold held the game row at 0.999 and Denmark's at 0.0045; the
+ * collapse below correctly refused to pick between prices that far apart, and
+ * withheld the rung — so the card showed two of the four lines it was served.
+ * Where a team row is ALONE at a threshold nothing refuses it, and Denmark's
+ * half is drawn as the match's.
+ *
+ * Narrow on purpose: it fires only when the scope in front of the half names
+ * one of the two sides the market's own title names. A name without that
+ * `A vs B:` shape is never touched.
+ */
+const TEAM_SCOPED_HALF_RE =
+  /^(.+?)\s+(?:vs\.?|v\.?|at|@)\s+(.+?):\s*(.+?)\s+(?:1st|2nd|first|second)\s+half\b/i;
+
+export function isTeamScopedHalfTotal(marketName: string | null | undefined): boolean {
+  const m = TEAM_SCOPED_HALF_RE.exec((marketName || "").trim());
+  if (!m) return false;
+  const scope = m[3].trim().toLowerCase();
+  return scope === m[1].trim().toLowerCase() || scope === m[2].trim().toLowerCase();
+}
+
+/** Whether a settled half rung was cleared, decided by the rows' own grades. */
+export type HalfRungGrade = "cleared" | "missed";
+
+/**
+ * One threshold's verdict, from the grades its own rows carry. #5527.
+ *
+ * The half card graded ONLY against a half score derived from ESPN's play
+ * history (#6169), and a match with no history — `/events/15194200`,
+ * `espn_history` empty — printed `LAST QUOTE FOR GOING OVER` over rows the
+ * venue had already called: 1H O/U 0.5, 1.5, 2.5 Over `is_winner: true`, 3.5
+ * Over `false`, every one `resolution_source: "clean_resolution"`. The same
+ * page's Additional Markets section printed `Halftime Result: Norway — Won`
+ * off rows of exactly that shape.
+ *
+ * So this asks `outcomeRowVerdict` — the rule that section uses, not a second
+ * copy of it (#6138) — with the card's settled state as `isResolved`, the same
+ * argument `SpecialEventMarkets` passes. That keeps every refusal the rule
+ * owns: the retraction, a SERVED null source (#4788's never-graded cohort) and
+ * a null `is_winner` all abstain.
+ *
+ * Orientation is read off the outcome's first word; a row that is neither
+ * `Over…` nor `Under…` abstains rather than being guessed at. Rows that abstain
+ * do not vote, and rows that vote must agree — a threshold whose graded rows
+ * disagree is a contradiction upstream and gets no verdict (#6138's rule for a
+ * merged grade).
+ *
+ * PURE: no I/O, no React.
+ */
+export function halfRungRowGrade(
+  rows: PeriodTotalRow[],
+  settled: boolean
+): HalfRungGrade | undefined {
+  const votes = new Set<HalfRungGrade>();
+  for (const row of rows) {
+    const verdict = outcomeRowVerdict(row, settled);
+    if (verdict == null) continue;
+    const side = /^\s*(over|under)\b/i.exec(row.outcome_name || "")?.[1]?.toLowerCase();
+    if (side == null) continue;
+    const overWon = side === "over" ? verdict === "won" : verdict === "lost";
+    votes.add(overWon ? "cleared" : "missed");
+  }
+  return votes.size === 1 ? [...votes][0] : undefined;
+}
+
+/**
+ * The half's total as its graded rungs pin it, or `null` when they do not.
+ * #5527.
+ *
+ * `Over 2.5` cleared and `Over 3.5` missed leave exactly one total: 3. That is
+ * one of the two deductions made — two ADJACENT rungs one unit apart, the lower
+ * cleared and the upper missed. The other is the floor: `Over 0.5` missed is a
+ * scoreless half (Rennes 1-0 Marseille's 1H, this issue's first specimen).
+ * Anything short of that (a ladder that cleared every rung, a gap of two) pins
+ * nothing and draws no marker, and a ladder whose grades are not monotone is
+ * not asked at all (`selectHalfTotalRungs` withholds its grades).
+ *
+ * PURE: no I/O, no React.
+ */
+export function halfTotalPinnedByGrades(
+  rungs: Array<{ threshold: number; rowGrade?: HalfRungGrade }>
+): number | null {
+  if (rungs.length === 0 || rungs.some((r) => r.rowGrade == null)) return null;
+  if (rungs[0].threshold === 0.5 && rungs[0].rowGrade === "missed") return 0;
+  for (let i = 0; i + 1 < rungs.length; i++) {
+    const lo = rungs[i];
+    const hi = rungs[i + 1];
+    if (lo.rowGrade === "cleared" && hi.rowGrade === "missed") {
+      if (hi.threshold - lo.threshold !== 1) return null;
+      const total = lo.threshold + 0.5;
+      return Number.isInteger(total) ? total : null;
+    }
+  }
+  return null;
+}
+
+/**
+ * Each half's total on a finished game, as the half ladders' OWN grades pin it
+ * — the fallback for a match whose play history carries no halftime row.
+ * #5527.
+ *
+ * The card keeps #6169's rule: it grades a ladder only against a NUMBER it
+ * draws, never rung-by-rung off `is_winner`. That rule is load-bearing —
+ * `/events/14637256` served eight Kalshi 2H rows ALL `is_winner: true,
+ * api_settlement`, including `Over 38.5` on a 27-point half — so a row grade is
+ * used here only to find the number, and every number is checked against the
+ * game's own final before the card may draw it:
+ *
+ *   - a half the grades pin (`halfTotalPinnedByGrades`) counts;
+ *   - both halves pinned must sum to the final, or neither counts;
+ *   - one half pinned gives the other as `final − pinned`, which counts only if
+ *     that half's own graded rungs agree with it (a half with no graded rung
+ *     has nothing to disagree with). A pin above the final counts for neither.
+ *
+ * On Norway 3-2 Denmark the 1H rows pin 3 (`2.5` in, `3.5` out) and the 2H
+ * rows (`0.5`, `1.5` both in) agree with 5 − 3 = 2.
+ *
+ * PURE: no I/O, no React.
+ */
+export function settledHalfTotalsFromGrades(
+  periodMarkets: PeriodTotalRow[] | null | undefined,
+  eventStatus: string | null | undefined,
+  gameFinalTotal: number | null
+): Record<(typeof TOTAL_MAP_HALVES)[number], number | null> {
+  const none = { "1H": null, "2H": null };
+  if (!marketMapIsGraded(eventStatus) || gameFinalTotal == null) return none;
+
+  const rungs = {
+    "1H": selectHalfTotalRungs(periodMarkets, "1H", eventStatus),
+    "2H": selectHalfTotalRungs(periodMarkets, "2H", eventStatus),
+  };
+  const pinned = {
+    "1H": halfTotalPinnedByGrades(rungs["1H"]),
+    "2H": halfTotalPinnedByGrades(rungs["2H"]),
+  };
+  const agrees = (half: "1H" | "2H", total: number) =>
+    rungs[half].every(
+      (r) => r.rowGrade == null || (r.rowGrade === "cleared") === total > r.threshold
+    );
+
+  if (pinned["1H"] != null && pinned["2H"] != null) {
+    return pinned["1H"] + pinned["2H"] === gameFinalTotal ? pinned : none;
+  }
+  for (const [known, other] of [["1H", "2H"], ["2H", "1H"]] as const) {
+    const total = pinned[known];
+    if (total == null) continue;
+    if (total > gameFinalTotal) return none;
+    const rest = gameFinalTotal - total;
+    return { [known]: total, [other]: agrees(other, rest) ? rest : null } as Record<
+      "1H" | "2H",
+      number | null
+    >;
+  }
+  return none;
+}
+
+/**
  * The rungs one half's totals map is drawn from. A rail needs two rungs to be
  * a rail, so fewer than two — before or after the monotonicity pass — means
  * that half's card does not render.
+ *
+ * #5527: on a graded card (`marketMapIsGraded(eventStatus)`) each rung also
+ * carries `rowGrade`, its own rows' verdict (`halfRungRowGrade`). Grades that
+ * contradict each other across the ladder — a cleared rung ABOVE a missed one —
+ * are withheld from every rung, so the card quotes rather than printing an
+ * impossible result. Without `eventStatus` no rung carries a grade.
  */
 export function selectHalfTotalRungs(
   periodMarkets: PeriodTotalRow[] | null | undefined,
-  halfKey: string
-): Array<{ threshold: number; overProbability: number }> {
+  halfKey: string,
+  eventStatus?: string | null
+): Array<{ threshold: number; overProbability: number; rowGrade?: HalfRungGrade }> {
   const halfItemsRaw = (periodMarkets || []).filter(
     (p) =>
       p.market_type === "half_total" &&
       isGameTotal(p.outcome_name) &&
+      !isTeamScopedHalfTotal(p.market_name) &&
       derivePeriod(p) === halfKey
   );
 
@@ -582,7 +756,7 @@ export function selectHalfTotalRungs(
 
   const sorted = [...halfItems].sort((a, b) => (a.threshold ?? 0) - (b.threshold ?? 0));
 
-  const cleaned: Array<{ threshold: number; overProbability: number }> = [];
+  const cleaned: Array<{ threshold: number; overProbability: number; rowGrade?: HalfRungGrade }> = [];
   let lastProb = 1.0;
   for (const t of sorted) {
     const prob = t.over_probability ?? t.probability ?? 0;
@@ -592,6 +766,20 @@ export function selectHalfTotalRungs(
     }
   }
   if (cleaned.length < 2) return [];
+
+  if (marketMapIsGraded(eventStatus)) {
+    const graded = cleaned.map((rung) => ({
+      ...rung,
+      rowGrade: halfRungRowGrade(
+        halfItemsRaw.filter((p) => (p.threshold ?? 0) === rung.threshold),
+        true
+      ),
+    }));
+    const firstMissed = graded.findIndex((r) => r.rowGrade === "missed");
+    const contradicted =
+      firstMissed >= 0 && graded.slice(firstMissed).some((r) => r.rowGrade === "cleared");
+    if (!contradicted) return graded;
+  }
   return cleaned;
 }
 

@@ -28,6 +28,7 @@ import {
   marketMapIsGraded,
   selectGameTotalRungs,
   selectHalfTotalRungs,
+  settledHalfTotalsFromGrades,
   ladderQuotesALine,
   settledLadderQuotesALine,
   probabilitiesQuoteALine,
@@ -1324,6 +1325,17 @@ export default function MarketMapSection({
     return maps;
   }, [gameMarkets.period_markets, status, homeTeam, awayTeam, hAbbr, aAbbr, sportKey, vocab, isDone, isLive, halfScores, liveHalfScores, homeLogo, awayLogo]);
 
+  // #5527: the halves' totals where no halftime row exists — see the card below.
+  const halfTotalsFromGrades = useMemo(
+    () =>
+      settledHalfTotalsFromGrades(
+        gameMarkets.period_markets,
+        eventStatus,
+        homeScore != null && awayScore != null ? homeScore + awayScore : null
+      ),
+    [gameMarkets.period_markets, eventStatus, homeScore, awayScore]
+  );
+
   // ── Period Total Maps (half totals) ──
   const halfTotalMaps = useMemo(() => {
     const allPeriod = gameMarkets.period_markets || [];
@@ -1401,13 +1413,21 @@ export default function MarketMapSection({
          Gated on the same `isDone && halfScores` the FINAL marker below is
          gated on — #3769's own rule that the ladder grades exactly when the
          card draws the number it grades against — and computed ONCE so the
-         marker and the grade can never disagree about one card. */
+         marker and the grade can never disagree about one card.
+
+         #5527: and with no halftime row, the number the half ladders' own
+         grades pin, checked against the game's final
+         (`settledHalfTotalsFromGrades`). `/events/15194200` (Norway 3-2
+         Denmark) has no ESPN history, so both halves printed `LAST QUOTE FOR
+         GOING OVER` over rows the venue had called. Still a NUMBER, drawn as
+         the FINAL marker and graded against like any other — the ESPN score
+         wins wherever it exists. */
       const halfFinalTotal =
         isDone && halfScores
           ? halfKey === "1H"
             ? halfScores.h1Home + halfScores.h1Away
             : halfScores.h2Home + halfScores.h2Away
-          : null;
+          : halfTotalsFromGrades[halfKey];
       const gradeRung = (threshold: number): MarketMapLadderRow["outcome"] =>
         halfFinalTotal == null ? undefined : halfFinalTotal > threshold ? "cleared" : "missed";
 
@@ -1511,7 +1531,7 @@ export default function MarketMapSection({
       });
     }
     return maps;
-  }, [gameMarkets.period_markets, status, vocab, isDone, isLive, halfScores, liveHalfScores]);
+  }, [gameMarkets.period_markets, status, vocab, isDone, isLive, halfScores, liveHalfScores, halfTotalsFromGrades]);
 
   // #3136: the headings below are counted, not assumed — see `mapColumnHeading`.
   // A tennis match has no halves, so its totals column has always held exactly
