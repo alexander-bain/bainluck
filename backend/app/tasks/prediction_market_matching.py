@@ -14,6 +14,7 @@ import logging
 import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
+from types import SimpleNamespace
 from typing import Optional
 
 from sqlalchemy import select, or_, and_, func, delete, case, update, text, bindparam, String
@@ -4400,6 +4401,111 @@ def _phase15_rotation_query(
     ).limit(limit)
 
 
+#: #8547 (reach) — the venue-instant arm's own slice of the queue.
+#:
+#: The arm shipped (#8560 Polymarket, #8614 Kalshi) and never reached its
+#: specimens, because neither slice above can hold a busy game's link. Measured
+#: on production 2026-09-25 17:40Z, 19,748 eligible rows in 27 shards:
+#:
+#:   * the fresh slice is 250 rows and ``_phase15_priority_order`` fills it from
+#:     rank 2 (links to rows with no ``external_id``: 11,517 of them) before a
+#:     single anchored scheduled game (rank 3, 8,186) is considered — so a live
+#:     game's link is in the fresh slice never;
+#:   * the rotation is rank-then-oldest-``updated_at`` first and capped at 750,
+#:     and a Polymarket game market is re-polled every few minutes, so it sorts
+#:     LAST in its shard. Gamma 1053347's row (61665049, venue 23:05Z = game 2,
+#:     linked to game 1 at 20:05Z) sat at position 775 of 775 in shard 19 —
+#:     cut every beat, and moving to the back again with every poll. The Kalshi
+#:     specimen (``KXMLBGAME-26SEP251905BALNYY``) sat at 627 of 732, ~1,080th in
+#:     a queue the loop's budget has been measured not to finish.
+#:
+#: So the arm selects its own rows: every near-term link whose venue instant
+#: :func:`_venue_instant_disowns_link` — the arm's entry predicate, called
+#: verbatim, not a SQL restatement of it — says names another game, on a
+#: covered-league row. The probe reads six narrow columns (``->>`` one key, never
+#: the whole metadata blob) over ~16,000 rows in ~0.4s (EXPLAIN ANALYZE,
+#: production); the rows it claimed were five — the three 1053347 rows, the
+#: Kalshi specimen and one other MLB ticker. The window bounds the probe, not the
+#: arm: a link to a game three days out enters it three days before first pitch,
+#: and one that started up to six hours ago (live, not yet final) still gets
+#: moved.
+_PHASE15_VENUE_INSTANT_SLICE = 50
+_PHASE15_VENUE_INSTANT_LOOKBACK = timedelta(hours=6)
+_PHASE15_VENUE_INSTANT_LOOKAHEAD = timedelta(days=3)
+
+
+def _phase15_venue_instant_probe_query(now: datetime):
+    """``(id, source, external_id, venue_game_start, commence_time, sport_key)``
+    of every eligible link to an unfinished, unretired row starting inside the
+    window."""
+    from app.models.models import FuturesMarket, Event, Sport
+
+    return (
+        select(
+            FuturesMarket.id,
+            FuturesMarket.source,
+            FuturesMarket.external_id,
+            FuturesMarket.market_metadata["venue_game_start"].astext,
+            Event.commence_time,
+            Sport.key,
+        )
+        .join(Event, FuturesMarket.event_id == Event.id)
+        .join(Sport, Event.sport_id == Sport.id)
+        .where(
+            *_phase15_eligible_where(),
+            Event.status.notin_(sorted(RETIRED_STATUSES | {"completed", "closed"})),
+            Event.commence_time >= now - _PHASE15_VENUE_INSTANT_LOOKBACK,
+            Event.commence_time <= now + _PHASE15_VENUE_INSTANT_LOOKAHEAD,
+        )
+    )
+
+
+def _phase15_venue_instant_candidate_ids(
+    probe_rows, limit: int = _PHASE15_VENUE_INSTANT_SLICE,
+) -> list[int]:
+    """The probe rows the arm's entry predicate claims, soonest game first.
+
+    Pure. Each row is dressed as just enough of a market and an event for
+    :func:`_venue_instant_disowns_link` — the same call the loop makes — so the
+    slice can never disagree with the arm about which links it would examine.
+
+    Only links on a covered-league row. The arm moves a market only onto a row
+    of the covered league its finder names, and it only runs when the market's
+    teams already match the row it is on, so a link on an uncovered row can
+    enter the arm but never leave it: on production 2026-09-25 the predicate
+    claimed 439 near-term links, 434 of them on ``soccer_other``, ``esports`` and
+    tennis rows, which sorted soonest-first would take the slice ahead of the
+    doubleheader. The five on covered rows were the four #8547 specimens and one
+    other MLB ticker.
+    """
+    claimed = []
+    for market_id, source, external_id, venue_start, commence, sport_key in probe_rows:
+        if not _sport_key_is_odds_api_covered(sport_key):
+            continue
+        market = SimpleNamespace(
+            source=source,
+            external_id=external_id,
+            market_metadata=(
+                {"venue_game_start": venue_start} if venue_start else None
+            ),
+        )
+        if _venue_instant_disowns_link(market, SimpleNamespace(commence_time=commence)):
+            claimed.append((commence, market_id))
+    claimed.sort(key=lambda pair: (pair[0], pair[1]))
+    return [market_id for _commence, market_id in claimed[:limit]]
+
+
+def _phase15_rows_by_id_query(market_ids):
+    """``(FuturesMarket, Event)`` for the given linked market ids."""
+    from app.models.models import FuturesMarket, Event
+
+    return (
+        select(FuturesMarket, Event)
+        .join(Event, FuturesMarket.event_id == Event.id)
+        .where(FuturesMarket.id.in_(list(market_ids)))
+    )
+
+
 #: How far an event's recorded start must sit from the venue's own fixture
 #: instant before Phase 1.5 rewrites it. NOT a "close enough" tolerance — it is
 #: the floor under a no-op write. Gamma reports whole minutes and the measured
@@ -5019,16 +5125,33 @@ async def _phase15_revalidate(
             len(resolved_rows), resolved_scanned,
         )
 
+    # #8547 (reach): the venue-instant arm's own rows, which neither slice below
+    # can hold — see `_PHASE15_VENUE_INSTANT_SLICE`.
+    venue_probe = (
+        await session.execute(_phase15_venue_instant_probe_query(now))
+    ).all()
+    venue_ids = _phase15_venue_instant_candidate_ids(venue_probe)
+    venue_rows: list = []
+    if venue_ids:
+        venue_rows = (
+            await session.execute(_phase15_rows_by_id_query(venue_ids))
+        ).all()
+    stats["funnel"]["phase15_venue_instant_probed"] = len(venue_probe)
+    stats["funnel"]["phase15_venue_instant_candidates"] = len(venue_rows)
+
     fresh_rows = (await session.execute(_phase15_fresh_query())).all()
     rotation_rows = (
         await session.execute(_phase15_rotation_query(shards, shard_index))
     ).all()
 
-    # Resolved slice first, then fresh, then the shard, deduped — a row in more
-    # than one is checked once, at its earliest position.
+    # Resolved slice first, then the venue-instant slice, then fresh, then the
+    # shard, deduped — a row in more than one is checked once, at its earliest
+    # position.
     all_linked_rows = list(resolved_rows)
     _seen_market_ids = {market.id for market, _ in resolved_rows}
-    for market, linked_event in list(fresh_rows) + list(rotation_rows):
+    for market, linked_event in (
+        list(venue_rows) + list(fresh_rows) + list(rotation_rows)
+    ):
         if market.id not in _seen_market_ids:
             _seen_market_ids.add(market.id)
             all_linked_rows.append((market, linked_event))
