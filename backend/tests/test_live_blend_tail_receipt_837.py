@@ -551,3 +551,49 @@ async def test_receipt_elapsed_time_includes_awaited_batch(clock, caplog, finish
     assert receipt["result"] == ("stamped" if finish == "stamp" else "shutdown")
     assert receipt["held_s"] == "25.000"
     assert receipt["recv_to_close_s"] == "25.000"
+
+
+@pytest.mark.asyncio
+async def test_fresh_failed_attempt_opens_hold_at_completion(clock, caplog):
+    r, _ = _refresher()
+    successful_batch = r._refresh_batch
+
+    async def slow_failure(event_ids, now):
+        for event_id in event_ids:
+            r._last_refresh_at[event_id] = now
+        clock.t += 20.0
+        raise RuntimeError("connection reset after awaited work")
+
+    r._refresh_batch = slow_failure
+    await _commit(r, clock, 1001.0)
+    assert r.receipts._open[1].opened_mono == 1021.0
+    r._refresh_batch = successful_batch
+    clock.t = 1026.0
+    await r.refresh_pending()
+    (receipt,) = _receipts(caplog)
+    assert receipt["origin"] == "batch"
+    assert receipt["held_s"] == "5.000"
+    assert receipt["recv_to_close_s"] == "25.000"
+
+
+@pytest.mark.asyncio
+async def test_new_lock_in_failed_batch_keeps_its_lock_origin(clock, caplog):
+    r, _ = _refresher()
+    successful_batch = r._refresh_batch
+
+    async def lock_then_failed_commit(event_ids, now):
+        r._dispositions[1] = ("lock",)
+        r._lock_retry.add(1)
+        raise RuntimeError("batch commit failed after another row was locked")
+
+    r._refresh_batch = lock_then_failed_commit
+    await _commit(r, clock, 1000.0)
+    assert r._lock_retry == {1}
+    r._refresh_batch = successful_batch
+    clock.t = 1002.0
+    await r.refresh_pending()
+    (receipt,) = _receipts(caplog)
+    assert receipt["origin"] == "lock"
+    assert receipt["lock_retries"] == "1"
+    assert receipt["batch_failures"] == "1"
+    assert receipt["result"] == "stamped"

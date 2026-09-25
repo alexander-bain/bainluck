@@ -324,8 +324,9 @@ class TailReceipts:
     ) -> None:
         """After a batch that did NOT commit. A stamp the batch had made rolled
         back with it — `commit_failed`; otherwise the batch died first —
-        `batch_failed`. A re-queued chain stays open and counts it;
-        anything else the batch was carrying is dropped, and says so."""
+        `batch_failed`. The refresher retains all due events, so their chains
+        stay open and count the failure. The defensive dropped result is only
+        for a caller that explicitly omits an event from `requeued`."""
         for event_id in due:
             disposition = dispositions.get(event_id, ("",))
             failure = "commit_failed" if disposition[0] == "stamped" else "batch_failed"
