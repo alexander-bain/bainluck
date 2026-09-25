@@ -32,6 +32,7 @@ from app.utils.futures_unsupported_price import (
     MIDPOINT_TRADE_SOURCES,
     WITHHELD_PRICE_FIELDS,
     field_names_two_favourites,
+    leg_has_no_live_support,
     market_is_proved_exclusive_field,
     midpoint_refuted_by_last_trade,
     needs_trade_disconfirmation,
@@ -44,6 +45,7 @@ from app.utils.futures_unsupported_price import (
     price_refuted_by_live_book,
     row_carries_a_verdict,
     snapshot_price_is_unsupported,
+    unsupported_legs_above_the_supported_head,
 )
 from app.utils.game_market_club_names import repair_field_outcome_name
 from app.utils.hook_staleness import hook_names_unpriced_outcome, is_hook_stale
@@ -4188,6 +4190,57 @@ def _unlocated_in_broken_field_outcome_ids(
     }
 
 
+def _unsupported_head_outcome_ids(
+    market: FuturesMarket, already_withheld: set[int]
+) -> set[int]:
+    """Which outcomes would head a proved field on a print nobody bids on or trades (#8265).
+
+    The sixth arm, and like #7059's it costs no query and takes the ids the arms
+    above refused, for the same reason: its ceiling is a fact about the column a
+    reader is SHOWN. On the specimen that is the whole case — Jakub Mensik's 3¢ bid
+    is the only bid on the board, and #7747 already withholds his price, so counting
+    stored rows would credit the field with support no reader sees.
+
+    Runs after #7059's arm and reads its refusals too. The rule and its measurement
+    live on :func:`unsupported_legs_above_the_supported_head`.
+
+    A board carrying a verdict is a RESULT and is skipped whole (settled means
+    settled), and a market whose shape is not proved exclusive never reaches the
+    rule — outside a one-winner field there is no column for a leg to head.
+    """
+    if not market_is_proved_exclusive_field(
+        getattr(market, "market_type", None),
+        getattr(market, "market_metadata", None),
+    ):
+        return set()
+    outcomes = getattr(market, "outcomes", None) or []
+    if _board_has_a_verdict(outcomes):
+        return set()
+    served = []
+    for o in outcomes:
+        if o.id in already_withheld:
+            continue
+        probability = _as_float(getattr(o, "current_probability", None))
+        if probability is None:
+            continue
+        served.append(
+            (
+                o.id,
+                probability,
+                leg_has_no_live_support(
+                    market.source,
+                    getattr(o, "resolution_source", None),
+                    _as_float(getattr(o, "current_yes_bid", None)),
+                    _as_float(getattr(o, "current_yes_ask", None)),
+                    volume_24h=getattr(o, "volume_24h", None),
+                    volume_24h_at=getattr(o, "volume_24h_at", None),
+                    last_seen_at=getattr(o, "last_updated", None),
+                ),
+            )
+        )
+    return unsupported_legs_above_the_supported_head(served)
+
+
 def _board_has_a_verdict(outcomes) -> bool:
     """Has anybody actually settled this board? (#8011 / CERT-3298)
 
@@ -4315,7 +4368,7 @@ async def _fleet_newest_observation(
 async def _withheld_price_outcome_ids(
     db: AsyncSession, market: FuturesMarket
 ) -> set[int]:
-    """Every outcome of this market whose served price is refused, all five arms.
+    """Every outcome of this market whose served price is refused, all six arms.
 
     #6993. THE ARMS WERE ALREADY COMPOSED — in the body of
     :func:`get_futures_market`, where only that route could reach them. The group
@@ -4345,6 +4398,9 @@ async def _withheld_price_outcome_ids(
     # Last, and reading the four above rather than the stored rows: its gate is a
     # fact about the column a reader is actually shown. See the arm's docstring.
     ids |= _unlocated_in_broken_field_outcome_ids(market, ids)
+    # #8265, after every other arm for the same reason: its ceiling is read from
+    # the legs a reader is actually shown.
+    ids |= _unsupported_head_outcome_ids(market, ids)
     return ids
 
 
@@ -4467,6 +4523,7 @@ async def withheld_price_outcome_ids_for_markets(
             # the per-market helper, because this arm's gate is a fact about
             # what the OTHER four already took away.
             ids |= _unlocated_in_broken_field_outcome_ids(market, ids)
+            ids |= _unsupported_head_outcome_ids(market, ids)
         except Exception:
             logger.warning(
                 "withheld-price screen could not grade market %s — its card "
