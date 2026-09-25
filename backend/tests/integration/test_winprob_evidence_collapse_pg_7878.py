@@ -339,3 +339,38 @@ async def test_5b_a_later_stamped_span_composes_into_the_earlier_keeper(db):
     keeper = next(r for r in rows if r.id == ids[0])
     assert ids[20] not in {r.id for r in rows}
     assert _through(keeper) == base + timedelta(minutes=23)
+
+
+async def test_10_espn_play_by_play_backfill_never_merges_8514(db):
+    """#8514: ESPN's win-probability backfill writes `backfilled`, not `backfill`.
+
+    Its pre-#8514 rows sit 200 s apart at estimated instants, so equal neighbours
+    passed every clause above and came back stamped as observed coverage of a
+    stretch nobody watched. Its #8514 rows are at true play times but are still
+    written after the fact. Neither kind may merge or carry a span; a raw reading
+    beside them still merges as before (the control arm).
+    """
+    estimate = lambda t: dict(  # noqa: E731
+        _obs(t), gs={"seconds_left": None, "backfilled": True},
+    )
+    evidenced = lambda t: dict(  # noqa: E731
+        _obs(t), gs={"seconds_left": None, "backfilled": True,
+                     "time_basis": "play_wallclock", "play_id": f"p{t}"},
+    )
+    eid, base, ids = await _seed(
+        db,
+        [estimate(0), estimate(3), estimate(6), evidenced(10), evidenced(12),
+         _obs(20), _obs(22)],
+        name="c10",
+    )
+    assert await _collapse(db, eid) == (1, 1), "only the two raw readings may merge"
+    rows = await _rows(db, eid)
+    survivors = {r.id for r in rows}
+    for t in (0, 3, 6, 10, 12):
+        assert ids[t] in survivors, t
+    assert ids[22] not in survivors
+    backfilled = [r for r in rows if (r.game_state or {}).get("backfilled") is True]
+    assert len(backfilled) == 5
+    assert all(_span(r) is None for r in backfilled)
+    keeper = next(r for r in rows if r.id == ids[20])
+    assert _through(keeper) == base + timedelta(minutes=22)
