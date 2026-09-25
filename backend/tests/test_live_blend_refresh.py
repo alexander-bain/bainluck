@@ -586,6 +586,8 @@ class TestTheFrameCarriesTheStoredBlend:
         await r.refresh([1])
 
         assert len(published) == 1, "the fast lane published nothing"
+        assert published[0]["updated_at"] == returned["kalshi"]["updated_at"]
+        assert r._dispositions[1][2] == published[0]["updated_at"]
         # `p` is the aggregate the hero renders — the field live/305's capture
         # showed disagreeing with itself 89 ms apart.
         got = published[0]["p"]
@@ -856,7 +858,7 @@ class TestAStampNeverQueuesOnAForeignRowLock:
         self, monkeypatch
     ):
         event, market = _event_and_market()
-        session = _LockedRowSession([(market, event)], [], {"polymarket": {}})
+        session = _LockedRowSession([(market, event)], [], {"polymarket": {"updated_at": "2026-09-25T18:00:00+00:00"}})
         r, published = _one_event_refresher(monkeypatch, session)
 
         stats = await r.refresh([1])
@@ -878,7 +880,7 @@ class TestAStampNeverQueuesOnAForeignRowLock:
         """The unstamped price is already in `futures_outcomes`. Waiting for the
         event to tick again would strand it on exactly the quiet markets."""
         event, market = _event_and_market()
-        session = _LockedRowSession([(market, event)], [], {"polymarket": {}})
+        session = _LockedRowSession([(market, event)], [], {"polymarket": {"updated_at": "2026-09-25T18:00:00+00:00"}})
         r, published = _one_event_refresher(monkeypatch, session)
         await r.refresh([1])
 
@@ -899,7 +901,7 @@ class TestAStampNeverQueuesOnAForeignRowLock:
         from app.utils.repair_lock_budget import SET_LOCK_TIMEOUT_SQL
 
         event, market = _event_and_market()
-        session = _LockedRowSession([(market, event)], [], {"polymarket": {}})
+        session = _LockedRowSession([(market, event)], [], {"polymarket": {"updated_at": "2026-09-25T18:00:00+00:00"}})
         r, _ = _one_event_refresher(monkeypatch, session)
         await r.refresh([1])
 
@@ -925,7 +927,7 @@ class TestAStampNeverQueuesOnAForeignRowLock:
             sqlstate = "40P01"  # deadlock_detected: not a lock timeout
 
         event, market = _event_and_market()
-        session = _LockedRowSession([(market, event)], [], {"polymarket": {}})
+        session = _LockedRowSession([(market, event)], [], {"polymarket": {"updated_at": "2026-09-25T18:00:00+00:00"}})
 
         async def _raise_boom(statement, *a, **k):
             from sqlalchemy.sql.dml import Update
@@ -1022,7 +1024,7 @@ class TestAFailedCommitLeavesNothingMarkedWritten:
 
         event, market = _event_and_market()
         session = _LockedRowSession(
-            [(market, event)], [], {"polymarket": {}}, locked=False
+            [(market, event)], [], {"polymarket": {"updated_at": "2026-09-25T18:00:00+00:00"}}, locked=False
         )
         r, published = _one_event_refresher(monkeypatch, session)
         from types import SimpleNamespace

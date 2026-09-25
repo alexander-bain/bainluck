@@ -303,7 +303,10 @@ class TestLockChains:
     async def test_the_real_batch_reports_the_lock(self, monkeypatch, caplog):
         """The disposition comes from the REAL `_refresh_batch`, not a fake."""
         event, market = _event_and_market()
-        session = _LockedRowSession([(market, event)], [], {"polymarket": {}})
+        session = _LockedRowSession(
+            [(market, event)], [],
+            {"polymarket": {"updated_at": "2026-09-25T18:00:00+00:00"}},
+        )
         r, published = _one_event_refresher(monkeypatch, session)
         r.receipts = TailReceipts("polymarket")
         r.receipts.stage([r.receipts.note_input(1, 11, 0.9, "price", None)])

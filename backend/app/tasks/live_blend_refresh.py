@@ -191,8 +191,8 @@ class TailReceipts:
     included) and every later committed write, and `quiet` is only
     `later_inputs == 0`.
 
-    CLOCK DOMAINS, stated because they must not be mixed: `*_wall` fields and
-    `stamped_at` are the dyno clock — `stamped_at` is byte-for-byte the JSONB
+    CLOCK DOMAINS, stated because they must not be mixed: `*_wall` fields are the
+    dyno clock. `stamped_at` is the database write clock, byte-for-byte the JSONB
     `updated_at` and the SSE frame's, so the receipt joins to what was served.
     `*_s` durations are monotonic on the same process. `venue_ts_ms` is the
     venue's clock, copied raw. The database clock (`price_changed_at`,
@@ -412,7 +412,7 @@ class TailReceipts:
 
 
 def atomic_stamp_expression(
-    source: str, value: float, stamped_at, eligibility=None,
+    source: str, value: float, stamped_at=None, eligibility=None,
 ):
     """The SET expression that stamps ONE source key WITHOUT reading it first.
 
@@ -459,7 +459,14 @@ def atomic_stamp_expression(
     from app.models.models import Event
     from app.utils.probability_eligibility import ELIGIBILITY_KEY
 
-    entry: dict = {"value": value, "updated_at": stamped_at.isoformat()}
+    # Production stamps inside the UPDATE, not before waiting for its row lock.
+    # READ COMMITTED re-evaluates this expression against a concurrent updater's
+    # committed tuple. A pre-lock Python clock can otherwise make the NEWER
+    # aggregate look like an older replay to the phone (#837).
+    # Explicit clocks remain available for deterministic historical/helper use.
+    entry: dict = {"value": value}
+    if stamped_at is not None:
+        entry["updated_at"] = stamped_at.isoformat()
     if eligibility is not None:
         entry[ELIGIBILITY_KEY] = eligibility.to_entry()
 
@@ -479,9 +486,12 @@ def atomic_stamp_expression(
         return case((func.jsonb_typeof(expression) == "object", expression), else_=empty)
 
     column = Event.win_probability_sources
-    merged_entry = as_object(column[source]).concat(
-        cast(literal(json.dumps(entry)), JSONB)
-    )
+    entry_expression = cast(literal(json.dumps(entry)), JSONB)
+    if stamped_at is None:
+        entry_expression = entry_expression.concat(
+            func.jsonb_build_object("updated_at", func.clock_timestamp())
+        )
+    merged_entry = as_object(column[source]).concat(entry_expression)
     return as_object(column).concat(
         func.jsonb_build_object(cast(literal(source), Text), merged_entry)
     )
@@ -694,7 +704,6 @@ class LiveBlendRefresher:
         return await self.refresh(())
 
     async def _refresh_batch(self, event_ids: list[int], now: float) -> None:
-        from datetime import datetime, timezone
         from types import SimpleNamespace
 
         from sqlalchemy import select, update
@@ -826,12 +835,10 @@ class LiveBlendRefresher:
                         self._dispositions[event_id] = ("unchanged", value)
                         continue
 
-                    # ONE stamp instant, shared by the JSONB write and the frame
-                    # the client reads its "live · Ns ago" from. Letting the
-                    # stamp default its own `now` would put a different
-                    # timestamp in the column than on the wire, and the age on
-                    # screen would be quietly wrong.
-                    stamped_at = datetime.now(timezone.utc)
+                    # The database assigns the write clock; RETURNING below
+                    # supplies that exact clock to the frame and tail receipt.
+                    # A Python timestamp taken before the awaited UPDATE could
+                    # precede a sibling's stamp despite committing after it.
                     # Core update, never ORM attribute assignment (gotcha #4),
                     # and a server-side merge rather than a read-modify-write:
                     # the sibling arm streaming the OTHER venue writes this same
@@ -852,7 +859,6 @@ class LiveBlendRefresher:
                                     win_probability_sources=atomic_stamp_expression(
                                         self.source,
                                         value,
-                                        stamped_at,
                                         eligibility=reading.eligibility,
                                     )
                                 )
@@ -869,6 +875,8 @@ class LiveBlendRefresher:
                             self.stats["no_reading"] += 1
                             self._dispositions[event_id] = ("no_row",)
                             continue
+
+                        stamped_at = new_sources[self.source]["updated_at"]
 
                         # The chart point rides a savepoint of its own inside
                         # the stamp's: a snapshot that cannot be written must
@@ -897,7 +905,7 @@ class LiveBlendRefresher:
                     # #837 receipt — trusted only once the batch returns, i.e.
                     # after the commit; `previous` says whether it MOVED.
                     self._dispositions[event_id] = (
-                        "stamped", value, stamped_at.isoformat(),
+                        "stamped", value, stamped_at,
                         self._last_written_value.get(event_id),
                     )
 
@@ -935,7 +943,7 @@ class LiveBlendRefresher:
                             ),
                             source=self.source,
                             source_value=value,
-                            updated_at=stamped_at.isoformat(),
+                            updated_at=stamped_at,
                             status=event.status,
                         )
                     )
