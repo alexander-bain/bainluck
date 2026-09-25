@@ -83,6 +83,8 @@ export interface OtherMarketRow {
    */
   is_winner?: boolean | null;
   resolution_source?: string | null;
+  /** The market this row belongs to (served on every `other` row). */
+  _market_id?: number | null;
 }
 
 export interface ParsedPropLabel {
@@ -1023,6 +1025,15 @@ export interface MarketSection {
   quotedOutcomes: number;
   /** Labels withheld across the whole section. */
   withheld: number;
+  /**
+   * #8596: the market ids behind the cards this section actually draws, so
+   * another section on the page can stand down for a market already shown here
+   * (Bigger Picture's game props repeated the first-inning question). Built from
+   * the cards that SURVIVE, not the wire, since rows eaten as the hero's moneyline
+   * or answered by a market map are not drawn here, and hiding their only other
+   * copy would delete them.
+   */
+  drawnMarketIds: number[];
 }
 
 const CATEGORY_ORDER = [
@@ -1372,13 +1383,14 @@ export function buildMarketSection(
   // are a stray `(-2.5)` handicap and a 99% BTTS row on a finished match, and
   // neither is a market a reader is missing.
   if (kept.length === 0)
-    return { categories: [], renderedOutcomes: 0, quotedOutcomes: 0, withheld: 0 };
+    return { categories: [], renderedOutcomes: 0, quotedOutcomes: 0, withheld: 0, drawnMarketIds: [] };
 
   interface Draft {
     title: string;
     subtitle: string;
     cardOrder: string[];
     cards: Map<string, LabeledRow[]>;
+    cardMarketIds: Map<string, Set<number>>;
   }
   const drafts = new Map<string, Draft>();
   const draftOrder: string[] = [];
@@ -1447,7 +1459,7 @@ export function buildMarketSection(
 
     let draft = drafts.get(title);
     if (!draft) {
-      draft = { title, subtitle, cardOrder: [], cards: new Map() };
+      draft = { title, subtitle, cardOrder: [], cards: new Map(), cardMarketIds: new Map() };
       drafts.set(title, draft);
       draftOrder.push(title);
     }
@@ -1457,6 +1469,14 @@ export function buildMarketSection(
       card = [];
       draft.cards.set(cardName, card);
       draft.cardOrder.push(cardName);
+    }
+    if (typeof row._market_id === "number") {
+      let ids = draft.cardMarketIds.get(cardName);
+      if (!ids) {
+        ids = new Set();
+        draft.cardMarketIds.set(cardName, ids);
+      }
+      ids.add(row._market_id);
     }
     card.push({
       label,
@@ -1490,6 +1510,7 @@ export function buildMarketSection(
   let renderedOutcomes = 0;
   let quotedOutcomes = 0;
   let withheld = 0;
+  const drawnMarketIds = new Set<number>();
 
   const categories: MarketCategoryGroup[] = draftOrder.map((title) => {
     const draft = drafts.get(title) as Draft;
@@ -1605,12 +1626,16 @@ export function buildMarketSection(
     });
 
     withheld += categoryWithheld;
+    // A card can be emptied entirely by withholding; it must not render as a
+    // headed card with no bars.
+    const drawnCards = cards.filter((c) => c.outcomes.length > 0);
+    for (const c of drawnCards) {
+      for (const id of draft.cardMarketIds.get(c.name) ?? []) drawnMarketIds.add(id);
+    }
     return {
       title: draft.title,
       subtitle: draft.subtitle,
-      // A card can be emptied entirely by withholding; it must not render as a
-      // headed card with no bars.
-      cards: cards.filter((c) => c.outcomes.length > 0),
+      cards: drawnCards,
       withheld: categoryWithheld,
     };
   });
@@ -1626,5 +1651,6 @@ export function buildMarketSection(
     renderedOutcomes,
     quotedOutcomes,
     withheld,
+    drawnMarketIds: [...drawnMarketIds].sort((a, b) => a - b),
   };
 }
