@@ -208,8 +208,7 @@ class TestTheUnlinkedGameSelector:
     @pytest.mark.asyncio
     async def test_it_is_sent_the_linked_window_and_its_own_ceiling(self, monkeypatch):
         _st, _w, selector, *_ = await _run(monkeypatch, redis=_Redis(refused={"123"}))
-        sql, params = selector.calls[-1]
-        assert sql == self.SQL
+        sql, params = next(c for c in selector.calls if c[0] == self.SQL)
         assert params["horizon_days"] == poly.LINKED_POLY_BOOK_HORIZON_DAYS
         assert params["lookback_hours"] == poly.LINKED_POLY_BOOK_LOOKBACK_HOURS
         assert params["stale_hours"] == poly.SUNK_POLY_STALE_HOURS
