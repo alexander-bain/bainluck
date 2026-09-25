@@ -2205,6 +2205,84 @@ _NON_US_JURISDICTION_RE = re.compile(
     re.IGNORECASE,
 )
 
+# #8742. `story:us_federal_power` is headed "Who holds power in Washington?", so
+# its membership rule has to be about Washington — #7494's lesson, second family.
+# The old arm was the bare vocabulary `attorney general|fbi director|save act|
+# cabinet|supreme court|nomination|confirmed`, and on production (2026-09-25
+# 23:23Z, Discover slot 10) it seated "Who will be the next to leave the Burnham
+# Cabinet?" — the UK cabinet — under that sentence. Measured by running
+# `_story_key` over every open market that evening: 96 members, of which the
+# sentence was false of roughly half —
+#
+#   `confirmed` in any sense   Kylie Jenner / Rihanna / Nara Smith "confirmed
+#                              pregnant", "Madison Beer and Justin Herbert
+#                              confirmed married", "Adam Back confirmed to be
+#                              Satoshi", "Ebola: new country confirmed", "Ren
+#                              Zhengfei confirmed outside China", Epstein x4
+#   a STATE office             Texas / Ohio / Wisconsin / Montana / Alabama /
+#                              Washington-state Supreme Court seats, "Illinois
+#                              Republican Attorney General nominee?"
+#   another country            both Burnham Cabinet markets, Brazil's Supreme
+#                              Court (de Moraes x2, Lula's nomination x2)
+#
+# So three narrowings, each keyed on what the sentence claims:
+#   1. `confirmed` counts only in the Senate sense — next to an office ("confirmed
+#      as FDA Commissioner", "Labor Secretary pick be confirmed", "federal judges
+#      will be confirmed"). Every other `confirmed` in the corpus is gossip or news.
+#   2. A state name directly before the court or AG office is a state office.
+#      Directly before, not anywhere: "Will the Supreme Court hear Texas's case?"
+#      is still a Washington question.
+#   3. A foreign jurisdiction anywhere excludes (the #7494 negative test, same
+#      list) — EXCEPT for an ambassador, who is named by the country they are sent
+#      to ("U.S. Ambassador to Saudi Arabia" is a Senate confirmation). And a
+#      cabinet named for a leader who is not a US one ("the Burnham Cabinet") is
+#      another government's cabinet; the leader's name is the only jurisdiction
+#      that market states.
+#
+# An excluded market keeps no story key here and falls through the cascade, as
+# #7494's do. Measured over that same population: 41 of the 96 leave, every one of
+# them wrongly seated, and all 41 fall through to `None` (the state court seats are
+# not an office `_subnational_election_story_key` knows) — so each competes as its
+# own card, still capped by `_quality_family_key`, and is re-homed into no sentence
+# we have not written. The new arms can only evict: each still requires a word the
+# old arm required, and nothing earlier in the cascade moved. KNOWN RESIDUE, named:
+# "Will Lula announce nomination of a Supreme Court minister by...?" states no
+# country (only its sibling says Brazil), so it stays; a list of foreign leaders
+# would be a second vocabulary to keep in step, for one row.
+_FEDERAL_OFFICE_ALT = (
+    r"secretary|ambassador|commissioner|director|attorney|judges?|justices?|"
+    r"pick|nominee|chair|administrator"
+)
+_US_FEDERAL_POWER_RE = re.compile(
+    r"\b(attorney general|fbi director|save act|cabinet|supreme court|nomination)\b"
+    r"|\bconfirmed\s+as\b.{0,25}\b(" + _FEDERAL_OFFICE_ALT + r")\b"
+    r"|\b(" + _FEDERAL_OFFICE_ALT + r")\b.{0,30}\bconfirmed\b",
+    re.IGNORECASE,
+)
+_STATE_OFFICE_RE = re.compile(
+    r"\b(" + _US_STATE_ALT + r")(['’]s)?\s+((republican|democratic)\s+)?"
+    r"(supreme court|attorney general)\b",
+    re.IGNORECASE,
+)
+#: Case-sensitive on purpose: the capital is what makes "Burnham" a name. The
+#: leading `\s` keeps a title's first word (always capitalised) out of it.
+_OTHER_LEADERS_CABINET_RE = re.compile(
+    r"\s(?!(?:Trump|Vance|Biden|Harris|Obama)\b)[A-Z][a-z]+(?:['’]s)?\s+[Cc]abinet\b"
+)
+_AMBASSADOR_RE = re.compile(r"\bambassador\b", re.IGNORECASE)
+
+
+def _is_us_federal_power(name: str) -> bool:
+    """Is this market an answer to "Who holds power in Washington?" (#8742)."""
+    lower = name.lower()
+    if not _US_FEDERAL_POWER_RE.search(lower):
+        return False
+    if _STATE_OFFICE_RE.search(name) or _OTHER_LEADERS_CABINET_RE.search(name):
+        return False
+    if _NON_US_JURISDICTION_RE.search(lower) and not _AMBASSADOR_RE.search(lower):
+        return False
+    return True
+
 _STOPWORDS = {
     "will",
     "the",
@@ -2520,16 +2598,16 @@ def _story_key(name: str, category: str) -> str | None:
     if category == "tennis" and re.search(r"\bus open\b", lower):
         return "story:grand_slam_tennis"
 
-    if re.search(r"\b(openai|gpt|claude|deepseek|gemini|ai model|best ai)\b", lower):
+    # #8742: "Claude Monet's artwork break auction record" is not about a model.
+    if re.search(
+        r"\b(openai|gpt|claude(?!\s+monet)|deepseek|gemini|ai model|best ai)\b", lower
+    ):
         return "story:ai"
 
     if re.search(r"\b(met gala|oscars?|academy awards?|grammys?|emmys?)\b", lower):
         return "story:major_entertainment_events"
 
-    if re.search(
-        r"\b(attorney general|fbi director|save act|cabinet|supreme court|nomination|confirmed)\b",
-        lower,
-    ):
+    if _is_us_federal_power(name):
         return "story:us_federal_power"
 
     if category == "entertainment" and re.search(r"\b(drake|iceman)\b", lower):

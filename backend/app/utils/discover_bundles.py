@@ -257,7 +257,16 @@ AUTHORED_STORY_QUESTIONS = {
     "story:ipo_markets": "Who goes public, and at what price?",
     "story:spacex_ipo": "Does SpaceX go public, and at what valuation?",
     # Tech / science
-    "story:ai": "Which AI model comes out on top?",
+    # #8742: this was "Which AI model comes out on top?", which is true of the
+    # leaderboard rows and false of most of the family. `_story_key` mints this key
+    # for 318 open markets (2026-09-25): OpenAI's valuation, devices, lawsuits and
+    # bankruptcy, model release dates, token prices, and the leaderboards. Page one
+    # served "Will Tristan Buckmaster sue OpenAI or Bubeck?" under it. Membership
+    # is left alone (the story cap of 2 holds the family in check, and narrowing it
+    # would release ~170 rows to compete as single cards); the sentence is
+    # rewritten to be true of every member, which is how `story:ufc_events` was
+    # repaired.
+    "story:ai": "What happens next in AI?",
     "story:spacex_launches": "What does SpaceX launch next?",
     "story:aliens_disclosure": "Does anyone confirm we are not alone?",
     # Culture / entertainment
