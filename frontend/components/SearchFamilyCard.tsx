@@ -12,6 +12,7 @@
 import Link from "next/link";
 import type { FuturesFamily, FuturesMarket } from "@/lib/types";
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
+import { outcomeRowVerdict } from "@/components/futures/OutcomeRow";
 import {
   leaderOutcome,
   movementArrow,
@@ -36,7 +37,17 @@ function AnswerRow({
   onClick?: () => void;
 }) {
   const ld = leaderOutcome(market);
-  const arrow = ld ? movementArrow(ld.movement) : null;
+  // #8640: a leader the venue has already GRADED is a result, not a price.
+  // Production 2026-09-25, `/search?q=Fed chair`: the headline read
+  // `Kevin Warsh >99%` over a leg served `is_winner: true, resolution_source:
+  // "api_settlement"` on a market that stays `open` — a settled question
+  // printed as a live one. Asked through `outcomeRowVerdict`, the rule the
+  // futures card and page already use, not a second copy: an open market earns
+  // only the authoritative `won` arm, a retraction or a served-null source
+  // earns nothing, and an absent `resolution_source` (an older payload) keeps
+  // today's price.
+  const verdict = ld ? outcomeRowVerdict(ld, market.status === "resolved") : null;
+  const arrow = ld && verdict === null ? movementArrow(ld.movement) : null;
   const reso = resolutionLabel(market.resolution_date);
   const nameClass = prominent
     ? "text-sm font-medium text-text-primary"
@@ -142,9 +153,15 @@ function AnswerRow({
               marker and the sign are one string: handed `">99"` with a literal
               `%` after it this span would print `>99%` correctly by luck and
               `<1%` wrongly the moment the other arm fired. */}
-          <span className="flex-shrink-0 text-text-primary font-medium">
-            {formatProbabilityPercent(ld.probability)}
-          </span>
+          {verdict === "won" ? (
+            <span className="flex-shrink-0 text-accent-live font-medium">Won</span>
+          ) : verdict === "lost" ? (
+            <span className="flex-shrink-0 text-text-muted">Lost</span>
+          ) : (
+            <span className="flex-shrink-0 text-text-primary font-medium">
+              {formatProbabilityPercent(ld.probability)}
+            </span>
+          )}
           {arrow && (
             <span
               className={`flex-shrink-0 ${arrow.up ? "text-accent-live" : "text-accent-danger"}`}
