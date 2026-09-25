@@ -711,6 +711,33 @@ _REFUSAL_VENUE_FIXTURE = "venue_fixture"  # (c) #4965: PM fixture vs the event
 #: 24h and 48h out.
 _PM_FIXTURE_MAX_DIFF_HOURS = 3
 
+#: #8547 — the two bounds of Phase 1.5's venue-instant relink, the arm that
+#: moves a Polymarket game market off a row that PASSES the ±3h guard above but
+#: is not the game the venue names, onto the one row that is.
+#:
+#: The specimen: Saturday's Orioles @ Yankees was moved into a Friday split
+#: doubleheader. Gamma 1053347 (slug still `mlb-bal-nyy-2026-09-26`) moved its
+#: ``startTime`` to 2026-09-25T20:05Z — game 1. At 02:37Z the only Friday row we
+#: held was game 2 (15316328, 23:05Z), exactly 3.0h away, which the guard's
+#: strict ``>`` admits, so the market linked there. Game 1's row (15318575,
+#: ESPN 401817088, 20:05Z) arrived at 04:29Z, and a linked market is never
+#: re-windowed (gotcha #15), so game 2's page blended two games' Polymarket
+#: prices and game 1 had none.
+#:
+#: ``_PM_VENUE_NAMES_ANOTHER_GAME`` is the entry condition: how far the row we
+#: are on must sit from the venue's instant before this arm looks at all.
+#: Gamma's instant matches our schedule sources to the minute on every measured
+#: team-sport specimen (see the comment above), so 90 minutes of drift is not a
+#: timing wobble; it is under the ~3h gap between the games of a split
+#: doubleheader and far under the day between consecutive games of a series.
+#:
+#: ``_PM_VENUE_SAME_GAME`` is the destination bound: the ONE real covered-league
+#: row the market moves onto must sit within 15 minutes of the venue's instant
+#: (the Red Sox doubleheader of the same night paired 17:05 with 17:06 and 22:05
+#: with 22:00). Zero rows or two rows inside it and nothing moves.
+_PM_VENUE_NAMES_ANOTHER_GAME = timedelta(minutes=90)
+_PM_VENUE_SAME_GAME = timedelta(minutes=15)
+
 #: The leagues The Odds API covers end to end, and therefore the leagues
 #: `_create_event_from_prediction_market` must NEVER mint a row for: a real
 #: event is coming from the schedule, so a market-born row can only be a twin
@@ -1613,8 +1640,18 @@ async def _check_polymarket_fixture_reason(session, event_id: int, market):
     return None
 
 
-async def _venue_confirmed_covered_fixture(session, matchup, market, linked_event):
+async def _venue_confirmed_covered_fixture(
+    session, matchup, market, linked_event, *,
+    window: Optional[timedelta] = None,
+    exclude_retired: bool = False,
+):
     """The real covered-league fixture this market's OWN venue instant names. #5544.
+
+    ``window`` / ``exclude_retired`` (#8547): the venue-instant relink asks this
+    finder a NARROWER question than the phantom and retired-row arms — "which
+    row sits at the venue's minute", not "which row is within the guard's ±3h" —
+    because the row it is leaving is itself inside ±3h. Both default to the
+    behaviour every earlier caller was measured on.
 
     CERT-2708's finding, and the half the minting refusal cannot reach. Declining
     to mint stops the next phantom; it does nothing for the ones already
@@ -1688,7 +1725,11 @@ async def _venue_confirmed_covered_fixture(session, matchup, market, linked_even
     if league is None:
         return None
 
-    window = timedelta(hours=_PM_FIXTURE_MAX_DIFF_HOURS)
+    if window is None:
+        window = timedelta(hours=_PM_FIXTURE_MAX_DIFF_HOURS)
+    retired_clause = (
+        [Event.status.notin_(sorted(RETIRED_STATUSES))] if exclude_retired else []
+    )
     candidates = (await session.execute(
         select(
             Event.id, Event.sport_id, Event.home_team_name, Event.away_team_name,
@@ -1707,6 +1748,7 @@ async def _venue_confirmed_covered_fixture(session, matchup, market, linked_even
             ),
             Event.commence_time >= fixture - window,
             Event.commence_time <= fixture + window,
+            *retired_clause,
         )
     )).all()
 
@@ -1734,10 +1776,10 @@ async def _venue_confirmed_covered_fixture(session, matchup, market, linked_even
         if confirmed:
             logger.info(
                 "Venue-confirmed relink declined for polymarket %s: %d real %s "
-                "fixtures sit within %dh of %s (%s) — ambiguous, leaving the "
+                "fixtures sit within %s of %s (%s) — ambiguous, leaving the "
                 "link on event %d for #1946",
                 market.external_id, len(confirmed), league,
-                _PM_FIXTURE_MAX_DIFF_HOURS, fixture.isoformat(),
+                window, fixture.isoformat(),
                 [row.id for row in confirmed], linked_event.id,
             )
         return None
@@ -1749,6 +1791,29 @@ async def _venue_confirmed_covered_fixture(session, matchup, market, linked_even
         market.external_id, fixture.isoformat(), league, row.id, linked_event.id,
     )
     return {"event_id": row.id, "sport_id": row.sport_id}
+
+
+def _venue_instant_disowns_link(market, linked_event) -> bool:
+    """Does this Polymarket market's own instant name a different game? #8547.
+
+    True only when the venue's ``startTime`` sits at least
+    :data:`_PM_VENUE_NAMES_ANOTHER_GAME` from the ``commence_time`` of the row
+    the market is linked to. Pure and in-memory, so the 15-minute pass pays for
+    the finder's query only on the rare link that fails this test.
+
+    False (leave the link alone) whenever either instant is missing or the
+    market is not Polymarket: Kalshi states its game in the ticker and has its
+    own guard arms, and a missing instant is no signal, never a refusal.
+    """
+    if getattr(market, "source", None) != "polymarket":
+        return False
+    fixture = venue_game_start(market)
+    commence = getattr(linked_event, "commence_time", None)
+    if fixture is None or not isinstance(commence, datetime):
+        return False
+    if commence.tzinfo is None:
+        commence = commence.replace(tzinfo=timezone.utc)
+    return abs(fixture - commence) >= _PM_VENUE_NAMES_ANOTHER_GAME
 
 
 #: Bound on the one Gamma read the split-squad arm makes. The arm runs inside
@@ -5145,14 +5210,32 @@ async def _phase15_revalidate(
             # `external_id` is not the `pm_` shape `is_auto_created` reads.
             is_retired = is_retired_event_status(linked_event.status)
 
+            # #8547: a link whose teams agree can still be the wrong GAME of the
+            # matchup — a split doubleheader puts two games of one pair ~3h
+            # apart, inside the ±3h guard. When the venue's own instant sits
+            # 90+ minutes off this row AND exactly one real covered-league row
+            # of the pair sits at the venue's minute, that row is the game.
+            # Destination via the #5544 finder only (never the scorer), retired
+            # rows excluded; zero or two candidates leave the link alone.
+            venue_named_row = None
             if (
                 teams_match and not is_finished and not is_auto_created
                 and not sport_mismatch and not is_retired
             ):
-                continue
+                if not _venue_instant_disowns_link(market, linked_event):
+                    continue
+                venue_named_row = await _venue_confirmed_covered_fixture(
+                    session, matchup, market, linked_event,
+                    window=_PM_VENUE_SAME_GAME, exclude_retired=True,
+                )
+                if venue_named_row is None:
+                    stats["funnel"].setdefault("phase15_venue_instant_left_alone", 0)
+                    stats["funnel"]["phase15_venue_instant_left_alone"] += 1
+                    continue
 
             reason = (
-                "auto_created" if is_auto_created
+                "venue_instant" if venue_named_row is not None
+                else "auto_created" if is_auto_created
                 else "cross_sport" if sport_mismatch
                 else "mislinked" if not teams_match
                 else "retired_event" if is_retired
@@ -5163,7 +5246,9 @@ async def _phase15_revalidate(
                 if market.source == "kalshi" else None
             )
 
-            if reason == "retired_event":
+            if venue_named_row is not None:
+                better_match = venue_named_row
+            elif reason == "retired_event":
                 # The destination is the VENUE-CONFIRMED finder only, never the
                 # scorer. The scorer answers "the best-looking scheduled row",
                 # which on this population can be another `_other` shadow or one
@@ -5316,6 +5401,9 @@ async def _phase15_revalidate(
                 if is_auto_created:
                     stats["funnel"].setdefault("auto_created_relinked", 0)
                     stats["funnel"]["auto_created_relinked"] += 1
+                elif venue_named_row is not None:
+                    stats["funnel"].setdefault("phase15_venue_instant_relinked", 0)
+                    stats["funnel"]["phase15_venue_instant_relinked"] += 1
                 elif not teams_match or sport_mismatch:
                     stats["funnel"]["mislink_fixed"] += 1
                 else:
