@@ -443,6 +443,19 @@ def project_scores(
     return round(home_score, 1), round(away_score, 1)
 
 
+def sportsbook_spread_is_a_margin(sport_key: Optional[str]) -> bool:
+    """False when a sport's sportsbook spread is a fixed handicap, not an expected margin.
+
+    #8617. :func:`project_scores` reads the spread point as the expected margin.
+    A baseball run line is pinned at ±1.5 whatever the matchup, so on a coin
+    flip it projected ``4.7 – 3.1`` and the card printed "Proj 5-3" (event
+    15318355, home 0.50, 2026-09-25). Same misreading as #8613 in the stat
+    model. Mirrors the web's ``sportsbookSpreadIsAMargin`` (baseball false,
+    everything else true). An unknown sport keeps the old answer.
+    """
+    return not str(sport_key or "").startswith("baseball")
+
+
 def projection_contradicts_moneyline(
     home_probability: Optional[float],
     projected_home: Optional[float],
