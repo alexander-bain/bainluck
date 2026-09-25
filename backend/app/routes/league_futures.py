@@ -76,6 +76,7 @@ from app.utils.sport_keys import (
     SPORT_HIERARCHY,
     TOUR_LEAGUES_INCLUDING_TOURNAMENTS,
     league_identity,
+    season_variant_rail_keys,
     tour_scope_sport_keys,
 )
 
@@ -3040,6 +3041,43 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
                 timeout=10,
             )
             _also_keys = tour_scope_sport_keys(sport_key, _in_play.scalars().all())[1:]
+        # #8700: a league whose games are split across its SEASON-VARIANT key
+        # (`icehockey_nhl_preseason`: the Odds API half, holding the sportsbook
+        # price) reads that key too, so `_folded_upcoming`/`_folded_past_rails`
+        # see both halves and elect the anchored row with the price unioned on.
+        # Scoped to the parent key alone, 40 of 40 NHL preseason games served the
+        # unpriced half. Same in-window pruning as the tour lookup above, so a
+        # variant out of season adds nothing and the rails compile the measured
+        # `sports.key = :key` statement; only a declared league pays the lookup.
+        _variant_keys: list[str] = []
+        _variant_candidates = season_variant_rail_keys(sport_key)
+        if _variant_candidates:
+            try:
+                _v_in_play = await asyncio.wait_for(
+                    db.execute(
+                        select(Sport.key).where(
+                            Sport.key.in_(_variant_candidates),
+                            exists().where(
+                                and_(
+                                    Event.sport_id == Sport.id,
+                                    Event.commence_time
+                                    > now - timedelta(days=RESULTS_LOOKBACK_DAYS),
+                                )
+                            ),
+                        )
+                    ),
+                    timeout=10,
+                )
+                _variant_keys = sorted(_v_in_play.scalars().all())
+            except Exception:
+                # The fold improves the rails; it is never a precondition for
+                # having them. `sport_key` is a path parameter and is not logged
+                # (notice 32, `py/log-injection`).
+                logger.exception(
+                    "league rails: season-variant lookup failed; "
+                    "serving the parent key only"
+                )
+            _also_keys = [*_also_keys, *_variant_keys]
         # #3872: an opted-in rail looks past its cap so the share below has
         # something to share. Every other league passes 0 and compiles the exact
         # statement it compiled before.
@@ -3052,6 +3090,14 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
             fold_headroom=UPCOMING_TWIN_FOLD_HEADROOM,
         )
         _results_q = recent_results_query(sport_key, now, also_sport_keys=_also_keys)
+        if _variant_keys:
+            # #8700: a variant-scoped results rail holds each game twice until
+            # the fold, so it gets the headroom the upcoming rail has (#5496) —
+            # without it eight slots fold down to four games. `.limit()` REPLACES
+            # the outer LIMIT only; the fence's inner statement is untouched, and
+            # every league without a variant in play keeps the measured statement
+            # (and the builder's text, which `league_rails_fence_mutations` pins).
+            _results_q = _results_q.limit(RESULTS_LIMIT + 1 + RESULTS_LIMIT)
         _unreported_q = unreported_games_query(sport_key, now, also_sport_keys=_also_keys)
         _g = await asyncio.wait_for(db.execute(_games_q), timeout=10)
         _g_events = list(_g.scalars().all())
