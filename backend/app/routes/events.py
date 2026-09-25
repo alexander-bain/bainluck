@@ -12906,6 +12906,10 @@ async def _build_search_suggestions(db: AsyncSession) -> dict:
             # the event page's hero shows, so a chip can no longer disagree with the
             # page it links to.
             from app.utils.aggregation import compute_aggregate_probability
+            from app.utils.highlights import (
+                underdog_leads,
+                upset_is_no_longer_in_doubt,
+            )
 
             for ev in live_events:
                 if _section_full(1):
@@ -12969,9 +12973,46 @@ async def _build_search_suggestions(db: AsyncSession) -> dict:
                     now_home_fav = hp > 0.55
                     if (opened_home_fav and now_away_fav) or (opened_away_fav and now_home_fav):
                         underdog = ev.away_team_name if opened_home_fav else ev.home_team_name
+                        # 🔴 #5051 — #4580's rule, on the second copy of the
+                        # sentence it never reached. "Upset brewing" names the
+                        # SCOREBOARD; the flip above is price alone, so it put
+                        # the chip on a 0-0 game whose line had drifted. The
+                        # scoreboard now has to say the price's underdog is
+                        # AHEAD, through the same `underdog_leads` the capsule
+                        # and footer badge call. No score (`None`), level, or a
+                        # leader other than `underdog` ⇒ no chip: this section
+                        # has no earned sentence to fall back to.
+                        opening_home = float(ev.opening_home_probability)
+                        opening_away = (
+                            float(ev.opening_away_probability)
+                            if ev.opening_away_probability is not None
+                            else None
+                        )
+                        if (
+                            underdog_leads(
+                                opening_home,
+                                ev.home_score,
+                                ev.away_score,
+                                opening_away,
+                            )
+                            is not True
+                        ):
+                            continue
+                        leader = (
+                            ev.home_team_name
+                            if ev.home_score > ev.away_score
+                            else ev.away_team_name
+                        )
+                        if leader != underdog:
+                            continue
+                        # #5047's tense, same as the capsule: once the market
+                        # has no doubt left it is not "brewing".
                         _add(
                             underdog,
-                            "Upset brewing",
+                            "Upset underway"
+                            if upset_is_no_longer_in_doubt(opening_home, float(hp))
+                            is True
+                            else "Upset brewing",
                             "event",
                             section=1,
                             event_id=ev.id,
