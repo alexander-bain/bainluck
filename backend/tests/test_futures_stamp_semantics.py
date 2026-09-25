@@ -460,6 +460,20 @@ READ_SIDE_CONSUMERS = {
         "remove, on live games, instead of removing it. It is also the one "
         "consumer here whose write is READER-FACING within minutes."
     ),
+    "app/utils/price_evidence.py": (
+        "POLLER ALIVE — #8464's `price_evidence`. A lone Polymarket 0.500 is "
+        "served `tradeable_book` only when each cited market's stored book was "
+        "written with the reading or LATER (`last_updated >= updated_at`) and "
+        "is still tight and still brackets the number; otherwise the page "
+        "withholds it ('No price yet'). Read-only, reader-facing. The first "
+        "cut compared with `==`, which this scan cannot see, so it sat outside "
+        "the audit until the repair's docstring spelled the `>=`. Under option "
+        "1 a book whose price holds steady would stop advancing its stamp "
+        "while the reading is re-stamped, fall behind it and read `unproven` "
+        "— every stable genuine pick'em withheld. That fails closed (no wrong "
+        "number, a missing one), but it is the same shape as the defect the "
+        "`>=` repaired."
+    ),
 }
 
 _GATE = re.compile(r"last_updated\s*(?:<|>=|<=|>)\s*")
