@@ -1299,6 +1299,21 @@ jobs:
             exit 1
           fi
 
+      - name: "#8586 mark_resolved_futures spares live and unstarted events (real Postgres)"
+        # A live match's Kalshi market carried a start-shaped resolution_date and
+        # the 6-hourly clock task resolved it mid-match, so the page lost its only
+        # price. The subject is the task's own UPDATE (jsonb `||` stamp plus a
+        # correlated NOT EXISTS over events), which sqlite cannot host. Controls
+        # (finished, stale-scheduled, unlinked) must still resolve.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_mark_resolved_spares_live_events_8586_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/mark_resolved_8586.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/mark_resolved_8586.txt; then
+            echo "::error::#8586 mark_resolved_futures gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#7035 the void fact retires the postponed fixture (real Postgres)"
         # CERT-3326's required repair, and the gate that answers the BLOCK.
         #

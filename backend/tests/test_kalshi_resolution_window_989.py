@@ -35,6 +35,8 @@ so no test here can flip with the date.
 
 from __future__ import annotations
 
+import re
+
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
@@ -204,7 +206,8 @@ class TestPollerWiring:
         from app.tasks import kalshi as kalshi_task
 
         src = inspect.getsource(kalshi_task)
-        assert "derive_resolution_window(event.markets)" in src, (
+        # #8586 added a `single_contest=` keyword, so the call now spans lines.
+        assert re.search(r"derive_resolution_window\(\s*event\.markets\b", src), (
             "the Kalshi poller must derive the window, not re-inline "
             "max(expiration_time)"
         )
@@ -234,11 +237,10 @@ class TestPollerWiring:
         from app.tasks import kalshi as kalshi_task
 
         src = inspect.getsource(kalshi_task)
-        assert "derive_resolution_window(event.markets)" in src
-        assert src.count("derive_resolution_window(event.markets)") == 2, (
+        sites = re.findall(r"derive_resolution_window\(\s*event\.markets\b", src)
+        assert len(sites) == 2, (
             "both the poller and the gap-create path must derive the window; "
-            f"found {src.count('derive_resolution_window(event.markets)')} "
-            "call site(s)"
+            f"found {len(sites)} call site(s)"
         )
         assert (
             "resolution_date = max(exp_times) if exp_times else max_close" not in src

@@ -1181,6 +1181,11 @@ async def run_backfill(
     sem = asyncio.Semaphore(concurrency)
     client = client_factory()
 
+    # #8586: the same single-contest rule the poller uses, so the two writers of
+    # `resolution_date` cannot disagree. Lazy — `app.tasks.kalshi` is heavy and
+    # this module is imported by scripts.
+    from app.tasks.kalshi import _is_dated_fixture_ticker, _is_kalshi_game_ticker
+
     async def handle(row) -> Optional[dict]:
         market_id, ticker, stored_rd, commence, tier = row
 
@@ -1259,7 +1264,9 @@ async def run_backfill(
                     _parse(m.get("expected_expiration_time")),
                 )
                 for m in markets
-            ]
+            ],
+            single_contest=bool(_is_kalshi_game_ticker(ticker or ""))
+            or _is_dated_fixture_ticker(ticker),
         )
         if window.resolution_date is None:
             stats["unresolvable_at_venue"] += 1
