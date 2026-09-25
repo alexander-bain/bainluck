@@ -2207,3 +2207,74 @@ async def test_only_a_complete_rostered_name_resolves_a_team(
     assert "Kansas City Chiefs" not in _team_names(payload), (
         f"{q!r} resolved the Chiefs from a roster without naming a player in full"
     )
+
+
+# --------------------------------------------------------------------------
+# #8523, dropdown half — the same player, typed into /typeahead
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+async def typeahead_with_a_rostered_player(search_with_a_rostered_player, typeahead):
+    """`typeahead` over the same seed as `search_with_a_rostered_player`.
+
+    The roster index is PROCESS state (`_roster_player_team_ids`), and every
+    test here gets a fresh database, so it is expired on the way in and out: an
+    index built over another test's rows would answer with that test's ids.
+    """
+    from app.routes import events as events_route
+
+    events_route._roster_index_expires_at = 0.0
+    yield typeahead
+    events_route._roster_index_expires_at = 0.0
+
+
+def _typeahead_rows(payload) -> list[tuple[str, str]]:
+    items = payload.get("suggestions", []) if isinstance(payload, dict) else payload
+    return [(i.get("type"), i.get("text")) for i in items if isinstance(i, dict)]
+
+
+async def test_the_dropdown_offers_a_rostered_players_team_and_its_game(
+    typeahead_with_a_rostered_player,
+):
+    """#8523 — `patrick mahomes` in the search box: his club, then its game.
+
+    Production before (2026-09-25 04:1xZ): five novelty markets, no team, no
+    game. The club must also LEAD the novelty that lists him — it carries his
+    name as scorer evidence, so a club row sitting under the SNL market would
+    mean the evidence never reached the scorer.
+    """
+    rows = _typeahead_rows(await typeahead_with_a_rostered_player("patrick mahomes"))
+    texts = [t for _, t in rows]
+    assert ("team", "Kansas City Chiefs") in rows, (
+        f"no Chiefs row in the dropdown: {rows!r} (#8523)"
+    )
+    assert any(k == "event" and "Kansas City Chiefs" in t for k, t in rows), (
+        f"the Chiefs resolved but their next game is missing: {rows!r} (#8523)"
+    )
+    snl = "Who will host Saturday Night Live Season 51?"
+    if snl in texts:
+        assert texts.index("Kansas City Chiefs") < texts.index(snl), (
+            f"the club ranks below a novelty that merely lists him: {rows!r}"
+        )
+
+
+async def test_the_dropdown_reads_the_bare_string_roster_form(
+    typeahead_with_a_rostered_player,
+):
+    rows = _typeahead_rows(await typeahead_with_a_rostered_player("travis kelce"))
+    assert ("team", "Kansas City Chiefs") in rows, rows
+
+
+@pytest.mark.parametrize("q", ["mahomes", "patrick maho", "patrick kelce"])
+async def test_the_dropdown_resolves_a_team_only_from_a_complete_rostered_name(
+    typeahead_with_a_rostered_player, q
+):
+    """No liveness assert, unlike `/search`'s controls: the dropdown ANDs every
+    word, so `patrick kelce` legitimately reaches nothing. The control is live
+    anyway, because the roster rescue is gated on an EMPTY TEAM POOL only, which
+    every one of these queries has."""
+    rows = _typeahead_rows(await typeahead_with_a_rostered_player(q))
+    assert ("team", "Kansas City Chiefs") not in rows, (
+        f"{q!r} resolved the Chiefs from a roster without naming a player in full"
+    )
