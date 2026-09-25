@@ -143,17 +143,18 @@ final class ALiveHeroCarriesTheStoryNotTheContext8320Tests: XCTestCase {
         let code = try pageCode()
         let title = try span(code, from: "privatevarnavTitleView:someView{",
                              to: "privatefuncscoreProtectedTitle(")
-        XCTAssertTrue(title.contains(
-            "Self.navTitleShowsScore(heroBottom:heroBottom,viewportTop:scrollViewportTop)"))
+        // #8651 — the bar reads the decision; the hero's position never reaches page state.
+        XCTAssertTrue(title.contains("ifletrungs=titleRungs,navShowsScore{"))
         XCTAssertTrue(title.contains("Text(scorelessTitle)"),
                       "the fallback title still prints dynamicTitle, which carries the score")
         XCTAssertFalse(title.contains("Text(dynamicTitle)"))
         // Both measurements are actually published and received.
-        XCTAssertTrue(code.contains(".onPreferenceChange(HeroBottomPreferenceKey.self){heroBottom=$0}"))
+        XCTAssertTrue(code.contains(".onPreferenceChange(NavShowsScorePreferenceKey.self){navShowsScore=$0??true}"))
         XCTAssertTrue(code.contains(
             ".onPreferenceChange(ScrollViewportTopPreferenceKey.self){scrollViewportTop=$0}"))
         XCTAssertTrue(code.contains(
-            "key:HeroBottomPreferenceKey.self,value:proxy.frame(in:.named(Self.scrollSpace)).maxY"))
+            "key:NavShowsScorePreferenceKey.self,value:Self.navTitleShowsScore("
+            + "heroBottom:proxy.frame(in:.named(Self.scrollSpace)).maxY,viewportTop:scrollViewportTop)"))
         XCTAssertTrue(code.contains(".coordinateSpace(name:Self.scrollSpace)"))
     }
 }

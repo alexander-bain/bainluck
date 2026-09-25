@@ -71,6 +71,26 @@ enum LaunchRig {
         defaults.bool(forKey: debugCountsKey)
     }
 
+    // MARK: - Counting what a scroll costs
+
+    /// Launch-argument key that makes the event page count its own body
+    /// evaluations and publish the count as an accessibility value.
+    ///
+    /// `xcrun simctl launch <sim> <bundle> -launch_count_page_builds YES`.
+    static let countPageBuildsKey = "launch_count_page_builds"
+
+    /// Whether the event page should count its rebuilds (#8651).
+    ///
+    /// Build 23 scrolled choppily on Alex's phone because every scrolled frame
+    /// rebuilt the whole event page: measured on the build's own source, 105
+    /// rebuilds across eight ordinary swipes, one every ~0.25 s. A recording
+    /// cannot see that and neither can a screenshot; this makes the page's own
+    /// number readable by `AnOrdinaryScrollDoesNotRebuildTheGamePage8651Tests`.
+    /// Off unless asked for, so no reader's page counts anything.
+    static func countsPageBuilds(defaults: UserDefaults = .standard) -> Bool {
+        defaults.bool(forKey: countPageBuildsKey)
+    }
+
     // MARK: - Photographing what is behind a disclosure
 
     /// Launch-argument key that starts collapsed disclosure sections OPEN.
