@@ -208,7 +208,9 @@ class TestServedMarkers:
         espn_rows = [
             {"timestamp": (t0 + timedelta(minutes=m)).isoformat(), "home_probability": p,
              "away_probability": 1 - p, "home_score": hs, "away_score": aws, "period": None}
-            for m, p, hs, aws in [(0, 0.5, 0, 0), (40, 0.4, 0, 7), (80, 0.6, 3, 7)]
+            # #8501: the capture at 79 is what lets the 80-minute sighting place
+            # the Q3 play; a sighting 40 minutes after the last capture would not.
+            for m, p, hs, aws in [(0, 0.5, 0, 0), (40, 0.4, 0, 7), (79, 0.4, 0, 7), (80, 0.6, 3, 7)]
         ]
         session = _session(
             event_id=14999001, sport_key="americanfootball_nfl", commence=t0,
@@ -335,6 +337,9 @@ class TestWallClockHelper:
     SNAPS = [
         {"timestamp": "2026-09-10T00:24:28+00:00", "home_score": 0, "away_score": 0},
         {"timestamp": "2026-09-10T01:08:34+00:00", "home_score": 0, "away_score": 7},
+        # #8501: a capture a minute before the 3–10 sighting, so that sighting
+        # places its play rather than bounding it from after an 80-minute gap.
+        {"timestamp": "2026-09-10T02:27:38+00:00", "home_score": 0, "away_score": 7},
         {"timestamp": "2026-09-10T02:28:38+00:00", "home_score": 3, "away_score": 10},
     ]
 
@@ -351,7 +356,7 @@ class TestWallClockHelper:
         assert out[0]["timestamp"] == self.SNAPS[0]["timestamp"]  # still ordered, unchanged
         assert out[0].get("timestamp_resolved") is False
         assert out[1].get("timestamp_resolved") is True
-        assert out[1]["timestamp"] == self.SNAPS[2]["timestamp"]
+        assert out[1]["timestamp"] == self.SNAPS[3]["timestamp"]
 
 
 class TestBoxScoreWriter:

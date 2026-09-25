@@ -15450,32 +15450,64 @@ _SCORING_PLAY_TYPES = {
 }
 
 
+#: #8501 — a play is only as well placed as the capture BEFORE its first
+#: sighting. ESPN is captured every ~60s, so three minutes allows two missed
+#: captures; a longer gap bounds the play from one side only.
+_PLAY_STAMP_MAX_GAP = timedelta(minutes=3)
+
+
+def _parse_sighting_time(value) -> datetime | None:
+    if not value:
+        return None
+    try:
+        at = datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+    return at if at.tzinfo else at.replace(tzinfo=timezone.utc)
+
+
 def _assign_wall_clock_timestamps(
     espn_plays: list[dict],
     espn_history: list[dict],
+    score_history: list[dict] | None = None,
 ) -> list[dict]:
     """Map ESPN scoring plays to wall-clock timestamps.
 
     ESPN scoring plays have period + clock (game time) but no wall-clock time.
-    We find the first ESPN snapshot where (home_score, away_score) matches the
-    post-play score. That snapshot's captured_at ≈ the play's wall-clock time.
+    We find the first served sighting — an ESPN snapshot or, when given, a
+    score_history row — where (home_score, away_score) matches the post-play
+    score. That sighting's timestamp ≈ the play's wall-clock time.
 
     Falls back to ordering-based interpolation when no snapshot match is found.
+
+    #8501: `/events/15315984` drew a touchdown at 00:30:38Z, the first ESPN
+    capture after a 16-minute capture gap, while score_history in the same
+    response had seen 3–10 at 00:15:38Z. Both series are sightings, so the
+    EARLIEST one is the stamp. And a sighting only places the play if the
+    capture before it is recent (`_PLAY_STAMP_MAX_GAP`); after a longer gap, or
+    with no earlier capture at all, the stamp is an upper bound and says so
+    with `timestamp_resolved: false`.
     """
     if not espn_plays:
         return []
 
     result = []
 
-    # Build index of (home_score, away_score) → first matching timestamp
-    score_to_timestamp: dict[tuple[int, int], str] = {}
-    for snap in espn_history:
+    # Every served sighting of a score, both series, in time order. The sort is
+    # stable and ESPN is listed first, so a tie keeps ESPN's own timestamp.
+    sightings: list[tuple[datetime, str, tuple[int, int]]] = []
+    for snap in list(espn_history) + list(score_history or []):
         hs = snap.get("home_score")
         aw = snap.get("away_score")
-        if hs is not None and aw is not None:
-            key = (int(hs), int(aw))
-            if key not in score_to_timestamp:
-                score_to_timestamp[key] = snap["timestamp"]
+        at = _parse_sighting_time(snap.get("timestamp"))
+        if hs is not None and aw is not None and at is not None:
+            sightings.append((at, snap["timestamp"], (int(hs), int(aw))))
+    sightings.sort(key=lambda s: s[0])
+
+    # (home_score, away_score) → index of its first sighting
+    first_sighting: dict[tuple[int, int], int] = {}
+    for i, (_, _, key) in enumerate(sightings):
+        first_sighting.setdefault(key, i)
 
     # Track last assigned timestamp for fallback ordering
     last_timestamp = espn_history[0]["timestamp"] if espn_history else None
@@ -15485,12 +15517,19 @@ def _assign_wall_clock_timestamps(
         away_score = play.get("away_score")
 
         timestamp = None
+        resolved = False
         if home_score is not None and away_score is not None:
-            timestamp = score_to_timestamp.get((int(home_score), int(away_score)))
+            i = first_sighting.get((int(home_score), int(away_score)))
+            if i is not None:
+                timestamp = sightings[i][1]
+                # #8501: the play happened between the previous capture and
+                # this one; only a short interval places it.
+                resolved = i > 0 and (
+                    sightings[i][0] - sightings[i - 1][0] <= _PLAY_STAMP_MAX_GAP
+                )
 
         # #5140: a carried timestamp keeps the play in ORDER; it is not when the
         # play happened. Say so, so nothing downstream reads it as an observation.
-        resolved = bool(timestamp)
         if not timestamp:
             timestamp = last_timestamp
 
@@ -25365,7 +25404,12 @@ async def get_event_odds_history(
     espn_scoring = (event.box_score_data or {}).get("scoring_plays", [])
     if espn_scoring:
         # Assign wall-clock timestamps by matching post-play scores to ESPN snapshots
-        scoring_plays = _assign_wall_clock_timestamps(espn_scoring, espn_history)
+        # #8501: score_history is a second set of sightings of the same score.
+        # It is read from `folded_series_event_ids`, which admits only rows whose
+        # home/away slots agree with this one, so its scores are the plays' own.
+        scoring_plays = _assign_wall_clock_timestamps(
+            espn_scoring, espn_history, score_history
+        )
     else:
         # Fallback to StatPal play-by-play data
         scoring_plays = extract_scoring_plays(
