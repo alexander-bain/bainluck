@@ -667,6 +667,34 @@ jobs:
             exit 1
           fi
 
+      - name: "#5531 a hook's stamps survive the ingest poll's metadata replace (real Postgres)"
+        # PILLAR: DISCOVER. SHIP: a game market's one-line context sentence
+        # stays on its page after the next Kalshi/Polymarket poll, instead of
+        # being withheld as "policy 1" (48 of the first 100 new hooks were).
+        #
+        # The merge is SQL (`jsonb_build_object` over the existing row, `||`,
+        # `NULLIF`), so only a server can say it keeps the keys. The file needs no
+        # tables — it SELECTs the real expression over JSONB literals — and runs
+        # the pre-#5531 expression beside it as a strawman. Same three refusals as
+        # the step above: a skip, nothing collected, and a short count.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_hook_stamp_survives_ingest_poll_5531_pg.py \
+            -v -rs 2>&1 | tee /tmp/hookstamp5531.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/hookstamp5531.txt; then
+            echo "::error::#5531 hook-stamp merge contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+          if grep -qiE "no tests ran|collected 0 items" /tmp/hookstamp5531.txt; then
+            echo "::error::#5531 hook-stamp merge contract collected NOTHING"
+            exit 1
+          fi
+          PASSED=$(grep -oE "[0-9]+ passed" /tmp/hookstamp5531.txt | tail -1 | grep -oE "[0-9]+")
+          if [ "${PASSED:-0}" -lt 13 ]; then
+            echo "::error::#5531 expected 13 passing contracts, saw ${PASSED:-0} — a case was lost, not fixed"
+            exit 1
+          fi
+
       - name: "#2077 the route supplies the fleet stamp (real Postgres)"
         # PILLAR: TRUTH. SHIP: a settled board nobody graded stops printing a
         # live coin flip.
