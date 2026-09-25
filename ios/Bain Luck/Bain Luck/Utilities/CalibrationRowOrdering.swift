@@ -54,6 +54,10 @@ enum CalRowState: Equatable {
     case measured
     /// The active cohort holds no outcomes for this row. Its metrics are `nil`.
     case noCohortData
+    /// Outcomes stand behind this row, but every one fell on the same side, so
+    /// its metrics are a function of the prices alone. Its metrics are `nil`.
+    /// See `CalibrationRowOrdering.censoringVerdict`.
+    case censored
 }
 
 /// A calibration row that can be ordered by its headline metric.
@@ -81,6 +85,55 @@ enum CalibrationRowOrdering {
         n > 0 ? .measured : .noCohortData
     }
 
+    /// #6211 on the phone — web's `censoringVerdict`, the same judgement.
+    ///
+    /// DataGolf publishes 36 outcomes and all 36 won. With the untraded toggle on,
+    /// this screen printed them as `36 · 36.5 · 35.8 · 0.142` and ranked the row
+    /// last, in the columns beside Kalshi's 318,956, while the website printed
+    /// "All 36 won — no losses to measure against." in those cells. When every
+    /// outcome lands on one side, the error is just the average distance from
+    /// each price to certainty. It cannot move with how the questions resolved,
+    /// because they all resolved the same way. So it is not a measurement of the
+    /// source, and ranking it publishes a verdict on a named third party that the
+    /// population cannot support.
+    ///
+    /// Exact, not a threshold, as on web: 99%-one-sided is a real measurement of a
+    /// skewed population, and 100% is arithmetic. `n > 0` first, because an empty
+    /// population is `noCohortData`, not censored (absence beats censoring).
+    static func censoringVerdict(outcomes n: Int, winners: Int) -> Bool {
+        n > 0 && (winners == n || winners == 0)
+    }
+
+    /// Winners pooled over `buckets`, each bucket's clamped to its own `n` and
+    /// floored at 0 — web's pooling, so a corrupt bucket claiming more winners
+    /// than outcomes reads as one-sided and is withheld (the fail-closed side).
+    static func pooledWinners(_ buckets: [CalibrationBucket]) -> Int {
+        buckets.reduce(0) { acc, b in
+            let n = max(b.n, 0)
+            return acc + min(max(b.winners, 0), n)
+        }
+    }
+
+    /// The row's state from its count AND its winners. Source Comparison rows use
+    /// this one. Category rows keep `state(outcomes:)`, as web does: only the
+    /// source table carries the censored cell.
+    static func state(outcomes n: Int, winners: Int) -> CalRowState {
+        guard state(outcomes: n) == .measured else { return .noCohortData }
+        return censoringVerdict(outcomes: n, winners: winners) ? .censored : .measured
+    }
+
+    /// The one sentence a censored population is stated in. The WORDS are web's
+    /// `censoredPopulationText`, so the two surfaces state this row the same
+    /// way. Grouping is pinned to en_US because web prints `toLocaleString()` in
+    /// an en-US page. The count is a published figure and must read the same on
+    /// both surfaces.
+    static func censoredPopulationText(outcomes n: Int, winners: Int) -> String {
+        let count = n.formatted(.number.locale(Locale(identifier: "en_US")))
+        return winners == 0
+            ? "All \(count) lost \u{2014} no wins to measure against."
+            : "All \(count) won \u{2014} no losses to measure against."
+    }
+
     /// A metric, or `nil` if nothing was measured to produce it.
     ///
     /// Call this at every site that builds a row, so the empty reduction's `0`
@@ -88,6 +141,14 @@ enum CalibrationRowOrdering {
     /// to a formatter that has no way left to tell it from a real zero.
     static func metric(_ value: Double, outcomes n: Int) -> Double? {
         guard state(outcomes: n) == .measured, value.isFinite else { return nil }
+        return value
+    }
+
+    /// The same, for a row whose state also depends on its winners. A censored
+    /// row's figure is discarded here, where `winners` is still in scope, exactly
+    /// as the empty reduction's `0` is.
+    static func metric(_ value: Double, outcomes n: Int, winners: Int) -> Double? {
+        guard state(outcomes: n, winners: winners) == .measured, value.isFinite else { return nil }
         return value
     }
 
