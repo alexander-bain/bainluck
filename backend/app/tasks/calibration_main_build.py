@@ -2256,7 +2256,17 @@ def _record_served_bank(runner: PhaseRunner, payload: dict[str, Any]) -> None:
     if not isinstance(digests, dict):
         runner.ledger.record_gauge("staged:served_reason:no_digest_map", 1)
     else:
-        uncheckable = sum(1 for name in served if name not in digests)
+        # #8458: a served unit the builder has since re-cut is not in the plan,
+        # so ``served_drift`` has no current digest to compare it against and
+        # skips it. That is "we cannot tell", not "it did not move". Only when
+        # the payload carries a plan at all: an absent plan is not a re-cut.
+        planned = payload.get("planned_units")
+        planned_set = set(planned) if isinstance(planned, list) and planned else None
+        uncheckable = sum(
+            1
+            for name in served
+            if name not in digests or (planned_set is not None and name not in planned_set)
+        )
         runner.ledger.record_gauge("staged:served_drift_uncheckable", uncheckable)
     served_at = payload.get("served_at")
     if isinstance(served_at, (int, float)) and not isinstance(served_at, bool) and served_at > 0:

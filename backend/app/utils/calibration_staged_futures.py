@@ -811,6 +811,114 @@ def slot_ref(chunk: Any) -> str:
     return f"{int(chunk.buckets)}{SLOT_REF_SEPARATOR}{int(chunk.index)}"
 
 
+def slot_key(buckets: int, index: int) -> str:
+    """:attr:`UnitChunk.key` of the slot ``(buckets, index)``, without a chunk.
+
+    The ONE derivation of a unit key: :attr:`UnitChunk.key` returns this. It
+    exists as a function because :func:`refined_cover` has to name slots that
+    are no longer planned — a refined parent has no chunk — and a second copy of
+    the digest recipe beside the property is the drift C14 refuses.
+    """
+    return input_fingerprint(UNIT_KEY_VM_ID, f"b={int(buckets)}", f"i={int(index)}")[:16]
+
+
+def refined_cover(
+    banked: Iterable[str], planned: Iterable[Any], refinements: Mapping[str, int]
+) -> bool:
+    """Whether ``banked`` is a complete census of ``planned`` at a COARSER cut.
+
+    #8458. A bank is keyed by the slots of the plan it was built against, and
+    :attr:`StagedFuturesCursor.unit_splits` is shared by the serving bank and
+    the bank being built. So when the builder refines a slot the SERVING bank
+    covered whole, the plan's keys move — slot ``128:5`` becomes ``256:5`` and
+    ``256:133`` — while the served census is unchanged. Exact key equality then
+    reads a complete census as incomplete, and the publish-first path
+    (``served_covers``) stays off until the successor completes. Production,
+    2026-09-25 01:30Z: the builder's packing sweep refined 121 slots in one
+    beat, the plan went 140 -> 249 units, and the finished 140-unit served bank
+    stopped publishing — about 31 beats of build left before anything could.
+
+    The census does not depend on the cut: a ``buckets * m``-way partition is an
+    exact refinement of the ``buckets``-way one (the note above
+    :data:`SLOT_REF_SEPARATOR`), and
+    ``test_a_census_reached_through_splits_equals_one_computed_in_one_pass``
+    pins that the sums agree. So a coarse bank covers a fine plan iff every
+    banked slot expands, through ``refinements``, into planned slots — ALL of
+    its children, recursively — and those expansions partition the plan
+    exactly: no planned slot left over, none reached twice.
+
+    **"All of its children" is the conservative clause.** An empty child plans
+    no chunk, so a banked parent with a missing child either lost questions the
+    plan no longer asks about or never had any there; the two are
+    indistinguishable here, so it is refused — the same answer exact equality
+    gives a served slot that empties out. Refusing costs only the shortcut; the
+    successor still completes and publishes.
+
+    Only ever COARSER. The splits map only grows for the life of a cursor, so a
+    bank finer than the plan is not a state the producer reaches and is refused.
+    Bare keys in ``planned`` (no slot to read) are refused too: this is the
+    refinement path, and exact equality is the caller's first test.
+    """
+    banked_keys = set(banked)
+    chunk_list = list(planned)
+    if not banked_keys or not chunk_list:
+        return False
+    if not all(isinstance(chunk, UnitChunk) for chunk in chunk_list):
+        return False
+    splits: dict[tuple[int, int], int] = {}
+    for ref, factor in (refinements or {}).items():
+        parsed = parse_slot_ref(ref)
+        if parsed is None or not isinstance(factor, int) or isinstance(factor, bool):
+            continue
+        if factor >= 2:
+            splits[parsed] = factor
+    if not splits:
+        return False
+    planned_slots = {(int(chunk.buckets), int(chunk.index)) for chunk in chunk_list}
+    parent: dict[tuple[int, int], tuple[int, int]] = {}
+    for (buckets, index), factor in splits.items():
+        for m in range(factor):
+            parent[(buckets * factor, index + buckets * m)] = (buckets, index)
+    # Every slot a banked key could legitimately name: the planned slots and
+    # their ancestors. A banked key outside this set names no slot of this
+    # partition at all.
+    by_key: dict[str, tuple[int, int]] = {}
+    for slot in planned_slots:
+        seen: set[tuple[int, int]] = set()
+        while slot is not None and slot not in seen:
+            seen.add(slot)
+            by_key[slot_key(*slot)] = slot
+            slot = parent.get(slot)
+
+    def leaves(slot: tuple[int, int]) -> Optional[set[tuple[int, int]]]:
+        if slot in planned_slots:
+            return {slot}
+        factor = splits.get(slot)
+        if not factor:
+            return None
+        buckets, index = slot
+        found: set[tuple[int, int]] = set()
+        for m in range(factor):
+            child = leaves((buckets * factor, index + buckets * m))
+            if child is None:
+                return None
+            found |= child
+        return found
+
+    reached: set[tuple[int, int]] = set()
+    total = 0
+    for key in banked_keys:
+        slot = by_key.get(key)
+        if slot is None:
+            return False
+        found = leaves(slot)
+        if found is None:
+            return False
+        reached |= found
+        total += len(found)
+    return total == len(planned_slots) and reached == planned_slots
+
+
 def parse_slot_ref(ref: Any) -> Optional[tuple[int, int]]:
     """``(buckets, index)`` for a well-formed reference, else ``None``.
 
@@ -1060,7 +1168,7 @@ class UnitChunk:
         generation. Late inclusion, not a wrong number, and it is published
         rather than assumed (Alex ruling, 2026-08-10).
         """
-        return input_fingerprint(UNIT_KEY_VM_ID, f"b={self.buckets}", f"i={self.index}")[:16]
+        return slot_key(self.buckets, self.index)
 
     @property
     def member_digest(self) -> str:
@@ -1828,8 +1936,17 @@ class StagedFuturesCursor:
         return {unit_key(p) for p in planned} == set(self.committed_units)
 
     def served_covers(self, planned: Iterable[Any]) -> bool:
-        """Whether the bank being SERVED is a complete census of ``planned``."""
-        return {unit_key(p) for p in planned} == set(self.served_units)
+        """Whether the bank being SERVED is a complete census of ``planned``.
+
+        #8458: exact key equality, OR the served bank is the same census at a
+        coarser cut of the partition (:func:`refined_cover`). Only the SERVED
+        bank needs the second arm. The building bank is always built against
+        the current plan, because :func:`refine_unit` refuses a banked slot.
+        """
+        chunk_list = list(planned)
+        if {unit_key(p) for p in chunk_list} == set(self.served_units):
+            return True
+        return refined_cover(self.served_units, chunk_list, self.unit_splits)
 
     def as_payload(self) -> dict[str, Any]:
         return {
@@ -3078,9 +3195,15 @@ def is_complete(cursor: StagedFuturesCursor, chunks: Iterable[Any]) -> bool:
     immediately, and in practice :func:`promote_if_complete` has already moved
     it — the ordering matters only for a caller that advances without ever
     stamping a plan, which every existing test does.
+
+    **#8458 — the served arm reads through** :meth:`StagedFuturesCursor.served_covers`,
+    so a served bank the builder has since re-cut still counts. That is still not
+    a subset test: :func:`refined_cover` requires the served slots to expand into
+    the plan exactly, with nothing missing and nothing reached twice.
     """
-    planned = {unit_key(chunk) for chunk in chunks}
-    return planned == set(cursor.committed_units) or planned == set(cursor.served_units)
+    chunk_list = list(chunks)
+    planned = {unit_key(chunk) for chunk in chunk_list}
+    return planned == set(cursor.committed_units) or cursor.served_covers(chunk_list)
 
 
 def collect_unit_results(
