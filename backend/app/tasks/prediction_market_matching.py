@@ -4182,6 +4182,12 @@ def _sport_family(sport_key: Optional[str]) -> Optional[str]:
     return sport_key.split("_", 1)[0]
 
 
+#: #8587: sports whose `<family>_other` bucket is accepted even on the strict
+#: forward path — a match between two named people, where the both-sides name
+#: gate already carries the identity. See `_is_cross_sport_link`.
+_FORWARD_PATH_UNCLASSIFIED_BUCKET_FAMILIES = frozenset({"tennis"})
+
+
 def _is_cross_sport_link(
     market_sport: Optional[str],
     event_sport_key: Optional[str],
@@ -4228,15 +4234,28 @@ def _is_cross_sport_link(
     DIFFERENT precise keys still are — `americanfootball_nfl` on
     `americanfootball_ncaaf` stays a mislink, which is the detection this arm
     was added for.
+
+    #8587: TENNIS TAKES THE BUCKET ON THE FORWARD PATH TOO. The golden-set
+    reason for strictness is a TEAM sport's: "Boston" and "Utah Tech" name a
+    club in several leagues, so an `americanfootball_other` row two days off an
+    NCAAF ticker may well be a different game. A tennis match names two PEOPLE,
+    and the name gate above this call has already required both. Polymarket's
+    tennis rows have no ticker and are all minted `tennis_other`, so every
+    Kalshi `KXATPMATCH`/`KXWTAMATCH` market that met one refused it here and
+    minted a surname-only second row beside it: 98 of the 125 Kalshi-later
+    tennis twins of the 14 days to 2026-09-25 carry exactly this verdict on
+    their mint receipt (Medvedev v Royer, 15318222 beside 15318217). Only the
+    bucket is accepted — `tennis_atp` on `tennis_wta` is still a mismatch.
     """
     if not market_sport or not event_sport_key:
         return False
     if event_sport_key.startswith(market_sport):
         return False  # same key, or the market names only the family
+    family = _sport_family(market_sport)
     if (
         allow_unclassified_bucket
-        and event_sport_key == f"{_sport_family(market_sport)}_other"
-    ):
+        or family in _FORWARD_PATH_UNCLASSIFIED_BUCKET_FAMILIES
+    ) and event_sport_key == f"{family}_other":
         return False  # the unclassified bucket of our OWN sport (#3605)
     return True
 
