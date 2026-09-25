@@ -364,6 +364,19 @@ _SPORTS_SERIES_TICKERS = [
     # KXWNBASPREAD/TOTAL are the natural next widening once that headroom is
     # measured — not something to spend tonight's budget on unmeasured.
     "KXWNBAGAME",
+    # #8569: the same omission, fifth occurrence — esports. Every esports
+    # match winner stopped arriving after 2026-09-20 08:47Z while the venue kept
+    # listing them (measured 2026-09-25 at `/events?series_ticker=…&status=open`:
+    # KXCS2GAME 78, KXLOLGAME 27, KXDOTA2GAME 9, KXVALORANTGAME 6; we held 0
+    # open rows). Our creation history is bursts — 9/5, 9/8–13, 9/19–20, dark
+    # between — which is the resumable main-scan cursor passing over those
+    # pages now and then, and nothing else: the four winner series carry `GAME`,
+    # so discovery declines them `heavy_payload_shape` (and `_DISCOVERY_TAGS`
+    # does not name Esports at all). Stripped fetch + per-event backfill like
+    # the five above; ~120 open events across the four, far under #995's
+    # threshold. Winner series only — the MAP/TOTALMAPS books are not what a
+    # match page's price reads, and are the next widening once measured.
+    "KXCS2GAME", "KXLOLGAME", "KXDOTA2GAME", "KXVALORANTGAME",
     # Game-level (neg-risk, status=None — missed by unfiltered pagination)
     "KXNBASPREAD", "KXNBATOTAL", "KXNBATEAMTOTAL",
     "KXNBA1HSPREAD", "KXNBA1HTOTAL", "KXNBA1HWINNER",
@@ -641,6 +654,9 @@ _ALWAYS_FETCH_SERIES = {
     # the `any(startswith)` short-circuit and skips the whole slate — the
     # difference between "some" and "all" is every game page.
     "KXWNBAGAME",
+    # #8569: esports matches turn over daily too — one stale match surfacing in
+    # the main scan must not skip the rest of the day's slate.
+    "KXCS2GAME", "KXLOLGAME", "KXDOTA2GAME", "KXVALORANTGAME",
     "KXATPMATCH", "KXWTAMATCH",
     "KXATPNATSTAGE", "KXWTANATSTAGE",
     "KXRAIN", "KXRAINWKND",
