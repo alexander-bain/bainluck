@@ -1546,9 +1546,18 @@ export default function CalibrationPage() {
           </p>
         </CalibrationCardNote>
         <div className="overflow-x-auto scroll-shadow-x">
-          <table className="w-full text-sm">
+          <table className="w-full text-[13px] sm:text-sm">
             <thead>
-              <tr className="text-left text-xs text-text-muted uppercase tracking-normal sm:tracking-wide">
+              {/* #8581. Mixed case below `sm`, uppercase from `sm` up. At 375px
+                  this table ran 8px past its card and sliced Brier, and every
+                  wide column was wide because of its HEADER: uppercase
+                  "OUTCOMES" is 71px over numbers that need 59, "BUCKET" 51px
+                  over 41. Mixed case gives most of that back, and 13px body type
+                  below `sm` (the table's own size from `sm` up is unchanged)
+                  gives the rest; Category Breakdown needs it, because its
+                  widest cell is "Uncategorized" itself. The matched-buckets
+                  table below already prints mixed case. */}
+              <tr className="text-left text-xs text-text-muted normal-case sm:uppercase tracking-normal sm:tracking-wide">
                 <th className="pb-2 pr-1 sm:pr-4">Source</th>
                 <th className="pb-2 pr-1 sm:pr-4 text-right">Outcomes</th>
                 <th className="pb-2 pr-1 sm:pr-4 text-right">ECE</th>
@@ -2504,9 +2513,11 @@ export default function CalibrationPage() {
           </p>
         )}
         <div className="overflow-x-auto scroll-shadow-x">
-          <table className="w-full text-sm">
+          <table className="w-full text-[13px] sm:text-sm">
             <thead>
-              <tr className="text-left text-xs text-text-muted uppercase tracking-normal sm:tracking-wide">
+              {/* #8581, same as the Source Comparison table: 18px over at
+                  375px; mixed case recovers 12 of it, 13px type the rest. */}
+              <tr className="text-left text-xs text-text-muted normal-case sm:uppercase tracking-normal sm:tracking-wide">
                 <th className="pb-2 pr-1 sm:pr-4">Category</th>
                 <th className="pb-2 pr-1 sm:pr-4 text-right">Outcomes</th>
                 <th className="pb-2 pr-1 sm:pr-4 text-right">ECE</th>
