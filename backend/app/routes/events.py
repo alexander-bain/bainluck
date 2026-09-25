@@ -4304,10 +4304,20 @@ def _futures_name_match_term(term: str, exp: str | None):
     boundary against the compiled SQL, which needs no Postgres to fail.
     """
     if not _has_extractable_trigram(term):
-        # Fragment: substring recall only. See the LAT-P037 section above — the
+        # Fragment: no whole-word vote. See the LAT-P037 section above — the
         # word test cannot be right about a word the user has not finished
         # typing, so it does not get a vote.
-        return _build_expanded_ilike(FuturesMarket.name, term, exp)
+        #
+        # #8689: but it matches at the START of a word, not anywhere. A prefix
+        # being typed is a word start, so `re` still reaches "Recession" and
+        # LAT-P037's guard keeps passing; an infix is not one. `us open` served
+        # Chengdu/Korea doubles through "Venus" and "Ruse", the Australian Open
+        # through "Aus", a CS:GO match through "Aimhaus" and a transit story
+        # through "push" — 20 of the 25 open markets its name arm reached,
+        # measured on production 2026-09-25. `ts_rank_cd` could not sink them:
+        # `us` is a stopword, so every name with "Open" tied. Same rule the team
+        # arm took in #7381; the ILIKE half is unchanged and still drives the scan.
+        return _build_word_start_ilike(FuturesMarket.name, term, exp)
     return and_(
         _build_expanded_ilike(FuturesMarket.name, term, exp),
         or_(
