@@ -63,8 +63,9 @@ revert the fix along with the mutation:
     what makes that arm non-vacuous: CFL is relinkable, and a flag that always
     declined would take that away silently.
   * making `unambiguous_only` a no-op — **1 fails**,
-    `test_the_nfl_pair_is_still_ambiguous_and_still_refused`, which is the
-    control that keeps the arm above honest.
+    `test_a_pair_in_two_real_leagues_is_still_ambiguous_and_refused`, which is
+    the control that keeps the arm above honest. (It was the NFL/NFL-preseason
+    pair until #8547 ruled a season variant beside its parent ONE league.)
 """
 import re
 
@@ -259,21 +260,31 @@ class TestTheRelinkCanNameIt:
         ) == "americanfootball_cfl"
 
     @pytest.mark.asyncio
-    async def test_the_nfl_pair_is_still_ambiguous_and_still_refused(self):
-        """THE CONTRAST THAT KEEPS THE ARM ABOVE HONEST, and it is not
-        hypothetical: production carries BOTH clubs under `americanfootball_nfl`
-        AND `americanfootball_nfl_preseason` (all four rows are verbatim in
-        `CLUBS`), so `shared` has two members and this pair cannot be NAMED.
+    async def test_a_pair_in_two_real_leagues_is_still_ambiguous_and_refused(self):
+        """THE CONTRAST THAT KEEPS THE ARM ABOVE HONEST. Two clubs that both
+        resolve in two genuinely different covered leagues cannot be NAMED. If
+        `unambiguous_only` were quietly neutered this would return a league and
+        `test_a_cfl_pair_names_exactly_one_league` above would prove nothing."""
+        rows = CLUBS + [
+            _Row("Detroit Lions", None, "americanfootball_ncaaf"),
+            _Row("Cincinnati Bengals", None, "americanfootball_ncaaf"),
+        ]
+        assert await covered_league_for_matchup(
+            _FakeSession(rows), "Detroit Lions", "Cincinnati Bengals",
+            unambiguous_only=True,
+        ) is None
 
-        Two things follow. If `unambiguous_only` were quietly neutered, this
-        would return a league and `test_a_cfl_pair_names_exactly_one_league`
-        above would be proving nothing. And the CFL arm's cleanliness is a
-        measured property of that league, not a property of the flag — an NFL
-        pair, in the very same family, fails the same question."""
+    @pytest.mark.asyncio
+    async def test_the_nfl_pair_names_its_league_despite_preseason_rows_8547(self):
+        """Production carries BOTH clubs under `americanfootball_nfl` AND
+        `americanfootball_nfl_preseason` (all four rows verbatim in `CLUBS`).
+        This pair was this file's ambiguity control until #8547: a season
+        variant beside its own parent is ONE league, and reading it as two
+        declined every Polymarket venue-instant relink in MLB/NFL/NHL/NBA."""
         assert await covered_league_for_matchup(
             _session(), "Detroit Lions", "Cincinnati Bengals",
             unambiguous_only=True,
-        ) is None
+        ) == "americanfootball_nfl"
 
     @pytest.mark.asyncio
     async def test_that_same_nfl_pair_is_still_refused_a_mint(self):
