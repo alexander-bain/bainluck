@@ -477,6 +477,71 @@ final class EventRefreshLifecycleTests: XCTestCase {
         vm.stopRefresh()
     }
 
+    // MARK: - #8541: a final that arrives by push is settled by the server
+
+    /// The stream's last frame: the match is over. It carries a status and no
+    /// score, and `closed` follows it — the server's order.
+    private func pushFinal(_ handle: FakeHandle) {
+        handle.fire("probability", #"{"event_id": 4242, "p": 0.9, "status": "completed"}"#)
+        handle.fire("closed", #"{"reason": "not_live"}"#)
+    }
+
+    /// THE SHIP. A walk-off: the deciding run scores after the page's last
+    /// refresh, then the final frame arrives. The page used to plan `.idle` on
+    /// the pushed status and print FINAL over the pre-walk-off score for good.
+    func testAPushedFinalSettlesOnTheServersScore() async throws {
+        let client = ScriptedClient([
+            .ok(try event(status: "live", commenceOffset: -10_800, home: 4, away: 5)),
+            .ok(try event(status: "completed", commenceOffset: -10_800, home: 6, away: 5))
+        ])
+        let ticker = Ticker()
+        let handle = FakeHandle()
+        let vm = makeVM(client: client, ticker: ticker, handle: handle)
+
+        await vm.load()
+        handle.fire("open")
+        pushFinal(handle)
+
+        XCTAssertEqual(vm.event?.status, "completed", "the pushed final did not reach the page")
+        XCTAssertEqual(
+            vm.currentRefreshPlan, .poll(every: 30),
+            "a pushed final went idle before the server served the final score"
+        )
+
+        ticker.openGate()
+        await waitUntil("the served final score") { vm.event?.homeScore == 6 }
+        XCTAssertEqual(vm.event?.awayScore, 5)
+        XCTAssertEqual(vm.event?.status, "completed")
+        // Settled by the SERVER now, so the saving comes back: nothing polls.
+        await waitUntil("the page to go idle once the server agreed") { !vm.isAutoRefreshing }
+        XCTAssertNil(vm.currentRefreshPlan)
+    }
+
+    /// The sibling. The detail payload is cached for up to 30s while live, so the
+    /// loads right after a pushed final can still say `live`. The page must not
+    /// flip FINAL back to live on them, and must not stop asking either.
+    func testAPushedFinalOutlivesACachedLivePayloadAndKeepsAsking() async throws {
+        let client = ScriptedClient([
+            .ok(try event(status: "live", commenceOffset: -10_800, home: 4, away: 5)),
+            .ok(try event(status: "live", commenceOffset: -10_800, home: 4, away: 5))
+        ])
+        let ticker = Ticker()
+        let handle = FakeHandle()
+        let vm = makeVM(client: client, ticker: ticker, handle: handle)
+
+        await vm.load()
+        handle.fire("open")
+        pushFinal(handle)
+
+        ticker.openGate()
+        await waitUntil("the page to ask again after the pushed final") { client.fetchCount >= 3 }
+        XCTAssertEqual(vm.event?.status, "completed", "a cached `live` payload undid the pushed final")
+        XCTAssertEqual(vm.currentRefreshPlan, .poll(every: 30))
+        XCTAssertTrue(vm.isAutoRefreshing)
+
+        vm.stopRefresh()
+    }
+
     /// Defect 2, wired.
     func testSuspendedMatchKeepsPolling() async throws {
         let client = ScriptedClient([
