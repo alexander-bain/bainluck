@@ -3746,6 +3746,65 @@ def _rescue_teams_from_rows(rows) -> list[tuple[str, str]]:
     return resolved
 
 
+#: #8523 — the fewest words the roster arm will look up. The comparison is exact
+#: full-name equality, so a bare surname (`allen`) can never match `Josh Allen`
+#: either way; this gate is about COST. One-word queries are most of the empty
+#: rail (partials and misspellings), and production holds 10 one-word roster
+#: names out of 10,268 (2026-09-25) — so a one-word lookup would pay ~120 ms on
+#: nearly every miss to reach almost nobody. Those 10 are the price, named.
+_ROSTER_PLAYER_MIN_WORDS = 2
+
+
+def _roster_player_name_key(q: str) -> str | None:
+    """#8523: the query as the roster arm compares it, or None if it may not.
+
+    Lower-cased with its whitespace collapsed, so `Patrick  Mahomes` and
+    `patrick mahomes` are one lookup. None under `_ROSTER_PLAYER_MIN_WORDS`.
+    """
+    words = q.lower().split()
+    if len(words) < _ROSTER_PLAYER_MIN_WORDS:
+        return None
+    return " ".join(words)
+
+
+def _roster_player_team_query(name_key: str):
+    """#8523: the clubs whose roster lists a player by exactly this full name.
+
+    A player's name is not a team name, event name or market name, so no other
+    arm on the page can reach his club from it: `patrick mahomes` served no team,
+    no game and five novelty markets (Madden cover, SNL host) that list him as an
+    outcome. `teams.roster_players` already knows he is a Kansas City Chief; this
+    asks it.
+
+    EXACT full-name equality, case-insensitive. Not a substring and not a trigram
+    — the whole safety argument is that the reader typed a person's complete name
+    and a curated roster holds that same name, so there is nothing to guess.
+
+    The roster is a JSON array whose members are objects carrying `name` (9,276
+    on production 2026-09-25) or, from an older sync, bare strings (992). Both
+    are read. The shape is the same rows `_rescue_teams_from_rows` takes, plus
+    the id the teams bucket needs.
+
+    Priced on production 2026-09-25: ~120 ms over the 350 rostered teams, no
+    index. It runs only where the rescue arm already runs — an empty rail that
+    resolved no team — so the searches that work today issue no extra statement.
+    """
+    return (
+        select(Team.id, Team.name, Sport.key.label("sport_key"))
+        .join(Sport, Team.sport_id == Sport.id, isouter=True)
+        .where(
+            text(
+                "jsonb_typeof(teams.roster_players) = 'array' AND EXISTS ("
+                "SELECT 1 FROM jsonb_array_elements(teams.roster_players) AS rp(v) "
+                "WHERE lower(CASE WHEN jsonb_typeof(rp.v) = 'object' "
+                "THEN rp.v ->> 'name' ELSE rp.v #>> '{}' END) = :roster_player_name)"
+            ).bindparams(roster_player_name=name_key)
+        )
+        .order_by(Team.name, Team.id)
+        .limit(25)
+    )
+
+
 def _resolved_team_event_filter(resolved: list[tuple[str, str]]):
     """#5773: games played by clubs the page has already resolved, sport-scoped.
 
@@ -7008,6 +7067,9 @@ async def search_events(
     # blank-card); reusing the shared list makes this arm immune to that class by
     # construction rather than by review.
     _resolved_teams: list[tuple[str, str]] = []
+    # #8523: the clubs a PLAYER's name resolved to, by id, for the teams bucket
+    # below — which otherwise finds a team only by its own name.
+    _roster_team_ids: list[int] = []
     if total_count == 0 and not degraded and not sport_alias_keys:
         try:
             # 25 then cap, the same shape as the teams bucket itself (:6638) —
@@ -7023,6 +7085,27 @@ async def search_events(
                 )
             ).all()
             _resolved_teams = _rescue_teams_from_rows(_resolved_rows)
+
+            # #8523 — no club by NAME: is it a rostered player's full name?
+            # `patrick mahomes` -> Kansas City Chiefs, and from here the arm
+            # below is unchanged: his club's games fill the rail, the sport
+            # facet becomes NFL, and `_demote_wrong_sport` sinks the Madden and
+            # SNL novelty markets beneath his award markets. A resolved player
+            # also declines the trigram "did you mean", for the reason #5773
+            # gives for a resolved club: we know who he is.
+            _roster_key = (
+                None if _resolved_teams else _roster_player_name_key(_q_identity)
+            )
+            if _roster_key is not None:
+                _roster_rows = (
+                    await db.execute(_roster_player_team_query(_roster_key))
+                ).all()
+                _resolved_teams = _rescue_teams_from_rows(_roster_rows)
+                _roster_team_ids = [
+                    row.id
+                    for row in _roster_rows
+                    if (row.name, row.sport_key) in _resolved_teams
+                ]
 
             if _resolved_teams:
                 _rescue_conditions = [
@@ -7095,6 +7178,7 @@ async def search_events(
             logger.warning("search resolved-team rescue failed: %s", exc)
             await _recover_search_session(db, _deadline)
             _resolved_teams = []
+            _roster_team_ids = []
 
     # #4809 — a query that resolved a CURATED nickname is never "corrected".
     #
@@ -9098,7 +9182,20 @@ async def search_events(
                Team.logo_url_small, Team.current_record, Sport.key.label("sport_key"),
                Team.alternate_names, team_rank)
         .join(Sport, Team.sport_id == Sport.id, isouter=True)
-        .where(_build_team_search_filter(_q_identity))
+        .where(
+            # #8523: a club the rescue resolved from a PLAYER's name joins by id
+            # — its own name shares no word with `patrick mahomes`, so the name
+            # filter alone would leave his team off the page it was found for.
+            # Non-empty only when that filter resolved nothing (the rescue's own
+            # gate), and absent otherwise: the SQL every other query compiles is
+            # unchanged.
+            or_(
+                _build_team_search_filter(_q_identity),
+                Team.id.in_(_roster_team_ids),
+            )
+            if _roster_team_ids
+            else _build_team_search_filter(_q_identity)
+        )
         .order_by(team_rank.desc(), Team.name)
         .limit(25)
     )
