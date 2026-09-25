@@ -202,7 +202,14 @@ class TestTheHandlerWiring:
         assert teams < rerank
 
     def test_both_rerank_sites_carry_the_evidence(self):
-        assert self.SRC.count("_team_sport_categories,\n") == 2
+        # Counted on the re-rank CALLS, not on the bare argument text: #8628 r2
+        # added a third `_team_sport_categories,` argument (the post-sink
+        # teamless pass), which is not a re-rank site.
+        import re
+
+        calls = re.findall(r"_rerank_search_futures\([^)]*?\)", self.SRC)
+        assert len(calls) == 2
+        assert all("_team_sport_categories" in c for c in calls)
 
     def test_the_teams_shed_path_uses_a_savepoint_not_a_rollback(self):
         """It now runs while the futures rows are live; `_recover_search_session`

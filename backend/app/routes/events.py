@@ -724,6 +724,69 @@ def _admit_search_future(
     return True
 
 
+#: #8628 r2 — rows one MATCH keeps in rank order before the rest sink.
+_SEARCH_MATCH_ROWS_CAP = 2
+#: The two sides of a fixture name: `Scunthorpe United FC vs. Hartlepool United FC`.
+_SEARCH_MATCH_SIDES = re.compile(r"\s(?:vs\.?|v\.?)\s", re.I)
+#: A venue's suffix on the fixture itself: `… - More Markets`, `… - Exact Score`.
+_SEARCH_MATCH_SUFFIX = re.compile(r"\s+-\s+.*$")
+_SEARCH_WORD = re.compile(r"[^\W_]+")
+
+
+def _search_match_key(market) -> Optional[str]:
+    """The fixture a market row belongs to, or None when the name names none.
+
+    #8628 r2 — the ladder fold left `?q=united` (production `dda40b8b`, 2026-09-25)
+    with 7 of its 10 market rows from ONE League Two match, each a DIFFERENT
+    ladder: corners, team totals, 1st-half totals, `- More Markets`. Polymarket
+    names every sub-market `<fixture>: <question>`, so the fixture is the text
+    before the colon, and it is a fixture only if it reads `A vs. B`.
+
+    Fail-open: `Champions League Winner: PSG vs Arsenal` has no sides before its
+    colon and gets None, so a row that does not name its match is never capped.
+    """
+    name = (getattr(market, "name", None) or "").strip()
+    head = _SEARCH_MATCH_SUFFIX.sub("", name.split(":", 1)[0]).strip().lower()
+    sides = _SEARCH_MATCH_SIDES.split(head, maxsplit=1)
+    if len(sides) != 2 or not all(s.strip() for s in sides):
+        return None
+    return "match:" + " ".join(head.split())
+
+
+def _query_names_both_sides(match_key: str, query_words: frozenset) -> bool:
+    """Does the query name each side of this fixture with a word of its own?
+
+    `scunthorpe hartlepool` does, so its reader asked for that match and gets
+    every row of it. `united` does not: the one word sits on both sides.
+    """
+    sides = _SEARCH_MATCH_SIDES.split(match_key.removeprefix("match:"), maxsplit=1)
+    a, b = (query_words & set(_SEARCH_WORD.findall(s)) for s in sides)
+    return bool(a - b) and bool(b - a)
+
+
+def _is_over_match_cap(market, match_counts: dict, query_words: frozenset) -> bool:
+    """Count this admitted row against its fixture; True once the fixture is full.
+
+    Called on rows already admitted, in rank order, so the fixture's first
+    `_SEARCH_MATCH_ROWS_CAP` rows are its highest-ranked ones. An over-cap row is
+    SUNK, not dropped (`_sink_over_match_cap`): when nothing else answers the
+    query it still fills the page.
+    """
+    key = _search_match_key(market)
+    if key is None or _query_names_both_sides(key, query_words):
+        return False
+    match_counts[key] = match_counts.get(key, 0) + 1
+    return match_counts[key] > _SEARCH_MATCH_ROWS_CAP
+
+
+def _sink_over_match_cap(markets: list, over_cap_ids: set) -> list:
+    """#8628 r2: a stable partition — every other row above every over-cap row."""
+    if not over_cap_ids:
+        return markets
+    keep = [m for m in markets if m.id not in over_cap_ids]
+    return keep + [m for m in markets if m.id in over_cap_ids]
+
+
 #: A row none of whose printable prices was written inside this window is
 #: FROZEN for `_live_twin_first`. Two weeks: a live season market is re-polled
 #: every hour or two; the specimen below had gone 69 days without a write.
@@ -8805,10 +8868,18 @@ async def search_events(
     # already on the page is dropped even when the two classified to different
     # tiers. See `_is_repeat_of_a_kept_question`.
     kept_sources_by_question: dict[str, set] = {}
+    # #8628 r2: rows past a fixture's cap are SUNK below every other row and do
+    # not count toward a full page, so the refill below can bring in another
+    # question. See `_is_over_match_cap`.
+    _query_words = frozenset(_SEARCH_WORD.findall(_q_identity.lower()))
+    _match_counts: dict[str, int] = {}
+    _over_match_cap_ids: set[int] = set()
     deduped_futures = []
     for m in reranked_futures:
         if not _admit_search_future(m, seen_search_keys, kept_sources_by_question):
             continue
+        if _is_over_match_cap(m, _match_counts, _query_words):
+            _over_match_cap_ids.add(m.id)
         deduped_futures.append(m)
 
     # LAT-P038/#1769 (defect 1b): dedup runs AFTER the LIMIT, so a collapsing
@@ -8857,6 +8928,18 @@ async def search_events(
             "to %d (%d answer rows); refilling from rank %d",
             len(q), len(futures_markets_raw), len(deduped_futures), _answer_rows,
             _SEARCH_FUTURES_WINDOW,
+        )
+        # #8628 r2: the gate above counts an over-cap row as an answer, so the
+        # cap never FIRES a refill that would not have run — the refill costs
+        # 2.4-4.0 s on `united` (production `dda40b8b`, 2026-09-25) against
+        # 3 ms on `city`, where it does not fire. Once it has run, its rows are
+        # already fetched, so from here the count is of rows that can lead the
+        # page and the loop below reads further into them instead of stopping
+        # on a fixture's sunk rows.
+        _answer_rows -= sum(
+            1 for m in deduped_futures
+            if m.id in _over_match_cap_ids
+            and not _is_teamless_sport(m, _team_sport_categories)
         )
         await _apply_search_statement_timeout(db, _deadline)
         # A SAVEPOINT, for the same reason the headline lane below has one
@@ -8934,8 +9017,13 @@ async def search_events(
                 m, seen_search_keys, kept_sources_by_question
             ):
                 continue
+            if _is_over_match_cap(m, _match_counts, _query_words):
+                _over_match_cap_ids.add(m.id)
             deduped_futures.append(m)
-            if not _is_teamless_sport(m, _team_sport_categories):
+            if (
+                not _is_teamless_sport(m, _team_sport_categories)
+                and m.id not in _over_match_cap_ids
+            ):
                 _answer_rows += 1
             if _answer_rows >= _SEARCH_FUTURES_PAGE:
                 break
@@ -8944,6 +9032,16 @@ async def search_events(
         # row. A no-op when the evidence is disarmed or nothing was sunk.
         deduped_futures = _demote_teamless_sport(
             deduped_futures, _team_sport_categories
+        )
+
+    # #8628 r2: sink the over-cap rows, on EITHER path — the window alone can
+    # hold them. Then the teamless pass again, so a nickname cousin still sits
+    # below a real match's third row. Both partitions are stable; with nothing
+    # over a cap this is skipped and the list is untouched.
+    if _over_match_cap_ids:
+        deduped_futures = _demote_teamless_sport(
+            _sink_over_match_cap(deduped_futures, _over_match_cap_ids),
+            _team_sport_categories,
         )
 
     # THE STAGE BOUNDARY, AND IT IS HERE BECAUSE THE OLD ONE MEASURED TWO LANES.
