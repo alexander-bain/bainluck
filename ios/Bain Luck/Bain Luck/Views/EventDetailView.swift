@@ -1062,7 +1062,9 @@ struct EventDetailView: View {
                                     away: event.awayTeam, home: event.homeTeam,
                                     sportKey: event.sport
                                 )
-                                Text("\(pregameWord) \(named.home) \(formatProbability(opened.home, renderedPercent: pregame.isServed ? pregame.percents[1] : nil))")
+                                // #5271 — rounded ALONE, as before: a pair's rounding is about
+                                // the complement this arm refuses to print.
+                                Text("\(pregameWord) \(named.home) \(formatProbability(opened.home))")
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
                             }
