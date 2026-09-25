@@ -1084,6 +1084,9 @@ async def _mark_resolved_impl(now: Optional[datetime] = None):
             # A parameter so the #8586 gate can be tested on a fixed clock
             # (gotcha #44); the beat passes nothing.
             now = now or datetime.now(timezone.utc)
+            # #8586: the event graph outranks the date (see docstring).
+            _unstarted = and_(Event.status == "scheduled", Event.commence_time > now)
+            _in_play_or_ahead = or_(Event.status == "live", _unstarted)
             _stamp = gate_stamp(
                 task="mark_resolved_futures",
                 reason=REASON_RESOLUTION_DATE_ELAPSED,
@@ -1096,14 +1099,7 @@ async def _mark_resolved_impl(now: Optional[datetime] = None):
                     FuturesMarket.resolution_date.isnot(None),
                     FuturesMarket.resolution_date < now,
                     ~exists().where(
-                        Event.id == FuturesMarket.event_id,
-                        or_(
-                            Event.status == "live",
-                            and_(
-                                Event.status == "scheduled",
-                                Event.commence_time > now,
-                            ),
-                        ),
+                        Event.id == FuturesMarket.event_id, _in_play_or_ahead
                     ),
                 )
                 .values(
