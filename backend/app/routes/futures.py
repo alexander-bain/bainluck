@@ -4601,16 +4601,43 @@ async def get_related_events(
             "events": [],
         }
 
-    # Build team_id → outcome mapping for context
-    team_outcome_map = {}
+    # ═══ A FIELD OF PLAYERS HAS NO TEAM PRICE (#8627) ═══
+    #
+    # `/futures/209` — NL MVP — printed "Chicago Cubs 1%" under "Each team's
+    # odds in this market" while its own hero read 100% for Pete
+    # Crow-Armstrong, a Cub. This map was keyed by `team_id` and written
+    # last-wins, so on a player field every Cub collapsed onto whichever row
+    # came last (Nico Hoerner, 0.01) and the strip labelled his price as the
+    # team's.
+    #
+    # Two outcomes sharing a team is structural proof the outcomes are not the
+    # teams, and that holds for every row of the market, including a team that
+    # happens to carry one player. So a player field serves each team's LEADING
+    # outcome (highest price, lowest id on a tie, never insertion order) and
+    # says `outcome_is_team: False`; the client names the player, not the team.
+    # A team field (one outcome per team) is served exactly as before.
+    outcomes_by_team: dict[int, list] = {}
     for o in market.outcomes:
         if o.team_id:
-            team_outcome_map[o.team_id] = {
-                "outcome_name": o.name,
-                "probability": float(o.current_probability) if o.current_probability is not None else None,
-                "american_odds": o.current_american_odds,
-                "rank": o.rank,
-            }
+            outcomes_by_team.setdefault(o.team_id, []).append(o)
+    player_field = any(len(group) > 1 for group in outcomes_by_team.values())
+
+    team_outcome_map = {}
+    for team_id, group in outcomes_by_team.items():
+        o = min(
+            group,
+            key=lambda x: (
+                -(float(x.current_probability) if x.current_probability is not None else -1.0),
+                x.id if x.id is not None else 0,
+            ),
+        )
+        team_outcome_map[team_id] = {
+            "outcome_name": o.name,
+            "probability": float(o.current_probability) if o.current_probability is not None else None,
+            "american_odds": o.current_american_odds,
+            "rank": o.rank,
+            "outcome_is_team": not player_field,
+        }
 
     # Find events where either team is linked
     now = datetime.now(timezone.utc)

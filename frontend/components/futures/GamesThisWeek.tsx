@@ -161,7 +161,7 @@ export function RelatedEventRow({ event }: { event: RelatedEvent }) {
                     The whole name, truncated by the box if it has to be: a clipped
                     "Philadelphia Phi…" still says who, and "FC" never did. */}
                 <span className="font-medium text-text-primary truncate min-w-0 sm:max-w-[10rem]">
-                  {lt.team_name}
+                  {oddsLabel(lt)}
                 </span>
                 {lt.probability !== null && (
                   <span className="font-mono text-text-muted flex-shrink-0">
@@ -175,6 +175,30 @@ export function RelatedEventRow({ event }: { event: RelatedEvent }) {
       </div>
     </Link>
   );
+}
+
+/**
+ * #8627 — A FIELD OF PLAYERS HAS NO TEAM PRICE.
+ *
+ * Production, `/futures/209` (NL MVP): the hero read 100% for Pete
+ * Crow-Armstrong while this strip printed "Chicago Cubs 1%" under "Each team's
+ * odds" — one arbitrary Cub's price (Nico Hoerner, 0.01) wearing the team's
+ * name. The route now serves each team's leading outcome and marks a player
+ * field `outcome_is_team: false`; such a row names the player whose price it
+ * is. An absent flag (a team field, or an older payload) keeps the team name.
+ */
+export function oddsLabel(lt: RelatedEventLinkedTeam): string {
+  return lt.outcome_is_team === false ? lt.outcome_name : lt.team_name;
+}
+
+/** The caption's one claim about every number in the section. */
+export function oddsCaption(events: RelatedEvent[]): string {
+  const playerField = events.some((e) =>
+    e.linked_teams.some((lt) => lt.outcome_is_team === false),
+  );
+  return playerField
+    ? "Each team's leading player in this market."
+    : "Each team's odds in this market.";
 }
 
 /**
@@ -207,7 +231,7 @@ export default function GamesThisWeek({
         Games This Week
       </h2>
       <p className="text-sm text-text-secondary mb-4">
-        Each team&apos;s odds in this market.
+        {oddsCaption(events)}
       </p>
       <div className="space-y-2">
         {events.map((event) => (

@@ -1829,6 +1829,8 @@ export interface RelatedEventLinkedTeam {
   probability: number | null;
   american_odds: number | null;
   rank: number | null;
+  /** #8627: false on a field of players — the price is `outcome_name`'s, not the team's. */
+  outcome_is_team?: boolean;
 }
 
 export interface RelatedEvent {
