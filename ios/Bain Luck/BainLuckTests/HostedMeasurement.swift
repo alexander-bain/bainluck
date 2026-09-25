@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+@testable import Bain_Luck
 
 /// native/081, #4207 — the one place a test hosts a real view in order to
 /// measure it.
@@ -55,5 +56,8 @@ func hostForMeasurement<V: View>(
 func rendererForMeasurement<V: View>(
     _ view: V, at size: DynamicTypeSize = .large
 ) -> ImageRenderer<some View> {
-    ImageRenderer(content: view.environment(\.dynamicTypeSize, size))
+    // #925 — a raster has no finger, and `ImageRenderer` paints a UIKit touch
+    // surface as an opaque placeholder over whatever is being measured.
+    let view = view.environment(\.chartScrubSurfaces, false)
+    return ImageRenderer(content: view.environment(\.dynamicTypeSize, size))
 }
