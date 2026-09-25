@@ -653,13 +653,13 @@ class LiveBlendRefresher:
             if receipts is not None:
                 self._receipt_call(
                     receipts.resolve_failed, due, self._dispositions, staged,
-                    stored_wall, set(self._lock_retry), exc, now,
+                    stored_wall, set(self._lock_retry), exc, _mono(),
                 )
         else:
             if receipts is not None:
                 self._receipt_call(
                     receipts.resolve, due, self._dispositions, staged,
-                    stored_wall, now,
+                    stored_wall, _mono(),
                 )
         return self.stats
 

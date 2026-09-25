@@ -514,3 +514,30 @@ class TestTheRealConsumerCarriesTheReceiveMark:
         assert rc["quiet"] == "False", rc
         assert rc["later_inputs"] == "1"
         assert rc["rev_seq"] == "2"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("finish", ["stamp", "commit_fail"])
+async def test_receipt_elapsed_time_includes_awaited_batch(clock, caplog, finish):
+    r, _ = _refresher({2: finish})
+    await _commit(r, clock, 1000.0)
+    await _commit(r, clock, 1001.0)
+    original_batch = r._refresh_batch
+
+    async def slow_batch(event_ids, now):
+        try:
+            await original_batch(event_ids, now)
+        finally:
+            # Work or commit failure completes twenty seconds after dispatch.
+            clock.t += 20.0
+
+    r._refresh_batch = slow_batch
+    clock.t = 1006.0
+    await r.refresh_pending()
+
+    (receipt,) = _receipts(caplog)
+    assert receipt["result"] == (
+        "stamped" if finish == "stamp" else "dropped_commit_failed"
+    )
+    assert receipt["held_s"] == "25.000"
+    assert receipt["recv_to_close_s"] == "25.000"
