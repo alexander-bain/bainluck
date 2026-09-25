@@ -540,13 +540,22 @@ export interface WinProbHistoryPoint {
    */
   live_edge?: boolean;
   /**
-   * #7878 producer contract (NOT served yet): the snapshot's `valid_until` —
-   * the last time the source was re-read and still quoted this value. When
-   * present, the interval up to it is observed by definition and the chart
-   * honours it before any cadence heuristic. `history` points already carry
-   * this field; `win_prob_history` points do not.
+   * NOT served on `win_prob_history` points, and never coverage evidence (Codex
+   * card-B, #7878: a changed value closes the row at the NEXT reading's time,
+   * so it can make a hole look observed). The contract-mode chart does not read
+   * it; the pre-contract heuristic still honours it if an old server sends it.
    */
   valid_until?: string | null;
+  /**
+   * #7878 producer contract (`backend/app/utils/winprob_evidence.py`, live on
+   * production since 2026-09-24). ABSENT on a plain reading — nearly every
+   * point. Present, it says what the point is: `observed` (a reading that also
+   * proves coverage through `covered_through`), `candle` / `price_history` (venue
+   * backfill), `live_edge`, `final` (our resolved result) or `terminal_row` (a
+   * finished game's last row, rewritten in place). Read only when the response
+   * carries `evidence_contract`; see `lib/chartObservationSupport`.
+   */
+  evidence?: { kind: string; covered_through?: string };
 }
 
 export interface WinProbSourceMeta {
@@ -626,6 +635,14 @@ export interface EventHistoryResponse {
    * The charts read it to decide whether `commence_time` may be used as the "Since Start" cut.
    */
   commence_time_is_kickoff?: boolean;
+  /**
+   * #7878: served once per response by a server that classifies
+   * `win_prob_history` points (`{v: "7878.v1", resolution_s: 300}`). Its absence
+   * means the per-point `evidence` keys do not exist and the chart keeps its
+   * pre-contract behaviour. `resolution_s` is the display evidence resolution G —
+   * not a freshness SLA.
+   */
+  evidence_contract?: { v: string; resolution_s: number };
   points: number;
   espn_snapshot_count?: number;
   pm_spread_data?: {

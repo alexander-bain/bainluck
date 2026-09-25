@@ -47,6 +47,7 @@ import type {
   WinProbSourceMeta,
   ScoringPlay,
   ActiveChartPoint,
+  EventHistoryResponse,
 } from "@/lib/types";
 import type { PeriodBoundary } from "@/lib/periodMarkers";
 import { carriedStateDisclosure, carryGameStateForward } from "@/lib/chartGameState";
@@ -64,6 +65,8 @@ import { formatLiveClockLabel } from "@/lib/gameTimeLabel";
 import {
   bucketSupport,
   classifySeriesSupport,
+  contractObservation,
+  evidenceResolutionS,
   formatAge,
   type SeriesSupport,
   type SupportObservation,
@@ -292,6 +295,13 @@ interface OddsChartProps {
    * behaviour. Never re-derive it from the series — see the type's own note.
    */
   commenceTimeIsKickoff?: boolean;
+  /**
+   * #7878 — `EventHistoryResponse.evidence_contract`, passed straight through. When it names a
+   * contract this client reads, the win-probability series are judged by the served `evidence`
+   * keys at the served resolution instead of by the cadence heuristic. Undefined keeps today's
+   * behaviour.
+   */
+  evidenceContract?: EventHistoryResponse["evidence_contract"];
   isLive?: boolean;
   bookmakerHistory?: Record<string, BookmakerHistoryPoint[]>;
   /** ESPN win probability history (legacy, used as fallback) */
@@ -542,6 +552,7 @@ export default function OddsChart({
   awayTeam,
   commenceTime,
   commenceTimeIsKickoff,
+  evidenceContract,
   isLive = false,
   bookmakerHistory,
   espnHistory,
@@ -1131,7 +1142,23 @@ export default function OddsChart({
         });
       }
     }
-    if (useNewWinProbData) {
+    // The served evidence contract, when there is one, judges the win-prob
+    // series by what each point says it is, at the served resolution — the
+    // cadence heuristic and `valid_until` are not consulted for those keys.
+    // Sportsbook and legacy ESPN series are not classified by the producer and
+    // keep the heuristic.
+    const contractS = evidenceResolutionS(evidenceContract);
+    const contractKeys = new Set<string>();
+    if (useNewWinProbData && contractS !== null) {
+      for (const [sourceKey, points] of Object.entries(filteredWinProbHistory)) {
+        const key = `wp_${sourceKey}_delta`;
+        contractKeys.add(key);
+        for (const p of points) {
+          const obs = contractObservation(p);
+          if (obs) push(key, obs);
+        }
+      }
+    } else if (useNewWinProbData) {
       for (const [sourceKey, points] of Object.entries(filteredWinProbHistory)) {
         for (const p of points) {
           // The settled terminal point (`game_state.final`) is a real endpoint
@@ -1175,10 +1202,11 @@ export default function OddsChart({
       out[key] = classifySeriesSupport(obs, {
         gameStartMs: Number.isFinite(gameStartMs) ? gameStartMs : null,
         domainEndMs: domainEndMs !== null && Number.isFinite(domainEndMs) ? domainEndMs : null,
+        evidenceResolutionS: contractKeys.has(key) ? contractS : null,
       });
     }
     return out;
-  }, [filteredHistory, filteredBookmakerHistory, filteredWinProbHistory, filteredEspnHistory, useNewWinProbData, commenceTime, chartEndTime, isClosed]);
+  }, [filteredHistory, filteredBookmakerHistory, filteredWinProbHistory, filteredEspnHistory, useNewWinProbData, commenceTime, chartEndTime, isClosed, evidenceContract]);
 
   /** Series whose line ends before the chart does, with nothing observed since. */
   const staleTrailingEdges = useMemo(() => {

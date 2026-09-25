@@ -2453,6 +2453,7 @@ export default function EventPage({ params }: EventPageProps) {
                  cut. The fullscreen chart below passes no `chartStartTime`, so it needs this
                  directly. */
               commenceTimeIsKickoff={historyData?.commence_time_is_kickoff}
+              evidenceContract={historyData?.evidence_contract}
               isLive={effectivelyLive}
               bookmakerHistory={historyData?.bookmaker_history}
               espnHistory={historyData?.espn_history}
@@ -3051,6 +3052,7 @@ export default function EventPage({ params }: EventPageProps) {
                  cut. The fullscreen chart below passes no `chartStartTime`, so it needs this
                  directly. */
               commenceTimeIsKickoff={historyData?.commence_time_is_kickoff}
+              evidenceContract={historyData?.evidence_contract}
               isLive={effectivelyLive}
               bookmakerHistory={historyData?.bookmaker_history}
               espnHistory={historyData?.espn_history}
