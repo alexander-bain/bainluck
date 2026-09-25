@@ -107,6 +107,16 @@ def test_search_and_game_card_expansions_are_byte_identical_to_before():
         "niners": ("49ers", "football"),
         "bucs": ("Buccaneers", "football"),
         "sixers": ("76ers", "basketball"),
+        # #8685: eleven franchise nicknames added after this pin; none is this alias.
+        "habs": ("Canadiens", "hockey"),
+        "pens": ("Penguins", "hockey"),
+        "sens": ("Senators", "hockey"),
+        "yanks": ("Yankees", "baseball"),
+        "nats": ("Nationals", "baseball"),
+        "phils": ("Phillies", "baseball"),
+        "cubbies": ("Cubs", "baseball"),
+        "mavs": ("Mavericks", "basketball"),
+        "jags": ("Jaguars", "football"),
     }
     assert team_nickname_event_expansions() == {
         "pats": ("Patriots", "americanfootball_nfl"),
@@ -115,6 +125,18 @@ def test_search_and_game_card_expansions_are_byte_identical_to_before():
         "9ers": ("49ers", "americanfootball_nfl"),
         "bucs": ("Buccaneers", "americanfootball_nfl"),
         "sixers": ("76ers", "basketball_nba"),
+        # #8685 (the game arm also carries the inside-token `nucks`/`dbacks`, like `9ers`).
+        "habs": ("Canadiens", "icehockey_nhl"),
+        "pens": ("Penguins", "icehockey_nhl"),
+        "sens": ("Senators", "icehockey_nhl"),
+        "nucks": ("Canucks", "icehockey_nhl"),
+        "yanks": ("Yankees", "baseball_mlb"),
+        "nats": ("Nationals", "baseball_mlb"),
+        "phils": ("Phillies", "baseball_mlb"),
+        "cubbies": ("Cubs", "baseball_mlb"),
+        "dbacks": ("Diamondbacks", "baseball_mlb"),
+        "mavs": ("Mavericks", "basketball_nba"),
+        "jags": ("Jaguars", "americanfootball_nfl"),
     }
 
 
