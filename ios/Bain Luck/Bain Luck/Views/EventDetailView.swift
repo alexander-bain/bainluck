@@ -39,10 +39,16 @@ struct EventDetailView: View {
     /// each (`PageAxisPlotWidthPreferenceKey`) and handed back to both, so one
     /// page draws one clock. Only this view can see both charts.
     @State private var pageAxisPlotWidth: CGFloat = 0
-    /// #8320 — the hero's bottom edge and the bar's bottom edge, both in
-    /// `scrollSpace`, so the bar can take the score over only once the hero
-    /// has gone under it (`navTitleShowsScore`).
-    @State private var heroBottom: CGFloat?
+    /// #8320 — whether the hero has gone under the bar, so the bar can take the
+    /// score over only then (`navTitleShowsScore`). `true` until measured.
+    ///
+    /// #8651 — the DECISION, never the hero's position. The hero's bottom edge
+    /// moves with every frame of every scroll, and holding it here re-ran this
+    /// whole page's body on each of those frames: build 23's choppy scrolling on
+    /// Alex's phone. The hero's own `GeometryReader` decides, and this changes
+    /// only when the hero actually crosses the bar.
+    @State private var navShowsScore = true
+    /// The bar's bottom edge in `scrollSpace`; moves only when the bar does.
     @State private var scrollViewportTop: CGFloat = 0
     static let scrollSpace = "eventDetailScroll"
     /// #8481 — the page's ONE All / Since Start choice. The picker above Win
@@ -162,7 +168,7 @@ struct EventDetailView: View {
         // #8320 — while the hero is on screen it states the score, so the bar
         // names the matchup instead of repeating it.
         if let rungs = titleRungs,
-           Self.navTitleShowsScore(heroBottom: heroBottom, viewportTop: scrollViewportTop) {
+           navShowsScore {
             ViewThatFits(in: .horizontal) {
                 if let full = rungs.withState {
                     Text(full.text).font(.headline).lineLimit(1)
@@ -202,8 +208,28 @@ struct EventDetailView: View {
         URL(string: eventShareURL(eventId)) ?? bainLuckFallbackURL
     }
 
+    /// #8651 — the page's own rebuild count, kept only when the rig asks
+    /// (`LaunchRig.countsPageBuilds`), so a test can read what a scroll costs.
+    private static let countsBuilds = LaunchRig.countsPageBuilds()
+    private static var builds = 0
+
+    private static func countBuild() -> Int {
+        guard countsBuilds else { return 0 }
+        builds += 1
+        return builds
+    }
+
     var body: some View {
+        let builds = Self.countBuild()
         contentView
+            .background {
+                if Self.countsBuilds {
+                    Text("\(builds)")
+                        .font(.system(size: 1))
+                        .opacity(0.01)
+                        .accessibilityIdentifier("page-build-count")
+                }
+            }
             .navigationTitle(dynamicTitle)
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -270,8 +296,10 @@ struct EventDetailView: View {
                     heroSection(event)
                         .background(GeometryReader { proxy in
                             Color.clear.preference(
-                                key: HeroBottomPreferenceKey.self,
-                                value: proxy.frame(in: .named(Self.scrollSpace)).maxY)
+                                key: NavShowsScorePreferenceKey.self,
+                                value: Self.navTitleShowsScore(
+                                    heroBottom: proxy.frame(in: .named(Self.scrollSpace)).maxY,
+                                    viewportTop: scrollViewportTop))
                         })
                     VStack(spacing: 0) {
                         OddsChartView(eventId: event.id, teamColors: teamColors(event),
@@ -535,7 +563,7 @@ struct EventDetailView: View {
                     key: ScrollViewportTopPreferenceKey.self,
                     value: proxy.safeAreaInsets.top)
             })
-            .onPreferenceChange(HeroBottomPreferenceKey.self) { heroBottom = $0 }
+            .onPreferenceChange(NavShowsScorePreferenceKey.self) { navShowsScore = $0 ?? true }
             .onPreferenceChange(ScrollViewportTopPreferenceKey.self) { scrollViewportTop = $0 }
         }
     }
@@ -2223,10 +2251,13 @@ struct EventDetailView: View {
     }
 }
 
-/// #8320 — the hero's bottom edge in `EventDetailView.scrollSpace`.
-private struct HeroBottomPreferenceKey: PreferenceKey {
-    static let defaultValue: CGFloat? = nil
-    static func reduce(value: inout CGFloat?, nextValue: () -> CGFloat?) {
+/// #8320 / #8651 — whether the bar should state the score (`nil`: the hero was
+/// never measured, which keeps the score). A decision and not a position, so the
+/// page hears a change only when the hero crosses the bar, not on every
+/// scrolled frame.
+private struct NavShowsScorePreferenceKey: PreferenceKey {
+    static let defaultValue: Bool? = nil
+    static func reduce(value: inout Bool?, nextValue: () -> Bool?) {
         value = nextValue() ?? value
     }
 }
