@@ -1,0 +1,1409 @@
+{
+"_about": "#8692 \u2014 production futures_odds_snapshots rows for Matt Fitzpatrick, FedEx Open de France, read 2026-09-25 ~19:45Z via /api/admin/db-query, verbatim (outcome_id, bookmaker, captured_at, probability), 9/24 12:00Z .. 9/25 19:30Z. Outcomes: DataGolf 232672440 (market 61720782 'FedEx Open de France - Winner'), Kalshi 231407113 ('FedEx Open de France Winner'), Polymarket 233295412 ('DP World Tour: Open de France Winner', 'Matthew Fitzpatrick').",
+"current_probability": {
+"232672440": 0.439817,
+"231407113": 0.255,
+"233295412": 0.395
+},
+"polymarket_winner_field_scale": 0.4704,
+"rows": [
+{
+"outcome_id": 231407113,
+"bookmaker": "kalshi",
+"captured_at": "2026-09-24 12:52:40.654368+00:00",
+"probability": "0.180000"
+},
+{
+"outcome_id": 231407113,
+"bookmaker": "kalshi",
+"captured_at": "2026-09-24 13:51:07.851550+00:00",
+"probability": "0.185000"
+},
+{
+"outcome_id": 231407113,
+"bookmaker": "kalshi",
+"captured_at": "2026-09-24 14:49:00.153370+00:00",
+"probability": "0.185000"
+},
+{
+"outcome_id": 231407113,
+"bookmaker": "kalshi",
+"captured_at": "2026-09-24 15:51:19.485450+00:00",
+"probability": "0.185000"
+},
+{
+"outcome_id": 231407113,
+"bookmaker": "kalshi",
+"captured_at": "2026-09-24 18:52:35.955695+00:00",
+"probability": "0.165000"
+},
+{
+"outcome_id": 231407113,
+"bookmaker": "kalshi",
+"captured_at": "2026-09-24 22:49:01.403780+00:00",
+"probability": "0.165000"
+},
+{
+"outcome_id": 231407113,
+"bookmaker": "kalshi",
+"captured_at": "2026-09-25 00:49:02.753498+00:00",
+"probability": "0.165000"
+},
+{
+"outcome_id": 231407113,
+"bookmaker": "kalshi",
+"captured_at": "2026-09-25 06:54:05.903903+00:00",
+"probability": "0.165000"
+},
+{
+"outcome_id": 231407113,
+"bookmaker": "kalshi",
+"captured_at": "2026-09-25 08:49:00.583758+00:00",
+"probability": "0.165000"
+},
+{
+"outcome_id": 231407113,
+"bookmaker": "kalshi",
+"captured_at": "2026-09-25 12:49:01.766109+00:00",
+"probability": "0.165000"
+},
+{
+"outcome_id": 231407113,
+"bookmaker": "kalshi",
+"captured_at": "2026-09-25 14:48:43.707393+00:00",
+"probability": "0.255000"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 12:00:47.096353+00:00",
+"probability": "0.182141"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 12:06:47.066713+00:00",
+"probability": "0.178119"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 12:11:16.989316+00:00",
+"probability": "0.177487"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 12:15:47.094393+00:00",
+"probability": "0.175631"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 12:21:47.205561+00:00",
+"probability": "0.175792"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 12:26:17.143861+00:00",
+"probability": "0.181324"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 12:30:47.153655+00:00",
+"probability": "0.180720"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 12:36:47.117957+00:00",
+"probability": "0.180046"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 12:41:17.104910+00:00",
+"probability": "0.180408"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 12:45:47.004451+00:00",
+"probability": "0.172591"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 12:51:47.050007+00:00",
+"probability": "0.178872"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 12:56:16.991741+00:00",
+"probability": "0.177832"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 13:01:24.687400+00:00",
+"probability": "0.184111"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 13:05:54.665065+00:00",
+"probability": "0.182740"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 13:11:54.650455+00:00",
+"probability": "0.179097"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 13:20:54.739183+00:00",
+"probability": "0.182943"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 13:26:54.678389+00:00",
+"probability": "0.176214"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 13:31:24.786829+00:00",
+"probability": "0.178619"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 13:41:54.652999+00:00",
+"probability": "0.183944"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 13:46:24.780020+00:00",
+"probability": "0.184178"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 13:50:54.852232+00:00",
+"probability": "0.180771"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 13:56:54.883001+00:00",
+"probability": "0.179682"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 14:01:24.801512+00:00",
+"probability": "0.183983"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 14:05:54.740973+00:00",
+"probability": "0.179523"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 14:11:54.681178+00:00",
+"probability": "0.183503"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 14:16:24.851442+00:00",
+"probability": "0.182279"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 14:20:54.755179+00:00",
+"probability": "0.183273"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 14:26:54.841852+00:00",
+"probability": "0.187253"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 14:31:24.951721+00:00",
+"probability": "0.184233"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 14:35:54.810004+00:00",
+"probability": "0.185943"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 14:41:54.707686+00:00",
+"probability": "0.181906"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 14:46:24.786159+00:00",
+"probability": "0.182677"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 14:50:55.012188+00:00",
+"probability": "0.178138"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 14:56:54.789766+00:00",
+"probability": "0.172666"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 15:01:25.055347+00:00",
+"probability": "0.175880"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 15:05:54.752495+00:00",
+"probability": "0.180443"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 15:11:54.773178+00:00",
+"probability": "0.177676"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 15:16:24.827504+00:00",
+"probability": "0.175863"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 15:20:54.802235+00:00",
+"probability": "0.169003"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 15:26:54.849093+00:00",
+"probability": "0.170271"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 15:31:24.932553+00:00",
+"probability": "0.170759"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 15:35:54.944174+00:00",
+"probability": "0.166625"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 15:41:54.762083+00:00",
+"probability": "0.169881"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 15:46:24.884655+00:00",
+"probability": "0.172622"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 15:50:54.877019+00:00",
+"probability": "0.165237"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 16:01:25.020568+00:00",
+"probability": "0.165360"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 16:05:54.812489+00:00",
+"probability": "0.166664"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 16:10:27.700248+00:00",
+"probability": "0.161521"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 16:16:24.979303+00:00",
+"probability": "0.162067"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 16:20:54.911364+00:00",
+"probability": "0.164084"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 16:26:54.875932+00:00",
+"probability": "0.163063"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 16:31:24.948128+00:00",
+"probability": "0.166983"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 16:35:54.907661+00:00",
+"probability": "0.163291"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 16:43:26.580575+00:00",
+"probability": "0.162887"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 16:45:36.895666+00:00",
+"probability": "0.172696"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 16:51:03.797038+00:00",
+"probability": "0.170778"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 16:55:33.652628+00:00",
+"probability": "0.169487"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 17:01:33.623839+00:00",
+"probability": "0.167774"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 17:06:03.681618+00:00",
+"probability": "0.168638"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 17:10:33.986343+00:00",
+"probability": "0.169192"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 17:16:33.744720+00:00",
+"probability": "0.166226"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 17:21:03.739428+00:00",
+"probability": "0.173855"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 17:27:03.754774+00:00",
+"probability": "0.171968"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 17:31:35.061809+00:00",
+"probability": "0.172530"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 17:36:03.825302+00:00",
+"probability": "0.170320"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 17:42:03.779214+00:00",
+"probability": "0.169723"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 17:46:33.630742+00:00",
+"probability": "0.168958"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 17:51:03.723386+00:00",
+"probability": "0.172433"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-24 17:58:33.699126+00:00",
+"probability": "0.169124"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 06:51:50.383249+00:00",
+"probability": "0.171905"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 06:56:20.543790+00:00",
+"probability": "0.173863"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 07:00:50.568879+00:00",
+"probability": "0.173128"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 07:06:50.423512+00:00",
+"probability": "0.174059"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 07:11:20.448159+00:00",
+"probability": "0.174874"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 07:21:50.514377+00:00",
+"probability": "0.177240"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 07:26:20.464357+00:00",
+"probability": "0.168815"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 07:30:51.032730+00:00",
+"probability": "0.170632"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 07:36:50.530902+00:00",
+"probability": "0.172574"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 07:41:20.542561+00:00",
+"probability": "0.173353"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 07:45:50.406042+00:00",
+"probability": "0.173613"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 07:51:50.390831+00:00",
+"probability": "0.174825"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 07:56:20.367747+00:00",
+"probability": "0.175188"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 08:00:50.546545+00:00",
+"probability": "0.173537"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 08:06:50.438853+00:00",
+"probability": "0.168834"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 08:11:20.415898+00:00",
+"probability": "0.176581"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 08:15:50.528784+00:00",
+"probability": "0.171918"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 08:21:50.471066+00:00",
+"probability": "0.179029"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 08:26:20.395881+00:00",
+"probability": "0.174278"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 08:30:50.487996+00:00",
+"probability": "0.171812"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 08:36:50.455199+00:00",
+"probability": "0.167674"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 08:41:20.447237+00:00",
+"probability": "0.167951"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 08:45:50.436494+00:00",
+"probability": "0.174964"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 08:53:20.419199+00:00",
+"probability": "0.163417"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 08:56:20.365618+00:00",
+"probability": "0.162476"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 09:00:46.347502+00:00",
+"probability": "0.158013"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 09:05:45.214427+00:00",
+"probability": "0.161911"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 09:11:45.158044+00:00",
+"probability": "0.160609"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 09:16:15.059042+00:00",
+"probability": "0.165517"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 09:20:45.199738+00:00",
+"probability": "0.166472"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 09:26:45.197999+00:00",
+"probability": "0.163999"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 09:31:15.139455+00:00",
+"probability": "0.165187"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 09:35:45.048328+00:00",
+"probability": "0.168084"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 09:41:45.152004+00:00",
+"probability": "0.163613"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 09:46:15.029585+00:00",
+"probability": "0.163971"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 09:50:45.096797+00:00",
+"probability": "0.165992"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 09:56:45.736288+00:00",
+"probability": "0.163508"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 10:01:15.074523+00:00",
+"probability": "0.153326"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 10:05:45.238129+00:00",
+"probability": "0.156904"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 10:11:45.077072+00:00",
+"probability": "0.157437"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 10:16:15.059648+00:00",
+"probability": "0.161862"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 10:20:45.106178+00:00",
+"probability": "0.162171"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 10:26:45.044546+00:00",
+"probability": "0.167853"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 10:31:15.043296+00:00",
+"probability": "0.163524"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 10:35:45.030500+00:00",
+"probability": "0.165597"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 10:41:45.032223+00:00",
+"probability": "0.168741"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 10:46:14.985327+00:00",
+"probability": "0.167426"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 10:50:45.157004+00:00",
+"probability": "0.166577"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 10:56:45.177020+00:00",
+"probability": "0.170187"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 11:01:15.237835+00:00",
+"probability": "0.162345"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 11:05:45.200335+00:00",
+"probability": "0.168578"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 11:11:45.165958+00:00",
+"probability": "0.159503"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 11:16:15.199656+00:00",
+"probability": "0.166264"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 11:20:45.192839+00:00",
+"probability": "0.161148"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 11:26:45.211339+00:00",
+"probability": "0.165918"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 11:31:15.281818+00:00",
+"probability": "0.163703"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 11:36:59.463115+00:00",
+"probability": "0.168229"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 11:41:29.106020+00:00",
+"probability": "0.163837"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 11:45:59.057404+00:00",
+"probability": "0.174340"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 11:51:59.086523+00:00",
+"probability": "0.166683"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 11:56:29.051062+00:00",
+"probability": "0.164838"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 12:01:00.252737+00:00",
+"probability": "0.166647"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 12:05:30.250848+00:00",
+"probability": "0.168785"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 12:11:30.216907+00:00",
+"probability": "0.173586"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 12:15:49.803946+00:00",
+"probability": "0.176805"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 12:21:49.780340+00:00",
+"probability": "0.176512"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 12:26:19.861280+00:00",
+"probability": "0.178368"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 12:30:49.763522+00:00",
+"probability": "0.159870"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 12:41:19.854713+00:00",
+"probability": "0.154435"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 12:45:49.860451+00:00",
+"probability": "0.150628"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 12:51:49.850175+00:00",
+"probability": "0.154264"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 12:56:19.906414+00:00",
+"probability": "0.150433"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 13:00:49.973401+00:00",
+"probability": "0.154158"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 13:06:49.919248+00:00",
+"probability": "0.171905"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 13:11:19.835933+00:00",
+"probability": "0.171185"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 13:15:49.878861+00:00",
+"probability": "0.174433"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 13:21:50.091381+00:00",
+"probability": "0.236904"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 13:26:20.200726+00:00",
+"probability": "0.234850"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 13:30:51.150244+00:00",
+"probability": "0.235256"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 13:36:50.429298+00:00",
+"probability": "0.220033"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 13:41:20.188712+00:00",
+"probability": "0.219675"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 13:45:50.162399+00:00",
+"probability": "0.224040"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 13:50:45.893447+00:00",
+"probability": "0.264764"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 13:56:45.675152+00:00",
+"probability": "0.263573"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 14:01:16.265602+00:00",
+"probability": "0.265024"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 14:05:45.925031+00:00",
+"probability": "0.268167"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 14:11:46.107587+00:00",
+"probability": "0.263154"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 14:16:15.855803+00:00",
+"probability": "0.272635"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 14:20:45.843248+00:00",
+"probability": "0.267760"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 14:26:45.877709+00:00",
+"probability": "0.260286"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 14:31:15.928635+00:00",
+"probability": "0.254818"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 14:35:46.031409+00:00",
+"probability": "0.254347"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 14:41:46.147397+00:00",
+"probability": "0.254087"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 14:46:15.858781+00:00",
+"probability": "0.252118"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 14:50:48.219686+00:00",
+"probability": "0.253628"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 14:56:45.933286+00:00",
+"probability": "0.313188"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 15:01:15.926052+00:00",
+"probability": "0.310102"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 15:05:46.165141+00:00",
+"probability": "0.297788"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 15:11:45.936672+00:00",
+"probability": "0.288042"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 15:16:16.116541+00:00",
+"probability": "0.276712"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 15:20:45.964347+00:00",
+"probability": "0.263278"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 15:26:46.171032+00:00",
+"probability": "0.263166"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 15:31:15.920961+00:00",
+"probability": "0.270221"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 15:35:46.077400+00:00",
+"probability": "0.268950"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 15:41:46.066848+00:00",
+"probability": "0.265690"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 15:46:15.962662+00:00",
+"probability": "0.262780"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 15:50:46.123948+00:00",
+"probability": "0.241031"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 15:56:45.996059+00:00",
+"probability": "0.247654"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 16:01:16.284514+00:00",
+"probability": "0.251236"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 16:05:45.997951+00:00",
+"probability": "0.365042"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 16:11:45.920113+00:00",
+"probability": "0.372519"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 16:16:16.045798+00:00",
+"probability": "0.371264"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 16:20:46.172441+00:00",
+"probability": "0.357064"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 16:26:46.207791+00:00",
+"probability": "0.351577"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 16:31:15.982419+00:00",
+"probability": "0.353756"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 16:35:46.096250+00:00",
+"probability": "0.425053"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 16:41:46.220977+00:00",
+"probability": "0.425722"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 16:46:16.088798+00:00",
+"probability": "0.409670"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 16:50:46.116459+00:00",
+"probability": "0.413997"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 16:56:46.038829+00:00",
+"probability": "0.409025"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 17:01:20.941812+00:00",
+"probability": "0.420909"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 17:07:20.641119+00:00",
+"probability": "0.417096"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 17:11:50.728172+00:00",
+"probability": "0.422254"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 17:16:20.825994+00:00",
+"probability": "0.423520"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 17:20:50.736237+00:00",
+"probability": "0.435662"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 17:26:50.761575+00:00",
+"probability": "0.443474"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 17:31:20.748771+00:00",
+"probability": "0.442698"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 17:35:50.855218+00:00",
+"probability": "0.442474"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 17:41:50.916290+00:00",
+"probability": "0.439671"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 17:46:20.728336+00:00",
+"probability": "0.434240"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 17:50:50.820862+00:00",
+"probability": "0.427003"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 17:56:50.648920+00:00",
+"probability": "0.433184"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 18:01:20.673487+00:00",
+"probability": "0.443775"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 18:05:50.739211+00:00",
+"probability": "0.439031"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 18:11:50.854623+00:00",
+"probability": "0.433172"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 18:16:20.833827+00:00",
+"probability": "0.441004"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 18:22:20.776458+00:00",
+"probability": "0.436913"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 18:26:50.977714+00:00",
+"probability": "0.441505"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 18:31:20.906549+00:00",
+"probability": "0.438545"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 18:35:50.866727+00:00",
+"probability": "0.443736"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 18:41:51.185468+00:00",
+"probability": "0.437883"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 18:46:20.744349+00:00",
+"probability": "0.439383"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 18:52:20.721949+00:00",
+"probability": "0.442045"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 18:56:50.718094+00:00",
+"probability": "0.447025"
+},
+{
+"outcome_id": 232672440,
+"bookmaker": "datagolf_model",
+"captured_at": "2026-09-25 19:04:20.730533+00:00",
+"probability": "0.439817"
+},
+{
+"outcome_id": 233295412,
+"bookmaker": "polymarket",
+"captured_at": "2026-09-24 12:52:19.942869+00:00",
+"probability": "0.210000"
+},
+{
+"outcome_id": 233295412,
+"bookmaker": "polymarket",
+"captured_at": "2026-09-24 17:27:59.510145+00:00",
+"probability": "0.170000"
+},
+{
+"outcome_id": 233295412,
+"bookmaker": "polymarket",
+"captured_at": "2026-09-24 18:51:38.381642+00:00",
+"probability": "0.165000"
+},
+{
+"outcome_id": 233295412,
+"bookmaker": "polymarket",
+"captured_at": "2026-09-25 00:53:45.882556+00:00",
+"probability": "0.165000"
+},
+{
+"outcome_id": 233295412,
+"bookmaker": "polymarket",
+"captured_at": "2026-09-25 06:57:16.541187+00:00",
+"probability": "0.160000"
+},
+{
+"outcome_id": 233295412,
+"bookmaker": "polymarket",
+"captured_at": "2026-09-25 13:50:31.485255+00:00",
+"probability": "0.270000"
+},
+{
+"outcome_id": 233295412,
+"bookmaker": "polymarket",
+"captured_at": "2026-09-25 15:37:01.801570+00:00",
+"probability": "0.270000"
+},
+{
+"outcome_id": 233295412,
+"bookmaker": "polymarket",
+"captured_at": "2026-09-25 17:31:44.158519+00:00",
+"probability": "0.395000"
+}
+]
+}

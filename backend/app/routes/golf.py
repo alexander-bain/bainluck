@@ -14,7 +14,7 @@ from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import or_, select, func as sqlfunc
+from sqlalchemy import or_, select, text, func as sqlfunc
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -1856,35 +1856,69 @@ def _is_h2h_matchup(market) -> bool:
     return True
 
 
+#: #8692 — how old a "24h ago" basis may be. The basis is the source's number AS
+#: OF now−23h: its latest write at or before that instant, which for a source that
+#: writes only on change (or stops between rounds) is an older row.
+#:
+#: The old window was "a write captured 23–25h ago". DataGolf's in-play model
+#: writes every ~5 minutes during play and not at all between rounds, so every
+#: evening it had no row in that window and dropped out of the blend's move —
+#: production 2026-09-25 19:25Z, Fitzpatrick read ▲9.9 on a blend that had moved
+#: ≈+15.7, because DataGolf's own 0.169 → 0.440 (last write 9/24 17:58Z) was not
+#: counted. Coverage then flipped with the time of day, so one golfer's "today"
+#: jumped 10+ points between two hourly rebuilds with no price change.
+#:
+#: The ceiling is measured, not guessed: DataGolf's market-wide between-round
+#: silences on production were 9h and 13h (FedEx Open de France, 9/24 17:58Z →
+#: 9/25 06:51Z is the 13h one), so 23h + 13h = 36h covers every one of them. The
+#: pre-tournament silences ran 18–42h and a move that old is not "today", so they
+#: stay undated — a source with no write inside the cap has no basis, exactly as
+#: before, and `_set_blend_movement` averages only the sources that have one.
+MOVE_BASIS_MIN_AGE = timedelta(hours=23)
+MOVE_BASIS_MAX_AGE = timedelta(hours=36)
+
+# One index probe per outcome on `idx_fos_outcome_captured (outcome_id,
+# captured_at)`: measured on production 2026-09-25 over the 2,695 open golf
+# outcomes, 137 ms, where the same 13h range read as a row_number() scan touched
+# 84,628 rows in 1.8 s. `CAST(...)` rather than `::integer[]` because asyncpg
+# parses the `::` spelling as a bind (the `routes/futures.py` precedent).
+_MOVE_BASIS_SQL = text(
+    """
+    SELECT o.outcome_id, basis.probability
+      FROM unnest(CAST(:outcome_ids AS integer[])) AS o(outcome_id)
+      CROSS JOIN LATERAL (
+            SELECT s.probability
+              FROM futures_odds_snapshots s
+             WHERE s.outcome_id = o.outcome_id
+               AND s.captured_at <= :newest
+               AND s.captured_at >= :oldest
+             ORDER BY s.captured_at DESC
+             LIMIT 1
+           ) AS basis
+    """
+)
+
+
 async def _fetch_24h_snapshots(
     db: AsyncSession, outcome_ids: list[int], now: datetime,
 ) -> dict[int, float]:
-    """Batch-fetch probabilities from ~24h ago for a list of outcome IDs."""
+    """Each outcome's probability as of ~24h ago, keyed by outcome id.
+
+    The basis is the latest write at or before `now - MOVE_BASIS_MIN_AGE` that is
+    no older than `now - MOVE_BASIS_MAX_AGE` (#8692). An outcome with no write in
+    that span is ABSENT, never present with a guess: absence is what keeps its
+    source out of the dated mean and off the word "today" (#3013, #7179).
+    """
     if not outcome_ids:
         return {}
 
-    snapshot_subq = (
-        select(
-            FuturesOddsSnapshot.outcome_id,
-            FuturesOddsSnapshot.probability,
-            sqlfunc.row_number().over(
-                partition_by=FuturesOddsSnapshot.outcome_id,
-                order_by=FuturesOddsSnapshot.captured_at.desc()
-            ).label("rn")
-        )
-        .where(
-            FuturesOddsSnapshot.outcome_id.in_(outcome_ids),
-            FuturesOddsSnapshot.captured_at.between(
-                now - timedelta(hours=25),
-                now - timedelta(hours=23),
-            ),
-        )
-        .subquery()
-    )
-
     snap_result = await db.execute(
-        select(snapshot_subq.c.outcome_id, snapshot_subq.c.probability)
-        .where(snapshot_subq.c.rn == 1)
+        _MOVE_BASIS_SQL,
+        {
+            "outcome_ids": list(outcome_ids),
+            "newest": now - MOVE_BASIS_MIN_AGE,
+            "oldest": now - MOVE_BASIS_MAX_AGE,
+        },
     )
     return {row.outcome_id: float(row.probability) for row in snap_result}
 
@@ -2148,9 +2182,9 @@ def _set_blend_movement(entry: dict) -> None:
 
     The card shows the BLEND — the mean of `sources` — so the move it states
     must be the blend's: the mean of the per-source dated deltas, over the
-    sources that have a 23-25h snapshot. It used to keep the single largest
-    source move, so a leader whose DataGolf number jumped 25 points while
-    Kalshi and Polymarket moved a few read "up 25 points today" on a blend
+    sources that have a ~24h-ago basis (`_fetch_24h_snapshots`, #8692). It
+    used to keep the single largest source move, so a leader whose DataGolf
+    number jumped 25 points while Kalshi and Polymarket moved a few read "up 25 points today" on a blend
     that had moved about half that.
 
     No dated source ⇒ the undated per-write change, exactly as before (#7179:
@@ -2187,7 +2221,7 @@ def _aggregate_golfer_outcome(
 
     ═══ `movement_24h` IS TWO DIFFERENT MEASUREMENTS UNDER ONE NAME (#7179) ═══
 
-    The first arm subtracts a `FuturesOddsSnapshot` captured 23-25h ago, which is
+    The first arm subtracts the source's number as of ~24h ago (#8692), which is
     a genuinely DATED day's move. The second arm falls back to
     `probability_change_24h`, which every writer stores as `new - previous` for a
     previous write of unknown age — the #4079 defect. Both land in the same
@@ -2299,8 +2333,8 @@ def _build_tournament_entry(
             "name": data["name"],
             "probability": avg_prob,
             "movement_24h": data["movement_24h"],
-            # #7179 — whether `movement_24h` is a DATED day's move (a 23-25h
-            # snapshot subtraction) or a per-write delta of unknown age. Carried
+            # #7179 — whether `movement_24h` is a DATED day's move (a ~24h-ago
+            # basis subtraction, #8692) or a per-write delta of unknown age. Carried
             # onto the published golfer so the tournament card can ask before it
             # says "today"; `.get()` rather than `[]` is not defensiveness here,
             # it is the merge above being allowed to produce entries this loop
