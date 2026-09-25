@@ -944,3 +944,60 @@ class TestAStampNeverQueuesOnAForeignRowLock:
         assert not [s for s, _ in session.statements if s is SET_LOCK_TIMEOUT_SQL]
         assert stats["errors"] == 1 and stats["lock_skipped"] == 0
         assert r._lock_retry == set()
+
+
+class TestAQueuedRetrySurvivesAFailedBatch:
+    """Codex review of #8490 (P1 #2): `refresh()` cleared the retry set before
+    `_refresh_batch` ran, so one transient batch failure silently dropped the
+    stamps a row lock had deferred, and nothing re-queued them."""
+
+    @pytest.mark.asyncio
+    async def test_failure_then_success_without_another_venue_tick(self):
+        r = LiveBlendRefresher("polymarket")
+        r._lock_retry = {1}
+        calls = []
+
+        async def _flaky(event_ids, now):
+            calls.append(sorted(event_ids))
+            # What the real batch does before anything can fail.
+            for eid in event_ids:
+                r._last_refresh_at[eid] = now
+            if len(calls) == 1:
+                raise RuntimeError("connection reset")
+
+        r._refresh_batch = _flaky
+
+        await r.refresh([])  # quiet flush: the batch names nothing
+        assert r.stats["errors"] == 1
+        assert r._lock_retry == {1}, "the deferred stamp was dropped by a failure"
+        assert 1 not in r._last_refresh_at, "the throttle would suppress the retry"
+
+        await r.refresh([])  # next quiet flush, still inside the 5s throttle
+        assert calls == [[1], [1]]
+        assert r._lock_retry == set()
+
+    @pytest.mark.asyncio
+    async def test_an_ordinary_event_in_a_failed_batch_keeps_the_old_contract(self):
+        """Only lock-deferred work is re-queued. Re-queuing every event of a
+        failed batch would reopen a connection every 2s for as long as the
+        failure lasts, which is the cost `_refresh_batch`'s throttle-first
+        stamp exists to avoid."""
+        r = LiveBlendRefresher("polymarket")
+
+        async def _fail(event_ids, now):
+            raise RuntimeError("boom")
+
+        r._refresh_batch = _fail
+        await r.refresh([7])
+        assert r._lock_retry == set()
+
+    @pytest.mark.asyncio
+    async def test_refresh_pending_is_free_when_nothing_is_queued(self):
+        r = LiveBlendRefresher("polymarket")
+
+        async def _must_not_run(event_ids, now):
+            raise AssertionError("opened a batch with nothing queued")
+
+        r._refresh_batch = _must_not_run
+        await r.refresh_pending()
+        assert r.stats["considered"] == 0

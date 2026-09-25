@@ -271,6 +271,10 @@ class _NoopRefresher:
     async def refresh(self, _event_ids):
         return None
 
+    async def refresh_pending(self):
+        # #837 tail: the quiet-flush path; a fake never defers a stamp.
+        return None
+
 
 class TestTheSocketSubscribesToAMarketItHadToAskFor:
     async def test_a_tokenless_slate_row_becomes_a_correctly_attributed_tick(

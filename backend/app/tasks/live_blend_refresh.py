@@ -297,9 +297,11 @@ class LiveBlendRefresher:
     async def refresh(self, event_ids: Iterable[int]) -> dict[str, int]:
         """Recompute and stamp the blend for these events. Never raises."""
         now = time.monotonic()
-        wanted = set(event_ids) | self._lock_retry
-        self._lock_retry.clear()
+        retry = set(self._lock_retry)
+        wanted = set(event_ids) | retry
         due = [eid for eid in wanted if self._due(eid, now)]
+        # A queued retry leaves the set only when a batch actually takes it.
+        self._lock_retry = retry.difference(due)
         self.stats["considered"] += len(due)
         skipped = len(wanted) - len(due)
         if skipped > 0:
@@ -315,7 +317,27 @@ class LiveBlendRefresher:
                 "live_blend_refresh[%s]: batch failed for %d events",
                 self.source, len(due),
             )
+            # #837 tail — a failed batch must not cost the stamps it was
+            # carrying for a row lock: they are owed whether or not the venue
+            # ticks again. Re-queued due at once (`_refresh_batch` stamped the
+            # throttle before it failed). Only the retries: an ordinary batch
+            # event keeps the existing contract and waits for its next price.
+            for event_id in retry.intersection(due):
+                self._lock_retry.add(event_id)
+                self._last_refresh_at.pop(event_id, None)
         return self.stats
+
+    async def refresh_pending(self) -> dict[str, int]:
+        """#837 tail — stamp only the lock-deferred events. Never raises.
+
+        For the socket's flush when it has no new prices to write: `refresh`
+        is otherwise only reached after a price write, and a deferred event on a
+        quiet market would wait for a tick that may not come. Returns at once,
+        without opening a session, when nothing is queued.
+        """
+        if not self._lock_retry:
+            return self.stats
+        return await self.refresh(())
 
     async def _refresh_batch(self, event_ids: list[int], now: float) -> None:
         from datetime import datetime, timezone

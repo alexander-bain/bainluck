@@ -242,6 +242,10 @@ class _NoopRefresher:
     async def refresh(self, event_ids):
         return None
 
+    async def refresh_pending(self):
+        # #837 tail: the quiet-flush path; a fake never defers a stamp.
+        return None
+
 
 def _poly_frame(event_type, asset_id, **kw):
     return json.dumps({"event_type": event_type, "asset_id": asset_id, **kw})

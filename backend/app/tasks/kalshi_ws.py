@@ -202,9 +202,14 @@ async def _run_kalshi_ws_consumer():
     async def flush_prices():
         """Write buffered price updates to DB in one batch."""
         async with buffer_lock:
-            if not price_buffer:
-                return
             batch = dict(price_buffer)
+        if not batch:
+            # #837 tail — a flush with no new prices still owes the stamps a row
+            # lock deferred: those prices are already stored, so waiting for the
+            # next venue tick would strand them on a quiet market. Free when
+            # nothing is queued (no session is opened).
+            await blend_refresher.refresh_pending()
+            return
         # Q491 repair 2 (CERT-659 BLOCK) — THE BUFFER IS DELIBERATELY *NOT*
         # CLEARED HERE. Draining first and putting the batch back on failure
         # only covers the failures you thought to catch, and two rounds of certs
