@@ -203,7 +203,10 @@ def test_the_refill_is_bounded_and_deadline_aware():
     unconditional query.
     """
     assert "_SEARCH_FUTURES_REFILL" in SEARCH_CODE
-    refill = SEARCH_CODE[SEARCH_CODE.index("len(deduped_futures) < _SEARCH_FUTURES_PAGE"):]
+    # #7355 r2: the gate counts ANSWER rows (rows `_demote_teamless_sport` did
+    # not sink); with the team evidence disarmed that is every deduped row, so
+    # it is the old `len(deduped_futures)` test. Still an observed-collapse gate.
+    refill = SEARCH_CODE[SEARCH_CODE.index("_answer_rows < _SEARCH_FUTURES_PAGE"):]
     # The refill block ends where the page is cut from `deduped_futures`. #6327
     # split that one line in two — `_deduped_page` (the page as dedup produced
     # it) and `futures_markets` (that page minus the wholly-unpriced cards) — so
