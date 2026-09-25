@@ -887,6 +887,25 @@ jobs:
             exit 1
           fi
 
+      - name: "#837 an odds pass releases each game before its next fetch (real Postgres)"
+        # `discover_events` held one transaction across 33 sports' Odds API
+        # fetches, so every `events` row it wrote stayed locked until its single
+        # commit — the live blend refresher re-queued a live game for 55 s
+        # (2026-09-25 03:05:40–03:06:35Z). The probe is a SECOND connection's
+        # `FOR UPDATE` under a 300 ms lock_timeout at each fake network call, so
+        # only a real server can answer it.
+        #
+        # Same skip detection as every gate in this job; this job names each PG
+        # file explicitly, so a `*_pg.py` nobody adds here runs nowhere.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_a_pass_releases_each_game_before_its_next_fetch_837_pg.py \
+            -v -rs 2>&1 | tee /tmp/release837.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/release837.txt; then
+            echo "::error::#837 lock-release gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#5531 the hook queue reaches what its gate allows (real Postgres)"
         # `enrich_market_hooks` wrote 0 hooks for twelve days: the evidence gate
         # refuses markets with no upcoming fixture, and those rows filled the

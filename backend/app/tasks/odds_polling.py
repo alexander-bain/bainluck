@@ -648,6 +648,23 @@ async def _maybe_set_opening_odds(
     )
 
 
+async def _rollback_quietly(session) -> None:
+    """#837: end a per-sport transaction that failed, so the next sport starts clean.
+
+    A rollback that itself fails (the connection is gone) is logged, not raised:
+    the caller is already on its error path and is about to `continue`, and the
+    next statement will surface a dead connection on its own.
+
+    🪤 A rollback EXPIRES every ORM object in the session, `expire_on_commit=False`
+    or not (gotcha #6). Callers must not read a row loaded before the rollback
+    afterwards; both passes that call this iterate plain values, not ORM rows.
+    """
+    try:
+        await session.rollback()
+    except Exception as exc:  # noqa: BLE001 — already on the error path
+        logger.warning("per-sport rollback failed: %s", exc)
+
+
 async def _create_or_update_snapshot(
     session,
     event_id: int,
@@ -1614,8 +1631,26 @@ async def _poll_all_odds():
                         total_snapshots += await _ingest_event_odds(
                             session, event, event_data, commence_time, snapshot_cache,
                         )
+                        # #837 — release this game's rows before the next one.
+                        # `_ingest_event_odds` ends in `UPDATE events SET
+                        # win_probability_sources`, and until this commit that
+                        # row stayed locked for the REST OF THE PASS, every
+                        # later sport's HTTP fetch included. The live blend
+                        # refresher stamps the same row under a 500 ms
+                        # lock_timeout, so each overlap cost the game a re-queue
+                        # (0.5 s + one ~2.4 s flush): the re-queues live/583
+                        # measured cluster at :23/:53, just before this 30 s
+                        # pass commits. One commit per game bounds the hold to
+                        # that game's own writes.
+                        await session.commit()
 
                 except Exception as e:
+                    # #837 — a failed statement (a 40P01 against a sibling
+                    # writer, 03:05:27Z 2026-09-25) leaves the transaction
+                    # aborted, and `continue` carried it into every later
+                    # sport: each logged PendingRollbackError and the pass died
+                    # at the scores query. Games committed above are kept.
+                    await _rollback_quietly(session)
                     # Cache 404 sports to avoid retrying for 24h
                     if hasattr(e, "response") and getattr(e.response, "status_code", 0) == 404:
                         logger.info("Sport %s returned 404, skipping for 24h", sport_key)
@@ -2382,7 +2417,16 @@ async def _poll_all_odds():
                             logger.warning("Error updating score for event %s: %s", score_event.get('id'), e)
                             continue
 
+                    # #837 — this sport's score rows are released before the
+                    # next sport's `get_scores` HTTP call, as the odds loop
+                    # releases per game. Per SPORT here, not per game: nothing
+                    # between two games of one sport leaves the database. A
+                    # commit refused because a game above aborted the
+                    # transaction lands in the `except` below.
+                    await session.commit()
+
                 except Exception as e:
+                    await _rollback_quietly(session)  # #837, as in the odds loop
                     if hasattr(e, "response") and getattr(e.response, "status_code", 0) == 404:
                         logger.info("Scores for %s returned 404, skipping for 24h", sport_key)
                         if r:

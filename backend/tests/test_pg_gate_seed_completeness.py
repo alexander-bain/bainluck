@@ -419,6 +419,13 @@ COVERED = (
     # the guard never fires), and the stored `home_score`/`away_score` pair,
     # where a NULL half is the carve-out the ship had to keep intact.
     "test_completed_espn_final_is_not_repoisoned_7147_pg.py",
+    # #837: seeds two `sports` (explicit reserved ids, #7147's reason), their
+    # `teams` and four `events` by raw INSERT, then drives real
+    # `_poll_all_odds` / `_discover_events` passes and probes each seeded row's
+    # lock from a second connection. `external_id` is nullable and the whole
+    # join: the fake client's payload ids and the registry stub both resolve
+    # the seeded row through it.
+    "test_a_pass_releases_each_game_before_its_next_fetch_837_pg.py",
     # #7501: seeds `sports` and seven `teams` by raw INSERT to drive the slug
     # filler against the real UNIQUE index on `teams.slug`, which IS the
     # mechanism — 855 of the 4,004 slug-less clubs exist as a cohort only
