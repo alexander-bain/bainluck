@@ -18,6 +18,9 @@
  * the unit it measures at all. The second is the worse defect and this issue was filed
  * without it; it is here because the population was measured rather than assumed.
  *
+ * (#8562: the 45% below is now the CAP of a width sized from the ladder's longest label — a short
+ * stock ladder no longer reserves 114px for "$730". Every label this file is about hits the cap.)
+ *
  * WHAT DOES NOT CHANGE, AND WHY THAT IS THE POINT. The slot is a fixed `w-[45%]`, and it stays
  * fixed. #1574 acceptance (c) — one track width per ladder, so equal percentages draw equal
  * bars — is the invariant that fixed width buys, and #4404 and #4644 are both previous repairs
@@ -116,12 +119,18 @@ describe("#7427 CONTROLS — the track invariant and the two other arms are unto
     // paying for the tail out of the bar, which is the thing #1574(c) forbids.
     const classes = labelClasses(renderToStaticMarkup(<QuantityGroup wideLabels sort={false} rungs={greenland} />));
     for (const c of classes) {
-      expect(c).toContain("w-[45%]");
       expect(c).toContain("shrink-0");
     }
     const html = renderToStaticMarkup(<QuantityGroup wideLabels sort={false} rungs={greenland} />);
-    // No computed width anywhere: the wide arm must not have quietly acquired #4404's clamp.
-    expect(html).not.toContain("clamp(2.75rem");
+    // #8562 — the slot is sized from the longest label (23 chars here), CAPPED at the 45% it
+    // always was. A label this long hits the cap, so this ladder's bars are what they were;
+    // the cap is the part that must never move (a wider slot would pay for the tail out of
+    // the bar). Every rung carries the SAME width, so #1574(c) still holds.
+    const widths = [...html.matchAll(/style="width:(clamp[^"]*)"/g)].map((m) => m[1]);
+    expect(widths).toEqual([
+      "clamp(2.75rem, calc(23ch + 0.75rem), 45%)",
+      "clamp(2.75rem, calc(23ch + 0.75rem), 45%)",
+    ]);
   });
 
   test("a wide ladder whose labels already fit renders exactly as its clipped sibling does", () => {

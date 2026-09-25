@@ -135,7 +135,11 @@ describe("#4404 the label track", () => {
         ]}
       />,
     );
-    expect(html).toContain("w-[45%]");
-    expect(html).not.toContain("clamp(2.75rem");
+    // #8562 — the wide arm is sized from its labels too, but it is still its OWN track: the
+    // proportional wrapping face with its own width, never this arm's mono ellipsis.
+    expect(html).toContain("clamp(2.75rem, calc(13ch + 0.75rem), 45%)");
+    expect(html).not.toContain("calc(13ch + 0.5rem)");
+    expect(html).toContain("line-clamp-2");
+    expect(html).not.toContain("truncate");
   });
 });

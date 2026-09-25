@@ -48,10 +48,32 @@ describe("UX-P010 #1574(c) — bar tracks align and fills match printed values",
   it("QuantityGroup wideLabels uses a FIXED label width, so every track is equal", () => {
     const src = read(QUANTITY_GROUP);
 
+    // #8562 — THE 45% IS NOW A CAP, AND THIS GUARD STATES THE PROPERTY, NOT THE LITERAL.
+    //
+    // A flat `w-[45%]` reserved 114px for "$730"; beside #5659's "▲56.0 pts" slot the track
+    // measured 0px on production at 1280 (the Meta card drew no bars at all). The slot is now
+    // sized from the ladder's longest label and capped at the same 45%. What #1574(c) needs is
+    // untouched and asserted below: ONE width per ladder — computed from `longestLabelChars`,
+    // a reduce over the whole ladder, never from the row's own label — so it cannot be a
+    // content width, and it can never be wider than it was.
     assert.ok(
-      /w-\[45%\]\s+shrink-0\b/.test(src),
-      "wideLabels must set a fixed `w-[45%] shrink-0` label width — a " +
-        "content-width label makes the flex-1 track a different length per row",
+      /const longestLabelChars = ordered\.reduce\(/.test(src),
+      "the label width must be measured over the whole ladder (`ordered`), not per row",
+    );
+    const wideWidth = src.match(/const wideLabelWidth = `clamp\(([^`]*)\)`;/);
+    assert.ok(wideWidth, "wideLabels must compute one `wideLabelWidth` clamp for the ladder");
+    assert.ok(
+      /\$\{longestLabelChars\}ch/.test(wideWidth[1]) && !/rung\./.test(wideWidth[1]),
+      "the wide slot must be sized from the LADDER's longest label — a per-row width is the " +
+        "#1574(c) defect: equal percentages draw unequal bars",
+    );
+    assert.ok(
+      /,\s*45%$/.test(wideWidth[1]),
+      "the wide slot is capped at 45%: a wider slot pays for the label out of every bar",
+    );
+    assert.ok(
+      /wideLabels\s*\?\s*\{\s*width:\s*wideLabelWidth\s*\}/.test(src),
+      "the wide label must be given `wideLabelWidth` as its width",
     );
     assert.ok(
       !/max-w-\[45%\]/.test(src),
@@ -59,36 +81,23 @@ describe("UX-P010 #1574(c) — bar tracks align and fills match printed values",
         "its content, so equal percentages draw unequal bars",
     );
 
-    // #7427 — THIS ASSERTION USED TO READ `w-[45%] shrink-0 truncate`, AND THE
-    // `truncate` IN IT WAS NEVER THIS GUARD'S PROPERTY.
-    //
-    // The invariant above is that the label width is FIXED rather than sized to
-    // content; the ellipsis was the incidental way the fixed width was made to
-    // hold one line, and pinning it here meant this file failed the repair for a
-    // defect the fixed width had itself created. Measured on production at 390px:
-    // the slot is 128–135px of a 300px row, so "Before January 20, 2029" printed
-    // "Before January 20, …" above "Before 2027" and lost the only token telling
-    // two rungs four years apart apart, and a coal ladder printed "Above 20
-    // million short t…" on all six rungs. 8 of 89 rungs on that draw were over.
-    //
-    // This is the same lesson as the `?? 0` in the next assertion down, one
-    // assertion up: a guard that hard-codes an implementation string fails the
-    // fix for the bug inside it. So the pair below re-states the guard as the two
-    // properties it actually protects, and is strictly STRONGER than the single
-    // literal it replaces — the width is still fixed, and now the label also may
-    // not spend its tail to stay on one line.
-    //
-    // Both are anchored to `w-[45%]` so they speak about the wide-label arm only.
-    // `truncate` remains correct on the #4404 numeric arm in the same file, where
-    // wrapping orphaned an operator above the number it qualified, and a
-    // file-wide assertion here would forbid it there.
+    // #7427 — the ellipsis was never this guard's property; see the history in git
+    // (`w-[45%] shrink-0 truncate` → the pair below). The wide label keeps its fixed width by
+    // WRAPPING, bounded, and may not spend its load-bearing tail to stay on one line. The
+    // wide arm is identified by its own face (`text-[12px] font-semibold`), so `truncate` on
+    // the #4404 numeric arm in the same file stays allowed.
+    const wideClass = [...src.matchAll(/wideLabels\s*\?\s*"([^"]*)"/g)]
+      .map((m) => m[1])
+      .find((c) => c.includes("text-[12px] font-semibold"));
+    assert.ok(wideClass, "the wide-label class string must exist");
+    assert.ok(/\bshrink-0\b/.test(wideClass), "the wide label must not shrink below its width");
     assert.ok(
-      !/w-\[45%\][^"]*\btruncate\b/.test(src),
+      !/\btruncate\b/.test(wideClass),
       "the wide label must not `truncate`: the slot is narrower than the labels " +
         "the venues write, so the ellipsis lands on the load-bearing tail (#7427)",
     );
     assert.ok(
-      /w-\[45%\][^"]*\bline-clamp-2\b/.test(src),
+      /\bline-clamp-2\b/.test(wideClass),
       "the wide label must wrap within its fixed slot, bounded (#7427) — " +
         "unbounded wrapping lets one pathological label grow the row without limit",
     );
