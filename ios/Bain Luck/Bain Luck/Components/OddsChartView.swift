@@ -50,6 +50,30 @@ struct ChartDataPoint: Identifiable {
     /// line whose trailing interval is supported (`observationSegments`) and is
     /// otherwise not a reading — never a lone mark, never cadence.
     var isLiveEdge: Bool = false
+    /// #7878 — what the served evidence contract says this point proves, or nil
+    /// when the response carried no contract this client reads (then the gap
+    /// rule is the pre-contract cadence heuristic). Set only on
+    /// `win_prob_history` points: the sportsbook consensus and the blend are not
+    /// classified by the producer.
+    var servedEvidence: ServedEvidence?
+}
+
+/// One point as the served evidence contract classifies it (#7878). Mirrors the
+/// web's `contractObservation` (`frontend/lib/chartObservationSupport.ts`).
+///
+/// Every drawn point — a plain reading, a venue candle, a terminal row, the
+/// result — is an endpoint of the intervals either side of it, and covers its
+/// own instant and nothing more. The one thing that can say more is an
+/// `observed` reading's `covered_through`, so that is all this carries.
+struct ServedEvidence: Equatable {
+    /// G, the contract's `resolution_s`: an interval wider than this that no
+    /// reading covers is UNKNOWN and the line breaks there.
+    let resolution: TimeInterval
+    /// `observed.covered_through`, and only ever that: never set on a candle,
+    /// backfill, terminal row, result or unknown kind, never from `valid_until`,
+    /// and always later than the point's own time (`servedEvidence(for:resolution:)`
+    /// refuses anything else).
+    var coveredThrough: Date?
 }
 
 // MARK: - Period Marker
@@ -1587,6 +1611,10 @@ struct OddsChartView: View {
             return points
         }
 
+        // #7878 — a server that classifies its points says so once per response.
+        // Nil (no contract, unknown version) keeps the pre-contract gap rule.
+        let contractResolution = history.evidenceContract?.readableResolution
+
         // Other win-probability sources (ESPN, Kalshi, Polymarket, model, …).
         // Retain every backend-valid observation: the consumer cannot tell an
         // upstream placeholder from a real swing using two probabilities alone, and
@@ -1597,6 +1625,10 @@ struct OddsChartView: View {
                       let prob = wp.homeProbability else { continue }
                 var point = ChartDataPoint(date: date, probability: prob, source: sourceKey)
                 point.isLiveEdge = wp.liveEdge == true
+                if let resolution = contractResolution {
+                    point.isLiveEdge = point.isLiveEdge || wp.evidence?.kind == "live_edge"
+                    point.servedEvidence = servedEvidence(for: wp, resolution: resolution)
+                }
                 points.append(point)
             }
         }
@@ -1829,6 +1861,11 @@ struct OddsChartView: View {
     /// supported trailing interval ends the last run at it, as today; an
     /// unsupported one ends the line at the last real observation, with nothing
     /// drawn after it.
+    ///
+    /// **Under the served evidence contract (#7878.v1) the heuristic is not
+    /// consulted.** When the points carry `servedEvidence` the series is judged
+    /// by `contractSegments` instead — what each point says it is, at the served
+    /// resolution G.
     static func observationSegments(
         _ points: [ChartDataPoint],
         gameStart: Date?,
@@ -1838,6 +1875,10 @@ struct OddsChartView: View {
         let ordered = points.filter { !$0.isLiveEdge }.sorted { $0.date < $1.date }
         guard !ordered.isEmpty else { return [] }
         let liveEdge = points.filter(\.isLiveEdge).max { $0.date < $1.date }
+
+        if let resolution = ordered.lazy.compactMap(\.servedEvidence).first?.resolution {
+            return contractSegments(ordered, liveEdge: liveEdge, gameStart: gameStart, resolution: resolution)
+        }
 
         var segments: [[ChartDataPoint]] = [ordered]
         var median: TimeInterval?
@@ -1882,6 +1923,80 @@ struct OddsChartView: View {
             if !unsupported {
                 segments[segments.count - 1].append(liveEdge)
             }
+        }
+        return segments
+    }
+
+    /// The contract's reading of one served point (#7878.v1), mirroring the web's
+    /// `contractObservation`. `valid_until` is never read.
+    ///
+    /// - no `evidence` key: a plain reading, proving its own instant;
+    /// - `observed`: a reading that also proves coverage through
+    ///   `covered_through` — a malformed or backwards span proves nothing beyond
+    ///   the reading itself;
+    /// - `candle` · `price_history` · `terminal_row` · `final` · anything this
+    ///   client does not recognise: drawn where it falls, proves nothing (fails
+    ///   closed — a venue aggregate and the result are real values, not readings).
+    static func servedEvidence(for wp: WinProbHistoryPoint, resolution: TimeInterval) -> ServedEvidence {
+        var served = ServedEvidence(resolution: resolution)
+        guard let evidence = wp.evidence, evidence.kind == "observed" else { return served }
+        if let through = evidence.coveredThrough?.asDate,
+           let at = wp.timestamp.asDate, through > at {
+            served.coveredThrough = through
+        }
+        return served
+    }
+
+    /// `observationSegments` under the served evidence contract (Codex card-B
+    /// decision, 2026-09-24; web twin `classifyUnderContract`).
+    ///
+    /// Every consecutive pair of DRAWN points is an interval. Its hole starts
+    /// where the earlier point's proven coverage ends — its own instant, or
+    /// `covered_through` for an `observed` reading; a point that proves nothing
+    /// covers nothing past itself — and the line breaks when the hole is wider
+    /// than G. Exactly G stays joined. G is a display resolution, not a
+    /// freshness SLA: a break says "no readings here", never "the feed was down".
+    ///
+    /// Pre-match stays unjudged, for the reason the heuristic gives (the
+    /// pre-match writer stores no row while a quote sits still, so a G-sized
+    /// rule there would shatter every healthy pre-match line). What changes is
+    /// that an interval straddling the start is judged FROM the start: the
+    /// stretch after kick-off is in-game however it began. A nil `gameStart`
+    /// judges nothing.
+    ///
+    /// The live edge stays a delivery time: it ends the last run when the
+    /// trailing interval is covered, and is dropped when it is not. There is no
+    /// domain-end trailing test here (the web has one) because Swift Charts draws
+    /// nothing past a series' last point — the line already ends where the
+    /// readings do.
+    private static func contractSegments(
+        _ ordered: [ChartDataPoint],
+        liveEdge: ChartDataPoint?,
+        gameStart: Date?,
+        resolution: TimeInterval
+    ) -> [[ChartDataPoint]] {
+        func unknown(after from: ChartDataPoint, until to: Date) -> Bool {
+            guard let gameStart else { return false }
+            let coveredUntil = from.servedEvidence?.coveredThrough ?? from.date
+            let holeStart = max(coveredUntil, gameStart)
+            return to > holeStart && to.timeIntervalSince(holeStart) > resolution
+        }
+
+        var segments: [[ChartDataPoint]] = []
+        var run: [ChartDataPoint] = [ordered[0]]
+        for (previous, current) in zip(ordered, ordered.dropFirst()) {
+            if unknown(after: previous, until: current.date) {
+                segments.append(run)
+                run = [current]
+            } else {
+                run.append(current)
+            }
+        }
+        segments.append(run)
+
+        if let liveEdge, let last = ordered.last, liveEdge.date > last.date,
+           !unknown(after: last, until: liveEdge.date) {
+            segments[segments.count - 1].append(liveEdge)
         }
         return segments
     }
