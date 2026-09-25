@@ -121,6 +121,13 @@ per beat) and the served set is bounded by the page (26 futures markets on
 Discover page one on 2026-09-05, capped at
 :data:`app.utils.feed_served_markets.MAX_SERVED_IDS_PER_SHAPE`).
 
+A third identity arm (#8718) selects by the market's own clock: a tier-1
+outright resolving within :data:`IN_PLAY_HORIZON_HOURS` is in play, and gets the
+same 45-minute window, staying in for :data:`IN_PLAY_GRACE_HOURS` past a stored
+date that is only the venue's expected expiration (CERT-3515). It is bounded by
+the calendar (22 markets on 2026-09-25) and by :data:`IN_PLAY_LIMIT` should an
+upstream ever mislabel a batch.
+
 STARVATION GUARDS (gotcha #41 — an ordering needs both bounds)
 --------------------------------------------------------------
 * **Value floor and liveness floor**, not a bare "oldest first":
@@ -418,6 +425,40 @@ REGISTERED_REFRESH_MINUTES = 45
 #: Discover. Collapsing them would recreate the lockstep the registered constant
 #: was split out to break, one level up.
 SERVED_REFRESH_MINUTES = 45
+
+#: #8718 — how stale a tier-1 outright may get IN ITS LAST DAYS before the sweep
+#: re-prices it. An outright is a season-long market for most of its life and an
+#: in-play market at the end: the Presidents Cup winner read USA 85.5% for 4.5h of
+#: round 2 while Kalshi traded it at 64¢ ($118k in 24h), because neither identity
+#: arm could see it — it is not in the tournament register, and `/golf` is not a
+#: page-one payload the served arm reads. The class clock (6h) is right for the
+#: season and wrong for the weekend. Same 45-minute sub-interval as the two
+#: identity windows above, for the same reason.
+IN_PLAY_REFRESH_MINUTES = 45
+
+#: The window in which a tier-1 outright counts as in play: resolves within this
+#: many hours. 72h spans a golf or tennis event's final three days. Measured
+#: 2026-09-25 21:40Z: 22 open tier-1 markets inside it (17 Polymarket, 5 Kalshi),
+#: every one unlinked to an event, so the arm adds ~5 Kalshi calls per beat and
+#: never overlaps `poll_live_prediction_markets`.
+IN_PLAY_HORIZON_HOURS = 72
+
+#: CERT-3515's repair: how long past its stored ``resolution_date`` a tier-1
+#: outright stays in the in-play arm. The stored date can be the venue's
+#: EXPECTED expiration, not its close: `KXPRESCUP-26` stores 2026-09-27 14:00Z
+#: (Kalshi `expected_expiration_time`) while its `close_time` is 2026-10-11 and
+#: Sunday's singles run past 14:00Z. Without a grace the arm drops the one market
+#: it was built for at the start of the final day. 36h spans a final day plus a
+#: weather Monday. Bounded on the other side by settlement, stricter than the
+#: shared contract: no winner of ANY shape and no venue-settled stamp at all.
+#: Measured 2026-09-25 22:15Z: 0 open tier-1 rows inside the grace (all 212
+#: tier-1 rows past their date in the last 36h were already `resolved`).
+IN_PLAY_GRACE_HOURS = 36
+
+#: A ceiling, not a fence: 9x the measured population. It exists so an upstream
+#: that mislabels a batch of short-dated markets as tier 1 cannot turn an
+#: identity arm (taken before the budget) into an unbounded one.
+IN_PLAY_LIMIT = 200
 
 #: Markets refreshed per run, PER SOURCE, because the two sources cost 20x
 #: different amounts per market and one shared cap over two unequally-priced
@@ -811,6 +852,50 @@ _REGISTERED_CANDIDATE_SQL = text(_BY_ID_CANDIDATE_SQL)
 #: other arm is the whole defect.
 _SERVED_CANDIDATE_SQL = text(_BY_ID_CANDIDATE_SQL)
 
+#: #8718 — tier-1 outrights in their last :data:`IN_PLAY_HORIZON_HOURS`, stale for
+#: longer than :data:`IN_PLAY_REFRESH_MINUTES`. Selected by the market's own
+#: clock rather than by a list, because what makes it urgent is WHEN it is, not
+#: who curated it. The liveness bounds are the shared ones, with ONE exception
+#: (CERT-3515): a row past its stored ``resolution_date`` by less than
+#: :data:`IN_PLAY_GRACE_HOURS` stays in while it is open, has no winning outcome
+#: and carries no venue-settled stamp — the stored date can be the venue's
+#: expected expiration, which falls before the last day's play ends.
+_IN_PLAY_CANDIDATE_SQL = text(
+    f"""
+    SELECT fm.id, fm.source, fm.external_id, fm.volume,
+           {_POLY_EVENT_ID_SQL},
+           fm.market_metadata->>'{VENUE_SETTLED_KEY}' AS venue_settled_since
+      FROM futures_markets fm
+     WHERE (
+             ({LIVE_MARKET_SQL})
+          OR (
+                 fm.status = 'open'
+             AND fm.source IN ('kalshi', 'polymarket')
+             AND fm.resolution_date <= NOW()
+             AND fm.resolution_date > NOW() - make_interval(hours => :in_play_grace_hours)
+             AND fm.market_metadata->>'{VENUE_SETTLED_KEY}' IS NULL
+             AND NOT EXISTS (
+                   SELECT 1 FROM futures_outcomes fo_g
+                    WHERE fo_g.market_id = fm.id
+                      AND fo_g.is_winner IS TRUE
+                 )
+             )
+           )
+       AND {VALUE_TIER1_SQL}
+       AND fm.resolution_date IS NOT NULL
+       AND fm.resolution_date <= NOW() + make_interval(hours => :in_play_hours)
+       AND NOT EXISTS (
+             SELECT 1
+               FROM futures_outcomes fo
+               JOIN futures_odds_snapshots s ON s.outcome_id = fo.id
+              WHERE fo.market_id = fm.id
+                AND s.captured_at > NOW() - make_interval(mins => :stale_minutes)
+           )
+     ORDER BY fm.resolution_date, fm.id
+     LIMIT :in_play_limit
+    """
+)
+
 
 #: The arm a candidate came in on. ``class`` is the value sweep; the other two
 #: are identity arms. Kept as a NAME rather than as a pair of booleans because
@@ -822,6 +907,7 @@ _SERVED_CANDIDATE_SQL = text(_BY_ID_CANDIDATE_SQL)
 _ARM_CLASS = "class"
 _ARM_REGISTERED = "registered"
 _ARM_SERVED = "served"
+_ARM_IN_PLAY = "in_play"
 
 
 def _rows_to_markets(rows, *, arm: str) -> list[dict]:
@@ -1016,6 +1102,29 @@ async def _scan_served_candidates(
         )
     ).fetchall()
     return _rows_to_markets(rows, arm=_ARM_SERVED)
+
+
+async def _scan_in_play_candidates(
+    session,
+    *,
+    stale_minutes: int,
+    horizon_hours: int = IN_PLAY_HORIZON_HOURS,
+    grace_hours: int = IN_PLAY_GRACE_HOURS,
+    limit: int = IN_PLAY_LIMIT,
+) -> list[dict]:
+    """Stale tier-1 outrights whose tournament is in its last days (#8718)."""
+    rows = (
+        await session.execute(
+            _IN_PLAY_CANDIDATE_SQL,
+            {
+                "stale_minutes": stale_minutes,
+                "in_play_hours": horizon_hours,
+                "in_play_grace_hours": grace_hours,
+                "in_play_limit": limit,
+            },
+        )
+    ).fetchall()
+    return _rows_to_markets(rows, arm=_ARM_IN_PLAY)
 
 
 #: How many served ids this task CAN price. The unreachable count is derived
@@ -2615,6 +2724,7 @@ async def _refresh_stale_futures_prices(
     polymarket_budget: int = POLYMARKET_MARKET_BUDGET,
     registered_refresh_minutes: int = REGISTERED_REFRESH_MINUTES,
     served_refresh_minutes: int = SERVED_REFRESH_MINUTES,
+    in_play_refresh_minutes: int = IN_PLAY_REFRESH_MINUTES,
 ) -> dict:
     """Refresh prices for stale high-value open futures markets. See module docstring."""
     from app.tasks.base import get_task_session
@@ -2793,6 +2903,12 @@ async def _refresh_stale_futures_prices(
         "served_candidates": 0,
         "served_attempted": 0,
         "served_priced": 0,
+        # #8718: tier-1 outrights in their last IN_PLAY_HORIZON_HOURS. Counted
+        # apart from the other identity arms for the reason they are counted
+        # apart from each other — attribution follows the arm, below.
+        "in_play_candidates": 0,
+        "in_play_attempted": 0,
+        "in_play_priced": 0,
         # Served ids this task structurally cannot refresh: an `odds_api` row
         # (LIVE_MARKET_SQL is Kalshi/Polymarket only) or a market the liveness
         # bounds retired. Counted so a page-one card that stays wrong has a
@@ -2863,6 +2979,9 @@ async def _refresh_stale_futures_prices(
             market_ids=sorted(registered_market_ids()),
             stale_minutes=registered_refresh_minutes,
         )
+        in_play_scan = await _scan_in_play_candidates(
+            session, stale_minutes=in_play_refresh_minutes
+        )
         class_scan = await _scan_candidates(
             session,
             volume_floor=volume_floor,
@@ -2886,15 +3005,23 @@ async def _refresh_stale_futures_prices(
         served_scan_ids = {m["id"] for m in served_scan}
         registered_scan = [m for m in registered_scan if m["id"] not in served_scan_ids]
         priority_ids = served_scan_ids | {m["id"] for m in registered_scan}
+        # #8718: in-play ranks after the two curated arms and before class. A
+        # registered or served row keeps that attribution; an in-play outright
+        # that is ALSO a class candidate must keep the identity classification
+        # for the same reason as above — the 6h attempt TTL would undo it.
+        in_play_scan = [m for m in in_play_scan if m["id"] not in priority_ids]
+        priority_ids |= {m["id"] for m in in_play_scan}
         scan = (
             served_scan
             + registered_scan
+            + in_play_scan
             + [m for m in class_scan if m["id"] not in priority_ids]
         )
 
         stats["candidates"] = len(scan)
         stats["registered_candidates"] = len(registered_scan)
         stats["served_candidates"] = len(served_scan)
+        stats["in_play_candidates"] = len(in_play_scan)
 
         skip_ids = _load_attempt_skips([m["id"] for m in scan])
         eligible = [m for m in scan if m["id"] not in skip_ids]
@@ -2928,7 +3055,7 @@ async def _refresh_stale_futures_prices(
             # opposite states, so they get different terminals.
             stats["terminal"] = "complete" if not scan else "no_work"
             stats["reason"] = (
-                "no stale valuable, registered or served markets"
+                "no stale valuable, registered, served or in-play markets"
                 if not scan
                 else "every stale market was attempted inside the current window"
             )
@@ -2955,6 +3082,8 @@ async def _refresh_stale_futures_prices(
                 stats["registered_attempted"] += 1
             if market["served"]:
                 stats["served_attempted"] += 1
+            if market["arm"] == _ARM_IN_PLAY:
+                stats["in_play_attempted"] += 1
             if market["priority"]:
                 priority_attempted_ids.append(market["id"])
             else:
@@ -3078,6 +3207,8 @@ async def _refresh_stale_futures_prices(
                                     stats["registered_priced"] += 1
                                 if market["served"]:
                                     stats["served_priced"] += 1
+                                if market["arm"] == _ARM_IN_PLAY:
+                                    stats["in_play_priced"] += 1
                                 await _clear_if_stamped(session, market, stats)
                             else:
                                 stats["unpriceable"] += 1
@@ -3240,6 +3371,8 @@ async def _refresh_stale_futures_prices(
                         stats["registered_priced"] += 1
                     if market["served"]:
                         stats["served_priced"] += 1
+                    if market["arm"] == _ARM_IN_PLAY:
+                        stats["in_play_priced"] += 1
                     await _clear_if_stamped(session, market, stats)
                 else:
                     stats["unpriceable"] += 1
@@ -3293,7 +3426,10 @@ async def _refresh_stale_futures_prices(
         _mark_attempted(attempted_ids, ttl_seconds=stale_hours * 3600)
         _mark_attempted(
             priority_attempted_ids,
-            ttl_seconds=max(1, min(registered_refresh_minutes, served_refresh_minutes))
+            ttl_seconds=max(
+                1,
+                min(registered_refresh_minutes, served_refresh_minutes, in_play_refresh_minutes),
+            )
             * 60,
         )
 
