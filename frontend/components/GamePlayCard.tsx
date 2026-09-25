@@ -1,6 +1,6 @@
 "use client";
 
-import { format, parseISO } from "date-fns";
+import { format, isSameDay, parseISO } from "date-fns";
 import { trustedLiveClock } from "@/lib/gameTimeLabel";
 import { renderedDuelPercents } from "@/lib/renderedPercent";
 import { teamShortNames } from "@/lib/teamShortName";
@@ -238,10 +238,14 @@ export default function GamePlayCard({
       const oldest = carriedObservations.reduce((a, b) =>
         parseISO(a).getTime() <= parseISO(b).getTime() ? a : b,
       );
-      const observed = format(parseISO(oldest), "h:mm a");
-      // Minute-keyed rows, so a carry never spans less than a minute; when the
-      // two read the same minute the line would only repeat the time above it.
-      if (observed !== timeOfDay) stateAsOf = observed;
+      const observedAt = parseISO(oldest);
+      const sameDay = isSameDay(observedAt, parseISO(point.timestamp));
+      const observed = format(observedAt, "h:mm a");
+      // A previous day's reading needs its date, even when its clock minute
+      // matches the selected point. Compare in the reader's local timezone,
+      // just as the point time above is rendered.
+      if (!sameDay) stateAsOf = format(observedAt, "MMM d, h:mm a");
+      else if (observed !== timeOfDay) stateAsOf = observed;
     } catch {
       stateAsOf = "";
     }
