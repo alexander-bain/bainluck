@@ -28847,6 +28847,7 @@ from app.utils.outcome_display import (  # noqa: E402
     drop_incoherent_near_certain as _drop_incoherent_near_certain,
     drop_unbacked_legs as _drop_unbacked_legs,
 )
+from app.utils.futures_liveness import leg_is_graded  # noqa: E402  #8640
 from app.utils.duplicate_condition_outcomes import (  # noqa: E402
     drop_duplicate_legs as _drop_duplicate_legs,
 )
@@ -29608,10 +29609,52 @@ def _build_search_top_outcomes(
     # equally uninteresting as headlines. The nulling below is what tells them
     # apart on the wire, not this ordering.
     _withheld_ids = withheld or set()
+    # #8640: A GRADED RUNG ON A STILL-OPEN LADDER IS A RESULT, NOT THE ANSWER.
+    # Measured live 2026-09-25, `?q=Fed rate` led market 113427 *What will Fed
+    # Rate hit before 2027* (polymarket, open, `mutually_exclusive=false`) with
+    # `↓ 3.5% 100%` — a rung graded `is_winner` / `api_settlement` whose price is
+    # pinned at 1.0 — one row above the same card's `↑ 4.25%` 90%. The graded
+    # 1.0 outranks every live price by construction, so on every open
+    # multi-winner board with a graded rung the headline was a settled leg
+    # printed as a live certainty.
+    #
+    # Demoted, not dropped: settled means settled, and deleting a result a
+    # reader is owed is #6532. The row keeps its price and carries its grade on
+    # the wire (below) so a client can print it as a result.
+    #
+    # MULTI-WINNER ONLY, and that is the judgement. On a one-winner board a
+    # graded winner IS the answer to the whole question — every other leg is
+    # dead — so demoting it would headline a loser; that population is #8615's,
+    # which resolves the market instead. `leg_is_graded` rather than
+    # `is_winner`: `False` is the column's default, not a verdict.
+    #
+    # THREE TIERS, NOT TWO: live and priced, then graded, then withheld or
+    # unpriced. A two-way "graded last" split puts a refused (#6993) or
+    # never-priced ungraded rung ABOVE every result, and on a ladder where those
+    # are the only ungraded legs the card headlines a dash — #6993's own
+    # specimen (Nasdaq-100 109485, whose graded rungs are winners at
+    # 0.95–0.995) does exactly that on its short-ladder door.
+    _demote_graded = getattr(market, "status", None) == "open" and not getattr(
+        market, "mutually_exclusive", True
+    )
+
+    # Every other board gets one tier, so its order is byte-for-byte what it was.
+    def _headline_tier(o) -> int:
+        if not _demote_graded:
+            return 0
+        if o.id in _withheld_ids or o.current_probability is None:
+            return 0
+        if leg_is_graded(
+            getattr(o, "is_winner", None), getattr(o, "resolution_source", None)
+        ):
+            return 1
+        return 2
+
     real.sort(
-        key=lambda o: 0
-        if o.id in _withheld_ids
-        else (o.current_probability or 0),
+        key=lambda o: (
+            _headline_tier(o),
+            0 if o.id in _withheld_ids else (o.current_probability or 0),
+        ),
         reverse=True,
     )
     top = real[:limit]
@@ -29676,6 +29719,13 @@ def _build_search_top_outcomes(
                 "american_odds": o.current_american_odds,
                 "rank": o.rank,
                 "movement": float(o.probability_change_24h) if o.probability_change_24h else None,
+                # #8640: the grade, in the detail payload's own two fields
+                # (`FuturesOutcome` in `lib/types.ts`), so a client can tell a
+                # graded 1.0 from a live one. Both are needed: `is_winner`
+                # defaults to false, and only `resolution_source` separates
+                # "graded a loss" from "never graded".
+                "is_winner": getattr(o, "is_winner", None),
+                "resolution_source": getattr(o, "resolution_source", None),
             }
             for o, name in named
         ]
