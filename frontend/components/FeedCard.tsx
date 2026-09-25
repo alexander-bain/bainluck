@@ -397,6 +397,12 @@ function EventFeedCard({
   // live-style probability split for one nothing is reporting on.
   const isSuspended = isSuspendedStatus(data.status);
   const isScheduled = data.status === "scheduled";
+  // #8635: the server's last-resort highlight for a live game is the word
+  // "Live", which repeats the green LIVE chip beside it. Drop only that echo; a
+  // live label that says something new ("Odds moved", "Wild game") still shows.
+  const rawHighlightLabel = data.highlight?.label?.trim() || "";
+  const highlightLabel =
+    isLive && rawHighlightLabel.toLowerCase() === "live" ? "" : rawHighlightLabel;
   const homeProb = data.current_odds?.home_probability ?? null;
   const awayProb = data.current_odds?.away_probability ?? null;
   const hasScore = (isLive || isFinished) && data.home_score !== null && data.away_score !== null;
@@ -716,13 +722,13 @@ function EventFeedCard({
                 FINAL
               </span>
             )}
-            {data.highlight?.label && (
+            {highlightLabel && (
               <span className={`px-2 py-0.5 rounded text-[11px] font-semibold flex-shrink-0 ${
                 isFinished
                   ? "bg-accent-brand/15 text-accent-brand"
                   : "bg-accent-warning/15 text-accent-warning"
               }`}>
-                {data.highlight.label}
+                {highlightLabel}
               </span>
             )}
             {item.headline && !isLive && !data.highlight?.label && (
