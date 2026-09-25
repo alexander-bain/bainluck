@@ -574,6 +574,20 @@ jobs:
             exit 1
           fi
 
+      - name: Search settled-recency contract (real Postgres)
+        # #8505. `q=Red Sox` ties every row on ts_rank_cd, so the LLM tag tier
+        # ordered the finals ahead of recency and last night's game sat 14th.
+        # Settled rows now take no tag boost; upcoming rows keep it (the
+        # control). JSONB `@>` + ts_rank_cd through the route need Postgres.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_search_settled_recency_pg_8505.py \
+            -v -rs 2>&1 | tee /tmp/settledrecency.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/settledrecency.txt; then
+            echo "::error::search settled-recency contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: Proven-duplicate search BRIDGE contract (real Postgres)
         # #5821 / CERT-3073. The step above proves the tagged twin stops being a
         # second search result. This proves the reader still reaches the game:

@@ -201,6 +201,46 @@ _SEARCH_STATUSES = ["scheduled", "live", EVENT_SUSPENDED, "completed", "closed"]
 #: that is the one thing about it nothing disputes — so it belongs here too.
 _SEARCH_STARTED_STATUSES = ["live", EVENT_SUSPENDED, "completed", "closed"]
 
+#: The statuses search prints most-recent-first — the same set as the
+#: `commence_time DESC` arm of every search ORDER BY below.
+_SEARCH_SETTLED_STATUSES = ["completed", "closed", EVENT_SUSPENDED]
+
+#: The tier a row with no qualifying tag gets, and the one every settled row gets.
+_SEARCH_TAG_BOOST_NONE = 9
+
+
+def _search_tag_boost():
+    """The LLM-tag relevance tier for search, applied to games NOT yet played.
+
+    #8505 — settled games take no tag boost. For a team query every row ties on
+    `search_rank` (`ts_rank_cd` = 1.0 on all eight Red Sox rows read on
+    production 2026-09-25), so the tag tier used to decide the finished list
+    ahead of recency: `q=Red Sox` printed every rivalry game (tier 3) by date,
+    then national-interest (4), then playoff-race (5), and last night's 0-1 loss
+    sat 14th behind a game from Aug 28. A fan searching their team is asking for
+    the last result first; "this was a rivalry game" is a reason to look at an
+    UPCOMING game, not a reason a month-old final outranks yesterday's.
+
+    Settled rows get the constant, so within that tier `search_rank` and then
+    `commence_time DESC` decide exactly as they already did for untagged rows.
+    Live and scheduled ordering is unchanged.
+    """
+    return case(
+        (Event.status.in_(_SEARCH_SETTLED_STATUSES), _SEARCH_TAG_BOOST_NONE),
+        # Championship/playoff events first
+        (Event.event_tags.op("@>")(literal_column("'[\"importance:championship\"]'::jsonb")), 0),
+        (Event.event_tags.op("@>")(literal_column("'[\"importance:playoff\"]'::jsonb")), 1),
+        # High-stakes LLM tags
+        (Event.event_tags.op("@>")(literal_column("'[\"stakes:elimination\"]'::jsonb")), 2),
+        (Event.event_tags.op("@>")(literal_column("'[\"stakes:title_defense\"]'::jsonb")), 2),
+        (Event.event_tags.op("@>")(literal_column("'[\"narrative:rivalry\"]'::jsonb")), 3),
+        (Event.event_tags.op("@>")(literal_column("'[\"narrative:historic_rivalry\"]'::jsonb")), 3),
+        (Event.event_tags.op("@>")(literal_column("'[\"audience:national_interest\"]'::jsonb")), 4),
+        (Event.event_tags.op("@>")(literal_column("'[\"stakes:clinch\"]'::jsonb")), 4),
+        (Event.event_tags.op("@>")(literal_column("'[\"stakes:playoff_race\"]'::jsonb")), 5),
+        else_=_SEARCH_TAG_BOOST_NONE,
+    )
+
 #: The default `GET /api/events` status set — every state the list is MEANT to
 #: reach, as opposed to the four that happened to exist when it was written.
 #:
@@ -6602,24 +6642,9 @@ async def search_events(
     # it as, rather than at the head of the results.
     status_order = live_scheduled_settled_order(now)
 
-    # Tag-based relevance boost within each status group.
-    # Events with contextual LLM tags (rivalry, elimination, etc.) or
-    # importance tags (playoff, championship) rank higher in search.
-    from sqlalchemy import literal_column as _lc
-    tag_boost = case(
-        # Championship/playoff events first
-        (Event.event_tags.op("@>")(_lc("'[\"importance:championship\"]'::jsonb")), 0),
-        (Event.event_tags.op("@>")(_lc("'[\"importance:playoff\"]'::jsonb")), 1),
-        # High-stakes LLM tags
-        (Event.event_tags.op("@>")(_lc("'[\"stakes:elimination\"]'::jsonb")), 2),
-        (Event.event_tags.op("@>")(_lc("'[\"stakes:title_defense\"]'::jsonb")), 2),
-        (Event.event_tags.op("@>")(_lc("'[\"narrative:rivalry\"]'::jsonb")), 3),
-        (Event.event_tags.op("@>")(_lc("'[\"narrative:historic_rivalry\"]'::jsonb")), 3),
-        (Event.event_tags.op("@>")(_lc("'[\"audience:national_interest\"]'::jsonb")), 4),
-        (Event.event_tags.op("@>")(_lc("'[\"stakes:clinch\"]'::jsonb")), 4),
-        (Event.event_tags.op("@>")(_lc("'[\"stakes:playoff_race\"]'::jsonb")), 5),
-        else_=9
-    )
+    # Tag-based relevance boost within the live and upcoming groups (#8505:
+    # settled games order by recency, see `_search_tag_boost`).
+    tag_boost = _search_tag_boost()
     # On the SUBJECT (#5688): `websearch_to_tsquery` ANDs its lexemes, so the raw
     # query ranks every row that does not contain "today" at 0 and flattens the
     # relevance ordering of the very pool the reader asked about.
