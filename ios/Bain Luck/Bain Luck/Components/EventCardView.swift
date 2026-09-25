@@ -615,6 +615,14 @@ struct EventCardView: View {
         )
     }
 
+    /// #8622 — the pre-match reading a finished row prints: the server's
+    /// ladder rung (`prematch_odds`), which its reason line is written from,
+    /// with `opening_odds` only as the fallback. The live footer's "Opened"
+    /// caption keeps `openingPercents`: that one IS the opening line.
+    private var prematch: PrematchReading? {
+        PrematchReading.resolve(prematch: event.prematchOdds, opening: event.openingOdds)
+    }
+
     /// #5363 — whether this card may print an AWAY probability at all.
     ///
     /// `sportPricesADraw` and not `printablePair`, deliberately, and this is the
@@ -675,11 +683,11 @@ struct EventCardView: View {
     /// that has none (#4788).
     @ViewBuilder
     private func preGameOddsLabel(for side: TeamSide) -> some View {
-        let opening = event.openingOdds
+        let reading = prematch
         // #5363 — the settled row's pre-game number is the same complement.
         let prob: Double? = side == .home
-            ? opening?.homeProbability
-            : (awayIsWithheld ? nil : opening?.awayProbability)
+            ? reading?.homeProbability
+            : (awayIsWithheld ? nil : reading?.awayProbability)
         if let prob {
             let wasUnderdog = prob < 0.4
             let wasHeavyFavorite = prob > 0.7
@@ -687,7 +695,7 @@ struct EventCardView: View {
             let isUpset = won && wasUnderdog
 
             HStack(spacing: 2) {
-                Text(formatProbability(prob, renderedPercent: side == .home ? openingPercents[1] : openingPercents[0]))
+                Text(formatProbability(prob, renderedPercent: reading?.percents[side == .home ? 1 : 0]))
                     .font(.caption)
                     .fontWeight(.semibold)
                     .monospacedDigit()
@@ -703,12 +711,10 @@ struct EventCardView: View {
     @ViewBuilder
     private var probabilityBar: some View {
         if isFinished {
-            if let opening = event.openingOdds,
-               let awayProb = opening.awayProbability,
-               let homeProb = opening.homeProbability {
+            if let reading = prematch {
                 ProbabilityBar(
-                    awayProb: awayProb,
-                    homeProb: homeProb,
+                    awayProb: reading.awayProbability,
+                    homeProb: reading.homeProbability,
                     // #5363 — the bar KEEPS its remainder, because the two
                     // segments are a partition and "not the home team" is a
                     // true quantity. What it is not is the away team, so it

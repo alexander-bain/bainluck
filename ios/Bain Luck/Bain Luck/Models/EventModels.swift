@@ -23,6 +23,8 @@ nonisolated struct EventDetail: Decodable, Identifiable, Sendable {
     // model every native surface already reads. See `CurrentOdds`.
     var currentOdds: CurrentOdds?
     let openingOdds: OpeningOdds?
+    /// #8622 — see `PrematchOdds`. Read through `PrematchReading.resolve`.
+    let prematchOdds: PrematchOdds?
     let bookmakerOdds: [BookmakerOdds]?
     let highlight: Highlight?
     let espn: ESPNData?

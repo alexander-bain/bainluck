@@ -1028,10 +1028,18 @@ struct EventDetailView: View {
                                 .font(.title3.weight(.bold))
                                 .foregroundStyle(homeWon ? colors.home : colors.away)
                         }
-                        // Pre-game odds as secondary context
-                        if let opened = DrawPricedWinner.printablePair(
-                            away: event.openingOdds?.awayProbability,
-                            home: event.openingOdds?.homeProbability,
+                        // Pre-game odds as secondary context.
+                        //
+                        // #8622 — the card's number, not the sportsbook median:
+                        // `prematch_odds` (served on settled events since #8324)
+                        // with `opening_odds` only as the fallback. "Opened" is
+                        // true of the fallback alone (`captionWord`).
+                        let pregame = PrematchReading.resolve(
+                            prematch: event.prematchOdds, opening: event.openingOdds)
+                        let pregameWord = pregame?.captionWord ?? "Opened"
+                        if let pregame, let opened = DrawPricedWinner.printablePair(
+                            away: pregame.awayProbability,
+                            home: pregame.homeProbability,
                             sport: event.sport) {
                             // #2085 — `opening_odds` is a complement pair too
                             // (`opening_away_probability or round(1 - home, 4)`),
@@ -1045,10 +1053,8 @@ struct EventDetailView: View {
                             // "{Winner} Win", so nothing else in the column is
                             // carrying the subject for it.
                             if let awayOpen = opened.away {
-                                let openDuel = renderedDuelPercents(
-                                    away: awayOpen, home: opened.home
-                                )
-                                Text("Opened \(formatProbability(awayOpen, renderedPercent: openDuel[0])) – \(formatProbability(opened.home, renderedPercent: openDuel[1]))")
+                                let openDuel = pregame.percents
+                                Text("\(pregameWord) \(formatProbability(awayOpen, renderedPercent: openDuel[0])) – \(formatProbability(opened.home, renderedPercent: openDuel[1]))")
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
                             } else {
@@ -1056,7 +1062,7 @@ struct EventDetailView: View {
                                     away: event.awayTeam, home: event.homeTeam,
                                     sportKey: event.sport
                                 )
-                                Text("Opened \(named.home) \(formatProbability(opened.home))")
+                                Text("\(pregameWord) \(named.home) \(formatProbability(opened.home, renderedPercent: pregame.isServed ? pregame.percents[1] : nil))")
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
                             }

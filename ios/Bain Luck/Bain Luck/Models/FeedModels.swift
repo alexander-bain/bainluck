@@ -488,6 +488,8 @@ nonisolated struct FeedEventData: Decodable, Identifiable, Sendable {
     let awayScore: Int?
     let currentOdds: CurrentOdds?
     let openingOdds: OpeningOdds?
+    /// #8622 — see `PrematchOdds`. Read through `PrematchReading.resolve`.
+    let prematchOdds: PrematchOdds?
     let highlight: Highlight?
     let homeTeamData: TeamData?
     let awayTeamData: TeamData?
