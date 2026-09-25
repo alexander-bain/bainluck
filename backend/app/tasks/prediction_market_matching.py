@@ -32,6 +32,8 @@ from app.utils.event_completion import (
 from app.utils.sport_keys import (
     KALSHI_TICKER_TO_SPORT_KEY,
     is_kalshi_shadowed_futures_ticker,
+    is_season_variant,
+    league_identity,
 )
 from app.utils.kalshi_occurrence_start import kalshi_game_scale_commence
 from app.utils.futures_liveness import KALSHI_BOOK_SILENT_SQL
@@ -959,6 +961,22 @@ async def covered_league_for_matchup(
                 leagues_by_side[index].add(sport_key)
 
     shared = leagues_by_side[0] & leagues_by_side[1]
+    # #8547: a season variant standing beside its own parent is ONE league, not
+    # an ambiguity. Every MLB club has a row under `baseball_mlb` AND
+    # `baseball_mlb_preseason` (NFL, NHL and NBA likewise), so `shared` was
+    # always two keys and `unambiguous_only` declined every Polymarket
+    # venue-instant relink in those leagues — Friday's Orioles @ Yankees game 2
+    # kept its Polymarket group on game 1 while the Kalshi ticker (league from
+    # the ticker, not from here) moved. The parent is what `sorted()[0]` already
+    # returned to the tie-break callers, so only the relink's answer changes;
+    # two genuinely different leagues (`aussierules_afl` / `_aflw`, #6377) are
+    # not season variants and stay ambiguous.
+    parents = {k for k in shared if not is_season_variant(k)}
+    parent_leagues = {league_identity(k) for k in parents}
+    shared = parents | {
+        k for k in shared
+        if is_season_variant(k) and league_identity(k) not in parent_leagues
+    }
     if unambiguous_only and len(shared) != 1:
         return None
     return sorted(shared)[0] if shared else None
