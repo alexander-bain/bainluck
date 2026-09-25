@@ -173,6 +173,10 @@ class _NoopRefresher:
     async def refresh(self, event_ids):
         return None
 
+    async def refresh_pending(self):
+        # #837 tail: the quiet-flush path; a fake never defers a stamp.
+        return None
+
 
 async def _drive_the_socket(monkeypatch, rowcount=1):
     """Run the REAL consumer over one tick; return (captured stmts, stats)."""

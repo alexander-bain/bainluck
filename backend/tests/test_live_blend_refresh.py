@@ -759,3 +759,324 @@ class TestTheFastLaneActuallyCallsTheSnapshot:
             < src.index("_maybe_snapshot")
             < src.index('self.stats["stamped"]')
         )
+
+
+class _LockTimeout(Exception):
+    """What asyncpg raises when `lock_timeout` fires: SQLSTATE 55P03."""
+
+    sqlstate = "55P03"
+
+
+class _LockedRowSession(_RecordingSession):
+    """A session whose stamp UPDATE finds the row held by another transaction.
+
+    Records every statement in order, so a test can see the `lock_timeout` was
+    set BEFORE the first UPDATE and not after it (where it would bound nothing).
+    """
+
+    def __init__(self, market_rows, outcomes, returned, *, locked=True):
+        super().__init__(market_rows, outcomes, returned)
+        self.locked = locked
+        self.statements = []
+
+    async def execute(self, statement, *args, **kwargs):
+        from sqlalchemy.sql.dml import Update
+
+        self.statements.append((statement, args))
+        if isinstance(statement, Update) and self.locked:
+            self.updates.append(statement)
+            raise _LockTimeout("canceling statement due to lock timeout")
+        return await super().execute(statement, *args, **kwargs)
+
+
+def _one_event_refresher(monkeypatch, session, **kwargs):
+    """A real refresher over one live event whose only market reads 0.9."""
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+
+    @asynccontextmanager
+    async def _fake_session():
+        yield session
+
+    monkeypatch.setattr("app.tasks.base.get_task_session", _fake_session)
+    monkeypatch.setattr(
+        "app.utils.live_blend.compute_source_home_probability",
+        lambda group, home, away: SimpleNamespace(
+            home_probability=0.9, away_probability=None, draw_probability=None,
+            eligibility=None,
+        ),
+    )
+
+    async def _no_inversion(session, event_id, home_prob, source):
+        return home_prob
+
+    monkeypatch.setattr(
+        "app.tasks.prediction_market_matching._check_and_fix_inversion",
+        _no_inversion,
+    )
+
+    async def _no_snapshot(session, **kw):
+        return object(), False
+
+    monkeypatch.setattr(
+        "app.tasks.snapshots._create_or_update_win_prob_snapshot", _no_snapshot
+    )
+    published = []
+
+    async def _capture(frames):
+        published.extend(frames)
+
+    r = LiveBlendRefresher("polymarket", **kwargs)
+    monkeypatch.setattr(r, "_publish", _capture)
+    return r, published
+
+
+def _event_and_market():
+    from types import SimpleNamespace
+
+    event = SimpleNamespace(
+        id=1, home_team_name="Phillies", away_team_name="Brewers",
+        completed_at=None, status="live", espn_win_prob_home=None,
+        opening_home_probability=None,
+    )
+    market = SimpleNamespace(id=10, event_id=1, name="Brewers vs Phillies")
+    return event, market
+
+
+class TestAStampNeverQueuesOnAForeignRowLock:
+    """#837 tail. Production 2026-09-24 23:16:09–23:16:20Z: the Polymarket arm's
+    stamp of ONE game waited 10.6s on a row lock a worker-realtime transaction
+    held, and every other game's price froze behind it (one transaction, serial
+    flush loop). The real-lock proof is
+    `tests/integration/test_live_blend_stamp_deadlock_pg_837.py`; these pin the
+    contract a fake can see."""
+
+    @pytest.mark.asyncio
+    async def test_a_lock_timeout_is_requeued_not_counted_as_an_error(
+        self, monkeypatch
+    ):
+        event, market = _event_and_market()
+        session = _LockedRowSession([(market, event)], [], {"polymarket": {}})
+        r, published = _one_event_refresher(monkeypatch, session)
+
+        stats = await r.refresh([1])
+
+        assert stats["lock_skipped"] == 1
+        assert stats["errors"] == 0, "a contended row is not a failure"
+        assert stats["stamped"] == 0
+        assert published == [], "nothing the database did not keep is pushed"
+        assert 1 not in r._last_written_value, (
+            "a stamp that never landed must not read as written, or the retry "
+            "would be skipped as unchanged"
+        )
+        assert r._lock_retry == {1}
+
+    @pytest.mark.asyncio
+    async def test_the_retry_rides_the_next_flush_even_if_the_event_is_quiet(
+        self, monkeypatch
+    ):
+        """The unstamped price is already in `futures_outcomes`. Waiting for the
+        event to tick again would strand it on exactly the quiet markets."""
+        event, market = _event_and_market()
+        session = _LockedRowSession([(market, event)], [], {"polymarket": {}})
+        r, published = _one_event_refresher(monkeypatch, session)
+        await r.refresh([1])
+
+        session.locked = False  # the other transaction committed
+        session._selects = 0  # a fresh flush opens a fresh session
+        # The next flush's batch names only OTHER events — and inside the 5s
+        # throttle, which the retry must not have to wait out.
+        stats = await r.refresh([])
+
+        assert stats["stamped"] == 1, stats
+        assert [f["event_id"] for f in published] == [1]
+        assert r._lock_retry == set()
+
+    @pytest.mark.asyncio
+    async def test_the_timeout_is_set_before_the_first_stamp(self, monkeypatch):
+        from sqlalchemy.sql.dml import Update
+
+        from app.utils.repair_lock_budget import SET_LOCK_TIMEOUT_SQL
+
+        event, market = _event_and_market()
+        session = _LockedRowSession([(market, event)], [], {"polymarket": {}})
+        r, _ = _one_event_refresher(monkeypatch, session)
+        await r.refresh([1])
+
+        kinds = [
+            "set" if stmt is SET_LOCK_TIMEOUT_SQL
+            else "update" if isinstance(stmt, Update) else "other"
+            for stmt, _ in session.statements
+        ]
+        assert "set" in kinds and kinds.index("set") < kinds.index("update"), kinds
+        (params,) = [a[0] for s, a in session.statements if s is SET_LOCK_TIMEOUT_SQL]
+        assert params == {"ms": "500ms"}
+
+    @pytest.mark.asyncio
+    async def test_disabled_sets_nothing_and_a_real_error_still_counts(
+        self, monkeypatch
+    ):
+        """`stamp_lock_timeout_ms=None` is the pre-tail behaviour the deadlock
+        rig still exercises. And the lock branch is narrow: any other failure is
+        still an error with a traceback (gotcha #36's shape one module over)."""
+        from app.utils.repair_lock_budget import SET_LOCK_TIMEOUT_SQL
+
+        class _Boom(Exception):
+            sqlstate = "40P01"  # deadlock_detected: not a lock timeout
+
+        event, market = _event_and_market()
+        session = _LockedRowSession([(market, event)], [], {"polymarket": {}})
+
+        async def _raise_boom(statement, *a, **k):
+            from sqlalchemy.sql.dml import Update
+
+            session.statements.append((statement, a))
+            if isinstance(statement, Update):
+                raise _Boom("deadlock detected")
+            return await _RecordingSession.execute(session, statement, *a, **k)
+
+        session.execute = _raise_boom
+        r, _ = _one_event_refresher(
+            monkeypatch, session, stamp_lock_timeout_ms=None
+        )
+        stats = await r.refresh([1])
+
+        assert not [s for s, _ in session.statements if s is SET_LOCK_TIMEOUT_SQL]
+        assert stats["errors"] == 1 and stats["lock_skipped"] == 0
+        assert r._lock_retry == set()
+
+
+class TestAQueuedRetrySurvivesAFailedBatch:
+    """Codex review of #8490 (P1 #2): `refresh()` cleared the retry set before
+    `_refresh_batch` ran, so one transient batch failure silently dropped the
+    stamps a row lock had deferred, and nothing re-queued them."""
+
+    @pytest.mark.asyncio
+    async def test_failure_then_success_without_another_venue_tick(self):
+        r = LiveBlendRefresher("polymarket")
+        r._lock_retry = {1}
+        calls = []
+
+        async def _flaky(event_ids, now):
+            calls.append(sorted(event_ids))
+            # What the real batch does before anything can fail.
+            for eid in event_ids:
+                r._last_refresh_at[eid] = now
+            if len(calls) == 1:
+                raise RuntimeError("connection reset")
+
+        r._refresh_batch = _flaky
+
+        await r.refresh([])  # quiet flush: the batch names nothing
+        assert r.stats["errors"] == 1
+        assert r._lock_retry == {1}, "the deferred stamp was dropped by a failure"
+        assert 1 not in r._last_refresh_at, "the throttle would suppress the retry"
+
+        await r.refresh([])  # next quiet flush, still inside the 5s throttle
+        assert calls == [[1], [1]]
+        assert r._lock_retry == set()
+
+    @pytest.mark.asyncio
+    async def test_an_ordinary_event_in_a_failed_batch_keeps_the_old_contract(self):
+        """Only lock-deferred work is re-queued. Re-queuing every event of a
+        failed batch would reopen a connection every 2s for as long as the
+        failure lasts, which is the cost `_refresh_batch`'s throttle-first
+        stamp exists to avoid."""
+        r = LiveBlendRefresher("polymarket")
+
+        async def _fail(event_ids, now):
+            raise RuntimeError("boom")
+
+        r._refresh_batch = _fail
+        await r.refresh([7])
+        assert r._lock_retry == set()
+
+    @pytest.mark.asyncio
+    async def test_refresh_pending_is_free_when_nothing_is_queued(self):
+        r = LiveBlendRefresher("polymarket")
+
+        async def _must_not_run(event_ids, now):
+            raise AssertionError("opened a batch with nothing queued")
+
+        r._refresh_batch = _must_not_run
+        await r.refresh_pending()
+        assert r.stats["considered"] == 0
+
+
+class TestAFailedCommitLeavesNothingMarkedWritten:
+    """Codex review of #8490 at b4bd9e96b8 (P1): write bookkeeping was set
+    when the savepoint released, BEFORE the outer commit. A failed commit left
+    `_should_write` believing the price was stored, so the quiet retry of a
+    lock-deferred event skipped it as unchanged and consumed the retry for good
+    (Codex's fault injection: 1 UPDATE, 0 frames, retry gone). Here the real
+    `_refresh_batch`, savepoint, `_should_write` and `_maybe_snapshot` run; only
+    the COMMIT fails, once."""
+
+    @pytest.mark.asyncio
+    async def test_the_quiet_retry_after_a_failed_commit_really_restamps(
+        self, monkeypatch
+    ):
+        from contextlib import asynccontextmanager
+
+        import app.tasks.live_blend_refresh as lbr
+
+        event, market = _event_and_market()
+        session = _LockedRowSession(
+            [(market, event)], [], {"polymarket": {}}, locked=False
+        )
+        r, published = _one_event_refresher(monkeypatch, session)
+        from types import SimpleNamespace
+
+        monkeypatch.setattr(
+            "app.utils.live_blend.compute_source_home_probability",
+            lambda group, home, away: SimpleNamespace(
+                home_probability=0.9, away_probability=None,
+                draw_probability=None, eligibility=None, market=market,
+                outcome=SimpleNamespace(name="Phillies"), yes_probability=0.9,
+            ),
+        )
+        snapshots = []
+
+        async def _record_snapshot(session, **kw):
+            snapshots.append(kw)
+            return object(), True
+
+        monkeypatch.setattr(
+            "app.tasks.snapshots._create_or_update_win_prob_snapshot",
+            _record_snapshot,
+        )
+        commits = {"n": 0}
+
+        @asynccontextmanager
+        async def _commit_fails_once():
+            commits["n"] += 1
+            session._selects = 0
+            yield session
+            if commits["n"] == 1:
+                raise RuntimeError("COMMIT failed after the savepoint released")
+
+        monkeypatch.setattr("app.tasks.base.get_task_session", _commit_fails_once)
+        clock = {"t": 1000.0}
+        monkeypatch.setattr(lbr.time, "monotonic", lambda: clock["t"])
+
+        r._lock_retry = {1}
+        await r.refresh_pending()
+
+        assert len(session.updates) == 1 and len(snapshots) == 1, "rig: stamp ran"
+        assert published == [], "a rolled-back stamp must not be pushed"
+        assert r._last_written_value == {}, "an uncommitted stamp reads as written"
+        assert r._last_write_at == {}
+        assert r.stats["stamped"] == 0
+        assert 1 not in r._last_snapshot_at, "the chart point never committed"
+        assert r._lock_retry == {1}
+
+        clock["t"] += 2.0  # the next flush, inside every throttle window
+        await r.refresh_pending()
+
+        assert len(session.updates) == 2, "the retry was skipped as unchanged"
+        assert [f["event_id"] for f in published] == [1]
+        assert len(snapshots) == 2, "the chart point was not re-attempted"
+        assert r._last_written_value == {1: 0.9}
+        assert r._last_snapshot_at == {1: 1002.0}
+        assert r.stats["stamped"] == 1
+        assert r._lock_retry == set()

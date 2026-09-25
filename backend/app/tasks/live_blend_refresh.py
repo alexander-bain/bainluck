@@ -58,6 +58,7 @@ must not wipe the pass).
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import math
 import time
@@ -97,6 +98,19 @@ DEFAULT_SNAPSHOT_INTERVAL_S = 25.0
 #: between its endpoints. 60s is Alex's stated bar and bounds the cost at one row
 #: per minute per source per live event.
 DEFAULT_SNAPSHOT_MAX_GAP_S = 60.0
+
+#: #837 tail — the longest one event's stamp may QUEUE behind another
+#: transaction's lock on its `events` row before it gives up and retries on the
+#: next flush. Production 2026-09-24 23:16:09–23:16:20Z: the Polymarket arm's
+#: stamp of one game waited 10.6s on a row a worker-realtime transaction held,
+#: and because a batch is one transaction inside a serial flush loop, every
+#: OTHER game's price froze with it — Brewers @ Phillies moved on the venue at
+#: 23:16:12.452 and reached the page at 23:16:24.2. In that 32-minute capture the
+#: arm waited >1s 34 times (17 of them ≥5s, 240s in all). Under the server's 1s
+#: `deadlock_timeout` on purpose: a stamp that has stopped waiting cannot be the
+#: party a deadlock is detected on, and cannot be the convoy the sibling arm
+#: queues behind.
+DEFAULT_STAMP_LOCK_TIMEOUT_MS = 500
 
 
 def atomic_stamp_expression(
@@ -206,6 +220,7 @@ class LiveBlendRefresher:
         unchanged_restamp_interval_s: float = UNCHANGED_RESTAMP_INTERVAL_S,
         snapshot_interval_s: float = DEFAULT_SNAPSHOT_INTERVAL_S,
         snapshot_max_gap_s: float = DEFAULT_SNAPSHOT_MAX_GAP_S,
+        stamp_lock_timeout_ms: Optional[int] = DEFAULT_STAMP_LOCK_TIMEOUT_MS,
     ) -> None:
         self.source = source
         self.min_refresh_interval_s = min_refresh_interval_s
@@ -213,6 +228,14 @@ class LiveBlendRefresher:
         self.unchanged_restamp_interval_s = unchanged_restamp_interval_s
         self.snapshot_interval_s = snapshot_interval_s
         self.snapshot_max_gap_s = snapshot_max_gap_s
+        #: None or 0 waits as long as Postgres lets it (the pre-#837-tail
+        #: behaviour, kept reachable for the deadlock-containment rig).
+        self.stamp_lock_timeout_ms = stamp_lock_timeout_ms
+        #: Events whose stamp gave up on a lock. Carried into the NEXT refresh
+        #: whatever that flush's batch holds: the price that was not stamped is
+        #: already in `futures_outcomes`, so waiting for the event to tick again
+        #: would strand it on a quiet market.
+        self._lock_retry: set[int] = set()
         self._last_refresh_at: dict[int, float] = {}
         self._last_write_at: dict[int, float] = {}
         self._last_written_value: dict[int, float] = {}
@@ -232,6 +255,9 @@ class LiveBlendRefresher:
             # like a quiet market (gotcha #53).
             "published": 0,
             "publish_errors": 0,
+            # #837 tail — stamps that stopped waiting on another transaction's
+            # row lock and were re-queued. Not an error: the retry is the path.
+            "lock_skipped": 0,
         }
         #: Lazily-built async Redis client, reused for the life of this
         #: refresher. Built on first publish rather than in __init__ so a
@@ -272,9 +298,13 @@ class LiveBlendRefresher:
     async def refresh(self, event_ids: Iterable[int]) -> dict[str, int]:
         """Recompute and stamp the blend for these events. Never raises."""
         now = time.monotonic()
-        due = [eid for eid in set(event_ids) if self._due(eid, now)]
+        retry = set(self._lock_retry)
+        wanted = set(event_ids) | retry
+        due = [eid for eid in wanted if self._due(eid, now)]
+        # A queued retry leaves the set only when a batch actually takes it.
+        self._lock_retry = retry.difference(due)
         self.stats["considered"] += len(due)
-        skipped = len(set(event_ids)) - len(due)
+        skipped = len(wanted) - len(due)
         if skipped > 0:
             self.stats["throttled"] += skipped
         if not due:
@@ -288,7 +318,27 @@ class LiveBlendRefresher:
                 "live_blend_refresh[%s]: batch failed for %d events",
                 self.source, len(due),
             )
+            # #837 tail — a failed batch must not cost the stamps it was
+            # carrying for a row lock: they are owed whether or not the venue
+            # ticks again. Re-queued due at once (`_refresh_batch` stamped the
+            # throttle before it failed). Only the retries: an ordinary batch
+            # event keeps the existing contract and waits for its next price.
+            for event_id in retry.intersection(due):
+                self._lock_retry.add(event_id)
+                self._last_refresh_at.pop(event_id, None)
         return self.stats
+
+    async def refresh_pending(self) -> dict[str, int]:
+        """#837 tail — stamp only the lock-deferred events. Never raises.
+
+        For the socket's flush when it has no new prices to write: `refresh`
+        is otherwise only reached after a price write, and a deferred event on a
+        quiet market would wait for a tick that may not come. Returns at once,
+        without opening a session, when nothing is queued.
+        """
+        if not self._lock_retry:
+            return self.stats
+        return await self.refresh(())
 
     async def _refresh_batch(self, event_ids: list[int], now: float) -> None:
         from datetime import datetime, timezone
@@ -305,6 +355,9 @@ class LiveBlendRefresher:
             MarketOutcomes, compute_source_home_probability,
         )
         from app.utils.live_push import build_frame
+        from app.utils.repair_lock_budget import (
+            SET_LOCK_TIMEOUT_SQL, is_lock_timeout, lock_timeout_value,
+        )
 
         # live/034 S1 — frames are COLLECTED here and published after the
         # session context exits cleanly, never inside the loop. Publishing
@@ -312,6 +365,13 @@ class LiveBlendRefresher:
         # same batch could roll back, and an un-take-back-able push of a value
         # the database never kept is worse than a push that never happened.
         pending: list[dict] = []
+        # #837 tail (Codex review of #8490) — and for the same reason the
+        # write bookkeeping is COLLECTED and applied only after the commit. A
+        # released savepoint is not a committed stamp: recorded there, a failed
+        # commit left `_should_write` believing the price was stored, so the
+        # retry of a lock-deferred event skipped it as unchanged and the price
+        # was lost for good.
+        written: dict[int, float] = {}
 
         # Stamp the throttle for EVERY event we are about to attempt, before any
         # of them can fail to resolve. Stamping per-resolved-event instead would
@@ -322,7 +382,10 @@ class LiveBlendRefresher:
         for event_id in event_ids:
             self._last_refresh_at[event_id] = now
 
-        async with get_task_session() as session:
+        async with (
+            self._snapshot_slots_follow_the_commit(event_ids),
+            get_task_session() as session,
+        ):
             market_rows = (
                 await session.execute(
                     select(FuturesMarket, Event)
@@ -379,6 +442,16 @@ class LiveBlendRefresher:
             # headlines silently held back until the next price. Ascending id in
             # BOTH arms removes the cycle between them; the savepoint confines any
             # other failure (a third writer, a bad row) to the one event it hit.
+            #
+            # #837 tail — and no event waits on a lock long enough to hold the
+            # rest back (see `DEFAULT_STAMP_LOCK_TIMEOUT_MS`). Transaction-local,
+            # set here rather than at session open so the joins above keep their
+            # ordinary waits; a timed-out stamp rolls back only its savepoint.
+            if self.stamp_lock_timeout_ms:
+                await session.execute(
+                    SET_LOCK_TIMEOUT_SQL,
+                    {"ms": lock_timeout_value(self.stamp_lock_timeout_ms)},
+                )
             for event_id in sorted(grouped):
                 event, group = grouped[event_id]
                 try:
@@ -461,12 +534,10 @@ class LiveBlendRefresher:
                                 self.source, event_id,
                             )
 
-                    # Recorded only once the savepoint has released: a stamp
-                    # that rolled back must not read as written, or
-                    # `_should_write` would skip re-sending the same price.
-                    self._last_write_at[event_id] = now
-                    self._last_written_value[event_id] = value
-                    self.stats["stamped"] += 1
+                    # Noted only once the savepoint has released (a stamp that
+                    # rolled back must not read as written), and applied only
+                    # once the transaction commits — see `written` above.
+                    written[event_id] = value
 
                     # The AGGREGATE, computed off the sources JSONB the server
                     # RETURNED — the number the hero renders, not this one
@@ -506,7 +577,21 @@ class LiveBlendRefresher:
                             status=event.status,
                         )
                     )
-                except Exception:
+                except Exception as exc:
+                    if is_lock_timeout(exc):
+                        # Another transaction holds this row. Its price is
+                        # already stored; stamp it on the next flush, due at
+                        # once, instead of freezing every other event's stamp
+                        # behind a lock this arm does not control.
+                        self.stats["lock_skipped"] += 1
+                        self._lock_retry.add(event_id)
+                        self._last_refresh_at.pop(event_id, None)
+                        logger.info(
+                            "live_blend_refresh[%s]: event %s row locked >%sms, "
+                            "re-queued for the next flush",
+                            self.source, event_id, self.stamp_lock_timeout_ms,
+                        )
+                        continue
                     self.stats["errors"] += 1
                     logger.exception(
                         "live_blend_refresh[%s]: event %s failed",
@@ -514,8 +599,34 @@ class LiveBlendRefresher:
                     )
 
         # Session closed and committed — only now is the pushed number a number
-        # the database actually kept.
+        # the database actually kept, and only now is it "written".
+        for event_id, value in written.items():
+            self._last_write_at[event_id] = now
+            self._last_written_value[event_id] = value
+        self.stats["stamped"] += len(written)
         await self._publish(pending)
+
+    @contextlib.asynccontextmanager
+    async def _snapshot_slots_follow_the_commit(self, event_ids: list[int]):
+        """Undo this batch's chart-point throttle slots if it does not commit.
+
+        `_maybe_snapshot` takes its slot BEFORE writing, deliberately: a
+        snapshot that fails inside its own savepoint must not retry every two
+        seconds. But a transaction that never commits wrote no chart point at
+        all, and a slot kept for it would hold the line flat for up to
+        `snapshot_interval_s` after the retry stamps the number. Entered before
+        the session and exited after it, so a failing COMMIT reaches it.
+        """
+        prior = {eid: self._last_snapshot_at.get(eid) for eid in event_ids}
+        try:
+            yield
+        except BaseException:
+            for event_id, at in prior.items():
+                if at is None:
+                    self._last_snapshot_at.pop(event_id, None)
+                else:
+                    self._last_snapshot_at[event_id] = at
+            raise
 
     async def _publish(self, frames: list[dict]) -> None:
         """Fan the committed frames out to any SSE subscribers. Never raises.

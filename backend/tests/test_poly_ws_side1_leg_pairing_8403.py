@@ -96,6 +96,10 @@ class _NoopRefresher:
     async def refresh(self, event_ids):
         return None
 
+    async def refresh_pending(self):
+        # #837 tail: the quiet-flush path; a fake never defers a stamp.
+        return None
+
 
 async def _run(monkeypatch, legs, frames):
     import app.tasks.base as task_base

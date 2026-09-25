@@ -391,6 +391,10 @@ class _RecordingRefresher:
         _RecordingRefresher.refreshed.append(set(event_ids))
         return None
 
+    async def refresh_pending(self):
+        # #837 tail: the quiet-flush path; a fake never defers a stamp.
+        return None
+
 
 def _production_batches():
     """The slate exactly as production served it for Wolfsberger AC vs LASK.

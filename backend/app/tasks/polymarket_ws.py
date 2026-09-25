@@ -380,7 +380,7 @@ def _log_stats_line(stats: dict, ws_stats: dict, blend: dict) -> None:
     logger.info(
         "Polymarket WS: %d prices, %d trades, %d resolutions, %d errors, "
         "%d msgs | coverage shards=%d/%d served=%d/%d wire=%d by_shard=%s "
-        "| blend stamped=%d no_reading=%d throttled=%d errors=%d",
+        "| blend stamped=%d no_reading=%d throttled=%d errors=%d lock_skipped=%d",
         stats["price_updates"], stats["trade_updates"],
         stats["resolutions"], stats["errors"],
         ws_stats.get("messages", 0),
@@ -391,6 +391,8 @@ def _log_stats_line(stats: dict, ws_stats: dict, blend: dict) -> None:
         _format_by_shard(ws_stats),
         blend["stamped"], blend["no_reading"],
         blend["throttled"], blend["errors"],
+        # #837 tail: stamps re-queued rather than left waiting on a row lock.
+        blend.get("lock_skipped", 0),
     )
 
 
@@ -743,9 +745,14 @@ async def _run_polymarket_ws_consumer():
 
     async def flush_prices():
         async with buffer_lock:
-            if not price_buffer:
-                return
             batch = dict(price_buffer)
+        if not batch:
+            # #837 tail — a flush with no new prices still owes the stamps a row
+            # lock deferred: those prices are already stored, so waiting for the
+            # next venue tick would strand them on a quiet market. Free when
+            # nothing is queued (no session is opened).
+            await blend_refresher.refresh_pending()
+            return
         # Q491 repair 2 (CERT-659 BLOCK) — THE BUFFER IS DELIBERATELY *NOT*
         # CLEARED HERE. Twin of the Kalshi socket: draining first and putting
         # the batch back on failure only covers the failures you thought to

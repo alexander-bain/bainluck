@@ -271,3 +271,71 @@ class TestPolymarketAssetIdsAreActuallyWritten:
             event_id=None, matchup_title=None, clob_token_ids=["7"],
         )
         assert meta == {"clob_token_ids": ["7"]}
+
+
+def _exec_flush(module, consumer_name: str, namespace: dict):
+    """The consumer's REAL `flush_prices` body, compiled against `namespace`.
+
+    The closure cannot be reached without a venue socket and a database, but its
+    quiet-flush branch touches only three names, so it can run for real. A name
+    the branch should not reach is simply absent: touching it is a NameError.
+    """
+    fn = _flush_function(module, consumer_name)
+    code = compile(
+        ast.fix_missing_locations(ast.Module(body=[fn], type_ignores=[])),
+        inspect.getsourcefile(module), "exec",
+    )
+    exec(code, namespace)
+    return namespace["flush_prices"]
+
+
+class TestAQuietFlushServicesLockDeferredStamps:
+    """Codex review of #8490 (P1 #1), reproduced against the committed bodies:
+    both sockets returned from `flush_prices()` on an empty buffer BEFORE the
+    refresher was reached, so an event whose stamp a row lock deferred waited
+    for another venue tick — on a quiet market, indefinitely. Executed, not
+    parsed, because the defect was an early return a structural check can miss.
+    """
+
+    def test_a_pending_retry_is_stamped_on_an_empty_flush(self):
+        import asyncio
+
+        from app.tasks.live_blend_refresh import LiveBlendRefresher
+
+        for module, consumer in CONSUMERS:
+            refresher = LiveBlendRefresher("kalshi")
+            refresher._lock_retry = {15318131}
+            seen = []
+
+            async def _batch(event_ids, now, _seen=seen):
+                _seen.append(sorted(event_ids))
+
+            refresher._refresh_batch = _batch
+            flush = _exec_flush(module, consumer, {
+                "buffer_lock": asyncio.Lock(),
+                "price_buffer": {},
+                "blend_refresher": refresher,
+            })
+            asyncio.run(flush())
+            assert seen == [[15318131]], f"{consumer}: quiet flush skipped the retry"
+            assert refresher._lock_retry == set(), consumer
+
+    def test_an_empty_flush_with_nothing_queued_does_no_work(self):
+        import asyncio
+
+        from app.tasks.live_blend_refresh import LiveBlendRefresher
+
+        for module, consumer in CONSUMERS:
+            refresher = LiveBlendRefresher("kalshi")
+
+            async def _must_not_run(event_ids, now):
+                raise AssertionError(f"{consumer}: opened a batch for nothing")
+
+            refresher._refresh_batch = _must_not_run
+            flush = _exec_flush(module, consumer, {
+                "buffer_lock": asyncio.Lock(),
+                "price_buffer": {},
+                "blend_refresher": refresher,
+            })
+            asyncio.run(flush())
+            assert refresher.stats["considered"] == 0, consumer
