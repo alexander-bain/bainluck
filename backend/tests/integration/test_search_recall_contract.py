@@ -217,6 +217,19 @@ _FUTURES_SEEDS = [
      ["Mayank Sharma", "Luis Klaus"]),
     ("kalshi-rockies-yankees-f5", "Colorado Rockies vs. New York Yankees - First 5 Innings Winner",
      ["New York Yankees", "Colorado Rockies"]),
+    # ---- #8689: a fragment term matches at the START of a word. -------------
+    #
+    # `us open` reaches all three through the name arm's substring ILIKE: the
+    # real US Open, "Ven*us*" and "*Aus*tralian". `us` has no trigram, so it never
+    # word-votes (LAT-P037), and it is a stopword, so `ts_rank_cd` ties every
+    # name carrying "Open". Transcribed from production 2026-09-25 19:12Z, where
+    # the Chengdu row held slot 2 and the Australian Open slot 3 of `us open`.
+    # Outcomes carry neither "open" nor both terms, so only the NAME arm can
+    # admit these rows — the arm the fix changes.
+    ("kalshi-usopen-mens-2027", "2027 US Open Men's Singles Winner", ["Carlos Alcaraz"]),
+    ("polymarket-chengdu-dbl-8689", "Chengdu Open (Doubles): Peers/Venus vs Johnson/Zielinski",
+     ["Peers/Venus", "Johnson/Zielinski"]),
+    ("kalshi-ausopen-mens-8689", "Australian Open Men's Singles Winner", ["Jannik Sinner"]),
 ]
 
 # LAT-P053 Item 5 — the seeded futures corpus, carried FIVE times and ruled into
@@ -1047,6 +1060,26 @@ async def test_multi_term_short_token_still_filters_after_lat_p010(search):
     assert "US Recession in 2026?" in names, (
         f"multi-term recall broke: got {names!r}"
     )
+
+
+async def test_a_fragment_term_matches_a_word_start_not_an_infix(search):
+    """#8689: `us open` must answer with the US Open, not with "Venus" and "Aus".
+
+    A no-trigram term keeps its substring ILIKE (LAT-P037: it cannot word-vote)
+    but must now also start a word. `re` -> "Recession" above is the prefix case
+    this has to keep; this is the infix case it exists to drop.
+    """
+    names = _futures_names(await search("us open"))
+    assert "2027 US Open Men's Singles Winner" in names, (
+        f"the fragment rule took the real US Open with the noise: got {names!r}"
+    )
+    for infix in (
+        "Chengdu Open (Doubles): Peers/Venus vs Johnson/Zielinski",
+        "Australian Open Men's Singles Winner",
+    ):
+        assert infix not in names, (
+            f"`us` matched inside a word again ({infix!r}): got {names!r}"
+        )
 
 
 # --------------------------------------------------------------------------
