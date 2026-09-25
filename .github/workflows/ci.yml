@@ -1181,6 +1181,22 @@ jobs:
             exit 1
           fi
 
+      - name: Unpriced-opening statement contract (real Postgres)
+        # #8612. `update_max_movement`'s A10 lists legs whose stored opening was
+        # captured off a book that was never a price (a 16c/96c spread read as
+        # 94%), so Discover stops saying "down 86.3 points since Aug 19". The
+        # one-second lateral at `opening_captured_at`, the
+        # `NOT coalesce(priced, false)` arm a one-sided book turns NULL, and the
+        # `id % :slices` scope are properties of real rows. Same skip detection.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_unpriced_opening_pg_8612.py \
+            -v -rs 2>&1 | tee /tmp/unpricedopening.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/unpricedopening.txt; then
+            echo "::error::unpriced-opening statement contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#3026 restore round-trip (real Postgres)"
         # CERT-932. `repair_3026_question_events.py` deletes events, and D51
         # authorises that UNATTENDED only because a one-command restore ships
