@@ -803,12 +803,34 @@ struct EventDetailView: View {
     /// withholds it. One spelling for the two places that can print it: the
     /// hero before the off, Game Info while live (#8320).
     private func projectionText(_ event: EventDetail, hasScore: Bool) -> String? {
-        guard let phs = event.currentOdds?.projectedHomeScore,
-              let pas = event.currentOdds?.projectedAwayScore,
-              EventDetailView.showsProjection(
-                status: event.status, commenceTime: event.commenceTime?.asDate,
-                hasScore: hasScore) else { return nil }
-        let vocab = SportVocab.forSport(event.sport)
+        EventDetailView.projectionText(
+            sport: event.sport, status: event.status,
+            commenceTime: event.commenceTime?.asDate,
+            projectedHome: event.currentOdds?.projectedHomeScore,
+            projectedAway: event.currentOdds?.projectedAwayScore,
+            hasScore: hasScore)
+    }
+
+    /// #8617 — the projected final is withheld where the sportsbooks' spread is
+    /// not a margin. The served pair is solved from each sportsbook's spread
+    /// point and total, so its difference IS the spread point; in baseball that
+    /// is the ±1.5 run line whatever the matchup, so every MLB hero printed the
+    /// favourite winning by a run and a half — for a 55% coin flip on
+    /// `/events/15318166`. Same flag as the
+    /// Score Differential chart (`SportVocab.sportsbookSpreadIsAMargin`), and ux
+    /// ruled withhold rather than print the total: a total alone does not say
+    /// who wins, and the hero still carries the percentages.
+    static func projectionText(
+        sport: String?, status: String?, commenceTime: Date?,
+        projectedHome: Double?, projectedAway: Double?, hasScore: Bool,
+        now: Date = Date()
+    ) -> String? {
+        let vocab = SportVocab.forSport(sport)
+        guard vocab.sportsbookSpreadIsAMargin,
+              let phs = projectedHome, let pas = projectedAway,
+              showsProjection(
+                status: status, commenceTime: commenceTime,
+                hasScore: hasScore, now: now) else { return nil }
         let pair = "\(Int(pas.rounded()))-\(Int(phs.rounded()))"
         return "Proj. \(vocab.scoreboardCountsTheUnit ? pair : vocab.withUnit(pair))"
     }
