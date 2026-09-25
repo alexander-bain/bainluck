@@ -63,6 +63,18 @@ class TestTheSurpriseScoreRefusesAListedLeg:
         assert not {"major_surprise", "moderate_surprise"} & set(refused.reasons)
         assert control.score - refused.score == 10
 
+    def test_the_production_shape_one_yes_leg_listing_its_own_id(self):
+        # CERT-3476 follow-up: production stores ONE affirmative leg for this
+        # market (read 2026-09-25 15:50Z: 220051242 "Yes" 0.94 -> 0.0765) and
+        # the metadata lists that one id. Refusing it alone must remove the
+        # surprise; the two-leg board above never proved a lone leg suffices.
+        board = [_leg(KANYE_YES, "Yes", 0.94, 0.0765)]
+        control = _highlight(board)
+        refused = _highlight(board, frozenset({KANYE_YES}))
+        assert "major_surprise" in control.reasons
+        assert not {"major_surprise", "moderate_surprise"} & set(refused.reasons)
+        assert control.score - refused.score == 10
+
     def test_an_unlisted_leg_on_the_same_board_still_scores(self):
         # Refusing one leg must not silence a real move beside it.
         board = [_leg(KANYE_YES, "Yes", 0.94, 0.077), _leg(7, "Other", 0.20, 0.35)]
