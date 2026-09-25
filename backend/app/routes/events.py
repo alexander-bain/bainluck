@@ -2078,13 +2078,21 @@ def _demote_teamless_sport(markets: list, team_categories: frozenset | None) -> 
     if not team_categories or len(markets) < 2:
         return markets
 
-    def _teamless(m) -> bool:
-        cat = (getattr(m, "llm_sport_category", None) or "").strip().lower()
-        return cat in _SEARCH_SPORT_LLM_CATEGORIES and cat not in team_categories
-
-    keep = [m for m in markets if not _teamless(m)]
-    teamless = [m for m in markets if _teamless(m)]
+    keep = [m for m in markets if not _is_teamless_sport(m, team_categories)]
+    teamless = [m for m in markets if _is_teamless_sport(m, team_categories)]
     return keep + teamless if teamless else markets
+
+
+def _is_teamless_sport(m, team_categories: frozenset | None) -> bool:
+    """#7355: is this market from a sport none of the query's matched teams play?
+
+    False whenever the evidence is disarmed (None), so every caller keeps its
+    pre-#7355 behaviour on a query with no usable team recall.
+    """
+    if not team_categories:
+        return False
+    cat = (getattr(m, "llm_sport_category", None) or "").strip().lower()
+    return cat in _SEARCH_SPORT_LLM_CATEGORIES and cat not in team_categories
 
 
 # Award-narrowing scope tokens. A market whose NAME carries one of these but the
@@ -8819,15 +8827,30 @@ async def search_events(
     # One refill, never a loop, and never at the cost of a late answer: if the
     # deadline is spent the short page ships as-is. A timeout here leaves the
     # already-good page alone rather than degrading the whole stage.
+    #
+    # #7355 r2: a row `_demote_teamless_sport` sank does not fill the page either.
+    # `kings` on production 2026-09-25: the window was twenty Honor of Kings rows
+    # (their names repeat "king", so they out-rank every club market on
+    # `ts_rank_cd`), the demotion had nothing to sink them BELOW, and the card
+    # was all esports while 17 Kings hockey and 4 Kings basketball markets sat at
+    # ranks 21-60. So the collapse test counts ANSWER rows — rows that are not
+    # teamless — and the refilled page is re-partitioned so the refill's club
+    # rows land above the window's sunk ones. With the evidence disarmed every
+    # row is an answer row, and this gate is byte-for-byte the old one.
+    _answer_rows = sum(
+        1 for m in deduped_futures
+        if not _is_teamless_sport(m, _team_sport_categories)
+    )
     if (
-        len(deduped_futures) < _SEARCH_FUTURES_PAGE
+        _answer_rows < _SEARCH_FUTURES_PAGE
         and len(futures_markets_raw) >= _SEARCH_FUTURES_WINDOW
         and time.monotonic() < _deadline
     ):
         logger.warning(
-            "search futures bucket COLLAPSED for %r — %d rows deduped to %d; "
-            "refilling from rank %d",
-            q, len(futures_markets_raw), len(deduped_futures), _SEARCH_FUTURES_WINDOW,
+            "search futures bucket COLLAPSED for %r — %d rows deduped to %d "
+            "(%d answer rows); refilling from rank %d",
+            q, len(futures_markets_raw), len(deduped_futures), _answer_rows,
+            _SEARCH_FUTURES_WINDOW,
         )
         await _apply_search_statement_timeout(db, _deadline)
         # A SAVEPOINT, for the same reason the headline lane below has one
@@ -8906,8 +8929,16 @@ async def search_events(
             ):
                 continue
             deduped_futures.append(m)
-            if len(deduped_futures) >= _SEARCH_FUTURES_PAGE:
+            if not _is_teamless_sport(m, _team_sport_categories):
+                _answer_rows += 1
+            if _answer_rows >= _SEARCH_FUTURES_PAGE:
                 break
+        # #7355 r2: window and refill were each partitioned on their own; one
+        # stable pass over the joined list puts every club row above every sunk
+        # row. A no-op when the evidence is disarmed or nothing was sunk.
+        deduped_futures = _demote_teamless_sport(
+            deduped_futures, _team_sport_categories
+        )
 
     # THE STAGE BOUNDARY, AND IT IS HERE BECAUSE THE OLD ONE MEASURED TWO LANES.
     #
