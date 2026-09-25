@@ -155,6 +155,12 @@ _DERIVATIVE_OUTCOME_RE = re.compile(
     r"|\brun ?line\b|\bpuck ?line\b"
     r"|\bnrfi\b|\byrfi\b"                         # "NRFI" alone, wearing the game's title
     r"|\bset \d+\b"                               # "Set 1 Winner", "Set 1 O/U 8.5"
+    # An esports container's book labels, worn as outcomes under the match
+    # winner's own "(BO3) - <tournament>" title (#8568): "Map 1 Winner",
+    # "Match Winner". Neither is ever a competitor. Measured over every open
+    # linked market (2026-09-25): 8 carry such an outcome, all esports
+    # containers; 5 were refuted already by a handicap/O/U sibling, 3 were not.
+    r"|\bmap \d+\b|\bmatch winner\b"
     r"|\btotal (?:sets|games|points|runs|goals|corners)\b"
     r"|\((?:\+|-)\d"                              # "Venezia FC (-1.5)"
     r"|\b\d+ ?- ?\d+\b"                           # exact score "2 - 2"
@@ -313,6 +319,68 @@ _PREFIX_DISQUALIFIERS = (
 )
 
 
+# A series format pinned to the matchup, followed by the tournament it is
+# played in: "Counter-Strike: Eternal Fire vs WBT (BO3) - Stake Ranked Episode
+# 5: Closed Qualifier Playoffs". See `_without_series_tournament`.
+_SERIES_TOURNAMENT_RE = re.compile(
+    r"^(?P<match>.*?\(BO\d+\))\s+-\s+(?P<tournament>.+)$", re.IGNORECASE
+)
+
+# What a tournament name may NOT contain. The module's own derivative
+# vocabulary, minus `_DERIVATIVE_SCOPE_RE`: a bare scope word is the right test
+# against a leading prefix and the wrong one against a tournament, which is
+# free to say "VCT Game Changers" or "Swiss Round 3". The ordinal-adjacent form
+# ("Map 1", "2nd Half", "1H") still refuses — it is the moneyline door's set, so
+# "Round 2" stays a whole match here exactly as it does there.
+_TOURNAMENT_DISQUALIFIERS = (
+    _SPREAD_RE,
+    _TOTAL_RE,
+    _PLAYER_PROP_RE,
+    _TEAM_PROP_RE,
+    _DERIVATIVE_OUTCOME_RE,
+    _WINNER_WORD_RE,
+    _MONEYLINE_WORD_RE,
+    _SEGMENT_SCOPED_MONEYLINE_RE,
+)
+
+
+def _without_series_tournament(stripped: str) -> Optional[str]:
+    """``stripped`` with a trailing "(BOn) - <tournament>" cut back to "(BOn)".
+
+    POLYMARKET TITLES EVERY ESPORTS MATCH WINNER THIS WAY (#8568), and the
+    " - " after the series format read as a trailing qualifier, so the market
+    classed "other", `admissible_as_blend_speaker` refused it, and the match
+    page said "No price yet" while the venue priced it. Measured over every
+    Polymarket name carrying a "(BOn)" tag in the ten days to 2026-09-25 (1,741
+    rows, nine games — Counter-Strike, LoL, Dota 2, Valorant, Rainbow Six …):
+    **every one** has the tournament tail and none is a bare "A vs B (BO3)", so
+    the whole family was mute — #8568 counted **0** esports events holding a
+    Polymarket win-prob snapshot in two days.
+
+    THE DISCRIMINATOR IS THE SERIES FORMAT, READ STRUCTURALLY. "(BO3)" states
+    how many maps the MATCH is played over — it is the match's own label, and
+    the venue's derivatives do not wear it: their titles are
+    "Counter-Strike: Eternal Fire vs WBT - Map 1 Winner", refused unchanged by
+    the " - " test because no series format precedes the dash. The tournament
+    after it may carry its own colon ("Closed Qualifier: Series #10") or its
+    own dash ("Asia Pacific League Asia - Stage 2"), which is why the cut is
+    made at the FIRST "(BOn) - " rather than at the last separator.
+
+    Returns ``stripped`` unchanged when there is no such tail, and None when the
+    tail names a derivative — a refusal, never a pass-through, so a venue that
+    writes "(BO3) - Map 1 Winner" gets today's answer and not a match price.
+    The Polymarket container that shares the winner's title (its outcomes are
+    "Map Handicap …", "O/U 2.5 Games") is refused by
+    `outcomes_refute_game_winner`, the door built for exactly that row (#5273).
+    """
+    series = _SERIES_TOURNAMENT_RE.match(stripped)
+    if not series:
+        return stripped
+    if any(p.search(series.group("tournament")) for p in _TOURNAMENT_DISQUALIFIERS):
+        return None
+    return series.group("match")
+
+
 def _matchup_behind_competition_prefix(stripped: str) -> bool:
     """True if ``stripped`` is a bare matchup wearing a competition PREFIX.
 
@@ -374,6 +442,9 @@ def _competition_prefix_tail(stripped: str) -> Optional[str]:
     disagreeing is the #1951 drift failure, so there is exactly one function
     that decides where the matchup starts and both callers use it.
     """
+    stripped = _without_series_tournament(stripped)
+    if stripped is None:
+        return None
     prefix, sep, tail = stripped.rpartition(":")
     if not sep:
         return None
