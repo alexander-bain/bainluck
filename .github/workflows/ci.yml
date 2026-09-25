@@ -1339,6 +1339,21 @@ jobs:
             exit 1
           fi
 
+      - name: "#8615 mark_resolved_futures closes a venue-graded one-winner board (real Postgres)"
+        # A one-winner board the venue had graded stayed open under a 2029
+        # backstop date (the venue now answers `markets: []`), so search served
+        # "Kevin Warsh >99%" as live. The subject reads `market_metadata->'shape'`
+        # with `->>`/`?` and screens on correlated EXISTS, which sqlite cannot
+        # host. One-column controls, including a fully graded ladder, stay open.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_mark_resolved_venue_winner_8615_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/mark_resolved_8615.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/mark_resolved_8615.txt; then
+            echo "::error::#8615 mark_resolved_futures gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#7035 the void fact retires the postponed fixture (real Postgres)"
         # CERT-3326's required repair, and the gate that answers the BLOCK.
         #

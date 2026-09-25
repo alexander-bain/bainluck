@@ -1056,14 +1056,31 @@ async def _mark_resolved_impl(now: Optional[datetime] = None):
     9/20). The root fix is in ``derive_resolution_window``; this is the belt for
     rows still carrying the old date, and for any future writer that repeats it.
     Unlinked markets and finished events are unchanged.
+
+    #8615 — A VENUE-GRADED WINNER ON A ONE-WINNER BOARD ENDS THE QUESTION. The
+    graders write ``is_winner`` per leg and never the market's ``status``; the
+    only Kalshi status writer needs the venue's nested legs to be all-terminal,
+    and ``all_terminal([])`` is False on purpose. So a board graded before
+    Kalshi purged its contracts (the event then answers ``markets: []``) stays
+    ``open`` under a far-future ``resolution_date`` and reads as live: "Who will
+    be confirmed as Fed chair? Kevin Warsh >99%", graded 7/15, served 9/25.
+    The second statement resolves an open market whose shape is a one-winner
+    board (``expected_winners`` 1, ``mutually_exclusive``, high confidence) and
+    which carries a leg the VENUE graded a winner. That is winner evidence, so
+    the stamp says ``proof_kind: winner`` and the count is its own key.
+    Why not "every stored leg is graded": ``KX10YRDIRHM-26SEP30H`` holds 25 of
+    25 stored rungs graded YES while Kalshi lists 6 more still trading — our
+    legs can be a subset of the venue's, so only exclusivity makes one winner
+    final. The #8586 event-graph screen applies to this statement too.
     """
     import json as _json
 
     from sqlalchemy import and_, cast, exists, func, literal, or_, update
     from sqlalchemy.dialects.postgresql import JSONB
 
-    from app.models import Event, FuturesMarket
+    from app.models import Event, FuturesMarket, FuturesOutcome
     from app.utils.resolved_write_gate import (
+        PROOF_WINNER,
         REASON_RESOLUTION_DATE_ELAPSED,
         gate_stamp,
     )
@@ -1076,6 +1093,9 @@ async def _mark_resolved_impl(now: Optional[datetime] = None):
         # the day they diverge should be visible without a code read.
         "marked_resolved_without_winner_proof": 0,
         "resolution_gate_reason": REASON_RESOLUTION_DATE_ELAPSED,
+        # #8615: resolved on a venue-graded winner (see docstring). Kept out of
+        # `marked_resolved` so the date population above still reads alone.
+        "marked_resolved_venue_winner": 0,
         "errors": [],
     }
 
@@ -1115,6 +1135,40 @@ async def _mark_resolved_impl(now: Optional[datetime] = None):
             await session.commit()
             stats["marked_resolved"] = result.rowcount
             stats["marked_resolved_without_winner_proof"] = result.rowcount
+
+            # #8615: a venue-graded winner on a one-winner board (docstring).
+            _shape = FuturesMarket.market_metadata["shape"]
+            _venue_winner = exists().where(
+                FuturesOutcome.market_id == FuturesMarket.id,
+                FuturesOutcome.is_winner.is_(True),
+                FuturesOutcome.resolution_source == "api_settlement",
+            )
+            _winner_stamp = gate_stamp(
+                task="mark_resolved_futures", proof_kind=PROOF_WINNER, at=now
+            )
+            won = await session.execute(
+                update(FuturesMarket)
+                .where(
+                    FuturesMarket.status == "open",
+                    _shape["expected_winners"].astext == "1",
+                    _shape["evidence"].has_key("mutually_exclusive:true"),
+                    _shape["confidence"].astext == "high",
+                    _venue_winner,
+                    ~exists().where(
+                        Event.id == FuturesMarket.event_id, _in_play_or_ahead
+                    ),
+                )
+                .values(
+                    status="resolved",
+                    **settled_values(FuturesMarket.settled_at),
+                    market_metadata=func.coalesce(
+                        FuturesMarket.market_metadata,
+                        cast(literal("{}"), JSONB),
+                    ).op("||")(cast(literal(_json.dumps(_winner_stamp)), JSONB)),
+                )
+            )
+            await session.commit()
+            stats["marked_resolved_venue_winner"] = won.rowcount
     except Exception as e:
         stats["errors"].append(f"Error: {str(e)}")
 
@@ -1123,6 +1177,11 @@ async def _mark_resolved_impl(now: Optional[datetime] = None):
         "recorded reason %r (no winner evidence available to this task)",
         stats["marked_resolved"],
         REASON_RESOLUTION_DATE_ELAPSED,
+    )
+    logger.info(
+        "mark_resolved_futures: marked %d one-winner markets as resolved on a "
+        "venue-graded winner (#8615)",
+        stats["marked_resolved_venue_winner"],
     )
     return stats
 

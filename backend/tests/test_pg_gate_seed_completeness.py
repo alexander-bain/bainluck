@@ -133,6 +133,10 @@ COVERED = (
     # and CASTs `market_metadata`; `events.status` + `commence_time` are the
     # only differences between each subject and its control, so both are named.
     "test_mark_resolved_spares_live_events_8586_pg.py",
+    # #8615. Same seed discipline as #8586, plus `futures_outcomes.is_winner`
+    # and `resolution_source` named on every leg — they are the evidence the
+    # statement reads, so a default would make the controls vacuous.
+    "test_mark_resolved_venue_winner_8615_pg.py",
     # #7035, CERT-3326's repair — the CONSUMER half of the gate above. Where
     # that one proves the capture reaches the fixture, this one runs the real
     # retirement arm over the fact it wrote and reads `events.status` back.
