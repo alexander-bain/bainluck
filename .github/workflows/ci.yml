@@ -3069,6 +3069,9 @@ jobs:
         # transaction; walked in join order they locked `events` rows in opposite
         # orders and Postgres killed one (5 deadlocks in 13 min, 2026-09-24), and
         # the abort discarded the whole batch. Only real row locks can show it.
+        # #837 tail adds two: a foreign transaction holding one game's row must
+        # not freeze the other games' stamps (500ms lock_timeout, retry next
+        # flush), plus its control with the timeout off.
         # Skip detection plus a count, as for #7617.
         run: |
           set -o pipefail
@@ -3078,8 +3081,8 @@ jobs:
             echo "::error::#837 stamp deadlock gate SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]2 passed," /tmp/deadlock837.txt || {
-            echo "::error::#837 stamp deadlock gate did not run both cases"
+          grep -qE "[^0-9]4 passed," /tmp/deadlock837.txt || {
+            echo "::error::#837 stamp gate did not run all four cases"
             exit 1
           }
 
