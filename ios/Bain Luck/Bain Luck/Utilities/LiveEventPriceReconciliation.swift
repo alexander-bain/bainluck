@@ -15,8 +15,26 @@ nonisolated enum LiveEventPriceReconciliation {
         return dates.max()
     }
 
-    static func shouldPreserve(_ frame: LiveStreamFrame?, over polled: EventDetail, delivering: Bool) -> Bool {
-        guard delivering, let frame, frame.eventId == polled.id,
+    /// Protect only a recognizable pre-game cache lease. Price clocks alone
+    /// cannot overrule a reschedule, an unknown lifecycle, or a changed start.
+    static func preservingLiveStatus(
+        _ frame: LiveStreamFrame?, current: EventDetail?, polled: EventDetail,
+        streamRecoverable: Bool, now: Date
+    ) -> EventDetail {
+        guard polled.status == "scheduled", current?.status == "live",
+              current?.id == polled.id, frame?.status == "live",
+              let oldStart = current?.commenceTime?.asDate,
+              let newStart = polled.commenceTime?.asDate,
+              oldStart == newStart, newStart <= now else { return polled }
+        var candidate = polled
+        candidate.status = "live"
+        // Changing status does not waive any source, price or clock guard.
+        return shouldPreserve(frame, over: candidate, streamRecoverable: streamRecoverable)
+            ? candidate : polled
+    }
+
+    static func shouldPreserve(_ frame: LiveStreamFrame?, over polled: EventDetail, streamRecoverable: Bool) -> Bool {
+        guard streamRecoverable, let frame, frame.eventId == polled.id,
               polled.status == "live",
               let p = frame.p, p.isFinite, (0...1).contains(p),
               let served = polled.currentOdds?.homeProbability, served.isFinite,
@@ -30,8 +48,8 @@ nonisolated enum LiveEventPriceReconciliation {
         return newest < pushedAt
     }
 
-    static func applying(_ frame: LiveStreamFrame?, to polled: EventDetail, delivering: Bool) -> EventDetail {
-        guard shouldPreserve(frame, over: polled, delivering: delivering),
+    static func applying(_ frame: LiveStreamFrame?, to polled: EventDetail, streamRecoverable: Bool) -> EventDetail {
+        guard shouldPreserve(frame, over: polled, streamRecoverable: streamRecoverable),
               let p = frame?.p, var odds = polled.currentOdds else { return polled }
         odds.homeProbability = p
         odds.awayProbability = 1 - p
