@@ -72,6 +72,7 @@ from app.utils.live_blend import (
     count_admissible_speakers,
     select_primary_market as _select_primary_market,
 )
+from app.utils.venue_competition import venue_refuses_placement
 from app.utils import match_receipts as _receipts
 from app.utils import matcher_pass_runs as _pass_runs
 from app.utils.match_receipts import (
@@ -8393,6 +8394,25 @@ async def _create_event_from_prediction_market(session, matchup, market, now):
             sport_key,
         )
         placed_league = None
+    # #8636: the sixth refusal. The clubs say which league they PLAY in; the
+    # venue says which competition THIS fixture is. Stuttgart v Heidenheim is
+    # two Bundesliga clubs in a September club friendly (Polymarket slug
+    # `clf-vfb-fch-…`), and the five refusals above placed it in the Bundesliga,
+    # where it led Discover as "BUNDESLIGA · LIVE". When the market's own slug
+    # names a competition and it is not the placed league, leave the row on the
+    # catch-all — see `venue_refuses_placement` for the 11-of-44 measurement.
+    if placed_league:
+        venue_code = venue_refuses_placement(
+            getattr(market, "market_metadata", None), placed_league,
+        )
+        if venue_code:
+            logger.info(
+                "Refusing placement of '%s' (#8636) — %s v %s resolves to %s by "
+                "club, but the venue lists this fixture under league code '%s'; "
+                "leaving the row on %s",
+                market.name, team_a, team_b, placed_league, venue_code, sport_key,
+            )
+            placed_league = None
     if placed_league:
         logger.info(
             "Placing '%s' (#5576) — %s vs %s is a %s fixture, not %s",
