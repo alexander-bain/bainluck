@@ -70,6 +70,8 @@ behind a `skipif` would move real coverage into a job that does not always run.
 import asyncio
 import json
 import os
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -130,7 +132,7 @@ async def pg_engine():
     """
     from sqlalchemy.ext.asyncio import create_async_engine
 
-    from app.models.models import Event, Sport, Team, Venue
+    from app.models.models import Event, FuturesMarket, FuturesOutcome, Sport, Team, Venue
     from app.services.database import Base
 
     tables = [
@@ -138,6 +140,8 @@ async def pg_engine():
         Venue.__table__,
         Team.__table__,
         Event.__table__,
+        FuturesMarket.__table__,
+        FuturesOutcome.__table__,
     ]
     engine = create_async_engine(DB_URL)
     async with engine.begin() as conn:
@@ -146,6 +150,17 @@ async def pg_engine():
     yield engine
 
     async with engine.begin() as conn:
+        for table in ("futures_outcomes", "futures_markets"):
+            where = (
+                "market_id IN (SELECT id FROM futures_markets WHERE sport_id IN"
+                " (SELECT id FROM sports WHERE key LIKE :k))"
+                if table == "futures_outcomes" else
+                "sport_id IN (SELECT id FROM sports WHERE key LIKE :k)"
+            )
+            await conn.execute(
+                text(f"DELETE FROM {table} WHERE {where}"),
+                {"k": f"{MARKER}%"},
+            )
         await conn.execute(
             text(
                 "DELETE FROM events WHERE sport_id IN"
@@ -257,9 +272,7 @@ class _AtomicArm:
                 update(Event)
                 .where(Event.id == event_id)
                 .values(
-                    win_probability_sources=atomic_stamp_expression(
-                        source, value, datetime.now(timezone.utc)
-                    )
+                    win_probability_sources=atomic_stamp_expression(source, value)
                 )
                 .returning(Event.win_probability_sources)
             )
@@ -507,3 +520,198 @@ class TestTheServerSideMergePreservesWhatThePythonHelperDid:
 
         via_python = stamp_source_reading(SEEDED, "kalshi", 0.53, now=stamped_at)
         assert via_sql == via_python
+
+
+async def _concurrent_refresh_frames(engine, monkeypatch, *, prelock_control):
+    """Actual refresh/commit path; only inputs, snapshots and fanout are seams.
+
+    The first arm reaches the pre-SAVEPOINT await first, but the sibling obtains
+    the row lock first. Observe an actual PostgreSQL transaction lock wait before
+    releasing the sibling. No sleep determines which UPDATE wins.
+    """
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from app.models.models import Event, FuturesMarket
+    from app.tasks import live_blend_refresh as lbr
+
+    event_id = await _seed_event(engine, sources={})
+    maker = async_sessionmaker(engine, expire_on_commit=False)
+    async with maker() as session:
+        sport_id = (
+            await session.execute(select(Event.sport_id).where(Event.id == event_id))
+        ).scalar_one()
+        for source in ("kalshi", "polymarket"):
+            session.add(
+                FuturesMarket(
+                    sport_id=sport_id,
+                    event_id=event_id,
+                    source=source,
+                    external_id=f"{MARKER}-{source}-{uuid4().hex}",
+                    name="Twins vs Yankees",
+                )
+            )
+        await session.commit()
+
+    first_at_savepoint = asyncio.Event()
+    sibling_has_lock = asyncio.Event()
+    first_attempting_update = asyncio.Event()
+    release_sibling = asyncio.Event()
+    sibling_published = asyncio.Event()
+    before_lock = {}
+    pids = {}
+    frames = []
+    commits = []
+    lock_waits = []
+
+    class OrderedSession:
+        def __init__(self, session, source):
+            self.session, self.source = session, source
+            self.nested_count = 0
+
+        def __getattr__(self, name):
+            return getattr(self.session, name)
+
+        @asynccontextmanager
+        async def begin_nested(self):
+            self.nested_count += 1
+            if self.nested_count == 1:
+                before_lock[self.source] = datetime.now(timezone.utc)
+                if self.source == "polymarket":
+                    first_at_savepoint.set()
+                    await sibling_has_lock.wait()
+                else:
+                    await first_at_savepoint.wait()
+            async with self.session.begin_nested():
+                yield
+
+        async def execute(self, statement, *args, **kwargs):
+            is_update = getattr(statement, "is_update", False)
+            if is_update and self.source == "polymarket":
+                first_attempting_update.set()
+            result = await self.session.execute(statement, *args, **kwargs)
+            if is_update and self.source == "kalshi":
+                sibling_has_lock.set()
+            return result
+
+    @asynccontextmanager
+    async def session_factory():
+        source = asyncio.current_task().get_name()
+        async with maker() as session:
+            pids[source] = (
+                await session.execute(text("SELECT pg_backend_pid()"))
+            ).scalar_one()
+            yield OrderedSession(session, source)
+            await session.commit()
+            commits.append(source)
+
+    monkeypatch.setattr("app.tasks.base.get_task_session", session_factory)
+    monkeypatch.setattr(
+        "app.utils.live_blend.compute_source_home_probability",
+        lambda group, *_: SimpleNamespace(
+            home_probability=0.55 if group[0].market.source == "kalshi" else 0.65,
+            eligibility=None,
+        ),
+    )
+    if prelock_control:
+        # The old clock placement, with all production SQL/commit/frame code
+        # otherwise unchanged. This must make the newer aggregate look older.
+        real_expression = lbr.atomic_stamp_expression
+
+        def old_clock(source, value, stamped_at=None, eligibility=None):
+            return real_expression(source, value, before_lock[source], eligibility)
+
+        monkeypatch.setattr(lbr, "atomic_stamp_expression", old_clock)
+
+    arms = {}
+    for source in ("kalshi", "polymarket"):
+        arm = lbr.LiveBlendRefresher(source)
+
+        async def oriented(session, eid, probability):
+            return probability
+
+        async def snapshot(*args, _source=source):
+            if _source == "kalshi":
+                await release_sibling.wait()
+
+        async def publish(batch, _source=source):
+            if _source == "polymarket":
+                await sibling_published.wait()
+            frames.extend(batch)
+            if _source == "kalshi":
+                sibling_published.set()
+
+        arm._oriented, arm._maybe_snapshot, arm._publish = oriented, snapshot, publish
+        arms[source] = arm
+
+    async def observe_lock():
+        await first_attempting_update.wait()
+        async with engine.connect() as conn:
+            for _ in range(100):
+                row = (
+                    await conn.execute(
+                        text(
+                            "SELECT wait_event_type, wait_event FROM pg_stat_activity WHERE pid=:pid"
+                        ),
+                        {"pid": pids["polymarket"]},
+                    )
+                ).first()
+                if row and row[0] == "Lock":
+                    lock_waits.append(tuple(row))
+                    release_sibling.set()
+                    return
+                await asyncio.sleep(0.001)
+        release_sibling.set()
+        pytest.fail("the test did not exercise an actual PostgreSQL row-lock wait")
+
+    pm = asyncio.create_task(
+        arms["polymarket"]._refresh_batch([event_id], 100), name="polymarket"
+    )
+    await asyncio.wait_for(first_at_savepoint.wait(), 5)
+    kalshi = asyncio.create_task(
+        arms["kalshi"]._refresh_batch([event_id], 100), name="kalshi"
+    )
+    await asyncio.wait_for(asyncio.gather(pm, kalshi, observe_lock()), 5)
+    stored = await _stored(engine, event_id)
+    assert commits == ["kalshi", "polymarket"]
+    assert lock_waits == [("Lock", "transactionid")]
+    assert [frame["p"] for frame in frames] == [0.55, 0.60]
+    assert _values(stored) == {"kalshi": 0.55, "polymarket": 0.65}
+    for frame in frames:
+        assert frame["updated_at"] == stored[frame["source"]]["updated_at"]
+        assert arms[frame["source"]]._dispositions[event_id][2] == frame["updated_at"]
+        assert arms[frame["source"]].stats["errors"] == 0
+        assert arms[frame["source"]].stats["lock_skipped"] == 0
+    return frames
+
+
+@needs_postgres
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "prelock_control", [False, True], ids=["database-clock", "old-clock-control"]
+)
+@pytest.mark.parametrize(
+    "late_older_publication", [False, True], ids=["commit-order", "late-old-frame"]
+)
+async def test_newer_committed_blend_has_newer_frame_clock(
+    pg_engine,
+    monkeypatch,
+    prelock_control,
+    late_older_publication,
+):
+    frames = await _concurrent_refresh_frames(
+        pg_engine, monkeypatch, prelock_control=prelock_control
+    )
+    stamps = [datetime.fromisoformat(frame["updated_at"]) for frame in frames]
+    assert (stamps[1] > stamps[0]) is not prelock_control
+
+    # Commit-before-publish does not serialize Redis publication across arms.
+    # The clock must identify the newest aggregate even when the older committed
+    # frame arrives last. This is the native/chart event-watermark contract.
+    delivered = frames[::-1] if late_older_publication else frames
+    accepted = None
+    for frame in delivered:
+        if accepted is None or datetime.fromisoformat(
+            frame["updated_at"]
+        ) > datetime.fromisoformat(accepted["updated_at"]):
+            accepted = frame
+    assert accepted["p"] == (0.55 if prelock_control else 0.60)
