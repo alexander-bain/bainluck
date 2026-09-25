@@ -100,9 +100,29 @@ describe("formatEventTime", () => {
     expect(formatEventTime("2026-08-09T18:45:00.000Z", NOW)).toBe("In 45 min");
   });
 
-  test("inside the day it is a bare clock time, with no weekday", () => {
-    const out = formatEventTime("2026-08-10T01:30:00.000Z", NOW);
-    expect(out).toMatch(/^\d{1,2}:\d{2}\s?(AM|PM)$/);
+  // Jest pins TZ=UTC (jest.config.js), so "today" below is the UTC calendar day.
+  test("later today it is a bare clock time, with no weekday", () => {
+    // NOW is 18:00 on Aug 9; 21:00 the same day is 3 hours out.
+    expect(formatEventTime("2026-08-09T21:00:00.000Z", NOW)).toBe("9:00 PM");
+  });
+
+  test("#8513: under 24 hours away but on tomorrow's date says Tomorrow", () => {
+    // 23h51m out — the old `diffHours < 24` rule printed a bare "5:51 PM",
+    // which beside tonight's live game reads as tonight.
+    expect(formatEventTime("2026-08-10T17:51:00.000Z", NOW)).toBe("Tomorrow 5:51 PM");
+  });
+
+  test("#8513: just after midnight is tomorrow, not tonight", () => {
+    expect(formatEventTime("2026-08-10T01:30:00.000Z", NOW)).toBe("Tomorrow 1:30 AM");
+  });
+
+  test("tomorrow stays Tomorrow even when it is more than 24 hours out", () => {
+    const lateNow = new Date("2026-08-09T22:00:00.000Z");
+    expect(formatEventTime("2026-08-10T23:00:00.000Z", lateNow)).toBe("Tomorrow 11:00 PM");
+  });
+
+  test("the last minute of today is still a bare clock time", () => {
+    expect(formatEventTime("2026-08-09T23:59:00.000Z", NOW)).toBe("11:59 PM");
   });
 
   test("beyond a day it leads with the weekday", () => {
@@ -375,11 +395,14 @@ describe("the real production payload", () => {
     }
   });
 
-  test("the live game reads 'Live now' and the next one is dated", () => {
+  test("the live game reads 'Live now' and the next one names its day", () => {
     expect(suggestionSubtitle(LIVE[1], NOW)).toEqual({ kind: "event-time", text: "Live now" });
-    const next = suggestionSubtitle(LIVE[2], NOW);
-    expect(next?.kind).toBe("event-time");
-    expect(next && "text" in next && next.text).toMatch(/^(Sun|Mon|Tue|Wed|Thu|Fri|Sat),/);
+    // Next game is on the following calendar day, so it says so (#8513) —
+    // never a bare clock time beside a game that is live right now.
+    expect(suggestionSubtitle(LIVE[2], NOW)).toEqual({
+      kind: "event-time",
+      text: "Tomorrow 11:07 PM",
+    });
   });
 
   test("the NRFI row's +2pt move clears the arrow threshold", () => {
