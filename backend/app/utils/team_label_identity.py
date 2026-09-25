@@ -93,6 +93,7 @@ from app.utils.team_pattern_match import pattern_token_spans
 __all__ = [
     "LabelIdentity",
     "build_label_identity",
+    "label_is_another_club",
     "label_names_another_club",
 ]
 
@@ -251,3 +252,37 @@ def label_names_another_club(
         covered_spans.append((start, end))
 
     return bool(covered_spans)
+
+
+def label_is_another_club(
+    label: Optional[str],
+    identities: Iterable[Optional[LabelIdentity]],
+) -> bool:
+    """True when ``label`` IS a known club that is neither side of this game.
+
+    #8620 — the market-name fallback reads this over a market's ANSWERS. It
+    admits every outcome of a market whose title carries one of our tokens, which
+    is right for a game prop ("Boston at Golden State: Rebounds" → "Over 218.5")
+    and wrong for a field of clubs: ``Portugal`` is a whole token of ``Liga
+    Portugal Champion``, so all 18 Portuguese clubs landed on the national team's
+    Championship Path. An answer that is itself another club says the market is a
+    field of clubs, and a field's title is the competition's name, not a claim.
+
+    Exact label only — the whole label (trimmed, lower-cased) is a name,
+    location or listed alias of a family club — never a token inside it:
+    ``Lamar Jackson: 50+`` must not read as Lamar or Jackson State. The club is
+    foreign when NO claimant of that string is ours on EITHER side, so the
+    opponent's own label (``Wales`` on a Portugal v Wales market) never counts.
+    Disarmed with nothing resolved, as `label_names_another_club` is.
+    """
+    armed = [i for i in identities if i is not None and i.is_armed()]
+    key = (label or "").strip().lower()
+    if not key or not armed:
+        return False
+    # Every side's identity is built from the same family rows, so `claims`
+    # is shared; only `own` differs per side.
+    claimants = armed[0].claims.get(key)
+    if not claimants:
+        return False
+    own = frozenset().union(*(i.own for i in armed))
+    return not (claimants & own)
