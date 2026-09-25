@@ -46,7 +46,21 @@ def item(
 ) -> dict:
     data: dict = {"id": identity}
     if kind == "event":
-        data.update({"status": status or "live", "home_team_data": {"logo": "x"}})
+        # `game:live` denotes an ELIGIBLE live game — this corpus is an authority
+        # on ORDER (marquee before games before the mix, membership preserved,
+        # scores untouched), and carries no eligibility case at all: no
+        # crest-less game, no finished game, though `_is_eligible` refuses both.
+        # `home_team_data` has been here since the media bar shipped for exactly
+        # that reason; `game_clock` joins it for #4872's substance bar. Neither
+        # is a property under test — they are what makes the token mean what the
+        # case ids say it means.
+        data.update(
+            {
+                "status": status or "live",
+                "home_team_data": {"logo": "x"},
+                "game_clock": "60'",
+            }
+        )
         if soon:
             data["commence_time"] = (NOW + timedelta(hours=1)).isoformat()
     return {
