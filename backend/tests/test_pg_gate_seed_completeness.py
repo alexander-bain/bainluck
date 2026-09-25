@@ -295,6 +295,11 @@ COVERED = (
     "test_illegal_settled_tennis_score_recall_2772_pg.py",
     "test_typeahead_played_game_suppression_pg.py",
     "test_typeahead_final_seven_route_control_pg.py",
+    # #5082. Seeds `sports`, `teams` (with production's `alternate_names`, the
+    # only path by which `pats` resolves the Patriots), `futures_markets` and
+    # `futures_outcomes` by raw INSERT; drops and recreates the schema like the
+    # final-seven gate above.
+    "test_typeahead_team_query_cross_sport_5082_pg.py",
     # #5779. Seeds `sports` and `events` by raw INSERT, including rows whose
     # `statpal_fixture_id` is deliberately NULL — the NOT-NULL arm is what keeps
     # a future column with a client-side default from making that seed illegal
