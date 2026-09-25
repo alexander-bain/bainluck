@@ -215,7 +215,7 @@ final class CalibrationAvailabilityTests: XCTestCase {
         XCTAssertEqual(activity.movedText, "1.7")
         XCTAssertEqual(activity.unchangedText, "1.0")
         let sentence = try XCTUnwrap(activity.sentence)
-        XCTAssertTrue(sentence.hasPrefix("Price moved sits at 1.7pp and price unchanged at 1.0pp. "))
+        XCTAssertTrue(sentence.hasPrefix("Traded sits at 1.7pp and untraded at 1.0pp. "))
         // #8504 / web #6176: the ranking is withdrawn.
         XCTAssertFalse(sentence.contains("carries the higher"))
         XCTAssertFalse(sentence.localizedCaseInsensitiveContains("more accurately calibrated"))
@@ -232,54 +232,91 @@ final class CalibrationAvailabilityTests: XCTestCase {
         // real trading moved the price" when 40,075 of them carry no such flag.
         XCTAssertNotEqual(detail, "Where real trading moved the price. Thin markets can be noisy.")
         XCTAssertFalse(detail.hasPrefix("Where real trading moved the price"), detail)
-        // Both halves of the cohort are named, with their counts...
-        XCTAssertTrue(detail.contains(fmt(Prod.movedN)), detail)
-        XCTAssertTrue(detail.contains(fmt(Prod.notApplicableN)), detail)
-        XCTAssertTrue(detail.localizedCaseInsensitiveContains("doesn't apply"), detail)
-        // ...and so is the third one, which the cohort excludes.
-        XCTAssertTrue(detail.contains("Excluded: \(fmt(Prod.unchangedN)) outcomes"), detail)
+        // #1865 / web #7330: the sportsbook rows are named as a SUBSET of the
+        // traded cohort, with their count...
+        XCTAssertEqual(
+            detail,
+            "Of those, \(fmt(Prod.notApplicableN)) are sportsbook lines. Excluded: "
+                + "\(fmt(Prod.unchangedN)) untraded outcomes, whose price never moved off its opening line.")
+        // ...and the headline's count is not restated beside it, which read as
+        // double-counting in the rendered "headline detail" flow.
+        XCTAssertFalse(detail.contains(fmt(Prod.cohortN)), detail)
     }
 
-    /// L2-237 — the residual divergence L2-231 deferred and L2-236 decided.
+    /// #1865 (a)/(c) — one vocabulary for the two cohorts on BOTH surfaces.
     ///
-    /// L2-231 fixed the CLAIM under the cohort on native and kept the NAME
-    /// "well-traded", because the name was web's; renaming it on one surface
-    /// would have manufactured a second divergence. L2-236 renamed it on web:
-    /// "well-traded" is a LIQUIDITY claim over a MOVEMENT predicate, and the
-    /// excluded side is not thin or untraded — those rows traded and never moved,
-    /// and zero-bid outcomes are excluded upstream. This is native's half, and
-    /// the strings below are web's `describeCohort` output word for word.
+    /// L2-237 ported L2-236's predicate-description names ("Showing markets whose
+    /// price moved, plus sportsbook lines"). Alex overruled L2-236 on this page
+    /// (2026-08-13, UX-P075 (a)/(c): "untraded" everywhere) and web took the
+    /// rename; native kept the overruled strings, so the phone said "Active
+    /// Trading / Opening Price Only / price moved" where the web said "traded /
+    /// untraded". The strings below are web's `describeCohort` output word for
+    /// word (`frontend/lib/calibrationCohort.ts`).
     @MainActor
-    func testTheCohortNameIsThePredicateOnBothSurfaces() throws {
+    func testTheCohortNamesAreWebsTradedAndUntraded() throws {
         let vm = try prodModel()
-        XCTAssertEqual(
-            vm.cohortHeadline,
-            "Showing markets whose price moved, plus sportsbook lines (\(fmt(Prod.cohortN)))")
-        XCTAssertEqual(vm.cohortShortLabel, "Price moved + sportsbook lines")
-        XCTAssertEqual(vm.cohortToggleLabel, "Include never-moved (+\(fmt(Prod.unchangedN)))")
+        XCTAssertEqual(vm.cohortHeadline, "Showing traded outcomes (\(fmt(Prod.cohortN)))")
+        XCTAssertEqual(vm.cohortShortLabel, "Traded")
+        XCTAssertEqual(vm.cohortToggleLabel, "Include untraded (+\(fmt(Prod.unchangedN)))")
         XCTAssertEqual(
             vm.heroPopulationText,
             "\(fmt(Prod.cohortN)) resolved predictions \u{2014} every outcome we measured "
-                + "except the \(fmt(Prod.unchangedN)) whose price never moved off its opening "
-                + "line (\(fmt(Prod.fullN)) measured in all)")
+                + "except the \(fmt(Prod.unchangedN)) untraded ones, whose price never moved off "
+                + "its opening line (\(fmt(Prod.fullN)) measured in all)")
 
         vm.includeThin = true
-        XCTAssertEqual(vm.cohortHeadline, "Showing all markets (\(fmt(Prod.fullN)))")
-        XCTAssertEqual(vm.cohortShortLabel, "All markets")
-        XCTAssertEqual(vm.cohortToggleLabel, "Exclude never-moved")
+        XCTAssertEqual(vm.cohortHeadline, "Showing all outcomes (\(fmt(Prod.fullN)))")
+        XCTAssertEqual(vm.cohortShortLabel, "All")
+        XCTAssertEqual(vm.cohortToggleLabel, "Exclude untraded")
         XCTAssertEqual(vm.heroPopulationText, "\(fmt(Prod.fullN)) resolved predictions")
+    }
+
+    /// The old nouns, swept over every cohort-facing string in both toggle
+    /// states — a single equality is satisfied by moving the old word one label
+    /// over.
+    @MainActor
+    func testNoCohortStringUsesThePhonesRetiredNouns() throws {
+        let vm = try prodModel()
+        let retired = ["never-moved", "price moved +", "price unchanged", "not applicable",
+                       "active trading", "opening price only", "all markets", "neither cohort"]
+        for includeNeverMoved in [false, true] {
+            vm.includeThin = includeNeverMoved
+            for (name, value) in [
+                ("headline", vm.cohortHeadline), ("detail", vm.cohortDetail),
+                ("shortLabel", vm.cohortShortLabel), ("toggleLabel", vm.cohortToggleLabel),
+                ("toggleA11y", vm.cohortToggleAccessibilityLabel), ("hero", vm.heroPopulationText),
+                ("partitionNote", vm.activityPartitionNote ?? ""),
+                ("activity", vm.activity.sentence ?? ""),
+            ] {
+                for word in retired {
+                    XCTAssertFalse(value.localizedCaseInsensitiveContains(word),
+                                   "\(name) (includeNeverMoved=\(includeNeverMoved)) still says "
+                                       + "\"\(word)\": \(value)")
+                }
+            }
+        }
     }
 
     /// The guard, not the assertion: sweep EVERY cohort-facing string in both
     /// toggle states for the vocabulary this queue removed. A single-string
     /// assertion is satisfied by moving the claim one label to the left.
+    ///
+    /// #1865: "untraded" left this list. Alex overruled L2-236 on the word
+    /// (2026-08-13) and web's ban narrowed to what the name must not become — a
+    /// claim about trading ACTIVITY (`calibrationCohort.test.ts`, "no label
+    /// upgrades the cohort NAME into a claim about trading activity"). This is
+    /// that ban, on the phone's strings.
     @MainActor
     func testNoCohortStringMakesALiquidityClaim() throws {
         let vm = try prodModel()
         // "thin" is deliberately NOT bare: it is a substring of "within", and a
         // guard that fails on an innocent word gets deleted rather than fixed.
         let banned = ["well-traded", "well traded", "thinly", "thin markets",
-                      "include thin", "untraded", "illiquid"]
+                      "include thin", "illiquid", "actively traded", "active trading",
+                      "heavily traded", "trade count", "trading volume", "number of trades"]
+        // Web's control: the cohort is still NAMED with the short word, so a
+        // rename that dodged the sweep by dropping the word fails here.
+        XCTAssertTrue(vm.cohortToggleLabel.contains("untraded"), vm.cohortToggleLabel)
         for includeNeverMoved in [false, true] {
             vm.includeThin = includeNeverMoved
             let strings: [(String, String)] = [
@@ -387,11 +424,11 @@ final class CalibrationAvailabilityTests: XCTestCase {
         let vm = try prodModel()
         XCTAssertEqual(
             vm.cohortToggleAccessibilityLabel,
-            "Include the \(fmt(Prod.unchangedN)) outcomes whose price never moved off its opening line")
+            "Include the \(fmt(Prod.unchangedN)) untraded outcomes, whose price never moved off its opening line")
         vm.includeThin = true
         XCTAssertEqual(
             vm.cohortToggleAccessibilityLabel,
-            "Exclude the \(fmt(Prod.unchangedN)) outcomes whose price never moved off its opening line")
+            "Exclude the \(fmt(Prod.unchangedN)) untraded outcomes, whose price never moved off its opening line")
     }
 
     // The arithmetic under these labels is asserted against the same production
@@ -417,11 +454,10 @@ final class CalibrationAvailabilityTests: XCTestCase {
         // — measured rather than assumed. The excluded side is still named.
         XCTAssertEqual(
             vm.cohortDetail,
-            "Every outcome whose price moved in real trading. Excluded: 100 outcomes whose "
+            "Every traded outcome. Excluded: 100 untraded outcomes, whose "
                 + "price never moved off its opening line.")
-        // ...and with no sportsbook rows the name drops the clause about them.
-        XCTAssertEqual(vm.cohortHeadline, "Showing markets whose price moved (200)")
-        XCTAssertEqual(vm.cohortShortLabel, "Price moved")
+        XCTAssertEqual(vm.cohortHeadline, "Showing traded outcomes (200)")
+        XCTAssertEqual(vm.cohortShortLabel, "Traded")
         XCTAssertNil(vm.activityPartitionNote)
     }
 
@@ -430,11 +466,12 @@ final class CalibrationAvailabilityTests: XCTestCase {
         let vm = try prodModel()
         vm.includeThin = true
         let detail = vm.cohortDetail
-        XCTAssertTrue(detail.contains("\(fmt(Prod.movedN)) price moved"), detail)
-        XCTAssertTrue(detail.contains("\(fmt(Prod.unchangedN)) price unchanged"), detail)
-        XCTAssertTrue(detail.contains("\(fmt(Prod.notApplicableN)) not applicable"), detail)
-        // The third term says WHICH rows are not applicable, matching web.
-        XCTAssertTrue(detail.contains("not applicable (sportsbook lines)"), detail)
+        // Two cohorts, not three (web's `describeCohort`, UX-P080 item 3): the
+        // sportsbook count rides inside the traded cohort it belongs to.
+        XCTAssertEqual(
+            detail,
+            "\(fmt(Prod.cohortN)) traded (including \(fmt(Prod.notApplicableN)) sportsbook lines) "
+                + "\u{00B7} \(fmt(Prod.unchangedN)) untraded.")
         // The shipped prefix asserted a property of the added rows that nothing
         // measured — they are the rows that never moved, not the untraded ones.
         XCTAssertFalse(detail.hasPrefix("Including thin / untraded"), detail)
@@ -446,6 +483,10 @@ final class CalibrationAvailabilityTests: XCTestCase {
         let note = try XCTUnwrap(vm.activityPartitionNote)
         XCTAssertTrue(note.contains(fmt(Prod.notApplicableN)), note)
         XCTAssertTrue(note.contains("\(fmt(Prod.movedN)) + \(fmt(Prod.unchangedN)) + \(fmt(Prod.notApplicableN)) = \(fmt(Prod.fullN))"), note)
+        // #1865: sportsbook lines are TRADED everywhere else on the page, so the
+        // note scopes "in neither" to the two cards, never to the cohorts.
+        XCTAssertTrue(note.hasPrefix("Both cards are the price-moved test"), note)
+        XCTAssertTrue(note.contains("traded, but never put to that test"), note)
         // The arithmetic in the sentence must be the arithmetic in the model.
         XCTAssertEqual(vm.movedN + vm.unchangedN + vm.notApplicableN, vm.fullN)
     }

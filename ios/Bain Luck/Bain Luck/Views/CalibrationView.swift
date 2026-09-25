@@ -602,8 +602,11 @@ struct CalibrationSurfaceView: View {
         if movedN > 0 && unchangedN > 0 {
             let movedECE = viewModel.movedECE, unchangedECE = viewModel.unchangedECE
             let activity = viewModel.activity
-            cardSection("Does Trading Activity Matter?",
-                        sub: "The calibration curve split by whether real trading moved the price. The two cohorts differ in source, category and market-shape mix, so whichever side lands lower here is an observed ordering \u{2014} not evidence that trading caused it.") {
+            // #1865 (a)/(c): web's heading and nouns. "Active Trading" asserted
+            // activity the predicate never measured — it tests whether the price
+            // moved — which is the claim L2-236's surviving ban exists to stop.
+            cardSection("Does a price that moves predict better?",
+                        sub: "The calibration curve split by whether the price moved after opening. The two cohorts differ in source, category and market-shape mix, so whichever side lands lower here is an observed ordering \u{2014} not evidence that trading caused it.") {
                 // #8504 (web #6176): the lines were green (moved) and red
                 // (unchanged) — the good/bad pair, on a chart whose whole subject
                 // is which cohort sits nearer the diagonal — while the cards below
@@ -618,8 +621,8 @@ struct CalibrationSurfaceView: View {
                 // it to follow. Both figures are neutral; `activity.direction`
                 // is computed and never painted.
                 HStack(spacing: 10) {
-                    tradingCard("Active Trading", movedECE, movedN, Self.movedSeriesColor)
-                    tradingCard("Opening Price Only", unchangedECE, unchangedN, Self.unchangedSeriesColor)
+                    tradingCard("Traded", movedECE, movedN, Self.movedSeriesColor)
+                    tradingCard("Untraded", unchangedECE, unchangedN, Self.unchangedSeriesColor)
                 }
                 if let sentence = activity.sentence {
                     Text(sentence)

@@ -44,7 +44,7 @@ final class CalibrationBenchmarkTests: XCTestCase {
     }
 
     private func rows(
-        mce: Double = 1.0, outcomes: String = "449,027", cohort: String = "Price moved"
+        mce: Double = 1.0, outcomes: String = "449,027", cohort: String = "Traded"
     ) -> [CalibrationBenchmarks.Row] {
         CalibrationBenchmarks.rows(ourMCE: mce, ourOutcomes: outcomes, cohort: cohort)
     }
@@ -199,8 +199,8 @@ final class CalibrationBenchmarkTests: XCTestCase {
     // MARK: - #6278 item 1 — our row names the cohort it moves with
 
     func testOurRowCarriesTheActiveCohortAndTheBenchmarksDoNot() {
-        let ours = rows(cohort: "Price moved + sportsbook lines").first { $0.isOurs }
-        XCTAssertEqual(ours?.cohortTag, "Price moved + sportsbook lines")
+        let ours = rows(cohort: "Traded").first { $0.isOurs }
+        XCTAssertEqual(ours?.cohortTag, "Traded")
         for r in rows() where !r.isOurs {
             XCTAssertNil(r.cohortTag,
                          "\(r.label) is not cohort-scoped at all — tagging it would claim "
@@ -224,8 +224,8 @@ final class CalibrationBenchmarkTests: XCTestCase {
         vm.includeThin = true
         let all = try XCTUnwrap(ourRow())
 
-        XCTAssertEqual(traded.cohortTag, "Price moved + sportsbook lines")
-        XCTAssertEqual(all.cohortTag, "All markets")
+        XCTAssertEqual(traded.cohortTag, "Traded")
+        XCTAssertEqual(all.cohortTag, "All")
         XCTAssertNotEqual(traded.detail, all.detail, "the outcome count moves with it")
         XCTAssertNotEqual(traded.value, all.value, "so does the figure")
         print("#7536 prod row: \(traded.label) [\(traded.cohortTag ?? "nil")] "

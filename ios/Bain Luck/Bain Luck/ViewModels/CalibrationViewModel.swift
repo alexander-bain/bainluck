@@ -207,93 +207,76 @@ final class CalibrationViewModel: ObservableObject {
     /// only thing taken out of the measured set, which is the claim this sentence
     /// can support.
     ///
-    /// 🪤 **Web's fix says "untraded ones" and native deliberately does not.**
-    /// This is the native half of the same ship (#7497 on web), but L2-236 ruled
-    /// that word out here and the ruling holds: those rows are `price_moved ==
-    /// false` — they traded, they just never moved — and zero-bid, zero-volume
-    /// outcomes are already excluded upstream. Copying web verbatim would take
-    /// the over-claim fix and re-introduce a false name with it, so this takes
-    /// the scoping and leaves the vocabulary where L2-236 put it. The divergence
-    /// is one word and it is the correct one; `testNoCohortStringMakesALiquidityClaim`
-    /// is what keeps it.
+    /// #1865 (a)/(c) — **the phone now says "untraded", as web does.** This block
+    /// used to explain why native deliberately did not: L2-236 ruled the word out
+    /// because those rows are `price_moved == false` — they traded, they just
+    /// never moved. That objection is factually right and was OVERRULED by Alex
+    /// (2026-08-13 eyeball session, UX-P075 item (a)): *rename the excluded cohort
+    /// "untraded" everywhere.* Web took the rename in August (`lib/calibrationCohort.ts`
+    /// records the reversal under ruling 055); native kept the overruled wording,
+    /// so the one page whose job is credibility named its two cohorts two ways on
+    /// two surfaces. What survives of L2-236 is the narrower ban web kept: no
+    /// string may assert ACTIVITY ("well-traded", "actively traded", a trade
+    /// count). `testNoCohortStringMakesALiquidityClaim` holds that line now.
     var heroPopulationText: String {
         guard data != nil else { return "\u{2014} resolved predictions" }
-        if includeThin { return "\(formattedCohortOutcomes) resolved predictions" }
+        if includeThin || unchangedN == 0 { return "\(formattedCohortOutcomes) resolved predictions" }
         return "\(formattedCohortOutcomes) resolved predictions \u{2014} every outcome we measured "
-            + "except the \(Self.fmt(unchangedN)) whose price never moved off its opening line "
-            + "(\(Self.fmt(fullN)) measured in all)"
+            + "except the \(Self.fmt(unchangedN)) untraded ones, whose price never moved off its "
+            + "opening line (\(Self.fmt(fullN)) measured in all)"
     }
 
-    // MARK: - Cohort banner (L2-231 Item 2 / L2-237 — every label names its predicate)
+    // MARK: - Cohort banner (#1865 — web's `describeCohort`, string for string)
 
-    /// The cohort's name, in the words of the predicate that selects it.
-    ///
-    /// L2-231 fixed the CLAIM under the cohort and deliberately kept the NAME
-    /// "well-traded", because the name was web's and renaming it on one surface
-    /// would have manufactured a second divergence. L2-236 made that call on web
-    /// and the name did not survive it:
-    ///
-    ///   - "well-traded" is a LIQUIDITY claim; the predicate measures MOVEMENT. A
-    ///     market can trade heavily and close where it opened.
-    ///   - "thin / untraded" for the excluded side is false twice over. Those
-    ///     rows are `price_moved == false` — they traded, they just never moved —
-    ///     and zero-bid, zero-volume outcomes are already excluded upstream.
-    ///
-    /// So each string below names what it selects and nothing else. This is the
-    /// native half of L2-236, wording-for-wording.
+    /// The cohort's name. UX-P080 item 3 (Alex, round 2): the default cohort is
+    /// THE TRADED OUTCOMES — sportsbook lines are traded by construction, a
+    /// sportsbook moves its line with money — so they are part of it, not an
+    /// appendix to it. The unit is the OUTCOME (#7750): a market resolves into
+    /// many outcomes, so "markets (N)" would name a smaller quantity.
     var cohortHeadline: String {
-        if includeThin { return "Showing all markets (\(formattedCohortOutcomes))" }
-        return notApplicableN > 0
-            ? "Showing markets whose price moved, plus sportsbook lines (\(formattedCohortOutcomes))"
-            : "Showing markets whose price moved (\(formattedCohortOutcomes))"
+        includeThin
+            ? "Showing all outcomes (\(formattedCohortOutcomes))"
+            : "Showing traded outcomes (\(formattedCohortOutcomes))"
     }
 
-    /// Short noun phrase for the active cohort — chart headings and legends.
-    var cohortShortLabel: String {
-        if includeThin { return "All markets" }
-        return notApplicableN > 0 ? "Price moved + sportsbook lines" : "Price moved"
-    }
+    /// The ADJECTIVE slot (#7750): its consumers supply their own noun over their
+    /// own number ("Traded (413,406 outcomes)"), so "All markets" would print a
+    /// noun and its counter-noun over one number.
+    var cohortShortLabel: String { includeThin ? "All" : "Traded" }
 
     /// The toggle button's label: the cohort it switches TO, and what that costs.
+    /// With nothing untraded there is nothing to include or exclude.
     var cohortToggleLabel: String {
-        includeThin
-            ? "Exclude never-moved"
-            : "Include never-moved (+\(Self.fmt(unchangedN)))"
+        guard unchangedN > 0 else { return "Show every outcome" }
+        return includeThin ? "Exclude untraded" : "Include untraded (+\(Self.fmt(unchangedN)))"
     }
 
     /// What VoiceOver reads for that button. The visible label is a two-word verb
     /// phrase sized for a capsule; read on its own it never says what it acts on.
     var cohortToggleAccessibilityLabel: String {
-        includeThin
-            ? "Exclude the \(Self.fmt(unchangedN)) outcomes whose price never moved off its opening line"
-            : "Include the \(Self.fmt(unchangedN)) outcomes whose price never moved off its opening line"
+        (includeThin ? "Exclude" : "Include")
+            + " the \(Self.fmt(unchangedN)) untraded outcomes, whose price never moved off its opening line"
     }
 
-    /// The sentence under the cohort name, written to match what the cohort
-    /// filter ACTUALLY selects.
-    ///
-    /// The default cohort is `price_moved != false`, which the surface described
-    /// as "where real trading moved the price". That is true of the `true` rows
-    /// and false of the `nil` ones — sportsbook lines, where the price-moved test
-    /// does not apply — and on the 2026-08-02 payload those were 40,075 of the
-    /// 389,385 rows the sentence was describing, 10.3% of the default cohort.
+    /// The sentence under the cohort name. Rendered straight after the headline,
+    /// so it never restates the count the headline just printed (#7330): "Of
+    /// those" names the sportsbook rows as a SUBSET of the traded cohort, not a
+    /// third thing beside it. An empty excluded side excludes nothing and gets no
+    /// clause — "Excluded: 0 untraded outcomes" states a non-fact.
     var cohortDetail: String {
         let na = notApplicableN
         if includeThin {
             return na > 0
-                ? "\(Self.fmt(movedN)) price moved \u{00B7} \(Self.fmt(unchangedN)) price unchanged "
-                    + "\u{00B7} \(Self.fmt(na)) not applicable (sportsbook lines)."
-                : "\(Self.fmt(movedN)) price moved \u{00B7} \(Self.fmt(unchangedN)) price unchanged."
+                ? "\(Self.fmt(movedN + na)) traded (including \(Self.fmt(na)) sportsbook lines) "
+                    + "\u{00B7} \(Self.fmt(unchangedN)) untraded."
+                : "\(Self.fmt(movedN)) traded \u{00B7} \(Self.fmt(unchangedN)) untraded."
         }
-        let excluded = "Excluded: \(Self.fmt(unchangedN)) outcomes whose price never moved "
-            + "off its opening line."
-        guard na > 0 else {
-            // No not-applicable rows: the cohort really is "where real trading
-            // moved the price", so the plain claim is measured and may stand.
-            return "Every outcome whose price moved in real trading. \(excluded)"
-        }
-        return "\(Self.fmt(movedN)) outcomes whose price moved in real trading, plus \(Self.fmt(na)) "
-            + "sportsbook lines where that test doesn't apply. \(excluded)"
+        let excluded = unchangedN > 0
+            ? " Excluded: \(Self.fmt(unchangedN)) untraded outcomes, whose price never moved off its opening line."
+            : ""
+        return na > 0
+            ? "Of those, \(Self.fmt(na)) are sportsbook lines.\(excluded)"
+            : "Every traded outcome.\(excluded)"
     }
 
     // MARK: - Sample gate
@@ -555,12 +538,19 @@ final class CalibrationViewModel: ObservableObject {
     /// Reconciles the two trading-activity cards with the page's population. Nil
     /// when there are no not-applicable rows, so the note never appears as
     /// boilerplate on a payload it does not describe.
+    ///
+    /// #1865 — web's `describeActivityScope` caption (#7519). This note used to
+    /// say sportsbook lines "sit in neither cohort", which was true of the old
+    /// framing and contradicts the new one: everywhere else the page counts them
+    /// as TRADED (UX-P080 item 3). It stays true of THESE TWO CARDS, which are the
+    /// price-moved test, so the note says that — scoped to the cards — and keeps
+    /// the sum, so the Traded card's count is never read as the page's traded total.
     var activityPartitionNote: String? {
         let na = notApplicableN
         guard na > 0 else { return nil }
-        return "Sportsbook lines (\(Self.fmt(na)) outcomes) carry no price-moved flag, so they "
-            + "sit in neither cohort: \(Self.fmt(movedN)) + \(Self.fmt(unchangedN)) + \(Self.fmt(na)) "
-            + "= \(Self.fmt(fullN)) resolved outcomes."
+        return "Both cards are the price-moved test, so the \(Self.fmt(na)) sportsbook lines \u{2014} "
+            + "traded, but never put to that test \u{2014} are in neither: \(Self.fmt(movedN)) + "
+            + "\(Self.fmt(unchangedN)) + \(Self.fmt(na)) = \(Self.fmt(fullN)) resolved outcomes."
     }
 
     /// L2-231 Item 2: the direction-aware, causation-free comparison the web page

@@ -216,8 +216,8 @@ nonisolated enum CalibrationMath {
     /// between two stored prices, not a trade), so no ranking between them says
     /// anything about what trading does to a forecast. The figures stay; the
     /// ranking goes, and the sentence says why the two numbers cannot answer the
-    /// section's question. The nouns are the phone's own — unifying them with
-    /// web's "traded / untraded" is a separate change.
+    /// section's question. #1865: the nouns are now web's `COHORT_NOUNS` —
+    /// "Traded" sentence-initially, "untraded" mid-sentence.
     static func describeActivity(
         movedECE: Double?, movedN: Int?,
         unchangedECE: Double?, unchangedN: Int?
@@ -232,7 +232,7 @@ nonisolated enum CalibrationMath {
             // Still computed, never rendered as a verdict.
             direction: m == u ? .tied : (m > u ? .movedHigher : .unchangedHigher),
             movedText: movedText, unchangedText: unchangedText,
-            sentence: "Price moved sits at \(movedText)pp and price unchanged at \(unchangedText)pp. "
+            sentence: "Traded sits at \(movedText)pp and untraded at \(unchangedText)pp. "
                 + "These are two different sets of outcomes, not the same forecasts "
                 + "measured twice, so the gap between them does not tell you whether "
                 + "trading moved a price closer to the truth."
