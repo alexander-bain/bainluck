@@ -76,6 +76,9 @@ def _team(**over) -> Team:
         # `_snapshot_team` read the write stamp of the standings board.
         "standings_updated_at": None,
         "season_stats": {"ppg": 21.4},
+        # Same reason: #8682 made `_snapshot_team` read the row's ESPN id, so
+        # the lookup can check a lone crest against the club it claims to be.
+        "espn_id": "29",
     }
     fields.update(over)
     return Team(**fields)
