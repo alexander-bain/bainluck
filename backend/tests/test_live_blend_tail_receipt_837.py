@@ -234,31 +234,38 @@ class TestASamePriceInputThatNeverReachesTheStore:
 
 class TestRollback:
     @pytest.mark.asyncio
-    async def test_a_stamp_the_commit_rolled_back_is_not_stamped(self, clock, caplog):
-        """The batch stamped, then the commit failed. A throttle-held event is
-        not re-queued (the existing contract), so the chain ends — as a DROP,
-        named, never as `stamped`."""
-        r, _ = _refresher({2: "commit_fail"})
-        await _commit(r, clock, 1000.0)
-        await _commit(r, clock, 1001.0)
-        clock.t = 1006.0
+    @pytest.mark.parametrize("failure", ["commit_fail", "batch_fail"])
+    @pytest.mark.parametrize("fresh", [False, True])
+    async def test_failed_stamp_retries_without_another_input(
+        self, clock, caplog, failure, fresh,
+    ):
+        r, calls = _refresher({1 if fresh else 2: failure})
+        if fresh:
+            await _commit(r, clock, 1001.0)
+        else:
+            await _commit(r, clock, 1000.0)
+            await _commit(r, clock, 1001.0)
+            clock.t = 1006.0
+            await r.refresh_pending()
+
+        failed_at = clock.t
+        assert _receipts(caplog) == [], "the retry chain must stay open"
+        assert r._throttle_deferred == {1} and r._lock_retry == set()
+        calls_before = len(calls)
+        clock.t = failed_at + 2.0
+        await r.refresh_pending()
+        assert len(calls) == calls_before, "failures must respect the throttle"
+        clock.t = failed_at + 5.0
         await r.refresh_pending()
 
         (rc,) = _receipts(caplog)
-        assert rc["result"] == "dropped_commit_failed", rc
-        assert rc["stamped_at"] == "None"
-        assert rc["error"] == "RuntimeError"
+        assert rc["result"] == "stamped" and rc["quiet"] == "True"
+        assert rc["origin"] == ("batch" if fresh else "throttle")
+        assert rc["commit_failures"] == ("1" if failure == "commit_fail" else "0")
+        assert rc["batch_failures"] == ("1" if failure == "batch_fail" else "0")
+        assert rc["later_inputs"] == "0"
+        assert rc["recv_to_close_s"] == ("5.000" if fresh else "10.000")
         assert r._throttle_deferred == set() and r._lock_retry == set()
-
-    @pytest.mark.asyncio
-    async def test_a_batch_that_dies_before_stamping_says_batch(self, clock, caplog):
-        r, _ = _refresher({2: "batch_fail"})
-        await _commit(r, clock, 1000.0)
-        await _commit(r, clock, 1001.0)
-        clock.t = 1006.0
-        await r.refresh_pending()
-        (rc,) = _receipts(caplog)
-        assert rc["result"] == "dropped_batch_failed", rc
 
 
 class TestLockChains:
@@ -535,9 +542,12 @@ async def test_receipt_elapsed_time_includes_awaited_batch(clock, caplog, finish
     clock.t = 1006.0
     await r.refresh_pending()
 
+    if finish == "commit_fail":
+        assert _receipts(caplog) == []
+        assert r.receipts._open[1].commit_failures == 1
+        # Failed work is now retained. A shutdown records its elapsed hold.
+        r.receipts.close_all("shutdown")
     (receipt,) = _receipts(caplog)
-    assert receipt["result"] == (
-        "stamped" if finish == "stamp" else "dropped_commit_failed"
-    )
+    assert receipt["result"] == ("stamped" if finish == "stamp" else "shutdown")
     assert receipt["held_s"] == "25.000"
     assert receipt["recv_to_close_s"] == "25.000"

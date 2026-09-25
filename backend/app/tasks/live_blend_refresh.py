@@ -164,7 +164,7 @@ class InputMark:
 
 @dataclass
 class _TailChain:
-    origin: str  # "throttle" | "lock"
+    origin: str  # "throttle" | "lock" | "batch"
     rev: InputMark  # the revision whose committed write was held
     stamp_rev: InputMark  # the newest committed revision before the close
     stored_wall: float
@@ -324,7 +324,7 @@ class TailReceipts:
     ) -> None:
         """After a batch that did NOT commit. A stamp the batch had made rolled
         back with it — `commit_failed`; otherwise the batch died first —
-        `batch_failed`. A re-queued (lock) chain stays open and counts it;
+        `batch_failed`. A re-queued chain stays open and counts it;
         anything else the batch was carrying is dropped, and says so."""
         for event_id in due:
             disposition = dispositions.get(event_id, ("",))
@@ -332,10 +332,12 @@ class TailReceipts:
             chain = self._open.get(event_id)
             if chain is None:
                 mark = staged.get(event_id)
-                if disposition[0] != "lock" or mark is None or event_id not in requeued:
+                if mark is None or event_id not in requeued:
                     continue
-                chain = self._open_chain("lock", mark, stored_wall, now)
-                chain.lock_retries += 1
+                origin = "lock" if disposition[0] == "lock" else "batch"
+                chain = self._open_chain(origin, mark, stored_wall, now)
+                if origin == "lock":
+                    chain.lock_retries += 1
             if event_id in requeued:
                 if failure == "commit_failed":
                     chain.commit_failures += 1
@@ -642,18 +644,20 @@ class LiveBlendRefresher:
                 "live_blend_refresh[%s]: batch failed for %d events",
                 self.source, len(due),
             )
-            # #837 tail — a failed batch must not cost the stamps it was
-            # carrying for a row lock: they are owed whether or not the venue
-            # ticks again. Re-queued due at once (`_refresh_batch` stamped the
-            # throttle before it failed). Only the retries: an ordinary batch
-            # event keeps the existing contract and waits for its next price.
+            # The outcome prices already committed before this refresh. Keep
+            # every owed stamp if its transaction fails, even when no further
+            # venue input arrives. Ordinary retries retain the attempt's 5s
+            # throttle; only existing row-lock retries remain due at once.
+            self._throttle_deferred.update(set(due).difference(self._lock_retry))
             for event_id in retry.intersection(due):
                 self._lock_retry.add(event_id)
                 self._last_refresh_at.pop(event_id, None)
+                self._throttle_deferred.discard(event_id)
             if receipts is not None:
                 self._receipt_call(
                     receipts.resolve_failed, due, self._dispositions, staged,
-                    stored_wall, set(self._lock_retry), exc, _mono(),
+                    stored_wall, self._lock_retry | self._throttle_deferred,
+                    exc, _mono(),
                 )
         else:
             if receipts is not None:
