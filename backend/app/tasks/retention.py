@@ -611,7 +611,10 @@ def _write_winprob_watermark(last_aged: datetime, event_id: int) -> bool:
         get_redis_client().set(
             WINPROB_WATERMARK_KEY,
             json.dumps({"last_aged": last_aged.isoformat(), "event_id": int(event_id)}),
-        )
+        )  # ← load-bearing: a bare `        )` above this handler is the exact
+        # replacement text of `typeahead_outcome_arm_mutations:M2-NO-LIMIT`, and
+        # `scan_mutation_residue` Pass B reds it as residue in any changed file.
+        # Same fix as `generic_market_history_fill.py` and its siblings.
     except Exception as exc:  # noqa: BLE001 — the collapse already committed
         logger.warning("winprob collapse: watermark write failed (%s)", exc)
         return False
