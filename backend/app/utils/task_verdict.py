@@ -319,6 +319,12 @@ ENFORCED_TASKS = frozenset({
     # for good. See `MIN_MARKETS_FLOOR` for why 500 against a twice-measured
     # ~11,400.
     "polymarket_container_twin_sweep",  # terminal + measured + fold_live + markets_read
+    # #7993. The Odds API re-mint arm of the same fold, enrolled from birth. Its
+    # quiet state is `complete` with `written: 0`, because re-mints are episodic.
+    # A needed provider listing that could not be read is `partial` (one sport)
+    # or `failed` (all of them), so "the provider dropped nothing" and "we could
+    # not ask the provider" never share a verdict.
+    "odds_api_remint_sweep",           # terminal + measured + listing_errors + written
     # #1912 (CAL-P065) — the two halves of the Polymarket ownership hole,
     # enrolled TOGETHER because separately each looked fine. The Gamma rail
     # discarded 9,748 markets a run as `unsupported_lookup` to a CLOB rail

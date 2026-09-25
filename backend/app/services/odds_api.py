@@ -142,6 +142,22 @@ class OddsAPIService(BaseAPIClient):
         self._capture_quota(response)
         return response.json()
 
+    async def get_events(self, sport_key: str) -> list[dict]:
+        """Every event the provider currently lists for a sport — ids only, no odds.
+
+        The ``/events`` endpoint costs no quota (``x-requests-last: 0``), so a
+        caller may ask "does the provider still list this id?" without spending
+        any of the 5M/month. It returns ``id``, ``commence_time``, ``home_team``
+        and ``away_team`` per event.
+        """
+        response = await self.client.get(
+            f"{self.BASE_URL}/sports/{sport_key}/events",
+            params={"apiKey": self.api_key},
+        )
+        response.raise_for_status()
+        self._capture_quota(response)
+        return response.json()
+
     async def get_scores(
         self,
         sport_key: str,
