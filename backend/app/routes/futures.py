@@ -4365,6 +4365,97 @@ async def _fleet_newest_observation(
         return None
 
 
+async def _game_container_leg_sides(
+    db: AsyncSession, market: FuturesMarket
+) -> dict[str, str]:
+    """``{leg external id: the side its price is}`` for a Polymarket game container (#8664).
+
+    WHAT A READER SAW. ``/futures/62357974`` at 390px, 2026-09-25 20:26Z —
+    "Counter-Strike: Infinite vs SAW (BO3)". The hero read **"100%  Map 1 Rounds
+    Handicap: SAW (-3.5) vs Infinite (+3.5)"** and All Outcomes listed thirteen
+    questions as answers: "Match Winner <1%", "Map 2 Winner <1%", "O/U 2.5 Games
+    <1%". "Match Winner <1%" is Infinite at <1%. SAW was at 99.95% on the real
+    Match Winner row, 62357977.
+
+    The board is the event row of a non-negRisk Polymarket event. The parent
+    writer (``tasks/polymarket._parent_outcome_data``) gives it one leg per
+    sub-market, priced at Gamma's ``outcome_prices[0]`` and named after the
+    sub-market's question. The sub-market is also its own row on the group, and
+    the decomposed writer stores ``outcome_prices[0]``'s side as
+    ``{condition_id}_yes`` with the venue's side name (``_sub_market_side_label``
+    index 0). Measured on the specimen: all 13 legs equal their sibling's ``_yes``
+    price exactly. So each leg's side is read by ID, never by row order. Row order
+    is an insertion-order bet that a third of Polymarket markets lose.
+
+    The board test is #8669's, imported and not re-spelled: a non-exclusive
+    Polymarket group row whose EVERY leg is another row on its group
+    (`_search_container_parents_among`). A leg is labelled only when its sibling
+    names exactly two sides, neither Yes/No (`_outcomes_name_two_sides`). For a
+    Yes/No sub-market the question IS the true label of its YES price ("Will T1
+    make the playoffs?"), and that leg is left alone.
+
+    Display-only. Prices, ids, ranks and history are untouched. Linked and
+    unlinked containers are handled alike: the label is true either way, and
+    search withholding (#8375/#8669) was the only place where linkage mattered.
+    """
+    # events.py imports this module at load time, so the reverse import is lazy.
+    from app.routes.events import (
+        _outcomes_name_two_sides,
+        _search_container_parents_among,
+        _search_leg_copy_board_legs,
+    )
+
+    # A row with no group is no container. Read with getattr because the thin
+    # serializer fixtures across the suite carry no `group_id` at all.
+    if not getattr(market, "group_id", None):
+        return {}
+    board = _search_leg_copy_board_legs(market)
+    if board is None:
+        return {}
+    group_id, legs = board
+    rows = (
+        await db.execute(
+            select(
+                FuturesMarket.id,
+                FuturesMarket.external_id,
+                FuturesOutcome.external_id,
+                FuturesOutcome.name,
+            )
+            .join(FuturesOutcome, FuturesOutcome.market_id == FuturesMarket.id)
+            .where(
+                FuturesMarket.source == "polymarket",
+                FuturesMarket.group_id == group_id,
+                FuturesMarket.external_id.in_(legs),
+            )
+        )
+    ).all()
+    sides_by_sibling: dict[tuple[int, str], dict[str, str]] = {}
+    for sibling_id, sibling_external, side_external, side_name in rows:
+        sides_by_sibling.setdefault((sibling_id, sibling_external), {})[
+            side_external
+        ] = side_name
+    if market.id not in _search_container_parents_among(
+        {market.id: board},
+        [(sid, group_id, ext) for sid, ext in sides_by_sibling],
+    ):
+        return {}
+    return {
+        ext: sides[f"{ext}_yes"].strip()
+        for (sid, ext), sides in sides_by_sibling.items()
+        if f"{ext}_yes" in sides
+        and _outcomes_name_two_sides(list(sides.values()))
+    }
+
+
+def _leg_side_label(side: str, question: str) -> str:
+    """The side first, then the question it answers: ``Infinite — Match Winner``.
+
+    Side first because the rows truncate at phone width. "Map 1 Rounds Handicap:
+    SAW (-3.5) vs Infinite (+3.5)" already fills a 390px row, so a side written
+    after it is the half the reader never sees."""
+    return f"{side} — {question}"
+
+
 async def _withheld_price_outcome_ids(
     db: AsyncSession, market: FuturesMarket
 ) -> set[int]:
@@ -4602,6 +4693,8 @@ async def get_futures_market(
         bookmakers,
         unsupported_price_ids,
         fleet_newest_observation=await _fleet_newest_observation(db, market),
+        # #8664 page half: a game container's legs name their side.
+        leg_sides=await _game_container_leg_sides(db, market),
     )
     if len(bookmakers) > 1 and source_breakdown:
         detail["source_breakdown"] = source_breakdown
@@ -7488,8 +7581,16 @@ async def get_futures_history(
     # Per-row and id-anchored by construction: every rung carries its own Kalshi
     # OUTCOME ticker, so a rung that resolves never depends on a sibling that did
     # not, and an unresolved rung prints exactly what Kalshi sent.
+    #
+    # #8664 page half: a game container's legs are relabelled here too, with the
+    # same map the detail route uses, so the legend and the rows agree.
+    leg_sides = await _game_container_leg_sides(db, market)
     outcome_names = {
-        o.id: (repair_field_outcome_name(o.external_id, o.name) or o.name)
+        o.id: (
+            _leg_side_label(leg_sides[o.external_id], o.name)
+            if o.external_id in leg_sides
+            else repair_field_outcome_name(o.external_id, o.name) or o.name
+        )
         for o in charted_outcomes
     }
 
@@ -8096,8 +8197,12 @@ def _format_market_detail(
     unsupported_price_outcome_ids: "set[int] | None" = None,
     *,
     fleet_newest_observation: "datetime | None" = None,
+    leg_sides: "dict[str, str] | None" = None,
 ) -> dict:
     """Format a market for detail view with all outcomes.
+
+    ``leg_sides`` is `_game_container_leg_sides`'s map (#8664). A leg named in it
+    is served as ``"<side> — <question>"``, because its price is that side's.
 
     #993: the click-through must MATCH the answer search shows. Apply the SAME
     shared display pipeline (app.utils.outcome_display) — placeholder filter
@@ -8227,7 +8332,11 @@ def _format_market_detail(
     outcomes = [
         {
             "id": o.id,
-            "name": repair_field_outcome_name(o.external_id, o.name) or o.name,
+            "name": (
+                _leg_side_label(leg_sides[o.external_id], o.name)
+                if leg_sides and o.external_id in leg_sides
+                else repair_field_outcome_name(o.external_id, o.name) or o.name
+            ),
             "probability": float(o.current_probability) if o.current_probability is not None else None,
             "american_odds": o.current_american_odds,
             # The stored column is the SEED here, not the served answer: #2556
