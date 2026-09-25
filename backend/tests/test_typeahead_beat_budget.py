@@ -831,6 +831,11 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
     have been wrong. RE-DERIVED by running the census below, which printed
     `explicit 77 implicit 43 total 120`.
 
+    🔴 **RE-DERIVED at lane1/818 (2026-09-25, #7993): 128 → 129, explicit
+    85 → 86, fall-through UNMOVED at 43.** `odds-api-remint-sweep` names
+    `background` explicitly. The census printed `explicit 86 implicit 43 total
+    129`. The cost declaration is on `BACKGROUND_BEAT_COUNT`.
+
     The test name still says 105/45 and both halves are now stale; the numbers
     that bind are the assertions, and the name is left alone because renaming it
     would break every reference to this guard in the handoff record.
@@ -1158,9 +1163,9 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
         elif named is None and conf.task_default_queue == "background":
             implicit += 1
 
-    assert explicit == 85, f"explicitly-routed background beats moved: {explicit}"
+    assert explicit == 86, f"explicitly-routed background beats moved: {explicit}"
     assert implicit == 43, f"default-queue fall-through moved: {implicit}"
-    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 128
+    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 129
 
     # ruling 110's two movers are OFF this queue and ON heavy — asserted here
     # too, so a silent revert cannot restore the count without being noticed.

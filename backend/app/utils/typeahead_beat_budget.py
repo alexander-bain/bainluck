@@ -1946,7 +1946,21 @@ def free_background_slots(
 #: WHY `background` AND NOT `heavy`: nothing here is heavy, and the serve path
 #: that reads the published listing is the main app's. Routing it to heavy would
 #: put a deployment lag (notice 48) in front of a beat that costs one HTTP GET.
-BACKGROUND_BEAT_COUNT = 128
+#: 🔴 RE-DERIVED at lane1/818 (2026-09-25, #7993): 128 → **129**, explicit
+#: 85 → **86**, fall-through UNMOVED at **43**. `odds-api-remint-sweep`
+#: (`crontab(minute=13)`) names `background` explicitly. RE-DERIVED by RUNNING
+#: the census over the assembled `beat_schedule`, which printed `explicit 86
+#: implicit 43 total 129`, never by adding one to 128 (#1910).
+#:
+#: Cost shape: ONE FIRE AN HOUR. One indexed read of upcoming combat rows that
+#: carry an Odds API id (156 rows on 2026-09-25), a pure in-memory plan, and a
+#: provider `/events` GET only for sports holding a same-pair group (0–2 a run,
+#: no quota). Writes happen only when the provider has re-minted a bout: 15 on
+#: the first run, then usually 0.
+#:
+#: ⚠️ The merge hazard applies to this line too: re-run the census on the
+#: composed tree after any rebase.
+BACKGROUND_BEAT_COUNT = 129
 #: 🔴 RE-DERIVED at lane1/282 (2026-09-13, #5896): 122 → **123**, explicit
 #: 79 → **80**, fall-through UNMOVED at 43. One beat added,
 #: `soccer-ghost-twin-sweep` (`crontab(minute="9,49")`) with an EXPLICIT
