@@ -10,6 +10,9 @@ import { servedDuelPercents } from "@/lib/servedDuelPercents";
 import { eventPath } from "@/lib/eventKey";
 import { orderByParticipant } from "@/lib/railParticipantOrder";
 import { PriceAgeMark } from "@/components/event/PriceAgeMark";
+import { isFinishedStatus } from "@/lib/eventState";
+import { PREMATCH_SAID, prematchReading } from "@/lib/prematchReading";
+import { awayIsTheComplement } from "@/lib/drawPricedWinner";
 
 /** The item types this section knows how to render.
  *
@@ -99,6 +102,112 @@ const FIELD_VALUE = "shrink-0 tabular-nums font-semibold text-text-primary";
 
 /** The most outcomes a card lists. Beyond four the card stops being a card. */
 const MAX_FIELD_ROWS = 4;
+
+/**
+ * ═══ #5558: A FINISHED GAME IS A RESULT, NOT A PRICE ═══
+ *
+ * The game branch below reads `current_odds` with no status check, and after
+ * the whistle that is the SETTLED market: `Atlanta Falcons @ Green Bay Packers`
+ * (14780546, final 35–14) printed `>99% / <1%` on production 2026-09-25, with
+ * no score and no FINAL — a live-looking forecast of a game already over. On
+ * soccer rails it named the loser as favourite (Ireland 61% over a Kosovo that
+ * won 1–0).
+ *
+ * Settled means settled, and one card family (notice 35): this is `FeedCard`'s
+ * finished treatment in this rail's grammar — FINAL beside the title, the score
+ * in the right-hand column bold on the winner, and the pre-match reading grey
+ * beside each name (`prematchReading`, the same call and the same #6238
+ * away-withhold `FeedCard` makes). `current_odds` is never read here.
+ *
+ * A card with no pre-match reading prints no number, and one with no score
+ * prints no score column — this rail never invents a figure.
+ */
+function FinishedEventCard({ data }: { data: FeedEventData }) {
+  const hasScore = data.away_score != null && data.home_score != null;
+  const awayWon = hasScore && data.away_score! > data.home_score!;
+  const homeWon = hasScore && data.home_score! > data.away_score!;
+  const prematch = prematchReading(data);
+  const awayWithheld =
+    prematch !== null &&
+    awayIsTheComplement(prematch.awayProbability, prematch.homeProbability, data.sport);
+  const rows = [
+    {
+      side: "away",
+      name: data.away_team,
+      won: awayWon,
+      score: data.away_score,
+      percent: awayWithheld ? null : prematch?.awayPercent ?? null,
+      probability: prematch?.awayProbability,
+    },
+    {
+      side: "home",
+      name: data.home_team,
+      won: homeWon,
+      score: data.home_score,
+      percent: prematch?.homePercent ?? null,
+      probability: prematch?.homeProbability,
+    },
+  ];
+  return (
+    <Link
+      href={`/events/${data.id}`}
+      className={CARD}
+      data-testid="related-card"
+      data-kind="event"
+      data-state="final"
+    >
+      <span className="flex items-baseline gap-1.5">
+        <span className={CARD_TITLE}>
+          {data.away_team} @ {data.home_team}
+        </span>
+        <span
+          className="ml-auto shrink-0 rounded bg-surface-elevated px-1.5 py-0.5 text-[10.5px] font-semibold text-text-muted"
+          data-testid="related-card-final"
+        >
+          FINAL
+        </span>
+      </span>
+      <ol className="mt-1.5 space-y-0.5" data-testid="related-card-result">
+        {rows.map((row) => (
+          <li key={row.side} className={FIELD_ROW} data-side={row.side}>
+            <span className="flex min-w-0 items-baseline gap-1.5">
+              <span
+                className={`min-w-0 truncate ${
+                  row.won ? "font-semibold text-text-primary" : "text-text-muted"
+                }`}
+              >
+                {row.name}
+              </span>
+              {row.percent !== null && (
+                <span
+                  className="shrink-0 font-mono text-[11px] tabular-nums text-text-muted"
+                  data-testid="related-card-prematch"
+                  data-prematch={row.probability}
+                  data-prematch-source={prematch?.source}
+                >
+                  <span className="sr-only">
+                    {PREMATCH_SAID} {row.name}{" "}
+                  </span>
+                  {row.percent}%
+                </span>
+              )}
+            </span>
+            {hasScore && (
+              <span
+                className={`shrink-0 tabular-nums ${
+                  row.won ? "font-bold text-text-primary" : "text-text-muted"
+                }`}
+                data-testid="related-card-score"
+              >
+                {row.score}
+              </span>
+            )}
+          </li>
+        ))}
+      </ol>
+    </Link>
+  );
+}
 
 interface RelatedByTagProps {
   /** Tag queries to filter by, e.g. ["sport:basketball"] */
@@ -234,6 +343,9 @@ export default function RelatedByTag({
         {items.map((item) => {
           if (item.type === "event") {
             const d = item.data as FeedEventData;
+            if (isFinishedStatus(d.status)) {
+              return <FinishedEventCard key={`rel-event-${d.id}`} data={d} />;
+            }
             /* A game's field is its two sides. Away first, matching the title,
                so the two lines below read in the order the title names them.
 
