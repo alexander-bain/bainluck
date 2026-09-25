@@ -121,4 +121,63 @@ final class TheRunLineIsNotAProjectedMargin8617Tests: XCTestCase {
         let nfl = try ink(sportKey: "americanfootball_nfl", dropScores: true, name: "nfl-no-scores")
         XCTAssertGreaterThan(nfl.orange, 300, "control: a projection-only payload draws under NFL")
     }
+
+    // MARK: - The hero and Game Info (ux ruling, issuecomment-5835251785)
+
+    /// The same run-line pair the backend serves for an MLB game: spread point
+    /// 1.5 and total 7.5 solve to 3.0 / 4.5 — the favourite by a run and a half
+    /// whatever the price.
+    private static let runLineAway = 3.0, runLineHome = 4.5
+    private static let now = Date(timeIntervalSince1970: 1_790_000_000)
+    private static let beforeTheOff = now.addingTimeInterval(3 * 3600)
+    private static let underway = now.addingTimeInterval(-3600)
+
+    /// Before the off the hero prints the projection; baseball withholds it and
+    /// the same pair under NFL still prints — so the nil is the sport gate, not
+    /// a status or date that #5697's gate already refuses.
+    func testTheHeroWithholdsTheRunLineBeforeTheOff() {
+        XCTAssertNil(EventDetailView.projectionText(
+            sport: "baseball_mlb", status: "scheduled", commenceTime: Self.beforeTheOff,
+            projectedHome: Self.runLineHome, projectedAway: Self.runLineAway,
+            hasScore: false, now: Self.now),
+            "the iPhone hero prints the ±1.5 run line as a projected final (#8617)")
+        XCTAssertNil(EventDetailView.projectionText(
+            sport: "baseball_npb", status: "scheduled", commenceTime: Self.beforeTheOff,
+            projectedHome: Self.runLineHome, projectedAway: Self.runLineAway,
+            hasScore: false, now: Self.now))
+        let control = EventDetailView.projectionText(
+            sport: "americanfootball_nfl", status: "scheduled", commenceTime: Self.beforeTheOff,
+            projectedHome: Self.runLineHome, projectedAway: Self.runLineAway,
+            hasScore: false, now: Self.now)
+        XCTAssertEqual(control.map { $0.hasPrefix("Proj. ") && $0.contains("3-5") }, true,
+                       "control: the same pair no longer prints under a margin sport — got \(String(describing: control))")
+    }
+
+    /// While live the projection moves to Game Info (#8320) through the same
+    /// function; baseball withholds it there too.
+    func testGameInfoWithholdsTheRunLineWhileLive() {
+        XCTAssertNil(EventDetailView.projectionText(
+            sport: "baseball_mlb", status: "live", commenceTime: Self.underway,
+            projectedHome: Self.runLineHome, projectedAway: Self.runLineAway,
+            hasScore: true, now: Self.now),
+            "Game Info prints the ±1.5 run line as a projected final (#8617)")
+        XCTAssertNotNil(EventDetailView.projectionText(
+            sport: "icehockey_nhl", status: "live", commenceTime: Self.underway,
+            projectedHome: Self.runLineHome, projectedAway: Self.runLineAway,
+            hasScore: true, now: Self.now),
+            "control: a live margin sport with a score keeps its Game Info projection")
+    }
+
+    /// The hero and Game Info are withheld by one gate only because both read
+    /// the served pair through `projectionText`. A second read of
+    /// `projectedHomeScore` in the page would be a print path the gate never
+    /// sees, so the set of reads is pinned at the one inside the wrapper.
+    func testTheEventPageReadsTheProjectedPairInOnePlace() throws {
+        let source = try String(contentsOf: URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Bain Luck/Views/EventDetailView.swift"), encoding: .utf8)
+        let reads = source.components(separatedBy: "currentOdds?.projectedHomeScore").count - 1
+        XCTAssertEqual(reads, 1, "EventDetailView reads the projected pair outside projectionText")
+        XCTAssertEqual(source.components(separatedBy: "projectedHomeScore").count - 1, 1)
+    }
 }

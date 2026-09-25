@@ -153,8 +153,16 @@ d("iOS reads one event-status vocabulary", () => {
     });
 
     it("the projection gate asks the helper instead of restating !isFinished", () => {
+      // #8617 moved the gate one hop: the body hands the event's own status,
+      // start and drawn score to the static `projectionText` (which the Swift
+      // tests drive), and that function asks `showsProjection` with exactly
+      // what it was handed. Both hops are pinned, so a body that restates the
+      // gate, or a static that drops a field on the way, still fails here.
       expect(detail()).toMatch(
-        /EventDetailView\.showsProjection\(\n\s*status: event\.status, commenceTime: event\.commenceTime\?\.asDate,\n\s*hasScore: hasScore\)/
+        /EventDetailView\.projectionText\(\n\s*sport: event\.sport, status: event\.status,\n\s*commenceTime: event\.commenceTime\?\.asDate,/
+      );
+      expect(detail()).toMatch(
+        /showsProjection\(\n\s*status: status, commenceTime: commenceTime,\n\s*hasScore: hasScore, now: now\) else \{ return nil \}/
       );
       // The pre-fix gate, verbatim. Its absence is the assertion.
       expect(stripComments(detail())).not.toMatch(
