@@ -213,3 +213,36 @@ export function drawnImpliedSpreadSources(
     )
     .map(([source]) => source);
 }
+
+/**
+ * #4887 (D123, Alex): a venue's implied margin is ONE current reading, so it
+ * is stamped on ONE point — the chart's last — and never across the game.
+ *
+ * `pm_spread_data.implied_spreads` carries no history: each arm is what the
+ * ladder implies at serve time. The chart used to copy that value onto every
+ * point in the domain, so a dashed "Kalshi Implied" rule ran flat from the
+ * first pitch to now and told the reader Kalshi had held that margin all game.
+ * Measured on production 2026-09-25 22:40Z, Cubs @ Red Sox (15318545), live
+ * 0–0 in the 4th: the only forecast on the card was a purple rule flat at Red
+ * Sox +1.2 from 2:40 PM, while the served arm read `home_margin -0.2` minutes
+ * later. We never observed the +1.2 at 2:40 — or at any time but the last.
+ *
+ * Mutates `points` in place, like the rest of the chart build. Every other
+ * point is left without the key, so `<Line dot>` draws a single marker and no
+ * stroke. `points` must already be sorted and pruned to the shared domain:
+ * "last" means the right edge the reader sees.
+ */
+export function stampImpliedSpreadSnapshot(
+  points: Array<Record<string, unknown>>,
+  impliedSpreads: Record<string, ImpliedSpreadArm> | null | undefined,
+  sources: string[]
+): void {
+  if (points.length === 0 || !impliedSpreads) return;
+  const last = points[points.length - 1];
+  for (const source of sources) {
+    const arm = impliedSpreads[source];
+    if (!arm) continue;
+    // 🔴 Never plot `arm.spread` raw — betting-line sign (#3948).
+    last[`pm_${source}_spread`] = impliedSpreadHomeMargin(arm);
+  }
+}

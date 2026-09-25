@@ -327,15 +327,22 @@ describe("#6142 — the three draw sites read one list", () => {
     expect(CHART_SOURCE).toContain("drawnImpliedSpreadSources(");
     expect(CHART_SOURCE).toContain("const impliedSpreadSources");
 
-    // data build
-    expect(CHART_SOURCE).toContain("if (!impliedSpreadSources.includes(source)) continue;");
-    // legend payload + the two lines: four `includes` gates in all, plus the
-    // build's own, plus the wrapper attribute's `join`.
+    // data build — #4887 moved the loop into `stampImpliedSpreadSnapshot`,
+    // which stamps exactly the sources it is handed; the build hands it the list.
+    expect(CHART_SOURCE).toContain(
+      "stampImpliedSpreadSnapshot(points, pmSpreadData?.implied_spreads, impliedSpreadSources);"
+    );
+    // legend payload + the two lines: four `includes` gates in all, on the
+    // #4887 shown-subset, which is the shared list or nothing — never a
+    // second derivation from the payload.
+    expect(CHART_SOURCE).toContain(
+      "const shownImpliedSpreadSources = impliedSourcesShown ? impliedSpreadSources : [];"
+    );
     expect(
-      CHART_SOURCE.match(/impliedSpreadSources\.includes\("kalshi"\)/g)
+      CHART_SOURCE.match(/shownImpliedSpreadSources\.includes\("kalshi"\)/g)
     ).toHaveLength(2);
     expect(
-      CHART_SOURCE.match(/impliedSpreadSources\.includes\("polymarket"\)/g)
+      CHART_SOURCE.match(/shownImpliedSpreadSources\.includes\("polymarket"\)/g)
     ).toHaveLength(2);
   });
 
