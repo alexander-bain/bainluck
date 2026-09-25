@@ -9019,9 +9019,12 @@ async def search_events(
                 await _refill_savepoint.rollback()
                 if not _is_query_timeout(exc):
                     raise
+                # #8704: the query text stays out of this line — the block moved
+                # under the in-hand check, and CodeQL (py/log-injection) reads a
+                # moved `%r, q` as new (#7355's teams line, same reason).
                 logger.error(
-                    "search futures REFILL timed out for %r — shipping the short "
-                    "page rather than nothing", q
+                    "search futures REFILL timed out (query length %d) — "
+                    "shipping the short page rather than nothing", len(q)
                 )
                 # AND SAY SO, FOR THE REASON THE HEADLINE LANE BELOW SAYS IT (#7243).
                 #

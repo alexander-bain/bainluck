@@ -21,12 +21,18 @@ import random
 import pytest
 
 from app.routes import events as events_module
-from app.routes.events import (
-    _SEARCH_FUTURES_REFILL,
-    _SEARCH_FUTURES_WINDOW,
-    _fetch_futures_window,
-    _futures_refill_in_hand,
-)
+from app.routes.events import _SEARCH_FUTURES_REFILL, _SEARCH_FUTURES_WINDOW
+
+
+# Read off the module at call time, not imported by value (CodeQL
+# py/import-of-mutable-attribute): a monkeypatch of either is then seen here.
+def _fetch_futures_window(*args, **kwargs):
+    return events_module._fetch_futures_window(*args, **kwargs)
+
+
+def _futures_refill_in_hand(*args, **kwargs):
+    return events_module._futures_refill_in_hand(*args, **kwargs)
+
 
 WINDOW = _SEARCH_FUTURES_WINDOW
 REFILL = _SEARCH_FUTURES_REFILL
