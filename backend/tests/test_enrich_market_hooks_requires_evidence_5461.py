@@ -33,6 +33,7 @@ import pytest
 
 from app.utils.hook_prompt import (
     NO_HOOK_SENTINEL,
+    _kickoff_as_of,
     accept_hook_output,
     build_hook_evidence,
     should_generate_hook,
@@ -228,7 +229,7 @@ class TestEnrichMarketHooksRequiresEvidenceForSpecificDevelopment5461:
         assert len(client.calls) == 1
         prompt = client.calls[0]
         assert "EVIDENCE — the ONLY facts you may state" in prompt
-        stamp = kickoff.strftime("%b %d, %Y")
+        stamp = _kickoff_as_of(kickoff)  # the ET day + clock, pinned on fixed instants in the #5531 file
         assert f"Philadelphia Phillies vs Atlanta Braves is scheduled for {stamp}." in prompt
         settles = (real_now + timedelta(days=5)).strftime("%b %d, %Y")
         assert f"settled no later than {settles}" in prompt, (
@@ -267,7 +268,7 @@ class TestEnrichMarketHooksRequiresEvidenceForSpecificDevelopment5461:
         # Split on the BLOCK HEADER, not the bare word: "EVIDENCE" also appears earlier, in
         # the criterion "State ONLY what an EVIDENCE line supports".
         evidence_block = prompt.split("EVIDENCE — the ONLY facts you may state")[1]
-        stamp = kickoff.strftime("%b %d, %Y")
+        stamp = _kickoff_as_of(kickoff)  # the ET day + clock, pinned on fixed instants in the #5531 file
         assert evidence_block.index(stamp) < evidence_block.index("settled no later than"), (
             "the padded settlement date outranked a real kickoff"
         )
@@ -360,7 +361,7 @@ async def test_enrich_market_hooks_requires_evidence_for_specific_development_54
         monkeypatch, with_evidence, _OUTCOMES, event_row=(kickoff, "Riverside", "Northgate")
     )
     assert len(client.calls) == 1
-    assert kickoff.strftime("%b %d, %Y") in client.calls[0]
+    assert _kickoff_as_of(kickoff) in client.calls[0]  # the ET day, not the UTC day (gotcha #44)
     assert stats["generated"] == 1 and session.updates
 
 

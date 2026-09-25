@@ -774,6 +774,22 @@ async def enrich_market_hooks(limit: int = 50):
             FuturesMarket.market_tier <= 3,
         )
 
+        # #5531: the candidate window holds only markets the evidence gate below
+        # can pass — a linked fixture that has not started yet, the same test
+        # `build_hook_evidence` applies (`should_generate_hook` refuses a
+        # settlement date on its own). Without it the window was 300 null-hook
+        # politics/economics rows, every one refused and never stamped, so the
+        # same 300 came back first every run: production wrote 0 hooks from
+        # 2026-09-13 to 2026-09-24 while 514 fixture-linked markets waited.
+        has_upcoming_fixture = (
+            select(Event.id)
+            .where(
+                Event.id == FuturesMarket.event_id,
+                Event.commence_time > now,
+            )
+            .exists()
+        )
+
         # Only enrich feed-shaped candidates. Do not grind through the entire
         # open-market backlog: there are tens of thousands of open markets, and
         # most should never need LLM hooks unless they become plausible Discover
@@ -783,6 +799,7 @@ async def enrich_market_hooks(limit: int = 50):
             .where(
                 FuturesMarket.status == "open",
                 feed_candidate_scope,
+                has_upcoming_fixture,
                 or_(
                     FuturesMarket.hook_description.is_(None),
                     FuturesMarket.hook_generated_at.is_(None),
