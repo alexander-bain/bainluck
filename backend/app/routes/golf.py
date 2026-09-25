@@ -1504,7 +1504,8 @@ def _merge_abbreviated_golfers(golfer_data: dict[str, dict]) -> dict[str, dict]:
     the merge body. No golfer entry has ever carried a `probabilities` key —
     `_aggregate_golfer_outcome` is the only thing that builds one, and it sets
     `name` / `sources` / `movement_24h` / `movement_is_dated` /
-    `opening_probability` — and nothing reads one, so that line
+    `dated_deltas` / `undated_change` / `opening_probability` — and nothing
+    reads one, so that line
     could only ever raise `KeyError`. Its caller `_build_tournament_entry` is
     unguarded, so the whole golf base rebuild died with it, taking every golf
     card on Discover and the `/golf` page with it. It has never fired in
@@ -1581,13 +1582,22 @@ def _merge_abbreviated_golfers(golfer_data: dict[str, dict]) -> dict[str, dict]:
         # Merge sources and probabilities
         long["sources"].update(short["sources"])
 
-        if short["movement_24h"] is not None and long["movement_24h"] is None:
-            long["movement_24h"] = short["movement_24h"]
-            # The provenance travels WITH the value (#7179). Moving the number
-            # and leaving the flag behind would publish the merged golfer's move
-            # under the recipient's provenance, which is the one thing this flag
-            # exists to prevent.
-            long["movement_is_dated"] = short.get("movement_is_dated", False)
+        # #3013 — the per-source moves merge exactly as `sources` just did (the
+        # short entry's source wins, and brings its own dated delta or none),
+        # and the move is recomputed from them, so the merged golfer states the
+        # move of the merged blend. The provenance travels WITH the value
+        # (#7179): it is recomputed from the same per-source inputs as the
+        # number, never copied from one side.
+        long_dated = long.setdefault("dated_deltas", {})
+        short_dated = short.get("dated_deltas") or {}
+        for label in short["sources"]:
+            if label in short_dated:
+                long_dated[label] = short_dated[label]
+            else:
+                long_dated.pop(label, None)
+        if long.get("undated_change") is None:
+            long["undated_change"] = short.get("undated_change")
+        _set_blend_movement(long)
         if short["opening_probability"] is not None and long["opening_probability"] is None:
             long["opening_probability"] = short["opening_probability"]
 
@@ -2113,6 +2123,58 @@ def _extract_yes_no_prop(market, source_label: str) -> dict | None:
     }
 
 
+def _pin_golfer_name(entry: dict, candidate: str, candidate_is_datagolf: bool) -> None:
+    """Pick the golfer's display name by a rule, not by which outcome came first (#3013).
+
+    Sources spell one golfer differently ("Matt" / "Matthew Fitzpatrick" share a
+    match key), and the entry used to keep whichever outcome the query happened
+    to return first, so the card's name flipped between reads. Order: DataGolf's
+    spelling (the field authority, and the source the invitee filter already
+    trusts), then the longest form, then alphabetical so a tie cannot flip.
+    """
+    current = entry["name"]
+    current_is_datagolf = bool(entry.get("name_from_datagolf"))
+
+    def rank(name: str, from_datagolf: bool) -> tuple:
+        return (from_datagolf, len(name), tuple(-ord(c) for c in name))
+
+    if rank(candidate, candidate_is_datagolf) > rank(current, current_is_datagolf):
+        entry["name"] = candidate
+        entry["name_from_datagolf"] = candidate_is_datagolf
+
+
+def _set_blend_movement(entry: dict) -> None:
+    """Set `movement_24h` / `movement_is_dated` from the per-source moves (#3013).
+
+    The card shows the BLEND — the mean of `sources` — so the move it states
+    must be the blend's: the mean of the per-source dated deltas, over the
+    sources that have a 23-25h snapshot. It used to keep the single largest
+    source move, so a leader whose DataGolf number jumped 25 points while
+    Kalshi and Polymarket moved a few read "up 25 points today" on a blend
+    that had moved about half that.
+
+    No dated source ⇒ the undated per-write change, exactly as before (#7179:
+    `movement_is_dated` stays False on that arm, so no caller says "today").
+    Any dated source ⇒ no fallback: a dated answer, even "unchanged", outranks
+    a per-write delta of unknown age. Under the 0.001 floor ⇒ no movement.
+    """
+    dated = entry.get("dated_deltas") or {}
+    if dated:
+        mean = sum(dated.values()) / len(dated)
+        if abs(mean) >= 0.001:
+            entry["movement_24h"] = round(mean, 4)
+            entry["movement_is_dated"] = True
+        else:
+            entry["movement_24h"] = None
+            entry["movement_is_dated"] = False
+        return
+    undated = entry.get("undated_change")
+    entry["movement_24h"] = round(undated, 4) if undated is not None else None
+    # Every line that assigns `movement_24h` also states that value's
+    # provenance — the invariant #7179 made local.
+    entry["movement_is_dated"] = False
+
+
 def _aggregate_golfer_outcome(
     outcome, source_label: str, golfer_data: dict[str, dict],
     prob_24h_ago: dict[int, float], prob_scale: float = 1.0,
@@ -2132,12 +2194,15 @@ def _aggregate_golfer_outcome(
     field, so a reader of that field cannot tell a dated move from a per-write
     delta, and the tournament card spends it on the word "today".
 
-    So each write records WHICH arm produced it in `movement_is_dated`. Nothing
-    about the VALUE changes: ranking (`_score_tournament`), liveness
-    (`_tournament_is_live`) and the golf page read `movement_24h` exactly as
-    before. This flag only lets a caller that wants to say "today" find out
-    whether it may — the A8 rule that a fix here narrows what may be SAID, never
-    what is SHOWN.
+    So each write records WHICH arm produced it in `movement_is_dated`. This
+    flag only lets a caller that wants to say "today" find out whether it may —
+    the A8 rule that a fix here narrows what may be SAID, never what is SHOWN.
+
+    #3013 changed the VALUE on the dated arm: it is now the blend's move (the
+    mean of the per-source dated deltas, `_set_blend_movement`), not the
+    largest single source's. Ranking (`_score_tournament`), liveness
+    (`_tournament_is_live`), the golf page and the Discover card all read that
+    one number, so they now read the move of the probability they print.
 
     Measured on production 2026-09-19 over all 4,319 open golf outcomes: 2,766
     dated, 1,553 with no movement at all, and **0 on the fallback** — so this is
@@ -2159,40 +2224,47 @@ def _aggregate_golfer_outcome(
     if not key:
         return
 
+    is_datagolf = source_label == "datagolf_model"
     if key not in golfer_data:
         golfer_data[key] = {
             "name": display_name,
+            "name_from_datagolf": is_datagolf,
             "sources": {},
             "movement_24h": None,
             # False until an arm sets `movement_24h`, so "no movement" and "an
             # undated movement" are the same answer to "may this be called
             # today's?" — which is the only question this field is asked.
             "movement_is_dated": False,
+            # #3013 — each source's DATED move, keyed like `sources` and written
+            # in lockstep with it, so `movement_24h` can be the move of the
+            # number the card shows (the blend) rather than of one source.
+            "dated_deltas": {},
+            "undated_change": None,
             "opening_probability": None,
         }
+    else:
+        _pin_golfer_name(golfer_data[key], display_name, is_datagolf)
 
-    golfer_data[key]["sources"][source_label] = round(prob, 3)
+    entry = golfer_data[key]
+    entry["sources"][source_label] = round(prob, 3)
 
+    # Lockstep with the line above: `sources` is last-write-wins per source, so
+    # the dated delta for that source must be THIS outcome's or none — never an
+    # earlier outcome's move sitting beside a later outcome's price. A delta
+    # under the 0.001 floor is still a dated answer ("this source did not
+    # move") and is kept: dropping it would let the one source that did move
+    # speak for the whole blend, which is #3013.
     if outcome.id in prob_24h_ago:
-        delta = prob - prob_24h_ago[outcome.id] * prob_scale
-        if abs(delta) >= 0.001:
-            existing = golfer_data[key]["movement_24h"]
-            if existing is None or abs(delta) > abs(existing):
-                golfer_data[key]["movement_24h"] = round(delta, 4)
-                golfer_data[key]["movement_is_dated"] = True
+        entry["dated_deltas"][source_label] = prob - prob_24h_ago[outcome.id] * prob_scale
+    else:
+        entry["dated_deltas"].pop(source_label, None)
 
-    if golfer_data[key]["movement_24h"] is None and outcome.probability_change_24h is not None:
+    if entry["undated_change"] is None and outcome.probability_change_24h is not None:
         change = float(outcome.probability_change_24h) * prob_scale
         if abs(change) >= 0.001:
-            golfer_data[key]["movement_24h"] = round(change, 4)
-            # Redundant today — the `is None` guard above means no dated value
-            # can be sitting here to be overwritten — and written anyway so the
-            # invariant is LOCAL: every line that assigns `movement_24h` also
-            # states that value's provenance. A later edit that relaxes the
-            # guard then cannot leave the two fields describing different
-            # numbers, which is the exact way the one field came to mean two
-            # measurements in the first place.
-            golfer_data[key]["movement_is_dated"] = False
+            entry["undated_change"] = change
+
+    _set_blend_movement(entry)
 
     if outcome.opening_probability is not None and golfer_data[key]["opening_probability"] is None:
         golfer_data[key]["opening_probability"] = round(

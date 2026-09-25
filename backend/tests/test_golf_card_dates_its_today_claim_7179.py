@@ -314,13 +314,15 @@ class TestTheAggregationRecordsWhichArmRan:
         assert entry["movement_24h"] is None
         assert entry["movement_is_dated"] is False
 
-    def test_a_dated_arm_that_loses_the_max_abs_race_does_not_claim_the_flag(self):
-        """Two sources, and the flag must describe the value that WON.
+    def test_any_dated_source_outranks_a_larger_undated_one(self):
+        """Two sources, and the flag must describe the value that is SERVED.
 
-        The aggregation keeps the largest absolute move across sources. A flag
-        that recorded "some source was dated" rather than "THIS number is dated"
-        would relabel an undated winner as dated — the defect, wearing the fix's
-        name.
+        Before #3013 the aggregation kept the largest absolute move across
+        sources, and this test pinned that an undated winner of that race was
+        not relabelled dated. #3013 makes the served move the blend's DATED move
+        whenever any source is dated, so the undated per-write delta — however
+        large — no longer displaces it. The flag still describes the served
+        number: here the number is the dated one, so the flag says dated.
         """
         data: dict[str, dict] = {}
         # Undated but large, seen first.
@@ -330,15 +332,13 @@ class TestTheAggregationRecordsWhichArmRan:
             data,
             {},
         )
-        # Dated but smaller — must NOT displace the larger value.
+        # Dated but smaller — the only dated answer, so it is the blend's move.
         _aggregate_golfer_outcome(
             _Outcome(2, "Neal Shipley", 0.283), "datagolf_model", data, {2: 0.273}
         )
         entry = data["neal shipley"]
-        assert entry["movement_24h"] == pytest.approx(0.30)
-        assert entry["movement_is_dated"] is False, (
-            "the surviving value is the undated one, so the flag must say so"
-        )
+        assert entry["movement_24h"] == pytest.approx(0.01)
+        assert entry["movement_is_dated"] is True
 
     def test_a_dated_arm_that_wins_the_race_sets_the_flag(self):
         """The mirror of the above, so the guard is not one-sided."""
@@ -366,11 +366,15 @@ class TestTheProvenanceTravelsWithTheValue:
     @staticmethod
     def _pair(short_dated: bool) -> dict[str, dict]:
         return {
+            # #3013 — entries carry the per-source inputs the move is computed
+            # from; the merge recomputes the move from them.
             "s scheffler": {
                 "name": "S. Scheffler",
                 "sources": {"odds_api": 0.2},
                 "movement_24h": 0.03,
                 "movement_is_dated": short_dated,
+                "dated_deltas": {"odds_api": 0.03} if short_dated else {},
+                "undated_change": None if short_dated else 0.03,
                 "opening_probability": 0.1,
             },
             "scottie scheffler": {
@@ -378,6 +382,8 @@ class TestTheProvenanceTravelsWithTheValue:
                 "sources": {"datagolf_model": 0.22},
                 "movement_24h": None,
                 "movement_is_dated": False,
+                "dated_deltas": {},
+                "undated_change": None,
                 "opening_probability": None,
             },
         }
