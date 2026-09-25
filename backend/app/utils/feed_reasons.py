@@ -1403,6 +1403,7 @@ def compose_live_claim(
         home_score=home_score,
         away_score=away_score,
         opening_away_prob=opening_away_prob,
+        sport=sport,
     )
     if claim is None:
         return None

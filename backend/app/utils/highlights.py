@@ -16,6 +16,7 @@ from typing import Optional, Literal
 import math
 import re
 
+from app.utils.draw_priced_winner import sport_prices_a_draw
 from app.utils.league_classification import is_power_4_team
 from app.utils.lifecycle import live_start_satisfied
 from app.utils.odds_math import favorite_from_pair
@@ -657,6 +658,7 @@ def select_live_claim(
     home_score: Optional[int],
     away_score: Optional[int],
     opening_away_prob: Optional[float] = None,
+    sport: Optional[str] = None,
 ) -> Optional[LiveClaimType]:
     """Which claim does a live card's evidence actually support? (T10-1, #5439)
 
@@ -682,7 +684,8 @@ def select_live_claim(
       selector is what lets the SENTENCE say the true thing either way.
 
     * ``"movement"`` — the price has moved at least ``MAJOR_PROB_SWING`` off its
-      pre-game number. That is a fact about our own instrument and is stated as
+      pre-game number, OR the pre-game favourite is now the underdog on a
+      two-way board. That is a fact about our own instrument and is stated as
       one: endpoints and direction, never as an event on the field.
 
     * ``None`` — nothing is supported. Ruling 146: the sentence is suppressed,
@@ -708,7 +711,51 @@ def select_live_claim(
     if opening_home_prob is not None and current_home_prob is not None:
         if abs(current_home_prob - opening_home_prob) >= MAJOR_PROB_SWING:
             return "movement"
+        if _favourite_flipped_on_a_two_way_board(
+            opening_home_prob, opening_away_prob, current_home_prob, sport
+        ):
+            return "movement"
     return None
+
+
+# Half a point: the least the live price can sit off 50% and still PRINT on the
+# other side of it (rendered_percent rounds half up), so the sentence never reads
+# "rose from 48% to 50%" about a flip the reader cannot see.
+_FLIP_MIN_DISTANCE_FROM_EVEN = 0.005
+
+
+def _favourite_flipped_on_a_two_way_board(
+    opening_home_prob: float,
+    opening_away_prob: Optional[float],
+    current_home_prob: float,
+    sport: Optional[str],
+) -> bool:
+    """Has the side that opened as the favourite become the underdog? (#5439)
+
+    The evidence behind the "Odds moved" pill. ``get_highlight_label`` serves
+    that label on ANY live favourite switch, while the movement arm above needs
+    a 15-point swing, so Cubs @ Red Sox (game 2, 2026-09-25 22:42Z) — opened
+    Boston 0.4792 / Chicago 0.5208, live 0.532 — led Discover with the bare words
+    "Odds moved": a price claim with neither number. The flip IS the move the
+    pill names, so it earns the sentence with both endpoints in it.
+
+    Same opening side as ``compute_highlight``'s ``favorite_switched`` (both
+    legs, ``FAVORITE_MARGIN``), and the same one-leg read of the live price —
+    which is why this is TWO-WAY ONLY. On a draw-priced board the home leg sits
+    under 0.5 whoever is favoured (#7055), so a crossing of 0.5 is not a flip
+    there and this answers False; the 15-point arm still covers those boards.
+    """
+    if opening_away_prob is None:
+        return False
+    if sport_prices_a_draw(sport):
+        return False
+    opened = favorite_from_pair(opening_home_prob, opening_away_prob)
+    if opened not in ("home", "away"):
+        return False
+    if abs(current_home_prob - 0.5) < _FLIP_MIN_DISTANCE_FROM_EVEN:
+        return False
+    now = "home" if current_home_prob > 0.5 else "away"
+    return now != opened
 
 
 @dataclass
