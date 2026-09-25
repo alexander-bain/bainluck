@@ -236,6 +236,16 @@ class LiveBlendRefresher:
         #: already in `futures_outcomes`, so waiting for the event to tick again
         #: would strand it on a quiet market.
         self._lock_retry: set[int] = set()
+        #: #837 tail — events whose price was written while their throttle was
+        #: running. Stamped by the first flush after the throttle expires,
+        #: whatever that flush's batch holds. Dropped instead, the stored price
+        #: waited for another tick on ANY outcome of the game: production
+        #: 2026-09-25 02:47:45–55Z, Padres @ Dodgers' 0.605 was written during
+        #: the throttle; the moneyline sent nothing more until 02:47:57.5, so
+        #: the stamp at 02:47:52 happened only because another of the game's
+        #: markets ticked. On a quiet game the wait is the next tick or the
+        #: 120s poll.
+        self._throttle_deferred: set[int] = set()
         self._last_refresh_at: dict[int, float] = {}
         self._last_write_at: dict[int, float] = {}
         self._last_written_value: dict[int, float] = {}
@@ -299,12 +309,18 @@ class LiveBlendRefresher:
         """Recompute and stamp the blend for these events. Never raises."""
         now = time.monotonic()
         retry = set(self._lock_retry)
-        wanted = set(event_ids) | retry
+        deferred = set(self._throttle_deferred)
+        fresh = set(event_ids)
+        wanted = fresh | retry | deferred
         due = [eid for eid in wanted if self._due(eid, now)]
         # A queued retry leaves the set only when a batch actually takes it.
         self._lock_retry = retry.difference(due)
+        # A throttled event is owed the price it just had written, so it waits
+        # for its throttle rather than for its next tick.
+        self._throttle_deferred = wanted.difference(due)
         self.stats["considered"] += len(due)
-        skipped = len(wanted) - len(due)
+        # Counted once per throttled price, not once per flush it waits out.
+        skipped = len(self._throttle_deferred.difference(deferred))
         if skipped > 0:
             self.stats["throttled"] += skipped
         if not due:
@@ -329,14 +345,16 @@ class LiveBlendRefresher:
         return self.stats
 
     async def refresh_pending(self) -> dict[str, int]:
-        """#837 tail — stamp only the lock-deferred events. Never raises.
+        """#837 tail — stamp only the deferred events. Never raises.
 
         For the socket's flush when it has no new prices to write: `refresh`
         is otherwise only reached after a price write, and a deferred event on a
-        quiet market would wait for a tick that may not come. Returns at once,
-        without opening a session, when nothing is queued.
+        quiet market would wait for a tick that may not come. Deferred means a
+        row lock gave up OR the throttle held a written price. Returns at once,
+        without opening a session, when nothing is queued or nothing queued is
+        due yet.
         """
-        if not self._lock_retry:
+        if not self._lock_retry and not self._throttle_deferred:
             return self.stats
         return await self.refresh(())
 
