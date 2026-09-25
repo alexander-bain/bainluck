@@ -74,6 +74,13 @@ TENNIS_MATCH_WINNER_PREFIXES = frozenset({
     "kxwtadoubles",
     "kxatpchallengerdoubles",
     "kxwtachallengerdoubles",
+    # #8722: the Laver Cup is its own pair of Kalshi series, not a tour one, so
+    # every Laver Cup row carried an empty blend and the hero read "No price yet"
+    # beside a linked 54/46 market (15318449, 2026-09-25). Kalshi's Sports index
+    # lists three Laver Cup series; the third, ``kxlavercup``, is the TEAM
+    # outright and stays out — it is not a match.
+    "kxlavercupmatch",
+    "kxlavercupdoublesmatch",
 })
 
 
