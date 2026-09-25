@@ -23190,6 +23190,7 @@ async def _build_related_futures(
     )
     from app.utils.team_label_identity import (
         build_label_identity,
+        label_is_another_club,
         label_names_another_club,
     )
     from app.utils.award_person_claim import outcome_claim_patterns
@@ -23292,6 +23293,39 @@ async def _build_related_futures(
     # merge below already pays whenever the payload has any merge group at all.
     if all_team_ids and outcomes:
         await _load_team_roster()
+
+    # #8620 — A MARKET WHOSE ANSWERS ARE OTHER CLUBS IS A FIELD, NOT OURS.
+    #
+    # The market-name fallback at the bottom of the classification admits every
+    # outcome of a market whose TITLE carries one of our tokens. It exists for
+    # game props, whose answers are "Over 218.5" or a player line. A field of
+    # clubs passes the same test when its competition is named after a place we
+    # are named after: `Portugal` is a whole token of `Liga Portugal Champion`
+    # (market 395, last season's, resolved), so 18 Portuguese clubs printed as
+    # Portugal's Championship Path on /events/15194389 (production 2026-09-25).
+    #
+    # The evidence is the market's own answers: when one of them IS a known club
+    # that is neither side of this game (`FC Porto`, `Sporting Lisbon`), the
+    # market is a field of clubs and its title is the competition's name. Such a
+    # market loses ONLY the market-name fallback — an answer that names us, or
+    # that the ticker / alias / `team_id` place, is classified as before. An
+    # answer that names either side is never the evidence (the opponent's own
+    # label on this game's markets), and with no side resolved nothing is armed.
+    # Replayed over 150 production payloads (6,060 rows): 19 refused, the 18
+    # Liga Portugal rows and `Cal Poly` on the Commanders through `Spread:
+    # Eastern Washington (-5.5)`; 0 other rows move.
+    field_of_clubs_market_ids: set = set()
+    for outcome in outcomes:
+        if outcome.market_id in field_of_clubs_market_ids:
+            continue
+        if _matches_any(outcome.name, home_team_patterns) or _matches_any(
+            outcome.name, away_team_patterns
+        ):
+            continue
+        if label_is_another_club(
+            outcome.name, (home_label_identity, away_label_identity)
+        ):
+            field_of_clubs_market_ids.add(outcome.market_id)
 
     for outcome in outcomes:
         if outcome.id in seen_ids:
@@ -23416,9 +23450,10 @@ async def _build_related_futures(
                 outcome.name, away_claim, away_label_identity
             )
 
-        if not is_home and not is_away:
+        if not is_home and not is_away and outcome.market_id not in field_of_clubs_market_ids:
             # Fall back to name matching on MARKET name (game props)
             # e.g., "Boston at Golden State: Rebounds" → market name matches
+            # — never for a field of clubs (#8620, above the loop).
             is_home = _matches_any(market.name, home_team_patterns) and not label_names_another_club(
                 market.name, home_team_patterns, home_label_identity
             )
