@@ -299,15 +299,20 @@ function ThumbButtons({
 }) {
   if (!category || (!onThumbsUp && !onThumbsDown)) return null;
 
+  // #4168 — each button is a 24×24 target (12px glyph + `p-1.5`) with 4px between them. They were
+  // 20×20 and 2px apart on production `/sports` at 390px: two OPPOSITE personalization signals under
+  // WCAG 2.5.8's 24px floor, so a thumb aimed at 👍 that landed 3px right sent 👎. `-my-0.5` keeps the
+  // row the height it was — the 4px of extra target sits in the card's own padding, over no text.
+  // The row gains 10px of width, which the footer's left group absorbs (`min-w-0 flex-1`, #3075).
   return (
-    <div className="flex items-center gap-0.5 ml-auto flex-shrink-0">
+    <div className="flex items-center gap-1 -my-0.5 ml-auto flex-shrink-0">
       <button
         onClick={(e) => {
           e.preventDefault();
           e.stopPropagation();
           onThumbsUp?.(category);
         }}
-        className="p-1 text-text-muted/40 hover:text-accent-live transition-colors rounded"
+        className="p-1.5 text-text-muted/40 hover:text-accent-live transition-colors rounded"
         title="More like this"
         aria-label="More like this"
       >
@@ -322,7 +327,7 @@ function ThumbButtons({
           e.stopPropagation();
           onThumbsDown?.(category);
         }}
-        className="p-1 text-text-muted/40 hover:text-accent-danger transition-colors rounded"
+        className="p-1.5 text-text-muted/40 hover:text-accent-danger transition-colors rounded"
         title="Less like this"
         aria-label="Less like this"
       >
