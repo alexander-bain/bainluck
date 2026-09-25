@@ -103,6 +103,9 @@ class TestMatchWinnersAreAdmitted:
             "KXWTADOUBLES-26AUG30ABCDEF",
             "KXATPCHALLENGERDOUBLES-26AUG30ABCDEF",
             "KXWTACHALLENGERDOUBLES-26AUG30ABCDEF",
+            # #8722: the Laver Cup's own singles and doubles winner series.
+            "KXLAVERCUPMATCH-26SEP25RUUCER",
+            "KXLAVERCUPDOUBLESMATCH-26SEP25ALCMENBUBFRI",
         ],
     )
     def test_match_winner_feeds_the_blend(self, ticker):
@@ -133,6 +136,9 @@ class TestPropsStayOut:
             "KXATPGSPREAD-26AUG30FRIBLA",
             "KXATPGTOTAL-26AUG30FRIBLA",
             "KXWTAGTOTAL-26AUG30SAKMON",
+            # #8722: the Laver Cup TEAM outright shares the family name with the
+            # two match series and is a futures market, not a match moneyline.
+            "KXLAVERCUP-26",
         ],
     )
     def test_tennis_prop_does_not_feed_the_blend(self, ticker):
