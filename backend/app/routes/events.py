@@ -8847,9 +8847,9 @@ async def search_events(
         and time.monotonic() < _deadline
     ):
         logger.warning(
-            "search futures bucket COLLAPSED for %r — %d rows deduped to %d "
-            "(%d answer rows); refilling from rank %d",
-            q, len(futures_markets_raw), len(deduped_futures), _answer_rows,
+            "search futures bucket COLLAPSED (query length %d) — %d rows deduped "
+            "to %d (%d answer rows); refilling from rank %d",
+            len(q), len(futures_markets_raw), len(deduped_futures), _answer_rows,
             _SEARCH_FUTURES_WINDOW,
         )
         await _apply_search_statement_timeout(db, _deadline)
