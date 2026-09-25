@@ -18,11 +18,17 @@ market's stored `futures_outcomes` book. A reading proves a tradeable book when
 EVERY market its eligibility record names (`contributing_market_ids` — a composite
 reading is only as good as its worst leg) has an outcome whose book
 
-  1. was stored in the SAME write as the reading (`last_updated == updated_at`) —
-     the book the number was read off, not a later or earlier one. Measured
-     2026-09-25 00:40Z over all 8 upcoming verified lone-Polymarket-0.500 events:
-     8 of 8 match to the microsecond, because the Polymarket writer stamps both
-     from one clock;
+  1. was stored in the same write as the reading or a LATER one
+     (`last_updated >= updated_at`) — the book the number was read off, or the
+     market's current book, never one older than the number. At 00:40Z all 8
+     upcoming verified lone-Polymarket-0.500 events matched to the microsecond,
+     but that was one moment in the poll cycle: by 02:40Z 15314878 (Robots v
+     NeoPhoenix) had its book re-stored at 02:30:25 as 0.48/0.50 + 0.50/0.52
+     while its unchanged 0.500 reading kept its 02:08:05 stamp, so an equality
+     test withheld a genuine pick'em whenever a book refresh landed between
+     readings. A later book still has to be tight and still bracket the
+     reading (2 and 3), so a market that has moved off the number stays
+     ``UNPROVEN``;
   2. is two-sided and tighter than ``FEED_PHANTOM_MIN_SPREAD`` — the one meaning
      of "untradeable" this codebase already has, imported rather than restated;
   3. brackets the reading or its complement (a one-outcome market can carry only
@@ -65,7 +71,7 @@ def _book_supports(
         return False
     if booked_at.tzinfo is None:
         booked_at = booked_at.replace(tzinfo=timezone.utc)
-    if booked_at != read_at:
+    if booked_at < read_at:
         return False
     bid, ask = float(bid), float(ask)
     if ask - bid >= FEED_PHANTOM_MIN_SPREAD:

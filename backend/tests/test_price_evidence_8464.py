@@ -12,9 +12,11 @@ counterexamples — verified 0.500s over books nobody trades inside:
 stored `futures_outcomes` book written with the reading. Every row below is the
 production value read 2026-09-25 00:40Z (db-query), not a hand-built shape.
 
-Both directions (gotcha #43): the specimen proves `tradeable_book`; both wide
-books, a stale book, a book that does not bracket the reading, a composite with
-one wide leg and an entry naming no market all read `unproven`.
+Both directions (gotcha #43): the specimen and a book re-stored after the
+reading (15314878) prove `tradeable_book`; both wide books, a book older than
+the reading, a later book that moved off the reading, a book that does not
+bracket the reading, a composite with one wide leg and an entry naming no market
+all read `unproven`.
 """
 
 from __future__ import annotations
@@ -95,6 +97,17 @@ FINLAND_BOOKS = [
     _row(61207264, "0.1700", "0.2200", FINLAND_AT),
 ]
 
+# The after-check specimen (read 2026-09-25 02:40Z): the 0.500 reading was
+# written at 02:08:05; the same market's book was re-stored 22 minutes later,
+# still tight, still bracketing 0.500. 15314878 Ibaraki Robots v SAN-EN NeoPhoenix.
+ROBOTS_AT = "2026-09-25T02:08:05.854489+00:00"
+ROBOTS_BOOKED_AT = "2026-09-25T02:30:25.176995+00:00"
+ROBOTS_ENTRY = _entry(ROBOTS_AT, 61478574)
+ROBOTS_BOOKS = [
+    _row(61478574, "0.4800", "0.5000", ROBOTS_BOOKED_AT),
+    _row(61478574, "0.5000", "0.5200", ROBOTS_BOOKED_AT),
+]
+
 
 class TestClassifier:
     def test_the_cubs_red_sox_pickem_is_a_tradeable_book(self):
@@ -109,10 +122,23 @@ class TestClassifier:
     def test_cert_3408_vechta_wide_book_is_unproven(self):
         assert classify_price_evidence(VECHTA_ENTRY, VECHTA_BOOKS) == UNPROVEN
 
-    def test_a_book_stored_in_a_different_write_is_not_the_readings_book(self):
-        later = (_ts(CUBS_AT) + timedelta(minutes=2)).isoformat()
-        books = [(m, b, a, _ts(later)) for m, b, a, _ in CUBS_BOOKS]
+    def test_a_book_older_than_the_reading_is_not_the_readings_book(self):
+        earlier = (_ts(CUBS_AT) - timedelta(minutes=2)).isoformat()
+        books = [(m, b, a, _ts(earlier)) for m, b, a, _ in CUBS_BOOKS]
         assert classify_price_evidence(CUBS_ENTRY, books) == UNPROVEN
+
+    def test_robots_book_restored_after_the_reading_still_proves_the_pickem(self):
+        # The #8464 after-check specimen: the equality rule read this UNPROVEN
+        # and the page printed "No price yet" over a chart ending at 50%.
+        assert classify_price_evidence(ROBOTS_ENTRY, ROBOTS_BOOKS) == TRADEABLE_BOOK
+
+    def test_a_later_book_that_moved_off_the_reading_is_unproven(self):
+        books = [_row(61478574, "0.5800", "0.6000", ROBOTS_BOOKED_AT)]
+        assert classify_price_evidence(ROBOTS_ENTRY, books) == UNPROVEN
+
+    def test_a_later_wide_book_is_unproven(self):
+        books = [(61478582, b, a, _ts(ROBOTS_BOOKED_AT)) for _, b, a, _ in GALATASARAY_BOOKS]
+        assert classify_price_evidence(GALATASARAY_ENTRY, books) == UNPROVEN
 
     def test_a_tight_book_that_does_not_bracket_the_reading_is_unproven(self):
         books = [_row(61478582, "0.3000", "0.3200", GALATASARAY_AT)]
