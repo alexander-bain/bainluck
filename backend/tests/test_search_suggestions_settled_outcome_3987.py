@@ -273,24 +273,42 @@ def test_an_unknown_probability_is_not_a_settled_one(engine, pooled):
 
 
 # --------------------------------------------------------------------------
-# 3 — the boundary is AT certainty, not near it
+# 3 — the boundary is where the price READS 0% or 100% (#8606), not at 0 and 1
 # --------------------------------------------------------------------------
 
 
 @BOTH_ARMS
-@pytest.mark.parametrize("prob", [0.999999, 0.000001, 0.98, 0.02])
+@pytest.mark.parametrize("prob", [0.995, 0.005, 0.98, 0.02, 0.994, 0.006])
 def test_a_nearly_certain_outcome_is_still_a_mover(engine, pooled, prob):
-    """Only certainty is barred — "nearly resolved" is a real, tradeable move.
+    """Anything the reader still sees as a live price is a real, tradeable move.
 
-    Pinned because the tempting widening ("anything above 0.95 is basically
-    over") is a PRODUCT judgement nobody has made, and it would have removed the
-    live `Cut more than 25bps` row at 0.98 — a Bank of Korea market that is
-    genuinely moving and genuinely unresolved.
+    #3987 refused the judgement widening ("anything above 0.95 is basically
+    over"), and that refusal stands: the live `Cut more than 25bps` row at 0.98 —
+    a Bank of Korea market genuinely moving and genuinely unresolved — stays, and
+    so does every price down to the display floor itself (0.005 / 0.995 are IN).
     """
     with Session(engine) as s:
         _seed_specimen_plus_movers(s, specimen_prob=prob)
 
     assert _SPECIMEN_OUTCOME_ID in _run(engine, pooled=pooled)
+
+
+@BOTH_ARMS
+@pytest.mark.parametrize("prob", [0.0005, 0.999999, 0.000001, 0.9951, 0.0049])
+def test_a_price_that_reads_zero_or_hundred_percent_is_not_a_mover(engine, pooled, prob):
+    """#8606: the chip's destination prints 0% or 100%, so it is a result.
+
+    0.0005 is the production specimen (2026-09-25 11:19Z): `Shiyu Ye  Falling
+    -82.4 points` on a finished ITF match whose `Completed Match` outcome sat at
+    0.9995. The floor is `FEED_MIN_REAL_PROBABILITY` (#921's display-rounding
+    boundary, and `_detect_elimination`'s threshold), not a new number.
+    """
+    with Session(engine) as s:
+        _seed_specimen_plus_movers(s, specimen_prob=prob)
+
+    ids = _run(engine, pooled=pooled)
+    assert _SPECIMEN_OUTCOME_ID not in ids
+    assert len(ids) == _SUGGESTION_MOVERS_LIMIT
 
 
 # --------------------------------------------------------------------------
@@ -299,7 +317,7 @@ def test_a_nearly_certain_outcome_is_still_a_mover(engine, pooled, prob):
 
 
 def test_the_gate_is_null_safe_in_the_compiled_sql():
-    """The rendered statement names the column three times: IS NULL, > 0, < 1.
+    """The rendered statement names the column three times: IS NULL, >= floor, <= 1 - floor.
 
     A structural assertion rather than a behavioural one, because the behavioural
     proof above runs on SQLite while production is Postgres — and the two engines
@@ -315,5 +333,5 @@ def test_the_gate_is_null_safe_in_the_compiled_sql():
             ).split()
         )
         assert "current_probability IS NULL" in sql
-        assert "current_probability > 0.0" in sql
-        assert "current_probability < 1.0" in sql
+        assert "current_probability >= 0.005" in sql
+        assert "current_probability <= 0.995" in sql
