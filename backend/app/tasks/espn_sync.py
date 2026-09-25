@@ -5638,6 +5638,12 @@ def _wp_backfill_snap_time(commence, index: int, total: int, sport_key, now):
     Spreads points evenly across a realistic game window [commence, commence +
     sport_duration], hard-clamped to ``now`` so a synthetic timeline can NEVER
     extend past the real game end / current time (the #922 stale-tail bug).
+
+    #8514: NO LONGER USED BY THE BACKFILL, which stamps each point at its play's
+    evidenced ``wallclock`` instead. An evenly spread time is still invented —
+    15318166's backfill ran 27 min after the final, so its window was 180 min
+    for a 153-min game, the line trailed every source and nine rows landed after
+    the final reading 84–91%. Kept only for the finished #2486 repair script.
     """
     if not commence:
         return now
@@ -5650,6 +5656,34 @@ def _wp_backfill_snap_time(commence, index: int, total: int, sport_key, now):
     if total <= 1 or span == 0.0:
         return commence
     return commence + timedelta(seconds=span * (index / (total - 1)))
+
+
+#: #8514: how far back the backfill re-reads a finished game whose ESPN rows
+#: are all pre-#8514 estimates, and how many such games one run takes. About
+#: ten games a day were backfilled before the fix (measured 2026-09-25 over the
+#: 14 days before), so 40 per six-hourly run drains a month in about two days
+#: and cannot crowd out the first-time arm, which keeps its own limit.
+_WP_RESTAMP_WINDOW_DAYS = 30
+_WP_RESTAMP_LIMIT = 40
+
+
+def _wp_backfill_evidenced_time(point: dict, now: datetime) -> Optional[datetime]:
+    """The instant a backfilled ESPN point belongs at, or None (#8514).
+
+    That is the ``wallclock`` of the play the point follows, as
+    ``ESPNAPIService.get_win_probability`` joined it. A point without one has no
+    evidenced time and is not stored: a guessed time is what #8514 removed, and
+    one missing point costs the chart nothing a wrong one would not cost more.
+    A wallclock in the future is not evidence of anything.
+    """
+    at = point.get("wallclock")
+    if not isinstance(at, datetime):
+        return None
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=timezone.utc)
+    if at > now:
+        return None
+    return at
 
 
 async def _backfill_espn_win_probability(limit: int = 200, oldest_first: bool = False):
@@ -5670,16 +5704,33 @@ async def _backfill_espn_win_probability(limit: int = 200, oldest_first: bool = 
     default newest-first pass can never drain (gotcha #41: newer rows starve a
     bounded run before it reaches what needs fixing). Wired as a separate daily
     beat so both ends of the backlog make progress.
+
+    #8514 — EVERY POINT IS STAMPED AT ITS PLAY'S WALLCLOCK. Each ESPN point names
+    a play, and the play carries the instant it happened; the point is stored
+    there, with ``time_basis = "play_wallclock"``, or not at all. Before this the
+    points were spread evenly from kick-off to the earlier of a sport-length
+    guess and "now", so a game backfilled 27 minutes after its final drew a line
+    that trailed every other source and carried readings after the final. The
+    newest-first run also re-reads, in a separate arm with its own limit, a
+    finished game from the last ``_WP_RESTAMP_WINDOW_DAYS`` whose ESPN rows are
+    all such estimates; the route then serves the evidenced rows in their place
+    (`winprob_evidence.drop_superseded_estimates`). Nothing is deleted, and a
+    point already stored at the same instant is not stored twice — the table has
+    no unique key, so ``ON CONFLICT DO NOTHING`` alone never deduplicated.
     """
     import asyncio as _asyncio
     from sqlalchemy import text
     from sqlalchemy.dialects.postgresql import insert as pg_insert
     from app.services.espn_api import ESPNAPIService
     from app.models.models import WinProbSnapshot
+    from app.utils.winprob_evidence import PLAY_WALLCLOCK_BASIS
 
     stats = {
         "events_checked": 0, "events_backfilled": 0,
         "snapshots_created": 0, "api_empty": 0, "already_covered": 0,
+        # #8514
+        "restamp_candidates": 0, "points_unevidenced": 0,
+        "points_already_stored": 0,
         "errors": [],
     }
 
@@ -5704,7 +5755,57 @@ async def _backfill_espn_win_probability(limit: int = 200, oldest_first: bool = 
                 """),
                 {"limit": limit},
             )
-            events = result.fetchall()
+            events = list(result.fetchall())
+
+            # #8514: the re-read arm. Its own query and limit, because the arm
+            # above is permanently full of games ESPN publishes no series for
+            # (NHL and soccer have none) — anything ordered behind it is never
+            # reached. The lateral's window test references only the outer row,
+            # so Postgres runs it as a one-time filter and reads no snapshot rows
+            # for a game outside the window (EXPLAIN on production 2026-09-25).
+            if not oldest_first:
+                restamp = await session.execute(
+                    text("""
+                        SELECT e.id, e.espn_id, e.commence_time,
+                               s.key AS sport_key,
+                               spread.n AS espn_snap_count
+                        FROM events e
+                        JOIN sports s ON s.id = e.sport_id
+                        JOIN LATERAL (
+                            SELECT COUNT(*) AS n,
+                                   COALESCE(bool_or(
+                                       wps.game_state->>'backfilled' = 'true'
+                                       AND wps.game_state ? 'seconds_left'
+                                       AND NOT wps.game_state ? 'time_basis'
+                                   ), false) AS has_estimate,
+                                   COALESCE(bool_or(
+                                       wps.game_state->>'time_basis' = :basis
+                                   ), false) AS has_evidenced
+                            FROM win_prob_snapshots wps
+                            WHERE wps.event_id = e.id AND wps.source = 'espn'
+                              AND e.commence_time >= :window_start
+                        ) spread ON true
+                        WHERE e.status IN (""" + AUTHORITY_BACKFILL_STATUS_SQL + """)
+                          AND e.espn_id IS NOT NULL
+                          AND e.commence_time >= :window_start
+                          AND spread.has_estimate
+                          AND NOT spread.has_evidenced
+                        ORDER BY e.commence_time DESC
+                        LIMIT :limit
+                    """),
+                    {
+                        "basis": PLAY_WALLCLOCK_BASIS,
+                        "window_start": datetime.now(timezone.utc)
+                        - timedelta(days=_WP_RESTAMP_WINDOW_DAYS),
+                        "limit": _WP_RESTAMP_LIMIT,
+                    },
+                )
+                restamp_rows = list(restamp.fetchall())
+                stats["restamp_candidates"] = len(restamp_rows)
+                seen_ids = {row.id for row in restamp_rows}
+                events = restamp_rows + [
+                    row for row in events if row.id not in seen_ids
+                ]
 
             if not events:
                 return {**stats, "status": "nothing_to_backfill"}
@@ -5733,22 +5834,30 @@ async def _backfill_espn_win_probability(limit: int = 200, oldest_first: bool = 
                         continue
 
                     event_snapshots = 0
-                    commence = event_row.commence_time
                     _wp_now = datetime.now(timezone.utc)
-                    _wp_total = len(wp_data)
+                    stored_at = {
+                        row[0] for row in (await session.execute(
+                            text(
+                                "SELECT captured_at FROM win_prob_snapshots "
+                                "WHERE event_id = :e AND source = 'espn'"
+                            ),
+                            {"e": event_row.id},
+                        )).fetchall()
+                    }
 
-                    for i, point in enumerate(wp_data):
+                    for point in wp_data:
                         home_wp = point.get("home_win_probability")
                         if home_wp is None:
                             continue
 
-                        seconds_left = point.get("seconds_left")
-                        # #922: spread points across the real game window (clamped
-                        # to now) instead of a naive 30s/point timeline that ran
-                        # hours past the game end into the future (the stale tail).
-                        snap_time = _wp_backfill_snap_time(
-                            commence, i, _wp_total, sport_key, _wp_now
-                        )
+                        snap_time = _wp_backfill_evidenced_time(point, _wp_now)
+                        if snap_time is None:
+                            stats["points_unevidenced"] += 1
+                            continue
+                        if snap_time in stored_at:
+                            stats["points_already_stored"] += 1
+                            continue
+                        stored_at.add(snap_time)
 
                         stmt = pg_insert(WinProbSnapshot).values(
                             event_id=event_row.id,
@@ -5757,8 +5866,10 @@ async def _backfill_espn_win_probability(limit: int = 200, oldest_first: bool = 
                             away_win_probability=round(1.0 - home_wp, 4),
                             captured_at=snap_time,
                             game_state={
-                                "seconds_left": seconds_left,
+                                "seconds_left": point.get("seconds_left"),
                                 "backfilled": True,
+                                "time_basis": PLAY_WALLCLOCK_BASIS,
+                                "play_id": point.get("play_id"),
                             },
                         ).on_conflict_do_nothing()
                         await session.execute(stmt)
@@ -5787,9 +5898,11 @@ async def _backfill_espn_win_probability(limit: int = 200, oldest_first: bool = 
         stats["errors"].append(f"task_error: {str(e)[:200]}")
 
     logger.info(
-        "ESPN win prob backfill: %d checked, %d backfilled, %d snapshots",
+        "ESPN win prob backfill: %d checked, %d backfilled, %d snapshots "
+        "(%d re-read candidates, %d points without a play time, %d already stored)",
         stats["events_checked"], stats["events_backfilled"],
-        stats["snapshots_created"],
+        stats["snapshots_created"], stats["restamp_candidates"],
+        stats["points_unevidenced"], stats["points_already_stored"],
     )
     return stats
 

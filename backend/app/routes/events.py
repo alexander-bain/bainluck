@@ -130,6 +130,7 @@ from app.utils import period_markers as pm_source
 from app.utils.winprob_evidence import (
     SERVED_CONTRACT as WINPROB_EVIDENCE_CONTRACT,
     attach_served_evidence,
+    drop_superseded_estimates,
 )
 from app.utils.game_window import (
     filter_state_bearing_rows as _filter_state_bearing_rows,
@@ -25153,6 +25154,16 @@ async def get_event_odds_history(
             )
             if _silent.scalar():
                 win_prob_history.pop("kalshi", None)
+
+        # #8514 — an ESPN series the backfill has re-read with play times keeps
+        # only those; its pre-#8514 rows are the same readings at guessed
+        # instants (15318166: 15–40 min behind every source, 27 min past the
+        # final). Before the metadata so `snapshot_count` counts what is drawn,
+        # and before the aggregate line, which is built from these lists.
+        for _src in list(win_prob_history):
+            win_prob_history[_src], _ = drop_superseded_estimates(
+                win_prob_history[_src]
+            )
 
         # Build source metadata for sources that have data
         for source_key in win_prob_history:

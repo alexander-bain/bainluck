@@ -235,6 +235,42 @@ def _normalize_win_percentage(value) -> Optional[float]:
     return num
 
 
+def _play_wallclocks(summary: dict) -> dict[str, datetime]:
+    """``playId`` → the instant ESPN says that play happened (#8514).
+
+    Each ``winprobability`` point names the play it follows, and the same
+    ``/summary`` carries that play with a ``wallclock`` — the evidenced time the
+    reading belongs at. MLB, WNBA and NBA list plays at the top level; NFL and
+    college football nest them under ``drives``. Joined on 2026-09-25 against
+    one finished game per sport: MLB 64/64 and 79/79 points, NFL 184/185,
+    NCAAF 181/182, WNBA 360/360. A play with no parseable ``wallclock`` is left
+    out, so its point has no evidenced time and the backfill does not store it.
+    """
+    plays = list(summary.get("plays") or [])
+    drives = summary.get("drives") or {}
+    if isinstance(drives, dict):
+        for drive in drives.get("previous") or []:
+            if isinstance(drive, dict):
+                plays.extend(drive.get("plays") or [])
+        current = drives.get("current")
+        if isinstance(current, dict):
+            plays.extend(current.get("plays") or [])
+
+    out: dict[str, datetime] = {}
+    for play in plays:
+        if not isinstance(play, dict):
+            continue
+        play_id, raw = play.get("id"), play.get("wallclock")
+        if play_id is None or not isinstance(raw, str):
+            continue
+        try:
+            at = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        out[str(play_id)] = at if at.tzinfo else at.replace(tzinfo=timezone.utc)
+    return out
+
+
 @dataclass
 class ESPNTeam:
     """Team data from ESPN."""
@@ -1004,8 +1040,10 @@ class ESPNAPIService:
             event_id: ESPN event ID
 
         Returns:
-            List of {time, home_win_probability} dicts, or None when ESPN
-            publishes no win-probability series for the game OR did not answer.
+            List of {play_id, wallclock, seconds_left, home_win_probability}
+            dicts, or None when ESPN publishes no win-probability series for the
+            game OR did not answer. ``wallclock`` is the aware datetime of the
+            play the point follows, or None when the summary carries none.
         """
         path = self._get_espn_path(sport_key)
         if not path:
@@ -1026,10 +1064,15 @@ class ESPNAPIService:
         if not win_prob_data:
             return None
 
+        # #8514: the evidenced time of each point, from the play it names.
+        wallclocks = _play_wallclocks(data)
+
         result = []
         for point in win_prob_data:
+            play_id = point.get("playId")
             result.append({
-                "play_id": point.get("playId"),
+                "play_id": play_id,
+                "wallclock": wallclocks.get(str(play_id)) if play_id is not None else None,
                 "seconds_left": point.get("secondsLeft"),
                 # 🔴 #2486. This line read `point.get("homeWinPercentage", 0) / 100`
                 # for as long as the task existed, and this array is a FRACTION —

@@ -217,8 +217,10 @@ class TestServedSeries:
         }
         series = await self._call(client, monkeypatch, payload)
 
+        # #8514: `wallclock` rides too — None here, as the payload lists no play.
         assert series == [
-            {"play_id": "p1", "seconds_left": 1800, "home_win_probability": 0.55}
+            {"play_id": "p1", "wallclock": None, "seconds_left": 1800,
+             "home_win_probability": 0.55}
         ]
 
     async def test_an_empty_array_is_still_none_not_an_empty_series(

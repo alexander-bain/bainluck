@@ -28,6 +28,13 @@ Two halves live here so they cannot drift apart:
                     and the point is then a plain observation)
       candle        a venue candlestick aggregate (`history_backfill`), not a tick
       price_history a venue price-history point (Polymarket CLOB backfill)
+      play_history  an ESPN win-probability point written after the game from
+                    ESPN's play-by-play, stamped at its play's ``wallclock``
+                    (#8514) — ESPN's value at a true time, not a tick we observed
+      estimated_time an ESPN backfill point written before #8514, stamped at an
+                    evenly spread guess between kick-off and when the backfill
+                    ran; drawn, never evidence, and not served at all for a series
+                    that also holds ``play_history`` points
       live_edge     synthesised at request time to carry the line to now
       final         synthesised from our resolved result
       terminal_row  the last stored reading of a finished game; a completed game
@@ -65,6 +72,50 @@ _COVERED_THROUGH = re.compile(COVERED_THROUGH_RE)
 #: Served once per response so a client can tell a classifying server apart
 #: from one that predates this contract.
 SERVED_CONTRACT = {"v": EVIDENCE_CONTRACT, "resolution_s": EVIDENCE_RESOLUTION_S}
+
+
+#: `game_state.time_basis` on an ESPN win-probability backfill row whose
+#: `captured_at` is its play's evidenced `wallclock` (#8514). The backfill writes
+#: it; retention, this module and the route read it.
+PLAY_WALLCLOCK_BASIS = "play_wallclock"
+
+#: What `espn_wp_backfill_basis` answers for a backfill row written before
+#: #8514, whose `captured_at` was spread evenly over a guessed window.
+ESTIMATED_BASIS = "estimated"
+
+
+def espn_wp_backfill_basis(state: Any) -> Optional[str]:
+    """How an ESPN win-probability BACKFILL row got its `captured_at`, or None.
+
+    That backfill has always written ``{"seconds_left", "backfilled": true}``;
+    ``game_state_backfill`` also writes ``backfilled`` but never ``seconds_left``
+    (its rows are period markers), so the pair is this writer's signature. Since
+    #8514 the row also says ``time_basis``; a row without one predates it and
+    sits at an estimated time.
+    """
+    if not isinstance(state, dict) or state.get("backfilled") is not True:
+        return None
+    if "seconds_left" not in state:
+        return None
+    if state.get("time_basis") == PLAY_WALLCLOCK_BASIS:
+        return PLAY_WALLCLOCK_BASIS
+    return ESTIMATED_BASIS
+
+
+def drop_superseded_estimates(points: list) -> tuple[list, int]:
+    """Remove estimated-time backfill points from a series that has evidenced ones.
+
+    Once the backfill has re-read a game with play times (#8514), its older
+    estimated rows are the same ESPN readings at the wrong instants — on
+    15318166 they trailed every other source by 15–40 minutes and ran 27 minutes
+    past the final. Nothing is deleted from the table; a series with no
+    evidenced point is returned whole. Returns (points, number removed).
+    """
+    bases = [espn_wp_backfill_basis(p.get("game_state")) for p in points]
+    if PLAY_WALLCLOCK_BASIS not in bases:
+        return points, 0
+    kept = [p for p, basis in zip(points, bases) if basis != ESTIMATED_BASIS]
+    return kept, len(points) - len(kept)
 
 
 def _parse(ts: Any) -> Optional[datetime]:
@@ -118,6 +169,14 @@ def served_evidence(point: dict, *, terminal_row: bool = False) -> Optional[dict
         return {"kind": "candle"}
     if state.get("backfill") is True:
         return {"kind": "price_history"}
+    # #8514: ESPN's play-by-play, written after the fact. Decided before the
+    # stamp is read — a pre-#8514 retention pass merged these rows and stamped
+    # spans on them, which would otherwise serve as `observed`.
+    basis = espn_wp_backfill_basis(state)
+    if basis == PLAY_WALLCLOCK_BASIS:
+        return {"kind": "play_history"}
+    if basis is not None:
+        return {"kind": "estimated_time"}
     if terminal_row:
         return {"kind": "terminal_row"}
     through = validated_covered_through(state, point.get("timestamp"))

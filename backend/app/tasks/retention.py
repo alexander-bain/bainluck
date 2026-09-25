@@ -16,6 +16,9 @@ earliest. `_collapse_winprob_partition_sql` replaces it for this table only:
 
 * **merges only raw observations** — never candle/price-history backfill
   (`game_state.poll_type = 'history_backfill'` or `game_state.backfill`), never
+  a row written after the fact with `game_state.backfilled` (ESPN's play-by-play
+  backfill, #8514: its estimated rows sat 200 s apart, so equal neighbours were
+  eligible to merge and come back stamped as observed coverage), never
   a row with no home price, never a series' LAST row (a completed game rewrites
   that one in place, so its value was not observed at its `captured_at`);
 * **only when the whole tuple matches** — home/away/draw, period/inning/half,
@@ -406,6 +409,7 @@ async def _collapse_winprob_partition_sql(
                     AND NOT is_series_last
                     AND COALESCE(game_state->>'poll_type', '') <> 'history_backfill'
                     AND COALESCE(game_state->>'backfill', '') <> 'true'
+                    AND COALESCE(game_state->>'backfilled', '') <> 'true'
                 ) AS eligible,
                 CASE
                     WHEN game_state->'evidence_span'->>'contract' = CAST(:contract AS text)

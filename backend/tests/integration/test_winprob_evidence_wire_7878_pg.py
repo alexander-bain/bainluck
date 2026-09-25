@@ -50,6 +50,10 @@ S_ID = 90_007_878
 FINISHED = 90_007_878_1
 LIVE = 90_007_878_2
 SNAP_BASE = 2_007_878_000
+#: #8514: an ESPN series holding both kinds of play-by-play backfill, and one
+#: holding only the pre-#8514 estimates.
+ESPN_MIXED = 90_007_878_3
+ESPN_ESTIMATES = 90_007_878_4
 
 SPAN_OK = {"contract": "7878.v1", "resolution_s": 300}
 
@@ -69,12 +73,15 @@ async def pg_engine():
     await engine.dispose()
 
 
+_EVENT_IDS = [FINISHED, LIVE, ESPN_MIXED, ESPN_ESTIMATES]
+
+
 async def _clear(engine):
     from app.models.models import Event, Sport, WinProbSnapshot
 
     async with AsyncSession(engine) as session:
-        await session.execute(delete(WinProbSnapshot).where(WinProbSnapshot.event_id.in_([FINISHED, LIVE])))
-        await session.execute(delete(Event).where(Event.id.in_([FINISHED, LIVE])))
+        await session.execute(delete(WinProbSnapshot).where(WinProbSnapshot.event_id.in_(_EVENT_IDS)))
+        await session.execute(delete(Event).where(Event.id.in_(_EVENT_IDS)))
         await session.execute(delete(Sport).where(Sport.id == S_ID))
         await session.commit()
 
@@ -268,3 +275,76 @@ async def test_a_live_edge_does_not_carry_the_span_it_copied(pg_engine, client):
     assert len(edges) == 1, series
     assert edges[0]["evidence"] == {"kind": "live_edge"}
     assert "covered_through" not in edges[0]["evidence"]
+
+
+#: The two shapes `_backfill_espn_win_probability` has written.
+ESTIMATE = {"seconds_left": None, "backfilled": True}
+EVIDENCED = {"seconds_left": None, "backfilled": True, "time_basis": "play_wallclock"}
+
+
+async def _seed_espn(engine):
+    """ESPN_MIXED: estimates every 3 min (the old spread), evidenced rows at the
+    plays' own minutes, and one live reading. ESPN_ESTIMATES: estimates only."""
+    from app.models.models import Event, Sport, WinProbSnapshot
+
+    now = dt.datetime.now(UTC).replace(microsecond=0)
+    base = now - dt.timedelta(hours=72)
+    at = lambda m: base + dt.timedelta(minutes=m)  # noqa: E731
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        session.add(Sport(id=S_ID, key="baseball_mlb_w7878", name="MLB 7878", active=True))
+        await session.flush()
+        for eid in (ESPN_MIXED, ESPN_ESTIMATES):
+            session.add(Event(
+                id=eid, sport_id=S_ID, home_team_name=f"Home {eid}", away_team_name=f"Away {eid}",
+                commence_time=at(0), status="completed", completed_at=at(160),
+                home_score=3, away_score=1,
+            ))
+        await session.flush()
+        rows = (
+            [(ESPN_MIXED, m, ESTIMATE) for m in range(0, 181, 20)]
+            + [(ESPN_MIXED, m, {**EVIDENCED, "play_id": f"p{m}"}) for m in (4, 31, 77, 150)]
+            + [(ESPN_MIXED, 120, {"period": "Top 8th", "home_score": 3, "away_score": 1})]
+            + [(ESPN_ESTIMATES, m, ESTIMATE) for m in range(0, 151, 30)]
+        )
+        for n, (eid, minute, state) in enumerate(rows):
+            session.add(WinProbSnapshot(
+                id=SNAP_BASE + 100 + n, event_id=eid, source="espn", captured_at=at(minute),
+                home_win_probability=0.7, away_win_probability=0.3,
+                game_state=state, reading_count=1,
+            ))
+        await session.commit()
+    return base
+
+
+async def test_espn_estimates_give_way_to_play_times_8514(pg_engine, client):
+    """#8514 across the route: a series the backfill re-read with play times
+    serves only those (and its live reading); the estimates are not drawn, not
+    counted in the legend and not fed to the blend. Nothing is deleted."""
+    base = await _seed_espn(pg_engine)
+
+    resp = await client.get(f"/api/events/{ESPN_MIXED}/history?hours=168&range=all")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    series = [p for p in body["win_prob_history"]["espn"]
+              if (p.get("evidence") or {}).get("kind") != "final"]
+    minutes = [round((_ts(p) - base).total_seconds() / 60) for p in series]
+    assert minutes == [4, 31, 77, 120, 150], minutes
+    kinds = {m: (p.get("evidence") or {}).get("kind") for m, p in zip(minutes, series)}
+    assert kinds == {4: "play_history", 31: "play_history", 77: "play_history",
+                     120: None, 150: "play_history"}, kinds
+    # The legend counts stored readings; the synthesised `final` is added later.
+    assert body["win_prob_sources"]["espn"]["snapshot_count"] == len(series) == 5
+    for p in body["win_prob_history"]["espn"]:
+        assert not ({"backfilled", "time_basis", "play_id", "seconds_left"}
+                    & set(p.get("game_state") or {})), p["game_state"]
+
+
+async def test_espn_estimates_alone_are_drawn_but_prove_nothing_8514(pg_engine, client):
+    base = await _seed_espn(pg_engine)
+
+    resp = await client.get(f"/api/events/{ESPN_ESTIMATES}/history?hours=168&range=all")
+    assert resp.status_code == 200, resp.text
+    series = [p for p in resp.json()["win_prob_history"]["espn"]
+              if (p.get("evidence") or {}).get("kind") != "final"]
+    assert [round((_ts(p) - base).total_seconds() / 60) for p in series] == [0, 30, 60, 90, 120, 150]
+    assert all(p["evidence"] == {"kind": "estimated_time"} for p in series), series
