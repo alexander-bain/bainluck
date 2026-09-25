@@ -5305,6 +5305,34 @@ def polymarket_container_twin_sweep_task(self, apply: bool = True,
     )
 
 
+@celery_app.task(bind=True, soft_time_limit=300, time_limit=360,
+                 name="app.tasks.odds_api_reissued_twin_sweep")
+def odds_api_reissued_twin_sweep_task(self, apply: bool = True,
+                                      lookahead: int | None = None):
+    """#8422 — the same fold, for a fixture the Odds API re-issued under a new id.
+
+    Fleetwood Town v Arsenal was two rows, 19h apart: the provider replaced the
+    placeholder-dated id with a new one and stopped listing the old. None of
+    the three siblings can see it — neither row is fixture-anchored, neither
+    holds a market. What separates them is the provider's own schedule, read
+    from the free `/events` endpoint. APPLY BY DEFAULT for the siblings'
+    reason: a reversible label with the prior value banked first (D51).
+    `lookahead=None` resolves from the module, never re-typed here (#3813).
+    """
+    from app.tasks.odds_api_reissued_twin_sweep import (
+        DEFAULT_LOOKAHEAD_DAYS,
+        run_odds_api_reissued_twin_sweep,
+    )
+
+    return _tracked_run(
+        "odds_api_reissued_twin_sweep",
+        run_odds_api_reissued_twin_sweep(
+            apply=apply,
+            lookahead=DEFAULT_LOOKAHEAD_DAYS if lookahead is None else lookahead,
+        ),
+    )
+
+
 # --- Duplicate Event Cleanup ---
 
 
@@ -6619,6 +6647,17 @@ celery_app.conf.beat_schedule = {
     "polymarket-container-twin-sweep": {
         "task": "app.tasks.polymarket_container_twin_sweep",
         "schedule": crontab(minute="27"),
+        "kwargs": {"apply": True},
+        "options": {"queue": "background"},
+    },
+    # #8422 — the Odds API re-issued-id fold. Undo: set
+    # REISSUED_TWIN_SWEEP_DISABLED, confirm a `skipped` receipt, then
+    # `scripts/restore_8422_odds_api_reissued_tags.py --apply`. Hourly at :51,
+    # a minute no other beat uses; its provider read costs no quota and is
+    # skipped entirely when no same-pair block exists.
+    "odds-api-reissued-twin-sweep": {
+        "task": "app.tasks.odds_api_reissued_twin_sweep",
+        "schedule": crontab(minute="51"),
         "kwargs": {"apply": True},
         "options": {"queue": "background"},
     },

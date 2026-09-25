@@ -299,6 +299,8 @@ class TestEnforcementScope:
             # thing it measured shared a failure mode. Enrolled in the change
             # that gives it real terminals, never before it.
             "polymarket_container_twin_sweep",
+            # #8422: the Odds API re-issued-id arm, enrolled from birth.
+            "odds_api_reissued_twin_sweep",
             # #1912 (CAL-P065): the two halves of the Polymarket ownership
             # hole, enrolled TOGETHER because separately each one looked fine.
             # The Gamma rail discarded 9,748 markets a run as

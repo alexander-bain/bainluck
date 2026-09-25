@@ -475,6 +475,11 @@ COVERED = (
     # (pass 1b) through real Postgres retrieval. Explicit ids; the schema is
     # dropped whole on teardown.
     "test_pm_venue_name_extension_8440_pg.py",
+    # #8422. Seeds `sports`, `events` and `event_provider_anchors` by raw
+    # INSERT, in a private schema built by `create_all`, to drive the
+    # re-issued-id sweep's read, write, lift and restore. Explicit ids; the
+    # schema is dropped whole on teardown.
+    "test_odds_api_reissued_twin_8422_pg.py",
 )
 
 INTEGRATION_DIR = Path(__file__).parent / "integration"

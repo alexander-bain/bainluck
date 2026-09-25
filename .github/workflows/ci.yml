@@ -4730,6 +4730,24 @@ jobs:
             exit 1
           }
 
+      - name: "#8422 a fixture the Odds API re-issued prints once (real Postgres)"
+        # #8422. The sweep's population read (`array_agg` over
+        # `event_provider_anchors`, `make_interval` under asyncpg), the jsonb
+        # append, the bank, the `- tag` lift and the restore script are SQL a
+        # session double cannot run. 3 = tag/idempotent/lift + both-listed + restore.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_odds_api_reissued_twin_8422_pg.py \
+            -v -rs 2>&1 | tee /tmp/reissued8422.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/reissued8422.txt; then
+            echo "::error::#8422 re-issued-id gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]3 passed[,[:space:]]" /tmp/reissued8422.txt || {
+            echo "::error::#8422 re-issued-id gate did not run all three cases"
+            exit 1
+          }
+
   frontend-build:
     runs-on: ubuntu-latest
     defaults:

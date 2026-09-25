@@ -294,6 +294,7 @@ class TestBeatScheduleCompleteness:
         "tennis-twin-sweep",
         "soccer-ghost-twin-sweep",
         "polymarket-container-twin-sweep",
+        "odds-api-reissued-twin-sweep",
         "merge-degenerate-combat-events",
         "canonicalize-entities-daily",
         "precompute-interestingness",
