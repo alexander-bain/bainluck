@@ -2038,6 +2038,134 @@ async def test_the_seeded_teams_that_never_collided_are_untouched(
 
 
 # --------------------------------------------------------------------------
+# #5773 — the outcome arm speaks for the club the registry resolved
+# --------------------------------------------------------------------------
+# Here because the rule is ILIKE and POSIX `~*` word boundaries over real
+# outcome text, and the resolution that switches it on is the teams query the
+# route runs first; neither half means anything against a mocked session.
+
+_YANK_OUTCOME_JUNK = (
+    "Who will become Prime Minister of India after next general election?",
+    "WBC Flyweight Title on January 1, 2027",
+    "Latin Grammy Awards: Best Urban Song",
+)
+_PHIL_WHOLE_WORD = "Colorado Governor winner?"
+_PHIL_PREFIX_ONLY = "2027 FIFA Women's World Cup Champion"
+_LEBRO_CONTROL = "Will LeBron James retire before next NBA season? (5773 control)"
+
+
+@pytest.fixture
+async def search_with_resolved_clubs(seeded_db, search):
+    """`search`, plus the rows #5773's futures half was reported on.
+
+    `?q=yank` on production 2026-09-25 04:5xZ resolved New York Yankees on the
+    teams rail and still listed three markets reached only through an outcome
+    spelling the four letters: `Priyanka Gandhi Vadra`, `Yankiel Rivera`,
+    `Daddy Yankee`. `phil` carries the whole-word case (`Phil Weiser`, which must
+    survive) beside a prefix-only one (`Philippines`, which the rule drops while
+    `phil` resolves the Phillies). The LeBron row is the control: `lebro`
+    resolves no club, so its arm must be the bare substring it always was.
+
+    Its own fixture, not `_seed`: adding the Yankees to the shared seed would make
+    `yank` resolve a club for every test in this file, and
+    `test_an_interior_substring_does_not_outrank_a_real_prefix` asserts the
+    Mayank row is still IN the bucket.
+    """
+    from sqlalchemy import select
+
+    from app.models.models import FuturesMarket, FuturesOutcome, Sport, Team
+
+    _engine, maker = seeded_db
+    async with maker() as session:
+        mlb = (
+            await session.execute(select(Sport).where(Sport.key == "baseball_mlb"))
+        ).scalar_one()
+        session.add_all(
+            [
+                Team(sport_id=mlb.id, name="New York Yankees", abbreviation="NYY"),
+                Team(sport_id=mlb.id, name="Philadelphia Phillies", abbreviation="PHI"),
+            ]
+        )
+        for external_id, name, outcomes in (
+            ("KXINDIAPM-5773", _YANK_OUTCOME_JUNK[0], ["Priyanka Gandhi Vadra", "Rahul Gandhi"]),
+            ("KXWBCFLY-5773", _YANK_OUTCOME_JUNK[1], ["Yankiel Rivera", "Kenshiro Teraji"]),
+            ("KXLATINGRAMMY-5773", _YANK_OUTCOME_JUNK[2],
+             ["Daddy Yankee: Bzrp Music Sessions, Vol. 0/66", "Karol G: Si Antes Te Hubiera Conocido"]),
+            ("KXCOGOV-5773", _PHIL_WHOLE_WORD, ["Phil Weiser", "Michael Bennet"]),
+            ("KXWWC-5773", _PHIL_PREFIX_ONLY, ["Philippines", "Spain"]),
+            ("KXLEBRON-5773", _LEBRO_CONTROL, ["Yes", "No", "LeBron James"]),
+        ):
+            market = FuturesMarket(
+                source="kalshi",
+                external_id=external_id,
+                name=name,
+                status="open",
+                resolution_date=datetime.now(timezone.utc) + timedelta(days=90),
+            )
+            session.add(market)
+            await session.flush()
+            for outcome_name in outcomes:
+                session.add(
+                    FuturesOutcome(
+                        market_id=market.id,
+                        external_id=f"{external_id}:{outcome_name}",
+                        name=outcome_name,
+                        current_probability=_SEED_PRICE,
+                    )
+                )
+        await session.commit()
+
+    return search
+
+
+async def test_a_resolved_club_keeps_its_own_market_and_sheds_the_spelling_junk(
+    search_with_resolved_clubs,
+):
+    """#5773's specimen. The Yankees market is reached through its outcome
+    `New York Yankees` and stays; every market reached only by `yank` sitting
+    inside another name goes — including `Mayank`, the #4572 row the ranking fix
+    could only sink."""
+    payload = await search_with_resolved_clubs("yank")
+    assert "New York Yankees" in [t.get("name") for t in payload.get("teams", [])], (
+        "the fixture is dead: `yank` did not resolve the Yankees, so the rule under "
+        "test never switched on"
+    )
+    names = _futures_names(payload)
+    assert _YANK_REAL in names, f"the club's own market was lost: {names!r}"
+    leaked = [n for n in (*_YANK_OUTCOME_JUNK, _YANK_NOISE) if n in names]
+    assert not leaked, (
+        f"`yank` resolved the Yankees and still served {leaked!r} through an "
+        "outcome that only spells the four letters (#5773)"
+    )
+
+
+async def test_a_whole_word_outcome_survives_the_club_rule(search_with_resolved_clubs):
+    """`phil` resolves the Phillies, and `Phil Weiser` is still a Phil. The rule
+    narrows partial-word matches only; a whole word is what the reader typed."""
+    names = _futures_names(await search_with_resolved_clubs("phil"))
+    assert _PHIL_WHOLE_WORD in names, f"a whole-word outcome was lost: {names!r}"
+    assert _PHIL_PREFIX_ONLY not in names, (
+        f"`Philippines` survived while `phil` resolved a club: {names!r}. That is "
+        "the named cost of the rule; if it is back, the rule did not switch on"
+    )
+
+
+async def test_a_query_that_resolves_no_club_keeps_the_bare_substring(
+    search_with_resolved_clubs,
+):
+    """The control, and the reason the earlier word test was descoped: `lebro`
+    is four letters into a PERSON, no registry row answers for it, and the arm
+    must still reach every market that lists him."""
+    payload = await search_with_resolved_clubs("lebro")
+    assert not payload.get("teams"), f"`lebro` resolved a team: {payload.get('teams')!r}"
+    names = _futures_names(payload)
+    assert _LEBRO_CONTROL in names, (
+        f"`lebro` lost the market that lists LeBron James: {names!r}. A query that "
+        "resolves no club must compile the outcome arm exactly as before"
+    )
+
+
+# --------------------------------------------------------------------------
 # #8523 — a rostered player's full name reaches his club
 # --------------------------------------------------------------------------
 # Here and not in a unit suite for the reason the #7381 block gives: the lookup

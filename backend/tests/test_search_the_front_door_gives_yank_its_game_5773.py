@@ -28,6 +28,13 @@ the teams registry rescues it; an outcome has no registry. The numbers live in
 `test_search_latency_contract.py::test_the_outcome_arm_is_deliberately_not_word_tested`
 — which demanded exactly this before/after — stays green and unedited.
 
+**2026-09-25: the half came back, on the registry this suite already has.** When
+the teams rail resolved a club for a partial term, the outcome arm serves the
+club's own word, the term as a whole word, and the expansion — `yank` sheds
+Priyanka, Yankiel and Daddy Yankee, `lebro` resolves no club and is untouched.
+`TestTheOutcomeArmSpeaksForTheResolvedClub` below holds the pure halves; the
+recall itself is in `tests/integration/test_search_recall_contract.py`.
+
 ═══ THE REFUSALS THIS SUITE MUST NOT BREAK ═══
 
 🔴 **Prefix matching is refused for the EVENT predicate, in writing, naming this
@@ -69,6 +76,8 @@ from app.routes.events import (
     _event_name_match,
     _futures_name_match_term,
     _rescue_teams_from_rows,
+    _resolved_club_outcome_match,
+    _resolved_club_words,
     _resolved_team_event_filter,
     _RESOLVED_TEAM_RESCUE_CAP,
 )
@@ -356,3 +365,71 @@ class TestTheRouteIsWiredToThem:
             "if _rescue_count:"
         )
         assert block.index("if _rescue_count:") < block.index("query = (")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# THE OUTCOME ARM — the registry's answer, reused one arm over (2026-09-25)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestTheOutcomeArmSpeaksForTheResolvedClub:
+
+    def test_a_partial_term_yields_the_club_word_it_starts(self):
+        assert _resolved_club_words("yank", [("New York Yankees", "baseball_mlb")]) == ["Yankees"]
+
+    def test_a_shared_city_word_is_offered_once(self):
+        clubs = [
+            ("Philadelphia Flyers", "icehockey_nhl"),
+            ("Philadelphia Eagles", "americanfootball_nfl"),
+        ]
+        assert _resolved_club_words("phil", clubs) == ["Philadelphia"]
+
+    def test_the_match_ignores_case(self):
+        assert _resolved_club_words("YANK", [("New York Yankees", "baseball_mlb")]) == ["Yankees"]
+
+    def test_a_finished_word_leaves_the_arm_alone(self):
+        """`red` IS the word `Red`: nothing partial for the registry to speak for,
+        so the route keeps the arm it had."""
+        assert _resolved_club_words("red", [("Boston Red Sox", "baseball_mlb")]) == []
+
+    def test_no_resolved_club_leaves_the_arm_alone(self):
+        """`lebro` and `fed` — the populations the word test was descoped for."""
+        assert _resolved_club_words("lebro", []) == []
+
+    def test_a_mid_name_resolution_leaves_the_arm_alone(self):
+        assert _resolved_club_words("ankee", [("New York Yankees", "baseball_mlb")]) == []
+
+    def test_the_arm_serves_the_club_word_and_the_whole_term(self):
+        sql = _sql(_resolved_club_outcome_match("yank", None, ["Yankees"]))
+        assert "ILIKE '%%Yankees%%'" in sql
+        assert "(^|[^[:alnum:]])yank([^[:alnum:]]|$)" in sql
+
+    def test_the_bare_term_substring_never_stands_alone(self):
+        """The whole defect is `ILIKE '%yank%'` as a sufficient condition. It may
+        appear only as the trigram half AND-ed with its word boundary."""
+        sql = _sql(_resolved_club_outcome_match("yank", None, ["Yankees"]))
+        assert re.search(
+            r"futures_outcomes\.name ILIKE '%%yank%%' AND \(?futures_outcomes\.name ~\*", sql
+        ), sql
+        assert sql.count("ILIKE '%%yank%%'") == 1
+
+    def test_the_expansion_is_kept(self):
+        sql = _sql(_resolved_club_outcome_match("yank", "yankees", ["Yankees"]))
+        assert "ILIKE '%%yankees%%'" in sql
+
+    def test_the_route_switches_on_the_resolved_clubs(self):
+        """Wired in the single-term branch, fed `_resolved_teams`, and AFTER the
+        rescue that fills it — otherwise the list is always empty and the rule
+        ships inert."""
+        fn = _search_events_ast()
+        calls = [
+            node for node in ast.walk(fn)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        ]
+        words = [c for c in calls if c.func.id == "_resolved_club_words"]
+        assert len(words) == 1, "the club-word lookup is not called exactly once"
+        assert [a.id for a in words[0].args if isinstance(a, ast.Name)][-1] == "_resolved_teams"
+        rescue = max(c.lineno for c in calls if c.func.id == "_rescue_teams_from_rows")
+        assert words[0].lineno > rescue
+        assert any(c.func.id == "_resolved_club_outcome_match" for c in calls)
+

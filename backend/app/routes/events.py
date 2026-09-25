@@ -3892,6 +3892,57 @@ def _resolved_team_event_filter(resolved: list[tuple[str, str]]):
     )
 
 
+def _resolved_club_words(term: str, resolved: list[tuple[str, str]]) -> list[str]:
+    """#5773: the words of the page's resolved club names that `term` is PART of.
+
+    `yank` + New York Yankees -> ["Yankees"]; `phil` + five Philadelphia clubs ->
+    ["Philadelphia"]. A term that already IS a whole club word (`red`, `sox`)
+    yields nothing: the reader has finished the word, so there is no partial for
+    the registry to speak for and the outcome arm stays as it was. So does a club
+    list with no word the term starts (a rescue that matched mid-name).
+    """
+
+    lowered = term.lower()
+    words: list[str] = []
+    for name, _sport_key in resolved:
+        for word in re.findall(r"[^\W_]+", name):
+            if (
+                len(word) > len(lowered)
+                and word.lower().startswith(lowered)
+                and word not in words
+            ):
+                words.append(word)
+    return words
+
+
+def _resolved_club_outcome_match(term: str, exp: str | None, club_words: list[str]):
+    """#5773: the futures OUTCOME arm when the teams registry has named a club.
+
+    The arm is otherwise a bare substring, and for `yank` that reached
+    `Priyanka Gandhi Vadra`, `Yankiel Rivera` and `Daddy Yankee`. Here an outcome
+    qualifies if it names the resolved club's own word (`Yankees`), OR carries the
+    term as a WHOLE word (`phil` -> "Phil Mickelson" survives), OR matches the
+    term's expansion exactly as `_build_expanded_ilike` would. Each part keeps its
+    trigram-servable ILIKE, and the regex is AND-ed onto one, never alone, for the
+    seq-scan reason `_build_word_start_ilike` records.
+    """
+
+    arms = [FuturesOutcome.name.ilike(f"%{word}%") for word in club_words]
+    arms.append(
+        and_(
+            FuturesOutcome.name.ilike(f"%{term}%"),
+            FuturesOutcome.name.op("~*")(
+                f"(^|[^[:alnum:]]){_regex_escape(term)}([^[:alnum:]]|$)"
+            ),
+        )
+    )
+    if exp:
+        arms.append(FuturesOutcome.name.ilike(f"%{exp}%"))
+    return FuturesMarket.id.in_(
+        select(FuturesOutcome.market_id).where(or_(*arms))
+    )
+
+
 def _futures_name_match_term(term: str, exp: str | None):
     """One term against a market NAME: substring RECALL and word ABOUT-NESS.
 
@@ -8076,9 +8127,34 @@ async def search_events(
         # deliberately unfixed, now with the numbers that say why.
         # `test_search_latency_contract.py::test_the_outcome_arm_is_deliberately_
         # not_word_tested` is the guard, and it was right.
+        #
+        # #5773, THE HALF THAT REGISTRY CAN PAY FOR (2026-09-25). There IS an
+        # identity layer on the one page shape the junk came from: `yank` reaches
+        # this line only after the teams registry resolved New York Yankees for
+        # the empty event rail (`_resolved_teams`, above). When it has, the arm
+        # serves the club's own word, the term as a whole word, and the expansion
+        # (`_resolved_club_outcome_match`); every other query, `lebro` and `ohtan`
+        # included, resolves no club and compiles exactly as before. Measured on
+        # production 2026-09-25 04:5xZ, open markets the arm reaches, then dropped:
+        #
+        #     term   reached   dropped
+        #     yank        22         6   Daddy Yankee x2, Yankiel Rivera, Priyanka x3
+        #     dodg        28         1   Lucien Dodge (anime voice award)
+        #     phil       362        60   Philippines, Phillips, Philippe ...
+        #
+        # `phil`'s sixty are real prefixes of other names, and that is the cost,
+        # named: a reader mid-word on a name the registry reads as a club loses
+        # them until the word is finished (`phillips` resolves no club). None of
+        # them was on `phil`'s served ten that minute: its one outcome-only row,
+        # "Colorado Governor winner?", is reached by `Phil Weiser`, a whole word.
+        _club_words = _resolved_club_words(term, _resolved_teams)
         if not _has_extractable_trigram(term):
             futures_outcome_match = (
                 _outcome_id_match(exp, None) if exp else None
+            )
+        elif _club_words:
+            futures_outcome_match = _resolved_club_outcome_match(
+                term, exp, _club_words
             )
         else:
             futures_outcome_match = _outcome_id_match(term, exp)
