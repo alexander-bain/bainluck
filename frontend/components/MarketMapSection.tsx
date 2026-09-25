@@ -14,6 +14,7 @@ import {
   sportVocab,
   withUnit,
   unitPhrase,
+  halfLabel,
   distributionTense,
   playedCountAbsence,
   playedUnits,
@@ -1141,7 +1142,7 @@ export default function MarketMapSection({
       const projMargin = closest50.isHome ? closest50.threshold : -closest50.threshold;
       const projTeam = projMargin > 0 ? hAbbr : projMargin < 0 ? aAbbr : "TIE";
 
-      const label = half === "1H" ? "1st half" : "2nd half";
+      const label = halfLabel(half, vocab);
 
       const halfMarkers: MarketMapMarker[] = [];
 
@@ -1285,7 +1286,7 @@ export default function MarketMapSection({
       });
     }
     return maps;
-  }, [gameMarkets.period_markets, status, homeTeam, awayTeam, hAbbr, aAbbr, sportKey, isDone, isLive, halfScores, liveHalfScores, homeLogo, awayLogo]);
+  }, [gameMarkets.period_markets, status, homeTeam, awayTeam, hAbbr, aAbbr, sportKey, vocab, isDone, isLive, halfScores, liveHalfScores, homeLogo, awayLogo]);
 
   // ── Period Total Maps (half totals) ──
   const halfTotalMaps = useMemo(() => {
@@ -1382,7 +1383,7 @@ export default function MarketMapSection({
       }));
 
       const midLabel = String(Math.round((rangeMin + rangeMax) / 2));
-      const label = halfKey === "1H" ? "1st half" : "2nd half";
+      const label = halfLabel(halfKey, vocab);
 
       const halfTotalMarkers: MarketMapMarker[] = [];
 
