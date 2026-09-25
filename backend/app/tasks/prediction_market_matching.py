@@ -35,7 +35,10 @@ from app.utils.sport_keys import (
     is_season_variant,
     league_identity,
 )
-from app.utils.kalshi_occurrence_start import kalshi_game_scale_commence
+from app.utils.kalshi_occurrence_start import (
+    KALSHI_OCCURRENCE_TIMED_SOURCES,
+    kalshi_game_scale_commence,
+)
 from app.utils.futures_liveness import KALSHI_BOOK_SILENT_SQL
 from app.utils.feed_market_quality import (  # #6676, the two-minute beat's third writer
     is_empty_book_midpoint,
@@ -4684,6 +4687,17 @@ def polymarket_venue_redate(market, event, fixture=None) -> Optional[datetime]:
 
     current = current if current.tzinfo else current.replace(tzinfo=timezone.utc)
     if abs(fixture - current) < _PM_VENUE_REDATE_MIN_DRIFT:
+        return None
+    # #8722: over a start Kalshi stamped, the fixture may only move it EARLIER.
+    # That start is the contract's expected expiration, which sits after the
+    # match by construction, so a fixture LATER than it is not the correction
+    # the registry authorized — it is a rescheduled or disputed fixture (three
+    # Korea Open rows on 2026-09-25 read 20h later on the moneyline than on its
+    # own O/U sibling), and that question is not this rail's to answer.
+    if (
+        getattr(event, "commence_time_source", None) in KALSHI_OCCURRENCE_TIMED_SOURCES
+        and fixture >= current
+    ):
         return None
     return fixture
 

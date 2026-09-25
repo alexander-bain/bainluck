@@ -61,6 +61,7 @@ from app.utils.event_completion import (
     POLYMARKET_VENUE_COMMENCE_SOURCE,
     settlement_is_a_staleness_artifact,
 )
+from app.utils.kalshi_occurrence_start import KALSHI_OCCURRENCE_TIMED_SOURCES
 from app.utils.name_normalization import names_match
 from app.utils.provider_anchor_keys import SCALAR_DERIVED_ID_COLUMNS
 
@@ -148,6 +149,42 @@ def polymarket_venue_corrects_its_own_listing(
     )
 
 
+def polymarket_venue_corrects_a_kalshi_expiration(
+    current_source: Optional[str], incoming_source: Optional[str],
+) -> bool:
+    """Is Gamma's fixture instant replacing Kalshi's expected-expiration? (#8722)
+
+    A start stamped ``kalshi``/``kalshi_occurrence`` is not a start. It is
+    Kalshi's ``occurrence_datetime`` — byte-identical to
+    ``expected_expiration_time``, the instant the contract is expected to
+    resolve, i.e. AFTER the match (#5905 read it at the venue;
+    :data:`app.utils.kalshi_occurrence_start.KALSHI_OCCURRENCE_TIMED_SOURCES` is
+    that set). Gamma's ``startTime`` is the venue's published fixture instant.
+    Both rank 0, so the tie rule froze the expiration in place.
+
+    Specimen, event 15318449 (Laver Cup doubles, 2026-09-25): stored 22:30Z
+    ``kalshi`` = ``KXLAVERCUPDOUBLESMATCH-…`` expected expiration; Polymarket
+    Gamma 1074594 ``startTime`` 19:30Z; the match was over when the page read
+    "Starts in 43m".
+
+    **DIRECTIONAL**, like :func:`polymarket_venue_corrects_its_own_listing`: the
+    fixture instant may replace the expiration, and a Kalshi claim can never
+    come back over ``polymarket_venue`` (the tie rule still refuses it). Not a
+    rank bump — that would also stop The Odds API, ESPN and StatPal correcting
+    either. ``kalshi_ticker`` is absent on purpose: it is a DATE at midnight,
+    not this instant, and the date/hour question is a different one.
+
+    The PAIRING is not this predicate's to vouch for: every rail that writes
+    ``polymarket_venue`` onto a linked row asks its own link validation first
+    (Phase 1.5: ``phase15_link_is_valid_for_redate``; the link itself passed the
+    ≤3h venue-fixture guard).
+    """
+    return (
+        incoming_source == POLYMARKET_VENUE_COMMENCE_SOURCE
+        and current_source in KALSHI_OCCURRENCE_TIMED_SOURCES
+    )
+
+
 def commence_time_write_authorized(
     current_source: Optional[str],
     incoming_source: Optional[str],
@@ -225,6 +262,8 @@ def commence_time_write_authorized(
         return (True, f"revision: {incoming_source} correcting its own record")
     if polymarket_venue_corrects_its_own_listing(current_source, incoming_source):
         return (True, "revision: polymarket's fixture instant over its listing stamp")
+    if polymarket_venue_corrects_a_kalshi_expiration(current_source, incoming_source):
+        return (True, "correction: polymarket's fixture instant over kalshi's expiration")
     return (
         False,
         f"priority: {incoming_source or '<none>'}({incoming}) does not outrank "

@@ -386,6 +386,12 @@ _CATEGORY_PREFIX_RE = re.compile(
     r'|ATP|WTA|Grand Slam|Australian Open|French Open|Wimbledon|US Open'
     r'|(?:ITF|Challenger)\s+[\w\s\-\.]+?(?=\s*:)'  # "ITF Messina:", "Challenger Parma:", etc.
     r'|Roland Garros'
+    # #8722: Polymarket titles every Laver Cup match "Laver Cup: A vs B" /
+    # "Laver Cup (Doubles): A/B vs C/D". Unstripped, the match-winner market is
+    # not game-level, so a doubles group (which carries no prop to mint from)
+    # never produced a row at the venue's hour and Kalshi's expiration-timed
+    # row stood alone. "2026 Laver Cup: Winner" leads with the year and stays out.
+    r'|Laver Cup'
     r'|[\w][\w\s\-\.]*?\s+(?:Open|Classic|Masters|Championships?|International|Invitational)(?=\s*:)'  # "Stuttgart Open:", "Cincinnati Masters:", etc.
     r'|PGA|LIV Golf|DP World Tour'
     r'|Formula\s*1|F1|NASCAR|IndyCar'
@@ -3162,7 +3168,23 @@ def _expand_team_search_terms(team: str) -> list[str]:
     if state_expanded != team:
         terms.append(state_expanded)
 
+    # A doubles pair in the other venue's spelling (#8722). Polymarket writes
+    # "Alcaraz/Mensik", Kalshi "Alcaraz / Mensik", and "%Alcaraz/Mensik%" never
+    # retrieves the Kalshi row, so the name gate (which now reads both as one
+    # side) is never even asked. Both spellings, never a bare surname: the pair
+    # is the identity, and "%Mensik%" is every singles match he plays.
+    if "/" in team:
+        for spelling in (
+            _PAIR_SLASH_SPELLING_RE.sub("/", team),
+            _PAIR_SLASH_SPELLING_RE.sub(" / ", team),
+        ):
+            if spelling not in terms:
+                terms.append(spelling)
+
     return terms
+
+
+_PAIR_SLASH_SPELLING_RE = re.compile(r"\s*/\s*")
 
 
 # ── Ticker fragment extraction for college team disambiguation ────────────
