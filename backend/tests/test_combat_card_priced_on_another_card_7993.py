@@ -45,9 +45,15 @@ from app.utils.event_ufc import UFC_CONFIG, UFCEventAdapter
 _IDS = itertools.count(7993000)
 
 
+#: The ONE clock read. Module constants (`_D`, `_NEXT`) are built at import and
+#: test bodies call `_at` at run time; reading the clock in both places let a run
+#: that straddled 00:00Z put a control's bout a day past `_NEXT` (master 1614c294).
+_NOW = datetime.now(timezone.utc)
+
+
 def _at(days: int, hour: int, minute: int = 0) -> datetime:
     """A fixed instant. Offset FIRST, then truncate (gotcha #44)."""
-    return (datetime.now(timezone.utc) + timedelta(days=days)).replace(
+    return (_NOW + timedelta(days=days)).replace(
         hour=hour, minute=minute, second=0, microsecond=0
     )
 
