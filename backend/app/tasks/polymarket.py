@@ -284,6 +284,20 @@ _TAG_TO_CATEGORY: dict[str, str] = {
     "horse-racing": "horse_racing",
     "kentucky derby": "horse_racing",
     "lacrosse": "lacrosse",
+    # #8507: the venue tags every chess event `Chess` and this key was absent,
+    # so the loop skipped it and returned on the next tag it knew. Read off
+    # Gamma 2026-09-25:
+    #
+    #     775267   46th FIDE Chess Olympiad Open Tournament Winner
+    #                  ['Chess', 'Sports', 'Esports']           -> was esports
+    #     1064637  Titled Tuesday Winner: September 29
+    #                  ['Sports', 'Chess', 'Titled Tuesday', 'Recurring'] -> was None
+    #
+    # so the Olympiad sat on /hub/esports and the Titled Tuesday cards named no
+    # sport. `chess` is the value the resolved history already settles on (160
+    # `championship` + 401 `game_prop` rows), and it has no key in
+    # `LLM_CATEGORY_TO_SPORT_PREFIX`, so it labels the card and opens no rail.
+    "chess": "chess",
     "cycling": "other",
     "swimming": "olympics",
     "track and field": "olympics",
@@ -426,6 +440,9 @@ _SPORT_CATEGORIES = {
     # for a sport we run no fixtures for. The category labels the card; it does
     # not open a matching rail.
     "pickleball",
+    # #8507, for the same reason as the two above: a `Chess` tag must yield
+    # ("championship", "chess"), which is what the resolved chess rows carry.
+    "chess",
 }
 
 
