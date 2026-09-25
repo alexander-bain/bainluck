@@ -8707,7 +8707,12 @@ async def search_events(
         team_search_q = team_search_q.where(Sport.key == sport)
     # LAT-P002/#1494 (1e): teams is a non-essential stage too.
     if time.monotonic() > _deadline:
-        logger.warning("search deadline exceeded before teams for %r", q)
+        # #7355: the query text stays out of this line. The stage moved in this
+        # change, and CodeQL (py/log-injection) reads a moved `%r, q` as new;
+        # the length is enough to tell a long query from a short one.
+        logger.warning(
+            "search deadline exceeded before teams (query length %d)", len(q)
+        )
         _team_result_rows = []
         degraded.append("teams")
     else:
@@ -8722,7 +8727,7 @@ async def search_events(
             await _teams_savepoint.rollback()
             if not _is_query_timeout(exc):
                 raise
-            logger.warning("search teams timed out for %r", q)
+            logger.warning("search teams timed out (query length %d)", len(q))
             await _apply_search_statement_timeout(db, _deadline)
             _team_result_rows = []
             degraded.append("teams")
