@@ -47,7 +47,12 @@ from app.utils.market_label_normalization import non_sport_topic_label, rewrite_
 # Module-level and safe: `routes/futures.py` imports nothing from this module
 # (its three cross-route imports — feed, golf — are function-local), so there is
 # no cycle to defer around. `tests/test_startup.py` is the standing guard.
-from app.routes.futures import WITHHELD_PRICE_FIELDS, _withheld_price_outcome_ids
+from app.routes.futures import (
+    WITHHELD_PRICE_FIELDS,
+    _board_has_a_verdict,
+    _fleet_newest_observation,
+    _withheld_price_outcome_ids,
+)
 from app.utils.feed_reasons import _points as format_movement_points
 from app.utils.game_market_club_names import (
     SEARCH_CARD_FIELDS,
@@ -57,6 +62,7 @@ from app.utils.game_market_club_names import (
     repair_club_names,
     repair_field_outcome_name,
 )
+from app.utils.market_staleness import unobserved_board_keys
 from app.utils.sport_keys import SPORT_PREFIX_TO_LLM_CATEGORY
 
 # #6923. The search card's age pip and the futures card's age mark must agree on
@@ -9018,8 +9024,19 @@ async def search_events(
     # left whole for concept derivation, `_deduped_page` for the two decisions
     # that must see the unfiltered page — is unchanged and load-bearing for both.
     _deduped_page = deduped_futures[:_SEARCH_FUTURES_PAGE]
+    # #6993's refusal set per market — see the note where the formatter map is
+    # built below. Asked HERE, before the filter, since #8661: a board whose
+    # every priced leg is refused is withdrawn by `_futures_card_has_no_answer`,
+    # and it must be withdrawn BEFORE the slice so the page refills (#6327's
+    # filter-then-slice rule). Same markets the map below always asked about,
+    # so this moves the queries earlier and adds none.
+    _withheld_by_market = {
+        m.id: await _search_withheld_price_ids(db, m) for m in deduped_futures
+    }
     futures_markets = [
-        m for m in deduped_futures if not _futures_card_has_no_answer(m)
+        m for m in deduped_futures if not _futures_card_has_no_answer(
+            m, _withheld_by_market.get(m.id)
+        )
         and m.id not in _container_parent_ids  # #8375
     ][:_SEARCH_FUTURES_PAGE]  # flat list (unchanged shape)
 
@@ -9286,10 +9303,16 @@ async def search_events(
     # reaches a candidate shape, so a market with no suspicious book pays no
     # query at all. Browse measured 16 of 200 markets paying one; a search page
     # carries a page of futures, not two hundred.
-    _withheld_by_market = {
-        m.id: await _search_withheld_price_ids(db, m)
-        for m in (*deduped_futures, *futures_markets)
-    }
+    # #8661: the deduped rows were asked before the filter above; only a
+    # promoted headline contender can be new here, and one whose every price is
+    # refused leaves the page like any other withdrawn card.
+    for m in futures_markets:
+        if m.id not in _withheld_by_market:
+            _withheld_by_market[m.id] = await _search_withheld_price_ids(db, m)
+    futures_markets = [
+        m for m in futures_markets
+        if not _futures_market_prices_all_withheld(m, _withheld_by_market[m.id])
+    ]
     _formatted_by_id = {
         m.id: _format_futures_for_search(m, _withheld_by_market.get(m.id))
         for m in (*deduped_futures, *futures_markets)
@@ -9334,7 +9357,7 @@ async def search_events(
         [
             m
             for m in deduped_futures
-            if not _futures_card_has_no_answer(m)
+            if not _futures_card_has_no_answer(m, _withheld_by_market.get(m.id))
             and m.id not in _container_parent_ids
         ],
         expanded,
@@ -29476,7 +29499,9 @@ def _futures_board_is_mostly_unserved(market: "FuturesMarket") -> bool:
     return 0 < served < _BOARD_MIN_SERVED_SUM  # all-zero rungs are #6327's
 
 
-def _futures_card_has_no_answer(market: "FuturesMarket") -> bool:
+def _futures_card_has_no_answer(
+    market: "FuturesMarket", withheld: Optional[set] = None
+) -> bool:
     """The card this market would draw can state no answer a reader can trust.
 
     The union the search surfaces actually want, and the ONLY thing the call
@@ -29498,13 +29523,39 @@ def _futures_card_has_no_answer(market: "FuturesMarket") -> bool:
     is a genuine widening of the question and is recorded here rather than
     smuggled in under the old sentence — the arms stay four, not three-and-a-
     footnote, precisely so the next reader can revert it alone.
+
+    #8661 adds a fifth, and it is the only arm that reads the refusal set rather
+    than the row: ``withheld`` is the market's `_search_withheld_price_ids`
+    answer. A board whose every priced leg is refused draws a ranked ladder of
+    dashes — #6327's defect, reached through the refusal instead of the column.
+    ``None`` (nobody asked) is the old four-arm question exactly.
     """
     return (
         _futures_market_has_no_outcome_rows(market)
         or _futures_market_is_wholly_unpriced(market)
         or _futures_market_prices_only_empty_books(market)
         or _futures_board_is_mostly_unserved(market)
+        or _futures_market_prices_all_withheld(market, withheld)
     )
+
+
+def _futures_market_prices_all_withheld(
+    market: "FuturesMarket", withheld: Optional[set]
+) -> bool:
+    """Every leg the search ladder would price is in the refusal set (#8661).
+
+    Judged on `_search_surviving_legs` — the legs the builder actually draws —
+    and on the builder's own gate (`current_probability is not None`), so this
+    is True exactly when `_build_search_top_outcomes` would serve a ladder whose
+    every row it then nulls. An empty or absent set withholds nothing and can
+    never withdraw a card.
+    """
+    if not withheld:
+        return False
+    priced = [
+        o for o in _search_surviving_legs(market) if o.current_probability is not None
+    ]
+    return bool(priced) and all(o.id in withheld for o in priced)
 
 
 def _search_container_parent_candidates(markets: list) -> dict[int, tuple[str, set[str]]]:
@@ -29898,7 +29949,33 @@ async def _search_withheld_price_ids(db, market: "FuturesMarket") -> set[int]:
     hook exists to prevent.
     """
     try:
-        return await _withheld_price_outcome_ids(db, market)
+        withheld = await _withheld_price_outcome_ids(db, market)
+        # #8661 — AND THE SIXTH ARM, WHICH THE HELPER DOES NOT CARRY.
+        #
+        # `?q=nfl mvp` at 390px (2026-09-25) drew *NFL Championship MVP?* —
+        # Kalshi KXNFLSBMVP-26, last season's Super Bowl, played in February,
+        # never graded (the venue purged its contracts) — as a live card:
+        # `Sam Darnold 45% · Drake Maye 27%`, prices last written 2026-02-04.
+        # `/api/futures/479` serves the same board as `prices_withheld: 79`,
+        # every leg null. The page withholds on six arms; the helper above is
+        # five of them (plus #8265's), because `get_futures_market` adds
+        # #8011's unobserved-board arm OUTSIDE it. #8102 found the same split
+        # on `/entertainment` and closed it there, with this exact call; search
+        # was the surface still trusting the helper as "the" refusal.
+        #
+        # Called, never re-spelled: `_fleet_newest_observation` returns None
+        # without a query for every board that cannot qualify (status, verdict,
+        # its own recency gate), and `unobserved_board_keys` reads None as
+        # "withhold nothing", so a live board pays nothing and a graded board
+        # keeps its result by construction.
+        outcomes = getattr(market, "outcomes", None) or []
+        withheld |= unobserved_board_keys(
+            ((o.id, o.last_updated) for o in outcomes),
+            board_touched_at=getattr(market, "updated_at", None),
+            fleet_newest_observation=await _fleet_newest_observation(db, market),
+            board_has_a_verdict=_board_has_a_verdict(outcomes),
+        )
+        return withheld
     except AttributeError:
         logger.warning(
             "search: could not evaluate the #6993 price refusal for market %s; "

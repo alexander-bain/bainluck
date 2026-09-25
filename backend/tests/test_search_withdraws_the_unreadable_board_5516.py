@@ -517,7 +517,8 @@ class TestTheWithdrawalReachesThePage:
         assert "if m.id in serialized_ids" in composer
         route = inspect.getsource(_events_module.search_events)
         assert "{m.id for m in futures_markets}" in route
-        assert "m for m in deduped_futures if not _futures_card_has_no_answer(m)" in route
+        # #8661: the predicate now also takes the market's refusal set.
+        assert "m for m in deduped_futures if not _futures_card_has_no_answer(" in route
 
 
 # ---------------------------------------------------------------------------
