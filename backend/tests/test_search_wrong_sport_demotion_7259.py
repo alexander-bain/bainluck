@@ -45,8 +45,9 @@ argument, and it is why the guard cannot arm on `giants` (MLB *and* NFL) or on
 These are unit tests over the two pure helpers plus positional guards on the
 route. The reranker is pure and its contract is an ORDERING, so ordering is what
 is asserted; the route-level facts that no unit test can see (that the argument
-is bound before the pill tally is discarded, that typeahead deliberately passes
-nothing) are read off the AST rather than asserted about a response body.
+is bound before the pill tally is discarded, that typeahead passes the team
+pool's sport and nothing else) are read off the AST rather than asserted about
+a response body.
 """
 
 import ast
@@ -300,30 +301,27 @@ class TestTheRouteWiring:
             f"found {len(passing)}"
         )
 
-    def test_the_typeahead_twin_is_DELIBERATELY_left_without_the_signal(self):
+    def test_the_typeahead_twin_passes_the_TEAM_POOL_sport_not_a_facet(self):
         """#3394's standing lesson is a fix landing on one endpoint while its
         copy keeps the defect — so the twin is checked, and the answer is
         recorded here rather than left to be rediscovered as an oversight.
 
-        Two independent reasons, either sufficient. (1) The signal does not exist
-        on that endpoint: the argument is `_search_sport_facets`' grouped tally
-        over the matched EVENT set, and `/typeahead` never runs that statement.
-        (2) The defect does not manifest there: measured on production
-        2026-09-19, `/typeahead?q=astros` returns the LNBP market (61496478)
-        SECOND, below `MLB World Series Champion 2026` (114584), because that
-        endpoint's ORDER BY leads with `market_tier` and tier 1 beats the tier-5
-        cousin before the reranker is reached. #7259 is a wrong-HEADLINE defect
-        on /search's ANSWERS card and that surface has no such headline.
-
-        This FAILS if someone threads a category into the typeahead call — not
-        because doing so would be wrong forever, but because it would need its
-        own measurement and its own definition of the query's sport, and a second
-        definition is how the two surfaces drift apart.
+        #7259 left `/typeahead` without the signal for two reasons: the facet
+        tally is never run there, and the defect did not manifest (`astros` kept
+        its LNBP cousin below a tier-1 MLB row). The second reason expired on
+        production 2026-09-25 (#5082): `dodg` resolved only the Dodgers and
+        served a tier-5 `auto` Hellcat market in row 2. So the twin now passes
+        the sport the resolved TEAMS agree on, through
+        `_typeahead_team_sport_category`, which reuses this module's one
+        prefix translation. Any OTHER argument here would be a second
+        definition of the query's sport, and this fails on it.
         """
         ta_src = inspect.getsource(events_route.typeahead_search)
-        for call in _calls_named(ta_src, "_rerank_search_futures"):
-            assert len(call.args) < 3 and not call.keywords, (
-                "the typeahead reranker call now passes a resolved sport "
-                "category; see this test's docstring for why that needs its own "
-                "measurement first"
-            )
+        calls = _calls_named(ta_src, "_rerank_search_futures")
+        assert calls
+        for call in calls:
+            assert not call.keywords
+            assert len(call.args) == 3
+            assert isinstance(call.args[2], ast.Name)
+            assert call.args[2].id == "_ta_team_sport_category"
+        assert "_ta_team_sport_category = _typeahead_team_sport_category(team_pool)" in ta_src

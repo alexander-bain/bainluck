@@ -1405,6 +1405,21 @@ jobs:
             exit 1
           fi
 
+      - name: typeahead team query keeps other-sport futures below its own (real Postgres, #5082)
+        # `pats` served three House races for politicians named Pat (the english
+        # stemmer folds `pats` to `pat`), and `dodg` served a Dodge Hellcat market
+        # above the Dodgers' own. Real Postgres because the first half is the
+        # stemmer and the second is `team_pool` feeding the rerank — neither
+        # exists in a session double. Same skip-detection as the gates around it.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_typeahead_team_query_cross_sport_5082_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/typeahead_cross_sport_5082.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/typeahead_cross_sport_5082.txt; then
+            echo "::error::#5082 typeahead cross-sport control SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: futures_outcomes grade schema parity (real Postgres)
         # CERT-521. `is_winner` was widened to nullable so a metadata-built test
         # database could finally express "nobody graded this" — and the widening

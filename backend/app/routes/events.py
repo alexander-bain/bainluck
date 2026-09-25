@@ -2114,6 +2114,17 @@ def _typeahead_stem_only_futures(
 
     Substring hits are never touched, so an interior-substring control row such as
     #4723's Korpatsch (`pats`) passes on clause 2.
+
+    #5082: a curated nickname names its team without being inside the name —
+    `pats` is not in "New England Patriots" — so clause 1 used to wave the query
+    through and the stemmer's `pats` -> `pat` fold reached the dropdown as three
+    House races (production 2026-09-25: `Pat Fallon`, `Pat Harrigan`, `Pat Ryan`
+    vote-percent markets under the Patriots). A single-term query that is a key of
+    `_TEAM_NICKNAME_EXPANSIONS` whose market token is in the lead team's
+    name now counts that token as the term's expansion, for all three clauses:
+    the gate opens, and "NE Patriots vs JAC Jaguars" stays on clause 2 through
+    `Patriots`. General synonym expansions do NOT open clause 1; only the curated,
+    franchise-anchored map does.
     """
     if not lead_team_name:
         return False
@@ -2122,7 +2133,11 @@ def _typeahead_stem_only_futures(
         return False
     team = lead_team_name.lower()
     if not all(t in team for t, _ in low):
-        return False
+        nickname = _TEAM_NICKNAME_EXPANSIONS.get(low[0][0]) if len(low) == 1 else None
+        if nickname is None or nickname[0].lower() not in team.split():
+            return False
+        low = [(low[0][0], nickname[0].lower())]
+        expanded = [(expanded[0][0], nickname[0])]
     if _query_name_match(market, expanded):
         return False
     for name in _search_owned_outcome_names(market):
@@ -2130,6 +2145,30 @@ def _typeahead_stem_only_futures(
         if all((t in n) or (e and e in n) for t, e in low):
             return False
     return True
+
+
+def _typeahead_team_sport_category(team_pool: list[dict]) -> str | None:
+    """#5082: the one `llm_sport_category` the dropdown's resolved TEAMS agree on, or None.
+
+    The typeahead twin of `_resolved_search_sport_category`, built from the team
+    pool because this endpoint never runs `/search`'s facet tally. Production
+    2026-09-25: `dodg` resolved only the Los Angeles Dodgers and still served
+    `Will Dodge release a new Challenger Hellcat before 2027?` (category `auto`)
+    in row 2, above the Dodgers' own markets, on the substring `dodg` alone.
+
+    Unanimity is the safety argument, as in the sibling: `giants` resolves the
+    San Francisco AND New York Giants and comes back None, so the demotion never
+    sinks one namesake's markets under the other's. Each team's sport key goes
+    through the sibling's translation, so the prefix map is applied in one place
+    and an unmapped key reads None rather than a neighbour.
+    """
+    categories = {
+        _resolved_search_sport_category([{"key": t.get("sport_key")}])
+        for t in team_pool
+    }
+    if len(categories) != 1:
+        return None
+    return next(iter(categories))
 
 
 def _typeahead_stem_only_event(
@@ -10857,28 +10896,25 @@ async def typeahead_search(
     # or a substring-cousin league before the 5-item cut. Shared helpers end-to-end
     # (query recall + rerank) → the two paths agree (L2-45).
     #
-    # 🔴 NO `resolved_sport_category` HERE, AND THE TWIN WAS CHECKED RATHER THAN
-    # ASSUMED (#7259; #3394's standing lesson in this file is a fix landing on one
-    # endpoint while its copy keeps the defect). Two independent reasons, either
-    # sufficient:
-    #   1. THE SIGNAL DOES NOT EXIST ON THIS ENDPOINT. The argument is not derived
-    #      from the query text — it is `_search_sport_facets`' grouped tally over
-    #      the matched EVENT set, and this endpoint never runs that statement.
-    #      There is nothing to pass, and inventing a cheaper substitute here would
-    #      be a second definition of "what sport is this query" for the two
-    #      surfaces to drift apart on.
-    #   2. THE DEFECT DOES NOT MANIFEST HERE. Measured on production 2026-09-19,
-    #      `/typeahead?q=astros` returns the LNBP market (61496478) SECOND, below
-    #      `MLB World Series Champion 2026` (114584) — this endpoint's ORDER BY
-    #      leads with `market_tier`, and tier 1 beats the tier-5 cousin before the
-    #      reranker is reached. #7259 is a wrong-HEADLINE defect on /search's
-    #      ANSWERS card, and this surface has no such headline to get wrong.
-    # So the parity L2-45 asks for is preserved by passing nothing: both paths run
-    # the same reranker, and the one extra signal is supplied only where it is
-    # both available and needed.
+    # THE SPORT SIGNAL HERE COMES FROM THE TEAM POOL, NOT THE FACET TALLY (#5082,
+    # reversing #7259's "pass nothing" after the twin was re-measured). /search's
+    # `_resolved_sport_category` is `_search_sport_facets`' grouped tally over the
+    # matched EVENT set, which this endpoint never runs. #7259 left this call
+    # without a category because (1) that signal is absent and (2) the defect
+    # did not manifest: `astros` kept its LNBP cousin below a tier-1 MLB row.
+    # (2) stopped holding: production 2026-09-25, `dodg` resolved only the Los
+    # Angeles Dodgers and served a tier-5 `auto` market, "Will Dodge release a
+    # new Challenger Hellcat before 2027?", in row 2 above the Dodgers' own
+    # markets. The team pool already answers "what sport is this query" when the
+    # resolved teams agree, and `_typeahead_team_sport_category` puts each key
+    # through the SAME translation as /search's facet, so the two surfaces share
+    # one map. `giants` (MLB and NFL) and every team-less query pass None, and
+    # the call is then byte-for-byte the old one.
+    _ta_team_sport_category = _typeahead_team_sport_category(team_pool)
     ta_futures_ranked = _rerank_search_futures(
         futures_result.scalars().unique().all() if futures_result is not None else [],
         ta_expanded,
+        _ta_team_sport_category,
     )
     # #8447: a team query drops the rows only the stemmer admitted (`angels` ->
     # "Los Angeles Mayor"). This runs after the rerank, before the dropdown cut,
