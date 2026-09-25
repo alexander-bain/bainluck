@@ -35,6 +35,10 @@ SPORT_LEAGUE_MAP: dict[str, tuple[str, str]] = {
     "soccer_epl": ("soccer", "eng.1"),
     "soccer_usa_mls": ("soccer", "usa.1"),
     "soccer_uefa_champs_league": ("soccer", "uefa.champions"),
+    # #8675: live scores and full time come only from here — without it a
+    # Nations League match serves `live` with no score until the Odds API
+    # scores poll catches up, 40+ min after ESPN reads full time.
+    "soccer_uefa_nations_league": ("soccer", "uefa.nations"),
     "soccer_spain_la_liga": ("soccer", "esp.1"),
     "soccer_germany_bundesliga": ("soccer", "ger.1"),
     "soccer_italy_serie_a": ("soccer", "ita.1"),
@@ -101,6 +105,7 @@ EXPECTED_GAME_STATE_INDICATORS: dict[str, int | None] = {
     "soccer_epl": 2,
     "soccer_usa_mls": 2,
     "soccer_uefa_champs_league": 2,
+    "soccer_uefa_nations_league": 2,
     "soccer_spain_la_liga": 2,
     "soccer_germany_bundesliga": 2,
     "soccer_italy_serie_a": 2,
@@ -150,6 +155,7 @@ ESPN_SPORT_MAPPING: dict[str, str] = {
     "basketball_wnba": "basketball/wnba",
     "americanfootball_cfl": "football/cfl",
     "soccer_uefa_champs_league": "soccer/uefa.champions",
+    "soccer_uefa_nations_league": "soccer/uefa.nations",  # #8675
     "golf_pga": "golf/pga",
     "golf_lpga": "golf/lpga",
     # Additional European soccer leagues
