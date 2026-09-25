@@ -4514,8 +4514,8 @@ jobs:
             echo "::error::#7878 evidence collapse SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]14 passed," /tmp/evidence7878.txt || {
-            echo "::error::#7878 evidence collapse did not run all fourteen cases"
+          grep -qE "[^0-9]15 passed," /tmp/evidence7878.txt || {
+            echo "::error::#7878 evidence collapse did not run all fifteen cases (#8514 added the backfilled-row case)"
             exit 1
           }
 
@@ -4534,8 +4534,8 @@ jobs:
             echo "::error::#7878 wire gate SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]2 passed," /tmp/wire7878.txt || {
-            echo "::error::#7878 wire gate did not run both cases"
+          grep -qE "[^0-9]4 passed," /tmp/wire7878.txt || {
+            echo "::error::#7878 wire gate did not run all four cases (#8514 added the two ESPN backfill cases)"
             exit 1
           }
 
