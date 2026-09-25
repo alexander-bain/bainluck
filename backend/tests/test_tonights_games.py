@@ -226,3 +226,52 @@ class TestAMinorLeagueGameNeverLeads:
         # An absent sport is class "other" — unknown is not minor.
         feed = [future("a"), game("g", status="live")]
         assert ids(lead_with_tonights_games(feed, NOW))[0] == "g"
+
+
+class TestAHalfIdentifiedGameNeverLeads:
+    """#8674. The media bar was `home_team_data or away_team_data`, so one crest
+    carried a game whose other side the card paints as a grey letter box. On
+    2026-09-25 18:21Z a live Nations League match (score 35) sat at Discover
+    slot 2, Northern Ireland's flag beside a grey `GEO`, above an 88-point MLB
+    game. The bar is now the field the card paints, on BOTH sides."""
+
+    NI = {"logo_small": "https://flagcdn.com/w80/gb-nir.png", "logo_large": None}
+
+    def test_the_reported_page(self):
+        feed = [
+            future("fitzpatrick", score=100),
+            game("cubs-sox", status="live", score=85, sport="baseball_mlb"),
+            game("ni-georgia", status="live", score=35, media=False,
+                 sport="soccer_uefa_nations_league", away_team_data=self.NI),
+            game("os-yanks", status="scheduled", starts_in_hours=0.5, score=88,
+                 sport="baseball_mlb"),
+        ]
+        out = ids(lead_with_tonights_games(feed, NOW))
+        assert out[:2] == ["cubs-sox", "os-yanks"]
+        # Still on the page, in the mix at its own place — never dropped.
+        assert out.index("ni-georgia") > out.index("fitzpatrick")
+        assert sorted(out) == sorted(ids(feed))
+
+    @pytest.mark.parametrize("home, away", [
+        (None, {"logo_small": "a"}),              # the reported shape
+        ({"logo_small": "h"}, None),              # mirror side
+        ({}, {"logo_small": "a"}),                # #4177's empty dict
+        ({"team_id": 1, "logo_small": None}, {"logo_small": "a"}),
+        ({"team_id": 1, "logo_small": ""}, {"logo_small": "a"}),
+        ({"logo_large": "h"}, {"logo_small": "a"}),  # the card never paints logo_large
+        ("h.png", {"logo_small": "a"}),           # malformed, not a dict
+    ])
+    def test_one_painted_crest_is_not_enough_live_or_soon(self, home, away):
+        live = game("half-live", status="live", media=False,
+                    home_team_data=home, away_team_data=away)
+        soon = game("half-soon", status="scheduled", starts_in_hours=1, media=False,
+                    home_team_data=home, away_team_data=away)
+        assert select_tonights_games([future("a"), live, soon], NOW) == []
+
+    def test_two_painted_crests_still_lead_live_and_soon(self):
+        # Both directions (#1091): the same league with both crests leads.
+        live = game("both-live", status="live", sport="soccer_uefa_nations_league")
+        soon = game("both-soon", status="scheduled", starts_in_hours=1,
+                    sport="soccer_uefa_nations_league")
+        assert ids(select_tonights_games([future("a"), live, soon], NOW)) == [
+            "both-live", "both-soon"]

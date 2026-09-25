@@ -107,8 +107,8 @@ def _scheduled_game(
         .replace("+00:00", "Z"),
     }
     if media:
-        data["home_team_data"] = {"logo": "h"}
-        data["away_team_data"] = {"logo": "a"}
+        data["home_team_data"] = {"logo_small": "h"}
+        data["away_team_data"] = {"logo_small": "a"}
     return {
         "type": "event",
         "score": score,
