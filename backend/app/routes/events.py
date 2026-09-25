@@ -2244,6 +2244,59 @@ def _demote_narrower_scope(name_matches: list, low: list[tuple[str, str]]) -> li
     return broad + narrow if narrow else name_matches
 
 
+#: #8726: a leg priced at or beyond these reads as a foregone answer on a card
+#: (`97%`, `>99%`, `2%`). A board with EVERY printed leg out here has no open
+#: question left in it.
+_SEARCH_DECIDED_HIGH = 0.95
+_SEARCH_DECIDED_LOW = 0.05
+
+
+def _search_board_is_decided(market) -> bool:
+    """#8726: every leg this board prints sits within 5 points of an extreme.
+
+    Only printed legs vote (`_outcome_prints_a_price`, the predicate the card
+    itself prints by), so a dash-only leg neither decides nor contests. A board
+    printing no leg at all is not decided: we cannot say, so it keeps its place.
+    """
+    printed = []
+    for o in getattr(market, "outcomes", None) or []:
+        if not _outcome_prints_a_price(o):
+            continue
+        try:
+            printed.append(float(o.current_probability))
+        except (TypeError, ValueError):
+            return False
+    return bool(printed) and all(
+        p >= _SEARCH_DECIDED_HIGH or p <= _SEARCH_DECIDED_LOW for p in printed
+    )
+
+
+def _decided_boards_last(markets: list) -> list:
+    """#8726: inside one partition, a board with a contested leg leads a decided one.
+
+    `?q=presidents cup` (production 2026-09-25, during round 2) led with
+    `Golfers to compete in the Presidents Cup this year`: Kalshi
+    KXPGACOMPETE-PRESCUP26SEP, 20 legs at 0.965-0.995 or 0.01-0.02, its teams
+    named weeks earlier. `Presidents Cup Winner` (Team USA 85.5%) came second,
+    because the volume sort reads LIFETIME volume (109k against 67k) and nothing
+    asked whether a board still has a question in it. The feed has refused this
+    class since #1004 (`is_locked_near_certain`); search had no equivalent.
+
+    A stable partition like its siblings: nothing is dropped here, each group
+    keeps its incoming order, and a list with no decided board or no contested
+    one comes back untouched. The page is still sliced downstream, so a decided
+    board CAN fall off page one, the same exposure `_demote_wrong_sport` names.
+    """
+    if len(markets) < 2:
+        return markets
+    decided = [_search_board_is_decided(m) for m in markets]
+    if not any(decided) or all(decided):
+        return markets
+    return [m for m, d in zip(markets, decided) if not d] + [
+        m for m, d in zip(markets, decided) if d
+    ]
+
+
 def _rerank_search_futures(
     markets: list,
     expanded: list[tuple[str, str | None]],
@@ -2292,7 +2345,9 @@ def _rerank_search_futures(
     name_matches = [m for m in markets if _name_match(m)]
     outcome_only = [m for m in markets if not _name_match(m)]
     name_matches.sort(key=_market_volume, reverse=True)  # real-interest signal
-    ordered = name_matches + outcome_only
+    # #8726: a board with no open question left yields to one that has one,
+    # inside each partition so a name match still leads every outcome-only row.
+    ordered = _decided_boards_last(name_matches) + _decided_boards_last(outcome_only)
     # Item 2 (L2-44): for a bare award query, headline the season/full award over
     # a narrower sub-award ("Eastern Conf Finals MVP"). Applied to the FULL list,
     # not just name_matches — award markets often reach results via league-ticker
