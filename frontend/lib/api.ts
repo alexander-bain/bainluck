@@ -1910,6 +1910,13 @@ export interface LeagueMarket {
    * missing, never as a guess (#3508).
    */
   competition?: string | null;
+  /**
+   * The venue's name for the match a prop belongs to — "Valorant: TYLOO vs Team
+   * Liquid (BO3) - VCT Champions Group C". The hub serves it ONLY on a card
+   * whose own name names no match ("Games Total: O/U 4.5"), so its presence is
+   * the whole rule for the eyebrow (#8524).
+   */
+  event_title?: string | null;
 }
 
 /**

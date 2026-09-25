@@ -24,8 +24,10 @@ from datetime import datetime, timezone
 from typing import Awaitable, Callable
 
 from fastapi import APIRouter, Depends, HTTPException, Path
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models import FuturesMarket
 from app.routes.league_futures import build_linked_matches, get_league_futures
 from app.services import get_db
 from app.utils.event_boxing import classify_boxing_prop, list_boxing_card_concepts
@@ -58,6 +60,10 @@ from app.utils.event_ufc import classify_ufc_prop, list_ufc_card_concepts
 from app.utils.grouped_field_legs import (
     drop_legs_of_a_rendered_field,
     move_parents_to_their_legs_section,
+)
+from app.utils.hub_prop_matchup import (
+    attach_group_matchups,
+    groups_needing_a_matchup,
 )
 
 logger = logging.getLogger(__name__)
@@ -528,6 +534,30 @@ def merge_league_sections(primary: dict, sibling: dict) -> dict:
     return merged
 
 
+async def fetch_group_event_titles(
+    db: AsyncSession | None, group_ids: set[str]
+) -> dict[str, str]:
+    """The venue event title stored on each group's grouped row (#8524).
+
+    Only the grouped row carries `market_metadata.event_title`; its sub-market
+    legs do not. Ordered by id so a group with two titled rows answers the same
+    way on every build instead of by heap order.
+    """
+    if db is None or not group_ids:
+        return {}
+    title = FuturesMarket.market_metadata["event_title"].astext
+    rows = await db.execute(
+        select(FuturesMarket.group_id, title)
+        .where(FuturesMarket.group_id.in_(sorted(group_ids)), title.isnot(None))
+        .order_by(FuturesMarket.group_id, FuturesMarket.id)
+    )
+    titles: dict[str, str] = {}
+    for group_id, text in rows.all():
+        if group_id not in titles and isinstance(text, str) and text.strip():
+            titles[group_id] = text
+    return titles
+
+
 async def build_hub(cfg: HubConfig, db: AsyncSession) -> dict:
     """Build one hub payload from the database. Never raises.
 
@@ -783,6 +813,22 @@ async def build_hub(cfg: HubConfig, db: AsyncSession) -> dict:
         if kept:
             rendered[name] = kept
     sections = rendered
+
+    # ── #8524: a prop card names the match it is about ──
+    #
+    # A Polymarket match sub-market is named for its own question alone, so
+    # `/hub/esports` PROPS drew "Games Total: O/U 4.5" with no team anywhere on
+    # the card. The group's event title names the match; serve it beside the
+    # rows that cannot say it themselves (rule: `utils/hub_prop_matchup.py`).
+    # Display only, after the tier and counts, so it cannot move either. A
+    # failed read leaves the cards exactly as they were (gotcha #42).
+    try:
+        titles = await fetch_group_event_titles(
+            db, groups_needing_a_matchup(sections)
+        )
+        sections = attach_group_matchups(sections, titles)
+    except Exception:
+        logger.exception("hub group matchup read failed for %s", cfg.slug)
 
     response = {
         "competition": cfg.slug,
