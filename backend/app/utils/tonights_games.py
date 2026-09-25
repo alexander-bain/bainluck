@@ -37,7 +37,8 @@ fixture must never be the first thing a reader sees. (Alex's Kalshi pass caught
 that exact failure in search: "Lehigh Valley IronPigs at Worcester Red Sox"
 outranking the actual MLB game.) Since #8398 a ``pro_minor`` league class is
 ineligible too, because the media bar alone let a crest-carrying minor-league game
-through.
+through; since #8674 the media bar needs a crest on BOTH sides, because one was
+enough to lead with a grey letter box where the other team belongs.
 """
 
 from __future__ import annotations
@@ -84,6 +85,11 @@ def _parse_dt(value: Any) -> datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
+def _paints_a_crest(team_data: Any) -> bool:
+    """Does this side of the card render a crest rather than the letter box?"""
+    return isinstance(team_data, dict) and bool(team_data.get("logo_small"))
+
+
 def _is_eligible(
     item: dict,
     now: datetime,
@@ -126,12 +132,24 @@ def _is_eligible(
     }:
         return False
 
-    # Same bar the noise filter already applies: no logos, no lead slot.
-    if not (data.get("home_team_data") or data.get("away_team_data")):
+    # No logos, no lead slot — and it takes BOTH (#8674). The bar used to be
+    # `home_team_data or away_team_data`, so one side's crest carried a game
+    # whose other side renders as the card's grey letter box: a live Nations
+    # League match led Discover at slot 2 (score 35) with the Northern Ireland
+    # flag beside a grey `GEO`, and #8398's Real Madrid crest beside a grey
+    # `BAS` was the same leak. The test is the field the card actually paints
+    # (`EventCard.tsx`: `<side>_team_data.logo_small`, else the letter box).
+    # Measured 2026-09-25 18:25Z across 79 served event cards: every MLB, NHL
+    # and NCAAF card with team data carried both crests except one (San Diego
+    # State @ Toledo), so this moves the half-identified games and nothing else.
+    if not (
+        _paints_a_crest(data.get("home_team_data"))
+        and _paints_a_crest(data.get("away_team_data"))
+    ):
         return False
 
-    # The media bar was the stand-in for "minor league" and it leaks: one crest
-    # is enough, and a crest can come from a namesake club's row (#8398 — a live
+    # The media bar was the stand-in for "minor league" and it leaks even with
+    # both crests: a crest can come from a namesake club's row (#8398 — a live
     # EuroLeague game, capped at 35, led Discover over MLB games starting in 30
     # minutes because Real Madrid resolved to the football club's logo). So the
     # rule the docstring states is checked on the league class itself. The game

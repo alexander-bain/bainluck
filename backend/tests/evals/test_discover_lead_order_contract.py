@@ -46,7 +46,8 @@ def item(
 ) -> dict:
     data: dict = {"id": identity}
     if kind == "event":
-        data.update({"status": status or "live", "home_team_data": {"logo": "x"}})
+        data.update({"status": status or "live", "home_team_data": {"logo_small": "x"},
+                     "away_team_data": {"logo_small": "y"}})
         if soon:
             data["commence_time"] = (NOW + timedelta(hours=1)).isoformat()
     return {

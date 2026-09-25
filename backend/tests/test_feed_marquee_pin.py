@@ -85,7 +85,8 @@ class TestPinPass:
             {
                 "type": "event",
                 "score": 35,
-                "data": {"status": "live", "home_team_data": {"logo": "x"}, "name": "game"},
+                "data": {"status": "live", "home_team_data": {"logo_small": "x"},
+                         "away_team_data": {"logo_small": "y"}, "name": "game"},
             },
             {"type": "concept", "score": 40, "_marquee_pin": True, "data": {"name": "TdF"}},
         ]
