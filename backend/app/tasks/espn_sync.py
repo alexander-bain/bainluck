@@ -753,6 +753,7 @@ async def _sync_espn_live_events():
             # ── Fetch all ESPN scoreboards ────────────────────────
             espn = ESPNAPIService()
             espn_data = {}
+            full_slate_boards: dict = {}
             try:
                 for key in all_fetch_keys:
                     try:
@@ -770,6 +771,13 @@ async def _sync_espn_live_events():
                         espn_data[key] = events
                     except Exception as e:
                         stats["errors"].append(f"espn_fetch_{key}: {str(e)}")
+                # #8682. The pre-game pass's own board, fetched through the same
+                # connection. Only for sports whose undated board is a featured
+                # slice (`ESPN_FULL_SLATE_GROUPS`); the live pass keeps
+                # `espn_data`, so what it matches and creates from is unchanged.
+                full_slate_boards = await _fetch_full_slate_boards(
+                    espn, scheduled_sport_keys, stats
+                )
             finally:
                 await espn.close()
 
@@ -844,7 +852,9 @@ async def _sync_espn_live_events():
                 # decision was taken once, before either loop.
                 if _failover.espn_reading(espn_data, sport_key) != _failover.FIXTURES:
                     continue
-                espn_events = espn_data[sport_key]
+                espn_events = scheduled_board_for(
+                    sport_key, espn_data[sport_key], full_slate_boards
+                )
                 try:
                     await sync_scheduled_events(session, sport_key, espn_events, stats)
                 except Exception as e:
@@ -2983,6 +2993,46 @@ async def _process_live_sport(
     # Create events for unmatched ESPN games
     await create_unmatched_fn(session, our_events, espn_events, sport_key, stats)
 
+
+async def _fetch_full_slate_boards(espn, scheduled_sport_keys, stats) -> dict:
+    """``{sport_key: [ESPNEvent, ...]}`` — the whole-group board, per sport (#8682).
+
+    Only sports in ``ESPN_FULL_SLATE_GROUPS`` are asked. A sport whose ask came
+    back dark (``None``) or raised is simply ABSENT, and
+    :func:`scheduled_board_for` then falls back to the featured board the pass
+    has always used — this can only ever add games, never take the pass's
+    board away.
+    """
+    from app.services.espn_api import ESPN_FULL_SLATE_GROUPS
+
+    boards: dict = {}
+    for key in scheduled_sport_keys:
+        groups = ESPN_FULL_SLATE_GROUPS.get(key)
+        if not groups:
+            continue
+        try:
+            board = await espn.get_scoreboard(key, groups=groups)
+        except Exception as e:
+            stats["errors"].append(f"espn_full_slate_{key}: {str(e)}")
+            continue
+        if board is None:
+            stats["full_slate_dark"] = stats.get("full_slate_dark", 0) + 1
+            continue
+        boards[key] = board
+        stats.setdefault("full_slate_events", {})[key] = len(board)
+    return boards
+
+
+def scheduled_board_for(sport_key, featured_board, full_slate_boards) -> list:
+    """The board the pre-game pass matches against (#8682).
+
+    The full-group board when one answered with games, else the featured board.
+    An EMPTY full-group answer does not replace a featured board that has games:
+    the full slate is a superset by construction, so an empty one beside a
+    non-empty featured one is the odd answer, and the pass keeps what it had.
+    """
+    full = full_slate_boards.get(sport_key)
+    return full if full else featured_board
 
 def espn_abbreviation_corresponds(abbreviation, *names) -> bool:
     """True when an ESPN abbreviation can be derived from the club's own name.

@@ -58,6 +58,22 @@ ESPN_CORE_API = "https://sports.core.api.espn.com/v2/sports"
 # So nobody tidies the one URL that differs into the shared base.
 ESPN_STANDINGS_BASE = "https://site.api.espn.com/apis/v2/sports"
 
+# THE UNDATED COLLEGE BOARD IS ESPN'S FEATURED SLICE, NOT THE SLATE (#8682).
+# `GET football/college-football/scoreboard` with no query answers the games
+# ESPN chooses to feature — measured 2026-09-25 18:5xZ: **18** events, none of
+# them `USA @ UK` or `CONN @ M-OH`. `?groups=80` (ESPN's FBS group) answers the
+# whole FBS week, **71** events, Thu–Sat. #5697 measured the same slice from
+# the live side and widened the live pass per event by DATE; the scheduled
+# (pre-game) pass has no event day to widen by, because it walks every
+# scheduled row, so it asks for the full group instead.
+#
+# Keyed by our sport key; the value is ESPN's `groups` id. Only the pre-game
+# pass reads this — see `espn_sync` — so the live pass's board, and therefore
+# what `create_events_from_unmatched_espn` creates from, is unchanged.
+ESPN_FULL_SLATE_GROUPS: dict[str, str] = {
+    "americanfootball_ncaaf": "80",
+}
+
 # Mapping from our sport keys to ESPN sport/league paths
 from app.utils.sport_keys import SPORT_LEAGUE_MAP  # noqa: E402
 
@@ -856,7 +872,10 @@ class ESPNAPIService:
         return entries
 
     async def get_scoreboard(
-        self, sport_key: str, date: Optional[str] = None
+        self,
+        sport_key: str,
+        date: Optional[str] = None,
+        groups: Optional[str] = None,
     ) -> Optional[list[ESPNEvent]]:
         """
         Get scoreboard (list of games) for a sport/league.
@@ -864,6 +883,8 @@ class ESPNAPIService:
         Args:
             sport_key: Our internal sport key
             date: Optional date in YYYYMMDD format (defaults to today)
+            groups: Optional ESPN group id (``"80"`` = FBS); see
+                :data:`ESPN_FULL_SLATE_GROUPS`
 
         Returns:
             List of ESPNEvent objects, ``[]`` when ESPN's slate is genuinely
@@ -877,8 +898,13 @@ class ESPNAPIService:
 
         sport, league = path
         url = f"{ESPN_API_BASE}/{sport}/{league}/scoreboard"
+        query = []
         if date:
-            url += f"?dates={date}"
+            query.append(f"dates={date}")
+        if groups:
+            query.append(f"groups={groups}")
+        if query:
+            url += "?" + "&".join(query)
 
         try:
             data = await self._get(url)
