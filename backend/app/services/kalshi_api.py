@@ -465,6 +465,18 @@ _SPORTS_SERIES_TICKERS = [
     # anything settled. The 5-page uniform cap is not in the way.
     "KXATPMATCH", "KXWTAMATCH",
     "KXATPNATSTAGE", "KXWTANATSTAGE",
+    # #8586: the exact-score books ("Medvedev wins 2-0") on the same matches.
+    # Measured 2026-09-25 20:40Z: every open `KXATPMATCH` row carried the close
+    # pad within one poll of heavy v93, and all 5 open `KXATPEXACTMATCH` rows
+    # still carried the scheduled START as `resolution_date`, their last poll
+    # write 06:54Z — the main scan reached them once and not since. Nothing else
+    # repairs them: the resolution sweep selects `resolution_date >=
+    # expiration_time`, and a start date sits below that. So
+    # `mark_resolved_futures` closed three of them on the start date while
+    # Kalshi still listed all three `active` (MEDROY, HALSAF, CINMUL). Venue
+    # read the same minute: 8 open ATP events / 32 markets, 0 WTA. No
+    # _HEAVY_TOKEN — a four-leg nested payload per match.
+    "KXATPEXACTMATCH", "KXWTAEXACTMATCH",
 ]
 
 # Weather (ux/1076). The golf-class gap, FIFTH occurrence — and the first one
@@ -659,6 +671,8 @@ _ALWAYS_FETCH_SERIES = {
     "KXCS2GAME", "KXLOLGAME", "KXDOTA2GAME", "KXVALORANTGAME",
     "KXATPMATCH", "KXWTAMATCH",
     "KXATPNATSTAGE", "KXWTANATSTAGE",
+    # #8586: one exact-score event per match, so the same daily turnover.
+    "KXATPEXACTMATCH", "KXWTAEXACTMATCH",
     "KXRAIN", "KXRAINWKND",
 } | set(_WEATHER_MONTHLY_SERIES_TICKERS)
 # #995 attempt-8 (targeted): game-level series (GAME/SPREAD/TOTAL/1H/2H/
