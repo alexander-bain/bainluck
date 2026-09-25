@@ -83,6 +83,25 @@ struct SportVocab: Equatable {
     /// complement is provably wrong, and nobody has measured those markets.
     /// Widening this is one `true` and a test, once someone has.
     let winnerMarketPricesADraw: Bool
+    /// Is the sportsbooks' spread POINT this sport's expected margin? (#8617)
+    ///
+    /// Web's `sportsbookSpreadIsAMargin`, ported in meaning. The Score
+    /// Differential chart's projected line is the served
+    /// `projected_home_score - projected_away_score`, which the backend solves
+    /// from each sportsbook's spread point and total — so that difference IS
+    /// the spread point, and it is a margin only where the point is the fair
+    /// line and the price sits near even.
+    ///
+    /// Baseball's spread is the run line: pinned at ±1.5 whatever the matchup,
+    /// with the price doing the work. `/events/15318166` (Mets @ Rangers,
+    /// priced 55% pregame) served ±1.5 / 2.5 from all nineteen sportsbooks, so
+    /// the projected line read "Rangers by 1.5" for a coin flip.
+    ///
+    /// `false` withholds the projected line; the played-score line is
+    /// untouched. Only baseball says `false`. Hockey's puck line has the same
+    /// shape but no page specimen yet, and web left its row `true` — this row
+    /// follows web, not a guess.
+    let sportsbookSpreadIsAMargin: Bool
 }
 
 extension SportVocab {
@@ -105,7 +124,10 @@ extension SportVocab {
         scoreboardUnit: "",
         // An undeclared sport keeps its two-sided reading. See the field's own
         // note: this default is what makes widening the rule opt-in.
-        winnerMarketPricesADraw: false
+        winnerMarketPricesADraw: false,
+        // The status quo for a sport nobody has measured: its projection keeps
+        // drawing. Withholding is only right where the point was measured.
+        sportsbookSpreadIsAMargin: true
     )
 
     /// The declared sports. Substring match against the sport key, in order, so
@@ -117,7 +139,8 @@ extension SportVocab {
             unit: "runs", unitSingular: "run", marginRange: 5,
             totalRange: 4...14,
             scoreboardCountsTheUnit: true, scoreboardUnit: "",
-            winnerMarketPricesADraw: false)),
+            winnerMarketPricesADraw: false,
+            sportsbookSpreadIsAMargin: false)),
         (["hockey", "nhl"], SportVocab(
             marginTitle: "Goal margin map", totalTitle: "Goals map",
             unit: "goals", unitSingular: "goal", marginRange: 5,
@@ -125,7 +148,8 @@ extension SportVocab {
             scoreboardCountsTheUnit: true, scoreboardUnit: "",
             // A regular-season game that is level after overtime is decided by
             // a shootout, so the winner market has two outcomes.
-            winnerMarketPricesADraw: false)),
+            winnerMarketPricesADraw: false,
+            sportsbookSpreadIsAMargin: true)),
         (["soccer", "mls", "epl", "uefa", "fifa"], SportVocab(
             marginTitle: "Goal margin map", totalTitle: "Goals map",
             unit: "goals", unitSingular: "goal", marginRange: 5,
@@ -133,7 +157,8 @@ extension SportVocab {
             scoreboardCountsTheUnit: true, scoreboardUnit: "",
             // THE ONE ROW THAT SAYS YES (#5271). A league draw prices around
             // 20–30% pre-match, and the app held no slot for it.
-            winnerMarketPricesADraw: true)),
+            winnerMarketPricesADraw: true,
+            sportsbookSpreadIsAMargin: true)),
         // A tennis match is scored in GAMES inside SETS; the market quotes a
         // game spread and a game total, and neither is a point. The scoreboard
         // reports sets, which is why this is the one row with
@@ -148,7 +173,8 @@ extension SportVocab {
             unit: "games", unitSingular: "game", marginRange: 6,
             totalRange: 12...48,
             scoreboardCountsTheUnit: false, scoreboardUnit: "sets",
-            winnerMarketPricesADraw: false)),
+            winnerMarketPricesADraw: false,
+            sportsbookSpreadIsAMargin: true)),
         // 180...230 is the literal `MarketMapView` used to hardcode for every
         // sport on earth. It is kept verbatim HERE, where it is actually true,
         // so basketball's rail does not move on a fix aimed at everyone else.
@@ -157,7 +183,8 @@ extension SportVocab {
             unit: "points", unitSingular: "point", marginRange: 18,
             totalRange: 180...230,
             scoreboardCountsTheUnit: true, scoreboardUnit: "",
-            winnerMarketPricesADraw: false)),
+            winnerMarketPricesADraw: false,
+            sportsbookSpreadIsAMargin: true)),
         (["americanfootball", "nfl", "ncaaf"], SportVocab(
             marginTitle: "Margin map", totalTitle: "Points map",
             unit: "points", unitSingular: "point", marginRange: 18,
@@ -165,7 +192,8 @@ extension SportVocab {
             scoreboardCountsTheUnit: true, scoreboardUnit: "",
             // An NFL tie is possible and the books do not price one: the h2h
             // market has two outcomes, and ties run near 0.2% of games.
-            winnerMarketPricesADraw: false)),
+            winnerMarketPricesADraw: false,
+            sportsbookSpreadIsAMargin: true)),
     ]
 
     /// The same span for a HALF.
