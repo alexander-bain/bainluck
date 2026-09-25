@@ -3523,6 +3523,23 @@ CONTRADICTED_DIRECTION_BATCH = 10_000
 DATED_BASIS_BANK_BATCH = 10_000
 
 
+#: How many runs statement A10 spreads the opening-book judgement over (#8612).
+#:
+#: A leg's opening never moves, so its verdict never goes stale and does not
+#: need judging every ten minutes. Judging the whole population at once does
+#: not fit: 40,538 open legs sit at or past the surprise rung (production,
+#: 2026-09-25), and one read over all of them hit db-query's 10 s timeout.
+#: One twelfth of the markets (`id % 12`) judged 3,144 legs in 856 ms. At the
+#: ten-minute cadence each market is re-judged every two hours, which is also
+#: how soon a new listing's opening is judged.
+OPENING_BOOK_SLICES = 12
+
+
+def _opening_book_slice(epoch_seconds: float) -> int:
+    """The slice statement A10 judges on a run starting at `epoch_seconds`."""
+    return int(epoch_seconds // 600) % OPENING_BOOK_SLICES
+
+
 @celery_app.task(bind=True, soft_time_limit=120, time_limit=150, name="app.tasks.update_max_movement")
 def update_max_movement(self):
     """Retire expired movement deltas, recompute max_movement_24h, publish movers.
@@ -3642,6 +3659,12 @@ def update_max_movement(self):
         # that owns it for the floor's reason: a basis the sweep calls a price
         # and a book the feed calls empty must be the same line.
         from app.utils.feed_market_quality import FEED_PHANTOM_MIN_SPREAD
+
+        # A10's scope (#8612): the smallest lifetime move a card can score or
+        # state, and the key the reader looks the refused legs up under — both
+        # imported from their owners so the sweep and the reader cannot drift.
+        from app.utils.futures_highlights import MODERATE_SURPRISE_THRESHOLD
+        from app.utils.futures_market_snapshot import UNPRICED_OPENING_METADATA_KEY
 
         # 🔴 A4's two thresholds are bound as `Decimal`, and a `float` here is a
         # REAL BUG, not a style preference. Both columns A4 compares are
@@ -4473,6 +4496,105 @@ def update_max_movement(self):
                 {"floor": floor},
             )
 
+            # A10. LIST THE OPENINGS THAT WERE NEVER A PRICE (#8612).
+            #
+            #     A8's rule, applied to the lifetime baseline. A card says
+            #     "down 86.3 points since Aug 19" by subtracting
+            #     `opening_probability`, and on 2026-09-25 Discover card 40 did
+            #     exactly that for "Kanye West performs in Russia by October
+            #     31?" from a 0.94 opening stored off a 16c/96c book. Card 73 was
+            #     the untraded midpoint (#5539): Starship, 0.495 on 2c/97c,
+            #     "up 37 points since Jul 31". Of 3,144 open legs at or past
+            #     the surprise rung in one slice, 1,381 had an opening like that.
+            #
+            #     The judgement uses A8's `priced` rule on the snapshot taken at
+            #     `opening_captured_at`: no book at all is a price, a spread
+            #     under the rail is a price, and anything else (wide, or one
+            #     side empty) is not. A leg with no snapshot at that instant is
+            #     NOT listed: the LEFT JOIN leaves both sides NULL, which is the
+            #     no-book arm. We cannot show it was junk, and absence has
+            #     always meant "measure from it".
+            #
+            #     Only the refused are listed, as `[outcome_id, ...]` under the
+            #     reader's key. An empty verdict REMOVES the key, and
+            #     `IS DISTINCT FROM` skips the unchanged, for A8's reason: this
+            #     rides the size-capped shared artifact, and a market with
+            #     nothing to refuse should carry nothing.
+            #
+            #     🔴 THE COLUMN ITSELF IS NOT TOUCHED. `opening_probability` is
+            #     calibration's fallback price (gotcha #144), so rewriting it
+            #     would move the published curve. The list only tells the card
+            #     which subtraction it may not print.
+            #
+            #     Sliced by `id % OPENING_BOOK_SLICES`; the constant explains why.
+            opening_key = UNPRICED_OPENING_METADATA_KEY
+            opening_slice = _opening_book_slice(_time.time())
+            openings = await session.execute(
+                text(f"""
+                    UPDATE futures_markets fm
+                    SET market_metadata =
+                            CASE WHEN verdict.ids = '[]'::jsonb
+                                 THEN fm.market_metadata
+                                      - CAST('{opening_key}' AS text)
+                                 -- Not `coalesce`: a JSON `null` (what an ORM
+                                 -- `None` stores) is not SQL NULL, and
+                                 -- `'null' || {...}` builds an ARRAY.
+                                 ELSE (CASE WHEN jsonb_typeof(fm.market_metadata)
+                                                 = 'object'
+                                            THEN fm.market_metadata
+                                            ELSE '{{}}'::jsonb END)
+                                      || jsonb_build_object('{opening_key}', verdict.ids)
+                            END
+                    FROM (
+                        SELECT fo.market_id,
+                               coalesce(
+                                   jsonb_agg(fo.id ORDER BY fo.id)
+                                       -- `coalesce(..., false)`: a ONE-sided
+                                       -- book makes `priced` NULL (NULL minus
+                                       -- a number), and it must list, not drop.
+                                       -- A leg with no snapshot reads both
+                                       -- sides NULL, the no-book arm: unlisted.
+                                       FILTER (WHERE NOT coalesce({priced}, false)),
+                                   '[]'::jsonb
+                               ) AS ids
+                        FROM futures_outcomes fo
+                        JOIN futures_markets m ON m.id = fo.market_id
+                        LEFT JOIN LATERAL (
+                            SELECT s.yes_bid, s.yes_ask
+                            FROM futures_odds_snapshots s
+                            WHERE s.outcome_id = fo.id
+                              AND s.captured_at >= fo.opening_captured_at
+                              AND s.captured_at
+                                  < fo.opening_captured_at + interval '1 second'
+                            ORDER BY s.captured_at
+                            LIMIT 1
+                        ) s ON true
+                        WHERE m.status = 'open'
+                          AND m.id % :slices = :slice
+                          AND fo.opening_probability IS NOT NULL
+                          AND fo.current_probability IS NOT NULL
+                          AND fo.opening_captured_at IS NOT NULL
+                          AND abs(fo.current_probability - fo.opening_probability)
+                              >= :surprise_floor
+                        GROUP BY fo.market_id
+                    ) verdict
+                    WHERE fm.id = verdict.market_id
+                      AND (fm.market_metadata -> '{opening_key}')
+                          IS DISTINCT FROM verdict.ids
+                      AND (
+                          verdict.ids <> '[]'::jsonb
+                          OR jsonb_exists(fm.market_metadata, '{opening_key}')
+                      )
+                """),
+                {
+                    "slices": OPENING_BOOK_SLICES,
+                    "slice": opening_slice,
+                    # Decimal for A4's reason: both columns are numeric(7, 6).
+                    "surprise_floor": Decimal(str(MODERATE_SURPRISE_THRESHOLD)),
+                    "max_spread": max_spread,
+                },
+            )
+
             # B. Recompute the per-market maximum over what survived A, A2, A3,
             #    A4 and A7.
             result = await session.execute(text("""
@@ -4523,6 +4645,7 @@ def update_max_movement(self):
             contradicted_rows = contradicted.rowcount
             banked_markets = banked.rowcount
             unbanked_markets = unbanked.rowcount
+            opening_markets = openings.rowcount
             rank_expired_rows = rank_expired.rowcount
             rank_graded_rows = rank_graded.rowcount
             cleared_markets = cleared.rowcount
@@ -4587,6 +4710,12 @@ def update_max_movement(self):
                 # stall (a basis only moves when an observation ages out).
                 "dated_basis_banked": banked_markets,
                 "dated_basis_unbanked": unbanked_markets,
+                # #8612 / A10. MARKETS WRITTEN in this run's slice (listed,
+                # changed or cleared), not markets judged: `IS DISTINCT FROM`
+                # skips unchanged verdicts, so after the first two hours a
+                # small number is the steady state.
+                "unpriced_openings_written": opening_markets,
+                "opening_book_slice": opening_slice,
                 "cleared_markets": cleared_markets,
                 # Both backlogs have to be empty before the strip is honest, so
                 # `backlog_drained` reports the AND. Reporting only A's would go
