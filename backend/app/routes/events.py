@@ -659,6 +659,35 @@ def _is_repeat_of_a_kept_question(market, kept_sources_by_question: dict) -> boo
     return bool(seen) and (getattr(market, "source", None), person) not in seen
 
 
+#: #8628 — the line of an over/under rung: the number right after `O/U`.
+_SEARCH_LADDER_LINE = re.compile(r"(\bo/u\s+)\d+(?:\.\d+)?(?![\d.])", re.I)
+
+
+def _search_ladder_key(market) -> Optional[str]:
+    """The search page's key for an O/U LADDER, or None when the row is not a rung.
+
+    #8628 — `?q=united` (production 2026-09-25) served 9 of its 10 market rows
+    as rungs of one League Two match: `Scunthorpe United FC vs. Hartlepool
+    United FC: Hartlepool United FC O/U 0.5`, `… O/U 1.5`, and so on. Polymarket
+    lists every line of a ladder as its own market, and the question key keeps
+    the number, so each rung was a different "question". `rangers` headed its
+    ANSWERS card with three rungs of `Carrick Rangers O/U`.
+
+    Two rows share this key only when their names are identical apart from that
+    one number, which is what a rung of the same ladder looks like. `1st Half
+    O/U 0.5` and `O/U 0.5` stay apart, and so do `O/U 4.5 Corners` and
+    `O/U 4.5`. The narrowness is on purpose: a looser key once merged six Oscar
+    categories into one row (`_normalize_futures_dedup_key`'s docstring).
+
+    Search only. The shared tiered key is untouched, so `league_futures` and
+    the event page, where the whole ladder belongs, do not change.
+    """
+    name = (getattr(market, "name", None) or "").strip()
+    if not _SEARCH_LADDER_LINE.search(name):
+        return None
+    return "ladder:" + _SEARCH_LADDER_LINE.sub(r"\1#", name.lower())
+
+
 def _admit_search_future(
     market, seen_keys: set, kept_sources_by_question: dict
 ) -> bool:
@@ -666,16 +695,22 @@ def _admit_search_future(
 
     False = drop the row: its tiered key is already on the page (the rule since
     #993/#1769), or it is another venue's copy of a question already kept
-    (#8378), or another series of one race (#8410). True = keep it, and record both keys so later rows are judged
+    (#8378), or another series of one race (#8410), or another rung of an O/U
+    ladder already kept (#8628). True = keep it, and record the keys so later rows are judged
     against it. Both route loops — the window and its refill — call this, so
     the refill cannot re-admit a copy the window dropped.
     """
     dkey = _normalize_futures_dedup_key(market)
-    if dkey in seen_keys or _is_repeat_of_a_kept_question(
-        market, kept_sources_by_question
+    lkey = _search_ladder_key(market)
+    if (
+        dkey in seen_keys
+        or (lkey is not None and lkey in seen_keys)
+        or _is_repeat_of_a_kept_question(market, kept_sources_by_question)
     ):
         return False
     seen_keys.add(dkey)
+    if lkey is not None:
+        seen_keys.add(lkey)
     key, person = _search_question_identity(market)
     kept_sources_by_question.setdefault(key, set()).add(
         (getattr(market, "source", None), person)
