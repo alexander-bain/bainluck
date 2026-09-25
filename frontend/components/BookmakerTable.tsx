@@ -4,11 +4,14 @@ import type { BookmakerOddsDetail } from "@/lib/types";
 import { isNamedSource, sourceLabel } from "@/lib/sourceLabels";
 import { formatSourceAge, formatSourceStamp } from "@/lib/sourceAge";
 import { teamShortNames } from "@/lib/teamShortName";
+import { sportsbookProjectionDrawable } from "@/lib/scoreDifferentialHeading";
 
 interface BookmakerTableProps {
   bookmakerOdds: BookmakerOddsDetail[];
   homeTeam: string;
   awayTeam: string;
+  /** #8617 — gates the projected-score line. Absent keeps it (the status quo). */
+  sportKey?: string;
 }
 
 /*
@@ -31,6 +34,7 @@ export default function BookmakerTable({
   bookmakerOdds,
   homeTeam,
   awayTeam,
+  sportKey,
 }: BookmakerTableProps) {
   if (!bookmakerOdds || bookmakerOdds.length === 0) {
     return null;
@@ -84,9 +88,15 @@ export default function BookmakerTable({
       ? validHomeProbs.reduce((a, b) => a + b, 0) / validHomeProbs.length
       : null;
 
+  // #8617 — a sportsbook's projected score is solved from its spread point and
+  // total. For baseball that point is the ±1.5 run line, a handicap and not a
+  // margin, so every book on a coin flip reads "5 / 3". Where the spread is not
+  // a margin the scores are not a projection, and the column prints none.
+  const scoresAreProjections = sportsbookProjectionDrawable(sportKey);
+
   // Calculate average projected scores from active bookmakers that have score data
   const activeWithScores = activeOdds.filter(
-    (b) => b.projected_home_score != null && b.projected_away_score != null
+    (b) => scoresAreProjections && b.projected_home_score != null && b.projected_away_score != null
   );
   const avgProjectedHomeScore =
     activeWithScores.length > 0
@@ -118,7 +128,7 @@ export default function BookmakerTable({
 
   // Check if any SHOWN sportsbook has projected scores — reading the unfiltered
   // array here would head a column "(proj. score)" that no visible row fills.
-  const hasAnyProjectedScores = oddsWithProbability.some(
+  const hasAnyProjectedScores = scoresAreProjections && oddsWithProbability.some(
     (odds) => odds.projected_home_score != null && odds.projected_away_score != null
   );
 
@@ -173,7 +183,8 @@ export default function BookmakerTable({
             const homeProb = odds.home_probability;
             const awayProb = odds.away_probability;
             const stale = odds.captured_at ? isStale(odds.captured_at) : false;
-            const hasProjectedScore = odds.projected_home_score != null && odds.projected_away_score != null;
+            const hasProjectedScore =
+              scoresAreProjections && odds.projected_home_score != null && odds.projected_away_score != null;
 
             // Highlight if this book differs significantly from average (>5%)
             const isDivergent =

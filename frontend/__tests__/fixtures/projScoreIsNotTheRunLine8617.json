@@ -1,0 +1,96 @@
+{
+  "15317642": {
+    "id": 15317642,
+    "sport": "baseball_mlb",
+    "status": "completed",
+    "home_team": "Texas Rangers",
+    "away_team": "New York Mets",
+    "home_score": 2,
+    "away_score": 7,
+    "bookmaker_odds": [
+      {
+        "bookmaker": "ballybet",
+        "home_moneyline": null,
+        "away_moneyline": null,
+        "home_probability": null,
+        "away_probability": null,
+        "captured_at": "2026-09-24T02:27:38.666305+00:00",
+        "spread": 4.5,
+        "over_under": 9.5,
+        "projected_home_score": 2.5,
+        "projected_away_score": 7.0
+      },
+      {
+        "bookmaker": "betanysports",
+        "home_moneyline": -105,
+        "away_moneyline": -105,
+        "home_probability": 0.5,
+        "away_probability": 0.5,
+        "captured_at": "2026-09-23T16:55:28.239080+00:00",
+        "spread": -1.5,
+        "over_under": 8.0,
+        "projected_home_score": 4.8,
+        "projected_away_score": 3.2
+      },
+      {
+        "bookmaker": "betmgm",
+        "home_moneyline": null,
+        "away_moneyline": null,
+        "home_probability": null,
+        "away_probability": null,
+        "captured_at": "2026-09-24T02:29:39.125255+00:00",
+        "spread": 4.5,
+        "over_under": 9.5,
+        "projected_home_score": 2.5,
+        "projected_away_score": 7.0
+      }
+    ]
+  },
+  "14782154": {
+    "id": 14782154,
+    "sport": "americanfootball_nfl",
+    "status": "scheduled",
+    "home_team": "Indianapolis Colts",
+    "away_team": "Houston Texans",
+    "home_score": null,
+    "away_score": null,
+    "bookmaker_odds": [
+      {
+        "bookmaker": "ballybet",
+        "home_moneyline": 112,
+        "away_moneyline": -136,
+        "home_probability": 0.4501,
+        "away_probability": 0.5499,
+        "captured_at": "2026-09-24T22:15:09.248717+00:00",
+        "spread": 2.0,
+        "over_under": 42.5,
+        "projected_home_score": 20.2,
+        "projected_away_score": 22.2
+      },
+      {
+        "bookmaker": "betanysports",
+        "home_moneyline": 105,
+        "away_moneyline": -125,
+        "home_probability": 0.4675,
+        "away_probability": 0.5325,
+        "captured_at": "2026-09-24T22:15:09.298328+00:00",
+        "spread": 1.5,
+        "over_under": 42.5,
+        "projected_home_score": 20.5,
+        "projected_away_score": 22.0
+      },
+      {
+        "bookmaker": "betmgm",
+        "home_moneyline": 105,
+        "away_moneyline": -130,
+        "home_probability": 0.4632,
+        "away_probability": 0.5368,
+        "captured_at": "2026-09-25T14:35:41.451348+00:00",
+        "spread": null,
+        "over_under": null,
+        "projected_home_score": null,
+        "projected_away_score": null
+      }
+    ]
+  }
+}
