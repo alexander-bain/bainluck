@@ -207,6 +207,26 @@ REFUSE_DEAD_CANONICAL = "REFUSE_DEAD_CANONICAL"
 #: from 173 families to 64 for no defect at all.
 REFUSE_MIXED_KICKOFF = "REFUSE_MIXED_KICKOFF"
 
+#: The duplicate and the canonical are BOTH named by an authority, and the
+#: authority gives them DIFFERENT ids — ESPN says two games, or StatPal does. That
+#: is not a split fixture; it is two fixtures, and no venue title overrides it
+#: (ruling 048: correspondence is proven by ids, and here the ids disagree).
+#:
+#: 🔴 THE SPECIMEN (#8547, 2026-09-25 18:27Z). An Orioles @ Yankees doubleheader:
+#: game 1 ``15318575`` (ESPN 401817088, 20:05Z) and game 2 ``15318665`` (ESPN
+#: 401817073, 23:05Z). Game 2's moneyline markets had been misattached to game 1,
+#: so the key ``('Baltimore Orioles vs. New York Yankees', 23:05Z)`` named both
+#: rows — game 1 through the misattached base title, game 2 through its own props.
+#: Game 1 won the election and game 2 was tagged a duplicate of it, which hid
+#: game 2 from search, rails and the feed and served game 1 on its URL.
+#: :data:`REFUSE_ANCHORED` did not fire because the CANONICAL is anchored too, and
+#: :data:`REFUSE_MIXED_KICKOFF` did not because the second kickoff lives on the
+#: canonical, not the duplicate.
+#:
+#: Only a DISAGREEMENT refuses: a row with no id on one provider is not evidence
+#: either way, and two rows sharing an id are exactly the twin this sweep folds.
+REFUSE_DISTINCT_ANCHORS = "REFUSE_DISTINCT_ANCHORS"
+
 #: At least one member of the family has no `twin_identity_rank`, so the fold's
 #: election cannot be reproduced here. Refused rather than defaulted: an absent
 #: rank sorts as the empty tuple, smaller than every real one, so defaulting
@@ -438,6 +458,9 @@ def _classify_family(
         if _is_fixture_anchored(duplicate) and not canonical_anchored:
             return REFUSE_ANCHORED, []
 
+        if _authority_ids_disagree(duplicate, canonical):
+            return REFUSE_DISTINCT_ANCHORS, []
+
         # Strictly more than one DISTINCT non-null kickoff on the row. A row
         # holding this key's kickoff and nothing else is the healthy case.
         if len(duplicate.venue_game_starts) > 1:
@@ -465,6 +488,22 @@ def _is_fixture_anchored(row: ContainerRow) -> bool:
     verdict and would have been right by luck.
     """
     return row.espn_id is not None or row.statpal_fixture_id is not None
+
+
+def _authority_ids_disagree(a: ContainerRow, b: ContainerRow) -> bool:
+    """Does any authority name these two rows as DIFFERENT fixtures?
+
+    Per provider, and only where BOTH rows carry that provider's id. Compared as
+    strings: the ids arrive from the row as whatever the column held, and
+    ``401817088`` and ``"401817088"`` are one fixture.
+    """
+    for field_name in ("espn_id", "statpal_fixture_id"):
+        left, right = getattr(a, field_name), getattr(b, field_name)
+        if left is None or right is None:
+            continue
+        if str(left).strip() and str(right).strip() and str(left).strip() != str(right).strip():
+            return True
+    return False
 
 
 def plan_container_tags(
