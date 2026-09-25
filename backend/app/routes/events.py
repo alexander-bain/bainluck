@@ -3805,6 +3805,63 @@ def _roster_player_team_query(name_key: str):
     )
 
 
+#: #8523 (dropdown half) — how long a process trusts its roster index. Rosters
+#: change by trade and call-up, on a daily sync; half an hour of lag on a player
+#: who just moved is the price of not querying on every keystroke.
+_ROSTER_INDEX_TTL_S = 1800.0
+#: After a failed load, try again sooner than the TTL but not on every keystroke.
+_ROSTER_INDEX_RETRY_S = 60.0
+
+#: {full name (lower, single-spaced): (team id, ...)}. PLAIN DATA ONLY — a
+#: module-global cache must never hold live ORM rows (gotcha #6, #2107).
+_roster_index: dict[str, tuple[int, ...]] = {}
+_roster_index_expires_at = 0.0
+
+_ROSTER_INDEX_SQL = text(
+    "SELECT t.id, lower(CASE WHEN jsonb_typeof(rp.v) = 'object' "
+    "THEN rp.v ->> 'name' ELSE rp.v #>> '{}' END) AS player "
+    "FROM teams t, jsonb_array_elements(t.roster_players) AS rp(v) "
+    "WHERE jsonb_typeof(t.roster_players) = 'array'"
+)
+
+
+async def _roster_player_team_ids(db, name_key: str) -> tuple[int, ...]:
+    """#8523: the team ids whose roster lists this full name, from a process index.
+
+    `/typeahead` fires on every keystroke, and `patrick m`, `patrick ma`, ... are
+    each a two-word query that resolves no team. `_roster_player_team_query`
+    costs ~120 ms on production, so running it there would tax every multi-word
+    miss to find the one keystroke that completes a name. The index costs one
+    load per process per `_ROSTER_INDEX_TTL_S` (~10k rows on production) and a
+    dict lookup per keystroke.
+
+    Same comparison as `_roster_player_team_query` (exact, lower-cased, object
+    or bare-string members); `/search` keeps the SQL form because it runs only on
+    an empty rail. A failed load RAISES (the statement aborted the caller's
+    transaction, and only the caller can recover it) and is retried after
+    `_ROSTER_INDEX_RETRY_S`, not on the next keystroke.
+    """
+    global _roster_index, _roster_index_expires_at
+    now = time.monotonic()
+    if now >= _roster_index_expires_at:
+        try:
+            rows = (await db.execute(_ROSTER_INDEX_SQL)).all()
+        except Exception as exc:  # noqa: BLE001 — a rescue, never load-bearing
+            logger.warning("roster index load failed: %s", exc)
+            _roster_index_expires_at = now + _ROSTER_INDEX_RETRY_S
+            raise
+        index: dict[str, list[int]] = {}
+        for team_id, player in rows:
+            if player:
+                key = " ".join(player.split())
+                ids = index.setdefault(key, [])
+                if team_id not in ids:
+                    ids.append(team_id)
+        _roster_index = {k: tuple(v) for k, v in index.items()}
+        _roster_index_expires_at = now + _ROSTER_INDEX_TTL_S
+    return _roster_index.get(name_key, ())
+
+
 def _resolved_team_event_filter(resolved: list[tuple[str, str]]):
     """#5773: games played by clubs the page has already resolved, sport-scoped.
 
@@ -10109,13 +10166,50 @@ async def typeahead_search(
     _ta_mark("teams_query")
     team_pool = []
     teams_seen = set()
+    _ta_team_rows = team_result.all()
+    # #8523 — no club by NAME: is the query a rostered player's full name?
+    # `patrick mahomes` offered five novelty markets that list him as an
+    # outcome and no Kansas City Chiefs. His club, fetched by id with the same
+    # columns, goes through the SAME loop below (individual-sport skip, #4489
+    # collapse, cap), and carries his name as a private alias: that is what the
+    # scorer reads (`query_is_entity_name` -> the entity-team kind), exactly as a
+    # club's own `alternate_names` would. As `team_pool[0]` it is also the lead
+    # team, so the #5201 arm below fetches its next game with no new code.
+    #
+    # The index, not `_roster_player_team_query`: this runs on every keystroke,
+    # and every `patrick m`, `patrick ma`, ... is a two-word miss.
+    _ta_roster_alias = None
+    if not any(not _is_individual_sport(r.sport_key) for r in _ta_team_rows):
+        _ta_roster_key = _roster_player_name_key(_q_identity)
+        if _ta_roster_key is not None:
+            try:
+                _ta_roster_ids = await _roster_player_team_ids(db, _ta_roster_key)
+                if _ta_roster_ids:
+                    _ta_team_rows = (
+                        await db.execute(
+                            select(
+                                Team.id, Team.name, Team.slug, Team.abbreviation,
+                                Team.sport_id, Team.logo_url_small,
+                                Team.alternate_names, Sport.key.label("sport_key"),
+                            )
+                            .join(Sport, Team.sport_id == Sport.id, isouter=True)
+                            .where(Team.id.in_(_ta_roster_ids))
+                            .order_by(Team.name, Team.id)
+                        )
+                    ).all()
+                    _ta_roster_alias = _ta_roster_key
+            except Exception as exc:  # noqa: BLE001 — a rescue, never load-bearing
+                # `q` withheld from the log (CodeQL: user text reaching a log).
+                logger.warning("typeahead roster rescue failed: %s", exc)
+                await _recover_search_session(db, _ta_deadline)
+        _ta_mark("roster_rescue")
     # #4489: collapse same-name rows BEFORE the pool cap, choosing the club's own
     # competition — `ajax` led the dropdown with the women's Champions League row
     # because the fetch order decided it. The cap and the individual-sport skip
     # keep their old meaning: the pool the scorer sees is still 3, and a name
     # group still takes the slot its first member would have taken.
     for row in _pick_team_row_per_name([
-        row for row in team_result.all()
+        row for row in _ta_team_rows
         # Skip individual-sport "teams" (tennis/MMA/golf/boxing players)
         if not _is_individual_sport(row.sport_key)
     ]):
@@ -10134,7 +10228,8 @@ async def typeahead_search(
             "team_slug": row.slug,
             "sport_key": _normalize_team_sport_key(row.sport_key),
             # Private: scorer evidence only, popped before the response.
-            "_aliases": [a for a in (row.alternate_names or []) if isinstance(a, str)],
+            "_aliases": [a for a in (row.alternate_names or []) if isinstance(a, str)]
+            + ([_ta_roster_alias] if _ta_roster_alias else []),
         })
 
     # 2. Events (live/upcoming) — with team logos
