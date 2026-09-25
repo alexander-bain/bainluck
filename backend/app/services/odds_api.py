@@ -142,6 +142,29 @@ class OddsAPIService(BaseAPIClient):
         self._capture_quota(response)
         return response.json()
 
+    async def get_events(self, sport_key: str) -> list[dict]:
+        """
+        Get the provider's current schedule for a sport, without odds.
+
+        The ``/events`` endpoint lists every event the provider still carries
+        for the sport, whether or not any bookmaker prices it, and costs no
+        quota (``x-requests-last: 0``, measured 2026-09-25). That makes it the
+        only read in this client whose ABSENCE of an id means something:
+        ``/odds`` omits an event no requested bookmaker prices, so an id
+        missing there proves nothing. #8422 reads it to tell a re-issued id
+        from a live one.
+
+        Raises on any non-200 (gotcha #36): an unread schedule must never look
+        like an empty one.
+        """
+        response = await self.client.get(
+            f"{self.BASE_URL}/sports/{sport_key}/events",
+            params={"apiKey": self.api_key},
+        )
+        response.raise_for_status()
+        self._capture_quota(response)
+        return response.json()
+
     async def get_scores(
         self,
         sport_key: str,
