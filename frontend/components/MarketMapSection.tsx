@@ -4,7 +4,7 @@ import { useMemo } from "react";
 import MarketMap, { ladderGraded } from "./MarketMap";
 import type { MarketMapMarker, MarketMapLadderRow } from "./MarketMap";
 import type { GameMarketsResponse } from "@/lib/api";
-import type { PlayedLinescore } from "@/lib/marketMapUtils";
+import type { PlayedLinescore, SportScoringVocab } from "@/lib/marketMapUtils";
 import {
   parseSpreadRungs,
   isFullGameSpread,
@@ -129,16 +129,40 @@ interface HalfScores {
   h2Away: number;
 }
 
+/** ESPN's baseball `period`: `Top 5th`, `Middle 5th`, `Bottom 5th`, `End 5th`. */
+const INNING_PERIOD = /^(top|mid(?:dle)?|bot(?:tom)?|end)\s+(\d+)(?:st|nd|rd|th)$/i;
+
+function inningOf(period: string): { end: boolean; inning: number } | null {
+  const m = INNING_PERIOD.exec(period.trim());
+  return m ? { end: m[1].toLowerCase() === "end", inning: Number(m[2]) } : null;
+}
+
+/**
+ * Is this ESPN row the moment the first period closed?
+ *
+ * #8557: an inning sport says where its first period stops
+ * (`firstHalfEndsAfterInning`) and the row is ESPN's `End 5th`; every other
+ * sport keeps the halftime vocabulary it had, passed in by the caller because
+ * the settled and live readers never agreed on it (`end of 2nd` is the settled
+ * one's alone) and this ship does not move either.
+ */
+function closesFirstHalf(period: string, vocab: SportScoringVocab, halftime: RegExp): boolean {
+  if (vocab.firstHalfEndsAfterInning == null) return halftime.test(period);
+  const at = inningOf(period);
+  return at != null && at.end && at.inning === vocab.firstHalfEndsAfterInning;
+}
+
 function deriveHalfScores(
   espnHistory: MarketMapSectionProps["espnHistory"],
   finalHome: number | null,
-  finalAway: number | null
+  finalAway: number | null,
+  vocab: SportScoringVocab
 ): HalfScores | null {
   if (!espnHistory || espnHistory.length === 0) return null;
   if (finalHome == null || finalAway == null) return null;
 
   const htEntry = [...espnHistory].reverse().find(
-    (e) => e.period && /halftime|^ht$|end of 2nd/i.test(e.period) && e.home_score != null
+    (e) => e.period && closesFirstHalf(e.period, vocab, /halftime|^ht$|end of 2nd/i) && e.home_score != null
   );
   if (!htEntry || htEntry.home_score == null || htEntry.away_score == null) return null;
 
@@ -155,11 +179,22 @@ function deriveHalfScores(
  * Returns "1H" or "2H" (null if unknown).
  */
 function detectCurrentHalf(
-  espnHistory: MarketMapSectionProps["espnHistory"]
+  espnHistory: MarketMapSectionProps["espnHistory"],
+  vocab: SportScoringVocab
 ): "1H" | "2H" | null {
   if (!espnHistory || espnHistory.length === 0) return null;
   const latest = espnHistory[espnHistory.length - 1];
   if (!latest.period) return null;
+  // #8557: `Top 3rd` fell through to "2H" below, so a live first-five card
+  // looked for a halftime row that baseball never writes and drew no Actual.
+  // `End 5th` is still the first period, as `Halftime` is. A row that names
+  // no inning (`Delayed`) is unknown here, not the second period.
+  const endsAfter = vocab.firstHalfEndsAfterInning;
+  if (endsAfter != null) {
+    const at = inningOf(latest.period);
+    if (!at) return null;
+    return at.inning <= endsAfter ? "1H" : "2H";
+  }
   const p = latest.period.toLowerCase();
   if (/1st quarter|1st half|first half|^q1\b|^q2\b|2nd quarter/i.test(p)) return "1H";
   if (/halftime|^ht$/i.test(p)) return "1H";
@@ -175,7 +210,8 @@ function deriveLiveHalfScores(
   espnHistory: MarketMapSectionProps["espnHistory"],
   currentHome: number | null,
   currentAway: number | null,
-  currentHalf: "1H" | "2H" | null
+  currentHalf: "1H" | "2H" | null,
+  vocab: SportScoringVocab
 ): { h1Home: number; h1Away: number; h2Home: number | null; h2Away: number | null } | null {
   if (currentHome == null || currentAway == null || !currentHalf) return null;
 
@@ -186,7 +222,7 @@ function deriveLiveHalfScores(
   // 2nd half: need halftime scores
   if (!espnHistory || espnHistory.length === 0) return null;
   const htEntry = espnHistory.find(
-    (e) => e.period && /halftime|^ht$/i.test(e.period) && e.home_score != null
+    (e) => e.period && closesFirstHalf(e.period, vocab, /halftime|^ht$/i) && e.home_score != null
   );
   if (!htEntry || htEntry.home_score == null || htEntry.away_score == null) return null;
 
@@ -404,18 +440,18 @@ export default function MarketMapSection({
       : null;
 
   const halfScores = useMemo(
-    () => deriveHalfScores(espnHistory, homeScore, awayScore),
-    [espnHistory, homeScore, awayScore]
+    () => deriveHalfScores(espnHistory, homeScore, awayScore, vocab),
+    [espnHistory, homeScore, awayScore, vocab]
   );
 
   const currentHalf = useMemo(
-    () => (isLive ? detectCurrentHalf(espnHistory) : null),
-    [isLive, espnHistory]
+    () => (isLive ? detectCurrentHalf(espnHistory, vocab) : null),
+    [isLive, espnHistory, vocab]
   );
 
   const liveHalfScores = useMemo(
-    () => (isLive ? deriveLiveHalfScores(espnHistory, homeScore, awayScore, currentHalf) : null),
-    [isLive, espnHistory, homeScore, awayScore, currentHalf]
+    () => (isLive ? deriveLiveHalfScores(espnHistory, homeScore, awayScore, currentHalf, vocab) : null),
+    [isLive, espnHistory, homeScore, awayScore, currentHalf, vocab]
   );
 
   // ── Margin Map ──
