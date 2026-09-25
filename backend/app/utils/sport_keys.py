@@ -1323,6 +1323,8 @@ KALSHI_TICKER_TO_SPORT_KEY: dict[str, str] = {
     # foreign soccer leagues). The sport_key value only needs a prefix present in
     # SPORT_PREFIX_TO_LLM_CATEGORY — that prefix is what drives classification.
     # Esports (Call of Duty, Dota 2, Rainbow Six, Overwatch)
+    # KXCODEAI / KXCODINGMODEL are AI, not Call of Duty (#8497): carved out in
+    # KALSHI_TICKER_PREFIXES_NOT_A_SPORT, not here.
     "kxcod": "esports",                       # Call of Duty (kxcodgame, kxcodmap)
     "kxdota2": "esports",                     # Dota 2 (kxdota2game, kxdota2map)
     "kxr6": "esports",                        # Rainbow Six (kxr6game, kxr6map)
@@ -2035,9 +2037,20 @@ KALSHI_FUTURES_TICKER_TO_SPORT_KEY: dict[str, str] = {
 # it must be at least as long as the sport prefix it overrules — a shorter
 # entry would be a stem deletion wearing a different name
 # (`test_sport_keys` pins that every entry here is shadowing a real sport prefix).
+#
+# #8497 added three more, from a read of all 14,378 venue series (2026-09-25)
+# for any series outside category `Sports` that a stem claims. `kxcod` (Call of
+# Duty) claimed KXCODEAI "DeepSWE Coding Rank" and KXCODINGMODEL "Best AI coding
+# model" (`Science and Technology`/`AI`), and the first one sat on /hub/esports.
+# `kxwta` claimed KXWTAX "Wealth tax" (`Politics`). The other non-`Sports`
+# hits (announcer *MENTION, NBA 2K cover, MLB CBA/strike, ticket prices) are
+# genuinely about the sport and stay claimed.
 KALSHI_TICKER_PREFIXES_NOT_A_SPORT: frozenset[str] = frozenset(
     {
         "kxpgaawards",
+        "kxcodeai",
+        "kxcodingmodel",
+        "kxwtax",
     }
 )
 
