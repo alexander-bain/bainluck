@@ -57,9 +57,8 @@ struct HeatMapCardView: View {
     private var lastAbove50Label: String? {
         // Derive from ALL thresholds (not the capped cells) so the crossover
         // summary stays correct even when cells overflow past maxCells.
-        let above = sortedPoints.filter { ($0.probability ?? 0) >= 0.50 }
-        guard let last = above.last else { return nil }
-        return compactThresholdLabel(last.label)
+        guard let rung = heatMapBetterThanEvenRung(sortedPoints) else { return nil }
+        return compactThresholdLabel(rung.label)
     }
 
     // MARK: - Body
@@ -130,6 +129,8 @@ struct HeatMapCardView: View {
                     // rung the market still calls better than even — and saying
                     // it this way needs no branch. Web says the same words
                     // (FuturesCard.tsx, PR #4656): one card family, notice 35.
+                    // #8647 — which end of the ladder is "furthest" depends on
+                    // the axis; `heatMapBetterThanEvenRung` says which.
                     Text("More likely than not:")
                         .font(.system(size: 12))
                         .foregroundStyle(DS.textSecondary)
@@ -245,6 +246,25 @@ struct HeatMapCardView: View {
             .replacingOccurrences(of: " or more", with: "+")
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
+}
+
+// MARK: - The rung the caption names
+
+/// #8647 — the rung "More likely than not:" names: the MOST SPECIFIC rung the
+/// market still calls better than even. `points` is in ladder order (ascending
+/// `value`), and which end of the over-even rungs that is depends on the axis.
+/// On a comparator ladder ("Above 52 / Above 58 / Above 64") chances fall as the
+/// rungs climb, so it is the last one. On a date ladder every rung is a
+/// cumulative "before this date" question and chances RISE, so the last one is
+/// the loosest: the phone captioned the Anthropic-IPO ladder (futures 8430022,
+/// 6% by Nov 1, 56% by Dec 1 … 90% by Apr 1) "Before Apr 1, 2027". The earliest
+/// rung over even is the answer. An exclusive date ladder ("Before 2027 / 2027 /
+/// 2029 or later") has at most one rung over even, so it reads the same. Web
+/// applies the same rule (FuturesCard.tsx, PR #8650): one card family, notice 35.
+func heatMapBetterThanEvenRung(_ points: [FeedDiscoverThresholdPoint]) -> FeedDiscoverThresholdPoint? {
+    let above = points.filter { ($0.probability ?? 0) >= 0.50 }
+    let isDateLadder = !points.isEmpty && points.allSatisfy { $0.source == "date_bucket" }
+    return isDateLadder ? above.first : above.last
 }
 
 // MARK: - Cell model
