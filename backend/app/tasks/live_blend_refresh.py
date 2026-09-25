@@ -62,6 +62,7 @@ import contextlib
 import logging
 import math
 import time
+from dataclasses import dataclass
 from typing import Iterable, Optional
 
 logger = logging.getLogger(__name__)
@@ -111,6 +112,303 @@ DEFAULT_SNAPSHOT_MAX_GAP_S = 60.0
 #: party a deadlock is detected on, and cannot be the convoy the sibling arm
 #: queues behind.
 DEFAULT_STAMP_LOCK_TIMEOUT_MS = 500
+
+#: #837 receipt — the per-event floor between receipt lines for chains that
+#: cannot qualify as a quiet tail (a busy market's routine deferrals, a held
+#: price that rounded to the stored value). Those are summarised with a count.
+#: A quiet stamp and every abnormal chain are never held back by it.
+TAIL_RECEIPT_COALESCE_S = 60.0
+
+
+def _mono() -> float:
+    """The refresher's monotonic clock — one seam, so a rig can drive time
+    without patching `time.monotonic` under the event loop."""
+    return time.monotonic()
+
+
+def _wall() -> float:
+    """The dyno's wall clock (epoch seconds, UTC) — same seam, same reason."""
+    return time.time()
+
+
+def _iso(wall: Optional[float]) -> Optional[str]:
+    if wall is None:
+        return None
+    from datetime import datetime, timezone
+
+    return datetime.fromtimestamp(wall, timezone.utc).isoformat(timespec="milliseconds")
+
+
+@dataclass(frozen=True)
+class InputMark:
+    """One accepted venue input, as the socket received it.
+
+    `seq` counts every accepted input of one consumer run, same-price repeats
+    included; `event_ordinal` is how many inputs THIS event had received when
+    this one arrived. The receipt's "did anything arrive after the held price"
+    is the difference between the event's running count and that ordinal —
+    which a stored `price_changed_at` cannot answer, because a repeat or a
+    move that rounds to the stored value leaves it untouched.
+    """
+
+    seq: int
+    event_id: int
+    outcome_id: int
+    probability: float
+    kind: str
+    recv_wall: float
+    recv_mono: float
+    venue_ts_ms: Optional[int]
+    event_ordinal: int
+
+
+@dataclass
+class _TailChain:
+    origin: str  # "throttle" | "lock" | "batch"
+    rev: InputMark  # the revision whose committed write was held
+    stamp_rev: InputMark  # the newest committed revision before the close
+    stored_wall: float
+    opened_wall: float
+    opened_mono: float
+    later_committed: int = 0
+    lock_retries: int = 0
+    commit_failures: int = 0
+    batch_failures: int = 0
+
+
+class TailReceipts:
+    """#837 — one receipt per held price: received, stored, held, stamped.
+
+    WHY. The deferred-tail stamp exists (`_throttle_deferred`, `_lock_retry`),
+    but nothing said, for ONE event, which price was held, when it arrived, and
+    whether the stamp that finally carried it was the quiet flush or another
+    tick. The aggregate `throttled=`/`stamped=` counts cannot. Codex's review of
+    the first draft (2026-09-25 16:20Z) also showed why a receipt must not read
+    "quiet" off the final flush: refresh 1000 → held 1001 → a second input
+    1003 → stamp 1006 printed quiet=True and held 6s, when the input at 1003
+    intervened and the price was held 5s. So a chain opens at the hold, counts
+    EVERY later input for the event (same-price and not-yet-flushed ones
+    included) and every later committed write, and `quiet` is only
+    `later_inputs == 0`.
+
+    CLOCK DOMAINS, stated because they must not be mixed: `*_wall` fields and
+    `stamped_at` are the dyno clock — `stamped_at` is byte-for-byte the JSONB
+    `updated_at` and the SSE frame's, so the receipt joins to what was served.
+    `*_s` durations are monotonic on the same process. `venue_ts_ms` is the
+    venue's clock, copied raw. The database clock (`price_changed_at`,
+    `captured_at`) is a fourth domain the receipt does not assert against.
+
+    VOLUME. One line per chain, never per flush. A chain closes only at a due
+    refresh, so the always-logged class (quiet stamps, lock and failure chains,
+    recycle/shutdown resets) is at most one line per event per throttle
+    interval; routine chains are coalesced per event (`TAIL_RECEIPT_COALESCE_S`).
+    A `tail-receipt summary` line per consumer run says the instrument was on —
+    the absence of a receipt proves nothing without it.
+
+    Pure bookkeeping, nothing awaited, and every entry point is wrapped by its
+    caller: a receipt that fails must never cost a price (gotcha #42).
+    """
+
+    COALESCIBLE = frozenset({"stamped", "unchanged", "no_reading", "no_row", "no_market"})
+
+    def __init__(self, source: str, *, coalesce_s: float = TAIL_RECEIPT_COALESCE_S) -> None:
+        import uuid
+
+        self.source = source
+        #: Sequences restart with every consumer run; the run id is what stops
+        #: a seq from one run being read against another's across a recycle.
+        self.run = uuid.uuid4().hex[:8]
+        self.coalesce_s = coalesce_s
+        self._seq = 0
+        self._inputs_by_event: dict[int, int] = {}
+        self._last_seq_by_event: dict[int, int] = {}
+        self._staged: dict[int, InputMark] = {}
+        self._staged_wall: Optional[float] = None
+        self._open: dict[int, _TailChain] = {}
+        self._last_logged: dict[int, float] = {}
+        self._coalesced: dict[int, int] = {}
+        self.stats: dict[str, int] = {
+            "inputs": 0, "opened": 0, "logged": 0, "coalesced": 0,
+        }
+
+    # ── the socket's side ────────────────────────────────────────────────────
+
+    def note_input(
+        self,
+        event_id: Optional[int],
+        outcome_id: int,
+        probability: float,
+        kind: str,
+        venue_ts=None,
+    ) -> Optional[InputMark]:
+        """Stamp one accepted input. Called under the socket's buffer lock, so
+        `seq` order is buffer order."""
+        if event_id is None:
+            return None
+        self._seq += 1
+        self.stats["inputs"] += 1
+        ordinal = self._inputs_by_event.get(event_id, 0) + 1
+        self._inputs_by_event[event_id] = ordinal
+        self._last_seq_by_event[event_id] = self._seq
+        try:
+            venue_ms = int(venue_ts) if venue_ts is not None else None
+        except (TypeError, ValueError):
+            venue_ms = None
+        return InputMark(
+            seq=self._seq, event_id=event_id, outcome_id=outcome_id,
+            probability=probability, kind=kind, recv_wall=_wall(),
+            recv_mono=_mono(), venue_ts_ms=venue_ms, event_ordinal=ordinal,
+        )
+
+    def stage(self, marks: Iterable[InputMark]) -> None:
+        """The revisions a flush just COMMITTED — called after the commit and
+        immediately before `refresh`, which takes them. Per event, the newest
+        input the write carried."""
+        staged: dict[int, InputMark] = {}
+        for mark in marks:
+            held = staged.get(mark.event_id)
+            if held is None or mark.seq > held.seq:
+                staged[mark.event_id] = mark
+        self._staged = staged
+        self._staged_wall = _wall()
+
+    def take_staged(self) -> tuple[dict[int, InputMark], Optional[float]]:
+        staged, wall = self._staged, self._staged_wall
+        self._staged, self._staged_wall = {}, None
+        return staged, wall
+
+    # ── the refresher's side ─────────────────────────────────────────────────
+
+    def _open_chain(self, origin, mark, stored_wall, now) -> _TailChain:
+        chain = _TailChain(
+            origin=origin, rev=mark, stamp_rev=mark,
+            stored_wall=stored_wall if stored_wall is not None else _wall(),
+            opened_wall=_wall(), opened_mono=now,
+        )
+        self._open[mark.event_id] = chain
+        self.stats["opened"] += 1
+        return chain
+
+    def observe(self, staged, stored_wall, due: set, now: float) -> None:
+        """Before the batch: a committed revision for an event with an open
+        chain is a later write inside the hold; one for an event the throttle
+        is holding opens a chain."""
+        for event_id, mark in staged.items():
+            chain = self._open.get(event_id)
+            if chain is not None:
+                chain.later_committed += 1
+                chain.stamp_rev = mark
+            elif event_id not in due:
+                self._open_chain("throttle", mark, stored_wall, now)
+
+    def resolve(self, due, dispositions, staged, stored_wall, now) -> None:
+        """After a batch that COMMITTED: close each attempted chain on what the
+        batch did with it. A lock skip keeps (or opens) the chain — the retry
+        is the path, and it is counted."""
+        for event_id in due:
+            disposition = dispositions.get(event_id, ("no_market",))
+            chain = self._open.get(event_id)
+            if disposition[0] == "lock":
+                if chain is None:
+                    mark = staged.get(event_id)
+                    if mark is None:
+                        continue
+                    chain = self._open_chain("lock", mark, stored_wall, now)
+                chain.lock_retries += 1
+                continue
+            if chain is not None:
+                self._close(event_id, disposition[0], now, disposition=disposition)
+
+    def resolve_failed(
+        self, due, dispositions, staged, stored_wall, requeued, exc, now,
+    ) -> None:
+        """After a batch that did NOT commit. A stamp the batch had made rolled
+        back with it — `commit_failed`; otherwise the batch died first —
+        `batch_failed`. The refresher retains all due events, so their chains
+        stay open and count the failure. The defensive dropped result is only
+        for a caller that explicitly omits an event from `requeued`."""
+        for event_id in due:
+            disposition = dispositions.get(event_id, ("",))
+            failure = "commit_failed" if disposition[0] == "stamped" else "batch_failed"
+            chain = self._open.get(event_id)
+            if chain is None:
+                mark = staged.get(event_id)
+                if mark is None or event_id not in requeued:
+                    continue
+                origin = "lock" if disposition[0] == "lock" else "batch"
+                chain = self._open_chain(origin, mark, stored_wall, now)
+                if origin == "lock":
+                    chain.lock_retries += 1
+            if event_id in requeued:
+                if failure == "commit_failed":
+                    chain.commit_failures += 1
+                else:
+                    chain.batch_failures += 1
+                continue
+            self._close(event_id, f"dropped_{failure}", now, error=type(exc).__name__)
+
+    def close_all(self, reason: str) -> None:
+        """The consumer is exiting: every chain still open was never stamped by
+        this run, and the next run's fresh refresher cannot inherit it."""
+        now = _mono()
+        open_at_close = len(self._open)
+        for event_id in sorted(self._open):
+            self._close(event_id, reason, now)
+        logger.info(
+            "live_blend_refresh[%s]: tail-receipt summary run=%s reason=%s "
+            "inputs=%d opened=%d logged=%d coalesced=%d open_at_close=%d",
+            self.source, self.run, reason, self.stats["inputs"],
+            self.stats["opened"], self.stats["logged"], self.stats["coalesced"],
+            open_at_close,
+        )
+
+    def _close(self, event_id, result, now, *, disposition=(), error=None) -> None:
+        chain = self._open.pop(event_id)
+        later_inputs = self._inputs_by_event.get(event_id, 0) - chain.rev.event_ordinal
+        quiet = later_inputs == 0 and chain.later_committed == 0
+        value = previous = stamped_at = None
+        if result == "stamped":
+            _, value, stamped_at, previous = disposition
+        elif result == "unchanged":
+            value = disposition[1]
+        moved = result == "stamped" and (previous is None or previous != value)
+
+        coalescible = (
+            result in self.COALESCIBLE
+            and not (result == "stamped" and quiet)
+            and chain.origin != "lock"
+            and not chain.lock_retries
+            and not chain.commit_failures
+            and not chain.batch_failures
+        )
+        if coalescible:
+            last = self._last_logged.get(event_id)
+            if last is not None and (now - last) < self.coalesce_s:
+                self._coalesced[event_id] = self._coalesced.get(event_id, 0) + 1
+                self.stats["coalesced"] += 1
+                return
+            self._last_logged[event_id] = now
+
+        self.stats["logged"] += 1
+        rev, stamp_rev = chain.rev, chain.stamp_rev
+        logger.info(
+            "live_blend_refresh[%s]: tail-receipt run=%s event=%s result=%s "
+            "quiet=%s moved=%s origin=%s rev_seq=%d rev_outcome=%s rev_p=%.6f "
+            "rev_kind=%s rev_recv_wall=%s rev_venue_ts_ms=%s stored_wall=%s "
+            "held_wall=%s stamp_rev_seq=%d stamped_at=%s value=%s previous=%s "
+            "later_inputs=%d later_committed=%d last_input_seq=%s "
+            "lock_retries=%d commit_failures=%d batch_failures=%d held_s=%.3f "
+            "recv_to_close_s=%.3f coalesced=%d error=%s",
+            self.source, self.run, event_id, result, quiet, moved, chain.origin,
+            rev.seq, rev.outcome_id, rev.probability, rev.kind,
+            _iso(rev.recv_wall), rev.venue_ts_ms, _iso(chain.stored_wall),
+            _iso(chain.opened_wall), stamp_rev.seq, stamped_at, value, previous,
+            later_inputs, chain.later_committed,
+            self._last_seq_by_event.get(event_id), chain.lock_retries,
+            chain.commit_failures, chain.batch_failures,
+            now - chain.opened_mono, now - rev.recv_mono,
+            self._coalesced.pop(event_id, 0), error,
+        )
 
 
 def atomic_stamp_expression(
@@ -273,6 +571,12 @@ class LiveBlendRefresher:
         #: refresher. Built on first publish rather than in __init__ so a
         #: consumer run that never stamps anything never opens a connection.
         self._redis = None
+        #: #837 receipt — attached by a consumer that stamps its inputs
+        #: (`TailReceipts`); None leaves this refresher exactly as it was.
+        self.receipts: Optional[TailReceipts] = None
+        #: What the current batch did with each event it attempted, for the
+        #: receipt. Filled by `_refresh_batch`, read only after it returns.
+        self._dispositions: dict[int, tuple] = {}
 
     # ── throttling ───────────────────────────────────────────────────────────
 
@@ -307,7 +611,11 @@ class LiveBlendRefresher:
 
     async def refresh(self, event_ids: Iterable[int]) -> dict[str, int]:
         """Recompute and stamp the blend for these events. Never raises."""
-        now = time.monotonic()
+        now = _mono()
+        receipts = self.receipts
+        staged, stored_wall = (
+            self._receipt_call(receipts.take_staged) if receipts is not None else None
+        ) or ({}, None)
         retry = set(self._lock_retry)
         deferred = set(self._throttle_deferred)
         fresh = set(event_ids)
@@ -323,26 +631,53 @@ class LiveBlendRefresher:
         skipped = len(self._throttle_deferred.difference(deferred))
         if skipped > 0:
             self.stats["throttled"] += skipped
+        if receipts is not None:
+            self._receipt_call(receipts.observe, staged, stored_wall, set(due), now)
         if not due:
             return self.stats
 
+        self._dispositions = {}
         try:
             await self._refresh_batch(due, now)
-        except Exception:
+        except Exception as exc:
             self.stats["errors"] += 1
             logger.exception(
                 "live_blend_refresh[%s]: batch failed for %d events",
                 self.source, len(due),
             )
-            # #837 tail — a failed batch must not cost the stamps it was
-            # carrying for a row lock: they are owed whether or not the venue
-            # ticks again. Re-queued due at once (`_refresh_batch` stamped the
-            # throttle before it failed). Only the retries: an ordinary batch
-            # event keeps the existing contract and waits for its next price.
+            # The outcome prices already committed before this refresh. Keep
+            # every owed stamp if its transaction fails, even when no further
+            # venue input arrives. Ordinary retries retain the attempt's 5s
+            # throttle; only existing row-lock retries remain due at once.
+            self._throttle_deferred.update(set(due).difference(self._lock_retry))
             for event_id in retry.intersection(due):
                 self._lock_retry.add(event_id)
                 self._last_refresh_at.pop(event_id, None)
+                self._throttle_deferred.discard(event_id)
+            if receipts is not None:
+                self._receipt_call(
+                    receipts.resolve_failed, due, self._dispositions, staged,
+                    stored_wall, self._lock_retry | self._throttle_deferred,
+                    exc, _mono(),
+                )
+        else:
+            if receipts is not None:
+                self._receipt_call(
+                    receipts.resolve, due, self._dispositions, staged,
+                    stored_wall, _mono(),
+                )
         return self.stats
+
+    def _receipt_call(self, fn, *args):
+        """Receipts are evidence about the price path, never part of it."""
+        try:
+            return fn(*args)
+        except Exception:
+            logger.warning(
+                "live_blend_refresh[%s]: tail receipt failed", self.source,
+                exc_info=True,
+            )
+            return None
 
     async def refresh_pending(self) -> dict[str, int]:
         """#837 tail — stamp only the deferred events. Never raises.
@@ -478,6 +813,7 @@ class LiveBlendRefresher:
                     )
                     if reading is None:
                         self.stats["no_reading"] += 1
+                        self._dispositions[event_id] = ("no_reading",)
                         continue
 
                     home_prob = await self._oriented(
@@ -487,6 +823,7 @@ class LiveBlendRefresher:
 
                     if not self._should_write(event_id, value, now):
                         self.stats["unchanged_skipped"] += 1
+                        self._dispositions[event_id] = ("unchanged", value)
                         continue
 
                     # ONE stamp instant, shared by the JSONB write and the frame
@@ -530,6 +867,7 @@ class LiveBlendRefresher:
                             # to skip, not a traceback to log on the dyno whose job
                             # is streaming prices.
                             self.stats["no_reading"] += 1
+                            self._dispositions[event_id] = ("no_row",)
                             continue
 
                         # The chart point rides a savepoint of its own inside
@@ -556,6 +894,12 @@ class LiveBlendRefresher:
                     # rolled back must not read as written), and applied only
                     # once the transaction commits — see `written` above.
                     written[event_id] = value
+                    # #837 receipt — trusted only once the batch returns, i.e.
+                    # after the commit; `previous` says whether it MOVED.
+                    self._dispositions[event_id] = (
+                        "stamped", value, stamped_at.isoformat(),
+                        self._last_written_value.get(event_id),
+                    )
 
                     # The AGGREGATE, computed off the sources JSONB the server
                     # RETURNED — the number the hero renders, not this one
@@ -602,6 +946,7 @@ class LiveBlendRefresher:
                         # once, instead of freezing every other event's stamp
                         # behind a lock this arm does not control.
                         self.stats["lock_skipped"] += 1
+                        self._dispositions[event_id] = ("lock",)
                         self._lock_retry.add(event_id)
                         self._last_refresh_at.pop(event_id, None)
                         logger.info(
@@ -611,6 +956,8 @@ class LiveBlendRefresher:
                         )
                         continue
                     self.stats["errors"] += 1
+                    # A committed stamp whose frame failed is still stamped.
+                    self._dispositions.setdefault(event_id, ("error",))
                     logger.exception(
                         "live_blend_refresh[%s]: event %s failed",
                         self.source, event_id,

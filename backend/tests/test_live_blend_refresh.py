@@ -977,11 +977,9 @@ class TestAQueuedRetrySurvivesAFailedBatch:
         assert r._lock_retry == set()
 
     @pytest.mark.asyncio
-    async def test_an_ordinary_event_in_a_failed_batch_keeps_the_old_contract(self):
-        """Only lock-deferred work is re-queued. Re-queuing every event of a
-        failed batch would reopen a connection every 2s for as long as the
-        failure lasts, which is the cost `_refresh_batch`'s throttle-first
-        stamp exists to avoid."""
+    async def test_an_ordinary_failure_does_not_become_an_immediate_lock_retry(self):
+        """Ordinary failed stamps retry on the normal throttle, not on the
+        immediate row-lock retry path."""
         r = LiveBlendRefresher("polymarket")
 
         async def _fail(event_ids, now):
@@ -990,6 +988,7 @@ class TestAQueuedRetrySurvivesAFailedBatch:
         r._refresh_batch = _fail
         await r.refresh([7])
         assert r._lock_retry == set()
+        assert r._throttle_deferred == {7}
 
     @pytest.mark.asyncio
     async def test_refresh_pending_is_free_when_nothing_is_queued(self):
@@ -1013,8 +1012,9 @@ class TestAFailedCommitLeavesNothingMarkedWritten:
     the COMMIT fails, once."""
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("origin", ["lock", "throttle", "fresh"])
     async def test_the_quiet_retry_after_a_failed_commit_really_restamps(
-        self, monkeypatch
+        self, monkeypatch, origin
     ):
         from contextlib import asynccontextmanager
 
@@ -1059,8 +1059,11 @@ class TestAFailedCommitLeavesNothingMarkedWritten:
         clock = {"t": 1000.0}
         monkeypatch.setattr(lbr.time, "monotonic", lambda: clock["t"])
 
-        r._lock_retry = {1}
-        await r.refresh_pending()
+        if origin == "lock":
+            r._lock_retry = {1}
+        elif origin == "throttle":
+            r._throttle_deferred = {1}
+        await r.refresh([1] if origin == "fresh" else [])
 
         assert len(session.updates) == 1 and len(snapshots) == 1, "rig: stamp ran"
         assert published == [], "a rolled-back stamp must not be pushed"
@@ -1068,16 +1071,23 @@ class TestAFailedCommitLeavesNothingMarkedWritten:
         assert r._last_write_at == {}
         assert r.stats["stamped"] == 0
         assert 1 not in r._last_snapshot_at, "the chart point never committed"
-        assert r._lock_retry == {1}
+        if origin == "lock":
+            assert r._lock_retry == {1}
+        else:
+            assert r._throttle_deferred == {1}
+            # A persistent outage must not open a new session every flush.
+            clock["t"] = 1002.0
+            await r.refresh_pending()
+            assert commits["n"] == 1
 
-        clock["t"] += 2.0  # the next flush, inside every throttle window
+        clock["t"] = 1002.0 if origin == "lock" else 1006.0
         await r.refresh_pending()
 
         assert len(session.updates) == 2, "the retry was skipped as unchanged"
         assert [f["event_id"] for f in published] == [1]
         assert len(snapshots) == 2, "the chart point was not re-attempted"
         assert r._last_written_value == {1: 0.9}
-        assert r._last_snapshot_at == {1: 1002.0}
+        assert r._last_snapshot_at == {1: clock["t"]}
         assert r.stats["stamped"] == 1
         assert r._lock_retry == set()
 
