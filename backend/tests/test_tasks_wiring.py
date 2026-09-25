@@ -293,6 +293,7 @@ class TestBeatScheduleCompleteness:
         "reconcile-unanchored-events",
         "tennis-twin-sweep",
         "soccer-ghost-twin-sweep",
+        "mlb-reschedule-ghost-sweep",
         "polymarket-container-twin-sweep",
         "odds-api-reissued-twin-sweep",
         "merge-degenerate-combat-events",

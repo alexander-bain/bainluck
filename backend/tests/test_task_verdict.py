@@ -289,6 +289,10 @@ class TestEnforcementScope:
             # raised (`measured: false`). Terminals come from
             # `app/tasks/soccer_ghost_twin_sweep.py`.
             "soccer_ghost_twin_sweep",
+            # #8547 half 2: the MLB reschedule arm of the same fold. Episodic
+            # like soccer, so its floor is the espn_id join on busy boards, not
+            # the plan. Terminals: `app/tasks/mlb_reschedule_ghost_sweep.py`.
+            "mlb_reschedule_ghost_sweep",
             # #5821 (CERT-3030): the Polymarket-container arm of the same fold.
             # The specimen for this set's other failure mode — not an unenrolled
             # task, but an enrolled-shaped one whose words are not in the

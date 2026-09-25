@@ -1142,6 +1142,14 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
     `grep -rl beat_schedule tests/` rule would have caught it locally first —
     the fifth lane in a row to learn that, and the first to be told so in
     advance by this very docstring.
+
+    🔴 **RE-DERIVED at lane1 (2026-09-25, #8547): 128 → 129, explicit 85 → 86.**
+    `mlb-reschedule-ghost-sweep` (`crontab(minute="52")`) names `background`
+    explicitly, so the fall-through half is UNMOVED at **43**. Obtained by
+    RUNNING the census below over the tree rebased onto `2ae5c500ad`, which
+    printed `explicit 86 implicit 43 total 129`. The sixth lane to miss this
+    locally: CI shard 2 reddened the first head. #8511 adds a background beat
+    too — whichever lands second re-derives these three numbers again.
     """
     from app.tasks import celery_app
     from app.utils.typeahead_beat_budget import BACKGROUND_BEAT_COUNT

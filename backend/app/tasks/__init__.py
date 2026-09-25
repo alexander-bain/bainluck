@@ -5467,6 +5467,33 @@ def soccer_ghost_twin_sweep_task(self, apply: bool = True,
 
 
 @celery_app.task(bind=True, soft_time_limit=300, time_limit=360,
+                 name="app.tasks.mlb_reschedule_ghost_sweep")
+def mlb_reschedule_ghost_sweep_task(self, apply: bool = True,
+                                    lookback: int | None = None,
+                                    lookahead: int | None = None):
+    """#8547 half 2 — the MLB row left behind when ESPN moves a game to
+    another day ("Rescheduled from Sep. 26") is labelled a duplicate of the game
+    that replaced it, so it stops being listed and its markets fold onto the
+    real game's page. Same label, fold guard and D51 backup as the soccer
+    sweep; the window is resolved from the module (``None`` = the module's).
+    """
+    from app.tasks.mlb_reschedule_ghost_sweep import (
+        DEFAULT_LOOKAHEAD_DAYS,
+        DEFAULT_LOOKBACK_DAYS,
+        run_mlb_reschedule_ghost_sweep,
+    )
+
+    return _tracked_run(
+        "mlb_reschedule_ghost_sweep",
+        run_mlb_reschedule_ghost_sweep(
+            apply=apply,
+            lookback=DEFAULT_LOOKBACK_DAYS if lookback is None else lookback,
+            lookahead=DEFAULT_LOOKAHEAD_DAYS if lookahead is None else lookahead,
+        ),
+    )
+
+
+@celery_app.task(bind=True, soft_time_limit=300, time_limit=360,
                  name="app.tasks.polymarket_container_twin_sweep")
 def polymarket_container_twin_sweep_task(self, apply: bool = True,
                                          lookback: int | None = None,
@@ -6838,6 +6865,18 @@ celery_app.conf.beat_schedule = {
     "soccer-ghost-twin-sweep": {
         "task": "app.tasks.soccer_ghost_twin_sweep",
         "schedule": crontab(minute="9,49"),
+        "kwargs": {"apply": True},
+        "options": {"queue": "background"},
+    },
+    # #8547 half 2 — the MLB reschedule ghost. HOURLY at :52: reschedules are
+    # episodic and a ghost only has to be caught before a reader finds it, and
+    # :52 is an unused minute clear of the settlement sweep's :31-:44 window.
+    # APPLY under D51 (reversible label, prior value banked). Undo:
+    # `scripts/restore_8547_mlb_reschedule_ghost_tags.py --apply`. No window
+    # kwargs, for the soccer entry's reason: the module owns the window.
+    "mlb-reschedule-ghost-sweep": {
+        "task": "app.tasks.mlb_reschedule_ghost_sweep",
+        "schedule": crontab(minute="52"),
         "kwargs": {"apply": True},
         "options": {"queue": "background"},
     },

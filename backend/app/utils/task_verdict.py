@@ -298,6 +298,11 @@ ENFORCED_TASKS = frozenset({
     # population and is `failed`. A plan floor copied from the sibling would
     # have made this task red on most days and taught everyone to ignore it.
     "soccer_ghost_twin_sweep",         # terminal + measured + fold_live + rows_read
+    # #8547 half 2. The MLB arm of the same fold, enrolled from birth. Like the
+    # soccer sibling its ghosts are episodic, so `complete` with nothing written
+    # is the healthy state; the red zeros are a collapsed espn_id join on busy
+    # boards, a plan over its ceiling, the fold unwired, and a read that raised.
+    "mlb_reschedule_ghost_sweep",      # terminal + measured + fold_live + rows_read
     # #5821 (CERT-3030). The Polymarket-container arm of the same fold. Enrolled
     # in the change that gives it real terminals, because enrolment alone would
     # have been a no-op in the literal sense this file keeps warning about: it

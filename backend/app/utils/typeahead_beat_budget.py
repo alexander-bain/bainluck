@@ -1957,6 +1957,26 @@ def free_background_slots(
 #: free `/events` GET per affected sport; writes are a handful of tags a week.
 #: ⚠️ The merge hazard applies: another lane adding a background beat writes
 #: the IDENTICAL `= 129`. Re-run the census on the composed tree.
+#:
+#: 🔴 RE-DERIVED at lane1 (2026-09-25, #8547): 128 → **129**, explicit
+#: 85 → **86**, fall-through UNMOVED at **43**. `mlb-reschedule-ghost-sweep`
+#: (`crontab(minute="52")`) names `background` explicitly, the benign direction.
+#: RE-DERIVED by RUNNING the census over the assembled `beat_schedule` after the
+#: rebase onto `2ae5c500ad`, which printed `explicit 86 implicit 43 total 129`,
+#: never by adding one to 128 (#1910). CI shard 2 caught the missed pin on the
+#: first head (`f4a26eb9d9`) — this branch's band was the #8547 suite plus
+#: `test_tasks_wiring.py`, not `grep -rl beat_schedule tests/`.
+#:
+#: Cost shape: HOURLY, and each fire is one bounded window read of MLB rows
+#: (the module's lookback/lookahead) plus a label write only on a proven ghost,
+#: under the soccer sweep's 300 s soft limit. `:52` is an unused minute clear of
+#: the settlement sweep's `:31-:44` window. WHY `background` AND NOT `heavy`: the
+#: ship is "the ghost stops being listed" on the main app; heavy would add a
+#: deployment lag (notice 48) in front of a sweep its sibling runs here.
+#:
+#: ⚠️ #8511 (#8422) also adds a background beat against this base. Whichever
+#: lands second writes the identical `129` and the composed tree is 130 with no
+#: textual conflict. Re-run the census AFTER the rebase.
 BACKGROUND_BEAT_COUNT = 129
 #: 🔴 RE-DERIVED at lane1/282 (2026-09-13, #5896): 122 → **123**, explicit
 #: 79 → **80**, fall-through UNMOVED at 43. One beat added,
