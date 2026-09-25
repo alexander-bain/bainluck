@@ -1882,7 +1882,10 @@ async def compute_and_write_stat_model(session, event, ee, sport_key, stats):
 
         # #8522: no prior and a market already on the row — the market's
         # number, not the model's coin flip, is the headline.
-        from app.utils.win_probability import priorless_model_defers_to_market
+        from app.utils.win_probability import (
+            priorless_model_defers_to_market,
+            retire_priorless_model_reading,
+        )
 
         if priorless_model_defers_to_market(
             pregame_spread, opening_prob, event.win_probability_sources
@@ -1890,6 +1893,19 @@ async def compute_and_write_stat_model(session, event, ee, sport_key, stats):
             stats["stat_model_priorless_deferred"] = (
                 stats.get("stat_model_priorless_deferred", 0) + 1
             )
+            # ...and drop the reading it wrote before the market arrived,
+            # or that frozen number keeps the headline.
+            retired = retire_priorless_model_reading(event.win_probability_sources)
+            if retired is not None:
+                await session.execute(
+                    _sql_update(Event)
+                    .where(Event.id == event.id)
+                    .values(win_probability_sources=retired)
+                )
+                event.win_probability_sources = retired
+                stats["stat_model_priorless_retired"] = (
+                    stats.get("stat_model_priorless_retired", 0) + 1
+                )
             return False
 
         # Prefer numeric period for reliability

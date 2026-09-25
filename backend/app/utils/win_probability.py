@@ -544,17 +544,44 @@ def priorless_model_defers_to_market(
     held 71–78%. Those writers skip the reading instead and leave the number to
     the market. A game with no market price at all keeps the model: then it is
     the only number there is.
+
+    A market entry the blend REFUSES (`is_refused`, the read-side eligibility
+    gate in `_tier1_readings`) is not a price here either: the headline will
+    not use it, so deferring to it would leave the model's slot empty with
+    nothing standing in it.
     """
     if pregame_spread is not None or opening_home_probability is not None:
         return False
     if not isinstance(win_probability_sources, dict):
         return False
     from app.utils.aggregation import parse_source_entry
+    from app.utils.probability_eligibility import is_refused
 
-    return any(
-        parse_source_entry(win_probability_sources.get(source))[0] is not None
-        for source in MARKET_PRICE_SOURCES
-    )
+    for source in MARKET_PRICE_SOURCES:
+        entry = win_probability_sources.get(source)
+        if is_refused(entry):
+            continue
+        if parse_source_entry(entry)[0] is not None:
+            return True
+    return False
+
+
+def retire_priorless_model_reading(win_probability_sources: object) -> dict | None:
+    """The column without its ``stat_model`` entry, or ``None`` if it has none.
+
+    #8522, the other half of deferring: a writer that only declines to write
+    freezes the reading it wrote last (the #5031 lesson). When the market
+    arrives AFTER the model — or the row carries a reading from before the
+    deferral shipped — the frozen priorless number keeps its 1.0 weight and
+    holds the headline for ~16 minutes until the hero's relative-age decay
+    retires it. A deferring writer drops it instead. Every other key is copied
+    through untouched.
+    """
+    if not isinstance(win_probability_sources, dict):
+        return None
+    if "stat_model" not in win_probability_sources:
+        return None
+    return {k: v for k, v in win_probability_sources.items() if k != "stat_model"}
 
 
 def compute_statistical_win_prob(
