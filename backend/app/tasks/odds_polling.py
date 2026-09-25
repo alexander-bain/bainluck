@@ -29,6 +29,7 @@ from app.utils.odds_math import (
     project_scores,
 )
 from app.utils.book_consensus import median_invents_its_answer
+from app.utils.name_normalization import names_match, normalize_name
 from app.utils.polling_config import compute_effective_interval
 from app.tasks.base import get_task_session, run_async
 from app.tasks.config import (
@@ -494,6 +495,47 @@ def _snapshots_are_equal(existing: OddsSnapshot, new_values: dict) -> bool:
     )
 
 
+def _orient_feed_to_row(
+    event_data: dict, row_home: Optional[str], row_away: Optional[str]
+) -> dict:
+    """Return ``event_data`` with its home/away NAMES in the row's orientation.
+
+    #8530 — the registry matches an Odds API listing to a row in EITHER
+    orientation (`_structured_matches`, and the exact odds_api id needs no names
+    at all), but `_parse_snapshot_values` keys every price on the FEED's
+    `home_team`. When the two disagree, each book's price for one side is stored
+    as the other side's. Measured on UFC Fight Night 2026-09-26: rows created by
+    odds_api on 09-17, the feed's home/away flipped since, and all six fights
+    served the underdog as favourite (15314293 Vieira 41% while DraftKings had
+    Vieira -162). MMA has no home side, so nothing holds the feed still.
+
+    The outcome lookup is by NAME, so swapping the two names is the whole fix —
+    the prices then land under the fighter or team they belong to. Exact
+    normalized equality decides first because `names_match` is loose enough to
+    pair same-city rivals ("Los Angeles Lakers" ~ "Los Angeles Clippers"), and
+    the fuzzy fallback swaps only when the row's own orientation does NOT match.
+    Anything else is left exactly as it was.
+    """
+    feed_home = event_data.get("home_team")
+    feed_away = event_data.get("away_team")
+    if not (feed_home and feed_away and row_home and row_away):
+        return event_data
+
+    fh, fa = normalize_name(feed_home), normalize_name(feed_away)
+    rh, ra = normalize_name(row_home), normalize_name(row_away)
+    if (fh, fa) == (rh, ra):
+        return event_data
+    swapped = (fh, fa) == (ra, rh)
+    if not swapped:
+        direct_ok = names_match(feed_home, row_home) and names_match(feed_away, row_away)
+        swapped_ok = names_match(feed_home, row_away) and names_match(feed_away, row_home)
+        swapped = swapped_ok and not direct_ok
+    if not swapped:
+        return event_data
+
+    return {**event_data, "home_team": feed_away, "away_team": feed_home}
+
+
 def _parse_snapshot_values(bookmaker: dict, event_data: dict) -> dict:
     """Parse bookmaker data into snapshot field values."""
     values = {
@@ -768,6 +810,14 @@ async def _ingest_event_odds(
         leaves the existing entry untouched instead of removing it.
     """
     event_id = event.id
+    # #8530: price each side under the name the ROW gives it, not the feed's
+    # current home/away — see `_orient_feed_to_row`. A caller holding no row
+    # names gets the feed as-is, which is exactly what it got before.
+    event_data = _orient_feed_to_row(
+        event_data,
+        getattr(event, "home_team_name", None),
+        getattr(event, "away_team_name", None),
+    )
 
     # Collect all bookmaker values for opening-odds consensus.
     all_home_probs: list[float] = []
@@ -2523,6 +2573,9 @@ async def _poll_sport_odds(sport_key: str):
                     session, identity,
                 )
                 event_id = event.id
+                event_data = _orient_feed_to_row(
+                    event_data, event.home_team_name, event.away_team_name
+                )
 
                 for bookmaker in event_data.get("bookmakers", []):
                     snapshot = await _create_snapshot(event_id, bookmaker, event_data)
