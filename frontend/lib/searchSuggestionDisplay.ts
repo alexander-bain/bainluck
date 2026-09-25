@@ -14,6 +14,7 @@
  * tests never seed relative to `Date.now()` (gotcha #44).
  */
 import type { TypeaheadSuggestion, TypeaheadOutcome, TeamSeasonAnswer } from "@/lib/api";
+import { getEmojiForLeague } from "@/lib/sportCategories";
 
 /**
  * How many season facts a team row shows (T2-1 / #5058). Two, because two is
@@ -88,6 +89,17 @@ export function formatEventTime(isoString: string, now: Date = new Date()): stri
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+/**
+ * #8538 — the icon a team row shows when it has no logo: its own sport's.
+ *
+ * Both dropdowns hardcoded 🏀, so Worcester Red Sox (`baseball_milb`) and 638
+ * logo-less MLS clubs wore a basketball. The row already carries `sport_key`;
+ * a key with no known sport gets the neutral 🏆, never another sport's ball.
+ */
+export function teamFallbackIcon(s: TypeaheadSuggestion): string {
+  return getEmojiForLeague(s.sport_key ?? "");
 }
 
 /** The title line. Futures names get cleaned; everything else reads as sent. */

@@ -58,6 +58,14 @@ describe("both search dropdowns share one row implementation", () => {
     expect(src).not.toMatch(/function\s+formatEventTime\b/);
   });
 
+  // #8538: both twins hardcoded 🏀 for a logo-less team, so a baseball club
+  // wore a basketball. The icon comes from the row's sport, in one place.
+  test.each(SURFACES)("%s draws a logo-less team's icon through teamFallbackIcon", (file) => {
+    const src = source(file);
+    expect(src).toMatch(/teamFallbackIcon\(/);
+    expect(src).not.toMatch(/\\u\{1F3C0\}|🏀/);
+  });
+
   // A hand-rolled `top_outcomes` reader in a component is the #993 drift itself.
   test.each(SURFACES)("%s does not read top_outcomes directly", (file) => {
     expect(source(file)).not.toMatch(/\.top_outcomes\b/);
