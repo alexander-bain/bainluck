@@ -186,6 +186,7 @@ __all__ = [
     "SECOND_FAVOURITE_CEILING",
     "WITHHELD_PRICE_FIELDS",
     "field_names_two_favourites",
+    "leg_has_no_live_support",
     "market_is_proved_exclusive_field",
     "row_carries_a_verdict",
     "midpoint_refuted_by_last_trade",
@@ -196,6 +197,7 @@ __all__ = [
     "price_refuted_by_live_book",
     "snapshot_price_is_unsupported",
     "trade_print_refuted_by_own_book",
+    "unsupported_legs_above_the_supported_head",
 ]
 
 
@@ -1234,6 +1236,101 @@ def price_is_an_unbacked_majority(
     # where there IS one. A zero is "never traded" — already #6846's arm — and a
     # leg with no trade at all never reached the exemption in the first place.
     return float(last_price) > 0
+
+
+def leg_has_no_live_support(
+    source: Optional[str],
+    resolution_source: Optional[str],
+    yes_bid: Optional[float],
+    yes_ask: Optional[float],
+    *,
+    volume_24h: Optional[float],
+    volume_24h_at: Optional[datetime],
+    last_seen_at: Optional[datetime],
+) -> bool:
+    """Nobody is bidding on this leg and the venue says nobody traded it today (#8265).
+
+    The per-leg half of :func:`unsupported_legs_above_the_supported_head`. It is
+    :func:`needs_unbacked_majority_evidence` with the claim term removed — the same
+    zero bid, the same "a book at all" ask, the same venue volume reading — because
+    the question here is not how much the leg claims but whether anything at all
+    stands behind it right now. Whatever number such a leg serves is an old print:
+    the poller writes no midpoint for a one-sided book.
+
+    Every absence answers False, which for this rule means "treat the leg as
+    supported": an unrecorded bid (gotcha #53), an unread or stale volume figure
+    (:func:`venue_reports_no_recent_trading`), a verdict. A supported leg is never
+    withheld by the field rule and it RAISES the ceiling the others are held to,
+    so each absence can only make the rule withhold less.
+    """
+    if (source or "").strip().lower() != KALSHI_BOOKMAKER:
+        return False
+    if row_carries_a_verdict(resolution_source):
+        return False
+    if yes_bid is None or yes_ask is None:
+        return False
+    if float(yes_bid) > 0:
+        return False
+    if float(yes_ask) <= 0:
+        return False
+    return venue_reports_no_recent_trading(volume_24h, volume_24h_at, last_seen_at)
+
+
+def unsupported_legs_above_the_supported_head(
+    served: "Iterable[tuple[int, float, bool]]",
+) -> set[int]:
+    """The legs of a proved field that would head its column on an old print alone (#8265).
+
+    ``served`` is ``(outcome_id, probability, has_no_live_support)`` for every leg
+    the page will actually print — the survivors of every other arm, for the reason
+    :func:`price_is_unlocated_in_broken_field`'s call site gives: a rule about the
+    column a reader sees may not be measured on rows the page withholds.
+
+    WHAT A READER SAW. ``/futures/61308736`` (2027 US Open Men's Singles Winner)
+    crowned **Carlos Alcaraz at 5%** in the page's largest type, drew a 22-point
+    cliff on the Probability Trend, and carried the same line onto Discover page one
+    ("Carlos Alcaraz leads at 5%"). No trade happened: a market maker pulled a 7¢
+    bid, the midpoint fell back to a five-day-old one-contract print, and the legs
+    above it had just been withheld by #7747. Production 2026-09-25: every served
+    leg on that board is bid 0.00 with a fresh zero 24-hour volume reading.
+
+    #8210 DECLINED THIS SHAPE ON PURPOSE AND WAS RIGHT ABOUT WHAT IT MEASURED.
+    Blanking every unbid stale print would take the honest 1–3% longshots at the
+    foot of a column, and :data:`UNBID_CLAIM_CEILING` exists to spare them. Its
+    reach note said they "invert nothing at the foot of the column" — which holds
+    only while something real sits above them. This function makes that condition
+    explicit instead of assuming it: an unsupported leg keeps its number exactly
+    when a supported leg is served at or above it.
+
+    THE CEILING IS THE HIGHEST SERVED LEG SOMEBODY IS BIDDING ON OR TRADING. Every
+    unsupported leg strictly above it is withheld; everything at or below it is
+    served as today. With no supported leg at all the board has no price discovery
+    to show, and every unsupported leg goes — #6846's accepted cost, and Alex's
+    standing rule that a number which cannot be shown honestly leaves the space
+    empty. Strict, so a tie keeps its number.
+
+    MEASURED ON THE SERVED PAYLOAD, production 2026-09-25: all 540 open proved
+    exclusive Kalshi fields holding a leg of this shape were fetched from
+    ``/api/futures/{id}`` and this function replayed over the legs each one
+    actually serves. **17 boards, 74 legs.** On 10 the leg the hero names changes
+    (``Korea KBO Champion``: KT Wiz 40% on a 0.00 / 0.55 book falls, LG Twins 28% —
+    bid 0.25, traded today — heads it; the 2027 US Open women's board: Coco Gauff
+    25% on one lifetime contract falls, Sabalenka 15.5% on a real bid heads it) and
+    7 are left with no number, the men's specimen among them.
+
+    One pass, never iterated: a withheld leg does not lower the ceiling, because the
+    ceiling is read only from supported legs, which this never withholds.
+    """
+    legs = list(served)
+    ceiling = max(
+        (probability for _, probability, unsupported in legs if not unsupported),
+        default=None,
+    )
+    return {
+        outcome_id
+        for outcome_id, probability, unsupported in legs
+        if unsupported and (ceiling is None or probability > ceiling)
+    }
 
 
 #: What "the last trade supports the served price" means, and it is anchored to
