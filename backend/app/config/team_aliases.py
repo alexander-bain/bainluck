@@ -23,6 +23,30 @@ CURATED_TEAM_ALIASES: dict[tuple[str, str], list[str]] = {
     ("americanfootball_nfl", "San Francisco 49ers"): ["niners", "9ers"],
     ("americanfootball_nfl", "Tampa Bay Buccaneers"): ["bucs"],
     ("basketball_nba", "Philadelphia 76ers"): ["sixers"],
+    # #8685 — eleven more nicknames fans type, each measured on production
+    # 2026-09-25 before it was added. Every open market in the franchise's sport
+    # whose name holds the canonical token was read, and every one of them is the
+    # franchise's own (a city-less "Senators vs. Canadiens" game title, never a
+    # namesake): Canadiens 23/23, Yankees 47/47, Mavericks 2/2, Nationals 34/34,
+    # Penguins 25/25, Senators 27/27, Jaguars 32/32, Phillies 39/39, Cubs 36/36.
+    # Before this, `habs` served no game and no market (its only answer was the
+    # Belgian club Habay La Neuve) and `yanks`/`mavs`/`jags`/`phils` served no
+    # market. `dbacks` and `nucks` are spelled inside their tokens, so the futures
+    # rail already reached them by ILIKE and skips them; they are here for the
+    # GAME rail, which word-matches and returned 0 games for both.
+    # `nats` also names the VALORANT pro nAts; the arm is additive (a UNION), so
+    # the esports row that answers today still does.
+    ("icehockey_nhl", "Montreal Canadiens"): ["habs"],
+    ("icehockey_nhl", "Pittsburgh Penguins"): ["pens"],
+    ("icehockey_nhl", "Ottawa Senators"): ["sens"],
+    ("icehockey_nhl", "Vancouver Canucks"): ["nucks"],
+    ("baseball_mlb", "New York Yankees"): ["yanks"],
+    ("baseball_mlb", "Washington Nationals"): ["nats"],
+    ("baseball_mlb", "Philadelphia Phillies"): ["phils"],
+    ("baseball_mlb", "Chicago Cubs"): ["cubbies"],
+    ("baseball_mlb", "Arizona Diamondbacks"): ["dbacks"],
+    ("basketball_nba", "Dallas Mavericks"): ["mavs"],
+    ("americanfootball_nfl", "Jacksonville Jaguars"): ["jags"],
     # #8084 — NOT a colloquial nickname: the school's own formal name. Our row is
     # spelled `NC State Wolfpack`, the college feeds spell it `North Carolina St.`,
     # and nothing anywhere holds the form in between. Measured on production
