@@ -28,7 +28,10 @@ from app.utils.event_completion import (
     commence_time_is_a_reported_start,
     is_retired_event_status,
 )
-from app.utils.sport_keys import is_kalshi_shadowed_futures_ticker
+from app.utils.sport_keys import (
+    KALSHI_TICKER_TO_SPORT_KEY,
+    is_kalshi_shadowed_futures_ticker,
+)
 from app.utils.kalshi_occurrence_start import kalshi_game_scale_commence
 from app.utils.futures_liveness import KALSHI_BOOK_SILENT_SQL
 from app.utils.feed_market_quality import (  # #6676, the two-minute beat's third writer
@@ -735,6 +738,17 @@ _PM_FIXTURE_MAX_DIFF_HOURS = 3
 #: row the market moves onto must sit within 15 minutes of the venue's instant
 #: (the Red Sox doubleheader of the same night paired 17:05 with 17:06 and 22:05
 #: with 22:00). Zero rows or two rows inside it and nothing moves.
+#:
+#: Both bounds serve the KALSHI twin too (#8547, second specimen). There the
+#: venue's instant is the ticker's own HHMM (US Eastern, via
+#: :func:`ticker_start_utc`), and only for a ``WRONG_GAME_PREFIXES`` game ticker.
+#: At 11:32Z the twin step merged game 2's row into game 1's and carried
+#: ``KXMLBGAME-26SEP251905BALNYY`` (19:05 ET = 23:05Z = game 2) onto game 1
+#: (20:05Z). That is exactly 3.0h, which
+#: :func:`_ticker_date_conflicts_with_event`'s strict ``>`` keeps, so game 1
+#: blended game 2's Kalshi price. The 3h bound is NOT widened for this: a 3h gap
+#: is also the ET/PT-confusion shape that bound protects against. The arm moves
+#: the market only when the ONE row at the ticker's minute exists.
 _PM_VENUE_NAMES_ANOTHER_GAME = timedelta(minutes=90)
 _PM_VENUE_SAME_GAME = timedelta(minutes=15)
 
@@ -1644,8 +1658,18 @@ async def _venue_confirmed_covered_fixture(
     session, matchup, market, linked_event, *,
     window: Optional[timedelta] = None,
     exclude_retired: bool = False,
+    allow_kalshi_ticker: bool = False,
 ):
     """The real covered-league fixture this market's OWN venue instant names. #5544.
+
+    ``allow_kalshi_ticker`` (#8547): the venue-instant relink alone also asks
+    this of a Kalshi game ticker. The instant is the ticker's HHMM
+    (:func:`_kalshi_game_ticker_instant`) and the league is the one the ticker
+    PREFIX names (``kxmlbgame`` → ``baseball_mlb``), which must be a covered
+    league. Kalshi's short names ("New York Y") cannot pass the exact-name
+    resolver, and the prefix is the venue's own statement of the league. The
+    split-squad tie-break reads Gamma and is Polymarket only. Every other caller
+    leaves this False, so condition 1 below still holds for them.
 
     ``window`` / ``exclude_retired`` (#8547): the venue-instant relink asks this
     finder a NARROWER question than the phantom and retired-row arms — "which
@@ -1682,7 +1706,8 @@ async def _venue_confirmed_covered_fixture(
     declining one, so the safe direction is inverted from the rest of this file:
 
       1. Polymarket only. Kalshi states its referent in the ticker and has arm
-         (a)/(b) of the linkage guard for it.
+         (a)/(b) of the linkage guard for it. The one exception is the
+         venue-instant relink's ``allow_kalshi_ticker`` (#8547, above).
       2. ``covered_league_for_matchup`` — the SAME resolver the minting refusal
          calls, so the two halves of #5544 cannot drift onto two answers. NPB,
          CPBL, FIBA and the European hockey rows resolve to nothing here and are
@@ -1708,20 +1733,27 @@ async def _venue_confirmed_covered_fixture(
     """
     from app.models.models import Event, Sport
 
-    if market.source != "polymarket":
+    is_kalshi = allow_kalshi_ticker and market.source == "kalshi"
+    if market.source != "polymarket" and not is_kalshi:
         return None
 
-    fixture = venue_game_start(market)
+    fixture = (
+        _kalshi_game_ticker_instant(market) if is_kalshi
+        else venue_game_start(market)
+    )
     if fixture is None:
         return None  # no signal — see the docstring on venue_game_start
 
-    # `unambiguous_only` (#6377): this arm searches ONE league key for the row
-    # it will move a market onto, so a tie-break between two codes the clubs
-    # both field is a wrong-sport attachment rather than a missed one. See the
-    # resolver's docstring for the measured AFL/AFLW pair that makes this real.
-    league = await covered_league_for_matchup(
-        session, matchup.team_a, matchup.team_b, unambiguous_only=True,
-    )
+    if is_kalshi:
+        league = _kalshi_game_ticker_league(market)
+    else:
+        # `unambiguous_only` (#6377): this arm searches ONE league key for the
+        # row it will move a market onto, so a tie-break between two codes the
+        # clubs both field is a wrong-sport attachment rather than a missed one.
+        # See the resolver's docstring for the measured AFL/AFLW pair.
+        league = await covered_league_for_matchup(
+            session, matchup.team_a, matchup.team_b, unambiguous_only=True,
+        )
     if league is None:
         return None
 
@@ -1765,7 +1797,7 @@ async def _venue_confirmed_covered_fixture(
             or _fuzzy_team_match(matchup.team_b, row.away_team_name)
         )
     ]
-    if len(confirmed) == 2:
+    if len(confirmed) == 2 and not is_kalshi:
         # #8396: a split-squad pair is two real games, and the venue says
         # which one it prices by its own home marker. `None` = still refuse.
         split = await _split_pair_by_venue_home(market, confirmed)
@@ -1775,10 +1807,10 @@ async def _venue_confirmed_covered_fixture(
     if len(confirmed) != 1:
         if confirmed:
             logger.info(
-                "Venue-confirmed relink declined for polymarket %s: %d real %s "
+                "Venue-confirmed relink declined for %s %s: %d real %s "
                 "fixtures sit within %s of %s (%s) — ambiguous, leaving the "
                 "link on event %d for #1946",
-                market.external_id, len(confirmed), league,
+                market.source, market.external_id, len(confirmed), league,
                 window, fixture.isoformat(),
                 [row.id for row in confirmed], linked_event.id,
             )
@@ -1786,28 +1818,69 @@ async def _venue_confirmed_covered_fixture(
 
     row = confirmed[0]
     logger.info(
-        "Venue-confirmed relink (#5544): polymarket %s names %s, which is real "
-        "%s event %d — moving it off listing-time phantom %d",
-        market.external_id, fixture.isoformat(), league, row.id, linked_event.id,
+        "Venue-confirmed relink (#5544): %s %s names %s, which is real "
+        "%s event %d — moving it off event %d",
+        market.source, market.external_id, fixture.isoformat(), league, row.id,
+        linked_event.id,
     )
     return {"event_id": row.id, "sport_id": row.sport_id}
 
 
-def _venue_instant_disowns_link(market, linked_event) -> bool:
-    """Does this Polymarket market's own instant name a different game? #8547.
+def _kalshi_game_ticker_prefix(market) -> Optional[str]:
+    """The lowercased series prefix of a Kalshi ``WRONG_GAME_PREFIXES`` ticker, or None."""
+    if getattr(market, "source", None) != "kalshi":
+        return None
+    ext = (getattr(market, "external_id", None) or "").lower()
+    prefix = ext.split("-")[0] if "-" in ext else ext
+    return prefix if prefix in WRONG_GAME_PREFIXES else None
 
-    True only when the venue's ``startTime`` sits at least
-    :data:`_PM_VENUE_NAMES_ANOTHER_GAME` from the ``commence_time`` of the row
-    the market is linked to. Pure and in-memory, so the 15-minute pass pays for
-    the finder's query only on the rare link that fails this test.
 
-    False (leave the link alone) whenever either instant is missing or the
-    market is not Polymarket: Kalshi states its game in the ticker and has its
-    own guard arms, and a missing instant is no signal, never a refusal.
+def _kalshi_game_ticker_instant(market) -> Optional[datetime]:
+    """The UTC start a Kalshi game ticker's HHMM names, or None. #8547.
+
+    Only a ``WRONG_GAME_PREFIXES`` game ticker (one game, one start). Props share
+    the game's ticker token but are deliberately outside that set, and a
+    date-only ticker has no minute to compare. Every no-signal case is None.
     """
-    if getattr(market, "source", None) != "polymarket":
-        return False
-    fixture = venue_game_start(market)
+    if _kalshi_game_ticker_prefix(market) is None:
+        return None
+    return ticker_start_utc(extract_game_date_from_ticker(market.external_id))
+
+
+def _kalshi_game_ticker_league(market) -> Optional[str]:
+    """The covered league a Kalshi game ticker's prefix names, or None. #8547."""
+    prefix = _kalshi_game_ticker_prefix(market)
+    league = KALSHI_TICKER_TO_SPORT_KEY.get(prefix) if prefix else None
+    return league if _sport_key_is_odds_api_covered(league) else None
+
+
+def _market_venue_instant(market) -> Optional[datetime]:
+    """The instant the market's own venue gives for its game, or None. #8547.
+
+    Polymarket: Gamma's ``startTime`` (:func:`venue_game_start`). Kalshi: a game
+    ticker's HHMM (:func:`_kalshi_game_ticker_instant`). Anything else: None.
+    """
+    source = getattr(market, "source", None)
+    if source == "polymarket":
+        return venue_game_start(market)
+    if source == "kalshi":
+        return _kalshi_game_ticker_instant(market)
+    return None
+
+
+def _venue_instant_disowns_link(market, linked_event) -> bool:
+    """Does this market's own venue instant name a different game? #8547.
+
+    True only when the venue's instant (:func:`_market_venue_instant`) sits at
+    least :data:`_PM_VENUE_NAMES_ANOTHER_GAME` from the ``commence_time`` of the
+    row the market is linked to. Pure and in-memory, so the 15-minute pass pays
+    for the finder's query only on the rare link that fails this test.
+
+    False (leave the link alone) whenever either instant is missing, the market
+    is a Kalshi ticker outside ``WRONG_GAME_PREFIXES`` or without HHMM, or it is
+    neither venue. A missing instant is no signal, never a refusal.
+    """
+    fixture = _market_venue_instant(market)
     commence = getattr(linked_event, "commence_time", None)
     if fixture is None or not isinstance(commence, datetime):
         return False
@@ -5227,6 +5300,7 @@ async def _phase15_revalidate(
                 venue_named_row = await _venue_confirmed_covered_fixture(
                     session, matchup, market, linked_event,
                     window=_PM_VENUE_SAME_GAME, exclude_retired=True,
+                    allow_kalshi_ticker=True,
                 )
                 if venue_named_row is None:
                     stats["funnel"].setdefault("phase15_venue_instant_left_alone", 0)
@@ -5404,6 +5478,19 @@ async def _phase15_revalidate(
                 elif venue_named_row is not None:
                     stats["funnel"].setdefault("phase15_venue_instant_relinked", 0)
                     stats["funnel"]["phase15_venue_instant_relinked"] += 1
+                    # #8547: the row the market LEFT must stop blending it. A
+                    # same-teams move keeps the row's curve (no snapshot delete),
+                    # but its `kalshi`/`polymarket` key named this market; with no
+                    # other market of the source still linked there, that key is
+                    # the other game's price. Drop it now rather than waiting on
+                    # the orphan sweep.
+                    await session.flush()
+                    if await _prune_orphaned_blend_source(
+                        session, linked_event.id, market.source,
+                        exclude_market_id=market.id,
+                    ):
+                        stats.setdefault("phantom_blend_sources_pruned", 0)
+                        stats["phantom_blend_sources_pruned"] += 1
                 elif not teams_match or sport_mismatch:
                     stats["funnel"]["mislink_fixed"] += 1
                 else:
