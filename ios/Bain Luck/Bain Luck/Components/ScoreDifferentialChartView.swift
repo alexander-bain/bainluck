@@ -226,10 +226,17 @@ struct ScoreDifferentialChartView: View {
     /// `history.history` wins a minute outright; the bookmaker series only fills
     /// buckets it left empty. That precedence is the shipped behaviour and is
     /// preserved exactly.
+    ///
+    /// #8617 — empty where the sport's spread point is not a margin (baseball's
+    /// ±1.5 run line; see `SportVocab.sportsbookSpreadIsAMargin`). The gate is
+    /// HERE, not in the view, for the reason above: both callers read this
+    /// function, so the chart and the page's predicate withhold together.
     private static func projectedDiffPoints(
         history: EventHistoryResponse,
+        sportKey: String?,
         since startDate: Date?
     ) -> [Int: DiffPoint] {
+        guard SportVocab.forSport(sportKey).sportsbookSpreadIsAMargin else { return [:] }
         // Projected spread from odds history (projected home score - projected away score)
         var projectedByMinute: [Int: DiffPoint] = [:]
         for h in history.history {
@@ -310,7 +317,7 @@ struct ScoreDifferentialChartView: View {
         guard started else { return false }
         // `isGameStarted` is true past that guard, so this is exactly the
         // `startDate` `buildDataPoints()` computes.
-        return !projectedDiffPoints(history: history, since: commenceTime?.asDate).isEmpty
+        return !projectedDiffPoints(history: history, sportKey: sportKey, since: commenceTime?.asDate).isEmpty
     }
 
     private func buildDataPoints() -> [DiffPoint] {
@@ -322,7 +329,7 @@ struct ScoreDifferentialChartView: View {
         // `startDate`: a score row before first pitch belongs to another game.
         let projectionStart = Self.projectionStart(
             range: range, gameStart: startDate, window: forcedDomain)
-        var projectedByMinute = Self.projectedDiffPoints(history: history, since: projectionStart)
+        var projectedByMinute = Self.projectedDiffPoints(history: history, sportKey: sportKey, since: projectionStart)
 
         // Actual scores — only where the scoreboard counts the unit the
         // projection is quoted in. For tennis this stays empty on purpose: the

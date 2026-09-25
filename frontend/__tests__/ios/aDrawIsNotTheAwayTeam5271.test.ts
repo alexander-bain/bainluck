@@ -169,9 +169,11 @@ d("a draw is not the away team on iOS", () => {
     expect(yeses).toHaveLength(1);
 
     // …and it is the soccer row that says it. The `true` has to sit inside the
-    // entry whose key list starts with "soccer", not in a neighbour.
+    // entry whose key list starts with "soccer", not in a neighbour: no later
+    // entry (`(["`) may open between the key list and the `true`. (#8617 added
+    // a field after this one, so the entry no longer ends at its `))`.)
     expect(code).toMatch(
-      /\["soccer",[\s\S]{0,600}?winnerMarketPricesADraw: true\)\)/
+      /\["soccer",(?:(?!\(\[")[\s\S]){0,600}?winnerMarketPricesADraw: true\b/
     );
 
     // Every other declared row, and the undeclared default, say no.
