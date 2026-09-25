@@ -16,7 +16,6 @@ import Link from "next/link";
 import { format, parseISO } from "date-fns";
 import {
   makeEnsurePoint,
-  toMinuteKey,
   fillMinuteGaps,
   CATEGORY_LABEL_FORMAT,
 } from "@/lib/chartTimeline";
@@ -46,11 +45,18 @@ import type {
   WinProbHistoryPoint,
   WinProbSourceMeta,
   ScoringPlay,
+  ScoreHistoryPoint,
   ActiveChartPoint,
   EventHistoryResponse,
 } from "@/lib/types";
 import type { PeriodBoundary } from "@/lib/periodMarkers";
-import { carriedStateDisclosure, carryGameStateForward } from "@/lib/chartGameState";
+import {
+  attachScoringPlays,
+  carriedStateDisclosure,
+  carryGameStateForward,
+  foldScoreObservations,
+  stampObservedGameState,
+} from "@/lib/chartGameState";
 import {
   collapseDuplicateTransitions,
   placePeriodLabels,
@@ -312,6 +318,12 @@ interface OddsChartProps {
   winProbSources?: Record<string, WinProbSourceMeta>;
   /** Scoring plays from StatPal play-by-play for chart annotations */
   scoringPlays?: ScoringPlay[];
+  /**
+   * #8565 — `EventHistoryResponse.score_history`, passed straight through. A
+   * score observation for the readout like an ESPN row; the server stamps
+   * scoring plays from it (#8501).
+   */
+  scoreHistory?: ScoreHistoryPoint[];
   /** Backend-computed aggregate line (weighted median with staleness decay) */
   aggregateLine?: Array<{ timestamp: string; home_probability: number }>;
   /**
@@ -559,6 +571,7 @@ export default function OddsChart({
   winProbHistory,
   winProbSources,
   scoringPlays,
+  scoreHistory,
   aggregateLine,
   backendBlendServed = true,
   eventId,
@@ -1008,6 +1021,13 @@ export default function OddsChart({
     return espnHistory.filter((point) => inChartRange(point.timestamp));
   }, [espnHistory, inChartRange]);
 
+  // #8565 — same window as the ESPN rows it sits beside in the score carry.
+  const filteredScoreHistory = useMemo(() => {
+    if (!scoreHistory || scoreHistory.length === 0) return [];
+    if (!inChartRange) return scoreHistory;
+    return scoreHistory.filter((point) => inChartRange(point.timestamp));
+  }, [scoreHistory, inChartRange]);
+
   // Filter aggregate line — use commenceTime (not smartStartTime) because the
   // aggregate line is already a clean backend-computed weighted median without
   // the noisy flat pre-game data that smartStartTime is designed to skip.
@@ -1206,7 +1226,7 @@ export default function OddsChart({
       });
     }
     return out;
-  }, [filteredHistory, filteredBookmakerHistory, filteredWinProbHistory, filteredEspnHistory, useNewWinProbData, commenceTime, chartEndTime, isClosed, evidenceContract]);
+  }, [filteredHistory, filteredBookmakerHistory, filteredWinProbHistory, filteredEspnHistory, filteredScoreHistory, useNewWinProbData, commenceTime, chartEndTime, isClosed, evidenceContract]);
 
   /** Series whose line ends before the chart does, with nothing observed since. */
   const staleTrailingEdges = useMemo(() => {
@@ -1344,75 +1364,24 @@ export default function OddsChart({
     }
 
     // ── Enrich chart points with game state (score, period, clock) ──
-    // Sources: ESPN history (has score/period/clock) and win_prob_history game_state
-    // ESPN history is the richest source for game context
-    for (const snap of filteredEspnHistory) {
-      const dp = dataMap.get(toMinuteKey(snap.timestamp));
-      if (dp) {
-        if (snap.home_score != null) dp._homeScore = snap.home_score;
-        if (snap.away_score != null) dp._awayScore = snap.away_score;
-        if (snap.period) dp._period = snap.period;
-        if (snap.game_clock) dp._clock = snap.game_clock;
-        // #925 — remember WHICH snapshot supplied each field. Stamped per
-        // field, never once for "state": a score row with no period must not
-        // refresh the age of a period seen minutes earlier, and a clock row
-        // with no period must not either.
-        if (snap.period) dp._periodObservedAt = snap.timestamp;
-        if (snap.game_clock) dp._clockObservedAt = snap.timestamp;
-        if (snap.home_score != null || snap.away_score != null) {
-          dp._scoreObservedAt = snap.timestamp;
-        }
-      }
-    }
+    // ESPN history first, win-prob `game_state` as the secondary source; each
+    // field stamped by the row that observed it (#925). Moved verbatim into
+    // `stampObservedGameState` (#8565) so the play/score guard runs this code.
+    stampObservedGameState(
+      dataMap,
+      filteredEspnHistory,
+      useNewWinProbData ? Object.values(filteredWinProbHistory) : null,
+    );
 
-    // Win prob history game_state as secondary source
-    if (useNewWinProbData) {
-      for (const points of Object.values(filteredWinProbHistory)) {
-        for (const pt of points) {
-          const gs = pt.game_state;
-          if (!gs) continue;
-          const dp = dataMap.get(toMinuteKey(pt.timestamp));
-          if (!dp) continue;
-          if (dp._homeScore == null && gs.home_score != null)
-            dp._homeScore = gs.home_score as number;
-          if (dp._awayScore == null && gs.away_score != null)
-            dp._awayScore = gs.away_score as number;
-          if (!dp._period && gs.period) dp._period = gs.period as string;
-          if (!dp._clock && gs.clock) dp._clock = gs.clock as string;
-          // #925 — same per-field stamping for the secondary source. Guarded
-          // on the stamp's own absence so an ESPN observation above is never
-          // re-dated by a win-prob row that only echoed it.
-          if (!dp._periodObservedAt && gs.period) dp._periodObservedAt = pt.timestamp;
-          if (!dp._clockObservedAt && gs.clock) dp._clockObservedAt = pt.timestamp;
-          if (!dp._scoreObservedAt && (gs.home_score != null || gs.away_score != null)) {
-            dp._scoreObservedAt = pt.timestamp;
-          }
-        }
-      }
-    }
-
-    // Map scoring plays onto chart data points
+    // Map scoring plays onto chart data points — at or after the play's
+    // minute, so the point's readout already includes the play (#8565,
+    // `attachScoringPlays`); the nearest-point rule put the 17–34 touchdown on
+    // a point still carrying 17–27.
     if (scoringPlays && scoringPlays.length > 0) {
       const sortedPoints = Array.from(dataMap.values()).sort(
         (a, b) => parseISO(a.timestamp).getTime() - parseISO(b.timestamp).getTime()
       );
-      for (const play of scoringPlays) {
-        if (!play.timestamp) continue;
-        const playTime = parseISO(play.timestamp).getTime();
-        let closestIdx = 0;
-        let closestDist = Infinity;
-        for (let i = 0; i < sortedPoints.length; i++) {
-          const dist = Math.abs(parseISO(sortedPoints[i].timestamp).getTime() - playTime);
-          if (dist < closestDist) {
-            closestDist = dist;
-            closestIdx = i;
-          }
-        }
-        // Only attach if within 2 minutes
-        if (closestDist < 120000) {
-          sortedPoints[closestIdx]._scoringPlay = play;
-        }
-      }
+      attachScoringPlays(sortedPoints, scoringPlays);
     }
 
     // Fill missing minutes for uniform x-axis spacing.
@@ -1533,6 +1502,10 @@ export default function OddsChart({
     // its only mounted consumer). `_clockApprox` keeps the meaning it has had
     // since `8bf2bf8d`; the period/score flags and the three `_*ObservedAt`
     // stamps are what let `GamePlayCard` say how old a carried readout is.
+    // #8565 — `score_history` joins the score carry, dated by its own
+    // timestamp: the server stamps plays from it (#8501), so a readout that
+    // skipped it printed a play beside the score from before it.
+    foldScoreObservations(sorted, filteredScoreHistory);
     carryGameStateForward(sorted);
 
     return sorted;

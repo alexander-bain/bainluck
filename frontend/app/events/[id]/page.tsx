@@ -2467,6 +2467,7 @@ export default function EventPage({ params }: EventPageProps) {
               winProbHistory={historyData?.win_prob_history}
               winProbSources={historyData?.win_prob_sources}
               scoringPlays={historyData?.scoring_plays}
+              scoreHistory={historyData?.score_history}
               aggregateLine={historyData?.aggregate_line ?? undefined}
               backendBlendServed={backendBlendServed}
               completedAt={historyData?.completed_at ?? undefined}
@@ -3066,6 +3067,7 @@ export default function EventPage({ params }: EventPageProps) {
               winProbHistory={historyData?.win_prob_history}
               winProbSources={historyData?.win_prob_sources}
               scoringPlays={historyData?.scoring_plays}
+              scoreHistory={historyData?.score_history}
               aggregateLine={historyData?.aggregate_line ?? undefined}
               backendBlendServed={backendBlendServed}
               completedAt={historyData?.completed_at ?? undefined}
