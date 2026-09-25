@@ -174,6 +174,7 @@ from app.utils.search_match_class import (
     query_is_entity_name,
     query_names_both_sides,
     query_names_participant,
+    query_resolves_team,
 )
 from app.utils.blank_event_cards import not_a_blank_card
 from app.utils.feed_market_quality import has_no_real_price, is_empty_book_midpoint
@@ -10600,6 +10601,18 @@ async def typeahead_search(
         # truncated to `_EVENT_POOL_SIZE` before anything is scored, and this row
         # exists only because four namesake fixtures were already ahead of it.
         _ta_rows = [*_ta_lead_rows, *_ta_rows]
+    # #4615: the lead team's own fixtures ALREADY in the pool are its games too.
+    # The arm above marks only rows it fetched itself, so a fixture the pool
+    # already held was scored as a plain `event` and served under its own props:
+    # `dodg` on production 2026-09-25 gave Dodgers, four "Nth Inning Winner"
+    # markets, then tonight's game. Gated on the team being the entity the query
+    # names (`query_resolves_team`), so `angel`/`new` keep ruling 041.
+    if _ta_lead_team is not None and query_resolves_team(
+        _q_identity, _typeahead_evidence(_ta_lead_team, _q_identity)
+    ):
+        _ta_lead_team_row_ids |= {
+            ev.id for ev in _ta_rows if _ta_is_lead_team_fixture(ev)
+        }
 
     event_pool = []
     # #2580 is #2623 seen through this dropdown: typing "Alcaraz" offered the
