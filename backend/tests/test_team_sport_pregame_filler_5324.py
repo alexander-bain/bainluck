@@ -32,7 +32,7 @@ The repair is two halves, both driven through the REAL writer below:
 """
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 import pytest
 
