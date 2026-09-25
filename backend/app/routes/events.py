@@ -15843,8 +15843,38 @@ _GENERIC_PLACE_QUALIFIERS = frozenset({
 #          | its distinctive word — Real Madrid on `Real Madrid`/`Madrid`, Real
 #          | Sociedad on `Real Sociedad`/`Sociedad`, Real Salt Lake on `Real
 #          | Salt Lake`/`Real Salt`/`Salt`/`Lake`.              LOSS 0
+#
+# SPORT WORDS MOVED 2026-09-25 (#8632), the same defect with the SPORT in the
+# mascot slot. Production, `/api/events/15318532/related-futures` (Gargzdai
+# Basketball v BC Neptunas Klaipeda, `basketball_other`): `'Gargzdai
+# Basketball'` emitted a bare `'Basketball'`, which is a whole token of every
+# `Pro Basketball ...` and `Women's Pro Basketball ...` market title, so the
+# market-name fallback gave the Lithuanian club every NBA and WNBA title, award,
+# division and seed market — Finals MVP x75, Cup MVP x75, Sixth Man x74 — and
+# the page ran to 17,664 px. Neither team resolves to a `teams` row, so #7867's
+# and #8620's resolved-club rules cannot see it; the pattern is the defect.
+#
+# A sport word names what KIND of club it is, exactly as `United` does: it is
+# shared by every club of that sport and by every market about the sport.
+#
+# THE RECALL CENSUS, production 2026-09-25 (`artifacts-lane1-815/measure_8632.py`,
+# over `teams.name` AND `events.home_team_name`/`away_team_name`, since this
+# specimen has no `teams` row): 305 distinct names lose a bare sport word —
+# esports 225, basket 26, basketball 22, rugby 8, cricket 6, handball 6,
+# football 5, hockey 5, soccer 2. A bare sport word can only be load-bearing
+# where a row names the club by the sport ALONE; every such label in both
+# tables (231 outcome rows: `Handball` x112, `Soccer` x93, `Football` x11,
+# `Hockey` x9, `Basketball` x6) is an answer to a "What will the announcers
+# say…" mention market, not a club.                              LOSS 0
+# Control on the same instrument: `Texas Rangers` hypothetically losing `Texas`
+# reports 4,608 labels. Every club keeps its full name and its own word —
+# Gargzdai on `Gargzdai`, Lyon Rugby on `Lyon`, `Rugby Borough FC` (a town) on
+# `Rugby Borough`; `G2 Esports`-shaped names, whose other word is under 4
+# characters, keep their full name. `volleyball`/`baseball` reach 0 names today.
 _CLUB_TYPE_DESIGNATORS = frozenset({
     "united", "city", "town", "real",
+    "basketball", "basket", "football", "soccer", "hockey", "handball",
+    "volleyball", "baseball", "rugby", "cricket", "esports",
 })
 
 #: The bare tokens `_team_name_patterns` will not emit, from both families.
