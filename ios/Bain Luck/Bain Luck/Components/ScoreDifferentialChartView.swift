@@ -27,6 +27,11 @@ struct ScoreDifferentialChartView: View {
     /// so this axis takes the SAME stride as the Win Probability chart above it
     /// rather than the one rung finer its wider plot would clear alone.
     var pageAxisPlotWidth: CGFloat = 0
+    /// #8481 — the page's one All / Since Start choice, set by the picker above
+    /// Win Probability. This chart has no picker of its own (Alex, 2026-09-24:
+    /// one control governs both); in All its projection runs back to the start
+    /// of `forcedDomain`, the run-up the chart above is showing.
+    var range: OddsTimeRange = .sinceStart
 
     /// The chart's height and its gutter's width, named because the gutter's
     /// label run is derived from the height (#2903) — two literals that have to
@@ -312,7 +317,12 @@ struct ScoreDifferentialChartView: View {
         let startDate = isGameStarted ? gameStartDate : nil
         let endDate = gameEndDate
 
-        var projectedByMinute = Self.projectedDiffPoints(history: history, since: startDate)
+        // #8481 — the projection is a pre-game number too, so All shows it over
+        // the same run-up the Win Probability chart shows. The ACTUAL score keeps
+        // `startDate`: a score row before first pitch belongs to another game.
+        let projectionStart = Self.projectionStart(
+            range: range, gameStart: startDate, window: forcedDomain)
+        var projectedByMinute = Self.projectedDiffPoints(history: history, since: projectionStart)
 
         // Actual scores — only where the scoreboard counts the unit the
         // projection is quoted in. For tennis this stays empty on purpose: the
@@ -347,6 +357,16 @@ struct ScoreDifferentialChartView: View {
         return mergeDiffPoints(projectedByMinute: projectedByMinute,
                                actualByMinute: actualByMinute,
                                endDate: endDate)
+    }
+
+    /// Where the projected series begins: the game's start, or — in All, with a
+    /// shared window — the window's own start, never later than the game's.
+    static func projectionStart(
+        range: OddsTimeRange, gameStart: Date?, window: ClosedRange<Date>?
+    ) -> Date? {
+        guard let gameStart else { return nil }
+        guard range == .all, let window else { return gameStart }
+        return min(gameStart, window.lowerBound)
     }
 
     /// Actual score differentials read off `win_prob_history` game states, one
@@ -395,15 +415,26 @@ struct ScoreDifferentialChartView: View {
 
         merged.sort { $0.date < $1.date }
 
+        // #8481 — nothing is drawn outside the window the axis shows; the chart's
+        // x-scale does not clip its marks.
+        let contained = merged.filter { SharedChartWindow.contains($0.date, in: forcedDomain) }
         if let endDate {
-            return merged.filter { $0.date <= endDate }
+            return contained.filter { $0.date <= endDate }
         }
-        return merged
+        return contained
     }
 
     // MARK: - Chart
 
     private func chartView(dataPoints: [DiffPoint]) -> some View {
+        // The MATCH chart's plan and tick instants, on the page's narrowest plot
+        // (#1833), read by both the gridlines and the drawn labels (#8481).
+        let domain = chartXDomain(dataPoints: dataPoints)
+        let plan = OddsChartView.xAxisPlan(
+            for: domain,
+            plotWidth: OddsChartView.axisPlanWidth(
+                own: plotWidth, pageNarrowest: pageAxisPlotWidth))
+        let ticks = OddsChartView.xAxisTicks(for: domain, plan: plan)
         let actualDiffs = dataPoints.compactMap(\.actualDiff)
         let projDiffs = dataPoints.compactMap(\.projectedDiff)
         let allDiffs = actualDiffs + projDiffs
@@ -457,7 +488,7 @@ struct ScoreDifferentialChartView: View {
             }
         }
         .chartYScale(domain: yRange)
-        .chartXScale(domain: chartXDomain(dataPoints: dataPoints))
+        .chartXScale(domain: domain)
         .chartYAxis {
             AxisMarks(position: .leading, values: .automatic(desiredCount: 5)) { value in
                 AxisGridLine(stroke: StrokeStyle(lineWidth: 0.3))
@@ -486,19 +517,14 @@ struct ScoreDifferentialChartView: View {
             // a sub-90-minute domain that cleared one more rung of the ladder:
             // 10-minute ticks under 15-minute ones. Both now plan on the page's
             // narrowest plot.
-            let plan = OddsChartView.xAxisPlan(
-                for: chartXDomain(dataPoints: dataPoints),
-                plotWidth: OddsChartView.axisPlanWidth(
-                    own: plotWidth, pageNarrowest: pageAxisPlotWidth))
-            AxisMarks(values: .stride(by: plan.component, count: plan.count)) { value in
+            //
+            // #8481: and the labels are drawn in the overlay below, off the same
+            // `ticks`, because the framework's own placement collided the last
+            // pair on iOS 27 (see `ChartTimeAxisLabels`).
+            AxisMarks(values: ticks) { _ in
                 AxisGridLine(stroke: StrokeStyle(lineWidth: 0.15))
                     .foregroundStyle(.secondary.opacity(0.3))
-                AxisValueLabel(
-                    format: plan.format,
-                    anchor: OddsChartView.xAxisLabelAnchor(
-                        index: value.index, count: value.count)
-                )
-                .font(.system(size: 9))
+                ChartTimeAxisLabels.reservedRow(format: plan.format)
             }
         }
         .chartXSelection(value: $selectedDate)
@@ -526,6 +552,7 @@ struct ScoreDifferentialChartView: View {
                 Color.clear
                     .preference(key: PlotWidthPreferenceKey.self, value: plotFrame.width)
                     .preference(key: PageAxisPlotWidthPreferenceKey.self, value: plotFrame.width)
+                ChartTimeAxisLabels(ticks: ticks, plan: plan, proxy: proxy, plotFrame: plotFrame)
                 ForEach(placements, id: \.key) { placement in
                     Text(periodMarkers[placement.key].label)
                         .font(.system(size: 8, weight: .semibold))

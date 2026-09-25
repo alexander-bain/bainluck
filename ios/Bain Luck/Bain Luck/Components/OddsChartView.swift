@@ -211,7 +211,6 @@ final class OddsChartViewModel: ObservableObject {
     @Published var history: EventHistoryResponse?
     @Published var loading = true
     @Published var error: String?
-    @Published var selectedRange: OddsTimeRange = .all
 
     let eventId: Int
 
@@ -303,6 +302,11 @@ struct OddsChartView: View {
     /// `init`, because `init` runs once and this keeps arriving. `historyEdge`
     /// watches it; `OddsChartViewModel.adopt` decides.
     var preloadedHistory: EventHistoryResponse?
+    /// #8481 — the page's one All / Since Start choice, which this chart's
+    /// picker writes and the Score Differential chart below also reads. It was a
+    /// `@Published` on this chart's own view model, which is why All could widen
+    /// the line here and nowhere else.
+    @Binding var selectedRange: OddsTimeRange
     /// Binding to expose the selected game play point (for GamePlayCardView)
     @Binding var selectedPlayPoint: GamePlayPoint?
     @StateObject private var vm: OddsChartViewModel
@@ -351,11 +355,11 @@ struct OddsChartView: View {
         Self.offersSinceStart(isGameStarted: isGameStarted, kickoff: kickoffDate)
     }
 
-    /// The range actually drawn. `.task` defaults a started game to Since Start
-    /// before the payload that can veto it has arrived, so a hidden picker
-    /// must not leave that choice cutting the line or wording the empty state.
+    /// The range actually drawn. The page defaults to Since Start before the
+    /// payload that can veto it has arrived, so a hidden picker must not leave
+    /// that choice cutting the line or wording the empty state.
     private var drawnRange: OddsTimeRange {
-        showPicker ? vm.selectedRange : .all
+        showPicker ? selectedRange : .all
     }
 
     /// Short team name: prefer ESPN abbreviation (e.g. "BOS"), fall back to the
@@ -387,6 +391,7 @@ struct OddsChartView: View {
          refreshStreaming: Bool = false,
          forcedDomain: ClosedRange<Date>? = nil,
          pageAxisPlotWidth: CGFloat = 0,
+         selectedRange: Binding<OddsTimeRange> = .constant(.sinceStart),
          selectedPlayPoint: Binding<GamePlayPoint?> = .constant(nil),
          preloadedHistory: EventHistoryResponse? = nil,
          liveFrames: [LiveBlendPoint] = []) {
@@ -407,6 +412,7 @@ struct OddsChartView: View {
         self.pageAxisPlotWidth = pageAxisPlotWidth
         self.liveFrames = liveFrames
         self.preloadedHistory = preloadedHistory
+        _selectedRange = selectedRange
         _selectedPlayPoint = selectedPlayPoint
         _vm = StateObject(wrappedValue: OddsChartViewModel(eventId: eventId, preloaded: preloadedHistory))
     }
@@ -527,10 +533,9 @@ struct OddsChartView: View {
         }
         .padding()
         .task {
-            // Default to "Since Start" for started games with a known commence time
-            if Self.offersSinceStart(isGameStarted: isGameStarted, kickoff: kickoffDate) {
-                vm.selectedRange = .sinceStart
-            }
+            // #8481 — the Since Start default is the PAGE's initial value now.
+            // Re-asserting it here reset the reader's choice on every appear,
+            // and wrote a range the score chart below could not see.
             await vm.load()
         }
         // #920. The page re-polls every 120 s and hands the result down; until
@@ -875,16 +880,16 @@ struct OddsChartView: View {
         HStack(spacing: 0) {
             ForEach(OddsTimeRange.allCases) { range in
                 Button {
-                    vm.selectedRange = range
+                    selectedRange = range
                     AnalyticsService.trackChartTimeRange(eventId: eventId, range: range.label)
                 } label: {
                     Text(range.label)
                         .font(.caption2)
-                        .fontWeight(vm.selectedRange == range ? .semibold : .regular)
+                        .fontWeight(selectedRange == range ? .semibold : .regular)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
-                        .background(vm.selectedRange == range ? Color.blue.opacity(0.15) : Color.clear)
-                        .foregroundStyle(vm.selectedRange == range ? .blue : .secondary)
+                        .background(selectedRange == range ? Color.blue.opacity(0.15) : Color.clear)
+                        .foregroundStyle(selectedRange == range ? .blue : .secondary)
                 }
             }
         }
@@ -929,6 +934,14 @@ struct OddsChartView: View {
         // Always clip post-game data for completed games (prevents Kalshi/Polymarket drift toward 50%)
         if EventState.isFinished(status), let endDate = gameEndDate {
             filtered = filtered.filter { $0.date <= endDate }
+        }
+
+        // #8481 — nothing is drawn outside the window the axis shows. The
+        // chart's x-scale does not clip its marks, so All's pre-game points,
+        // drawn against a window that opened at first pitch, ran out through the
+        // y-axis to the screen edge on Alex's phone.
+        if let forcedDomain {
+            filtered = filtered.filter { SharedChartWindow.contains($0.date, in: forcedDomain) }
         }
 
         guard isGameStarted else { return filtered }
@@ -1374,6 +1387,16 @@ struct OddsChartView: View {
         let yMin = 0.0
         let yMax = 1.0
 
+        // One plan and one set of tick instants, read by the gridlines AND the
+        // labels drawn in the overlay (#8481), so the two cannot disagree.
+        let domain = xAxisDomain(for: dataPoints)
+        let plan = Self.xAxisPlan(
+            for: domain,
+            plotWidth: Self.axisPlanWidth(
+                own: plotWidth.wrappedValue,
+                pageNarrowest: sharesPageAxis ? pageAxisPlotWidth : 0))
+        let ticks = Self.xAxisTicks(for: domain, plan: plan)
+
         return Chart {
             chartContent(dataPoints: dataPoints, sources: sources,
                          visibleMarkers: visibleMarkers, moments: moments)
@@ -1383,7 +1406,7 @@ struct OddsChartView: View {
         .accessibilityValue(Text(Self.accessibilityValue(
             dataPoints: dataPoints, selectedDate: selectedDate,
             homeShort: homeShort, awayShort: awayShort, moments: moments)))
-        .chartXScale(domain: xAxisDomain(for: dataPoints))
+        .chartXScale(domain: domain)
         // Period marker labels positioned inside chart via overlay.
         //
         // #3237, two corrections in one place, because they are the same mistake:
@@ -1411,6 +1434,7 @@ struct OddsChartView: View {
                     .preference(key: PlotWidthPreferenceKey.self, value: plotFrame.width)
                     .preference(key: PageAxisPlotWidthPreferenceKey.self,
                                 value: sharesPageAxis ? plotFrame.width : 0)
+                ChartTimeAxisLabels(ticks: ticks, plan: plan, proxy: proxy, plotFrame: plotFrame)
                 // Small floating period chips near the top of the chart
                 ForEach(placements, id: \.key) { placement in
                     let marker = visibleMarkers[placement.key]
@@ -1438,19 +1462,10 @@ struct OddsChartView: View {
             }
         }
         .chartXAxis {
-            let plan = Self.xAxisPlan(
-                for: xAxisDomain(for: dataPoints),
-                plotWidth: Self.axisPlanWidth(
-                    own: plotWidth.wrappedValue,
-                    pageNarrowest: sharesPageAxis ? pageAxisPlotWidth : 0))
-            AxisMarks(values: .stride(by: plan.component, count: plan.count)) { value in
+            AxisMarks(values: ticks) { _ in
                 AxisGridLine(stroke: StrokeStyle(lineWidth: 0.15))
                     .foregroundStyle(.secondary.opacity(0.3))
-                AxisValueLabel(
-                    format: plan.format,
-                    anchor: Self.xAxisLabelAnchor(index: value.index, count: value.count)
-                )
-                .font(.system(size: 9))
+                ChartTimeAxisLabels.reservedRow(format: plan.format)
             }
         }
         .onPreferenceChange(PlotWidthPreferenceKey.self) { width in
@@ -2624,6 +2639,71 @@ struct OddsChartView: View {
         guard pageNarrowest > 0 else { return own }
         guard own > 0 else { return pageNarrowest }
         return min(own, pageNarrowest)
+    }
+
+    /// The instants a plan ticks at (#8481): the domain's first whole
+    /// `component` (the minute, hour or day it opens in, rounded up), then every
+    /// `count` of them while inside the domain.
+    ///
+    /// These used to be the framework's (`.stride(by:count:)`), which left the
+    /// labels drawn in `ChartTimeAxisLabels` unable to know where the gridlines
+    /// were. Rounding to the component and no further is what the framework
+    /// drew on Alex's installed build — Brewers @ Phillies opened at 3:05 PM and
+    /// ticked 3:05 · 3:15 · 3:25 · 3:35 · 3:45, the sequence #1833 accepted on
+    /// both charts — so owning the ticks does not move a single one.
+    static func xAxisTicks(
+        for domain: ClosedRange<Date>, plan: XAxisPlan, calendar: Calendar = .current
+    ) -> [Date] {
+        guard plan.count > 0,
+              let opening = calendar.dateInterval(of: plan.component, for: domain.lowerBound)
+        else { return [] }
+        let first = opening.start == domain.lowerBound ? opening.start : opening.end
+        var ticks: [Date] = []
+        // Bounded so no domain can spin this: the coarsest rung already fits a
+        // year into a handful of ticks.
+        for step in 0..<200 {
+            guard let tick = calendar.date(
+                byAdding: plan.component, value: step * plan.count, to: first),
+                  tick <= domain.upperBound else { break }
+            ticks.append(tick)
+        }
+        return ticks
+    }
+
+    /// Where each time label's CENTRE sits, in plot points, given where its tick
+    /// sits (#8481).
+    ///
+    /// Every label is centred on its tick and then moved inward only as far as
+    /// it must go to stay inside the plot. This replaces hanging the two END
+    /// labels inward by a whole anchor (`xAxisLabelAnchor`) and leaving the rest
+    /// to the framework, which stopped centring them: on iOS 27 an
+    /// `AxisValueLabel(anchor: .top)` hangs RIGHT of its tick, as `.topLeading`
+    /// does, while `.topTrailing` still hangs left. Alex's iPhone 18 Pro Max on
+    /// TestFlight 1.0.1(20) drew 3:35 PM growing right and 3:45 PM growing left,
+    /// into each other — `3:35 PM3:45 PM` on both stacked charts, reproduced
+    /// byte-for-byte on the iOS 27 simulator and absent on iOS 26.5. The last
+    /// tick was not even at the edge: the domain ran on to 3:52, so the label
+    /// needed no move at all.
+    ///
+    /// Clamped with the style's MEASURED widest label (`xAxisLabelWidth`), the
+    /// same width `xAxisPlan` plans on, so the renderer and the planner share one
+    /// model of the row. A plot narrower than one label centres everything.
+    static func xAxisLabelCenters(
+        tickPositions: [CGFloat], plotWidth: CGFloat, labelWidth: CGFloat
+    ) -> [CGFloat] {
+        let half = labelWidth / 2
+        guard plotWidth >= labelWidth else {
+            return tickPositions.map { _ in plotWidth / 2 }
+        }
+        return tickPositions.map { min(max($0, half), plotWidth - half) }
+    }
+
+    /// Whether a row of label centres leaves `xAxisLabelMinGap` of clear space
+    /// between every neighbouring pair of `labelWidth`-wide labels.
+    static func xAxisLabelsClear(centers: [CGFloat], labelWidth: CGFloat) -> Bool {
+        zip(centers, centers.dropFirst()).allSatisfy { left, right in
+            right - left >= labelWidth + xAxisLabelMinGap
+        }
     }
 
     /// Where a time label hangs off its own tick (#3237).

@@ -45,80 +45,18 @@ struct EventDetailView: View {
     @State private var heroBottom: CGFloat?
     @State private var scrollViewportTop: CGFloat = 0
     static let scrollSpace = "eventDetailScroll"
+    /// #8481 — the page's ONE All / Since Start choice. The picker above Win
+    /// Probability writes it and both charts read it (Alex, 2026-09-24: one
+    /// control governs both). It lived in the probability chart's own view model,
+    /// where neither the shared window nor the score chart could see it.
+    @State private var chartRange: OddsTimeRange = .sinceStart
     private var sharedChartDomain: ClosedRange<Date>? {
-        guard let event = vm.event,
-              let commenceTime = event.commenceTime,
-              let scheduledStart = commenceTime.asDate else { return nil }
-        // #7878 D — a stored start the payload says is NOT a start (Kalshi's
-        // expected resolution hour, `commence_time_is_kickoff: false`) cannot
-        // open the axis either. It is the far end of the match: an axis from
-        // there puts the whole contest off the left edge however the chart
-        // filters its points. `nil` is the existing fallback — each chart
-        // takes its own domain from what it drew.
-        guard OddsChartView.sinceStartCut(
-            commenceTime: scheduledStart,
-            commenceTimeIsKickoff: vm.history?.commenceTimeIsKickoff
-        ) != nil else { return nil }
-
-        // Use actual game start (first ESPN data point) instead of scheduled
-        // time — a game that starts early/late should anchor to when it really
-        // began, not when it was listed.
-        //
-        // #1833: but `min()` here is unbounded backwards, and in-game rows from
-        // the PREVIOUS NIGHT'S game were landing on this event. On Alex's
-        // 2026-08-13 Sox–Jays specimen the earliest period-bearing ESPN row was
-        // 2026-08-12T23:34, so this opened the x-axis ~20 hours before first
-        // pitch: a 22-hour domain for a 2.5-hour game, which is what reduced the
-        // time labels to unreadable soup on a phone.
-        //
-        // The backend now filters those rows (app/utils/game_window.py), but a
-        // chart domain must not depend on upstream cleanliness to stay legible.
-        // A real early start is minutes, not hours — so accept an earlier anchor
-        // only within a warm-up margin and otherwise trust the schedule.
-        let earliestPlausibleStart = scheduledStart.addingTimeInterval(-2 * 60 * 60)
-        let actualStart: Date
-        if let espn = vm.history?.espnHistory,
-           let firstEspn = espn.first(where: { $0.period != nil && !($0.period?.isEmpty ?? true) }),
-           let espnDate = firstEspn.timestamp.asDate {
-            let candidate = min(scheduledStart, espnDate.addingTimeInterval(-60))
-            actualStart = max(candidate, earliestPlausibleStart)
-        } else {
-            actualStart = scheduledStart
-        }
-
-        // Build a domain only when the upper bound is at/after the lower bound.
-        // A market-less / aged-out closed game can have history whose only points
-        // predate the scheduled start (pre-game odds snapshot, no in-game data);
-        // a "stuck live" event can have a future start. Either yields an inverted
-        // ClosedRange, and `lower...upper` TRAPS when lower > upper — the crash on
-        // tapping a market-less card (#1092). Return nil in that case so the child
-        // charts compute their own safe domain from their data points.
-        func domain(upTo end: Date) -> ClosedRange<Date>? {
-            let upper = end.addingTimeInterval(30)
-            return upper >= actualStart ? actualStart...upper : nil
-        }
-
-        // For completed games: use last game data point, NOT completedAt
-        // (completedAt is a backend processing timestamp, often 30-45 min after game end)
-        if EventState.isFinished(event.status) {
-            let lastEspn = vm.history?.espnHistory?.last?.timestamp.asDate
-            let lastOdds = vm.history?.history.last?.timestamp.asDate
-            if let gameEnd = [lastEspn, lastOdds].compactMap({ $0 }).max(),
-               let range = domain(upTo: gameEnd) {
-                return range
-            }
-            // Fallback to completedAt only if no game data
-            if let ca = vm.history?.completedAt, let end = ca.asDate,
-               let range = domain(upTo: end) {
-                return range
-            }
-            return nil
-        }
-        if event.status == "live" {
-            let upper = Date().addingTimeInterval(60)
-            return upper >= actualStart ? actualStart...upper : nil
-        }
-        return nil
+        guard let event = vm.event else { return nil }
+        return SharedChartWindow.domain(
+            status: event.status,
+            commenceTime: event.commenceTime,
+            history: vm.history,
+            range: chartRange)
     }
     @Environment(\.horizontalSizeClass) private var sizeClass
 
@@ -354,6 +292,7 @@ struct EventDetailView: View {
                                      refreshStreaming: refreshIndicator == .streaming,
                                      forcedDomain: sharedChartDomain,
                                      pageAxisPlotWidth: pageAxisPlotWidth,
+                                     selectedRange: $chartRange,
                                      selectedPlayPoint: $selectedPlayPoint,
                                      preloadedHistory: vm.history,
                                      // #920 — the pushed blends the hero is
@@ -437,7 +376,8 @@ struct EventDetailView: View {
                             homeTeamLogo: event.homeTeamData?.logoSmall,
                             awayTeamLogo: event.awayTeamData?.logoSmall,
                             forcedDomain: sharedChartDomain,
-                            pageAxisPlotWidth: pageAxisPlotWidth
+                            pageAxisPlotWidth: pageAxisPlotWidth,
+                            range: chartRange
                         )
                     }
                     // Market Maps (margin + total density curves)
