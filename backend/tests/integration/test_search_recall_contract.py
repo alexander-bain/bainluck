@@ -2035,3 +2035,175 @@ async def test_the_seeded_teams_that_never_collided_are_untouched(
         "Boston Celtics" in t
         for t in _typeahead_texts(await typeahead_with_infix_teams("celtics"))
     ), "a plain whole-word team match stopped matching"
+
+
+# --------------------------------------------------------------------------
+# #8523 — a rostered player's full name reaches his club
+# --------------------------------------------------------------------------
+# Here and not in a unit suite for the reason the #7381 block gives: the lookup
+# is Postgres JSON (`jsonb_array_elements`, `->>`, `#>>`) over the roster column,
+# and only the engine that owns those operators can say what they match.
+
+
+@pytest.fixture
+async def search_with_a_rostered_player(seeded_db, search):
+    """`search`, plus the rows #8523 was reported on (production 2026-09-25).
+
+    `?q=patrick mahomes` served teams 0, games 0 and futures led by novelty
+    markets listing him as an outcome (Madden cover, SNL host), with his award
+    markets below them. Transcribed shape, trimmed to one of each class:
+
+        Kansas City Chiefs   NFL, roster holds him (object form) and Travis
+                             Kelce (the older bare-string form — 992 of the
+                             10,268 production roster entries are strings)
+        Chiefs at Dolphins   scheduled, in the window
+        Offensive Player of  `football`, market_tier 3 — the one that belongs
+        the Year Winner?     first
+        Who will host SNL    `entertainment`, market_tier 2 — why it led: tier
+        Season 51?           2 sorts above tier 3 and nothing about the query
+                             separates two outcome-only matches
+
+    Its own fixture, not `_seed`, so no roster exists for any other test in this
+    file to trip over.
+    """
+    from sqlalchemy import select
+
+    from app.models.models import Event, FuturesMarket, FuturesOutcome, Sport, Team
+
+    _engine, maker = seeded_db
+    async with maker() as session:
+        nfl = (
+            await session.execute(
+                select(Sport).where(Sport.key == "americanfootball_nfl")
+            )
+        ).scalar_one()
+        session.add(
+            Team(
+                sport_id=nfl.id,
+                name="Kansas City Chiefs",
+                abbreviation="KC",
+                roster_players=[
+                    {"name": "Patrick Mahomes", "espn_id": "3139477"},
+                    "Travis Kelce",
+                ],
+            )
+        )
+        session.add(
+            Event(
+                sport_id=nfl.id,
+                home_team_name="Miami Dolphins",
+                away_team_name="Kansas City Chiefs",
+                commence_time=datetime.now(timezone.utc) + timedelta(days=3),
+                status="scheduled",
+            )
+        )
+        for external_id, name, category, tier, volume in (
+            ("KXNFLOPOY-8523", "Offensive Player of the Year Winner?",
+             "football", 3, 1_409_544),
+            ("KXSNLHOST-8523", "Who will host Saturday Night Live Season 51?",
+             "entertainment", 2, 1_641_127),
+        ):
+            market = FuturesMarket(
+                source="kalshi",
+                external_id=external_id,
+                name=name,
+                status="open",
+                llm_sport_category=category,
+                market_tier=tier,
+                volume=volume,
+                resolution_date=datetime.now(timezone.utc) + timedelta(days=90),
+            )
+            session.add(market)
+            await session.flush()
+            for outcome_name in ("Patrick Mahomes", "Travis Kelce"):
+                session.add(
+                    FuturesOutcome(
+                        market_id=market.id,
+                        external_id=f"{external_id}:{outcome_name}",
+                        name=outcome_name,
+                        current_probability=_SEED_PRICE,
+                    )
+                )
+        await session.commit()
+
+    return search
+
+
+def _team_names(payload: dict) -> list[str]:
+    return [t.get("name") for t in payload.get("teams") or []]
+
+
+@pytest.mark.parametrize(
+    "q", ["patrick mahomes", "Patrick Mahomes", "  patrick   MAHOMES "]
+)
+async def test_a_rostered_players_name_reaches_his_team_and_its_game(
+    search_with_a_rostered_player, q
+):
+    """#8523 — the reported query, in the cases a reader types it."""
+    payload = await search_with_a_rostered_player(q)
+    assert "Kansas City Chiefs" in _team_names(payload), (
+        f"{q!r} served teams {_team_names(payload)!r} — the roster says he is a "
+        "Kansas City Chief and the page did not ask it (#8523)"
+    )
+    pairings = _event_pairings(payload)
+    assert "Miami Dolphins vs Kansas City Chiefs" in pairings, (
+        f"{q!r} served games {pairings!r} — his team resolved but its next game "
+        "is missing (#8523)"
+    )
+    assert payload.get("did_you_mean") is None, (
+        f"{q!r} was 'corrected' to {payload.get('did_you_mean')!r} — a resolved "
+        "player is never a spelling to guess at"
+    )
+
+
+async def test_his_award_market_ranks_above_the_novelty_that_lists_him(
+    search_with_a_rostered_player,
+):
+    """#8523 — the ranking half, and it is not a separate mechanism.
+
+    The Chiefs' games make the sport facet NFL, and `_demote_wrong_sport` (#7259)
+    sinks the `entertainment` row beneath the `football` one. Before the roster
+    arm there were no games, no facet, no resolved sport, and market_tier 2 put
+    SNL first.
+    """
+    names = _futures_names(await search_with_a_rostered_player("patrick mahomes"))
+    opoy = "Offensive Player of the Year Winner?"
+    snl = "Who will host Saturday Night Live Season 51?"
+    assert opoy in names and snl in names, f"recall moved: {names!r}"
+    assert names.index(opoy) < names.index(snl), (
+        f"futures order {names!r}: the novelty still leads his award market (#8523)"
+    )
+
+
+async def test_the_older_bare_string_roster_form_is_read_too(
+    search_with_a_rostered_player,
+):
+    """992 production roster entries are plain strings, not `{name: ...}`."""
+    payload = await search_with_a_rostered_player("travis kelce")
+    assert "Kansas City Chiefs" in _team_names(payload), (
+        f"`travis kelce` served teams {_team_names(payload)!r} — a string-form "
+        "roster entry was not read"
+    )
+
+
+@pytest.mark.parametrize(
+    "q",
+    [
+        # A surname is not the full name (and one word is never looked up).
+        "mahomes",
+        # A prefix of the name is not the name.
+        "patrick maho",
+        # Two words that are no rostered player's name.
+        "patrick kelce",
+    ],
+)
+async def test_only_a_complete_rostered_name_resolves_a_team(
+    search_with_a_rostered_player, q
+):
+    """#8523's controls. Each still reaches the markets through their outcome
+    text, so the fixture is live — only the team must not appear."""
+    payload = await search_with_a_rostered_player(q)
+    assert _futures_names(payload), f"{q!r} reached no markets — the control is dead"
+    assert "Kansas City Chiefs" not in _team_names(payload), (
+        f"{q!r} resolved the Chiefs from a roster without naming a player in full"
+    )
