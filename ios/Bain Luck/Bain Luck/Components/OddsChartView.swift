@@ -326,6 +326,15 @@ struct OddsChartView: View {
     /// `init`, because `init` runs once and this keeps arriving. `historyEdge`
     /// watches it; `OddsChartViewModel.adopt` decides.
     var preloadedHistory: EventHistoryResponse?
+    /// #925 — the scrubbed moment's readout (clock, score, point time, "as
+    /// of", probabilities), drawn between the chart's header and its plot.
+    ///
+    /// It sat BELOW the chart until Alex's build-20 recording: with the chart
+    /// in view, the row a scrub rewrites was under the tab bar, so the finger
+    /// changed text nobody could see. Above the plot it is on screen whenever
+    /// the top of the chart is — which is whenever there is a chart to press.
+    /// The page builds it (it owns the resting last-point), the chart places it.
+    var readout: GamePlayCardView?
     /// #8481 — the page's one All / Since Start choice, which this chart's
     /// picker writes and the Score Differential chart below also reads. It was a
     /// `@Published` on this chart's own view model, which is why All could widen
@@ -335,6 +344,8 @@ struct OddsChartView: View {
     @Binding var selectedPlayPoint: GamePlayPoint?
     @StateObject private var vm: OddsChartViewModel
     @State private var selectedDate: Date?
+    /// #925 — which touches on the plot are a scrub. See `ChartScrubState.scrubs`.
+    @State private var scrub = ChartScrubState()
     @State private var isFullscreen = false
     /// The drawn plot area's width, reported by each chart's own overlay. The
     /// x-axis needs it to know whether its labels clear each other (#3269); 0
@@ -347,6 +358,8 @@ struct OddsChartView: View {
     /// axis only; `0` leaves it on its own width.
     var pageAxisPlotWidth: CGFloat = 0
     @Environment(\.horizontalSizeClass) private var sizeClass
+    /// #925 — false only under a raster (see `chartScrubSurfaces`).
+    @Environment(\.chartScrubSurfaces) private var scrubSurfaces
 
     private var chartHeight: CGFloat {
         guard sizeClass == .regular else { return 260 }
@@ -418,7 +431,8 @@ struct OddsChartView: View {
          selectedRange: Binding<OddsTimeRange> = .constant(.sinceStart),
          selectedPlayPoint: Binding<GamePlayPoint?> = .constant(nil),
          preloadedHistory: EventHistoryResponse? = nil,
-         liveFrames: [LiveBlendPoint] = []) {
+         liveFrames: [LiveBlendPoint] = [],
+         readout: GamePlayCardView? = nil) {
         self.eventId = eventId
         self.teamColors = teamColors
         self.commenceTime = commenceTime
@@ -436,6 +450,7 @@ struct OddsChartView: View {
         self.pageAxisPlotWidth = pageAxisPlotWidth
         self.liveFrames = liveFrames
         self.preloadedHistory = preloadedHistory
+        self.readout = readout
         _selectedRange = selectedRange
         _selectedPlayPoint = selectedPlayPoint
         _vm = StateObject(wrappedValue: OddsChartViewModel(eventId: eventId, preloaded: preloadedHistory))
@@ -657,6 +672,7 @@ struct OddsChartView: View {
                         .frame(maxWidth: .infinity)
                         .frame(height: chartHeight)
                 } else {
+                    if let readout { readout }
                     // Chart with vertical team labels alongside Y-axis
                     HStack(spacing: 0) {
                         // Vertical team labels on left (#2903 — the run is stated so
@@ -783,6 +799,9 @@ struct OddsChartView: View {
                                     Spacer()
                                 }
                             }
+                            // #925 — fullscreen covers the page, and the page
+                            // was the only place a scrub could be read.
+                            if let readout { readout }
                             HStack(spacing: 0) {
                                 // #2903 — fullscreen has no fixed chart height, so the
                                 // run is measured rather than assumed.
@@ -1471,6 +1490,42 @@ struct OddsChartView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 4))
                         .position(x: plotFrame.minX + placement.centerX, y: 10)
                 }
+                // #925 — the scrub. `chartXSelection` lost the touch to the
+                // page's scroll the moment a thumb drifted vertically (Alex's
+                // build-20 recording, 14781697). The futures chart solved the
+                // same contention with a UIKit pan that shares the touch
+                // (#6705, `ChartScrubSurface`); this chart adds the two things
+                // a whole-row readout needs on top: a HELD press owns the touch
+                // in any direction, and while a scrub owns it the page holds
+                // still under the thumb.
+                #if os(iOS)
+                if scrubSurfaces {
+                ChartScrubSurface(
+                    holdToScrub: ChartScrubSurface.gameChartHold,
+                    onChange: { location, translation in
+                        scrub.change(width: translation.width, height: translation.height)
+                        guard scrub.scrubs else {
+                            // Undecided, or latched vertical: the reader may
+                            // be scrolling. Nothing is selected, so the
+                            // readout keeps its resting moment.
+                            selectedDate = nil
+                            return
+                        }
+                        selectedDate = Self.scrubbedDate(atX: location.x, plotFrame: plotFrame, proxy: proxy)
+                    },
+                    onHold: { location in
+                        scrub.hold()
+                        selectedDate = Self.scrubbedDate(atX: location.x, plotFrame: plotFrame, proxy: proxy)
+                    },
+                    holdsTheScrollStill: { scrub.scrubs },
+                    onEnd: {
+                        scrub.end()
+                        selectedDate = nil
+                    }
+                )
+                .frame(width: geo.size.width, height: geo.size.height)
+                }
+                #endif
             }
         }
         .chartYAxis {
@@ -1495,7 +1550,24 @@ struct OddsChartView: View {
         .onPreferenceChange(PlotWidthPreferenceKey.self) { width in
             plotWidth.wrappedValue = width
         }
+        #if os(macOS)
+        // A trackpad scroll never contended for the touch (see
+        // `ChartScrubSurface`), so the Mac keeps the built-in selection.
         .chartXSelection(value: $selectedDate)
+        #endif
+    }
+
+    /// #925 — the date under a finger at chart-space `x`, clamped to the plot
+    /// so a thumb that slides past either end reads the first or last moment
+    /// rather than dropping the selection.
+    static func scrubbedDate(atX x: CGFloat, plotFrame: CGRect, proxy: ChartProxy) -> Date? {
+        let plotX = Self.clampedPlotX(x, plotFrame: plotFrame)
+        return proxy.value(atX: plotX, as: Date.self)
+    }
+
+    /// Chart-space `x` → plot-space `x`, inside `0...plotFrame.width`.
+    static func clampedPlotX(_ x: CGFloat, plotFrame: CGRect) -> CGFloat {
+        min(max(x - plotFrame.minX, 0), max(plotFrame.width, 0))
     }
 
     // MARK: - Moment Caption
