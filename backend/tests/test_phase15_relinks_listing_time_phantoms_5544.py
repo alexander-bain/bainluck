@@ -485,12 +485,19 @@ async def test_a_market_on_a_real_event_is_untouched():
 
     A market already on a real schedule row whose time happens to disagree is
     #4965's business and the ordinary relink path's, never this one's.
+
+    #8547 amended the EXPECTED DESTINATION, not the gate. Since #8547, Phase 1.5
+    asks the venue's instant about a same-teams link on a real row too: this
+    market sits 147h off its row while exactly one real row of the pair sits at
+    the venue's minute, so #8547's venue-instant arm moves it there — the
+    game the venue names. What this control still proves is that the #5544
+    phantom arm did not fire and that the move is attributed to #8547's arm.
     """
     session, mlb, other, _npb = _new_rail()
     # Linked to a REAL row that carries the listing stamp — wrong time, right
-    # provenance. Nothing here may act on it.
+    # provenance. The #5544 phantom arm may not act on it.
     wrongly_timed_real = _real_fixture(session, mlb, commence=LISTING_STAMP)
-    _real_fixture(session, mlb)
+    at_venue_minute = _real_fixture(session, mlb)
     market = _market(session, wrongly_timed_real)
 
     stats, _ = await _run_phase15(
@@ -498,5 +505,6 @@ async def test_a_market_on_a_real_event_is_untouched():
     )
 
     session.refresh(market)
-    assert market.event_id == wrongly_timed_real.id
     assert stats["funnel"].get("phase15_phantom_venue_relinked", 0) == 0
+    assert stats["funnel"].get("phase15_venue_instant_relinked", 0) == 1
+    assert market.event_id == at_venue_minute.id
