@@ -73,3 +73,19 @@ def test_an_alias_claimed_by_two_clubs_still_fails_the_guard():
                 collided = True
             seen[a] = name
     assert collided, "two different clubs sharing an alias must be a failure"
+
+
+def test_nicknames_two_franchises_share_are_not_curated_8685():
+    """#8685 added eleven nicknames and deliberately refused six.
+
+    Each of these is how fans of TWO franchises type their team — `avs` is the
+    Colorado Avalanche and AVS Futebol, `caps` the Capitals and the Whitecaps,
+    `cavs` Cleveland and Virginia, `canes` Carolina and Miami, `bolts` the
+    Lightning and the Chargers, `wolves` Minnesota and Wolverhampton. A curated
+    alias is scoped to ONE franchise, so adding any of them hands one fan base's
+    word to the other. This file's rule: an alias that matches two franchises
+    makes search worse, not better.
+    """
+    curated = {a.lower() for aliases in CURATED_TEAM_ALIASES.values() for a in aliases}
+    for shared in ("avs", "caps", "cavs", "canes", "bolts", "wolves"):
+        assert shared not in curated, f"{shared!r} names two franchises"

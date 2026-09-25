@@ -74,6 +74,17 @@ def test_the_derived_event_expansions_are_exactly_these() -> None:
         "9ers": ("49ers", "americanfootball_nfl"),
         "bucs": ("Buccaneers", "americanfootball_nfl"),
         "sixers": ("76ers", "basketball_nba"),
+        "habs": ("Canadiens", "icehockey_nhl"),
+        "pens": ("Penguins", "icehockey_nhl"),
+        "sens": ("Senators", "icehockey_nhl"),
+        "nucks": ("Canucks", "icehockey_nhl"),
+        "yanks": ("Yankees", "baseball_mlb"),
+        "nats": ("Nationals", "baseball_mlb"),
+        "phils": ("Phillies", "baseball_mlb"),
+        "cubbies": ("Cubs", "baseball_mlb"),
+        "dbacks": ("Diamondbacks", "baseball_mlb"),
+        "mavs": ("Mavericks", "basketball_nba"),
+        "jags": ("Jaguars", "americanfootball_nfl"),
     }
 
 
@@ -97,9 +108,13 @@ def test_the_two_rails_diverge_only_where_their_matchers_do() -> None:
     futures_map = team_nickname_search_expansions()
 
     only_events = set(event_map) - set(futures_map)
-    assert only_events == {"9ers"}, (
-        "the rails diverge somewhere new. Only `9ers` may be event-only, and only "
-        "because it is a substring of `49ers` that the FTS arm cannot word-match: "
+    # #8685 added two more of the same shape: `dbacks` inside `Diamondbacks`,
+    # `nucks` inside `Canucks`. Production 2026-09-25 served each 10 markets and 0
+    # games before they were curated — the 9ers hole, twice more.
+    assert only_events == {"9ers", "dbacks", "nucks"}, (
+        "the rails diverge somewhere new. Only an alias spelled inside its own "
+        "token (`9ers`/`49ers`, `dbacks`/`Diamondbacks`, `nucks`/`Canucks`) may be "
+        "event-only, because the FTS arm cannot word-match a substring: "
         f"got only-events={only_events!r}"
     )
     assert not set(futures_map) - set(event_map), (
@@ -189,6 +204,11 @@ def test_a_query_with_no_nickname_produces_no_event_arm() -> None:
         ("niners", "49ers", "americanfootball_nfl"),
         ("bucs", "Buccaneers", "americanfootball_nfl"),
         ("sixers", "76ers", "basketball_nba"),
+        ("habs", "Canadiens", "icehockey_nhl"),
+        ("nucks", "Canucks", "icehockey_nhl"),
+        ("dbacks", "Diamondbacks", "baseball_mlb"),
+        ("cubbies", "Cubs", "baseball_mlb"),
+        ("jags", "Jaguars", "americanfootball_nfl"),
     ],
 )
 def test_the_event_arm_matches_the_token_and_pins_the_sport(
