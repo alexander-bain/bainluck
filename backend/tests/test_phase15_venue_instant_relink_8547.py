@@ -29,7 +29,9 @@ WHAT EACH TEST DEFENDS:
   ``test_two_rows_at_the_venue_minute_leave_the_link``);
 * a retired row at the venue's minute is never a destination
   (``test_a_retired_row_at_the_venue_minute_is_not_a_destination``);
-* Kalshi is out of scope — it states its game in the ticker
+* a Kalshi ticker already on the game its HHMM names stays put — the Kalshi
+  twin of this arm has its own file,
+  ``test_phase15_kalshi_venue_instant_relink_8547.py``
   (``test_a_kalshi_market_is_never_moved_by_this_arm``);
 * the pure entry predicate
   (``test_venue_instant_disowns_link_predicate``).
@@ -304,7 +306,11 @@ async def test_a_retired_row_at_the_venue_minute_is_not_a_destination(retired):
 
 @pytest.mark.asyncio
 async def test_a_kalshi_market_is_never_moved_by_this_arm():
-    """Kalshi states its game in the ticker; the venue-instant arm is PM only."""
+    """A Kalshi ticker whose HHMM (19:05 ET = 23:05Z) is game 2 stays on game 2.
+
+    A stray ``venue_game_start`` on a Kalshi row is not read: the Kalshi
+    instant is the ticker's, and this ticker names the row it is on.
+    """
     from app.models.models import FuturesMarket
 
     session, mlb = _new_rail()
