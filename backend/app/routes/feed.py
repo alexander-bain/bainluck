@@ -7728,9 +7728,10 @@ def _biggest_move_from_opening(
     measured from a 0.94 stored off a 16c/96c book. `update_max_movement`
     lists such legs in `unpriced_opening_ids`, and a listed leg has no lifetime
     move here, so the copy falls through to what it says about a leg with no
-    opening. Only the SENTENCE's subject is refused: the surprise score and the
-    settled filters still read `opening_probability`, deliberately, because
-    changing what page one ranks is a different ship.
+    opening. The surprise score (`compute_futures_highlight`'s
+    `refused_opening_ids`) and the settled filters (`_leader_opening`) refuse
+    the same legs, so a card is neither told nor ranked on that move.
+    `opening_probability` itself is untouched: it is calibration's fallback.
 
     On a board that refusal can hand the sentence to a smaller mover while the
     `*_surprise` reason that licenses it was raised by the refused leg. So once
@@ -7898,6 +7899,27 @@ def _outcome_is_drawn_on_card(name: str | None, outcomes_data: list[dict]) -> bo
     return any((o.get("name") or "").strip().casefold() == target for o in drawn)
 
 
+def _leader_opening(
+    outcomes_data: list[dict], leader_name: str | None, market: Any
+) -> float | None:
+    """The leader's opening, or None when it has none a filter may trust.
+
+    #8612: an opening listed in `unpriced_opening_ids` was captured on a book
+    that could not price it, so the settled filters treat it exactly as a leg
+    with no opening at all. They used to let a stuck leader survive because it
+    "opened" below the threshold, on a number nobody ever traded at.
+    """
+    if not leader_name:
+        return None
+    refused = unpriced_opening_ids(market) if market is not None else frozenset()
+    for outcome in outcomes_data:
+        if outcome["name"] == leader_name:
+            if outcome.get("id") in refused:
+                return None
+            return outcome.get("opening_probability")
+    return None
+
+
 def _market_runtime_filter_trace(
     market: FuturesMarket,
     outcomes_data: list[dict],
@@ -7966,12 +7988,7 @@ def _market_runtime_filter_trace(
     if _prices_have_stopped(newest_outcome_at, now):
         blockers.append("prices_stopped")
 
-    leader_opening = None
-    if leader_name:
-        for outcome in outcomes_data:
-            if outcome["name"] == leader_name:
-                leader_opening = outcome.get("opening_probability")
-                break
+    leader_opening = _leader_opening(outcomes_data, leader_name, market)
 
     has_any_movement = any(
         outcome["probability_change_24h"] is not None
@@ -8327,6 +8344,7 @@ def _score_market_trace(
         market_name=market.name,
         volume_24h=market.volume_24h,
         curation_score_adj=market.__dict__.get("curation_score_adj", 0) or 0,
+        refused_opening_ids=unpriced_opening_ids(market),
     )
 
     top_mover_name = highlight_result.top_mover_name
@@ -11187,11 +11205,7 @@ async def _score_sports_mode_futures(
             leader_prob is not None and leader_prob >= resolved_threshold
         )
         if is_effectively_resolved:
-            leader_opening = None
-            for o in outcomes_data:
-                if o["name"] == leader_name:
-                    leader_opening = o.get("opening_probability")
-                    break
+            leader_opening = _leader_opening(outcomes_data, leader_name, market)
             sports_effectively_settled = (
                 leader_opening is not None
                 and leader_opening < opening_threshold
@@ -11210,11 +11224,9 @@ async def _score_sports_mode_futures(
             and len(probs_available) == 2
         ):
             if max_recent_movement < 0.02:
-                leader_opening_prob = None
-                for o in outcomes_data:
-                    if o["name"] == leader_name:
-                        leader_opening_prob = o.get("opening_probability")
-                        break
+                leader_opening_prob = _leader_opening(
+                    outcomes_data, leader_name, market
+                )
                 if leader_opening_prob is None or leader_opening_prob >= 0.50:
                     continue
 
@@ -11284,6 +11296,7 @@ async def _score_sports_mode_futures(
             market_name=market.name,
             volume_24h=market.volume_24h,
             curation_score_adj=market.__dict__.get("curation_score_adj", 0) or 0,
+            refused_opening_ids=unpriced_opening_ids(market),
         )
 
         top_mover_name = highlight_result.top_mover_name
@@ -12881,6 +12894,7 @@ async def _score_futures(
                 market_name=market.name,
                 volume_24h=market.volume_24h,
                 curation_score_adj=market.__dict__.get("curation_score_adj", 0) or 0,
+                refused_opening_ids=unpriced_opening_ids(market),
             )
 
             top_mover_name = highlight_result.top_mover_name

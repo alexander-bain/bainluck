@@ -586,6 +586,8 @@ def compute_futures_highlight(
     volume_7d_avg: Optional[float] = None,
     # Curator adjustment (from curation signals)
     curation_score_adj: int = 0,
+    # #8612: outcome ids whose opening was never a price (`unpriced_opening_ids`)
+    refused_opening_ids: frozenset[int] = frozenset(),
 ) -> FuturesHighlightResult:
     """
     Compute highlight score and flags for a futures market.
@@ -1065,9 +1067,14 @@ def compute_futures_highlight(
             result.reasons.append("volume_uptick")
 
     # === Surprise factor (current vs opening probability) ===
+    # #8612: a leg whose opening was captured on a book that could not price it
+    # (Kanye 0.94 on 16c/96c) has no lifetime move to score, just as the card
+    # has none to state. Absent from the set means not judged: scored as before.
     if outcomes:
         max_surprise = 0.0
         for o in outcomes:
+            if o.get("id") in refused_opening_ids:
+                continue
             opening = o.get("opening_probability")
             current = o.get("probability")
             if opening is not None and current is not None:
