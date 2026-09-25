@@ -1,8 +1,18 @@
 "use client";
 
+import { renderedPercent } from "@/lib/renderedPercent";
+
 interface FuturesHeroProps {
   name: string;
   probability: number | null;
+  /**
+   * #8482 — the integer the featured outcome's ROW prints, when the page has
+   * already decided it (`renderedById` on a two-outcome market). The hero is the
+   * same outcome as that row, so it prints the row's number rather than rounding
+   * a second time. Absent ⇒ `renderedPercent(probability)`, the rule the row's
+   * own fallback (`probabilityParts`) uses.
+   */
+  rendered?: number | null;
   outcomeName?: string;
   movement?: number | null;
   /**
@@ -33,6 +43,7 @@ interface FuturesHeroProps {
 export function FuturesHero({
   name,
   probability,
+  rendered,
   outcomeName,
   movement,
   movementLabel,
@@ -45,7 +56,15 @@ export function FuturesHero({
   resolved = false,
   resolvedWon,
 }: FuturesHeroProps) {
-  const pct = probability != null ? Math.round(probability * 100) : null;
+  // #8482 — `Math.round(p * 100)` here printed 57 over a row printing 58 for a
+  // wire 0.575 (`/futures/61318328`): the #3867 half-point case. The number is
+  // the row's, and never exists without a probability behind it.
+  const pct =
+    probability == null
+      ? null
+      : rendered != null && Number.isFinite(rendered)
+        ? rendered
+        : renderedPercent(probability);
   const movementUp = movement != null && movement > 0;
   // Resolved markets show the final result, not a live movement pill.
   const movementStr =
@@ -143,7 +162,7 @@ export function FuturesHero({
                 <AmbientHistory points={sparklinePoints} />
                 <div className="absolute inset-x-0 bottom-1 flex items-end justify-between gap-3">
                   <div className="shrink-0 flex items-baseline gap-[1px] font-mono font-bold tracking-[-0.045em] text-text-primary leading-none">
-                    <span className="text-[64px]">{pct}</span>
+                    <span data-testid="hero-percent" className="text-[64px]">{pct}</span>
                     <span className="text-[28px]">%</span>
                   </div>
                   {movementStr && (
@@ -183,7 +202,7 @@ export function FuturesHero({
             <div className="flex items-end justify-between mb-3">
               <div>
                 <div className="flex items-baseline gap-[1px] font-mono font-bold tracking-[-0.045em] text-text-primary leading-none">
-                  <span className="text-[64px]">{pct}</span>
+                  <span data-testid="hero-percent" className="text-[64px]">{pct}</span>
                   <span className="text-[28px]">%</span>
                 </div>
                 <div className="flex items-center gap-2 mt-2 flex-wrap">

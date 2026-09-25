@@ -876,6 +876,9 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
       <FuturesHero
         name={market.name}
         probability={heroNamesNobody ? null : heroOutcome?.probability ?? null}
+        // #8482 — the hero is the same outcome as one of the rows below, so it
+        // prints that row's decided integer, not a second rounding of its own.
+        rendered={heroOutcome ? renderedById.get(heroOutcome.id)?.current ?? null : null}
         // #6301 — the number travels with the name, and this half is DEFENSIVE
         // rather than a visible repair. Measured before writing it: every `pct`
         // site in `FuturesHero` is gated on `!resolved` (the 64px numeral, the
