@@ -501,3 +501,26 @@ def test_no_espn_start_write_defers_to_statpal_by_name():
         espn_helpers.sync_scheduled_events,
     ):
         assert 'provider_may_set_start(' in inspect.getsource(fn), fn.__name__
+
+
+def test_every_espn_start_rail_asks_the_ranking_and_none_names_statpal():
+    """The three ESPN start-time rails #8655 did not reach carried the same
+    upside-down "StatPal outranks ESPN" refusal, each citing another as its
+    source. They now make the same call; none may compare against StatPal by
+    name again."""
+    from app.tasks import espn_sync
+    from app.utils import anchor_schedule, espn_tennis_anchor
+
+    for module in (anchor_schedule, espn_sync, espn_tennis_anchor):
+        src = inspect.getsource(module)
+        for needle in (
+            '== "statpal"', "== 'statpal'", '!= "statpal"', "!= 'statpal'",
+            "COMMENCE_SOURCE_STATPAL", "REFUSED_STATPAL",
+        ):
+            assert needle not in src, (module.__name__, needle)
+    for fn in (
+        anchor_schedule.schedule_decision,
+        espn_sync._recover_unstarted_authority_fixtures,
+        espn_tennis_anchor.authority_write,
+    ):
+        assert "provider_may_set_start(" in inspect.getsource(fn), fn.__name__

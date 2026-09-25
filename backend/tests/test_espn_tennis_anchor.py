@@ -1653,18 +1653,29 @@ class TestTheClockCorrectionCarriesItsProvenance:
         )
         assert not allowed
 
-    def test_statpal_owns_the_start_and_is_not_overwritten(self):
-        """The refusal both of ESPN's other write sites already make
-        (`espn_helpers`, twice) and `anchor_schedule` calls REFUSED_STATPAL.
-
-        Inert for tennis today — 0 tennis rows carried a `statpal` stamp in the
-        census this shipped on — and written anyway, because adding the stamp
-        WITHOUT it would newly move a column ESPN has never held here.
-        """
+    def test_espn_corrects_a_statpal_start(self):
+        """#8653: the registry ranks espn above statpal, and every ESPN
+        start-time rail now asks that ranking (`provider_may_set_start`)."""
         changes = authority_write(
             our_status="scheduled", our_completed_at=None,
             our_commence_time=_utc("2026-09-13T18:00:00+00:00"),
             our_commence_time_source="statpal",
+            competition={"state": "upcoming", "date": "2026-09-13T18:15Z",
+                         "start_is_tbd": False},
+            now=_utc("2026-09-13T18:10:00+00:00"),
+        )
+        assert changes["commence_time"] == _utc("2026-09-13T18:15:00+00:00")
+        assert changes["commence_time_source"] == "espn"
+
+    def test_an_outranking_start_is_not_overwritten(self):
+        """The refusal every ESPN start-time rail makes through the registry
+        ranking (`espn_helpers`, twice; `anchor_schedule` as REFUSED_OUTRANKED)
+        — today only `mlb_schedule_repair` outranks ESPN.
+        """
+        changes = authority_write(
+            our_status="scheduled", our_completed_at=None,
+            our_commence_time=_utc("2026-09-13T18:00:00+00:00"),
+            our_commence_time_source="mlb_schedule_repair",
             competition={"state": "upcoming", "date": "2026-09-13T18:15Z",
                          "start_is_tbd": False},
             now=_utc("2026-09-13T18:10:00+00:00"),
@@ -1683,6 +1694,7 @@ class TestTheClockCorrectionCarriesItsProvenance:
             ("upcoming", "2026-09-13T18:02Z", False, "2026-09-13T18:00:00+00:00", "odds_api", None),
             ("upcoming", "2026-09-14T04:00Z", True, "2026-09-13T18:00:00+00:00", "odds_api", None),
             ("upcoming", "2026-09-13T18:15Z", False, "2026-09-13T18:00:00+00:00", "statpal", None),
+            ("upcoming", "2026-09-13T18:15Z", False, "2026-09-13T18:00:00+00:00", "mlb_schedule_repair", None),
             ("in_progress", "2026-09-13T18:15Z", False, "2026-09-13T18:00:00+00:00", None, None),
             ("in_progress", "2026-09-13T18:15Z", False, "2026-09-13T18:00:00+00:00", "espn", None),
             ("decided", "2026-09-13T18:15Z", False, "2026-09-13T18:00:00+00:00", "odds_api",
@@ -1749,16 +1761,18 @@ class TestTheClockCorrectionReachesTheDatabase:
         )
         assert stats["commence_writes"] == 1
 
-    async def test_a_statpal_start_survives_the_pass_untouched(self, monkeypatch):
+    async def test_an_outranking_start_survives_the_pass_untouched(self, monkeypatch):
         """The control. Without it the test above passes just as well against a
-        version that stamps `espn` on every row it can reach."""
+        version that stamps `espn` on every row it can reach. Since #8653 the
+        outranking stamp is `mlb_schedule_repair` (the registry ranks espn above
+        statpal)."""
         from app.tasks.espn_sync import _sync_tennis_from_espn
 
         event = _Event(
             15310688, "Carlos Alcaraz", "Jannik Sinner", "scheduled",
             _at("2026-09-13T18:00Z"), espn_id="182677",
             home_score=0, away_score=0,
-            commence_time_source="statpal",
+            commence_time_source="mlb_schedule_repair",
         )
         _install(
             monkeypatch,
@@ -1775,5 +1789,5 @@ class TestTheClockCorrectionReachesTheDatabase:
         stats = await _sync_tennis_from_espn()
 
         assert event.commence_time == _at("2026-09-13T18:00Z")
-        assert event.commence_time_source == "statpal"
+        assert event.commence_time_source == "mlb_schedule_repair"
         assert stats["commence_writes"] == 0

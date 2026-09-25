@@ -25,6 +25,7 @@ from app.utils.event_completion import (
     UNSTARTED_SETTLEABLE_STATUSES,
     espn_board_date,
 )
+from app.utils.start_time_authority import provider_may_set_start
 from app.utils.team_binding_invariant import accept_team_binding
 from app.utils.name_normalization import (
     token_overlap_score as _team_name_match_score,
@@ -2347,10 +2348,13 @@ async def _recover_unstarted_authority_fixtures(session, espn, now, stats):
        ``repair_authority_id_collisions``' question — refused here, never
        guessed at.
 
-    Plus one refusal taken from the sibling rather than reinvented: a row whose
-    clock came from StatPal is left alone, because
-    ``app.utils.anchor_schedule.schedule_decision`` rules StatPal outranks ESPN
-    for kickoff times and two rails must not disagree about that.
+    Plus one refusal taken from the registry rather than reinvented: a row whose
+    clock came from a provider that outranks ESPN (``mlb_schedule_repair``) is
+    left alone — ``utils.start_time_authority.provider_may_set_start``, the one
+    call every start-time rail makes (#8653). This arm used to skip StatPal
+    clocks instead, copying a precedence that was upside down: the registry
+    ranks ESPN above StatPal, and a stale StatPal start is exactly the row that
+    needs ESPN's.
 
     THE WRITE IS A COMPARE-AND-WRITE (#6056). It touches four live-state columns
     (``period``, ``game_clock``, and the two scores), so it goes through
@@ -2394,8 +2398,9 @@ async def _recover_unstarted_authority_fixtures(session, espn, now, stats):
         sport_key = event.sport.key if event.sport else ""
         if sport_key not in ESPN_SPORT_MAPPING:
             continue
-        # The sibling rail owns this row's clock; see the docstring.
-        if event.commence_time_source == "statpal":
+        # A provider ESPN does not outrank owns this row's clock; see the
+        # docstring.
+        if not provider_may_set_start(event.commence_time_source, "espn"):
             continue
         asked = _unstarted_recovery_asked_at(event, now)
         if asked is not None and asked > cooldown_floor:
