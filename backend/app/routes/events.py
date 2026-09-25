@@ -23192,7 +23192,7 @@ async def _build_related_futures(
         build_label_identity,
         label_names_another_club,
     )
-    from app.utils.award_person_claim import outcome_claim_patterns
+    from app.utils.award_person_claim import AWARD_MARKET_TIER, outcome_claim_patterns
 
     team_index = None
     team_rows: list = []
@@ -23400,14 +23400,26 @@ async def _build_related_futures(
         # that is the Islanders'.
         if not is_home and not is_away:
             # Fall back to name matching on outcome (team outcomes).
-            # #7867 person half: an award outcome is a PERSON, claimed by the
-            # club's roster names — a club token claims it only when it is the
-            # whole label ("Duke Watson" is not Duke's). `award_person_claim`.
+            # #7867: people also occur outside the award tier. Establish that
+            # identity from the existing full-name roster index, never from
+            # absence among teams or the shape of a name. The index spans
+            # leagues, but contributes personhood only, not club membership.
+            # Load it only for a name the fallback would otherwise admit.
+            known_person = False
+            if market.market_tier != AWARD_MARKET_TIER and (
+                _matches_any(outcome.name, home_patterns)
+                or _matches_any(outcome.name, away_patterns)
+            ):
+                person_key = _roster_player_name_key(outcome.name or "")
+                if person_key is not None:
+                    known_person = bool(await _roster_player_team_ids(db, person_key))
             home_claim = outcome_claim_patterns(
-                market.market_tier, outcome.name, home_patterns, home_team_patterns
+                market.market_tier, outcome.name, home_patterns, home_team_patterns,
+                known_person=known_person,
             )
             away_claim = outcome_claim_patterns(
-                market.market_tier, outcome.name, away_patterns, away_team_patterns
+                market.market_tier, outcome.name, away_patterns, away_team_patterns,
+                known_person=known_person,
             )
             is_home = _matches_any(outcome.name, home_claim) and not label_names_another_club(
                 outcome.name, home_claim, home_label_identity

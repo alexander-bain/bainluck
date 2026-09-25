@@ -42,9 +42,15 @@ Year, ``Tradarian Ball`` on Ball State, ``Boston Everitt`` on Boston College),
 0 clubs, 0 rostered players. ``Maikel García`` on the Royals is placed by his
 stored ``team_id``, which runs before this fallback and is untouched.
 
-WHAT IT DOES NOT TOUCH. Every other tier (club futures, game props whose
-labels carry a club token plus a suffix), the ticker / alias / ``team_id``
-paths that run before the name fallback, and the market-name fallback after it.
+Non-award tiers can also contain people: the NL Hank Aaron winner is filed
+as tier 1, and the passing-touchdowns leader as tier 4. For those tiers the
+caller may supply positive full-name evidence from the existing roster index.
+That evidence establishes a PERSON, not membership of the event's club. An
+unknown label stays unchanged; absence from the team index is not personhood.
+
+WHAT IT DOES NOT TOUCH. Unknown non-award labels (including team props with
+suffixes), the ticker / alias / ``team_id`` paths before the name fallback,
+and the market-name fallback after it.
 A player who IS on the club but missing from a stale roster loses the row —
 the same outcome as any player whose name shares no word with the club, which
 is the behaviour for almost every player today.
@@ -66,6 +72,8 @@ def outcome_claim_patterns(
     outcome_name: str | None,
     patterns: list[str],
     club_patterns: list[str],
+    *,
+    known_person: bool = False,
 ) -> list[str]:
     """The subset of ``patterns`` allowed to claim this outcome for one side.
 
@@ -74,9 +82,10 @@ def outcome_claim_patterns(
     the route builds them: membership compares escaped to escaped, and the
     whole-label test reads the pattern back first, because the label is raw.
 
-    Outside the award tier the list comes back unchanged (the same object).
+    Outside awards, apply the rule only with positive roster identity. Unknown
+    labels keep the same list, including aliases and suffixed team props.
     """
-    if market_tier != AWARD_MARKET_TIER:
+    if market_tier != AWARD_MARKET_TIER and not known_person:
         return patterns
     club = {p.lower() for p in club_patterns}
     label = (outcome_name or "").strip().lower()
