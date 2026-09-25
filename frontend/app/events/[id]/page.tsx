@@ -799,6 +799,7 @@ export default function EventPage({ params }: EventPageProps) {
                 bookmakerOdds={odds}
                 homeTeam={event.home_team}
                 awayTeam={event.away_team}
+                sportKey={event.sport ?? undefined}
               />
             </div>
           </div>
