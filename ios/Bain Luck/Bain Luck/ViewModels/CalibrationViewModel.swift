@@ -410,6 +410,7 @@ final class CalibrationViewModel: ObservableObject {
     var sourceRows: [CalSourceRow] {
         let bks = buckets
         let thin = includeThin
+        let served = data?.sourceLabels
         let rows = Self.providerGroups(sources).map { group -> CalSourceRow in
             let members = Set(group.members)
             let f: (CalibrationBucket) -> Bool = { members.contains($0.source) && (thin || $0.priceMoved != false) }
@@ -420,11 +421,13 @@ final class CalibrationViewModel: ObservableObject {
             // an empty one is. Web's Source Comparison has done this since
             // bae9f393b7. See `CalibrationRowOrdering.censoringVerdict`.
             let w = CalibrationRowOrdering.pooledWinners(bks.filter(f))
-            let name = Self.providerDisplayName(group.provider)
+            let name = Self.providerDisplayName(group.provider, served: served)
             return CalSourceRow(
                 source: group.provider, name: name,
                 memberNames: group.members.count > 1
-                    ? group.members.map { Self.withoutGroupQualifier(Self.sourceDisplayName($0), groupName: name) }
+                    ? group.members.map {
+                        Self.withoutGroupQualifier(Self.sourceDisplayName($0, served: served), groupName: name)
+                    }
                     : [],
                 n: n,
                 winners: w,
@@ -461,8 +464,9 @@ final class CalibrationViewModel: ObservableObject {
     }
 
     /// A provider's row name. One-member providers are named as their source.
-    static func providerDisplayName(_ provider: String) -> String {
-        provider == "odds_api_family" ? "Sportsbooks (Odds API)" : sourceDisplayName(provider)
+    static func providerDisplayName(_ provider: String,
+                                    served: [String: CalibrationSourceLabel]? = nil) -> String {
+        provider == "odds_api_family" ? "Sportsbooks (Odds API)" : sourceDisplayName(provider, served: served)
     }
 
     /// "Spreads (Odds API)" under "Sportsbooks (Odds API)" reads "Spreads" —
@@ -983,8 +987,20 @@ final class CalibrationViewModel: ObservableObject {
     /// same problem, which is why this is a shared formatter and not a seventh map
     /// entry — `sourceDisplayNames` deliberately still has no `datagolf` key, so
     /// this fallback is what produces "DataGolf" and a test proves it.
-    static func sourceDisplayName(_ source: String) -> String {
-        sourceDisplayNames[source] ?? toTitleCaseAcronymSafe(source)
+    ///
+    /// #3393 — between the two sits the server's own name (`served`, the
+    /// payload's `source_labels`), in web's precedence: house style first, then
+    /// the published label, then the formatter. The source key set is
+    /// data-driven, so a key this build has never seen now arrives with the
+    /// name web prints for it rather than one generated from its spelling. A
+    /// blank served label is no name at all and falls through.
+    static func sourceDisplayName(_ source: String,
+                                  served: [String: CalibrationSourceLabel]? = nil) -> String {
+        if let local = sourceDisplayNames[source] { return local }
+        if let label = served?[source]?.label.trimmingCharacters(in: .whitespacesAndNewlines), !label.isEmpty {
+            return label
+        }
+        return toTitleCaseAcronymSafe(source)
     }
 
     /// Display label for a raw (un-normalized) small-sample category token.
@@ -1049,13 +1065,13 @@ final class CalibrationViewModel: ObservableObject {
     /// **This map is what the phone prints, not the server's vocabulary.**
     ///
     /// `/api/calibration` publishes `source_labels` (owned by
-    /// `backend/app/utils/calibration_source_labels.py`), and this client has
-    /// never read it — `sourceDisplayName` looks the key up here and falls back
-    /// to `toTitleCaseAcronymSafe`. The web behaves the same way for a different
-    /// reason: `makeSourceLabeller` consults its own house-style map FIRST and
-    /// only falls through to the published label for keys it has no opinion
-    /// about. So a rename applied to the backend alone changes nothing a reader
-    /// sees on either client, and this entry has to move on its own account.
+    /// `backend/app/utils/calibration_source_labels.py`), and since #3393 this
+    /// client reads it — but only for keys this map has no opinion about, which
+    /// is web's precedence too: `makeSourceLabeller` consults its own house-style
+    /// map FIRST and only falls through to the published label for keys it does
+    /// not carry. So a rename applied to the backend alone changes nothing a
+    /// reader sees on either client for a key listed here, and this entry has to
+    /// move on its own account.
     ///
     /// `odds_api_bookmaker` is a payload key and stays as it is — it is a data
     /// contract, not prose. Its NAME may not carry the word: standing notice 33

@@ -103,6 +103,14 @@ nonisolated struct CalibrationQuarantine: Decodable, Sendable {
     let markets: Int?
 }
 
+/// One entry of the payload's `source_labels` vocabulary (#3393), owned by
+/// `backend/app/utils/calibration_source_labels.py`. `declared` is decoded for
+/// completeness; the phone prints `label` either way, as web does.
+nonisolated struct CalibrationSourceLabel: Decodable, Sendable {
+    let label: String
+    let declared: Bool?
+}
+
 /// The date span the calibration payload covers.
 nonisolated struct CalibrationDateRange: Decodable, Sendable {
     let start: String?
@@ -204,6 +212,11 @@ nonisolated struct CalibrationData: Decodable, Sendable {
     /// nothing. Both render nothing, but they are different facts (gotcha #53),
     /// so the decode keeps them apart.
     let quarantine: [CalibrationQuarantine]?
+    /// #3393. The server's name for every source key it publishes. `nil` = a
+    /// payload banked before the block existed (or one this build could not
+    /// read); the label path then falls back to its own formatter, so a raw key
+    /// is never the answer either way.
+    let sourceLabels: [String: CalibrationSourceLabel]?
 
     // MARK: - Partial-decode provenance (L2-231 Item 1)
 
@@ -222,7 +235,7 @@ nonisolated struct CalibrationData: Decodable, Sendable {
         case mceCiLower, mceCiUpper, mceClosingLine, mceOpeningPrice
         case generatedAt, minCategoryOutcomes, smallSampleCategories
         case corrections, dateRange, cache, populationVersion, producer
-        case quarantine
+        case quarantine, sourceLabels
     }
 
     init(from decoder: Decoder) throws {
@@ -252,5 +265,6 @@ nonisolated struct CalibrationData: Decodable, Sendable {
         producer = try? c.decodeIfPresent(CalibrationProducerState.self, forKey: .producer)
         quarantine = (try? c.decode(LossyArray<CalibrationQuarantine>.self,
                                     forKey: .quarantine))?.elements
+        sourceLabels = try? c.decodeIfPresent([String: CalibrationSourceLabel].self, forKey: .sourceLabels)
     }
 }
