@@ -18,6 +18,7 @@ from app.utils.event_completion import authority_may_settle, play_resumes
 # plain module-level import rather than five function-local ones dodging a cycle.
 from app.utils.game_state import _sanitize_period, live_write_would_revert
 from app.utils.live_state_write import write_live_state_if_unmoved
+from app.utils.start_time_authority import provider_may_set_start
 from app.utils.name_normalization import (
     names_match as _canonical_names_match,
     normalize_name as _normalize_name,
@@ -1230,7 +1231,7 @@ async def update_event_fields_from_espn(
 
     # Correct commence_time from ESPN if significantly different
     # The Odds API occasionally returns local times as UTC
-    # Skip if StatPal set the commence_time (more reliable source)
+    # Only where the registry's start-time ranking lets ESPN overwrite (#8653)
     if ee.date and event.commence_time:
         time_diff = abs((ee.date - event.commence_time).total_seconds())
         # #190 guard: never move commence_time to AFTER an already-recorded
@@ -1246,8 +1247,12 @@ async def update_event_fields_from_espn(
                 event.id, event.home_team_name, event.away_team_name,
                 ee.date.isoformat(), event.completed_at.isoformat(),
             )
-        if time_diff > 300 and getattr(event, 'commence_time_source', None) != "statpal" \
-                and not _would_invert:
+        # #8653: the registry's ranking decides, not a hard-coded "defer to
+        # StatPal" — espn outranks statpal, so a stale StatPal start no longer
+        # locks out ESPN's (see `utils/start_time_authority`).
+        if time_diff > 300 and provider_may_set_start(
+            getattr(event, "commence_time_source", None), "espn"
+        ) and not _would_invert:
             logger.info(
                 f"ESPN: Correcting commence_time for event {event.id} "
                 f"({event.home_team_name} vs {event.away_team_name}): "
@@ -2264,7 +2269,7 @@ async def sync_scheduled_events(session, sport_key, espn_events, stats):
         )
 
         # Correct commence_time from ESPN if significantly different
-        # Skip if StatPal set the commence_time (more reliable source)
+        # Only where the registry's start-time ranking lets ESPN overwrite (#8653)
         #
         # #1947, measured 2026-08-18: this correction is reachable via match arm 1
         # (the row's OWN espn_id), which is id-anchored and therefore NOT gated by
@@ -2290,7 +2295,10 @@ async def sync_scheduled_events(session, sport_key, espn_events, stats):
                     event.commence_time.isoformat(), ee.date.isoformat(),
                     time_diff / 3600, event.espn_id,
                 )
-            elif time_diff > 300 and getattr(event, 'commence_time_source', None) != "statpal":
+            elif time_diff > 300 and provider_may_set_start(
+                # #8653: the registry's ranking, not "defer to StatPal".
+                getattr(event, "commence_time_source", None), "espn"
+            ):
                 logger.info(
                     f"ESPN: Correcting commence_time for scheduled event {event.id} "
                     f"({event.home_team_name} vs {event.away_team_name}): "

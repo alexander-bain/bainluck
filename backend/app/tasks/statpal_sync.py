@@ -47,6 +47,7 @@ from app.utils.game_state import (
     period_places_within,
 )
 from app.utils.live_state_write import write_live_state_if_unmoved
+from app.utils.start_time_authority import provider_may_set_start
 
 logger = logging.getLogger(__name__)
 
@@ -302,6 +303,8 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
     # non-zero here is a TWIN COUNT — the same population #3093/#3463 track from
     # the other side — surfaced where the pass that trips over it can be seen.
     schedule_fid_collision_skipped = 0
+    # #8653: StatPal's start differed but the row's stamp outranks StatPal.
+    schedule_commence_outranked = 0
 
     # #4322. The other half of the same judgement, kept as its OWN number so the
     # twin count stays a twin count. A cross-sport hit is not a twin — it is one
@@ -681,11 +684,20 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                         event.away_team_id = away_team.id
                         updated = True
 
-                    # Correct commence_time if StatPal has a different (likely more accurate) time
+                    # Correct commence_time from StatPal's schedule — but only where
+                    # the registry's start-time ranking lets StatPal overwrite the
+                    # row's current stamp (#8653). ESPN outranks StatPal: this used
+                    # to overwrite unconditionally, so a schedule StatPal never
+                    # updated after a reschedule (Cubs @ Red Sox DH game 2, 22:05Z
+                    # vs MLB's 21:35Z) replaced ESPN's correct start every pass.
                     if fixture.start_time and event.commence_time:
                         diff = abs((fixture.start_time - event.commence_time).total_seconds())
                         # Only correct if >5 min difference (avoids timezone rounding)
-                        if diff > 300:
+                        if diff > 300 and not provider_may_set_start(
+                            getattr(event, "commence_time_source", None), "statpal"
+                        ):
+                            schedule_commence_outranked += 1
+                        elif diff > 300:
                             logger.info(
                                 f"StatPal: correcting commence_time for event {event.id} "
                                 f"({event.home_team_name} vs {event.away_team_name}): "
@@ -1232,6 +1244,7 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
         # #4307 — same rule: always present, and 0 is the reading that says no
         # fixture in this window is claimed by two rows.
         "schedule_fid_collision_skipped": schedule_fid_collision_skipped,
+        "schedule_commence_outranked": schedule_commence_outranked,
         # #4322 — same rule, and its own key so the twin count above stays a twin
         # count. 0 is the expected reading today: production carries zero
         # cross-sport fixture ids (measured 2026-09-09, and the generator of the
