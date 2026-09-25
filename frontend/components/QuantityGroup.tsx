@@ -225,8 +225,34 @@ export default function QuantityGroup({
   // The arrow is the one glyph in the badge that may fall back out of the mono
   // face, so its advance can exceed 1ch; the half-rem of slack absorbs that
   // rather than clipping a badge, and is the same on every row either way.
+  // #8562, second half — the date ladder. Sizing the wide slot from its ink
+  // rescued "$320 ▼7.8 pts" (73px of track on the 1280 Google card), but a
+  // prose label cannot shrink that far: "Trump publicly insults Warsh?" at
+  // 1280 printed "December 31 · ▲22.0 pts · [11px] · 43%" — a 43% bar 5px
+  // long, and the Astra card drew 9px. The row cannot hold label, badge and
+  // a bar side by side, so on such a ladder the badge moves UNDER the label
+  // and its column goes away. Decided once per ladder, never per rung, so
+  // every rung still has one track width (#1574 c) and no rung pays a slot.
+  //
+  // The estimate is the production row it failed on: 254px (a 1280 grid
+  // card), less the 40px percent and three 12px gaps, at the measured
+  // advances of the two faces (12px sans label ≈ 8px/ch + the 0.75rem pad;
+  // 11px mono badge ≈ 6.6px/ch + 0.5rem). It predicts the Google card's 73px
+  // exactly. Below a 48px track the badge stacks.
+  const NARROWEST_ROW_PX = 254;
+  const MIN_INLINE_TRACK_PX = 48;
+  const inlineTrackPx =
+    NARROWEST_ROW_PX -
+    (8 * longestLabelChars + 12) -
+    (6.6 * movementSlotChars + 8) -
+    40 -
+    3 * 12;
+  const stackMove =
+    wideLabels && movementSlotChars > 0 && inlineTrackPx < MIN_INLINE_TRACK_PX;
+  // Stacked, the label cell must also hold the badge line under the label.
+  const stackedCellWidth = `clamp(2.75rem, max(calc(${longestLabelChars}ch + 0.75rem), calc(${movementSlotChars}ch + 0.5rem)), 45%)`;
   const movementSlotStyle =
-    movementSlotChars > 0
+    movementSlotChars > 0 && !stackMove
       ? { width: `calc(${movementSlotChars}ch + 0.5rem)` }
       : undefined;
 
@@ -288,6 +314,79 @@ export default function QuantityGroup({
           // rung's under it (13px vs 22px at 390). Adding the 1rem the negative
           // margins give back keeps one track width per ladder (#1574 c).
           const insetRow = rung.highlighted || rungVerdict != null;
+          const labelSpan = (
+            <span
+              title={wideLabels || roomyNumericTrack ? rung.label : undefined}
+              style={
+                // stacked, the width belongs to the wrapper below: a 45% cap on
+                // this span would resolve against an auto-width parent, and each
+                // rung would size to its own text (measured 171/156/158px tracks)
+                wideLabels && !stackMove
+                  ? { width: wideLabelWidth }
+                  : roomyNumericTrack
+                    ? { width: `clamp(2.75rem, calc(${longestLabelChars}ch + 0.5rem), 45%)` }
+                    : undefined
+              }
+              className={[
+                // A FIXED label width, not `max-w-`. With a content-width label
+                // the `flex-1` track below is a different length on every row,
+                // so two rungs printing the same % render visibly different
+                // bars (#1574 acceptance c).
+                //
+                // #7427 — THE WIDE LABEL WRAPS; IT DOES NOT ELLIPSISE. The line
+                // that used to sit here said "Truncate rather than wrap so the
+                // track always starts at the same x", and that reason does not
+                // hold: the width is a fixed 45% whether the text wraps or not,
+                // so wrapping moves the track's x by exactly zero. Truncating
+                // bought nothing the fixed width had not already bought, and it
+                // cost the TAIL — which on these labels is the load-bearing
+                // token. Measured on production at 390px (the slot is 128–135px
+                // of a 300px row): "Before January 20, 2029" printed as "Before
+                // January 20, …" directly above "Before 2027", clipping away the
+                // one word that tells two rungs four years apart apart; and a
+                // coal ladder printed "Above 20 million short t…" on all six
+                // rungs, so the ladder stopped naming its own unit. 8 of 91
+                // rungs on that draw were over the slot, by 16–33px each.
+                //
+                // Two lines, not unbounded: at this width two lines hold about
+                // 44 characters against the 27 the widest measured label needs,
+                // so the clamp is headroom rather than a second clip, while a
+                // pathological label still cannot grow the row without limit.
+                // `break-words` covers the one case wrapping alone cannot, an
+                // unbroken token wider than the slot.
+                //
+                // This is deliberately NOT the #4404 treatment one arm below.
+                // There the label is mono and numeric ("≥ 0.5goals") and wrapping
+                // orphaned an operator above the number it qualified, so widening
+                // the slot was right and wrapping was wrong. Here the label is a
+                // prose phrase that already reads across a line break, and the
+                // slot cannot be widened far enough anyway — the widest label is
+                // 54% of the row, and paying that out of the `flex-1` track would
+                // shorten every bar on every ladder to fix eight rows.
+                //
+                // #8562 — the 45% is now the CAP of `wideLabelWidth` above,
+                // not the width; everything said here about wrapping holds.
+                wideLabels
+                  ? "shrink-0 break-words line-clamp-2 text-[12px] font-semibold leading-tight"
+                  : roomyNumericTrack
+                    ? "shrink-0 truncate font-mono text-[13px] font-bold tabular-nums"
+                    : "w-11 shrink-0 font-mono text-[13px] font-bold tabular-nums",
+                rung.highlighted ? "text-accent-brand" : "text-text-primary",
+              ].join(" ")}
+            >
+              {rung.label}
+            </span>
+          );
+          const moveBadge = rungPrintsMove(rung) ? (
+            <span
+              className={
+                (rung.movement ?? 0) > 0 ? "text-accent-brand" : "text-text-secondary"
+              }
+              aria-label={`${(rung.movement ?? 0) > 0 ? "up" : "down"} ${formatMovementPoints(rung.movement)} points`}
+            >
+              {movementBadgeText(rung.movement)}
+            </span>
+          ) : null;
           return (
             <RowTag
               key={rung.key}
@@ -308,64 +407,18 @@ export default function QuantityGroup({
               ].join(" ")}
               aria-label={`${rung.label}: ${pct(rung.probability)}${rungVerdict === "won" ? ", Won" : rungVerdict === "lost" ? ", Lost" : ""}`}
             >
-              <span
-                title={wideLabels || roomyNumericTrack ? rung.label : undefined}
-                style={
-                  wideLabels
-                    ? { width: wideLabelWidth }
-                    : roomyNumericTrack
-                      ? { width: `clamp(2.75rem, calc(${longestLabelChars}ch + 0.5rem), 45%)` }
-                      : undefined
-                }
-                className={[
-                  // A FIXED label width, not `max-w-`. With a content-width label
-                  // the `flex-1` track below is a different length on every row,
-                  // so two rungs printing the same % render visibly different
-                  // bars (#1574 acceptance c).
-                  //
-                  // #7427 — THE WIDE LABEL WRAPS; IT DOES NOT ELLIPSISE. The line
-                  // that used to sit here said "Truncate rather than wrap so the
-                  // track always starts at the same x", and that reason does not
-                  // hold: the width is a fixed 45% whether the text wraps or not,
-                  // so wrapping moves the track's x by exactly zero. Truncating
-                  // bought nothing the fixed width had not already bought, and it
-                  // cost the TAIL — which on these labels is the load-bearing
-                  // token. Measured on production at 390px (the slot is 128–135px
-                  // of a 300px row): "Before January 20, 2029" printed as "Before
-                  // January 20, …" directly above "Before 2027", clipping away the
-                  // one word that tells two rungs four years apart apart; and a
-                  // coal ladder printed "Above 20 million short t…" on all six
-                  // rungs, so the ladder stopped naming its own unit. 8 of 91
-                  // rungs on that draw were over the slot, by 16–33px each.
-                  //
-                  // Two lines, not unbounded: at this width two lines hold about
-                  // 44 characters against the 27 the widest measured label needs,
-                  // so the clamp is headroom rather than a second clip, while a
-                  // pathological label still cannot grow the row without limit.
-                  // `break-words` covers the one case wrapping alone cannot, an
-                  // unbroken token wider than the slot.
-                  //
-                  // This is deliberately NOT the #4404 treatment one arm below.
-                  // There the label is mono and numeric ("≥ 0.5goals") and wrapping
-                  // orphaned an operator above the number it qualified, so widening
-                  // the slot was right and wrapping was wrong. Here the label is a
-                  // prose phrase that already reads across a line break, and the
-                  // slot cannot be widened far enough anyway — the widest label is
-                  // 54% of the row, and paying that out of the `flex-1` track would
-                  // shorten every bar on every ladder to fix eight rows.
-                  //
-                  // #8562 — the 45% is now the CAP of `wideLabelWidth` above,
-                  // not the width; everything said here about wrapping holds.
-                  wideLabels
-                    ? "shrink-0 break-words line-clamp-2 text-[12px] font-semibold leading-tight"
-                    : roomyNumericTrack
-                      ? "shrink-0 truncate font-mono text-[13px] font-bold tabular-nums"
-                      : "w-11 shrink-0 font-mono text-[13px] font-bold tabular-nums",
-                  rung.highlighted ? "text-accent-brand" : "text-text-primary",
-                ].join(" ")}
-              >
-                {rung.label}
-              </span>
+              {stackMove ? (
+                <span style={{ width: stackedCellWidth }} className="shrink-0 flex flex-col gap-0.5">
+                  {labelSpan}
+                  {moveBadge && (
+                    <span className="whitespace-nowrap font-mono text-[11px] font-bold tabular-nums leading-tight">
+                      {moveBadge}
+                    </span>
+                  )}
+                </span>
+              ) : (
+                labelSpan
+              )}
               {/* #2437 — the verdict, in `OutcomeRow`'s own words (token colors —
                   this file is under the L2-117 raw-palette guard).
                   Reserved on every row (see `verdictSlotStyle`) so the bar's x
@@ -393,23 +446,15 @@ export default function QuantityGroup({
                   rounding residue cannot become an arrow (UX-P275); the SLOT
                   holding it is reserved on every row so the bar beside it is
                   measured against the same track (#4644). #2437: never on a
-                  rung that states a verdict. */}
+                  rung that states a verdict. A ladder that cannot fit the
+                  column prints the badge under its label instead (`stackMove`). */}
               {movementSlotStyle && (
                 <span
                   style={movementSlotStyle}
                   aria-hidden={rungPrintsMove(rung) ? undefined : true}
                   className="shrink-0 whitespace-nowrap text-right font-mono text-[11px] font-bold tabular-nums"
                 >
-                  {rungPrintsMove(rung) && (
-                    <span
-                      className={
-                        (rung.movement ?? 0) > 0 ? "text-accent-brand" : "text-text-secondary"
-                      }
-                      aria-label={`${(rung.movement ?? 0) > 0 ? "up" : "down"} ${formatMovementPoints(rung.movement)} points`}
-                    >
-                      {movementBadgeText(rung.movement)}
-                    </span>
-                  )}
+                  {moveBadge}
                 </span>
               )}
               <span className="flex-1 h-[18px] rounded-md bg-surface-elevated overflow-hidden">
