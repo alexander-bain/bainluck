@@ -759,6 +759,14 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
               )}
             </div>
           )}
+          {/* #8526 — the number says WHOSE it is, as Variant A's scrim does.
+              This root never printed `leader.name`, so "Which party will win
+              the U.S. Senate?" headlined a bare 61% on the no-photo half of the
+              A/B split and "61% · Democratic Party" on the other. Same string,
+              same `heroOutcome` pick, so the two halves cannot disagree. */}
+          {pctDisplay && leader && (
+            <div className="-mt-1.5 mb-3 text-[12px] font-medium text-text-secondary line-clamp-1" data-testid="futures-hero-outcome">{leader.name}</div>
+          )}
 
           {prob != null && (
             <div className="flex h-[7px] gap-0.5 mb-3.5">
