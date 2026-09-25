@@ -1080,3 +1080,90 @@ class TestAFailedCommitLeavesNothingMarkedWritten:
         assert r._last_snapshot_at == {1: 1002.0}
         assert r.stats["stamped"] == 1
         assert r._lock_retry == set()
+
+
+class TestAThrottledPriceIsStampedWhenItsThrottleExpires:
+    """#837 tail. `refresh()` dropped an event its throttle held, so the price
+    that flush had just written waited for another tick on ANY of the game's
+    outcomes. Production 2026-09-25 02:47:45Z: Padres @ Dodgers' 0.605 landed
+    during the throttle, the moneyline sent nothing more until 02:47:57.5, and
+    the stamp came only because another of the game's markets ticked. The
+    throttle is a ceiling on the write rate; it was never meant to lose the
+    last price of the window."""
+
+    def _refresher(self, monkeypatch):
+        import app.tasks.live_blend_refresh as lbr
+
+        clock = {"t": 1000.0}
+        monkeypatch.setattr(lbr.time, "monotonic", lambda: clock["t"])
+        r = LiveBlendRefresher("polymarket", min_refresh_interval_s=5.0)
+        batches = []
+
+        async def _batch(event_ids, now):
+            batches.append(sorted(event_ids))
+            for eid in event_ids:  # what the real batch stamps first
+                r._last_refresh_at[eid] = now
+
+        r._refresh_batch = _batch
+        return r, clock, batches
+
+    @pytest.mark.asyncio
+    async def test_a_quiet_flush_after_the_throttle_stamps_the_held_price(
+        self, monkeypatch
+    ):
+        r, clock, batches = self._refresher(monkeypatch)
+        await r.refresh([1])  # stamped at 1000
+        clock["t"] = 1002.0
+        await r.refresh([1])  # a new price written inside the throttle
+        assert batches == [[1]]
+        assert r._throttle_deferred == {1}
+
+        clock["t"] = 1005.5  # no tick since: the flush has no prices
+        await r.refresh_pending()
+
+        assert batches == [[1], [1]], "the held price waited for another tick"
+        assert r._throttle_deferred == set()
+
+    @pytest.mark.asyncio
+    async def test_it_also_rides_a_flush_that_names_only_other_events(
+        self, monkeypatch
+    ):
+        r, clock, batches = self._refresher(monkeypatch)
+        await r.refresh([1])
+        clock["t"] = 1002.0
+        await r.refresh([1])
+        clock["t"] = 1006.0
+        await r.refresh([2])
+        assert batches == [[1], [1, 2]]
+
+    @pytest.mark.asyncio
+    async def test_waiting_out_the_throttle_opens_no_batch_and_counts_once(
+        self, monkeypatch
+    ):
+        """The throttle still bounds the write rate: a held event is not taken
+        early, a quiet flush inside the window opens no session, and a price
+        held across three flushes is one throttled price, not three."""
+        r, clock, batches = self._refresher(monkeypatch)
+        await r.refresh([1])
+        for t in (1001.0, 1002.0, 1003.0):
+            clock["t"] = t
+            await r.refresh([1])
+        clock["t"] = 1004.0
+        await r.refresh_pending()
+
+        assert batches == [[1]]
+        assert r.stats["throttled"] == 1
+        assert r._throttle_deferred == {1}
+
+    @pytest.mark.asyncio
+    async def test_an_event_nothing_was_written_for_is_not_deferred(
+        self, monkeypatch
+    ):
+        """Only a price written inside the window is owed. An event that was
+        stamped and then went quiet costs nothing after its throttle."""
+        r, clock, batches = self._refresher(monkeypatch)
+        await r.refresh([1])
+        clock["t"] = 1010.0
+        await r.refresh_pending()
+        assert batches == [[1]]
+        assert r._throttle_deferred == set()
