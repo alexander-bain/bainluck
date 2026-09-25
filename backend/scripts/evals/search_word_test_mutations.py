@@ -379,9 +379,9 @@ MUTANTS: list[tuple[str, Path, str, str, str, str]] = [
     (
         "refill-fires-unconditionally",
         EVENTS,
-        """        len(deduped_futures) < _SEARCH_FUTURES_PAGE
+        """        _answer_rows < _SEARCH_FUTURES_PAGE
         and len(futures_markets_raw) >= _SEARCH_FUTURES_WINDOW""",
-        """        len(deduped_futures) < _SEARCH_FUTURES_PAGE""",
+        """        _answer_rows < _SEARCH_FUTURES_PAGE""",
         DEDUP_ORACLE,
         "OVER-APPLIES the refill: every short page — including the honestly short "
         "ones — pays a second futures query, on the stage that is already #1731's "
