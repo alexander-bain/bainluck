@@ -123,8 +123,10 @@ Discover page one on 2026-09-05, capped at
 
 A third identity arm (#8718) selects by the market's own clock: a tier-1
 outright resolving within :data:`IN_PLAY_HORIZON_HOURS` is in play, and gets the
-same 45-minute window. It is bounded by the calendar (22 markets on 2026-09-25)
-and by :data:`IN_PLAY_LIMIT` should an upstream ever mislabel a batch.
+same 45-minute window, staying in for :data:`IN_PLAY_GRACE_HOURS` past a stored
+date that is only the venue's expected expiration (CERT-3515). It is bounded by
+the calendar (22 markets on 2026-09-25) and by :data:`IN_PLAY_LIMIT` should an
+upstream ever mislabel a batch.
 
 STARVATION GUARDS (gotcha #41 — an ordering needs both bounds)
 --------------------------------------------------------------
@@ -440,6 +442,18 @@ IN_PLAY_REFRESH_MINUTES = 45
 #: every one unlinked to an event, so the arm adds ~5 Kalshi calls per beat and
 #: never overlaps `poll_live_prediction_markets`.
 IN_PLAY_HORIZON_HOURS = 72
+
+#: CERT-3515's repair: how long past its stored ``resolution_date`` a tier-1
+#: outright stays in the in-play arm. The stored date can be the venue's
+#: EXPECTED expiration, not its close: `KXPRESCUP-26` stores 2026-09-27 14:00Z
+#: (Kalshi `expected_expiration_time`) while its `close_time` is 2026-10-11 and
+#: Sunday's singles run past 14:00Z. Without a grace the arm drops the one market
+#: it was built for at the start of the final day. 36h spans a final day plus a
+#: weather Monday. Bounded on the other side by settlement, stricter than the
+#: shared contract: no winner of ANY shape and no venue-settled stamp at all.
+#: Measured 2026-09-25 22:15Z: 0 open tier-1 rows inside the grace (all 212
+#: tier-1 rows past their date in the last 36h were already `resolved`).
+IN_PLAY_GRACE_HOURS = 36
 
 #: A ceiling, not a fence: 9x the measured population. It exists so an upstream
 #: that mislabels a batch of short-dated markets as tier 1 cannot turn an
@@ -841,15 +855,32 @@ _SERVED_CANDIDATE_SQL = text(_BY_ID_CANDIDATE_SQL)
 #: #8718 — tier-1 outrights in their last :data:`IN_PLAY_HORIZON_HOURS`, stale for
 #: longer than :data:`IN_PLAY_REFRESH_MINUTES`. Selected by the market's own
 #: clock rather than by a list, because what makes it urgent is WHEN it is, not
-#: who curated it. The liveness bounds are the shared ones (``resolution_date >
-#: NOW()`` among them), so the arm ends where every other arm ends.
+#: who curated it. The liveness bounds are the shared ones, with ONE exception
+#: (CERT-3515): a row past its stored ``resolution_date`` by less than
+#: :data:`IN_PLAY_GRACE_HOURS` stays in while it is open, has no winning outcome
+#: and carries no venue-settled stamp — the stored date can be the venue's
+#: expected expiration, which falls before the last day's play ends.
 _IN_PLAY_CANDIDATE_SQL = text(
     f"""
     SELECT fm.id, fm.source, fm.external_id, fm.volume,
            {_POLY_EVENT_ID_SQL},
            fm.market_metadata->>'{VENUE_SETTLED_KEY}' AS venue_settled_since
       FROM futures_markets fm
-     WHERE {LIVE_MARKET_SQL}
+     WHERE (
+             ({LIVE_MARKET_SQL})
+          OR (
+                 fm.status = 'open'
+             AND fm.source IN ('kalshi', 'polymarket')
+             AND fm.resolution_date <= NOW()
+             AND fm.resolution_date > NOW() - make_interval(hours => :in_play_grace_hours)
+             AND fm.market_metadata->>'{VENUE_SETTLED_KEY}' IS NULL
+             AND NOT EXISTS (
+                   SELECT 1 FROM futures_outcomes fo_g
+                    WHERE fo_g.market_id = fm.id
+                      AND fo_g.is_winner IS TRUE
+                 )
+             )
+           )
        AND {VALUE_TIER1_SQL}
        AND fm.resolution_date IS NOT NULL
        AND fm.resolution_date <= NOW() + make_interval(hours => :in_play_hours)
@@ -1078,6 +1109,7 @@ async def _scan_in_play_candidates(
     *,
     stale_minutes: int,
     horizon_hours: int = IN_PLAY_HORIZON_HOURS,
+    grace_hours: int = IN_PLAY_GRACE_HOURS,
     limit: int = IN_PLAY_LIMIT,
 ) -> list[dict]:
     """Stale tier-1 outrights whose tournament is in its last days (#8718)."""
@@ -1087,6 +1119,7 @@ async def _scan_in_play_candidates(
             {
                 "stale_minutes": stale_minutes,
                 "in_play_hours": horizon_hours,
+                "in_play_grace_hours": grace_hours,
                 "in_play_limit": limit,
             },
         )

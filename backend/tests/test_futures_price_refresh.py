@@ -1897,6 +1897,36 @@ class TestInPlayOutrightsAreRepricedOnTheShortClock:
         assert "stale_hours" not in sql
         assert "limit :in_play_limit" in sql
 
+    def test_a_row_past_its_stored_date_stays_in_while_unsettled(self):
+        """CERT-3515. `KXPRESCUP-26` stores 2026-09-27 14:00Z (Kalshi's EXPECTED
+        expiration; `close_time` is 10-11) and Sunday's singles run past it, so
+        the shared `resolution_date > NOW()` alone drops the market at the start
+        of the final day. The grace branch admits it for a bounded window and is
+        STRICTER than the shared contract on settlement: no winner of any shape,
+        no venue-settled stamp at all (not merely an unconfirmed one).
+        """
+        from app.utils.futures_liveness import LIVE_MARKET_SQL, VENUE_SETTLED_KEY
+
+        sql = self._sql()
+        # The shared contract is still one arm of the OR — the census holds.
+        assert _normalise(LIVE_MARKET_SQL) in sql
+        grace = sql.split(" or (", 1)[1]
+        assert "fm.status = 'open'" in grace
+        assert "fm.source in ('kalshi', 'polymarket')" in grace
+        assert "fm.resolution_date <= now()" in grace
+        assert (
+            "fm.resolution_date > now() - make_interval(hours => :in_play_grace_hours)"
+            in grace
+        )
+        assert f"fm.market_metadata->>'{VENUE_SETTLED_KEY}' is null" in grace
+        assert "fo_g.is_winner is true" in grace
+        # No shape gate on the winner test: past its date, ANY settled leg ends it.
+        assert "expected_winners" not in grace.split("and fm.market_tier", 1)[0]
+
+    def test_the_grace_is_bounded_and_shorter_than_the_horizon(self):
+        assert fpr.IN_PLAY_GRACE_HOURS == 36
+        assert 0 < fpr.IN_PLAY_GRACE_HOURS < fpr.IN_PLAY_HORIZON_HOURS
+
     def test_the_constants_match_the_other_identity_windows(self):
         assert fpr.IN_PLAY_REFRESH_MINUTES == fpr.SERVED_REFRESH_MINUTES
         assert fpr.IN_PLAY_REFRESH_MINUTES < 60, "must be a sub-interval of the hourly beat"
@@ -1919,6 +1949,7 @@ class TestInPlayOutrightsAreRepricedOnTheShortClock:
         assert seen["params"] == {
             "stale_minutes": 45,
             "in_play_hours": fpr.IN_PLAY_HORIZON_HOURS,
+            "in_play_grace_hours": fpr.IN_PLAY_GRACE_HOURS,
             "in_play_limit": fpr.IN_PLAY_LIMIT,
         }
         assert [m["id"] for m in out] == [16757297]
@@ -1981,7 +2012,44 @@ class _InPlayHarness(_RunHarness):
         return await super().run(monkeypatch)
 
 
+class _PastDateInPlayHarness(_InPlayHarness):
+    """CERT-3515: Sunday after 14:00Z. The row is past its stored date, so the
+    class arm (which composes the shared `resolution_date > NOW()`) no longer
+    returns it — the in-play grace is the ONLY arm that can."""
+
+    def __init__(self, *, signal):
+        super().__init__(signal=signal)
+        self.class_rows = []
+
+
 class TestTheRunTreatsAnInPlayOutrightAsIdentity:
+    @pytest.mark.asyncio
+    async def test_past_its_stored_date_it_is_fetched_once_on_the_short_ttl(
+        self, monkeypatch
+    ):
+        from app.utils.feed_served_markets import SERVED_EMPTY
+
+        signal = type(
+            "Sig",
+            (),
+            {
+                "ids": [],
+                "state": SERVED_EMPTY,
+                "green_allowed": True,
+                "shapes": 0,
+                "stale_shapes": 0,
+                "unreadable_shapes": 0,
+            },
+        )()
+        h = _PastDateInPlayHarness(signal=signal)
+        stats = await h.run(monkeypatch)
+
+        assert stats["in_play_candidates"] == 1
+        assert stats["candidates"] == 1
+        assert stats["in_play_attempted"] == 1
+        assert h.kalshi_fetched == ["KXPRESCUP-26"]
+        assert h.marks.get((16757297,)) == fpr.IN_PLAY_REFRESH_MINUTES * 60
+
     @pytest.mark.asyncio
     async def test_counted_once_attempted_and_marked_on_the_short_ttl(self, monkeypatch):
         from app.utils.feed_served_markets import SERVED_EMPTY

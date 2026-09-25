@@ -1265,3 +1265,107 @@ class TestTheWriterClearsTheDeltaItInvalidates:
         await db.commit()
 
         assert await _read_delta(db, outcome.id) is None
+
+
+# --- CERT-3515: the in-play arm keeps a market past its stored date ----------
+
+
+async def _seed_in_play(
+    session,
+    *,
+    ticker,
+    resolved_hours_ago,
+    status="open",
+    winner=False,
+    venue_settled=False,
+):
+    """A tier-1 Kalshi outright, stale (no snapshot), resolving relative to NOW.
+
+    Relative seeding IS the frozen clock here: Postgres reads NOW() for real, so
+    "Sunday 23:00Z against a stored 14:00Z" is `resolved_hours_ago=9`.
+    """
+    from app.models.models import FuturesMarket, FuturesOutcome
+    from app.utils.futures_liveness import VENUE_SETTLED_KEY
+
+    now = datetime.now(timezone.utc)
+    metadata = {}
+    if venue_settled:
+        # An UNCONFIRMED stamp (1h old, inside the 48h confirm window): the
+        # shared contract still calls this row live, the grace must not.
+        metadata[VENUE_SETTLED_KEY] = (now - timedelta(hours=1)).strftime(
+            "%Y-%m-%dT%H:%M:%S"
+        )
+    market = FuturesMarket(
+        source=_BOOKMAKER,
+        external_id=ticker,
+        name=f"{ticker} winner",
+        category="championship",
+        market_tier=1,
+        status=status,
+        resolution_date=now - timedelta(hours=resolved_hours_ago),
+        market_metadata=metadata,
+    )
+    session.add(market)
+    await session.flush()
+    for leg, won in (("USA", winner), ("WORLD", False)):
+        session.add(
+            FuturesOutcome(
+                market_id=market.id,
+                external_id=f"{ticker}-{leg}",
+                name=leg,
+                is_winner=won,
+            )
+        )
+    await session.flush()
+    return market.id
+
+
+class TestTheInPlayArmOutlivesAnExpectedExpirationDate:
+    """CERT-3515. `KXPRESCUP-26` stores 2026-09-27 14:00Z — Kalshi's EXPECTED
+    expiration; `close_time` is 2026-10-11 — and Sunday's singles run past it.
+    The arm must still select it after 14:00Z, and must not resurrect a market
+    that is settled, closed, or beyond the grace.
+    """
+
+    async def test_after_the_stored_date_it_is_still_selected_and_the_controls_are_not(
+        self, db
+    ):
+        from app.tasks import futures_price_refresh as fpr
+
+        ids = {
+            "sunday_2300z": await _seed_in_play(
+                db, ticker="KXPRESCUP-26", resolved_hours_ago=9
+            ),
+            "saturday_future": await _seed_in_play(
+                db, ticker="KXFUTURE-26", resolved_hours_ago=-20
+            ),
+            "has_winner": await _seed_in_play(
+                db, ticker="KXWON-26", resolved_hours_ago=9, winner=True
+            ),
+            "venue_settled": await _seed_in_play(
+                db, ticker="KXSTAMP-26", resolved_hours_ago=9, venue_settled=True
+            ),
+            "beyond_grace": await _seed_in_play(
+                db,
+                ticker="KXOLD-26",
+                resolved_hours_ago=fpr.IN_PLAY_GRACE_HOURS + 4,
+            ),
+            "resolved_status": await _seed_in_play(
+                db, ticker="KXDONE-26", resolved_hours_ago=9, status="resolved"
+            ),
+        }
+        await db.commit()
+
+        out = await fpr._scan_in_play_candidates(
+            db, stale_minutes=fpr.IN_PLAY_REFRESH_MINUTES
+        )
+        selected = {m["id"] for m in out}
+
+        assert ids["sunday_2300z"] in selected, (
+            "the Presidents Cup falls out of the in-play arm the moment its stored "
+            "expected-expiration passes — CERT-3515's block"
+        )
+        assert ids["saturday_future"] in selected, "the pre-date arm regressed"
+        for control in ("has_winner", "venue_settled", "beyond_grace", "resolved_status"):
+            assert ids[control] not in selected, f"the grace resurrected {control}"
+        assert all(m["arm"] == fpr._ARM_IN_PLAY for m in out)
