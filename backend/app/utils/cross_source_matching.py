@@ -13,6 +13,9 @@ import re
 from collections import defaultdict
 from typing import Callable, Sequence
 
+from sqlalchemy import inspect as sa_inspect
+from sqlalchemy.orm.attributes import set_committed_value
+
 from app.models import FuturesMarket
 from app.utils.duplicate_condition_outcomes import drop_duplicate_legs
 
@@ -766,11 +769,23 @@ def group_markets_by_group_id(
                     merged_outcomes.append(o)
                     existing_names.add(name_key)
 
-        # Attach merged outcomes.  We mutate the relationship list in-place
-        # because SQLAlchemy lazy-loaded lists support item assignment.
-        # This is safe because we are in a read-only request context and the
-        # session will not be flushed/committed.
-        representative.outcomes = merged_outcomes  # type: ignore[assignment]
+        # Attach merged outcomes WITHOUT ORM history (#8609). A plain
+        # `representative.outcomes = merged_outcomes` is a write: it reparents
+        # every borrowed outcome, and the next query's autoflush sends
+        # `UPDATE futures_outcomes SET market_id=<representative>`. The session
+        # is never committed, but autoflush does not wait for a commit — a
+        # borrowed rung sharing an external_id with one of the representative's
+        # own (Polymarket's "↑ 45%" parent vs "45%" sub-market) hit
+        # uq_outcome_market_external and 500'd /api/politics on every request.
+        # `set_committed_value` loads the list as if the database had returned
+        # it: the view carries the full outcome set, the session has nothing
+        # to flush, and each borrowed outcome keeps its own `market_id`.
+        # Unmapped stand-ins (tests, pre-built view rows) have no session to
+        # flush, so plain assignment is the same thing for them.
+        if sa_inspect(representative, raiseerr=False) is not None:
+            set_committed_value(representative, "outcomes", merged_outcomes)
+        else:
+            representative.outcomes = merged_outcomes  # type: ignore[assignment]
 
         result.append(representative)
 
