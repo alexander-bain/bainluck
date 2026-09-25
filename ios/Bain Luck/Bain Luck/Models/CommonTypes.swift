@@ -221,6 +221,8 @@ nonisolated struct ESPNData: Decodable, Sendable {
 
 /// One source's win probability value and display metadata.
 nonisolated struct WinProbSource: Decodable, Sendable {
+    /// The source write clock, used to reconcile cached REST against live push.
+    let updatedAt: String?
     let value: WinProbValue?
     let displayName: String?
     let type: String?
@@ -231,6 +233,7 @@ nonisolated struct WinProbSource: Decodable, Sendable {
         if let container = try? decoder.singleValueContainer(),
            let d = try? container.decode(Double.self) {
             self.value = .number(d)
+            self.updatedAt = nil
             self.displayName = nil
             self.type = nil
             self.color = nil
@@ -238,13 +241,14 @@ nonisolated struct WinProbSource: Decodable, Sendable {
         }
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.value = try container.decodeIfPresent(WinProbValue.self, forKey: .value)
+        self.updatedAt = try? container.decodeIfPresent(String.self, forKey: .updatedAt)
         self.displayName = try container.decodeIfPresent(String.self, forKey: .displayName)
         self.type = try container.decodeIfPresent(String.self, forKey: .type)
         self.color = try container.decodeIfPresent(String.self, forKey: .color)
     }
 
     private enum CodingKeys: String, CodingKey {
-        case value, displayName, type, color
+        case value, displayName, type, color, updatedAt
     }
 }
 

@@ -84,6 +84,9 @@ final class EventDetailViewModel: ObservableObject {
     /// keeps the live cadence until a load comes back finished.
     private var awaitingServedFinal = false
 
+    private var latestPriceFrame: LiveStreamFrame?
+    private var latestAcceptedPriceDate: Date?
+
     private var stream: LiveStreamController?
     private var streamTickTask: Task<Void, Never>?
     /// Injected so tests can drive the lifecycle without a socket. `nil` means
@@ -163,6 +166,26 @@ final class EventDetailViewModel: ObservableObject {
                     // first load after a pushed final can still say `live`. The push
                     // is the newer fact: keep it, take everything else, ask again.
                     fetched.status = event?.status
+                }
+            }
+            if LiveEventPriceReconciliation.shouldPreserve(
+                latestPriceFrame, over: fetched, delivering: streamDelivering
+            ) {
+                fetched = LiveEventPriceReconciliation.applying(
+                    latestPriceFrame, to: fetched, delivering: streamDelivering
+                )
+            } else {
+                // A newer REST reading, a refusal, or an unrankable response
+                // retires the override. A later cache hit must not resurrect a
+                // pushed price that REST has already superseded.
+                latestPriceFrame = nil
+                // Unknown or older REST may remain authoritative, but neither
+                // erases a clock already proved by a served/pushed reading.
+                // Otherwise its next stale replay could move the hero while
+                // the chart correctly rejects that older point.
+                if let servedAt = LiveEventPriceReconciliation.newestSourceDate(in: fetched),
+                   latestAcceptedPriceDate.map({ servedAt > $0 }) ?? true {
+                    latestAcceptedPriceDate = servedAt
                 }
             }
             event = fetched
@@ -300,7 +323,10 @@ final class EventDetailViewModel: ObservableObject {
                 // frame of a resumed stream (`apply` runs before the controller
                 // reports delivering), so clearing there would erase the price
                 // that just earned it.
-                if !delivering { self.streamHasPushedPrice = false }
+                if !delivering {
+                    self.streamHasPushedPrice = false
+                    self.latestPriceFrame = nil
+                }
                 // Re-decide the poll on every transition, in BOTH directions.
                 // Only reacting to the good one would leave the page frozen the
                 // first time a stream went quiet.
@@ -334,6 +360,7 @@ final class EventDetailViewModel: ObservableObject {
         stream?.stop()
         stream = nil
         streamDelivering = false
+        latestPriceFrame = nil
     }
 
     /// Write a pushed price into the model the page already reads.
@@ -345,7 +372,13 @@ final class EventDetailViewModel: ObservableObject {
     private func apply(_ frame: LiveStreamFrame) {
         guard var current = event, current.id == frame.eventId else { return }
 
-        if let p = frame.p, var odds = current.currentOdds {
+        let stamped = frame.updatedAt?.asDate
+        let priceIsNotNewer = stamped.map { stamp in
+            latestAcceptedPriceDate.map { stamp <= $0 } ?? false
+        } ?? false
+        if !priceIsNotNewer, let p = frame.p, p.isFinite, (0...1).contains(p), var odds = current.currentOdds {
+            latestPriceFrame = frame
+            if let stamped { latestAcceptedPriceDate = stamped }
             odds.homeProbability = p
             // Derived, exactly as the feed derives it, which is what makes the
             // pair an exact complement — and therefore what the duel contract
@@ -376,7 +409,7 @@ final class EventDetailViewModel: ObservableObject {
         // The venue reading rides along (#836/#837/#920): on a single-source page
         // the backend blends nothing, and that venue's own line is the one the
         // chart draws — so it is the one that has to keep up with the hero.
-        if let p = frame.p, let stamped = frame.updatedAt?.asDate {
+        if !priceIsNotNewer, let p = frame.p, let stamped {
             liveBlend = LiveBlendBuffer.appending(
                 LiveBlendPoint(date: stamped, homeProbability: p,
                                source: frame.source, sourceProbability: frame.sourceValue),
