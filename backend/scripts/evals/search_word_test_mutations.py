@@ -229,10 +229,20 @@ MUTANTS: list[tuple[str, Path, str, str, str, str]] = [
         "fragment-boundary-removed",
         EVENTS,
         """    if not _has_extractable_trigram(term):
-        # Fragment: substring recall only. See the LAT-P037 section above — the
+        # Fragment: no whole-word vote. See the LAT-P037 section above — the
         # word test cannot be right about a word the user has not finished
         # typing, so it does not get a vote.
-        return _build_expanded_ilike(FuturesMarket.name, term, exp)
+        #
+        # #8689: but it matches at the START of a word, not anywhere. A prefix
+        # being typed is a word start, so `re` still reaches "Recession" and
+        # LAT-P037's guard keeps passing; an infix is not one. `us open` served
+        # Chengdu/Korea doubles through "Venus" and "Ruse", the Australian Open
+        # through "Aus", a CS:GO match through "Aimhaus" and a transit story
+        # through "push" — 20 of the 25 open markets its name arm reached,
+        # measured on production 2026-09-25. `ts_rank_cd` could not sink them:
+        # `us` is a stopword, so every name with "Open" tied. Same rule the team
+        # arm took in #7381; the ILIKE half is unchanged and still drives the scan.
+        return _build_word_start_ilike(FuturesMarket.name, term, exp)
     return and_(""",
         """    return and_(""",
         SHAPE_ORACLE,
@@ -249,9 +259,9 @@ MUTANTS: list[tuple[str, Path, str, str, str, str]] = [
         # futures arm happens to come first: a property of line ORDER, not of the
         # anchor. The comment line pins it to the futures arm on purpose.
         """    if not _has_extractable_trigram(term):
-        # Fragment: substring recall only. See the LAT-P037 section above — the""",
+        # Fragment: no whole-word vote. See the LAT-P037 section above — the""",
         """    if True:
-        # Fragment: substring recall only. See the LAT-P037 section above — the""",
+        # Fragment: no whole-word vote. See the LAT-P037 section above — the""",
         SHAPE_ORACLE,
         "Over-applies the exemption so nothing is ever word-tested — green on the "
         "2-char test while silently undoing the whole queue (`nba champion` returns "
@@ -262,9 +272,9 @@ MUTANTS: list[tuple[str, Path, str, str, str, str]] = [
         EVENTS,
         # Same ambiguity as the mutant above, pinned the same way.
         """    if not _has_extractable_trigram(term):
-        # Fragment: substring recall only. See the LAT-P037 section above — the""",
+        # Fragment: no whole-word vote. See the LAT-P037 section above — the""",
         """    if len(term) < 3:
-        # Fragment: substring recall only. See the LAT-P037 section above — the""",
+        # Fragment: no whole-word vote. See the LAT-P037 section above — the""",
         SHAPE_ORACLE,
         "Re-hand-rolls the cliff as a length check — the third copy, and blind to "
         "`u.s.`/`a.i.`/`d'or` (length 4, measured 22-31x their length-matched "
