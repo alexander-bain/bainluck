@@ -1980,6 +1980,78 @@ def _demote_wrong_sport(markets: list, resolved_category: str | None) -> list:
     return keep + wrong if wrong else markets
 
 
+# #7355: team sport-key prefixes `SPORT_PREFIX_TO_LLM_CATEGORY` does not carry,
+# translated here rather than added to `sport_keys.py` — that map also drives
+# market classification, and widening it is not this fix's call. Measured over
+# the teams table 2026-09-25: `rugbyleague` 31 rows (New Zealand Warriors),
+# `rugbyunion` 6, `handball` 20; every other team prefix is already mapped.
+_TEAM_PREFIX_EXTRA_LLM_CATEGORY = {
+    "rugbyleague": "rugby",
+    "rugbyunion": "rugby",
+    "handball": "handball",
+}
+
+# The market categories that name a SPORT. Only these can be demoted for having
+# no matched team: `politics` or `entertainment` on a club-name query is not a
+# sport cousin, and whether it belongs on the page is not this signal's question.
+_SEARCH_SPORT_LLM_CATEGORIES = frozenset(
+    set(SPORT_PREFIX_TO_LLM_CATEGORY.values())
+    | set(_TEAM_PREFIX_EXTRA_LLM_CATEGORY.values())
+    | {"table_tennis", "pickleball"}
+)
+
+
+def _team_evidence_sport_categories(team_rows, window: int) -> frozenset | None:
+    """#7355: the sport categories the query's matched TEAMS belong to, or None.
+
+    `warriors` resolves games in seven sport facets, so #7259's unanimity rule
+    can never arm on it, and the ANSWERS card led with League of Legends matches
+    (Saigon Warriors) while Golden State's own markets sat behind "+4 more". The
+    teams table already knows which sports have a club by that name; a market
+    from a sport with NO such club is a nickname cousin.
+
+    Read from the UNCAPPED recall rows, never the served `teams` bucket: that
+    caps at 5, and for `warriors` the five omit New Zealand Warriors (NRL), which
+    would have made rugby read teamless for the wrong reason. None — disarmed —
+    whenever the evidence could be incomplete:
+
+    * no team rows (`trump`, `fed`): nothing says which sports are real here;
+    * the window came back full (`city`): the next club may be in another sport;
+    * a team whose sport cannot be translated: it could be anyone's.
+    """
+    if not team_rows or len(team_rows) >= window:
+        return None
+    cats = set()
+    for row in team_rows:
+        prefix = (getattr(row, "sport_key", None) or "").strip().lower().split("_", 1)[0]
+        cat = SPORT_PREFIX_TO_LLM_CATEGORY.get(prefix) or _TEAM_PREFIX_EXTRA_LLM_CATEGORY.get(prefix)
+        if not cat:
+            return None
+        cats.add(cat)
+    return frozenset(cats)
+
+
+def _demote_teamless_sport(markets: list, team_categories: frozenset | None) -> list:
+    """#7355: sink markets from a sport none of the query's matched teams play.
+
+    The sibling of `_demote_wrong_sport` for the query it cannot arm on. It never
+    chooses between two real clubs — `giants` has NFL and MLB teams, so both
+    sports keep their place — it only sinks a sport with no club of that name at
+    all (esports on `warriors`). Same stable partition, same fail-open shape: a
+    market with no category, or a non-sport category, keeps its place.
+    """
+    if not team_categories or len(markets) < 2:
+        return markets
+
+    def _teamless(m) -> bool:
+        cat = (getattr(m, "llm_sport_category", None) or "").strip().lower()
+        return cat in _SEARCH_SPORT_LLM_CATEGORIES and cat not in team_categories
+
+    keep = [m for m in markets if not _teamless(m)]
+    teamless = [m for m in markets if _teamless(m)]
+    return keep + teamless if teamless else markets
+
+
 # Award-narrowing scope tokens. A market whose NAME carries one of these but the
 # QUERY does not is a sub-award (e.g. "Eastern Conference Finals MVP" vs the bare
 # season "MVP Winner"). Word-boundary matched so "final" inside another word can't
@@ -2022,6 +2094,7 @@ def _rerank_search_futures(
     markets: list,
     expanded: list[tuple[str, str | None]],
     resolved_sport_category: str | None = None,
+    team_sport_categories: frozenset | None = None,
 ) -> list:
     """#993 Slice C — surface the entity's real markets on entity queries.
 
@@ -2049,6 +2122,10 @@ def _rerank_search_futures(
     the caller that computed it. Optional and defaulted because only `/search`
     has it: see the demotion's own docstring, and the typeahead call site for why
     that endpoint deliberately passes nothing.
+
+    `team_sport_categories` (#7355) is the fourth, same provenance: the sports
+    the query's matched teams play, for the multi-sport queries the third cannot
+    arm on. Also `/search`-only.
     """
     if len(markets) < 2:
         return markets
@@ -2073,6 +2150,9 @@ def _rerank_search_futures(
     # Then push substring-cousin wrong-league markets to the bottom
     # ("nba mvp" must not lead with "WNBA: 2026 MVP").
     ordered = _demote_wrong_league(ordered, expanded)
+    # Then a sport no matched team plays (#7355) — the multi-sport query's
+    # version of the signal below, so it runs first and the stronger one last.
+    ordered = _demote_teamless_sport(ordered, team_sport_categories)
     # And finally the wrong SPORT (#7259), below even the wrong league — the one
     # signal here that the query text cannot supply. `astros` must not lead with
     # an LNBP basketball fixture. No-op when the caller resolved no single sport.
@@ -2597,6 +2677,9 @@ _SEARCH_FUTURES_OUTCOME_WEIGHT = "C"
 # only dedup headroom was true, load-bearing, and written down nowhere.
 _SEARCH_FUTURES_PAGE = 10      # rows the flat `futures` bucket returns
 _SEARCH_FUTURES_WINDOW = 20    # rows fetched before rerank + dedup
+# Team rows recalled before the 5-row display cap. #7355 also reads a FULL window
+# as incomplete evidence, so this is one constant for both.
+_SEARCH_TEAM_WINDOW = 25
 _SEARCH_FUTURES_REFILL = 40    # rank 21-60, fetched ONLY on an observed collapse
 
 # #5773 — clubs the resolved-team rescue arm will build event arms for. FIVE
@@ -8573,6 +8656,83 @@ async def search_events(
             degraded.append("futures")
     _mark("futures")
 
+    # #7355: the teams stage runs HERE, between the futures window and its
+    # re-rank, because the re-rank now reads which sports the matched teams play
+    # (`_team_evidence_sport_categories`). It was the same query further down;
+    # moving it adds none. A shed teams stage disarms that signal (no rows).
+    # Search teams — FTS-gated (see _build_team_search_filter): the dedicated Teams
+    # surface must be a genuine token match, not a substring-ILIKE artifact. A
+    # low-confidence trigram "did you mean" is deliberately NOT injected here (it
+    # produced "Spain" for "spacex"); the correction still drives the events
+    # fallback + the top-level did_you_mean field. Fetch a wider candidate set (25)
+    # so the marquee tie-break has the real contenders before the 5-row cap.
+    # #4126: `_team_search_rank`, not `_search_rank` — the prefix arm this query
+    # now recalls scores 0.0 against the whole-lexeme tsquery, so ranking it with
+    # the old expression would recall the Yankees for `yank` and then sort them
+    # by name. Identical expression when the query has no usable prefix token.
+    # The teams arm, on the SUBJECT (#5688). This is the arm the measurement
+    # above shows going 1 -> 0 and 2 -> 0: the filter is an AND over the terms
+    # and no team owns a name containing "today", so the reader's own team
+    # vanished from the page they went to find it on.
+    team_rank = _team_search_rank(_q_identity).label("team_rank")
+    team_search_q = (
+        # `alternate_names` is SELECTed for the scorer, not for the payload — the
+        # same correction typeahead needed (spec §3). The recall arms had always
+        # FILTERED on this column while never handing it to whatever ranked the
+        # rows, so `Boston Red Sox` was only MC1 for `red sox` and lost the kind
+        # tie to any market that mentioned the Red Sox. Withholding the evidence
+        # a team would win on turns the floor into a ceiling.
+        select(Team.id, Team.name, Team.slug, Team.abbreviation,
+               Team.logo_url_small, Team.current_record, Sport.key.label("sport_key"),
+               Team.alternate_names, team_rank)
+        .join(Sport, Team.sport_id == Sport.id, isouter=True)
+        .where(
+            # #8523: a club the rescue resolved from a PLAYER's name joins by id
+            # — its own name shares no word with `patrick mahomes`, so the name
+            # filter alone would leave his team off the page it was found for.
+            # Non-empty only when that filter resolved nothing (the rescue's own
+            # gate), and absent otherwise: the SQL every other query compiles is
+            # unchanged.
+            or_(
+                _build_team_search_filter(_q_identity),
+                Team.id.in_(_roster_team_ids),
+            )
+            if _roster_team_ids
+            else _build_team_search_filter(_q_identity)
+        )
+        .order_by(team_rank.desc(), Team.name)
+        .limit(_SEARCH_TEAM_WINDOW)
+    )
+    if sport:
+        team_search_q = team_search_q.where(Sport.key == sport)
+    # LAT-P002/#1494 (1e): teams is a non-essential stage too.
+    if time.monotonic() > _deadline:
+        logger.warning("search deadline exceeded before teams for %r", q)
+        _team_result_rows = []
+        degraded.append("teams")
+    else:
+        # #7355: a SAVEPOINT, because this stage now runs while the futures
+        # rows are live and read afterwards — a session `rollback()` on its shed
+        # path would expire them and 500 the request (the refill lane's reason).
+        _teams_savepoint = await db.begin_nested()
+        try:
+            team_search_result = await db.execute(team_search_q)
+            _team_result_rows = team_search_result.all()
+        except Exception as exc:  # noqa: BLE001
+            await _teams_savepoint.rollback()
+            if not _is_query_timeout(exc):
+                raise
+            logger.warning("search teams timed out for %r", q)
+            await _apply_search_statement_timeout(db, _deadline)
+            _team_result_rows = []
+            degraded.append("teams")
+        else:
+            await _teams_savepoint.commit()
+    _mark("teams")
+    _team_sport_categories = _team_evidence_sport_categories(
+        _team_result_rows, _SEARCH_TEAM_WINDOW
+    )
+
     # Re-rank FIRST (name-match priority + volume + wrong-league), THEN dedup —
     # so dedup keeps the volume-winning representative per key. (Dedup-then-rerank
     # let dedup keep the highest-ts_rank variant — e.g. the 820-vol "English
@@ -8583,7 +8743,8 @@ async def search_events(
     # assignment. Resolved once, so this window and its refill below are
     # partitioned on the same answer.
     reranked_futures = _rerank_search_futures(
-        futures_markets_raw, expanded, _resolved_sport_category
+        futures_markets_raw, expanded, _resolved_sport_category,
+        _team_sport_categories,
     )
     seen_search_keys: set[str] = set()
     # #8378/#8410: question key -> (venue, person-series) kept, so a second venue's copy of a question
@@ -8697,7 +8858,8 @@ async def search_events(
         else:
             await _refill_savepoint.commit()
         for m in _rerank_search_futures(
-            refill_rows, expanded, _resolved_sport_category
+            refill_rows, expanded, _resolved_sport_category,
+            _team_sport_categories,
         ):
             if not _admit_search_future(
                 m, seen_search_keys, kept_sources_by_question
@@ -9334,69 +9496,7 @@ async def search_events(
             event_concepts, _seen_concept_keys, _awards_concept,
         )
 
-    # Search teams — FTS-gated (see _build_team_search_filter): the dedicated Teams
-    # surface must be a genuine token match, not a substring-ILIKE artifact. A
-    # low-confidence trigram "did you mean" is deliberately NOT injected here (it
-    # produced "Spain" for "spacex"); the correction still drives the events
-    # fallback + the top-level did_you_mean field. Fetch a wider candidate set (25)
-    # so the marquee tie-break has the real contenders before the 5-row cap.
     _mark("futures_format_concepts")
-    # #4126: `_team_search_rank`, not `_search_rank` — the prefix arm this query
-    # now recalls scores 0.0 against the whole-lexeme tsquery, so ranking it with
-    # the old expression would recall the Yankees for `yank` and then sort them
-    # by name. Identical expression when the query has no usable prefix token.
-    # The teams arm, on the SUBJECT (#5688). This is the arm the measurement
-    # above shows going 1 -> 0 and 2 -> 0: the filter is an AND over the terms
-    # and no team owns a name containing "today", so the reader's own team
-    # vanished from the page they went to find it on.
-    team_rank = _team_search_rank(_q_identity).label("team_rank")
-    team_search_q = (
-        # `alternate_names` is SELECTed for the scorer, not for the payload — the
-        # same correction typeahead needed (spec §3). The recall arms had always
-        # FILTERED on this column while never handing it to whatever ranked the
-        # rows, so `Boston Red Sox` was only MC1 for `red sox` and lost the kind
-        # tie to any market that mentioned the Red Sox. Withholding the evidence
-        # a team would win on turns the floor into a ceiling.
-        select(Team.id, Team.name, Team.slug, Team.abbreviation,
-               Team.logo_url_small, Team.current_record, Sport.key.label("sport_key"),
-               Team.alternate_names, team_rank)
-        .join(Sport, Team.sport_id == Sport.id, isouter=True)
-        .where(
-            # #8523: a club the rescue resolved from a PLAYER's name joins by id
-            # — its own name shares no word with `patrick mahomes`, so the name
-            # filter alone would leave his team off the page it was found for.
-            # Non-empty only when that filter resolved nothing (the rescue's own
-            # gate), and absent otherwise: the SQL every other query compiles is
-            # unchanged.
-            or_(
-                _build_team_search_filter(_q_identity),
-                Team.id.in_(_roster_team_ids),
-            )
-            if _roster_team_ids
-            else _build_team_search_filter(_q_identity)
-        )
-        .order_by(team_rank.desc(), Team.name)
-        .limit(25)
-    )
-    if sport:
-        team_search_q = team_search_q.where(Sport.key == sport)
-    # LAT-P002/#1494 (1e): teams is a non-essential stage too.
-    if time.monotonic() > _deadline:
-        logger.warning("search deadline exceeded before teams for %r", q)
-        _team_result_rows = []
-        degraded.append("teams")
-    else:
-        try:
-            team_search_result = await db.execute(team_search_q)
-            _team_result_rows = team_search_result.all()
-        except Exception as exc:  # noqa: BLE001
-            if not _is_query_timeout(exc):
-                raise
-            logger.warning("search teams timed out for %r", q)
-            await _recover_search_session(db, _deadline)
-            _team_result_rows = []
-            degraded.append("teams")
-    _mark("teams")
     # Suppress individual-sport "teams" (tennis players, MMA fighters, golfers,
     # boxers) — artifacts of the Odds API modelling 1v1 sports as team-vs-team;
     # users still find these athletes via event and futures results. Then apply the
