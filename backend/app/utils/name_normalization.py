@@ -339,6 +339,13 @@ _TRAILING_STATE_RE = re.compile(r"(?<=\S)\s+St\.?$", re.IGNORECASE)
 # "Youngstown St." name the same school.
 _TOKEN_TRAILING_PERIOD_RE = re.compile(r"\.(?=\s|$)")
 
+# A doubles pair is one side written three ways (#8722): Kalshi "Alcaraz /
+# Mensik", Polymarket "Alcaraz/Mensik", StatPal "Birrell/ Stearns". The spacing
+# around the slash carries no identity, and while it differed no Kalshi doubles
+# market ever met a Polymarket doubles row — 44 matches in the 21 days to
+# 2026-09-25 were two rows each, the Kalshi one timed hours after the match.
+_PAIR_SLASH_RE = re.compile(r"\s*/\s*")
+
 
 def expand_trailing_state_abbrev(name: str) -> str:
     """Expand a trailing "St."/"St" abbreviation to "State".
@@ -375,11 +382,13 @@ def normalize_team_name_for_matching(name: str) -> str:
         "Ball St."               -> "ball state"
         "Youngstown St Penguins" -> "youngstown state penguins"
         "St. Louis Cardinals"    -> "st louis cardinals"
+        "Alcaraz / Mensik"       -> "alcaraz/mensik"
     """
     normalized = normalize_name(name)
     if not normalized:
         return ""
     normalized = _TOKEN_TRAILING_PERIOD_RE.sub("", normalized)
+    normalized = _PAIR_SLASH_RE.sub("/", normalized)
     tokens = normalized.split()
     return " ".join(
         "state" if i > 0 and token == "st" else token
