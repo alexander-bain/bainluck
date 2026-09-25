@@ -2474,6 +2474,29 @@ _SEARCH_TEAM_PREFIX_RANK_WEIGHT = 0.5
 #: honest empty bucket they are today.
 _SEARCH_MULTI_TERM_CORRECTION_FLOOR = 0.59
 
+
+def _multi_term_team_correction_rank(q_text):
+    """#8155 / #8250 — the ONE ordering both fuzzy "did you mean" twins use on a
+    multi-term query. Returns ``(word_sim, order_by_keys)``.
+
+    `word_similarity` first (see the floor constant for why not `similarity`),
+    then `similarity`, then the name: `red socks` ties at 0.600 between
+    `Boston Red Sox` and `Worcester Red Sox`, and `red sax` at 0.625 between
+    `Red Star` and `Boston Red Sox`; `LIMIT` over a tie is heap order, so the same
+    query would answer differently on two days.
+
+    It is a function rather than two copies because the copies drifted: #8155
+    changed `/search`'s ordering and left `/typeahead` on plain `similarity`, and
+    for a week the dropdown told a reader typing `red socks` "Showing results for
+    Red Star" while the search page, same text, said Boston Red Sox.
+    """
+    word_sim = func.word_similarity(q_text, Team.name)
+    return word_sim, (
+        word_sim.desc(),
+        func.similarity(Team.name, q_text).desc(),
+        Team.name.asc(),
+    )
+
 _SEARCH_FUTURES_MARKET_WEIGHT = "B"
 _SEARCH_FUTURES_OUTCOME_WEIGHT = "C"
 
@@ -7140,14 +7163,10 @@ async def search_events(
                 # and `LIMIT 1` over a tie is heap order — the same query would
                 # answer differently on two days. Ordering by `sim` then `name`
                 # makes the answer deterministic even where it is arguable.
-                _word_sim = func.word_similarity(_q_identity, Team.name)
+                _word_sim, _mt_order = _multi_term_team_correction_rank(_q_identity)
                 _best_team_q = _best_team_q.where(
                     _word_sim > _SEARCH_MULTI_TERM_CORRECTION_FLOOR
-                ).order_by(
-                    _word_sim.desc(),
-                    func.similarity(Team.name, _q_identity).desc(),
-                    Team.name.asc(),
-                )
+                ).order_by(*_mt_order)
             else:
                 _best_team_q = _best_team_q.order_by(
                     func.similarity(Team.name, _q_identity).desc()
@@ -11108,8 +11127,22 @@ async def typeahead_search(
             await db.execute(
                 sql_text("SET LOCAL pg_trgm.similarity_threshold = 0.25")
             )
+            # #8250 — the multi-term arm, the same ordering `/search` uses
+            # (`_multi_term_team_correction_rank`). On plain `similarity` the
+            # dropdown led with `Red Star` for `red socks` and said "Showing
+            # results for Red Star". Unlike `/search`, the floor gates only the
+            # CORRECTION below, not the rows: this is a list of candidates, and
+            # `celtics roster` still offers the Celtics row (word_similarity
+            # 0.533) — it just no longer asserts "Showing results for" it.
+            _ta_word_sim, _ta_mt_order = _multi_term_team_correction_rank(q)
+            _ta_fuzzy_order = (
+                _ta_mt_order
+                if is_multi_word
+                else (func.similarity(Team.name, q).desc(),)
+            )
             fuzzy_teams = await db.execute(
                 select(
+                    _ta_word_sim.label("word_sim"),
                     Team.id, Team.name, Team.slug, Team.abbreviation,
                     Team.logo_url_small, Sport.key.label("sport_key"),
                     # T2-3 (#5060) DELIBERATELY DOES NOT SUBSTITUTE THE SUBJECT
@@ -11133,13 +11166,20 @@ async def typeahead_search(
                     Team.name.op("%")(q),
                     func.similarity(Team.name, q) > 0.25,
                 )
-                .order_by(func.similarity(Team.name, q).desc())
+                .order_by(*_ta_fuzzy_order)
                 .limit(3)
             )
+            _ta_correction_clears_floor = False
             for row in fuzzy_teams.all():
                 if _is_individual_sport(row.sport_key):
                     continue
                 if row.name not in teams_seen:
+                    if not team_pool:
+                        # This row becomes `team_pool[0]`, the correction.
+                        _ta_correction_clears_floor = (
+                            not is_multi_word
+                            or row.word_sim > _SEARCH_MULTI_TERM_CORRECTION_FLOOR
+                        )
                     teams_seen.add(row.name)
                     team_pool.append({
                         "type": "team",
@@ -11205,7 +11245,8 @@ async def typeahead_search(
                         # file's own history calls the withheld-evidence defect.
                         "_participants": [event.home_team_name, event.away_team_name],
                     })
-                did_you_mean = best_team
+                if _ta_correction_clears_floor:
+                    did_you_mean = best_team
         except Exception:
             pass
 
