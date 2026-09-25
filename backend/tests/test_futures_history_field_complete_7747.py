@@ -63,6 +63,11 @@ _FIELD = {
 _HERO = {SINNER: 0.315, ALCARAZ: 0.270, RUUD: 0.030}
 #: What the Probability Trend drew for them the same second, before this fix.
 _CHART_BEFORE = {SINNER: 0.203, ALCARAZ: 0.174, RUUD: 0.019}
+#: #8595: the twenty 0.010 legs are the venue floor and are out of the squeeze's
+#: divisor, so a COMPLETE board now divides by its priced 1.355, not 1.555. It
+#: still squeezes, which is all the controls below need; this is what it prints.
+_PRICED_MASS = 1.355
+_CHART_SQUEEZED = {oid: _FIELD[oid] / _PRICED_MASS for oid in _HERO}
 
 
 def _raw(stamp=T0):
@@ -105,14 +110,16 @@ class TestTheServedSeries:
 
         If this field did not squeeze, `field_complete=False` would be
         indistinguishable from a no-op and both tests above would pass on a
-        reverted fix. It squeezes: the sum is 1.555, inside `_FIELD_SUM_MAX`.
+        reverted fix. It squeezes: the sum is 1.555, inside `_FIELD_SUM_MAX`,
+        and since #8595 it divides by the priced 1.355.
         """
         squeezed = devigged_consensus_by_time(
             _raw(), mutually_exclusive=True, field_complete=True
         )[T0]
 
-        for oid, before in _CHART_BEFORE.items():
-            assert squeezed[oid] == pytest.approx(before, abs=5e-4)
+        for oid, value in _CHART_SQUEEZED.items():
+            assert squeezed[oid] == pytest.approx(value, abs=5e-4)
+            assert squeezed[oid] != pytest.approx(_HERO[oid], abs=5e-4)
 
     def test_a_whole_field_is_still_squeezed(self):
         """The capability half: this refuses the squeeze, it does not delete it.
@@ -128,12 +135,16 @@ class TestTheServedSeries:
         running and said nothing about the capability.
         """
         whole = dict(_FIELD)
-        whole[MENSIK] = 0.40
+        # #8595: 0.45, not 0.40. The 0.010 tail left the divisor, so at 0.40 the
+        # priced legs sum 1.015 and the helper declines on its own threshold —
+        # the same vacuity the paragraph above describes. 0.45 prices them 1.065.
+        whole[MENSIK] = 0.45
         point = devigged_consensus_by_time(
             {T0: {"kalshi": whole}}, mutually_exclusive=True, field_complete=True
         )[T0]
 
-        assert sum(point.values()) == pytest.approx(1.0, abs=0.01)
+        priced = [oid for oid, p in whole.items() if p > 0.01]
+        assert sum(point[oid] for oid in priced) == pytest.approx(1.0, abs=0.01)
         assert point[SINNER] != pytest.approx(0.315, abs=1e-6)
 
 
@@ -231,7 +242,7 @@ class TestTheGateIsActuallyWired:
         ]
 
         payload = await self._history(outcomes)
-        assert payload[SINNER] == pytest.approx(0.203, abs=5e-4), (
+        assert payload[SINNER] == pytest.approx(_CHART_SQUEEZED[SINNER], abs=5e-4), (
             "a complete field stopped being squeezed — this fix refuses the "
             "squeeze on withheld boards, it does not remove it"
         )

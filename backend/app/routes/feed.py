@@ -277,6 +277,7 @@ from app.utils.name_normalization import names_match as _team_name_matches
 from app.utils.sport_keys import sport_display_name
 from app.utils.outcome_display import (
     _FIELD_SUM_MAX,
+    display_divisor_mass,
     display_rank_order,
     drop_dominant_field_outcomes,
     drop_incoherent_ladder_outcomes,
@@ -7160,9 +7161,21 @@ def _feed_display_scale(
     # #8224: the overround ceiling is per-class — detail's 1.60 for a one-winner
     # field, the historical 2.0 for everything else (and for "caller didn't say").
     field_sum_max = _FIELD_SUM_MAX if mutually_exclusive else 2.0
-    if all_sum <= norm_threshold or all_sum > field_sum_max:
+    if all_sum > field_sum_max:
         return 1.0
-    return all_sum
+    # #8595: a one-winner field divides by its PRICED legs, as the page does —
+    # legs at Kalshi's one-cent floor are upper bounds, not vig
+    # (`display_divisor_mass`). The ceiling above still reads the full sum, as
+    # the page's does. `None` keeps the full sum: "caller does not know" is
+    # never widened.
+    divisor = (
+        display_divisor_mass(o.current_probability for o in all_sorted_outcomes)
+        if mutually_exclusive
+        else all_sum
+    )
+    if divisor <= norm_threshold:
+        return 1.0
+    return divisor
 
 
 def _scale_display_probability(prob, scale: float):

@@ -120,10 +120,24 @@ class TestTheServedScale:
             )
 
     def test_carrying_the_graded_leg_would_miss_the_hero(self):
-        """Why `do_not_carry` exists: Kiwoom's stale 0.01 inflates the divisor."""
-        point = self._final(carry_forward_quotes(_raw_by_time()))
-        assert point[LG] == pytest.approx(0.3678, abs=5e-4)
+        """Why `do_not_carry` exists: a graded leg's stale price inflates the divisor.
+
+        #8595: Kiwoom's real stale row is 0.01, the venue floor, and a floor leg
+        is no longer in the squeeze's divisor — carried or not, it cannot move LG.
+        So the arm lifts Kiwoom's stale row to 0.03, a priced leg, which is the
+        case `do_not_carry` still exists for.
+        """
+        raw = _raw_by_time()
+        stamp = _LAST_ROW[KIWOOM][0]
+        raw[stamp]["polymarket"][KIWOOM] = 0.03
+        point = self._final(carry_forward_quotes(raw))
+        assert point[LG] == pytest.approx(0.47 / 1.298, abs=5e-4)
         assert point[LG] != pytest.approx(_HERO[LG], abs=6e-4)
+
+    def test_a_carried_floor_leg_no_longer_moves_the_divisor_8595(self):
+        """Kiwoom's real 0.01, carried, lands on the hero anyway (#8595)."""
+        point = self._final(carry_forward_quotes(_raw_by_time()))
+        assert point[LG] == pytest.approx(_HERO[LG], abs=6e-4)
 
 
 class TestTheCarriedEndpoint:
