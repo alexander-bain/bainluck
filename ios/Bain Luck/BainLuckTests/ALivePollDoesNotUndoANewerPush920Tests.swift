@@ -111,7 +111,8 @@ final class ALivePollDoesNotUndoANewerPush920Tests: XCTestCase {
         func fire(_ event: String, _ raw: String = "") { for handler in handlers[event] ?? [] { handler(raw) } }
     }
 
-    private actor HeldClient: EventDetailProviding {
+    @MainActor
+    private final class HeldClient: EventDetailProviding {
         struct Declined: Error {}
         let initial: EventDetail
         var stale: EventDetail
