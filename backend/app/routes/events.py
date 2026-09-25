@@ -2092,6 +2092,46 @@ def _typeahead_stem_only_futures(
     return True
 
 
+def _typeahead_stem_only_event(
+    participants: tuple[str | None, str | None],
+    expanded: list[tuple[str, str | None]],
+    lead_team_name: str | None,
+    names_participant: bool,
+) -> bool:
+    """#8488: the event twin of `_typeahead_stem_only_futures`.
+
+    The same stemmer fold reaches the event arm: `angels` and `Angeles` share
+    the stem `angel`, so every Los Angeles fixture enters the pool for `angels`.
+    Production 2026-09-24, once #8447 freed the futures slots: the dropdown
+    offered `Golden State Valkyries at Los Angeles Sparks` and `San Diego Padres
+    at Los Angeles Dodgers` beneath the Angels' own games.
+
+    True only when ALL of these hold:
+      1. the query resolved a team whose name contains every typed term — the
+         same gate as the futures helper, so a query that names no team keeps
+         every row the stemmer finds;
+      2. the route did not already judge that the row names a participant
+         (`names_participant`: `_ta_names_participant`, which carries the
+         curated nicknames, OR fetched by the lead team's own id);
+      3. no participant NAME contains the terms (term-or-expansion, as
+         `_query_name_match`). This keeps `sox` -> `Chicago White Sox` and
+         `new york` -> `New York Mets`: substring rows are never touched.
+    """
+    if names_participant or not lead_team_name:
+        return False
+    low = [(t.lower(), (e or "").lower()) for t, e in expanded]
+    if not low:
+        return False
+    team = lead_team_name.lower()
+    if not all(t in team for t, _ in low):
+        return False
+    for name in participants:
+        n = (name or "").lower()
+        if n and all((t in n) or (e and e in n) for t, e in low):
+            return False
+    return True
+
+
 def _futures_board_is_not_a_partition(market: "FuturesMarket") -> bool:
     """The served legs do not divide one question, so their max answers nothing.
 
@@ -10214,6 +10254,19 @@ async def typeahead_search(
     # same first-round match twice, "Alcaraz at Faria 5:00 PM" beside "Carlos
     # Alcaraz at Jaime Faria 5:10 PM". Same collapse, same helper.
     _ta_events, _ = collapse_duplicate_fixtures(_ta_rows)
+    # #8488: a team query drops the fixtures only the stemmer admitted (`angels`
+    # -> "Los Angeles Sparks"). Before the pool cut, so the slot goes to a row
+    # that names the team; the helper says why substring and nickname rows stay.
+    if _ta_lead_team is not None:
+        _ta_events = [
+            ev for ev in _ta_events
+            if not _typeahead_stem_only_event(
+                (ev.home_team_name, ev.away_team_name),
+                ta_expanded,
+                _ta_lead_team["text"],
+                _ta_names_participant(ev) or ev.id in _ta_lead_team_row_ids,
+            )
+        ]
     for event in _ta_events[:_EVENT_POOL_SIZE]:
         home = event.home_team
         away = event.away_team
