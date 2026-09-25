@@ -1880,6 +1880,18 @@ async def compute_and_write_stat_model(session, event, ee, sport_key, stats):
         if event.opening_home_probability is not None:
             opening_prob = float(event.opening_home_probability)
 
+        # #8522: no prior and a market already on the row — the market's
+        # number, not the model's coin flip, is the headline.
+        from app.utils.win_probability import priorless_model_defers_to_market
+
+        if priorless_model_defers_to_market(
+            pregame_spread, opening_prob, event.win_probability_sources
+        ):
+            stats["stat_model_priorless_deferred"] = (
+                stats.get("stat_model_priorless_deferred", 0) + 1
+            )
+            return False
+
         # Prefer numeric period for reliability
         period_str = _sanitize_period(ee.status_detail)
         if ee.period and not period_str:

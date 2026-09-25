@@ -1273,6 +1273,7 @@ async def _poll_all_odds():
         sports_skipped = 0
         scores_updated = 0
         stat_model_from_poll = 0
+        stat_model_priorless_deferred = 0
         # #1981: every score write refused because the row's own commence says the
         # provider id on it names a DIFFERENT game. Counted, never silent — a guard
         # whose refusals are invisible is indistinguishable from a guard that is off.
@@ -2399,11 +2400,24 @@ async def _poll_all_odds():
                                 and (event_obj.game_clock or event_obj.period or event_obj.commence_time)
                             ):
                                 try:
-                                    from app.utils.win_probability import compute_statistical_win_prob
+                                    from app.utils.win_probability import (
+                                        compute_statistical_win_prob,
+                                        priorless_model_defers_to_market,
+                                    )
 
                                     pregame_spread = None
                                     if event_obj.opening_home_spread is not None:
                                         pregame_spread = float(event_obj.opening_home_spread)
+
+                                    # #8522: no prior and a market on the row —
+                                    # leave the headline to the market.
+                                    if priorless_model_defers_to_market(
+                                        pregame_spread,
+                                        event_obj.opening_home_probability,
+                                        event_obj.win_probability_sources,
+                                    ):
+                                        stat_model_priorless_deferred += 1
+                                        continue
 
                                     stat_wp = compute_statistical_win_prob(
                                         home_score=home_score,
@@ -2542,6 +2556,7 @@ async def _poll_all_odds():
             "scores_refused_settled_repoison": scores_refused_settled_repoison,
             "scores_skipped_quota": scores_skipped_quota,
             "stat_model_from_poll": stat_model_from_poll,
+            "stat_model_priorless_deferred": stat_model_priorless_deferred,
             "events_closed": events_closed,
             "events_suspended": events_suspended,
             "live_gei_updated": live_gei_updated,
