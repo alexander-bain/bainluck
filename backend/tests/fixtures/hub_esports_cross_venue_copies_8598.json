@@ -1,0 +1,1172 @@
+{
+ "_source": "GET https://api.bainluck.com/api/hub/esports, read 2026-09-25T10:55Z (ux/1491, #8598); the served futures and awards rows with these ids, verbatim, in served order",
+ "sections": {
+  "futures": [
+   {
+    "id": 61142920,
+    "name": "VALORANT Champions 2026: Team to Make Playoffs",
+    "source": "polymarket",
+    "external_id": "1028618",
+    "market_tier": 4,
+    "category": "championship",
+    "resolution_date": "2026-10-06T03:59:00+00:00",
+    "outcome_count": 11,
+    "top_outcomes": [
+     {
+      "id": 229985854,
+      "name": "100 Thieves",
+      "probability": 0.52,
+      "opening_probability": 0.52,
+      "rank": 1,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 233173150,
+      "name": "Paper Rex",
+      "probability": 0.5,
+      "opening_probability": 0.5,
+      "rank": 2,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 233173151,
+      "name": "FUT Esports",
+      "probability": 0.26,
+      "opening_probability": 0.26,
+      "rank": 3,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 233173152,
+      "name": "T1",
+      "probability": 0.26,
+      "opening_probability": 0.26,
+      "rank": 3,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 233173153,
+      "name": "LOUD",
+      "probability": 0.26,
+      "opening_probability": 0.26,
+      "rank": 3,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 233173154,
+      "name": "Team Vitality",
+      "probability": 0.26,
+      "opening_probability": 0.26,
+      "rank": 3,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 233173155,
+      "name": "Team Liquid",
+      "probability": 0.26,
+      "opening_probability": 0.26,
+      "rank": 3,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 233173156,
+      "name": "G2 Esports",
+      "probability": 0.26,
+      "opening_probability": 0.26,
+      "rank": 3,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 233173157,
+      "name": "Karmine Corp",
+      "probability": 0.26,
+      "opening_probability": 0.26,
+      "rank": 3,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 233173158,
+      "name": "NRG",
+      "probability": 0.26,
+      "opening_probability": 0.26,
+      "rank": 3,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     }
+    ],
+    "canonical_market_key": "esports:VALORANT:make_playoffs:2026",
+    "group_id": "polymarket:1028618",
+    "section": "futures"
+   },
+   {
+    "id": 60722723,
+    "name": "Will a Western team win the Demacia Cup Global Invitational 2026?",
+    "source": "polymarket",
+    "external_id": "1001462",
+    "market_tier": 2,
+    "category": "championship",
+    "resolution_date": "2026-11-01T03:59:00+00:00",
+    "outcome_count": 1,
+    "top_outcomes": [
+     {
+      "id": 227506491,
+      "name": "Yes",
+      "probability": 0.03,
+      "opening_probability": 0.73,
+      "rank": 1,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     }
+    ],
+    "canonical_market_key": null,
+    "group_id": "polymarket:1001462",
+    "section": "futures"
+   },
+   {
+    "id": 60722724,
+    "name": "Will a Western team win Worlds 2026?",
+    "source": "polymarket",
+    "external_id": "1001461",
+    "market_tier": 2,
+    "category": "championship",
+    "resolution_date": "2026-11-29T04:59:00+00:00",
+    "outcome_count": 1,
+    "top_outcomes": [
+     {
+      "id": 231093732,
+      "name": "Yes",
+      "probability": 0.07,
+      "opening_probability": 0.09,
+      "rank": 1,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     }
+    ],
+    "canonical_market_key": null,
+    "group_id": "polymarket:1001461",
+    "section": "futures"
+   },
+   {
+    "id": 57718671,
+    "name": "46th FIDE Chess Olympiad Open Tournament Winner",
+    "source": "polymarket",
+    "external_id": "775267",
+    "market_tier": 1,
+    "category": "championship",
+    "resolution_date": "2026-09-28T23:59:00+00:00",
+    "outcome_count": 40,
+    "top_outcomes": [
+     {
+      "id": 214147166,
+      "name": "Uzbekistan",
+      "probability": 0.471,
+      "opening_probability": null,
+      "rank": 1,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": false
+     },
+     {
+      "id": 214147185,
+      "name": "Germany",
+      "probability": 0.1634,
+      "opening_probability": null,
+      "rank": 2,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": false
+     },
+     {
+      "id": 214147165,
+      "name": "India",
+      "probability": 0.1178,
+      "opening_probability": null,
+      "rank": 3,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": false
+     },
+     {
+      "id": 214147164,
+      "name": "United States of America",
+      "probability": 0.0772,
+      "opening_probability": null,
+      "rank": 4,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": false
+     },
+     {
+      "id": 214147167,
+      "name": "China",
+      "probability": 0.0754,
+      "opening_probability": null,
+      "rank": 5,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": false
+     },
+     {
+      "id": 214147194,
+      "name": "Netherlands",
+      "probability": 0.0382,
+      "opening_probability": null,
+      "rank": 6,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": false
+     },
+     {
+      "id": 214147172,
+      "name": "Azerbaijan",
+      "probability": 0.0198,
+      "opening_probability": null,
+      "rank": 7,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": false
+     },
+     {
+      "id": 214147169,
+      "name": "Armenia",
+      "probability": 0.0137,
+      "opening_probability": null,
+      "rank": 8,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": false
+     },
+     {
+      "id": 214147183,
+      "name": "France",
+      "probability": 0.0061,
+      "opening_probability": null,
+      "rank": 9,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": false
+     },
+     {
+      "id": 214147187,
+      "name": "Hungary",
+      "probability": 0.0024,
+      "opening_probability": null,
+      "rank": 10,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": false
+     }
+    ],
+    "canonical_market_key": null,
+    "group_id": "polymarket:775267",
+    "section": "futures"
+   },
+   {
+    "id": 60775226,
+    "name": "VALORANT Champions Shanghai Champion",
+    "source": "kalshi",
+    "external_id": "KXVALORANT-CHAMPSH26",
+    "market_tier": 1,
+    "category": "championship",
+    "resolution_date": "2026-10-19T02:00:00+00:00",
+    "outcome_count": 16,
+    "top_outcomes": [
+     {
+      "id": 227645299,
+      "name": "Paper Rex",
+      "probability": 0.1983,
+      "opening_probability": null,
+      "rank": 1,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 227645298,
+      "name": "100 Thieves",
+      "probability": 0.1561,
+      "opening_probability": null,
+      "rank": 2,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 227645300,
+      "name": "Nongshim RedForce",
+      "probability": 0.1055,
+      "opening_probability": null,
+      "rank": 3,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 227645303,
+      "name": "NRG",
+      "probability": 0.0928,
+      "opening_probability": null,
+      "rank": 4,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 227645304,
+      "name": "Karmine Corp",
+      "probability": 0.0886,
+      "opening_probability": null,
+      "rank": 5,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 227645307,
+      "name": "G2 Esports",
+      "probability": 0.0759,
+      "opening_probability": null,
+      "rank": 6,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 227645302,
+      "name": "LOUD",
+      "probability": 0.0675,
+      "opening_probability": null,
+      "rank": 7,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 227645297,
+      "name": "Global Esports",
+      "probability": 0.0464,
+      "opening_probability": null,
+      "rank": 8,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 227645306,
+      "name": "Team Vitality",
+      "probability": 0.0464,
+      "opening_probability": null,
+      "rank": 8,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 227645310,
+      "name": "EDward Gaming",
+      "probability": 0.038,
+      "opening_probability": null,
+      "rank": 10,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     }
+    ],
+    "canonical_market_key": "esports:VALORANT:championship:2026",
+    "group_id": "kalshi:KXVALORANT-CHAMPSH26",
+    "section": "futures"
+   },
+   {
+    "id": 60552216,
+    "name": "Worlds 2026: Winner",
+    "source": "polymarket",
+    "external_id": "991810",
+    "market_tier": 1,
+    "category": "championship",
+    "resolution_date": "2026-11-29T04:59:00+00:00",
+    "outcome_count": 16,
+    "top_outcomes": [
+     {
+      "id": 226514740,
+      "name": "Gen.G",
+      "probability": 0.3202,
+      "opening_probability": null,
+      "rank": 1,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": false
+     },
+     {
+      "id": 231083406,
+      "name": "Bilibili Gaming",
+      "probability": 0.1856,
+      "opening_probability": null,
+      "rank": 2,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 231083407,
+      "name": "T1",
+      "probability": 0.1624,
+      "opening_probability": null,
+      "rank": 3,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 231083405,
+      "name": "Hanwha Life Esports",
+      "probability": 0.1439,
+      "opening_probability": null,
+      "rank": 4,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 231083409,
+      "name": "G2 Esports",
+      "probability": 0.0561,
+      "opening_probability": null,
+      "rank": 5,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 231083410,
+      "name": "Karmine Corp",
+      "probability": 0.0469,
+      "opening_probability": null,
+      "rank": 6,
+      "movement_24h": 0.0015,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 234412090,
+      "name": "Anyone's Legend",
+      "probability": 0.0265,
+      "opening_probability": null,
+      "rank": 7,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 231083408,
+      "name": "Dplus KIA",
+      "probability": 0.0246,
+      "opening_probability": null,
+      "rank": 8,
+      "movement_24h": 0.001,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 234412092,
+      "name": "Invictus Gaming",
+      "probability": 0.0153,
+      "opening_probability": null,
+      "rank": 9,
+      "movement_24h": -0.0005,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 234412093,
+      "name": "Top Esports",
+      "probability": 0.0121,
+      "opening_probability": null,
+      "rank": 10,
+      "movement_24h": 0.003,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     }
+    ],
+    "canonical_market_key": null,
+    "group_id": "polymarket:991810",
+    "section": "futures"
+   },
+   {
+    "id": 61156894,
+    "name": "VALORANT Champions 2026: Winner",
+    "source": "polymarket",
+    "external_id": "1029488",
+    "market_tier": 1,
+    "category": "championship",
+    "resolution_date": "2026-10-20T03:59:00+00:00",
+    "outcome_count": 16,
+    "top_outcomes": [
+     {
+      "id": 233173210,
+      "name": "Paper Rex",
+      "probability": 0.2133,
+      "opening_probability": null,
+      "rank": 1,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 233173207,
+      "name": "100 Thieves",
+      "probability": 0.1467,
+      "opening_probability": null,
+      "rank": 2,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 233173208,
+      "name": "Nongshim RedForce",
+      "probability": 0.1378,
+      "opening_probability": null,
+      "rank": 3,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 233173211,
+      "name": "Karmine Corp",
+      "probability": 0.1067,
+      "opening_probability": null,
+      "rank": 4,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 233612499,
+      "name": "NRG",
+      "probability": 0.0867,
+      "opening_probability": null,
+      "rank": 5,
+      "movement_24h": -0.0005,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 232135018,
+      "name": "LOUD",
+      "probability": 0.0711,
+      "opening_probability": null,
+      "rank": 6,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 232135021,
+      "name": "G2 Esports",
+      "probability": 0.0627,
+      "opening_probability": null,
+      "rank": 7,
+      "movement_24h": 0.001,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 232135026,
+      "name": "EDward Gaming",
+      "probability": 0.0538,
+      "opening_probability": null,
+      "rank": 8,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 232135020,
+      "name": "Global Esports",
+      "probability": 0.0382,
+      "opening_probability": null,
+      "rank": 9,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 232135023,
+      "name": "Team Vitality",
+      "probability": 0.032,
+      "opening_probability": null,
+      "rank": 10,
+      "movement_24h": 0.0045,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     }
+    ],
+    "canonical_market_key": "esports:VALORANT:championship:2026",
+    "group_id": "polymarket:1029488",
+    "section": "futures"
+   },
+   {
+    "id": 60775242,
+    "name": "VALORANT Champions Shanghai Group A winner",
+    "source": "kalshi",
+    "external_id": "KXVALORANTGROUPWIN-CHAMPSH26A",
+    "market_tier": 1,
+    "category": "championship",
+    "resolution_date": "2026-10-01T02:00:00+00:00",
+    "outcome_count": 4,
+    "top_outcomes": [
+     {
+      "id": 227645517,
+      "name": "100 Thieves",
+      "probability": 0.68,
+      "opening_probability": 0.685,
+      "rank": 1,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 227645520,
+      "name": "FUT Esports",
+      "probability": 0.56,
+      "opening_probability": null,
+      "rank": 2,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 227645518,
+      "name": "T1",
+      "probability": 0.44,
+      "opening_probability": 0.255,
+      "rank": 4,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 227645519,
+      "name": "JD Gaming",
+      "probability": null,
+      "opening_probability": null,
+      "rank": 3,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     }
+    ],
+    "canonical_market_key": "esports:VALORANT:championship:2026",
+    "group_id": "kalshi:KXVALORANTGROUPWIN-CHAMPSH26A",
+    "section": "futures"
+   },
+   {
+    "id": 61158780,
+    "name": "Will the VALORANT Champions 2026 champion go undefeated on maps in the Playoffs?",
+    "source": "polymarket",
+    "external_id": "1029856",
+    "market_tier": 1,
+    "category": "championship",
+    "resolution_date": "2026-11-18T04:59:00+00:00",
+    "outcome_count": 1,
+    "top_outcomes": [
+     {
+      "id": 233612508,
+      "name": "Yes",
+      "probability": 0.13,
+      "opening_probability": 0.49,
+      "rank": 1,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     }
+    ],
+    "canonical_market_key": "esports:VALORANT:championship:2026",
+    "group_id": "polymarket:1029856",
+    "section": "futures"
+   },
+   {
+    "id": 61167510,
+    "name": "VALORANT Champions 2026: Unbeaten Champion?",
+    "source": "polymarket",
+    "external_id": "1029698",
+    "market_tier": 1,
+    "category": "championship",
+    "resolution_date": "2026-11-18T04:59:00+00:00",
+    "outcome_count": 1,
+    "top_outcomes": [
+     {
+      "id": 233612520,
+      "name": "Yes",
+      "probability": 0.345,
+      "opening_probability": 0.5,
+      "rank": 1,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     }
+    ],
+    "canonical_market_key": "esports:VALORANT:championship:2026",
+    "group_id": "polymarket:1029698",
+    "section": "futures"
+   }
+  ],
+  "awards": [
+   {
+    "id": 61484982,
+    "name": "VALORANT Champions Shanghai MVP",
+    "source": "kalshi",
+    "external_id": "KXVALORANTAWARD-CHAMPSH26MVP",
+    "market_tier": 3,
+    "category": "championship",
+    "resolution_date": "2026-10-19T02:00:00+00:00",
+    "outcome_count": 80,
+    "top_outcomes": [
+     {
+      "id": 231509632,
+      "name": "splash",
+      "probability": 0.6,
+      "opening_probability": null,
+      "rank": 1,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 231509633,
+      "name": "Asuna",
+      "probability": 0.03,
+      "opening_probability": null,
+      "rank": 2,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 231509634,
+      "name": "Autumn",
+      "probability": null,
+      "opening_probability": null,
+      "rank": 3,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 231509635,
+      "name": "UdoTan",
+      "probability": null,
+      "opening_probability": null,
+      "rank": 4,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 231509636,
+      "name": "Kr1stal",
+      "probability": null,
+      "opening_probability": null,
+      "rank": 5,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 231509637,
+      "name": "xavi8k",
+      "probability": null,
+      "opening_probability": null,
+      "rank": 6,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 231509638,
+      "name": "PatMen",
+      "probability": null,
+      "opening_probability": null,
+      "rank": 7,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 231509639,
+      "name": "bang",
+      "probability": null,
+      "opening_probability": null,
+      "rank": 8,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 231509640,
+      "name": "Cryocells",
+      "probability": null,
+      "opening_probability": null,
+      "rank": 9,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 231509641,
+      "name": "vora",
+      "probability": null,
+      "opening_probability": null,
+      "rank": 10,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     }
+    ],
+    "canonical_market_key": "esports:VALORANT:mvp:2026",
+    "group_id": "kalshi:KXVALORANTAWARD-CHAMPSH26MVP",
+    "section": "awards"
+   },
+   {
+    "id": 60552214,
+    "name": "Worlds 2026: Finals MVP",
+    "source": "polymarket",
+    "external_id": "991821",
+    "market_tier": 3,
+    "category": "championship",
+    "resolution_date": "2026-11-29T04:59:00+00:00",
+    "outcome_count": 52,
+    "top_outcomes": [
+     {
+      "id": 232079572,
+      "name": "Chovy",
+      "probability": 0.14,
+      "opening_probability": 0.06,
+      "rank": 1,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 231083358,
+      "name": "Zeus",
+      "probability": 0.0915,
+      "opening_probability": 0.125,
+      "rank": 2,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 234015463,
+      "name": "Knight",
+      "probability": 0.0915,
+      "opening_probability": 0.111,
+      "rank": 2,
+      "movement_24h": 0.0005,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 226598117,
+      "name": "Zeka",
+      "probability": 0.0895,
+      "opening_probability": 0.1025,
+      "rank": 4,
+      "movement_24h": 0.0005,
+      "team_id": null,
+      "settled": false,
+      "is_winner": false
+     },
+     {
+      "id": 231083360,
+      "name": "Ruler",
+      "probability": 0.0765,
+      "opening_probability": 0.121,
+      "rank": 5,
+      "movement_24h": 0.0025,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 231083359,
+      "name": "Xun",
+      "probability": 0.065,
+      "opening_probability": 0.125,
+      "rank": 6,
+      "movement_24h": 0.005,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 231083356,
+      "name": "Peyz",
+      "probability": 0.055,
+      "opening_probability": 0.135,
+      "rank": 7,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 234015462,
+      "name": "Faker",
+      "probability": 0.0545,
+      "opening_probability": 0.111,
+      "rank": 8,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 226392343,
+      "name": "Kanavi",
+      "probability": 0.051,
+      "opening_probability": 0.0755,
+      "rank": 9,
+      "movement_24h": -0.001,
+      "team_id": null,
+      "settled": false,
+      "is_winner": false
+     },
+     {
+      "id": 231083370,
+      "name": "Delight",
+      "probability": 0.044,
+      "opening_probability": 0.0755,
+      "rank": 10,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     }
+    ],
+    "canonical_market_key": "esports::mvp:2026",
+    "group_id": "polymarket:991821",
+    "section": "awards"
+   },
+   {
+    "id": 61142921,
+    "name": "VALORANT Champions 2026 MVP",
+    "source": "polymarket",
+    "external_id": "1028593",
+    "market_tier": 3,
+    "category": "championship",
+    "resolution_date": "2026-10-20T03:59:00+00:00",
+    "outcome_count": 12,
+    "top_outcomes": [
+     {
+      "id": 232134968,
+      "name": "something",
+      "probability": 0.085,
+      "opening_probability": null,
+      "rank": 1,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 232134969,
+      "name": "LêwN",
+      "probability": 0.075,
+      "opening_probability": null,
+      "rank": 2,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 232134970,
+      "name": "Cryocells",
+      "probability": 0.07,
+      "opening_probability": null,
+      "rank": 3,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 232134971,
+      "name": "Timotino",
+      "probability": 0.07,
+      "opening_probability": null,
+      "rank": 3,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 234764945,
+      "name": "Ivy",
+      "probability": null,
+      "opening_probability": null,
+      "rank": 5,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 233612418,
+      "name": "Asuna",
+      "probability": null,
+      "opening_probability": null,
+      "rank": 5,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 233612425,
+      "name": "xavi8k",
+      "probability": null,
+      "opening_probability": null,
+      "rank": 5,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 233612422,
+      "name": "CHICHOO",
+      "probability": null,
+      "opening_probability": null,
+      "rank": 5,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 233612423,
+      "name": "PROFEK",
+      "probability": null,
+      "opening_probability": null,
+      "rank": 5,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     },
+     {
+      "id": 233612426,
+      "name": "Dambi",
+      "probability": null,
+      "opening_probability": null,
+      "rank": 5,
+      "movement_24h": null,
+      "team_id": null,
+      "settled": false,
+      "is_winner": null
+     }
+    ],
+    "canonical_market_key": "esports:VALORANT:mvp:2026",
+    "group_id": "polymarket:1028593",
+    "section": "awards"
+   }
+  ]
+ }
+}
