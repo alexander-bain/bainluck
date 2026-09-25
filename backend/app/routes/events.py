@@ -32,6 +32,7 @@ from app.services.anchor_channel import (
     market_born_duplicates_on_page,
     resolve_market_born_duplicate,
 )
+from app.services.same_instant_refutation import same_instant_refuted_on_page
 from app.utils.agent_origin import ORIGIN_HEADER, ORIGIN_USER
 # #7369: the one place either search payload may answer "Conference". Module-level
 # and safe — `market_label_normalization` imports only `utils.futures_categorization`,
@@ -8074,6 +8075,30 @@ async def search_events(
             )
     _mark("market_born_drain")
 
+    # ── #7345: a listing both of whose teams were playing someone else ────────
+    #
+    # `q=arkansas state` served `15306765` (Arkansas State v South Alabama,
+    # Sep 12, suspended, no ids, no markets) directly under Arkansas State's
+    # real Sep 12 final. It has no twin for either stage above to fold against;
+    # it is refuted instead by both teams' ESPN-linked finals at the SAME
+    # kick-off against other opponents. Suppress-only, same belt as the drain.
+    if events:
+        try:
+            _refuted = await same_instant_refuted_on_page(db, events)
+            if _refuted:
+                events = [e for e in events if e.id not in _refuted]
+                logger.info(
+                    "search same-instant refutation: %d listing(s) suppressed "
+                    "(%s)",
+                    len(_refuted),
+                    list(_refuted.items())[:20],
+                )
+        except Exception:  # noqa: BLE001 — gotcha #42, as above
+            logger.exception(
+                "search same-instant refutation failed; serving the page"
+            )
+    _mark("same_instant_refutation")
+
     # Get latest aggregated odds for each event
     event_ids = [e.id for e in events]
     aggregated_odds_map = {}
@@ -14396,6 +14421,23 @@ async def list_events(
     except Exception:
         logger.exception(
             "events list market-born drain failed; serving the undrained page"
+        )
+
+    # #7345: the same-instant refutation, beside the drain on the sibling list
+    # route for the reason `search_events` gives. `count` below reads `events`.
+    try:
+        _refuted = await same_instant_refuted_on_page(db, events)
+        if _refuted:
+            events = [e for e in events if e.id not in _refuted]
+            logger.info(
+                "events list same-instant refutation: %d listing(s) "
+                "suppressed (%s)",
+                len(_refuted),
+                list(_refuted.items())[:20],
+            )
+    except Exception:
+        logger.exception(
+            "events list same-instant refutation failed; serving the page"
         )
 
     # Get the latest odds snapshots for each event, aggregated across bookmakers

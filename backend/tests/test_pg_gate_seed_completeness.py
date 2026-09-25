@@ -209,6 +209,10 @@ COVERED = (
     # (search_path pinned per pooled connection, since the repair under test
     # commits). Carries every NOT NULL column so the rows are real-shaped.
     "test_dangling_duplicate_tag_8308_pg.py",
+    # #7345. Seeds narrow `events` + `futures_markets` tables by raw INSERT in a
+    # private schema; kick-offs are dated from the server's `now()` because the
+    # verdict carries `commence_time < :now`.
+    "test_same_instant_refutation_7345_pg.py",
     # #6390. Enrolled with the gate itself, and this check earned its keep
     # immediately: the seed's first run died on
     # `NotNullViolation: null value in column "reading_count"` — `OddsSnapshot`

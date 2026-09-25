@@ -31,6 +31,7 @@ from app.routes.events import (
 from app.routes.futures import _withheld_price_outcome_ids
 from app.services import get_db
 from app.services.anchor_channel import market_born_duplicates_on_page
+from app.services.same_instant_refutation import same_instant_refuted_on_page
 from app.utils.aggregation import compute_aggregate_probability
 from app.utils.outcome_display import normalize_display_probs
 from app.utils.event_rails import (
@@ -3410,6 +3411,31 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
                 logger.exception(
                     "league page: market-born drain failed; serving the "
                     "undrained page"
+                )
+
+        # #7345: "No result reported · Sep 12" for Arkansas State v South
+        # Alabama, a listing both of whose teams hold an ESPN-linked final at
+        # that kick-off against other opponents. Same set form, same belt.
+        _page_rows = [*_g_events, *_r_events, *_u_events]
+        if _page_rows:
+            try:
+                _refuted = await asyncio.wait_for(
+                    same_instant_refuted_on_page(db, _page_rows), timeout=10
+                )
+                if _refuted:
+                    _g_events = [e for e in _g_events if e.id not in _refuted]
+                    _r_events = [e for e in _r_events if e.id not in _refuted]
+                    _u_events = [e for e in _u_events if e.id not in _refuted]
+                    logger.info(
+                        "league page same-instant refutation: %d listing(s) "
+                        "suppressed (%s)",
+                        len(_refuted),
+                        list(_refuted.items())[:20],
+                    )
+            except Exception:  # noqa: BLE001 — gotcha #42
+                logger.exception(
+                    "league page: same-instant refutation failed; serving "
+                    "the page"
                 )
 
         # UX-P074 (#1860): colours and logos for the SHARED event card, fetched

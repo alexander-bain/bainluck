@@ -808,6 +808,18 @@ jobs:
             exit 1
           fi
 
+      - name: "#7345 a listing both of whose teams played someone else at that kick-off stops printing (real Postgres)"
+        # Two LATERAL joins on exact `commence_time` equality with NULL-false
+        # team-id `<>` — SQL only a server runs. Same skip detection.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_same_instant_refutation_7345_pg.py \
+            -v -rs 2>&1 | tee /tmp/refute7345.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/refute7345.txt; then
+            echo "::error::#7345 same-instant refutation gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#8440 a Polymarket game reaches the sportsbook row its names extend (real Postgres)"
         # "Lukko Rauma" must reach our "Lukko" and never "Rauma" or "Luk": a
         # folded, space-terminated `strpos` plus `translate` for the accents,
