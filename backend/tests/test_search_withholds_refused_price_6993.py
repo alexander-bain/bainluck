@@ -249,9 +249,16 @@ def test_the_typeahead_dropdown_is_withheld_too_although_it_carries_no_id():
 
 
 def test_the_graded_leg_with_the_identical_book_keeps_its_price():
-    """Settled means settled: withholding a graded row deletes a result."""
+    """Settled means settled: withholding a graded row deletes a result.
+
+    On the SHORT ladder since #8640: this is an open multi-winner board, so its
+    graded rungs now sort below every live one, and on the full nineteen legs
+    the six live rungs fill the five-row slice. The control is about the row
+    being priced, not about where it sorts.
+    """
+    short = {WITHHELD_ID, GRADED_CONTROL_ID, 1597363}
     served = _build_search_top_outcomes(
-        _market(), limit=5, lean=False, withheld={WITHHELD_ID}
+        _market(_legs(only=short)), limit=5, lean=False, withheld={WITHHELD_ID}
     )
     control = _by_id(served)[GRADED_CONTROL_ID]
     assert control["probability"] is not None
