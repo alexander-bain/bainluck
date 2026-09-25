@@ -361,7 +361,7 @@ async def test_enrich_market_hooks_requires_evidence_for_specific_development_54
         monkeypatch, with_evidence, _OUTCOMES, event_row=(kickoff, "Riverside", "Northgate")
     )
     assert len(client.calls) == 1
-    assert kickoff.strftime("%b %d, %Y") in client.calls[0]
+    assert _kickoff_as_of(kickoff) in client.calls[0]  # the ET day, not the UTC day (gotcha #44)
     assert stats["generated"] == 1 and session.updates
 
 
