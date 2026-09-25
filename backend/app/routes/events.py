@@ -100,6 +100,10 @@ from app.utils.event_completion import (
 )
 from app.utils.current_odds_probability import current_odds_probability
 from app.utils.draw_priced_winner import printable_away
+from app.utils.game_market_class import (
+    is_game_winner_market,
+    outcomes_refute_game_winner,
+)
 from app.utils.graded_card import rendered_duel_percents
 from app.utils.market_shape import (
     SHAPE_CONTAINER_MEMBER,
@@ -9303,11 +9307,20 @@ async def search_events(
     _withheld_by_market = {
         m.id: await _search_withheld_price_ids(db, m) for m in deduped_futures
     }
+    # #8734: the events this response serves. A game's own winner market is left
+    # out of both reader lists when its game is among them (see
+    # `_answers_a_served_game_card`). Same filter-then-slice as the two
+    # exclusions above it, so the next market takes the slot. Read off the
+    # formatted dicts, not the ORM rows: a stage between here and the event page
+    # may have rolled the session back, and an expired row's `id` would try to
+    # refresh (gotcha #6).
+    _served_event_ids = {r.get("id") for r in formatted_results} - {None}
     futures_markets = [
         m for m in deduped_futures if not _futures_card_has_no_answer(
             m, _withheld_by_market.get(m.id)
         )
         and m.id not in _container_parent_ids  # #8375
+        and not _answers_a_served_game_card(m, _served_event_ids)  # #8734
     ][:_SEARCH_FUTURES_PAGE]  # flat list (unchanged shape)
 
     # UX-P259/#2579: the tournament a player can win is reachable by their name.
@@ -9582,6 +9595,8 @@ async def search_events(
     futures_markets = [
         m for m in futures_markets
         if not _futures_market_prices_all_withheld(m, _withheld_by_market[m.id])
+        # #8734: a promoted headline contender is asked too.
+        and not _answers_a_served_game_card(m, _served_event_ids)
     ]
     _formatted_by_id = {
         m.id: _format_futures_for_search(m, _withheld_by_market.get(m.id))
@@ -9629,6 +9644,7 @@ async def search_events(
             for m in deduped_futures
             if not _futures_card_has_no_answer(m, _withheld_by_market.get(m.id))
             and m.id not in _container_parent_ids
+            and not _answers_a_served_game_card(m, _served_event_ids)  # #8734
         ],
         expanded,
         lambda m: _formatted_by_id[m.id],
@@ -30086,6 +30102,52 @@ def _search_container_parents_among(
             for leg in legs
         )
     }
+
+
+_SEASON_WORD_RE = re.compile(r"\bseason\b", re.IGNORECASE)
+
+
+def _answers_a_served_game_card(market, served_event_ids: set) -> bool:
+    """True for a game's own WINNER market when that game is on this page (#8734).
+
+    `q=packers` served Buccaneers v Packers on the GAMES rail at 52% and, lower
+    down, Kalshi's `KXNFLGAME-26OCT04GBTB` as an ANSWER, "GB Packers vs TB
+    Buccaneers — Green Bay 53% · Oct 6": the same question twice, with two
+    numbers, and dated by the venue's close time rather than the kickoff. The
+    market is attached to that game, so its price is already one of the inputs
+    to the card's number. The blend is the product. #8375 withheld the
+    Polymarket container for the same reason ("the game is already the GAMES
+    result"). This covers the winner market itself, on both venues.
+
+    Three conditions, and each one keeps a row when it is unsure:
+
+      * the market's `event_id` is one of the events THIS response serves in
+        `results`. A game that is not on the page (another results page, a
+        `type=futures` filter, a shed event stage) keeps its market, because
+        there the market is the only way to reach the game. A market attached to
+        a folded duplicate is not matched to its canonical either. It stays, as
+        it did before this change.
+      * `is_game_winner_market` says the market decides the game. Spreads,
+        totals, team totals and props are different questions and stay.
+        `outcomes_refute_game_winner` refuses a bare matchup title that carries
+        Over/Under legs.
+      * the name does not say "season". The shared classifier accepts
+        "Lions vs. Packers Season Series Winner" on its "Winner" word. No such
+        market was attached to an upcoming game on production on 2026-09-25,
+        but a season series is not one game's question, so it is refused here
+        and not left to chance.
+    """
+    event_id = getattr(market, "event_id", None)
+    if event_id is None or event_id not in served_event_ids:
+        return False
+    name = getattr(market, "name", None) or ""
+    if _SEASON_WORD_RE.search(name):
+        return False
+    if not is_game_winner_market(name, getattr(market, "external_id", None)):
+        return False
+    return not outcomes_refute_game_winner(
+        o.name for o in (getattr(market, "outcomes", None) or ())
+    )
 
 
 async def _search_container_parent_ids(
