@@ -4658,8 +4658,8 @@ jobs:
             echo "::error::#7878 evidence collapse SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]15 passed," /tmp/evidence7878.txt || {
-            echo "::error::#7878 evidence collapse did not run all fifteen cases (#8514 added the backfilled-row case)"
+          grep -qE "[^0-9]22 passed," /tmp/evidence7878.txt || {
+            echo "::error::#7878 evidence collapse did not run all twenty-two cases (#8514 added the backfilled-row case; the retention-selection blocker added seven selector cases)"
             exit 1
           }
 

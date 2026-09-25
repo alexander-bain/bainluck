@@ -78,7 +78,7 @@ async def db():
     await engine.dispose()
 
 
-async def _seed(maker, readings, *, name, tail_after_cutoff=True):
+async def _seed(maker, readings, *, name, tail_after_cutoff=True, age=AGE):
     """One event, one `kalshi` series, rows inserted in the order given.
 
     Insert order is id order, so a case can make id order disagree with time
@@ -89,7 +89,7 @@ async def _seed(maker, readings, *, name, tail_after_cutoff=True):
     from app.models.models import Event, Sport, WinProbSnapshot
 
     now = datetime.now(timezone.utc).replace(microsecond=0)
-    base = now - AGE
+    base = now - age
     async with maker() as session:
         sport = Sport(key=f"americanfootball_nfl_{name}", name=f"NFL {name}")
         session.add(sport)
@@ -106,7 +106,7 @@ async def _seed(maker, readings, *, name, tail_after_cutoff=True):
         ids = {}
         rows = list(readings)
         if tail_after_cutoff:
-            rows.append(_obs(int((AGE - CUTOFF_AGE).total_seconds() // 60) + 60, home=0.99, away=0.01))
+            rows.append(_obs(int((age - CUTOFF_AGE).total_seconds() // 60) + 60, home=0.99, away=0.01))
         for r in rows:
             snap = WinProbSnapshot(
                 event_id=event.id,
@@ -374,3 +374,221 @@ async def test_10_espn_play_by_play_backfill_never_merges_8514(db):
     assert all(_span(r) is None for r in backfilled)
     keeper = next(r for r in rows if r.id == ids[20])
     assert _through(keeper) == base + timedelta(minutes=22)
+
+
+# ---------------------------------------------------------------------------
+# Which partitions a pass reaches (#7878 retention-selection blocker)
+# ---------------------------------------------------------------------------
+#
+# Codex, 2026-09-25 15:45Z: the released selector was `SELECT DISTINCT event_id
+# WHERE captured_at < cutoff LIMIT 500` with no order and no cursor. A collapse
+# leaves keepers behind, so a processed partition stays eligible and the same
+# 500 came back every day; production's selection was ids 1..5,225,589 and
+# neither September specimen. These cases run the real task body
+# (`_collapse_snapshots_impl(table="winprob")`) against real Postgres with a
+# dict standing in for Redis, and read which events it collapsed.
+
+
+class _FakeRedis:
+    def __init__(self):
+        self.store = {}
+
+    def get(self, key):
+        return self.store.get(key)
+
+    def set(self, key, value):
+        self.store[key] = value.encode() if isinstance(value, str) else value
+        return True
+
+
+@pytest.fixture
+def rig(db, monkeypatch):
+    from contextlib import asynccontextmanager
+
+    import app.tasks.redis_state as redis_state
+    import app.tasks.retention as retention
+
+    fake = _FakeRedis()
+    monkeypatch.setattr(redis_state, "get_redis_client", lambda *a, **k: fake)
+
+    @asynccontextmanager
+    async def session_cm(**_kw):
+        async with db() as session:
+            try:
+                yield session
+                await session.commit()
+            except BaseException:
+                await session.rollback()
+                raise
+
+    monkeypatch.setattr(retention, "get_task_session", session_cm)
+    return fake
+
+
+async def _pass(limit):
+    from app.tasks.retention import _collapse_snapshots_impl
+
+    return await _collapse_snapshots_impl(min_age_hours=48, table="winprob", limit=limit)
+
+
+def _pair():
+    """A mergeable pair and a lone point: collapsing it is (1 deleted, 1 stamped)."""
+    return [_obs(0), _obs(1), _obs(120)]
+
+
+async def _collapsed(maker, event_id):
+    return any(_span(r) for r in await _rows(maker, event_id))
+
+
+async def test_11_a_processed_partition_is_not_selected_again_and_the_walk_moves_on(db, rig):
+    e1, *_ = await _seed(db, _pair(), name="w1", age=timedelta(hours=100))
+    e2, *_ = await _seed(db, _pair(), name="w2", age=timedelta(hours=90))
+    e3, *_ = await _seed(db, _pair(), name="w3", age=timedelta(hours=80))
+
+    first = await _pass(limit=2)
+    assert (first["partitions_selected"], first["partitions_processed"]) == (2, 2)
+    assert first["resumed_from"] == "floor:absent"
+    assert first["caught_up"] is False
+    assert [await _collapsed(db, e) for e in (e1, e2, e3)] == [True, True, False]
+    assert first["watermark"]["event_id"] == e2
+
+    second = await _pass(limit=2)
+    assert second["resumed_from"] == "redis"
+    assert (second["partitions_selected"], second["rows_deleted"]) == (1, 1), (
+        "only the partition the first pass did not reach may be selected"
+    )
+    assert await _collapsed(db, e3)
+    assert second["caught_up"] is True
+
+    third = await _pass(limit=2)
+    assert third["partitions_selected"] == 0
+
+    # The control: the released predicate still matches all three processed
+    # partitions — a collapse leaves keepers behind, which is the whole defect.
+    from sqlalchemy import text
+
+    cutoff = datetime.now(timezone.utc) - CUTOFF_AGE
+    async with db() as session:
+        res = await session.execute(
+            text("SELECT DISTINCT event_id FROM win_prob_snapshots WHERE captured_at < :c"),
+            {"c": cutoff},
+        )
+        assert {r[0] for r in res} == {e1, e2, e3}
+
+
+async def test_12_a_partition_still_being_written_comes_back_for_its_newly_aged_rows(db, rig):
+    from app.models.models import WinProbSnapshot
+
+    done, *_ = await _seed(db, _pair(), name="w12a", age=timedelta(hours=90))
+    live, base, _ = await _seed(db, _pair(), name="w12b", age=timedelta(hours=80))
+    assert (await _pass(limit=10))["partitions_processed"] == 2
+
+    # Two equal readings that aged after the first pass's watermark, still
+    # before the series' fresh tail row.
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    async with db() as session:
+        for at in (now - timedelta(hours=49), now - timedelta(hours=49) + timedelta(minutes=2)):
+            session.add(
+                WinProbSnapshot(
+                    event_id=live, source="kalshi", captured_at=at,
+                    home_win_probability=0.55, away_win_probability=0.45,
+                    game_state=_obs(0, home=0.55, away=0.45)["gs"], reading_count=1,
+                )
+            )
+        await session.commit()
+
+    again = await _pass(limit=10)
+    assert again["partitions_selected"] == 1, "the finished partition must not come back"
+    assert again["watermark"]["event_id"] == live
+    assert (again["rows_deleted"], again["keepers_updated"]) == (1, 1)
+
+
+@pytest.mark.parametrize(
+    "stored, source",
+    [
+        pytest.param(None, "floor:absent", id="absent"),
+        pytest.param(b"not json", "floor:malformed", id="malformed"),
+        pytest.param("behind", "floor:behind", id="behind-the-floor"),
+    ],
+)
+async def test_13_an_unusable_watermark_resumes_at_the_floor_not_the_ancient_tail(
+    db, rig, stored, source
+):
+    import json
+
+    from app.tasks.retention import WINPROB_SELECTOR_FLOOR_HOURS, WINPROB_WATERMARK_KEY
+
+    beyond = CUTOFF_AGE + timedelta(hours=WINPROB_SELECTOR_FLOOR_HOURS + 30)
+    ancient, *_ = await _seed(db, _pair(), name="w13a", age=beyond)
+    recent, *_ = await _seed(db, _pair(), name="w13b", age=timedelta(hours=80))
+    if stored == "behind":
+        stored = json.dumps({
+            "last_aged": (datetime.now(timezone.utc) - beyond - timedelta(days=30)).isoformat(),
+            "event_id": 1,
+        }).encode()
+    if stored is not None:
+        rig.store[WINPROB_WATERMARK_KEY] = stored
+
+    out = await _pass(limit=10)
+    assert out["resumed_from"] == source
+    assert out["partitions_selected"] == 1
+    assert await _collapsed(db, recent)
+    assert not await _collapsed(db, ancient)
+
+
+async def test_14_one_failing_partition_is_passed_and_a_failure_streak_stops_on_the_last_success(
+    db, rig, monkeypatch
+):
+    import app.tasks.retention as retention
+
+    ids = []
+    for n, hours in enumerate((100, 95, 90, 85)):
+        eid, *_ = await _seed(db, _pair(), name=f"w14{n}", age=timedelta(hours=hours))
+        ids.append(eid)
+    real = retention._collapse_partition_sql
+    poison = set()
+
+    async def flaky(session, cfg, part_id, cutoff):
+        if part_id in poison:
+            raise RuntimeError(f"boom {part_id}")
+        return await real(session, cfg, part_id, cutoff)
+
+    monkeypatch.setattr(retention, "_collapse_partition_sql", flaky)
+
+    # A streak of three stops the pass; the watermark stays on the last success,
+    # so the three are retried next time rather than walked past.
+    poison.update(ids[1:])
+    out = await _pass(limit=10)
+    assert out["stopped_on_failures"] is True
+    assert (out["partitions_processed"], out["partitions_failed"]) == (1, 3)
+    assert out["watermark"]["event_id"] == ids[0]
+
+    poison.clear()
+    poison.add(ids[2])
+    out = await _pass(limit=10)
+    assert out["stopped_on_failures"] is False
+    assert out["failed_event_ids"] == [ids[2]]
+    assert [await _collapsed(db, e) for e in ids] == [True, True, False, True]
+    assert out["watermark"]["event_id"] == ids[3]
+
+
+async def test_15_the_soft_time_limit_is_not_swallowed(db, rig, monkeypatch):
+    from celery.exceptions import SoftTimeLimitExceeded
+
+    import app.tasks.retention as retention
+
+    e1, *_ = await _seed(db, _pair(), name="w15a", age=timedelta(hours=100))
+    e2, *_ = await _seed(db, _pair(), name="w15b", age=timedelta(hours=90))
+    real = retention._collapse_partition_sql
+
+    async def expires(session, cfg, part_id, cutoff):
+        if part_id == e2:
+            raise SoftTimeLimitExceeded()
+        return await real(session, cfg, part_id, cutoff)
+
+    monkeypatch.setattr(retention, "_collapse_partition_sql", expires)
+    with pytest.raises(SoftTimeLimitExceeded):
+        await _pass(limit=10)
+    import json
+
+    assert json.loads(rig.store[retention.WINPROB_WATERMARK_KEY])["event_id"] == e1

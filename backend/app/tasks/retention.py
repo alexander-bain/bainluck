@@ -36,11 +36,18 @@ It never reads `valid_until` or `reading_count` as evidence: those are closure
 and count, and a legacy row compacted before this contract carries no stamp, so
 its coverage is its own `captured_at` and nothing more. `valid_until` and
 `reading_count` keep their existing continuity meaning on the keeper.
+
+WHICH win-probability partitions a pass reaches is its own rule (see
+"Win-probability partition selection" below): a Redis-kept watermark walks
+them oldest-first by latest aged reading within a floor, so a processed
+partition is not selected again and the daily 500 are not the same 500.
 """
 
+import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
+from celery.exceptions import SoftTimeLimitExceeded
 from sqlalchemy import text
 
 from app.tasks.base import get_task_session
@@ -87,13 +94,15 @@ _TABLE_CONFIG = {
 
 
 async def _collapse_snapshots_impl(min_age_hours: int = 48, table: str = "odds", limit: int = 200):
-    from datetime import timedelta
-
     if table not in _TABLE_CONFIG:
         return {"error": f"Unknown table: {table}. Use 'odds', 'winprob', or 'futures'."}
 
     cfg = _TABLE_CONFIG[table]
     cutoff = datetime.now(timezone.utc) - timedelta(hours=min_age_hours)
+    if cfg.get("evidence_contract"):
+        # #7878: win-probability partitions are chosen by a progress-safe
+        # watermark, not the unordered DISTINCT below.
+        return await _collapse_winprob_progress(cfg, cutoff, limit)
     total_deleted = 0
     total_updated = 0
     partitions_processed = 0
@@ -524,6 +533,174 @@ async def _collapse_winprob_partition_sql(
     await _bridge_valid_until(session, cfg, partition_id, cutoff)
 
     return int(rows_deleted or 0), int(keepers_updated or 0)
+
+
+# ---------------------------------------------------------------------------
+# Win-probability partition selection (#7878)
+# ---------------------------------------------------------------------------
+#
+# The generic selector — `SELECT DISTINCT event_id WHERE captured_at < cutoff
+# LIMIT n`, no order and no cursor — cannot make progress on this table. A
+# collapse leaves keepers and singletons behind, so a processed partition stays
+# eligible forever and the same n partitions come back every day (production,
+# 2026-09-25 15:45Z: 500 ids between 1 and 5,225,589; neither September
+# specimen, 15316479 nor 15316485, among them).
+#
+# This selector walks partitions oldest-first by their LATEST aged reading,
+# resuming from a keyset watermark `(last_aged, event_id)` kept in Redis:
+#
+# * a finished partition's latest aged reading never moves, so once the
+#   watermark passes it, it is never selected again (the repeat-pass guard);
+# * a partition still being written ages new rows past the watermark, so it
+#   comes back once per run for the rows that aged since its last visit;
+# * the walk never starts earlier than `WINPROB_SELECTOR_FLOOR_HOURS` before the
+#   cutoff (oldest-first WITHIN a floor, gotcha #41), so a lost, malformed or
+#   lagging watermark restarts on recent history, not the 2024 tail;
+# * the watermark advances past each partition as it completes. One failing
+#   partition is logged and passed; `_MAX_CONSECUTIVE_FAILURES` in a row stop
+#   the run with the watermark on the last success, so an outage is retried
+#   next run instead of skipped.
+#
+# Selection changes nothing about what a collapse may merge: every selected
+# partition goes through `_collapse_winprob_partition_sql` unchanged.
+
+WINPROB_WATERMARK_KEY = "retention:winprob:selector_watermark"
+WINPROB_SELECTOR_FLOOR_HOURS = 168
+_MAX_CONSECUTIVE_FAILURES = 3
+
+
+def _read_winprob_watermark(floor: datetime) -> tuple[datetime, int, str]:
+    """Where the walk resumes: `(last_aged, event_id, source)`.
+
+    Anything unusable — no key, Redis down, a malformed value, or a watermark
+    behind the floor — resumes at the floor, and `source` says which.
+    """
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        raw = get_redis_client().get(WINPROB_WATERMARK_KEY)
+    except Exception as exc:  # noqa: BLE001 — a cursor read must not fail the pass
+        logger.warning("winprob collapse: watermark read failed (%s); resuming at the floor", exc)
+        return floor, 0, "floor:redis-error"
+    if not raw:
+        return floor, 0, "floor:absent"
+    try:
+        data = json.loads(raw)
+        last_aged = datetime.fromisoformat(data["last_aged"])
+        event_id = int(data["event_id"])
+        if last_aged.tzinfo is None:
+            raise ValueError("naive last_aged")
+    except (ValueError, KeyError, TypeError) as exc:
+        logger.warning("winprob collapse: malformed watermark %r (%s); resuming at the floor", raw, exc)
+        return floor, 0, "floor:malformed"
+    if last_aged < floor:
+        logger.warning(
+            "winprob collapse: watermark %s is behind the floor %s — partitions that "
+            "aged between them are not selected",
+            last_aged.isoformat(),
+            floor.isoformat(),
+        )
+        return floor, 0, "floor:behind"
+    return last_aged, event_id, "redis"
+
+
+def _write_winprob_watermark(last_aged: datetime, event_id: int) -> bool:
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        get_redis_client().set(
+            WINPROB_WATERMARK_KEY,
+            json.dumps({"last_aged": last_aged.isoformat(), "event_id": int(event_id)}),
+        )
+    except Exception as exc:  # noqa: BLE001 — the collapse already committed
+        logger.warning("winprob collapse: watermark write failed (%s)", exc)
+        return False
+    return True
+
+
+async def _select_winprob_partitions(
+    session, cfg: dict, cutoff: datetime, after_ts: datetime, after_id: int, limit: int
+) -> list[tuple[int, datetime]]:
+    """The next `limit` partitions after `(after_ts, after_id)`, oldest latest-aged first.
+
+    `MAX(captured_at)` over the rows at or after `after_ts` IS the partition's
+    latest aged reading, because any partition this returns has at least one.
+    """
+    tbl = cfg["table"]
+    pcol = cfg["partition_col"]
+    result = await session.execute(
+        text(f"""
+            SELECT {pcol}, MAX(captured_at) AS last_aged
+            FROM {tbl}
+            WHERE captured_at < :cutoff
+              AND captured_at >= :after_ts
+            GROUP BY {pcol}
+            HAVING (MAX(captured_at), {pcol})
+                   > (CAST(:after_ts AS timestamptz), CAST(:after_id AS bigint))
+            ORDER BY last_aged, {pcol}
+            LIMIT :lim
+        """),
+        {"cutoff": cutoff, "after_ts": after_ts, "after_id": after_id, "lim": limit},
+    )
+    return [(int(r[0]), r[1]) for r in result.fetchall()]
+
+
+async def _collapse_winprob_progress(cfg: dict, cutoff: datetime, limit: int) -> dict:
+    """One bounded, resumable win-probability collapse pass. See the section notes."""
+    floor = cutoff - timedelta(hours=WINPROB_SELECTOR_FLOOR_HOURS)
+    after_ts, after_id, source = _read_winprob_watermark(floor)
+
+    async with get_task_session() as session:
+        selected = await _select_winprob_partitions(session, cfg, cutoff, after_ts, after_id, limit)
+
+    total_deleted = 0
+    total_updated = 0
+    processed = 0
+    failed: list[int] = []
+    streak = 0
+    stopped = False
+    watermark = (after_ts, after_id)
+    for part_id, last_aged in selected:
+        try:
+            async with get_task_session() as session:
+                deleted, updated = await _collapse_partition_sql(session, cfg, part_id, cutoff)
+        except SoftTimeLimitExceeded:
+            raise
+        except Exception:  # noqa: BLE001 — one bad partition must not end the pass (gotcha #42)
+            logger.exception("winprob collapse: partition %s failed", part_id)
+            failed.append(part_id)
+            streak += 1
+            if streak >= _MAX_CONSECUTIVE_FAILURES:
+                stopped = True
+                break
+            continue
+        streak = 0
+        total_deleted += deleted
+        total_updated += updated
+        processed += 1
+        watermark = (last_aged, part_id)
+        _write_winprob_watermark(last_aged, part_id)
+
+    caught_up = len(selected) < limit and not failed
+    logger.info(
+        f"Snapshot collapse [winprob]: {total_deleted} rows deleted, {total_updated} keepers "
+        f"updated across {processed}/{len(selected)} partitions; resumed from {source}, "
+        f"watermark now ({watermark[0].isoformat()}, {watermark[1]}), "
+        f"failed={len(failed)} stopped={stopped} caught_up={caught_up}"
+    )
+    return {
+        "table": "winprob",
+        "rows_deleted": total_deleted,
+        "keepers_updated": total_updated,
+        "partitions_processed": processed,
+        "partitions_selected": len(selected),
+        "partitions_failed": len(failed),
+        "failed_event_ids": failed[:20],
+        "stopped_on_failures": stopped,
+        "caught_up": caught_up,
+        "resumed_from": source,
+        "watermark": {"last_aged": watermark[0].isoformat(), "event_id": watermark[1]},
+    }
 
 
 # ---------------------------------------------------------------------------
