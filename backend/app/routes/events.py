@@ -29546,14 +29546,16 @@ def _search_container_parent_candidates(markets: list) -> dict[int, tuple[str, s
     return {
         m.id: legs
         for m in markets
-        if m.event_id is not None and (legs := _search_leg_copy_board_legs(m))
+        if (legs := _search_leg_copy_board_legs(m)) and m.event_id is not None
     }
 
 
 def _search_leg_copy_board_legs(m) -> Optional[tuple[str, set[str]]]:
     """``(group_id, leg external ids)`` for a non-exclusive Polymarket group row
     whose every leg carries an id, else ``None``. The three conditions #8375's
-    candidates share with #8664's; the event arm is the callers' to add."""
+    candidates share with #8664's; the event arm is the callers' to add, and
+    they read ``event_id`` only AFTER this passes — #8375's order, which a thin
+    non-Polymarket row with no ``event_id`` attribute relies on (#6447's test)."""
     if m.source != "polymarket" or not m.group_id or m.mutually_exclusive is not False:
         return None
     legs = [o.external_id for o in (m.outcomes or [])]
@@ -29585,7 +29587,7 @@ def _search_unlinked_container_parent_candidates(
     return {
         m.id: legs
         for m in markets
-        if m.event_id is None and (legs := _search_leg_copy_board_legs(m))
+        if (legs := _search_leg_copy_board_legs(m)) and m.event_id is None
     }
 
 

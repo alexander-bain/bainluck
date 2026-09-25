@@ -215,3 +215,11 @@ async def test_a_timeout_on_the_named_read_fails_open(no_timeout, monkeypatch):
     assert await _search_container_parent_ids(db, [_container()], float("inf")) == set()
     savepoint.rollback.assert_awaited_once()
     db.rollback.assert_not_awaited()
+
+
+def test_a_thin_row_without_event_id_never_reaches_the_event_arm():
+    """#6447's thin search row (kalshi, no `event_id` attribute at all) must be
+    refused by the shared conditions BEFORE either arm reads `event_id`."""
+    thin = SimpleNamespace(id=1, source="kalshi", group_id=None, mutually_exclusive=True, outcomes=[])
+    assert _search_container_parent_candidates([thin]) == {}
+    assert _search_unlinked_container_parent_candidates([thin]) == {}
