@@ -19,6 +19,7 @@ import {
   stalenessAgeLabel,
   stalenessDriftClause,
   stalenessHeadline,
+  stalenessInputSentence,
   stalenessScheduleClause,
 } from "@/lib/calibrationStaleness";
 
@@ -529,6 +530,7 @@ describe("stalenessHeadline", () => {
         producerStalled: null,
         beatsMissed: null,
         producerProvenCurrent: false,
+        stagedReason: null,
       }),
     );
     expect(new Set(lines).size).toBe(3);
@@ -644,6 +646,7 @@ describe("#7696 the artifact date survives the tier it was served on", () => {
       producerStalled: null,
       beatsMissed: null,
       producerProvenCurrent: false,
+      stagedReason: null,
     };
 
     it("dated: does NOT disclaim the currency it is about to state", () => {
@@ -664,5 +667,83 @@ describe("#7696 the artifact date survives the tier it was served on", () => {
         expect(stalenessHeadline({ ...base, kind })).not.toBe(dated);
       }
     });
+  });
+});
+
+/**
+ * #5185 — an emptied bank is not an unreadable one.
+ *
+ * #5043 gave the server two answers — `served_bank_empty` (the bank was cleared
+ * so its census could be gathered again) and `served_at_absent` (a bank exists
+ * and lost its date) — and the page collapsed them back into one sentence,
+ * "We couldn't read when ... was last staged", which is false for the first:
+ * nothing failed to read.
+ *
+ * The envelope is production's main-tier answer of 2026-09-21T05:30Z (no
+ * `cache`), so the state under test is the one a reader actually lands in.
+ * The two arms differ in `staged.reason` and nothing else.
+ */
+describe("#5185 the empty served bank gets its own sentence", () => {
+  const MAIN_TIER_EMPTY = {
+    availability: "stale",
+    generated_at: "2026-09-15T11:16:10.215051+00:00",
+    staged: { measured: false, reason: "served_bank_empty" },
+    producer: { interval_s: 3600, stall_after_s: 14400, age_s: 497636, beats_missed: 138, stalled: true },
+  };
+  const MAIN_TIER_UNDATED = {
+    ...MAIN_TIER_EMPTY,
+    staged: { measured: false, reason: "served_at_absent" },
+  };
+
+  it("both land in `undisclosed` — the kind is unchanged, only the sentence splits", () => {
+    expect(decideCalibrationStaleness(MAIN_TIER_EMPTY)!.kind).toBe("undisclosed");
+    expect(decideCalibrationStaleness(MAIN_TIER_UNDATED)!.kind).toBe("undisclosed");
+  });
+
+  it("an emptied bank says so, and does not claim a failed read", () => {
+    const line = stalenessInputSentence(decideCalibrationStaleness(MAIN_TIER_EMPTY)!);
+    expect(line).toContain("gathered again from scratch");
+    expect(line).not.toMatch(/couldn.t read/);
+  });
+
+  it("control: a bank that lost its date keeps the failed-read sentence", () => {
+    const line = stalenessInputSentence(decideCalibrationStaleness(MAIN_TIER_UNDATED)!);
+    expect(line).toBe("We couldn\u2019t read when the market data behind it was last staged.");
+  });
+
+  it("absent and unreadable reasons keep the failed-read sentence too", () => {
+    for (const staged of [null, { measured: false }, { measured: false, reason: "phase_ledger_unreadable" }]) {
+      const n = decideCalibrationStaleness({ ...MAIN_TIER_EMPTY, staged })!;
+      expect(stalenessInputSentence(n)).toMatch(/couldn.t read/);
+    }
+  });
+
+  it("no date is invented for the empty bank (#2007)", () => {
+    const n = decideCalibrationStaleness(MAIN_TIER_EMPTY)!;
+    expect(n.stagedAt).toBeNull();
+    expect(n.stagedAgeS).toBeNull();
+  });
+
+  it("carries `staged.reason` on every kind, not only `undisclosed`", () => {
+    // The dated tier lands in `last-good`, whose own `reason` is `cache.reason`;
+    // the staged answer must still be readable there.
+    const lastGood = decideCalibrationStaleness({
+      ...MAIN_TIER_EMPTY,
+      cache: { status: "stale", reason: "main_key_absent_durable", age_s: 497636 },
+    })!;
+    expect(lastGood.kind).toBe("last-good");
+    expect(lastGood.reason).toBe("main_key_absent_durable");
+    expect(lastGood.stagedReason).toBe("served_bank_empty");
+
+    const frozen = decideCalibrationStaleness({
+      availability: "stale",
+      staged: { measured: true, frozen_over_drift: true, reason: "x_reason", staged_at: "2026-09-15T11:16:10Z" },
+      producer: { stalled: false, beats_missed: 0 },
+    })!;
+    expect(frozen.kind).toBe("frozen-inputs");
+    expect(frozen.stagedReason).toBe("x_reason");
+
+    expect(decideCalibrationStaleness({ ...MAIN_TIER_EMPTY, staged: null })!.stagedReason).toBeNull();
+    expect(decideCalibrationStaleness({ ...MAIN_TIER_EMPTY, staged: { measured: false, reason: "" } })!.stagedReason).toBeNull();
   });
 });

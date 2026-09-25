@@ -34,6 +34,7 @@ import * as path from "path";
 
 import {
   decideCalibrationStaleness,
+  stalenessInputSentence,
   stalenessScheduleClause,
   type CalibrationProducerDisclosure,
 } from "@/lib/calibrationStaleness";
@@ -233,6 +234,40 @@ describe("the calibration staleness banner", () => {
           hit ? `schedule clause contains ${JSON.stringify(hit[0])} — ${banned.why}` : null,
         ).toBeNull();
       }
+    });
+  });
+
+  // #5185: the undisclosed banner's input sentence moved out of this region
+  // into `stalenessInputSentence`, so — exactly like the schedule clause — the
+  // region scan above can no longer see it. Scanned as OUTPUT, every branch.
+  describe("the input sentence is held to the same ban", () => {
+    const REASONS: Array<string | null> = ["served_bank_empty", "served_at_absent", "phase_ledger_unreadable", null];
+
+    function sentenceFor(reason: string | null): string {
+      const notice = decideCalibrationStaleness({
+        availability: "stale",
+        staged: reason === null ? null : { measured: false, reason },
+        producer: { stalled: true, beats_missed: 138 },
+      });
+      if (notice === null || notice.kind !== "undisclosed") throw new Error("fixture missed `undisclosed`");
+      return stalenessInputSentence(notice);
+    }
+
+    it("renders two different sentences across the reasons", () => {
+      // Non-vacuity: a scan over one repeated string would prove nothing about
+      // the branch #5185 added.
+      expect(new Set(REASONS.map(sentenceFor)).size).toBe(2);
+    });
+
+    it.each(REASONS)("makes no forward-looking promise when staged.reason is %s", reason => {
+      const line = sentenceFor(reason);
+      for (const banned of BANNED) {
+        const hit = line.match(banned.pattern);
+        expect(hit ? `input sentence contains ${JSON.stringify(hit[0])} — ${banned.why}` : null).toBeNull();
+      }
+      // And the #5185-specific one: under a stalled producer, "a rebuild is
+      // underway" is a progress claim this render cannot support.
+      expect(line).not.toMatch(/underway|in progress|\byet\b/i);
     });
   });
 

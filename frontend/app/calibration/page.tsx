@@ -96,6 +96,7 @@ import {
   methodologyRefreshClause,
   stalenessAgeLabel,
   stalenessHeadline,
+  stalenessInputSentence,
   stalenessScheduleClause,
 } from "@/lib/calibrationStaleness";
 import { SOURCE_COLORS as SOURCE_COLOR_REGISTRY, canonicalSourceKey } from "@/lib/sourceColors";
@@ -1095,6 +1096,10 @@ export default function CalibrationPage() {
             staleness.unitsBanked === null ? "" : String(staleness.unitsBanked)
           }
           data-availability={data.availability ?? ""}
+          /* #5185: the staged block's own why, so a probe can tell an emptied
+             bank (`served_bank_empty`) from one that lost its date
+             (`served_at_absent`) without parsing the sentence. */
+          data-staged-reason={staleness.stagedReason ?? ""}
           /* #2649: the producer verdict as DATA, so a rail can assert "the
              promise is absent when the beat is stalled" without parsing the
              sentence. Empty string means the payload did not state it — which
@@ -1219,7 +1224,9 @@ export default function CalibrationPage() {
                   while admitting we cannot see the inputs is the reassuring
                   default gotcha #53 exists to forbid. */}
               {scheduleClause ? `${scheduleClause} ` : ""}
-              We couldn&rsquo;t read when the market data behind it was last staged.
+              {/* #5185: an emptied bank is not an unreadable one — see
+                  `stalenessInputSentence`. */}
+              {stalenessInputSentence(staleness)}{" "}
               We&rsquo;d rather say so than call these numbers current.
             </>
           )}
