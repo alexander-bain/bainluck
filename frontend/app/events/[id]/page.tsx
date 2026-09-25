@@ -124,7 +124,7 @@ import {
   suspendedSummary,
   venueSettledSummary,
 } from "@/lib/eventState";
-import type { ActiveChartPoint } from "@/lib/types";
+import type { ActiveChartPoint, TeamData } from "@/lib/types";
 import TeamNameLink from "@/components/TeamNameLink";
 import { PinIcon } from "@/components/PinButton";
 import { teamShortNames, shippableCrestBadge } from "@/lib/teamShortName";
@@ -151,6 +151,25 @@ import { SPECIAL_MARKETS_MIN_WIRE_ROWS, specialMarketsDrawnIds } from "@/lib/gam
 
 interface EventPageProps {
   params: { id: string };
+}
+
+/* #8677 — the hero tile's image ladder, one expression for both sides.
+   `logo_small` is the LAST image rung, after the two team resolvers, so every
+   tile that already drew a picture keeps it; only the tiles that fell through
+   to letters change. A national team carries nothing but a flagcdn
+   `logo_small` (Discover's card draws that flag), and the hero used to skip it
+   and paint `IRE` for Northern Ireland, which is Republic of Ireland's code. */
+function heroCrestImage(
+  teamData: TeamData | undefined,
+  teamName: string,
+  sportKey?: string | null
+): string | undefined {
+  return (
+    teamData?.logo_large ||
+    espnTeamLogoByName(teamName, sportKey) ||
+    teamData?.logo_small ||
+    undefined
+  );
 }
 
 const LIVE_REFRESH_INTERVAL = 32000; // Match backend LIVE_POLL_INTERVAL (32s)
@@ -1950,9 +1969,9 @@ export default function EventPage({ params }: EventPageProps) {
                 className="w-14 h-14 rounded-2xl flex items-center justify-center mb-1.5 overflow-hidden"
                 style={{ backgroundColor: `${event.home_team_data?.primary_color || "#94A3B8"}15` }}
               >
-                {(event.home_team_data?.logo_large || espnTeamLogoByName(event.home_team, event.sport_key)) ? (
+                {heroCrestImage(event.home_team_data, event.home_team, event.sport_key) ? (
                   <img
-                    src={event.home_team_data?.logo_large || espnTeamLogoByName(event.home_team, event.sport_key)!}
+                    src={heroCrestImage(event.home_team_data, event.home_team, event.sport_key)}
                     alt=""
                     width={48}
                     height={48}
@@ -1962,7 +1981,7 @@ export default function EventPage({ params }: EventPageProps) {
                   />
                 ) : null}
                 <span
-                  className={`text-sm font-extrabold ${(event.home_team_data?.logo_large || espnTeamLogoByName(event.home_team, event.sport_key)) ? "hidden" : ""}`}
+                  className={`text-sm font-extrabold ${heroCrestImage(event.home_team_data, event.home_team, event.sport_key) ? "hidden" : ""}`}
                   style={{ color: teamTextColor(event.home_team_data?.primary_color) || "var(--text-secondary)" }}
                 >
                   {/* #7270 — the badge policy lives in `lib/teamShortName.ts`, which
@@ -2298,9 +2317,9 @@ export default function EventPage({ params }: EventPageProps) {
                 className="w-14 h-14 rounded-2xl flex items-center justify-center mb-1.5 overflow-hidden"
                 style={{ backgroundColor: `${event.away_team_data?.primary_color || "#64748B"}15` }}
               >
-                {(event.away_team_data?.logo_large || espnTeamLogoByName(event.away_team, event.sport_key)) ? (
+                {heroCrestImage(event.away_team_data, event.away_team, event.sport_key) ? (
                   <img
-                    src={event.away_team_data?.logo_large || espnTeamLogoByName(event.away_team, event.sport_key)!}
+                    src={heroCrestImage(event.away_team_data, event.away_team, event.sport_key)}
                     alt=""
                     width={48}
                     height={48}
@@ -2310,7 +2329,7 @@ export default function EventPage({ params }: EventPageProps) {
                   />
                 ) : null}
                 <span
-                  className={`text-sm font-extrabold ${(event.away_team_data?.logo_large || espnTeamLogoByName(event.away_team, event.sport_key)) ? "hidden" : ""}`}
+                  className={`text-sm font-extrabold ${heroCrestImage(event.away_team_data, event.away_team, event.sport_key) ? "hidden" : ""}`}
                   style={{ color: teamTextColor(event.away_team_data?.primary_color) || "#64748B" }}
                 >
                   {/* #7270 — see the home tile above; same policy, same helper. */}
