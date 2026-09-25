@@ -690,6 +690,22 @@ async def _maybe_set_opening_odds(
     )
 
 
+async def _rollback_quietly(session) -> None:
+    """#837: end a per-sport transaction that failed, so the next sport starts clean.
+
+    A rollback that itself fails (the connection is gone) is logged, not raised:
+    the caller is already on its error path and is about to `continue`.
+
+    🪤 A rollback EXPIRES every ORM object in the session, `expire_on_commit=False`
+    or not (gotcha #6). A caller must not read a row loaded before the rollback
+    afterwards — which is why `_discover_events` iterates plain (id, key) pairs.
+    """
+    try:
+        await session.rollback()
+    except Exception as exc:  # noqa: BLE001 — already on the error path
+        logger.warning("per-sport rollback failed: %s", exc)
+
+
 async def _create_or_update_snapshot(
     session,
     event_id: int,
@@ -1676,6 +1692,12 @@ async def _poll_all_odds():
                     await session.commit()
 
                 except Exception as e:
+                    # #837 — a failed statement (the 40P01 be29398d lost at
+                    # 03:05:27Z) leaves the transaction aborted, and `continue`
+                    # carried it into every later sport: each logged
+                    # PendingRollbackError and the pass died at the scores
+                    # query. Sports committed above are kept.
+                    await _rollback_quietly(session)
                     # Cache 404 sports to avoid retrying for 24h
                     if hasattr(e, "response") and getattr(e.response, "status_code", 0) == 404:
                         logger.info("Sport %s returned 404, skipping for 24h", sport_key)
@@ -2442,7 +2464,17 @@ async def _poll_all_odds():
                             logger.warning("Error updating score for event %s: %s", score_event.get('id'), e)
                             continue
 
+                    # #837 — this sport's score rows are released before the
+                    # next sport's `get_scores` HTTP call, as the odds loop
+                    # releases per sport. A rollback INSIDE the per-game loop is
+                    # deliberately absent: it would expire the batch-loaded
+                    # `event_obj` rows its siblings still read (gotcha #6). A
+                    # commit refused after a game aborted the transaction lands
+                    # in the `except` below.
+                    await session.commit()
+
                 except Exception as e:
+                    await _rollback_quietly(session)  # #837, as in the odds loop
                     if hasattr(e, "response") and getattr(e.response, "status_code", 0) == 404:
                         logger.info("Scores for %s returned 404, skipping for 24h", sport_key)
                         if r:

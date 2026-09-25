@@ -214,7 +214,7 @@ async def _discover_events():
         logger.warning("discover_events SKIPPED by quota guard: %s", guard_reason)
         return {"skipped": True, "reason": f"quota_guard:{guard_reason}"}
 
-    from app.tasks.odds_polling import _ingest_event_odds
+    from app.tasks.odds_polling import _ingest_event_odds, _rollback_quietly
 
     service = OddsAPIService()
 
@@ -248,10 +248,13 @@ async def _discover_events():
             result = await session.execute(
                 select(Sport).where(Sport.active == True)
             )
-            sports = result.scalars().all()
+            # #837: plain (id, key) pairs, not ORM rows. The per-sport rollback
+            # below EXPIRES every loaded object (gotcha #6), and reading
+            # `sport.key` off an expired row in the next iteration lazy-loads
+            # outside a greenlet (MissingGreenlet) and kills the whole pass.
+            sports = [(s.id, s.key) for s in result.scalars().all()]
 
-            for sport in sports:
-                sport_key = sport.key
+            for sport_id, sport_key in sports:
 
                 # Per-sport discovery frequency gating based on league tier
                 discover_interval = _get_discover_interval(sport_key)
@@ -532,7 +535,7 @@ async def _discover_events():
                     if all_team_names:
                         existing_result = await session.execute(
                             select(Team.name).where(
-                                Team.sport_id == sport.id,
+                                Team.sport_id == sport_id,
                             )
                         )
                         existing_team_names = {
@@ -553,7 +556,7 @@ async def _discover_events():
                         for team_name in new_team_names:
                             new_team = Team(
                                 name=team_name,
-                                sport_id=sport.id,
+                                sport_id=sport_id,
                             )
                             session.add(new_team)
                         if new_team_names:
@@ -566,7 +569,7 @@ async def _discover_events():
                                 team_result = await session.execute(
                                     select(Team).where(
                                         Team.name == team_name,
-                                        Team.sport_id == sport.id,
+                                        Team.sport_id == sport_id,
                                     )
                                 )
                                 new_team_obj = team_result.scalar_one_or_none()
@@ -589,7 +592,7 @@ async def _discover_events():
                     if all_team_names:
                         team_map_result = await session.execute(
                             select(Team.name, Team.id).where(
-                                Team.sport_id == sport.id,
+                                Team.sport_id == sport_id,
                                 Team.name.in_(all_team_names),
                             )
                         )
@@ -601,7 +604,7 @@ async def _discover_events():
                             from sqlalchemy import or_ as sql_or
                             unlinked_result = await session.execute(
                                 select(Event).where(
-                                    Event.sport_id == sport.id,
+                                    Event.sport_id == sport_id,
                                     sql_or(
                                         Event.home_team_id.is_(None),
                                         Event.away_team_id.is_(None),
@@ -664,6 +667,9 @@ async def _discover_events():
                     await session.commit()
 
                 except Exception as e:
+                    # #837 — without this, one failed statement aborted the
+                    # transaction for every later sport. Committed sports stay.
+                    await _rollback_quietly(session)
                     # Log but continue with other sports
                     logger.warning("Error discovering events for %s: %s", sport_key, e)
                     continue

@@ -4693,6 +4693,30 @@ jobs:
             exit 1
           }
 
+      - name: "#837 a failed sport no longer aborts the sports after it, and the scores loop releases per sport (real Postgres)"
+        # #837, the three gaps the per-sport commit above left. (1) A failed
+        # statement (production: a 40P01 at 03:05:27Z) left the transaction
+        # aborted and every later sport died on PendingRollbackError; both
+        # passes now roll back in the per-sport `except`. (2) That rollback
+        # expires ORM rows (gotcha #6), so discovery iterates (id, key) pairs.
+        # (3) The scores loop commits per sport before the next `get_scores`.
+        #
+        # 4 = the probe's positive control + the scores-loop arm + one rollback
+        # arm per pass. The rollback arms inject a real Postgres error, and the
+        # discover arm fails with MissingGreenlet on the ORM-loop mutant.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_a_failed_sport_and_the_scores_loop_release_837_pg.py \
+            -v -rs 2>&1 | tee /tmp/rollback837.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/rollback837.txt; then
+            echo "::error::#837 rollback/scores gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]4 passed[,[:space:]]" /tmp/rollback837.txt || {
+            echo "::error::#837 rollback/scores gate did not run all four cases"
+            exit 1
+          }
+
   frontend-build:
     runs-on: ubuntu-latest
     defaults:

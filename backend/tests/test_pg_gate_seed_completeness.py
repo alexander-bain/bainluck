@@ -425,6 +425,12 @@ COVERED = (
     # not resolve the payload to the seeded row, nothing writes `betting`, and
     # the probe finds a free row for the wrong reason.
     "test_a_poll_releases_its_event_rows_per_sport_837_pg.py",
+    # #837 follow-up: seeds two invented sports, their teams and four `events`
+    # rows by raw INSERT (two scheduled for the odds loops, two completed for
+    # the scores loop). `external_id` is the reach: the lookup that stands in
+    # for the registry dereferences it, and a game it cannot find is never
+    # written, so the probe would read "free" for the wrong reason.
+    "test_a_failed_sport_and_the_scores_loop_release_837_pg.py",
     # #7501: seeds `sports` and seven `teams` by raw INSERT to drive the slug
     # filler against the real UNIQUE index on `teams.slug`, which IS the
     # mechanism — 855 of the 4,004 slug-less clubs exist as a cohort only
