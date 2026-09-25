@@ -594,9 +594,19 @@ export default function MarketMapSection({
     // not a pre-game quantity (event 15310077's was -7.9 on a game that opened
     // at -1.5). Before the game starts the two tenses coincide and the fresher
     // number is the better one, so `pre` keeps it.
-    let projValue = openingHomeSpread != null ? -openingHomeSpread : null;
+    // #8721: AND ONLY WHERE THE SPORTSBOOKS' SPREAD IS A MARGIN AT ALL. For
+    // baseball it is the run line, a ±1.5 handicap whatever the matchup (#8617's
+    // flag). Measured on production 2026-09-25 21:42Z: `/events/15318545`, Cubs @
+    // Red Sox at 48% – 52%, opening spread 1.5 and current 1.1, printed
+    // `PRE-GAME CHC by 1.5+` and `PROJECTION CHC by 1.5+` above a ladder pricing
+    // "Cubs by 2+" at 37%. Both sportsbook values stop here; the ladder and the
+    // scoreboard tiles are untouched.
+    const sportsbookSpreadIsAMargin = vocab.sportsbookSpreadIsAMargin;
+    let projValue =
+      sportsbookSpreadIsAMargin && openingHomeSpread != null ? -openingHomeSpread : null;
     if (projValue == null && status === "pre") {
-      projValue = vocab.hasDerivedSpread && homeSpread != null ? -homeSpread : null;
+      projValue =
+        sportsbookSpreadIsAMargin && vocab.hasDerivedSpread && homeSpread != null ? -homeSpread : null;
     }
     // CERT-2674: AND THE RUNG FALLBACK IS A PRE-STATUS FALLBACK TOO.
     //
@@ -621,7 +631,15 @@ export default function MarketMapSection({
       const closest = parsed.reduce((best, s) =>
         Math.abs(s.probability - 0.5) < Math.abs(best.probability - 0.5) ? s : best
       );
-      projValue = closest.isHome ? closest.threshold : -closest.threshold;
+      // #8721: the rung stands in for the run line only if the market makes it
+      // at least even money. A baseball ladder's smallest cut is 1.5 runs, so on
+      // a close game the rung nearest a coin flip is a long shot ("Cubs by 2+" at
+      // 37%), and `Projection CHC by 1.5+` would be the run line again, spelled
+      // from Kalshi. Scoped to the sports #8617 flags; a dense points ladder
+      // always has a rung near 50% and keeps its reading.
+      if (sportsbookSpreadIsAMargin || closest.probability >= 0.5) {
+        projValue = closest.isHome ? closest.threshold : -closest.threshold;
+      }
     }
     const projTeamAbbr = projValue != null ? (projValue > 0 ? hAbbr : projValue < 0 ? aAbbr : "TIE") : null;
     const projLogo = projValue != null ? (projValue > 0 ? homeLogo : awayLogo) : undefined;
@@ -653,7 +671,8 @@ export default function MarketMapSection({
     // block). Tennis therefore keeps its `Pre-game` tile and draws no live
     // projection, which is the honest pair for a sport this page may not
     // invent a spread for.
-    const liveProjValue = vocab.hasDerivedSpread && homeSpread != null ? -homeSpread : null;
+    const liveProjValue =
+      sportsbookSpreadIsAMargin && vocab.hasDerivedSpread && homeSpread != null ? -homeSpread : null;
     const liveProjTeamAbbr =
       liveProjValue != null ? (liveProjValue > 0 ? hAbbr : liveProjValue < 0 ? aAbbr : "TIE") : null;
     const liveProjLogo =

@@ -154,17 +154,23 @@ function renderZverev(props: Record<string, unknown> = {}, overrides: Record<str
 }
 
 /**
- * A pick'em, the case the backend half of this commit also fixes. MLB so that
+ * A pick'em, the case the backend half of this commit also fixes. NFL so that
  * `hasDerivedSpread` is `true` and the derived rung is genuinely available —
  * a pick'em that read "Tied" only because every other rung was gated off would
  * prove nothing.
+ *
+ * #8721: this fixture was MLB (15310077 Cubs–Pirates) until the baseball run
+ * line stopped feeding the margin tiles (`sportsbookSpreadIsAMargin: false`).
+ * A baseball sportsbook spread never opens at 0.0, and every assertion below is
+ * about a spread that IS a margin, so the vehicle is now a sport whose spread
+ * is one. The numbers are unchanged.
  */
 function pickem(overrides: Record<string, unknown> = {}) {
-  const m = "Chicago Cubs vs Pittsburgh Pirates";
+  const m = "Chicago Bears vs Pittsburgh Steelers";
   return {
     event_id: 15310077,
-    home_team: "Chicago Cubs",
-    away_team: "Pittsburgh Pirates",
+    home_team: "Chicago Bears",
+    away_team: "Pittsburgh Steelers",
     home_score: null,
     away_score: null,
     status: "scheduled",
@@ -176,8 +182,8 @@ function pickem(overrides: Record<string, unknown> = {}) {
     pace: null,
     props_script: [],
     spreads: [
-      spreadRung(m, "Chicago Cubs -1.5", 0.41),
-      spreadRung(m, "Pittsburgh Pirates -1.5", 0.38),
+      spreadRung(m, "Chicago Bears -1.5", 0.41),
+      spreadRung(m, "Pittsburgh Steelers -1.5", 0.38),
     ],
     totals: [totalRung(m, 8.5, 0.51)],
     ...overrides,
@@ -190,13 +196,13 @@ function renderPickem(props: Record<string, unknown> = {}, eventStatus = "schedu
       <MarketMapSection
         gameMarkets={pickem({ status: eventStatus }) as never}
         eventStatus={eventStatus}
-        homeTeam="Chicago Cubs"
-        awayTeam="Pittsburgh Pirates"
-        homeAbbr="CHC"
+        homeTeam="Chicago Bears"
+        awayTeam="Pittsburgh Steelers"
+        homeAbbr="CHI"
         awayAbbr="PIT"
         homeWinProb={0.5}
         awayWinProb={0.5}
-        sportKey="baseball_mlb"
+        sportKey="americanfootball_nfl"
         {...props}
       />
     )
@@ -231,7 +237,7 @@ describe("#5414 — the PRE-GAME tile reads the pre-game line", () => {
   });
 
   it("a settled game never takes the latest snapshot's spread, even with no opening line", () => {
-    // ⚠️ MLB, NOT the tennis specimen. On tennis this assertion passes with the
+    // ⚠️ A POINTS SPORT, NOT the tennis specimen. On tennis this assertion passes with the
     // tense rule DELETED, because #2441 already gates the derived rung off for
     // a sport with `hasDerivedSpread: false` — the test would be vacuous and
     // would report a guard where there is none. A points sport is the only
@@ -242,8 +248,8 @@ describe("#5414 — the PRE-GAME tile reads the pre-game line", () => {
     // — would otherwise have switched this on for every played game, showing a
     // 0.999 blowout's -7.9 line under the word `Pre-game`.
     const text = renderPickem({ homeSpread: -7.9 }, "completed");
-    expect(text).toContain("Run margin map");
-    expect(text).not.toContain("CHC by 7.9+");
+    expect(text).toContain("Margin map");
+    expect(text).not.toContain("CHI by 7.9+");
   });
 
   it("NEGATIVE CONTROL — a settled card with no pre-game reading draws NO Pre-game marker", () => {
@@ -257,40 +263,40 @@ describe("#5414 — the PRE-GAME tile reads the pre-game line", () => {
     // A tile with nothing true to say says nothing (notice 34: leave the space
     // empty, do not explain the emptiness).
     const text = renderPickem({ homeSpread: -7.9 }, "completed");
-    expect(text).not.toMatch(/Pre-game\s+CHC by/);
+    expect(text).not.toMatch(/Pre-game\s+CHI by/);
     expect(text).not.toMatch(/Pre-game\s+PIT by/);
     // …and the card is still a card: rail, band and ladder all still drawn.
     // Without this the assertion above would pass against a deleted component.
-    expect(text).toContain("Run margin map");
-    expect(text).toContain("CHC by 1.5+"); // the ladder rung, which is honest
+    expect(text).toContain("Margin map");
+    expect(text).toContain("CHI by 1.5+"); // the ladder rung, which is honest
   });
 
   it("the marker returns the moment there IS a pre-game reading to put in it", () => {
     // The other side of the control above, or "omit it" degenerates into
     // "never draw it".
     const text = renderPickem({ homeSpread: -7.9, openingHomeSpread: -1.5 }, "completed");
-    expect(text).toMatch(/Pre-game\s+CHC by 1\.5\+/);
+    expect(text).toMatch(/Pre-game\s+CHI by 1\.5\+/);
   });
 
   it("a PICK'EM opens at exactly 0.0 and reads as a line, not as no line", () => {
     const text = renderPickem({ openingHomeSpread: 0 });
     // `0` is falsy: under a truthiness test this falls through to the rung
-    // fallback and the reader is told the market favoured the Cubs by 1.5.
+    // fallback and the reader is told the market favoured the Bears by 1.5.
     expect(text).toMatch(/Projection\s+Tied/);
-    expect(text).not.toMatch(/Projection\s+CHC by 1\.5\+/);
+    expect(text).not.toMatch(/Projection\s+CHI by 1\.5\+/);
   });
 
   it("CONTROL — no opening line, unplayed game: the derived rung still fires", () => {
-    // `hasDerivedSpread` is true for MLB and the game has not started, so the
+    // `hasDerivedSpread` is true for the NFL and the game has not started, so the
     // latest snapshot IS a pre-game quantity and is the best number available.
     // If this goes red the fix has become a deletion.
     const text = renderPickem({ homeSpread: -2.5 });
-    expect(text).toMatch(/Projection\s+CHC by 2\.5\+/);
+    expect(text).toMatch(/Projection\s+CHI by 2\.5\+/);
   });
 
   it("CONTROL — no line of any kind: the coin-flip rung fallback survives", () => {
     const text = renderPickem();
-    expect(text).toMatch(/Projection\s+CHC by 1\.5\+/);
+    expect(text).toMatch(/Projection\s+CHI by 1\.5\+/);
   });
 });
 
@@ -333,7 +339,7 @@ describe("#5414 — the totals rail on the same card, fixed in the same pass", (
   });
 
   it("CONTROL — an unplayed card still takes the latest total as its projection", () => {
-    // Before first pitch the latest total IS a pre-game total, and it is
+    // Before kickoff the latest total IS a pre-game total, and it is
     // fresher than the opening one. If this goes red the tense rule has been
     // written as a deletion.
     const text = renderPickem({ overUnder: 9.5 });

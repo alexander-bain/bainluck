@@ -81,8 +81,14 @@ function fixture(overrides: Record<string, unknown> = {}) {
     other: [],
     pace: null,
     props_script: [],
+    // #8721: the baseball run line no longer feeds a margin tile, and a Kalshi
+    // rung stands in for it only at even money or better. This rung was 0.44,
+    // and the margin rail's `Projection` these controls assert was the run line
+    // (`homeSpread={-1.5}` below) on a 50/50 game — the #8721 defect. At 0.52 the
+    // rail draws a real forecast off its own ladder, so the scheduled controls
+    // and the suspended margin-rail test keep their teeth.
     spreads: [
-      { market_name: "Phillies vs. Braves: Run Line", outcome_name: "Philadelphia Phillies -1.5", threshold: 1.5, probability: 0.44, source: "kalshi", is_winner: null, resolution_source: null },
+      { market_name: "Phillies vs. Braves: Run Line", outcome_name: "Philadelphia Phillies -1.5", threshold: 1.5, probability: 0.52, source: "kalshi", is_winner: null, resolution_source: null },
       { market_name: "Phillies vs. Braves: Run Line", outcome_name: "Atlanta Braves -1.5", threshold: 1.5, probability: 0.38, source: "kalshi", is_winner: null, resolution_source: null },
     ],
     totals: [
@@ -109,8 +115,8 @@ function render(
         awayTeam="Atlanta Braves"
         homeAbbr="PHI"
         awayAbbr="ATL"
-        homeWinProb={0.5}
-        awayWinProb={0.5}
+        homeWinProb={0.68}
+        awayWinProb={0.32}
         homeSpread={-1.5}
         overUnder={8}
         /* #5414/CERT-2674: the frozen pre-game line, which every real MLB card
