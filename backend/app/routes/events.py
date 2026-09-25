@@ -16258,6 +16258,48 @@ def _leg_copy_parent_members(markets: list, outcomes_by_market: dict) -> dict[in
     return copies
 
 
+# #8309 — A LEG THAT IS ONLY A LINE, WITH NOTHING THE LINE IS ABOUT.
+#
+# A Polymarket game container copies each sub-market's short title onto its
+# own leg (`_parent_outcome_data`): "Spread -1.5", "O/U 8.5", "1st 5 Innings
+# O/U 4.5", "1H Moneyline", "Map 2 Winner", "NRFI". The question that says
+# WHICH team gives the 1.5, or wins the map, lives only on the sub-market. When that sub-market was written as its own row, #4189 /
+# #5273 drop the parent and the child serves the named leg. When it never was,
+# the parent is the group's only representation and stays — and these legs
+# reached Additional Markets bare.
+#
+# Seen on production 2026-09-23 23:50Z, /events/15317596 (Cardinals @ Pirates,
+# live): market 61294013 served "Spread -1.5" 63%, "Spread -1.5" 12.5% and
+# "Spread -2.5" 49% beside "St. Louis Cardinals 74%" — two different rows with
+# one label and no team on any of them. The number cannot be used by a reader
+# and the team cannot be recovered from the payload, so the leg is withheld
+# (notice 34); the parent's team legs keep their card. "NRFI" is on the list
+# for a second reason: #5273 measured its copied price as the YES of "Will
+# there be a run scored in the first inning?" — the opposite claim.
+#
+# The match is the WHOLE name, so a leg that names anything ("Cardinals -1.5",
+# "Over 8.5", "Both Teams to Score", "Draw") never matches. Bare totals
+# ("O/U 52.5") are deliberately NOT on the list: their missing word is a side,
+# not a team, and #6799's cert-graded guard (event 14780547) holds them as
+# real rungs of the fixture's container. That is a separate call.
+_LINE_LEG_PERIOD = (
+    r"(?:(?:1st|2nd|first|second)\s+(?:half|\d+\s+innings?)|[12]h|[1-4]q|map\s+\d+)"
+)
+_LINE_WITH_NO_SUBJECT_RE = re.compile(
+    r"^(?:"
+    rf"(?:{_LINE_LEG_PERIOD}\s+)?spread\s*[+-]?\d+(?:\.\d+)?"
+    rf"|(?:{_LINE_LEG_PERIOD}|match)\s+(?:moneyline|winner)"
+    r"|nrfi|yrfi"
+    r")$",
+    re.IGNORECASE,
+)
+
+
+def _leg_is_a_line_with_no_subject(name: Optional[str]) -> bool:
+    """True when an `other` leg's whole name is a line that names nothing (#8309)."""
+    return bool(name) and bool(_LINE_WITH_NO_SUBJECT_RE.match(name.strip()))
+
+
 def _row_market_ids(row: dict) -> set:
     """Which market(s) a rendered `/game-markets` row came from.
 
@@ -20607,6 +20649,8 @@ async def _build_game_markets(
                     player_props.append(pp)
                     continue
                 if other_stays_silent:
+                    continue
+                if _leg_is_a_line_with_no_subject(o.name):
                     continue
                 other_markets.append({
                     # #2127: a BTTS row is served under what it ASKS rather than
