@@ -375,10 +375,23 @@ async def test_teams_that_disagree_with_the_anchor_are_refused_and_counted():
 
 
 @pytest.mark.asyncio
-async def test_a_statpal_clock_is_never_even_asked_about():
-    """The sibling rail rules StatPal outranks ESPN for kickoff times
-    (`anchor_schedule.schedule_decision`), and two rails must not disagree."""
+async def test_a_statpal_clock_is_asked_about_and_recovered():
+    """#8653: the registry ranks espn above statpal. A stale StatPal clock is
+    the row that most needs ESPN's, so it is no longer skipped."""
     row = _row(MSU_AT_MICHIGAN, commence_time_source="statpal")
+    session, espn, stats = await _run([row], _answer(MSU_AT_MICHIGAN))
+
+    assert len(espn.asked) == 1
+    assert stats["unstarted_recovery_eligible"] == 1
+    assert len(session.recoveries()) == 1
+
+
+@pytest.mark.asyncio
+async def test_an_outranking_clock_is_never_even_asked_about():
+    """Every ESPN start-time rail asks the registry ranking
+    (`provider_may_set_start`), and two rails must not disagree: only
+    `mlb_schedule_repair` outranks ESPN."""
+    row = _row(MSU_AT_MICHIGAN, commence_time_source="mlb_schedule_repair")
     session, espn, stats = await _run([row], _answer(MSU_AT_MICHIGAN))
 
     assert espn.asked == []

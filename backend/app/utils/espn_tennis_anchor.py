@@ -92,6 +92,7 @@ from app.utils.espn_helpers import (
     stamp_authority_not_started,
 )
 from app.utils.player_names import names_agree, shares_substantial_token
+from app.utils.start_time_authority import provider_may_set_start
 
 #: The pass that produced a link, in the order they are tried. Carried on the
 #: receipt so a widening can be measured against the population it widened —
@@ -479,7 +480,6 @@ COMMENCE_DRIFT_TOLERANCE_SECONDS = 300
 #: ``event_registry._SOURCE_PRIORITY`` ranks, and a typo here does not fail, it
 #: silently scores 0 and hands the column back to whoever polls next (#5971).
 COMMENCE_SOURCE_ESPN = "espn"
-COMMENCE_SOURCE_STATPAL = "statpal"
 
 
 def parse_espn_moment(value: Any) -> Optional[Any]:
@@ -692,11 +692,14 @@ def authority_write(
 
     if (
         not competition.get("start_is_tbd")
-        # StatPal set this start and owns kickoff times against ESPN — the same
-        # refusal `espn_helpers` makes at both of its write sites and
-        # `anchor_schedule` makes as REFUSED_STATPAL. Asked before the clock so
-        # a refused row is not merely un-stamped but untouched.
-        and our_commence_time_source != COMMENCE_SOURCE_STATPAL
+        # The registry's start-time ranking (#8653): ESPN may replace this start
+        # unless a provider it does not outrank set it — the same call
+        # `espn_helpers` makes at both of its write sites and `anchor_schedule`
+        # makes as REFUSED_OUTRANKED. Asked before the clock so a refused row is
+        # not merely un-stamped but untouched.
+        and provider_may_set_start(
+            our_commence_time_source, COMMENCE_SOURCE_ESPN
+        )
     ):
         espn_start = parse_espn_moment(competition.get("date"))
         if espn_start is not None:

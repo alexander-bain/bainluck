@@ -24,8 +24,12 @@ later than it was. Of the 7 rows then holding a ``statpal`` start AND an
 ``espn_id`` (now-1d .. now+10d), 6 agreed with ESPN to the minute; this was the
 seventh, and ESPN was right.
 
-This module adds no rule. It is the one call both rails make, so the ranking
-they obey is the registry's and cannot drift from it.
+This module adds no rule. It is the one call every such rail makes, so the
+ranking they obey is the registry's and cannot drift from it. Three more ESPN
+start-time rails carried the same "StatPal outranks ESPN" refusal, each citing
+another as its source, and now ask here too: ``anchor_schedule``'s clause 4
+(``REFUSED_OUTRANKED``), ``espn_sync``'s unstarted-fixture recovery (#6280) and
+``espn_tennis_anchor.authority_write``.
 
 **A provider may still revise its own stamp** (``same_record_revision`` when the
 row's stamp names the incoming provider). That is what both rails did before for

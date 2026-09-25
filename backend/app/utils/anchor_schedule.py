@@ -94,6 +94,7 @@ from app.utils.authority_id_collisions import (
     _teams_agree,
 )
 from app.utils.espn_tennis_anchor import SETTLED_STATUSES
+from app.utils.start_time_authority import provider_may_set_start
 
 __all__ = [
     "AGREES",
@@ -101,7 +102,7 @@ __all__ = [
     "NO_ANSWER",
     "REFUSED_COMPLETED",
     "REFUSED_SETTLED",
-    "REFUSED_STATPAL",
+    "REFUSED_OUTRANKED",
     "SAME_START_TOLERANCE_S",
     "SCHEDULE_VERDICTS",
     "AnchoredRow",
@@ -125,7 +126,12 @@ NO_ANSWER = "no_answer"
 TEAMS_DISAGREE = "teams_disagree"
 REFUSED_COMPLETED = "refused_completed"
 REFUSED_SETTLED = "refused_settled"
-REFUSED_STATPAL = "refused_statpal"
+#: The row's start came from a provider the registry ranks at or above ESPN.
+REFUSED_OUTRANKED = "refused_outranked"
+
+#: The provider this rail writes as — the ``commence_time_source`` it stamps,
+#: and the name it is ranked under when asking whether it may.
+AUTHORITY_SOURCE = "espn"
 
 SCHEDULE_VERDICTS = (
     AGREES,
@@ -134,7 +140,7 @@ SCHEDULE_VERDICTS = (
     NO_ANSWER,
     REFUSED_COMPLETED,
     REFUSED_SETTLED,
-    REFUSED_STATPAL,
+    REFUSED_OUTRANKED,
 )
 
 
@@ -226,10 +232,14 @@ def schedule_decision(
        is a P1 by standing rule. Strictly stronger than the existing
        ``commence_correction_inverts_completion`` guard, which only refuses the
        moves that would invert it.
-    4. **StatPal set our start** — the existing precedence, stated in three
-       places in ``espn_helpers``: StatPal outranks ESPN for kickoff times. A
-       new rail that quietly reversed a precedence rule would be a regression
-       wearing a fix's clothes.
+    4. **A provider ESPN does not outrank set our start** — the registry's one
+       start-time ranking (``event_registry.commence_time_write_authorized``,
+       asked through ``start_time_authority.provider_may_set_start``, #8653).
+       Today that is ``mlb_schedule_repair``. This clause used to refuse
+       StatPal instead, copying ``espn_helpers``' precedence, which had the
+       ranking upside down: a Cubs–Red Sox doubleheader page served StatPal's
+       stale 3:05 first pitch over ESPN's 2:30. A rail with its own precedence
+       is how two rails come to disagree about one row's clock.
     5. **The teams disagree** — the anchor names a different fixture, so the
        disagreement is about identity, not about the clock. Reported, never
        written. See the module docstring.
@@ -286,11 +296,14 @@ def schedule_decision(
             verdict=REFUSED_SETTLED,
             reason=f"the row is {row.status}; the authority does not re-date a settled game",
         )
-    if row.commence_time_source == "statpal":
+    if not provider_may_set_start(row.commence_time_source, AUTHORITY_SOURCE):
         return ScheduleDecision(
             **common,
-            verdict=REFUSED_STATPAL,
-            reason="StatPal set this start and outranks ESPN for kickoff times",
+            verdict=REFUSED_OUTRANKED,
+            reason=(
+                f"{row.commence_time_source} set this start and ESPN does not "
+                "outrank it (registry start-time ranking)"
+            ),
         )
 
     agrees, inverted, _channel = _teams_agree(row.as_candidate(), record)
@@ -327,7 +340,7 @@ def schedule_decision(
             # rows this rail was built on ALREADY claimed 'espn' while
             # disagreeing with ESPN by three months. The provenance column is
             # only worth anything if the thing that sets it also checked.
-            "commence_time_source": "espn",
+            "commence_time_source": AUTHORITY_SOURCE,
         },
     )
 

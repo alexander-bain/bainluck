@@ -29,7 +29,7 @@ from app.utils.anchor_schedule import (
     NO_ANSWER,
     REFUSED_COMPLETED,
     REFUSED_SETTLED,
-    REFUSED_STATPAL,
+    REFUSED_OUTRANKED,
     SAME_START_TOLERANCE_S,
     SCHEDULE_VERDICTS,
     TEAMS_DISAGREE,
@@ -160,12 +160,24 @@ class TestTheDangerousDirection:
         assert decision.verdict == REFUSED_SETTLED
         assert decision.write == {}
 
-    def test_statpal_outranks_espn_for_kickoff_times(self):
-        # The existing precedence, stated in three places in `espn_helpers`. A
-        # new rail that quietly reversed it would be a regression wearing a
-        # fix's clothes.
+    def test_espn_outranks_a_stale_statpal_start(self):
+        # #8653: the registry ranks espn (3) above statpal (2). This clause
+        # used to refuse StatPal, copying espn_helpers' upside-down precedence;
+        # a stale StatPal start is exactly the row that needs ESPN's.
         decision = schedule_decision(_row(commence_time_source="statpal"), _record())
-        assert decision.verdict == REFUSED_STATPAL
+        assert decision.verdict == AUTHORITY_MOVES_US
+        assert decision.write == {
+            "commence_time": CHARTER_THEIRS,
+            "commence_time_source": "espn",
+        }
+
+    def test_mlbs_own_schedule_repair_outranks_espn(self):
+        # mlb_schedule_repair (4) is the one provider ESPN does not outrank.
+        decision = schedule_decision(
+            _row(commence_time_source="mlb_schedule_repair"), _record()
+        )
+        assert decision.verdict == REFUSED_OUTRANKED
+        assert "mlb_schedule_repair" in decision.reason
         assert decision.write == {}
 
     def test_the_refusals_are_ordered_most_certain_first(self):
