@@ -2404,7 +2404,6 @@ async def _poll_all_odds():
                                     from app.utils.win_probability import (
                                         compute_statistical_win_prob,
                                         priorless_model_defers_to_market,
-                                        retire_priorless_model_reading,
                                     )
 
                                     pregame_spread = None
@@ -2422,17 +2421,13 @@ async def _poll_all_odds():
                                         # ...and drop the reading written before
                                         # the market arrived, or it stays frozen
                                         # on the headline.
-                                        _retired = retire_priorless_model_reading(
-                                            event_obj.win_probability_sources
+                                        from app.utils.espn_helpers import (
+                                            retire_priorless_stat_model,
                                         )
-                                        if _retired is not None:
-                                            from sqlalchemy import update as _sql_upd
 
-                                            await session.execute(
-                                                _sql_upd(Event)
-                                                .where(Event.id == event_obj.id)
-                                                .values(win_probability_sources=_retired)
-                                            )
+                                        if await retire_priorless_stat_model(
+                                            session, event_obj, mirror_orm=False
+                                        ):
                                             stat_model_priorless_retired += 1
                                         continue
 

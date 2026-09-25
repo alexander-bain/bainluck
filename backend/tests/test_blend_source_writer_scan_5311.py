@@ -192,6 +192,12 @@ from app.utils.probability_eligibility import MARKET_DERIVED_SOURCES  # noqa: E4
 #    `prune_blend_source` callers, the admin "clear kalshi" repair, and the raw
 #    SQL that deletes `stat_model`/`espn`. A deletion mints no reading, so it has
 #    no observation time and no market to name.
+#  * `espn_helpers.py::retire_priorless_stat_model` — PRUNE, #8522. When a
+#    priorless stat model defers to a market, both stat-model writers drop the
+#    `stat_model` key it wrote earlier; declining to write alone left that frozen
+#    reading outvoting the market for ~16 minutes. Removal only, in its own
+#    function so the entry exempts nothing else. Both shapes: Core update, then
+#    the ORM mirror on the ESPN path (gotcha #4/#5), as its stamp write does.
 #  * `futures_price_refresh.py::_KALSHI_WITHDRAW_EVENT_HERO_SQL` — PRUNE, #5771.
 #    When the venue has declared a result for a match that has not kicked off,
 #    the leg is withdrawn from `futures_outcomes` AND the `kalshi` key is removed
@@ -227,6 +233,10 @@ KNOWN_NON_READING_WRITES: dict[tuple[str, str, str], str] = {
      "_recover_unstarted_authority_fixtures", "update.values"): "sidecar",
     ("backend/app/tasks/futures_price_refresh.py",
      "_KALSHI_WITHDRAW_EVENT_HERO_SQL", "raw-sql"): "prune",
+    ("backend/app/utils/espn_helpers.py", "retire_priorless_stat_model",
+     "update.values"): "prune",
+    ("backend/app/utils/espn_helpers.py", "retire_priorless_stat_model",
+     "orm-assign"): "prune",
     ("backend/app/tasks/statpal_sync.py", "_set_statpal_id", "orm-assign"):
         "sidecar",
     ("backend/app/tasks/statpal_sync.py", "_sync_statpal_injuries", "update.values"):
