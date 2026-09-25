@@ -105,6 +105,12 @@ export function leagueGameToEvent(game: LeagueGameBrief): Event {
     event.venue_settled_result = game.venue_settled_result ?? null;
   }
 
+  // #8515 — the provider's doubleheader facts travel as served. The card
+  // decides whether they license a "Game N" mark (`providerGameNumber`); this
+  // function only refuses to lose them.
+  if (game.doubleheader != null) event.doubleheader = game.doubleheader;
+  if (game.game_number != null) event.game_number = game.game_number;
+
   return event;
 }
 
