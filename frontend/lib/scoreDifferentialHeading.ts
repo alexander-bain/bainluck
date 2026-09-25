@@ -57,6 +57,11 @@ import { sportVocab } from "@/lib/marketMapUtils";
  * number the page does not have. There is then no absence to explain either,
  * which is why this ships no new grey sentence about our coverage (D102).
  *
+ * ⚠️ #8617 later found the NPB line above was itself the run line: baseball's
+ * sportsbook spread is pinned at ±1.5, so the "projection" was never a margin
+ * and baseball no longer draws it (`sportsbookProjectionDrawable`). The rule
+ * here still holds for every sport whose spread point IS a margin.
+ *
  * ── THE UNIT COMES FROM THE SAME PLACE THE CARD BELOW IT GETS ITS OWN ──────
  *
  * `sportVocab` already titles this exact quantity for the market maps — "Run
@@ -118,4 +123,18 @@ export function scoreDifferentialHeading(opts: {
   if (opts.actualSeriesDrawn) return "Score Differential";
   const unit = capitalize(sportVocab(opts.sportKey).unitSingular);
   return unit ? `Projected ${unit} Margin` : "Projected Margin";
+}
+
+/**
+ * #8617 — may this card draw the sportsbooks' projected margin for this sport?
+ *
+ * The page gate and the chart both ask it. The gate asked "is there a served
+ * projection" and the chart drew whatever it was handed, so for baseball both
+ * answered yes to the run line, which is not a margin (see
+ * `sportsbookSpreadIsAMargin`). A gate that still opened on it would put up a
+ * card whose only series the chart then refuses — the empty-chrome failure
+ * L2-112 Item 4 exists to prevent — so the two read this one question.
+ */
+export function sportsbookProjectionDrawable(sportKey?: string): boolean {
+  return sportVocab(sportKey).sportsbookSpreadIsAMargin;
 }

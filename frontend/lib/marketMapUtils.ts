@@ -1264,6 +1264,29 @@ export interface SportScoringVocab {
    * names the period, this says where it stops.
    */
   firstHalfEndsAfterInning: number | null;
+  /**
+   * Is the sportsbooks' spread POINT this sport's expected margin? (#8617)
+   *
+   * The Score Differential chart's "Projected margin" line is the served
+   * `projected_home_score - projected_away_score`, which the backend solves
+   * from each sportsbook's spread point and total (`project_scores`). That
+   * difference IS the spread point, so it is a margin only where the point is
+   * the book's fair line and the price sits near even.
+   *
+   * Baseball's spread is the run line: pinned at ±1.5 whatever the matchup,
+   * with the price doing the work. `/events/15318166` (Mets @ Rangers, priced
+   * 55% pregame) served 5.0 – 3.5 from every sportsbook, so the green line sat
+   * flat at +1.5 from the first pitch — "Rangers by 1.5" for a coin flip. The
+   * stat model read the same run line as a margin (#8613, fixed in its own
+   * path); this is the chart's half.
+   *
+   * `false` withholds the sportsbook projection lines. It does NOT touch the
+   * played-score line or prediction-market implied spreads, which are read off
+   * a threshold ladder and are real margins. Defaults `true` — the status quo
+   * for every sport not measured. Hockey's puck line has the same shape
+   * (#8231's note) but no page specimen yet, so its row is not changed here.
+   */
+  sportsbookSpreadIsAMargin: boolean;
 }
 
 /**
@@ -1281,14 +1304,14 @@ const SPORT_SCORING: { match: string[]; vocab: SportScoringVocab }[] = [
     // period; ESPN's `game_clock` for this sport is the constant `0:00`.
     // #8156's subject: extra innings run until somebody is ahead, so a level
     // scoreline is not a rare result here, it is not a result at all.
-    vocab: { marginTitle: "Run margin map", totalTitle: "Runs map", unit: "runs", unitSingular: "run", marginRange: 5, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "", winnerMarketPricesADraw: false, canEndInATie: false, gameHasAClock: false, firstHalfLabel: "First 5 innings", firstHalfEndsAfterInning: 5 },
+    vocab: { marginTitle: "Run margin map", totalTitle: "Runs map", unit: "runs", unitSingular: "run", marginRange: 5, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "", winnerMarketPricesADraw: false, canEndInATie: false, gameHasAClock: false, firstHalfLabel: "First 5 innings", firstHalfEndsAfterInning: 5, sportsbookSpreadIsAMargin: false },
   },
   {
     match: ["hockey", "nhl"],
     // A regular-season game level after overtime is decided by a shootout, so
     // the winner market has two outcomes and the complement is honest — and by
     // the same fact (#8156) the final scoreboard is never level either.
-    vocab: { marginTitle: "Goal margin map", totalTitle: "Goals map", unit: "goals", unitSingular: "goal", marginRange: 5, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "", winnerMarketPricesADraw: false, canEndInATie: false, gameHasAClock: true, firstHalfLabel: "1st half", firstHalfEndsAfterInning: null },
+    vocab: { marginTitle: "Goal margin map", totalTitle: "Goals map", unit: "goals", unitSingular: "goal", marginRange: 5, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "", winnerMarketPricesADraw: false, canEndInATie: false, gameHasAClock: true, firstHalfLabel: "1st half", firstHalfEndsAfterInning: null, sportsbookSpreadIsAMargin: true },
   },
   {
     match: ["soccer", "mls", "epl", "uefa", "fifa"],
@@ -1296,7 +1319,7 @@ const SPORT_SCORING: { match: string[]; vocab: SportScoringVocab }[] = [
     // draw prices around 20-30% pre-match and the site held no slot for it.
     // The same row says yes to #8156: a league draw is a result, so `1 – 1` is
     // a projection this page may print.
-    vocab: { marginTitle: "Goal margin map", totalTitle: "Goals map", unit: "goals", unitSingular: "goal", marginRange: 5, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "", winnerMarketPricesADraw: true, canEndInATie: true, gameHasAClock: true, firstHalfLabel: "1st half", firstHalfEndsAfterInning: null },
+    vocab: { marginTitle: "Goal margin map", totalTitle: "Goals map", unit: "goals", unitSingular: "goal", marginRange: 5, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "", winnerMarketPricesADraw: true, canEndInATie: true, gameHasAClock: true, firstHalfLabel: "1st half", firstHalfEndsAfterInning: null, sportsbookSpreadIsAMargin: true },
   },
   {
     // #2441's subject. A tennis match is scored in games inside sets; the
@@ -1308,13 +1331,13 @@ const SPORT_SCORING: { match: string[]; vocab: SportScoringVocab }[] = [
     // cannot reach: the projection this page prints is already withheld here by
     // `hasDerivedSpread`, one gate earlier. Declared anyway so the row states a
     // fact rather than an absence.
-    vocab: { marginTitle: "Game margin map", totalTitle: "Games map", unit: "games", unitSingular: "game", marginRange: 6, hasDerivedSpread: false, scoreboardCountsTheUnit: false, scoreboardUnit: "sets", winnerMarketPricesADraw: false, canEndInATie: false, gameHasAClock: false, firstHalfLabel: "1st half", firstHalfEndsAfterInning: null },
+    vocab: { marginTitle: "Game margin map", totalTitle: "Games map", unit: "games", unitSingular: "game", marginRange: 6, hasDerivedSpread: false, scoreboardCountsTheUnit: false, scoreboardUnit: "sets", winnerMarketPricesADraw: false, canEndInATie: false, gameHasAClock: false, firstHalfLabel: "1st half", firstHalfEndsAfterInning: null, sportsbookSpreadIsAMargin: true },
   },
   {
     match: ["basketball", "nba", "wnba", "ncaab"],
     // Overtime repeats until one side is ahead (#8156), so a level final is not
     // a basketball result at any level of the sport.
-    vocab: { marginTitle: "Margin map", totalTitle: "Points map", unit: "points", unitSingular: "point", marginRange: 18, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "", winnerMarketPricesADraw: false, canEndInATie: false, gameHasAClock: true, firstHalfLabel: "1st half", firstHalfEndsAfterInning: null },
+    vocab: { marginTitle: "Margin map", totalTitle: "Points map", unit: "points", unitSingular: "point", marginRange: 18, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "", winnerMarketPricesADraw: false, canEndInATie: false, gameHasAClock: true, firstHalfLabel: "1st half", firstHalfEndsAfterInning: null, sportsbookSpreadIsAMargin: true },
   },
   {
     match: ["americanfootball", "nfl", "ncaaf"],
@@ -1327,7 +1350,7 @@ const SPORT_SCORING: { match: string[]; vocab: SportScoringVocab }[] = [
     // a reason to SPLIT the row on measured evidence, never a reason to flip it
     // and delete a legal NFL scoreline. Same discipline as `gameHasAClock`'s
     // football note: the rare thing is named by someone who measured it.
-    vocab: { marginTitle: "Margin map", totalTitle: "Points map", unit: "points", unitSingular: "point", marginRange: 18, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "", winnerMarketPricesADraw: false, canEndInATie: true, gameHasAClock: true, firstHalfLabel: "1st half", firstHalfEndsAfterInning: null },
+    vocab: { marginTitle: "Margin map", totalTitle: "Points map", unit: "points", unitSingular: "point", marginRange: 18, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "", winnerMarketPricesADraw: false, canEndInATie: true, gameHasAClock: true, firstHalfLabel: "1st half", firstHalfEndsAfterInning: null, sportsbookSpreadIsAMargin: true },
   },
 ];
 
@@ -1370,6 +1393,9 @@ export const UNSCORED_IN_POINTS: SportScoringVocab = {
   gameHasAClock: true,
   firstHalfLabel: "1st half",
   firstHalfEndsAfterInning: null,
+  // `true`: the status quo for a sport nobody has measured. In practice the
+  // chart's gate is the only reader, and it withholds only what was measured.
+  sportsbookSpreadIsAMargin: true,
 };
 
 export function sportVocab(sportKey: string | undefined): SportScoringVocab {

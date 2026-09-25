@@ -22,7 +22,7 @@ import {
 } from "@/lib/chartTimeline";
 import { sourceLabel } from "@/lib/sourceColors";
 import { impliedSpreadHomeMargin, drawnImpliedSpreadSources } from "@/lib/impliedSpreadAxis";
-import { actualScoreSeriesDrawn } from "@/lib/scoreDifferentialHeading";
+import { actualScoreSeriesDrawn, sportsbookProjectionDrawable } from "@/lib/scoreDifferentialHeading";
 import { scoreDifferentialYTicks } from "@/lib/scoreDifferentialTicks";
 import { sportVocab, playedCountAbsence, playedUnits, withUnit } from "@/lib/marketMapUtils";
 import { teamShortNames } from "@/lib/teamShortName";
@@ -223,6 +223,12 @@ export default function ScoreDifferentialChart({
     }
   }, [defaultTimeRange, hasUserOverridden]);
 
+  // #8617: baseball's sportsbook "projection" is the ±1.5 run line solved
+  // against the total, not a margin. Where that is so, no sportsbook
+  // projection is drawn — neither the aggregate line nor the gray per-book
+  // lines. The played-score line and implied spreads are untouched.
+  const projectionDrawable = sportsbookProjectionDrawable(sportKey);
+
   // Filter projected history based on time range
   // Use commenceTime directly — no "smart" start skipping (see OddsChart for rationale)
   const filteredHistory = useMemo(() => {
@@ -234,6 +240,7 @@ export default function ScoreDifferentialChart({
 
   // Filter bookmaker history based on time range
   const filteredBookmakerHistory = useMemo(() => {
+    if (!projectionDrawable) return {};
     if (!bookmakerHistory || Object.keys(bookmakerHistory).length === 0)
       return {};
     const entries = Object.entries(bookmakerHistory);
@@ -262,7 +269,7 @@ export default function ScoreDifferentialChart({
       if (withScores.length > 0) filtered[bookmaker] = withScores;
     }
     return filtered;
-  }, [bookmakerHistory, timeRange, commenceTime]);
+  }, [bookmakerHistory, timeRange, commenceTime, projectionDrawable]);
 
   // Filter score history based on time range
   const filteredScoreHistory = useMemo(() => {
@@ -290,13 +297,14 @@ export default function ScoreDifferentialChart({
   );
 
   const hasProjectedScoreData = useMemo(() => {
+    if (!projectionDrawable) return false;
     if (!history || history.length === 0) return false;
     return history.some(
       (point) =>
         point.projected_home_score !== null &&
         point.projected_away_score !== null
     );
-  }, [history]);
+  }, [history, projectionDrawable]);
 
   /**
    * ═══ ux/1034 B5: THE FLAT LINE WAS A UNIT ERROR ═══
@@ -428,8 +436,9 @@ export default function ScoreDifferentialChart({
       ensurePoint(point.timestamp);
     }
 
-    // Add projected score differentials where available
-    for (const point of filteredHistory) {
+    // Add projected score differentials where available (#8617: and drawable —
+    // otherwise the values would still reach the domain and the strip band).
+    for (const point of hasProjectedScoreData ? filteredHistory : []) {
       if (
         point.projected_home_score === null ||
         point.projected_away_score === null
