@@ -4825,9 +4825,13 @@ def anchor_schedule_sentinel(self, file_issues=True):
     of the consecutive nights that crossed the window, not any single run
     (#2983), and never on a truncated, chain-broken or expired one.
 
-    READ-ONLY: `apply=False` at the one call site and this wrapper exposes no
-    apply flag — the correction stays attended (the moves are large and a
-    reviewer should see the plan). Excludes tennis, which answers for no anchor
+    ONE WRITE CLASS (#3023): a row standing at exactly midnight Eastern whose
+    own anchor now names a later time on the same Eastern date is moved, with
+    the rail's D51 undo record. Every other move stays attended (the moves are
+    large and a reviewer should see the plan); this wrapper exposes no apply
+    flag. Undo: set ANCHOR_PLACEHOLDER_APPLY_DISABLED, then run the
+    `restore_anchor_schedule_moves.py --identity <id> --apply` line the run
+    returns in `applied_undo_commands`. Excludes tennis, which answers for no anchor
     (#2852). The 840s soft limit (under the 900s hard limit, clear of the global
     300s) plus the run's 300s inner deadline keep it from SIGKILLing untracked
     (#966)."""

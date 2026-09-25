@@ -16,14 +16,25 @@ team page.
 system catches it the night it appears instead of a human catching it days
 before kickoff.** (Pillar: TRUTH.)
 
-WHAT IT WILL NOT DO
-═══════════════════
+WHAT IT WILL NOT DO — AND THE ONE CLASS IT DOES (#3023)
+═══════════════════════════════════════════════════════
 
-**It never writes.** ``apply`` is not a parameter of this module and
-:func:`reconcile` is called with ``apply=False`` at the one call site. The
-attended apply stays a human's, for the reason the rail's own docstring gives:
-the moves are large and a reviewer should see the plan. This driver's product is
-a *report* — the plan, and an issue on the board naming it.
+**It writes one class of move and no other.** ``apply`` is not a parameter of
+this module, and the one call site to :func:`reconcile` can only ever pass the
+narrowed apply: ``apply_only=is_midnight_placeholder_move``. That class is a row
+standing at exactly midnight Eastern whose own ESPN anchor now publishes a later
+time on the same Eastern date — an announcement filling in a stand-in, never a
+re-date (the predicate's docstring lists every clause). The scheduled ESPN pass
+refuses those moves as wider than #1947's 12 hours and the live pass only makes
+them on game day, so between the announcement and the game the stand-in was on
+the page, and for NHL/NFL a StatPal row beside it printed the game twice.
+
+Every OTHER move stays a human's, for the reason the rail's own docstring gives:
+those moves are large and a reviewer should see the plan. They are reported in
+the issue exactly as before. The narrowed apply takes the rail's own D51 path —
+undo record before the write, receipt co-committed with it — and each applied
+page's restore line is carried in ``applied_undo_commands``. Setting
+:data:`PLACEHOLDER_APPLY_DISABLED_ENV` returns the driver to read-only.
 
 The one thing it writes is a GitHub issue, through the shared sentinel filing
 rail, which is what every other sentinel does and is not a data write.
@@ -121,6 +132,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time as _time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
@@ -131,9 +143,17 @@ from app.tasks.reconcile_anchor_schedule import (
     EXCLUDED_SPORT_KEYS,
     reconcile,
 )
-from app.utils.anchor_schedule import SCHEDULE_VERDICTS
+from app.utils.anchor_schedule import SCHEDULE_VERDICTS, is_midnight_placeholder_move
 
 logger = logging.getLogger(__name__)
+
+#: The stop switch for the one write this driver makes (#3023). Set to any
+#: non-empty value and every page is read-only again, as before #3023.
+PLACEHOLDER_APPLY_DISABLED_ENV = "ANCHOR_PLACEHOLDER_APPLY_DISABLED"
+
+
+def placeholder_apply_enabled() -> bool:
+    return not os.getenv(PLACEHOLDER_APPLY_DISABLED_ENV, "").strip()
 
 #: Stop paging after this much wall clock. 300s sits well inside the 840s soft
 #: limit the Celery wrapper carries, leaving the filing round-trip room even on
@@ -395,9 +415,12 @@ def _summarize(state: dict[str, Any]) -> str:
         where += " CHAIN-BROKEN"
     if state.get("pass_drift_seen") and not state.get("moves"):
         where += " PASS-SAW-DRIFT-EARLIER"
+    if state.get("apply_refusals"):
+        where += " APPLY-REFUSED"
     return (
         f"{state['terminal']}:{where} examined={state['examined']}/{state['eligible']} "
-        f"pages={state['pages']} drift={len(state['moves'])} · {counts}"
+        f"pages={state['pages']} drift={len(state['moves'])} "
+        f"placeholders_applied={len(state.get('applied_moves') or [])} · {counts}"
     )
 
 
@@ -441,6 +464,13 @@ async def _sweep(
     start = _time.monotonic()
     by_verdict: dict[str, int] = {name: 0 for name in SCHEDULE_VERDICTS}
     moves: list[dict] = []
+    # #3023: the placeholder moves this run WROTE. Kept out of `moves`, which is
+    # the drift still on the page — a fixed row is not drift, and counting it
+    # would file (and hold open) an issue for rows that are already right.
+    applied_moves: list[dict] = []
+    applied_undo_commands: list[str] = []
+    apply_refusals: list[str] = []
+    apply_placeholders = placeholder_apply_enabled()
     examined = 0
     eligible = 0
     pages = 0
@@ -463,10 +493,12 @@ async def _sweep(
 
         page = await reconcile(
             session,
-            # Not a default being relied on — the one call site states it.
-            # This driver has no `apply` parameter to thread through, so there
-            # is no path by which a caller can turn this into a write.
-            apply=False,
+            # Not a default being relied on — the one call site states it. This
+            # driver has no `apply` parameter to thread through, and the only
+            # write it can reach is the #3023 placeholder class: `apply_only`
+            # is fixed here, so no caller can widen it to the whole plan.
+            apply=apply_placeholders,
+            apply_only=is_midnight_placeholder_move if apply_placeholders else None,
             limit=limit,
             sport=sport,
             lookback=lookback,
@@ -505,7 +537,27 @@ async def _sweep(
         examined += page.get("examined", 0)
         for name, n in (page.get("by_verdict") or {}).items():
             by_verdict[name] = by_verdict.get(name, 0) + n
-        moves.extend(page.get("moves") or [])
+        moved_ids = set(page.get("moved_event_ids") or [])
+        for move in page.get("moves") or []:
+            (applied_moves if move.get("event_id") in moved_ids else moves).append(move)
+        if page.get("undo_command"):
+            applied_undo_commands.append(page["undo_command"])
+        if page.get("terminal") == "refused":
+            # The rail wrote NOTHING on this page (its undo record or receipt
+            # would not persist). Its moves stayed in `moves` above, so the
+            # night still files them; this just says why they were not fixed.
+            apply_refusals.extend(page.get("reason_codes") or ["refused"])
+            logger.warning(
+                "anchor-schedule sentinel: placeholder apply refused on a page "
+                "(%s) — nothing written there",
+                page.get("reason_codes"),
+            )
+            # A refused page carries no cursor, and `has_more` absent would read
+            # below as "reached the end of the window" — a false finish. Stop
+            # here instead, and hand THIS page's start on so tomorrow re-reads it.
+            stopped_by = "apply_refused"
+            continuation = cursor
+            break
 
         if page.get("terminal") == "authority_dark":
             # A page where the authority answered for nothing tells us nothing
@@ -552,7 +604,11 @@ async def _sweep(
         "resumed_from": resume_from,
         "restarted_from_exhausted_cursor": restarted_from_exhausted_cursor,
         "continuation": continuation,
-        "applied": False,
+        "applied": bool(applied_moves),
+        "placeholder_apply_enabled": apply_placeholders,
+        "applied_moves": applied_moves,
+        "applied_undo_commands": applied_undo_commands,
+        "apply_refusals": apply_refusals,
         "pages": pages,
         "examined": examined,
         "eligible": eligible,
@@ -581,11 +637,27 @@ def _issue_body(state: dict[str, Any], *, now: datetime) -> str:
     if len(state["moves"]) > 50:
         lines.append(f"| … | *{len(state['moves']) - 50} more* | | | |")
 
+    applied = state.get("applied_moves") or []
     lines += [
         "",
-        "**Nothing was written.** This rail reports; the correction is attended. "
-        "To see the plan and then apply it, use the admin endpoint "
-        "(`/api/admin/events/reconcile-anchor-schedule`) with `apply=false` first.",
+        "**None of the rows above was written.** This rail reports them; their "
+        "correction is attended. To see the plan and then apply it, use the admin "
+        "endpoint (`/api/admin/events/reconcile-anchor-schedule`) with "
+        "`apply=false` first.",
+    ]
+    if applied:
+        # #3023: the one class the sentinel fixes itself, named with its undo so
+        # a reader of the issue never has to go looking for how to reverse it.
+        lines += [
+            "",
+            f"Separately, this run filled in **{len(applied)} announced start time(s)** "
+            "that were standing at midnight Eastern (same Eastern date, own ESPN "
+            "anchor, teams agree — #3023). Undo: set "
+            f"`{PLACEHOLDER_APPLY_DISABLED_ENV}`, then run "
+            + ", ".join(f"`{c}`" for c in state.get("applied_undo_commands") or [])
+            + ".",
+        ]
+    lines += [
         "",
         _blind_spots_note(),
         "",
@@ -701,6 +773,11 @@ async def _run_anchor_schedule_sentinel(
         terminal = "partial"
     elif pass_drift_seen:
         terminal = "plan_only"
+    elif state["applied_moves"]:
+        # #3023: the window is seen, nothing is left drifting, and this run
+        # wrote the placeholder moves it found — that is finished work, and
+        # `no_work` would hide the writes from anything reading the terminal.
+        terminal = "complete"
     else:
         terminal = "no_work"
 

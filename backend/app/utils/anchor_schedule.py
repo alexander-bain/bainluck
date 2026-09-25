@@ -85,8 +85,9 @@ and collapsing them would let an outage read as a clean bill of health.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, time
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
 from app.utils.authority_id_collisions import (
     AuthorityRecord,
@@ -106,6 +107,7 @@ __all__ = [
     "SAME_START_TOLERANCE_S",
     "SCHEDULE_VERDICTS",
     "AnchoredRow",
+    "is_midnight_placeholder_move",
     "ScheduleDecision",
     "schedule_decision",
     "summarize_decisions",
@@ -343,6 +345,51 @@ def schedule_decision(
             "commence_time_source": AUTHORITY_SOURCE,
         },
     )
+
+
+#: Where the placeholder lives. ESPN (and our rows copied from it) stand a
+#: fixture whose time is not yet announced at exactly midnight Eastern on its
+#: date — 04:00Z in summer, 05:00Z in winter — so the test is on the Eastern
+#: wall clock, never on a UTC hour.
+PLACEHOLDER_ZONE = ZoneInfo("America/New_York")
+PLACEHOLDER_WALL_CLOCK = time(0, 0, 0)
+
+
+def is_midnight_placeholder_move(decision: ScheduleDecision) -> bool:
+    """Is this move ONLY the announcement of a time the row was holding a place for?
+
+    #3023. The one class the nightly sentinel may apply without a person. The
+    rail's attended apply exists because its moves are large — 98 days in the
+    charter case — and a reviewer should see them. This class is the opposite
+    shape: the row already names the right game on the right Eastern date, it
+    just carries midnight as a stand-in, and ESPN has since published the real
+    time. The scheduled ESPN pass refuses the move (it is wider than the #1947
+    12-hour window) and the live pass only makes it on game day, so without
+    this the stand-in sits on the page from announcement to game day — and for
+    NHL/NFL a StatPal-created row beside it prints the game twice.
+
+    Every clause is required, and each one is a way the move could be bigger
+    than "fill in the announced time":
+
+    * the verdict is :data:`AUTHORITY_MOVES_US` — so the anchor is the row's own,
+      the teams agree, the row is unfinished and ESPN outranks its clock;
+    * our start is **exactly** 00:00:00 Eastern — a real 12:05 AM kickoff, or
+      any other time, is somebody's actual answer and stays attended;
+    * ESPN's start is on the **same Eastern date** (so, necessarily, later) —
+      a move to another day is a re-date, not an announcement;
+    * the orientation is not inverted — a row listing the sides the other way
+      round from its authority is worth a person's look before we touch it.
+    """
+    if decision.verdict != AUTHORITY_MOVES_US or decision.orientation_inverted:
+        return False
+    ours, theirs = decision.ours, decision.theirs
+    if ours is None or theirs is None or ours.tzinfo is None or theirs.tzinfo is None:
+        return False
+    ours_et = ours.astimezone(PLACEHOLDER_ZONE)
+    theirs_et = theirs.astimezone(PLACEHOLDER_ZONE)
+    # "Later" needs no clause of its own: nothing on the same Eastern date
+    # precedes its midnight, and an equal time is AGREES, not a move.
+    return ours_et.time() == PLACEHOLDER_WALL_CLOCK and theirs_et.date() == ours_et.date()
 
 
 def summarize_decisions(decisions) -> dict[str, Any]:
