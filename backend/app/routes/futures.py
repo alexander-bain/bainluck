@@ -4626,6 +4626,20 @@ RELATED_EVENTS_LIMIT = 20
 RELATED_EVENTS_FOLD_HEADROOM = RELATED_EVENTS_LIMIT
 
 
+def _outcome_names_its_team(outcome_name: Optional[str], team_name: Optional[str]) -> bool:
+    """Is this outcome the team itself ("Los Angeles Dodgers", or "Dodgers")?
+
+    Case, spacing and punctuation are ignored; a nickname counts when the team's
+    full name ends with it. A player's name never ends a team name, and a city
+    shared by two clubs ("Los Angeles Angels") does not name the other one.
+    """
+    if not outcome_name or not team_name:
+        return False
+    o = re.sub(r"[^a-z0-9]", "", outcome_name.lower())
+    t = re.sub(r"[^a-z0-9]", "", team_name.lower())
+    return bool(o) and (o == t or (len(o) >= 4 and t.endswith(o)))
+
+
 @router.get("/{market_id}/related-events")
 async def get_related_events(
     market_id: int,
@@ -4673,21 +4687,49 @@ async def get_related_events(
     # outcome (highest price, lowest id on a tie, never insertion order) and
     # says `outcome_is_team: False`; the client names the player, not the team.
     # A team field (one outcome per team) is served exactly as before.
+    #
+    # ONE MISLINKED OUTCOME IS NOT A PLAYER FIELD. The World Series market
+    # (114584) links "Los Angeles Angels" to the Dodgers' team id, so the
+    # Dodgers group held two outcomes and the whole market read as a field of
+    # players: every row "Each team's leading player" over team names. A group
+    # holding an outcome that names its own team is a team row — that outcome
+    # is the team's price — and only a group of several outcomes with none
+    # naming the team proves a player field. Team names are read only when some
+    # group holds several outcomes.
     outcomes_by_team: dict[int, list] = {}
     for o in market.outcomes:
         if o.team_id:
             outcomes_by_team.setdefault(o.team_id, []).append(o)
-    player_field = any(len(group) > 1 for group in outcomes_by_team.values())
 
-    team_outcome_map = {}
-    for team_id, group in outcomes_by_team.items():
-        o = min(
+    multi_team_ids = [tid for tid, group in outcomes_by_team.items() if len(group) > 1]
+    team_names: dict[int, str] = {}
+    if multi_team_ids:
+        names_result = await db.execute(
+            select(Team.id, Team.name).where(Team.id.in_(multi_team_ids))
+        )
+        team_names = {tid: name for tid, name in names_result.all() if name}
+
+    def _leader(group):
+        return min(
             group,
             key=lambda x: (
                 -(float(x.current_probability) if x.current_probability is not None else -1.0),
                 x.id if x.id is not None else 0,
             ),
         )
+
+    team_named = {
+        tid: [o for o in group if _outcome_names_its_team(o.name, team_names.get(tid))]
+        for tid, group in outcomes_by_team.items()
+    }
+    player_field = any(
+        len(group) > 1 and not team_named[tid] for tid, group in outcomes_by_team.items()
+    )
+
+    team_outcome_map = {}
+    for team_id, group in outcomes_by_team.items():
+        named = team_named[team_id]
+        o = _leader(named or group)
         team_outcome_map[team_id] = {
             "outcome_name": o.name,
             "probability": float(o.current_probability) if o.current_probability is not None else None,
