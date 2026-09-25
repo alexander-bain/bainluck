@@ -419,6 +419,12 @@ COVERED = (
     # the guard never fires), and the stored `home_score`/`away_score` pair,
     # where a NULL half is the carve-out the ship had to keep intact.
     "test_completed_espn_final_is_not_repoisoned_7147_pg.py",
+    # #837: seeds `sports`, `teams` and one live `events` row per sport by raw
+    # INSERT and parks a real odds pass mid-way to probe the row lock. The
+    # nullable `external_id` is the whole reach: without it the registry does
+    # not resolve the payload to the seeded row, nothing writes `betting`, and
+    # the probe finds a free row for the wrong reason.
+    "test_a_poll_releases_its_event_rows_per_sport_837_pg.py",
     # #7501: seeds `sports` and seven `teams` by raw INSERT to drive the slug
     # filler against the real UNIQUE index on `teams.slug`, which IS the
     # mechanism — 855 of the 4,004 slug-less clubs exist as a cohort only

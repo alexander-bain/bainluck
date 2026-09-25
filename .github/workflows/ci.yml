@@ -4667,6 +4667,32 @@ jobs:
             exit 1
           }
 
+      - name: "#837 an odds pass releases a sport's game rows before the next sport's call (real Postgres)"
+        # #837. `_poll_all_odds` and `_discover_events` each committed once, at
+        # the end of the pass. So a live game's `events` row stayed locked from
+        # its sport's betting write through every later sport's Odds API call,
+        # and the live stamp (500 ms lock_timeout) re-queued for that long.
+        # Production measured 55 s on one game behind discovery.
+        # Row locks are the subject, so a session double cannot see this: the
+        # gate parks a real pass inside the second sport's `get_odds` and tries
+        # the stamp's lock from a second connection.
+        #
+        # 3 = the probe's positive control (a held row reads `locked`) + one arm
+        # per pass. Each arm also asserts the pass really wrote `betting` on the
+        # row it probes, and that it parked mid-pass.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_a_poll_releases_its_event_rows_per_sport_837_pg.py \
+            -v -rs 2>&1 | tee /tmp/persport837.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/persport837.txt; then
+            echo "::error::#837 per-sport commit gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]3 passed[,[:space:]]" /tmp/persport837.txt || {
+            echo "::error::#837 per-sport commit gate did not run all three cases"
+            exit 1
+          }
+
   frontend-build:
     runs-on: ubuntu-latest
     defaults:

@@ -1615,6 +1615,16 @@ async def _poll_all_odds():
                             session, event, event_data, commence_time, snapshot_cache,
                         )
 
+                    # #837: release this sport's rows BEFORE the next sport's
+                    # network call. `_ingest_event_odds` has just updated every
+                    # one of its games' `events` rows, and one commit at the end
+                    # of the pass held those locks through every later Odds API
+                    # and scores call. The live stamp gives up after 500 ms and
+                    # re-queues, so the pass's whole network time turned into
+                    # price delay on each live game (live/583's after-check).
+                    # Nothing later in the pass needs these writes uncommitted.
+                    await session.commit()
+
                 except Exception as e:
                     # Cache 404 sports to avoid retrying for 24h
                     if hasattr(e, "response") and getattr(e.response, "status_code", 0) == 404:
