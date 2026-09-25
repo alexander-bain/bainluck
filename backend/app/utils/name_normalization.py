@@ -115,6 +115,23 @@ _GENERAL_ABBREVIATIONS: dict[str, str] = {
     "sec": "securities and exchange commission",
 }
 
+#: One country, two spellings, and the feeds disagree on which (#8675). ESPN
+#: writes `Türkiye`, `Czechia` and `Bosnia-Herzegovina`; the Odds API, whose
+#: rows the Nations League fixtures are, writes `Turkey`, `Czech Republic` and
+#: `Bosnia & Herzegovina`. No stage of :func:`names_match` sees either pair as
+#: one team — the first two share no token at all — so once ESPN's board is
+#: read for the competition, the registry's structured match would CREATE a
+#: second row for each of those games instead of joining the one we have.
+#:
+#: Keys and values are `normalize_name` output, and the fold is WHOLE-NAME
+#: only: the only equalities it adds are between spellings listed here.
+_NATION_NAME_ALIASES: dict[str, str] = {
+    "turkiye": "turkey",
+    "czechia": "czech republic",
+    "bosnia-herzegovina": "bosnia & herzegovina",
+    "bosnia and herzegovina": "bosnia & herzegovina",
+}
+
 
 def expand_search_terms(terms: list[str]) -> list[tuple[str, str | None]]:
     """Expand search terms using city, general abbreviation and diacritic folds.
@@ -440,8 +457,10 @@ def names_match(name_a: str, name_b: str) -> bool:
     if not norm_a or not norm_b:
         return False
 
-    # 1. Exact match
+    # 1. Exact match — after folding one country's two spellings to one (#8675)
     if norm_a == norm_b:
+        return True
+    if _NATION_NAME_ALIASES.get(norm_a, norm_a) == _NATION_NAME_ALIASES.get(norm_b, norm_b):
         return True
 
     # 2. Suffix containment at word boundaries
