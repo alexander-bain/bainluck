@@ -229,7 +229,9 @@ describe("#5558 ARM 4 — live and scheduled cards are unchanged", () => {
     const card = eventCard(render(soccer, soccer.items.length), belgiumRow.id as number);
     expect(attr(card, "data-state")).toBeNull();
     expect(byTestId(card, "related-card-final")).toHaveLength(0);
-    expect(byTestId(card, "related-card-field")[0]?.text).toMatch(/56%.*44%/);
+    // Italy's live 44% stays. Belgium's served 56% is `1 − home` on a draw-priced sport,
+    // withheld since #8702 (this line asserted "56%" until then, which was that defect).
+    expect(byTestId(card, "related-card-field")[0]?.text).toMatch(/Belgium.*—.*Italy\s*44%/);
   });
 
   it("the scheduled football card keeps its current price", () => {
