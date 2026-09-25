@@ -429,6 +429,54 @@ final class EventRefreshLifecycleTests: XCTestCase {
         vm.stopRefresh()
     }
 
+    /// #920 — a refusal leaves polling working. The server saying no to the
+    /// stream (409 once the match is decided, 503 at capacity, 404) is what the
+    /// real transport reports as `error` with `isClosed` already true. The
+    /// controller retires the stream for good, and the PAGE must come back to
+    /// the full live cadence and keep loading. A refusal that only stopped the
+    /// stream would leave the page on the slow pushed cadence behind a stream
+    /// that will never push again.
+    func testARefusedStreamPutsThePageBackOnTheFullCadence() async throws {
+        let client = ScriptedClient([
+            .ok(try event(status: "live", commenceOffset: -600, home: 0, away: 0)),
+            .ok(try event(status: "live", commenceOffset: -600, home: 2, away: 1))
+        ])
+        let ticker = Ticker()
+        let handle = FakeHandle()
+        var opened = 0
+        let vm = EventDetailViewModel(
+            eventId: 4242,
+            client: client,
+            makeStreamHandle: { _ in opened += 1; return handle },
+            now: { [anchor] in anchor.timeIntervalSince1970 },
+            sleep: { [ticker] seconds in await ticker.sleep(seconds) }
+        )
+
+        await vm.load()
+        handle.fire("open")
+        XCTAssertEqual(vm.currentRefreshPlan, .poll(every: 120))
+
+        // The refusal, in the transport's own order: closed first, then `error`.
+        handle.isClosed = true
+        handle.fire("error")
+
+        XCTAssertFalse(vm.streamDelivering)
+        XCTAssertEqual(
+            vm.currentRefreshPlan, .poll(every: 30),
+            "a refused stream left the page on the pushed cadence"
+        )
+
+        ticker.openGate()
+        await waitUntil("the poll to keep loading after the refusal") { vm.event?.homeScore == 2 }
+        XCTAssertEqual(vm.event?.awayScore, 1)
+        // Terminal: the page's own reloads re-plan, but never re-ask a server
+        // that already said no.
+        XCTAssertEqual(opened, 1, "a refused stream was reopened")
+        XCTAssertEqual(vm.currentRefreshPlan, .poll(every: 30))
+
+        vm.stopRefresh()
+    }
+
     /// Defect 2, wired.
     func testSuspendedMatchKeepsPolling() async throws {
         let client = ScriptedClient([
