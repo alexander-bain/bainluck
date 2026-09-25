@@ -458,6 +458,11 @@ COVERED = (
     # `_polymarket_group_sibling_event_id`. Torn down by its own name prefix,
     # home team and sport key — the `search-recall` database is shared.
     "test_polymarket_group_sibling_8430_pg.py",
+    # #8440. Seeds `sports` and `events` by raw INSERT, in a private schema
+    # built by `create_all`, to drive the matcher's venue-name-extension pass
+    # (pass 1b) through real Postgres retrieval. Explicit ids; the schema is
+    # dropped whole on teardown.
+    "test_pm_venue_name_extension_8440_pg.py",
 )
 
 INTEGRATION_DIR = Path(__file__).parent / "integration"
