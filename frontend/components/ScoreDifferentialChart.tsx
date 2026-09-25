@@ -21,7 +21,7 @@ import {
   CATEGORY_LABEL_FORMAT,
 } from "@/lib/chartTimeline";
 import { sourceLabel } from "@/lib/sourceColors";
-import { impliedSpreadHomeMargin, drawnImpliedSpreadSources } from "@/lib/impliedSpreadAxis";
+import { drawnImpliedSpreadSources, stampImpliedSpreadSnapshot } from "@/lib/impliedSpreadAxis";
 import { actualScoreSeriesDrawn, sportsbookProjectionDrawable } from "@/lib/scoreDifferentialHeading";
 import { scoreDifferentialYTicks } from "@/lib/scoreDifferentialTicks";
 import { sportVocab, playedCountAbsence, playedUnits, withUnit } from "@/lib/marketMapUtils";
@@ -194,6 +194,12 @@ export default function ScoreDifferentialChart({
     () => drawnImpliedSpreadSources(pmSpreadData?.implied_spreads, isClosed),
     [pmSpreadData, isClosed]
   );
+
+  // #4887 (D123, Alex): the venues' implied margins feed the picture, they do
+  // not compete with it — hidden by default behind the same "+ N sources"
+  // press the win-probability chart uses, shown on the reader's ask.
+  const [impliedSourcesShown, setImpliedSourcesShown] = useState(false);
+  const shownImpliedSpreadSources = impliedSourcesShown ? impliedSpreadSources : [];
 
   const hasPostStartData = useMemo(() => {
     if (!commenceTime) return false;
@@ -563,29 +569,6 @@ export default function ScoreDifferentialChart({
       }
     }
 
-    // Add prediction market implied spread as a constant line at current value
-    // (This is a snapshot, not a time series — we only have the current implied spread)
-    //
-    // #6142: which sources those are is `impliedSpreadSources`, not this loop.
-    // A finished game draws none of them — a snapshot of what the ladder
-    // implies *now* has nothing to say about a game whose real margin is
-    // already on this axis. The `sportsbook` skip that used to live here is
-    // the same rule's other clause and moved with it.
-    if (pmSpreadData?.implied_spreads) {
-      const allPts = Array.from(dataMap.values());
-      for (const [source, data] of Object.entries(pmSpreadData.implied_spreads)) {
-        if (!impliedSpreadSources.includes(source)) continue;
-        const key = `pm_${source}_spread`;
-        for (const pt of allPts) {
-          // Show the implied spread as a flat line across all timestamps.
-          //
-          // 🔴 Never plot `data.spread` raw here — it is betting-line sign and
-          // this axis is `home - away`. See `impliedSpreadHomeMargin` (#3948).
-          pt[key] = impliedSpreadHomeMargin(data);
-        }
-      }
-    }
-
     // Prune points outside the shared domain so category count matches OddsChart exactly
     const domainStart = chartStartTime ? parseISO(chartStartTime).getTime() : -Infinity;
     const domainEnd = chartEndTime ? parseISO(chartEndTime).getTime() : Infinity;
@@ -598,6 +581,12 @@ export default function ScoreDifferentialChart({
       (a, b) =>
         parseISO(a.timestamp).getTime() - parseISO(b.timestamp).getTime()
     );
+
+    // The venues' implied margins are a snapshot, not a series: one reading,
+    // on the last point only (#4887 — it used to be painted onto every point
+    // as a flat line across the game). Which sources is `impliedSpreadSources`
+    // (#6142: none on a finished game; #7660: none the producer distrusts).
+    stampImpliedSpreadSnapshot(points, pmSpreadData?.implied_spreads, impliedSpreadSources);
 
     // ── #7211: THE SCORE DOES NOT STOP BEING TRUE WHEN IT STOPS CHANGING ──
     //
@@ -680,8 +669,8 @@ export default function ScoreDifferentialChart({
     // The remaining keys are safe against the synthesis above without needing to
     // run before it: `fillMinuteGaps` and the marker categories both insert
     // points whose score values stay null (this chart has no forward-fill), and
-    // `pm_*_spread` — painted onto every point, "a snapshot, not a time series"
-    // by its own comment — is excluded by name. Bookmaker lines are always
+    // `pm_*_spread` — a snapshot on the last point only (#4887), and hidden
+    // until the reader asks for it — is excluded by name. Bookmaker lines are always
     // rendered, so they always count.
     const drawnScoreKeys = [
       ...(hasProjectedScoreData ? ["projectedDiff"] : []),
@@ -975,6 +964,10 @@ export default function ScoreDifferentialChart({
          the lines are both built from, so it cannot report a suppression the
          chart did not perform. */
       data-implied-spread-series={impliedSpreadSources.join(",") || "none"}
+      /* #4887: of those, which are on the plot NOW. The attribute above is
+         the set the "+ N sources" press can reveal; this is what is drawn,
+         and it reads "none" until the reader asks. */
+      data-implied-spread-drawn={shownImpliedSpreadSources.join(",") || "none"}
       /* How many period chips this chart will draw, for the same reason as the
          two attributes above and as OddsChart's (CERT-1989): recharts renders
          no `<ReferenceLine>` inside `ResponsiveContainer` without a viewport,
@@ -1169,10 +1162,10 @@ export default function ScoreDifferentialChart({
                       },
                     ]
                   : []),
-                ...(impliedSpreadSources.includes("kalshi")
+                ...(shownImpliedSpreadSources.includes("kalshi")
                   ? [{ value: "Kalshi Implied" as string, type: "circle" as const, color: "#7c3aed" }]
                   : []),
-                ...(impliedSpreadSources.includes("polymarket")
+                ...(shownImpliedSpreadSources.includes("polymarket")
                   ? [{ value: "Polymarket Implied" as string, type: "circle" as const, color: "#db2777" }]
                   : []),
               ]}
@@ -1221,32 +1214,30 @@ export default function ScoreDifferentialChart({
               />
             )}
 
-            {/* Prediction market implied spread lines (#6142: never on a
-                finished game — see `impliedSpreadSources`) */}
-            {impliedSpreadSources.includes("kalshi") && (
+            {/* Prediction market implied spreads (#6142: never on a finished
+                game — see `impliedSpreadSources`). #4887: one current reading
+                each, so ONE marker at the right edge — the data build stamps
+                only the last point — and only once the reader asks. */}
+            {shownImpliedSpreadSources.includes("kalshi") && (
               <Line
                 type="linear"
                 dataKey="pm_kalshi_spread"
                 name="Kalshi Implied"
                 stroke="#7c3aed"
                 strokeWidth={2}
-                strokeDasharray="8 4"
-                dot={false}
-                activeDot={{ r: 4, fill: "#7c3aed" }}
-                connectNulls
+                dot={{ r: 4, fill: "#7c3aed", stroke: "#7c3aed" }}
+                activeDot={{ r: 5, fill: "#7c3aed" }}
               />
             )}
-            {impliedSpreadSources.includes("polymarket") && (
+            {shownImpliedSpreadSources.includes("polymarket") && (
               <Line
                 type="linear"
                 dataKey="pm_polymarket_spread"
                 name="Polymarket Implied"
                 stroke="#db2777"
                 strokeWidth={2}
-                strokeDasharray="6 4"
-                dot={false}
-                activeDot={{ r: 4, fill: "#db2777" }}
-                connectNulls
+                dot={{ r: 4, fill: "#db2777", stroke: "#db2777" }}
+                activeDot={{ r: 5, fill: "#db2777" }}
               />
             )}
 
@@ -1290,6 +1281,34 @@ export default function ScoreDifferentialChart({
         </ResponsiveContainer>
         </div>
       </div>
+
+      {/* #4887: the press that reveals the venues' current implied margins.
+          Same control, same words as the win-probability chart's legend. */}
+      {impliedSpreadSources.length > 0 && (
+        <div className="flex justify-center shrink-0">
+          <button
+            type="button"
+            onClick={() => setImpliedSourcesShown((v) => !v)}
+            className="flex items-center gap-1 text-xs text-text-muted hover:text-text-secondary transition-colors"
+            aria-expanded={impliedSourcesShown}
+          >
+            {impliedSourcesShown
+              ? "Hide sources"
+              : `+ ${impliedSpreadSources.length} source${impliedSpreadSources.length !== 1 ? "s" : ""}`}
+            <svg
+              width="9"
+              height="9"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={3}
+              className={`shrink-0${impliedSourcesShown ? " rotate-180" : ""}`}
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+        </div>
+      )}
 
       {bookmakers.length > 0 && (
         <p className="text-xs text-text-muted text-center shrink-0">

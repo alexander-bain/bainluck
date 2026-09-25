@@ -65,17 +65,23 @@ describe("library arm — the implied line reads the chart's own axis", () => {
 });
 
 describe("source arm — the chart spends the rule instead of re-deriving it", () => {
+  // #4887 moved the assignment out of the chart's build loop into
+  // `stampImpliedSpreadSnapshot` (one point, not every point). The claim is
+  // unchanged: whatever writes the series value spends `impliedSpreadHomeMargin`.
   const source = readFileSync(
     join(process.cwd(), "components", "ScoreDifferentialChart.tsx"),
     "utf8",
   );
+  const lib = readFileSync(join(process.cwd(), "lib", "impliedSpreadAxis.ts"), "utf8");
+  const stampStart = lib.indexOf("export function stampImpliedSpreadSnapshot(");
+  const stamp = stampStart >= 0 ? lib.slice(stampStart, lib.indexOf("\n}\n", stampStart)) : "";
 
   it("assigns the implied-spread series through the axis helper", () => {
-    const assignment = source.match(/pt\[key\]\s*=\s*([^;]+);/);
+    const assignment = stamp.match(/last\[`pm_\$\{source\}_spread`\]\s*=\s*([^;]+);/);
     if (!assignment) {
       throw new Error(
-        "Could not find the `pt[key] = ...` implied-spread assignment in " +
-          "ScoreDifferentialChart.tsx. If it was renamed, update this guard — " +
+        "Could not find the `last[`pm_${source}_spread`] = ...` assignment in " +
+          "stampImpliedSpreadSnapshot. If it was renamed, update this guard — " +
           "do not let it pass by matching nothing.",
       );
     }
@@ -83,26 +89,19 @@ describe("source arm — the chart spends the rule instead of re-deriving it", (
   });
 
   it("does not plot the raw betting-line spread anywhere in the series builder", () => {
-    const block = source.match(
-      /if \(pmSpreadData\?\.implied_spreads\) \{[\s\S]*?\n {4}\}/,
-    );
-    if (!block) {
+    if (!stamp) {
       throw new Error(
-        "Could not find the implied_spreads series-building block in " +
-          "ScoreDifferentialChart.tsx. This guard must never pass vacuously.",
+        "Could not find stampImpliedSpreadSnapshot in lib/impliedSpreadAxis.ts. " +
+          "This guard must never pass vacuously.",
       );
     }
-    expect(block[0]).not.toMatch(/=\s*data\.spread\b/);
+    expect(stamp).not.toMatch(/=\s*arm\.spread\b/);
+    // And the chart has not grown its own writer beside the helper.
+    expect(source).not.toMatch(/pm_\$\{source\}_spread`?\]?\s*=/);
+    expect(source).not.toMatch(/=\s*data\.spread\b/);
   });
 
   it("imports the helper it claims to use", () => {
-    // #6142 widened this from an exact-punctuation match on the whole import
-    // statement. The claim is this arm's own name — that `impliedSpreadHomeMargin`
-    // is imported from that module rather than re-derived here — and pinning the
-    // brace contents made the guard fail on a change that STRENGTHENS it: the
-    // chart now also imports `drawnImpliedSpreadSources` from the same module,
-    // spending a second rule instead of restating it. The module path and the
-    // symbol are still both required, so nothing this arm asserted is relaxed.
     const decl = source.match(
       /import \{([^}]*)\} from "@\/lib\/impliedSpreadAxis";/,
     );
@@ -113,7 +112,7 @@ describe("source arm — the chart spends the rule instead of re-deriving it", (
       );
     }
     expect(decl[1].split(",").map((s) => s.trim())).toContain(
-      "impliedSpreadHomeMargin",
+      "stampImpliedSpreadSnapshot",
     );
   });
 });
