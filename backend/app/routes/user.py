@@ -1667,6 +1667,57 @@ async def _query_team_futures(
                     }
         return None
 
+    # #8503 — A PRICE THE MARKET'S OWN PAGE REFUSES IS NOT PRINTED HERE EITHER.
+    # The Eagles page's Season Futures read "Jalen Hurts — Top 5 Scoring QBs 50%"
+    # and "A.J. Brown — Top 5 Scoring FLEX 50%": untraded Polymarket books
+    # (bid 0.01 / ask 0.98), and `/api/futures/{id}` serves both legs as
+    # `probability: null`. #8480 wired the shared screen into the Prop Races
+    # block of the same page; this list, which also serves "Your Teams'
+    # Futures", never asked it. Same helper, same five arms — no sixth spelling.
+    #
+    # Only markets with a leg that matches a team are screened (a market that
+    # matches nothing never reaches the payload), each reloaded with ALL its legs
+    # because the field arms judge the whole board. Refused legs are skipped
+    # BEFORE the one-outcome-per-market pick, so a priced leg of the same market
+    # still takes the slot. Withheld, never re-priced (gotcha #21).
+    #
+    # FAILS OPEN inside a SAVEPOINT: this lane only reads, so its rollback
+    # expires nothing, and the rows below (plus the caller's `team`) survive. A
+    # board the helper could not evaluate is omitted from its map and served
+    # as-is, the helper's own documented failure direction.
+    withheld_by_market: dict[int, set[int]] = {}
+    _screen_ids = sorted({
+        m.id for o, m, sk in list(rows1) + list(rows2)
+        if _find_matched_team(o, m, market_sport_key=sk)
+    })
+    if _screen_ids:
+        from app.routes.futures import withheld_price_outcome_ids_for_markets
+
+        _tq = time.perf_counter()
+        _screen_savepoint = await db.begin_nested()
+        try:
+            _screen_markets = (
+                await db.execute(
+                    select(FuturesMarket)
+                    .where(FuturesMarket.id.in_(_screen_ids))
+                    .options(selectinload(FuturesMarket.outcomes))
+                )
+            ).scalars().all()
+            withheld_by_market = await withheld_price_outcome_ids_for_markets(
+                db, _screen_markets
+            )
+            await _screen_savepoint.commit()
+        except Exception:  # noqa: BLE001 — a price screen never costs the page
+            await _screen_savepoint.rollback()
+            withheld_by_market = {}
+            logger.exception(
+                "team futures: price screen failed for teams %s — serving unscreened",
+                sorted(teams),
+            )
+        if timings is not None:
+            timings["screen"] = round((time.perf_counter() - _tq) * 1000)
+            timings["screened"] = len(_screen_ids)
+
     # Process both result sets: team matches (query 1) + award matches (query 2).
     # Item 2: bucket candidate items per matched team (preserving the query sort
     # order — highest-probability headline markets first), then interleave
@@ -1680,6 +1731,8 @@ async def _query_team_futures(
         # Skip if we already have an outcome from this market
         if market.id in seen_market_ids:
             continue
+        if outcome.id in withheld_by_market.get(market.id, ()):
+            continue  # #8503: the market page refuses this price
 
         matched = _find_matched_team(outcome, market, market_sport_key=mkt_sport_key)
         if not matched:
