@@ -113,7 +113,11 @@ class TestTheSpecimensPrintOneNumber:
         "legs, leader_value, leader_pct",
         [
             (NETFLIX_LEGS, 0.6447, 64),
-            (BIG_BROTHER_LEGS, 0.4545, 45),
+            # #8595 re-pins Big Brother: its thirteen legs at exactly 0.01 are
+            # Kalshi's one-cent floor, upper bounds out of the divisor. The four
+            # priced legs sum 1.025, inside the threshold, so it prints raw.
+            # NASCAR's sub-cent legs are real prices and stay in the divisor.
+            (BIG_BROTHER_LEGS, 0.525, 53),
             (NASCAR_LEGS, 0.2848, 28),
         ],
         ids=["62121678", "52756008", "56947465"],
@@ -123,7 +127,7 @@ class TestTheSpecimensPrintOneNumber:
     ):
         page = page_legs(legs)
         card = card_legs(legs)
-        # Pinned by hand, not by calling either normalizer: raw / sum to 4dp.
+        # Pinned by hand, not by calling either normalizer: raw / sum to 4dp (#8595: floor legs out).
         assert card[0] == leader_value
         assert page[0] == leader_value
         assert rendered_percent(card[0]) == leader_pct  # the card was never wrong

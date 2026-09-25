@@ -109,8 +109,14 @@ def test_the_same_field_IS_squeezed_when_nothing_was_withheld():
     moved = normalize_display_probs(outcomes, field_complete=True)
 
     assert moved is True
-    assert sum(o["probability"] for o in outcomes) == pytest.approx(1.0, abs=1e-2)
-    assert outcomes[0]["probability"] == pytest.approx(0.767, abs=1e-3)
+    # #8595: the four 0.010 legs sit at the venue floor and are out of the
+    # divisor, so the squeeze divides by the priced 1.095 and the PRICED legs sum
+    # to one (the floor legs follow on the same scale, 0.0091 each).
+    assert outcomes[0]["probability"] + outcomes[1]["probability"] == pytest.approx(
+        1.0, abs=1e-3
+    )
+    assert outcomes[0]["probability"] == pytest.approx(0.870 / 1.095, abs=1e-4)
+    assert outcomes[2]["probability"] == pytest.approx(0.010 / 1.095, abs=1e-4)
 
 
 def test_the_default_is_complete_so_every_existing_caller_is_unmoved():

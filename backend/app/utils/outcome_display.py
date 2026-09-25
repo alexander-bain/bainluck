@@ -66,6 +66,19 @@ _FIELD_OUTCOME_RE = re.compile(
 # raw /api/futures/{id} + search surfaces match it (gotcha #23).
 _FIELD_SUM_MAX = 1.60
 
+# #8595: Kalshi's one-cent floor. A long shot with no bid under the one-cent ask
+# (bid 0 / ask 0.01) is stored at EXACTLY 0.01, and that 0.01 means "at most 1%",
+# an upper bound, not a price. It is kept out of the one-winner squeeze's divisor
+# (see `display_divisor_mass`). EXACTLY, not "at or below": a de-vigged sportsbook
+# long shot at 0.0066 or a Polymarket leg at 0.004 (tick 0.001) is a real price.
+_VENUE_FLOOR_PRICE = 0.01
+
+
+def is_venue_floor_price(p) -> bool:
+    """True for a leg stored at exactly the one-cent venue floor (#8595)."""
+    return p is not None and abs(float(p) - _VENUE_FLOOR_PRICE) < 1e-9
+
+
 # UX-P126/F5: a field outcome at or above this DISPLAYED probability is never a real
 # answer — it is an untraded midpoint or a no-bid ask (gotcha #17/#19), and it must not
 # occupy a leader or top-N slot. Evaluated AFTER `normalize_display_probs` so the
@@ -297,6 +310,46 @@ def drop_unbacked_legs(
     return kept if kept else kept_all
 
 
+def display_divisor_mass(probs) -> float:
+    """The sum a one-winner field's display squeeze divides by: every priced leg,
+    and no leg at the venue floor (#8595).
+
+    `/futures/209` (*NL MVP Winner?*, Kalshi, 2026-09-25) printed Pete
+    Crow-Armstrong at 65% while Kalshi's book read bid 0.98 / ask 0.99 and our own
+    game page read 99%. The raw field is 0.985 + 0.015 + fifty-one long shots at
+    0.010, and every one of those is Kalshi's one-cent floor: bid 0, ask 0.01. The
+    sum, 1.51, sits under ``_FIELD_SUM_MAX``, so the squeeze read it as a coherent
+    field with 51 points of vig and divided the leader by 1.51.
+
+    Those 51 points are not vig. A floor leg's 0.01 is the most it can be worth,
+    not what it is worth, and fifty of them are fifty upper bounds added together.
+    Without them the field sums to exactly 1.00 and there is nothing to squeeze.
+    #1201 made the same call for exact-0.5 untraded midpoints; this is the same
+    placeholder at the other end of the book.
+
+    EXACTLY 0.01, and nothing under it. Sub-cent legs are real prices elsewhere:
+    `/api/futures/7`'s golf field is 150 de-vigged sportsbook long shots, most
+    under 1%, and together they ARE the field's tail; Polymarket prices below a
+    cent in 0.001 ticks. Only a run of legs parked on the one-cent line is the
+    placeholder, which is what Kalshi's floor writes.
+
+    The floor legs still print — raw, or on the same scale as the priced legs when
+    the priced legs alone overround. They are left out of the DIVISOR only.
+
+    THE CARD AND THE PAGE BOTH CALL THIS, and that is why it is a function. The
+    feed card's `_feed_display_scale` divides by the same mass the page divides by
+    (#7537: the two surfaces owe each other one divisor). A second copy of the
+    floor rule on one side is how the card and the page would print two numbers
+    for one leg again.
+
+    The #1200 overround ceiling is NOT judged on this mass. It still reads the full
+    raw sum: a field that overrounds past 1.60 with its floor tail counted is left
+    raw exactly as before, and this function only changes what a field inside the
+    band is divided by.
+    """
+    return sum(float(p) for p in probs if p and not is_venue_floor_price(p))
+
+
 def normalize_display_probs(
     outcomes: list[dict],
     key: str = "probability",
@@ -410,15 +463,29 @@ def normalize_display_probs(
     # number is the raw price and there is nothing for a second column to disagree
     # with. `any` is the right quantifier — one moved row is one false comparison.
     before = [o.get(key) for o in outcomes]
-    pct = [{"p": (o.get(key) or 0) * 100} for o in outcomes]
+    # #8595: the squeeze decides and divides on the PRICED legs only. A leg at the
+    # venue floor is an upper bound, and fifty-one of them turned a 0.985 leader
+    # into 0.65 (`display_divisor_mass`). Floor legs follow the priced legs' scale
+    # below, so every printed number on the page shares one divisor. Both lists
+    # are chosen BEFORE any write: a priced 0.0105 squeezed to 0.01 is not a floor
+    # leg and must not be scaled twice.
+    mass = display_divisor_mass(o.get(key) for o in outcomes)
+    floor = [o for o in outcomes if is_venue_floor_price(o.get(key))]
+    priced = [o for o in outcomes if not is_venue_floor_price(o.get(key))]
+    pct = [{"p": (o.get(key) or 0) * 100} for o in priced]
+    unscaled = [s["p"] for s in pct]
     # #7586: two decimals of a percent is the feed card's `round(p / sum, 4)`.
     # The politics default of one decimal is a SECOND rounding the client then
     # rounds again — 0.88/1.365 = .64469 served as .645 printed 65 beside the
     # card's 64 for the same leg.
     _normalize_outcome_probs(pct, key="p", decimals=2)
-    for o, scaled in zip(outcomes, pct):
+    if [s["p"] for s in pct] == unscaled:
+        return False  # the priced legs already sum inside the threshold
+    for o, scaled in zip(priced, pct):
         if o.get(key):
             o[key] = round(scaled["p"] / 100, 4)
+    for o in floor:
+        o[key] = round(round(o[key] / mass * 100, 2) / 100, 4)
     return any(b != o.get(key) for b, o in zip(before, outcomes))
 
 
