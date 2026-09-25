@@ -214,4 +214,4 @@ class TestTheRefusalPrecedesEveryCreationCounter:
         """The ordering that makes the refusal mean anything at all."""
         assert self._line_of(
             "if not statpal_provided_an_id(live_fix.fixture_id):"
-        ) < self._line_of("claim_id = live_fix.fixture_id")
+        ) < self._line_of("claim_id = live_claim_id")
