@@ -221,7 +221,21 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
   if (data.discover_card?.suggested_format === "threshold_heatmap" && heatmapRows.length >= heatmapMinRows) {
     const shownCells = heatmapRows.slice(0, 8);
     const above50 = shownCells.filter((r) => (r.probability ?? 0) >= 0.5);
-    const lastAbove50Label = above50.length > 0 ? above50[above50.length - 1].label : null;
+    // #8647 — the caption names the MOST SPECIFIC rung the market still calls
+    // better than even, and which end of `above50` that is depends on the axis.
+    // On a comparator ladder ("Above 52 / Above 58 / Above 64") chances fall as
+    // the rungs climb, so it is the last one. On a date ladder the rungs are
+    // cumulative "before this date" questions and chances RISE, so the last one
+    // is the loosest — production printed "More likely than not: Before Feb 1,
+    // 2027" on an Anthropic-IPO ladder reading 6% by Nov 1 and 56% by Dec 1, and
+    // Feb 1 was only the last of the eight rungs the card draws. The earliest
+    // rung over even is the answer. An exclusive date ladder ("Before 2027 /
+    // 2027 / 2029 or later") has at most one rung over even, so it reads the same.
+    const betterThanEvenRung =
+      above50.length === 0 ? null
+      : ladderKind(shownCells) === "date" ? above50[0]
+      : above50[above50.length - 1];
+    const lastAbove50Label = betterThanEvenRung?.label ?? null;
     // #7457 — whether the confidence glyph will actually DRAW, not whether the
     // payload carried a string. `SignalBars` returns null for a tier it doesn't
     // recognise, so a separator gated on the raw field prints a lone "·" beside
@@ -230,13 +244,19 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
     // UX-1052 item 4 — the leader is the highest-probability rung, marked in
     // place. On a date ladder the rows are chronological, so "the answer" is
     // not the top row and had nothing pointing at it.
-    const leaderCell = shownCells.reduce<HeatmapRow | null>(
-      (best, r) =>
-        r.probability == null ? best
-        : best == null || r.probability > (best.probability ?? -1) ? r
-        : best,
-      null,
-    );
+    // #8647 — on a date ladder the highest rung is the latest date, the loosest
+    // question, so the mark goes where the caption points. Where no drawn rung
+    // clears even, and on every other ladder, the highest rung is still the mark.
+    const leaderCell =
+      ladderKind(shownCells) === "date" && betterThanEvenRung
+        ? betterThanEvenRung
+        : shownCells.reduce<HeatmapRow | null>(
+            (best, r) =>
+              r.probability == null ? best
+              : best == null || r.probability > (best.probability ?? -1) ? r
+              : best,
+            null,
+          );
     const leaderCellKey = leaderCell?.key ?? null;
     // UX-1052 item 4 — the share text gets the same treatment as the card.
     // Alex on the old one: "Before 2027 is at 15% in When will Apple…" — it
