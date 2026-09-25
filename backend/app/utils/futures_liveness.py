@@ -109,6 +109,21 @@ VENUE_SETTLED_KEY = "price_refresh_venue_settled_since"
 
 assert isinstance(VENUE_SETTLED_CONFIRM_HOURS, int)  # interpolated into SQL
 
+#: Keys `preserve_venue_settled` carries across an ingest poll's wholesale
+#: ``market_metadata`` replace — the ones a poll neither knows nor may erase.
+#: ``hook_staleness`` imports only the standard library, so this keeps the
+#: module's zero-model-imports property.
+from app.utils.hook_staleness import (  # noqa: E402
+    HOOK_POLICY_METADATA_KEY,
+    HOOK_PROB_METADATA_KEY,
+)
+
+CARRIED_METADATA_KEYS = (
+    VENUE_SETTLED_KEY,
+    HOOK_POLICY_METADATA_KEY,  # #5531
+    HOOK_PROB_METADATA_KEY,  # #5531
+)
+
 
 def venue_answered(result) -> bool:
     """Has Kalshi declared this contract's outcome?
@@ -551,9 +566,18 @@ def preserve_venue_settled(new_metadata, existing_column):
     from sqlalchemy import cast, func
     from sqlalchemy.dialects.postgresql import JSONB
 
+    # #5531 — the same REPLACE erased the hook writer's two stamps. The hook is
+    # written with `hook_policy_version` and `hook_probability_at_generation` in
+    # the same statement as the sentence, and `is_hook_stale` retires any hook
+    # whose metadata does not say policy 2. Measured on production 2026-09-25:
+    # of the 100 sentences the first post-#8487 run wrote, the 48 rows a poll
+    # touched afterwards (43 Kalshi, 5 Polymarket) had lost BOTH keys and were
+    # withheld from the page with their leader unchanged; the 46 untouched rows
+    # were served. The poll does not change the hook, so the hook's stamps are
+    # carried back exactly like the venue-settled one.
     kept = func.jsonb_strip_nulls(
         func.jsonb_build_object(
-            VENUE_SETTLED_KEY, existing_column[VENUE_SETTLED_KEY]
+            *(arg for key in CARRIED_METADATA_KEYS for arg in (key, existing_column[key]))
         )
     )
     merged = func.coalesce(cast(new_metadata, JSONB), cast("{}", JSONB)).op("||")(kept)

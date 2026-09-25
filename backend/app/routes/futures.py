@@ -8888,7 +8888,18 @@ def _format_market_detail(
     reader_leader = (
         max(outcomes, key=lambda o: o.get("probability") or 0) if outcomes else None
     )
-    leader_name = reader_leader.get("name") if reader_leader else None
+    # #5531 — compared in the WRITER's vocabulary. The hook task stores the raw
+    # venue name (`outcomes[0].name`, e.g. Kalshi's "Los Angeles D"), while the
+    # served dict carries `repair_field_outcome_name`'s expansion ("Los Angeles
+    # Dodgers"), so rule 2 read every repaired leader as a leader CHANGE and
+    # withheld the sentence (production 62013557, 2026-09-25). Same outcome, by
+    # id, in the stored name; the reader's choice of leader is unchanged.
+    _raw_names = {o.id: o.name for o in sorted_outcomes}
+    leader_name = (
+        _raw_names.get(reader_leader.get("id"), reader_leader.get("name"))
+        if reader_leader
+        else None
+    )
     leader_probability = reader_leader.get("probability") if reader_leader else None
     hook_description = market.hook_description
     hook_withheld = bool(hook_description) and (
