@@ -103,11 +103,14 @@ final class CalibrationSourceTableGeometryTests: XCTestCase {
     /// it would fail silently: six short names all fit, and the guard below would go
     /// green having proved nothing. Asserted first, by the same route the table uses.
     func testTheFixtureCarriesTheNamesThatTruncated() throws {
-        let names = Set(try everySourceModel().sourceRows.map(\.name))
-        XCTAssertTrue(names.contains("Per-sportsbook (Odds API)"),
-                      "the longest source name is missing from the fixture; got \(names.sorted())")
-        XCTAssertTrue(names.contains("Spreads (Odds API)"))
-        XCTAssertTrue(names.contains("Totals (Odds API)"))
+        // #8485: the four Odds API keys are ONE provider row now; its name is the
+        // longest the label column holds, and the four shapes ride under it.
+        let rows = try everySourceModel().sourceRows
+        let names = Set(rows.map(\.name))
+        XCTAssertTrue(names.contains("Sportsbooks (Odds API)"),
+                      "the longest row name is missing from the fixture; got \(names.sorted())")
+        let members = try XCTUnwrap(rows.first { $0.source == "odds_api_family" }).memberNames
+        XCTAssertEqual(Set(members), ["Per-sportsbook", "Moneylines", "Spreads", "Totals"])
     }
 
     // MARK: - The way a measured column goes wrong

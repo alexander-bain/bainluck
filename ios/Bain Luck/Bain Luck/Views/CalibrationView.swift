@@ -322,8 +322,9 @@ struct CalibrationSurfaceView: View {
             }
             Text("n-weighted \u{00B7} per-bucket \(String(format: "%.1f", viewModel.cohortMCE))pp")
                 .font(.caption2).foregroundStyle(.tertiary)
-            if let ciLo = viewModel.data?.mceCiLower, let ciHi = viewModel.data?.mceCiUpper {
-                Text("95% CI: \(String(format: "%.1f", ciLo))\u{2013}\(String(format: "%.1f", ciHi))pp")
+            // #8485: only over the population it was bootstrapped on (web #7374).
+            if let ci = viewModel.cohortInterval {
+                Text("95% CI: \(String(format: "%.1f", ci.lower))\u{2013}\(String(format: "%.1f", ci.upper))pp")
                     .font(.caption2).foregroundStyle(.tertiary)
             }
             Text(viewModel.eceQualityLabel).font(.caption2.weight(.medium)).foregroundStyle(viewModel.eceColor(viewModel.cohortECE))
@@ -479,7 +480,7 @@ struct CalibrationSurfaceView: View {
         // maximum would read that pair as an arithmetic impossibility. Wording
         // tracks web's "How these rows are measured" note so the two surfaces
         // explain one number the same way.
-        return cardSection("Source Comparison", sub: "How each data source performs independently, sorted by ECE (n-weighted, the headline metric). Bucket averages the ten probability buckets with equal weight, so a tiny bucket counts as much as a huge one \u{2014} which is why it can read below ECE. Lower is better.") {
+        return cardSection("Source Comparison", sub: "How each data provider performs on its own, sorted by ECE (n-weighted, the headline metric). Bucket averages the ten probability buckets with equal weight, so a tiny bucket counts as much as a huge one \u{2014} which is why it can read below ECE. Lower is better.") {
             VStack(spacing: 0) {
                 HStack(spacing: 0) {
                     let header = CalibrationSourceTableGeometry.Header.self
@@ -543,9 +544,18 @@ struct CalibrationSurfaceView: View {
                 // line: it is the only one of the three that loses no
                 // information, and the uneven row height it costs is confined to
                 // the row that needed it.
-                Text(row.name)
-                    .lineLimit(CalibrationSourceTableGeometry.sourceNameLineLimit)
-                    .fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(row.name)
+                        .lineLimit(CalibrationSourceTableGeometry.sourceNameLineLimit)
+                        .fixedSize(horizontal: false, vertical: true)
+                    // #8485: the pooled members, so the one Sportsbooks row says
+                    // what it pooled — web's subtitle, same words.
+                    if !row.memberNames.isEmpty {
+                        Text(row.memberNames.joined(separator: " \u{00B7} "))
+                            .font(.caption2).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
             }.frame(maxWidth: .infinity, alignment: .leading)
             Text(fmtN(row.n)).frame(width: widths.n, alignment: .trailing).monospacedDigit()
             metricText(row.ece, "%.1f").frame(width: widths.ece, alignment: .trailing)
@@ -986,7 +996,7 @@ struct CalibrationSurfaceView: View {
         switch source {
         case "kalshi": return .green
         case "polymarket": return .purple
-        case "odds_api": return .blue
+        case "odds_api", "odds_api_family": return .blue
         default: return .teal
         }
     }

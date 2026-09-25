@@ -83,9 +83,12 @@ final class CalibrationAvailabilityTests: XCTestCase {
         static let sourceRows: [String: (n: Int, ece: Double, mce: Double, brier: Double)] = [
             "kalshi": (267_121, 1.0553928743902576, 1.1400000000000001, 0.16024782177365315),
             "polymarket": (82_189, 4.8175351932740389, 4.29, 0.14606055554879607),
-            "odds_api": (14_960, 1.3532018716577541, 1.1199999999999999, 0.21266273395721924),
-            "odds_api_spreads": (12_410, 0.64699435938759065, 11.029999999999999, 0.24745518130539887),
-            "odds_api_totals": (12_705, 1.1074065328610783, 16.4375, 0.24877779614325068),
+            // #8485: one row per PROVIDER, as web draws it. The three Odds API
+            // keys pool into this row (14,960 + 12,410 + 12,705), computed by the
+            // same independent script — which reproduces the kalshi row above to
+            // the digit. Its n and ECE equal `notApplicableN` / `notApplicableECE`,
+            // because in this payload the not-applicable cohort IS the family.
+            "odds_api_family": (40_075, 0.28600873362445417, 0.64, 0.23488646787273865),
         ]
     }
 
@@ -413,7 +416,7 @@ final class CalibrationAvailabilityTests: XCTestCase {
         // — measured rather than assumed. The excluded side is still named.
         XCTAssertEqual(
             vm.cohortDetail,
-            "Every outcome whose price real trading moved. Excluded: 100 outcomes whose "
+            "Every outcome whose price moved in real trading. Excluded: 100 outcomes whose "
                 + "price never moved off its opening line.")
         // ...and with no sportsbook rows the name drops the clause about them.
         XCTAssertEqual(vm.cohortHeadline, "Showing markets whose price moved (200)")
