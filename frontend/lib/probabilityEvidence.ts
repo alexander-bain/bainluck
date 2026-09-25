@@ -73,7 +73,7 @@ const PLACEHOLDER_PRONE_SOURCE = "polymarket";
  */
 export type WinProbabilitySourceEntry =
   | number
-  | { value?: number | null }
+  | { value?: number | null; evidence_status?: string | null; price_evidence?: string | null }
   | null
   | undefined;
 
@@ -143,16 +143,48 @@ export function hasProbabilitySourceReading(
 }
 
 /**
+ * The eligibility grade the server stamps beside a reading (CU-4, #5311).
+ * `probability_eligibility.VERIFIED` on the backend: the reading answers the
+ * right QUESTION. It says nothing about whether the price trades.
+ */
+const VERIFIED_EVIDENCE = "verified";
+
+/**
+ * The price grade `/api/events/{id}` stamps beside a Polymarket reading
+ * (`app/utils/price_evidence.py`, #8464): every market the reading cites had a
+ * two-sided book tighter than the feed's phantom spread, stored in the same
+ * write as the reading, bracketing it.
+ */
+const TRADEABLE_BOOK_EVIDENCE = "tradeable_book";
+
+/**
  * True when the ONLY evidence behind this event is an untraded Polymarket midpoint.
  *
  * Deliberately narrow. Two or more sources always pass, even if they average to
  * exactly 0.500 — agreement between independent sources IS evidence.
+ *
+ * #8464 — a lone 0.500 also passes when the server proves BOTH halves: the
+ * question (`evidence_status: "verified"`) and the price (`price_evidence:
+ * "tradeable_book"`). The question alone is not enough (CERT-3408): 15314872
+ * and 15316031 are verified 0.500s over 0.06/0.95 and 0.09/0.90 books nobody
+ * trades inside, and neither is its book's exact midpoint, so the write-side
+ * guards let them through. `/events/15316415` (Cubs @ Red Sox, 2026-09-25) is
+ * the pick'em that passes: 0.49/0.51, and the hero read "No price yet" over a
+ * chart drawing the same leg at 49%. A bare number (the `/api/feed` shape) or
+ * any entry missing either stamp is still judged by value.
  */
 export function isUntradedPlaceholder(sources: WinProbabilitySources): boolean {
   const values = readSourceValues(sources);
   if (values.length !== 1) return false;
   const [name, value] = values[0];
-  return name === PLACEHOLDER_PRONE_SOURCE && value === UNTRADED_MIDPOINT;
+  if (name !== PLACEHOLDER_PRONE_SOURCE || value !== UNTRADED_MIDPOINT) return false;
+  const entry = sources?.[name];
+  const proven =
+    !!entry &&
+    typeof entry === "object" &&
+    entry.evidence_status === VERIFIED_EVIDENCE &&
+    entry.price_evidence === TRADEABLE_BOOK_EVIDENCE;
+  return !proven;
 }
 
 /** Statuses this gate applies to. */

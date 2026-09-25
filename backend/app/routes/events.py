@@ -14666,6 +14666,24 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
         probability_sources=folded_sources,
     )
 
+    # #8464 / CERT-3408: `evidence_status` says the Polymarket reading answers
+    # the right QUESTION; `price_evidence` says whether its stored book could be
+    # traded. The page withholds a lone Polymarket 0.500 unless this reads
+    # `tradeable_book` — verified wide books (15314872, 15316031) stay withheld.
+    # Read-only, one indexed lookup, and only when the entry is served.
+    _served_pm = (response.get("win_probability_sources") or {}).get("polymarket")
+    if isinstance(_served_pm, dict) and folded_sources:
+        from app.utils.price_evidence import load_price_evidence
+
+        try:
+            _served_pm["price_evidence"] = await load_price_evidence(
+                db, folded_sources.get("polymarket")
+            )
+        except Exception:
+            logger.warning(
+                "price_evidence lookup failed for event %s", event.id, exc_info=True
+            )
+
     # Compute deterministic tags, then merge in stored LLM-enriched tags
     # (competitive_structure, stakes, narrative, audience) from background enrichment.
     from app.utils.event_taxonomy import LLM_ENRICHMENT_NAMESPACES
