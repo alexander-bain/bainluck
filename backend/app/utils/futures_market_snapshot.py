@@ -1069,6 +1069,44 @@ def dated_movement_basis(market: Any) -> dict:
     return bank
 
 
+#: The `market_metadata` key the sweep lists UNPRICED OPENINGS under (#8612):
+#: the outcome ids whose `opening_probability` was captured on a book that could
+#: not price it (spread at or over `FEED_PHANTOM_MIN_SPREAD`, or one side empty).
+#:
+#: Specimen, 2026-09-25: "Kanye West performs in Russia by October 31: 8%
+#: chance, down 86.3 points since Aug 19". The 0.94 opening was stored off a
+#: 16c/96c book; nothing ever traded at 94. Same class as #8594's "today"
+#: basis, on the lifetime baseline instead.
+#:
+#: A LIST OF THE REFUSED, not a verdict per leg, for the reason
+#: `withheld_outcome_ids` is one: this rides the size-capped shared artifact,
+#: and most legs have nothing to say. Absent means NOT JUDGED and refuses
+#: nothing — today's behaviour — so a sweep that has not reached a market yet,
+#: or has stopped, cannot silence a card that was right.
+UNPRICED_OPENING_METADATA_KEY = "unpriced_opening_ids"
+
+
+def unpriced_opening_ids(market: Any) -> frozenset[int]:
+    """The outcome ids whose opening a card may not measure a move from.
+
+    Read through `__dict__` for `dated_movement_basis`'s reason (a deferred
+    attribute lazy-loads on the async path, gotcha #42), and every unreadable
+    shape folds to the empty set, which refuses nothing.
+    """
+    state = _instance_dict(market)
+    if state is None:
+        return frozenset()
+    metadata = state.get("market_metadata")
+    if not isinstance(metadata, dict):
+        return frozenset()
+    listed = metadata.get(UNPRICED_OPENING_METADATA_KEY)
+    if not isinstance(listed, list):
+        return frozenset()
+    return frozenset(
+        v for v in listed if isinstance(v, int) and not isinstance(v, bool)
+    )
+
+
 def read_dated_basis_entry(entry: Any) -> tuple[float | None, datetime | None]:
     """One bank cell as `(price, observed_at)`, or `(None, None)`.
 

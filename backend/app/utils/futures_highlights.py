@@ -501,6 +501,11 @@ PRIMARY_REASON_LABELS: list[tuple[str, str]] = [
 MAJOR_MOVEMENT_THRESHOLD = 0.05  # 5% change in 24h
 MODERATE_MOVEMENT_THRESHOLD = 0.02  # 2% change
 SOURCE_DIVERGENCE_THRESHOLD = 0.05  # 5% disagreement between sources
+# Surprise = distance from the OPENING price. The moderate rung is the smallest
+# lifetime move a card can score or state; named so the sweep that vets the
+# opening (`update_max_movement`, #8612) judges exactly the legs that can reach it.
+MAJOR_SURPRISE_THRESHOLD = 0.20
+MODERATE_SURPRISE_THRESHOLD = 0.10
 # #235 Item 2: a near-0% outcome ticking a few tenths of a point (a single thin
 # trade on a placeholder nominee — e.g. "Gigi Hadid 0.35% +0.3%") is NOT a story.
 # An outcome must clear this absolute-probability floor before it can headline as
@@ -1067,10 +1072,10 @@ def compute_futures_highlight(
             current = o.get("probability")
             if opening is not None and current is not None:
                 max_surprise = max(max_surprise, abs(current - opening))
-        if max_surprise >= 0.20:
+        if max_surprise >= MAJOR_SURPRISE_THRESHOLD:
             result.score += 10
             result.reasons.append("major_surprise")
-        elif max_surprise >= 0.10:
+        elif max_surprise >= MODERATE_SURPRISE_THRESHOLD:
             result.score += 5
             result.reasons.append("moderate_surprise")
 

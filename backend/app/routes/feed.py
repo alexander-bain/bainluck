@@ -152,6 +152,7 @@ from app.utils.futures_highlights import (
     # sweep and the copy layer must not drift into three answers about which
     # moves a reader may be told about.
     MODERATE_MOVEMENT_THRESHOLD,
+    MODERATE_SURPRISE_THRESHOLD,
     MOVER_MIN_PROBABILITY,
     SPORTS_CATEGORY_BASE,
 )
@@ -6348,6 +6349,7 @@ from app.utils.futures_market_snapshot import (
     CARD_PRICE_AGE_LEG_COUNT,
     dated_movement_points,
     opening_baseline_stamp,
+    unpriced_opening_ids,
     price_poll_stamp as _price_poll_stamp,
     displayed_price_stamp as _displayed_price_stamp,
     outcome_observed_at as _outcome_observed_at,
@@ -7707,14 +7709,29 @@ def _biggest_move_from_opening(
     is the answer, by construction and not by tie-break.
     (`top_mover_change` reaches the same composer with the same blindness on the
     "today" branch, which IS live — filed separately, not repaired here.)
+
+    🔴 #8612 — AN OPENING THAT WAS NEVER A PRICE IS NO BASELINE. "Kanye West
+    performs in Russia by October 31: 8% chance, down 86.3 points since Aug 19"
+    measured from a 0.94 stored off a 16c/96c book. `update_max_movement`
+    lists such legs in `unpriced_opening_ids`, and a listed leg has no lifetime
+    move here, so the copy falls through to what it says about a leg with no
+    opening. Only the SENTENCE's subject is refused: the surprise score and the
+    settled filters still read `opening_probability`, deliberately, because
+    changing what page one ranks is a different ship.
+
+    On a board that refusal can hand the sentence to a smaller mover while the
+    `*_surprise` reason that licenses it was raised by the refused leg. So once
+    anything is refused, the next leg must itself clear the moderate surprise
+    rung — the guarantee the biggest mover used to give by being the biggest.
     """
     opened_at: datetime | None = opening_baseline_stamp(market) if market else None
+    refused = unpriced_opening_ids(market) if market is not None else frozenset()
 
     affirmative = binary_affirmative_outcome(outcomes_data)
     if affirmative is not None:
         opening = affirmative.get("opening_probability")
         current = affirmative.get("probability")
-        if opening is None or current is None:
+        if opening is None or current is None or affirmative.get("id") in refused:
             return affirmative.get("name"), None, opened_at
         return affirmative.get("name"), current - opening, opened_at
 
@@ -7723,9 +7740,11 @@ def _biggest_move_from_opening(
     for outcome in outcomes_data:
         opening = outcome.get("opening_probability")
         current = outcome.get("probability")
-        if opening is None or current is None:
+        if opening is None or current is None or outcome.get("id") in refused:
             continue
         move = current - opening
+        if refused and abs(move) < MODERATE_SURPRISE_THRESHOLD:
+            continue
         if change is None or abs(move) > abs(change):
             name = outcome.get("name")
             change = move
