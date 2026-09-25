@@ -27,6 +27,7 @@ from app.utils.odds_math import (
     favorite_from_pair,
     h2h_pair_on_the_full_board,
     project_scores,
+    sportsbook_spread_is_a_margin,
 )
 from app.utils.book_consensus import median_invents_its_answer
 from app.utils.name_normalization import names_match, normalize_name
@@ -491,7 +492,12 @@ def _snapshots_are_equal(existing: OddsSnapshot, new_values: dict) -> bool:
         eq(existing.away_moneyline, new_values.get("away_moneyline")) and
         eq(existing.home_spread, new_values.get("home_spread")) and
         eq(existing.over_under, new_values.get("over_under")) and
-        eq(existing.home_win_probability, new_values.get("home_win_probability"))
+        eq(existing.home_win_probability, new_values.get("home_win_probability")) and
+        # The projected pair is a function of spread + total everywhere except
+        # where #8617 refuses it, so it adds no rows elsewhere; without it a
+        # baseball book with unmoved prices keeps its run-line projection.
+        eq(existing.projected_home_score, new_values.get("projected_home_score")) and
+        eq(existing.projected_away_score, new_values.get("projected_away_score"))
     )
 
 
@@ -621,8 +627,13 @@ def _parse_snapshot_values(bookmaker: dict, event_data: dict) -> dict:
             values["over_odds"] = over_outcome.get("price")
             values["under_odds"] = under_outcome.get("price")
 
-    # Calculate projected scores
-    if values["home_spread"] is not None and values["over_under"]:
+    # Calculate projected scores. A baseball run line is a fixed ±1.5
+    # handicap, not a margin, so it projects nothing (#8617).
+    if (
+        values["home_spread"] is not None
+        and values["over_under"]
+        and sportsbook_spread_is_a_margin(event_data.get("sport_key"))
+    ):
         home_score, away_score = project_scores(
             float(values["home_spread"]),
             float(values["over_under"]),

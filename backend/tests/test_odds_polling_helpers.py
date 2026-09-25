@@ -96,6 +96,8 @@ def _make_snapshot(**kwargs):
         "home_spread": -3.5,
         "over_under": 210.5,
         "home_win_probability": 0.6,
+        "projected_home_score": None,
+        "projected_away_score": None,
     }
     defaults.update(kwargs)
     return SimpleNamespace(**defaults)
