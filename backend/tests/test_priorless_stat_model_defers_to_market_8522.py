@@ -315,7 +315,7 @@ def test_the_odds_poll_writer_asks_the_same_rule_before_the_model_8522():
     src = inspect.getsource(odds_polling)
     ask = src.index("if priorless_model_defers_to_market(")
     model = src.index("stat_wp = compute_statistical_win_prob(")
-    spread = src.rindex("pregame_spread = float(event_obj.opening_home_spread)", 0, ask)
+    spread = src.rindex("pregame_spread = model_pregame_spread(", 0, ask)  # #8613
     assert spread < ask < model
     call = src[ask:model]
     assert "pregame_spread" in call
