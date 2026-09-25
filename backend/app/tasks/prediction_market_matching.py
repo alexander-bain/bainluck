@@ -11,11 +11,12 @@ Runs after Kalshi (:45) and Polymarket (:15) polling to pick up fresh data.
 """
 
 import logging
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
-from sqlalchemy import select, or_, and_, func, delete, case, update, text, bindparam
+from sqlalchemy import select, or_, and_, func, delete, case, update, text, bindparam, String
 from sqlalchemy.orm import joinedload
 from sqlalchemy.orm.attributes import set_committed_value
 
@@ -6835,6 +6836,23 @@ async def _find_matching_event(
     if result:
         return result
 
+    # ── Pass 1b (#8440): the venue's names EXTEND ours ─────────────────
+    extension_candidates = await _venue_name_extension_candidates(
+        session, matchup, market, past_cutoff,
+    )
+    if receipt is not None:
+        receipt.detail["venue_name_extension_candidates"] = len(extension_candidates)
+    result = _score_candidates(
+        extension_candidates, matchup, market, now, scoring_ref, receipt=receipt
+    )
+    if result:
+        logger.info(
+            "Venue-name-extension matched %s '%s' → event %d (%s vs %s)",
+            market.source, market.name, result["event_id"],
+            result["home_team"], result["away_team"],
+        )
+        return result
+
     # ── Pass 2: Broad fallback (no time window) ──────────────────────
     # Only when we have BOTH team names (strong signal) and Pass 1 found nothing.
     # This handles Polymarket (commence_time = market creation date) and
@@ -6880,6 +6898,108 @@ async def _find_matching_event(
         )
 
     return None
+
+
+#: #8440 — how far from the venue's own game instant an extension candidate may
+#: start. The ±3h doubleheader-separating number `_find_matching_event` already
+#: uses for a timed ticker: the venue stamp is exact, so the real row sits on it.
+VENUE_NAME_EXTENSION_WINDOW = timedelta(hours=3)
+
+#: A stored name shorter than this is never read as a prefix ("JYP", "TPS" and
+#: "HIFK" are real Liiga rows; two letters is an initial, not a club).
+VENUE_NAME_EXTENSION_MIN_CHARS = 3
+
+def fold_team_name(value: str | None) -> str:
+    """Lower-case, accent-free, single-spaced — the venue half of #8440's test."""
+    if not value:
+        return ""
+    decomposed = unicodedata.normalize("NFKD", value.lower())
+    stripped = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+    return " ".join(stripped.split())
+
+
+# Postgres has no unaccent here, so the stored side is folded with translate();
+# the venue side is folded in Python with NFKD. The translate map is DERIVED
+# from that same fold, one character at a time, so the two sides cannot drift
+# (a hand-typed map was off by two by the fourth vowel). Letters NFKD does not
+# decompose ("ø", "ł") are left out of both: a miss costs a candidate, it can
+# never invent one.
+_FOLD_FROM = "àáâãäåāçćčèéêëēěìíîïīñńòóôõöōùúûüūýÿšž"
+_FOLD_TO = "".join(fold_team_name(ch) for ch in _FOLD_FROM)
+
+
+def _stored_name_is_word_prefix_of(venue_name: str, column):
+    """``column`` is ``venue_name`` or a whole-word prefix of it.
+
+    "Lukko" of "Lukko Rauma", "Getafe" of "Getafe CF" — never "Rauma" of it,
+    and never "Luk". The trailing space on both sides is the word boundary.
+    """
+    folded_column = func.translate(func.lower(column), _FOLD_FROM, _FOLD_TO)
+    return and_(
+        func.length(column) >= VENUE_NAME_EXTENSION_MIN_CHARS,
+        func.strpos(
+            bindparam(None, fold_team_name(venue_name) + " ", type_=String),
+            folded_column + " ",
+        ) == 1,
+    )
+
+
+async def _venue_name_extension_candidates(session, matchup, market, past_cutoff):
+    """#8440 — rows a Polymarket game market's ILIKE cannot reach.
+
+    Polymarket names a Liiga club with its city appended — "Lukko Rauma vs.
+    Tappara Tampere" — where the sportsbook row we already hold says "Lukko" v
+    "Tappara". The windowed search looks for ``%Lukko Rauma%`` and ``%Rauma%``;
+    neither is inside "Lukko", so the candidate list came back empty and the
+    market minted a second row for the game. Search showed both cards, one
+    "No result reported", one "Lukko Rauma wins" (production 2026-09-24, events
+    15317756 / 15317914). Same shape for La Liga's "Getafe CF" against our
+    "Getafe": 14 Liiga + 3 La Liga PM-minted twins in 10 days, every one of them
+    minted AFTER the sportsbook row existed.
+
+    The reverse test — OUR name is a whole-word prefix of THE VENUE's — reaches
+    them, and it is kept narrow on purpose: Polymarket only, two named sides,
+    BOTH sides must pass, and only within ``VENUE_NAME_EXTENSION_WINDOW`` of the
+    venue's own game instant. What comes back still goes through the unchanged
+    ``_score_candidates`` gate (fuzzy name match on both sides, orientation,
+    sport) — this widens what is LOOKED AT, never what is accepted.
+    """
+    from app.models.models import Event
+
+    if getattr(market, "source", None) != "polymarket" or not matchup.team_b:
+        return []
+    venue_start = venue_game_start(market)
+    if venue_start is None:
+        return []
+
+    a, b = matchup.team_a, matchup.team_b
+    event_result = await session.execute(
+        select(Event)
+        .options(joinedload(Event.sport))
+        .where(
+            or_(
+                and_(
+                    _stored_name_is_word_prefix_of(a, Event.home_team_name),
+                    _stored_name_is_word_prefix_of(b, Event.away_team_name),
+                ),
+                and_(
+                    _stored_name_is_word_prefix_of(a, Event.away_team_name),
+                    _stored_name_is_word_prefix_of(b, Event.home_team_name),
+                ),
+            ),
+            Event.commence_time.between(
+                venue_start - VENUE_NAME_EXTENSION_WINDOW,
+                venue_start + VENUE_NAME_EXTENSION_WINDOW,
+            ),
+            or_(
+                Event.status.in_(["scheduled", "live"]),
+                Event.commence_time >= past_cutoff,
+            ),
+        )
+        .order_by(Event.commence_time)
+        .limit(20)
+    )
+    return event_result.scalars().unique().all()
 
 
 def _row_coverage(

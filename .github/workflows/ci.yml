@@ -755,6 +755,19 @@ jobs:
             exit 1
           fi
 
+      - name: "#8440 a Polymarket game reaches the sportsbook row its names extend (real Postgres)"
+        # "Lukko Rauma" must reach our "Lukko" and never "Rauma" or "Luk": a
+        # folded, space-terminated `strpos` plus `translate` for the accents,
+        # windowed on the venue stamp — SQL only a server runs. Same skip detection.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_pm_venue_name_extension_8440_pg.py \
+            -v -rs 2>&1 | tee /tmp/pmext8440.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/pmext8440.txt; then
+            echo "::error::#8440 venue-name-extension gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#2772 illegal settled tennis score recall (real Postgres)"
         # The arm withdraws a SCORE from a settled row, and its judgement — can
         # a completed tennis match have ended on this set count — is a rule
