@@ -1098,9 +1098,11 @@ _SCALE_RULING = (
 #                      suppression fail.
 #   test_7c / test_7d  NEW: the null-movement pin moves to an exclusive=True 1.40
 #                      fixture, which the card still normalizes and the page still
-#                      squeezes. Each surface keeps its EXISTING rounding:
+#                      squeezes. Both surfaces round ONCE, to 4dp (#7586
+#                      exclusive remainder — the page used to round the percent
+#                      to 1dp and the client rounded it again, 64/65 on x.5 legs):
 #                        feed    0.60 / 1.40 rounded to 4dp      -> .4286
-#                        detail  politics rounds the percent to 1dp -> .429
+#                        detail  the same 4dp                    -> .4286
 #                      both render 43%. Movement is PRESENT AND NULL on all four
 #                      feed readers AND detail (futures.py clears
 #                      probability_change_24h after it normalizes).
@@ -1116,7 +1118,7 @@ _SPORTS_QUESTION = "SYNTHETIC — Which Harbor League clubs sign a marquee free 
 #: independently pinned per-surface values for the 0.60 / 0.50 / 0.30 field
 _RAW_PRICE = 0.60
 _FEED_SQUEEZED = 0.4286   # 0.60 / 1.40 = 0.428571..., feed rounds the fraction to 4dp
-_DETAIL_SQUEEZED = 0.429  # 42.857% -> 42.9% (politics rounds the percent to 1dp)
+_DETAIL_SQUEEZED = 0.4286  # #7586: detail rounds once at the card's 4dp (was 1dp of a percent, .429)
 _SQUEEZED_PERCENT = 43
 _ROUNDING_TOL = 1e-6      # the pins above ARE the rounded values; only float noise
 
@@ -1266,8 +1268,8 @@ def test_7c_display_normalized_card_and_page_serve_no_movement():
     #8224's 1.60 ceiling, so the card divides AND the page squeezes.
 
       feed.top_outcomes / distribution_outcomes   probability .4286   movement null
-      detail.outcomes                             probability .429    change null
-      (existing per-surface rounding; both render 43%)
+      detail.outcomes                             probability .4286   change null
+      (both round once at 4dp since #7586's exclusive remainder; both render 43%)
     """
     s = _arun(_seed([M("scalex", _INDEPENDENT_QUESTION, "entertainment", _studio_legs(),
                        exclusive=True)]))
