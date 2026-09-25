@@ -411,7 +411,11 @@ def normalize_display_probs(
     # with. `any` is the right quantifier — one moved row is one false comparison.
     before = [o.get(key) for o in outcomes]
     pct = [{"p": (o.get(key) or 0) * 100} for o in outcomes]
-    _normalize_outcome_probs(pct, key="p")
+    # #7586: two decimals of a percent is the feed card's `round(p / sum, 4)`.
+    # The politics default of one decimal is a SECOND rounding the client then
+    # rounds again — 0.88/1.365 = .64469 served as .645 printed 65 beside the
+    # card's 64 for the same leg.
+    _normalize_outcome_probs(pct, key="p", decimals=2)
     for o, scaled in zip(outcomes, pct):
         if o.get(key):
             o[key] = round(scaled["p"] / 100, 4)

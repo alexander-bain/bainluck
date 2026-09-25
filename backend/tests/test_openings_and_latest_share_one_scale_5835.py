@@ -135,7 +135,7 @@ class TestTheSerializerWithholdsWhatItCannotCompare:
     def test_the_squeezed_field_still_serves_its_current_prices(self):
         """The withhold is about the opening column only."""
         detail = _detail(_market(OSCAR_ANIMATED_CURRENT, OSCAR_ANIMATED_OPENING))
-        assert [o["probability"] for o in detail["outcomes"]][:2] == [0.605, 0.327]
+        assert [o["probability"] for o in detail["outcomes"]][:2] == [0.6046, 0.3268]
 
 
 class TestTheOtherDirection:
@@ -216,7 +216,7 @@ class TestTheNormalizerReportsWhatItDid:
     def test_it_reports_true_when_it_squeezes(self):
         outcomes = [{"probability": p} for p in OSCAR_ANIMATED_CURRENT]
         assert normalize_display_probs(outcomes) is True
-        assert outcomes[0]["probability"] == 0.605
+        assert outcomes[0]["probability"] == 0.6046
 
     def test_it_reports_false_for_a_non_exclusive_family(self):
         outcomes = [{"probability": p} for p in (0.86, 0.80, 0.75)]
@@ -247,19 +247,22 @@ class TestTheNormalizerReportsWhatItDid:
         assert normalize_display_probs(outcomes) is False
         assert all(o["probability"] == 0.0 for o in outcomes)
 
-    def test_the_squeeze_rounds_on_the_percent_scale_and_can_zero_a_longshot(self):
-        """The reader-visible coarseness of the shared normalizer, pinned.
+    def test_the_squeeze_rounds_at_the_cards_precision_and_keeps_a_longshot(self):
+        """The reader-visible precision of the shared normalizer, pinned.
 
-        `_normalize_outcome_probs` rounds to ONE decimal as a percentage before
-        this function converts back, so 0.925 in a 1.53 field prints 0.605 and
-        not 0.6046 — and a 0.0005 longshot in a squeezed field collapses to 0.
-        Not this ship's to change; pinned so a later change to that rounding
-        cannot pass unnoticed through the return value above.
+        #5835 pinned the old coarseness here as a tripwire, and #7586 is the
+        change it was waiting for. `_normalize_outcome_probs` used to round to ONE
+        decimal of a percent, so 0.925 in a 1.53 field served 0.605 and the
+        client rounded that a second time; beside a Discover card that serves
+        `round(0.925 / 1.53, 4)` = 0.6046 the page could print one point higher
+        (0.88/1.365: card 64, page 65). This function now asks for two decimals
+        of a percent, which is the card's four decimals on 0-1 — and a 0.0005
+        longshot in a squeezed field no longer collapses to 0.
         """
         outcomes = [{"probability": 1.06}] + [{"probability": 0.0005}] * 10
         assert normalize_display_probs(outcomes) is True
-        assert outcomes[0]["probability"] == 0.995
-        assert outcomes[1]["probability"] == 0.0
+        assert outcomes[0]["probability"] == 0.9953
+        assert outcomes[1]["probability"] == 0.0005
 
     def test_it_reports_a_move_that_leaves_the_FIELD_SUM_untouched(self, monkeypatch):
         """The measurement is per ROW, because the reader's comparison is per row.
@@ -278,7 +281,7 @@ class TestTheNormalizerReportsWhatItDid:
         """
         import app.routes.politics as politics
 
-        def _permute(outcomes, key="prob"):
+        def _permute(outcomes, key="prob", **_kwargs):
             values = [o[key] for o in outcomes]
             for o, v in zip(outcomes, reversed(values)):
                 o[key] = v
@@ -295,4 +298,4 @@ class TestTheNormalizerReportsWhatItDid:
         """Six concept adapters call this for its side effect and ignore it."""
         outcomes = [{"probability": p} for p in OSCAR_ANIMATED_CURRENT]
         normalize_display_probs(outcomes)
-        assert [o["probability"] for o in outcomes][:2] == [0.605, 0.327]
+        assert [o["probability"] for o in outcomes][:2] == [0.6046, 0.3268]

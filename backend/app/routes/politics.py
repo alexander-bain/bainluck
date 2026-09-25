@@ -288,7 +288,9 @@ def _detect_party(name: str, fallback: str = "") -> str:
 # ---------------------------------------------------------------------------
 
 
-def _normalize_outcome_probs(outcomes: list[dict], key: str = "prob") -> None:
+def _normalize_outcome_probs(
+    outcomes: list[dict], key: str = "prob", *, decimals: int = 1
+) -> None:
     """Normalize probabilities in-place when independent binary markets sum > 105%.
 
     Kalshi/Polymarket create separate "Will X win?" binary markets for each
@@ -303,12 +305,19 @@ def _normalize_outcome_probs(outcomes: list[dict], key: str = "prob") -> None:
     gates on FuturesMarket.mutually_exclusive so this never runs on those.
 
     See also: feed.py BR27 fix for the same class of bug on the Discover feed.
+
+    ``decimals`` (#7586) is the precision of the written PERCENT. ``/politics``
+    prints this column itself and keeps its one decimal. A caller that hands the
+    value on to a client which rounds it AGAIN must not take the one decimal:
+    0.88 / 1.365 is 64.47%, the one-decimal write says 64.5, and the client's
+    half-up rounds that to 65 beside a card that prints 64 off the same leg.
+    ``normalize_display_probs`` passes 2, i.e. the feed card's 4dp on 0-1.
     """
     prob_sum = sum(o.get(key, 0) or 0 for o in outcomes)
     if prob_sum > 105:  # 105% threshold (same as feed.py's 1.05 on 0-1 scale)
         for o in outcomes:
             if o.get(key):
-                o[key] = round(o[key] / prob_sum * 100, 1)
+                o[key] = round(o[key] / prob_sum * 100, decimals)
 
 
 def _market_row(market: FuturesMarket, *, now: datetime) -> dict | None:
