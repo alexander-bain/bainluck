@@ -21,6 +21,7 @@ import { PREMATCH_SAID, prematchReading } from "@/lib/prematchReading";
 import { teamCrestInitials, teamShortNames } from "@/lib/teamShortName";
 import { formatFinishedGameLabel, formatLiveClockLabel } from "@/lib/gameTimeLabel";
 import type { HostCue } from "@/lib/sameFixtureHostCue";
+import { providerGameNumber } from "@/lib/teamGames";
 import { PinIcon } from "@/components/PinButton";
 import {
   hasNoReportedResult,
@@ -210,6 +211,7 @@ export default function EventCard({
   hostCue = null,
 }: EventCardProps) {
   const { trackEventCardClick } = useAnalytics();
+  const gameNumber = providerGameNumber(event);
 
   // Handle pin button click (prevent navigation)
   const handlePinClick = (e: React.MouseEvent) => {
@@ -590,7 +592,7 @@ export default function EventCard({
       onClick={handleCardClick}
       live={isLive}
       finished={isFinished}
-      ariaLabel={`${event.away_team} at ${event.home_team}${isLive ? " - Live" : isFinished ? " - Final" : ""}`}
+      ariaLabel={`${event.away_team} at ${event.home_team}${gameNumber !== null ? ` - Game ${gameNumber}` : ""}${isLive ? " - Live" : isFinished ? " - Final" : ""}`}
       style={teamColorStyle(
         event.home_team_data?.primary_color,
         event.away_team_data?.primary_color,
@@ -629,6 +631,24 @@ export default function EventCard({
                   data-host={hostCue.name}
                 >
                   at {hostCue.label}
+                </span>
+              )}
+              {/* #8515 — WHICH GAME OF A DOUBLEHEADER. Two cards with the same
+                  clubs on the same day, told apart only by a start time, read
+                  as one game shown twice (Cubs@Red Sox, 9/25). Printed ONLY when
+                  the provider itself says doubleheader + game N — never from a
+                  same-teams-same-day pair, which is also exactly what a
+                  duplicate row looks like (#2866). Same mark type and the same
+                  survive-390px rule as the host cue beside it. Unlike the host
+                  cue this one IS announced (aria-label), because the shell's
+                  label is identical on both halves of a doubleheader. */}
+              {gameNumber !== null && (
+                <span
+                  className="text-micro-xs text-text-muted whitespace-nowrap flex-shrink-0"
+                  data-testid="event-card-game-number"
+                  data-game-number={gameNumber}
+                >
+                  Game {gameNumber}
                 </span>
               )}
               {highlightLabel && !isLive && (

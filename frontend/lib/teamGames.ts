@@ -122,15 +122,31 @@ export function assignGameNumbers(
 ): Record<number, number> {
   const out: Record<number, number> = {};
   for (const g of games) {
-    if (g.doubleheader !== true) continue;
-    const n = g.game_number;
-    // A number is required, and it must be a real 1-based ordinal. `0`, a
-    // non-integer and a NaN are all "the authority did not actually say"; a
-    // chip reading `G0` would be the same confident lie in a new font.
-    if (typeof n !== "number" || !Number.isInteger(n) || n < 1) continue;
-    out[g.id] = n;
+    const n = providerGameNumber(g);
+    if (n !== null) out[g.id] = n;
   }
   return out;
+}
+
+/**
+ * One row's provider-vouched doubleheader game number, or null (#2866, #8515).
+ *
+ * The single definition behind both the team page's G-chip and the shared
+ * event card's "Game N" mark, so the two surfaces cannot disagree about which
+ * rows are a doubleheader. A card sees only its own row, which is enough: the
+ * provider's `doubleheader` + `game_number` are per-row facts, and a list-level
+ * rule is exactly the same-teams-same-day inference this refuses to make.
+ */
+export function providerGameNumber(
+  g: { doubleheader?: boolean | null; game_number?: number | null },
+): number | null {
+  if (g.doubleheader !== true) return null;
+  const n = g.game_number;
+  // A number is required, and it must be a real 1-based ordinal. `0`, a
+  // non-integer and a NaN are all "the authority did not actually say"; a
+  // chip reading `G0` would be the same confident lie in a new font.
+  if (typeof n !== "number" || !Number.isInteger(n) || n < 1) return null;
+  return n;
 }
 
 /**

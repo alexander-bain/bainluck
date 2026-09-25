@@ -1953,6 +1953,10 @@ export interface LeagueGameBrief {
   // @see Event.venue_settled for what the result string is and is not.
   venue_settled?: boolean;
   venue_settled_result?: string | null;
+  // ── #8515 ── the provider's doubleheader flag + game number, same names as
+  // `TeamGameBrief` and `Event`. @see Event.doubleheader
+  doubleheader?: boolean | null;
+  game_number?: number | null;
 }
 
 export interface LeagueFuturesResponse {

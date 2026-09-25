@@ -365,6 +365,16 @@ export interface Event {
   venue_settled?: boolean;
   /** @see Event.venue_settled */
   venue_settled_result?: string | null;
+  /**
+   * #8515 — the provider's own doubleheader flag and 1-based game number (MLB
+   * Stats API `doubleHeader` / `gameNumber`), under the names
+   * `TeamGameBrief` already declares. Read through `providerGameNumber` and
+   * nowhere else. Optional and they stay optional: absent means "we do not
+   * know", never "not a doubleheader", and nothing may infer them from two
+   * rows sharing teams and a day (#2866).
+   */
+  doubleheader?: boolean | null;
+  game_number?: number | null;
 }
 
 export interface EventsResponse {
