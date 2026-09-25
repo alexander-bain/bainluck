@@ -2218,19 +2218,50 @@ struct OddsChartView: View {
 
     // MARK: - Game State Enrichment
 
+    /// One observation of game state, from either series that observes it.
+    /// `rank` breaks a timestamp tie: a `score_history` row (0) is folded
+    /// before an ESPN row (1), so a score sighting replaces an ESPN score only
+    /// when it is strictly newer — the web's `foldScoreObservations` rule.
+    private struct ObservedStateRow {
+        let date: Date
+        let rank: Int
+        let homeScore: Int?
+        let awayScore: Int?
+        let period: String?
+        let clock: String?
+    }
+
     /// Enrich chart data points with game state (score, period, clock, scoring play)
-    /// by matching against ESPN history and scoring plays, then forward-filling.
+    /// by matching against ESPN history, the served score history and scoring
+    /// plays, then forward-filling.
     /// Static and internal (was a private instance method) so #925's dating of
     /// carried state can be pinned on the exact shape it runs on.
     static func enrichWithGameState(_ points: [ChartDataPoint], history: EventHistoryResponse) -> [ChartDataPoint] {
-        // Build time-indexed lookups from ESPN history
-        var espnByTime: [(date: Date, point: ESPNHistoryPoint)] = []
+        // Build one time-indexed lookup of every state observation.
+        //
+        // #8565 — `score_history` is a score observation like an ESPN row,
+        // dated by its own timestamp. Since #8501 the server stamps each scoring
+        // play at the FIRST served sighting of its post-play score across BOTH
+        // series; reading ESPN alone left a play stamped from `score_history`
+        // on a point still carrying the score from before it (15315984: the
+        // 17–34 touchdown at 03:28:17 beside 17–27, ESPN uncaptured between
+        // 03:27:17 and 03:31:17). Same contract as the web (`lib/chartGameState.ts`).
+        var stateRows: [ObservedStateRow] = []
         for ep in history.espnHistory ?? [] {
             if let date = ep.timestamp.asDate {
-                espnByTime.append((date, ep))
+                stateRows.append(ObservedStateRow(
+                    date: date, rank: 1, homeScore: ep.homeScore, awayScore: ep.awayScore,
+                    period: ep.period, clock: ep.gameClock))
             }
         }
-        espnByTime.sort { $0.date < $1.date }
+        for sh in history.scoreHistory ?? [] {
+            if let date = sh.timestamp.asDate {
+                stateRows.append(ObservedStateRow(
+                    date: date, rank: 0, homeScore: sh.homeScore, awayScore: sh.awayScore,
+                    period: nil, clock: nil))
+            }
+        }
+        stateRows.sort { ($0.date, $0.rank) < ($1.date, $1.rank) }
 
         // Build scoring plays lookup
         var playsByTime: [(date: Date, play: ScoringPlay)] = []
@@ -2256,9 +2287,11 @@ struct OddsChartView: View {
         var lastPeriodObservedAt: Date?
         var lastClockObservedAt: Date?
         var lastScoreObservedAt: Date?
-        /// Cursor into `espnByTime`: every row strictly before the current
+        /// Cursor into `stateRows`: every row strictly before the current
         /// point's cutoff has already been folded into the accumulators above.
-        var espnIdx = 0
+        var rowIdx = 0
+        /// #8565 — indices into `playsByTime` some point has already seen.
+        var attachedPlays = Set<Int>()
 
         for i in sorted.indices {
             let pointDate = sorted[i].date
@@ -2276,7 +2309,7 @@ struct OddsChartView: View {
             // EVERY row this point may read, not just the newest one. The three
             // `last*` values above are ACCUMULATORS — each field keeps the last
             // row that actually carried it — so every row has to be walked for
-            // them to accumulate. Sampling only `espnByTime.last(where:)` reads
+            // them to accumulate. Sampling only `stateRows.last(where:)` reads
             // one row per point and silently drops every row that falls BETWEEN
             // two points, which is most of them: prices are sparser than ESPN
             // rows, and the rows that go missing are exactly the ones this ship
@@ -2285,22 +2318,22 @@ struct OddsChartView: View {
             // reader got NO half-inning at all rather than a dated one).
             // Points and rows are both sorted ascending and `cutoff` rises with
             // them, so one cursor over the rows visits each exactly once.
-            while espnIdx < espnByTime.count, espnByTime[espnIdx].date < cutoff {
-                let row = espnByTime[espnIdx]
-                if let hs = row.point.homeScore {
-                    lastScore = (hs, row.point.awayScore ?? lastScore?.away ?? 0)
+            while rowIdx < stateRows.count, stateRows[rowIdx].date < cutoff {
+                let row = stateRows[rowIdx]
+                if let hs = row.homeScore {
+                    lastScore = (hs, row.awayScore ?? lastScore?.away ?? 0)
                     // A row that REPEATS the score is still an observation of it.
                     lastScoreObservedAt = row.date
                 }
-                if let p = row.point.period, !p.isEmpty {
+                if let p = row.period, !p.isEmpty {
                     lastPeriod = p
                     lastPeriodObservedAt = row.date
                 }
-                if let c = row.point.gameClock, !c.isEmpty {
+                if let c = row.clock, !c.isEmpty {
                     lastClock = c
                     lastClockObservedAt = row.date
                 }
-                espnIdx += 1
+                rowIdx += 1
             }
 
             // Forward-fill game state, each field dated by the row that saw IT.
@@ -2315,10 +2348,29 @@ struct OddsChartView: View {
             sorted[i].clockApprox = Self.carriedStateIsApproximate(pointDate: pointDate, observedAt: sorted[i].clockObservedAt)
             sorted[i].scoreApprox = Self.carriedStateIsApproximate(pointDate: pointDate, observedAt: sorted[i].scoreObservedAt)
 
-            // Check for scoring play at this timestamp (within 60s)
-            sorted[i].scoringPlay = playsByTime.first(where: {
-                abs($0.date.timeIntervalSince(pointDate)) < 60
-            })?.play
+            // #8565 — a play attaches only to a point that has already SEEN it:
+            // the play's stamp is inside the point's cutoff (its own minute or
+            // earlier), so the score folded above includes the play. The old
+            // nearest-within-60s rule put the play on the minute before it too,
+            // beside the score it had just changed. Latest such play wins.
+            if let j = playsByTime.lastIndex(where: {
+                $0.date < cutoff && pointDate.timeIntervalSince($0.date) < momentMatchWindowSeconds
+            }) {
+                sorted[i].scoringPlay = playsByTime[j].play
+                attachedPlays.insert(j)
+            }
+        }
+
+        // A play no point has seen yet — the last thing the series saw — falls
+        // back to the points just before its minute, so the marker is not lost
+        // (the web's `attachScoringPlays` fallback, same window).
+        for (j, entry) in playsByTime.enumerated() where !attachedPlays.contains(j) {
+            let playMinute = observationCutoff(for: entry.date).addingTimeInterval(-60)
+            for i in sorted.indices where sorted[i].scoringPlay == nil
+                && sorted[i].date < playMinute
+                && entry.date.timeIntervalSince(sorted[i].date) < momentMatchWindowSeconds {
+                sorted[i].scoringPlay = entry.play
+            }
         }
 
         return sorted
