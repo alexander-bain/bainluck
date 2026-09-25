@@ -168,6 +168,18 @@ export default function QuantityGroup({
   const longestLabelChars = ordered.reduce((m, r) => Math.max(m, r.label.length), 0);
   const roomyNumericTrack = !wideLabels && longestLabelChars > NUMERIC_TRACK_CH;
 
+  // #8562 — the wide slot gets the same "measure the ink" rule, capped where it
+  // always was. It used to be a flat 45% whatever it held, so a stock ladder
+  // reserved 114px for "$730" — and once #5659's badge took 67px for
+  // "▲56.0 pts", production measured the bar track at 0px on all three rungs of
+  // the 1280 Meta card (254px row: 114 label + 67 move + 40 pct + gaps). The
+  // width is still ONE per ladder (#1574 c), and it can only ever be ≤ 45%, so
+  // every bar is as long as it was or longer; a label past ~16 characters hits
+  // the cap and renders exactly as #7427 left it. The label does NOT shrink below
+  // this to rescue a track: on a long date ladder that re-clips the year #7427
+  // restored, and a missing bar loses nothing the printed percent does not say.
+  const wideLabelWidth = `clamp(2.75rem, calc(${longestLabelChars}ch + 0.75rem), 45%)`;
+
   // #4644 — the SAME property as the comment above, one column further right.
   // The movement badge was a `shrink-0` sibling rendered ONLY on rungs that
   // moved, so it took its width (and its flex gap) out of the `flex-1` track
@@ -269,13 +281,20 @@ export default function QuantityGroup({
           // aria-label keeps its `{label}: {pct}` prefix — hooks address rungs
           // by it — with the verdict appended.
           const rungVerdict = rung.verdict ?? null;
+          // #8562 — a tinted rung (the leader, or a graded one) is inset with
+          // `px-2 -mx-2`. At `w-full` that padding came out of its CONTENT box,
+          // so the leader's label and track were 16px shorter than its
+          // siblings': production drew the 93% rung's bar SHORTER than the 92%
+          // rung's under it (13px vs 22px at 390). Adding the 1rem the negative
+          // margins give back keeps one track width per ladder (#1574 c).
+          const insetRow = rung.highlighted || rungVerdict != null;
           return (
             <RowTag
               key={rung.key}
               type={interactive ? "button" : undefined}
               onClick={interactive ? () => onRungSelect!(rung) : undefined}
               className={[
-                "flex items-center gap-3 w-full text-left",
+                `flex items-center gap-3 ${insetRow ? "w-[calc(100%+1rem)]" : "w-full"} text-left`,
                 compact ? "py-1" : "py-1.5",
                 rung.highlighted
                   ? "px-2 -mx-2 rounded-lg bg-accent-brand/[0.06]"
@@ -292,9 +311,11 @@ export default function QuantityGroup({
               <span
                 title={wideLabels || roomyNumericTrack ? rung.label : undefined}
                 style={
-                  roomyNumericTrack
-                    ? { width: `clamp(2.75rem, calc(${longestLabelChars}ch + 0.5rem), 45%)` }
-                    : undefined
+                  wideLabels
+                    ? { width: wideLabelWidth }
+                    : roomyNumericTrack
+                      ? { width: `clamp(2.75rem, calc(${longestLabelChars}ch + 0.5rem), 45%)` }
+                      : undefined
                 }
                 className={[
                   // A FIXED label width, not `max-w-`. With a content-width label
@@ -332,8 +353,11 @@ export default function QuantityGroup({
                   // slot cannot be widened far enough anyway — the widest label is
                   // 54% of the row, and paying that out of the `flex-1` track would
                   // shorten every bar on every ladder to fix eight rows.
+                  //
+                  // #8562 — the 45% is now the CAP of `wideLabelWidth` above,
+                  // not the width; everything said here about wrapping holds.
                   wideLabels
-                    ? "w-[45%] shrink-0 break-words line-clamp-2 text-[12px] font-semibold leading-tight"
+                    ? "shrink-0 break-words line-clamp-2 text-[12px] font-semibold leading-tight"
                     : roomyNumericTrack
                       ? "shrink-0 truncate font-mono text-[13px] font-bold tabular-nums"
                       : "w-11 shrink-0 font-mono text-[13px] font-bold tabular-nums",

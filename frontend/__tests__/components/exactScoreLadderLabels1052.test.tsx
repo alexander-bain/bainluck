@@ -152,12 +152,16 @@ describe("UX-1052 item 2 — tennis exact match score", () => {
   });
 
   it("switches to the wide label track so a name is not clipped to nothing", () => {
-    // `wideLabels` is what makes the label column 45% instead of the fixed
-    // numeric w-11 — a two-word label in w-11 truncates to about two glyphs.
+    // `wideLabels` is what makes the label column the wide track (sized from
+    // its labels, up to 45% — #8562) instead of the fixed numeric w-11 — a
+    // two-word label in w-11 truncates to about two glyphs.
     const html = render([TENNIS_ROW]);
-    expect(html).toContain("w-[45%]");
+    expect(html).toMatch(/calc\(\d+ch \+ 0\.75rem\), 45%\)/);
+    expect(html).toContain("line-clamp-2");
     // …and a bare-score card keeps the tight numeric column.
-    expect(render([EXACT_SCORE_ROW])).not.toContain("w-[45%]");
+    const bare = render([EXACT_SCORE_ROW]);
+    expect(bare).not.toMatch(/calc\(\d+ch \+ 0\.75rem\)/);
+    expect(bare).not.toContain("line-clamp-2");
   });
 
   it("leads with the 99% outcome", () => {
