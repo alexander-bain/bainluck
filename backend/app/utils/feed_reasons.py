@@ -13,7 +13,11 @@ from typing import Mapping, NamedTuple, Optional, Sequence
 
 from app.utils.draw_priced_winner import away_is_the_complement, sport_prices_a_draw
 from app.utils.graded_card import rendered_percent
-from app.utils.highlights import CLOSE_MATCHUP_MIN, select_live_claim
+from app.utils.highlights import (
+    CLOSE_MATCHUP_MIN,
+    pregame_favorite_side,
+    select_live_claim,
+)
 from app.utils.outcome_display_names import (
     display_outcome_name,
     display_outcome_names,
@@ -1431,7 +1435,15 @@ def compose_live_claim(
     # and is left exactly as it was; only the NUMBER moves, and only on the away
     # side, where `1 − home` is not that team's price on a draw-priced sport.
     # `_away_kickoff_price` carries the specimen and the argument.
-    away_is_the_underdog = opening_home_prob > 0.5
+    #
+    # #8696 — and the NAME comes from that same determination. This line read
+    # `opening_home_prob > 0.5`, the two-way rule #7055 removed from
+    # `underdog_leads`: on a draw-priced board the home favourite opens under
+    # 0.5, so Belgium 1-0 Italy (Italy 0.4419 / Belgium 0.2885) printed "Italy
+    # leading after starting at 44%" about the favourite losing.
+    away_is_the_underdog = (
+        pregame_favorite_side(opening_home_prob, opening_away_prob) == "home"
+    )
     if claim == "underdog_lead":
         if away_is_the_underdog:
             underdog = away_team

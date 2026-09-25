@@ -488,6 +488,32 @@ class EventFlags:
     sport_key: Optional[str] = None
 
 
+def pregame_favorite_side(
+    opening_home_prob: float,
+    opening_away_prob: Optional[float] = None,
+) -> str:
+    """``'home'`` / ``'away'`` / ``'even'`` — which side OPENED as the favourite.
+
+    The side half of :func:`underdog_leads`, named so the sentence that prints
+    the underdog's NAME asks the same question the determination did (#8696).
+    Both legs when we hold them (#7055, ``margin=0`` — see ``underdog_leads``);
+    the one-leg 0.5 split only when the away leg is genuinely absent.
+
+    #8696 is what two answers cost: Belgium 1-0 Italy, opening home (Italy)
+    0.4419 / away (Belgium) 0.2885. ``underdog_leads`` compared the legs and
+    rightly said the underdog (Belgium) leads; the caption re-derived the side
+    as ``home > 0.5``, got "Italy is the underdog", and printed "Italy leading
+    after starting at 44%" about the favourite losing.
+    """
+    if opening_away_prob is not None:
+        side = favorite_from_pair(opening_home_prob, opening_away_prob, margin=0.0)
+        if side is not None:
+            return side
+    if opening_home_prob == 0.5:
+        return "even"
+    return "away" if opening_home_prob < 0.5 else "home"
+
+
 def underdog_leads(
     opening_home_prob: Optional[float],
     home_score: Optional[int],
@@ -541,12 +567,7 @@ def underdog_leads(
     if opening_home_prob is None or home_score is None or away_score is None:
         return None
 
-    if opening_away_prob is not None:
-        side = favorite_from_pair(opening_home_prob, opening_away_prob, margin=0.0)
-    else:
-        side = "even" if opening_home_prob == 0.5 else (
-            "away" if opening_home_prob < 0.5 else "home"
-        )
+    side = pregame_favorite_side(opening_home_prob, opening_away_prob)
     if side == "even":
         # No underdog for anyone to be.
         return None
