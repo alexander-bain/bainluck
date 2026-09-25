@@ -598,18 +598,22 @@ class TestControls:
 
         assert _drop_withheld_price_legs(market, legs) == legs
 
-    def test_an_all_withheld_board_keeps_its_legs_rather_than_emptying(self):
-        """Fails open: the harmful direction is taking a card's numbers away.
+    def test_an_all_withheld_board_has_no_survivors_7586(self):
+        """REVERSED by #7586. This used to pin the fail-open: keep every leg.
 
-        The page renders such a board as an all-`-` table. The card keeps what
-        it has and is at worst no worse than today, which is where it already
-        is — a card with nothing on it would be a new defect.
+        Production showed what that kept: ATP Chengdu (62228710) served as
+        "New favorite: Valentin Vacherot (49%)" while its page withheld 16 of
+        16 legs and said "No current prices for this market" — this file's own
+        Seoul specimen, back through the one clause that let it. The drop now
+        returns no survivors and both serializers skip the card; the
+        serializer-level guards and the controls (15 of 16, `None`, `[]`,
+        settled) live in `test_an_all_refused_board_serves_no_card_7586.py`.
         """
         legs = [_leg(1, "A", 0.6), _leg(2, "B", 0.4)]
         market = _market(1, "all refused", legs)
         market.withheld_outcome_ids = [1, 2]
 
-        assert _drop_withheld_price_legs(market, legs) == legs
+        assert _drop_withheld_price_legs(market, legs) == []
 
     def test_a_supported_zero_leg_is_kept(self):
         """ABSENT IS NOT ZERO (ruling 051, #6195).

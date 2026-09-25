@@ -6550,12 +6550,23 @@ def _drop_withheld_price_legs(market, outcomes: list, withheld_ids=None) -> list
     DIFFERENT feed, not a cheaper one". The wire column's note carries the same
     warning from the producing end.
 
-    FAILS OPEN ON AN ALL-REFUSED BOARD. A board whose every leg is withheld
-    keeps them all rather than becoming a card with nothing on it — same
-    judgement as the sibling's `survivors or outcomes`, and for the same reason:
-    the harmful direction here is taking a card's numbers away. The page shows
-    such a board as an all-`-` table; the card shows the prices and is at worst
-    no worse than today, which is where it already is.
+    AN ALL-REFUSED BOARD HAS NO SURVIVORS, AND ITS CARD IS NOT SERVED (#7586).
+    This used to fail open — `survivors or outcomes` kept every leg rather than
+    leave a card with nothing on it, on the reasoning that taking a card's
+    numbers away was the harmful direction. Production answered that: ATP
+    Chengdu (62228710, 2026-09-25 08:36Z) was served as "New favorite: Valentin
+    Vacherot (49%)" over two more legs at 39%, and its page said "No current
+    prices for this market" — `prices_withheld: 16` of 16. That is #7632's
+    Seoul shape (three co-favourites at 49% on a page that prices none of
+    them) getting back in through the one clause that let it. A card whose
+    every number the page refuses is not "no worse than today"; it is the
+    defect. So the empty list is returned as it is, and BOTH serializers skip
+    the card when this drop emptied a board that had legs — before the leader
+    pick, the ranking and the divisor, like the expired-rung `continue`.
+    Everything short of all-refused is unchanged: `None` drops nothing, `[]`
+    drops nothing, a partly refused board keeps its survivors, and a settled
+    board keeps every leg. The stale sibling keeps its `survivors or outcomes`
+    (measured: no live board is all-stale), which is out of this scope.
 
     ═══ TWO CARRIER SHAPES, ONE RULE (CERT-3330) ═══
 
@@ -6587,8 +6598,7 @@ def _drop_withheld_price_legs(market, outcomes: list, withheld_ids=None) -> list
     if not withheld:
         return outcomes
     withheld_ids = set(withheld)
-    survivors = [o for o in outcomes if o.id not in withheld_ids]
-    return survivors or outcomes
+    return [o for o in outcomes if o.id not in withheld_ids]
 
 
 def _resolve_withheld_ids(market, withheld_ids=None):
@@ -10974,9 +10984,14 @@ async def _score_sports_mode_futures(
             withheld_by_market.get(market.id),
             stale_ids=_stale_ids,
         )
+        _had_legs = bool(sorted_outcomes)
         sorted_outcomes = _drop_withheld_price_legs(
             market, sorted_outcomes, withheld_by_market.get(market.id)
         )
+        # #7586: the page refuses every leg ("No current prices for this
+        # market"), so there is no card to serve — see the drop's docstring.
+        if _had_legs and not sorted_outcomes:
+            continue
         # UX-P126/F5: nothing UNRANKABLE may hold a leader or top-N slot. Runs BEFORE
         # the top-10 slice and leader pick, same reason the phantom-book filter in
         # `_score_futures` does: a placeholder that outranks the real prices doesn't
@@ -12630,7 +12645,12 @@ async def _score_futures(
             _field_incomplete = _field_has_withheld_legs(
                 market, sorted_outcomes, stale_ids=_stale_ids
             )
+            _had_legs = bool(sorted_outcomes)
             sorted_outcomes = _drop_withheld_price_legs(market, sorted_outcomes)
+            # #7586: the page refuses every leg, so there is no card to serve.
+            # Before the leader pick, the ranking and the divisor below.
+            if _had_legs and not sorted_outcomes:
+                continue
 
             # UX-P126/F5: and neither may an anonymized reserved slot ("Party C",
             # "Coach N") or a ~100% "Other". Same insertion point and the same
