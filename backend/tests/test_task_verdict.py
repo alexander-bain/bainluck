@@ -289,6 +289,10 @@ class TestEnforcementScope:
             # raised (`measured: false`). Terminals come from
             # `app/tasks/soccer_ghost_twin_sweep.py`.
             "soccer_ghost_twin_sweep",
+            # #8547 half 2: the MLB reschedule arm of the same fold. Episodic
+            # like soccer, so its floor is the espn_id join on busy boards, not
+            # the plan. Terminals: `app/tasks/mlb_reschedule_ghost_sweep.py`.
+            "mlb_reschedule_ghost_sweep",
             # #5821 (CERT-3030): the Polymarket-container arm of the same fold.
             # The specimen for this set's other failure mode — not an unenrolled
             # task, but an enrolled-shaped one whose words are not in the
@@ -301,6 +305,10 @@ class TestEnforcementScope:
             "polymarket_container_twin_sweep",
             # #8422: the Odds API re-issued-id arm, enrolled from birth.
             "odds_api_reissued_twin_sweep",
+            # #7993: the Odds API re-mint arm of the same fold, enrolled at
+            # birth. "The provider dropped nothing" and "we could not ask the
+            # provider" must not share a verdict.
+            "odds_api_remint_sweep",
             # #1912 (CAL-P065): the two halves of the Polymarket ownership
             # hole, enrolled TOGETHER because separately each one looked fine.
             # The Gamma rail discarded 9,748 markets a run as

@@ -5468,6 +5468,33 @@ def soccer_ghost_twin_sweep_task(self, apply: bool = True,
 
 
 @celery_app.task(bind=True, soft_time_limit=300, time_limit=360,
+                 name="app.tasks.mlb_reschedule_ghost_sweep")
+def mlb_reschedule_ghost_sweep_task(self, apply: bool = True,
+                                    lookback: int | None = None,
+                                    lookahead: int | None = None):
+    """#8547 half 2 — the MLB row left behind when ESPN moves a game to
+    another day ("Rescheduled from Sep. 26") is labelled a duplicate of the game
+    that replaced it, so it stops being listed and its markets fold onto the
+    real game's page. Same label, fold guard and D51 backup as the soccer
+    sweep; the window is resolved from the module (``None`` = the module's).
+    """
+    from app.tasks.mlb_reschedule_ghost_sweep import (
+        DEFAULT_LOOKAHEAD_DAYS,
+        DEFAULT_LOOKBACK_DAYS,
+        run_mlb_reschedule_ghost_sweep,
+    )
+
+    return _tracked_run(
+        "mlb_reschedule_ghost_sweep",
+        run_mlb_reschedule_ghost_sweep(
+            apply=apply,
+            lookback=DEFAULT_LOOKBACK_DAYS if lookback is None else lookback,
+            lookahead=DEFAULT_LOOKAHEAD_DAYS if lookahead is None else lookahead,
+        ),
+    )
+
+
+@celery_app.task(bind=True, soft_time_limit=300, time_limit=360,
                  name="app.tasks.polymarket_container_twin_sweep")
 def polymarket_container_twin_sweep_task(self, apply: bool = True,
                                          lookback: int | None = None,
@@ -5541,6 +5568,24 @@ def odds_api_reissued_twin_sweep_task(self, apply: bool = True,
             lookahead=DEFAULT_LOOKAHEAD_DAYS if lookahead is None else lookahead,
         ),
     )
+
+
+@celery_app.task(bind=True, soft_time_limit=300, time_limit=360,
+                 name="app.tasks.odds_api_remint_sweep")
+def odds_api_remint_sweep_task(self, apply: bool = True):
+    """#7993 — the same fold, for a bout The Odds API re-minted under a new id.
+
+    The provider re-issued UFC 332's bouts with new ids and a new date, and the
+    old rows kept printing in search ("Oct 10 5:00 PM" for an Oct 3 fight). None
+    of the three siblings can reach them: both rows carry a provider id, the same
+    names and a 7-day gap. The evidence is the provider's own free `/events`
+    listing, which lists one id of the pair and not the other.
+
+    APPLY BY DEFAULT under D51, like its siblings: reversible label, prior value
+    banked into `bak_7993_odds_api_remint_tags`, undo via
+    `scripts/restore_7993_odds_api_remint_tags.py --apply`."""
+    from app.tasks.odds_api_remint_sweep import run_odds_api_remint_sweep
+    return _tracked_run("odds_api_remint_sweep", run_odds_api_remint_sweep(apply=apply))
 
 
 # --- Duplicate Event Cleanup ---
@@ -6842,6 +6887,18 @@ celery_app.conf.beat_schedule = {
         "kwargs": {"apply": True},
         "options": {"queue": "background"},
     },
+    # #8547 half 2 — the MLB reschedule ghost. HOURLY at :52: reschedules are
+    # episodic and a ghost only has to be caught before a reader finds it, and
+    # :52 is an unused minute clear of the settlement sweep's :31-:44 window.
+    # APPLY under D51 (reversible label, prior value banked). Undo:
+    # `scripts/restore_8547_mlb_reschedule_ghost_tags.py --apply`. No window
+    # kwargs, for the soccer entry's reason: the module owns the window.
+    "mlb-reschedule-ghost-sweep": {
+        "task": "app.tasks.mlb_reschedule_ghost_sweep",
+        "schedule": crontab(minute="52"),
+        "kwargs": {"apply": True},
+        "options": {"queue": "background"},
+    },
     # #5821 — the container-split fold. Undo:
     # `scripts/restore_5821_container_twin_tags.py --apply`.
     #
@@ -6868,6 +6925,18 @@ celery_app.conf.beat_schedule = {
     "odds-api-reissued-twin-sweep": {
         "task": "app.tasks.odds_api_reissued_twin_sweep",
         "schedule": crontab(minute="51"),
+        "kwargs": {"apply": True},
+        "options": {"queue": "background"},
+    },
+    # #7993 — the Odds API re-mint fold, hourly at :13. :13 is odd and not a
+    # multiple of five, so no `*/N` family reaches it, it is no other entry's
+    # literal, and it sits clear of the settlement sweep's :31-:44 window. Re-mints
+    # are episodic and the listing calls cost no quota, so an hour bounds how long
+    # a re-dated bout double-prints without chasing anything.
+    # Undo: `scripts/restore_7993_odds_api_remint_tags.py --apply`.
+    "odds-api-remint-sweep": {
+        "task": "app.tasks.odds_api_remint_sweep",
+        "schedule": crontab(minute="13"),
         "kwargs": {"apply": True},
         "options": {"queue": "background"},
     },

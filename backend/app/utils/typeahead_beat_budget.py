@@ -1957,7 +1957,49 @@ def free_background_slots(
 #: free `/events` GET per affected sport; writes are a handful of tags a week.
 #: ⚠️ The merge hazard applies: another lane adding a background beat writes
 #: the IDENTICAL `= 129`. Re-run the census on the composed tree.
-BACKGROUND_BEAT_COUNT = 129
+#:
+#: 🔴 RE-DERIVED at lane1 (2026-09-25, #8547): 128 → **129**, explicit
+#: 85 → **86**, fall-through UNMOVED at **43**. `mlb-reschedule-ghost-sweep`
+#: (`crontab(minute="52")`) names `background` explicitly, the benign direction.
+#: RE-DERIVED by RUNNING the census over the assembled `beat_schedule` after the
+#: rebase onto `2ae5c500ad`, which printed `explicit 86 implicit 43 total 129`,
+#: never by adding one to 128 (#1910). CI shard 2 caught the missed pin on the
+#: first head (`f4a26eb9d9`) — this branch's band was the #8547 suite plus
+#: `test_tasks_wiring.py`, not `grep -rl beat_schedule tests/`.
+#:
+#: Cost shape: HOURLY, and each fire is one bounded window read of MLB rows
+#: (the module's lookback/lookahead) plus a label write only on a proven ghost,
+#: under the soccer sweep's 300 s soft limit. `:52` is an unused minute clear of
+#: the settlement sweep's `:31-:44` window. WHY `background` AND NOT `heavy`: the
+#: ship is "the ghost stops being listed" on the main app; heavy would add a
+#: deployment lag (notice 48) in front of a sweep its sibling runs here.
+#:
+#: ⚠️ #8511 (#8422) also adds a background beat against this base. Whichever
+#: lands second writes the identical `129` and the composed tree is 130 with no
+#: textual conflict. Re-run the census AFTER the rebase.
+#:
+#: 🔴 RE-DERIVED at lane1/818 (2026-09-25, #7993): 128 → **129**, explicit
+#: 85 → **86**, fall-through UNMOVED at **43**. `odds-api-remint-sweep`
+#: (`crontab(minute=13)`) names `background` explicitly. RE-DERIVED by RUNNING
+#: the census over the assembled `beat_schedule`, which printed `explicit 86
+#: implicit 43 total 129`, never by adding one to 128 (#1910).
+#:
+#: Cost shape: ONE FIRE AN HOUR. One indexed read of upcoming combat rows that
+#: carry an Odds API id (156 rows on 2026-09-25), a pure in-memory plan, and a
+#: provider `/events` GET only for sports holding a same-pair group (0–2 a run,
+#: no quota). Writes happen only when the provider has re-minted a bout: 15 on
+#: the first run, then usually 0.
+#:
+#: ⚠️ The merge hazard applies to this line too: re-run the census on the
+#: composed tree after any rebase.
+#:
+#: 🔴 COMPOSED RE-DERIVATION (lane1, 2026-09-25, #8578 + #8660 on `a4cdc15c61`):
+#: the three blocks above each printed `129` against a master that carried
+#: none of the others, so NONE is the composed number. #8511 (#8422) was already
+#: live at 129; this composition adds `mlb-reschedule-ghost-sweep` (:52) and
+#: `odds-api-remint-sweep` (:13), both naming `background`. The census RUN over
+#: the composed `beat_schedule` printed `explicit 88 implicit 43 total 131`.
+BACKGROUND_BEAT_COUNT = 131
 #: 🔴 RE-DERIVED at lane1/282 (2026-09-13, #5896): 122 → **123**, explicit
 #: 79 → **80**, fall-through UNMOVED at 43. One beat added,
 #: `soccer-ghost-twin-sweep` (`crontab(minute="9,49")`) with an EXPLICIT

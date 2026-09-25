@@ -298,6 +298,11 @@ ENFORCED_TASKS = frozenset({
     # population and is `failed`. A plan floor copied from the sibling would
     # have made this task red on most days and taught everyone to ignore it.
     "soccer_ghost_twin_sweep",         # terminal + measured + fold_live + rows_read
+    # #8547 half 2. The MLB arm of the same fold, enrolled from birth. Like the
+    # soccer sibling its ghosts are episodic, so `complete` with nothing written
+    # is the healthy state; the red zeros are a collapsed espn_id join on busy
+    # boards, a plan over its ceiling, the fold unwired, and a read that raised.
+    "mlb_reschedule_ghost_sweep",      # terminal + measured + fold_live + rows_read
     # #5821 (CERT-3030). The Polymarket-container arm of the same fold. Enrolled
     # in the change that gives it real terminals, because enrolment alone would
     # have been a no-op in the literal sense this file keeps warning about: it
@@ -324,6 +329,12 @@ ENFORCED_TASKS = frozenset({
     # episodic), and a provider schedule read that raised is `errors` damage —
     # an unread schedule must never pass for "nothing re-issued".
     "odds_api_reissued_twin_sweep",    # terminal + measured + consumer_live + rows_read
+    # #7993. The Odds API re-mint arm of the same fold, enrolled from birth. Its
+    # quiet state is `complete` with `written: 0`, because re-mints are episodic.
+    # A needed provider listing that could not be read is `partial` (one sport)
+    # or `failed` (all of them), so "the provider dropped nothing" and "we could
+    # not ask the provider" never share a verdict.
+    "odds_api_remint_sweep",           # terminal + measured + listing_errors + written
     # #1912 (CAL-P065) — the two halves of the Polymarket ownership hole,
     # enrolled TOGETHER because separately each looked fine. The Gamma rail
     # discarded 9,748 markets a run as `unsupported_lookup` to a CLOB rail
