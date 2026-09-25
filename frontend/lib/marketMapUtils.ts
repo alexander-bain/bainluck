@@ -471,6 +471,10 @@ export function derivePeriod(item: {
   if (item.period) return item.period;
   const text = `${item.outcome_name} ${item.market_name || ""}`.toLowerCase();
   if (text.includes("1h") || text.includes("1st") || text.includes("first")) return "1H";
+  // #8483: "F5 Innings Total" is the backend's own `half_total` pattern and
+  // carries none of the words above, so it fell to the "2H" default — a
+  // first-five-innings line drawn as the second period.
+  if (/\bf5\b/.test(text)) return "1H";
   if (text.includes("2h") || text.includes("2nd") || text.includes("second")) return "2H";
   return "2H"; // default
 }
@@ -1047,6 +1051,19 @@ export interface SportScoringVocab {
    * this must check the live snapshots, not `events.game_clock`.
    */
   gameHasAClock: boolean;
+  /**
+   * What the page calls the first of the two periods a `half_total` /
+   * `half_spread` market is priced on (#8483).
+   *
+   * The backend files "1st 5 Innings O/U" under `half_total` on purpose (#3951)
+   * — it IS the early-game total a baseball market quotes — and the card then
+   * printed a fixed "1st half" over it. Baseball has no halves, so Reds at
+   * Braves read "1st half runs map" over five-inning lines. Declared on every
+   * row so a sport states its own word rather than inheriting basketball's.
+   * The second period keeps "2nd half" everywhere: no baseball market quotes
+   * one, and a row that says "2nd half" is using the market's own words.
+   */
+  firstHalfLabel: string;
 }
 
 /**
@@ -1064,14 +1081,14 @@ const SPORT_SCORING: { match: string[]; vocab: SportScoringVocab }[] = [
     // period; ESPN's `game_clock` for this sport is the constant `0:00`.
     // #8156's subject: extra innings run until somebody is ahead, so a level
     // scoreline is not a rare result here, it is not a result at all.
-    vocab: { marginTitle: "Run margin map", totalTitle: "Runs map", unit: "runs", unitSingular: "run", marginRange: 5, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "", winnerMarketPricesADraw: false, canEndInATie: false, gameHasAClock: false },
+    vocab: { marginTitle: "Run margin map", totalTitle: "Runs map", unit: "runs", unitSingular: "run", marginRange: 5, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "", winnerMarketPricesADraw: false, canEndInATie: false, gameHasAClock: false, firstHalfLabel: "First 5 innings" },
   },
   {
     match: ["hockey", "nhl"],
     // A regular-season game level after overtime is decided by a shootout, so
     // the winner market has two outcomes and the complement is honest — and by
     // the same fact (#8156) the final scoreboard is never level either.
-    vocab: { marginTitle: "Goal margin map", totalTitle: "Goals map", unit: "goals", unitSingular: "goal", marginRange: 5, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "", winnerMarketPricesADraw: false, canEndInATie: false, gameHasAClock: true },
+    vocab: { marginTitle: "Goal margin map", totalTitle: "Goals map", unit: "goals", unitSingular: "goal", marginRange: 5, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "", winnerMarketPricesADraw: false, canEndInATie: false, gameHasAClock: true, firstHalfLabel: "1st half" },
   },
   {
     match: ["soccer", "mls", "epl", "uefa", "fifa"],
@@ -1079,7 +1096,7 @@ const SPORT_SCORING: { match: string[]; vocab: SportScoringVocab }[] = [
     // draw prices around 20-30% pre-match and the site held no slot for it.
     // The same row says yes to #8156: a league draw is a result, so `1 – 1` is
     // a projection this page may print.
-    vocab: { marginTitle: "Goal margin map", totalTitle: "Goals map", unit: "goals", unitSingular: "goal", marginRange: 5, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "", winnerMarketPricesADraw: true, canEndInATie: true, gameHasAClock: true },
+    vocab: { marginTitle: "Goal margin map", totalTitle: "Goals map", unit: "goals", unitSingular: "goal", marginRange: 5, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "", winnerMarketPricesADraw: true, canEndInATie: true, gameHasAClock: true, firstHalfLabel: "1st half" },
   },
   {
     // #2441's subject. A tennis match is scored in games inside sets; the
@@ -1091,13 +1108,13 @@ const SPORT_SCORING: { match: string[]; vocab: SportScoringVocab }[] = [
     // cannot reach: the projection this page prints is already withheld here by
     // `hasDerivedSpread`, one gate earlier. Declared anyway so the row states a
     // fact rather than an absence.
-    vocab: { marginTitle: "Game margin map", totalTitle: "Games map", unit: "games", unitSingular: "game", marginRange: 6, hasDerivedSpread: false, scoreboardCountsTheUnit: false, scoreboardUnit: "sets", winnerMarketPricesADraw: false, canEndInATie: false, gameHasAClock: false },
+    vocab: { marginTitle: "Game margin map", totalTitle: "Games map", unit: "games", unitSingular: "game", marginRange: 6, hasDerivedSpread: false, scoreboardCountsTheUnit: false, scoreboardUnit: "sets", winnerMarketPricesADraw: false, canEndInATie: false, gameHasAClock: false, firstHalfLabel: "1st half" },
   },
   {
     match: ["basketball", "nba", "wnba", "ncaab"],
     // Overtime repeats until one side is ahead (#8156), so a level final is not
     // a basketball result at any level of the sport.
-    vocab: { marginTitle: "Margin map", totalTitle: "Points map", unit: "points", unitSingular: "point", marginRange: 18, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "", winnerMarketPricesADraw: false, canEndInATie: false, gameHasAClock: true },
+    vocab: { marginTitle: "Margin map", totalTitle: "Points map", unit: "points", unitSingular: "point", marginRange: 18, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "", winnerMarketPricesADraw: false, canEndInATie: false, gameHasAClock: true, firstHalfLabel: "1st half" },
   },
   {
     match: ["americanfootball", "nfl", "ncaaf"],
@@ -1110,7 +1127,7 @@ const SPORT_SCORING: { match: string[]; vocab: SportScoringVocab }[] = [
     // a reason to SPLIT the row on measured evidence, never a reason to flip it
     // and delete a legal NFL scoreline. Same discipline as `gameHasAClock`'s
     // football note: the rare thing is named by someone who measured it.
-    vocab: { marginTitle: "Margin map", totalTitle: "Points map", unit: "points", unitSingular: "point", marginRange: 18, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "", winnerMarketPricesADraw: false, canEndInATie: true, gameHasAClock: true },
+    vocab: { marginTitle: "Margin map", totalTitle: "Points map", unit: "points", unitSingular: "point", marginRange: 18, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "", winnerMarketPricesADraw: false, canEndInATie: true, gameHasAClock: true, firstHalfLabel: "1st half" },
   },
 ];
 
@@ -1151,6 +1168,7 @@ export const UNSCORED_IN_POINTS: SportScoringVocab = {
   // sent, so an undeclared sport keeps painting its clock. Defaulting false
   // would blank a genuine clock off every sport nobody has declared yet.
   gameHasAClock: true,
+  firstHalfLabel: "1st half",
 };
 
 export function sportVocab(sportKey: string | undefined): SportScoringVocab {
@@ -1185,6 +1203,11 @@ export function withUnit(value: string | number, vocab: SportScoringVocab): stri
 }
 
 /** `"Final games distribution"` / `"Final distribution"`. Same reason. */
+/** The name of one half-market period on this sport's card (#8483). */
+export function halfLabel(half: "1H" | "2H", vocab: SportScoringVocab): string {
+  return half === "1H" ? vocab.firstHalfLabel : "2nd half";
+}
+
 export function unitPhrase(prefix: string, vocab: SportScoringVocab, suffix: string): string {
   return [prefix, vocab.unit, suffix].filter(Boolean).join(" ");
 }
