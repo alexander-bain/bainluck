@@ -1,0 +1,4374 @@
+{
+ "_provenance": "GET https://api.bainluck.com/api/events/15315984/history read 2026-09-25 07:51Z (Liberty at Coastal Carolina, NCAAF, final 17-34; served after #8501 went live at 00f05940). Trimmed: price_minutes = the distinct minute keys of every price series inside time_domain (the points OddsChart builds before gap-fill); espn_history to state fields; win_prob_game_state = only rows that carry game_state. Issue #8565.",
+ "event_id": 15315984,
+ "home_team": "Coastal Carolina Chanticleers",
+ "away_team": "Liberty Flames",
+ "time_domain": {
+  "start": "2026-09-24T23:30:00+00:00",
+  "end": "2026-09-25T04:08:27.257426+00:00"
+ },
+ "price_minutes": [
+  "2026-09-24T23:30:00.000Z",
+  "2026-09-24T23:31:00.000Z",
+  "2026-09-24T23:32:00.000Z",
+  "2026-09-24T23:33:00.000Z",
+  "2026-09-24T23:34:00.000Z",
+  "2026-09-24T23:35:00.000Z",
+  "2026-09-24T23:36:00.000Z",
+  "2026-09-24T23:37:00.000Z",
+  "2026-09-24T23:38:00.000Z",
+  "2026-09-24T23:39:00.000Z",
+  "2026-09-24T23:40:00.000Z",
+  "2026-09-24T23:41:00.000Z",
+  "2026-09-24T23:42:00.000Z",
+  "2026-09-24T23:43:00.000Z",
+  "2026-09-24T23:44:00.000Z",
+  "2026-09-24T23:45:00.000Z",
+  "2026-09-24T23:46:00.000Z",
+  "2026-09-24T23:47:00.000Z",
+  "2026-09-24T23:48:00.000Z",
+  "2026-09-24T23:49:00.000Z",
+  "2026-09-24T23:50:00.000Z",
+  "2026-09-24T23:51:00.000Z",
+  "2026-09-24T23:52:00.000Z",
+  "2026-09-24T23:53:00.000Z",
+  "2026-09-24T23:54:00.000Z",
+  "2026-09-24T23:55:00.000Z",
+  "2026-09-24T23:56:00.000Z",
+  "2026-09-24T23:57:00.000Z",
+  "2026-09-24T23:58:00.000Z",
+  "2026-09-24T23:59:00.000Z",
+  "2026-09-25T00:00:00.000Z",
+  "2026-09-25T00:01:00.000Z",
+  "2026-09-25T00:02:00.000Z",
+  "2026-09-25T00:03:00.000Z",
+  "2026-09-25T00:04:00.000Z",
+  "2026-09-25T00:05:00.000Z",
+  "2026-09-25T00:06:00.000Z",
+  "2026-09-25T00:07:00.000Z",
+  "2026-09-25T00:08:00.000Z",
+  "2026-09-25T00:09:00.000Z",
+  "2026-09-25T00:10:00.000Z",
+  "2026-09-25T00:11:00.000Z",
+  "2026-09-25T00:12:00.000Z",
+  "2026-09-25T00:13:00.000Z",
+  "2026-09-25T00:14:00.000Z",
+  "2026-09-25T00:15:00.000Z",
+  "2026-09-25T00:16:00.000Z",
+  "2026-09-25T00:17:00.000Z",
+  "2026-09-25T00:18:00.000Z",
+  "2026-09-25T00:19:00.000Z",
+  "2026-09-25T00:20:00.000Z",
+  "2026-09-25T00:21:00.000Z",
+  "2026-09-25T00:22:00.000Z",
+  "2026-09-25T00:23:00.000Z",
+  "2026-09-25T00:24:00.000Z",
+  "2026-09-25T00:25:00.000Z",
+  "2026-09-25T00:26:00.000Z",
+  "2026-09-25T00:27:00.000Z",
+  "2026-09-25T00:28:00.000Z",
+  "2026-09-25T00:29:00.000Z",
+  "2026-09-25T00:30:00.000Z",
+  "2026-09-25T00:31:00.000Z",
+  "2026-09-25T00:32:00.000Z",
+  "2026-09-25T00:33:00.000Z",
+  "2026-09-25T00:34:00.000Z",
+  "2026-09-25T00:35:00.000Z",
+  "2026-09-25T00:36:00.000Z",
+  "2026-09-25T00:37:00.000Z",
+  "2026-09-25T00:38:00.000Z",
+  "2026-09-25T00:39:00.000Z",
+  "2026-09-25T00:40:00.000Z",
+  "2026-09-25T00:41:00.000Z",
+  "2026-09-25T00:42:00.000Z",
+  "2026-09-25T00:43:00.000Z",
+  "2026-09-25T00:44:00.000Z",
+  "2026-09-25T00:45:00.000Z",
+  "2026-09-25T00:46:00.000Z",
+  "2026-09-25T00:47:00.000Z",
+  "2026-09-25T00:48:00.000Z",
+  "2026-09-25T00:49:00.000Z",
+  "2026-09-25T00:50:00.000Z",
+  "2026-09-25T00:51:00.000Z",
+  "2026-09-25T00:52:00.000Z",
+  "2026-09-25T00:53:00.000Z",
+  "2026-09-25T00:54:00.000Z",
+  "2026-09-25T00:55:00.000Z",
+  "2026-09-25T00:56:00.000Z",
+  "2026-09-25T00:57:00.000Z",
+  "2026-09-25T00:58:00.000Z",
+  "2026-09-25T00:59:00.000Z",
+  "2026-09-25T01:00:00.000Z",
+  "2026-09-25T01:01:00.000Z",
+  "2026-09-25T01:02:00.000Z",
+  "2026-09-25T01:03:00.000Z",
+  "2026-09-25T01:04:00.000Z",
+  "2026-09-25T01:05:00.000Z",
+  "2026-09-25T01:06:00.000Z",
+  "2026-09-25T01:07:00.000Z",
+  "2026-09-25T01:08:00.000Z",
+  "2026-09-25T01:09:00.000Z",
+  "2026-09-25T01:10:00.000Z",
+  "2026-09-25T01:11:00.000Z",
+  "2026-09-25T01:12:00.000Z",
+  "2026-09-25T01:13:00.000Z",
+  "2026-09-25T01:14:00.000Z",
+  "2026-09-25T01:15:00.000Z",
+  "2026-09-25T01:16:00.000Z",
+  "2026-09-25T01:17:00.000Z",
+  "2026-09-25T01:18:00.000Z",
+  "2026-09-25T01:19:00.000Z",
+  "2026-09-25T01:20:00.000Z",
+  "2026-09-25T01:21:00.000Z",
+  "2026-09-25T01:22:00.000Z",
+  "2026-09-25T01:23:00.000Z",
+  "2026-09-25T01:24:00.000Z",
+  "2026-09-25T01:25:00.000Z",
+  "2026-09-25T01:26:00.000Z",
+  "2026-09-25T01:27:00.000Z",
+  "2026-09-25T01:28:00.000Z",
+  "2026-09-25T01:29:00.000Z",
+  "2026-09-25T01:30:00.000Z",
+  "2026-09-25T01:31:00.000Z",
+  "2026-09-25T01:32:00.000Z",
+  "2026-09-25T01:33:00.000Z",
+  "2026-09-25T01:34:00.000Z",
+  "2026-09-25T01:35:00.000Z",
+  "2026-09-25T01:36:00.000Z",
+  "2026-09-25T01:37:00.000Z",
+  "2026-09-25T01:38:00.000Z",
+  "2026-09-25T01:39:00.000Z",
+  "2026-09-25T01:40:00.000Z",
+  "2026-09-25T01:41:00.000Z",
+  "2026-09-25T01:42:00.000Z",
+  "2026-09-25T01:43:00.000Z",
+  "2026-09-25T01:44:00.000Z",
+  "2026-09-25T01:45:00.000Z",
+  "2026-09-25T01:46:00.000Z",
+  "2026-09-25T01:47:00.000Z",
+  "2026-09-25T01:48:00.000Z",
+  "2026-09-25T01:49:00.000Z",
+  "2026-09-25T01:50:00.000Z",
+  "2026-09-25T01:51:00.000Z",
+  "2026-09-25T01:52:00.000Z",
+  "2026-09-25T01:53:00.000Z",
+  "2026-09-25T01:54:00.000Z",
+  "2026-09-25T01:55:00.000Z",
+  "2026-09-25T01:56:00.000Z",
+  "2026-09-25T01:57:00.000Z",
+  "2026-09-25T01:58:00.000Z",
+  "2026-09-25T01:59:00.000Z",
+  "2026-09-25T02:00:00.000Z",
+  "2026-09-25T02:01:00.000Z",
+  "2026-09-25T02:02:00.000Z",
+  "2026-09-25T02:03:00.000Z",
+  "2026-09-25T02:04:00.000Z",
+  "2026-09-25T02:05:00.000Z",
+  "2026-09-25T02:06:00.000Z",
+  "2026-09-25T02:07:00.000Z",
+  "2026-09-25T02:08:00.000Z",
+  "2026-09-25T02:09:00.000Z",
+  "2026-09-25T02:10:00.000Z",
+  "2026-09-25T02:11:00.000Z",
+  "2026-09-25T02:12:00.000Z",
+  "2026-09-25T02:13:00.000Z",
+  "2026-09-25T02:14:00.000Z",
+  "2026-09-25T02:15:00.000Z",
+  "2026-09-25T02:16:00.000Z",
+  "2026-09-25T02:17:00.000Z",
+  "2026-09-25T02:18:00.000Z",
+  "2026-09-25T02:19:00.000Z",
+  "2026-09-25T02:20:00.000Z",
+  "2026-09-25T02:21:00.000Z",
+  "2026-09-25T02:22:00.000Z",
+  "2026-09-25T02:23:00.000Z",
+  "2026-09-25T02:24:00.000Z",
+  "2026-09-25T02:25:00.000Z",
+  "2026-09-25T02:26:00.000Z",
+  "2026-09-25T02:27:00.000Z",
+  "2026-09-25T02:28:00.000Z",
+  "2026-09-25T02:29:00.000Z",
+  "2026-09-25T02:30:00.000Z",
+  "2026-09-25T02:31:00.000Z",
+  "2026-09-25T02:32:00.000Z",
+  "2026-09-25T02:33:00.000Z",
+  "2026-09-25T02:34:00.000Z",
+  "2026-09-25T02:35:00.000Z",
+  "2026-09-25T02:36:00.000Z",
+  "2026-09-25T02:37:00.000Z",
+  "2026-09-25T02:38:00.000Z",
+  "2026-09-25T02:39:00.000Z",
+  "2026-09-25T02:40:00.000Z",
+  "2026-09-25T02:41:00.000Z",
+  "2026-09-25T02:42:00.000Z",
+  "2026-09-25T02:43:00.000Z",
+  "2026-09-25T02:44:00.000Z",
+  "2026-09-25T02:45:00.000Z",
+  "2026-09-25T02:46:00.000Z",
+  "2026-09-25T02:47:00.000Z",
+  "2026-09-25T02:48:00.000Z",
+  "2026-09-25T02:49:00.000Z",
+  "2026-09-25T02:50:00.000Z",
+  "2026-09-25T02:51:00.000Z",
+  "2026-09-25T02:52:00.000Z",
+  "2026-09-25T02:53:00.000Z",
+  "2026-09-25T02:54:00.000Z",
+  "2026-09-25T02:55:00.000Z",
+  "2026-09-25T02:56:00.000Z",
+  "2026-09-25T02:57:00.000Z",
+  "2026-09-25T02:58:00.000Z",
+  "2026-09-25T02:59:00.000Z",
+  "2026-09-25T03:00:00.000Z",
+  "2026-09-25T03:01:00.000Z",
+  "2026-09-25T03:02:00.000Z",
+  "2026-09-25T03:03:00.000Z",
+  "2026-09-25T03:04:00.000Z",
+  "2026-09-25T03:05:00.000Z",
+  "2026-09-25T03:06:00.000Z",
+  "2026-09-25T03:07:00.000Z",
+  "2026-09-25T03:08:00.000Z",
+  "2026-09-25T03:09:00.000Z",
+  "2026-09-25T03:10:00.000Z",
+  "2026-09-25T03:11:00.000Z",
+  "2026-09-25T03:12:00.000Z",
+  "2026-09-25T03:13:00.000Z",
+  "2026-09-25T03:14:00.000Z",
+  "2026-09-25T03:15:00.000Z",
+  "2026-09-25T03:16:00.000Z",
+  "2026-09-25T03:17:00.000Z",
+  "2026-09-25T03:18:00.000Z",
+  "2026-09-25T03:19:00.000Z",
+  "2026-09-25T03:20:00.000Z",
+  "2026-09-25T03:21:00.000Z",
+  "2026-09-25T03:22:00.000Z",
+  "2026-09-25T03:23:00.000Z",
+  "2026-09-25T03:24:00.000Z",
+  "2026-09-25T03:25:00.000Z",
+  "2026-09-25T03:26:00.000Z",
+  "2026-09-25T03:27:00.000Z",
+  "2026-09-25T03:28:00.000Z",
+  "2026-09-25T03:29:00.000Z",
+  "2026-09-25T03:30:00.000Z",
+  "2026-09-25T03:31:00.000Z",
+  "2026-09-25T03:32:00.000Z",
+  "2026-09-25T03:33:00.000Z",
+  "2026-09-25T03:34:00.000Z",
+  "2026-09-25T03:35:00.000Z",
+  "2026-09-25T03:36:00.000Z",
+  "2026-09-25T03:37:00.000Z",
+  "2026-09-25T03:38:00.000Z",
+  "2026-09-25T03:39:00.000Z",
+  "2026-09-25T03:40:00.000Z",
+  "2026-09-25T03:41:00.000Z",
+  "2026-09-25T03:44:00.000Z"
+ ],
+ "espn_history": [
+  {
+   "timestamp": "2026-09-24T23:37:37.739579+00:00",
+   "home_score": 0,
+   "away_score": 0,
+   "period": "15:00 - 1st Quarter",
+   "game_clock": "15:00"
+  },
+  {
+   "timestamp": "2026-09-24T23:38:37.722942+00:00",
+   "home_score": 0,
+   "away_score": 0,
+   "period": "13:50 - 1st Quarter",
+   "game_clock": "13:50"
+  },
+  {
+   "timestamp": "2026-09-24T23:39:37.732233+00:00",
+   "home_score": 0,
+   "away_score": 0,
+   "period": "13:00 - 1st Quarter",
+   "game_clock": "13:00"
+  },
+  {
+   "timestamp": "2026-09-24T23:40:37.754662+00:00",
+   "home_score": 0,
+   "away_score": 0,
+   "period": "13:00 - 1st Quarter",
+   "game_clock": "13:00"
+  },
+  {
+   "timestamp": "2026-09-24T23:41:37.757796+00:00",
+   "home_score": 0,
+   "away_score": 0,
+   "period": "12:09 - 1st Quarter",
+   "game_clock": "12:09"
+  },
+  {
+   "timestamp": "2026-09-24T23:42:37.979435+00:00",
+   "home_score": 0,
+   "away_score": 0,
+   "period": "11:36 - 1st Quarter",
+   "game_clock": "11:36"
+  },
+  {
+   "timestamp": "2026-09-24T23:43:37.725412+00:00",
+   "home_score": 0,
+   "away_score": 0,
+   "period": "10:27 - 1st Quarter",
+   "game_clock": "10:27"
+  },
+  {
+   "timestamp": "2026-09-24T23:44:37.736764+00:00",
+   "home_score": 0,
+   "away_score": 0,
+   "period": "10:27 - 1st Quarter",
+   "game_clock": "10:27"
+  },
+  {
+   "timestamp": "2026-09-24T23:45:37.734134+00:00",
+   "home_score": 0,
+   "away_score": 0,
+   "period": "10:27 - 1st Quarter",
+   "game_clock": "10:27"
+  },
+  {
+   "timestamp": "2026-09-24T23:46:37.722961+00:00",
+   "home_score": 0,
+   "away_score": 0,
+   "period": "10:27 - 1st Quarter",
+   "game_clock": "10:27"
+  },
+  {
+   "timestamp": "2026-09-24T23:47:37.725472+00:00",
+   "home_score": 0,
+   "away_score": 0,
+   "period": "10:26 - 1st Quarter",
+   "game_clock": "10:26"
+  },
+  {
+   "timestamp": "2026-09-24T23:48:38.111687+00:00",
+   "home_score": 0,
+   "away_score": 0,
+   "period": "9:43 - 1st Quarter",
+   "game_clock": "9:43"
+  },
+  {
+   "timestamp": "2026-09-24T23:49:37.718618+00:00",
+   "home_score": 0,
+   "away_score": 3,
+   "period": "9:43 - 1st Quarter",
+   "game_clock": "9:43"
+  },
+  {
+   "timestamp": "2026-09-24T23:50:37.720728+00:00",
+   "home_score": 0,
+   "away_score": 3,
+   "period": "9:35 - 1st Quarter",
+   "game_clock": "9:35"
+  },
+  {
+   "timestamp": "2026-09-24T23:51:37.763776+00:00",
+   "home_score": 0,
+   "away_score": 3,
+   "period": "9:35 - 1st Quarter",
+   "game_clock": "9:35"
+  },
+  {
+   "timestamp": "2026-09-24T23:52:37.773399+00:00",
+   "home_score": 0,
+   "away_score": 3,
+   "period": "9:35 - 1st Quarter",
+   "game_clock": "9:35"
+  },
+  {
+   "timestamp": "2026-09-24T23:53:37.753974+00:00",
+   "home_score": 0,
+   "away_score": 3,
+   "period": "9:35 - 1st Quarter",
+   "game_clock": "9:35"
+  },
+  {
+   "timestamp": "2026-09-24T23:54:38.190482+00:00",
+   "home_score": 0,
+   "away_score": 3,
+   "period": "9:34 - 1st Quarter",
+   "game_clock": "9:34"
+  },
+  {
+   "timestamp": "2026-09-24T23:55:37.732878+00:00",
+   "home_score": 0,
+   "away_score": 3,
+   "period": "9:35 - 1st Quarter",
+   "game_clock": "9:35"
+  },
+  {
+   "timestamp": "2026-09-24T23:56:37.709591+00:00",
+   "home_score": 0,
+   "away_score": 3,
+   "period": "9:27 - 1st Quarter",
+   "game_clock": "9:27"
+  },
+  {
+   "timestamp": "2026-09-24T23:57:37.727305+00:00",
+   "home_score": 0,
+   "away_score": 3,
+   "period": "8:46 - 1st Quarter",
+   "game_clock": "8:46"
+  },
+  {
+   "timestamp": "2026-09-24T23:58:37.852647+00:00",
+   "home_score": 0,
+   "away_score": 3,
+   "period": "7:51 - 1st Quarter",
+   "game_clock": "7:51"
+  },
+  {
+   "timestamp": "2026-09-25T00:00:37.979479+00:00",
+   "home_score": 0,
+   "away_score": 3,
+   "period": "7:14 - 1st Quarter",
+   "game_clock": "7:14"
+  },
+  {
+   "timestamp": "2026-09-25T00:02:37.703961+00:00",
+   "home_score": 0,
+   "away_score": 3,
+   "period": "5:55 - 1st Quarter",
+   "game_clock": "5:55"
+  },
+  {
+   "timestamp": "2026-09-25T00:03:37.825647+00:00",
+   "home_score": 0,
+   "away_score": 3,
+   "period": "5:22 - 1st Quarter",
+   "game_clock": "5:22"
+  },
+  {
+   "timestamp": "2026-09-25T00:04:37.706062+00:00",
+   "home_score": 3,
+   "away_score": 3,
+   "period": "5:19 - 1st Quarter",
+   "game_clock": "5:19"
+  },
+  {
+   "timestamp": "2026-09-25T00:05:37.713371+00:00",
+   "home_score": 3,
+   "away_score": 3,
+   "period": "5:19 - 1st Quarter",
+   "game_clock": "5:19"
+  },
+  {
+   "timestamp": "2026-09-25T00:07:37.717429+00:00",
+   "home_score": 3,
+   "away_score": 3,
+   "period": "5:19 - 1st Quarter",
+   "game_clock": "5:19"
+  },
+  {
+   "timestamp": "2026-09-25T00:08:37.729903+00:00",
+   "home_score": 3,
+   "away_score": 3,
+   "period": "5:19 - 1st Quarter",
+   "game_clock": "5:19"
+  },
+  {
+   "timestamp": "2026-09-25T00:09:37.702286+00:00",
+   "home_score": 3,
+   "away_score": 3,
+   "period": "5:13 - 1st Quarter",
+   "game_clock": "5:13"
+  },
+  {
+   "timestamp": "2026-09-25T00:10:37.993228+00:00",
+   "home_score": 3,
+   "away_score": 3,
+   "period": "4:26 - 1st Quarter",
+   "game_clock": "4:26"
+  },
+  {
+   "timestamp": "2026-09-25T00:11:38.142616+00:00",
+   "home_score": 3,
+   "away_score": 3,
+   "period": "4:26 - 1st Quarter",
+   "game_clock": "4:26"
+  },
+  {
+   "timestamp": "2026-09-25T00:12:38.254572+00:00",
+   "home_score": 3,
+   "away_score": 3,
+   "period": "4:08 - 1st Quarter",
+   "game_clock": "4:08"
+  },
+  {
+   "timestamp": "2026-09-25T00:13:38.003536+00:00",
+   "home_score": 3,
+   "away_score": 3,
+   "period": "3:22 - 1st Quarter",
+   "game_clock": "3:22"
+  },
+  {
+   "timestamp": "2026-09-25T00:14:38.005893+00:00",
+   "home_score": 3,
+   "away_score": 3,
+   "period": "3:20 - 1st Quarter",
+   "game_clock": "3:20"
+  },
+  {
+   "timestamp": "2026-09-25T00:30:38.382084+00:00",
+   "home_score": 3,
+   "away_score": 10,
+   "period": "2:45 - 1st Quarter",
+   "game_clock": "2:45"
+  },
+  {
+   "timestamp": "2026-09-25T00:31:38.136981+00:00",
+   "home_score": 3,
+   "away_score": 10,
+   "period": "2:45 - 1st Quarter",
+   "game_clock": "2:45"
+  },
+  {
+   "timestamp": "2026-09-25T00:32:38.135164+00:00",
+   "home_score": 3,
+   "away_score": 10,
+   "period": "2:01 - 1st Quarter",
+   "game_clock": "2:01"
+  },
+  {
+   "timestamp": "2026-09-25T00:33:38.095825+00:00",
+   "home_score": 3,
+   "away_score": 10,
+   "period": "1:43 - 1st Quarter",
+   "game_clock": "1:43"
+  },
+  {
+   "timestamp": "2026-09-25T00:34:38.127663+00:00",
+   "home_score": 3,
+   "away_score": 10,
+   "period": "0:45 - 1st Quarter",
+   "game_clock": "0:45"
+  },
+  {
+   "timestamp": "2026-09-25T00:35:38.144623+00:00",
+   "home_score": 3,
+   "away_score": 10,
+   "period": "0:02 - 1st Quarter",
+   "game_clock": "0:02"
+  },
+  {
+   "timestamp": "2026-09-25T00:36:38.705394+00:00",
+   "home_score": 3,
+   "away_score": 10,
+   "period": "0:02 - 1st Quarter",
+   "game_clock": "0:02"
+  },
+  {
+   "timestamp": "2026-09-25T00:37:38.124309+00:00",
+   "home_score": 3,
+   "away_score": 10,
+   "period": "End of 1st Quarter",
+   "game_clock": "0:00"
+  },
+  {
+   "timestamp": "2026-09-25T00:38:38.132185+00:00",
+   "home_score": 3,
+   "away_score": 10,
+   "period": "15:00 - 1st Quarter",
+   "game_clock": "15:00"
+  },
+  {
+   "timestamp": "2026-09-25T00:39:41.687907+00:00",
+   "home_score": 3,
+   "away_score": 10,
+   "period": "15:00 - 1st Quarter",
+   "game_clock": "15:00"
+  },
+  {
+   "timestamp": "2026-09-25T00:40:38.115989+00:00",
+   "home_score": 3,
+   "away_score": 10,
+   "period": "End of 1st Quarter",
+   "game_clock": "0:00"
+  },
+  {
+   "timestamp": "2026-09-25T00:41:38.106080+00:00",
+   "home_score": 3,
+   "away_score": 10,
+   "period": "End of 1st Quarter",
+   "game_clock": "0:00"
+  },
+  {
+   "timestamp": "2026-09-25T00:42:38.463485+00:00",
+   "home_score": 3,
+   "away_score": 10,
+   "period": "End of 1st Quarter",
+   "game_clock": "0:00"
+  },
+  {
+   "timestamp": "2026-09-25T00:43:38.113033+00:00",
+   "home_score": 3,
+   "away_score": 10,
+   "period": "End of 1st Quarter",
+   "game_clock": "0:00"
+  },
+  {
+   "timestamp": "2026-09-25T00:44:38.102141+00:00",
+   "home_score": 3,
+   "away_score": 10,
+   "period": "End of 1st Quarter",
+   "game_clock": "0:00"
+  },
+  {
+   "timestamp": "2026-09-25T00:45:38.136683+00:00",
+   "home_score": 3,
+   "away_score": 10,
+   "period": "End of 1st Quarter",
+   "game_clock": "0:00"
+  },
+  {
+   "timestamp": "2026-09-25T00:46:38.090746+00:00",
+   "home_score": 3,
+   "away_score": 10,
+   "period": "11:00 - 2nd Quarter",
+   "game_clock": "11:00"
+  },
+  {
+   "timestamp": "2026-09-25T00:47:38.100480+00:00",
+   "home_score": 3,
+   "away_score": 10,
+   "period": "11:00 - 2nd Quarter",
+   "game_clock": "11:00"
+  },
+  {
+   "timestamp": "2026-09-25T00:48:38.518684+00:00",
+   "home_score": 3,
+   "away_score": 10,
+   "period": "11:00 - 2nd Quarter",
+   "game_clock": "11:00"
+  },
+  {
+   "timestamp": "2026-09-25T00:49:38.112580+00:00",
+   "home_score": 3,
+   "away_score": 10,
+   "period": "11:00 - 2nd Quarter",
+   "game_clock": "11:00"
+  },
+  {
+   "timestamp": "2026-09-25T00:50:38.110762+00:00",
+   "home_score": 3,
+   "away_score": 10,
+   "period": "1:42 - 2nd Quarter",
+   "game_clock": "1:42"
+  },
+  {
+   "timestamp": "2026-09-25T00:51:38.105049+00:00",
+   "home_score": 3,
+   "away_score": 10,
+   "period": "10:40 - 2nd Quarter",
+   "game_clock": "10:40"
+  },
+  {
+   "timestamp": "2026-09-25T00:52:38.118581+00:00",
+   "home_score": 3,
+   "away_score": 10,
+   "period": "10:27 - 2nd Quarter",
+   "game_clock": "10:27"
+  },
+  {
+   "timestamp": "2026-09-25T00:53:38.098295+00:00",
+   "home_score": 3,
+   "away_score": 10,
+   "period": "9:54 - 2nd Quarter",
+   "game_clock": "9:54"
+  },
+  {
+   "timestamp": "2026-09-25T00:54:38.412102+00:00",
+   "home_score": 3,
+   "away_score": 10,
+   "period": "9:54 - 2nd Quarter",
+   "game_clock": "9:54"
+  },
+  {
+   "timestamp": "2026-09-25T00:55:38.096452+00:00",
+   "home_score": 3,
+   "away_score": 10,
+   "period": "9:54 - 2nd Quarter",
+   "game_clock": "9:54"
+  },
+  {
+   "timestamp": "2026-09-25T00:56:38.101267+00:00",
+   "home_score": 3,
+   "away_score": 10,
+   "period": "9:39 - 2nd Quarter",
+   "game_clock": "9:39"
+  },
+  {
+   "timestamp": "2026-09-25T00:57:38.099220+00:00",
+   "home_score": 3,
+   "away_score": 10,
+   "period": "9:25 - 2nd Quarter",
+   "game_clock": "9:25"
+  },
+  {
+   "timestamp": "2026-09-25T00:59:38.127665+00:00",
+   "home_score": 3,
+   "away_score": 10,
+   "period": "7:44 - 2nd Quarter",
+   "game_clock": "7:44"
+  },
+  {
+   "timestamp": "2026-09-25T01:01:38.146424+00:00",
+   "home_score": 3,
+   "away_score": 10,
+   "period": "6:42 - 2nd Quarter",
+   "game_clock": "6:42"
+  },
+  {
+   "timestamp": "2026-09-25T01:02:38.591273+00:00",
+   "home_score": 3,
+   "away_score": 10,
+   "period": "6:23 - 2nd Quarter",
+   "game_clock": "6:23"
+  },
+  {
+   "timestamp": "2026-09-25T01:03:38.124494+00:00",
+   "home_score": 9,
+   "away_score": 10,
+   "period": "5:26 - 2nd Quarter",
+   "game_clock": "5:26"
+  },
+  {
+   "timestamp": "2026-09-25T01:10:38.114144+00:00",
+   "home_score": 10,
+   "away_score": 10,
+   "period": "4:07 - 2nd Quarter",
+   "game_clock": "4:07"
+  },
+  {
+   "timestamp": "2026-09-25T01:11:38.096321+00:00",
+   "home_score": 10,
+   "away_score": 10,
+   "period": "3:26 - 2nd Quarter",
+   "game_clock": "3:26"
+  },
+  {
+   "timestamp": "2026-09-25T01:12:38.269741+00:00",
+   "home_score": 10,
+   "away_score": 10,
+   "period": "2:05 - 2nd Quarter",
+   "game_clock": "2:05"
+  },
+  {
+   "timestamp": "2026-09-25T01:13:38.089215+00:00",
+   "home_score": 10,
+   "away_score": 10,
+   "period": "2:00 - 2nd Quarter",
+   "game_clock": "2:00"
+  },
+  {
+   "timestamp": "2026-09-25T01:14:38.118560+00:00",
+   "home_score": 10,
+   "away_score": 10,
+   "period": "2:00 - 2nd Quarter",
+   "game_clock": "2:00"
+  },
+  {
+   "timestamp": "2026-09-25T01:16:38.215596+00:00",
+   "home_score": 10,
+   "away_score": 10,
+   "period": "2:00 - 2nd Quarter",
+   "game_clock": "2:00"
+  },
+  {
+   "timestamp": "2026-09-25T01:17:38.112173+00:00",
+   "home_score": 10,
+   "away_score": 10,
+   "period": "1:51 - 2nd Quarter",
+   "game_clock": "1:51"
+  },
+  {
+   "timestamp": "2026-09-25T01:18:38.336252+00:00",
+   "home_score": 10,
+   "away_score": 10,
+   "period": "1:47 - 2nd Quarter",
+   "game_clock": "1:47"
+  },
+  {
+   "timestamp": "2026-09-25T01:20:38.124347+00:00",
+   "home_score": 10,
+   "away_score": 10,
+   "period": "1:38 - 2nd Quarter",
+   "game_clock": "1:38"
+  },
+  {
+   "timestamp": "2026-09-25T01:21:38.107201+00:00",
+   "home_score": 10,
+   "away_score": 10,
+   "period": "1:32 - 2nd Quarter",
+   "game_clock": "1:32"
+  },
+  {
+   "timestamp": "2026-09-25T01:22:38.154723+00:00",
+   "home_score": 10,
+   "away_score": 10,
+   "period": "1:32 - 2nd Quarter",
+   "game_clock": "1:32"
+  },
+  {
+   "timestamp": "2026-09-25T01:23:38.113527+00:00",
+   "home_score": 10,
+   "away_score": 10,
+   "period": "1:32 - 2nd Quarter",
+   "game_clock": "1:32"
+  },
+  {
+   "timestamp": "2026-09-25T01:24:38.285705+00:00",
+   "home_score": 10,
+   "away_score": 10,
+   "period": "1:23 - 2nd Quarter",
+   "game_clock": "1:23"
+  },
+  {
+   "timestamp": "2026-09-25T01:25:38.192229+00:00",
+   "home_score": 10,
+   "away_score": 10,
+   "period": "0:54 - 2nd Quarter",
+   "game_clock": "0:54"
+  },
+  {
+   "timestamp": "2026-09-25T01:26:38.116379+00:00",
+   "home_score": 10,
+   "away_score": 10,
+   "period": "0:50 - 2nd Quarter",
+   "game_clock": "0:50"
+  },
+  {
+   "timestamp": "2026-09-25T01:27:38.126475+00:00",
+   "home_score": 10,
+   "away_score": 10,
+   "period": "0:44 - 2nd Quarter",
+   "game_clock": "0:44"
+  },
+  {
+   "timestamp": "2026-09-25T01:28:38.152609+00:00",
+   "home_score": 10,
+   "away_score": 10,
+   "period": "0:34 - 2nd Quarter",
+   "game_clock": "0:34"
+  },
+  {
+   "timestamp": "2026-09-25T01:29:38.098383+00:00",
+   "home_score": 10,
+   "away_score": 10,
+   "period": "0:29 - 2nd Quarter",
+   "game_clock": "0:29"
+  },
+  {
+   "timestamp": "2026-09-25T01:30:38.510994+00:00",
+   "home_score": 16,
+   "away_score": 10,
+   "period": "0:24 - 2nd Quarter",
+   "game_clock": "0:24"
+  },
+  {
+   "timestamp": "2026-09-25T01:34:38.143347+00:00",
+   "home_score": 17,
+   "away_score": 10,
+   "period": "0:10 - 2nd Quarter",
+   "game_clock": "0:10"
+  },
+  {
+   "timestamp": "2026-09-25T01:35:38.162879+00:00",
+   "home_score": 17,
+   "away_score": 10,
+   "period": "Halftime",
+   "game_clock": "0:00"
+  },
+  {
+   "timestamp": "2026-09-25T01:36:38.415346+00:00",
+   "home_score": 17,
+   "away_score": 10,
+   "period": "Halftime",
+   "game_clock": "0:00"
+  },
+  {
+   "timestamp": "2026-09-25T01:37:38.141897+00:00",
+   "home_score": 17,
+   "away_score": 10,
+   "period": "Halftime",
+   "game_clock": "0:00"
+  },
+  {
+   "timestamp": "2026-09-25T01:38:38.130737+00:00",
+   "home_score": 17,
+   "away_score": 10,
+   "period": "Halftime",
+   "game_clock": "0:00"
+  },
+  {
+   "timestamp": "2026-09-25T01:39:44.077904+00:00",
+   "home_score": 17,
+   "away_score": 10,
+   "period": "Halftime",
+   "game_clock": "0:00"
+  },
+  {
+   "timestamp": "2026-09-25T01:40:38.225903+00:00",
+   "home_score": 17,
+   "away_score": 10,
+   "period": "Halftime",
+   "game_clock": "0:00"
+  },
+  {
+   "timestamp": "2026-09-25T01:41:38.150302+00:00",
+   "home_score": 17,
+   "away_score": 10,
+   "period": "Halftime",
+   "game_clock": "0:00"
+  },
+  {
+   "timestamp": "2026-09-25T01:42:38.306101+00:00",
+   "home_score": 17,
+   "away_score": 10,
+   "period": "Halftime",
+   "game_clock": "0:00"
+  },
+  {
+   "timestamp": "2026-09-25T01:43:38.112298+00:00",
+   "home_score": 17,
+   "away_score": 10,
+   "period": "Halftime",
+   "game_clock": "0:00"
+  },
+  {
+   "timestamp": "2026-09-25T01:44:38.118754+00:00",
+   "home_score": 17,
+   "away_score": 10,
+   "period": "Halftime",
+   "game_clock": "0:00"
+  },
+  {
+   "timestamp": "2026-09-25T01:45:38.120393+00:00",
+   "home_score": 17,
+   "away_score": 10,
+   "period": "Halftime",
+   "game_clock": "0:00"
+  },
+  {
+   "timestamp": "2026-09-25T01:48:38.432050+00:00",
+   "home_score": 17,
+   "away_score": 10,
+   "period": "Halftime",
+   "game_clock": "0:00"
+  },
+  {
+   "timestamp": "2026-09-25T01:49:38.135688+00:00",
+   "home_score": 17,
+   "away_score": 10,
+   "period": "Halftime",
+   "game_clock": "0:00"
+  },
+  {
+   "timestamp": "2026-09-25T01:50:38.193372+00:00",
+   "home_score": 17,
+   "away_score": 10,
+   "period": "Halftime",
+   "game_clock": "0:00"
+  },
+  {
+   "timestamp": "2026-09-25T01:51:38.132512+00:00",
+   "home_score": 17,
+   "away_score": 10,
+   "period": "Halftime",
+   "game_clock": "0:00"
+  },
+  {
+   "timestamp": "2026-09-25T01:52:38.192142+00:00",
+   "home_score": 17,
+   "away_score": 10,
+   "period": "Halftime",
+   "game_clock": "0:00"
+  },
+  {
+   "timestamp": "2026-09-25T01:53:38.412928+00:00",
+   "home_score": 17,
+   "away_score": 10,
+   "period": "Halftime",
+   "game_clock": "0:00"
+  },
+  {
+   "timestamp": "2026-09-25T01:54:38.307070+00:00",
+   "home_score": 17,
+   "away_score": 10,
+   "period": "Halftime",
+   "game_clock": "0:00"
+  },
+  {
+   "timestamp": "2026-09-25T01:55:38.123881+00:00",
+   "home_score": 17,
+   "away_score": 10,
+   "period": "Halftime",
+   "game_clock": "0:00"
+  },
+  {
+   "timestamp": "2026-09-25T01:56:38.125486+00:00",
+   "home_score": 17,
+   "away_score": 10,
+   "period": "Halftime",
+   "game_clock": "0:00"
+  },
+  {
+   "timestamp": "2026-09-25T01:57:38.099120+00:00",
+   "home_score": 17,
+   "away_score": 10,
+   "period": "Halftime",
+   "game_clock": "0:00"
+  },
+  {
+   "timestamp": "2026-09-25T01:58:38.156185+00:00",
+   "home_score": 17,
+   "away_score": 10,
+   "period": "14:10 - 3rd Quarter",
+   "game_clock": "14:10"
+  },
+  {
+   "timestamp": "2026-09-25T01:59:38.108380+00:00",
+   "home_score": 17,
+   "away_score": 16,
+   "period": "13:10 - 3rd Quarter",
+   "game_clock": "13:10"
+  },
+  {
+   "timestamp": "2026-09-25T02:02:38.174658+00:00",
+   "home_score": 17,
+   "away_score": 17,
+   "period": "12:26 - 3rd Quarter",
+   "game_clock": "12:26"
+  },
+  {
+   "timestamp": "2026-09-25T02:03:38.108465+00:00",
+   "home_score": 17,
+   "away_score": 17,
+   "period": "11:50 - 3rd Quarter",
+   "game_clock": "11:50"
+  },
+  {
+   "timestamp": "2026-09-25T02:04:38.334048+00:00",
+   "home_score": 17,
+   "away_score": 17,
+   "period": "11:05 - 3rd Quarter",
+   "game_clock": "11:05"
+  },
+  {
+   "timestamp": "2026-09-25T02:05:38.138993+00:00",
+   "home_score": 17,
+   "away_score": 17,
+   "period": "10:48 - 3rd Quarter",
+   "game_clock": "10:48"
+  },
+  {
+   "timestamp": "2026-09-25T02:06:38.280516+00:00",
+   "home_score": 17,
+   "away_score": 17,
+   "period": "10:48 - 3rd Quarter",
+   "game_clock": "10:48"
+  },
+  {
+   "timestamp": "2026-09-25T02:09:38.209880+00:00",
+   "home_score": 17,
+   "away_score": 17,
+   "period": "10:38 - 3rd Quarter",
+   "game_clock": "10:38"
+  },
+  {
+   "timestamp": "2026-09-25T02:10:38.141486+00:00",
+   "home_score": 17,
+   "away_score": 17,
+   "period": "10:10 - 3rd Quarter",
+   "game_clock": "10:10"
+  },
+  {
+   "timestamp": "2026-09-25T02:11:38.106754+00:00",
+   "home_score": 17,
+   "away_score": 17,
+   "period": "8:59 - 3rd Quarter",
+   "game_clock": "8:59"
+  },
+  {
+   "timestamp": "2026-09-25T02:12:38.275848+00:00",
+   "home_score": 17,
+   "away_score": 17,
+   "period": "8:17 - 3rd Quarter",
+   "game_clock": "8:17"
+  },
+  {
+   "timestamp": "2026-09-25T02:13:38.110557+00:00",
+   "home_score": 17,
+   "away_score": 17,
+   "period": "7:30 - 3rd Quarter",
+   "game_clock": "7:30"
+  },
+  {
+   "timestamp": "2026-09-25T02:14:38.121404+00:00",
+   "home_score": 17,
+   "away_score": 17,
+   "period": "6:07 - 3rd Quarter",
+   "game_clock": "6:07"
+  },
+  {
+   "timestamp": "2026-09-25T02:15:38.151454+00:00",
+   "home_score": 17,
+   "away_score": 17,
+   "period": "5:19 - 3rd Quarter",
+   "game_clock": "5:19"
+  },
+  {
+   "timestamp": "2026-09-25T02:16:38.190429+00:00",
+   "home_score": 17,
+   "away_score": 17,
+   "period": "4:55 - 3rd Quarter",
+   "game_clock": "4:55"
+  },
+  {
+   "timestamp": "2026-09-25T02:17:38.125904+00:00",
+   "home_score": 17,
+   "away_score": 17,
+   "period": "4:55 - 3rd Quarter",
+   "game_clock": "4:55"
+  },
+  {
+   "timestamp": "2026-09-25T02:18:38.255266+00:00",
+   "home_score": 17,
+   "away_score": 17,
+   "period": "4:55 - 3rd Quarter",
+   "game_clock": "4:55"
+  },
+  {
+   "timestamp": "2026-09-25T02:19:38.159505+00:00",
+   "home_score": 17,
+   "away_score": 20,
+   "period": "4:52 - 3rd Quarter",
+   "game_clock": "4:52"
+  },
+  {
+   "timestamp": "2026-09-25T02:20:38.163920+00:00",
+   "home_score": 17,
+   "away_score": 20,
+   "period": "4:52 - 3rd Quarter",
+   "game_clock": "4:52"
+  },
+  {
+   "timestamp": "2026-09-25T02:21:38.133576+00:00",
+   "home_score": 17,
+   "away_score": 20,
+   "period": "4:52 - 3rd Quarter",
+   "game_clock": "4:52"
+  },
+  {
+   "timestamp": "2026-09-25T02:22:38.175769+00:00",
+   "home_score": 17,
+   "away_score": 20,
+   "period": "4:14 - 3rd Quarter",
+   "game_clock": "4:14"
+  },
+  {
+   "timestamp": "2026-09-25T02:23:38.186817+00:00",
+   "home_score": 17,
+   "away_score": 20,
+   "period": "3:30 - 3rd Quarter",
+   "game_clock": "3:30"
+  },
+  {
+   "timestamp": "2026-09-25T02:24:38.329615+00:00",
+   "home_score": 17,
+   "away_score": 20,
+   "period": "2:54 - 3rd Quarter",
+   "game_clock": "2:54"
+  },
+  {
+   "timestamp": "2026-09-25T02:25:38.148433+00:00",
+   "home_score": 17,
+   "away_score": 20,
+   "period": "1:57 - 3rd Quarter",
+   "game_clock": "1:57"
+  },
+  {
+   "timestamp": "2026-09-25T02:26:38.148945+00:00",
+   "home_score": 17,
+   "away_score": 20,
+   "period": "1:57 - 3rd Quarter",
+   "game_clock": "1:57"
+  },
+  {
+   "timestamp": "2026-09-25T02:27:38.152268+00:00",
+   "home_score": 17,
+   "away_score": 20,
+   "period": "1:57 - 3rd Quarter",
+   "game_clock": "1:57"
+  },
+  {
+   "timestamp": "2026-09-25T02:28:38.146118+00:00",
+   "home_score": 17,
+   "away_score": 20,
+   "period": "1:57 - 3rd Quarter",
+   "game_clock": "1:57"
+  },
+  {
+   "timestamp": "2026-09-25T02:29:38.153074+00:00",
+   "home_score": 17,
+   "away_score": 20,
+   "period": "1:57 - 3rd Quarter",
+   "game_clock": "1:57"
+  },
+  {
+   "timestamp": "2026-09-25T02:30:38.353169+00:00",
+   "home_score": 17,
+   "away_score": 20,
+   "period": "1:12 - 3rd Quarter",
+   "game_clock": "1:12"
+  },
+  {
+   "timestamp": "2026-09-25T02:31:38.133327+00:00",
+   "home_score": 17,
+   "away_score": 20,
+   "period": "0:34 - 3rd Quarter",
+   "game_clock": "0:34"
+  },
+  {
+   "timestamp": "2026-09-25T02:32:38.147156+00:00",
+   "home_score": 17,
+   "away_score": 20,
+   "period": "0:13 - 3rd Quarter",
+   "game_clock": "0:13"
+  },
+  {
+   "timestamp": "2026-09-25T02:33:38.159845+00:00",
+   "home_score": 17,
+   "away_score": 20,
+   "period": "End of 3rd Quarter",
+   "game_clock": "0:00"
+  },
+  {
+   "timestamp": "2026-09-25T02:34:38.176910+00:00",
+   "home_score": 17,
+   "away_score": 20,
+   "period": "End of 3rd Quarter",
+   "game_clock": "0:00"
+  },
+  {
+   "timestamp": "2026-09-25T02:35:38.147725+00:00",
+   "home_score": 17,
+   "away_score": 20,
+   "period": "End of 3rd Quarter",
+   "game_clock": "0:00"
+  },
+  {
+   "timestamp": "2026-09-25T02:36:38.500007+00:00",
+   "home_score": 17,
+   "away_score": 20,
+   "period": "End of 3rd Quarter",
+   "game_clock": "0:00"
+  },
+  {
+   "timestamp": "2026-09-25T02:38:38.201912+00:00",
+   "home_score": 17,
+   "away_score": 20,
+   "period": "End of 3rd Quarter",
+   "game_clock": "0:00"
+  },
+  {
+   "timestamp": "2026-09-25T02:39:38.185132+00:00",
+   "home_score": 17,
+   "away_score": 20,
+   "period": "15:00 - 4th Quarter",
+   "game_clock": "15:00"
+  },
+  {
+   "timestamp": "2026-09-25T02:40:38.158401+00:00",
+   "home_score": 17,
+   "away_score": 20,
+   "period": "13:08 - 4th Quarter",
+   "game_clock": "13:08"
+  },
+  {
+   "timestamp": "2026-09-25T02:41:38.142951+00:00",
+   "home_score": 17,
+   "away_score": 20,
+   "period": "12:52 - 4th Quarter",
+   "game_clock": "12:52"
+  },
+  {
+   "timestamp": "2026-09-25T02:47:16.705612+00:00",
+   "home_score": 17,
+   "away_score": 27,
+   "period": "12:06 - 4th Quarter",
+   "game_clock": "12:06"
+  },
+  {
+   "timestamp": "2026-09-25T02:48:16.807314+00:00",
+   "home_score": 17,
+   "away_score": 27,
+   "period": "11:54 - 4th Quarter",
+   "game_clock": "11:54"
+  },
+  {
+   "timestamp": "2026-09-25T02:49:16.715783+00:00",
+   "home_score": 17,
+   "away_score": 27,
+   "period": "11:08 - 4th Quarter",
+   "game_clock": "11:08"
+  },
+  {
+   "timestamp": "2026-09-25T02:50:16.739687+00:00",
+   "home_score": 17,
+   "away_score": 27,
+   "period": "11:02 - 4th Quarter",
+   "game_clock": "11:02"
+  },
+  {
+   "timestamp": "2026-09-25T02:51:16.746815+00:00",
+   "home_score": 17,
+   "away_score": 27,
+   "period": "10:01 - 4th Quarter",
+   "game_clock": "10:01"
+  },
+  {
+   "timestamp": "2026-09-25T02:52:16.747662+00:00",
+   "home_score": 17,
+   "away_score": 27,
+   "period": "9:57 - 4th Quarter",
+   "game_clock": "9:57"
+  },
+  {
+   "timestamp": "2026-09-25T02:53:16.726199+00:00",
+   "home_score": 17,
+   "away_score": 27,
+   "period": "9:48 - 4th Quarter",
+   "game_clock": "9:48"
+  },
+  {
+   "timestamp": "2026-09-25T02:54:16.739546+00:00",
+   "home_score": 17,
+   "away_score": 27,
+   "period": "9:48 - 4th Quarter",
+   "game_clock": "9:48"
+  },
+  {
+   "timestamp": "2026-09-25T02:55:16.746758+00:00",
+   "home_score": 17,
+   "away_score": 27,
+   "period": "9:48 - 4th Quarter",
+   "game_clock": "9:48"
+  },
+  {
+   "timestamp": "2026-09-25T02:56:16.721627+00:00",
+   "home_score": 17,
+   "away_score": 27,
+   "period": "9:48 - 4th Quarter",
+   "game_clock": "9:48"
+  },
+  {
+   "timestamp": "2026-09-25T02:57:16.751833+00:00",
+   "home_score": 17,
+   "away_score": 27,
+   "period": "8:58 - 4th Quarter",
+   "game_clock": "8:58"
+  },
+  {
+   "timestamp": "2026-09-25T02:58:16.757445+00:00",
+   "home_score": 17,
+   "away_score": 27,
+   "period": "7:49 - 4th Quarter",
+   "game_clock": "7:49"
+  },
+  {
+   "timestamp": "2026-09-25T02:59:16.849155+00:00",
+   "home_score": 17,
+   "away_score": 27,
+   "period": "7:49 - 4th Quarter",
+   "game_clock": "7:49"
+  },
+  {
+   "timestamp": "2026-09-25T03:00:16.779829+00:00",
+   "home_score": 17,
+   "away_score": 27,
+   "period": "7:49 - 4th Quarter",
+   "game_clock": "7:49"
+  },
+  {
+   "timestamp": "2026-09-25T03:01:16.971351+00:00",
+   "home_score": 17,
+   "away_score": 27,
+   "period": "7:49 - 4th Quarter",
+   "game_clock": "7:49"
+  },
+  {
+   "timestamp": "2026-09-25T03:02:16.998177+00:00",
+   "home_score": 17,
+   "away_score": 27,
+   "period": "7:49 - 4th Quarter",
+   "game_clock": "7:49"
+  },
+  {
+   "timestamp": "2026-09-25T03:03:16.972340+00:00",
+   "home_score": 17,
+   "away_score": 27,
+   "period": "7:49 - 4th Quarter",
+   "game_clock": "7:49"
+  },
+  {
+   "timestamp": "2026-09-25T03:04:16.945243+00:00",
+   "home_score": 17,
+   "away_score": 27,
+   "period": "7:49 - 4th Quarter",
+   "game_clock": "7:49"
+  },
+  {
+   "timestamp": "2026-09-25T03:05:16.957367+00:00",
+   "home_score": 17,
+   "away_score": 27,
+   "period": "7:49 - 4th Quarter",
+   "game_clock": "7:49"
+  },
+  {
+   "timestamp": "2026-09-25T03:06:16.958420+00:00",
+   "home_score": 17,
+   "away_score": 27,
+   "period": "7:49 - 4th Quarter",
+   "game_clock": "7:49"
+  },
+  {
+   "timestamp": "2026-09-25T03:07:17.003574+00:00",
+   "home_score": 17,
+   "away_score": 27,
+   "period": "7:49 - 4th Quarter",
+   "game_clock": "7:49"
+  },
+  {
+   "timestamp": "2026-09-25T03:08:16.989343+00:00",
+   "home_score": 17,
+   "away_score": 27,
+   "period": "5:52 - 4th Quarter",
+   "game_clock": "5:52"
+  },
+  {
+   "timestamp": "2026-09-25T03:09:17.311982+00:00",
+   "home_score": 17,
+   "away_score": 27,
+   "period": "5:52 - 4th Quarter",
+   "game_clock": "5:52"
+  },
+  {
+   "timestamp": "2026-09-25T03:10:16.939921+00:00",
+   "home_score": 17,
+   "away_score": 27,
+   "period": "5:52 - 4th Quarter",
+   "game_clock": "5:52"
+  },
+  {
+   "timestamp": "2026-09-25T03:12:17.044566+00:00",
+   "home_score": 17,
+   "away_score": 27,
+   "period": "4:22 - 4th Quarter",
+   "game_clock": "4:22"
+  },
+  {
+   "timestamp": "2026-09-25T03:13:16.981095+00:00",
+   "home_score": 17,
+   "away_score": 27,
+   "period": "4:15 - 4th Quarter",
+   "game_clock": "4:15"
+  },
+  {
+   "timestamp": "2026-09-25T03:14:16.979664+00:00",
+   "home_score": 17,
+   "away_score": 27,
+   "period": "4:06 - 4th Quarter",
+   "game_clock": "4:06"
+  },
+  {
+   "timestamp": "2026-09-25T03:15:17.036558+00:00",
+   "home_score": 17,
+   "away_score": 27,
+   "period": "3:35 - 4th Quarter",
+   "game_clock": "3:35"
+  },
+  {
+   "timestamp": "2026-09-25T03:16:17.103793+00:00",
+   "home_score": 17,
+   "away_score": 27,
+   "period": "3:08 - 4th Quarter",
+   "game_clock": "3:08"
+  },
+  {
+   "timestamp": "2026-09-25T03:17:16.993704+00:00",
+   "home_score": 17,
+   "away_score": 27,
+   "period": "3:01 - 4th Quarter",
+   "game_clock": "3:01"
+  },
+  {
+   "timestamp": "2026-09-25T03:18:16.978503+00:00",
+   "home_score": 17,
+   "away_score": 27,
+   "period": "2:39 - 4th Quarter",
+   "game_clock": "2:39"
+  },
+  {
+   "timestamp": "2026-09-25T03:19:17.004389+00:00",
+   "home_score": 17,
+   "away_score": 27,
+   "period": "2:39 - 4th Quarter",
+   "game_clock": "2:39"
+  },
+  {
+   "timestamp": "2026-09-25T03:20:17.002927+00:00",
+   "home_score": 17,
+   "away_score": 27,
+   "period": "2:26 - 4th Quarter",
+   "game_clock": "2:26"
+  },
+  {
+   "timestamp": "2026-09-25T03:21:17.135080+00:00",
+   "home_score": 17,
+   "away_score": 27,
+   "period": "1:59 - 4th Quarter",
+   "game_clock": "1:59"
+  },
+  {
+   "timestamp": "2026-09-25T03:22:17.009213+00:00",
+   "home_score": 17,
+   "away_score": 27,
+   "period": "1:59 - 4th Quarter",
+   "game_clock": "1:59"
+  },
+  {
+   "timestamp": "2026-09-25T03:23:17.051939+00:00",
+   "home_score": 17,
+   "away_score": 27,
+   "period": "1:59 - 4th Quarter",
+   "game_clock": "1:59"
+  },
+  {
+   "timestamp": "2026-09-25T03:24:17.018047+00:00",
+   "home_score": 17,
+   "away_score": 27,
+   "period": "1:59 - 4th Quarter",
+   "game_clock": "1:59"
+  },
+  {
+   "timestamp": "2026-09-25T03:25:17.003108+00:00",
+   "home_score": 17,
+   "away_score": 27,
+   "period": "1:48 - 4th Quarter",
+   "game_clock": "1:48"
+  },
+  {
+   "timestamp": "2026-09-25T03:26:17.042546+00:00",
+   "home_score": 17,
+   "away_score": 27,
+   "period": "1:07 - 4th Quarter",
+   "game_clock": "1:07"
+  },
+  {
+   "timestamp": "2026-09-25T03:27:17.032688+00:00",
+   "home_score": 17,
+   "away_score": 27,
+   "period": "1:02 - 4th Quarter",
+   "game_clock": "1:02"
+  },
+  {
+   "timestamp": "2026-09-25T03:31:17.068902+00:00",
+   "home_score": 17,
+   "away_score": 34,
+   "period": "0:54 - 4th Quarter",
+   "game_clock": "0:54"
+  },
+  {
+   "timestamp": "2026-09-25T03:32:17.068599+00:00",
+   "home_score": 17,
+   "away_score": 34,
+   "period": "0:33 - 4th Quarter",
+   "game_clock": "0:33"
+  },
+  {
+   "timestamp": "2026-09-25T03:33:17.029920+00:00",
+   "home_score": 17,
+   "away_score": 34,
+   "period": "0:33 - 4th Quarter",
+   "game_clock": "0:33"
+  },
+  {
+   "timestamp": "2026-09-25T03:34:17.063634+00:00",
+   "home_score": 17,
+   "away_score": 34,
+   "period": "0:33 - 4th Quarter",
+   "game_clock": "0:33"
+  },
+  {
+   "timestamp": "2026-09-25T03:35:17.062284+00:00",
+   "home_score": 17,
+   "away_score": 34,
+   "period": "End of 4th Quarter",
+   "game_clock": "0:00"
+  },
+  {
+   "timestamp": "2026-09-25T03:36:17.037340+00:00",
+   "home_score": 17,
+   "away_score": 34,
+   "period": "End of 4th Quarter",
+   "game_clock": "0:00"
+  },
+  {
+   "timestamp": "2026-09-25T03:37:17.078943+00:00",
+   "home_score": 17,
+   "away_score": 34,
+   "period": "End of 4th Quarter",
+   "game_clock": "0:00"
+  },
+  {
+   "timestamp": "2026-09-25T03:38:00+00:00",
+   "home_score": 17,
+   "away_score": 34,
+   "period": "Final",
+   "game_clock": "Final"
+  }
+ ],
+ "win_prob_game_state": {
+  "stat_model": [
+   {
+    "timestamp": "2026-09-24T23:37:37.739579+00:00",
+    "game_state": {
+     "clock": "15:00",
+     "period": "15:00 - 1st Quarter",
+     "away_score": 0,
+     "home_score": 0,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-24T23:38:37.722942+00:00",
+    "game_state": {
+     "clock": "13:50",
+     "period": "13:50 - 1st Quarter",
+     "away_score": 0,
+     "home_score": 0,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-24T23:39:37.732233+00:00",
+    "game_state": {
+     "clock": "13:00",
+     "period": "13:00 - 1st Quarter",
+     "away_score": 0,
+     "home_score": 0,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-24T23:41:37.757796+00:00",
+    "game_state": {
+     "clock": "12:09",
+     "period": "12:09 - 1st Quarter",
+     "away_score": 0,
+     "home_score": 0,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-24T23:42:37.979435+00:00",
+    "game_state": {
+     "clock": "11:36",
+     "period": "11:36 - 1st Quarter",
+     "away_score": 0,
+     "home_score": 0,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-24T23:43:37.725412+00:00",
+    "game_state": {
+     "clock": "10:27",
+     "period": "10:27 - 1st Quarter",
+     "away_score": 0,
+     "home_score": 0,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-24T23:47:37.725472+00:00",
+    "game_state": {
+     "clock": "10:26",
+     "period": "10:26 - 1st Quarter",
+     "away_score": 0,
+     "home_score": 0,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-24T23:48:38.111687+00:00",
+    "game_state": {
+     "clock": "9:43",
+     "period": "9:43 - 1st Quarter",
+     "away_score": 0,
+     "home_score": 0,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-24T23:49:37.718618+00:00",
+    "game_state": {
+     "clock": "9:43",
+     "period": "9:43 - 1st Quarter",
+     "away_score": 3,
+     "home_score": 0,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-24T23:50:37.720728+00:00",
+    "game_state": {
+     "clock": "9:35",
+     "period": "9:35 - 1st Quarter",
+     "away_score": 3,
+     "home_score": 0,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-24T23:54:38.190482+00:00",
+    "game_state": {
+     "clock": "9:34",
+     "period": "9:34 - 1st Quarter",
+     "away_score": 3,
+     "home_score": 0,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-24T23:55:37.732878+00:00",
+    "game_state": {
+     "clock": "9:35",
+     "period": "9:35 - 1st Quarter",
+     "away_score": 3,
+     "home_score": 0,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-24T23:56:37.709591+00:00",
+    "game_state": {
+     "clock": "9:27",
+     "period": "9:27 - 1st Quarter",
+     "away_score": 3,
+     "home_score": 0,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-24T23:57:37.727305+00:00",
+    "game_state": {
+     "clock": "8:46",
+     "period": "8:46 - 1st Quarter",
+     "away_score": 3,
+     "home_score": 0,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-24T23:58:37.852647+00:00",
+    "game_state": {
+     "clock": "7:51",
+     "period": "7:51 - 1st Quarter",
+     "away_score": 3,
+     "home_score": 0,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:00:37.979479+00:00",
+    "game_state": {
+     "clock": "7:14",
+     "period": "7:14 - 1st Quarter",
+     "away_score": 3,
+     "home_score": 0,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:02:37.703961+00:00",
+    "game_state": {
+     "clock": "5:55",
+     "period": "5:55 - 1st Quarter",
+     "away_score": 3,
+     "home_score": 0,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:03:37.825647+00:00",
+    "game_state": {
+     "clock": "5:22",
+     "period": "5:22 - 1st Quarter",
+     "away_score": 3,
+     "home_score": 0,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:04:37.706062+00:00",
+    "game_state": {
+     "clock": "5:19",
+     "period": "5:19 - 1st Quarter",
+     "away_score": 3,
+     "home_score": 3,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:09:37.702286+00:00",
+    "game_state": {
+     "clock": "5:13",
+     "period": "5:13 - 1st Quarter",
+     "away_score": 3,
+     "home_score": 3,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:10:37.993228+00:00",
+    "game_state": {
+     "clock": "4:26",
+     "period": "4:26 - 1st Quarter",
+     "away_score": 3,
+     "home_score": 3,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:12:38.254572+00:00",
+    "game_state": {
+     "clock": "4:08",
+     "period": "4:08 - 1st Quarter",
+     "away_score": 3,
+     "home_score": 3,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:13:38.003536+00:00",
+    "game_state": {
+     "clock": "3:22",
+     "period": "3:22 - 1st Quarter",
+     "away_score": 3,
+     "home_score": 3,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:14:38.005893+00:00",
+    "game_state": {
+     "clock": "3:20",
+     "period": "3:20 - 1st Quarter",
+     "away_score": 3,
+     "home_score": 3,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:15:38.022941+00:00",
+    "game_state": {
+     "clock": "3:13",
+     "period": "3:13 - 1st Quarter",
+     "away_score": 10,
+     "home_score": 3,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:17:38.062884+00:00",
+    "game_state": {
+     "clock": "3:05",
+     "period": "3:05 - 1st Quarter",
+     "away_score": 10,
+     "home_score": 3,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:30:38.382084+00:00",
+    "game_state": {
+     "clock": "2:45",
+     "period": "2:45 - 1st Quarter",
+     "away_score": 10,
+     "home_score": 3,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:32:38.135164+00:00",
+    "game_state": {
+     "clock": "2:01",
+     "period": "2:01 - 1st Quarter",
+     "away_score": 10,
+     "home_score": 3,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:33:38.095825+00:00",
+    "game_state": {
+     "clock": "1:43",
+     "period": "1:43 - 1st Quarter",
+     "away_score": 10,
+     "home_score": 3,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:34:38.127663+00:00",
+    "game_state": {
+     "clock": "0:45",
+     "period": "0:45 - 1st Quarter",
+     "away_score": 10,
+     "home_score": 3,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:35:38.144623+00:00",
+    "game_state": {
+     "clock": "0:02",
+     "period": "0:02 - 1st Quarter",
+     "away_score": 10,
+     "home_score": 3,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:37:38.124309+00:00",
+    "game_state": {
+     "clock": "0:00",
+     "period": "End of 1st Quarter",
+     "away_score": 10,
+     "home_score": 3,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:38:38.132185+00:00",
+    "game_state": {
+     "clock": "15:00",
+     "period": "15:00 - 1st Quarter",
+     "away_score": 10,
+     "home_score": 3,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:46:38.090746+00:00",
+    "game_state": {
+     "clock": "11:00",
+     "period": "11:00 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 3,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:50:38.110762+00:00",
+    "game_state": {
+     "clock": "1:42",
+     "period": "1:42 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 3,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:51:38.105049+00:00",
+    "game_state": {
+     "clock": "10:40",
+     "period": "10:40 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 3,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:52:38.118581+00:00",
+    "game_state": {
+     "clock": "10:27",
+     "period": "10:27 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 3,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:53:38.098295+00:00",
+    "game_state": {
+     "clock": "9:54",
+     "period": "9:54 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 3,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:56:38.101267+00:00",
+    "game_state": {
+     "clock": "9:39",
+     "period": "9:39 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 3,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:57:38.099220+00:00",
+    "game_state": {
+     "clock": "9:25",
+     "period": "9:25 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 3,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:59:38.127665+00:00",
+    "game_state": {
+     "clock": "7:44",
+     "period": "7:44 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 3,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:01:38.146424+00:00",
+    "game_state": {
+     "clock": "6:42",
+     "period": "6:42 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 3,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:02:38.591273+00:00",
+    "game_state": {
+     "clock": "6:23",
+     "period": "6:23 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 3,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:03:38.124494+00:00",
+    "game_state": {
+     "clock": "5:26",
+     "period": "5:26 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 9,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:04:38.124290+00:00",
+    "game_state": {
+     "clock": "5:26",
+     "period": "5:26 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 10,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:10:38.114144+00:00",
+    "game_state": {
+     "clock": "4:07",
+     "period": "4:07 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 10,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:11:38.096321+00:00",
+    "game_state": {
+     "clock": "3:26",
+     "period": "3:26 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 10,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:12:38.269741+00:00",
+    "game_state": {
+     "clock": "2:05",
+     "period": "2:05 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 10,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:13:38.089215+00:00",
+    "game_state": {
+     "clock": "2:00",
+     "period": "2:00 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 10,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:17:38.112173+00:00",
+    "game_state": {
+     "clock": "1:51",
+     "period": "1:51 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 10,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:18:38.336252+00:00",
+    "game_state": {
+     "clock": "1:47",
+     "period": "1:47 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 10,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:20:38.124347+00:00",
+    "game_state": {
+     "clock": "1:38",
+     "period": "1:38 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 10,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:21:38.107201+00:00",
+    "game_state": {
+     "clock": "1:32",
+     "period": "1:32 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 10,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:24:38.285705+00:00",
+    "game_state": {
+     "clock": "1:23",
+     "period": "1:23 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 10,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:25:38.192229+00:00",
+    "game_state": {
+     "clock": "0:54",
+     "period": "0:54 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 10,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:26:38.116379+00:00",
+    "game_state": {
+     "clock": "0:50",
+     "period": "0:50 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 10,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:27:38.126475+00:00",
+    "game_state": {
+     "clock": "0:44",
+     "period": "0:44 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 10,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:28:38.152609+00:00",
+    "game_state": {
+     "clock": "0:34",
+     "period": "0:34 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 10,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:29:38.098383+00:00",
+    "game_state": {
+     "clock": "0:29",
+     "period": "0:29 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 10,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:30:38.510994+00:00",
+    "game_state": {
+     "clock": "0:24",
+     "period": "0:24 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 16,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:31:38.102474+00:00",
+    "game_state": {
+     "clock": "0:24",
+     "period": "0:24 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:33:38.121553+00:00",
+    "game_state": {
+     "clock": "0:17",
+     "period": "0:17 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:34:38.143347+00:00",
+    "game_state": {
+     "clock": "0:10",
+     "period": "0:10 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:58:38.156185+00:00",
+    "game_state": {
+     "clock": "14:10",
+     "period": "14:10 - 3rd Quarter",
+     "away_score": 10,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:59:38.108380+00:00",
+    "game_state": {
+     "clock": "13:10",
+     "period": "13:10 - 3rd Quarter",
+     "away_score": 16,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:00:38.323573+00:00",
+    "game_state": {
+     "clock": "13:10",
+     "period": "13:10 - 3rd Quarter",
+     "away_score": 17,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:01:38.135460+00:00",
+    "game_state": {
+     "clock": "13:03",
+     "period": "13:03 - 3rd Quarter",
+     "away_score": 17,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:02:38.174658+00:00",
+    "game_state": {
+     "clock": "12:26",
+     "period": "12:26 - 3rd Quarter",
+     "away_score": 17,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:03:38.108465+00:00",
+    "game_state": {
+     "clock": "11:50",
+     "period": "11:50 - 3rd Quarter",
+     "away_score": 17,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:04:38.334048+00:00",
+    "game_state": {
+     "clock": "11:05",
+     "period": "11:05 - 3rd Quarter",
+     "away_score": 17,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:05:38.138993+00:00",
+    "game_state": {
+     "clock": "10:48",
+     "period": "10:48 - 3rd Quarter",
+     "away_score": 17,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:09:38.209880+00:00",
+    "game_state": {
+     "clock": "10:38",
+     "period": "10:38 - 3rd Quarter",
+     "away_score": 17,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:10:38.141486+00:00",
+    "game_state": {
+     "clock": "10:10",
+     "period": "10:10 - 3rd Quarter",
+     "away_score": 17,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:11:38.106754+00:00",
+    "game_state": {
+     "clock": "8:59",
+     "period": "8:59 - 3rd Quarter",
+     "away_score": 17,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:12:38.275848+00:00",
+    "game_state": {
+     "clock": "8:17",
+     "period": "8:17 - 3rd Quarter",
+     "away_score": 17,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:13:38.110557+00:00",
+    "game_state": {
+     "clock": "7:30",
+     "period": "7:30 - 3rd Quarter",
+     "away_score": 17,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:14:38.121404+00:00",
+    "game_state": {
+     "clock": "6:07",
+     "period": "6:07 - 3rd Quarter",
+     "away_score": 17,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:15:38.151454+00:00",
+    "game_state": {
+     "clock": "5:19",
+     "period": "5:19 - 3rd Quarter",
+     "away_score": 17,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:16:38.190429+00:00",
+    "game_state": {
+     "clock": "4:55",
+     "period": "4:55 - 3rd Quarter",
+     "away_score": 17,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:19:38.159505+00:00",
+    "game_state": {
+     "clock": "4:52",
+     "period": "4:52 - 3rd Quarter",
+     "away_score": 20,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:22:38.175769+00:00",
+    "game_state": {
+     "clock": "4:14",
+     "period": "4:14 - 3rd Quarter",
+     "away_score": 20,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:23:38.186817+00:00",
+    "game_state": {
+     "clock": "3:30",
+     "period": "3:30 - 3rd Quarter",
+     "away_score": 20,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:24:38.329615+00:00",
+    "game_state": {
+     "clock": "2:54",
+     "period": "2:54 - 3rd Quarter",
+     "away_score": 20,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:25:38.148433+00:00",
+    "game_state": {
+     "clock": "1:57",
+     "period": "1:57 - 3rd Quarter",
+     "away_score": 20,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:30:38.353169+00:00",
+    "game_state": {
+     "clock": "1:12",
+     "period": "1:12 - 3rd Quarter",
+     "away_score": 20,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:31:38.133327+00:00",
+    "game_state": {
+     "clock": "0:34",
+     "period": "0:34 - 3rd Quarter",
+     "away_score": 20,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:32:38.147156+00:00",
+    "game_state": {
+     "clock": "0:13",
+     "period": "0:13 - 3rd Quarter",
+     "away_score": 20,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:33:38.159845+00:00",
+    "game_state": {
+     "clock": "0:00",
+     "period": "End of 3rd Quarter",
+     "away_score": 20,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:39:38.185132+00:00",
+    "game_state": {
+     "clock": "15:00",
+     "period": "15:00 - 4th Quarter",
+     "away_score": 20,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:40:38.158401+00:00",
+    "game_state": {
+     "clock": "13:08",
+     "period": "13:08 - 4th Quarter",
+     "away_score": 20,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:41:38.142951+00:00",
+    "game_state": {
+     "clock": "12:52",
+     "period": "12:52 - 4th Quarter",
+     "away_score": 20,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:43:38.205267+00:00",
+    "game_state": {
+     "clock": "12:06",
+     "period": "12:06 - 4th Quarter",
+     "away_score": 27,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:48:16.807314+00:00",
+    "game_state": {
+     "clock": "11:54",
+     "period": "11:54 - 4th Quarter",
+     "away_score": 27,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:49:16.715783+00:00",
+    "game_state": {
+     "clock": "11:08",
+     "period": "11:08 - 4th Quarter",
+     "away_score": 27,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:50:16.739687+00:00",
+    "game_state": {
+     "clock": "11:02",
+     "period": "11:02 - 4th Quarter",
+     "away_score": 27,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:51:16.746815+00:00",
+    "game_state": {
+     "clock": "10:01",
+     "period": "10:01 - 4th Quarter",
+     "away_score": 27,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:52:16.747662+00:00",
+    "game_state": {
+     "clock": "9:57",
+     "period": "9:57 - 4th Quarter",
+     "away_score": 27,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:53:16.726199+00:00",
+    "game_state": {
+     "clock": "9:48",
+     "period": "9:48 - 4th Quarter",
+     "away_score": 27,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:57:16.751833+00:00",
+    "game_state": {
+     "clock": "8:58",
+     "period": "8:58 - 4th Quarter",
+     "away_score": 27,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:58:16.757445+00:00",
+    "game_state": {
+     "clock": "7:49",
+     "period": "7:49 - 4th Quarter",
+     "away_score": 27,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T03:08:16.989343+00:00",
+    "game_state": {
+     "clock": "5:52",
+     "period": "5:52 - 4th Quarter",
+     "away_score": 27,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T03:12:17.044566+00:00",
+    "game_state": {
+     "clock": "4:22",
+     "period": "4:22 - 4th Quarter",
+     "away_score": 27,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T03:13:16.981095+00:00",
+    "game_state": {
+     "clock": "4:15",
+     "period": "4:15 - 4th Quarter",
+     "away_score": 27,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T03:14:16.979664+00:00",
+    "game_state": {
+     "clock": "4:06",
+     "period": "4:06 - 4th Quarter",
+     "away_score": 27,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T03:15:17.036558+00:00",
+    "game_state": {
+     "clock": "3:35",
+     "period": "3:35 - 4th Quarter",
+     "away_score": 27,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T03:16:17.103793+00:00",
+    "game_state": {
+     "clock": "3:08",
+     "period": "3:08 - 4th Quarter",
+     "away_score": 27,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T03:17:16.993704+00:00",
+    "game_state": {
+     "clock": "3:01",
+     "period": "3:01 - 4th Quarter",
+     "away_score": 27,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T03:18:16.978503+00:00",
+    "game_state": {
+     "clock": "2:39",
+     "period": "2:39 - 4th Quarter",
+     "away_score": 27,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T03:20:17.002927+00:00",
+    "game_state": {
+     "clock": "2:26",
+     "period": "2:26 - 4th Quarter",
+     "away_score": 27,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T03:21:17.135080+00:00",
+    "game_state": {
+     "clock": "1:59",
+     "period": "1:59 - 4th Quarter",
+     "away_score": 27,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T03:25:17.003108+00:00",
+    "game_state": {
+     "clock": "1:48",
+     "period": "1:48 - 4th Quarter",
+     "away_score": 27,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T03:26:17.042546+00:00",
+    "game_state": {
+     "clock": "1:07",
+     "period": "1:07 - 4th Quarter",
+     "away_score": 27,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T03:27:17.032688+00:00",
+    "game_state": {
+     "clock": "1:02",
+     "period": "1:02 - 4th Quarter",
+     "away_score": 27,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T03:30:17.085953+00:00",
+    "game_state": {
+     "clock": "0:54",
+     "period": "0:54 - 4th Quarter",
+     "away_score": 34,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T03:32:17.068599+00:00",
+    "game_state": {
+     "clock": "0:33",
+     "period": "0:33 - 4th Quarter",
+     "away_score": 34,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   },
+   {
+    "timestamp": "2026-09-25T03:35:17.062284+00:00",
+    "game_state": {
+     "clock": "0:00",
+     "period": "End of 4th Quarter",
+     "away_score": 34,
+     "home_score": 17,
+     "time_source": "espn"
+    }
+   }
+  ],
+  "espn": [
+   {
+    "timestamp": "2026-09-24T23:37:37.739579+00:00",
+    "game_state": {
+     "clock": "15:00",
+     "period": "15:00 - 1st Quarter",
+     "away_score": 0,
+     "home_score": 0
+    }
+   },
+   {
+    "timestamp": "2026-09-24T23:38:37.722942+00:00",
+    "game_state": {
+     "clock": "13:50",
+     "period": "13:50 - 1st Quarter",
+     "away_score": 0,
+     "home_score": 0
+    }
+   },
+   {
+    "timestamp": "2026-09-24T23:39:37.732233+00:00",
+    "game_state": {
+     "clock": "13:00",
+     "period": "13:00 - 1st Quarter",
+     "away_score": 0,
+     "home_score": 0
+    }
+   },
+   {
+    "timestamp": "2026-09-24T23:40:37.754662+00:00",
+    "game_state": {
+     "clock": "13:00",
+     "period": "13:00 - 1st Quarter",
+     "away_score": 0,
+     "home_score": 0
+    }
+   },
+   {
+    "timestamp": "2026-09-24T23:41:37.757796+00:00",
+    "game_state": {
+     "clock": "12:09",
+     "period": "12:09 - 1st Quarter",
+     "away_score": 0,
+     "home_score": 0
+    }
+   },
+   {
+    "timestamp": "2026-09-24T23:42:37.979435+00:00",
+    "game_state": {
+     "clock": "11:36",
+     "period": "11:36 - 1st Quarter",
+     "away_score": 0,
+     "home_score": 0
+    }
+   },
+   {
+    "timestamp": "2026-09-24T23:43:37.725412+00:00",
+    "game_state": {
+     "clock": "10:27",
+     "period": "10:27 - 1st Quarter",
+     "away_score": 0,
+     "home_score": 0
+    }
+   },
+   {
+    "timestamp": "2026-09-24T23:44:37.736764+00:00",
+    "game_state": {
+     "clock": "10:27",
+     "period": "10:27 - 1st Quarter",
+     "away_score": 0,
+     "home_score": 0
+    }
+   },
+   {
+    "timestamp": "2026-09-24T23:47:37.725472+00:00",
+    "game_state": {
+     "clock": "10:26",
+     "period": "10:26 - 1st Quarter",
+     "away_score": 0,
+     "home_score": 0
+    }
+   },
+   {
+    "timestamp": "2026-09-24T23:48:38.111687+00:00",
+    "game_state": {
+     "clock": "9:43",
+     "period": "9:43 - 1st Quarter",
+     "away_score": 0,
+     "home_score": 0
+    }
+   },
+   {
+    "timestamp": "2026-09-24T23:49:37.718618+00:00",
+    "game_state": {
+     "clock": "9:43",
+     "period": "9:43 - 1st Quarter",
+     "away_score": 3,
+     "home_score": 0
+    }
+   },
+   {
+    "timestamp": "2026-09-24T23:50:37.720728+00:00",
+    "game_state": {
+     "clock": "9:35",
+     "period": "9:35 - 1st Quarter",
+     "away_score": 3,
+     "home_score": 0
+    }
+   },
+   {
+    "timestamp": "2026-09-24T23:51:37.763776+00:00",
+    "game_state": {
+     "clock": "9:35",
+     "period": "9:35 - 1st Quarter",
+     "away_score": 3,
+     "home_score": 0
+    }
+   },
+   {
+    "timestamp": "2026-09-24T23:52:37.773399+00:00",
+    "game_state": {
+     "clock": "9:35",
+     "period": "9:35 - 1st Quarter",
+     "away_score": 3,
+     "home_score": 0
+    }
+   },
+   {
+    "timestamp": "2026-09-24T23:53:37.753974+00:00",
+    "game_state": {
+     "clock": "9:35",
+     "period": "9:35 - 1st Quarter",
+     "away_score": 3,
+     "home_score": 0
+    }
+   },
+   {
+    "timestamp": "2026-09-24T23:54:38.190482+00:00",
+    "game_state": {
+     "clock": "9:34",
+     "period": "9:34 - 1st Quarter",
+     "away_score": 3,
+     "home_score": 0
+    }
+   },
+   {
+    "timestamp": "2026-09-24T23:55:37.732878+00:00",
+    "game_state": {
+     "clock": "9:35",
+     "period": "9:35 - 1st Quarter",
+     "away_score": 3,
+     "home_score": 0
+    }
+   },
+   {
+    "timestamp": "2026-09-24T23:56:37.709591+00:00",
+    "game_state": {
+     "clock": "9:27",
+     "period": "9:27 - 1st Quarter",
+     "away_score": 3,
+     "home_score": 0
+    }
+   },
+   {
+    "timestamp": "2026-09-24T23:57:37.727305+00:00",
+    "game_state": {
+     "clock": "8:46",
+     "period": "8:46 - 1st Quarter",
+     "away_score": 3,
+     "home_score": 0
+    }
+   },
+   {
+    "timestamp": "2026-09-24T23:58:37.852647+00:00",
+    "game_state": {
+     "clock": "7:51",
+     "period": "7:51 - 1st Quarter",
+     "away_score": 3,
+     "home_score": 0
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:00:37.979479+00:00",
+    "game_state": {
+     "clock": "7:14",
+     "period": "7:14 - 1st Quarter",
+     "away_score": 3,
+     "home_score": 0
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:02:37.703961+00:00",
+    "game_state": {
+     "clock": "5:55",
+     "period": "5:55 - 1st Quarter",
+     "away_score": 3,
+     "home_score": 0
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:03:37.825647+00:00",
+    "game_state": {
+     "clock": "5:22",
+     "period": "5:22 - 1st Quarter",
+     "away_score": 3,
+     "home_score": 0
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:04:37.706062+00:00",
+    "game_state": {
+     "clock": "5:19",
+     "period": "5:19 - 1st Quarter",
+     "away_score": 3,
+     "home_score": 3
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:08:37.729903+00:00",
+    "game_state": {
+     "clock": "5:19",
+     "period": "5:19 - 1st Quarter",
+     "away_score": 3,
+     "home_score": 3
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:09:37.702286+00:00",
+    "game_state": {
+     "clock": "5:13",
+     "period": "5:13 - 1st Quarter",
+     "away_score": 3,
+     "home_score": 3
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:10:37.993228+00:00",
+    "game_state": {
+     "clock": "4:26",
+     "period": "4:26 - 1st Quarter",
+     "away_score": 3,
+     "home_score": 3
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:11:38.142616+00:00",
+    "game_state": {
+     "clock": "4:26",
+     "period": "4:26 - 1st Quarter",
+     "away_score": 3,
+     "home_score": 3
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:12:38.254572+00:00",
+    "game_state": {
+     "clock": "4:08",
+     "period": "4:08 - 1st Quarter",
+     "away_score": 3,
+     "home_score": 3
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:13:38.003536+00:00",
+    "game_state": {
+     "clock": "3:22",
+     "period": "3:22 - 1st Quarter",
+     "away_score": 3,
+     "home_score": 3
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:14:38.005893+00:00",
+    "game_state": {
+     "clock": "3:20",
+     "period": "3:20 - 1st Quarter",
+     "away_score": 3,
+     "home_score": 3
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:30:38.382084+00:00",
+    "game_state": {
+     "clock": "2:45",
+     "period": "2:45 - 1st Quarter",
+     "away_score": 10,
+     "home_score": 3
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:32:38.135164+00:00",
+    "game_state": {
+     "clock": "2:01",
+     "period": "2:01 - 1st Quarter",
+     "away_score": 10,
+     "home_score": 3
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:33:38.095825+00:00",
+    "game_state": {
+     "clock": "1:43",
+     "period": "1:43 - 1st Quarter",
+     "away_score": 10,
+     "home_score": 3
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:34:38.127663+00:00",
+    "game_state": {
+     "clock": "0:45",
+     "period": "0:45 - 1st Quarter",
+     "away_score": 10,
+     "home_score": 3
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:35:38.144623+00:00",
+    "game_state": {
+     "clock": "0:02",
+     "period": "0:02 - 1st Quarter",
+     "away_score": 10,
+     "home_score": 3
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:36:38.705394+00:00",
+    "game_state": {
+     "clock": "0:02",
+     "period": "0:02 - 1st Quarter",
+     "away_score": 10,
+     "home_score": 3
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:37:38.124309+00:00",
+    "game_state": {
+     "clock": "0:00",
+     "period": "End of 1st Quarter",
+     "away_score": 10,
+     "home_score": 3
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:38:38.132185+00:00",
+    "game_state": {
+     "clock": "15:00",
+     "period": "15:00 - 1st Quarter",
+     "away_score": 10,
+     "home_score": 3
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:40:38.115989+00:00",
+    "game_state": {
+     "clock": "0:00",
+     "period": "End of 1st Quarter",
+     "away_score": 10,
+     "home_score": 3
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:42:38.463485+00:00",
+    "game_state": {
+     "clock": "0:00",
+     "period": "End of 1st Quarter",
+     "away_score": 10,
+     "home_score": 3
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:43:38.113033+00:00",
+    "game_state": {
+     "clock": "0:00",
+     "period": "End of 1st Quarter",
+     "away_score": 10,
+     "home_score": 3
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:44:38.102141+00:00",
+    "game_state": {
+     "clock": "0:00",
+     "period": "End of 1st Quarter",
+     "away_score": 10,
+     "home_score": 3
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:45:38.136683+00:00",
+    "game_state": {
+     "clock": "0:00",
+     "period": "End of 1st Quarter",
+     "away_score": 10,
+     "home_score": 3
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:46:38.090746+00:00",
+    "game_state": {
+     "clock": "11:00",
+     "period": "11:00 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 3
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:47:38.100480+00:00",
+    "game_state": {
+     "clock": "11:00",
+     "period": "11:00 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 3
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:50:38.110762+00:00",
+    "game_state": {
+     "clock": "1:42",
+     "period": "1:42 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 3
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:51:38.105049+00:00",
+    "game_state": {
+     "clock": "10:40",
+     "period": "10:40 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 3
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:52:38.118581+00:00",
+    "game_state": {
+     "clock": "10:27",
+     "period": "10:27 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 3
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:53:38.098295+00:00",
+    "game_state": {
+     "clock": "9:54",
+     "period": "9:54 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 3
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:56:38.101267+00:00",
+    "game_state": {
+     "clock": "9:39",
+     "period": "9:39 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 3
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:57:38.099220+00:00",
+    "game_state": {
+     "clock": "9:25",
+     "period": "9:25 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 3
+    }
+   },
+   {
+    "timestamp": "2026-09-25T00:59:38.127665+00:00",
+    "game_state": {
+     "clock": "7:44",
+     "period": "7:44 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 3
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:01:38.146424+00:00",
+    "game_state": {
+     "clock": "6:42",
+     "period": "6:42 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 3
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:02:38.591273+00:00",
+    "game_state": {
+     "clock": "6:23",
+     "period": "6:23 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 3
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:03:38.124494+00:00",
+    "game_state": {
+     "clock": "5:26",
+     "period": "5:26 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 9
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:10:38.114144+00:00",
+    "game_state": {
+     "clock": "4:07",
+     "period": "4:07 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 10
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:11:38.096321+00:00",
+    "game_state": {
+     "clock": "3:26",
+     "period": "3:26 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 10
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:12:38.269741+00:00",
+    "game_state": {
+     "clock": "2:05",
+     "period": "2:05 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 10
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:13:38.089215+00:00",
+    "game_state": {
+     "clock": "2:00",
+     "period": "2:00 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 10
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:14:38.118560+00:00",
+    "game_state": {
+     "clock": "2:00",
+     "period": "2:00 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 10
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:16:38.215596+00:00",
+    "game_state": {
+     "clock": "2:00",
+     "period": "2:00 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 10
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:17:38.112173+00:00",
+    "game_state": {
+     "clock": "1:51",
+     "period": "1:51 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 10
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:18:38.336252+00:00",
+    "game_state": {
+     "clock": "1:47",
+     "period": "1:47 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 10
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:20:38.124347+00:00",
+    "game_state": {
+     "clock": "1:38",
+     "period": "1:38 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 10
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:21:38.107201+00:00",
+    "game_state": {
+     "clock": "1:32",
+     "period": "1:32 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 10
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:22:38.154723+00:00",
+    "game_state": {
+     "clock": "1:32",
+     "period": "1:32 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 10
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:23:38.113527+00:00",
+    "game_state": {
+     "clock": "1:32",
+     "period": "1:32 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 10
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:24:38.285705+00:00",
+    "game_state": {
+     "clock": "1:23",
+     "period": "1:23 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 10
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:25:38.192229+00:00",
+    "game_state": {
+     "clock": "0:54",
+     "period": "0:54 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 10
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:26:38.116379+00:00",
+    "game_state": {
+     "clock": "0:50",
+     "period": "0:50 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 10
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:27:38.126475+00:00",
+    "game_state": {
+     "clock": "0:44",
+     "period": "0:44 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 10
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:28:38.152609+00:00",
+    "game_state": {
+     "clock": "0:34",
+     "period": "0:34 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 10
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:29:38.098383+00:00",
+    "game_state": {
+     "clock": "0:29",
+     "period": "0:29 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 10
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:30:38.510994+00:00",
+    "game_state": {
+     "clock": "0:24",
+     "period": "0:24 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 16
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:34:38.143347+00:00",
+    "game_state": {
+     "clock": "0:10",
+     "period": "0:10 - 2nd Quarter",
+     "away_score": 10,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:35:38.162879+00:00",
+    "game_state": {
+     "clock": "0:00",
+     "period": "Halftime",
+     "away_score": 10,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:36:38.415346+00:00",
+    "game_state": {
+     "clock": "0:00",
+     "period": "Halftime",
+     "away_score": 10,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:37:38.141897+00:00",
+    "game_state": {
+     "clock": "0:00",
+     "period": "Halftime",
+     "away_score": 10,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:38:38.130737+00:00",
+    "game_state": {
+     "clock": "0:00",
+     "period": "Halftime",
+     "away_score": 10,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:39:44.077904+00:00",
+    "game_state": {
+     "clock": "0:00",
+     "period": "Halftime",
+     "away_score": 10,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:40:38.225903+00:00",
+    "game_state": {
+     "clock": "0:00",
+     "period": "Halftime",
+     "away_score": 10,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:41:38.150302+00:00",
+    "game_state": {
+     "clock": "0:00",
+     "period": "Halftime",
+     "away_score": 10,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:42:38.306101+00:00",
+    "game_state": {
+     "clock": "0:00",
+     "period": "Halftime",
+     "away_score": 10,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:43:38.112298+00:00",
+    "game_state": {
+     "clock": "0:00",
+     "period": "Halftime",
+     "away_score": 10,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:44:38.118754+00:00",
+    "game_state": {
+     "clock": "0:00",
+     "period": "Halftime",
+     "away_score": 10,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:45:38.120393+00:00",
+    "game_state": {
+     "clock": "0:00",
+     "period": "Halftime",
+     "away_score": 10,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:48:38.432050+00:00",
+    "game_state": {
+     "clock": "0:00",
+     "period": "Halftime",
+     "away_score": 10,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:49:38.135688+00:00",
+    "game_state": {
+     "clock": "0:00",
+     "period": "Halftime",
+     "away_score": 10,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:50:38.193372+00:00",
+    "game_state": {
+     "clock": "0:00",
+     "period": "Halftime",
+     "away_score": 10,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:51:38.132512+00:00",
+    "game_state": {
+     "clock": "0:00",
+     "period": "Halftime",
+     "away_score": 10,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:52:38.192142+00:00",
+    "game_state": {
+     "clock": "0:00",
+     "period": "Halftime",
+     "away_score": 10,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:53:38.412928+00:00",
+    "game_state": {
+     "clock": "0:00",
+     "period": "Halftime",
+     "away_score": 10,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:54:38.307070+00:00",
+    "game_state": {
+     "clock": "0:00",
+     "period": "Halftime",
+     "away_score": 10,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:55:38.123881+00:00",
+    "game_state": {
+     "clock": "0:00",
+     "period": "Halftime",
+     "away_score": 10,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:56:38.125486+00:00",
+    "game_state": {
+     "clock": "0:00",
+     "period": "Halftime",
+     "away_score": 10,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:57:38.099120+00:00",
+    "game_state": {
+     "clock": "0:00",
+     "period": "Halftime",
+     "away_score": 10,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:58:38.156185+00:00",
+    "game_state": {
+     "clock": "14:10",
+     "period": "14:10 - 3rd Quarter",
+     "away_score": 10,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T01:59:38.108380+00:00",
+    "game_state": {
+     "clock": "13:10",
+     "period": "13:10 - 3rd Quarter",
+     "away_score": 16,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:02:38.174658+00:00",
+    "game_state": {
+     "clock": "12:26",
+     "period": "12:26 - 3rd Quarter",
+     "away_score": 17,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:03:38.108465+00:00",
+    "game_state": {
+     "clock": "11:50",
+     "period": "11:50 - 3rd Quarter",
+     "away_score": 17,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:04:38.334048+00:00",
+    "game_state": {
+     "clock": "11:05",
+     "period": "11:05 - 3rd Quarter",
+     "away_score": 17,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:05:38.138993+00:00",
+    "game_state": {
+     "clock": "10:48",
+     "period": "10:48 - 3rd Quarter",
+     "away_score": 17,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:09:38.209880+00:00",
+    "game_state": {
+     "clock": "10:38",
+     "period": "10:38 - 3rd Quarter",
+     "away_score": 17,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:10:38.141486+00:00",
+    "game_state": {
+     "clock": "10:10",
+     "period": "10:10 - 3rd Quarter",
+     "away_score": 17,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:11:38.106754+00:00",
+    "game_state": {
+     "clock": "8:59",
+     "period": "8:59 - 3rd Quarter",
+     "away_score": 17,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:12:38.275848+00:00",
+    "game_state": {
+     "clock": "8:17",
+     "period": "8:17 - 3rd Quarter",
+     "away_score": 17,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:13:38.110557+00:00",
+    "game_state": {
+     "clock": "7:30",
+     "period": "7:30 - 3rd Quarter",
+     "away_score": 17,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:14:38.121404+00:00",
+    "game_state": {
+     "clock": "6:07",
+     "period": "6:07 - 3rd Quarter",
+     "away_score": 17,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:15:38.151454+00:00",
+    "game_state": {
+     "clock": "5:19",
+     "period": "5:19 - 3rd Quarter",
+     "away_score": 17,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:16:38.190429+00:00",
+    "game_state": {
+     "clock": "4:55",
+     "period": "4:55 - 3rd Quarter",
+     "away_score": 17,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:19:38.159505+00:00",
+    "game_state": {
+     "clock": "4:52",
+     "period": "4:52 - 3rd Quarter",
+     "away_score": 20,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:21:38.133576+00:00",
+    "game_state": {
+     "clock": "4:52",
+     "period": "4:52 - 3rd Quarter",
+     "away_score": 20,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:22:38.175769+00:00",
+    "game_state": {
+     "clock": "4:14",
+     "period": "4:14 - 3rd Quarter",
+     "away_score": 20,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:23:38.186817+00:00",
+    "game_state": {
+     "clock": "3:30",
+     "period": "3:30 - 3rd Quarter",
+     "away_score": 20,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:24:38.329615+00:00",
+    "game_state": {
+     "clock": "2:54",
+     "period": "2:54 - 3rd Quarter",
+     "away_score": 20,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:25:38.148433+00:00",
+    "game_state": {
+     "clock": "1:57",
+     "period": "1:57 - 3rd Quarter",
+     "away_score": 20,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:26:38.148945+00:00",
+    "game_state": {
+     "clock": "1:57",
+     "period": "1:57 - 3rd Quarter",
+     "away_score": 20,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:27:38.152268+00:00",
+    "game_state": {
+     "clock": "1:57",
+     "period": "1:57 - 3rd Quarter",
+     "away_score": 20,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:28:38.146118+00:00",
+    "game_state": {
+     "clock": "1:57",
+     "period": "1:57 - 3rd Quarter",
+     "away_score": 20,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:29:38.153074+00:00",
+    "game_state": {
+     "clock": "1:57",
+     "period": "1:57 - 3rd Quarter",
+     "away_score": 20,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:30:38.353169+00:00",
+    "game_state": {
+     "clock": "1:12",
+     "period": "1:12 - 3rd Quarter",
+     "away_score": 20,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:31:38.133327+00:00",
+    "game_state": {
+     "clock": "0:34",
+     "period": "0:34 - 3rd Quarter",
+     "away_score": 20,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:32:38.147156+00:00",
+    "game_state": {
+     "clock": "0:13",
+     "period": "0:13 - 3rd Quarter",
+     "away_score": 20,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:33:38.159845+00:00",
+    "game_state": {
+     "clock": "0:00",
+     "period": "End of 3rd Quarter",
+     "away_score": 20,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:34:38.176910+00:00",
+    "game_state": {
+     "clock": "0:00",
+     "period": "End of 3rd Quarter",
+     "away_score": 20,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:39:38.185132+00:00",
+    "game_state": {
+     "clock": "15:00",
+     "period": "15:00 - 4th Quarter",
+     "away_score": 20,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:40:38.158401+00:00",
+    "game_state": {
+     "clock": "13:08",
+     "period": "13:08 - 4th Quarter",
+     "away_score": 20,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:41:38.142951+00:00",
+    "game_state": {
+     "clock": "12:52",
+     "period": "12:52 - 4th Quarter",
+     "away_score": 20,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:47:16.705612+00:00",
+    "game_state": {
+     "clock": "12:06",
+     "period": "12:06 - 4th Quarter",
+     "away_score": 27,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:48:16.807314+00:00",
+    "game_state": {
+     "clock": "11:54",
+     "period": "11:54 - 4th Quarter",
+     "away_score": 27,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:49:16.715783+00:00",
+    "game_state": {
+     "clock": "11:08",
+     "period": "11:08 - 4th Quarter",
+     "away_score": 27,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:50:16.739687+00:00",
+    "game_state": {
+     "clock": "11:02",
+     "period": "11:02 - 4th Quarter",
+     "away_score": 27,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:51:16.746815+00:00",
+    "game_state": {
+     "clock": "10:01",
+     "period": "10:01 - 4th Quarter",
+     "away_score": 27,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:52:16.747662+00:00",
+    "game_state": {
+     "clock": "9:57",
+     "period": "9:57 - 4th Quarter",
+     "away_score": 27,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:53:16.726199+00:00",
+    "game_state": {
+     "clock": "9:48",
+     "period": "9:48 - 4th Quarter",
+     "away_score": 27,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:54:16.739546+00:00",
+    "game_state": {
+     "clock": "9:48",
+     "period": "9:48 - 4th Quarter",
+     "away_score": 27,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:57:16.751833+00:00",
+    "game_state": {
+     "clock": "8:58",
+     "period": "8:58 - 4th Quarter",
+     "away_score": 27,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T02:58:16.757445+00:00",
+    "game_state": {
+     "clock": "7:49",
+     "period": "7:49 - 4th Quarter",
+     "away_score": 27,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T03:07:17.003574+00:00",
+    "game_state": {
+     "clock": "7:49",
+     "period": "7:49 - 4th Quarter",
+     "away_score": 27,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T03:08:16.989343+00:00",
+    "game_state": {
+     "clock": "5:52",
+     "period": "5:52 - 4th Quarter",
+     "away_score": 27,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T03:10:16.939921+00:00",
+    "game_state": {
+     "clock": "5:52",
+     "period": "5:52 - 4th Quarter",
+     "away_score": 27,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T03:12:17.044566+00:00",
+    "game_state": {
+     "clock": "4:22",
+     "period": "4:22 - 4th Quarter",
+     "away_score": 27,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T03:13:16.981095+00:00",
+    "game_state": {
+     "clock": "4:15",
+     "period": "4:15 - 4th Quarter",
+     "away_score": 27,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T03:14:16.979664+00:00",
+    "game_state": {
+     "clock": "4:06",
+     "period": "4:06 - 4th Quarter",
+     "away_score": 27,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T03:15:17.036558+00:00",
+    "game_state": {
+     "clock": "3:35",
+     "period": "3:35 - 4th Quarter",
+     "away_score": 27,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T03:16:17.103793+00:00",
+    "game_state": {
+     "clock": "3:08",
+     "period": "3:08 - 4th Quarter",
+     "away_score": 27,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T03:17:16.993704+00:00",
+    "game_state": {
+     "clock": "3:01",
+     "period": "3:01 - 4th Quarter",
+     "away_score": 27,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T03:18:16.978503+00:00",
+    "game_state": {
+     "clock": "2:39",
+     "period": "2:39 - 4th Quarter",
+     "away_score": 27,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T03:20:17.002927+00:00",
+    "game_state": {
+     "clock": "2:26",
+     "period": "2:26 - 4th Quarter",
+     "away_score": 27,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T03:21:17.135080+00:00",
+    "game_state": {
+     "clock": "1:59",
+     "period": "1:59 - 4th Quarter",
+     "away_score": 27,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T03:25:17.003108+00:00",
+    "game_state": {
+     "clock": "1:48",
+     "period": "1:48 - 4th Quarter",
+     "away_score": 27,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T03:26:17.042546+00:00",
+    "game_state": {
+     "clock": "1:07",
+     "period": "1:07 - 4th Quarter",
+     "away_score": 27,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T03:27:17.032688+00:00",
+    "game_state": {
+     "clock": "1:02",
+     "period": "1:02 - 4th Quarter",
+     "away_score": 27,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T03:31:17.068902+00:00",
+    "game_state": {
+     "clock": "0:54",
+     "period": "0:54 - 4th Quarter",
+     "away_score": 34,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T03:32:17.068599+00:00",
+    "game_state": {
+     "clock": "0:33",
+     "period": "0:33 - 4th Quarter",
+     "away_score": 34,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T03:35:17.062284+00:00",
+    "game_state": {
+     "clock": "0:00",
+     "period": "End of 4th Quarter",
+     "away_score": 34,
+     "home_score": 17
+    }
+   },
+   {
+    "timestamp": "2026-09-25T03:36:17.037340+00:00",
+    "game_state": {
+     "clock": "0:00",
+     "period": "End of 4th Quarter",
+     "away_score": 34,
+     "home_score": 17
+    }
+   }
+  ]
+ },
+ "score_history": [
+  {
+   "timestamp": "2026-09-24T23:30:38.050112+00:00",
+   "home_score": 0,
+   "away_score": 0
+  },
+  {
+   "timestamp": "2026-09-24T23:49:37.718618+00:00",
+   "home_score": 0,
+   "away_score": 3
+  },
+  {
+   "timestamp": "2026-09-25T00:04:37.706062+00:00",
+   "home_score": 3,
+   "away_score": 3
+  },
+  {
+   "timestamp": "2026-09-25T00:15:38.022941+00:00",
+   "home_score": 3,
+   "away_score": 10
+  },
+  {
+   "timestamp": "2026-09-25T01:20:38.124347+00:00",
+   "home_score": 10,
+   "away_score": 10
+  },
+  {
+   "timestamp": "2026-09-25T01:30:38.510994+00:00",
+   "home_score": 16,
+   "away_score": 10
+  },
+  {
+   "timestamp": "2026-09-25T01:31:38.102474+00:00",
+   "home_score": 17,
+   "away_score": 10
+  },
+  {
+   "timestamp": "2026-09-25T01:59:38.108380+00:00",
+   "home_score": 17,
+   "away_score": 16
+  },
+  {
+   "timestamp": "2026-09-25T02:00:38.323573+00:00",
+   "home_score": 17,
+   "away_score": 17
+  },
+  {
+   "timestamp": "2026-09-25T02:19:38.159505+00:00",
+   "home_score": 17,
+   "away_score": 20
+  },
+  {
+   "timestamp": "2026-09-25T02:43:38.205267+00:00",
+   "home_score": 17,
+   "away_score": 27
+  },
+  {
+   "timestamp": "2026-09-25T03:28:17.016443+00:00",
+   "home_score": 17,
+   "away_score": 34
+  }
+ ],
+ "scoring_plays": [
+  {
+   "timestamp": "2026-09-24T23:49:37.718618+00:00",
+   "description": "C. Reeves 29 yd FG GOOD",
+   "team": "Liberty Flames",
+   "type": "Field Goal Good",
+   "home_score": 0,
+   "away_score": 3,
+   "period": "1",
+   "clock": "9:43"
+  },
+  {
+   "timestamp": "2026-09-25T00:04:37.706062+00:00",
+   "description": "N. Cavanillas Alti 41 yd FG GOOD",
+   "team": "Coastal Carolina Chanticleers",
+   "type": "Field Goal Good",
+   "home_score": 3,
+   "away_score": 3,
+   "period": "1",
+   "clock": "5:19"
+  },
+  {
+   "timestamp": "2026-09-25T00:15:38.022941+00:00",
+   "description": "D. Purdie pass to M. Jackson for 58 yds, for a TD (C. Reeves KICK)",
+   "team": "Liberty Flames",
+   "type": "Passing Touchdown",
+   "home_score": 3,
+   "away_score": 10,
+   "period": "1",
+   "clock": "3:13"
+  },
+  {
+   "timestamp": "2026-09-25T01:10:38.114144+00:00",
+   "description": "D. Bailey pass to C. Hinton for 24 yds, for a TD (N. Cavanillas Alti KICK)",
+   "team": "Coastal Carolina Chanticleers",
+   "type": "Passing Touchdown",
+   "home_score": 10,
+   "away_score": 10,
+   "period": "2",
+   "clock": "5:26"
+  },
+  {
+   "timestamp": "2026-09-25T01:31:38.102474+00:00",
+   "description": "D. Bailey pass to T. Gardner for 39 yds, for a TD (N. Cavanillas Alti KICK)",
+   "team": "Coastal Carolina Chanticleers",
+   "type": "Passing Touchdown",
+   "home_score": 17,
+   "away_score": 10,
+   "period": "2",
+   "clock": "0:24"
+  },
+  {
+   "timestamp": "2026-09-25T02:00:38.323573+00:00",
+   "description": "D. Purdie pass to M. Jackson for 33 yds, for a TD (C. Reeves KICK)",
+   "team": "Liberty Flames",
+   "type": "Passing Touchdown",
+   "home_score": 17,
+   "away_score": 17,
+   "period": "3",
+   "clock": "13:10"
+  },
+  {
+   "timestamp": "2026-09-25T02:19:38.159505+00:00",
+   "description": "C. Reeves 24 yd FG GOOD",
+   "team": "Liberty Flames",
+   "type": "Field Goal Good",
+   "home_score": 17,
+   "away_score": 20,
+   "period": "3",
+   "clock": "4:52"
+  },
+  {
+   "timestamp": "2026-09-25T02:43:38.205267+00:00",
+   "description": "E. Vasko run for 8 yds, for a TD (C. Reeves KICK)",
+   "team": "Liberty Flames",
+   "type": "Rushing Touchdown",
+   "home_score": 17,
+   "away_score": 27,
+   "period": "4",
+   "clock": "12:06"
+  },
+  {
+   "timestamp": "2026-09-25T03:28:17.016443+00:00",
+   "description": "E. Vasko pass to K. Davis for 6 yds, for a TD (T. Black KICK)",
+   "team": "Liberty Flames",
+   "type": "Passing Touchdown",
+   "home_score": 17,
+   "away_score": 34,
+   "period": "4",
+   "clock": "1:02"
+  }
+ ]
+}

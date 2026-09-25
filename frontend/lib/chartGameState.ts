@@ -39,6 +39,7 @@
 
 import { format, parseISO } from "date-fns";
 import { trustedLiveClock } from "@/lib/gameTimeLabel";
+import { toMinuteKey } from "@/lib/chartTimeline";
 
 export interface CarriedGameStateRow {
   timestamp: string;
@@ -141,6 +142,78 @@ export function carryGameStateForward<T extends CarriedGameStateRow>(sorted: T[]
   return sorted;
 }
 
+// ── WHO OBSERVED WHAT (moved from `OddsChart`, #8565) ────────────────────────
+//
+// Verbatim from the component's enrich step so the play/score guard runs the
+// code the chart runs. ESPN rows are the primary source of score / period /
+// clock; a win-prob row's `game_state` fills only what ESPN left empty in that
+// minute. Mutates the points in `dataMap`; a row whose minute has no point is
+// dropped (gap-fill has not run yet at this step).
+
+export interface EspnStateRow {
+  timestamp: string;
+  home_score: number | null;
+  away_score: number | null;
+  period: string | null;
+  game_clock: string | null;
+}
+
+export interface WinProbStateRow {
+  timestamp: string;
+  game_state?: Record<string, unknown>;
+}
+
+export function stampObservedGameState<T extends CarriedGameStateRow>(
+  dataMap: Map<string, T>,
+  espnRows: EspnStateRow[],
+  winProbSeries: WinProbStateRow[][] | null,
+): void {
+  for (const snap of espnRows) {
+    const dp = dataMap.get(toMinuteKey(snap.timestamp));
+    if (dp) {
+      if (snap.home_score != null) dp._homeScore = snap.home_score;
+      if (snap.away_score != null) dp._awayScore = snap.away_score;
+      if (snap.period) dp._period = snap.period;
+      if (snap.game_clock) dp._clock = snap.game_clock;
+      // #925 — remember WHICH snapshot supplied each field. Stamped per
+      // field, never once for "state": a score row with no period must not
+      // refresh the age of a period seen minutes earlier, and a clock row
+      // with no period must not either.
+      if (snap.period) dp._periodObservedAt = snap.timestamp;
+      if (snap.game_clock) dp._clockObservedAt = snap.timestamp;
+      if (snap.home_score != null || snap.away_score != null) {
+        dp._scoreObservedAt = snap.timestamp;
+      }
+    }
+  }
+
+  // Win prob history game_state as secondary source
+  if (winProbSeries) {
+    for (const points of winProbSeries) {
+      for (const pt of points) {
+        const gs = pt.game_state;
+        if (!gs) continue;
+        const dp = dataMap.get(toMinuteKey(pt.timestamp));
+        if (!dp) continue;
+        if (dp._homeScore == null && gs.home_score != null)
+          dp._homeScore = gs.home_score as number;
+        if (dp._awayScore == null && gs.away_score != null)
+          dp._awayScore = gs.away_score as number;
+        if (!dp._period && gs.period) dp._period = gs.period as string;
+        if (!dp._clock && gs.clock) dp._clock = gs.clock as string;
+        // #925 — same per-field stamping for the secondary source. Guarded
+        // on the stamp's own absence so an ESPN observation above is never
+        // re-dated by a win-prob row that only echoed it.
+        if (!dp._periodObservedAt && gs.period) dp._periodObservedAt = pt.timestamp;
+        if (!dp._clockObservedAt && gs.clock) dp._clockObservedAt = pt.timestamp;
+        if (!dp._scoreObservedAt && (gs.home_score != null || gs.away_score != null)) {
+          dp._scoreObservedAt = pt.timestamp;
+        }
+      }
+    }
+  }
+}
+
 // ── THE TOOLTIP'S AGE LINE (#925, the clause the first delivery left unpaid) ──
 //
 // `GamePlayCard` dates what it prints (`8206`). The hover tooltip on the same
@@ -223,4 +296,115 @@ export function carriedStateDisclosure(
       ? "period and clock"
       : (carried[0].which as "period" | "clock" | "score");
   return { carried: which, asOf: oldest, text: `${which} as of ${oldest}` };
+}
+
+// ── THE SCORE BESIDE A PLAY (#8565) ──────────────────────────────────────────
+//
+// Since #8501 the server stamps each scoring play at the FIRST served sighting
+// of its post-play score, taken across `espn_history` AND `score_history`. The
+// readout used to take its score from the first one only (ESPN rows, then the
+// win-prob `game_state` echo), and attached a play to the NEAREST point within
+// two minutes. On 15315984 the 17–34 touchdown is stamped 03:28:17 from
+// `score_history`; ESPN had not been captured between 03:27:17 (17–27) and
+// 03:31:17, so the play sat on the 03:28 point carrying 17–27 — the touchdown
+// printed beside the score from before it.
+//
+// Two rules, both needed:
+//   1. `score_history` is a score observation like any other, dated by its own
+//      timestamp. It joins the carry in the minute bucket it was seen in, and
+//      inside one bucket the LATER observation wins, whichever series it came
+//      from (an ESPN row at 03:28:05 must not out-rank the 03:28:17 sighting).
+//   2. A play attaches to the nearest point whose minute is AT OR AFTER the
+//      play's minute, so the point's state already includes the play. Points
+//      are minute buckets, so "at" is the bucket the stamp falls in.
+
+/** One served `score_history` row. Structural so this file imports no types. */
+export interface ScoreObservation {
+  timestamp: string;
+  home_score: number | null;
+  away_score: number | null;
+}
+
+const MINUTE_MS = 60_000;
+const floorMinute = (ms: number): number => Math.floor(ms / MINUTE_MS) * MINUTE_MS;
+
+/**
+ * Writes each observation onto the point whose minute bucket it falls in,
+ * unless that point already holds a LATER score observation. Mutates `sorted`
+ * in place; must run BEFORE `carryGameStateForward`, which decides "observed
+ * here" from the values a row arrived with. Observations in a minute that has
+ * no point are dropped — the same treatment an ESPN row gets.
+ */
+export function foldScoreObservations<T extends CarriedGameStateRow>(
+  sorted: T[],
+  observations: ScoreObservation[] | null | undefined,
+): T[] {
+  if (!observations || observations.length === 0 || sorted.length === 0) return sorted;
+  const byMinute = new Map<number, T>();
+  for (const pt of sorted) byMinute.set(floorMinute(parseISO(pt.timestamp).getTime()), pt);
+
+  for (const obs of observations) {
+    if (obs.home_score == null && obs.away_score == null) continue;
+    const obsMs = parseISO(obs.timestamp).getTime();
+    if (!Number.isFinite(obsMs)) continue;
+    const pt = byMinute.get(floorMinute(obsMs));
+    if (!pt) continue;
+    const hasOwn = pt._homeScore != null || pt._awayScore != null;
+    if (hasOwn) {
+      const ownAt = parseISO(pt._scoreObservedAt ?? pt.timestamp).getTime();
+      if (!(obsMs > ownAt)) continue;
+    }
+    // The pair is one observation: a side this row did not report is not
+    // borrowed from an older one in the same bucket.
+    pt._homeScore = obs.home_score;
+    pt._awayScore = obs.away_score;
+    pt._scoreObservedAt = obs.timestamp;
+  }
+  return sorted;
+}
+
+export interface PlayAttachable<P> {
+  timestamp: string;
+  _scoringPlay?: P | null;
+}
+
+/** How far after its stamp a play may land on a point (unchanged from the nearest-point rule). */
+export const PLAY_ATTACH_WINDOW_MS = 120_000;
+
+/**
+ * Attaches each play to the earliest point whose minute is at or after the
+ * play's minute and within `PLAY_ATTACH_WINDOW_MS` of the stamp. When no such
+ * point exists — the play is the last thing the series saw — it falls back to
+ * the nearest earlier point inside the same window, so the marker is not lost.
+ * `sorted` must be timestamp-ascending; mutated in place.
+ */
+export function attachScoringPlays<P extends { timestamp?: string | null }, T extends PlayAttachable<P>>(
+  sorted: T[],
+  plays: P[] | null | undefined,
+): T[] {
+  if (!plays || plays.length === 0 || sorted.length === 0) return sorted;
+  const times = sorted.map((pt) => parseISO(pt.timestamp).getTime());
+  for (const play of plays) {
+    if (!play.timestamp) continue;
+    const playMs = parseISO(play.timestamp).getTime();
+    if (!Number.isFinite(playMs)) continue;
+    const playMinute = floorMinute(playMs);
+    let target = -1;
+    for (let i = 0; i < times.length; i++) {
+      if (times[i] >= playMinute) {
+        if (times[i] - playMs < PLAY_ATTACH_WINDOW_MS) target = i;
+        break;
+      }
+    }
+    if (target === -1) {
+      for (let i = times.length - 1; i >= 0; i--) {
+        if (times[i] < playMinute) {
+          if (playMs - times[i] < PLAY_ATTACH_WINDOW_MS) target = i;
+          break;
+        }
+      }
+    }
+    if (target !== -1) sorted[target]._scoringPlay = play;
+  }
+  return sorted;
 }
