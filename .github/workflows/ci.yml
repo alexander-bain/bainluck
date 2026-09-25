@@ -1022,6 +1022,22 @@ jobs:
             exit 1
           fi
 
+      - name: "#8692 a between-rounds golf source keeps its basis for the card's move (real Postgres)"
+        # #8692. The golf card's "up N points today" averages the sources with a
+        # ~24h-ago basis, and the basis is now each outcome's latest write at or
+        # before now-23h within a 36h cap — a LATERAL ... ORDER BY ... LIMIT 1
+        # over production's own Fitzpatrick rows. Which row that returns, and
+        # which rows the two bounds let it see, only Postgres can say. Wired
+        # here because this job names each PG file explicitly (the shards skip it).
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_golf_move_basis_between_rounds_8692_pg.py \
+            -v -rs 2>&1 | tee /tmp/golfbasis8692.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/golfbasis8692.txt; then
+            echo "::error::#8692 golf move-basis gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#5024 a decided ladder's row is reachable by touch age (real Postgres)"
         # #5024. The whole change is a SQL predicate: `RECENT_FINAL_SELECT_SQL`
         # gains an OR arm that reaches a row no leg has touched inside
