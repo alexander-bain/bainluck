@@ -133,6 +133,7 @@ from app.utils.winprob_evidence import (
     drop_superseded_estimates,
 )
 from app.utils.game_window import (
+    MAX_GAME_DURATION as _MAX_GAME_DURATION,
     filter_state_bearing_rows as _filter_state_bearing_rows,
     game_state_window as _game_state_window,
 )
@@ -10361,7 +10362,7 @@ async def typeahead_search(
         .where(
             event_team_filter,
             Event.status.in_(["live", "scheduled"]),
-            Event.commence_time >= now - timedelta(hours=1),
+            _pool_start_floor(now),
             Event.commence_time <= now + timedelta(days=7),
             # #2263 / CERT-439: the dropdown is the FIRST search surface a person
             # touches, and it takes four slots. Two of them spent on one game is
@@ -11564,7 +11565,7 @@ async def typeahead_search(
                             Event.away_team_name.ilike(best_pattern),
                         ),
                         Event.status.in_(["live", "scheduled"]),
-                        Event.commence_time >= now - timedelta(hours=1),
+                        _pool_start_floor(now),
                         Event.commence_time <= now + timedelta(days=7),
                         not_a_proven_duplicate(),  # #2263 / CERT-439, as above
                     )
@@ -29614,6 +29615,52 @@ def _search_owned_outcome_names(market: "FuturesMarket") -> tuple[str, ...]:
     )
 
 
+#: #5030: how long after its scheduled start a row that is NOT live stays in
+#: the dropdown's game pools. It covers a start the status transition has not
+#: caught up with yet. It is not a game length.
+_POOL_KICKOFF_GRACE = timedelta(hours=1)
+
+
+def _pool_start_floor(now: datetime):
+    """#5030: the start-time floor shared by every upcoming-game pool in the dropdown.
+
+    A row that is LIVE stays eligible until :data:`_MAX_GAME_DURATION` after its
+    start. Any other row leaves :data:`_POOL_KICKOFF_GRACE` after its start.
+
+    🔴 WHY: the floor used to be a flat `now - 1h` for every row, and the pools
+    admit `status = 'live'`. So a game left the dropdown one hour after kickoff
+    while it was still being played. That is two thirds of an NFL game, and most
+    of a tennis match. The or-LAST arm then filled the slot with finished games,
+    and the reader watching the game could not reach it from the search box.
+    Production, 2026-09-11 02:30Z: `niners` during SF@LAR offered three Finals
+    and two quarter-winner markets from the Rams game, but not the game. The
+    same thing on 2026-09-25 08:46Z: `mannarino` offered two September matches
+    while his Chengdu match (15318277) was live, and `richmond` offered a
+    Saturday college game while Richmond v Carlton (15316735) was live. At that
+    moment 24 live rows were between one and four hours past their start, and
+    none of them could be reached.
+
+    The live arm trusts the status column only as far as it can be trusted.
+    `_transition_event_statuses_impl` moves a row nothing reports on from live
+    to suspended once the sport's maximum duration has passed
+    (`SPORT_MAX_DURATIONS`, at most 8h, golf). The 12h ceiling is the second
+    bound gotcha #41 asks for: a stuck row the net missed still leaves. The
+    ceiling is also written as a plain range on `commence_time`, so the pool's
+    index range scan is unchanged and the OR sits inside it.
+
+    Every caller uses this one floor, so a live game can never be in one pool
+    and missing from the arm that backs it up. That was the old `now - 1h`
+    reasoning in the two docstrings below, and it still holds.
+    """
+    return and_(
+        Event.commence_time >= now - _MAX_GAME_DURATION,
+        or_(
+            Event.commence_time >= now - _POOL_KICKOFF_GRACE,
+            Event.status == "live",
+        ),
+    )
+
+
 def _next_match_query(event_name_filter, now: datetime):
     """The "or-NEXT" arm of T2-2 (#5059): the team's next fixture, past the 7-day pool.
 
@@ -29651,8 +29698,8 @@ def _next_match_query(event_name_filter, now: datetime):
     return this team's last game of the season.
 
     Bounded at BOTH ends (gotcha #41). The floor is the upcoming pool's own
-    `now - 1h`, not `now`, so this arm is a strict superset of that pool in time
-    and a long-running live game cannot fall between the two. The ceiling is
+    :func:`_pool_start_floor`, not `now`, so this arm is a strict superset of
+    that pool in time and a long-running live game cannot fall between the two. The ceiling is
     :data:`_NEXT_MATCH_LOOKAHEAD_DAYS`, whose docstring shows the measurement.
     """
     return (
@@ -29666,7 +29713,7 @@ def _next_match_query(event_name_filter, now: datetime):
         .where(
             event_name_filter,
             Event.status.in_(["live", "scheduled"]),
-            Event.commence_time >= now - timedelta(hours=1),
+            _pool_start_floor(now),
             Event.commence_time <= now + timedelta(days=_NEXT_MATCH_LOOKAHEAD_DAYS),
             not_a_proven_duplicate(),
         )
@@ -29718,8 +29765,8 @@ def _lead_team_next_match_query(team_id: int, team_name: str, now: datetime):
 
     Every other clause mirrors `_next_match_query` deliberately — the same
     live-first ordering (Q438: the served status can never disagree with the
-    sort), the same `now - 1h` floor so a game that kicked off forty minutes ago
-    cannot fall between two arms, the same measured 120-day ceiling (gotcha #41
+    sort), the same :func:`_pool_start_floor` so a game in progress cannot fall
+    between two arms, the same measured 120-day ceiling (gotcha #41
     wants both ends), and the same proven-duplicate clause (CERT-439). That last
     one matters more here than anywhere: this arm reaches furthest out, over
     fixtures still accumulating provider rows, and it takes only ONE row — so a
@@ -29748,7 +29795,7 @@ def _lead_team_next_match_query(team_id: int, team_name: str, now: datetime):
                 Event.away_team_name == team_name,
             ),
             Event.status.in_(["live", "scheduled"]),
-            Event.commence_time >= now - timedelta(hours=1),
+            _pool_start_floor(now),
             Event.commence_time <= now + timedelta(days=_NEXT_MATCH_LOOKAHEAD_DAYS),
             not_a_proven_duplicate(),
         )

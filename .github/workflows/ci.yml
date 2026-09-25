@@ -622,6 +622,31 @@ jobs:
             exit 1
           fi
 
+      - name: "#5030 a game being played stays in the search dropdown (real Postgres)"
+        # PILLAR: DISCOVER. SHIP: typing a player or team while their game is on
+        # offers that game, not last week's finals.
+        #
+        # The fix is the WHERE clause `_pool_start_floor`, so only a real
+        # database can observe it. The file's strawman case puts the old flat
+        # `now - 1h` floor back and asserts the live rows disappear. Three
+        # refusals: a skip, a zero count, and a short count.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_typeahead_live_game_stays_5030_pg.py \
+            -v -rs 2>&1 | tee /tmp/live5030.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/live5030.txt; then
+            echo "::error::#5030 live-game dropdown gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          if grep -qiE "no tests ran|collected 0 items" /tmp/live5030.txt; then
+            echo "::error::#5030 live-game dropdown gate collected NOTHING"
+            exit 1
+          fi
+          if ! grep -qE "^=+ 5 passed" /tmp/live5030.txt; then
+            echo "::error::#5030 live-game dropdown gate did not report exactly 5 passed"
+            exit 1
+          fi
+
       - name: "#6354 the Browse list serves no answer-less row (real Postgres)"
         # PILLAR: TRUTH. SHIP: the iPhone Browse tab stops opening on rows that
         # show a name, a category chip and no number.
