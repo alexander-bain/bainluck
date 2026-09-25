@@ -74,11 +74,11 @@ final class AnOpenedStreamIsNotAPushedPrice8320Tests: XCTestCase {
             pushedPrice: vm.streamHasPushedPrice)
     }
 
-    private func price(_ p: Double?) -> String {
+    private func price(_ p: Double?, stamp: String = "2026-09-24T01:00:00Z") -> String {
         let value = p.map { "\($0)" } ?? "null"
         return """
         {"event_id": 4242, "p": \(value), "source": "polymarket", "source_value": \(value), \
-        "updated_at": "2026-09-24T01:00:00Z", "status": "live"}
+        "updated_at": "\(stamp)", "status": "live"}
         """
     }
 
@@ -155,7 +155,9 @@ final class AnOpenedStreamIsNotAPushedPrice8320Tests: XCTestCase {
 
         // The resumed stream's first price is applied BEFORE the controller
         // reports delivering again; clearing on the way up would erase it.
-        handle.fire("probability", price(0.58))
+        // A changed observation must carry a newer write time; reusing the
+        // first frame's stamp tests a replay, not a newly pushed price (#920).
+        handle.fire("probability", price(0.58, stamp: "2026-09-24T01:00:05Z"))
         XCTAssertEqual(vm.event?.currentOdds?.homeProbability, 0.58)
         XCTAssertEqual(indicator(vm), .streaming)
     }
