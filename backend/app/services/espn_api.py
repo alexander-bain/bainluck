@@ -797,6 +797,35 @@ class ESPNAPIService:
 
         return self._parse_team(data.get("team", data))
 
+    async def get_golf_scoreboard(self, league: str) -> Optional[list[dict]]:
+        """ESPN's golf scoreboard for one tour (`pga`, `eur`, `liv`), as plain dicts.
+
+        Golf has no teams or scores, so `get_scoreboard`'s ESPNEvent shape does not
+        fit it. Each dict carries ``name``, ``start`` / ``end`` (ESPN's ISO stamps),
+        ``state`` (`pre` / `in` / `post`) and ``status`` (e.g. `STATUS_IN_PROGRESS`).
+
+        Returns ``[]`` for an empty board and ``None`` when ESPN did not answer: an
+        absent tournament proves nothing (#7450).
+        """
+        url = f"{ESPN_API_BASE}/golf/{league}/scoreboard"
+        try:
+            data = await self._get(url)
+        except ESPNAuthorityDark:
+            return None
+        if not data:
+            return []
+        events: list[dict] = []
+        for e in data.get("events") or []:
+            status_type = (e.get("status") or {}).get("type") or {}
+            events.append({
+                "name": e.get("name") or "",
+                "start": e.get("date"),
+                "end": e.get("endDate"),
+                "state": status_type.get("state"),
+                "status": status_type.get("name"),
+            })
+        return events
+
     async def get_scoreboard(
         self, sport_key: str, date: Optional[str] = None
     ) -> Optional[list[ESPNEvent]]:

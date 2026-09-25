@@ -11,7 +11,7 @@ import re
 import sys
 import time
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import or_, select, func as sqlfunc
@@ -1180,7 +1180,131 @@ _GOLF_SCHEDULE_TTL = 3600  # 1 hour
 _SCHEDULE_TOURS = ("pga", "euro", "liv")
 
 
+def _schedule_key(event_name: str) -> str:
+    """The schedule's stable key for a tournament name.
+
+    Sponsor suffixes are stripped so "Arnold Palmer Invitational Presented By
+    Mastercard" -> "arnold_palmer_invitational", which keeps keys matching
+    _SIGNATURE_EVENTS entries.
+    """
+    clean_name = _SPONSOR_SUFFIX_RE.sub("", event_name)
+    return re.sub(r"[^a-z0-9]+", "_", clean_name.lower()).strip("_")
+
+
 async def _get_golf_schedule() -> list[dict]:
+    """The DataGolf schedule, with ESPN's word on which tournaments are in play.
+
+    #7450: DataGolf's `get-schedule` status never says a tournament is being
+    played. On 2026-09-25, day two of both, the Presidents Cup and the FedEx Open de
+    France read `upcoming` (all 94 PGA entries on 2026-09-20 read `completed` or
+    `upcoming`, and `in-progress` appeared zero times). `_golf_status` and the
+    phone's Golf hero both key on that status, so a tournament being played was
+    drawn as one that hadn't started. ESPN's scoreboard says `in` for both. That is
+    evidence of play, not the calendar, so it is the signal used here.
+    """
+    schedule = await _get_datagolf_schedule()
+    if not schedule:
+        return schedule
+    try:
+        espn_by_tour = await _get_espn_golf_scoreboards()
+    except Exception as e:  # noqa: BLE001 — the overlay must never cost the schedule
+        logger.warning("ESPN golf scoreboard overlay failed: %s", e)
+        return schedule
+    return _overlay_espn_in_progress(schedule, espn_by_tour)
+
+
+# ESPN league slug -> the schedule's `tour`. ESPN's DP World board is `eur`.
+_ESPN_GOLF_LEAGUE_TO_TOUR = {"pga": "pga", "eur": "euro", "liv": "liv"}
+
+# Its own cache, much shorter than the schedule's hour. A status is only true
+# while play lasts: on the hour-long cache it would still say `in-progress` for up
+# to an hour after the last putt, and turn on up to an hour after the first tee
+# shot.
+_espn_golf_cache: dict = {"data": None, "ts": 0}
+_ESPN_GOLF_TTL = 300
+
+
+async def _get_espn_golf_scoreboards() -> dict[str, list[dict]]:
+    """ESPN's golf boards keyed by schedule tour (5-minute cache).
+
+    A tour ESPN did not answer is absent from the result, and absence overlays
+    nothing, so a dark ESPN leaves DataGolf's status exactly as it was. An empty
+    result is cached too, so a dark ESPN isn't retried on every request.
+    """
+    import asyncio
+
+    now_ts = time.time()
+    if _espn_golf_cache["data"] is not None and (now_ts - _espn_golf_cache["ts"]) < _ESPN_GOLF_TTL:
+        return _espn_golf_cache["data"]
+
+    from app.services.espn_api import ESPNAPIService
+
+    service = ESPNAPIService(timeout=3.0, rate_limit_delay=0.0)
+    by_tour: dict[str, list[dict]] = {}
+    try:
+        leagues = list(_ESPN_GOLF_LEAGUE_TO_TOUR)
+        boards = await asyncio.gather(
+            *(service.get_golf_scoreboard(league) for league in leagues),
+            return_exceptions=True,
+        )
+        for league, board in zip(leagues, boards):
+            if isinstance(board, list):
+                by_tour[_ESPN_GOLF_LEAGUE_TO_TOUR[league]] = board
+    finally:
+        await service.close()
+    _espn_golf_cache["data"] = by_tour
+    _espn_golf_cache["ts"] = now_ts
+    return by_tour
+
+
+def _espn_event_inside_schedule_dates(espn_event: dict, entry: dict) -> bool:
+    """True when ESPN's start date falls inside the schedule entry's own dates.
+
+    One day of slack each side for time zones (ESPN stamps the Presidents Cup
+    `2026-09-24T04:00Z`, DataGolf `2026-09-24`). An entry or event missing a date
+    is refused: a name alone does not make two tournaments the same one.
+    """
+    try:
+        espn_start = date.fromisoformat(str(espn_event.get("start") or "")[:10])
+        start = date.fromisoformat(str(entry.get("start_date") or "")[:10])
+        end = date.fromisoformat(str(entry.get("end_date") or "")[:10])
+    except ValueError:
+        return False
+    return start - timedelta(days=1) <= espn_start <= end + timedelta(days=1)
+
+
+def _overlay_espn_in_progress(
+    schedule: list[dict], espn_by_tour: dict[str, list[dict]],
+) -> list[dict]:
+    """Mark `in-progress` the schedule entries ESPN reports as being played.
+
+    It takes three things to agree: the same tour, the same schedule key, and
+    ESPN's start date inside the entry's dates. ESPN's state is `in`, which also
+    covers a weather suspension (still being played). Only `in` counts: an
+    `upcoming` entry never becomes `completed` from here, and a `completed` entry
+    is left alone. `in-progress` is DataGolf's own spelling, which
+    `_golf_status` reads as live and the phone's Golf hero keys on.
+
+    Returns a new list and never mutates an entry, because the entries belong to
+    the hour-long schedule cache and this status lasts only as long as play does.
+    """
+    out: list[dict] = []
+    for entry in schedule:
+        status = (entry.get("status") or "").lower().replace("-", "_")
+        if status not in ("completed", "in_progress"):
+            for event in espn_by_tour.get(entry.get("tour")) or []:
+                if (
+                    event.get("state") == "in"
+                    and _schedule_key(event.get("name") or "") == entry.get("key")
+                    and _espn_event_inside_schedule_dates(event, entry)
+                ):
+                    entry = {**entry, "status": "in-progress"}
+                    break
+        out.append(entry)
+    return out
+
+
+async def _get_datagolf_schedule() -> list[dict]:
     """Fetch the PGA, DP World and LIV schedules from DataGolf (1-hour cache).
 
     Returns a list of tournament dicts with name, start/end dates, venue, status and
@@ -1213,11 +1337,7 @@ async def _get_golf_schedule() -> list[dict]:
                 if not t.event_name:
                     continue
 
-                # Generate a stable key from the event name, stripping sponsor suffixes
-                # so "Arnold Palmer Invitational Presented By Mastercard" -> "arnold_palmer_invitational"
-                # This ensures keys match _SIGNATURE_EVENTS entries.
-                clean_name = _SPONSOR_SUFFIX_RE.sub("", t.event_name)
-                key = re.sub(r"[^a-z0-9]+", "_", clean_name.lower()).strip("_")
+                key = _schedule_key(t.event_name)
                 if not key or key in seen_keys:
                     continue
                 seen_keys.add(key)
