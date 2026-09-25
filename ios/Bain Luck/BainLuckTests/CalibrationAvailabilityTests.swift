@@ -208,15 +208,16 @@ final class CalibrationAvailabilityTests: XCTestCase {
     }
 
     @MainActor
-    func testActivityDirectionOnTheProductionPayloadNamesTheHigherErrorCohort() throws {
+    func testActivityOnTheProductionPayloadStatesBothFiguresAndRanksNeither() throws {
         let vm = try prodModel()
         let activity = vm.activity
         XCTAssertEqual(activity.direction, .movedHigher)
         XCTAssertEqual(activity.movedText, "1.7")
         XCTAssertEqual(activity.unchangedText, "1.0")
-        XCTAssertEqual(activity.ratioText, "1.7")
         let sentence = try XCTUnwrap(activity.sentence)
-        XCTAssertTrue(sentence.contains("price-moved cohort carries the higher calibration error"))
+        XCTAssertTrue(sentence.hasPrefix("Price moved sits at 1.7pp and price unchanged at 1.0pp. "))
+        // #8504 / web #6176: the ranking is withdrawn.
+        XCTAssertFalse(sentence.contains("carries the higher"))
         XCTAssertFalse(sentence.localizedCaseInsensitiveContains("more accurately calibrated"))
     }
 

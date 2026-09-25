@@ -598,19 +598,22 @@ struct CalibrationSurfaceView: View {
             let activity = viewModel.activity
             cardSection("Does Trading Activity Matter?",
                         sub: "The calibration curve split by whether real trading moved the price. The two cohorts differ in source, category and market-shape mix, so whichever side lands lower here is an observed ordering \u{2014} not evidence that trading caused it.") {
-                calibrationChart(points: viewModel.points(from: viewModel.movedBuckets), color: .green, height: 220,
-                                 secondSeries: (pts: viewModel.points(from: viewModel.unchangedBuckets), color: .red))
-                // L2-230: the value colour is part of the claim. Hard-coding moved
-                // green and unchanged red asserted "moved is better" in pixels even
-                // on the day moved measured 1.7pp against unchanged's 1.0pp, so it
-                // follows the same direction the sentence below does.
+                // #8504 (web #6176): the lines were green (moved) and red
+                // (unchanged) — the good/bad pair, on a chart whose whole subject
+                // is which cohort sits nearer the diagonal — while the cards below
+                // coloured whichever cohort measured LOWER green. On 2026-09-25
+                // that was the unchanged one, so the green card named the red
+                // line. Two categorical colours now, neither one the winner, and
+                // each card's dot is its line's colour: the dot is the key.
+                calibrationChart(points: viewModel.points(from: viewModel.movedBuckets), color: Self.movedSeriesColor, height: 220,
+                                 secondSeries: (pts: viewModel.points(from: viewModel.unchangedBuckets), color: Self.unchangedSeriesColor))
+                // L2-230 made the value colour FOLLOW the observed ordering;
+                // #6176 withdrew the ordering, so there is nothing honest left for
+                // it to follow. Both figures are neutral; `activity.direction`
+                // is computed and never painted.
                 HStack(spacing: 10) {
-                    tradingCard("Active Trading", movedECE, movedN,
-                                Self.cohortColor(isHigher: activity.direction == .movedHigher,
-                                                 isLower: activity.direction == .unchangedHigher))
-                    tradingCard("Opening Price Only", unchangedECE, unchangedN,
-                                Self.cohortColor(isHigher: activity.direction == .unchangedHigher,
-                                                 isLower: activity.direction == .movedHigher))
+                    tradingCard("Active Trading", movedECE, movedN, Self.movedSeriesColor)
+                    tradingCard("Opening Price Only", unchangedECE, unchangedN, Self.unchangedSeriesColor)
                 }
                 if let sentence = activity.sentence {
                     Text(sentence)
@@ -629,22 +632,22 @@ struct CalibrationSurfaceView: View {
         }
     }
 
-    /// Orange for the higher-error cohort, green for the lower, neutral on a tie
-    /// or when no honest ordering exists.
-    private static func cohortColor(isHigher: Bool, isLower: Bool) -> Color {
-        if isHigher { return .orange }
-        if isLower { return .green }
-        return .secondary
-    }
+    /// #8504: the two cohorts' line colours — web's COLORS[0]/[5] pair (blue and
+    /// pink), picked there for hue separation after blue + violet blurred into
+    /// one mass. Neither is a good/bad colour.
+    static let movedSeriesColor: Color = .blue
+    static let unchangedSeriesColor: Color = .pink
 
-    private func tradingCard(_ label: String, _ ece: Double, _ count: Int, _ color: Color) -> some View {
+    /// `seriesColor` is the dot only — the key back to the chart line. The
+    /// figure and the card stay neutral (#8504 / web #6176).
+    private func tradingCard(_ label: String, _ ece: Double, _ count: Int, _ seriesColor: Color) -> some View {
         VStack(spacing: 4) {
-            HStack(spacing: 4) { Circle().fill(color).frame(width: 8, height: 8); Text(label).font(.caption2.weight(.medium)) }
-            Text(String(format: "%.1fpp", ece)).font(.callout.weight(.bold).monospacedDigit()).foregroundStyle(color)
+            HStack(spacing: 4) { Circle().fill(seriesColor).frame(width: 8, height: 8); Text(label).font(.caption2.weight(.medium)) }
+            Text(String(format: "%.1fpp", ece)).font(.callout.weight(.bold).monospacedDigit()).foregroundStyle(.primary)
             Text("\(fmtN(count)) outcomes").font(.caption2).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity).padding(.vertical, 10)
-        .background(color.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
+        .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
     }
 
     // MARK: - Category Breakdown

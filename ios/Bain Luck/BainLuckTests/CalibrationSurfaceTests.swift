@@ -1,3 +1,4 @@
+import SwiftUI
 import XCTest
 @testable import Bain_Luck
 
@@ -151,30 +152,44 @@ final class CalibrationSurfaceTests: XCTestCase {
     // MARK: - 2. The activity claim (the L2-230 bug, still live on native)
 
     @MainActor
-    func testActivityCopyNamesTheHigherErrorCohortAndNeverClaimsSuperiority() throws {
+    func testActivityCopyStatesBothFiguresAndRanksNeither() throws {
         let vm = try model(Self.healthy())
         let activity = vm.activity
+        // Still computed (data), never rendered (#8504 / web #6176).
         XCTAssertEqual(activity.direction, .movedHigher)
         let sentence = try XCTUnwrap(activity.sentence)
-        XCTAssertTrue(sentence.contains("the price-moved cohort carries the higher calibration error"))
-        // The exact strings L2-230 removed from web must never appear on native.
-        XCTAssertFalse(sentence.localizedCaseInsensitiveContains("more accurately calibrated"))
-        XCTAssertFalse(sentence.localizedCaseInsensitiveContains("better calibrated"))
-        XCTAssertFalse(sentence.localizedCaseInsensitiveContains("dramatically"))
+        XCTAssertEqual(sentence,
+                       "Price moved sits at 5.0pp and price unchanged at 0.0pp. "
+                       + "These are two different sets of outcomes, not the same forecasts "
+                       + "measured twice, so the gap between them does not tell you whether "
+                       + "trading moved a price closer to the truth.")
+        // The ranking #6176 withdrew, and the strings L2-230 removed before it.
+        for phrase in ["carries the higher", "more accurately calibrated", "better calibrated",
+                       "dramatically", "x the"] {
+            XCTAssertFalse(sentence.localizedCaseInsensitiveContains(phrase), "must not say \"\(phrase)\"")
+        }
     }
 
     @MainActor
-    func testActivityRatioIsSuppressedWhenTheLowerSideRoundsToZero() throws {
-        // unchangedECE is exactly 0.0 here, which is what the OLD native code
-        // divided by: `unchangedECE / movedECE` guarded only on `> 0`, so a
-        // 0.0 lower side produced either a nonsense ratio or nothing at all
-        // depending on which side hit zero. The ordering still renders.
+    func testActivityLowerSideAtZeroLeaksNoArithmetic() throws {
+        // unchangedECE is exactly 0.0 here, which the old ratio divided by.
         let vm = try model(Self.healthy())
-        XCTAssertNil(vm.activity.ratioText)
         let sentence = try XCTUnwrap(vm.activity.sentence)
-        XCTAssertFalse(sentence.contains("x the"))
         XCTAssertFalse(sentence.contains("inf"))
         XCTAssertFalse(sentence.contains("nan"))
+    }
+
+    /// #8504: the chart's two lines and the cards' dots share one colour per
+    /// cohort, and neither colour is a verdict. The defect this catches: lines
+    /// green/red while the cards painted the LOWER-error cohort green, so the
+    /// green card named the red line.
+    func testActivitySeriesColoursAreDistinctAndNeitherIsAGoodBadColour() {
+        let moved = CalibrationSurfaceView.movedSeriesColor, unchanged = CalibrationSurfaceView.unchangedSeriesColor
+        XCTAssertNotEqual(moved, unchanged)
+        for verdict in [Color.green, .red, .orange] {
+            XCTAssertNotEqual(moved, verdict)
+            XCTAssertNotEqual(unchanged, verdict)
+        }
     }
 
     /// Table-driven parity with the web formatter, including the live 1.7/1.0 case.
@@ -184,7 +199,6 @@ final class CalibrationSurfaceTests: XCTestCase {
             let movedECE: Double?, movedN: Int?
             let unchangedECE: Double?, unchangedN: Int?
             let direction: CalibrationMath.ActivityDirection
-            let ratio: String?
             let rendersSentence: Bool
         }
         let cases: [Case] = [
@@ -192,60 +206,61 @@ final class CalibrationSurfaceTests: XCTestCase {
             // shipped native string was "0.6x more accurately calibrated".
             .init(name: "live changed-worse", movedECE: 1.7162, movedN: 349_310,
                   unchangedECE: 1.0341, unchangedN: 263_022,
-                  direction: .movedHigher, ratio: "1.7", rendersSentence: true),
+                  direction: .movedHigher, rendersSentence: true),
             .init(name: "changed-better", movedECE: 1.0, movedN: 10,
                   unchangedECE: 2.0, unchangedN: 10,
-                  direction: .unchangedHigher, ratio: "2.0", rendersSentence: true),
+                  direction: .unchangedHigher, rendersSentence: true),
             .init(name: "exact tie", movedECE: 1.5, movedN: 10,
                   unchangedECE: 1.5, unchangedN: 10,
-                  direction: .tied, ratio: nil, rendersSentence: true),
+                  direction: .tied, rendersSentence: true),
             // Both round to 1.5 at display precision, so prose must not rank them.
             .init(name: "tie by display rounding", movedECE: 1.4501, movedN: 10,
                   unchangedECE: 1.5, unchangedN: 10,
-                  direction: .tied, ratio: nil, rendersSentence: true),
+                  direction: .tied, rendersSentence: true),
             // Straddles the rounding boundary the other way: 1.4 vs 1.5, ordered.
             .init(name: "ordered across the boundary", movedECE: 1.4499, movedN: 10,
                   unchangedECE: 1.5001, unchangedN: 10,
-                  direction: .unchangedHigher, ratio: "1.1", rendersSentence: true),
+                  direction: .unchangedHigher, rendersSentence: true),
             // Ordered at display precision (21.0 vs 20.9) but the RATIO rounds to
             // 1.0x, which reads as "the same" beside prose that just said one is
             // higher. The ordering is kept; the ratio clause is dropped.
             .init(name: "ratio would print 1.0x", movedECE: 21.0, movedN: 10,
                   unchangedECE: 20.9, unchangedN: 10,
-                  direction: .movedHigher, ratio: nil, rendersSentence: true),
+                  direction: .movedHigher, rendersSentence: true),
             .init(name: "zero lower side", movedECE: 2.0, movedN: 10,
                   unchangedECE: 0.0, unchangedN: 10,
-                  direction: .movedHigher, ratio: nil, rendersSentence: true),
+                  direction: .movedHigher, rendersSentence: true),
             .init(name: "both zero", movedECE: 0.0, movedN: 10,
                   unchangedECE: 0.0, unchangedN: 10,
-                  direction: .tied, ratio: nil, rendersSentence: true),
+                  direction: .tied, rendersSentence: true),
             .init(name: "missing moved cohort", movedECE: nil, movedN: 10,
                   unchangedECE: 1.0, unchangedN: 10,
-                  direction: .unknown, ratio: nil, rendersSentence: false),
+                  direction: .unknown, rendersSentence: false),
             .init(name: "empty unchanged cohort", movedECE: 1.0, movedN: 10,
                   unchangedECE: 1.0, unchangedN: 0,
-                  direction: .unknown, ratio: nil, rendersSentence: false),
+                  direction: .unknown, rendersSentence: false),
             .init(name: "nil n", movedECE: 1.0, movedN: nil,
                   unchangedECE: 1.0, unchangedN: 10,
-                  direction: .unknown, ratio: nil, rendersSentence: false),
+                  direction: .unknown, rendersSentence: false),
             .init(name: "NaN", movedECE: Double.nan, movedN: 10,
                   unchangedECE: 1.0, unchangedN: 10,
-                  direction: .unknown, ratio: nil, rendersSentence: false),
+                  direction: .unknown, rendersSentence: false),
             .init(name: "positive infinity", movedECE: .infinity, movedN: 10,
                   unchangedECE: 1.0, unchangedN: 10,
-                  direction: .unknown, ratio: nil, rendersSentence: false),
+                  direction: .unknown, rendersSentence: false),
             .init(name: "negative infinity", movedECE: -.infinity, movedN: 10,
                   unchangedECE: 1.0, unchangedN: 10,
-                  direction: .unknown, ratio: nil, rendersSentence: false),
+                  direction: .unknown, rendersSentence: false),
             .init(name: "negative ECE", movedECE: -1.0, movedN: 10,
                   unchangedECE: 1.0, unchangedN: 10,
-                  direction: .unknown, ratio: nil, rendersSentence: false),
+                  direction: .unknown, rendersSentence: false),
             .init(name: "negative n", movedECE: 1.0, movedN: -5,
                   unchangedECE: 1.0, unchangedN: 10,
-                  direction: .unknown, ratio: nil, rendersSentence: false),
+                  direction: .unknown, rendersSentence: false),
         ]
 
-        let banned = ["more accurately calibrated", "better calibrated", "dramatically", "improves"]
+        let banned = ["more accurately calibrated", "better calibrated", "dramatically", "improves",
+                      "carries the higher", "x the"]
 
         for c in cases {
             let out = CalibrationMath.describeActivity(
@@ -253,7 +268,6 @@ final class CalibrationSurfaceTests: XCTestCase {
                 unchangedECE: c.unchangedECE, unchangedN: c.unchangedN
             )
             XCTAssertEqual(out.direction, c.direction, "direction for \(c.name)")
-            XCTAssertEqual(out.ratioText, c.ratio, "ratio for \(c.name)")
             XCTAssertEqual(out.sentence != nil, c.rendersSentence, "sentence presence for \(c.name)")
 
             guard let sentence = out.sentence else { continue }
@@ -268,21 +282,23 @@ final class CalibrationSurfaceTests: XCTestCase {
                 XCTAssertFalse(sentence.localizedCaseInsensitiveContains(token),
                                "\(c.name) leaked \"\(token)\": \(sentence)")
             }
-            if let ratio = out.ratioText {
-                // A shown ratio is ALWAYS higher ÷ lower, so it can never be < 1.
-                let value = try? XCTUnwrap(Double(ratio))
-                XCTAssertGreaterThan(value ?? 0, 1.0, "ratio must exceed 1 for \(c.name)")
-            }
+            // #8504: every renderable state — ordered, tied, zero — gets the one
+            // sentence; it names both figures and ranks neither.
+            XCTAssertTrue(sentence.hasSuffix("trading moved a price closer to the truth."), c.name)
         }
     }
 
     func testActivityComparisonIsSymmetricUnderArgumentSwap() {
-        // Swapping the cohorts must change WHICH label is named and nothing else.
+        // Swapping the cohorts swaps the two figures and nothing else: the
+        // sentence has no clause that depends on which side is higher (#8504).
         let a = CalibrationMath.describeActivity(movedECE: 1.7, movedN: 100, unchangedECE: 1.0, unchangedN: 100)
         let b = CalibrationMath.describeActivity(movedECE: 1.0, movedN: 100, unchangedECE: 1.7, unchangedN: 100)
         XCTAssertEqual(a.direction, .movedHigher)
         XCTAssertEqual(b.direction, .unchangedHigher)
-        XCTAssertEqual(a.ratioText, b.ratioText)
+        let swapped = b.sentence?
+            .replacingOccurrences(of: "1.0pp", with: "#").replacingOccurrences(of: "1.7pp", with: "1.0pp")
+            .replacingOccurrences(of: "#", with: "1.7pp")
+        XCTAssertEqual(a.sentence, swapped)
     }
 
     // MARK: - 3. Dated last-good payload

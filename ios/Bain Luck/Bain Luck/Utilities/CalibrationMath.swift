@@ -160,16 +160,19 @@ nonisolated enum CalibrationMath {
 
     /// The rendered description of the activity split. `sentence == nil` means
     /// render no comparison at all.
+    ///
+    /// #8504: `direction` is still computed and never rendered — not in the
+    /// sentence, not as a value colour. The ratio the sentence used to print is
+    /// gone rather than kept unrendered: a "1.3x" left in the struct is one line
+    /// away from being printed again.
     nonisolated struct ActivityComparison: Sendable {
         let direction: ActivityDirection
         let movedText: String?
         let unchangedText: String?
-        let ratioText: String?
         let sentence: String?
 
         static let unrenderable = ActivityComparison(
-            direction: .unknown, movedText: nil, unchangedText: nil,
-            ratioText: nil, sentence: nil
+            direction: .unknown, movedText: nil, unchangedText: nil, sentence: nil
         )
     }
 
@@ -204,6 +207,17 @@ nonisolated enum CalibrationMath {
     ///      sensitive: a synthetic mix where moved was better within BOTH strata
     ///      still inverted in aggregate. An ordering is an ordering. When one
     ///      cannot be computed honestly we say nothing — nothing > unhelpful.
+    ///
+    /// #8504 — ports web's #6176 (Alex, 2026-09-14): AN ORDERING IS ALSO A CLAIM.
+    /// Rule 2 forbade saying trading CAUSED the gap, and "in this sample the
+    /// price-moved cohort carries the higher calibration error, 1.3x …" obeyed it
+    /// to the letter; a reader still hears "one of these is more accurate". The
+    /// two sides are different sets of outcomes (the split is a value inequality
+    /// between two stored prices, not a trade), so no ranking between them says
+    /// anything about what trading does to a forecast. The figures stay; the
+    /// ranking goes, and the sentence says why the two numbers cannot answer the
+    /// section's question. The nouns are the phone's own — unifying them with
+    /// web's "traded / untraded" is a separate change.
     static func describeActivity(
         movedECE: Double?, movedN: Int?,
         unchangedECE: Double?, unchangedN: Int?
@@ -214,37 +228,14 @@ nonisolated enum CalibrationMath {
 
         let movedText = fixed1(m)
         let unchangedText = fixed1(u)
-        let lead = "Price moved sits at \(movedText)pp and price unchanged at \(unchangedText)pp"
-
-        if m == u {
-            return ActivityComparison(
-                direction: .tied, movedText: movedText, unchangedText: unchangedText,
-                ratioText: nil,
-                sentence: "\(lead) \u{2014} effectively the same calibration error in this sample."
-            )
-        }
-
-        let movedHigher = m > u
-        let higher = movedHigher ? m : u
-        let lower = movedHigher ? u : m
-        let higherLabel = movedHigher ? "price-moved" : "price-unchanged"
-        let lowerLabel = movedHigher ? "price-unchanged" : "price-moved"
-
-        // Suppressed when the smaller side rounds to 0.0pp (division by zero) and
-        // when it would print "1.0x", which reads as "the same" beside prose that
-        // just said one is higher.
-        var ratioText: String?
-        if lower > 0 {
-            let r = fixed1(higher / lower)
-            if r != "1.0" { ratioText = r }
-        }
-        let tail = ratioText.map { ", \($0)x the \(lowerLabel) cohort's" } ?? ""
-
         return ActivityComparison(
-            direction: movedHigher ? .movedHigher : .unchangedHigher,
-            movedText: movedText, unchangedText: unchangedText, ratioText: ratioText,
-            sentence: "\(lead) \u{2014} in this sample the \(higherLabel) cohort carries the "
-                + "higher calibration error\(tail)."
+            // Still computed, never rendered as a verdict.
+            direction: m == u ? .tied : (m > u ? .movedHigher : .unchangedHigher),
+            movedText: movedText, unchangedText: unchangedText,
+            sentence: "Price moved sits at \(movedText)pp and price unchanged at \(unchangedText)pp. "
+                + "These are two different sets of outcomes, not the same forecasts "
+                + "measured twice, so the gap between them does not tell you whether "
+                + "trading moved a price closer to the truth."
         )
     }
 }
