@@ -38,6 +38,7 @@ from app.utils.settled_price import (  # #5246 / #7767
 )
 from app.utils.futures_rank import rerank_market_field_stmt  # #6598
 from app.utils.futures_liveness import preserve_venue_settled  # #2222
+from app.utils.venue_competition import POLYMARKET_EVENT_SLUG_KEY  # #8636
 from app.utils.event_taxonomy import NON_SPORT_CATEGORIES  # #7814 — see below
 from app.utils.event_completion import (  # #6073
     POLYMARKET_VENUE_COMMENCE_SOURCE,
@@ -466,6 +467,7 @@ def sub_market_metadata(
     clob_token_ids: Optional[list] = None,
     content_understanding: Optional[dict] = None,
     venue_game_start=None,
+    event_slug: Optional[str] = None,
 ) -> Optional[dict]:
     """``market_metadata`` for a decomposed Polymarket sub-market, at mint time.
 
@@ -555,6 +557,11 @@ def sub_market_metadata(
             meta["venue_game_start"] = _vgs
     if event_id is not None and str(event_id) != "":
         meta["polymarket_event_id"] = str(event_id)
+    if event_slug:
+        # #8636: the slug's first token is the venue's league code (`clf` =
+        # Club Friendlies). The sub-market is the row an event is minted from,
+        # so the placement check reads it HERE, not on the parent.
+        meta[POLYMARKET_EVENT_SLUG_KEY] = str(event_slug)
     if clob_token_ids:
         # Strings, always: Gamma returns these as decimal strings far wider than
         # a float64 can hold, and a token id that has been through a JSON number
@@ -2569,6 +2576,11 @@ async def _process_event_batch(
                     poly_metadata["polymarket_event_id"] = event.id
                 if event.title:
                     poly_metadata["event_title"] = event.title
+                # #8636: the venue's league code rides the slug; see
+                # `app.utils.venue_competition`. Rewritten on conflict like the
+                # rest of this dict, so live rows acquire it on the next poll.
+                if event.slug:
+                    poly_metadata[POLYMARKET_EVENT_SLUG_KEY] = event.slug
                 # #4965: THE VENUE'S OWN FIXTURE INSTANT, kept because
                 # `commence_time` above cannot carry it — that column is fed by
                 # Gamma's `startDate`, which is the LISTING stamp (the three
@@ -2853,6 +2865,8 @@ async def _process_event_batch(
                             # from, so without it a match is dated by the moment
                             # Polymarket listed it and reads LIVE hours early.
                             venue_game_start=event.game_start_time,
+                            # #8636: the venue's league code, for placement.
+                            event_slug=event.slug,
                         )
                         # ── ITS OWN 24h VOLUME (UX-P157, #2256).
                         #
