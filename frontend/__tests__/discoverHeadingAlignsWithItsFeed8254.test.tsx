@@ -108,8 +108,12 @@ describe("#8254 — the Discover heading and its feed are one container, not two
     // Four columns in ~1520px are ~368px each; a fifth would be ~291px, NARROWER than the ~300px
     // the defect produced. Widening and then re-narrowing would satisfy the issue's words and
     // defeat its purpose.
-    expect(SOURCE).toContain("columns-1 sm:columns-2 lg:columns-3 xl:columns-4");
-    expect(SOURCE).not.toMatch(/columns-5/);
+    // #8491 moved the ladder from CSS multi-column to a grid with the same 1/2/3/4 tracks and
+    // 16px gutter (MasonryCell); the page renders MASONRY_GRID_CLASS.
+    const { MASONRY_GRID_CLASS } = require("../components/discover/MasonryCell");
+    expect(SOURCE).toContain("className={MASONRY_GRID_CLASS}");
+    expect(MASONRY_GRID_CLASS).toContain("grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-4");
+    expect(MASONRY_GRID_CLASS).not.toMatch(/cols-5/);
   });
 });
 

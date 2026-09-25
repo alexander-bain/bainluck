@@ -285,7 +285,10 @@ describe("HERO_IMAGE_SIZES tracks the Discover masonry", () => {
     const page = fs.readFileSync(path.join(process.cwd(), "app/discover/page.tsx"), "utf8");
     const layout = fs.readFileSync(path.join(process.cwd(), "app/layout.tsx"), "utf8");
     expect(page).toMatch(/<main className="max-w-content mx-auto px-4 /);
-    expect(page).toContain("columns-1 sm:columns-2 lg:columns-3 xl:columns-4");
+    // #8491: same tracks and 16px gutter, now a grid (MasonryCell) instead of multi-column.
+    const { MASONRY_GRID_CLASS } = require("../../components/discover/MasonryCell");
+    expect(page).toContain("className={MASONRY_GRID_CLASS}");
+    expect(MASONRY_GRID_CLASS).toContain("grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-4");
     expect(layout).toContain('className="max-w-content mx-auto px-3 md:px-6 py-4"');
     const tw = fs.readFileSync(path.join(process.cwd(), "tailwind.config.ts"), "utf8");
     expect(tw).toMatch(/content:\s*'1600px'/);

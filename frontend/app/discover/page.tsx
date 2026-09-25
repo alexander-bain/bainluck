@@ -9,6 +9,7 @@ import { useAuthContext } from "@/components/AuthProvider";
 import type { FeedItem, FeedEventData, FeedFuturesData, FeedBundleData, FeedConceptData } from "@/lib/types";
 import DiscoverCard, { type DiscoverGroupedItem, GuessCard, DailyChallengeCard, ResolutionCard, ResolutionGroup } from "@/components/DiscoverCard";
 import EndOfFeedCard from "@/components/discover/EndOfFeedCard";
+import MasonryCell, { MASONRY_GRID_CLASS } from "@/components/discover/MasonryCell";
 import FeedUnavailableNotice, { type FeedFailureReason } from "@/components/discover/FeedUnavailableNotice";
 import DiscoverSkeletonGrid from "@/components/discover/DiscoverSkeletonGrid";
 import { Button } from "@/components/ui/button";
@@ -1494,7 +1495,8 @@ export default function DiscoverPage() {
           </div>
         )}
 
-        <div className="columns-1 sm:columns-2 lg:columns-3 xl:columns-4 gap-4">
+        {/* #8491 — across then down: see MasonryCell. */}
+        <div className={MASONRY_GRID_CLASS}>
           {visibleItems.map((gi, idx) => {
             const key = gi.type === "single" ? getItemId(gi.item!) : `group-${gi.groupTitle}-${idx}`;
             // Queue 309 Item 3: a locked slot falls through to the normal
@@ -1532,10 +1534,10 @@ export default function DiscoverPage() {
               // satisfied "a real card was visible", recorded a first-card
               // latency, and reported green. This hook exists only on a
               // mounted feed item, so that false green cannot recur.
-              <div
+              <MasonryCell
                 key={key}
                 data-testid="discover-card"
-                className={`break-inside-avoid mb-4${isFirstCard ? " animate-peek-right" : ""}`}
+                className={isFirstCard ? "animate-peek-right" : ""}
               >
                 <FeedItemShell groupedItem={gi} positionIndex={idx} personalizationTrace={personalizationTrace} onSeen={handleCardSeen}>
                   {isGuessSlot ? (
@@ -1550,7 +1552,7 @@ export default function DiscoverPage() {
                     />
                   )}
                 </FeedItemShell>
-              </div>
+              </MasonryCell>
             );
           })}
         </div>

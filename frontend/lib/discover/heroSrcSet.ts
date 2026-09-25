@@ -80,8 +80,8 @@
 // option (a) needs (#1636), so both halves of the hero work now converge on it.
 
 /**
- * The Discover masonry is `columns-1 sm:columns-2 lg:columns-3 xl:columns-4
- * gap-4` inside `max-w-content mx-auto px-4` (`app/discover/page.tsx`), which
+ * The Discover masonry is `grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4
+ * gap-x-4` (`MASONRY_GRID_CLASS`, #8491) inside `max-w-content mx-auto px-4` (`app/discover/page.tsx`), which
  * sits in the site shell's `max-w-content px-6` (`app/layout.tsx`). Slot width
  * per breakpoint, gutters and page padding subtracted:
  *
