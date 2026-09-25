@@ -305,6 +305,10 @@ class TestEnforcementScope:
             "polymarket_container_twin_sweep",
             # #8422: the Odds API re-issued-id arm, enrolled from birth.
             "odds_api_reissued_twin_sweep",
+            # #7993: the Odds API re-mint arm of the same fold, enrolled at
+            # birth. "The provider dropped nothing" and "we could not ask the
+            # provider" must not share a verdict.
+            "odds_api_remint_sweep",
             # #1912 (CAL-P065): the two halves of the Polymarket ownership
             # hole, enrolled TOGETHER because separately each one looked fine.
             # The Gamma rail discarded 9,748 markets a run as

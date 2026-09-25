@@ -296,6 +296,7 @@ class TestBeatScheduleCompleteness:
         "mlb-reschedule-ghost-sweep",
         "polymarket-container-twin-sweep",
         "odds-api-reissued-twin-sweep",
+        "odds-api-remint-sweep",
         "merge-degenerate-combat-events",
         "canonicalize-entities-daily",
         "precompute-interestingness",

@@ -5569,6 +5569,24 @@ def odds_api_reissued_twin_sweep_task(self, apply: bool = True,
     )
 
 
+@celery_app.task(bind=True, soft_time_limit=300, time_limit=360,
+                 name="app.tasks.odds_api_remint_sweep")
+def odds_api_remint_sweep_task(self, apply: bool = True):
+    """#7993 — the same fold, for a bout The Odds API re-minted under a new id.
+
+    The provider re-issued UFC 332's bouts with new ids and a new date, and the
+    old rows kept printing in search ("Oct 10 5:00 PM" for an Oct 3 fight). None
+    of the three siblings can reach them: both rows carry a provider id, the same
+    names and a 7-day gap. The evidence is the provider's own free `/events`
+    listing, which lists one id of the pair and not the other.
+
+    APPLY BY DEFAULT under D51, like its siblings: reversible label, prior value
+    banked into `bak_7993_odds_api_remint_tags`, undo via
+    `scripts/restore_7993_odds_api_remint_tags.py --apply`."""
+    from app.tasks.odds_api_remint_sweep import run_odds_api_remint_sweep
+    return _tracked_run("odds_api_remint_sweep", run_odds_api_remint_sweep(apply=apply))
+
+
 # --- Duplicate Event Cleanup ---
 
 
@@ -6906,6 +6924,18 @@ celery_app.conf.beat_schedule = {
     "odds-api-reissued-twin-sweep": {
         "task": "app.tasks.odds_api_reissued_twin_sweep",
         "schedule": crontab(minute="51"),
+        "kwargs": {"apply": True},
+        "options": {"queue": "background"},
+    },
+    # #7993 — the Odds API re-mint fold, hourly at :13. :13 is odd and not a
+    # multiple of five, so no `*/N` family reaches it, it is no other entry's
+    # literal, and it sits clear of the settlement sweep's :31-:44 window. Re-mints
+    # are episodic and the listing calls cost no quota, so an hour bounds how long
+    # a re-dated bout double-prints without chasing anything.
+    # Undo: `scripts/restore_7993_odds_api_remint_tags.py --apply`.
+    "odds-api-remint-sweep": {
+        "task": "app.tasks.odds_api_remint_sweep",
+        "schedule": crontab(minute="13"),
         "kwargs": {"apply": True},
         "options": {"queue": "background"},
     },

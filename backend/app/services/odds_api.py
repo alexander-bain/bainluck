@@ -152,7 +152,8 @@ class OddsAPIService(BaseAPIClient):
         only read in this client whose ABSENCE of an id means something:
         ``/odds`` omits an event no requested bookmaker prices, so an id
         missing there proves nothing. #8422 reads it to tell a re-issued id
-        from a live one.
+        from a live one; #7993 reads it to tell a re-minted combat bout from
+        a live one.
 
         Raises on any non-200 (gotcha #36): an unread schedule must never look
         like an empty one.
