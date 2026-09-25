@@ -136,6 +136,12 @@ BY_TAG = {"Tennis": TENNIS, "Football": FOOTBALL}
 PROD_TENNIS_SELECTABLE = 27
 PROD_FOOTBALL_SELECTABLE = 214
 
+#: The fixture's own split. #8586 moved `KXATPEXACTMATCH` / `KXWTAEXACTMATCH`
+#: onto the hand-listed floor (`_SPORTS_SERIES_TICKERS`), which removes them
+#: from discovery's selectable pool: tennis 27 -> 25, and Football takes the two
+#: freed places under the shared total (33 -> 35).
+EXPECTED_SPLIT = {"Football": 35, "Tennis": 25}
+
 
 def _select(discovered, *, max_series=None, **over):
     kwargs = dict(
@@ -329,14 +335,14 @@ class TestTheReceipt:
 
     def test_the_split_is_reported_per_tag(self):
         _, receipt = _select(BY_TAG)
-        assert receipt["selected_per_tag"] == {"Football": 33, "Tennis": 27}
+        assert receipt["selected_per_tag"] == EXPECTED_SPLIT
 
     def test_the_split_survives_into_the_persisted_receipt(self):
         """Bounded telemetry drops a lot; this must not be among it."""
         _, receipt = _select(BY_TAG)
         receipt["source"] = "live"
         kept = summarize_discovery_receipt(receipt)
-        assert kept["selected_per_tag"] == {"Football": 33, "Tennis": 27}
+        assert kept["selected_per_tag"] == EXPECTED_SPLIT
 
     def test_an_untagged_selection_reports_no_split(self):
         """A flat caller has no tags, so it must not invent a `_` tag."""
@@ -401,7 +407,7 @@ class TestTheChain:
         svc = _TwoTagService()
         selected, receipt = asyncio.run(svc.resolve_discovered_series())
         assert receipt["source"] == "live"
-        assert receipt["selected_per_tag"] == {"Football": 33, "Tennis": 27}
+        assert receipt["selected_per_tag"] == EXPECTED_SPLIT
         picked = {t for t, _ in selected}
         # Both tags reached the fetch list, and tennis's ship is intact.
         assert "KXNFLRACE" in picked and "KXATPDOUBLES" in picked
