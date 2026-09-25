@@ -51,7 +51,13 @@ export function formatFuturesName(name: string): string {
 
 /**
  * Kickoff, phrased by how soon it is: "Recently" once past, "In 45 min" inside
- * the hour, a clock time inside the day, otherwise a dated clock time.
+ * the hour, a bare clock time later TODAY, "Tomorrow 7:10 PM" on the next local
+ * calendar day, otherwise a dated clock time.
+ *
+ * The bare time is gated on the calendar day, not on "under 24 hours": Friday
+ * 7:10 PM seen on Thursday evening is under 24 hours away, and printing it as
+ * "7:10 PM" beside tonight's live game read as tonight (#8513). Days are counted
+ * between local midnights, so a 23- or 25-hour DST day still counts as one.
  *
  * `now` is injectable purely for tests; production callers omit it.
  */
@@ -62,12 +68,18 @@ export function formatEventTime(isoString: string, now: Date = new Date()): stri
 
   if (diffHours < 0) return "Recently";
   if (diffHours < 1) return `In ${Math.round(diffHours * 60)} min`;
-  if (diffHours < 24) {
-    return date.toLocaleTimeString("en-US", {
-      hour: "numeric",
-      minute: "2-digit",
-    });
-  }
+
+  const clock = date.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  const dayOffset = Math.round(
+    (new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime() -
+      new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()) /
+      (1000 * 60 * 60 * 24)
+  );
+  if (dayOffset === 0) return clock;
+  if (dayOffset === 1) return `Tomorrow ${clock}`;
 
   return date.toLocaleDateString("en-US", {
     weekday: "short",
