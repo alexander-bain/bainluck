@@ -168,11 +168,20 @@ final class EventDetailViewModel: ObservableObject {
                     fetched.status = event?.status
                 }
             }
+            // Delivery can pause while a socket recovers. Keep its last
+            // proven observation, but terminal refusal makes REST authoritative.
+            // Check controller state here: error -> refusal need not emit a
+            // second false delivery callback.
+            let streamRecoverable = stream?.state.stopped == false
+            fetched = LiveEventPriceReconciliation.preservingLiveStatus(
+                latestPriceFrame, current: event, polled: fetched,
+                streamRecoverable: streamRecoverable, now: Date(timeIntervalSince1970: now())
+            )
             if LiveEventPriceReconciliation.shouldPreserve(
-                latestPriceFrame, over: fetched, delivering: streamDelivering
+                latestPriceFrame, over: fetched, streamRecoverable: streamRecoverable
             ) {
                 fetched = LiveEventPriceReconciliation.applying(
-                    latestPriceFrame, to: fetched, delivering: streamDelivering
+                    latestPriceFrame, to: fetched, streamRecoverable: streamRecoverable
                 )
             } else {
                 // A newer REST reading, a refusal, or an unrankable response
@@ -325,7 +334,9 @@ final class EventDetailViewModel: ObservableObject {
                 // that just earned it.
                 if !delivering {
                     self.streamHasPushedPrice = false
-                    self.latestPriceFrame = nil
+                    // The dot and fast polling reflect the outage immediately.
+                    // A recoverable outage does not invalidate a price already
+                    // observed; load() checks terminal refusal before using it.
                 }
                 // Re-decide the poll on every transition, in BOTH directions.
                 // Only reacting to the good one would leave the page frozen the
