@@ -73,6 +73,17 @@ final class EventDetailViewModel: ObservableObject {
     /// view being re-created, which is the half of this bug that bit hardest.
     @Published private(set) var liveBlend: [LiveBlendPoint] = []
 
+    /// #8541 — the stream has said the match is over and the server has not yet
+    /// served a finished payload.
+    ///
+    /// A pushed frame carries a status but no score. Before this, the frame that
+    /// ended the match set the status, `closed` stopped the stream, and a finished
+    /// status plans `.idle` — so the page never asked again and printed FINAL over
+    /// whatever score its last refresh (up to two minutes earlier) had. A walk-off
+    /// is exactly the run that lands in that window. While this is set the page
+    /// keeps the live cadence until a load comes back finished.
+    private var awaitingServedFinal = false
+
     private var stream: LiveStreamController?
     private var streamTickTask: Task<Void, Never>?
     /// Injected so tests can drive the lifecycle without a socket. `nil` means
@@ -143,7 +154,18 @@ final class EventDetailViewModel: ObservableObject {
 
         // Await primary fetch (controls loading state)
         do {
-            event = try await client.fetchEvent(id: eventId)
+            var fetched = try await client.fetchEvent(id: eventId)
+            if awaitingServedFinal {
+                if EventState.isFinished(fetched.status) {
+                    awaitingServedFinal = false
+                } else {
+                    // The detail payload is cached for up to 30s while live, so the
+                    // first load after a pushed final can still say `live`. The push
+                    // is the newer fact: keep it, take everything else, ask again.
+                    fetched.status = event?.status
+                }
+            }
+            event = fetched
             error = nil
         } catch {
             self.error = error.localizedDescription
@@ -201,12 +223,14 @@ final class EventDetailViewModel: ObservableObject {
         // Decided AFTER the socket work, never before it: `stopStream()` clears
         // `streamDelivering`, and that is an input. Reading it first would let a
         // page that just lost its stream keep the slow push cadence.
-        let plan = EventRefreshPlan.decide(
-            status: event?.status,
-            streamDelivering: streamDelivering,
-            commenceTime: event?.commenceTime?.asDate,
-            now: Date(timeIntervalSince1970: now())
-        )
+        let plan: EventRefreshPlan = awaitingServedFinal
+            ? .poll(every: EventRefreshPlan.livePollInterval)
+            : EventRefreshPlan.decide(
+                status: event?.status,
+                streamDelivering: streamDelivering,
+                commenceTime: event?.commenceTime?.asDate,
+                now: Date(timeIntervalSince1970: now())
+            )
 
         guard case .poll(let interval) = plan else {
             refreshTask?.cancel()
@@ -363,7 +387,12 @@ final class EventDetailViewModel: ObservableObject {
         // A frame whose status has left the live set is the server telling us
         // the match ended; the controller closes on the `closed` event that
         // follows, and the status must not stay "live" underneath it.
-        if let status = frame.status { current.status = status }
+        if let status = frame.status {
+            if !EventState.isFinished(current.status), EventState.isFinished(status) {
+                awaitingServedFinal = true
+            }
+            current.status = status
+        }
 
         event = current
         // NOT `lastLoadedAt`: that field means "a load completed" and drives the
