@@ -29680,7 +29680,9 @@ def _search_container_parent_candidates(markets: list) -> dict[int, tuple[str, s
       Packers game?", "VALORANT Champions 2026: Team to Make Playoffs",
       "How many Chinook will pass Bonneville Dam…"). Of the 1,552 open
       event-linked non-exclusive Polymarket group rows, 7 have no "vs" in
-      their name;
+      their name. (#8664: an UNLINKED game has the same container; it is
+      `_search_unlinked_container_parent_candidates`'s, told apart by its
+      siblings, and this arm is unchanged);
     * ``mutually_exclusive is False``, because a one-winner board is a real
       question even when each leg is also a row. "Norway vs. Denmark"
       (Norway / Draw / Denmark) and "… - Exact Score" are ``True`` and are kept.
@@ -29690,20 +29692,113 @@ def _search_container_parent_candidates(markets: list) -> dict[int, tuple[str, s
     A row with no outcomes, or with any leg that has no external id, cannot be
     proved a copy and is not a candidate.
     """
-    candidates: dict[int, tuple[str, set[str]]] = {}
-    for m in markets:
-        if (
-            m.source != "polymarket"
-            or not m.group_id
-            or m.event_id is None
-            or m.mutually_exclusive is not False
-        ):
-            continue
-        legs = [o.external_id for o in (m.outcomes or [])]
-        if not legs or not all(isinstance(e, str) and e for e in legs):
-            continue
-        candidates[m.id] = (m.group_id, set(legs))
-    return candidates
+    return {
+        m.id: legs
+        for m in markets
+        if (legs := _search_leg_copy_board_legs(m)) and m.event_id is not None
+    }
+
+
+def _search_leg_copy_board_legs(m) -> Optional[tuple[str, set[str]]]:
+    """``(group_id, leg external ids)`` for a non-exclusive Polymarket group row
+    whose every leg carries an id, else ``None``. The three conditions #8375's
+    candidates share with #8664's; the event arm is the callers' to add, and
+    they read ``event_id`` only AFTER this passes — #8375's order, which a thin
+    non-Polymarket row with no ``event_id`` attribute relies on (#6447's test)."""
+    if m.source != "polymarket" or not m.group_id or m.mutually_exclusive is not False:
+        return None
+    legs = [o.external_id for o in (m.outcomes or [])]
+    if not legs or not all(isinstance(e, str) and e for e in legs):
+        return None
+    return (m.group_id, set(legs))
+
+
+def _search_unlinked_container_parent_candidates(
+    markets: list,
+) -> dict[int, tuple[str, set[str]]]:
+    """The leg-copy boards #8375 left alone because they have no game (#8664).
+
+    #8375 required ``event_id`` because, measured then, the unlinked leg-copy
+    boards were the legitimate ones — "What will the announcers say…", "Team
+    to Make Playoffs". That measurement was right about those boards and
+    blind to a second population: a game the matcher has NOT linked. Its
+    Polymarket event row is the same container, printed the same way.
+    Production, 2026-09-25 17:3xZ, ``q=kings`` at 390px: "Honor of Kings:
+    Buriram United Esports vs King of Gamers Club (BO5) — Game 1 Winner 91%"
+    (62250339, ``event_id`` NULL). ``q=infinite saw`` led its "Other Sports"
+    card with 62357974 the same way: "Map Handicap … 48% · O/U 2.5 Games 45% ·
+    Map 2 Winner 44% · Match Winner 30%". Open unlinked rows of this shape,
+    same day: esports 116, hockey 90, table tennis 88, tennis 85, and more.
+
+    Being unlinked is therefore not the test. What separates the two is the
+    SIBLINGS, and `_search_unlinked_container_parents_among` reads them.
+    """
+    return {
+        m.id: legs
+        for m in markets
+        if (legs := _search_leg_copy_board_legs(m)) and m.event_id is None
+    }
+
+
+def _outcomes_name_two_sides(names: list) -> bool:
+    """Exactly two distinct named sides, neither a bare Yes/No (#8664).
+
+    "Infinite / SAW", "Over / Under", "Teodora Kostovic / Polina Iatcenko" are
+    two sides. "Yes / No" is one question's two answers. "Yes / No /
+    September 30" (the date-ladder children measured beside this fix) is
+    neither and is refused: exactly two, or it is not this shape.
+    """
+    cleaned = [(n or "").strip().lower() for n in names]
+    return (
+        len(cleaned) == 2
+        and all(cleaned)
+        and cleaned[0] != cleaned[1]
+        and not any(n in ("yes", "no") for n in cleaned)
+    )
+
+
+def _search_unlinked_container_parents_among(
+    candidates: dict[int, tuple[str, set[str]]],
+    named_sibling_rows,
+) -> set[int]:
+    """The unlinked candidates that are a GAME's container (#8664).
+
+    ``named_sibling_rows`` is ``(id, group_id, external_id, outcome name)``, one
+    row per outcome of each Polymarket row whose external id is a candidate leg.
+
+    Two conditions, both required:
+
+    * **every leg is another row on its own group** — #8375's test, applied by
+      calling `_search_container_parents_among` itself, so nothing is withheld
+      whose legs cannot all be found as rows;
+    * **at least one of those rows names two sides.** The parent writer
+      (`tasks/polymarket._parent_outcome_data`) gives a non-negRisk event one
+      leg per sub-market priced at ``outcome_prices[0]`` and labelled with the
+      sub-market's title. For a Yes/No sub-market that is a true label — the
+      YES price of "Will T1 make the playoffs?" is T1's number. For a
+      sub-market whose outcomes are two sides it is not: "Map 2 Winner 44%" is
+      the price of the first side, named after the question. That leg is the
+      defect, and a board carrying one is a game's container, whose every
+      sub-market is already its own row with both sides named.
+
+    Measured on the open unlinked candidates the same minute: every Yes/No
+    board — Team to Make Playoffs, Scorigami, "closes above ___", tornado
+    cities — has no two-sided sibling and is kept.
+    """
+    by_row: dict[tuple[int, str, str], list] = {}
+    for mid, group_id, external_id, name in named_sibling_rows:
+        by_row.setdefault((mid, group_id, external_id), []).append(name)
+    copies = _search_container_parents_among(candidates, list(by_row))
+    two_sided = {
+        (group_id, external_id)
+        for (mid, group_id, external_id), names in by_row.items()
+        if _outcomes_name_two_sides(names)
+    }
+    return {
+        parent_id
+        for parent_id in copies
+        if any((candidates[parent_id][0], leg) in two_sided for leg in candidates[parent_id][1])
+    }
 
 
 def _search_container_parents_among(
@@ -29745,34 +29840,69 @@ async def _search_container_parent_ids(
     ``deduped_futures`` rows, and a session rollback would expire them.
     """
     candidates = _search_container_parent_candidates(markets)
-    if not candidates or time.monotonic() > deadline:
+    # #8664: the unlinked arm needs each sibling's outcome NAMES, so it is its
+    # own read, issued only when an unlinked candidate exists. Same savepoint,
+    # same timeout, same fail-open: either read timing out serves the page
+    # exactly as #8375 left it for that request.
+    unlinked = _search_unlinked_container_parent_candidates(markets)
+    if not (candidates or unlinked) or time.monotonic() > deadline:
         return set()
-    leg_ids = set().union(*(legs for _, legs in candidates.values()))
     await _apply_search_statement_timeout(db, deadline)
     savepoint = await db.begin_nested()
+    rows: list = []
+    named_rows: list = []
     try:
-        rows = (
-            await db.execute(
-                select(
-                    FuturesMarket.id, FuturesMarket.group_id, FuturesMarket.external_id
-                ).where(
-                    FuturesMarket.source == "polymarket",
-                    FuturesMarket.external_id.in_(leg_ids),
+        if candidates:
+            leg_ids = set().union(*(legs for _, legs in candidates.values()))
+            rows = (
+                await db.execute(
+                    select(
+                        FuturesMarket.id, FuturesMarket.group_id, FuturesMarket.external_id
+                    ).where(
+                        FuturesMarket.source == "polymarket",
+                        FuturesMarket.external_id.in_(leg_ids),
+                    )
                 )
-            )
-        ).all()
+            ).all()
+        # CERT-3491 follow-up: when both reads run, the second gets what is LEFT
+        # of the budget, re-derived here, not the first read's arming. A spent
+        # deadline skips it and the linked verdict still ships.
+        if unlinked and candidates:
+            if time.monotonic() > deadline:
+                unlinked = {}
+            else:
+                await _apply_search_statement_timeout(db, deadline)
+        if unlinked:
+            unlinked_leg_ids = set().union(*(legs for _, legs in unlinked.values()))
+            named_rows = (
+                await db.execute(
+                    select(
+                        FuturesMarket.id,
+                        FuturesMarket.group_id,
+                        FuturesMarket.external_id,
+                        FuturesOutcome.name,
+                    )
+                    .join(FuturesOutcome, FuturesOutcome.market_id == FuturesMarket.id)
+                    .where(
+                        FuturesMarket.source == "polymarket",
+                        FuturesMarket.external_id.in_(unlinked_leg_ids),
+                    )
+                )
+            ).all()
     except Exception as exc:  # noqa: BLE001
         await savepoint.rollback()
         if not _is_query_timeout(exc):
             raise
         logger.error(
             "search container-parent read timed out for %d candidates; serving "
-            "them unfiltered", len(candidates)
+            "them unfiltered", len(candidates) + len(unlinked)
         )
         await _apply_search_statement_timeout(db, deadline)
         return set()
     await savepoint.commit()
-    return _search_container_parents_among(candidates, rows)
+    return _search_container_parents_among(
+        candidates, rows
+    ) | _search_unlinked_container_parents_among(unlinked, named_rows)
 
 
 def _build_search_top_outcomes(
