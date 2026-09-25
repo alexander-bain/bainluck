@@ -126,8 +126,8 @@ final class CalibrationSurfaceTests: XCTestCase {
         XCTAssertEqual(vm.fullN, 700)
         XCTAssertEqual(
             vm.heroPopulationText,
-            "600 resolved predictions \u{2014} every outcome we measured except the 100 whose "
-                + "price never moved off its opening line (700 measured in all)")
+            "600 resolved predictions \u{2014} every outcome we measured except the 100 untraded "
+                + "ones, whose price never moved off its opening line (700 measured in all)")
         // The pre-fix bug: leading with total_outcomes (700) under the default
         // cohort, i.e. a number the cohort below it contradicts.
         XCTAssertNotEqual(vm.heroPopulationText, vm.formattedTotalOutcomes)
@@ -159,7 +159,7 @@ final class CalibrationSurfaceTests: XCTestCase {
         XCTAssertEqual(activity.direction, .movedHigher)
         let sentence = try XCTUnwrap(activity.sentence)
         XCTAssertEqual(sentence,
-                       "Price moved sits at 5.0pp and price unchanged at 0.0pp. "
+                       "Traded sits at 5.0pp and untraded at 0.0pp. "
                        + "These are two different sets of outcomes, not the same forecasts "
                        + "measured twice, so the gap between them does not tell you whether "
                        + "trading moved a price closer to the truth.")

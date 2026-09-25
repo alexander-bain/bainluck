@@ -127,10 +127,9 @@ final class CalibrationCurveWidthTests: XCTestCase {
     /// so "a layout fix" cannot quietly become anything else.
     func testChartGeometryCopyAndNumbersAreUnchanged() throws {
         let vm = try model()
-        // Copy — the exact strings L2-237 approved.
-        XCTAssertEqual(vm.cohortShortLabel, "Price moved + sportsbook lines")
-        XCTAssertEqual(vm.cohortHeadline,
-                       "Showing markets whose price moved, plus sportsbook lines (389,385)")
+        // Copy — web's `describeCohort` strings (#1865, which superseded L2-237's).
+        XCTAssertEqual(vm.cohortShortLabel, "Traded")
+        XCTAssertEqual(vm.cohortHeadline, "Showing traded outcomes (389,385)")
         // Population / metrics — the 1e-12 production-fixture invariants.
         XCTAssertEqual(vm.cohortN, 389_385)
         XCTAssertEqual(vm.movedN + vm.unchangedN + vm.notApplicableN, vm.fullN)
