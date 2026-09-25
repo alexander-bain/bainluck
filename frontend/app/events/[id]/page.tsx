@@ -100,6 +100,7 @@ import { awayIsTheComplement, printableAway, sportPricesADraw } from "@/lib/draw
 import {
   actualScoreSeriesDrawn,
   scoreDifferentialHeading,
+  sportsbookProjectionDrawable,
 } from "@/lib/scoreDifferentialHeading";
 import { espnTeamLogoByName } from "@/lib/images";
 import {
@@ -1567,10 +1568,13 @@ export default function EventPage({ params }: EventPageProps) {
     scoreHistory: historyData?.score_history,
     espnHistory: historyData?.espn_history,
   });
+  // #8617: and only a projection the chart will draw. Baseball's served
+  // projection is the ±1.5 run line, which the chart withholds; counting it
+  // here would open the card over nothing on a game with no played score.
   const hasScoreDiffData = (effectivelyLive || isFinished || hasStarted) && !!historyData && (
-    (historyData.history ?? []).some(
+    (sportsbookProjectionDrawable(event?.sport || undefined) && (historyData.history ?? []).some(
       (p) => p.projected_home_score != null && p.projected_away_score != null
-    ) ||
+    )) ||
     drawsActualScore
   );
   const scoreDiffHeading = scoreDifferentialHeading({

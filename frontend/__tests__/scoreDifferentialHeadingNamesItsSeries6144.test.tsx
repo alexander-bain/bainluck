@@ -305,13 +305,17 @@ describe("#6144 — on the production wire", () => {
       ).length
     ).toBe(122);
 
+    // #8617: the projection on this wire is the run line, not a margin, so
+    // baseball no longer draws it. The naming rule is unchanged and still
+    // holds wherever the projection IS a margin — the same bytes read as a
+    // tennis card below prove that half.
     const markup = renderChart(NPB, "baseball_npb");
+    expect(seriesAttr(markup, "data-actual-series")).toBe(null);
+    expect(markup).toContain("Score data is not available");
 
-    // The two halves of the claim, on one payload: the card says projection,
-    // and projection is all the chart draws.
-    expect(headingFor(NPB, "baseball_npb")).toBe("Projected Run Margin");
-    expect(seriesAttr(markup, "data-actual-series")).toBe("false");
-    expect(seriesAttr(markup, "data-projected-series")).toBe("true");
+    const asMargin = renderChart(NPB, "tennis_wta");
+    expect(seriesAttr(asMargin, "data-actual-series")).toBe("false");
+    expect(seriesAttr(asMargin, "data-projected-series")).toBe("true");
   });
 
   it("THE DIFFERENTIAL: one score point — not the sport — decides the name", () => {
@@ -341,13 +345,16 @@ describe("#6144 — on the production wire", () => {
     expect(seriesAttr(markup, "data-actual-series")).toBe("true");
   });
 
-  it("CONTROL: the NPB card still draws — this is a rename, not a suppression", () => {
+  it("CONTROL: a projection-only card still draws — this is a rename, not a suppression", () => {
     // The legend that says "Projected margin" lives inside
     // `ResponsiveContainer` and so is invisible to a server render — which is
     // why the drawn series are reported on the wrapper at all. What IS
     // observable here is everything around the plot, and it is a real card:
     // both range pills, both axis labels, the sportsbook note, no error stub.
-    const markup = renderChart(NPB, "baseball_npb");
+    //
+    // #8617: read under a sport whose sportsbook spread IS a margin. Baseball's
+    // is the run line and is withheld — see runLineIsNotAMargin8617.
+    const markup = renderChart(NPB, "americanfootball_nfl");
     expect(markup).not.toContain("Score data is not available");
     expect(markup).toContain("Since Start");
     expect(markup).toContain("Tigers");
