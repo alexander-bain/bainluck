@@ -2633,11 +2633,13 @@ async def _process_live_sport(
     # this module is: the two modules import each other (header, line 62).
     from app.utils.espn_helpers import (
         clear_authority_not_started,
+        espn_pregame_filler,
         espn_scheduled_demotes_live,
         espn_scheduled_marks_not_started,
         play_evidence,
         stamp_authority_not_started,
     )
+    from app.utils.live_state_write import write_live_state_if_unmoved
 
     events_result = await session.execute(
         select(Event)
@@ -2869,17 +2871,64 @@ async def _process_live_sport(
         # because that fold is real; ruling 048's id-anchored correspondence is
         # the bar for a claim about identity, and this is one. The tennis
         # authority write next door is likewise anchored-only.
+        #
+        # THE BOARD'S OWN FILLER IS NOT EVIDENCE AGAINST THE BOARD (#5324,
+        # team-sport half). A pre-game ESPN board publishes clock "0:00" (MLB
+        # also period "Scheduled") and score 0; a row that took those before
+        # the updater stopped copying them would refuse this demotion forever
+        # on values the authority wrote while saying "not started". Judged with
+        # them removed, and — when the authority does say not started —
+        # withdrawn from the row too, because the promoter's hold reads the ROW
+        # (`authority_not_started_holds`) and would otherwise be superseded by
+        # the same filler one beat later.
+        _filler = (
+            espn_pregame_filler(
+                ee.status, _sanitize_period(ee.status_detail), ee.clock,
+                ee.home_score, ee.away_score,
+                period=event.period, game_clock=event.game_clock,
+                home_score=event.home_score, away_score=event.away_score,
+            )
+            if match_method == "espn_id" else {}
+        )
+        # Read only for anchored rows, as the predicates below always were —
+        # an unanchored pass never consults the row's live state here.
+        if match_method == "espn_id":
+            _ev_period = None if "period" in _filler else event.period
+            _ev_clock = None if "game_clock" in _filler else event.game_clock
+            _ev_home = None if "home_score" in _filler else event.home_score
+            _ev_away = None if "away_score" in _filler else event.away_score
+        else:
+            _ev_period = _ev_clock = _ev_home = _ev_away = None
         _authority_says_not_started = match_method == "espn_id" and (
             espn_scheduled_marks_not_started(
                 event.status, ee.status,
-                home_score=event.home_score, away_score=event.away_score,
-                period=event.period, game_clock=event.game_clock,
+                home_score=_ev_home, away_score=_ev_away,
+                period=_ev_period, game_clock=_ev_clock,
             )
         )
+        if _authority_says_not_started and _filler:
+            # Compare-and-write on the four columns (#6056): if another writer
+            # moved the row since we read it, something real may have landed,
+            # so this pass neither withdraws nor demotes.
+            _withdrawn = await write_live_state_if_unmoved(
+                session, event, _filler,
+                observed_period=event.period,
+                observed_clock=event.game_clock,
+                observed_home_score=event.home_score,
+                observed_away_score=event.away_score,
+                what="ESPN pre-game filler withdrawal (#5324)",
+            )
+            if _withdrawn:
+                stats["pregame_filler_withdrawn"] = (
+                    stats.get("pregame_filler_withdrawn", 0) + 1
+                )
+                changed = True
+            else:
+                _authority_says_not_started = False
         _demotes = _authority_says_not_started and espn_scheduled_demotes_live(
             event.status, ee.status,
-            home_score=event.home_score, away_score=event.away_score,
-            period=event.period, game_clock=event.game_clock,
+            home_score=_ev_home, away_score=_ev_away,
+            period=_ev_period, game_clock=_ev_clock,
         )
         if _demotes:
             logger.info(
