@@ -10,6 +10,7 @@ Events:
 """
 
 import asyncio
+import contextlib
 import logging
 import os
 from typing import Optional
@@ -448,7 +449,7 @@ async def _run_polymarket_ws_consumer():
     from app.services.polymarket_ws import PolymarketWebSocket
     from app.tasks.base import get_task_session
     from app.tasks.live_blend_refresh import (
-        LiveBlendRefresher, event_ids_for_outcomes,
+        LiveBlendRefresher, TailReceipts, event_ids_for_outcomes,
     )
     from app.tasks.polymarket_token_topup import (
         topup_clob_tokens, topup_outcome_clob_tokens,
@@ -742,10 +743,18 @@ async def _run_polymarket_ws_consumer():
         if market_id in event_id_by_market
     }
     blend_refresher = LiveBlendRefresher("polymarket")
+    # #837 receipt — every accepted input is stamped (seq, receive instant) as
+    # it is buffered, so a held price can be followed from the socket to the
+    # stamp that carried it. `input_marks` is keyed like `price_buffer` (one
+    # entry per subscribed outcome) and holds the mark of the buffered value.
+    tail_receipts = TailReceipts("polymarket")
+    blend_refresher.receipts = tail_receipts
+    input_marks: dict = {}
 
     async def flush_prices():
         async with buffer_lock:
             batch = dict(price_buffer)
+            batch_marks = [input_marks[oid] for oid in batch if oid in input_marks]
         if not batch:
             # #837 tail — a flush with no new prices still owes the stamps a row
             # lock deferred: those prices are already stored, so waiting for the
@@ -833,6 +842,9 @@ async def _run_polymarket_ws_consumer():
 
         # Q460 — THE SHIP. Carry the freshly-flushed prices through to
         # `Event.win_probability_sources`, the JSONB the card actually renders.
+        # #837 receipt: the revisions this write committed ride into the
+        # refresh that follows it, and only that one.
+        tail_receipts.stage(batch_marks)
         await blend_refresher.refresh(
             event_ids_for_outcomes(event_id_by_outcome, batch.keys())
         )
@@ -923,6 +935,20 @@ async def _run_polymarket_ws_consumer():
 
         async with buffer_lock:
             price_buffer[outcome_id] = prob
+            _mark_input(outcome_id, prob, "price", msg)
+
+    def _mark_input(outcome_id, prob, kind, msg):
+        # Under `buffer_lock`, so seq order is buffer order. Never raises into
+        # the socket: a receipt is evidence about the price, not the price.
+        try:
+            mark = tail_receipts.note_input(
+                event_id_by_outcome.get(outcome_id), outcome_id, prob, kind,
+                msg.get("timestamp"),
+            )
+        except Exception:
+            return
+        if mark is not None:
+            input_marks[outcome_id] = mark
 
     async def handle_trade(msg: dict):
         """Handle last_trade_price event."""
@@ -949,6 +975,7 @@ async def _run_polymarket_ws_consumer():
 
         async with buffer_lock:
             price_buffer[outcome_id] = prob
+            _mark_input(outcome_id, prob, "trade", msg)
         stats["trade_updates"] += 1
 
     async def handle_resolved(msg: dict):
@@ -1028,6 +1055,7 @@ async def _run_polymarket_ws_consumer():
 
     _report_liveness("polymarket", "subscribing", legs=len(asset_ids))
 
+    exit_reason = "consumer_exit"
     try:
         # Q460: recycle on a timer so the slate is re-read — same reasoning as
         # `kalshi_ws.SUBSCRIPTION_REFRESH_SECONDS`, and the same constant, so the
@@ -1041,13 +1069,23 @@ async def _run_polymarket_ws_consumer():
     except asyncio.CancelledError:
         # Real shutdown, not the planned recycle (CERT-491) — keep it travelling
         # so the runner stops instead of relaunching. Buffer still drains below.
+        exit_reason = "shutdown"
         raise
     finally:
         flush_task.cancel()
         stats_task.cancel()
         # Q491 repair (CERT-654 BLOCK): the last flush has no successor, so it
         # must RETRY rather than requeue into a buffer nobody will read again.
-        await drain_prices()
+        try:
+            await drain_prices()
+        finally:
+            # #837 receipt — the next run's refresher starts empty, so a held
+            # price still open here was never stamped by this run. Said so.
+            with contextlib.suppress(Exception):
+                tail_receipts.close_all(
+                    "recycle_reset" if stats.get("status") == "resubscribe"
+                    else exit_reason
+                )
 
     # #837: the per-shard breakdown, once per recycle rather than once a minute
     # — this is the shape that tells a starved subscription from a quiet one.
