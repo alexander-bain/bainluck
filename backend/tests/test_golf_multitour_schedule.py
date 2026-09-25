@@ -310,6 +310,12 @@ def fresh_schedule_cache(monkeypatch):
 
     monkeypatch.setitem(golf_mod._golf_schedule_cache, "data", None)
     monkeypatch.setitem(golf_mod._golf_schedule_cache, "ts", 0)
+    # #7450: the loader also asks ESPN which tournaments are in play. Not this
+    # file's subject, and no test may reach the network.
+    async def _no_espn():
+        return {}
+
+    monkeypatch.setattr(golf_mod, "_get_espn_golf_scoreboards", _no_espn)
     return golf_mod
 
 
