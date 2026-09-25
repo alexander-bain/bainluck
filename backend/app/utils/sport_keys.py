@@ -2527,7 +2527,8 @@ def get_all_sport_slugs() -> list[str]:
 #:     soccer_uefa_champs_league_women     -> is not the men's UCL
 #:     soccer_uefa_champs_league_qualification
 #:     americanfootball_ncaaf_fcs          -> FCS is not FBS
-#:     americanfootball_nfl_preseason
+#:     americanfootball_nfl_preseason     -> not a TOUR child; a season variant's
+#:                                           rails are :data:`SEASON_VARIANT_RAIL_LEAGUES`
 #:
 #: So "a child key belongs to its parent league" is true of a TOUR and false of a
 #: competition, and inferring it from the string would have merged the women's
@@ -2603,6 +2604,38 @@ def is_season_variant(sport_key: Optional[str]) -> bool:
         sport_key.endswith(suffix) and len(sport_key) > len(suffix)
         for suffix in _SEASON_VARIANT_SUFFIXES
     )
+
+
+#: #8700 — leagues whose league-page games rails also read their SEASON-VARIANT
+#: keys, so the twin fold can see both halves of a split preseason game.
+#:
+#: Measured on production 2026-09-25 20:3xZ: every NHL preseason game in the
+#: rails' window is two rows — the ESPN-anchored one under ``icehockey_nhl``
+#: (the row `/api/leagues/icehockey_nhl` serves; no sportsbook price, no opening
+#: line) and an Odds API one under ``icehockey_nhl_preseason`` holding the
+#: 6-sportsbook price. 40 pairs, 1 unpaired variant row. Scoped to the parent
+#: key alone, the rail never loads the priced half, so `fold_twin_events` (which
+#: already folds exactly this pair — #2866 league-aware key, #7915 kick-off
+#: drift — and unions the price onto the anchored survivor) has nothing to fold.
+#:
+#: Declared, not inferred (D55), and deliberately separate from
+#: :data:`TOUR_LEAGUES_INCLUDING_TOURNAMENTS`: a tour's children are its own
+#: play, a season variant's rows are the SAME games split by provider. NFL and
+#: MLB have variant keys too; they join when their preseason population is
+#: measured, not before — neither is in play today.
+SEASON_VARIANT_RAIL_LEAGUES: frozenset[str] = frozenset({"icehockey_nhl"})
+
+
+def season_variant_rail_keys(sport_key: str) -> list[str]:
+    """The season-variant keys a league's games rails may also read, or ``[]``.
+
+    Candidates only: the caller confirms which exist with rows in its window, so
+    a variant that was never minted cannot widen a scope (the same contract as
+    :func:`tour_scope_sport_keys`).
+    """
+    if sport_key not in SEASON_VARIANT_RAIL_LEAGUES:
+        return []
+    return [f"{sport_key}{suffix}" for suffix in _SEASON_VARIANT_SUFFIXES]
 
 
 def league_identity(sport_key: Optional[str]) -> Optional[str]:
