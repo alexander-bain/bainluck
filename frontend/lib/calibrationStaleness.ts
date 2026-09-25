@@ -127,6 +127,14 @@ export interface CalibrationStalenessNotice {
    * place. Positive proof, so every unreadable case is `false`.
    */
   producerProvenCurrent: boolean;
+  /**
+   * #5185: `staged.reason` verbatim, on every kind. `reason` above is the
+   * banner's OWN why — `cache.reason` on a last-good, a constant on
+   * frozen-inputs — so the staged block's answer was readable only on the
+   * `undisclosed` branch and nowhere on the page. `null` = the payload carried
+   * none; never defaulted to a word the server did not write.
+   */
+  stagedReason: string | null;
 }
 
 /**
@@ -290,6 +298,7 @@ export function decideCalibrationStaleness(
     producerStalled,
     beatsMissed,
     producerProvenCurrent,
+    stagedReason: stagedIsObject ? asString(staged.reason) : null,
   };
 
   // Precedence, and it is this way round deliberately. A dated last-good is the
@@ -376,6 +385,34 @@ export function stalenessHeadline(notice: CalibrationStalenessNotice): string {
         ? "We can't confirm how current the data behind this is."
         : "We can't confirm how current this is.";
   }
+}
+
+/** `staged.reason` for a served bank with nothing in it (#5043's contract). */
+export const STAGED_REASON_SERVED_BANK_EMPTY = "served_bank_empty";
+
+/**
+ * The `undisclosed` banner's sentence about the market data behind the curve.
+ *
+ * ## The defect this closes (#5185)
+ *
+ * #5043 split the server's answer in two: `served_bank_empty` is a served bank
+ * that was cleared so its census could be gathered again from scratch — the
+ * normal state after a population fingerprint change — and `served_at_absent`
+ * is a bank that exists and lost its date. The page rendered both, and every
+ * other unreadable reason, as "We couldn't read when ... was last staged".
+ * For the empty bank that is false: nothing failed to read. There is no date
+ * because there is no census yet to date.
+ *
+ * Describes, never predicts (the banner's standing rule): on production this
+ * state has sat under a stalled producer — 138 beats missed on 2026-09-21 — so
+ * "a rebuild is underway" or "back shortly" would be a claim this render
+ * cannot support. What IS measured is that the bank is empty, and that is all
+ * the sentence says. And no date is invented for it — that is #2007.
+ */
+export function stalenessInputSentence(notice: CalibrationStalenessNotice): string {
+  return notice.stagedReason === STAGED_REASON_SERVED_BANK_EMPTY
+    ? "The market data behind it is being gathered again from scratch, so it has no date to show."
+    : "We couldn’t read when the market data behind it was last staged.";
 }
 
 /**
