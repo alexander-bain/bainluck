@@ -17,6 +17,7 @@ import {
   suggestionDisplayText,
   suggestionSubtitle,
   suggestionTypeLabel,
+  teamFallbackIcon,
   isMovementWorthShowing,
   toPercent,
 } from "@/lib/searchSuggestionDisplay";
@@ -458,7 +459,7 @@ export default function SearchBar({
                       className="w-5 h-5 rounded-sm"
                     />
                   ) : (
-                    <span>{"\u{1F3C0}"}</span>
+                    <span>{teamFallbackIcon(suggestion)}</span>
                   )
                 )}
                 {suggestion.type === "event" && (

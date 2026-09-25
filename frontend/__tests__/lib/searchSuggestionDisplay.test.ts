@@ -30,6 +30,7 @@ import {
   suggestionDisplayText,
   suggestionSubtitle,
   suggestionTypeLabel,
+  teamFallbackIcon,
   teamSeasonAnswers,
   toPercent,
   TEAM_SEASON_ANSWER_LIMIT,
@@ -509,5 +510,27 @@ describe("a team row's season answers (#5058)", () => {
       ],
     });
     expect(teamSeasonAnswers(futures)).toEqual([]);
+  });
+});
+
+// #8538 — a logo-less team row showed 🏀 whatever its sport. The keys below are
+// the production ones: Worcester Red Sox is `baseball_milb` with no logo.
+describe("teamFallbackIcon", () => {
+  const team = (sport_key?: string) => suggestion({ type: "team", text: "A team", sport_key });
+
+  test.each([
+    ["baseball_milb", "⚾"],
+    ["soccer_usa_mls", "⚽"],
+    ["soccer_epl", "⚽"],
+    ["icehockey_ahl", "🏒"],
+    ["americanfootball_ncaaf", "🏈"],
+    ["basketball_nba", "🏀"],
+  ])("%s draws its own sport's icon", (key, icon) => {
+    expect(teamFallbackIcon(team(key))).toBe(icon);
+  });
+
+  test("a sport we have no icon for draws the neutral trophy, not a ball", () => {
+    expect(teamFallbackIcon(team("handball_germany_bundesliga"))).toBe("🏆");
+    expect(teamFallbackIcon(team(undefined))).toBe("🏆");
   });
 });

@@ -17,6 +17,7 @@ import {
   suggestionDisplayText,
   suggestionSubtitle,
   suggestionTypeLabel,
+  teamFallbackIcon,
   isMovementWorthShowing,
   toPercent,
 } from "@/lib/searchSuggestionDisplay";
@@ -258,7 +259,7 @@ export default function MobileSearchOverlay({ isOpen, onClose }: Props) {
             className="w-full text-left px-5 py-3 flex items-center gap-3 hover:bg-surface-elevated/50 active:bg-surface-elevated"
           >
             <span className="text-base flex-shrink-0 w-6 text-center">
-              {s.type === "team" && (s.logo ? <img src={s.logo} alt="" className="w-6 h-6 rounded-sm" /> : "\u{1F3C0}")}
+              {s.type === "team" && (s.logo ? <img src={s.logo} alt="" className="w-6 h-6 rounded-sm" /> : teamFallbackIcon(s))}
               {s.type === "event" && (s.status === "live" ? <span className="text-red-500">{"\u{1F534}"}</span> : "\u{1F4C5}")}
               {s.type === "futures" && "\u{1F4C8}"}
               {s.type === "event_concept" && "\u{1F3C6}"}
