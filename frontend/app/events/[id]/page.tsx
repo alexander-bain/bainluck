@@ -146,6 +146,7 @@ import {
 } from "@/lib/eventKeyStats";
 import { renderedPercent } from "@/lib/renderedPercent";
 import { settledPregameMark } from "@/lib/settledPregameMark";
+import { SPECIAL_MARKETS_MIN_WIRE_ROWS, specialMarketsDrawnIds } from "@/lib/gamePropsDrawnAbove";
 
 interface EventPageProps {
   params: { id: string };
@@ -2809,7 +2810,7 @@ export default function EventPage({ params }: EventPageProps) {
           )}
 
           {/* Special Event Markets (auto-categorized other markets) */}
-          {(gameMarkets.other?.length ?? 0) >= 3 && (
+          {(gameMarkets.other?.length ?? 0) >= SPECIAL_MARKETS_MIN_WIRE_ROWS && (
             <SectionErrorBoundary label="Special markets" resetKey={gameMarkets}>
               <SpecialEventMarkets
                 data={gameMarkets}
@@ -2962,6 +2963,13 @@ export default function EventPage({ params }: EventPageProps) {
         homeStandings={event.home_team_data?.standings || undefined}
         awayStandings={event.away_team_data?.standings || undefined}
         hasGameMarkets={!!gameMarkets && (gameMarkets.totals.length > 0 || gameMarkets.player_props.length > 0 || (gameMarkets.team_totals?.length ?? 0) > 0)}
+        // #8596: markets Additional Markets already draws, so Bigger Picture's
+        // game props don't print the same question a second time.
+        drawnGameMarketIds={specialMarketsDrawnIds(gameMarkets, {
+          completedSets: completedSetsForTennis(event.sport, gameMarkets),
+          decidedSetsWinner: decidedSetsWinnerFor(event.sport, gameMarkets),
+          setsWon: tennisSetsWonFor(event.sport, gameMarkets),
+        })}
         teamProgression={teamProgression || undefined}
       />
       </SectionErrorBoundary>

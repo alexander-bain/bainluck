@@ -12,6 +12,7 @@ import { teamTextColor } from "@/lib/teamColors";
 import { awardPriceIsStale } from "@/lib/awardPriceAge";
 import { isEventOwnMoneylineMarket } from "@/lib/eventOwnMoneyline";
 import { groupAwardsByPlayer, playerAwardKey } from "@/lib/playerAwardRows";
+import { withoutGamePropsDrawnAbove } from "@/lib/gamePropsDrawnAbove";
 import EntityImage from "./EntityImage";
 import AdvancementPath from "@/components/event/AdvancementPath";
 
@@ -59,6 +60,11 @@ interface RelatedFuturesProps {
   awayStandings?: TeamStandings;
   /** When true, game-level stat props are already shown by TotalPointsSpectrum/PlayerPropsGrid above — suppress duplicate display here */
   hasGameMarkets?: boolean;
+  /**
+   * #8596: market ids Additional Markets already draws above this section. A game
+   * prop with one of these ids is not repeated here.
+   */
+  drawnGameMarketIds?: number[];
   /** Grid-based team progression data — always available for both teams in team sports */
   teamProgression?: TeamProgressionResponse;
 }
@@ -2497,6 +2503,7 @@ export default function RelatedFutures({
   homeStandings,
   awayStandings,
   hasGameMarkets = false,
+  drawnGameMarketIds,
   teamProgression,
   eventStatus,
 }: RelatedFuturesProps) {
@@ -2552,6 +2559,10 @@ export default function RelatedFutures({
   // Categorize futures for each team (pass team names for mismatch filtering)
   const homeCats = categorizeFutures(home_team_futures, homeTeam, awayTeam);
   const awayCats = categorizeFutures(away_team_futures, homeTeam, awayTeam);
+  // #8596: a game prop Additional Markets already prints is not printed again
+  // under "Season context". Filtered here, before every count and render reads it.
+  homeCats.statProps = withoutGamePropsDrawnAbove(homeCats.statProps, drawnGameMarketIds);
+  awayCats.statProps = withoutGamePropsDrawnAbove(awayCats.statProps, drawnGameMarketIds);
 
   // Find championship futures for title comparison
   const CHAMP_RE = /\bchampionship\b|\bwin\s+(the\s+)?title\b|\btitle\s+winner\b|\bwin\s+it\s+all\b/i;

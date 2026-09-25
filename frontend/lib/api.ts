@@ -1240,6 +1240,8 @@ export interface GameMarketsResponse {
      */
     is_winner?: boolean | null;
     resolution_source?: string | null;
+    /** #8596: the market id, so the page can tell which section already shows it. */
+    _market_id?: number | null;
   }[];
   pace: {
     total_scored: number;
