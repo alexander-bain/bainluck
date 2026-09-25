@@ -35,6 +35,7 @@ import {
   TOTAL_MAP_HALVES,
 } from "@/lib/marketMapUtils";
 import { formatProbability } from "@/lib/api";
+import { teamShortName } from "@/lib/teamShortName";
 
 /**
  * The rail colours, named once (#3210).
@@ -323,8 +324,21 @@ export function gradeMarginRung(
   return (isHome ? finalMargin : -finalMargin) >= threshold ? "cleared" : "missed";
 }
 
-function deriveAbbr(team: string, provided?: string): string {
-  if (provided) return provided;
+/**
+ * #8585 — served abbreviations that are English words, which every label on
+ * this card turns into a sentence: Ole Miss's real ESPN code printed "FINAL
+ * MISS by 8" under a hero saying the Rebels won — read as "the forecast missed
+ * by 8". "NO" (New Orleans) reads "FINAL NO by 8" the same way. These sides
+ * take the short name the hero already uses instead. Upper-case keys; the
+ * served code is compared upper-cased.
+ */
+const ABBREVIATIONS_THAT_READ_AS_WORDS: ReadonlySet<string> = new Set(["MISS", "NO"]);
+
+function deriveAbbr(team: string, provided?: string, sportKey?: string): string {
+  if (provided) {
+    if (!ABBREVIATIONS_THAT_READ_AS_WORDS.has(provided.trim().toUpperCase())) return provided;
+    return teamShortName(team, null, sportKey) || provided;
+  }
   const words = team.split(" ");
   return words[words.length - 1].slice(0, 3).toUpperCase();
 }
@@ -351,8 +365,8 @@ export default function MarketMapSection({
   linescore,
   noResultReported = false,
 }: MarketMapSectionProps) {
-  const hAbbr = deriveAbbr(homeTeam, homeAbbr);
-  const aAbbr = deriveAbbr(awayTeam, awayAbbr);
+  const hAbbr = deriveAbbr(homeTeam, homeAbbr, sportKey);
+  const aAbbr = deriveAbbr(awayTeam, awayAbbr, sportKey);
   const vocab = sportVocab(sportKey);
 
   const isLive = eventStatus === "live";
