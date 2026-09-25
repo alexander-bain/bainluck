@@ -232,7 +232,38 @@ enum OddsTimeRange: String, CaseIterable, Identifiable {
 // MARK: - ViewModel
 
 final class OddsChartViewModel: ObservableObject {
-    @Published var history: EventHistoryResponse?
+    @Published var history: EventHistoryResponse? {
+        didSet { historyGeneration &+= 1 }
+    }
+    /// #8651 — bumped on every write to `history`, so the memo below can tell a
+    /// new payload from the one it already turned into points without
+    /// `EventHistoryResponse` having to be `Equatable`.
+    private var historyGeneration = 0
+    /// #8651 — the last `chartPoints` result and what it was built from. Plain
+    /// stored state, not `@Published`: it is written while a body is being
+    /// evaluated, and publishing from there would schedule another one.
+    private var pointsMemo: (generation: Int, liveFrames: [LiveBlendPoint], points: [ChartDataPoint])?
+
+    /// #8651 — the chart's points, built once per payload and live edge rather
+    /// than once per body.
+    ///
+    /// Measured on the recorded specimen (14781697, 7,602 history rows) with
+    /// real UIKit callbacks on a simulator: every scrub step set the selection,
+    /// the chart's body ran twice, and each run built these points TWICE (once
+    /// for `noReadings`, once for the plot) at ~600 ms apiece — a horizontal
+    /// scrub froze the page for 4–5 s. The points depend on the payload and the
+    /// pushed live frames and on nothing a finger changes, so a selection must
+    /// never rebuild them. Returning the same array also keeps each point's
+    /// `id`, which the plot is keyed on.
+    func chartPoints(liveFrames: [LiveBlendPoint]) -> [ChartDataPoint] {
+        guard let history else { return [] }
+        if let memo = pointsMemo, memo.generation == historyGeneration, memo.liveFrames == liveFrames {
+            return memo.points
+        }
+        let points = OddsChartView.chartPoints(from: history, liveFrames: liveFrames)
+        pointsMemo = (historyGeneration, liveFrames, points)
+        return points
+    }
     @Published var loading = true
     @Published var error: String?
 
@@ -333,15 +364,22 @@ struct OddsChartView: View {
     /// in view, the row a scrub rewrites was under the tab bar, so the finger
     /// changed text nobody could see. Above the plot it is on screen whenever
     /// the top of the chart is — which is whenever there is a chart to press.
-    /// The page builds it (it owns the resting last-point), the chart places it.
+    /// The page builds it (it owns the resting last-point), the chart places it
+    /// and hands it the scrubbed moment (#8651: `showing(_:)`).
     var readout: GamePlayCardView?
     /// #8481 — the page's one All / Since Start choice, which this chart's
     /// picker writes and the Score Differential chart below also reads. It was a
     /// `@Published` on this chart's own view model, which is why All could widen
     /// the line here and nowhere else.
     @Binding var selectedRange: OddsTimeRange
-    /// Binding to expose the selected game play point (for GamePlayCardView)
-    @Binding var selectedPlayPoint: GamePlayPoint?
+    /// The scrubbed moment the readout prints (#925).
+    ///
+    /// #8651 — the chart's own state, not a binding to the page's. As page
+    /// state every scrub step rebuilt the whole event page and then this chart
+    /// a second time; measured on 14781697, two page rebuilds and two extra
+    /// chart passes per scrub. The readout is drawn inside this chart, so
+    /// nothing above it needs the value.
+    @State private var selectedPlayPoint: GamePlayPoint?
     @StateObject private var vm: OddsChartViewModel
     @State private var selectedDate: Date?
     /// #925 — which touches on the plot are a scrub. See `ChartScrubState.scrubs`.
@@ -429,7 +467,6 @@ struct OddsChartView: View {
          forcedDomain: ClosedRange<Date>? = nil,
          pageAxisPlotWidth: CGFloat = 0,
          selectedRange: Binding<OddsTimeRange> = .constant(.sinceStart),
-         selectedPlayPoint: Binding<GamePlayPoint?> = .constant(nil),
          preloadedHistory: EventHistoryResponse? = nil,
          liveFrames: [LiveBlendPoint] = [],
          readout: GamePlayCardView? = nil) {
@@ -452,7 +489,6 @@ struct OddsChartView: View {
         self.preloadedHistory = preloadedHistory
         self.readout = readout
         _selectedRange = selectedRange
-        _selectedPlayPoint = selectedPlayPoint
         _vm = StateObject(wrappedValue: OddsChartViewModel(eventId: eventId, preloaded: preloadedHistory))
     }
 
@@ -672,7 +708,7 @@ struct OddsChartView: View {
                         .frame(maxWidth: .infinity)
                         .frame(height: chartHeight)
                 } else {
-                    if let readout { readout }
+                    if let readout { readout.showing(selectedPlayPoint) }
                     // Chart with vertical team labels alongside Y-axis
                     HStack(spacing: 0) {
                         // Vertical team labels on left (#2903 — the run is stated so
@@ -801,7 +837,7 @@ struct OddsChartView: View {
                             }
                             // #925 — fullscreen covers the page, and the page
                             // was the only place a scrub could be read.
-                            if let readout { readout }
+                            if let readout { readout.showing(selectedPlayPoint) }
                             HStack(spacing: 0) {
                                 // #2903 — fullscreen has no fixed chart height, so the
                                 // run is measured rather than assumed.
@@ -1645,7 +1681,9 @@ struct OddsChartView: View {
     // MARK: - Data Transformation
 
     private func buildDataPoints(_ history: EventHistoryResponse) -> [ChartDataPoint] {
-        Self.chartPoints(from: history, liveFrames: liveFrames)
+        // #8651 — through the view model's memo: this runs on every body, and
+        // a scrub re-runs the body on every step.
+        vm.chartPoints(liveFrames: liveFrames)
     }
 
     /// Pure transform: decoded event history → observed chart points.

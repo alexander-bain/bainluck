@@ -77,4 +77,52 @@ final class AnOrdinaryScrollDoesNotRebuildTheGamePage8651Tests: XCTestCase {
                                  "eight ordinary swipes rebuilt the event page \(after - before) times — "
                                  + "something the page holds is changing on every scrolled frame")
     }
+
+    /// #8651's scrub half: **a horizontal scrub on the chart does not rebuild the
+    /// page.** The scrubbed moment used to be page state, so every scrub step
+    /// rebuilt the whole event page and then the chart again — measured on this
+    /// specimen with real callbacks, +2 page rebuilds per scrub and a 4–5 s
+    /// freeze. The chart owns that moment now; the page has nothing to redo.
+    func testAHorizontalScrubDoesNotRebuildThePage() throws {
+        let route = ProcessInfo.processInfo.environment["BL_SCROLL_ROUTE"] ?? "bainluck://events/14781697"
+        let app = XCUIApplication()
+        app.launchArguments += UITestLaunch.arguments
+            + ["-launch_route", route, "-launch_count_page_builds", "YES"]
+        app.launch()
+        let chart = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == %@", "Win probability over time"))
+            .firstMatch
+        let wait = UITestLaunch.launchTimeout + UITestLaunch.contentTimeout
+        if !chart.waitForExistence(timeout: wait) {
+            print("SCRUB-RELAUNCH the chart did not appear on the first launch")
+            app.terminate()
+            app.launch()
+        }
+        XCTAssertTrue(chart.waitForExistence(timeout: wait), "the game chart never appeared on \(route)")
+        Thread.sleep(forTimeInterval: 6)
+
+        let counter = app.staticTexts["page-build-count"]
+        XCTAssertTrue(counter.waitForExistence(timeout: 5),
+                      "-launch_count_page_builds drew no counter — the rig flag is inert")
+        let before = try XCTUnwrap(Int(counter.label), "counter label \(counter.label) is not a count")
+        let y0 = chart.frame.minY
+
+        // Two scrubs across the plot, level — a press that drags sideways.
+        for _ in 0..<2 {
+            chart.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.6))
+                .press(forDuration: 0.05,
+                       thenDragTo: chart.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.55)),
+                       withVelocity: 300, thenHoldForDuration: 0.5)
+            Thread.sleep(forTimeInterval: 1.5)
+        }
+        let after = try XCTUnwrap(Int(counter.label), "counter label \(counter.label) is not a count")
+        let travel = abs(chart.frame.minY - y0)
+        print("SCRUB-REBUILDS before=\(before) after=\(after) spent=\(after - before) travel=\(travel)")
+
+        // The drags must have been scrubs, not scrolls: a scroll that carried the
+        // hero under the bar legitimately rebuilds the page and would muddy this.
+        XCTAssertLessThan(travel, 12, "the scrub scrolled the page \(travel)pt — #925's question, not this one")
+        XCTAssertEqual(after - before, 0,
+                       "two scrubs rebuilt the event page \(after - before) times — the scrubbed moment is page state again")
+    }
 }
