@@ -20,7 +20,8 @@ import {
 import { canonicalEventHref } from "@/lib/canonicalEventUrl";
 import { withoutEventOwnMoneyline } from "@/lib/eventOwnMoneyline";
 import { teamTextColor } from "@/lib/teamColors";
-import { useLiveEventStream } from "@/hooks/useLiveEventStream";
+import { useLiveEventStream, type LiveFrame } from "@/hooks/useLiveEventStream";
+import { fetchEventWithLiveFrame } from "@/lib/reconcileEventPoll";
 import { mergeLiveChartHistory } from "@/lib/liveChartHistory";
 import FreshnessChip from "@/components/event/FreshnessChip";
 import {
@@ -193,6 +194,7 @@ export default function EventPage({ params }: EventPageProps) {
   // live/034 S2 — see the `refreshInterval` note below. Declared here because
   // the SWR config closes over it and the hook that sets it needs `event`.
   const streamConnectedRef = useRef(false);
+  const latestLiveFrameRef = useRef<LiveFrame | null>(null);
 
   // #7621 — ONE callback for the life of the mount, and that is the whole fix.
   //
@@ -224,7 +226,10 @@ export default function EventPage({ params }: EventPageProps) {
     mutate: refreshEvent,
   } = useSWR(
     ["event", eventId],
-    () => fetchEvent(eventId),
+    () => fetchEventWithLiveFrame(
+      () => fetchEvent(eventId),
+      () => latestLiveFrameRef.current,
+    ),
     {
       // live/034 S2 — when the SSE stream is delivering, the 32s poll stands
       // down. That is the ship: the same number, arriving instead of being
@@ -318,7 +323,9 @@ export default function EventPage({ params }: EventPageProps) {
   // writes, so the hero, the sources rail and every other consumer stay
   // consistent and nothing downstream needs to know push exists.
   useEffect(() => {
-    if (!liveFrame || liveFrame.p === null || liveFrame.p === undefined) return;
+    if (!liveFrame || liveFrame.event_id !== eventId
+        || liveFrame.p === null || liveFrame.p === undefined) return;
+    latestLiveFrameRef.current = liveFrame;
     const frame = { ...liveFrame, p: liveFrame.p };
     refreshEvent(
       // `applyLiveFrame` spreads `prev` FIRST and then only the fields a frame
@@ -330,7 +337,7 @@ export default function EventPage({ params }: EventPageProps) {
       { revalidate: false },
     );
     setLastRefresh(Date.now());
-  }, [liveFrame, refreshEvent]);
+  }, [liveFrame, refreshEvent, eventId]);
 
   // The freshest write across all sources — what the age stamp counts from.
   // MAX, not the pushed frame's own stamp: the hero is a blend, and its age is
