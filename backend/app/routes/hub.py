@@ -61,6 +61,7 @@ from app.utils.grouped_field_legs import (
     drop_legs_of_a_rendered_field,
     move_parents_to_their_legs_section,
 )
+from app.utils.hub_cross_venue_fold import fold_cross_venue_copies
 from app.utils.hub_prop_matchup import (
     attach_group_matchups,
     groups_needing_a_matchup,
@@ -760,6 +761,11 @@ async def build_hub(cfg: HubConfig, db: AsyncSession) -> dict:
     # run FIRST: it is what gives the rule below a family to see.
     sections = move_parents_to_their_legs_section(sections)
     sections = drop_legs_of_a_rendered_field(sections)
+    # #8598: the same rule across venues. Kalshi's "VALORANT Champions Shanghai
+    # Champion" and Polymarket's "VALORANT Champions 2026: Winner" are one
+    # question; the hub drew both, side by side. Before the tier and counts for
+    # #7400's reason: a copy is not another answer.
+    sections = fold_cross_venue_copies(sections)
 
     # ── UX-P061 (#1742, epic #1741): the entity envelope ──
     #
