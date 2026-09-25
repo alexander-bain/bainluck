@@ -72,8 +72,26 @@ describe("UX-P010 #1574(c) — bar tracks align and fills match printed values",
       "the wide slot is capped at 45%: a wider slot pays for the label out of every bar",
     );
     assert.ok(
-      /wideLabels\s*\?\s*\{\s*width:\s*wideLabelWidth\s*\}/.test(src),
+      /wideLabels(?:\s*&&\s*!stackMove)?\s*\?\s*\{\s*width:\s*wideLabelWidth\s*\}/.test(src),
       "the wide label must be given `wideLabelWidth` as its width",
+    );
+    // #8562, second half — a date ladder whose badge cannot share the row prints it UNDER the
+    // label, and the stacked CELL carries the width. The same property, one element up: one
+    // ladder-wide width (longest label, longest badge, never a rung's own), capped at 45%, on the
+    // cell whose parent is the row — on the inner label the 45% resolved against an auto-width
+    // cell and each rung sized to its own text (measured 171/156/158px tracks, one ladder).
+    const stacked = src.match(/const stackedCellWidth = `clamp\(([^`]*)\)`;/);
+    assert.ok(stacked, "a stacked ladder must compute one `stackedCellWidth` clamp for the ladder");
+    assert.ok(
+      /\$\{longestLabelChars\}ch/.test(stacked[1]) &&
+        /\$\{movementSlotChars\}ch/.test(stacked[1]) &&
+        !/rung\./.test(stacked[1]),
+      "the stacked cell must be sized from the LADDER's longest label and badge, never a row's own",
+    );
+    assert.ok(/,\s*45%$/.test(stacked[1]), "the stacked cell is capped at 45% like the wide slot");
+    assert.ok(
+      /style=\{\{\s*width:\s*stackedCellWidth\s*\}\}/.test(src),
+      "the stacked cell (not the label inside it) must carry `stackedCellWidth`",
     );
     assert.ok(
       !/max-w-\[45%\]/.test(src),

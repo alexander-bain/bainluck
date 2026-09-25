@@ -47,21 +47,45 @@ function barWidths(html: string): number[] {
 }
 
 describe("#4644 the track is the same length on every row", () => {
-  test("the production ladder reserves the badge slot on all three rungs", () => {
+  test("the production ladder gives every rung the same non-track columns", () => {
+    // #8562 (second half): "Above 52 · ▼3.5 pts" cannot share a 254px card row
+    // with a bar, so this wide-label ladder now prints its badges UNDER the
+    // labels and reserves no badge column at all. The #4644 property is
+    // unchanged — every row spends the same width beside the track — it is
+    // just carried by the label cell now instead of a slot.
     const html = renderToStaticMarkup(
       <QuantityGroup bare compact wideLabels sort={false} maxRungs={3} rungs={netflixLadder} />,
     );
 
-    // Two rungs moved; three rungs get a slot. Before the fix this was 2.
-    const widths = slotWidths(html);
-    expect(widths.length).toBe(3);
-    expect(new Set(widths).size).toBe(1);
+    expect(slotWidths(html)).toEqual([]);
+    const labelWidths = [...html.matchAll(/width:(clamp[^"]*)"/g)].map((m) => m[1]);
+    expect(labelWidths.length).toBe(3);
+    expect(new Set(labelWidths).size).toBe(1);
 
     // The badges themselves are unchanged — the un-moved rung stays unmarked.
     expect(html.match(/▲/g)?.length).toBe(1);
     expect(html.match(/▼/g)?.length).toBe(1);
 
     // And the bars still say what the numbers say.
+    expect(barWidths(html)).toEqual([92, 88, 94]);
+  });
+
+  test("a wide ladder that fits inline reserves the badge slot on all three rungs", () => {
+    // The same movements on short labels fit beside the bar, so the column
+    // stays. Two rungs moved; three rungs get a slot. Before #4644 this was 2.
+    const html = renderToStaticMarkup(
+      <QuantityGroup
+        bare
+        compact
+        wideLabels
+        sort={false}
+        maxRungs={3}
+        rungs={netflixLadder.map((r) => ({ ...r, label: `$${r.value}` }))}
+      />,
+    );
+    const widths = slotWidths(html);
+    expect(widths.length).toBe(3);
+    expect(new Set(widths).size).toBe(1);
     expect(barWidths(html)).toEqual([92, 88, 94]);
   });
 
