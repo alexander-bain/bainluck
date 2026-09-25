@@ -27572,6 +27572,9 @@ class TeamSnapshot:
     #: `_same_league_row_preference` and #7132.
     standings_updated_at: object | None = None
     season_stats: dict | None = None
+    #: The row's own ESPN id, carried so a crest can be checked against the
+    #: club it claims to be — see `_crest_is_its_own` and #8682.
+    espn_id: str | None = None
 
 
 def _snapshot_team(team, sport_key: str | None = None) -> TeamSnapshot:
@@ -27603,6 +27606,7 @@ def _snapshot_team(team, sport_key: str | None = None) -> TeamSnapshot:
         standings_data=deepcopy(getattr(team, "standings_data", None)),
         standings_updated_at=getattr(team, "standings_updated_at", None),
         season_stats=deepcopy(getattr(team, "season_stats", None)),
+        espn_id=getattr(team, "espn_id", None),
     )
 
 
@@ -27683,6 +27687,50 @@ def _crest_for_corroboration(team) -> str | None:
     return logo
 
 
+#: ESPN's numbered crest: `.../teamlogos/ncaa/500/324.png` is team 324's badge.
+_NUMBERED_CREST = re.compile(r"/teamlogos/[a-z]+/500/(\d+)\.png$")
+
+
+def _crest_is_its_own(team) -> bool:
+    """True when the row's crest is ESPN's badge for the row's OWN ESPN id.
+
+    A second, independent signal for a crest nobody else under the key can vouch
+    for (#8682). The crest and the id are both written by the ESPN enrichment
+    for one club, so a row whose `.../500/324.png` sits beside `espn_id` 324 is
+    internally consistent, and a row carrying another club's badge is not.
+    Crests without a number (`nfl/500/car.png`) never qualify — this can only
+    admit, and it admits nothing it cannot check.
+    """
+    crest = _crest_for_corroboration(team)
+    espn_id = getattr(team, "espn_id", None)
+    if not crest or not espn_id:
+        return False
+    match = _NUMBERED_CREST.search(crest)
+    return bool(match) and match.group(1) == str(espn_id).strip()
+
+
+def _abbreviation_is_vouched(team, rows) -> bool:
+    """True when another row under the key prints the SAME abbreviation.
+
+    The third signal for the sole-crest exception (#8682), and the one that
+    catches what the crest cannot: a contaminated row keeps its own crest and
+    ESPN id but carries another club's abbreviation and colours. Measured over
+    production's 1,618 enriched rows on 2026-09-25, the crest check alone would
+    have admitted Northern Kentucky as `TEX`, Southern Indiana as `OKST`, and
+    the bare key "Lumberjacks" as Northern Arizona where its only siblings are
+    Stephen F. Austin (`SFA`). The blank-shield sibling's abbreviation was
+    written by a different sport's enrichment, so agreement is independent.
+    """
+    mine = (getattr(team, "abbreviation", None) or "").strip().upper()
+    if not mine:
+        return False
+    return any(
+        other is not team
+        and (getattr(other, "abbreviation", None) or "").strip().upper() == mine
+        for other in rows
+    )
+
+
 def _rows_by_league(rows) -> dict:
     """For ONE name key, the best row per LEAGUE — corroborated crests only (#7262).
 
@@ -27707,6 +27755,14 @@ def _rows_by_league(rows) -> dict:
     null it replaced. That row is a `teams` defect (#7262's third arm), not a
     lookup rule, and this function deliberately cannot paper over it.
 
+    **One exception (#8682): the sole real crest, checked against its own id.**
+    When every other row under the key carries the blank shield or no crest,
+    there is nobody to corroborate with and nobody to contradict. Such a row is
+    eligible only if its crest is ESPN's badge for the row's own `espn_id`
+    (`_crest_is_its_own`) AND a sibling prints the same abbreviation
+    (`_abbreviation_is_vouched`) — never consulted while a different real crest
+    exists under the key.
+
     Nothing here overrides the cross-league guard for callers that do not know
     the sport: `_dedupe_team_name_lookup`'s own answer is untouched, and a name
     key it dropped is still dropped on a bare `.get()`.
@@ -27720,12 +27776,28 @@ def _rows_by_league(rows) -> dict:
         if crest:
             crest_count[crest] = crest_count.get(crest, 0) + 1
     corroborated = {crest for crest, n in crest_count.items() if n > 1}
-    if not corroborated:
+    # #8682: the ONLY real crest under the key, on a row whose crest is its own
+    # ESPN badge. Every other row carries the blank shield or nothing — so there
+    # is no second club's badge to confuse it with, and the guard that dropped
+    # the key was answering a disagreement with a placeholder, not with a crest.
+    # Coastal Carolina, Fresno State, Northern Illinois and Arkansas State
+    # football (production 2026-09-25) each sat beside only a `baseball_ncaa`
+    # blank shield and printed initials on every card. A second REAL crest
+    # anywhere under the key (837's Texas State badge among Ohio State's) still
+    # refuses it: `len(crest_count) == 1` is that condition.
+    sole_own = len(crest_count) == 1 and not corroborated
+    if not corroborated and not sole_own:
         return {}
 
     best: dict = {}
     for team in rows:
-        if _crest_for_corroboration(team) not in corroborated:
+        crest = _crest_for_corroboration(team)
+        if crest not in corroborated and not (
+            sole_own
+            and crest is not None
+            and _crest_is_its_own(team)
+            and _abbreviation_is_vouched(team, rows)
+        ):
             continue
         identity = _team_league_identity(team)
         incumbent = best.get(identity)

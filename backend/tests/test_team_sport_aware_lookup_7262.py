@@ -496,3 +496,138 @@ def test_the_league_rail_still_refuses_the_wrong_identity_row():
     )
     assert "home_team_data" not in brief
     assert "away_team_data" not in brief
+
+
+# ── #8682: the sole real crest under a key, checked against its own ESPN id ──
+#
+# Production 2026-09-25, `/api/leagues/americanfootball_ncaaf` at 390px: Coastal
+# Carolina, Fresno State, Northern Illinois and Arkansas State drew grey
+# initials on every card. Each football row carries its own ESPN badge
+# (`.../500/324.png` beside `espn_id` 324); its only sibling under the name is a
+# `baseball_ncaa` row with the blank shield. Nothing could corroborate, so the
+# rail refused — a disagreement with a placeholder, read as one with a crest.
+
+COASTAL_CREST = "https://a.espncdn.com/i/teamlogos/ncaa/500/324.png"
+BASEBALL_BLANK_SHIELD = (
+    "https://a.espncdn.com/guid/2c3c8cc1-efab-3ad5-9815-4550421a8e2a/logos/default.png"
+)
+
+
+def _espn_row(row_id, name, sport_key, crest, espn_id, **kw):
+    row = _row(row_id, name, sport_key, crest, **kw)
+    row.espn_id = espn_id
+    return row
+
+
+COASTAL_ROWS = [
+    _espn_row(
+        15322, "Coastal Carolina Chanticleers", NCAAF, COASTAL_CREST, "324",
+        record="1-3", abbr="CCU", color="#006f71",
+    ),
+    _espn_row(
+        908, "Coastal Carolina Chanticleers", BASEBALL_NCAA, BASEBALL_BLANK_SHIELD, "146",
+        record="40-20", abbr="CCU", color="#59A0A0",
+    ),
+]
+
+
+def test_a_sole_crest_that_is_its_own_espn_badge_is_served_on_its_sport_8682():
+    for lookup in _every_order(COASTAL_ROWS):
+        assert lookup.get("Coastal Carolina Chanticleers") is None, (
+            "a caller with no sport in hand keeps the cross-league guard's answer"
+        )
+        team = _team_for_event(lookup, "Coastal Carolina Chanticleers", NCAAF)
+        assert team is not None, "this null is the grey-initials card"
+        assert team.id == 15322 and team.logo_url_small == COASTAL_CREST
+        # The blank-shield row is still nobody's answer, even on its own sport.
+        assert _team_for_event(lookup, "Coastal Carolina Chanticleers", BASEBALL_NCAA) is None
+
+
+def test_a_sole_crest_that_is_ANOTHER_clubs_badge_is_refused_8682():
+    """The second signal is load-bearing: a crest whose number is not the row's id."""
+    rows = [
+        _espn_row(1, "Coastal Carolina Chanticleers", NCAAF, TEXAS_STATE_CREST, "324"),
+        COASTAL_ROWS[1],
+    ]
+    for lookup in _every_order(rows):
+        assert _team_for_event(lookup, "Coastal Carolina Chanticleers", NCAAF) is None
+
+
+def test_a_sole_crest_with_no_espn_id_is_refused_8682():
+    rows = [
+        _espn_row(1, "Coastal Carolina Chanticleers", NCAAF, COASTAL_CREST, None),
+        COASTAL_ROWS[1],
+    ]
+    for lookup in _every_order(rows):
+        assert _team_for_event(lookup, "Coastal Carolina Chanticleers", NCAAF) is None
+
+
+def test_a_self_consistent_crest_beside_a_DIFFERENT_real_crest_is_refused_8682():
+    """837's shape with ids attached: the exception never overrides a real disagreement."""
+    rows = [
+        _espn_row(837, "Ohio State Buckeyes", NCAAF, TEXAS_STATE_CREST, "326", abbr="TXST"),
+        _espn_row(198, "Ohio State Buckeyes", NCAAB, OHIO_STATE_CREST, "194", abbr="OSU"),
+        _espn_row(879, "Ohio State Buckeyes", BASEBALL_NCAA, BASEBALL_BLANK_SHIELD, "108"),
+    ]
+    for lookup in _every_order(rows):
+        assert _team_for_event(lookup, "Ohio State Buckeyes", NCAAF) is None
+        # ...and a lone different real crest with NO corroboration refuses both.
+        assert _team_for_event(lookup, "Ohio State Buckeyes", NCAAB) is None
+
+
+def test_an_unnumbered_crest_never_takes_the_exception_8682():
+    rows = [
+        _espn_row(10, "Panthers FC", "americanfootball_nfl",
+                  "https://a.espncdn.com/i/teamlogos/nfl/500/car.png", "29"),
+        _espn_row(11, "Panthers FC", BASEBALL_NCAA, BASEBALL_BLANK_SHIELD, "7"),
+    ]
+    for lookup in _every_order(rows):
+        assert _team_for_event(lookup, "Panthers FC", "americanfootball_nfl") is None
+
+
+def test_the_snapshot_carries_espn_id_so_the_exception_is_reachable_8682():
+    """A test-only `_Row` with `espn_id` proves nothing if the cache strips it."""
+    from types import SimpleNamespace
+
+    from app.routes.events import _snapshot_team
+
+    live = SimpleNamespace(
+        id=15322, sport_id=760, name="Coastal Carolina Chanticleers", slug=None,
+        abbreviation="CCU", primary_color="#006f71", secondary_color=None,
+        logo_url_small=COASTAL_CREST, logo_url_large=COASTAL_CREST,
+        current_record="1-3", alternate_names=[], standings_data=None,
+        standings_updated_at=None, season_stats=None, espn_id="324",
+    )
+    snap = _snapshot_team(live, sport_key=NCAAF)
+    assert snap.espn_id == "324"
+    lookup = _dedupe_team_name_lookup(
+        [snap, _snapshot_team(SimpleNamespace(**{**vars(live), "id": 908,
+            "logo_url_small": BASEBALL_BLANK_SHIELD, "espn_id": "146",
+            "primary_color": "#59A0A0"}), sport_key=BASEBALL_NCAA)]
+    )
+    assert _team_for_event(lookup, "Coastal Carolina Chanticleers", NCAAF).id == 15322
+
+
+def test_a_self_consistent_crest_with_ANOTHER_clubs_abbreviation_is_refused_8682():
+    """Production's contaminated rows keep their own crest: Northern Kentucky as `TEX`."""
+    rows = [
+        _espn_row(2593, "Northern Kentucky Norse", NCAAB,
+                  "https://a.espncdn.com/i/teamlogos/ncaa/500/94.png", "94", abbr="TEX"),
+        _espn_row(3001, "Northern Kentucky Norse", BASEBALL_NCAA, BASEBALL_BLANK_SHIELD,
+                  "2001", abbr="NKU"),
+    ]
+    for lookup in _every_order(rows):
+        assert _team_for_event(lookup, "Northern Kentucky Norse", NCAAB) is None
+
+
+def test_a_bare_mascot_shared_by_two_schools_takes_no_exception_8682():
+    """'Lumberjacks': Northern Arizona football beside Stephen F. Austin baseball."""
+    rows = [
+        _espn_row(17069, "Northern Arizona Lumberjacks", NCAAF,
+                  "https://a.espncdn.com/i/teamlogos/ncaa/500/2464.png", "2464",
+                  abbr="NAU", alt=["Lumberjacks"]),
+        _espn_row(4001, "Stephen F. Austin Lumberjacks", BASEBALL_NCAA, BASEBALL_BLANK_SHIELD,
+                  "301", abbr="SFA", alt=["Lumberjacks"]),
+    ]
+    for lookup in _every_order(rows):
+        assert _team_for_event(lookup, "Lumberjacks", NCAAF) is None
