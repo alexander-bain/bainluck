@@ -524,6 +524,39 @@ def estimate_seconds_remaining_from_wall_clock(
     return game_seconds_remaining
 
 
+#: The sources that price the game itself. While the model has no prior, any
+#: one of these is a better number than the coin flip the model starts from.
+MARKET_PRICE_SOURCES: tuple[str, ...] = ("betting", "kalshi", "polymarket")
+
+
+def priorless_model_defers_to_market(
+    pregame_spread: float | None,
+    opening_home_probability: float | None,
+    win_probability_sources: object,
+) -> bool:
+    """True when the model has no prior and the row already holds a market price.
+
+    #8522: with neither a spread nor an opening price the model centres on a
+    pick'em, so it reads 0.5 at 0–0 and drifts from there on the score alone.
+    Its weight (1.0) outweighs a lone Kalshi or Polymarket reading (0.8), and a
+    two-source weighted median returns the heavier source verbatim — NHL
+    preseason headlines sat at 50% while Kalshi, the only market on the game,
+    held 71–78%. Those writers skip the reading instead and leave the number to
+    the market. A game with no market price at all keeps the model: then it is
+    the only number there is.
+    """
+    if pregame_spread is not None or opening_home_probability is not None:
+        return False
+    if not isinstance(win_probability_sources, dict):
+        return False
+    from app.utils.aggregation import parse_source_entry
+
+    return any(
+        parse_source_entry(win_probability_sources.get(source))[0] is not None
+        for source in MARKET_PRICE_SOURCES
+    )
+
+
 def compute_statistical_win_prob(
     home_score: int,
     away_score: int,
