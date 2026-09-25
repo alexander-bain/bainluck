@@ -139,6 +139,11 @@ class ResolutionWindow:
     #: close". Defaulted so every existing construction site stays valid.
     used_expected_expiration: bool = False
 
+    #: True when #2644's gate matched (a pad close and an earlier estimate) but
+    #: the caller named the event a single contest, so the estimate was NOT
+    #: taken (#8586). Exposed so the refusal is countable, not inferred.
+    declined_expected_for_single_contest: bool = False
+
 
 #: The venue statuses that mean "Kalshi says this market is over".
 #:
@@ -424,7 +429,9 @@ def _max_or_none(values: Iterable[Optional[datetime]]) -> Optional[datetime]:
     return max(present) if present else None
 
 
-def derive_resolution_window(markets: Sequence[_HasWindow]) -> ResolutionWindow:
+def derive_resolution_window(
+    markets: Sequence[_HasWindow], *, single_contest: bool = False
+) -> ResolutionWindow:
     """Derive ``(resolution_date, expiration_time)`` for one Kalshi event.
 
     ``markets`` is the event's sub-market list. Both aggregations use ``max()``
@@ -470,6 +477,22 @@ def derive_resolution_window(markets: Sequence[_HasWindow]) -> ResolutionWindow:
 
     An absent estimate is "no opinion" and changes nothing (gotcha #53: absence
     is not a value).
+
+    #8586 — NOT FOR A SINGLE CONTEST. For one match, fight or game on a dated
+    ticker the venue's estimate is the START, not the end. Venue-read
+    2026-09-25 09:00Z, ``KXATPMATCH-26SEP25MEDROY`` while the match was live::
+
+        status active   result ''   close 2026-10-09T05:00Z (== expiration)
+        expected_expiration 2026-09-25T08:00Z   (the scheduled start)
+
+    Taking ``min()`` stored the start as ``resolution_date`` and
+    ``mark_resolved_futures`` resolved the market 16 minutes into play, so the
+    event page lost its only price (11 markets that day, 51 on 9/20). The
+    caller passes ``single_contest=True`` for game and dated-fixture tickers;
+    they keep the pad, exactly as before #2644, and settle on the venue's own
+    status (:func:`derive_venue_settlement`) — the event graph, not a date,
+    knows when a match is over. Futures (``KXSB-27``, ``KXWTA-26USO``) are
+    unchanged.
     """
     close_max = _max_or_none(m.close_time for m in markets)
     expiration_max = _max_or_none(m.expiration_time for m in markets)
@@ -493,6 +516,13 @@ def derive_resolution_window(markets: Sequence[_HasWindow]) -> ResolutionWindow:
         and expected_max is not None
         and expected_max < close_max
     ):
+        if single_contest:
+            return ResolutionWindow(
+                resolution_date=close_max,
+                expiration_time=expiration_max,
+                used_expiration_fallback=False,
+                declined_expected_for_single_contest=True,
+            )
         return ResolutionWindow(
             resolution_date=expected_max,
             expiration_time=expiration_max,

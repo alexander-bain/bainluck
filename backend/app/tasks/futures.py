@@ -4,6 +4,7 @@ Futures/outrights polling task (The Odds API).
 
 import logging
 from datetime import datetime, timezone
+from typing import Optional
 
 from sqlalchemy import func
 
@@ -1025,7 +1026,7 @@ async def _fix_outcome_names_impl():
     return stats
 
 
-async def _mark_resolved_impl():
+async def _mark_resolved_impl(now: Optional[datetime] = None):
     """Mark futures markets as resolved when their resolution_date has passed.
 
     CAL-P086A (`C-WINNER-WRITER-1` [P0]): this task has NO winner evidence. It
@@ -1046,13 +1047,22 @@ async def _mark_resolved_impl():
     Codex's stronger recommendation — stop this task resolving prediction-market
     sources at all — is deliberately NOT taken here. It is a coverage change to
     a live producer and it belongs to Alex, who can now take it on a count.
+
+    #8586 — A DATE NEVER OUTRANKS THE EVENT GRAPH. A market linked to an event
+    that is ``live``, or ``scheduled`` with a start still ahead, is not resolved
+    here whatever its date says: the date is the thing that is wrong. Kalshi's
+    estimate for a match is its START, and a start-shaped ``resolution_date``
+    resolved Medvedev–Royer 16 minutes into play (11 markets on 9/25, 51 on
+    9/20). The root fix is in ``derive_resolution_window``; this is the belt for
+    rows still carrying the old date, and for any future writer that repeats it.
+    Unlinked markets and finished events are unchanged.
     """
     import json as _json
 
-    from sqlalchemy import cast, func, literal, update
+    from sqlalchemy import and_, cast, exists, func, literal, or_, update
     from sqlalchemy.dialects.postgresql import JSONB
 
-    from app.models import FuturesMarket
+    from app.models import Event, FuturesMarket
     from app.utils.resolved_write_gate import (
         REASON_RESOLUTION_DATE_ELAPSED,
         gate_stamp,
@@ -1071,7 +1081,12 @@ async def _mark_resolved_impl():
 
     try:
         async with get_task_session() as session:
-            now = datetime.now(timezone.utc)
+            # A parameter so the #8586 gate can be tested on a fixed clock
+            # (gotcha #44); the beat passes nothing.
+            now = now or datetime.now(timezone.utc)
+            # #8586: the event graph outranks the date (see docstring).
+            _unstarted = and_(Event.status == "scheduled", Event.commence_time > now)
+            _in_play_or_ahead = or_(Event.status == "live", _unstarted)
             _stamp = gate_stamp(
                 task="mark_resolved_futures",
                 reason=REASON_RESOLUTION_DATE_ELAPSED,
@@ -1083,6 +1098,9 @@ async def _mark_resolved_impl():
                     FuturesMarket.status == "open",
                     FuturesMarket.resolution_date.isnot(None),
                     FuturesMarket.resolution_date < now,
+                    ~exists().where(
+                        Event.id == FuturesMarket.event_id, _in_play_or_ahead
+                    ),
                 )
                 .values(
                     status="resolved",

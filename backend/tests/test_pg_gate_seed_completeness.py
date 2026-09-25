@@ -129,6 +129,10 @@ COVERED = (
     #     ungraded screen. Left to its default, the graded control is not graded
     #     and the screen is never exercised.
     "test_kalshi_resolved_void_selection_pg.py",
+    # #8586. Seeds `sports.active` explicitly (NOT NULL, Python-side default)
+    # and CASTs `market_metadata`; `events.status` + `commence_time` are the
+    # only differences between each subject and its control, so both are named.
+    "test_mark_resolved_spares_live_events_8586_pg.py",
     # #7035, CERT-3326's repair — the CONSUMER half of the gate above. Where
     # that one proves the capture reaches the fixture, this one runs the real
     # retirement arm over the fact it wrote and reads `events.status` back.

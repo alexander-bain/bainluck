@@ -1624,7 +1624,13 @@ async def _poll_kalshi_markets():
                     # markets in the past and so hid every one of them from
                     # `past resolution_date`. Derivation + the measurement that chose
                     # the field: app/utils/kalshi_resolution_window.py.
-                    _window = derive_resolution_window(event.markets)
+                    # #8586: a single contest keeps the pad — Kalshi's estimate
+                    # for a match is its START, not its end.
+                    _window = derive_resolution_window(
+                        event.markets,
+                        single_contest=bool(game_sport)
+                        or _is_dated_fixture_ticker(event.event_ticker),
+                    )
                     resolution_date = _window.resolution_date
                     expiration_time = _window.expiration_time
 
@@ -6925,7 +6931,11 @@ async def _create_settled_market(
     # codebase with two derivations — one reading the venue's legal backstop and one
     # reading when trading stopped — and every row this path creates carrying the
     # wrong date. Same pure function as the poller, deliberately.
-    _gap_window = derive_resolution_window(event.markets)
+    _gap_window = derive_resolution_window(
+        event.markets,
+        single_contest=bool(game_sport)
+        or _is_dated_fixture_ticker(event.event_ticker),
+    )
     resolution_date = _gap_window.resolution_date
     expiration_time = _gap_window.expiration_time
 
