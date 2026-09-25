@@ -2810,6 +2810,7 @@ async def _fetch_futures_window(
     tier1_arms: list,
     outcome_arm,
     deadline: float,
+    tier1_limit: int | None = None,
 ) -> tuple[list, str]:
     """The futures window, fetched TIER-ORDERED instead of all at once.
 
@@ -2856,10 +2857,19 @@ async def _fetch_futures_window(
     (LAT-P271: no time left to start it), ``budget_exceeded`` (LAT-P271: it
     started and blew its own bound, so the page is the name matches alone) and
     ``merged``.
+
+    ``tier1_limit`` (#8704) widens ONLY the tier<=1 statement, so the rows the
+    collapse refill would read come back from the SAME execution. Every state
+    except ``skipped``/``absent`` still returns at most the window: those states
+    mean tier<=1 came back short, so a wider LIMIT did not bind and the rows are
+    the ones it always returned. The outcome arm is never widened.
     """
     if tier1_arms:
+        _tier1_stmt = window_query(candidates_in(tier1_arms))
+        if tier1_limit is not None:
+            _tier1_stmt = _tier1_stmt.limit(tier1_limit)
         tier1_rows = list(
-            (await db.execute(window_query(candidates_in(tier1_arms))))
+            (await db.execute(_tier1_stmt))
             .scalars()
             .unique()
             .all()
@@ -2977,6 +2987,29 @@ async def _fetch_futures_window(
         if len(merged) >= _SEARCH_FUTURES_WINDOW:
             break
     return merged, "merged"
+
+
+def _futures_refill_in_hand(arm_state: str, spare_rows: list) -> list | None:
+    """#8704: the collapse refill, when the window's own statement already has it.
+
+    The refill is the full arm set's ranks 21-60. The window statement returns
+    tier<=1 rows up to rank 60 (``tier1_limit``), and those ARE that page when:
+
+    * ``absent`` — there is no outcome arm, so tier<=1 is the whole arm set and
+      the spare rows are ranks 21-60 exactly (fewer only because fewer exist);
+    * ``skipped`` with a FULL spare page — tier is the first ORDER BY key, so
+      while tier<=1 fills rank 60 no outcome-only (tier 2) row can reach it.
+      LAT-P111's proof, one page further in.
+
+    Anything else — ``skipped`` with a short spare page (tier<=1 ran out, so
+    outcome-only rows belong in 21-60), ``merged``, ``shed``,
+    ``budget_exceeded`` — returns None and the refill runs its query as before.
+    """
+    if arm_state == "absent":
+        return list(spare_rows)
+    if arm_state == "skipped" and len(spare_rows) >= _SEARCH_FUTURES_REFILL:
+        return list(spare_rows[:_SEARCH_FUTURES_REFILL])
+    return None
 
 
 def _search_tsquery(q: str):
@@ -8739,6 +8772,9 @@ async def search_events(
     # A stage that never ran and a stage that ran and skipped the arm are
     # different facts (gotcha #53).
     _futures_outcome_arm = "not_reached"
+    # #8704: tier<=1 rows ranked 21-60, fetched by the window's own statement.
+    # See `_futures_refill_in_hand` for when they ARE the collapse refill.
+    _futures_spare_rows: list = []
     if time.monotonic() > _deadline:
         logger.error(
             "search deadline exceeded before futures for %r — returning an answer "
@@ -8755,7 +8791,10 @@ async def search_events(
                 _futures_tier1_arms,
                 futures_outcome_match,
                 _deadline,
+                tier1_limit=_SEARCH_FUTURES_WINDOW + _SEARCH_FUTURES_REFILL,
             )
+            _futures_spare_rows = futures_markets_raw[_SEARCH_FUTURES_WINDOW:]
+            futures_markets_raw = futures_markets_raw[:_SEARCH_FUTURES_WINDOW]
         except Exception as exc:  # noqa: BLE001
             if not _is_query_timeout(exc):
                 raise
@@ -8918,6 +8957,7 @@ async def search_events(
         1 for m in deduped_futures
         if not _is_teamless_sport(m, _team_sport_categories)
     )
+    _futures_refill_source = "not_fired"
     if (
         _answer_rows < _SEARCH_FUTURES_PAGE
         and len(futures_markets_raw) >= _SEARCH_FUTURES_WINDOW
@@ -8941,74 +8981,85 @@ async def search_events(
             if m.id in _over_match_cap_ids
             and not _is_teamless_sport(m, _team_sport_categories)
         )
-        await _apply_search_statement_timeout(db, _deadline)
-        # A SAVEPOINT, for the same reason the headline lane below has one
-        # (LAT-P255/#3731). This lane also runs while `deduped_futures` is live
-        # and read afterwards by `_formatted_by_id`, so a session `rollback()`
-        # on its shed path would expire those rows and 500 the request exactly
-        # as the headline lane did on production. It is fixed here on the
-        # evidence of the sibling rather than waiting for its own outage: the two
-        # lanes hold the same rows across the same kind of failure, and the only
-        # reason this one has not been seen is that a paged re-read of a query
-        # that already ran is far cheaper than an unselective regex.
-        #
-        # No bound of its own: unlike the headline lane this is the SAME query
-        # already executed once, one page further in, so the request deadline is
-        # the right budget for it and a second constant would be a number with no
-        # measurement behind it.
-        _refill_savepoint = await db.begin_nested()
-        try:
-            refill_result = await db.execute(
-                futures_query.offset(_SEARCH_FUTURES_WINDOW).limit(
-                    _SEARCH_FUTURES_REFILL
-                )
-            )
-            refill_rows = refill_result.scalars().unique().all()
-        except Exception as exc:  # noqa: BLE001
-            await _refill_savepoint.rollback()
-            if not _is_query_timeout(exc):
-                raise
-            logger.error(
-                "search futures REFILL timed out for %r — shipping the short "
-                "page rather than nothing", q
-            )
-            # AND SAY SO, FOR THE REASON THE HEADLINE LANE BELOW SAYS IT (#7243).
-            #
-            # This lane runs ONLY when the bucket already collapsed — the gate
-            # above is "the window came back saturated AND dedup could not fill
-            # the page" — so by the time this handler runs the page is KNOWN
-            # short and this query was the one thing that could have filled it.
-            # The log line says exactly that ("shipping the short page"). Without
-            # the mark, LAT-P007's rule at the cache write below does not fire and
-            # that short page is written to the response cache and served to every
-            # reader of the term for the full SEARCH_RESPONSE_TTL_SECONDS.
-            #
-            # 🔴 THIS CORRECTS MY OWN CLAIM ON THE SIBLING FIX. `d45510b58`'s
-            # comment below states the headline lane "was the only shed path in
-            # the handler that never joined `degraded`". That was wrong: this
-            # handler is a second one, and it was missed because the census that
-            # produced the claim walked the paths that mark and not the paths that
-            # shed. The two are mutually exclusive and so never co-occur — a
-            # `futures` shed empties `futures_markets_raw`, which fails this
-            # lane's own `>= _SEARCH_FUTURES_WINDOW` gate — which is precisely why
-            # no observation of one could ever reveal the other.
-            #
-            # #3399's LOOP CANNOT FORM HERE, and the reason is structural rather
-            # than measured: unlike the headline lane this arm has NO bound of its
-            # own (see the note above — it is the same query one page further in,
-            # so the request deadline is the right budget). Shedding therefore
-            # requires burning the full 20,000 ms deadline, so it cannot be the
-            # deterministic every-time shed that made four typeahead head terms
-            # permanently uncacheable under LAT-P241. A term that reaches this
-            # handler has a far larger problem than its cache entry.
-            degraded.append("futures_refill")
-            # The savepoint rollback restored the transaction; re-arm the
-            # statement timeout for the stages that follow and leave the
-            # session — and the futures rows it holds — alone.
+        # #8704: the rows this would fetch may already be in hand. `united` on
+        # production 2026-09-25 read `futures_outcome_arm: skipped` and then spent
+        # 4-12 s here, because the query below is the FULL arm set — it re-ranks
+        # every candidate and pays the outcome arm the window had just proved it
+        # could skip. When the window's statement already returned ranks 21-60
+        # (see `_futures_refill_in_hand` for when that is exact), use them.
+        refill_rows = _futures_refill_in_hand(
+            _futures_outcome_arm, _futures_spare_rows
+        )
+        _futures_refill_source = "window" if refill_rows is not None else "query"
+        if refill_rows is None:
             await _apply_search_statement_timeout(db, _deadline)
-            refill_rows = []
-        else:
-            await _refill_savepoint.commit()
+            # A SAVEPOINT, for the same reason the headline lane below has one
+            # (LAT-P255/#3731). This lane also runs while `deduped_futures` is live
+            # and read afterwards by `_formatted_by_id`, so a session `rollback()`
+            # on its shed path would expire those rows and 500 the request exactly
+            # as the headline lane did on production. It is fixed here on the
+            # evidence of the sibling rather than waiting for its own outage: the two
+            # lanes hold the same rows across the same kind of failure, and the only
+            # reason this one has not been seen is that a paged re-read of a query
+            # that already ran is far cheaper than an unselective regex.
+            #
+            # No bound of its own: unlike the headline lane this is the SAME query
+            # already executed once, one page further in, so the request deadline is
+            # the right budget for it and a second constant would be a number with no
+            # measurement behind it.
+            _refill_savepoint = await db.begin_nested()
+            try:
+                refill_result = await db.execute(
+                    futures_query.offset(_SEARCH_FUTURES_WINDOW).limit(
+                        _SEARCH_FUTURES_REFILL
+                    )
+                )
+                refill_rows = refill_result.scalars().unique().all()
+            except Exception as exc:  # noqa: BLE001
+                await _refill_savepoint.rollback()
+                if not _is_query_timeout(exc):
+                    raise
+                logger.error(
+                    "search futures REFILL timed out for %r — shipping the short "
+                    "page rather than nothing", q
+                )
+                # AND SAY SO, FOR THE REASON THE HEADLINE LANE BELOW SAYS IT (#7243).
+                #
+                # This lane runs ONLY when the bucket already collapsed — the gate
+                # above is "the window came back saturated AND dedup could not fill
+                # the page" — so by the time this handler runs the page is KNOWN
+                # short and this query was the one thing that could have filled it.
+                # The log line says exactly that ("shipping the short page"). Without
+                # the mark, LAT-P007's rule at the cache write below does not fire and
+                # that short page is written to the response cache and served to every
+                # reader of the term for the full SEARCH_RESPONSE_TTL_SECONDS.
+                #
+                # 🔴 THIS CORRECTS MY OWN CLAIM ON THE SIBLING FIX. `d45510b58`'s
+                # comment below states the headline lane "was the only shed path in
+                # the handler that never joined `degraded`". That was wrong: this
+                # handler is a second one, and it was missed because the census that
+                # produced the claim walked the paths that mark and not the paths that
+                # shed. The two are mutually exclusive and so never co-occur — a
+                # `futures` shed empties `futures_markets_raw`, which fails this
+                # lane's own `>= _SEARCH_FUTURES_WINDOW` gate — which is precisely why
+                # no observation of one could ever reveal the other.
+                #
+                # #3399's LOOP CANNOT FORM HERE, and the reason is structural rather
+                # than measured: unlike the headline lane this arm has NO bound of its
+                # own (see the note above — it is the same query one page further in,
+                # so the request deadline is the right budget). Shedding therefore
+                # requires burning the full 20,000 ms deadline, so it cannot be the
+                # deterministic every-time shed that made four typeahead head terms
+                # permanently uncacheable under LAT-P241. A term that reaches this
+                # handler has a far larger problem than its cache entry.
+                degraded.append("futures_refill")
+                # The savepoint rollback restored the transaction; re-arm the
+                # statement timeout for the stages that follow and leave the
+                # session — and the futures rows it holds — alone.
+                await _apply_search_statement_timeout(db, _deadline)
+                refill_rows = []
+            else:
+                await _refill_savepoint.commit()
         for m in _rerank_search_futures(
             refill_rows, expanded, _resolved_sport_category,
             _team_sport_categories,
@@ -9851,7 +9902,8 @@ async def search_events(
         # request and nowhere else.
         **({"debug_timing": {**_stage_ms,
                              "total_ms": sum(_stage_ms.values()),
-                             "futures_outcome_arm": _futures_outcome_arm}}
+                             "futures_outcome_arm": _futures_outcome_arm,
+                             "futures_refill_source": _futures_refill_source}}
            if debug_timing else {}),
     }
 
