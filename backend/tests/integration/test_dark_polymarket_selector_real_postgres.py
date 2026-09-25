@@ -946,3 +946,132 @@ class TestTheSunkHeadArmAgainstRealPostgres:
             )
         ).fetchall()
         assert [r.id for r in rows] == [ids["live_game"]]
+
+
+# ── #7930: the post-start arm against real Postgres ──────────────────────────
+#
+# `tests/test_polymarket_sunk_post_start_arm_7930.py` drives the pass with a
+# selector that ANSWERS. This executes `_SUNK_POLY_POST_START_SQL` itself: the
+# guarded `venue_game_start` cast, the one-hour staleness bound SEPARATELY from
+# the six-hour resolution floor, the 48h window and the oldest-start order.
+# Three rows come back IN ORDER — linked and unlinked alike — and nine must not,
+# each excluded by a different clause.
+
+async def _seed_post_start(session):
+    from app.models.models import Event, FuturesMarket, Sport
+
+    sport = Sport(key="baseball_mlb", name="MLB", group="Baseball")
+    session.add(sport)
+    await session.flush()
+    now = datetime.now(UTC)
+    finished = Event(
+        sport_id=sport.id,
+        home_team_name="Baltimore Orioles",
+        away_team_name="Toronto Blue Jays",
+        commence_time=now - timedelta(hours=20),
+        status="completed",
+    )
+    session.add(finished)
+    await session.flush()
+
+    def _market(external_id, start_hours, *, read_ago=timedelta(minutes=90),
+                status="open", linked=False, stamp=None, resolves_in=None):
+        start = now + timedelta(hours=start_hours)
+        m = FuturesMarket(
+            source="polymarket",
+            external_id=external_id,
+            name="Toronto Blue Jays vs. Baltimore Orioles",
+            category="championship",
+            market_tier=5,
+            status=status,
+            event_id=finished.id if linked else None,
+            market_metadata={
+                "venue_game_start": stamp or start.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            },
+            # Gamma's `endDate`, a week after first pitch — what the imminent
+            # arm orders by, and why it reached these rows days late.
+            resolution_date=(
+                now + resolves_in if resolves_in is not None else start + timedelta(days=7)
+            ),
+            volume_updated_at=now - read_ago,
+            llm_sport_category="baseball",
+            sport_id=sport.id,
+        )
+        session.add(m)
+        return m
+
+    rows = {
+        # picked — minted newest-start first, so the ids ascend the wrong way
+        # and only `ORDER BY s.venue_start` returns them right.
+        "three_hours_in": _market("1073203", -3),
+        "linked_twenty_hours_in": _market("1073204", -20, linked=True),
+        "forty_hours_in": _market("1073205", -40),
+        # skipped, one clause each
+        "pre_start": _market("1073206", 3),
+        "beyond_the_floor": _market("1073207", -49),
+        "read_twenty_minutes_ago": _market("1073208", -3, read_ago=timedelta(minutes=20)),
+        "resolved": _market("1073209", -3, status="resolved"),
+        "condition_id_keyed": _market("0x5d1c0ffee", -3),
+        "refused": _market("1073210", -3),
+        "malformed_stamp": _market("1073211", -3, stamp="sometime tuesday"),
+        "resolution_behind_the_floor": _market(
+            "1073212", -10, resolves_in=-timedelta(hours=8)
+        ),
+        "no_stamp": _market("1073213", -3, stamp=None),
+    }
+    await session.flush()
+    rows["no_stamp"].market_metadata = {}
+    await session.commit()
+    return {k: m.id for k, m in rows.items()}
+
+
+async def _select_post_start(session, refused=("1073210",), **over):
+    from app.tasks.polymarket import (
+        SUNK_POLY_POST_START_LOOKBACK_HOURS,
+        SUNK_POLY_POST_START_STALE_HOURS,
+        SUNK_POLY_STALE_HOURS,
+        _SUNK_POLY_POST_START_MAX,
+        _SUNK_POLY_POST_START_SQL,
+    )
+
+    params = {
+        "stale_hours": SUNK_POLY_STALE_HOURS,
+        "post_start_stale_hours": SUNK_POLY_POST_START_STALE_HOURS,
+        "post_start_lookback_hours": SUNK_POLY_POST_START_LOOKBACK_HOURS,
+        "refused": list(refused),
+        "max_rows": _SUNK_POLY_POST_START_MAX,
+        **over,
+    }
+    return (await session.execute(_SUNK_POLY_POST_START_SQL, params)).fetchall()
+
+
+class TestTheSunkPostStartArmAgainstRealPostgres:
+    async def test_it_picks_finished_games_oldest_start_first_and_nothing_else(self, pg_session):
+        ids = await _seed_post_start(pg_session)
+        rows = await _select_post_start(pg_session)
+        assert [r.id for r in rows] == [
+            ids["forty_hours_in"], ids["linked_twenty_hours_in"], ids["three_hours_in"],
+        ], (
+            "three rows in start order, nine excluded by nine different clauses; "
+            "any other answer means one clause is not doing its job"
+        )
+
+    async def test_a_row_read_ninety_minutes_ago_is_not_held_out_for_six_hours(self, pg_session):
+        # The defect: under the shared six-hour staleness this game would not be
+        # re-read until start+6h, which is when every other game arm lets go.
+        ids = await _seed_post_start(pg_session)
+        held = await _select_post_start(pg_session, post_start_stale_hours=6)
+        assert ids["three_hours_in"] not in {r.id for r in held}
+        assert ids["three_hours_in"] in {r.id for r in await _select_post_start(pg_session)}
+
+    async def test_the_resolution_floor_is_the_shared_six_hours_not_the_one_hour(self, pg_session):
+        ids = await _seed_post_start(pg_session)
+        # Widening the floor readmits the row whose resolution is 8h behind us:
+        # proof the floor is bound to :stale_hours and nothing else.
+        wide = await _select_post_start(pg_session, stale_hours=12)
+        assert ids["resolution_behind_the_floor"] in {r.id for r in wide}
+
+    async def test_the_limit_keeps_the_oldest(self, pg_session):
+        ids = await _seed_post_start(pg_session)
+        rows = await _select_post_start(pg_session, max_rows=1)
+        assert [r.id for r in rows] == [ids["forty_hours_in"]]
