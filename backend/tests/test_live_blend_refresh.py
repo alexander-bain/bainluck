@@ -1001,3 +1001,82 @@ class TestAQueuedRetrySurvivesAFailedBatch:
         r._refresh_batch = _must_not_run
         await r.refresh_pending()
         assert r.stats["considered"] == 0
+
+
+class TestAFailedCommitLeavesNothingMarkedWritten:
+    """Codex review of #8490 at b4bd9e96b8 (P1): write bookkeeping was set
+    when the savepoint released, BEFORE the outer commit. A failed commit left
+    `_should_write` believing the price was stored, so the quiet retry of a
+    lock-deferred event skipped it as unchanged and consumed the retry for good
+    (Codex's fault injection: 1 UPDATE, 0 frames, retry gone). Here the real
+    `_refresh_batch`, savepoint, `_should_write` and `_maybe_snapshot` run; only
+    the COMMIT fails, once."""
+
+    @pytest.mark.asyncio
+    async def test_the_quiet_retry_after_a_failed_commit_really_restamps(
+        self, monkeypatch
+    ):
+        from contextlib import asynccontextmanager
+
+        import app.tasks.live_blend_refresh as lbr
+
+        event, market = _event_and_market()
+        session = _LockedRowSession(
+            [(market, event)], [], {"polymarket": {}}, locked=False
+        )
+        r, published = _one_event_refresher(monkeypatch, session)
+        from types import SimpleNamespace
+
+        monkeypatch.setattr(
+            "app.utils.live_blend.compute_source_home_probability",
+            lambda group, home, away: SimpleNamespace(
+                home_probability=0.9, away_probability=None,
+                draw_probability=None, eligibility=None, market=market,
+                outcome=SimpleNamespace(name="Phillies"), yes_probability=0.9,
+            ),
+        )
+        snapshots = []
+
+        async def _record_snapshot(session, **kw):
+            snapshots.append(kw)
+            return object(), True
+
+        monkeypatch.setattr(
+            "app.tasks.snapshots._create_or_update_win_prob_snapshot",
+            _record_snapshot,
+        )
+        commits = {"n": 0}
+
+        @asynccontextmanager
+        async def _commit_fails_once():
+            commits["n"] += 1
+            session._selects = 0
+            yield session
+            if commits["n"] == 1:
+                raise RuntimeError("COMMIT failed after the savepoint released")
+
+        monkeypatch.setattr("app.tasks.base.get_task_session", _commit_fails_once)
+        clock = {"t": 1000.0}
+        monkeypatch.setattr(lbr.time, "monotonic", lambda: clock["t"])
+
+        r._lock_retry = {1}
+        await r.refresh_pending()
+
+        assert len(session.updates) == 1 and len(snapshots) == 1, "rig: stamp ran"
+        assert published == [], "a rolled-back stamp must not be pushed"
+        assert r._last_written_value == {}, "an uncommitted stamp reads as written"
+        assert r._last_write_at == {}
+        assert r.stats["stamped"] == 0
+        assert 1 not in r._last_snapshot_at, "the chart point never committed"
+        assert r._lock_retry == {1}
+
+        clock["t"] += 2.0  # the next flush, inside every throttle window
+        await r.refresh_pending()
+
+        assert len(session.updates) == 2, "the retry was skipped as unchanged"
+        assert [f["event_id"] for f in published] == [1]
+        assert len(snapshots) == 2, "the chart point was not re-attempted"
+        assert r._last_written_value == {1: 0.9}
+        assert r._last_snapshot_at == {1: 1002.0}
+        assert r.stats["stamped"] == 1
+        assert r._lock_retry == set()

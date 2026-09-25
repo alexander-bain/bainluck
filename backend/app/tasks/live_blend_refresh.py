@@ -58,6 +58,7 @@ must not wipe the pass).
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import math
 import time
@@ -364,6 +365,13 @@ class LiveBlendRefresher:
         # same batch could roll back, and an un-take-back-able push of a value
         # the database never kept is worse than a push that never happened.
         pending: list[dict] = []
+        # #837 tail (Codex review of #8490) — and for the same reason the
+        # write bookkeeping is COLLECTED and applied only after the commit. A
+        # released savepoint is not a committed stamp: recorded there, a failed
+        # commit left `_should_write` believing the price was stored, so the
+        # retry of a lock-deferred event skipped it as unchanged and the price
+        # was lost for good.
+        written: dict[int, float] = {}
 
         # Stamp the throttle for EVERY event we are about to attempt, before any
         # of them can fail to resolve. Stamping per-resolved-event instead would
@@ -374,7 +382,10 @@ class LiveBlendRefresher:
         for event_id in event_ids:
             self._last_refresh_at[event_id] = now
 
-        async with get_task_session() as session:
+        async with (
+            self._snapshot_slots_follow_the_commit(event_ids),
+            get_task_session() as session,
+        ):
             market_rows = (
                 await session.execute(
                     select(FuturesMarket, Event)
@@ -523,12 +534,10 @@ class LiveBlendRefresher:
                                 self.source, event_id,
                             )
 
-                    # Recorded only once the savepoint has released: a stamp
-                    # that rolled back must not read as written, or
-                    # `_should_write` would skip re-sending the same price.
-                    self._last_write_at[event_id] = now
-                    self._last_written_value[event_id] = value
-                    self.stats["stamped"] += 1
+                    # Noted only once the savepoint has released (a stamp that
+                    # rolled back must not read as written), and applied only
+                    # once the transaction commits — see `written` above.
+                    written[event_id] = value
 
                     # The AGGREGATE, computed off the sources JSONB the server
                     # RETURNED — the number the hero renders, not this one
@@ -590,8 +599,34 @@ class LiveBlendRefresher:
                     )
 
         # Session closed and committed — only now is the pushed number a number
-        # the database actually kept.
+        # the database actually kept, and only now is it "written".
+        for event_id, value in written.items():
+            self._last_write_at[event_id] = now
+            self._last_written_value[event_id] = value
+        self.stats["stamped"] += len(written)
         await self._publish(pending)
+
+    @contextlib.asynccontextmanager
+    async def _snapshot_slots_follow_the_commit(self, event_ids: list[int]):
+        """Undo this batch's chart-point throttle slots if it does not commit.
+
+        `_maybe_snapshot` takes its slot BEFORE writing, deliberately: a
+        snapshot that fails inside its own savepoint must not retry every two
+        seconds. But a transaction that never commits wrote no chart point at
+        all, and a slot kept for it would hold the line flat for up to
+        `snapshot_interval_s` after the retry stamps the number. Entered before
+        the session and exited after it, so a failing COMMIT reaches it.
+        """
+        prior = {eid: self._last_snapshot_at.get(eid) for eid in event_ids}
+        try:
+            yield
+        except BaseException:
+            for event_id, at in prior.items():
+                if at is None:
+                    self._last_snapshot_at.pop(event_id, None)
+                else:
+                    self._last_snapshot_at[event_id] = at
+            raise
 
     async def _publish(self, frames: list[dict]) -> None:
         """Fan the committed frames out to any SSE subscribers. Never raises.
