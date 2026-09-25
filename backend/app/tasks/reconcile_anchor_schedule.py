@@ -82,7 +82,7 @@ import logging
 import time as _time
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from sqlalchemy import and_, func, or_, select, update
 
@@ -812,6 +812,7 @@ async def reconcile(
     cursor: Optional[str] = None,
     exclude_sports: frozenset[str] = frozenset(),
     budget_seconds: float = EXAMINE_BUDGET_SECONDS,
+    apply_only: Optional[Callable[[Any], bool]] = None,
 ) -> dict[str, Any]:
     """Ask the authority about every anchored near-future row's kickoff.
 
@@ -864,6 +865,13 @@ async def reconcile(
 
     This is the same rule the empty-page branch above already applies with
     ``bool(cursor)``; the two branches agree because it is one rule, not two.
+
+    ``apply_only`` narrows an apply to the moves it answers True for (#3023:
+    the sentinel passes ``is_midnight_placeholder_move``). Every other move is
+    still decided, counted and reported in ``moves`` exactly as on a dry run —
+    it is simply not written — so a narrowed apply that leaves moves behind
+    ends ``plan_only``, never ``complete``. ``moved_event_ids`` names the rows
+    that did land, which is how a caller tells the fixed from the still-wrong.
     """
     from app.services.espn_api import get_espn_service
     from app.tasks.repair_authority_id_collisions import _fetch_record
@@ -957,7 +965,11 @@ async def reconcile(
     receipted: list[dict[str, Any]] = []
     if apply:
         rows_by_id = {row.event_id: row for row in rows}
-        movers = [d for d in decisions if d.verdict == AUTHORITY_MOVES_US]
+        movers = [
+            d
+            for d in decisions
+            if d.verdict == AUTHORITY_MOVES_US and (apply_only is None or apply_only(d))
+        ]
         planned = [undo_row_for(d, rows_by_id[d.event_id]) for d in movers]
 
         # ── BACKUP BEFORE WRITE (D51) ────────────────────────────────────────
@@ -1102,6 +1114,10 @@ async def reconcile(
         terminal = "partial"
     elif not pending:
         terminal = "no_work"
+    elif apply and moved + stale < pending:
+        # A narrowed apply (`apply_only`) left moves on the plan. They are as
+        # wrong as they were before this call, so it did not complete anything.
+        terminal = "plan_only"
     elif apply:
         terminal = "complete" if not stale else "partial"
     else:
@@ -1112,6 +1128,7 @@ async def reconcile(
         "terminal": terminal,
         "applied": apply,
         "moved": moved,
+        "moved_event_ids": [int(r["event_id"]) for r in receipted],
         "stale": stale,
         "eligible": eligible,
         "remaining": remaining,

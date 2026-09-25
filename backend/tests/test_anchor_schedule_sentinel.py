@@ -8,8 +8,11 @@ seen it ran when a person remembered to run it.
 So these guards are about the DRIVER's five ways to be wrong, not about the
 rail's arithmetic (``test_reconcile_anchor_schedule_paging`` owns that):
 
-* **Writing.** The rail can apply moves. This driver must never reach that path,
-  and not by defaulting into safety — by having no way to express it.
+* **Writing.** The rail can apply moves. This driver may reach ONE narrowed
+  apply (#3023's midnight-placeholder class, fixed at the call site) and never
+  the whole plan — not by defaulting into safety, by having no way to express
+  it. The placeholder class itself is guarded in
+  ``test_anchor_placeholder_apply_3023``.
 * **Calling an unfinished sweep clean.** The worst one, and the reason the
   module exists at all. A run that stopped on its budget knows nothing about the
   rows it never reached; if that closes the issue, the sentinel resolves a live
@@ -44,7 +47,11 @@ from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session
 
 from app.tasks import reconcile_anchor_schedule as rail
-from app.utils.anchor_schedule import AUTHORITY_MOVES_US, SCHEDULE_VERDICTS
+from app.utils.anchor_schedule import (
+    AUTHORITY_MOVES_US,
+    SCHEDULE_VERDICTS,
+    is_midnight_placeholder_move,
+)
 
 # NOT `from app.tasks import anchor_schedule_sentinel`: the Celery wrapper in
 # `app/tasks/__init__.py` is registered under that exact name and shadows the
@@ -231,7 +238,11 @@ def _move(event_id: int = 7):
 
 
 class TestItCannotWrite:
-    """The apply path is not merely defaulted off — it is unreachable."""
+    """The whole-plan apply path is not merely defaulted off — it is unreachable.
+
+    #3023 opened ONE narrowed write; these guards now assert that it is the only
+    one, and that the stop switch really does return the driver to read-only.
+    """
 
     def test_the_driver_exposes_no_apply_parameter(self):
         """A caller cannot ask for a write, so no future caller can pass one
@@ -242,9 +253,43 @@ class TestItCannotWrite:
         assert "apply" not in inspect.signature(sentinel._sweep).parameters
 
     @pytest.mark.asyncio
-    async def test_every_call_to_the_rail_passes_apply_false(self, monkeypatch):
+    async def test_every_apply_the_rail_is_handed_is_narrowed_to_placeholders(
+        self, monkeypatch
+    ):
         """Asserted on what RUNS: capture the kwargs the sweep actually hands the
-        rail, over several pages, rather than trusting the source line."""
+        rail, over several pages, rather than trusting the source line. An
+        `apply=True` without the placeholder filter would be the whole plan."""
+        monkeypatch.delenv(sentinel.PLACEHOLDER_APPLY_DISABLED_ENV, raising=False)
+        seen = []
+
+        async def fake_reconcile(session, **kwargs):
+            seen.append(kwargs)
+            more = len(seen) < 3
+            return _page(
+                has_more=more,
+                next_cursor=f"c{len(seen)}" if more else None,
+            )
+
+        monkeypatch.setattr(sentinel, "reconcile", fake_reconcile)
+        await sentinel._sweep(
+            object(),
+            limit=10,
+            sport=None,
+            lookback=rail.DEFAULT_LOOKBACK,
+            horizon=rail.DEFAULT_HORIZON,
+            deadline_seconds=60.0,
+            max_pages=10,
+        )
+
+        assert len(seen) == 3
+        for call in seen:
+            assert call["apply"] is True
+            assert call["apply_only"] is is_midnight_placeholder_move
+
+    @pytest.mark.asyncio
+    async def test_the_stop_switch_passes_apply_false(self, monkeypatch):
+        """With the stop switch set, the driver is exactly its pre-#3023 self."""
+        monkeypatch.setenv(sentinel.PLACEHOLDER_APPLY_DISABLED_ENV, "1")
         seen = []
 
         async def fake_reconcile(session, **kwargs):
@@ -268,6 +313,7 @@ class TestItCannotWrite:
 
         assert len(seen) == 3
         assert all(call["apply"] is False for call in seen)
+        assert all(call["apply_only"] is None for call in seen)
 
 
 class TestAnUnfinishedSweepIsNotAnAllClear:
@@ -1080,7 +1126,7 @@ class TestTheIssueSaysWhatItCannotSee:
         body = sentinel._issue_body(state, now=NOW)
         assert f"{sentinel.MARKER_KEY}:anchor-schedule-drift" in body
         assert "401873124" in body, "the evidence pack must name the drifting anchor"
-        assert "Nothing was written" in body
+        assert "None of the rows above was written" in body
 
 
 async def _run_with_stub_session(
@@ -1148,3 +1194,113 @@ async def _run_with_stub_session(
         now=now,
         resume=resume,
     )
+
+
+class TestThePlaceholderClassIsFixedNotFiled:
+    """#3023: the one class the driver writes. A written row is not drift."""
+
+    PLACEHOLDER = {
+        "event_id": 15316001,
+        "espn_id": "401802001",
+        "ours": "2026-10-01T04:00:00+00:00",
+        "theirs": "2026-10-01T23:00:00+00:00",
+        "delta_days": 0.79,
+        "authority": "ESPN",
+    }
+    UNDO = "python3 scripts/restore_anchor_schedule_moves.py --identity x --apply"
+
+    def _applied_page(self, *, moves, moved, **kw):
+        page = _page(moves=moves, **kw)
+        page["moved_event_ids"] = moved
+        page["undo_command"] = self.UNDO
+        return page
+
+    async def test_a_written_placeholder_leaves_moves_and_carries_its_undo(
+        self, monkeypatch
+    ):
+        monkeypatch.delenv(sentinel.PLACEHOLDER_APPLY_DISABLED_ENV, raising=False)
+
+        async def fake_reconcile(session, **kwargs):
+            return self._applied_page(
+                moves=[self.PLACEHOLDER, _move()], moved=[15316001], examined=2
+            )
+
+        monkeypatch.setattr(sentinel, "reconcile", fake_reconcile)
+        state = await sentinel._sweep(
+            object(), limit=10, sport=None, lookback=rail.DEFAULT_LOOKBACK,
+            horizon=rail.DEFAULT_HORIZON, deadline_seconds=60.0, max_pages=5,
+        )
+        assert [m["event_id"] for m in state["moves"]] == [_move()["event_id"]]
+        assert [m["event_id"] for m in state["applied_moves"]] == [15316001]
+        assert state["applied_undo_commands"] == [self.UNDO]
+        assert state["applied"] is True
+
+    async def test_CONTROL_an_unwritten_placeholder_is_still_drift(self, monkeypatch):
+        """The rail refused or the switch is off: nothing landed, so it files."""
+
+        async def fake_reconcile(session, **kwargs):
+            return self._applied_page(moves=[self.PLACEHOLDER], moved=[])
+
+        monkeypatch.setattr(sentinel, "reconcile", fake_reconcile)
+        state = await sentinel._sweep(
+            object(), limit=10, sport=None, lookback=rail.DEFAULT_LOOKBACK,
+            horizon=rail.DEFAULT_HORIZON, deadline_seconds=60.0, max_pages=5,
+        )
+        assert [m["event_id"] for m in state["moves"]] == [15316001]
+        assert state["applied_moves"] == []
+
+    async def test_a_refused_page_stops_the_sweep_instead_of_finishing_it(
+        self, monkeypatch
+    ):
+        """The rail's `refused` return carries no `has_more`; read as a normal
+        page it would claim the end of the window was reached."""
+        seen = []
+
+        async def fake_reconcile(session, **kwargs):
+            seen.append(kwargs.get("cursor"))
+            if len(seen) == 1:
+                return _page(has_more=True, next_cursor="c1")
+            refused = _page(moves=[self.PLACEHOLDER], terminal="refused")
+            del refused["has_more"], refused["next_cursor"]
+            refused["reason_codes"] = [rail.REASON_UNDO_UNWRITTEN]
+            return refused
+
+        monkeypatch.setattr(sentinel, "reconcile", fake_reconcile)
+        state = await sentinel._sweep(
+            object(), limit=10, sport=None, lookback=rail.DEFAULT_LOOKBACK,
+            horizon=rail.DEFAULT_HORIZON, deadline_seconds=60.0, max_pages=5,
+        )
+        assert state["stopped_by"] == "apply_refused"
+        assert state["reached_window_end"] is False
+        assert state["continuation"] == "c1", "tomorrow re-reads the refused page"
+        assert [m["event_id"] for m in state["moves"]] == [15316001]
+        assert state["apply_refusals"] == [rail.REASON_UNDO_UNWRITTEN]
+
+    async def test_a_complete_window_whose_only_moves_were_written_closes_green(
+        self, monkeypatch
+    ):
+        monkeypatch.delenv(sentinel.PLACEHOLDER_APPLY_DISABLED_ENV, raising=False)
+        page = self._applied_page(moves=[self.PLACEHOLDER], moved=[15316001])
+        state = await _run_with_stub_session(
+            monkeypatch, pages=[page], max_pages=5, deadline_seconds=60.0
+        )
+        assert state["terminal"] == "complete"
+        assert state["moves"] == []
+        assert state["filing"]["red"] is False
+        assert "placeholders_applied=1" in sentinel._summarize(state)
+
+    def test_the_issue_body_names_the_written_rows_undo(self):
+        state = {
+            "terminal": "plan_only",
+            "examined": 2,
+            "eligible": 2,
+            "pages": 1,
+            "moves": [_move()],
+            "applied_moves": [self.PLACEHOLDER],
+            "applied_undo_commands": [self.UNDO],
+            "by_verdict": {name: 0 for name in SCHEDULE_VERDICTS},
+            "fingerprint": "anchor-schedule-drift",
+        }
+        body = sentinel._issue_body(state, now=NOW)
+        assert self.UNDO in body
+        assert sentinel.PLACEHOLDER_APPLY_DISABLED_ENV in body
