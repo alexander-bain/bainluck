@@ -44,10 +44,16 @@ from app.utils.event_ufc import UFC_CONFIG, UFCEventAdapter
 
 _IDS = itertools.count(7993000)
 
+# ONE clock read for the whole module. The module-level card (_D, _NEXT) is
+# built at collection time and the controls call _at() at run time; with a
+# fresh now() each, a run that collects before 00:00 UTC and reaches the
+# controls after it puts the "own bout" a day past _NEXT (CI 2026-09-25 00:14Z).
+_NOW = datetime.now(timezone.utc)
+
 
 def _at(days: int, hour: int, minute: int = 0) -> datetime:
     """A fixed instant. Offset FIRST, then truncate (gotcha #44)."""
-    return (datetime.now(timezone.utc) + timedelta(days=days)).replace(
+    return (_NOW + timedelta(days=days)).replace(
         hour=hour, minute=minute, second=0, microsecond=0
     )
 
