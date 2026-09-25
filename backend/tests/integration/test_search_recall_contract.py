@@ -2387,6 +2387,30 @@ async def test_the_dropdown_offers_a_rostered_players_team_and_its_game(
         )
 
 
+async def test_the_dropdown_ranks_his_teams_game_above_the_novelties(
+    typeahead_with_a_rostered_player,
+):
+    """#8523 — the GAME leads the novelties too, not only the club.
+
+    The test above let the game sit anywhere, and production served it LAST
+    (2026-09-25 05:5xZ): club, then Madden / SNL / wedding / two Google-search
+    markets, then "Kansas City Chiefs at Miami Dolphins". The game's own name
+    holds no word of the query, so without the player's alias it scores the
+    fragment class, under every market that lists him as an outcome.
+    """
+    rows = _typeahead_rows(await typeahead_with_a_rostered_player("patrick mahomes"))
+    kinds = [k for k, _ in rows]
+    assert "event" in kinds and "futures" in kinds, f"recall moved: {rows!r}"
+    game_at = kinds.index("event")
+    first_market_at = kinds.index("futures")
+    assert game_at < first_market_at, (
+        f"the Chiefs' game ranks under a market that merely lists him: {rows!r} (#8523)"
+    )
+    assert rows[game_at - 1] == ("team", "Kansas City Chiefs"), (
+        f"the game is not directly under its club: {rows!r} (#8523)"
+    )
+
+
 async def test_the_dropdown_reads_the_bare_string_roster_form(
     typeahead_with_a_rostered_player,
 ):
