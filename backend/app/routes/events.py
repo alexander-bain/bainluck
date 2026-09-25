@@ -2206,6 +2206,68 @@ def _event_teamless_sport_order_key(team_categories: frozenset | None):
     return case((func.split_part(Sport.key, "_", 1).in_(sunk), 1), else_=0)
 
 
+def _team_card_lead_sport_keys(team_rows, window: int) -> frozenset | None:
+    """#8738: the sport keys of the club the TEAMS card leads with, or None.
+
+    `lakers` on production 2026-09-25: the TEAMS card led with Los Angeles Lakers
+    and the GAMES list opened with Växjö Lakers v HV71 (Swedish hockey) and
+    Western Kentucky v Mercyhurst Lakers (NCAAF). Every Lakers club ties on
+    `search_rank`, so the games list broke the tie by kickoff, while the card
+    breaks the same tie with `_sort_matched_team_rows` (rank, then marquee
+    league). #8697's key cannot help: Växjö and Mercyhurst are real clubs called
+    Lakers, so neither sport is teamless.
+
+    The card's own pipeline picks the leader (individual sports dropped, prefix
+    duplicates dropped, then the card's sort), so the two surfaces cannot
+    disagree about who "the" Lakers are. The lead TIER is every row tied with the
+    first on (rank, marquee); the keys are every sport key a lead-tier club NAME
+    carries — a club's rows are one per competition, and Manchester City's FA Cup
+    game must not sink under its own Premier League games.
+
+    None — the caller then adds NO key and the compiled SQL is unchanged — when
+    the evidence could be incomplete (no rows; a full window, as #7355) or when
+    there is nothing to decide (every matched club's sport is a lead sport:
+    `dodgers`, `barcelona`'s two non-marquee namesakes that tie outright).
+    """
+    if not team_rows or len(team_rows) >= window:
+        return None
+    rows = _sort_matched_team_rows(_dedupe_prefix_duplicate_team_rows([
+        row for row in team_rows if not _is_individual_sport(row.sport_key)
+    ]))
+    if not rows:
+        return None
+
+    def _tier(r):
+        return (
+            getattr(r, "team_rank", 0.0) or 0.0,
+            _team_marquee_rank(getattr(r, "sport_key", None)),
+        )
+
+    lead_tier = _tier(rows[0])
+    lead_names = {
+        (getattr(r, "name", "") or "").lower() for r in rows if _tier(r) == lead_tier
+    }
+    lead_keys = frozenset(
+        r.sport_key for r in rows
+        if r.sport_key and (getattr(r, "name", "") or "").lower() in lead_names
+    )
+    if not lead_keys or all(r.sport_key in lead_keys for r in rows):
+        return None
+    return lead_keys
+
+
+def _team_card_lead_order_key(lead_keys: frozenset | None):
+    """#8738: 0 for a game in the TEAMS card leader's sport, 1 otherwise.
+
+    Placed BELOW the status tier, unlike #8697's key: a namesake here is a real
+    club, and its live game is a real answer — the card only decides the order
+    among games in the same state. A key, never a filter. None when disarmed.
+    """
+    if not lead_keys:
+        return None
+    return case((Sport.key.in_(sorted(lead_keys)), 0), else_=1)
+
+
 # Award-narrowing scope tokens. A market whose NAME carries one of these but the
 # QUERY does not is a sub-award (e.g. "Eastern Conference Finals MVP" vs the bare
 # season "MVP Winner"). Word-boundary matched so "final" inside another word can't
@@ -7260,6 +7322,10 @@ async def search_events(
     _teamless_sport_key = _event_teamless_sport_order_key(
         _team_evidence_sport_categories(_early_team_rows, _SEARCH_TEAM_WINDOW)
     )
+    # #8738: the games list follows the TEAMS card's leader (see the key).
+    _team_card_lead_key = _team_card_lead_order_key(
+        _team_card_lead_sport_keys(_early_team_rows, _SEARCH_TEAM_WINDOW)
+    )
     _mark("team_evidence")
 
     # Build base query - search both home and away team names
@@ -7319,6 +7385,8 @@ async def search_events(
         # team's games. Absent when disarmed, like `_day_boost`.
         *( (_teamless_sport_key,) if _teamless_sport_key is not None else () ),
         status_order,
+        # #8738: within a state, the club the TEAMS card leads with first.
+        *( (_team_card_lead_key,) if _team_card_lead_key is not None else () ),
         tag_boost,
         search_rank.desc(),
         # For live/scheduled, sort ascending; for completed, we want descending

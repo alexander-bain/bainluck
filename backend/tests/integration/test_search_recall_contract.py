@@ -2466,6 +2466,88 @@ async def test_a_query_that_resolves_no_team_keeps_kickoff_order(
     assert games == ["Exeter Chiefs v Gloucester", "Bath v Exeter Chiefs"], games
 
 
+# ---------------------------------------------------------------------------
+# #8738 — the games list follows the TEAMS card's leader among real namesakes
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+async def search_with_a_namesake_hockey_club(seeded_db, search):
+    """`?q=lakers` on production 2026-09-25, trimmed to one of each class.
+
+        Los Angeles Lakers          NBA team — the card leads with it (marquee)
+        Växjö Lakers                SHL team — a REAL club, so #8697 cannot sink it
+        Växjö Lakers v HV71         SHL, TOMORROW — led the games list
+        Boston Celtics v LA Lakers  NBA, in 2 days (the base seed's event)
+        Frölunda HC v Växjö Lakers  SHL, in 3 days
+    """
+    from sqlalchemy import select
+
+    from app.models.models import Event, Sport, Team
+
+    _engine, maker = seeded_db
+    now = datetime.now(timezone.utc)
+    async with maker() as session:
+        nba = (
+            await session.execute(select(Sport).where(Sport.key == "basketball_nba"))
+        ).scalar_one()
+        shl = Sport(key="icehockey_sweden_hockey_league", name="SHL")
+        session.add(shl)
+        await session.flush()
+        session.add_all([
+            Team(sport_id=nba.id, name="Los Angeles Lakers", abbreviation="LAL"),
+            Team(sport_id=shl.id, name="Växjö Lakers", abbreviation="VLH"),
+        ])
+        for home, away, delta, status in (
+            ("Växjö Lakers", "HV71", timedelta(days=1), "scheduled"),
+            ("Frölunda HC", "Växjö Lakers", timedelta(days=3), "scheduled"),
+        ):
+            session.add(
+                Event(
+                    sport_id=shl.id,
+                    home_team_name=home,
+                    away_team_name=away,
+                    commence_time=now + delta,
+                    status=status,
+                )
+            )
+        await session.commit()
+    return search
+
+
+async def test_the_team_cards_leader_leads_a_real_namesakes_games(
+    search_with_a_namesake_hockey_club,
+):
+    payload = await search_with_a_namesake_hockey_club("lakers")
+    assert [t.get("name") for t in payload.get("teams") or []][0] == "Los Angeles Lakers"
+    games = _game_pairs(payload)
+    # Within a state the leader's game is first; the namesake's games are sunk,
+    # never dropped, and keep kickoff order among themselves.
+    assert games == [
+        "Boston Celtics v Los Angeles Lakers",
+        "Växjö Lakers v HV71",
+        "Frölunda HC v Växjö Lakers",
+    ], games
+
+
+async def test_without_the_lead_key_the_namesake_leads_again(
+    search_with_a_namesake_hockey_club, monkeypatch,
+):
+    """Strawman: remove the key and tomorrow's SHL game is ahead of the Lakers
+    again — the fixture reproduces the defect, so the test above testifies."""
+    from app.routes import events as events_module
+
+    monkeypatch.setattr(events_module, "_team_card_lead_order_key", lambda *_: None)
+    games = _game_pairs(await search_with_a_namesake_hockey_club("lakers"))
+    assert games[0] == "Växjö Lakers v HV71", games
+
+
+async def test_a_query_naming_the_namesake_follows_it(search_with_a_namesake_hockey_club):
+    """`växjö lakers`: the SHL club outranks on text — its games lead."""
+    games = _game_pairs(await search_with_a_namesake_hockey_club("växjö lakers"))
+    assert "Boston Celtics v Los Angeles Lakers" not in games[:2], games
+
+
 @pytest.fixture
 async def typeahead_with_a_rostered_player(search_with_a_rostered_player, typeahead):
     """`typeahead` over the same seed as `search_with_a_rostered_player`.
