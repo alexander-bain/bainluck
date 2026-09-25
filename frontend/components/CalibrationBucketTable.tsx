@@ -112,9 +112,13 @@ function displayedErrorPp(b: Pick<AggBucket, "avgProb" | "actual">): number {
 export default function CalibrationBucketTable({ buckets }: { buckets: AggBucket[] }) {
   return (
     <div className="overflow-x-auto scroll-shadow-x">
-      <table className="w-full text-sm" data-testid="calibration-bucket-table">
+      <table className="w-full text-[13px] sm:text-sm" data-testid="calibration-bucket-table">
         <thead>
-          <tr className="text-left text-xs text-text-muted uppercase tracking-normal sm:tracking-wide">
+          {/* #8581. Mixed case below `sm`: at 375px "AVG PREDICTED" wrapped to
+              a 70px "PREDICTED" line over numbers that need 43, which pushed
+              Error 7px past the card ("-0.3p"). Uppercase from `sm` up; 13px body
+              type below `sm` matches the page's other two stats tables. */}
+          <tr className="text-left text-xs text-text-muted normal-case sm:uppercase tracking-normal sm:tracking-wide">
             <th className="pb-2 pr-1 sm:pr-4">Bucket</th>
             <th className="pb-2 pr-1 sm:pr-4 text-right">N</th>
             <th className="pb-2 pr-1 sm:pr-4 text-right">Avg Predicted</th>
