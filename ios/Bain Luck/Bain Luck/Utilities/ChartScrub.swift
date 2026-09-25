@@ -75,7 +75,27 @@ struct ChartScrubState: Equatable, Sendable {
     ///
     /// Undecided counts as tracking (see the type's doc comment): a finger that
     /// has not moved is a press-and-hold inspect, not a scroll.
-    var tracks: Bool { !axisLatched || isHorizontal }
+    var tracks: Bool { held || !axisLatched || isHorizontal }
+
+    /// #925 — true once a finger has rested on the chart long enough to be a
+    /// deliberate press (`ChartScrubSurface.holdToScrub`). A held scrub
+    /// belongs to the chart for the rest of the gesture: the thumb may then
+    /// wander in ANY direction, because nothing that started still is a scroll.
+    /// Reset in `end`.
+    private(set) var held = false
+
+    /// #925 — the game chart's stricter reading of `tracks`: only a HELD press
+    /// or a drag that has latched HORIZONTAL is a scrub. Undecided does not
+    /// count here, unlike `tracks`, because the game chart's readout is a
+    /// whole row of text above the plot — it would flicker to some other
+    /// minute for the first 12pt of every scroll that starts on the chart.
+    /// While this is true the enclosing scroll view is held still.
+    var scrubs: Bool { held || (axisLatched && isHorizontal) }
+
+    /// The press has been held long enough to own the touch (#925).
+    mutating func hold() {
+        held = true
+    }
 
     /// Feed one pan update. Returns `tracks` so the caller reads the decision
     /// from the SAME evaluation that made it and cannot drift from it.
@@ -96,5 +116,6 @@ struct ChartScrubState: Equatable, Sendable {
     mutating func end() {
         axisLatched = false
         isHorizontal = false
+        held = false
     }
 }

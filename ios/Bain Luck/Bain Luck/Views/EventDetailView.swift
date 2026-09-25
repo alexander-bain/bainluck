@@ -298,19 +298,23 @@ struct EventDetailView: View {
                                      // #920 — the pushed blends the hero is
                                      // already showing, so the chart's right
                                      // edge reaches the same moment it does.
-                                     liveFrames: vm.liveBlend)
-                        if (isLive || isFinished) && vm.history?.scoringPlays?.isEmpty == false {
-                            GamePlayCardView(
-                                selectedPoint: selectedPlayPoint,
-                                homeTeam: event.homeTeam,
-                                awayTeam: event.awayTeam,
-                                homeTeamColor: teamColors(event).home,
-                                awayTeamColor: teamColors(event).away,
-                                homeTeamLogo: event.homeTeamData?.logoSmall,
-                                awayTeamLogo: event.awayTeamData?.logoSmall,
-                                lastPoint: lastPlayPoint(event: event)
-                            )
-                        }
+                                     liveFrames: vm.liveBlend,
+                                     // #925 — the scrub readout rides INSIDE the
+                                     // chart, above its plot, so the finger on
+                                     // the chart and the text it rewrites are on
+                                     // screen together (it was below the chart,
+                                     // under the tab bar, in Alex's recording).
+                                     readout: (isLive || isFinished) && vm.history?.scoringPlays?.isEmpty == false
+                                        ? GamePlayCardView(
+                                            selectedPoint: selectedPlayPoint,
+                                            homeTeam: event.homeTeam,
+                                            awayTeam: event.awayTeam,
+                                            homeTeamColor: teamColors(event).home,
+                                            awayTeamColor: teamColors(event).away,
+                                            homeTeamLogo: event.homeTeamData?.logoSmall,
+                                            awayTeamLogo: event.awayTeamData?.logoSmall,
+                                            lastPoint: lastPlayPoint(event: event))
+                                        : nil)
                         // Bookmaker table (collapsible Sources panel)
                         sourcesToggle(event)
 

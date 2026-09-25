@@ -50,6 +50,30 @@ struct ChartDataPoint: Identifiable {
     /// line whose trailing interval is supported (`observationSegments`) and is
     /// otherwise not a reading — never a lone mark, never cadence.
     var isLiveEdge: Bool = false
+    /// #7878 — what the served evidence contract says this point proves, or nil
+    /// when the response carried no contract this client reads (then the gap
+    /// rule is the pre-contract cadence heuristic). Set only on
+    /// `win_prob_history` points: the sportsbook consensus and the blend are not
+    /// classified by the producer.
+    var servedEvidence: ServedEvidence?
+}
+
+/// One point as the served evidence contract classifies it (#7878). Mirrors the
+/// web's `contractObservation` (`frontend/lib/chartObservationSupport.ts`).
+///
+/// Every drawn point — a plain reading, a venue candle, a terminal row, the
+/// result — is an endpoint of the intervals either side of it, and covers its
+/// own instant and nothing more. The one thing that can say more is an
+/// `observed` reading's `covered_through`, so that is all this carries.
+struct ServedEvidence: Equatable {
+    /// G, the contract's `resolution_s`: an interval wider than this that no
+    /// reading covers is UNKNOWN and the line breaks there.
+    let resolution: TimeInterval
+    /// `observed.covered_through`, and only ever that: never set on a candle,
+    /// backfill, terminal row, result or unknown kind, never from `valid_until`,
+    /// and always later than the point's own time (`servedEvidence(for:resolution:)`
+    /// refuses anything else).
+    var coveredThrough: Date?
 }
 
 // MARK: - Period Marker
@@ -302,6 +326,15 @@ struct OddsChartView: View {
     /// `init`, because `init` runs once and this keeps arriving. `historyEdge`
     /// watches it; `OddsChartViewModel.adopt` decides.
     var preloadedHistory: EventHistoryResponse?
+    /// #925 — the scrubbed moment's readout (clock, score, point time, "as
+    /// of", probabilities), drawn between the chart's header and its plot.
+    ///
+    /// It sat BELOW the chart until Alex's build-20 recording: with the chart
+    /// in view, the row a scrub rewrites was under the tab bar, so the finger
+    /// changed text nobody could see. Above the plot it is on screen whenever
+    /// the top of the chart is — which is whenever there is a chart to press.
+    /// The page builds it (it owns the resting last-point), the chart places it.
+    var readout: GamePlayCardView?
     /// #8481 — the page's one All / Since Start choice, which this chart's
     /// picker writes and the Score Differential chart below also reads. It was a
     /// `@Published` on this chart's own view model, which is why All could widen
@@ -311,6 +344,8 @@ struct OddsChartView: View {
     @Binding var selectedPlayPoint: GamePlayPoint?
     @StateObject private var vm: OddsChartViewModel
     @State private var selectedDate: Date?
+    /// #925 — which touches on the plot are a scrub. See `ChartScrubState.scrubs`.
+    @State private var scrub = ChartScrubState()
     @State private var isFullscreen = false
     /// The drawn plot area's width, reported by each chart's own overlay. The
     /// x-axis needs it to know whether its labels clear each other (#3269); 0
@@ -323,6 +358,8 @@ struct OddsChartView: View {
     /// axis only; `0` leaves it on its own width.
     var pageAxisPlotWidth: CGFloat = 0
     @Environment(\.horizontalSizeClass) private var sizeClass
+    /// #925 — false only under a raster (see `chartScrubSurfaces`).
+    @Environment(\.chartScrubSurfaces) private var scrubSurfaces
 
     private var chartHeight: CGFloat {
         guard sizeClass == .regular else { return 260 }
@@ -394,7 +431,8 @@ struct OddsChartView: View {
          selectedRange: Binding<OddsTimeRange> = .constant(.sinceStart),
          selectedPlayPoint: Binding<GamePlayPoint?> = .constant(nil),
          preloadedHistory: EventHistoryResponse? = nil,
-         liveFrames: [LiveBlendPoint] = []) {
+         liveFrames: [LiveBlendPoint] = [],
+         readout: GamePlayCardView? = nil) {
         self.eventId = eventId
         self.teamColors = teamColors
         self.commenceTime = commenceTime
@@ -412,6 +450,7 @@ struct OddsChartView: View {
         self.pageAxisPlotWidth = pageAxisPlotWidth
         self.liveFrames = liveFrames
         self.preloadedHistory = preloadedHistory
+        self.readout = readout
         _selectedRange = selectedRange
         _selectedPlayPoint = selectedPlayPoint
         _vm = StateObject(wrappedValue: OddsChartViewModel(eventId: eventId, preloaded: preloadedHistory))
@@ -633,6 +672,7 @@ struct OddsChartView: View {
                         .frame(maxWidth: .infinity)
                         .frame(height: chartHeight)
                 } else {
+                    if let readout { readout }
                     // Chart with vertical team labels alongside Y-axis
                     HStack(spacing: 0) {
                         // Vertical team labels on left (#2903 — the run is stated so
@@ -759,6 +799,9 @@ struct OddsChartView: View {
                                     Spacer()
                                 }
                             }
+                            // #925 — fullscreen covers the page, and the page
+                            // was the only place a scrub could be read.
+                            if let readout { readout }
                             HStack(spacing: 0) {
                                 // #2903 — fullscreen has no fixed chart height, so the
                                 // run is measured rather than assumed.
@@ -1447,6 +1490,42 @@ struct OddsChartView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 4))
                         .position(x: plotFrame.minX + placement.centerX, y: 10)
                 }
+                // #925 — the scrub. `chartXSelection` lost the touch to the
+                // page's scroll the moment a thumb drifted vertically (Alex's
+                // build-20 recording, 14781697). The futures chart solved the
+                // same contention with a UIKit pan that shares the touch
+                // (#6705, `ChartScrubSurface`); this chart adds the two things
+                // a whole-row readout needs on top: a HELD press owns the touch
+                // in any direction, and while a scrub owns it the page holds
+                // still under the thumb.
+                #if os(iOS)
+                if scrubSurfaces {
+                ChartScrubSurface(
+                    holdToScrub: ChartScrubSurface.gameChartHold,
+                    onChange: { location, translation in
+                        scrub.change(width: translation.width, height: translation.height)
+                        guard scrub.scrubs else {
+                            // Undecided, or latched vertical: the reader may
+                            // be scrolling. Nothing is selected, so the
+                            // readout keeps its resting moment.
+                            selectedDate = nil
+                            return
+                        }
+                        selectedDate = Self.scrubbedDate(atX: location.x, plotFrame: plotFrame, proxy: proxy)
+                    },
+                    onHold: { location in
+                        scrub.hold()
+                        selectedDate = Self.scrubbedDate(atX: location.x, plotFrame: plotFrame, proxy: proxy)
+                    },
+                    holdsTheScrollStill: { scrub.scrubs },
+                    onEnd: {
+                        scrub.end()
+                        selectedDate = nil
+                    }
+                )
+                .frame(width: geo.size.width, height: geo.size.height)
+                }
+                #endif
             }
         }
         .chartYAxis {
@@ -1471,7 +1550,24 @@ struct OddsChartView: View {
         .onPreferenceChange(PlotWidthPreferenceKey.self) { width in
             plotWidth.wrappedValue = width
         }
+        #if os(macOS)
+        // A trackpad scroll never contended for the touch (see
+        // `ChartScrubSurface`), so the Mac keeps the built-in selection.
         .chartXSelection(value: $selectedDate)
+        #endif
+    }
+
+    /// #925 — the date under a finger at chart-space `x`, clamped to the plot
+    /// so a thumb that slides past either end reads the first or last moment
+    /// rather than dropping the selection.
+    static func scrubbedDate(atX x: CGFloat, plotFrame: CGRect, proxy: ChartProxy) -> Date? {
+        let plotX = Self.clampedPlotX(x, plotFrame: plotFrame)
+        return proxy.value(atX: plotX, as: Date.self)
+    }
+
+    /// Chart-space `x` → plot-space `x`, inside `0...plotFrame.width`.
+    static func clampedPlotX(_ x: CGFloat, plotFrame: CGRect) -> CGFloat {
+        min(max(x - plotFrame.minX, 0), max(plotFrame.width, 0))
     }
 
     // MARK: - Moment Caption
@@ -1587,6 +1683,10 @@ struct OddsChartView: View {
             return points
         }
 
+        // #7878 — a server that classifies its points says so once per response.
+        // Nil (no contract, unknown version) keeps the pre-contract gap rule.
+        let contractResolution = history.evidenceContract?.readableResolution
+
         // Other win-probability sources (ESPN, Kalshi, Polymarket, model, …).
         // Retain every backend-valid observation: the consumer cannot tell an
         // upstream placeholder from a real swing using two probabilities alone, and
@@ -1597,6 +1697,10 @@ struct OddsChartView: View {
                       let prob = wp.homeProbability else { continue }
                 var point = ChartDataPoint(date: date, probability: prob, source: sourceKey)
                 point.isLiveEdge = wp.liveEdge == true
+                if let resolution = contractResolution {
+                    point.isLiveEdge = point.isLiveEdge || wp.evidence?.kind == "live_edge"
+                    point.servedEvidence = servedEvidence(for: wp, resolution: resolution)
+                }
                 points.append(point)
             }
         }
@@ -1829,6 +1933,11 @@ struct OddsChartView: View {
     /// supported trailing interval ends the last run at it, as today; an
     /// unsupported one ends the line at the last real observation, with nothing
     /// drawn after it.
+    ///
+    /// **Under the served evidence contract (#7878.v1) the heuristic is not
+    /// consulted.** When the points carry `servedEvidence` the series is judged
+    /// by `contractSegments` instead — what each point says it is, at the served
+    /// resolution G.
     static func observationSegments(
         _ points: [ChartDataPoint],
         gameStart: Date?,
@@ -1838,6 +1947,10 @@ struct OddsChartView: View {
         let ordered = points.filter { !$0.isLiveEdge }.sorted { $0.date < $1.date }
         guard !ordered.isEmpty else { return [] }
         let liveEdge = points.filter(\.isLiveEdge).max { $0.date < $1.date }
+
+        if let resolution = ordered.lazy.compactMap(\.servedEvidence).first?.resolution {
+            return contractSegments(ordered, liveEdge: liveEdge, gameStart: gameStart, resolution: resolution)
+        }
 
         var segments: [[ChartDataPoint]] = [ordered]
         var median: TimeInterval?
@@ -1882,6 +1995,80 @@ struct OddsChartView: View {
             if !unsupported {
                 segments[segments.count - 1].append(liveEdge)
             }
+        }
+        return segments
+    }
+
+    /// The contract's reading of one served point (#7878.v1), mirroring the web's
+    /// `contractObservation`. `valid_until` is never read.
+    ///
+    /// - no `evidence` key: a plain reading, proving its own instant;
+    /// - `observed`: a reading that also proves coverage through
+    ///   `covered_through` — a malformed or backwards span proves nothing beyond
+    ///   the reading itself;
+    /// - `candle` · `price_history` · `terminal_row` · `final` · anything this
+    ///   client does not recognise: drawn where it falls, proves nothing (fails
+    ///   closed — a venue aggregate and the result are real values, not readings).
+    static func servedEvidence(for wp: WinProbHistoryPoint, resolution: TimeInterval) -> ServedEvidence {
+        var served = ServedEvidence(resolution: resolution)
+        guard let evidence = wp.evidence, evidence.kind == "observed" else { return served }
+        if let through = evidence.coveredThrough?.asDate,
+           let at = wp.timestamp.asDate, through > at {
+            served.coveredThrough = through
+        }
+        return served
+    }
+
+    /// `observationSegments` under the served evidence contract (Codex card-B
+    /// decision, 2026-09-24; web twin `classifyUnderContract`).
+    ///
+    /// Every consecutive pair of DRAWN points is an interval. Its hole starts
+    /// where the earlier point's proven coverage ends — its own instant, or
+    /// `covered_through` for an `observed` reading; a point that proves nothing
+    /// covers nothing past itself — and the line breaks when the hole is wider
+    /// than G. Exactly G stays joined. G is a display resolution, not a
+    /// freshness SLA: a break says "no readings here", never "the feed was down".
+    ///
+    /// Pre-match stays unjudged, for the reason the heuristic gives (the
+    /// pre-match writer stores no row while a quote sits still, so a G-sized
+    /// rule there would shatter every healthy pre-match line). What changes is
+    /// that an interval straddling the start is judged FROM the start: the
+    /// stretch after kick-off is in-game however it began. A nil `gameStart`
+    /// judges nothing.
+    ///
+    /// The live edge stays a delivery time: it ends the last run when the
+    /// trailing interval is covered, and is dropped when it is not. There is no
+    /// domain-end trailing test here (the web has one) because Swift Charts draws
+    /// nothing past a series' last point — the line already ends where the
+    /// readings do.
+    private static func contractSegments(
+        _ ordered: [ChartDataPoint],
+        liveEdge: ChartDataPoint?,
+        gameStart: Date?,
+        resolution: TimeInterval
+    ) -> [[ChartDataPoint]] {
+        func unknown(after from: ChartDataPoint, until to: Date) -> Bool {
+            guard let gameStart else { return false }
+            let coveredUntil = from.servedEvidence?.coveredThrough ?? from.date
+            let holeStart = max(coveredUntil, gameStart)
+            return to > holeStart && to.timeIntervalSince(holeStart) > resolution
+        }
+
+        var segments: [[ChartDataPoint]] = []
+        var run: [ChartDataPoint] = [ordered[0]]
+        for (previous, current) in zip(ordered, ordered.dropFirst()) {
+            if unknown(after: previous, until: current.date) {
+                segments.append(run)
+                run = [current]
+            } else {
+                run.append(current)
+            }
+        }
+        segments.append(run)
+
+        if let liveEdge, let last = ordered.last, liveEdge.date > last.date,
+           !unknown(after: last, until: liveEdge.date) {
+            segments[segments.count - 1].append(liveEdge)
         }
         return segments
     }
@@ -2103,19 +2290,50 @@ struct OddsChartView: View {
 
     // MARK: - Game State Enrichment
 
+    /// One observation of game state, from either series that observes it.
+    /// `rank` breaks a timestamp tie: a `score_history` row (0) is folded
+    /// before an ESPN row (1), so a score sighting replaces an ESPN score only
+    /// when it is strictly newer — the web's `foldScoreObservations` rule.
+    private struct ObservedStateRow {
+        let date: Date
+        let rank: Int
+        let homeScore: Int?
+        let awayScore: Int?
+        let period: String?
+        let clock: String?
+    }
+
     /// Enrich chart data points with game state (score, period, clock, scoring play)
-    /// by matching against ESPN history and scoring plays, then forward-filling.
+    /// by matching against ESPN history, the served score history and scoring
+    /// plays, then forward-filling.
     /// Static and internal (was a private instance method) so #925's dating of
     /// carried state can be pinned on the exact shape it runs on.
     static func enrichWithGameState(_ points: [ChartDataPoint], history: EventHistoryResponse) -> [ChartDataPoint] {
-        // Build time-indexed lookups from ESPN history
-        var espnByTime: [(date: Date, point: ESPNHistoryPoint)] = []
+        // Build one time-indexed lookup of every state observation.
+        //
+        // #8565 — `score_history` is a score observation like an ESPN row,
+        // dated by its own timestamp. Since #8501 the server stamps each scoring
+        // play at the FIRST served sighting of its post-play score across BOTH
+        // series; reading ESPN alone left a play stamped from `score_history`
+        // on a point still carrying the score from before it (15315984: the
+        // 17–34 touchdown at 03:28:17 beside 17–27, ESPN uncaptured between
+        // 03:27:17 and 03:31:17). Same contract as the web (`lib/chartGameState.ts`).
+        var stateRows: [ObservedStateRow] = []
         for ep in history.espnHistory ?? [] {
             if let date = ep.timestamp.asDate {
-                espnByTime.append((date, ep))
+                stateRows.append(ObservedStateRow(
+                    date: date, rank: 1, homeScore: ep.homeScore, awayScore: ep.awayScore,
+                    period: ep.period, clock: ep.gameClock))
             }
         }
-        espnByTime.sort { $0.date < $1.date }
+        for sh in history.scoreHistory ?? [] {
+            if let date = sh.timestamp.asDate {
+                stateRows.append(ObservedStateRow(
+                    date: date, rank: 0, homeScore: sh.homeScore, awayScore: sh.awayScore,
+                    period: nil, clock: nil))
+            }
+        }
+        stateRows.sort { ($0.date, $0.rank) < ($1.date, $1.rank) }
 
         // Build scoring plays lookup
         var playsByTime: [(date: Date, play: ScoringPlay)] = []
@@ -2141,9 +2359,11 @@ struct OddsChartView: View {
         var lastPeriodObservedAt: Date?
         var lastClockObservedAt: Date?
         var lastScoreObservedAt: Date?
-        /// Cursor into `espnByTime`: every row strictly before the current
+        /// Cursor into `stateRows`: every row strictly before the current
         /// point's cutoff has already been folded into the accumulators above.
-        var espnIdx = 0
+        var rowIdx = 0
+        /// #8565 — indices into `playsByTime` some point has already seen.
+        var attachedPlays = Set<Int>()
 
         for i in sorted.indices {
             let pointDate = sorted[i].date
@@ -2161,7 +2381,7 @@ struct OddsChartView: View {
             // EVERY row this point may read, not just the newest one. The three
             // `last*` values above are ACCUMULATORS — each field keeps the last
             // row that actually carried it — so every row has to be walked for
-            // them to accumulate. Sampling only `espnByTime.last(where:)` reads
+            // them to accumulate. Sampling only `stateRows.last(where:)` reads
             // one row per point and silently drops every row that falls BETWEEN
             // two points, which is most of them: prices are sparser than ESPN
             // rows, and the rows that go missing are exactly the ones this ship
@@ -2170,22 +2390,22 @@ struct OddsChartView: View {
             // reader got NO half-inning at all rather than a dated one).
             // Points and rows are both sorted ascending and `cutoff` rises with
             // them, so one cursor over the rows visits each exactly once.
-            while espnIdx < espnByTime.count, espnByTime[espnIdx].date < cutoff {
-                let row = espnByTime[espnIdx]
-                if let hs = row.point.homeScore {
-                    lastScore = (hs, row.point.awayScore ?? lastScore?.away ?? 0)
+            while rowIdx < stateRows.count, stateRows[rowIdx].date < cutoff {
+                let row = stateRows[rowIdx]
+                if let hs = row.homeScore {
+                    lastScore = (hs, row.awayScore ?? lastScore?.away ?? 0)
                     // A row that REPEATS the score is still an observation of it.
                     lastScoreObservedAt = row.date
                 }
-                if let p = row.point.period, !p.isEmpty {
+                if let p = row.period, !p.isEmpty {
                     lastPeriod = p
                     lastPeriodObservedAt = row.date
                 }
-                if let c = row.point.gameClock, !c.isEmpty {
+                if let c = row.clock, !c.isEmpty {
                     lastClock = c
                     lastClockObservedAt = row.date
                 }
-                espnIdx += 1
+                rowIdx += 1
             }
 
             // Forward-fill game state, each field dated by the row that saw IT.
@@ -2200,10 +2420,29 @@ struct OddsChartView: View {
             sorted[i].clockApprox = Self.carriedStateIsApproximate(pointDate: pointDate, observedAt: sorted[i].clockObservedAt)
             sorted[i].scoreApprox = Self.carriedStateIsApproximate(pointDate: pointDate, observedAt: sorted[i].scoreObservedAt)
 
-            // Check for scoring play at this timestamp (within 60s)
-            sorted[i].scoringPlay = playsByTime.first(where: {
-                abs($0.date.timeIntervalSince(pointDate)) < 60
-            })?.play
+            // #8565 — a play attaches only to a point that has already SEEN it:
+            // the play's stamp is inside the point's cutoff (its own minute or
+            // earlier), so the score folded above includes the play. The old
+            // nearest-within-60s rule put the play on the minute before it too,
+            // beside the score it had just changed. Latest such play wins.
+            if let j = playsByTime.lastIndex(where: {
+                $0.date < cutoff && pointDate.timeIntervalSince($0.date) < momentMatchWindowSeconds
+            }) {
+                sorted[i].scoringPlay = playsByTime[j].play
+                attachedPlays.insert(j)
+            }
+        }
+
+        // A play no point has seen yet — the last thing the series saw — falls
+        // back to the points just before its minute, so the marker is not lost
+        // (the web's `attachScoringPlays` fallback, same window).
+        for (j, entry) in playsByTime.enumerated() where !attachedPlays.contains(j) {
+            let playMinute = observationCutoff(for: entry.date).addingTimeInterval(-60)
+            for i in sorted.indices where sorted[i].scoringPlay == nil
+                && sorted[i].date < playMinute
+                && entry.date.timeIntervalSince(sorted[i].date) < momentMatchWindowSeconds {
+                sorted[i].scoringPlay = entry.play
+            }
         }
 
         return sorted

@@ -44,6 +44,24 @@ import SwiftUI
 /// touch in the first place. Guarded rather than ported, because a macOS
 /// `NSViewRepresentable` written blind is a thing nobody on this lane can
 /// photograph.
+/// #925 — whether a chart installs its UIKit touch surface. True everywhere a
+/// finger can reach; false only for rasters. `ImageRenderer` cannot draw a
+/// UIKit-backed view and paints an opaque placeholder in its place — measured:
+/// it covered the game chart's time labels in
+/// `OneControlOneWindowReadableClock8481Tests` (0 labels found, 47,652 coloured
+/// pixels where the plot should be empty). A picture has no finger, so the
+/// measurement helper turns this off; nothing in the app does.
+private struct ChartScrubSurfacesKey: EnvironmentKey {
+    static let defaultValue = true
+}
+
+extension EnvironmentValues {
+    var chartScrubSurfaces: Bool {
+        get { self[ChartScrubSurfacesKey.self] }
+        set { self[ChartScrubSurfacesKey.self] = newValue }
+    }
+}
+
 #if os(iOS)
 struct ChartScrubSurface: UIViewRepresentable {
     /// Whether this surface's pan lets the enclosing scroll view recognize the
@@ -55,9 +73,30 @@ struct ChartScrubSurface: UIViewRepresentable {
     /// method — see the delegate below for what that cost before it existed.
     static let sharesTheTouchWithTheScrollView = true
 
+    /// #925 — seconds a STILL finger must rest before `onHold` fires. `nil`
+    /// (the futures chart) installs no hold recognizer at all.
+    ///
+    /// Alex's build-20 recording on the game chart: a press-and-drag drew a
+    /// crosshair for a moment and then the page moved under his thumb. A thumb
+    /// never drags level, and any vertical drift let the page's scroll take the
+    /// touch. A press that has rested this long cannot be the start of a
+    /// scroll — a scroll moves before it is this old — so from here on the
+    /// finger may wander in any direction and stay on the chart.
+    static let gameChartHold: TimeInterval = 0.25
+
+    var holdToScrub: TimeInterval? = nil
     /// Called for every pan update with the touch location in this view's own
     /// coordinate space, and the translation since the gesture began.
     let onChange: (_ location: CGPoint, _ translation: CGSize) -> Void
+    /// Called when a held press begins and for every move after it (#925),
+    /// with the touch location in this view's own coordinate space.
+    var onHold: ((_ location: CGPoint) -> Void)? = nil
+    /// #925 — asked after every callback: while it answers true the nearest
+    /// enclosing scroll view is held still, and it is released the moment it
+    /// answers false or the gesture ends. The futures chart never asks (it
+    /// defaults false), which keeps #6705's simultaneous scroll exactly as it
+    /// was measured.
+    var holdsTheScrollStill: () -> Bool = { false }
     /// Called when the gesture ends, cancels, or fails.
     let onEnd: () -> Void
 
@@ -72,6 +111,19 @@ struct ChartScrubSurface: UIViewRepresentable {
         pan.minimumNumberOfTouches = 1
         pan.maximumNumberOfTouches = 1
         view.addGestureRecognizer(pan)
+        if let holdToScrub {
+            context.coordinator.holdsOffTheContentBackSwipe = true
+            let hold = UILongPressGestureRecognizer(
+                target: context.coordinator,
+                action: #selector(Coordinator.handleHold(_:)))
+            hold.delegate = context.coordinator
+            hold.minimumPressDuration = holdToScrub
+            // UIKit's default 10pt: a finger that travels further than this
+            // before the hold matures is a drag, and the pan above decides its
+            // axis. After it matures the recognizer tracks any distance.
+            hold.allowableMovement = 10
+            view.addGestureRecognizer(hold)
+        }
         return view
     }
 
@@ -80,21 +132,115 @@ struct ChartScrubSurface: UIViewRepresentable {
         // coordinator is not, so it has to be re-pointed at the live ones or it
         // keeps calling into the first render's captured state.
         context.coordinator.onChange = onChange
+        context.coordinator.onHold = onHold
+        context.coordinator.holdsTheScrollStill = holdsTheScrollStill
         context.coordinator.onEnd = onEnd
     }
 
-    func makeCoordinator() -> Coordinator { Coordinator(onChange: onChange, onEnd: onEnd) }
+    static func dismantleUIView(_ uiView: UIView, coordinator: Coordinator) {
+        // A page popped mid-scrub must not leave its scroll view frozen.
+        coordinator.releaseTheScroll()
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onChange: onChange, onHold: onHold,
+                    holdsTheScrollStill: holdsTheScrollStill, onEnd: onEnd)
+    }
 
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         var onChange: (_ location: CGPoint, _ translation: CGSize) -> Void
+        var onHold: ((_ location: CGPoint) -> Void)?
+        var holdsTheScrollStill: () -> Bool
         var onEnd: () -> Void
+        /// The scroll view this surface is holding still, and what its
+        /// `isScrollEnabled` was before — restored, never assumed `true`.
+        private weak var frozen: UIScrollView?
+        private var frozenWasEnabled = true
 
         init(
             onChange: @escaping (_ location: CGPoint, _ translation: CGSize) -> Void,
+            onHold: ((_ location: CGPoint) -> Void)?,
+            holdsTheScrollStill: @escaping () -> Bool,
             onEnd: @escaping () -> Void
         ) {
             self.onChange = onChange
+            self.onHold = onHold
+            self.holdsTheScrollStill = holdsTheScrollStill
             self.onEnd = onEnd
+        }
+
+        /// Freeze or release the enclosing scroll view to match the view's
+        /// answer. Disabling a scroll view mid-drag cancels its pan where it
+        /// stands; the page does not jump back.
+        func syncTheScroll(from view: UIView) {
+            if holdsTheScrollStill() {
+                guard frozen == nil, let scroll = Self.enclosingScrollView(of: view) else { return }
+                frozen = scroll
+                frozenWasEnabled = scroll.isScrollEnabled
+                scroll.isScrollEnabled = false
+            } else {
+                releaseTheScroll()
+            }
+        }
+
+        func releaseTheScroll() {
+            frozen?.isScrollEnabled = frozenWasEnabled
+            frozen = nil
+        }
+
+        static func enclosingScrollView(of view: UIView) -> UIScrollView? {
+            var next = view.superview
+            while let candidate = next {
+                if let scroll = candidate as? UIScrollView { return scroll }
+                next = candidate.superview
+            }
+            return nil
+        }
+
+        private func endGesture() {
+            releaseTheScroll()
+            onEnd()
+        }
+
+        /// #925 — set for the game chart (it installs the hold). iOS 26 added a
+        /// full-width swipe-back (`interactiveContentPopGestureRecognizer`), and
+        /// a quick rightward scrub on the chart started leaving the page —
+        /// measured on the simulator, before and after this fix's other half.
+        /// A sideways drag that begins on a scrubbable chart is the chart's; the
+        /// screen-EDGE back swipe is a different recognizer and is untouched.
+        var holdsOffTheContentBackSwipe = false
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldBeRequiredToFailBy other: UIGestureRecognizer
+        ) -> Bool {
+            guard holdsOffTheContentBackSwipe, let view = gestureRecognizer.view else { return false }
+            return Self.isContentBackSwipe(other, near: view)
+        }
+
+        static func isContentBackSwipe(_ recognizer: UIGestureRecognizer, near view: UIView) -> Bool {
+            guard #available(iOS 26.0, *) else { return false }
+            var responder: UIResponder? = view
+            while let next = responder {
+                if let nav = next as? UINavigationController {
+                    return recognizer === nav.interactiveContentPopGestureRecognizer
+                }
+                responder = next.next
+            }
+            return false
+        }
+
+        @objc func handleHold(_ hold: UILongPressGestureRecognizer) {
+            guard let view = hold.view else { return }
+            switch hold.state {
+            case .began, .changed:
+                onHold?(hold.location(in: view))
+                syncTheScroll(from: view)
+            case .ended, .cancelled, .failed:
+                endGesture()
+            default:
+                break
+            }
         }
 
         /// **The whole point of this file.** Without this the pan added above
@@ -122,8 +268,9 @@ struct ChartScrubSurface: UIViewRepresentable {
                 onChange(
                     pan.location(in: view),
                     CGSize(width: translation.x, height: translation.y))
+                syncTheScroll(from: view)
             case .ended, .cancelled, .failed:
-                onEnd()
+                endGesture()
             default:
                 break
             }

@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// ESPN-style game play card displayed below the odds chart.
+/// ESPN-style game play card displayed above the odds chart's plot (#925).
 /// Updates as the user scrubs across the chart, showing:
 /// - Score (team-colored)
 /// - Period and clock
@@ -23,134 +23,208 @@ struct GamePlayCardView: View {
 
     var body: some View {
         if let point {
-            VStack(spacing: 0) {
-                Divider()
-                    .padding(.bottom, 8)
-
-                HStack(alignment: .top, spacing: 10) {
-                    // Game-state badge (period + clock) over the wall-clock time
-                    // of the scrubbed point, and — when the state is carried
-                    // from an older row — the time it was actually seen (#925).
-                    if !point.timeDisplay.isEmpty || !point.wallClockDisplay.isEmpty {
-                        VStack(alignment: .leading, spacing: 2) {
-                            if !point.timeDisplay.isEmpty {
-                                Text(point.timeDisplay)
-                                    .font(.caption2)
-                                    .fontWeight(.medium)
-                                    .foregroundStyle(.secondary)
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 3)
-                                    .background(Color.gray.opacity(0.15))
-                                    .clipShape(RoundedRectangle(cornerRadius: 4))
-                            }
-                            if !point.wallClockDisplay.isEmpty {
-                                Text(point.wallClockDisplay)
-                                    .font(.caption2)
-                                    .monospacedDigit()
-                                    .foregroundStyle(.tertiary)
-                                    .padding(.horizontal, 6)
-                            }
-                            if let asOf = point.stateAsOfDisplay {
-                                Text(asOf)
-                                    .font(.caption2)
-                                    .monospacedDigit()
-                                    .foregroundStyle(.tertiary)
-                                    .padding(.horizontal, 6)
-                            }
-                        }
+            // #925 — this card now sits ABOVE the plot (see `OddsChartView.readout`)
+            // and is laid out in two rows so nothing has to share a line it
+            // cannot fit on: the moment (state · score) first, the probabilities
+            // on a full-width line under it. Alex's build-20 recording showed
+            // the old single row squeezing "Cowboys 99% — Commanders 1%" into a
+            // third of the width, where SwiftUI broke each NAME mid-word
+            // ("Cow-/boys", "Comman-/ders"). Every name and number below is one
+            // unbreakable run; when a row cannot fit it re-stacks rather than
+            // hyphenate, and only the last arrangement may shrink the type.
+            VStack(alignment: .leading, spacing: 4) {
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .center, spacing: 10) {
+                        stateLine(point)
+                        scoreView(point)
                     }
-
-                    // Score
-                    if point.hasScore {
-                        HStack(spacing: 6) {
-                            HStack(spacing: 3) {
-                                if let url = homeTeamLogo {
-                                    AsyncImage(url: URL(string: url)) { image in
-                                        image.resizable().aspectRatio(contentMode: .fit)
-                                    } placeholder: {
-                                        EmptyView()
-                                    }
-                                    .frame(width: 14, height: 14)
-                                }
-                                Text("\(point.homeScore ?? 0)")
-                                    .font(.caption)
-                                    .fontWeight(.bold)
-                                    .monospacedDigit()
-                                    .foregroundStyle(homeTeamColor)
-                            }
-                            Text("-")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                            HStack(spacing: 3) {
-                                Text("\(point.awayScore ?? 0)")
-                                    .font(.caption)
-                                    .fontWeight(.bold)
-                                    .monospacedDigit()
-                                    .foregroundStyle(awayTeamColor)
-                                if let url = awayTeamLogo {
-                                    AsyncImage(url: URL(string: url)) { image in
-                                        image.resizable().aspectRatio(contentMode: .fit)
-                                    } placeholder: {
-                                        EmptyView()
-                                    }
-                                    .frame(width: 14, height: 14)
-                                }
-                            }
-                        }
+                    VStack(alignment: .leading, spacing: 4) {
+                        stateLine(point)
+                        scoreView(point)
                     }
-
-                    // Play description or probability context
                     VStack(alignment: .leading, spacing: 2) {
-                        if let play = point.scoringPlay {
-                            HStack(spacing: 4) {
-                                Circle()
-                                    .fill(.red)
-                                    .frame(width: 5, height: 5)
-                                if let type = play.type {
-                                    Text(type)
-                                        .font(.caption2)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                            Text(play.description ?? play.shortText ?? "")
-                                .font(.caption2)
-                                .foregroundStyle(.primary)
-                                .lineLimit(2)
-                        } else {
-                            let homeProb = Int((point.homeProb * 100).rounded())
-                            HStack(spacing: 0) {
-                                Text(homeShort)
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                                Text(" \(homeProb)%")
-                                    .font(.caption2)
-                                    .fontWeight(.semibold)
-                                    .foregroundStyle(homeTeamColor)
-                                // #5271 — the away half is drawn only where an
-                                // away price exists. `awayProb` was `1 - home`
-                                // at both of this point's construction sites,
-                                // and on a draw-priced sport that is the away
-                                // side's chances with the draw folded in.
-                                if let away = point.awayProb {
-                                    Text(" — ")
-                                        .font(.caption2)
-                                        .foregroundStyle(.secondary)
-                                    Text(awayShort)
-                                        .font(.caption2)
-                                        .foregroundStyle(.secondary)
-                                    Text(" \(Int((away * 100).rounded()))%")
-                                        .font(.caption2)
-                                        .fontWeight(.semibold)
-                                        .foregroundStyle(awayTeamColor)
-                                }
-                            }
-                        }
+                        stateStack(point)
+                        scoreView(point)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                // Play description or probability context — in a box that is
+                // always TWO lines tall at the current type size (#925). This
+                // row sits above the plot now, so any change in its height moves
+                // the plot under the finger that is scrubbing it: measured at
+                // 375pt, scrubbing onto a field goal (type line + description)
+                // pushed the plot down 14pt from a one-line probability row.
+                ZStack(alignment: .topLeading) {
+                    Text(verbatim: "X\nX")
+                        .font(.caption2)
+                        .hidden()
+                        .accessibilityHidden(true)
+                    detail(point)
                 }
             }
-            .padding(.top, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 4)
         }
+    }
+
+    @ViewBuilder
+    private func detail(_ point: GamePlayPoint) -> some View {
+        if let play = point.scoringPlay {
+            // One wrapping run, type first: two separate lines (type, then a
+            // two-line description) made this row three lines tall.
+            let description = play.description ?? play.shortText ?? ""
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Circle()
+                    .fill(.red)
+                    .frame(width: 5, height: 5)
+                    .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1 }
+                if let type = play.type, !type.isEmpty {
+                    Text("\(Text(type).foregroundStyle(.secondary)) · \(description)")
+                        .font(.caption2)
+                        .foregroundStyle(.primary)
+                        .lineLimit(2)
+                } else {
+                    Text(description)
+                        .font(.caption2)
+                        .foregroundStyle(.primary)
+                        .lineLimit(2)
+                }
+            }
+        } else {
+            let homeProb = Int((point.homeProb * 100).rounded())
+            // #5271 — the away half is drawn only where an away price exists.
+            // `awayProb` was `1 - home` at both of this point's construction
+            // sites, and on a draw-priced sport that is the away side's chances
+            // with the draw folded in.
+            let awayProb: Int? = {
+                if let away = point.awayProb { return Int((away * 100).rounded()) }
+                return nil
+            }()
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 0) {
+                    probRun(homeShort, homeProb, homeTeamColor)
+                    if let awayProb {
+                        Text(" — ")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .fixedSize()
+                        probRun(awayShort, awayProb, awayTeamColor)
+                    }
+                }
+                VStack(alignment: .leading, spacing: 0) {
+                    probRun(homeShort, homeProb, homeTeamColor)
+                    if let awayProb { probRun(awayShort, awayProb, awayTeamColor) }
+                }
+                // Last resort (the largest accessibility sizes on the narrowest
+                // phone): shrink, never hyphenate a name.
+                VStack(alignment: .leading, spacing: 0) {
+                    probRun(homeShort, homeProb, homeTeamColor, shrinks: true)
+                    if let awayProb { probRun(awayShort, awayProb, awayTeamColor, shrinks: true) }
+                }
+            }
+        }
+    }
+
+    /// Game-state badge (period + clock), the wall-clock time of the point,
+    /// and — when the state is carried from an older row — the time it was
+    /// actually seen (#925). One line.
+    @ViewBuilder
+    private func stateLine(_ point: GamePlayPoint) -> some View {
+        HStack(spacing: 6) { stateParts(point) }
+    }
+
+    /// The same three parts, stacked, for when one line cannot hold them.
+    @ViewBuilder
+    private func stateStack(_ point: GamePlayPoint) -> some View {
+        VStack(alignment: .leading, spacing: 2) { stateParts(point) }
+    }
+
+    @ViewBuilder
+    private func stateParts(_ point: GamePlayPoint) -> some View {
+        if !point.timeDisplay.isEmpty {
+            Text(point.timeDisplay)
+                .font(.caption2)
+                .fontWeight(.medium)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .fixedSize()
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(Color.gray.opacity(0.15))
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+        }
+        if !point.wallClockDisplay.isEmpty {
+            Text(point.wallClockDisplay)
+                .font(.caption2)
+                .monospacedDigit()
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
+                .fixedSize()
+        }
+        if let asOf = point.stateAsOfDisplay {
+            Text(asOf)
+                .font(.caption2)
+                .monospacedDigit()
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
+                .fixedSize()
+        }
+    }
+
+    @ViewBuilder
+    private func scoreView(_ point: GamePlayPoint) -> some View {
+        if point.hasScore {
+            HStack(spacing: 6) {
+                HStack(spacing: 3) {
+                    if let url = homeTeamLogo {
+                        AsyncImage(url: URL(string: url)) { image in
+                            image.resizable().aspectRatio(contentMode: .fit)
+                        } placeholder: {
+                            EmptyView()
+                        }
+                        .frame(width: 14, height: 14)
+                    }
+                    Text("\(point.homeScore ?? 0)")
+                        .font(.caption)
+                        .fontWeight(.bold)
+                        .monospacedDigit()
+                        .foregroundStyle(homeTeamColor)
+                }
+                Text("-")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                HStack(spacing: 3) {
+                    Text("\(point.awayScore ?? 0)")
+                        .font(.caption)
+                        .fontWeight(.bold)
+                        .monospacedDigit()
+                        .foregroundStyle(awayTeamColor)
+                    if let url = awayTeamLogo {
+                        AsyncImage(url: URL(string: url)) { image in
+                            image.resizable().aspectRatio(contentMode: .fit)
+                        } placeholder: {
+                            EmptyView()
+                        }
+                        .frame(width: 14, height: 14)
+                    }
+                }
+            }
+            .fixedSize()
+        }
+    }
+
+    /// One side's name and chance as ONE run that cannot break (#925).
+    /// `shrinks` is the last-resort arrangement's permission to scale the type
+    /// down instead of clipping; no arrangement may wrap inside a name.
+    private func probRun(_ name: String, _ pct: Int, _ color: Color, shrinks: Bool = false) -> some View {
+        HStack(spacing: 0) {
+            Text(name).foregroundStyle(.secondary)
+            Text(" \(pct)%").fontWeight(.semibold).foregroundStyle(color)
+        }
+            .font(.caption2)
+            .lineLimit(1)
+            .minimumScaleFactor(shrinks ? 0.5 : 1)
+            .fixedSize(horizontal: !shrinks, vertical: false)
     }
 
     /// #3430 — both competitors of one matchup, so the pair rule decides.

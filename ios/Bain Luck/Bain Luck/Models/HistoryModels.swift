@@ -31,6 +31,12 @@ nonisolated struct EventHistoryResponse: Decodable, Sendable {
     /// "Since Start" there, nor open the page's axis there. Optional: an older
     /// payload has no key, and absent keeps the scheduled start as before.
     let commenceTimeIsKickoff: Bool?
+    /// `{v: "7878.v1", resolution_s: 300}`, served once per response by a server
+    /// that classifies `win_prob_history` points (#7878, producer #8438). Its
+    /// absence means the per-point `evidence` keys do not exist and the chart
+    /// keeps its pre-contract gap rule. Optional and never-throwing: additive,
+    /// and a malformed contract must not blank the chart.
+    let evidenceContract: EvidenceContract?
     let points: Int?
     let bookmakerCount: Int?
     let snapshotCount: Int?
@@ -88,6 +94,76 @@ nonisolated struct WinProbHistoryPoint: Decodable, Sendable {
     /// observation: never a dot, never cadence, never a reading. Absent on
     /// every real row.
     let liveEdge: Bool?
+    /// #7878 — what this point IS, under the response's `evidenceContract`.
+    /// ABSENT on a plain reading (nearly every point). Read only when the
+    /// response carries a contract this client knows; see
+    /// `OddsChartView.servedEvidence(for:resolution:)`.
+    let evidence: WinProbEvidence?
+}
+
+/// The served evidence contract (#7878, `backend/app/utils/winprob_evidence.py`).
+///
+/// `resolution_s` is the display evidence resolution G — an interval between
+/// readings wider than G is UNKNOWN. It is NOT a freshness SLA and not proof of
+/// continuous observation (Codex card-B decision, 2026-09-24).
+nonisolated struct EvidenceContract: Decodable, Sendable {
+    /// The only contract version this client knows how to read.
+    static let knownVersion = "7878.v1"
+
+    let v: String?
+    let resolutionS: Double?
+
+    private enum CodingKeys: String, CodingKey { case v, resolutionS }
+
+    init(v: String?, resolutionS: Double?) {
+        self.v = v
+        self.resolutionS = resolutionS
+    }
+
+    /// NEVER THROWS, for the reason `PeriodMarkerPayload.init(from:)` gives: this
+    /// sits inside `EventHistoryResponse`, so a scalar or mistyped contract must
+    /// degrade to "no contract", never to "no chart".
+    init(from decoder: Decoder) throws {
+        let c = try? decoder.container(keyedBy: CodingKeys.self)
+        v = (try? c?.decodeIfPresent(String.self, forKey: .v)) ?? nil
+        resolutionS = (try? c?.decodeIfPresent(Double.self, forKey: .resolutionS)) ?? nil
+    }
+
+    /// G in seconds, or nil when this is not a contract this client can read —
+    /// an unknown version, or a missing / non-positive / non-finite resolution.
+    /// Nil keeps the pre-contract gap rule, exactly as before the producer shipped.
+    var readableResolution: TimeInterval? {
+        guard v == Self.knownVersion, let resolutionS,
+              resolutionS.isFinite, resolutionS > 0 else { return nil }
+        return resolutionS
+    }
+}
+
+/// One point's served `evidence` object: `{kind, covered_through?}`.
+///
+/// Kinds the producer writes: `observed` (a reading that also proves coverage
+/// through `covered_through`), `candle` / `price_history` (venue backfill),
+/// `live_edge`, `final` (our resolved result), `terminal_row` (a finished
+/// game's last row, rewritten in place). Every field optional and the
+/// initialiser never throws: an unreadable object still says "this point is
+/// not a plain reading", which is exactly how the chart treats it (fails
+/// closed — drawn, proves nothing).
+nonisolated struct WinProbEvidence: Decodable, Sendable {
+    let kind: String?
+    let coveredThrough: String?
+
+    private enum CodingKeys: String, CodingKey { case kind, coveredThrough }
+
+    init(kind: String?, coveredThrough: String? = nil) {
+        self.kind = kind
+        self.coveredThrough = coveredThrough
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try? decoder.container(keyedBy: CodingKeys.self)
+        kind = (try? c?.decodeIfPresent(String.self, forKey: .kind)) ?? nil
+        coveredThrough = (try? c?.decodeIfPresent(String.self, forKey: .coveredThrough)) ?? nil
+    }
 }
 
 /// Game-state fields paired with a win-probability snapshot.

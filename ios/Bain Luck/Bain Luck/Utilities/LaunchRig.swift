@@ -118,6 +118,18 @@ enum LaunchRig {
         defaults.bool(forKey: chartSumKey)
     }
 
+    /// Launch-argument key that starts the Accuracy screen's "include untraded"
+    /// toggle ON. `xcrun simctl launch <sim> <bundle> -launch_include_untraded YES`.
+    ///
+    /// #6211: DataGolf's censored row appears only with the toggle on, and the rig
+    /// cannot tap, so the phone's version of it had never been photographed. Off
+    /// unless asked for, so the toggle a reader sees still starts off.
+    static let includeUntradedKey = "launch_include_untraded"
+
+    static func startsIncludingUntraded(defaults: UserDefaults = .standard) -> Bool {
+        defaults.bool(forKey: includeUntradedKey)
+    }
+
     // MARK: - Photographing what is BELOW the fold
 
     /// Launch-argument key carrying how far down the page to scroll, in POINTS,
