@@ -43,9 +43,10 @@ But that argument is about *writing*, and until #2853 it was being used to keep
 the rail from *looking*.  A rail that only runs when asked catches a December
 anchor on a September row exactly when somebody thinks to ask — which, for
 #2804, was days after a fan could already see the wrong kickoff.  So the
-read-only half now runs nightly (``app.tasks.anchor_schedule_sentinel``), pages
+detecting half now runs nightly (``app.tasks.anchor_schedule_sentinel``), pages
 the window under a budget, and files what it finds; the plan it produces is
-still the reviewer's to apply.
+still the reviewer's to apply, except the one narrow midnight-placeholder class
+#3023 lets the driver apply itself (``apply_only``).
 
 ═══ IT IS REVERSIBLE, AND THAT IS WHAT MAKES IT UNATTENDED-ELIGIBLE ═══
 
