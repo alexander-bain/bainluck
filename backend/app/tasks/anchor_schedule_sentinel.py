@@ -1,4 +1,4 @@
-"""Nightly, read-only driver for the anchor-schedule rail. #2853.
+"""Nightly driver for the anchor-schedule rail. #2853; one write class since #3023.
 
 WHAT THIS IS FOR
 ════════════════
@@ -36,8 +36,9 @@ undo record before the write, receipt co-committed with it — and each applied
 page's restore line is carried in ``applied_undo_commands``. Setting
 :data:`PLACEHOLDER_APPLY_DISABLED_ENV` returns the driver to read-only.
 
-The one thing it writes is a GitHub issue, through the shared sentinel filing
-rail, which is what every other sentinel does and is not a data write.
+Beside that one class, the only thing it writes is a GitHub issue, through the
+shared sentinel filing rail, which is what every other sentinel does and is not
+a data write.
 
 WHAT IT CANNOT SEE — SAY IT IN THE ISSUE, NOT JUST HERE
 ═══════════════════════════════════════════════════════
@@ -435,7 +436,10 @@ async def _sweep(
     max_pages: int,
     resume_from: Optional[str] = None,
 ) -> dict[str, Any]:
-    """Page the rail read-only until the window ends or a bound is hit.
+    """Page the rail until the window ends or a bound is hit.
+
+    Read-only except the #3023 placeholder class, which it writes unless
+    :data:`PLACEHOLDER_APPLY_DISABLED_ENV` is set.
 
     ``reached_window_end`` is this SWEEP's word, not any one page's. The rail is
     explicit that whether a sweep finished is the driver's finding to report
@@ -679,7 +683,9 @@ async def _run_anchor_schedule_sentinel(
     now: Optional[datetime] = None,
     resume: bool = True,
 ) -> dict[str, Any]:
-    """Sweep the anchored near-future window read-only and report what drifted.
+    """Sweep the anchored near-future window and report what drifted.
+
+    Writes only the #3023 midnight-placeholder class; every other move is reported.
 
     RED (file) when the sweep found drift. GREEN (close) **only from a COMPLETE
     window pass that found none, on any night of it** — a truncated,

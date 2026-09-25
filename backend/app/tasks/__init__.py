@@ -887,11 +887,12 @@ HEAVY_TASKS = {
     "app.tasks.horizon_sentinel",
     "app.tasks.settled_concept_sentinel",
     "app.tasks.calibration_sentinel",
-    # #2853 — the anchor-schedule rail's nightly read-only driver. Same family
-    # and the same reason: a daily detect-only sentinel that must not sit on the
-    # congested background queue. It is the most network-bound of the group
-    # (one ESPN `summary?event=` per row, budget-capped at 300s), which is an
-    # argument for the protected slot, not against it.
+    # #2853 — the anchor-schedule rail's nightly driver. Same family and the
+    # same reason: a daily detect sentinel (plus #3023's one narrow placeholder
+    # write) that must not sit on the congested background queue. It is the
+    # most network-bound of the group (one ESPN `summary?event=` per row,
+    # budget-capped at 300s), which is an argument for the protected slot, not
+    # against it.
     "app.tasks.anchor_schedule_sentinel",
     # Queue #258: the Board Sentinel keeps the board itself honest (duplicate
     # fingerprints, stale Inbox, template-P1 share, blocked-in-Inbox, missing
