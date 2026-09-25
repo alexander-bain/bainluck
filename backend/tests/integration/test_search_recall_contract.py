@@ -2668,3 +2668,113 @@ async def test_a_team_the_query_only_lands_on_keeps_market_before_game(
     assert kinds.index("futures") < rows.index(_DODGERS_GAME), (
         f"`angel` promoted the game over the market: {rows!r} (#4615 gate leaked)"
     )
+
+
+# ---------------------------------------------------------------------------
+# #8704 — the collapse refill reads the rows the window's statement already has
+# ---------------------------------------------------------------------------
+
+#: 25 copies of one question rank first (tier 1, top volume), so the 20-row
+#: window dedups to ONE answer row and the collapse refill fires; 45 distinct
+#: questions follow. Tier<=1 therefore holds 70 rows — more than rank 60 — so
+#: the window statement's own spare rows ARE the refill (`skipped` + full page).
+_REFILL_WORDS = (
+    "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima "
+    "mike november oscar papa quebec romeo sierra tango uniform victor whiskey "
+    "xray yankee zulu amber cobalt denim ember fern garnet harbor ivory jade "
+    "kelp lotus maple nectar onyx pearl quartz raven slate topaz"
+).split()
+
+
+@pytest.fixture
+async def search_with_a_collapsing_window(seeded_db):
+    """`/api/events/search?debug_timing=1` over a corpus whose window collapses."""
+    from httpx import ASGITransport, AsyncClient
+
+    from app.dependencies.auth import get_optional_user
+    from app.main import app
+    from app.models.models import FuturesMarket, FuturesOutcome
+    from app.services.database import get_db, get_db_rw
+
+    _engine, maker = seeded_db
+    names = [("Qzunited Cup Winner?", 1, 10_000_000 - i) for i in range(25)]
+    names += [
+        (f"Qzunited {word.title()} Trophy Winner?", 2, 1_000_000 - i)
+        for i, word in enumerate(_REFILL_WORDS[:45])
+    ]
+    async with maker() as session:
+        for i, (name, tier, volume) in enumerate(names):
+            market = FuturesMarket(
+                source="kalshi",
+                external_id=f"KXQZUNITED-8704-{i}",
+                name=name,
+                status="open",
+                market_tier=tier,
+                volume=volume,
+                resolution_date=datetime.now(timezone.utc) + timedelta(days=90),
+            )
+            session.add(market)
+            await session.flush()
+            session.add(
+                FuturesOutcome(
+                    market_id=market.id,
+                    external_id=f"KXQZUNITED-8704-{i}:yes",
+                    name="Yes",
+                    current_probability=_SEED_PRICE,
+                )
+            )
+        await session.commit()
+
+    async def _override():
+        async with maker() as session:
+            yield session
+
+    app.dependency_overrides[get_db] = _override
+    app.dependency_overrides[get_db_rw] = _override
+    app.dependency_overrides[get_optional_user] = lambda: None
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+
+        async def _do(q: str) -> dict:
+            resp = await client.get(
+                "/api/events/search", params={"q": q, "debug_timing": 1}
+            )
+            assert resp.status_code == 200, f"{q!r} -> HTTP {resp.status_code}"
+            return resp.json()
+
+        yield _do
+    app.dependency_overrides.clear()
+
+
+def _futures_names(payload: dict) -> list[str]:
+    return [f.get("name") or f.get("question") for f in payload.get("futures") or []]
+
+
+async def test_a_collapsed_window_refills_from_rows_already_fetched(
+    search_with_a_collapsing_window,
+):
+    payload = await search_with_a_collapsing_window("qzunited")
+    timing = payload.get("debug_timing") or {}
+    assert timing.get("futures_outcome_arm") == "skipped", timing
+    assert timing.get("futures_refill_source") == "window", timing
+    names = _futures_names(payload)
+    assert names[0] == "Qzunited Cup Winner?", names
+    assert names.count("Qzunited Cup Winner?") == 1, names
+    assert len(names) >= 10, f"the refill did not fill the page: {names!r}"
+
+
+async def test_the_refill_from_the_window_serves_what_the_refill_query_served(
+    search_with_a_collapsing_window, monkeypatch,
+):
+    """Strawman control: force today's query path and compare the served page."""
+    from app.routes import events as events_module
+
+    fast = await search_with_a_collapsing_window("qzunited")
+    monkeypatch.setattr(events_module, "_futures_refill_in_hand", lambda *_: None)
+    slow = await search_with_a_collapsing_window("qzunited")
+    assert (slow.get("debug_timing") or {}).get("futures_refill_source") == "query"
+    assert _futures_names(fast) == _futures_names(slow)
+    assert [f.get("id") for f in fast["futures"]] == [
+        f.get("id") for f in slow["futures"]
+    ]
