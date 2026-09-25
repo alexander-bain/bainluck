@@ -125,8 +125,8 @@ MUTANTS: list[tuple[str, pathlib.Path, str, str, str]] = [
         """        or_(
             FuturesOutcome.current_probability.is_(None),
             and_(
-                FuturesOutcome.current_probability > 0.0,
-                FuturesOutcome.current_probability < 1.0,
+                FuturesOutcome.current_probability >= FEED_MIN_REAL_PROBABILITY,
+                FuturesOutcome.current_probability <= 1 - FEED_MIN_REAL_PROBABILITY,
             ),
         ),
 """,
@@ -139,26 +139,41 @@ MUTANTS: list[tuple[str, pathlib.Path, str, str, str]] = [
         """        or_(
             FuturesOutcome.current_probability.is_(None),
             and_(
-                FuturesOutcome.current_probability > 0.0,
-                FuturesOutcome.current_probability < 1.0,
+                FuturesOutcome.current_probability >= FEED_MIN_REAL_PROBABILITY,
+                FuturesOutcome.current_probability <= 1 - FEED_MIN_REAL_PROBABILITY,
             ),
         ),
 """,
-        """        FuturesOutcome.current_probability < 1.0,
-        FuturesOutcome.current_probability > 0.0,
+        """        FuturesOutcome.current_probability <= 1 - FEED_MIN_REAL_PROBABILITY,
+        FuturesOutcome.current_probability >= FEED_MIN_REAL_PROBABILITY,
 """,
     ),
     (
         "M-SET-INCLUSIVE",
         ROUTE,
-        "make the bounds inclusive — certainty is admitted again",
+        "open the bounds to certainty — 'Completed Match' at 1.0 is admitted again",
         """            and_(
-                FuturesOutcome.current_probability > 0.0,
-                FuturesOutcome.current_probability < 1.0,
+                FuturesOutcome.current_probability >= FEED_MIN_REAL_PROBABILITY,
+                FuturesOutcome.current_probability <= 1 - FEED_MIN_REAL_PROBABILITY,
             ),""",
         """            and_(
                 FuturesOutcome.current_probability >= 0.0,
                 FuturesOutcome.current_probability <= 1.0,
+            ),""",
+    ),
+    # #8606: the exact-endpoint gate #3987 shipped, restored. Every #3987 test
+    # passes on it; only the 0%/100%-reading arms (`Shiyu Ye` at 0.0005) see it.
+    (
+        "M-SET-ENDPOINTS",
+        ROUTE,
+        "bar only exact 0 and 1 — a finished match at 0.05% leads the row again",
+        """            and_(
+                FuturesOutcome.current_probability >= FEED_MIN_REAL_PROBABILITY,
+                FuturesOutcome.current_probability <= 1 - FEED_MIN_REAL_PROBABILITY,
+            ),""",
+        """            and_(
+                FuturesOutcome.current_probability > 0.0,
+                FuturesOutcome.current_probability < 1.0,
             ),""",
     ),
     (
@@ -166,7 +181,7 @@ MUTANTS: list[tuple[str, pathlib.Path, str, str, str]] = [
         ROUTE,
         "bar 'nearly certain' too — a product judgement nobody made, and it "
         "removes real movers like the 0.98 rate-decision row",
-        "FuturesOutcome.current_probability < 1.0,",
+        "FuturesOutcome.current_probability <= 1 - FEED_MIN_REAL_PROBABILITY,",
         "FuturesOutcome.current_probability < 0.95,",
     ),
     # ---------------------------------------------------------------- shape

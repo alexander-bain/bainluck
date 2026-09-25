@@ -178,7 +178,11 @@ from app.utils.search_match_class import (
     query_resolves_team,
 )
 from app.utils.blank_event_cards import not_a_blank_card
-from app.utils.feed_market_quality import has_no_real_price, is_empty_book_midpoint
+from app.utils.feed_market_quality import (
+    FEED_MIN_REAL_PROBABILITY,
+    has_no_real_price,
+    is_empty_book_midpoint,
+)
 from app.utils.proven_duplicates import (
     FoldedBlendView,
     bridged_canonical_ids,
@@ -12292,6 +12296,20 @@ def _suggestion_entity_name(outcome_name: str) -> Optional[str]:
     return name
 
 
+def _popular_market_label(market) -> str:
+    """Section 5's chip label: why this market is on the row. #8607.
+
+    The section ranks tier-1 open markets by `volume_24h`, and on production
+    (2026-09-25) about half its top 40 are elections, the Nobel Peace Prize and TV
+    shows, which is how `Maine Senate winner?  Championship odds` reached the row.
+    Only a `championship` market is named one; every other market is here
+    because it is popular.
+    """
+    if getattr(market, "category", None) == "championship":
+        return "Championship odds"
+    return "Popular market"
+
+
 def _mover_chips(rows, *, limit: int = _SUGGESTION_MOVERS_LIMIT) -> list[dict]:
     """Turn ranked mover outcomes into section 3's chips. #3675, all three defects.
 
@@ -12545,11 +12563,24 @@ def _build_suggestion_movers_query(*, pooled: bool):
         # spelling would have silently dropped every outcome whose probability is
         # unknown — 4 live rows in the pool of 2,047 when this shipped, none of
         # them settled. Unknown is not resolved; those rows stay.
+        #
+        # 🔴 #8606. THE BOUNDARY IS WHERE THE PRICE READS 0% OR 100%, NOT AT 0 AND 1.
+        # Production 2026-09-25 11:19Z, first chip on the row: `Shiyu Ye  Falling
+        # -82.4 points — W15 Maanshan: Shiyu Ye vs Z...` — market 62178337, a
+        # finished ITF match (`Completed Match` = 0.9995), her outcome at 0.0005.
+        # The exact-endpoint gate above let it through by five ten-thousandths.
+        # #3987 declined to widen on judgement ("anything above 0.95 is basically
+        # over"); this is not that. `FEED_MIN_REAL_PROBABILITY` (0.5%, #921) is the
+        # display-rounding boundary — the chip's destination prints 0% — and it is
+        # the same threshold `routes/futures.py::_detect_elimination` calls
+        # eliminated. A price the reader sees as 0% or 100% is a result, and the
+        # *settled means settled* ruling already says a result is not a movement.
+        # #3987's live 0.98 Bank of Korea row sits well inside and stays.
         or_(
             FuturesOutcome.current_probability.is_(None),
             and_(
-                FuturesOutcome.current_probability > 0.0,
-                FuturesOutcome.current_probability < 1.0,
+                FuturesOutcome.current_probability >= FEED_MIN_REAL_PROBABILITY,
+                FuturesOutcome.current_probability <= 1 - FEED_MIN_REAL_PROBABILITY,
             ),
         ),
     ]
@@ -13282,7 +13313,13 @@ async def _build_search_suggestions(db: AsyncSession) -> dict:
             # Extract a short query from the market name
             name = market.name
             # Try to get just the league championship part
-            _add(name, "Championship odds", "futures", section=5, market_id=market.id)
+            _add(
+                name,
+                _popular_market_label(market),
+                "futures",
+                section=5,
+                market_id=market.id,
+            )
     except Exception:
         _log_dead_suggestion_section(5, "popular championship markets")
 
