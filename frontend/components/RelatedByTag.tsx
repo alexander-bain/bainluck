@@ -368,12 +368,25 @@ export default function RelatedByTag({
               d.current_odds?.away_rendered_percent,
               d.current_odds?.home_rendered_percent,
             );
+            /* #8702 — on a draw-priced sport a served `current_odds` pair that
+               sums to 1 carries the away side as `1 − home`: "does not lose",
+               the draw folded in, not a win price. Belgium @ Italy (15196508,
+               live 1–0) printed "Belgium 98%" here while `FeedCard` on /sports
+               drew the same row as "—". Same call, same withhold (#6238): the
+               slot stays, so the home number keeps its line. */
+            const awayWithheld = awayIsTheComplement(awayProbability, homeProbability, d.sport);
             const sides: {
               name: string;
               probability: number | null | undefined;
               rendered: number | null | undefined;
+              withheld?: boolean;
             }[] = [
-              { name: d.away_team, probability: awayProbability, rendered: duel[0] },
+              {
+                name: d.away_team,
+                probability: awayProbability,
+                rendered: duel[0],
+                withheld: awayWithheld,
+              },
               { name: d.home_team, probability: homeProbability, rendered: duel[1] },
             ];
             const priced = sides.some(
@@ -408,11 +421,23 @@ export default function RelatedByTag({
                     {sides.map((side) => (
                       <li key={side.name} className={FIELD_ROW}>
                         <span className={FIELD_NAME}>{side.name}</span>
-                        <span className={FIELD_VALUE}>
-                          {formatProbability(side.probability, {
-                            rendered: side.rendered,
-                          })}
-                        </span>
+                        {side.withheld ? (
+                          <span
+                            className="shrink-0 tabular-nums font-semibold text-text-muted"
+                            data-testid="related-card-away-withheld"
+                          >
+                            <span className="sr-only">
+                              No separate win probability for {side.name}.
+                            </span>
+                            <span aria-hidden="true">—</span>
+                          </span>
+                        ) : (
+                          <span className={FIELD_VALUE}>
+                            {formatProbability(side.probability, {
+                              rendered: side.rendered,
+                            })}
+                          </span>
+                        )}
                       </li>
                     ))}
                   </ol>
