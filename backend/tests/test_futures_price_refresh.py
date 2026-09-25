@@ -212,6 +212,10 @@ class TestSelectionPredicate:
             # would let the reach arm retire legs on a market the other eight
             # have already retired.
             "task._KALSHI_UNREACHED_FROZEN_SQL": fpr._KALSHI_UNREACHED_FROZEN_SQL.text,
+            # #8718: the tenth. The in-play arm is an identity arm (taken before
+            # the budget), so a liveness clause that skipped it would re-price a
+            # market every other asker has retired — every 45 minutes.
+            "task._IN_PLAY_CANDIDATE_SQL": fpr._IN_PLAY_CANDIDATE_SQL.text,
         }
         for name, sql in askers.items():
             assert shared in _normalise(sql), f"{name} does not compose LIVE_MARKET_SQL"
@@ -248,7 +252,10 @@ class TestSelectionPredicate:
         # guard worked exactly as designed: the arm was written, the suite went
         # red here, and the number was not touched until the asker was enrolled
         # in the dictionary above.
-        enrolled = 9
+        #
+        # 9 -> 10 for #8718's in-play arm (`_IN_PLAY_CANDIDATE_SQL`), enrolled
+        # above before this number moved.
+        enrolled = 10
         # SITES THAT ARE NOT ASKERS, ACCOUNTED SEPARATELY RATHER THAN FOLDED IN.
         # An asker is a statement that selects live markets; the dictionary
         # enrols those by name. Two interpolation sites are neither:
@@ -289,10 +296,11 @@ class TestSelectionPredicate:
         # interpolation and the module carries the result. Assert on the source:
         # there is no module-level constant to read for this one.
         assert "{LIVE_MARKET_SQL}" in _MODULE_SRC
-        assert _MODULE_SRC.count("{LIVE_MARKET_SQL}") == 6, (
+        assert _MODULE_SRC.count("{LIVE_MARKET_SQL}") == 7, (
             "all THREE pool branches (#5781 added liquid_pool), the by-id "
-            "selector, the reachability census, and #4253's reach arm "
-            "(_KALSHI_UNREACHED_FROZEN_SQL)"
+            "selector, the reachability census, #4253's reach arm "
+            "(_KALSHI_UNREACHED_FROZEN_SQL) and #8718's in-play arm "
+            "(_IN_PLAY_CANDIDATE_SQL)"
         )
         # #3315: the census now composes the whole ELIGIBLE POOL, not just the
         # liveness clause. A census that kept the liveness bounds but not the
@@ -984,9 +992,13 @@ class TestTheProducerClockLeadsTheRenderClock:
         marker past the shorter arm's next beat, which is the lockstep again with
         the served arm as its victim.
         """
+        # #8718 made it three identity arms behind one marker; the rule is the
+        # same, over all three. `TestTheRunTreatsAnInPlayOutrightAsIdentity`
+        # proves the TTL the run actually writes.
         src = _MODULE_SRC.replace("\n", " ")
         assert (
-            "min(registered_refresh_minutes, served_refresh_minutes)" in src
+            "min(registered_refresh_minutes, served_refresh_minutes, in_play_refresh_minutes)"
+            in src
         ), "the identity marker must be sized off the shorter window"
         assert "max(registered_refresh_minutes" not in src
 
@@ -1387,6 +1399,10 @@ class _RunHarness:
         async def rollback(self):
             return None
 
+    def _mark(self, ids, ttl_seconds):
+        # A no-op here; #8718's subclass records it.
+        return None
+
     async def run(self, monkeypatch):
         import contextlib
 
@@ -1415,7 +1431,7 @@ class _RunHarness:
             "app.utils.feed_served_markets.note_served_signal_healthy", _note
         )
         monkeypatch.setattr(mod, "_load_attempt_skips", lambda ids: set())
-        monkeypatch.setattr(mod, "_mark_attempted", lambda ids, ttl_seconds: None)
+        monkeypatch.setattr(mod, "_mark_attempted", self._mark)
 
         class _Service:
             async def close(self):
@@ -1857,3 +1873,141 @@ class TestTheGuardAnswersInsideTheRoutersWall:
         # themselves into green.
         assert "price_dark" not in out
         assert "eligible_markets" not in out
+
+
+# --- #8718: a tier-1 outright in its last days is re-priced like an identity row ---
+
+
+class TestInPlayOutrightsAreRepricedOnTheShortClock:
+    """#8718. The Presidents Cup winner (Kalshi `KXPRESCUP-26`, tier 1, no
+    `event_id`) read USA 85.5% through round 2 while Kalshi traded it at 64¢,
+    because the only arm that could see it was the 6h class arm.
+    """
+
+    def _sql(self) -> str:
+        return _normalise(fpr._IN_PLAY_CANDIDATE_SQL.text)
+
+    def test_the_arm_selects_tier_one_inside_the_horizon_on_the_minute_clock(self):
+        sql = self._sql()
+        assert "fm.market_tier = 1" in sql
+        assert "fm.resolution_date <= now() + make_interval(hours => :in_play_hours)" in sql
+        # The window is the identity arms' MINUTE clock, not the class arm's
+        # hours — `hours => :stale_minutes` would read 45 as 45 hours.
+        assert "make_interval(mins => :stale_minutes)" in sql
+        assert "stale_hours" not in sql
+        assert "limit :in_play_limit" in sql
+
+    def test_the_constants_match_the_other_identity_windows(self):
+        assert fpr.IN_PLAY_REFRESH_MINUTES == fpr.SERVED_REFRESH_MINUTES
+        assert fpr.IN_PLAY_REFRESH_MINUTES < 60, "must be a sub-interval of the hourly beat"
+        assert fpr.IN_PLAY_HORIZON_HOURS == 72
+        # Ceiling well above the measured 22, and small against the Kalshi budget
+        # it is taken ahead of.
+        assert 22 * 5 < fpr.IN_PLAY_LIMIT < fpr.KALSHI_MARKET_BUDGET
+
+    @pytest.mark.asyncio
+    async def test_the_scan_binds_every_parameter_and_tags_the_arm(self):
+        seen = {}
+
+        class _S:
+            async def execute(self, statement, params=None):
+                seen["sql"] = str(statement)
+                seen["params"] = params
+                return _FakeResult([(16757297, "kalshi", "KXPRESCUP-26", 67447, None, None)])
+
+        out = await fpr._scan_in_play_candidates(_S(), stale_minutes=45)
+        assert seen["params"] == {
+            "stale_minutes": 45,
+            "in_play_hours": fpr.IN_PLAY_HORIZON_HOURS,
+            "in_play_limit": fpr.IN_PLAY_LIMIT,
+        }
+        assert [m["id"] for m in out] == [16757297]
+        assert out[0]["arm"] == fpr._ARM_IN_PLAY
+        assert out[0]["priority"] is True
+        assert out[0]["registered"] is False and out[0]["served"] is False
+
+    def test_an_in_play_row_is_taken_ahead_of_an_exhausted_class_budget(self):
+        in_play = fpr._rows_to_markets(
+            [(16757297, "kalshi", "KXPRESCUP-26", 67447, None, None)],
+            arm=fpr._ARM_IN_PLAY,
+        )
+        klass = fpr._rows_to_markets(
+            [(1, "kalshi", "KXBIG", 9_000_000, None, None)], arm=fpr._ARM_CLASS
+        )
+        taken = fpr._take_for_source(in_play + klass, "kalshi", budget=0)
+        assert [m["id"] for m in taken] == [16757297]
+
+
+class _InPlayHarness(_RunHarness):
+    """The real entry point with one in-play Kalshi row and one class row that
+    names the SAME market — the Presidents Cup is tier 1, so it is in both."""
+
+    IN_PLAY_ROW = (16757297, "kalshi", "KXPRESCUP-26", 67447, None, None)
+
+    def __init__(self, *, signal):
+        super().__init__(signal=signal, class_rows=[self.IN_PLAY_ROW + (0, 1)])
+        self.marks: dict[tuple[int, ...], int] = {}
+        self.kalshi_fetched: list[str] = []
+
+    class _Session(_RunHarness._Session):
+        async def execute(self, statement, params=None):
+            if "in_play_hours" in str(statement):
+                return _RunHarness._Result([_InPlayHarness.IN_PLAY_ROW])
+            return await super().execute(statement, params)
+
+    def _mark(self, ids, ttl_seconds):
+        self.marks[tuple(ids)] = ttl_seconds
+
+    async def run(self, monkeypatch):
+        from app.tasks import futures_price_refresh as mod
+
+        async def _fetch(service, external_id):
+            self.kalshi_fetched.append(external_id)
+            return None
+
+        async def _no_reach(*a, **k):
+            return None
+
+        class _KService:
+            async def close(self):
+                return None
+
+        monkeypatch.setenv("KALSHI_API_KEY", "test-only")
+        monkeypatch.setattr(mod, "_fetch_kalshi_prices", _fetch)
+        monkeypatch.setattr(mod, "_kalshi_reach_arm", _no_reach)
+        monkeypatch.setattr(
+            "app.services.kalshi_api.KalshiAPIService", lambda *a, **k: _KService()
+        )
+        return await super().run(monkeypatch)
+
+
+class TestTheRunTreatsAnInPlayOutrightAsIdentity:
+    @pytest.mark.asyncio
+    async def test_counted_once_attempted_and_marked_on_the_short_ttl(self, monkeypatch):
+        from app.utils.feed_served_markets import SERVED_EMPTY
+
+        signal = type(
+            "Sig",
+            (),
+            {
+                "ids": [],
+                "state": SERVED_EMPTY,
+                "green_allowed": True,
+                "shapes": 0,
+                "stale_shapes": 0,
+                "unreadable_shapes": 0,
+            },
+        )()
+        h = _InPlayHarness(signal=signal)
+        stats = await h.run(monkeypatch)
+
+        assert stats["in_play_candidates"] == 1
+        # It qualified on the class arm too, and is ONE candidate, not two.
+        assert stats["candidates"] == 1
+        assert stats["in_play_attempted"] == 1
+        assert h.kalshi_fetched == ["KXPRESCUP-26"]
+        # The attempt marker is the identity TTL (45 min), never the class 6h —
+        # otherwise the next three beats would skip it and the short clock is
+        # undone.
+        assert h.marks.get((16757297,)) == fpr.IN_PLAY_REFRESH_MINUTES * 60
+        assert h.marks.get(()) == fpr.STALE_AFTER_HOURS * 3600
