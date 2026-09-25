@@ -29,7 +29,7 @@ final class CalibrationViewModel: ObservableObject {
     /// never meant "thin" in the liquidity sense: zero-bid, zero-volume outcomes
     /// are excluded upstream, so nothing this flag adds is untraded — those rows
     /// traded and never moved off their opening line.
-    @Published var includeThin = false
+    @Published var includeThin = LaunchRig.startsIncludingUntraded()
 
     private static let nf: NumberFormatter = { let f = NumberFormatter(); f.numberStyle = .decimal; return f }()
 
@@ -416,6 +416,10 @@ final class CalibrationViewModel: ObservableObject {
             let agg = CalibrationMath.aggregate(bks, filter: f)
             let band = agg.filter { abs($0.error) <= 5 }.count
             let n = CalibrationMath.totalN(bks, filter: f)
+            // #6211: a population that all won (or all lost) is withheld the way
+            // an empty one is. Web's Source Comparison has done this since
+            // bae9f393b7. See `CalibrationRowOrdering.censoringVerdict`.
+            let w = CalibrationRowOrdering.pooledWinners(bks.filter(f))
             let name = Self.providerDisplayName(group.provider)
             return CalSourceRow(
                 source: group.provider, name: name,
@@ -423,9 +427,10 @@ final class CalibrationViewModel: ObservableObject {
                     ? group.members.map { Self.withoutGroupQualifier(Self.sourceDisplayName($0), groupName: name) }
                     : [],
                 n: n,
-                ece: CalibrationRowOrdering.metric(CalibrationMath.ece(agg), outcomes: n),
-                mce: CalibrationRowOrdering.metric(CalibrationMath.mce(agg), outcomes: n),
-                brier: CalibrationRowOrdering.metric(CalibrationMath.brier(bks, filter: f), outcomes: n),
+                winners: w,
+                ece: CalibrationRowOrdering.metric(CalibrationMath.ece(agg), outcomes: n, winners: w),
+                mce: CalibrationRowOrdering.metric(CalibrationMath.mce(agg), outcomes: n, winners: w),
+                brier: CalibrationRowOrdering.metric(CalibrationMath.brier(bks, filter: f), outcomes: n, winners: w),
                 bucketsInBand: band, totalBuckets: agg.count
             )
         }
@@ -1086,14 +1091,18 @@ struct CalSourceRow: Identifiable, CalibrationMetricRow {
     /// The pooled members' names, qualifier stripped; empty for a one-member provider.
     let memberNames: [String]
     let n: Int
-    /// `nil` when `n == 0`. See `CalibrationRowOrdering`.
+    /// Winners pooled over the same cohort as `n` (#6211). The censored cell
+    /// reads it to say which side the population fell on.
+    let winners: Int
+    /// `nil` when `n == 0`, or when the population is censored (#6211). See
+    /// `CalibrationRowOrdering`.
     let ece: Double?
     let mce: Double?
     let brier: Double?
     let bucketsInBand: Int
     let totalBuckets: Int
 
-    var state: CalRowState { CalibrationRowOrdering.state(outcomes: n) }
+    var state: CalRowState { CalibrationRowOrdering.state(outcomes: n, winners: winners) }
 }
 
 struct CalCategoryRow: Identifiable, CalibrationMetricRow {

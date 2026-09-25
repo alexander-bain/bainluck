@@ -564,17 +564,38 @@ struct CalibrationSurfaceView: View {
                 }
             }.frame(maxWidth: .infinity, alignment: .leading)
             Text(fmtN(row.n)).frame(width: widths.n, alignment: .trailing).monospacedDigit()
-            metricText(row.ece, "%.1f").frame(width: widths.ece, alignment: .trailing)
-                .monospacedDigit().foregroundStyle(viewModel.eceColor(row.ece)).fontWeight(.semibold)
-            metricText(row.mce, "%.1f").frame(width: widths.mce, alignment: .trailing)
-                .monospacedDigit().foregroundStyle(.secondary)
-            metricText(row.brier, "%.3f").frame(width: widths.brier, alignment: .trailing).monospacedDigit()
+            if row.state == .censored {
+                // #6211: the count stays in its column, because it is a real
+                // count. The three metric cells become the one sentence web's
+                // `SourceComparisonRow` prints there: the fact, no method note.
+                Text(verbatim: CalibrationRowOrdering.censoredPopulationText(outcomes: row.n, winners: row.winners))
+                    .font(.caption2).foregroundStyle(.secondary)
+                    .multilineTextAlignment(.trailing)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(width: widths.ece + widths.mce + widths.brier, alignment: .trailing)
+                    .accessibilityIdentifier("calibration-provider-censored")
+            } else {
+                metricText(row.ece, "%.1f").frame(width: widths.ece, alignment: .trailing)
+                    .monospacedDigit().foregroundStyle(viewModel.eceColor(row.ece)).fontWeight(.semibold)
+                metricText(row.mce, "%.1f").frame(width: widths.mce, alignment: .trailing)
+                    .monospacedDigit().foregroundStyle(.secondary)
+                metricText(row.brier, "%.3f").frame(width: widths.brier, alignment: .trailing).monospacedDigit()
+            }
         }
         .font(.caption).padding(.horizontal, 12).padding(.vertical, 10)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(row.state == .noCohortData
-            ? "\(row.name), no outcomes in this cohort, not ranked"
-            : "\(row.name), \(fmtN(row.n)) outcomes")
+        .accessibilityLabel(sourceRowAccessibilityLabel(row))
+    }
+
+    private func sourceRowAccessibilityLabel(_ row: CalSourceRow) -> String {
+        switch row.state {
+        case .noCohortData:
+            return "\(row.name), no outcomes in this cohort, not ranked"
+        case .censored:
+            return "\(row.name), \(CalibrationRowOrdering.censoredPopulationText(outcomes: row.n, winners: row.winners)) Not ranked"
+        case .measured:
+            return "\(row.name), \(fmtN(row.n)) outcomes"
+        }
     }
 
     /// #3650: a withheld metric prints an em dash, never a zero.
