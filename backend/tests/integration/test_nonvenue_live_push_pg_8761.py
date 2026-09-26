@@ -123,7 +123,9 @@ async def test_savepoint_release_is_not_commit_and_last_snapshot_wins(pg_engine,
     assert sink[0][1]["updated_at"] == sources["stat_model"]["updated_at"]
 
 
-async def test_removal_streams_reweighted_blend_and_keeps_sibling(pg_engine, sink):
+async def test_removal_keeps_sibling_without_fabricating_a_source_quote(
+    pg_engine, sink
+):
     event_id = await _seed_event(pg_engine, {"betting": 0.1, "kalshi": 0.8})
     async with async_sessionmaker(pg_engine, expire_on_commit=False)() as session:
         event = await session.get(Event, event_id)
@@ -133,8 +135,7 @@ async def test_removal_streams_reweighted_blend_and_keeps_sibling(pg_engine, sin
         await session.commit()
         await publish_committed_nonvenue_frames(session)
     assert sources == {"kalshi": 0.8, "betting_book_count": 1}
-    assert sink[0][1]["p"] == 0.8
-    assert sink[0][1]["source_value"] is None
+    assert not sink
 
 
 @pytest.mark.parametrize("status", ["scheduled", "completed", "closed"])
@@ -387,3 +388,20 @@ async def test_nonvenue_writer_refuses_other_source_classes(pg_engine, source):
         event = await session.get(Event, event_id)
         with pytest.raises(ValueError, match="not a nonvenue probability source"):
             await write_nonvenue_probability(session, event, source, 0.7)
+
+
+@pytest.mark.parametrize("removed", ["betting", "stat_model"])
+async def test_removal_tombstone_cancels_earlier_quote_at_commit(
+    pg_engine, sink, removed
+):
+    event_id = await _seed_event(pg_engine, {"kalshi": 0.8})
+    async with async_sessionmaker(pg_engine, expire_on_commit=False)() as session:
+        event = await session.get(Event, event_id)
+        await write_nonvenue_probability(session, event, removed, 0.4)
+        await write_nonvenue_probability(session, event, removed, None)
+        await session.commit()
+        await publish_committed_nonvenue_frames(session)
+    assert removed not in await _stored(pg_engine, event_id)
+    assert (
+        not sink
+    ), "neither a null-source fake quote nor its superseded value may escape"

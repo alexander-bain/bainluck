@@ -735,14 +735,15 @@ class TestEveryWriterStamps:
     """
 
     WRITERS = [
-        ("app/tasks/odds_polling.py", 2),
-        ("app/tasks/mlb_sync.py", 1),
-        ("app/tasks/prediction_market_matching.py", 2),
-        ("app/tasks/espn_sync.py", 1),
-        ("app/tasks/backfill_combat_wps.py", 1),
-        ("app/utils/espn_helpers.py", 3),
-        ("app/routes/admin_matching.py", 1),
-        ("app/routes/admin_providers.py", 2),
+        ("app/tasks/odds_polling.py", "write_nonvenue_probability"),
+        ("app/tasks/mlb_sync.py", "write_nonvenue_probability"),
+        ("app/tasks/prediction_market_matching.py", "stamp_source_reading"),
+        ("app/tasks/espn_sync.py", "stamp_source_reading"),
+        ("app/tasks/backfill_combat_wps.py", "stamp_source_reading"),
+        ("app/utils/espn_helpers.py", "write_nonvenue_probability"),
+        ("app/utils/nonvenue_live_push.py", "atomic_stamp_expression"),
+        ("app/routes/admin_matching.py", "stamp_source_reading"),
+        ("app/routes/admin_providers.py", "stamp_source_reading"),
     ]
 
     @pytest.mark.parametrize("rel,expected", WRITERS)
@@ -751,7 +752,9 @@ class TestEveryWriterStamps:
 
         root = pathlib.Path(__file__).resolve().parents[1]
         text = (root / rel).read_text()
-        assert "stamp_source_reading" in text, f"{rel} writes the column unstamped"
+        # #8761's wrapper uses the same atomic database stamper as venue writes;
+        # require that explicit path instead of accepting an old comment as proof.
+        assert expected in text, f"{rel} must write through {expected}"
 
     def test_no_writer_assigns_a_bare_number_into_the_column(self):
         """The shape that bypasses the stamper, as a pattern rather than a list."""

@@ -34,8 +34,14 @@ def _after_commit(session):
     # One event may change twice in a transaction (ESPN followed by stat_model).
     # Only its last kept snapshot should reach a reader.
     latest = {frame["event_id"]: frame for _, frame, _, _ in pending}
+    # Current consumers interpret a null source_value as the blended p, which
+    # would resurrect a removed source as a fabricated quote. Keep removal as
+    # a tombstone through coalescing, then suppress it: an earlier quote in the
+    # same transaction must not escape after its source was removed.
     session.info.setdefault(_READY, []).extend(
-        frame for frame in latest.values() if frame["status"] == "live"
+        frame
+        for frame in latest.values()
+        if frame["status"] == "live" and frame["source_value"] is not None
     )
 
 
@@ -78,8 +84,10 @@ async def write_nonvenue_probability(
 ):
     """Atomically replace/remove one allowed source and queue its returned blend.
 
-    ``None`` removes a source under the caller's existing refusal policy. Extra
-    metadata is inert top-level data (currently sportsbook count); extra values
+    ``None`` removes a source under the caller's existing refusal policy and
+    cancels any earlier queued event frame; consumers do not yet support source
+    removal messages. Extra metadata is inert top-level data (currently
+    sportsbook count); extra values
     retain the ESPN writer's own id/fallback columns. No commit happens here.
     """
     if source not in NONVENUE_SOURCES:
