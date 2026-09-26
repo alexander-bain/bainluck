@@ -27213,6 +27213,7 @@ async def get_event_odds_history(
             resolve_rung_sides_by_code,
             rung_provider_code,
             select_projected_final,
+            total_rung_states_only_the_line,
         )
         from app.models.models import FuturesOddsSnapshot
 
@@ -27266,6 +27267,10 @@ async def get_event_odds_history(
                 event.away_team_name,
             )
 
+            # Rungs read by `extract_spread_threshold` carry a magnitude and no
+            # side. Held back per market until the whole market is read (#8898).
+            unsided_spread_rungs: list[dict] = []
+
             for outcome in market.outcomes:
                 name = outcome.name or ""
                 prob = float(outcome.current_probability) if outcome.current_probability else None
@@ -27292,6 +27297,14 @@ async def get_event_odds_history(
                         # `extract_spread_threshold` cannot read its wording
                         # (#3948) — which is how a spread contaminated a total
                         # pool in the first place.
+                        outcome_may_price_total = False
+                    elif not total_rung_states_only_the_line(name):
+                        # #8898: a total with a subject in front of the line —
+                        # `Xavier Worthy: over 16.5 yards`, `Dolphins O/U
+                        # 16.5` — is a player's or a team's total. The
+                        # classifier read both as the game's (the word "over"
+                        # was enough), and on every NFL page they priced the
+                        # game total at ~17.
                         outcome_may_price_total = False
 
                 # Kalshi's own phrasing first (#3948). It carries both teams'
@@ -27332,9 +27345,7 @@ async def get_event_odds_history(
                 # Try to extract spread threshold
                 spread_val = extract_spread_threshold(name)
                 if spread_val is not None:
-                    if source not in spread_contracts_by_source:
-                        spread_contracts_by_source[source] = []
-                    spread_contracts_by_source[source].append({
+                    unsided_spread_rungs.append({
                         "threshold": spread_val,
                         "probability": prob,
                         "name": name,
@@ -27361,6 +27372,18 @@ async def get_event_odds_history(
                         "probability": prob,
                         "name": name,
                     })
+
+            # #8898: one market pricing the SAME side-less line twice is carrying
+            # both teams' ladders — Polymarket's `Chiefs vs. Dolphins` holds
+            # `Spread -1.5` at 0.815 (Chiefs) and at 0.145 (Dolphins), and read
+            # as one ladder they put the home side ahead by 1.5 on every NFL
+            # page. Neither rung says whose line it is, so neither is placed:
+            # losing a rung costs precision, guessing a side inverts the score.
+            unsided_lines = [rung["threshold"] for rung in unsided_spread_rungs]
+            if unsided_spread_rungs and len(set(unsided_lines)) == len(unsided_lines):
+                spread_contracts_by_source.setdefault(source, []).extend(
+                    unsided_spread_rungs
+                )
 
         # Sport-range guard on the totals — the same guard `_build_game_markets`
         # already applies to its own totals (step 7a), mirrored here so both
