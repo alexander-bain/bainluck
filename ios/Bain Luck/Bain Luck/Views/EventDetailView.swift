@@ -1032,9 +1032,18 @@ struct EventDetailView: View {
                                 sportKey: event.sport
                             )
                             let winnerName = homeWon ? duel.home : duel.away
+                            // #8419 — BOUNDED like the venue verdict below. The
+                            // pair's label is the FULL name whenever the short
+                            // one would collide, so "Seattle Sounders FC Win"
+                            // took this fixed-size column's whole ideal width
+                            // and cut the crest beside it to "Seattle Sounder…".
                             Text("\(winnerName) Win")
                                 .font(.title3.weight(.bold))
                                 .foregroundStyle(homeWon ? colors.home : colors.away)
+                                .multilineTextAlignment(.center)
+                                .lineLimit(2)
+                                .minimumScaleFactor(0.7)
+                                .frame(maxWidth: EventDetailView.verdictSlotWidth)
                         }
                         // Pre-game odds as secondary context.
                         //
@@ -1072,9 +1081,14 @@ struct EventDetailView: View {
                                 )
                                 // #5271 — rounded ALONE, as before: a pair's rounding is about
                                 // the complement this arm refuses to print.
+                                // #8419 — the same full name, so the same cap as
+                                // the verdict it sits under.
                                 Text("\(pregameWord) \(named.home) \(formatProbability(opened.home))")
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
+                                    .multilineTextAlignment(.center)
+                                    .lineLimit(2)
+                                    .frame(maxWidth: EventDetailView.verdictSlotWidth)
                             }
                         }
                     } else if EventState.showsVenueSettledVerdict(
