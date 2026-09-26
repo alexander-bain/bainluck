@@ -19,6 +19,11 @@ struct StatusBadge: View {
     /// rather than requiring it is what keeps that true without four edits that
     /// would each have to invent a value.
     var venueSettled: Bool = false
+    /// #8841 — the served `start_is_tbd`, defaulted false like `venueSettled`.
+    /// True withholds the scheduled countdown: "In 3d 2h" is the placeholder
+    /// clock restated as a duration, and the row's date line already carries
+    /// the one true part ("Sep 29 · TBD"). See ``countdownText(commenceTime:startIsTbd:now:)``.
+    var startIsTbd: Bool = false
 
     /// #7019 — THE ONLY THING ON THIS VIEW THAT EVER CHANGES BY ITSELF.
     ///
@@ -145,8 +150,8 @@ struct StatusBadge: View {
             // what makes this arm a reader of something that changes; drop the
             // argument and the chip compiles, draws correctly once, and then
             // silently stops ageing on every surface at once.
-            if let commence = commenceTime, let date = commence.asDate,
-               let countdown = formatCountdown(from: date, now: clock.now) {
+            if let countdown = StatusBadge.countdownText(
+                commenceTime: commenceTime, startIsTbd: startIsTbd, now: clock.now) {
                 HStack(spacing: 3) {
                     Image(systemName: "clock")
                         .font(.system(size: 8))
@@ -165,6 +170,20 @@ struct StatusBadge: View {
         } else {
             EmptyView()
         }
+    }
+}
+
+extension StatusBadge {
+    /// The scheduled arm's countdown ("2h 15m"), or nil for no chip.
+    ///
+    /// #8841 — lifted out of the `body` so the TBD withholding is a claim a test
+    /// can make: a start the venue has not announced has no distance to count
+    /// down to, so the chip is withheld rather than drawn off the placeholder.
+    static func countdownText(
+        commenceTime: String?, startIsTbd: Bool, now: Date
+    ) -> String? {
+        guard !startIsTbd, let date = commenceTime?.asDate else { return nil }
+        return formatCountdown(from: date, now: now)
     }
 }
 

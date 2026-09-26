@@ -107,8 +107,12 @@ struct EventCardView: View {
     @State private var isHovered = false
     #endif
 
-    /// "Today 7:00 PM", "Tomorrow 3:30 PM", or "Mar 8 7:00 PM"
+    /// "Today 7:00 PM", "Tomorrow 3:30 PM", or "Mar 8 7:00 PM" — or, when the
+    /// venue has not announced the start (#8841), "Sep 29 · TBD" with no clock.
     private var formattedDateTimeString: String? {
+        if event.startIsTbd == true {
+            return RelativeTimeText.tbdText(for: event.commenceTime)
+        }
         guard let dateStr = event.commenceTime, let date = dateStr.asDate else { return nil }
         let calendar = Calendar.current
         let timeFormatter = DateFormatter()
@@ -223,7 +227,8 @@ struct EventCardView: View {
                 status: event.status,
                 commenceTime: event.commenceTime,
                 gameClock: event.espn?.gameClock,
-                period: event.espn?.period
+                period: event.espn?.period,
+                startIsTbd: event.startIsTbd == true
             )
             if !isFinished, let ei = event.ei ?? event.pulse {
                 EIBadgeView(ei: ei, size: .sm)

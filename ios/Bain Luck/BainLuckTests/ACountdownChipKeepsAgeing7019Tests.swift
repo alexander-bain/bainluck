@@ -260,8 +260,17 @@ final class ACountdownChipKeepsAgeing7019Tests: XCTestCase {
             the countdown is computed
             """
         )
+        // #8841 — the arm may route through `StatusBadge.countdownText`, which
+        // withholds the chip on an unannounced start. That helper takes `now`
+        // with NO default, so dropping the argument there does not compile, and
+        // it must hand that instant on to `formatCountdown` rather than let the
+        // default read `Date()` — both halves pinned, or the seam moves inward.
+        let viaHelper =
+            code.contains("StatusBadge.countdownText(commenceTime:commenceTime,startIsTbd:startIsTbd,now:clock.now)")
+            && code.contains("startIsTbd:Bool,now:Date)->String?{")
+            && code.contains("formatCountdown(from:date,now:now)")
         XCTAssertTrue(
-            code.contains("formatCountdown(from:date,now:clock.now)"),
+            code.contains("formatCountdown(from:date,now:clock.now)") || viaHelper,
             """
             the scheduled arm stopped passing the observed instant. \
             `formatCountdown(from:)` defaults `now` to `Date()`, so dropping the \

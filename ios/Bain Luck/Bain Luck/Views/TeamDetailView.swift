@@ -202,9 +202,13 @@ struct TeamDetailView: View {
                 Text("\(prefix) \(opponent)").font(.subheadline).fontWeight(.medium)
                 HStack(spacing: 4) {
                     // #4021 — see StatusBadge: the suspended arm is clock-gated.
-                    StatusBadge(status: event.status, commenceTime: event.commenceTime)
+                    StatusBadge(
+                        status: event.status, commenceTime: event.commenceTime,
+                        startIsTbd: event.startIsTbd == true)
                     if let commence = event.commenceTime {
-                        RelativeTimeText(dateString: commence)
+                        // #8841 — an unannounced start prints "Sep 29 · TBD".
+                        RelativeTimeText(
+                            dateString: commence, startIsTbd: event.startIsTbd == true)
                     }
                 }
                 // The grade-our-call line, the web card's own words.
