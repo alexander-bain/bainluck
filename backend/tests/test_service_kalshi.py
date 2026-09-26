@@ -17,6 +17,7 @@ from app.services.kalshi_api import KalshiAPIService
 from app.tasks.kalshi import (
     _build_game_market_name,
     _categorize_kalshi_market,
+    _floor_series_first,
     _is_kalshi_game_ticker,
     _partition_new_events_first,
 )
@@ -455,6 +456,69 @@ class TestPartitionNewEventsFirst:
         new, exist = _partition_new_events_first([], {"X"})
         assert new == []
         assert exist == []
+
+
+class TestFloorSeriesFirst:
+    """#8586: the guaranteed-floor series are upserted ahead of the NEW
+    partition. 2026-09-26 02:45Z fetched 4,813 new events, processed 3,694 and
+    reached no existing row — the exact-score and match rows the floor exists
+    to rewrite every beat were never written."""
+
+    def test_floor_events_jump_ahead_of_new_ones(self):
+        events = [_StubEvent(t) for t in [
+            "KXMIDTERMMOV-26-NY01",            # new, not floor
+            "KXVOTECOUNTY-26-TX",              # new, not floor
+            "KXFEDDECISION-26OCT",             # existing, not floor
+            "KXATPEXACTMATCH-26SEP25CERDAV",   # existing, floor
+            "KXATPMATCH-26SEP25MEDROY",        # existing, floor
+        ]]
+        existing = {
+            "KXFEDDECISION-26OCT",
+            "KXATPEXACTMATCH-26SEP25CERDAV",
+            "KXATPMATCH-26SEP25MEDROY",
+        }
+        new, exist = _partition_new_events_first(events, existing)
+        ordered = [e.event_ticker for e in _floor_series_first(new + exist)]
+        assert ordered == [
+            "KXATPEXACTMATCH-26SEP25CERDAV",
+            "KXATPMATCH-26SEP25MEDROY",
+            "KXMIDTERMMOV-26-NY01",
+            "KXVOTECOUNTY-26-TX",
+            "KXFEDDECISION-26OCT",
+        ]
+        # A loop cut off after two events still rewrote both floor rows.
+        assert all(t in existing for t in ordered[:2])
+
+    def test_series_is_read_whole_not_by_prefix(self):
+        # `KXATPMATCHX` is not `KXATPMATCH`; `KXATP` (futures) is not floor.
+        events = [_StubEvent(t) for t in [
+            "KXATP-26", "KXATPMATCHX-26A", "KXWTAMATCH-26SEP26A",
+        ]]
+        assert [e.event_ticker for e in _floor_series_first(events)] == [
+            "KXWTAMATCH-26SEP26A", "KXATP-26", "KXATPMATCHX-26A",
+        ]
+
+    def test_order_preserved_and_nothing_dropped(self):
+        events = [_StubEvent(t) for t in [
+            "A-1", "KXRAIN-26SEP26NYC", "B-1", "KXNFLGAME-26SEP27X", "C-1",
+        ]]
+        out = [e.event_ticker for e in _floor_series_first(events)]
+        assert out == [
+            "KXRAIN-26SEP26NYC", "KXNFLGAME-26SEP27X", "A-1", "B-1", "C-1",
+        ]
+        assert _floor_series_first([]) == []
+
+    def test_upsert_loop_applies_it(self):
+        # The helper is only a fix if the loop orders by it.
+        import inspect
+        from app.tasks import kalshi as tk
+        src = inspect.getsource(tk._poll_kalshi_markets)
+        assert "events = _floor_series_first(new_events + existing_events)" in src
+        # ...and the scan report reads the direct count, since the floor runs
+        # ahead of the new partition and `processed - new` undercounts.
+        assert 'stats["existing_events_processed"] += 1' in src
+        assert '_reached_existing = int(stats.get("existing_events_processed")' in src
+        assert "_reached_existing = max(0, _processed - _n_new)" not in src
 
 
 async def _no_sleep(*_a, **_k):

@@ -64,6 +64,18 @@ class TestVerdict:
         )
         assert r.verdict() == "frozen"
 
+    def test_floor_reached_ahead_of_new_is_starved_not_frozen(self):
+        # #8586: the floor series run ahead of the new partition, so a beat can
+        # process fewer events than it fetched NEW and still reach existing rows.
+        r = _report(
+            stop_reason="main_scan_deadline",
+            events_new=4813,
+            events_existing=25058,
+            events_processed=3694,
+            unreached_existing=25058 - 285,
+        )
+        assert r.verdict() == "starved"
+
     def test_starved_when_the_deadline_cut_off_existing_events(self):
         r = _report(
             stop_reason="main_scan_deadline",
