@@ -863,6 +863,15 @@ export interface FuturesOutcome {
    * therefore withholds on `=== null` only, and absent keeps prior behaviour.
    */
   resolution_source?: string | null;
+  /**
+   * #8842/#8863 — `/api/events/search` only. A card recalled through an OUTCOME
+   * name pins that outcome into its LAST row when the probability cut left it
+   * out, and stamps it `query_match: true` plus `matched_rank`: its place on the
+   * whole board by price, not its row index. Absent on every other row and every
+   * other payload.
+   */
+  query_match?: boolean;
+  matched_rank?: number;
   last_updated: string | null;
 }
 

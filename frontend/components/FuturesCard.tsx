@@ -259,7 +259,7 @@ export default function FuturesCard({
               <motion.div key={row.outcome.id} variants={staggerItem}>
                 <OutcomeRow
                   outcome={row.outcome}
-                  rank={index + 1}
+                  rank={boardRank(row.outcome, index)}
                   isLeader={row === highlighted}
                   isResolved={isResolved}
                   marketCategory={market.llm_sport_category}
@@ -305,6 +305,22 @@ export default function FuturesCard({
       </motion.div>
     </Link>
   );
+}
+
+/** The badge digit for a row: its place on the board.
+ *
+ *  #8863 — the row index IS that place for every row but one. Search pins the
+ *  outcome that answered the reader's query into the last row when the price
+ *  cut left it out (#8842), so on `?q=ohtani` Ohtani sits in row 5 while being
+ *  ninth on the board. `index + 1` badged him "5", which reads as fifth. The
+ *  server counts his real place and serves it as `matched_rank`; the row stays
+ *  last (it is below the cut by construction, so the leader-first sort cannot
+ *  lift it), only the digit changes. */
+function boardRank(outcome: FuturesOutcome, index: number): number {
+  if (outcome.query_match && typeof outcome.matched_rank === "number" && outcome.matched_rank >= 1) {
+    return outcome.matched_rank;
+  }
+  return index + 1;
 }
 
 function OutcomeRow({
