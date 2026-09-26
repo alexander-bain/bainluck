@@ -2245,10 +2245,19 @@ _NON_US_JURISDICTION_RE = re.compile(
 # not an office `_subnational_election_story_key` knows) — so each competes as its
 # own card, still capped by `_quality_family_key`, and is re-homed into no sentence
 # we have not written. The new arms can only evict: each still requires a word the
-# old arm required, and nothing earlier in the cascade moved. KNOWN RESIDUE, named:
-# "Will Lula announce nomination of a Supreme Court minister by...?" states no
-# country (only its sibling says Brazil), so it stays; a list of foreign leaders
-# would be a second vocabulary to keep in step, for one row.
+# old arm required, and nothing earlier in the cascade moved.
+#
+# 4. (CERT-3524's repair) "Will Lula announce nomination of a Supreme Court
+#    minister by...?" states no country — only its siblings say Brazil — so arm 3
+#    cannot see it. Its office can: Washington has no ministers. A justice is a
+#    justice, a secretary a secretary; "minister" is the title of the office in
+#    every government that is not the US one (Brazil's STF, every cabinet with a
+#    prime minister). So the office word excludes, and a list of foreign leaders
+#    (a second vocabulary to keep in step) is not needed. The US question of the
+#    same shape — "Will Trump announce nomination of a Supreme Court justice" —
+#    names a justice and stays. Over the 167 open markets the old vocabulary
+#    matched (2026-09-26 00:1xZ) "minister" appears in exactly the three Lula
+#    rows.
 _FEDERAL_OFFICE_ALT = (
     r"secretary|ambassador|commissioner|director|attorney|judges?|justices?|"
     r"pick|nominee|chair|administrator"
@@ -2270,6 +2279,7 @@ _OTHER_LEADERS_CABINET_RE = re.compile(
     r"\s(?!(?:Trump|Vance|Biden|Harris|Obama)\b)[A-Z][a-z]+(?:['’]s)?\s+[Cc]abinet\b"
 )
 _AMBASSADOR_RE = re.compile(r"\bambassador\b", re.IGNORECASE)
+_NON_US_OFFICE_RE = re.compile(r"\bministers?\b", re.IGNORECASE)
 
 
 def _is_us_federal_power(name: str) -> bool:
@@ -2278,6 +2288,8 @@ def _is_us_federal_power(name: str) -> bool:
     if not _US_FEDERAL_POWER_RE.search(lower):
         return False
     if _STATE_OFFICE_RE.search(name) or _OTHER_LEADERS_CABINET_RE.search(name):
+        return False
+    if _NON_US_OFFICE_RE.search(lower):
         return False
     if _NON_US_JURISDICTION_RE.search(lower) and not _AMBASSADOR_RE.search(lower):
         return False

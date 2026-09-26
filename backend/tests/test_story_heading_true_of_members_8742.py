@@ -39,6 +39,9 @@ from app.utils.feed_market_quality import _story_key
 
 FED = "story:us_federal_power"
 
+# Production id 31266896, verbatim (open, 2026-09-26).
+LULA = "Will Lula announce nomination of a Supreme Court minister by...?"
+
 # Production names (open markets, 2026-09-25), with the category they carry.
 EVICTED = [
     ("Who will be the next to leave the Burnham Cabinet?", "politics"),
@@ -58,6 +61,11 @@ EVICTED = [
     ("Illinois Republican Attorney General nominee?", "politics"),
     ("Will Alexandre de Moraes leave Brazil's Supreme Court?", "legal"),
     ("Alexandre de Moraes out as Brazil Supreme Court Justice?", "politics"),
+    # CERT-3524's residue: states no country, only its office — Washington has
+    # no ministers. The siblings say Brazil and left on arm 3 already.
+    (LULA, "politics"),
+    ("Will Lula announce the nomination of an individual for Minister of the Supreme Federal Court of Brazil by September 30?", "politics"),
+    ("Will Lula announce the nomination of an individual for Minister of the Supreme Federal Court of Brazil by December 31?", "politics"),
 ]
 
 KEPT = [
@@ -80,6 +88,9 @@ KEPT = [
     ("Who will be the next Deputy Attorney General?", "politics"),
     # A state named AFTER the court is a Washington case, not a state office.
     ("Will the Supreme Court hear Texas's challenge to the tariffs?", "legal"),
+    # The US question of the Lula row's exact shape names a justice, not a
+    # minister, and must survive the arm that evicts it.
+    ("Will Trump announce nomination of a Supreme Court justice by...?", "politics"),
 ]
 
 
@@ -159,3 +170,36 @@ def test_monet_is_not_an_ai_model_but_claude_still_is():
     assert _story_key("Claude Monet's artwork break auction record this season?", "entertainment") != "story:ai"
     assert _story_key("Will Claude Opus 5.6+ debut at an output token price of at least $15 by June 30, 2027?", "tech") == "story:ai"
     assert _story_key("When will Anthropic release Claude 6?", "tech") == "story:ai"
+
+
+def test_the_lula_row_is_not_bundled_under_washington_and_both_cards_survive():
+    """CERT-3524's replay, end to end: the production Lula title beside a true
+    Washington member folded into one "Who holds power in Washington?" bundle.
+    Now there is no Washington pair, and neither card is lost."""
+    items = [
+        _futures(108332, "Who will leave Trump's Cabinet next?", "politics", 60.0),
+        _futures(31266896, LULA, "politics", 58.0),
+    ]
+    out = assemble_story_theme_bundles(list(items))
+    for bundle in _bundles(out):
+        assert 31266896 not in bundle["data"]["member_ids"]
+    assert _bundles(out) == []
+    assert {i["data"]["id"] for i in out} == {108332, 31266896}
+
+
+def test_a_washington_bundle_still_forms_beside_the_lula_row_without_it():
+    """Non-vacuous half: with two true members present the Washington bundle does
+    fold — so the test above is measuring the Lula eviction, not a bundler that
+    folds nothing — and the Lula row is outside it, as its own card."""
+    items = [
+        _futures(61998713, "Democratic nomination odds leader on October 31?", "politics", 60.0),
+        _futures(108332, "Who will leave Trump's Cabinet next?", "politics", 59.0),
+        _futures(31266896, LULA, "politics", 58.0),
+    ]
+    out = assemble_story_theme_bundles(list(items))
+    bundles = _bundles(out)
+    assert len(bundles) == 1
+    assert bundles[0]["data"]["shared_question"] == "Who holds power in Washington?"
+    assert sorted(bundles[0]["data"]["member_ids"]) == [108332, 61998713]
+    loose = [i for i in out if i.get("type") == "futures"]
+    assert [i["data"]["id"] for i in loose] == [31266896]
