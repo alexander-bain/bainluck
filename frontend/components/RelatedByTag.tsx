@@ -10,6 +10,7 @@ import { servedDuelPercents } from "@/lib/servedDuelPercents";
 import { eventPath } from "@/lib/eventKey";
 import { orderByParticipant } from "@/lib/railParticipantOrder";
 import { PriceAgeMark } from "@/components/event/PriceAgeMark";
+import { formatScheduledGameLabel, formatTbdStartLabel } from "@/lib/gameTimeLabel";
 import { isFinishedStatus } from "@/lib/eventState";
 import { PREMATCH_SAID, prematchReading } from "@/lib/prematchReading";
 import { awayIsTheComplement } from "@/lib/drawPricedWinner";
@@ -393,6 +394,10 @@ export default function RelatedByTag({
             const priced = sides.some(
               (side) => side.probability !== null && side.probability !== undefined
             );
+            const startLabel =
+              d.start_is_tbd === true
+                ? formatTbdStartLabel(d.commence_time)
+                : formatScheduledGameLabel(d.commence_time);
             return (
               <Link
                 key={`rel-event-${d.id}`}
@@ -415,6 +420,19 @@ export default function RelatedByTag({
                 {d.status === "live" && d.home_score !== null && (
                   <span className="mt-px text-[11.5px] tabular-nums text-text-muted">
                     {d.away_score} - {d.home_score}
+                  </span>
+                )}
+                {/* #8954 — an upcoming game says WHEN, in the Discover card's words.
+                    "Oregon @ USC 63% / 37%" with no start read the same an hour before
+                    kickoff as a month before it. An unannounced start prints its day
+                    and "TBD", never a clock (#8841); a start already past prints
+                    nothing rather than a time that has gone. */}
+                {d.status === "scheduled" && startLabel && (
+                  <span
+                    className="mt-px text-[11.5px] tabular-nums text-text-muted"
+                    data-testid="related-card-start"
+                  >
+                    {startLabel}
                   </span>
                 )}
                 {priced && (

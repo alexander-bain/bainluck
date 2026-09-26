@@ -12,6 +12,7 @@ from app.utils.aggregation import parse_source_entry
 from app.utils.game_state import normalize_live_game_state
 from app.utils.graded_card import rendered_duel_percents
 from app.utils.prematch_reading import resolve_prematch_reading
+from app.utils.start_placeholder import start_is_tbd
 
 
 # Tag-based scoring boosts (LLM taxonomy enrichment)
@@ -424,10 +425,17 @@ def format_event_data(
     ended_at: datetime | None,
     prematch_by_source: dict[str, tuple] | None = None,
     hero: Any | None = None,
+    stored_tags: Any | None = None,
 ) -> dict:
     """Build the compact event data dict for the feed response.
 
     Pure function — takes all data as arguments, returns a dict.
+
+    ``stored_tags`` is the row's persisted ``event_tags`` (not ``inline_tags``,
+    which are recomputed and never carry the start-placeholder mark). It feeds
+    ``start_is_tbd`` (#8954 / #8841), the flag ``/api/events`` and the team page
+    already serve: without it a feed card prints StatPal's placeholder hour as a
+    real clock — "Tue 1:00 PM" on a Wild Card game nobody has scheduled.
     """
     data: dict = {
         "id": event_id,
@@ -437,6 +445,7 @@ def format_event_data(
         "home_team": home_team,
         "away_team": away_team,
         "commence_time": commence_time.isoformat(),
+        "start_is_tbd": start_is_tbd(stored_tags, commence_time, status),
         "status": status,
         "home_score": home_score,
         "away_score": away_score,

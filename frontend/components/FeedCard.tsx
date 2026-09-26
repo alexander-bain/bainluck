@@ -28,7 +28,12 @@ import TournamentCard from "./TournamentCard";
 import { isNonSportsCategory, isInternationalSport, flagUrl, espnTeamLogoByName } from "@/lib/images";
 import { useAnalyticsContext } from "@/components/Analytics";
 import { feedContextSnippet, feedItemHasRenderableContent, resolvesLabel, formatConceptMovement, conceptDomainLabel, stripCardTitleHead, stripResolutionWindowClause } from "@/components/discover/utils";
-import { formatFinishedGameLabel, formatLiveClockLabel } from "@/lib/gameTimeLabel";
+import {
+  formatFinishedGameLabel,
+  formatLiveClockLabel,
+  formatScheduledGameLabel,
+  formatTbdStartLabel,
+} from "@/lib/gameTimeLabel";
 import {
   SUSPENDED_LABEL,
   isFinishedStatus,
@@ -146,45 +151,6 @@ export default function FeedCard({ item, onThumbsUp, onThumbsDown, category }: F
 // ============================================================================
 // Helpers
 // ============================================================================
-
-/** Format commence_time as a short game time string. */
-function formatGameTime(commenceTime: string): string {
-  const now = new Date();
-  const game = new Date(commenceTime);
-  const diffMs = game.getTime() - now.getTime();
-  const diffHours = diffMs / (1000 * 60 * 60);
-
-  // Already started or in the past
-  if (diffMs <= 0) return "";
-
-  const timeStr = game.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-
-  // Same calendar day
-  const isToday =
-    game.getDate() === now.getDate() &&
-    game.getMonth() === now.getMonth() &&
-    game.getFullYear() === now.getFullYear();
-  if (isToday) return `Today ${timeStr}`;
-
-  // Next calendar day
-  const tomorrow = new Date(now);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  const isTomorrow =
-    game.getDate() === tomorrow.getDate() &&
-    game.getMonth() === tomorrow.getMonth() &&
-    game.getFullYear() === tomorrow.getFullYear();
-  if (isTomorrow) return `Tomorrow ${timeStr}`;
-
-  // Within the week — show day name
-  if (diffHours < 168) {
-    const dayName = game.toLocaleDateString([], { weekday: "short" });
-    return `${dayName} ${timeStr}`;
-  }
-
-  // Further out — show date
-  const dateStr = game.toLocaleDateString([], { month: "short", day: "numeric" });
-  return `${dateStr} ${timeStr}`;
-}
 
 /**
  * Format a finished game's date for staleness context.
@@ -512,7 +478,13 @@ function EventFeedCard({
   const leagueName = data.sport ? getSportLabel(data.sport, data.sport_name) : null;
 
   // Game time for scheduled events
-  const gameTime = isScheduled ? formatGameTime(data.commence_time) : null;
+  // #8954 — an unannounced start (#8841) prints its day and "TBD", never the
+  // placeholder hour as a clock; the feed serves the same flag `/api/events` does.
+  const gameTime = isScheduled
+    ? data.start_is_tbd === true
+      ? formatTbdStartLabel(data.commence_time)
+      : formatScheduledGameLabel(data.commence_time)
+    : null;
 
   // Date/time for finished events (staleness context)
   const finishedTime = isFinished ? formatFinishedDate(data.commence_time) : null;

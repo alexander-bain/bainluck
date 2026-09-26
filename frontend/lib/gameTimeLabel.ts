@@ -826,3 +826,59 @@ export function formatTbdStartLabel(
   });
   return `${day} · TBD`;
 }
+
+/**
+ * #8954 — the start line of an upcoming game with an announced start: "Today 4:30 PM",
+ * "Tomorrow 7:05 PM", "Wed 7:05 PM" inside the week, else "Oct 3 7:05 PM". Returns ""
+ * (render nothing) for a start already past or unparseable.
+ *
+ * MOVED UNCHANGED FROM `FeedCard` (its module-private `formatGameTime`), so the Discover
+ * card and the related rail under a game page print one wording for the same game. The
+ * rail printed no start at all — "Oregon @ USC 63% / 37%" an hour before kickoff, which a
+ * reader cannot tell from a game next month. Only the `now` parameter (for clock-free
+ * tests) and the unparseable guard are new; the old body printed "Invalid Date".
+ *
+ * A start the venue has NOT announced is `formatTbdStartLabel`'s, never this function's.
+ */
+export function formatScheduledGameLabel(
+  commenceTime: string | null | undefined,
+  now: number = Date.now(),
+): string {
+  if (!commenceTime) return "";
+  const game = new Date(commenceTime);
+  if (Number.isNaN(game.getTime())) return "";
+  const nowDate = new Date(now);
+  const diffMs = game.getTime() - now;
+  const diffHours = diffMs / (1000 * 60 * 60);
+
+  // Already started or in the past
+  if (diffMs <= 0) return "";
+
+  const timeStr = game.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+
+  // Same calendar day
+  const isToday =
+    game.getDate() === nowDate.getDate() &&
+    game.getMonth() === nowDate.getMonth() &&
+    game.getFullYear() === nowDate.getFullYear();
+  if (isToday) return `Today ${timeStr}`;
+
+  // Next calendar day
+  const tomorrow = new Date(now);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const isTomorrow =
+    game.getDate() === tomorrow.getDate() &&
+    game.getMonth() === tomorrow.getMonth() &&
+    game.getFullYear() === tomorrow.getFullYear();
+  if (isTomorrow) return `Tomorrow ${timeStr}`;
+
+  // Within the week — show day name
+  if (diffHours < 168) {
+    const dayName = game.toLocaleDateString([], { weekday: "short" });
+    return `${dayName} ${timeStr}`;
+  }
+
+  // Further out — show date
+  const dateStr = game.toLocaleDateString([], { month: "short", day: "numeric" });
+  return `${dateStr} ${timeStr}`;
+}
