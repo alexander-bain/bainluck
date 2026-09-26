@@ -260,6 +260,24 @@ else
   SUP=1
 fi
 
-echo "$((N + LANE4_GRADERS + BUS + SUP)) Terminal windows opened — $N lanes, $LANE4_GRADERS cert graders, $BUS measurement bus and $SUP supervisor, streaming live."
+# TBH uses its existing launchd worker, not lane-runner's Claude command.
+# Its window command reuses an existing titled view and never duplicates work.
+DIAGNOSIS="${DIAGNOSIS_LAUNCHER:-$SELF_DIR/diagnosis-lane.sh}"
+if [ ! -f "$DIAGNOSIS" ] && [ -z "${DIAGNOSIS_LAUNCHER:-}" ]; then
+  # Bootstrap checkout used by the installed launch agent before the runner PR
+  # lands. Once merged, the tracked sibling above wins automatically.
+  DIAGNOSIS="$HOME/bainluck-dev/diagnosis-runner-setup/diagnosis-lane.sh"
+fi
+if [ -f "$DIAGNOSIS" ]; then
+  if [ "$DRYRUN" -eq 1 ]; then
+    echo "[dry-run] would open/reuse Terminal window \"TBH diagnosis\": $DIAGNOSIS window"
+  else
+    bash "$DIAGNOSIS" window || echo "Diagnosis window failed; other lanes remain running."
+  fi
+else
+  echo "Diagnosis: SKIPPED — no launcher at $DIAGNOSIS."
+fi
+
+echo "$((N + LANE4_GRADERS + BUS + SUP)) standard Terminal windows opened — $N lanes, $LANE4_GRADERS cert graders, $BUS measurement bus and $SUP supervisor; diagnosis view handled separately."
 echo "If a lane is already running in another window, close the duplicate:"
 echo "the runners take queues atomically, so duplicates waste nothing but a window."
