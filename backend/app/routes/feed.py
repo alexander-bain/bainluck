@@ -178,6 +178,7 @@ from app.utils.feed_market_quality import (
     FIRST_PAGE_WHY_NOW_WINDOW,
     has_no_real_price,
     is_locked_near_certain,
+    is_lone_midpoint_field,
     is_templated_flat_ladder,
     range_ladder_missing_middle,
 )
@@ -11107,6 +11108,16 @@ async def _score_sports_mode_futures(
             market.name,
         ):
             continue
+        # #8867: and no field whose one price is a wide-book midpoint ("South Africa
+        # leads at 80%" over 23 unpriced teams) — see `is_lone_midpoint_field`.
+        if is_lone_midpoint_field(
+            [
+                (o.current_probability, o.current_yes_bid, o.current_yes_ask)
+                for o in sorted_outcomes
+            ],
+            _market_exclusivity(market),
+        ):
+            continue
         outcomes_data = []
         leader_name = None
         leader_prob = None
@@ -12774,6 +12785,15 @@ async def _score_futures(
                     for o in sorted_outcomes
                 ],
                 market.name,
+            ):
+                continue
+            # #8867: nor a field whose one price is a wide-book midpoint (#4610).
+            if is_lone_midpoint_field(
+                [
+                    (o.current_probability, o.current_yes_bid, o.current_yes_ask)
+                    for o in sorted_outcomes
+                ],
+                _market_exclusivity(market),
             ):
                 continue
 
