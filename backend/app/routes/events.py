@@ -3756,6 +3756,27 @@ def _futures_game_already_played():
     transformation, which is the same finding `_futures_name_arms` records one
     level up ("UNION, not OR"). Do not re-try it; the majority of this pool
     carries `event_id IS NULL` anyway, so there is little to short-circuit.
+
+    🔴 #8704 — THE SCOPE IS IN THE SIBLING KEY, NOT IN TWO OUTER-ONLY QUALS. The
+    arm used to say `futures_markets.event_id IS NULL AND futures_markets.group_id
+    IS NOT NULL AND grp_sibling.group_id = futures_markets.group_id`. Postgres
+    turns the NOT EXISTS into an anti-join, and in an anti-join a qual that reads
+    only the OUTER row cannot be pushed down to skip the inner side. It is checked
+    after the inner side runs. So every candidate paid the sibling scan (~23 rows
+    via `ix_futures_markets_group_id`) plus an `events` probe per sibling, even the
+    event-ATTACHED candidates the arm can never apply to. Those are 1,160 of
+    `united`'s 1,343 open name matches. Now the key is
+    `CASE WHEN event_id IS NULL THEN group_id END`: an attached or ungrouped
+    market gets a NULL key, the index probe returns nothing, and the anti-join
+    shape the paragraph above protects is unchanged.
+
+    Measured on production 2026-09-26 03:1xZ, the emitted `/search?q=united`
+    tier<=1 window statement, row path, two runs each: **9,236-9,514 ms ->
+    1,000-1,135 ms**, the same 60 ids in the same order. Set-identity over the
+    WHOLE open pool, `count` + `md5(string_agg(id ORDER BY id))` in 40 `id % 40`
+    slices: 53,327 kept both ways, 40/40 slices byte-identical. That is expected,
+    because the rewrite is an equivalence: a NULL key never equals anything, which
+    is what the two removed quals did by failing.
     """
     _dup_ghost = aliased(Event, name="dup_ghost")
     _dup_canonical = aliased(Event, name="dup_canonical")
@@ -3788,9 +3809,10 @@ def _futures_game_already_played():
             .join(_grp_ghost, _grp_ghost.id == _grp_sibling.event_id)
             .outerjoin(_grp_canonical, ghost_names_canonical(_grp_ghost, _grp_canonical))
             .where(
-                FuturesMarket.event_id.is_(None),
-                FuturesMarket.group_id.isnot(None),
-                _grp_sibling.group_id == FuturesMarket.group_id,
+                # #8704: the "unattached market" scope lives IN the key. See the
+                # docstring's #8704 section; a NULL key finds no sibling.
+                _grp_sibling.group_id
+                == case((FuturesMarket.event_id.is_(None), FuturesMarket.group_id)),
                 or_(
                     _grp_ghost.status.in_(tuple(sorted(SETTLED_STATUSES))),
                     _grp_canonical.status.in_(tuple(sorted(SETTLED_STATUSES))),
