@@ -129,6 +129,11 @@ enum SpreadRungs {
         for (name, group) in grouped(legs) {
             rungs += parse(market: name, legs: group, home: home, away: away)
         }
+        // #8739 — only where nothing else on the page parses. See
+        // ``titledSpreadLadder(_:home:away:)`` for why it never merges.
+        if rungs.isEmpty {
+            rungs = titledSpreadLadder(legs, home: home, away: away)
+        }
         let empty = Map(unit: sportUnit, rungs: [])
         guard let unit = mapUnit(of: rungs, sportUnit: sportUnit) else { return empty }
         let kept = rungs.filter { ($0.quotedUnit ?? sportUnit) == unit }
@@ -166,6 +171,10 @@ enum SpreadRungs {
     }
 
     private static func parse(market name: String, legs: [Leg], home: String, away: String) -> [Rung] {
+        // #8739 — a `Spread: <Team> (-N)` market belongs to the title reader.
+        // Its losing leg names the OTHER team, so reading it as a named outcome
+        // would draw "Tennessee by 7.5+" out of "Texas does not cover 7.5".
+        if TitledSpread.read(marketName: name) != nil { return [] }
         let unit = SportVocab.declaredMarginUnit(inMarketName: name)
         if let pair = twoWay(legs), let handicap = Handicap.read(marketName: name) {
             return fromHandicap(pair, handicap, home: home, away: away, unit: unit)
@@ -299,6 +308,102 @@ enum SpreadRungs {
             Rung(margin: favouriteSide == .home ? handicap.line : -handicap.line,
                  probability: pair.yes, isHome: favouriteSide == .home, quotedUnit: unit),
         ]
+    }
+
+    // MARK: - `Spread: Texas (-7.5)` (#8739)
+
+    /// The cover team and line a Polymarket spread market's TITLE states.
+    ///
+    /// **What a reader saw.** No margin map at all on a page priced only on
+    /// Polymarket. Polymarket writes the line in the market name and leaves
+    /// only a team in each leg, with `threshold` unserved:
+    ///
+    /// ```
+    /// market_name  Spread: Texas (-7.5)   outcome_name  Texas      0.385
+    /// market_name  Spread: Texas (-7.5)   outcome_name  Tennessee  0.615
+    /// ```
+    ///
+    /// `fromNamedOutcome` found no number in `Texas` and dropped the row —
+    /// all 52 of them on event 14870011 (Texas @ Tennessee, production
+    /// 2026-09-25), the gap web closed in PR #8746.
+    struct TitledSpread: Equatable {
+        let coverTeam: String
+        /// Always positive: the title's `-N`, unsigned.
+        let line: Double
+
+        /// Anchored at `Spread:` so `1st 5 Innings Spread: …` stays out of the
+        /// full-game map — that card's long-shot floor is #8785's. And only a
+        /// `-N` line: a `+N` market asks a different question, and none is
+        /// served.
+        static func read(marketName: String) -> TitledSpread? {
+            let pattern = #"^\s*spread:\s*(.+?)\s*\(\s*-\s*(\d+(?:\.\d+)?)\s*\)\s*$"#
+            guard let re = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return nil }
+            let range = NSRange(marketName.startIndex..., in: marketName)
+            guard let m = re.firstMatch(in: marketName, range: range),
+                  let teamRange = Range(m.range(at: 1), in: marketName),
+                  let lineRange = Range(m.range(at: 2), in: marketName),
+                  let line = Double(marketName[lineRange])
+            else { return nil }
+            let team = marketName[teamRange].trimmingCharacters(in: .whitespaces)
+            return team.isEmpty ? nil : TitledSpread(coverTeam: team, line: line)
+        }
+    }
+
+    /// Every rung the `Spread: <Team> (-N)` markets are entitled to draw.
+    ///
+    /// Each market asks ONE question — does Texas win by more than 7.5? — so
+    /// it gives at most one rung, on the cover team's side. The cover leg IS
+    /// that rung. The other leg is Tennessee +7.5, "Texas does not cover", so
+    /// it is read as the same rung at `1 − p`, and only where the cover leg is
+    /// not served: settled and live markets often serve one leg, and where
+    /// both are served the complement only adds the other token's noise.
+    /// A leg naming both teams, neither, or a number is refused (``side(of:home:away:)``).
+    ///
+    /// **Why only as a fallback.** Web merged these rungs into Kalshi's ladder
+    /// and got two things this app has no guard for: a line quoted by both
+    /// venues printing twice (web has `collapseDuplicateRungs`, we do not), and
+    /// Polymarket's thinly traded far end running backwards beside Kalshi's
+    /// (#8773: `Chargers (-19.5)` 6%, `(-21.5)` 9%). Where another venue's
+    /// ladder parses, this map is exactly what it was.
+    ///
+    /// **Monotone per side.** Walking out from the tightest line, a rung priced
+    /// above the one before it is withheld: "wins by 22+" cannot be likelier
+    /// than "wins by 18+", and a thin market saying so is not the market's
+    /// opinion of the game.
+    static func titledSpreadLadder(_ legs: [Leg], home: String, away: String) -> [Rung] {
+        var raw: [Rung] = []
+        for (name, group) in grouped(legs) {
+            guard let spread = TitledSpread.read(marketName: name),
+                  let coverSide = side(of: spread.coverTeam, home: home, away: away)
+            else { continue }
+            var cover: [Double] = []
+            var other: [Double] = []
+            for leg in group {
+                let outcome = leg.outcomeName.trimmingCharacters(in: .whitespaces)
+                guard !outcome.isEmpty, !outcome.contains(where: \.isNumber),
+                      let p = leg.probability,
+                      let legSide = side(of: outcome, home: home, away: away)
+                else { continue }
+                if legSide == coverSide { cover.append(p) } else { other.append(p) }
+            }
+            // Two legs on one side is not a two-way market; read nothing.
+            guard cover.count <= 1, other.count <= 1,
+                  let p = cover.first ?? other.first.map({ 1 - $0 })
+            else { continue }
+            let unit = SportVocab.declaredMarginUnit(inMarketName: name)
+            raw.append(Rung(margin: coverSide == .home ? spread.line : -spread.line,
+                            probability: p, isHome: coverSide == .home, quotedUnit: unit))
+        }
+        var kept: [Rung] = []
+        for isHome in [false, true] {
+            var last: Rung?
+            for rung in raw.filter({ $0.isHome == isHome }).sorted(by: { abs($0.margin) < abs($1.margin) }) {
+                if let last, abs(rung.margin) == abs(last.margin) || rung.probability > last.probability { continue }
+                kept.append(rung)
+                last = rung
+            }
+        }
+        return kept
     }
 
     // MARK: - `Seattle wins by 1 to 6 points` is not a rung (#3788)
