@@ -17674,6 +17674,123 @@ def _match_winner_rank_beats(challenger, incumbent, blended_observed_at) -> bool
     return c_id < i_id
 
 
+#: A ``Completed Match`` leg at or above this is the venue saying "it was played".
+_COMPLETED_MATCH_YES_FLOOR = 0.99
+
+
+def _names_completed_match(market_name: Optional[str]) -> bool:
+    """Is this Polymarket's "was the match completed?" market? (#8874)
+
+    Judged on a whole colon segment, never a substring:
+    ``M25 Setubal, Main Draw: Completed Match: Alec Deckers vs Philip Henning``
+    carries it as its own segment, and a player whose name merely contains the
+    words cannot.
+    """
+    return any(
+        segment.strip().casefold() == "completed match"
+        for segment in (market_name or "").split(":")
+    )
+
+
+def _completed_match_says_played(rows: list) -> bool:
+    """Does a served ``Completed Match`` market read "yes, it was played"? (#8874)
+
+    Only then does it repeat the hero. A market leaning ``No`` is the void signal
+    #8288 exists to read, and one still in the middle has not said anything yet,
+    so both stay on the page. A leg graded ``No`` wins over any price.
+    """
+    said_yes = False
+    for row in rows:
+        side = (row.get("outcome_name") or "").strip().casefold()
+        if side == "no" and row.get("is_winner") is True:
+            return False
+        if side == "yes":
+            prob = row.get("probability")
+            if row.get("is_winner") is True or (
+                prob is not None and prob >= _COMPLETED_MATCH_YES_FLOOR
+            ):
+                said_yes = True
+    return said_yes
+
+
+def _markets_the_settled_hero_answers(
+    other_rows: list, home_name: Optional[str], away_name: Optional[str]
+) -> set:
+    """Market ids a SETTLED page's hero has already answered (#8874).
+
+    `/events/15319072` (M25 Setubal, Deckers v Henning), suspended and graded by
+    the venue: the hero read **Settled · Deckers wins**, and Additional Markets
+    printed that answer twice more — the match winner `62392768` ("Alec Deckers,
+    last quote 100%") and Polymarket's `62526438` ("Completed Match: Yes, last
+    quote 100%").
+
+    On a live page the match winner never reaches a card: the page's
+    ``findWinProbMarkets`` hides a market of two priced legs summing to one. A
+    settled market serves its loser's 0 as ``None`` (the ``other`` row builder's
+    ``if prob else None``), so the pair became ONE price and that fold stopped
+    exactly when the page stopped needing the market. The fold is therefore made
+    here, where "the hero states the result" can be asked, and it covers both
+    clients.
+
+    Two families, each with its own reason to be here:
+
+    * **The match winner** — :func:`_market_is_event_match_winner`, #6799's test,
+      unchanged. Set N Winner and Set Handicap are refused by it (#8829), so the
+      set markets a reader came for stay.
+    * **Completed Match, reading "played"** — :func:`_completed_match_says_played`.
+      A void keeps its card.
+    """
+    rows_by_market: dict = {}
+    for row in other_rows:
+        market_id = row.get("_market_id")
+        if market_id is None:
+            continue
+        rows_by_market.setdefault(market_id, []).append(row)
+
+    answered = set()
+    for market_id, rows in rows_by_market.items():
+        if _market_is_event_match_winner(rows, home_name, away_name):
+            answered.add(market_id)
+        elif _names_completed_match(rows[0].get("market_name")) and _completed_match_says_played(rows):
+            answered.add(market_id)
+    return answered
+
+
+async def _settled_hero_names_the_result(db: AsyncSession, event, now) -> bool:
+    """Does this page's hero name a winner the VENUE graded? (#8874)
+
+    Asked exactly as the detail route asks it in its #6381 block:
+    :func:`venue_settlement_is_askable` over the values it serves, then
+    :func:`_venue_settlement`. Same two calls, so a card is never folded on a
+    page whose hero still says "No result reported".
+
+    🔴 A FINISHED EVENT HOLDING ITS SCORE IS DELIBERATELY NOT IN SCOPE. There the
+    graded moneyline is an owned surface: #6627 and #6312 pin that its verdict
+    rows (``Colorado · Won``, a draw's ``Tie · Won``) keep rendering. The askable
+    gate refuses any row with a score, so that population never reaches here.
+
+    ``live_claim_is_unbacked`` is passed ``False``: the detail route's third arm
+    needs a flatness read this route does not make, and leaving it out can only
+    keep a card, never remove one.
+    """
+    served = dict(
+        status=served_event_status(event.status, event.commence_time, now),
+        started_without_result=started_without_result(
+            event.status, event.commence_time, now
+        ),
+        home_score=event.home_score,
+        away_score=event.away_score,
+    )
+    if not venue_settlement_is_askable(served, live_claim_is_unbacked=False):
+        return False
+    settlement = await _venue_settlement(db, event)
+    return bool(
+        settlement
+        and settlement.get("venue_settled")
+        and settlement.get("venue_settled_result")
+    )
+
+
 def _withhold_partial_field_markets(other_rows: list, markets: list) -> list:
     """A field card accounts for the whole question, or it is not shown (#3721).
 
@@ -22824,6 +22941,18 @@ async def _build_game_markets(
     other_markets = _fold_duplicate_match_winner_markets(
         other_markets, event.home_team_name, event.away_team_name
     )
+
+    # ── #8874 — A SETTLED PAGE SAYS ITS RESULT ONCE, IN THE HERO ─────────────
+    #
+    # After the #6799 fold, for its reason: only the markets that survive are
+    # candidates. The venue read is made only when a candidate exists.
+    _answered = _markets_the_settled_hero_answers(
+        other_markets, event.home_team_name, event.away_team_name
+    )
+    if _answered and await _settled_hero_names_the_result(db, event, _gm_now):
+        other_markets = [
+            r for r in other_markets if r.get("_market_id") not in _answered
+        ]
 
     # ── #3721 — A SLICE IS NOT SHOWN AS THE FIELD ───────────────────────────
     #
