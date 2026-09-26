@@ -183,8 +183,9 @@ class TestThePhantomCardIsGone:
         assert _DAY in listed
         # The real card's fight count is the venue's — six bouts, not three.
         assert listed[_DAY]["fight_count"] == 6, listed[_DAY]
-        # And its date is still the schedule's, not Kalshi's close stamp.
-        assert listed[_DAY]["start_date"] == _D.replace(hour=22).isoformat()
+        # And its date is still the schedule's, not Kalshi's close stamp — since
+        # #6747 the schedule's OPENING (the first bout, 19:00Z), not its last.
+        assert listed[_DAY]["start_date"] == _D.isoformat()
 
     async def test_the_page_behind_it_answers_none(self):
         assert await _page(_NEXT, _REAL + _TWINS, _MARKETS) is None

@@ -1506,6 +1506,37 @@ def card_status_from_bouts(
     return combat_status(last, now, first)
 
 
+def card_opens_at(bouts, *, fallback_first=None, fallback_last=None, anchored_ids=None):
+    """When the card BEGINS for a reader — the instant its LIVE window opens.
+
+    #6747. Every serve path used to date a card by its main event
+    (``latest``), and a UFC main event walks after UTC midnight, so a Saturday
+    card read "Sun, Sep 20" (UFC 331) and, on 2026-09-26 at 20:22Z, "Fight
+    Night: Rosas Jr vs Barcelos" read **STARTS IN 1 DAY · Sep 27** and Discover
+    said "Tomorrow" 48 minutes before its first bout (21:10Z). The same card's
+    pill lights at that first bout (#4505, #8881), so the date and the pill
+    named two different nights.
+
+    One clock: this is the SAME pair :func:`card_status_from_bouts` hands
+    `combat_status` — called-off bouts out (#5603), the first bout a venue
+    prices on this card when the caller knows it (#8881), the fallback pair when
+    we hold no rows of our own — and it returns the opening. The pill and the
+    date therefore cannot disagree. Only the reader's date moves: the sort key
+    and the headline fight stay on the main event.
+    """
+    first, last = card_status_span(bouts, anchored_ids)
+    if last is None:
+        first, last = fallback_first, fallback_last
+    if first is None:
+        return last
+    try:
+        # A first bout after the last is bad data (see `combat_status`): the
+        # pair's true order, never an opening the card's own end precedes.
+        return last if last is not None and first > last else first
+    except TypeError:
+        return last
+
+
 def card_status_span(bouts, anchored_ids=None):
     """The ``(first, last)`` commence pair that decides a card's LIVE window.
 
@@ -2241,6 +2272,13 @@ async def list_card_concepts(
         )
         if status not in statuses:
             continue
+        # #6747: the reader's date is the window's opening, on the same pair.
+        opens_at = card_opens_at(
+            bouts,
+            fallback_first=earliest,
+            fallback_last=latest,
+            anchored_ids=_anchored_on.get(token),
+        )
 
         # Name/numbering: Kalshi carries the numbered-card label ("UFC 329") and
         # event_titles; events rows only carry fighter names, so an events-only card
@@ -2322,11 +2360,14 @@ async def list_card_concepts(
                 "domain": cfg.domain,
                 **({"sport_label": _sport_label} if _sport_label else {}),
                 "status": status,
-                "start_date": latest.isoformat() if latest is not None else None,
+                "start_date": opens_at.isoformat() if opens_at is not None else None,
                 "is_major": is_major,
                 "fight_count": fight_count,
                 "main_event_id": main_id,
+                # The main event: the sort key below and the feed's ranking
+                # input. `opens_at` is the card's countdown/"Today" clock.
                 "latest_commence": latest,
+                "opens_at": opens_at,
             }
         )
 
@@ -2645,7 +2686,7 @@ class CombatEventAdapter:
         first_commence = bouts[0].commence_time if bouts else fights[0].commence_time
         # #5603: the STATUS pair skips bouts that have been called off, so the page
         # behind the card agrees with the card about whether the night is on.
-        # `authoritative_commence` still carries `start_date` — display unchanged.
+        # (#6747: `start_date` now reads the opening of this same pair.)
         # #8881: the window opens at the first bout a venue prices ON this card,
         # the same rule the lister applies, so page and card agree.
         _priced_on_card = {
@@ -2658,6 +2699,13 @@ class CombatEventAdapter:
         card_status_value = card_status_from_bouts(
             bouts,
             now,
+            fallback_first=first_commence,
+            fallback_last=authoritative_commence,
+            anchored_ids=_priced_on_card,
+        )
+        # #6747: the page's date and countdown open with the card, same pair.
+        card_opens = card_opens_at(
+            bouts,
             fallback_first=first_commence,
             fallback_last=authoritative_commence,
             anchored_ids=_priced_on_card,
@@ -2847,9 +2895,7 @@ class CombatEventAdapter:
                 "name": card_name or main_event.name,  # numbered/Fight-Night card
                 "status": card_status_value,
                 "start_date": (
-                    authoritative_commence.isoformat()
-                    if authoritative_commence is not None
-                    else None
+                    card_opens.isoformat() if card_opens is not None else None
                 ),
                 "end_date": None,
                 "venue": None,
@@ -3121,11 +3167,15 @@ class CombatEventAdapter:
         # #4505: this envelope's card is events-only, so its first bout is known —
         # `bouts` is sorted ascending by `bout_order_key`. #5603: the pair handed to
         # `combat_status` skips bouts that have been called off; `latest_commence`
-        # still names the main event for `start_date`.
+        # still names the main event (#6747: `start_date` is the opening).
         # CERT-2727: and an all-called-off card is terminal, never live.
         first_commence = bouts[0].commence_time if bouts else None
         card_status_value = card_status_from_bouts(
             bouts, now, fallback_first=first_commence, fallback_last=latest_commence
+        )
+        # #6747: dated by its opening, on the pair that decides the pill.
+        card_opens = card_opens_at(
+            bouts, fallback_first=first_commence, fallback_last=latest_commence
         )
 
         def _child(ev):
@@ -3159,7 +3209,7 @@ class CombatEventAdapter:
                 "name": card_name or headline,
                 "status": card_status_value,
                 "start_date": (
-                    latest_commence.isoformat() if latest_commence is not None else None
+                    card_opens.isoformat() if card_opens is not None else None
                 ),
                 "end_date": None,
                 "venue": None,
