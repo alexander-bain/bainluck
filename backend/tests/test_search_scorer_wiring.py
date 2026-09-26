@@ -555,7 +555,19 @@ class TestEveryConceptCallSiteIsRouted:
         )
 
     def test_the_scorer_is_applied_to_both_unpaginated_buckets(self):
-        assert self._source().count("_search_rank_candidates(") == 2
+        """Concepts in the handler; teams through `_team_card_keyed` (#8765),
+        the one card definition the games list's leader key also reads."""
+        import inspect
+
+        from app.routes.events import _team_card_keyed
+
+        src = self._source()
+        assert src.count("_search_rank_candidates(") == 1
+        assert "_team_card_keyed(_team_result_rows, _q_identity)" in src
+        assert (
+            "rank_with_keys(query, [(_search_team_evidence(t), t) for t in cards])"
+            in inspect.getsource(_team_card_keyed)
+        )
 
     def test_private_evidence_is_stripped_before_the_response(self):
         src = self._source()

@@ -2221,47 +2221,81 @@ def _event_teamless_sport_order_key(team_categories: frozenset | None):
     return case((func.split_part(Sport.key, "_", 1).in_(sunk), 1), else_=0)
 
 
-def _team_card_lead_sport_keys(team_rows, window: int) -> frozenset | None:
+def _team_card_keyed(team_rows, query: str) -> list:
+    """The TEAMS card — at most five `(scorer key, row dict)` pairs, in card order.
+
+    ONE definition, read by the card itself and by the games list's leader key
+    (#8765), so the two cannot disagree about who "the" Eagles are. Individual
+    sports dropped, prefix duplicates dropped, the card's sort, the same-name
+    collapse (#4489), then the match-class scorer over the WHOLE window — its
+    `[:5]` is the card's cap (#8756). `rank()` is `rank_with_keys()` without the
+    keys, so the card's order is byte-for-byte what it was.
+    """
+    from app.utils.search_match_class import rank_with_keys
+
+    rows = _pick_team_row_per_name(_sort_matched_team_rows(
+        _dedupe_prefix_duplicate_team_rows([
+            row for row in (team_rows or ())
+            if not _is_individual_sport(row.sport_key)
+        ])
+    ))
+    cards = [
+        {
+            "id": row.id,
+            "name": row.name,
+            "slug": row.slug,
+            "abbreviation": row.abbreviation,
+            "logo": row.logo_url_small,
+            "record": row.current_record,
+            "sport_key": _normalize_team_sport_key(row.sport_key),
+            # Ranking evidence, never a payload — popped before the response,
+            # same as typeahead. Guarded on `isinstance(str)` because the column
+            # is JSON and has been observed holding non-string members.
+            "_aliases": [a for a in (row.alternate_names or []) if isinstance(a, str)],
+        }
+        for row in rows
+    ]
+    return rank_with_keys(query, [(_search_team_evidence(t), t) for t in cards])[:5]
+
+
+def _team_card_lead_sport_keys(team_rows, query: str) -> frozenset | None:
     """#8738: the sport keys of the club the TEAMS card leads with, or None.
 
     `lakers` on production 2026-09-25: the TEAMS card led with Los Angeles Lakers
     and the GAMES list opened with Växjö Lakers v HV71 (Swedish hockey) and
-    Western Kentucky v Mercyhurst Lakers (NCAAF). Every Lakers club ties on
-    `search_rank`, so the games list broke the tie by kickoff, while the card
-    breaks the same tie with `_sort_matched_team_rows` (rank, then marquee
-    league). #8697's key cannot help: Växjö and Mercyhurst are real clubs called
-    Lakers, so neither sport is teamless.
+    Western Kentucky v Mercyhurst Lakers (NCAAF). #8697's key cannot help: Växjö
+    and Mercyhurst are real clubs called Lakers, so neither sport is teamless.
 
-    The card's own pipeline picks the leader (individual sports dropped, prefix
-    duplicates dropped, then the card's sort), so the two surfaces cannot
-    disagree about who "the" Lakers are. The lead TIER is every row tied with the
-    first on (rank, marquee); the keys are every sport key a lead-tier club NAME
-    carries — a club's rows are one per competition, and Manchester City's FA Cup
-    game must not sink under its own Premier League games.
+    The leader is read off the card itself (`_team_card_keyed`), scorer
+    included (#8765). `eagles` on production 2026-09-26: the card (after #8756)
+    leads with the Philadelphia Eagles, while this helper picked its own leader
+    by (text rank, marquee) — six colleges repeating "Eagles" outrank them — and
+    the games list opened with Hanwha Eagles (KBO) and Rakuten Golden Eagles
+    (NPB). The lead TIER is every card row tied with the first on the scorer's
+    full key; the keys are every sport key a lead-tier club NAME carries — a
+    club's rows are one per competition, and Manchester City's FA Cup game must
+    not sink under its own Premier League games.
+
+    A FULL window no longer disarms it (#8765; `eagles` fills all 25 rows): the
+    card is chosen from that same window, so following the card's leader cannot
+    disagree with the card however many rows the window cut. (#7355's teamless
+    key still reads a full window as incomplete — it infers an ABSENCE; this
+    key follows a row the reader is shown.)
 
     None — the caller then adds NO key and the compiled SQL is unchanged — when
-    the evidence could be incomplete (no rows; a full window, as #7355) or when
-    there is nothing to decide (every matched club's sport is a lead sport:
-    `dodgers`, `barcelona`'s two non-marquee namesakes that tie outright).
+    there is no card, or nothing to decide (every matched club's sport is a lead
+    sport: `dodgers`; two clubs the scorer cannot separate share the lead).
     """
-    if not team_rows or len(team_rows) >= window:
+    keyed = _team_card_keyed(team_rows, query)
+    if not keyed:
         return None
-    rows = _sort_matched_team_rows(_dedupe_prefix_duplicate_team_rows([
-        row for row in team_rows if not _is_individual_sport(row.sport_key)
-    ]))
-    if not rows:
-        return None
-
-    def _tier(r):
-        return (
-            getattr(r, "team_rank", 0.0) or 0.0,
-            _team_marquee_rank(getattr(r, "sport_key", None)),
-        )
-
-    lead_tier = _tier(rows[0])
+    lead_key = keyed[0][0]
     lead_names = {
-        (getattr(r, "name", "") or "").lower() for r in rows if _tier(r) == lead_tier
+        (card.get("name") or "").lower() for key, card in keyed if key == lead_key
     }
+    rows = _dedupe_prefix_duplicate_team_rows([
+        row for row in team_rows if not _is_individual_sport(row.sport_key)
+    ])
     lead_keys = frozenset(
         r.sport_key for r in rows
         if r.sport_key and (getattr(r, "name", "") or "").lower() in lead_names
@@ -7345,7 +7379,7 @@ async def search_events(
     )
     # #8738: the games list follows the TEAMS card's leader (see the key).
     _team_card_lead_key = _team_card_lead_order_key(
-        _team_card_lead_sport_keys(_early_team_rows, _SEARCH_TEAM_WINDOW)
+        _team_card_lead_sport_keys(_early_team_rows, _q_identity)
     )
     _mark("team_evidence")
 
@@ -10019,48 +10053,16 @@ async def search_events(
     _mark("futures_format_concepts")
     # Suppress individual-sport "teams" (tennis players, MMA fighters, golfers,
     # boxers) — artifacts of the Odds API modelling 1v1 sports as team-vs-team;
-    # users still find these athletes via event and futures results. Then apply the
-    # rank-first / marquee tie-break ordering; the scorer below caps at 5 (#8756).
-    # #4489: the same-name collapse picks the club's own competition instead of
-    # whichever row the heap handed over first. It runs AFTER the sort so a name
-    # group still occupies its first member's slot.
-    team_rows = _pick_team_row_per_name(_sort_matched_team_rows(
-        _dedupe_prefix_duplicate_team_rows([
-            row for row in _team_result_rows
-            if not _is_individual_sport(row.sport_key)
-        ])
-    ))
-    matched_teams = []
-    for row in team_rows:
-        matched_teams.append({
-            "id": row.id,
-            "name": row.name,
-            "slug": row.slug,
-            "abbreviation": row.abbreviation,
-            "logo": row.logo_url_small,
-            "record": row.current_record,
-            "sport_key": _normalize_team_sport_key(row.sport_key),
-            # Ranking evidence, never a payload — popped before the response,
-            # same as typeahead. Guarded on `isinstance(str)` because the column
-            # is JSON and has been observed holding non-string members.
-            "_aliases": [a for a in (row.alternate_names or []) if isinstance(a, str)],
-        })
-    # #8756: the scorer runs over the WHOLE window, and its `[:5]` is the card's
-    # cap. The loop above used to stop at 5 by FTS rank, before the scorer ran,
-    # so the scorer only ever reordered five rows that alias repetition had
-    # chosen. `eagles`: five colleges repeating "Eagles" three times each filled
-    # the card, and Philadelphia Eagles (owns the alias "Eagles" too, MC0,
-    # prominent) never reached the scorer that ranks it first — the answer
-    # typeahead gives, because its pool is ordered the way the scorer ranks.
-    # Ranked HERE, before the World Cup check below, so that check still reads
-    # the card a reader sees and not the whole window.
-    # The scorer's import lives here, its first use (#8756); `event_concepts`
-    # reuses it below.
+    # users still find these athletes via event and futures results. Then the
+    # rank-first / marquee tie-break ordering, the same-name collapse (#4489) and
+    # the match-class scorer over the WHOLE window, whose `[:5]` is the card's cap
+    # (#8756). One definition, `_team_card_keyed`, which the games list's leader
+    # key also reads (#8765) — so the games list cannot follow a club the card
+    # does not lead with. Ranked HERE, before the World Cup check below, so that
+    # check still reads the card a reader sees and not the whole window.
+    matched_teams = [card for _key, card in _team_card_keyed(_team_result_rows, _q_identity)]
+    # The scorer's import lives here; `event_concepts` uses it below.
     from app.utils.search_match_class import rank as _search_rank_candidates
-
-    matched_teams = _search_rank_candidates(
-        _q_identity, [(_search_team_evidence(t), t) for t in matched_teams]
-    )[:5]
 
     # #206 Item 1b: positively surface the never-dead World Cup concept for a bare
     # WC-participant country query ("france") — the deriver guard above stops the

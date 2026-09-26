@@ -60,12 +60,16 @@ def test_the_window_breaks_rank_ties_on_marquee_before_name():
 def test_the_card_is_capped_by_the_scorer_not_before_it():
     src = _code_lines(ev.search_events)
     assert "len(matched_teams) >= 5" not in src
-    ranked = src.index("matched_teams = _search_rank_candidates(")
+    ranked = src.index("_team_card_keyed(_team_result_rows, _q_identity)")
     world_cup = src.index('"soccer_fifa_world_cup" in sports_found')
     payload = src.index('"teams": matched_teams,')
     # Ranked before the World Cup check reads the card, and exactly once.
     assert ranked < world_cup < payload
-    assert src.count("_search_team_evidence(t), t) for t in matched_teams") == 1
+    assert src.count("_search_team_evidence(t), t) for t in matched_teams") == 0
+    # The card's one definition (#8765) ranks the whole window, then caps.
+    card = _code_lines(ev._team_card_keyed)
+    assert "for t in cards])[:5]" in card
+    assert "cards[:5]" not in card and "rows[:5]" not in card
 
 
 def _team(name, sport_key, aliases, team_rank):
