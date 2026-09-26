@@ -85,8 +85,11 @@ class TestPinPass:
             {
                 "type": "event",
                 "score": 35,
+                # A painted score, like the crests: a live card with no score
+                # does not lead (tonights_games, d537).
                 "data": {"status": "live", "home_team_data": {"logo_small": "x"},
-                         "away_team_data": {"logo_small": "y"}, "name": "game"},
+                         "away_team_data": {"logo_small": "y"}, "name": "game",
+                         "home_score": 0, "away_score": 0},
             },
             {"type": "concept", "score": 40, "_marquee_pin": True, "data": {"name": "TdF"}},
         ]

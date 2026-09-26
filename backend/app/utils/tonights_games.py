@@ -158,6 +158,18 @@ def _is_eligible(
         return False
 
     if status == "live":
+        # A live game that paints no score does not lead. The card's scoreboard
+        # is `home_score`/`away_score` and nothing else (`EventCard.tsx` prints
+        # each only when it is non-null), so with both null the reader gets the
+        # word "Live" between two crests and a price — no game on the screen.
+        # Production 2026-09-26 13:47Z: Napoli @ Juventus (15319146, a
+        # Kalshi-minted row with no provider id, #5697's population) led
+        # Discover at slot 1 with score 35, 3h17m after a 10:30Z kickoff, no
+        # score, "Juventus 99%" — a match that was over, still reading live.
+        # A 0-0 kickoff carries 0/0, not null, so it still leads; the row's
+        # state is lane1/live's to repair, and this refuses only the lead slot.
+        if data.get("home_score") is None and data.get("away_score") is None:
+            return False
         return True
 
     if status in {"scheduled", "upcoming", "pre", ""}:
