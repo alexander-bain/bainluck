@@ -168,14 +168,131 @@ class TestTheFixDoesNotContaminateAGrid:
             cfg,
         )
 
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "College Football National Championship Qualifiers",
+            "College Football National Championship Game Qualifiers",
+        ],
+    )
+    def test_kalshis_finalist_series_is_not_winning_it(self, name):
+        # #8885: KXNCAAFFINALIST-27 asks who REACHES the title game (Georgia
+        # 32.5%, Ohio St. 28%). Filed under `championship` it merged with the
+        # Winner market by team name, and the Champion chart drew a 12%<->30%
+        # sawtooth that ended on "Ohio St. 28%" beside a table reading 10%.
+        cfg = get_league_config("ncaa-football")
+        assert not _market_passes_league_filter(name, "KXNCAAFFINALIST-27", cfg), name
+
     def test_the_real_national_championship_markets_still_pass(self):
         """Control for the exclusions above."""
         cfg = get_league_config("ncaa-football")
-        for name in [
-            "College Football National Championship Winner",
-            "College Football National Championship Qualifiers",
+        for name, eid in [
+            ("College Football National Championship Winner", "KXNCAAF-27"),
+            ("NCAAF Championship Winner", "americanfootball_ncaaf_championship_winner"),
         ]:
-            assert _market_passes_league_filter(name, "KXNCAAF-27", cfg), name
+            assert _market_passes_league_filter(name, eid, cfg), name
+
+    def test_the_champion_column_holds_only_the_winner_markets(self):
+        """#8885, end to end: the three production markets the Champion stage
+        served on 2026-09-26 go through the same two gates the route runs, and
+        only the two that ask who WINS reach the column."""
+        from types import SimpleNamespace
+
+        from app.routes.playoffs import _match_market_to_column
+
+        cfg = get_league_config("ncaa-football")
+        served = [
+            (181, "KXNCAAF-27", "College Football National Championship Winner"),
+            (182, "KXNCAAFFINALIST-27", "College Football National Championship Qualifiers"),
+            (6601311, "americanfootball_ncaaf_championship_winner", "NCAAF Championship Winner"),
+        ]
+        champion = [
+            mid
+            for mid, eid, name in served
+            if _market_passes_league_filter(name, eid, cfg)
+            and _match_market_to_column(
+                SimpleNamespace(id=mid, external_id=eid, market_tier=1, name=name), cfg
+            )
+            == "championship"
+        ]
+        assert champion == [181, 6601311]
+
+
+
+# #8893: the #8885 defect on five more Stage charts. Each tuple is a market the
+# column's `market_ids` served on 2026-09-26 (id, external_id, name, tier), read
+# from production; `True` means it asks the stage's own question and must stay.
+_STAGE_SPECIMENS = {
+    ("mlb", "pennant"): [
+        (270, "KXMLBNL-26", "National League Champion", 2, True),
+        (274, "KXMLBAL-26", "American League Champion", 2, True),
+        (199045, "215866", "MLB: 2026 American League Champion", 2, True),
+        (199050, "215871", "MLB: 2026 National League Champion", 2, True),
+        (62383707, "KXMLBNLCSQUAL-26", "Pro Baseball NLCS Qualifiers", 5, False),
+        (62383708, "KXMLBALCSQUAL-26", "Pro Baseball ALCS Qualifiers", 5, False),
+    ],
+    ("nfl", "conference"): [
+        (31615, "KXNFLNFCCHAMP-27", "NFC Championship Winner", 2, True),
+        (31616, "KXNFLAFCCHAMP-27", "AFC Championship Winner", 2, True),
+        (129171, "203716", "Pro Football: 2027 NFC Champion ", 2, True),
+        (129172, "203722", "Pro Football: 2027 AFC Champion ", 2, True),
+        (60473181, "KXNFLROUNDQUAL-27CONF", "NFL Conference Championship Qualifiers", 2, False),
+    ],
+    ("nba", "conference"): [
+        (52755681, "KXNBAWEST-27", "Pro Basketball Western Conference Champion", 2, True),
+        (52755687, "KXNBAEAST-27", "Pro Basketball Eastern Conference Champion", 2, True),
+        (52755664, "KXNBACONF-27", "Conference to Win Pro Basketball Finals", 2, False),
+        (55686462, "KXNBANEXTTEAMCONF-26LJAMES23", "LeBron James' Next Conference", 2, False),
+        (61461612, "KXNBAWCFQUAL-27", "Pro Basketball Western Conference Finals Qualifiers", 2, False),
+    ],
+    ("wnba", "championship"): [
+        (9413479, "350828", "WNBA: 2026 Champion", 1, True),
+        (12046267, "KXWNBA-26", "Women's Pro Basketball Champion", 1, True),
+        (56945896, "KXWNBA3PTROUND-26FINAL", "3-Point Contest Championship Round Qualifiers", 1, False),
+    ],
+    ("champions-league", "championship"): [
+        (31834253, "KXUCL-27", "Champions League Winner", 1, True),
+        (60607786, "994204", "UEFA Champions League: League Phase Winner", 1, False),
+    ],
+}
+
+
+class TestAStageColumnHoldsOnlyItsOwnQuestion:
+    """#8893, end to end through the two gates the route runs, like #8885's
+    Champion test above. The `True` rows are the control: an exclusion that
+    swallowed the real stage markets would empty the chart instead."""
+
+    @pytest.mark.parametrize("slug,column", sorted(_STAGE_SPECIMENS))
+    def test_only_the_stages_own_markets_reach_its_column(self, slug, column):
+        from types import SimpleNamespace
+
+        from app.routes.playoffs import _match_market_to_column
+
+        cfg = get_league_config(slug)
+        reached = [
+            mid
+            for mid, eid, name, tier, _ in _STAGE_SPECIMENS[(slug, column)]
+            if _market_passes_league_filter(name, eid, cfg)
+            and _match_market_to_column(
+                SimpleNamespace(id=mid, external_id=eid, market_tier=tier, name=name), cfg
+            )
+            == column
+        ]
+        expected = [mid for mid, *_, keep in _STAGE_SPECIMENS[(slug, column)] if keep]
+        assert reached == expected
+
+    @pytest.mark.parametrize(
+        "slug,eid,name",
+        [
+            ("nba", "KXNBAECFQUAL-27", "Pro Basketball Eastern Conference Finals Qualifiers"),
+            ("champions-league", "KXUCLTOP8-27", "League Phase Top 8 Finishers"),
+            ("champions-league", "1024892", "UEFA Champions League: Team to Finish 9th-24th in League Phase"),
+        ],
+    )
+    def test_the_open_siblings_are_refused_too(self, slug, eid, name):
+        # Open on production 2026-09-26 but not (yet) in a column: the same
+        # questions under their other names.
+        assert not _market_passes_league_filter(name, eid, get_league_config(slug)), name
 
 
 class TestPrefilterNeverNarrows:
