@@ -567,6 +567,41 @@ def is_top_tier_soccer_market(market_name: str) -> bool:
     return _name_verdicts(market_name or "").top_tier_soccer
 
 
+def rank_claim_is_evidence(outcome: dict) -> bool:
+    """Does this outcome's stored rank change say it actually changed places?
+
+    `rank_change_24h` is `old_rank - rank`, written per poll by the three outcome
+    writers, so the old rank is `rank + rank_change_24h`. Two shapes of it are no
+    evidence that anyone was overtaken, and both reached page one as
+    "New favorite" (#8784, served 2026-09-26 03:25Z, 4 of 8 such cards):
+
+    * AN OLD RANK BELOW 1. Rank 1 with a change of -5 puts the old rank at -4,
+      a place no board has. The pair was written at different times (#6598's rerank moves
+      `rank` without touching the change), so it describes no board that existed.
+      Galatasaray, Charley Hull and Alina Korneeva led on this.
+    * NO PRIOR PRICE. Every writer leaves `probability_change_24h` NULL exactly
+      when the row had no price before this poll, and an unpriced leg is ranked
+      after every priced one (`kalshi.py`'s placeholder pass). A leg that gets
+      its price back therefore "rises" by the size of the field. University of
+      Florida opened the Steel Bridge market at 79.5% and led it throughout; its
+      price blinked out for one poll and came back as a +98 "New favorite".
+
+    The prior-price half is read from `prior_priced`, which the feed's three
+    outcome builders set from the stored column. It cannot be inferred from the
+    dict's own `probability_change_24h`: those builders fold a stored 0.0 into
+    None, and a leader whose price held while the old leader fell is a real new
+    favorite with a 0.0 change. A row without the key is UNKNOWN and keeps the
+    old reading, so only a caller that looked can refuse on it.
+    """
+    rank = outcome.get("rank")
+    rank_change = outcome.get("rank_change_24h")
+    if rank is None or not rank_change:
+        return False
+    if rank + rank_change < 1:
+        return False
+    return outcome.get("prior_priced") is not False
+
+
 def compute_futures_highlight(
     # Market metadata
     market_tier: Optional[int] = None,
@@ -861,7 +896,6 @@ def compute_futures_highlight(
         for o in outcomes:
             change_24h = abs(float(o.get("probability_change_24h") or 0))
             rank = o.get("rank")
-            rank_change = o.get("rank_change_24h")
             opening_prob = o.get("opening_probability")
             current_prob = o.get("probability")
 
@@ -876,13 +910,13 @@ def compute_futures_highlight(
                 biggest_mover_name = o.get("name")
 
             # Track rank changes in top 5
-            if rank is not None and rank <= 5 and rank_change and rank_change != 0:
+            if rank is not None and rank <= 5 and rank_claim_is_evidence(o):
                 rank_changes_in_top5 += 1
 
             # Track leader change
             if rank == 1:
                 current_leader = o.get("name")
-                if rank_change and rank_change != 0:
+                if rank_claim_is_evidence(o):
                     leader_was_different = True
 
         # Major movement scoring — SINGLE HOME: the interestingness blend.
