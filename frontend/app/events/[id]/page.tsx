@@ -763,16 +763,27 @@ export default function EventPage({ params }: EventPageProps) {
      "tracking will begin" over a chart that would have drawn — and suppressing
      on the same test would have turned a wrong sentence into a missing chart,
      which is worse. The predicate below asks the question the chart asks. */
+  const historyHoldsASeries =
+    !!historyData &&
+    ((historyData.history?.length ?? 0) > 0 ||
+      hasAnyWinProbData(historyData) ||
+      (historyData.aggregate_line?.length ?? 0) > 0 ||
+      Object.values(historyData.bookmaker_history ?? {}).some(
+        (points) => Array.isArray(points) && points.length > 0,
+      ));
   const hasNoPriceHistoryAtAll =
     !historyLoading &&
     !historyError &&
     !!historyData &&
-    (historyData.history?.length ?? 0) === 0 &&
-    !hasAnyWinProbData(historyData) &&
-    (historyData.aggregate_line?.length ?? 0) === 0 &&
-    !Object.values(historyData.bookmaker_history ?? {}).some(
-      (points) => Array.isArray(points) && points.length > 0,
-    );
+    !historyHoldsASeries;
+  /* #8800: A FAILED REFRESH IS NOT A MISSING CHART. SWR keeps the last good
+     body when a refetch fails, but the chart card used to test the error first,
+     so one failed 32-second poll on a live game swapped a drawn chart for
+     "Unable to load history", the next good poll swapped it back, and the card's
+     height change jumped the page under the reader's thumb. The error box is for
+     a card with nothing to draw — the same five-series question as above — and
+     keeps its Retry there; a curve we hold stays drawn through the failure. */
+  const showHistoryError = !!historyError && !historyHoldsASeries;
   const eventHasBegun = hasStarted || !isPregameStatus(event?.status);
   const suppressWinProbabilityCard = hasNoPriceHistoryAtAll && eventHasBegun;
 
@@ -2473,11 +2484,11 @@ export default function EventPage({ params }: EventPageProps) {
             <div className="h-48 flex items-center justify-center">
               <LoadingSpinner size="sm" />
             </div>
-          ) : historyError ? (
+          ) : showHistoryError ? (
             <div className="h-48 flex flex-col items-center justify-center text-sm text-text-secondary gap-2">
               <span>Unable to load history</span>
               <span className="text-xs text-text-muted">
-                {historyError.message || 'Unknown error'}
+                {historyError?.message || 'Unknown error'}
               </span>
               <button
                 onClick={() => refreshHistory()}
