@@ -174,8 +174,8 @@ describe("#925 — the tooltip's carried-state line", () => {
       expect(
         carriedStateDisclosure({
           timestamp: t3,
-          period: "Halftime",
-          clock: "0:00",
+          period: "3rd Quarter",
+          clock: "4:12",
           hasScore: true,
           periodObservedAt: t3,
           clockObservedAt: t0,

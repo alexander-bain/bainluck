@@ -647,6 +647,15 @@ export interface TrustedLiveClock {
 const CLOCK_TOKEN_RE = /^\d{1,2}[:.]\d{1,2}$/;
 
 /**
+ * A period that names a stoppage between periods, not a period in play (rule 6):
+ * "Halftime", "End of 3rd Quarter", "End of 2nd Period", "End of 1st Half",
+ * "End of Regulation", "End of OT", "Intermission", "1st Intermission". Anchored at both ends
+ * so a running period that merely mentions a half ("0:45 - 2nd Half") is not one.
+ */
+const BREAK_PERIOD_RE =
+  /^(?:half\s*time|(?:\d(?:st|nd|rd|th)\s+)?intermission|end\s+of\s+(?:regulation|overtime|\d?ot|(?:the\s+)?\d(?:st|nd|rd|th)(?:\s+(?:quarter|period|half|inning))?))$/i;
+
+/**
  * Which of ESPN's clock fields a card may paint.
  *
  * TWO RULES, BOTH MEASURED ON THE SAME EVENT 20 MINUTES APART — 15192197 flipped
@@ -706,6 +715,15 @@ const CLOCK_TOKEN_RE = /^\d{1,2}[:.]\d{1,2}$/;
  *    an exact leading `"<clock> - "` is not a coincidence, it is the composer's
  *    own format. So "Bottom 1st" / "1" still keeps its clock — "Bottom 1st"
  *    does not start with "1 - ".
+ *
+ * 6. A BREAK HAS NO RUNNING CLOCK (#8937). Every college game at a break printed
+ *    one: `Halftime 0:00`, `End of 2nd Quarter 0:00`, and on 15313789
+ *    `End of 3rd Quarter 10:45` — a stopped reading from mid-quarter, printed as
+ *    if it described the game. While the period names a break the clock is not
+ *    running, so whatever ESPN sends beside it is either the zero default or a
+ *    stale value; neither is a fact about the game. The period is kept — it is
+ *    the true half of the badge. Matched on the whole period, so
+ *    "0:45 - 2nd Half" (a running half) keeps its clock.
  */
 export function trustedLiveClock(
   period: string | null | undefined,
@@ -724,6 +742,9 @@ export function trustedLiveClock(
   }
   const trimmedPeriod = (period || "").trim();
   const trimmedClock = (gameClock || "").trim();
+  if (BREAK_PERIOD_RE.test(trimmedPeriod)) {
+    return { period: trimmedPeriod, gameClock: "" };
+  }
   const alreadySpelledOut =
     trimmedClock !== "" &&
     CLOCK_TOKEN_RE.test(trimmedClock) &&
