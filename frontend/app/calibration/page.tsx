@@ -2682,9 +2682,8 @@ export default function CalibrationPage() {
             <p className="text-xs text-text-muted mb-4">
               {total.toLocaleString()} resolved {total === 1 ? "outcome is" : "outcomes are"}{" "}
               excluded from every curve on this page while we check them. They are not
-              graded, not counted, and not deleted &mdash; a held-out row is a stated
-              exclusion we can reverse, which is the difference between a quarantine and a
-              quietly shorter denominator.
+              graded, not counted, and not deleted, so the ones that check out can be put
+              back.
             </p>
             <ul className="space-y-2">
               {held.map((q, i) => (
