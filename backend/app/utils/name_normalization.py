@@ -132,6 +132,23 @@ _NATION_NAME_ALIASES: dict[str, str] = {
     "bosnia and herzegovina": "bosnia & herzegovina",
 }
 
+#: One club, two names, and no stage of :func:`names_match` can see it (#3391).
+#: The Odds API writes `Los Angeles FC`; ESPN writes `LAFC`. `lafc` is a single
+#: token, so the overlap stage has nothing to share and the suffix stage nothing
+#: to contain — while `Los Angeles FC` DOES reach `LA Galaxy` by overlap. So the
+#: ESPN claim for every LAFC fixture failed the registry's structured match
+#: against the Odds row already holding the markets and CREATED a second row:
+#: production 2026-09-26 carries seven such pairs back to 08-29, tonight's
+#: FC Dallas v LAFC with 96 markets on one row and none on the other.
+#:
+#: Same shape as :data:`_NATION_NAME_ALIASES`: keys and values are
+#: `normalize_name` output and the fold is WHOLE-NAME only, so `LAFC` still does
+#: not reach `LA Galaxy`. (A reserve suffix is stripped by `normalize_name`
+#: before this runs, for every name alike; this table does not change that.)
+_CLUB_NAME_ALIASES: dict[str, str] = {
+    "lafc": "los angeles fc",
+}
+
 
 def nation_spelling(name: str | None) -> str | None:
     """The one spelling of a country a feed writes two ways, or None. #8818.
@@ -491,6 +508,8 @@ def names_match(name_a: str, name_b: str) -> bool:
     if norm_a == norm_b:
         return True
     if _NATION_NAME_ALIASES.get(norm_a, norm_a) == _NATION_NAME_ALIASES.get(norm_b, norm_b):
+        return True
+    if _CLUB_NAME_ALIASES.get(norm_a, norm_a) == _CLUB_NAME_ALIASES.get(norm_b, norm_b):
         return True
 
     # 2. Suffix containment at word boundaries

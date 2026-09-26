@@ -660,6 +660,8 @@ class TestTheWholeNameInitialisms:
             # Kalshi's and the StatPal board's spelling against the Odds API's.
             ("GA Eagles", "Go Ahead Eagles"),
             ("G.A. Eagles", "Go Ahead Eagles"),
+            # #3391: ESPN's against the Odds API's, every LAFC fixture this season.
+            ("LAFC", "Los Angeles FC"),
         ],
     )
     def test_every_entry_is_exercised_by_the_pair_that_earned_it(self, short, long):
@@ -682,6 +684,8 @@ class TestTheWholeNameInitialisms:
                 "Racing Club de Lens",
                 "Los Angeles Galaxy",
                 "Go Ahead Eagles",
+                # #3391: the Odds API's name for LAFC, production 2026-09-26.
+                "Los Angeles FC",
             )
         }
         assert set(CLUB_NAME_ALIASES) <= measured
