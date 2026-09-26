@@ -14699,7 +14699,11 @@ def _concept_headline(c: dict, now: datetime) -> Optional[str]:
     """Honest countdown/live headline for a concept card."""
     if c.get("status") == "live":
         return "Live"
-    start = c.get("latest_commence")
+    # #6747: a fight card counts down to its OPENING (`opens_at`, the instant its
+    # pill lights), not its main event — which walks after UTC midnight and made
+    # a Saturday card read "Tomorrow" on the Saturday. Ranking still reads
+    # `latest_commence`; concepts without an opening keep it here too.
+    start = c.get("opens_at") or c.get("latest_commence")
     if start is None:
         return None
     try:

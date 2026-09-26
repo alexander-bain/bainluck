@@ -195,9 +195,14 @@ class TestEveryCallSitePassesTheFirstBout:
         # `fallback_first=first_commence`, so `... in src` stays true when ONE of
         # them is switched to the last bout. (Measured: that mutant survived this
         # test until the asserts were made site-exact.)
+        # #6747: `card_opens_at` takes the same pair right below this call, so
+        # the count is anchored on the STATUS call's own opening lines.
         assert (
             src.count(
-                "fallback_first=first_commence,\n"
+                "card_status_from_bouts(\n"
+                "            bouts,\n"
+                "            now,\n"
+                "            fallback_first=first_commence,\n"
                 "            fallback_last=authoritative_commence,"
             )
             == 1
