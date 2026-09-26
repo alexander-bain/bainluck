@@ -2,9 +2,9 @@
 
 THE SHIP: typing ``habs`` / ``cubbies`` / ``nucks`` / ``dbacks`` (and ``pens``,
 ``sens``, ``yanks``, ``nats``, ``phils``, ``mavs``, ``jags``) puts that club on the
-/search TEAMS card. On 2026-09-26 03:40Z ``/api/events/search?q=habs`` served
+/search TEAMS card. On 2026-09-26 03:40Z the search route served ``habs``
 ``teams=[Habay La Neuve]`` (a Belgian soccer club) and ``cubbies`` / ``nucks`` /
-``dbacks`` served ``teams=[]``.
+``dbacks`` ``teams=[]``. (This script sends no request; it writes rows.)
 
 WHY THE ROWS LACK THEM
 ----------------------
