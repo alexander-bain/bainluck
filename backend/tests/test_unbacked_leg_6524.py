@@ -346,4 +346,7 @@ def test_the_search_card_stops_headlining_the_unbacked_row_6524():
     top = _build_search_top_outcomes(board)
 
     assert top, "the card must still carry an answer"
-    assert [o["name"] for o in top] == ["December 31", "June 30"]
+    # Threshold order since #8834: "released by...?" is a date ladder, so its
+    # card runs by deadline rather than by price. The #6524 claim is that the
+    # fabricated `April 8` is gone, which holds either way.
+    assert [o["name"] for o in top] == ["June 30", "December 31"]
