@@ -350,7 +350,10 @@ struct MarketMapView: View {
         // With no rungs there is no map unit either, so the event-level spread
         // is the sport's number on a rail nobody has drawn yet — it applies
         // exactly when the sport declares a unit for it to be in.
-        let hasProjection = sportUnitLineApplies(fullMarginData.unit) && homeSpread != nil
+        // #8721 — and only where the sportsbooks' spread is a margin at all;
+        // baseball's is the ±1.5 run line, which projects nothing.
+        let hasProjection = vocab.sportsbookSpreadIsAMargin
+            && sportUnitLineApplies(fullMarginData.unit) && homeSpread != nil
         let hasScoreTile = scoredHomeScore != nil && scoredAwayScore != nil && (isLive || isDone)
         return !hasProjection && !hasScoreTile
     }
@@ -460,7 +463,10 @@ struct MarketMapView: View {
         // has carried on the totals side since #3509. Without it a tennis SET
         // margin map would print the books' GAME line as its projection.
         let sportSpread = sportUnitLineApplies(data.unit) ? homeSpread : nil
-        let projValue = sportSpread != nil ? -(sportSpread!) : Self.closestToEvenMargin(parsed)
+        let projValue = Self.marginProjection(
+            homeSpread: sportSpread, rungs: parsed,
+            sportsbookSpreadIsAMargin: vocab.sportsbookSpreadIsAMargin, isLive: isLive
+        )
         if isDone {
             if let homeScoreValue = scoredHomeScore,
                let awayScoreValue = scoredAwayScore {
@@ -896,7 +902,14 @@ struct MarketMapView: View {
         let rangeMax = bounds.max
         let density = buildDensityFromSpreads(parsed, rangeMin: rangeMin, rangeMax: rangeMax)
         let zeroPos = posOnRail(0, min: rangeMin, max: rangeMax)
-        let projValue = Self.closestToEvenMargin(parsed)
+        // #8721 — a half has no sportsbook spread of its own, but the rung rule
+        // is the full card's: a baseball F5 ladder's nearest-a-coin-flip rung is
+        // a long shot too. `/events/15318868` (LAD 75%) read `PRE-GAME SF by
+        // 1.5+` here off "SF -1.5 first 5 innings" at 24%.
+        let projValue = Self.marginProjection(
+            homeSpread: nil, rungs: parsed,
+            sportsbookSpreadIsAMargin: vocab.sportsbookSpreadIsAMargin, isLive: isLive
+        )
 
         var markers: [MapMarker] = []
         // #3885 — the half cards are the shared-tile half of the issue, and they
@@ -1378,6 +1391,34 @@ struct MarketMapView: View {
     static func closestToEvenMargin(_ parsed: [SpreadRungs.Rung]) -> Double? {
         guard !parsed.isEmpty else { return nil }
         return parsed.min(by: { abs($0.probability - 0.5) < abs($1.probability - 0.5) })!.margin
+    }
+
+    /// A margin card's projection value (#8721, the iPhone twin of web PR
+    /// #8725). The full-game card passes its unit-gated spread; the half cards
+    /// have none and pass nil.
+    ///
+    /// `homeSpread` arrives already gated to a rail drawn in the sport's unit.
+    /// Where the sport's sportsbook spread is NOT a margin — baseball's run
+    /// line, ±1.5 whatever the matchup (``SportVocab/sportsbookSpreadIsAMargin``,
+    /// #8617) — it never feeds the tile: `/events/15318545`, Cubs @ Red Sox at
+    /// 48% – 52%, printed `PROJECTION Cubs by 1.5+` on web from exactly this
+    /// read. The Kalshi rung nearest a coin flip may stand in there only on an
+    /// unplayed game and only at even money or better: a baseball ladder's
+    /// smallest cut is 1.5 runs, so a close game's nearest rung is a long shot
+    /// ("Cubs by 2+" at 35%) and naming it would be the run line again, spelled
+    /// from Kalshi. Every sport whose spread is a margin reads exactly as before.
+    static func marginProjection(
+        homeSpread: Double?, rungs: [SpreadRungs.Rung],
+        sportsbookSpreadIsAMargin: Bool, isLive: Bool
+    ) -> Double? {
+        if sportsbookSpreadIsAMargin {
+            if let spread = homeSpread { return -spread }
+            return closestToEvenMargin(rungs)
+        }
+        guard !isLive,
+              let closest = rungs.min(by: { abs($0.probability - 0.5) < abs($1.probability - 0.5) }),
+              closest.probability >= 0.5 else { return nil }
+        return closest.margin
     }
 
     /// Derive the period label for a market outcome.
