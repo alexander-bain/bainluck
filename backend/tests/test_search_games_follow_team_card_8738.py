@@ -206,5 +206,5 @@ class TestTheHandlerWiring:
         block = self.SRC[start:start + 1400]
         status = block.index("status_order,")
         key = block.index("(_team_card_lead_key,)")
-        tag = block.index("tag_boost,")
+        tag = block.index("*tag_boost_keys,")
         assert status < key < tag

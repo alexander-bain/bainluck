@@ -265,6 +265,28 @@ def _search_tag_boost():
         else_=_SEARCH_TAG_BOOST_NONE,
     )
 
+
+def _search_tag_boost_keys(team_rows, query: str) -> tuple:
+    """#8942: the tag tier as games ORDER BY keys — none when the query names a club.
+
+    `arsenal` on production 2026-09-26: the games list opened with Fleetwood v
+    Arsenal (EFL Cup, Oct 27) above Arsenal v Leeds (EPL, Oct 10), the next game.
+    Every row of a club query ties on `search_rank`, and the cup tie carries
+    `importance:playoff` (tier 1) — a knockout round reads that way to the
+    tagger — so the tag tier decided the club's schedule before the date did.
+    `liverpool` read the same way (EFL Cup Oct 28 above Man City Oct 11).
+
+    A reader who names a club is asking when it plays next: #8505's reasoning for
+    finished games, applied to upcoming ones. "Names a club" is the TEAMS card
+    having a row (`_team_card_keyed`) — the definition the card and #8738's lead
+    key read, so the games list cannot disagree with the card about it. No card
+    (`nfl`, `world series`, a tennis player) keeps the tier, and the compiled SQL
+    is then unchanged.
+    """
+    if _team_card_keyed(team_rows, query):
+        return ()
+    return (_search_tag_boost(),)
+
 #: The default `GET /api/events` status set — every state the list is MEANT to
 #: reach, as opposed to the four that happened to exist when it was written.
 #:
@@ -7719,8 +7741,9 @@ async def search_events(
     status_order = live_scheduled_settled_order(now)
 
     # Tag-based relevance boost within the live and upcoming groups (#8505:
-    # settled games order by recency, see `_search_tag_boost`).
-    tag_boost = _search_tag_boost()
+    # settled games order by recency, see `_search_tag_boost`; #8942: a club's
+    # own schedule orders by date, see `_search_tag_boost_keys`).
+    tag_boost_keys = _search_tag_boost_keys(_early_team_rows, _q_identity)
     # On the SUBJECT (#5688): `websearch_to_tsquery` ANDs its lexemes, so the raw
     # query ranks every row that does not contain "today" at 0 and flattens the
     # relevance ordering of the very pool the reader asked about.
@@ -7763,7 +7786,7 @@ async def search_events(
         status_order,
         # #8738: within a state, the club the TEAMS card leads with first.
         *( (_team_card_lead_key,) if _team_card_lead_key is not None else () ),
-        tag_boost,
+        *tag_boost_keys,
         search_rank.desc(),
         # For live/scheduled, sort ascending; for completed, we want descending
         # Using a compound sort: status priority, then time
@@ -7909,7 +7932,7 @@ async def search_events(
                         .order_by(
                             *((_day_boost,) if _day_boost is not None else ()),
                             status_order,
-                            tag_boost,
+                            *tag_boost_keys,
                             # `search_rank` is absent for the reason the
                             # resolved-team arm states: every row here scores 0
                             # against the literal query — the canonical is the row
@@ -8133,7 +8156,7 @@ async def search_events(
                         .order_by(
                             *((_day_boost,) if _day_boost is not None else ()),
                             status_order,
-                            tag_boost,
+                            *tag_boost_keys,
                             # `search_rank` is deliberately absent. Every row
                             # here scores 0 against the literal query — that IS
                             # the defect being repaired — so including the key
