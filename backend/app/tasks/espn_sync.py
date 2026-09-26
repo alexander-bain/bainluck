@@ -4,10 +4,11 @@ ESPN live sync, metadata enrichment, and team logo backfill tasks.
 
 import logging
 import re
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from sqlalchemy import select, distinct, and_, or_, func, literal
+from sqlalchemy import select, distinct, and_, or_, func, literal, text
 from sqlalchemy.orm import selectinload
 
 from app.models import Event, Sport
@@ -612,6 +613,32 @@ async def _serve_live_from_statpal(sports: list[str], stats: dict) -> None:
         logger.warning("failover live write failed for %s: %s", covered, exc)
 
 
+@asynccontextmanager
+async def _step_savepoint(session):
+    """Run one step of the ESPN pass in its own SAVEPOINT (#8796).
+
+    The pass is ONE transaction — ``get_task_session`` commits once, at the
+    end — so a failed statement a step catches leaves the session aborted:
+    every later step raises ``InFailedSQLTransactionError`` and the final
+    ``COMMIT`` on an aborted transaction is a ROLLBACK. The pass then writes
+    nothing, for any sport, while reporting success. Measured on production
+    9/26: 5 of 17 passes, each behind one 40P01 deadlock that
+    ``compute_and_write_stat_model`` logged and swallowed.
+
+    Rolled back to its own savepoint, a failure costs its own step. The flush
+    and the probe are the part that is easy to leave out: when a step swallows
+    a failure as its LAST act, the savepoint's ``RELEASE`` is the first
+    statement to meet the abort, and SQLAlchemy never rolls back to a savepoint
+    whose ``RELEASE`` failed — the outer transaction stays aborted. Probed
+    inside the savepoint, the swallowed failure raises while it can still be
+    rolled back.
+    """
+    async with session.begin_nested():
+        yield
+        await session.flush()
+        await session.execute(text("SELECT 1"))
+
+
 async def _sync_espn_live_events():
     """Async implementation of sync_espn_live_events.
 
@@ -678,14 +705,17 @@ async def _sync_espn_live_events():
             # a sport whose only unsettled row is suspended contributes nothing
             # to `live_sport_keys` at all.
             straggler_espn = ESPNAPIService()
+            # Every step of this pass runs in its own savepoint (#8796) — see
+            # `_step_savepoint`.
             try:
-                await _settle_authority_stragglers(
-                    session,
-                    straggler_espn,
-                    datetime.now(timezone.utc),
-                    stats,
-                    update_event_fields_from_espn,
-                )
+                async with _step_savepoint(session):
+                    await _settle_authority_stragglers(
+                        session,
+                        straggler_espn,
+                        datetime.now(timezone.utc),
+                        stats,
+                        update_event_fields_from_espn,
+                    )
             except Exception as e:
                 stats["errors"].append(f"authority_stragglers: {str(e)}")
                 logger.warning(
@@ -698,13 +728,14 @@ async def _sync_espn_live_events():
             # disjoint populations, so a failure to reach the stranded backlog
             # must not cost the liveness-adjacent pass its run, or the reverse.
             try:
-                await _settle_deep_authority_stragglers(
-                    session,
-                    straggler_espn,
-                    datetime.now(timezone.utc),
-                    stats,
-                    update_event_fields_from_espn,
-                )
+                async with _step_savepoint(session):  # #8796
+                    await _settle_deep_authority_stragglers(
+                        session,
+                        straggler_espn,
+                        datetime.now(timezone.utc),
+                        stats,
+                        update_event_fields_from_espn,
+                    )
             except Exception as e:
                 stats["errors"].append(f"deep_authority_stragglers: {str(e)}")
                 logger.warning(
@@ -719,12 +750,13 @@ async def _sync_espn_live_events():
             # runs AFTER them deliberately — a row the settle door has just
             # finished has left the candidate states and is never re-examined.
             try:
-                await _recover_unstarted_authority_fixtures(
-                    session,
-                    straggler_espn,
-                    datetime.now(timezone.utc),
-                    stats,
-                )
+                async with _step_savepoint(session):  # #8796
+                    await _recover_unstarted_authority_fixtures(
+                        session,
+                        straggler_espn,
+                        datetime.now(timezone.utc),
+                        stats,
+                    )
             except Exception as e:
                 stats["errors"].append(f"unstarted_authority_recovery: {str(e)}")
                 logger.warning(
@@ -827,18 +859,21 @@ async def _sync_espn_live_events():
                         continue
                     espn_events = espn_data[sport_key]
 
+                    # Each sport in its own savepoint, so one sport's failed
+                    # statement cannot discard the pass (#8796).
                     try:
-                        await _process_live_sport(
-                            session, sport_key, espn_events, stats,
-                            recently_completed_cutoff, started_cutoff,
-                            espn_names_match, upsert_team,
-                            register_espn_team_identities,
-                            match_event_to_espn, update_event_fields_from_espn,
-                            write_espn_win_probability,
-                            compute_and_write_stat_model,
-                            create_events_from_unmatched_espn,
-                            dated_board_fetcher=_fetch_dated_board,
-                        )
+                        async with _step_savepoint(session):
+                            await _process_live_sport(
+                                session, sport_key, espn_events, stats,
+                                recently_completed_cutoff, started_cutoff,
+                                espn_names_match, upsert_team,
+                                register_espn_team_identities,
+                                match_event_to_espn, update_event_fields_from_espn,
+                                write_espn_win_probability,
+                                compute_and_write_stat_model,
+                                create_events_from_unmatched_espn,
+                                dated_board_fetcher=_fetch_dated_board,
+                            )
                     except Exception as e:
                         stats["errors"].append(f"{sport_key}: {str(e)}")
             finally:
@@ -856,25 +891,31 @@ async def _sync_espn_live_events():
                     sport_key, espn_data[sport_key], full_slate_boards
                 )
                 try:
-                    await sync_scheduled_events(session, sport_key, espn_events, stats)
+                    async with _step_savepoint(session):  # #8796
+                        await sync_scheduled_events(
+                            session, sport_key, espn_events, stats
+                        )
                 except Exception as e:
                     stats["errors"].append(f"scheduled_{sport_key}: {str(e)}")
 
             # ── Third pass: completed box scores ─────────────────
             try:
-                await fetch_completed_box_scores(session, stats)
+                async with _step_savepoint(session):  # #8796
+                    await fetch_completed_box_scores(session, stats)
             except Exception as e:
                 stats["errors"].append(f"box_score_pass: {str(e)}")
 
             # ── Fourth pass: live box scores ─────────────────────
             try:
-                await fetch_live_box_scores(session, stats)
+                async with _step_savepoint(session):  # #8796
+                    await fetch_live_box_scores(session, stats)
             except Exception as e:
                 stats["errors"].append(f"live_box_score_pass: {str(e)}")
 
             # ── Fifth pass: score backfill ───────────────────────
             try:
-                await backfill_missing_scores(session, stats)
+                async with _step_savepoint(session):  # #8796
+                    await backfill_missing_scores(session, stats)
             except Exception as e:
                 stats["errors"].append(f"score_backfill_pass: {str(e)}")
 
