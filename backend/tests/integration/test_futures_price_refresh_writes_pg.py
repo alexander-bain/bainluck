@@ -775,7 +775,7 @@ async def _drive_the_real_task(monkeypatch, session, verdicts):
     )
     monkeypatch.setattr("app.services.kalshi_api.KalshiAPIService", lambda: _Svc())
 
-    async def _fetch(_service, external_id):
+    async def _fetch(_service, external_id, **_kw):
         return verdicts.get(external_id)
 
     monkeypatch.setattr(fpr, "_fetch_kalshi_prices", _fetch)
@@ -1369,3 +1369,108 @@ class TestTheInPlayArmOutlivesAnExpectedExpirationDate:
         for control in ("has_winner", "venue_settled", "beyond_grace", "resolved_status"):
             assert ids[control] not in selected, f"the grace resurrected {control}"
         assert all(m["arm"] == fpr._ARM_IN_PLAY for m in out)
+
+
+class TestTheWindowWriteOnPostgres8871:
+    """#8871 — `_KALSHI_WINDOW_WRITE_SQL` on real Postgres through asyncpg.
+
+    The SQLite arm in `test_futures_price_refresh_carries_window_8871.py` proves
+    the fences on rows; this one proves the statement itself binds here — a
+    `timestamptz` bound twice (SET and `IS DISTINCT FROM`) and once inside a
+    `COALESCE` — which only the real driver can answer.
+    """
+
+    async def test_the_backstop_row_moves_and_nothing_else_does(self, db):
+        from sqlalchemy import text
+
+        from app.models.models import FuturesMarket
+        from app.tasks import futures_price_refresh as fpr
+
+        backstop = datetime(2027, 11, 3, 15, tzinfo=timezone.utc)
+        expected = datetime(2027, 1, 4, 15, tzinfo=timezone.utc)
+        real_close = datetime(2027, 2, 1, tzinfo=timezone.utc)
+
+        def _m(ext, status, rd):
+            return FuturesMarket(
+                source=_BOOKMAKER,
+                external_id=ext,
+                name=ext,
+                category="futures",
+                market_tier=1,
+                status=status,
+                resolution_date=rd,
+                expiration_time=backstop,
+            )
+
+        specimen = _m("SENATEME-26", "open", backstop)
+        closed = _m("KXREALCLOSE-27", "open", real_close)
+        resolved = _m("SENATEOLD-26", "resolved", backstop)
+        db.add_all([specimen, closed, resolved])
+        await db.flush()
+
+        async def _write(mid, exp=backstop):
+            return (
+                await db.execute(
+                    fpr._KALSHI_WINDOW_WRITE_SQL,
+                    {"mid": mid, "resolution_date": expected, "expiration_time": exp},
+                )
+            ).rowcount
+
+        assert await _write(specimen.id) == 1
+        assert await _write(specimen.id) == 0  # already there: zero writes
+        assert await _write(closed.id) == 0
+        assert await _write(resolved.id) == 0
+        await db.commit()
+
+        rows = dict(
+            (
+                await db.execute(
+                    text(
+                        "SELECT external_id, resolution_date FROM futures_markets"
+                    )
+                )
+            ).fetchall()
+        )
+        assert rows == {
+            "SENATEME-26": expected,
+            "KXREALCLOSE-27": real_close,
+            "SENATEOLD-26": backstop,
+        }
+
+    async def test_a_missing_expiration_keeps_the_backstop(self, db):
+        from sqlalchemy import text
+
+        from app.models.models import FuturesMarket
+        from app.tasks import futures_price_refresh as fpr
+
+        backstop = datetime(2027, 11, 3, 15, tzinfo=timezone.utc)
+        m = FuturesMarket(
+            source=_BOOKMAKER,
+            external_id="SENATETX-26",
+            name="Texas Senate winner?",
+            category="futures",
+            market_tier=1,
+            status="open",
+            resolution_date=backstop,
+            expiration_time=backstop,
+        )
+        db.add(m)
+        await db.flush()
+        n = (
+            await db.execute(
+                fpr._KALSHI_WINDOW_WRITE_SQL,
+                {
+                    "mid": m.id,
+                    "resolution_date": datetime(2027, 1, 4, 15, tzinfo=timezone.utc),
+                    "expiration_time": None,
+                },
+            )
+        ).rowcount
+        assert n == 1
+        exp = (
+            await db.execute(
+                text("SELECT expiration_time FROM futures_markets WHERE id = :i"),
+                {"i": m.id},
+            )
+        ).scalar()
+        assert exp == backstop

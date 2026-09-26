@@ -56,6 +56,23 @@ that changes or retires a price runs
 :func:`app.utils.futures_rank.rerank_market_field_stmt` for that market before it
 commits. The helper's own header carries the rule and the exemptions.
 
+IT CARRIES THE RESOLUTION WINDOW FORWARD TOO, FOR THE SAME REASON (#8871). The
+event payload this task reads for a Kalshi future is the one the discovery poll
+derives ``resolution_date`` from, and it was being thrown away. Measured
+2026-09-26: the poll had not upserted a single ``SENATE*``/``HOUSE*``/
+``GOVPARTY*`` row since 2026-09-10 06:52Z (its scan verdict is ``starved``,
+16,379 existing events unreached), while this task rewrote Maine Senate's
+prices at 14:54Z that day. So "Maine Senate winner? — Resolves Nov 3, 2027", the
+venue's one-year backstop, stayed on a tier-1 page five weeks before election
+day on a row this task visits every few hours. It now runs the poll's own
+:func:`app.utils.kalshi_resolution_window.derive_resolution_window` over the
+payload it already holds, no extra venue call, and writes the result under three
+fences: futures only (a single contest keeps its pad, #8586), only onto a row
+whose stored date is still the backstop (the resolution sweep's own
+``resolution_date >= expiration_time`` population), and only a FUTURE date (a
+date is never how this task decides a market is over). See
+:func:`_kalshi_window_to_write`.
+
 THREE ARMS, BECAUSE THERE ARE THREE KINDS OF WORTH REFRESHING
 --------------------------------------------------------------
 The sweep selects on **value** (volume above a floor at any tier, or tier 1
@@ -187,6 +204,7 @@ from app.utils.futures_liveness import (
     venue_answered,
 )
 from app.utils.futures_rank import rerank_market_field_stmt  # #6598 / CERT-3182
+from app.utils.kalshi_resolution_window import derive_resolution_window  # #8871
 from app.utils.polymarket_settlement_scan import GAMMA_EVENT_ID_EXPR
 
 logger = logging.getLogger(__name__)
@@ -1740,7 +1758,76 @@ def venue_volume_24h(raw_market: dict) -> Optional[float]:
     return None
 
 
-async def _fetch_kalshi_prices(service, external_id: str):
+# --- the resolution window, off the payload we already hold (#8871) ------------
+
+#: The write, and every fence on it that the row itself can answer.
+#:
+#: ``status = 'open'`` and the backstop test are the resolution sweep's own
+#: population (``kalshi_resolution_sweep.SELECT_SQL``): a row whose stored date
+#: is already a real close is the poll's to maintain and this task leaves it
+#: alone. ``IS DISTINCT FROM`` makes the healthy case zero row writes, the same
+#: economy the rank re-derivation relies on. ``COALESCE`` on the backstop column
+#: because a derivation that yields no expiration must not blank one we hold.
+#: No ``status`` and no grade: a date is not a settlement (#1852's line).
+_KALSHI_WINDOW_WRITE_SQL = text(
+    """
+    UPDATE futures_markets
+       SET resolution_date = :resolution_date,
+           expiration_time = COALESCE(:expiration_time, expiration_time)
+     WHERE id = :mid
+       AND source = 'kalshi'
+       AND status = 'open'
+       AND (expiration_time IS NULL
+            OR resolution_date IS NULL
+            OR resolution_date >= expiration_time)
+       AND resolution_date IS DISTINCT FROM :resolution_date
+    """
+)
+
+
+def _kalshi_window_to_write(
+    external_id: Optional[str], markets, now: datetime
+) -> Optional[tuple[datetime, Optional[datetime]]]:
+    """``(resolution_date, expiration_time)`` to write for one Kalshi event, or None.
+
+    The derivation is the poll's, called the way the poll calls it; what is
+    added here is only what this task may NOT do that the poll may:
+
+    * **No single contest.** A game or dated-fixture ticker keeps whatever the
+      poll wrote. This task visits in-play markets every few minutes, so a
+      start-shaped date written here would resolve a match mid-play far more
+      reliably than the poll ever did (#8586's 16 minutes).
+    * **No fallback.** An event whose legs carry no ``close_time`` derives the
+      backstop itself, which the row already holds.
+    * **Only a future date.** ``mark_resolved_futures`` resolves an unlinked
+      open market once its date passes, so a past date written here would be
+      this task settling a market it just read as trading. The venue's own
+      status is the only thing that ends a market on this path
+      (:data:`VENUE_SETTLED`).
+    """
+    from app.tasks.kalshi import _is_dated_fixture_ticker, _is_kalshi_game_ticker
+
+    if not external_id or not markets:
+        return None
+    if _is_kalshi_game_ticker(external_id) or _is_dated_fixture_ticker(external_id):
+        return None
+    # Stated, not defaulted: the ticker gate above already returned for every
+    # single contest, so what reaches the rule here is a future (#8586's guard
+    # asks every caller to say which it is).
+    window = derive_resolution_window(markets, single_contest=False)
+    resolution_date = window.resolution_date
+    if resolution_date is None or window.used_expiration_fallback:
+        return None
+    if resolution_date.tzinfo is None:
+        resolution_date = resolution_date.replace(tzinfo=timezone.utc)
+    if resolution_date <= now:
+        return None
+    return resolution_date, window.expiration_time
+
+
+async def _fetch_kalshi_prices(
+    service, external_id: str, *, windows: Optional[dict] = None
+):
     """Prices for one Kalshi event ticker.
 
     Three returns, because there are three different facts (see
@@ -1777,6 +1864,11 @@ async def _fetch_kalshi_prices(service, external_id: str):
       place that can observe, and which `_write_prices` needs in order to stop
       publishing the fossil that a bare ``continue`` left standing. A caller
       that wants only quotes filters the flag; the one caller there is does.
+
+    ``windows``, when passed, is filled with ``{external_id: window-or-None}``
+    from the same payload — see :func:`_kalshi_window_to_write` (#8871). It is
+    written only on the list return: a settled or unreadable event has no
+    window this task may act on.
 
     🔴 WHAT (2) COSTS A READER, measured on production 2026-09-12 22:2xZ. Of the
     24 events kicking off in the future whose stored Kalshi blend leg sat at
@@ -1832,6 +1924,20 @@ async def _fetch_kalshi_prices(service, external_id: str):
     event = service._parse_event(raw)
     if not event:
         return None
+
+    # #8871. Off the parsed event the poll derives from, for no extra call. A
+    # caller that passes no ``windows`` gets exactly the old behaviour, and a
+    # derivation that fails costs this read its date, never its prices.
+    if windows is not None:
+        try:
+            windows[external_id] = _kalshi_window_to_write(
+                external_id, event.markets, datetime.now(timezone.utc)
+            )
+        except Exception as exc:  # noqa: BLE001 — see the comment above
+            logger.warning(
+                "futures_price_refresh: no resolution window for %s: %s",
+                external_id, exc,
+            )
 
     # #7747. Keyed by ticker off the RAW list, because the parsed object's own
     # `volume_24h` cannot answer this question — see `venue_volume_24h`. Built
@@ -2765,6 +2871,11 @@ async def _refresh_stale_futures_prices(
         # was never made" are the two states this counter exists to separate,
         # and only one of them is healthy.
         "ranks_rederived": 0,
+        # #8871. Kalshi futures whose backstop date this pass replaced with the
+        # derived one. Unconditional, including as zero, for the reason
+        # `ranks_rederived` is: the healthy case writes nothing, so "zero" and
+        # "never asked" are the two states it exists to separate.
+        "resolution_windows_rederived": 0,
         # #5869. THE LEG THIS PASS DECLINED TO PRICE — the third outcome, and the
         # one the summary could not express. `legs_retired` says "the venue quotes
         # nothing, so we withdrew ours"; `markets_priced` says "we wrote". A leg
@@ -3251,6 +3362,9 @@ async def _refresh_stale_futures_prices(
                 await session.rollback()
                 stats["errors"].append(f"kalshi frozen scan: {exc}")
                 frozen_certain = {}
+            # #8871. One dict for the pass, filled by the fetch from the payload
+            # it already read and consumed after the price commit below.
+            windows: dict = {}
             for market in kalshi_markets:
                 if time.monotonic() - started > _TIME_BUDGET_S:
                     stats["budget_hit"] = True
@@ -3258,7 +3372,7 @@ async def _refresh_stale_futures_prices(
                 _note_attempt(market)
                 try:
                     priced = await _fetch_kalshi_prices(
-                        kalshi_service, market["external_id"]
+                        kalshi_service, market["external_id"], windows=windows
                     )
                 except Exception as exc:
                     stats["errors"].append(f"kalshi {market['external_id']}: {exc}")
@@ -3376,6 +3490,38 @@ async def _refresh_stale_futures_prices(
                     await _clear_if_stamped(session, market, stats)
                 else:
                     stats["unpriceable"] += 1
+
+                # #8871, in its OWN transaction and after the price commit. A
+                # date is independent of a price, so a failed date write must
+                # not roll back prices this pass already wrote (gotcha #42).
+                window = windows.get(market["external_id"])
+                if window is not None:
+                    try:
+                        _rewindowed = (
+                            await session.execute(
+                                _KALSHI_WINDOW_WRITE_SQL,
+                                {
+                                    "mid": market["id"],
+                                    "resolution_date": window[0],
+                                    "expiration_time": window[1],
+                                },
+                            )
+                        ).rowcount
+                        await session.commit()
+                    except Exception as exc:
+                        await session.rollback()
+                        stats["errors"].append(
+                            f"kalshi window {market['external_id']}: {exc}"
+                        )
+                    else:
+                        if _rewindowed:
+                            stats["resolution_windows_rederived"] += _rewindowed
+                            logger.info(
+                                "futures_price_refresh: market %s (%s) now "
+                                "resolves %s, not the venue backstop (#8871)",
+                                market["id"], market["external_id"],
+                                window[0].isoformat(),
+                            )
 
                 # #4253, AFTER the write on purpose. The event read above
                 # proves the venue is reachable and this market is live, so

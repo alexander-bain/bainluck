@@ -379,7 +379,7 @@ async def _drive(monkeypatch, session, *, verdict):
     async def _reach(*a, **kw):
         return None
 
-    async def _fetch(_service, _external_id):
+    async def _fetch(_service, _external_id, **_kw):
         return verdict
 
     monkeypatch.setattr(fpr, "_scan_kalshi_frozen_certain", _scan)
