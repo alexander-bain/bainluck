@@ -18218,6 +18218,106 @@ def _withhold_partial_field_futures(
     )
 
 
+def _redundant_parent_scope(row_markets: dict, event_id: int) -> tuple[set, set]:
+    """The parents Bigger Picture could be drawing twice, and their groups (#8848).
+
+    Only a market door one owns (`event_id == event_id`) that sits on a
+    `group_id` can be a decomposed container's parent — the same bound
+    `/game-markets` has by construction, since it only ever loads the event's
+    own markets. A season field ("Super Bowl Champion") is never in scope here,
+    whatever its group holds: this is a port of door one's verdict, not a new
+    rule for futures. Returns ``(parent_ids, group_ids)``; both empty means the
+    caller issues no query.
+    """
+    parent_ids = {
+        market_id
+        for market_id, market in row_markets.items()
+        if getattr(market, "group_id", None) and getattr(market, "event_id", None) == event_id
+    }
+    group_ids = {row_markets[market_id].group_id for market_id in parent_ids}
+    return parent_ids, group_ids
+
+
+def _withhold_redundant_parent_futures(
+    home_futures: list,
+    away_futures: list,
+    parent_ids: set,
+    group_markets: list,
+    legs_by_market: dict,
+) -> tuple[list, list]:
+    """#4189 / #5273's verdict, at the second door (#8848).
+
+    WHAT A READER SAW. `/events/15318843` (Hangzhou doubles), Bigger Picture:
+    Polymarket parent `62352559` drawn with four legs that are its children's
+    TITLES — "Hangzhou Open (Doubles): Reynolds/Watt vs King/Stevens Set 2
+    Winner" 59.5%, "… Set 1 Winner" 59%, "Reynolds/Watt" 39% (a third copy of
+    the match winner, at a different number) and "Completed Match" 99% — right
+    beside the Set 1 / Set 2 children those legs were copied from.
+    `/game-markets` has removed such parents since #4189 (by shape) and #5273
+    (by leg id); this door drew them from the same rows with neither pass.
+
+    THE SAME TWO CANDIDATE TESTS AND THE SAME PAYLOAD VERDICT, VERBATIM:
+    :func:`_decomposed_container_parent_candidates` and
+    :func:`_leg_copy_parent_members` name the candidates, and a candidate's rows
+    go only when a row speaking for one of its own group's members is still in
+    the FINAL lists (CERT-2335 / CERT-2340: a parent whose children were all
+    filtered away is the group's only representation and stays).
+
+    THE ONE DIFFERENCE IS THE BASIS. Door one loads every market on the event,
+    so its candidate tests see the whole group. This door selects by team, so
+    a child that names no team ("Completed Match") never produces a row — and
+    the leg-copy test, which needs EVERY leg of the parent to name a sibling,
+    would refuse on the leg that child owns. So ``group_markets`` is the whole
+    group (id, group_id, market_type, external_id) and ``legs_by_market`` the
+    parent's whole leg set, both read by the caller; the verdict still reads
+    only the rows this door serves.
+
+    Rows that speak for merged contributors (`contributor_market_ids`) are kept
+    unless EVERY id behind them is a redundant parent — door one's rule for its
+    merged rows — so a member's price never leaves with the container's.
+    """
+    if not parent_ids or not group_markets:
+        return home_futures, away_futures
+
+    leg_copy_members = _leg_copy_parent_members(group_markets, legs_by_market)
+    candidates = (
+        _decomposed_container_parent_candidates(group_markets) | set(leg_copy_members)
+    ) & parent_ids
+    if not candidates:
+        return home_futures, away_futures
+
+    member_ids_by_group: dict = {}
+    for m in group_markets:
+        if m.group_id and (m.market_type or "") in _DECOMPOSED_MEMBER_SHAPES:
+            member_ids_by_group.setdefault(m.group_id, set()).add(m.id)
+
+    surviving_ids: set = set()
+    for row in list(home_futures) + list(away_futures):
+        surviving_ids |= _futures_row_market_ids(row)
+
+    redundant = {
+        m.id
+        for m in group_markets
+        if m.id in candidates
+        and (
+            member_ids_by_group.get(m.group_id, set())
+            | leg_copy_members.get(m.id, set())
+        )
+        & surviving_ids
+    }
+    if not redundant:
+        return home_futures, away_futures
+
+    def _keep(row: dict) -> bool:
+        ids = _futures_row_market_ids(row)
+        return not (ids and ids <= redundant)
+
+    return (
+        [r for r in home_futures if _keep(r)],
+        [r for r in away_futures if _keep(r)],
+    )
+
+
 def _classify_game_market(name: str, external_id: Optional[str] = None) -> str:
     """Classify a game-level market name into a type.
 
@@ -24707,6 +24807,41 @@ async def _build_related_futures(
         pre_merge_market_ids=pre_merge_market_ids,
         stored_leg_counts=stored_leg_counts,
     )
+
+    # ── #8848 — a decomposed container's parent is not drawn beside its children
+    #
+    # AFTER every drop above, for #4189's reason: only here is "did one of the
+    # group's members reach the reader?" a fact rather than a forecast. The two
+    # reads are scoped to the event's own grouped markets that produced a row,
+    # so a page with none issues no query.
+    redundant_parent_ids, redundant_parent_groups = _redundant_parent_scope(
+        row_markets, event_id
+    )
+    if redundant_parent_ids:
+        group_markets_result = await db.execute(
+            select(
+                FuturesMarket.id,
+                FuturesMarket.group_id,
+                FuturesMarket.market_type,
+                FuturesMarket.external_id,
+            ).where(FuturesMarket.group_id.in_(sorted(redundant_parent_groups)))
+        )
+        group_markets = group_markets_result.all()
+        parent_legs_result = await db.execute(
+            select(FuturesOutcome.market_id, FuturesOutcome.external_id).where(
+                FuturesOutcome.market_id.in_(sorted(redundant_parent_ids))
+            )
+        )
+        parent_legs: dict = {}
+        for leg in parent_legs_result.all():
+            parent_legs.setdefault(leg.market_id, []).append(leg)
+        home_futures, away_futures = _withhold_redundant_parent_futures(
+            home_futures,
+            away_futures,
+            redundant_parent_ids,
+            group_markets,
+            parent_legs,
+        )
 
     # ── Enrich matchup outcomes with team logos ───────────────────
     # For "matchup" outcomes (e.g., "Los Angeles Lakers" in a Finals matchup
