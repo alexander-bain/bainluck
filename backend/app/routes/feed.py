@@ -2201,6 +2201,14 @@ def apply_pregame_record_caption(feed_items: list[dict]) -> None:
     bucket label, so a card that has already earned a specific sentence (a
     rivalry tag, a line move, a live claim) is never overwritten.
 
+    #8853 — and over NO caption at all. A game that is not yet "starting soon"
+    gets no bucket from `get_highlight_label`, so it arrives with an empty
+    `headline` and no pill; the same card family printed records at 45 minutes
+    and a blank at 4 hours. That arm is narrower on purpose: status must be
+    exactly `scheduled` (a postponed or unknown-state row keeps its blank), and
+    because the demotion predicate falls back to `headline` on a label-less card,
+    a caption carrying one of its keywords is refused, so this cannot move rank.
+
     Per item, because a feed pass that raises loses the whole page and this one
     reads two nested dicts written by a different pass (gotcha #42).
     """
@@ -2208,12 +2216,17 @@ def apply_pregame_record_caption(feed_items: list[dict]) -> None:
         try:
             if item.get("type") != "event":
                 continue
-            if item.get("headline") != PREGAME_CLOSE_MATCHUP_LABEL:
-                continue
             data = item.get("data") or {}
-            if (data.get("highlight") or {}).get(
-                "label"
-            ) != PREGAME_CLOSE_MATCHUP_LABEL:
+            headline = item.get("headline")
+            label = (data.get("highlight") or {}).get("label")
+            uncaptioned = not headline and not label
+            if uncaptioned:
+                if data.get("status") != "scheduled":
+                    continue
+            elif (
+                headline != PREGAME_CLOSE_MATCHUP_LABEL
+                or label != PREGAME_CLOSE_MATCHUP_LABEL
+            ):
                 continue
             if (data.get("status") or "") in _RECORD_CAPTION_EXCLUDED_STATUSES:
                 continue
@@ -2225,6 +2238,10 @@ def apply_pregame_record_caption(feed_items: list[dict]) -> None:
                 home_label=home.get("abbreviation"),
                 home_record=home.get("record"),
             )
+            if caption and uncaptioned:
+                lowered = caption.lower()
+                if any(kw in lowered for kw in _DISCOVER_EVENT_EXCEPTION_KEYWORDS):
+                    continue
             if caption:
                 item["headline"] = caption
         except Exception:  # pragma: no cover - a caption never costs a page
