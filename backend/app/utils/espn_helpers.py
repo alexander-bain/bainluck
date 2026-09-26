@@ -1953,94 +1953,105 @@ async def compute_and_write_stat_model(session, event, ee, sport_key, stats):
         return False
 
     try:
-        from app.utils.win_probability import (
-            compute_statistical_win_prob,
-            model_pregame_spread,
-        )
-
-        # Use opening spread if available — not baseball's run line (#8613).
-        pregame_spread = model_pregame_spread(sport_key, event.opening_home_spread)
-
-        # Pass opening probability as prior so the model
-        # doesn't start at 50% when no spread is available.
-        opening_prob = None
-        if event.opening_home_probability is not None:
-            opening_prob = float(event.opening_home_probability)
-
-        # #8522: no prior and a market already on the row — the market's
-        # number, not the model's coin flip, is the headline.
-        from app.utils.win_probability import priorless_model_defers_to_market
-
-        if priorless_model_defers_to_market(
-            pregame_spread, opening_prob, event.win_probability_sources
-        ):
-            stats["stat_model_priorless_deferred"] = (
-                stats.get("stat_model_priorless_deferred", 0) + 1
+        # A SAVEPOINT, because the failure below is caught and swallowed
+        # (#8796). The ESPN pass is ONE transaction (`get_task_session` commits
+        # once, at the end), so a statement that failed here — measured: a
+        # 40P01 deadlock against a live-state compare-and-write and another
+        # `win_probability_sources` writer, on a row the pass had already
+        # locked — left the whole session aborted: every later sport raised
+        # InFailedSQLTransaction and the final COMMIT became a ROLLBACK that
+        # discarded the pass for every sport. Rolled back to here, the failure
+        # costs this one reading (and #8761's queued frame goes with it).
+        async with session.begin_nested():
+            from app.utils.win_probability import (
+                compute_statistical_win_prob,
+                model_pregame_spread,
             )
-            # ...and drop the reading it wrote before the market arrived,
-            # or that frozen number keeps the headline.
-            if await retire_priorless_stat_model(session, event, mirror_orm=True):
-                stats["stat_model_priorless_retired"] = (
-                    stats.get("stat_model_priorless_retired", 0) + 1
+
+            # Use opening spread if available — not baseball's run line (#8613).
+            pregame_spread = model_pregame_spread(sport_key, event.opening_home_spread)
+
+            # Pass opening probability as prior so the model
+            # doesn't start at 50% when no spread is available.
+            opening_prob = None
+            if event.opening_home_probability is not None:
+                opening_prob = float(event.opening_home_probability)
+
+            # #8522: no prior and a market already on the row — the market's
+            # number, not the model's coin flip, is the headline.
+            from app.utils.win_probability import priorless_model_defers_to_market
+
+            if priorless_model_defers_to_market(
+                pregame_spread, opening_prob, event.win_probability_sources
+            ):
+                stats["stat_model_priorless_deferred"] = (
+                    stats.get("stat_model_priorless_deferred", 0) + 1
                 )
-            return False
+                # ...and drop the reading it wrote before the market arrived,
+                # or that frozen number keeps the headline.
+                if await retire_priorless_stat_model(session, event, mirror_orm=True):
+                    stats["stat_model_priorless_retired"] = (
+                        stats.get("stat_model_priorless_retired", 0) + 1
+                    )
+                return False
 
-        # Prefer numeric period for reliability
-        period_str = _sanitize_period(ee.status_detail)
-        if ee.period and not period_str:
-            period_str = str(ee.period)
+            # Prefer numeric period for reliability
+            period_str = _sanitize_period(ee.status_detail)
+            if ee.period and not period_str:
+                period_str = str(ee.period)
 
-        stat_wp = compute_statistical_win_prob(
-            home_score=ee.home_score,
-            away_score=ee.away_score,
-            clock=ee.clock,
-            period=period_str,
-            sport_key=sport_key,
-            pregame_spread=pregame_spread,
-            opening_home_probability=opening_prob,
-        )
-        if stat_wp is not None:
-            # #1829: `stat_model` has TWO writers — this one and
-            # odds_polling.py's. Both stamp, or the source's age depends on
-            # which task happened to write last.
-            from app.utils.nonvenue_live_push import write_nonvenue_probability
-            await write_nonvenue_probability(
-                session, event, "stat_model", round(stat_wp, 4),
+            stat_wp = compute_statistical_win_prob(
+                home_score=ee.home_score,
+                away_score=ee.away_score,
+                clock=ee.clock,
+                period=period_str,
+                sport_key=sport_key,
+                pregame_spread=pregame_spread,
+                opening_home_probability=opening_prob,
             )
+            if stat_wp is not None:
+                # #1829: `stat_model` has TWO writers — this one and
+                # odds_polling.py's. Both stamp, or the source's age depends on
+                # which task happened to write last.
+                from app.utils.nonvenue_live_push import write_nonvenue_probability
+                await write_nonvenue_probability(
+                    session, event, "stat_model", round(stat_wp, 4),
+                )
 
-            from app.tasks.snapshots import _create_or_update_win_prob_snapshot
-            # #922: if OUR event is already completed/closed (ESPN can lag and
-            # keep reporting MLB as "in" for 20-40 min post-final), capture the
-            # terminal stat_model point once and stop appending drift points —
-            # those post-final stat_model re-stamps were the MLB chart stale tail.
-            is_completed = getattr(event, "status", None) in ("completed", "closed")
-            stat_snap, is_new = await _create_or_update_win_prob_snapshot(
-                session,
-                event_id=event.id,
-                source="stat_model",
-                home_win_probability=round(stat_wp, 4),
-                away_win_probability=round(1.0 - stat_wp, 4),
-                game_state={
-                    "clock": ee.clock,
-                    "period": period_str,
-                    "home_score": ee.home_score,
-                    "away_score": ee.away_score,
-                    "pregame_spread": pregame_spread,
-                    "time_source": "espn",
-                },
-                is_completed=is_completed,
-            )
-            if is_new:
-                session.add(stat_snap)
-            stats["stat_model_computed"] = stats.get("stat_model_computed", 0) + 1
-            return True
-        else:
-            logger.warning(
-                f"stat_model returned None for event {event.id} "
-                f"(sport={sport_key}, clock={ee.clock!r}, period={ee.status_detail!r}, "
-                f"score={ee.home_score}-{ee.away_score})"
-            )
+                from app.tasks.snapshots import _create_or_update_win_prob_snapshot
+                # #922: if OUR event is already completed/closed (ESPN can lag and
+                # keep reporting MLB as "in" for 20-40 min post-final), capture the
+                # terminal stat_model point once and stop appending drift points —
+                # those post-final stat_model re-stamps were the MLB chart stale tail.
+                is_completed = getattr(event, "status", None) in ("completed", "closed")
+                stat_snap, is_new = await _create_or_update_win_prob_snapshot(
+                    session,
+                    event_id=event.id,
+                    source="stat_model",
+                    home_win_probability=round(stat_wp, 4),
+                    away_win_probability=round(1.0 - stat_wp, 4),
+                    game_state={
+                        "clock": ee.clock,
+                        "period": period_str,
+                        "home_score": ee.home_score,
+                        "away_score": ee.away_score,
+                        "pregame_spread": pregame_spread,
+                        "time_source": "espn",
+                    },
+                    is_completed=is_completed,
+                )
+                if is_new:
+                    session.add(stat_snap)
+                stats["stat_model_computed"] = stats.get("stat_model_computed", 0) + 1
+                return True
+            else:
+                logger.warning(
+                    f"stat_model returned None for event {event.id} "
+                    f"(sport={sport_key}, clock={ee.clock!r}, period={ee.status_detail!r}, "
+                    f"score={ee.home_score}-{ee.away_score})"
+                )
     except Exception as e:
+        stats["stat_model_errors"] = stats.get("stat_model_errors", 0) + 1
         logger.error(f"stat_model error for event {event.id}: {e}")
 
     return False

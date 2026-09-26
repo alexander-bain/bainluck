@@ -65,6 +65,7 @@ commented out entirely.
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -364,6 +365,14 @@ class _AsyncShim:
 
     async def commit(self):
         self._s.commit()
+
+    @asynccontextmanager
+    async def begin_nested(self):
+        # A real SAVEPOINT on the inner session: the stat_model writer runs in
+        # one since #8796, and a shim that faked it would hide a write that
+        # only lands outside it.
+        with self._s.begin_nested():
+            yield
 
 
 def _live_row_on_disk():

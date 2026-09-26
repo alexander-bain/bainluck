@@ -4733,6 +4733,26 @@ jobs:
             exit 1
           }
 
+      - name: "#8796 one failed statement does not discard the ESPN pass (real Postgres)"
+        # The ESPN live pass is one transaction. A deadlock that stat_model
+        # caught and swallowed left it aborted, every later sport failed, and
+        # the final COMMIT became a ROLLBACK that dropped the whole pass. Only
+        # Postgres aborts a transaction, so only Postgres can show that the
+        # savepoints restore it. Reuses the #7617 database; this file drops and
+        # creates its own tables. Skip detection plus a count.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_espn_pass_survives_one_failed_statement_pg_8796.py \
+            -v -rs 2>&1 | tee /tmp/espnpass8796.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/espnpass8796.txt; then
+            echo "::error::#8796 ESPN-pass contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]5 passed," /tmp/espnpass8796.txt || {
+            echo "::error::#8796 ESPN-pass contract did not run all five cases"
+            exit 1
+          }
+
       - name: "#837 subscription slate — provision the disposable database"
         # Its own database for the reason the #7617 step above gives: this
         # contract creates and drops the six tables the slate predicate joins,
