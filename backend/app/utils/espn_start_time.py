@@ -29,3 +29,17 @@ def espn_start_time(ee: Any) -> Optional[datetime]:
     if getattr(ee, "time_valid", True) is False:
         return None
     return getattr(ee, "date", None)
+
+
+def espn_announced_start(ee: Any) -> Optional[datetime]:
+    """ESPN's start for ``ee`` only when ESPN said ``timeValid: true`` outright.
+
+    Stricter than :func:`espn_start_time`: that one lets an absent flag through
+    so no pre-#8841 payload changes behaviour; this one is for rails that treat
+    ESPN's clock as a VOUCHER for a start already on the row (the equal-instant
+    case — StatPal's 20:00Z placeholder turning out to be the real first pitch),
+    where silence must vouch for nothing.
+    """
+    if getattr(ee, "time_announced", False) is not True:
+        return None
+    return espn_start_time(ee)

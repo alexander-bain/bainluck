@@ -29,13 +29,12 @@ venue must not report the same thing as one that correctly wrote nothing.
 """
 
 import asyncio
-import json
 import logging
 from datetime import datetime, timezone, timedelta
 from itertools import zip_longest
 from typing import Collection, Optional, Sequence
 
-from sqlalchemy import select, update, or_, func, text
+from sqlalchemy import select, update, or_, func
 
 from app.tasks.base import get_task_session
 from app.tasks.config import STATPAL_SPORT_MAPPING
@@ -49,8 +48,8 @@ from app.utils.game_state import (
 )
 from app.utils.live_state_write import write_live_state_if_unmoved
 from app.utils.start_time_authority import provider_may_set_start
+from app.utils.start_placeholder_write import write_start_placeholder_tags
 from app.utils.start_placeholder import (
-    START_PLACEHOLDER_TAG_PREFIX,
     desired_start_placeholder_tags,
     needs_start_placeholder_write,
 )
@@ -197,30 +196,9 @@ def statpal_live_position(fixture) -> tuple[Optional[str], Optional[str]]:
 async def _write_start_placeholder_tags(session, event_id: int, desired: list[str]) -> None:
     """Replace a row's start-placeholder tags with ``desired`` (#8841).
 
-    Core SQL with a server-side rewrite, never an ORM assignment: `event_tags`
-    is JSONB (gotcha #4) and the taxonomy task replaces it wholesale, so this
-    touches only elements carrying the prefix and leaves every other tag as the
-    database holds it now, not as this session read it. The prefix is compared
-    with `left()` and a bound value rather than `LIKE`, whose `%` inside
-    `text()` is a bind-parameter trap (gotcha #45).
+    The SQL lives in `utils/start_placeholder_write` so ESPN's rails share it.
     """
-    await session.execute(
-        text(
-            "UPDATE events SET event_tags = COALESCE(("
-            "  SELECT jsonb_agg(t) FROM jsonb_array_elements("
-            "    COALESCE(event_tags, '[]'::jsonb)) AS t"
-            "  WHERE NOT (jsonb_typeof(t) = 'string'"
-            "             AND left(t #>> '{}', :plen) = :prefix)"
-            "), '[]'::jsonb) || CAST(:add AS jsonb) "
-            "WHERE id = :eid"
-        ),
-        {
-            "plen": len(START_PLACEHOLDER_TAG_PREFIX),
-            "prefix": START_PLACEHOLDER_TAG_PREFIX,
-            "add": json.dumps(list(desired)),
-            "eid": event_id,
-        },
-    )
+    await write_start_placeholder_tags(session, event_id, desired)
 
 
 async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
@@ -755,6 +733,14 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                         fixture_start=fixture.start_time,
                         commence_time=event.commence_time,
                     )
+                    # A stamp an outranking rail vouches for is not StatPal's to
+                    # call a placeholder — ESPN announcing the SAME minute
+                    # (espn_helpers, equal-instant) takes the stamp and retires
+                    # the tag, and this pass must not put it back every run.
+                    if _desired_placeholder and not provider_may_set_start(
+                        getattr(event, "commence_time_source", None), "statpal"
+                    ):
+                        _desired_placeholder = []
                     if needs_start_placeholder_write(
                         getattr(event, "event_tags", None), _desired_placeholder
                     ):
