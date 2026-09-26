@@ -26,7 +26,7 @@ nonisolated struct EventDetail: Decodable, Identifiable, Sendable {
     let bookmakerOdds: [BookmakerOdds]?
     let highlight: Highlight?
     let espn: ESPNData?
-    let winProbabilitySources: [String: WinProbSource]?
+    var winProbabilitySources: [String: WinProbSource]?
     let ei: EIData?
     let pulse: EIData?
     let eventTags: [String]?

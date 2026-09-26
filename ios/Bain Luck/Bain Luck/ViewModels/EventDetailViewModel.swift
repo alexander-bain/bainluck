@@ -85,6 +85,8 @@ final class EventDetailViewModel: ObservableObject {
     private var awaitingServedFinal = false
 
     private var latestPriceFrame: LiveStreamFrame?
+    private var latestSourceFrames: [String: LiveStreamFrame] = [:]
+    private var latestAcceptedSourceDates: [String: Date] = [:]
     private var latestAcceptedPriceDate: Date?
 
     private var stream: LiveStreamController?
@@ -197,6 +199,16 @@ final class EventDetailViewModel: ObservableObject {
                     latestAcceptedPriceDate = servedAt
                 }
             }
+            // Retiring an override must not erase an observation already known:
+            // a later cache hit cannot make a replayed older source frame new.
+            for (key, date) in LiveEventSourceReconciliation.observationDates(in: fetched) {
+                if latestAcceptedSourceDates[key].map({ date > $0 }) ?? true {
+                    latestAcceptedSourceDates[key] = date
+                }
+            }
+            fetched = LiveEventSourceReconciliation.reconciling(
+                &latestSourceFrames, over: fetched, streamRecoverable: streamRecoverable
+            )
             event = fetched
             error = nil
         } catch {
@@ -372,6 +384,7 @@ final class EventDetailViewModel: ObservableObject {
         stream = nil
         streamDelivering = false
         latestPriceFrame = nil
+        latestSourceFrames.removeAll()
     }
 
     /// Write a pushed price into the model the page already reads.
@@ -382,6 +395,17 @@ final class EventDetailViewModel: ObservableObject {
     @MainActor
     private func apply(_ frame: LiveStreamFrame) {
         guard var current = event, current.id == frame.eventId else { return }
+
+        // Source ordering is independent of the blend: a delayed Kalshi quote
+        // can still advance its own bar after a newer Polymarket blend frame.
+        if let key = frame.source,
+           let updated = LiveEventSourceReconciliation.applying(
+               frame, to: current, newerThan: latestAcceptedSourceDates[key]
+           ) {
+            current = updated
+            latestSourceFrames[key] = frame
+            latestAcceptedSourceDates[key] = frame.updatedAt?.asDate
+        }
 
         let stamped = frame.updatedAt?.asDate
         let priceIsNotNewer = stamped.map { stamp in
