@@ -25,11 +25,14 @@
  * two halves of one screen disagree about whether a game is over.
  */
 
+import { railPercentPoints } from "@/lib/propDivergence";
 import type { DivergenceRow } from "@/lib/propDivergence";
 import { propVerdictLabel, SETTLED_NO_GRADE_LABEL } from "@/lib/propGrade";
 
+// #8754: the rounding `direction` is decided with, so a flat bar and its two
+// printed ends cannot disagree.
 export function pct(p: number): string {
-  return `${Math.round(p * 100)}%`;
+  return `${railPercentPoints(p)}%`;
 }
 
 /**

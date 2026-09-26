@@ -539,8 +539,31 @@ function signedMovePoints(points: number): string {
  * chip and must stay in plain sight.
  */
 function isUnchanged(item: PropMark): boolean {
-  if (item.pregame_mark == null || item.current == null) return false;
-  return Math.round((item.current - item.pregame_mark) * 100) === 0;
+  return printedMovePoints(item.pregame_mark, item.current) === 0;
+}
+
+/**
+ * #8754 — the unpaired row's move, read off the two numbers it PRINTS.
+ *
+ * #5296 gave complement pairs #2951's rule (a printed delta is the difference
+ * of the printed levels) and left every other row on the raw difference. Marks
+ * sit on a half-point grid, so the two disagree exactly at `.5`: Indiana's
+ * `2+ team receiving touchdowns` on `/events/15315945` (2026-09-26 00:40Z,
+ * 390px) served `0.665 → 0.67` and printed `67% → 67% ↑ 1`: both levels round
+ * up to 67, and so does the half-point raw move. Same row, `0.425 → 0.43`, for
+ * `43% → 43% ↑ 1`. Reading the move off `renderedPercent` (the rule `pct`
+ * prints with) makes a badge between two equal numbers unprintable, and the
+ * same answer decides the "didn't move" drawer so the two cannot disagree.
+ *
+ * Null when either end is missing: no mark, no move to claim.
+ */
+function printedMovePoints(
+  from: number | null | undefined,
+  to: number | null | undefined,
+): number | null {
+  const a = renderedPercent(from);
+  const b = renderedPercent(to);
+  return a == null || b == null ? null : b - a;
 }
 
 /**
@@ -1060,13 +1083,12 @@ function DivergenceValue({
   // decided all three numbers together, and the row prints what it was handed.
   // Otherwise every line below is exactly what it was.
   // #5408: `paired.move` is null exactly when the family had no baseline, and
-  // `signedDelta` on a null mark is null too — so the markless row falls through
+  // `printedMovePoints` on a null mark is null too — so the markless row falls through
   // to the same "no badge" answer it already gave, and the marked row takes the
   // #5296 branch unchanged.
-  const delta =
-    paired?.move != null
-      ? signedMovePoints(paired.move)
-      : signedDelta(item.pregame_mark, item.current);
+  // #8754: an unpaired row's badge is the difference of its printed levels too.
+  const move = paired?.move != null ? paired.move : printedMovePoints(item.pregame_mark, item.current);
+  const delta = move != null ? signedMovePoints(move) : null;
   const up = delta?.startsWith("↑");
   const flat = delta === "±0";
   return (
@@ -1086,7 +1108,7 @@ function DivergenceValue({
         // "if a number cannot be shown honestly, leave the space empty; do not
         // explain the emptiness". The row keeps the thing a reader came for —
         // its live price, one slot to the right — and simply has no arrow into
-        // it. There is no delta either, because `signedDelta` on a null mark is
+        // it. There is no delta either, because `printedMovePoints` on a null mark is
         // already null, so the row is complete and says only true things.
         //
         // THE DECISION IS #4530's, ONE FUNCTION UP, not a new one. `ScriptValue`
