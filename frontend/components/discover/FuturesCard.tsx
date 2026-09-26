@@ -245,10 +245,17 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
     // place. On a date ladder the rows are chronological, so "the answer" is
     // not the top row and had nothing pointing at it.
     // #8647 — on a date ladder the highest rung is the latest date, the loosest
-    // question, so the mark goes where the caption points. Where no drawn rung
-    // clears even, and on every other ladder, the highest rung is still the mark.
+    // question, so the mark goes where the caption points.
+    // #8788 — an at-least ladder ("Above 3.97 / Above 3.98 / …", "6.8+") is
+    // the same axis turned round: every rung contains the next, so the tallest
+    // bar is the loosest question. Production marked "Above 3.9850 — 91%" on
+    // Tennessee gas prices while the caption named "Above 4.0100", two rows
+    // called out for one answer. Where a rung clears even the mark goes where
+    // the caption points, as #8647 does for dates. Where none does, the highest
+    // rung stays the mark on every ladder: that is Alex's UX-1052 design
+    // ("the leader marked"), not this fix's call to reverse.
     const leaderCell =
-      ladderKind(shownCells) === "date" && betterThanEvenRung
+      (ladderKind(shownCells) === "date" || atLeastLadder(shownCells)) && betterThanEvenRung
         ? betterThanEvenRung
         : shownCells.reduce<HeatmapRow | null>(
             (best, r) =>
@@ -982,6 +989,27 @@ function ladderKind(rows: HeatmapRow[]): LadderKind {
   return rows.length > 0 && rows.every((row) => row.source === "date_bucket")
     ? "date"
     : "threshold";
+}
+
+/**
+ * Is every drawn rung an at-least question ("Above 3.97", "Over 2.5",
+ * "At least 15%", "6.8+", "50 or more")? — #8788.
+ *
+ * Read off the rung's own words, because that is what the reader reads. On
+ * such a ladder each rung contains the next, chances fall as the rungs climb,
+ * and `above50[last]` — the caption's rung — is the most specific answer.
+ *
+ * `every`, not `some`: ranges with an open end ("<14m … 26m+"), two-sided
+ * pairs ("Below 15% / At least 15%") and "or below" ladders are not this axis,
+ * and one such rung keeps today's mark.
+ */
+const AT_LEAST_RUNG_RE = /^(?:above|over|at least|more than|≥|>)\s*\S|\+$|\bor (?:more|higher|above)$/i;
+
+function atLeastLadder(rows: HeatmapRow[]): boolean {
+  return (
+    rows.length >= 2 &&
+    rows.every((row) => row.source !== "date_bucket" && AT_LEAST_RUNG_RE.test(row.label.trim()))
+  );
 }
 
 function buildHeatmapRows(data: FeedFuturesData): HeatmapRow[] {
