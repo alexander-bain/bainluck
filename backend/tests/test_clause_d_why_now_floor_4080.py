@@ -312,7 +312,11 @@ class TestTheSwap:
         out, meta = enforce_first_page_quality_floor(items, first_page_size=10)
 
         assert meta["demoted"] == 1
-        assert out[0] is SPEAKING_TAIL_CARD
+        # #8797: the page closes up over the vacancy and the tail card enters at
+        # the bottom — slot 9, still inside clause (d)'s ten, so the mutes are
+        # still refused and the one speaking card is still the only legal pick.
+        assert out[0] is items[1]
+        assert out[9] is SPEAKING_TAIL_CARD
         assert meta["clean_replacements_available"] == 1
 
     def test_it_demotes_and_never_drops(self):
