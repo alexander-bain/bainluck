@@ -13,6 +13,7 @@ import { PriceAgeMark } from "@/components/event/PriceAgeMark";
 import { isFinishedStatus } from "@/lib/eventState";
 import { PREMATCH_SAID, prematchReading } from "@/lib/prematchReading";
 import { awayIsTheComplement } from "@/lib/drawPricedWinner";
+import { futuresOutcomeTotal } from "@/lib/discover/futuresBoard";
 
 /** The item types this section knows how to render.
  *
@@ -532,6 +533,15 @@ export default function RelatedByTag({
           const fieldPercents = derivedField.every((percent) => percent !== null)
             ? derivedField
             : field.map((outcome) => outcome.rendered_percent ?? null);
+          /* #8837 — THE REST OF THE FIELD IS COUNTED THE WAY DISCOVER COUNTS IT.
+             `outcome_count` is every stored leg (128 on the French election);
+             the Discover card for the same market says "Field and 39 more"
+             under four rows. `futuresOutcomeTotal` is that card's total, so
+             three rows here read "+40 more" — the same 43. No served total, no
+             remainder: the raw leg count is the number this retires. */
+          const outcomeTotal = futuresOutcomeTotal(d);
+          const unshownCount =
+            outcomeTotal !== null && field.length > 0 ? outcomeTotal - field.length : 0;
           return (
             <Link
               key={`rel-futures-${d.id}`}
@@ -585,13 +595,10 @@ export default function RelatedByTag({
                   thing that ranks them. Six rows, not thirty, and a mark that
                   earns its place. Moving this to 6h would silence exactly the
                   case #5752 was filed on. */}
-              {(d.outcome_count > field.length && field.length > 0) ||
-              d.price_observed_at ? (
+              {unshownCount > 0 || d.price_observed_at ? (
                 <span className="mt-1.5 flex items-baseline justify-between gap-2 text-[11px] text-text-muted">
-                  {d.outcome_count > field.length && field.length > 0 ? (
-                    <span data-testid="related-card-more">
-                      +{d.outcome_count - field.length} more
-                    </span>
+                  {unshownCount > 0 ? (
+                    <span data-testid="related-card-more">+{unshownCount} more</span>
                   ) : (
                     <span />
                   )}

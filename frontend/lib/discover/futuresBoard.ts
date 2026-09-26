@@ -149,6 +149,32 @@ export function futuresDistributionBoard(data: FeedFuturesData): FuturesBoard | 
 }
 
 /**
+ * #8837 — HOW MANY OUTCOMES THIS MARKET HAS, counted the way the board counts
+ * them, for a surface that draws its own rows and still owes the reader the rest.
+ *
+ * The related rail (`components/RelatedByTag.tsx`) draws three rows off
+ * `top_outcomes` and used to say how many it left out off the payload's raw
+ * `outcome_count` — every stored leg. On `Next French Presidential Election`
+ * that is 128, so the rail said "+125 more" while the Discover card for the same
+ * market, two taps earlier, said "Field and 39 more outcomes" under four rows:
+ * 43. The route builds `remaining_outcome_count` as
+ * `len(card_outcomes) - len(distribution_outcomes)`, so their sum is the card's
+ * own outcome set — and it is exactly `rows.length + remainingCount` of the board
+ * above for any payload the board draws. One market, one total, on every card.
+ *
+ * `null` when the payload does not carry the count: a surface then prints no
+ * remainder rather than falling back to the raw leg count this exists to retire.
+ * PURE.
+ */
+export function futuresOutcomeTotal(data: FeedFuturesData): number | null {
+  const card = (data as { discover_card?: Partial<DiscoverCardBoardFields> | null })
+    .discover_card;
+  const remaining = card?.remaining_outcome_count;
+  if (typeof remaining !== "number" || !Number.isFinite(remaining)) return null;
+  return (card?.distribution_outcomes ?? []).length + remaining;
+}
+
+/**
  * #8112 — MAY THIS BOARD DRAW A LEADER AT ALL?
  *
  * ## The defect
