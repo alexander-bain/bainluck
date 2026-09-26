@@ -172,12 +172,21 @@ export default function MarketMap({
       </div>
 
       {/* Summary tiles — with colored left border matching the dot */}
+      {/* #8925: `minmax(0, auto)`, not a bare `1fr`. A bare `1fr` never shrinks
+          below its content's min-content width, and the value below was
+          `nowrap`, so at 390px the third tile of `/events/14870008` —
+          `PROJECTION UGA by 26.1+` — pushed past the card's right edge. Now a
+          column is as wide as its tile's content when all three fit (no wrap,
+          the common case), and when they do not it shrinks — floor 0, so a
+          tile never leaves its card — and the value wraps at a space rather
+          than a number being cut to an ellipsis. Not `minmax(0, 1fr)`: equal
+          thirds wrapped `ND by 27.5+` on a card where it fits on one line. */}
       {!noTiles && (
         <div
           className="relative"
           style={{
             display: "grid",
-            gridTemplateColumns: `repeat(${orderedTiles.length}, 1fr)`,
+            gridTemplateColumns: `repeat(${orderedTiles.length}, minmax(0, auto))`,
             gap: 8,
             marginTop: 10,
             zIndex: 6,
@@ -209,7 +218,7 @@ export default function MarketMap({
                 }}>
                   {m.label}
                 </div>
-                <div style={{ fontSize: 14, fontWeight: 950, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                <div data-tile-value style={{ fontSize: 14, fontWeight: 950, marginTop: 2, whiteSpace: "normal" }}>
                   {m.displayValue}
                 </div>
               </div>
