@@ -4981,6 +4981,28 @@ jobs:
             exit 1
           }
 
+      - name: "#8910 a newer WebSocket stamp survives the two-minute poll (real Postgres)"
+        # #8910 / CERT-3585's required guard. The REAL live poll against real
+        # Postgres, paused after its compared read, while a second session sends
+        # the WS lane's own `atomic_stamp_expression` UPDATE. Row locks, the
+        # server-side merge and commit ordering are what is under test, so a
+        # session double cannot run it. 3 = race (the WS write waits on the poll's
+        # lock; newer stamp + sibling survive) + refused (older reading writes no
+        # stamp, no point) + control. Lock removed: race red; guard removed:
+        # refused red.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_live_poll_stamp_race_8910_pg.py \
+            -v -rs 2>&1 | tee /tmp/stamprace8910.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/stamprace8910.txt; then
+            echo "::error::#8910 stamp-race gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]3 passed[,[:space:]]" /tmp/stamprace8910.txt || {
+            echo "::error::#8910 stamp-race gate did not run all three cases"
+            exit 1
+          }
+
   frontend-build:
     runs-on: ubuntu-latest
     defaults:
