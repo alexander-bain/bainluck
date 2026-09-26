@@ -196,6 +196,7 @@ from app.utils.blank_event_cards import not_a_blank_card
 from app.utils.feed_market_quality import (
     FEED_MIN_REAL_PROBABILITY,
     has_no_real_price,
+    is_bidless_empty_book_midpoint,
     is_empty_book_midpoint,
 )
 from app.utils.futures_unsupported_price import price_refuted_by_live_book  # #8753
@@ -30535,12 +30536,18 @@ def _leg_prices_an_empty_book(outcome) -> bool:
     phantoms — measured at 2 rows of 1,119 in #5333's cohort, named there. What
     this surface can honestly say is that the number it withheld was supported by
     no current quote; it may not say the number was never real.
+
+    #8916: and the one-sided mirror — a leg with NO bid recorded whose price is the
+    midpoint of ``(0, ask)``. `?q=ohio state` served *Ohio State vs. Iowa* as
+    `Ohio State 84% · Spread -20.5 50% · Spread -5.5 50%` on NULL/0.99 books. See
+    :func:`is_bidless_empty_book_midpoint` for why it is its own predicate.
     """
+    probability = outcome.current_probability
+    bid = outcome.current_yes_bid
+    ask = outcome.current_yes_ask
     return is_empty_book_midpoint(
-        outcome.current_probability,
-        outcome.current_yes_bid,
-        outcome.current_yes_ask,
-    )
+        probability, bid, ask
+    ) or is_bidless_empty_book_midpoint(probability, bid, ask)
 
 
 def _futures_market_prices_only_empty_books(market: "FuturesMarket") -> bool:
