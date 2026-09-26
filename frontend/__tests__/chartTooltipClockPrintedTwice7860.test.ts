@@ -109,12 +109,14 @@ describe("#7860 — the chart tooltip's period/clock line", () => {
   });
 
   it("KEEPS a clock the period does not already spell — the refusal arm", () => {
-    // These are real rows from the same fixture. `0:00` is not inside "Halftime",
-    // so the card still prints it; narrowing further would be a second decision
-    // this fix is not making.
+    // A running period keeps a clock it does not already spell.
+    expect(formatLiveClockLabel("3rd Quarter", "4:12")).toBe("3rd Quarter 4:12");
+    // These are real rows from the same fixture. They were kept here as
+    // "Halftime 0:00" until #8937 made that second decision: a break has no
+    // running clock (rule 6), so the stopped clock goes and the break stays.
     for (const period of ["Halftime", "End of 3rd Quarter", "End of OT"]) {
       expect(SPECIMENS.rows.some((r) => r.period === period)).toBe(true);
-      expect(formatLiveClockLabel(period, "0:00")).toBe(`${period} 0:00`);
+      expect(formatLiveClockLabel(period, "0:00")).toBe(period);
     }
     // And a shape no NFL/NHL row has, which is exactly why it is asserted here:
     // a soccer clock is not spelled inside its period.

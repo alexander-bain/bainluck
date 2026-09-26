@@ -545,6 +545,47 @@ describe("the live clock — ESPN's PRE-GAME sentence is not a period", () => {
       });
     });
 
+    /**
+     * #8937 — the sixth rule. Production 9/26: every college game at a break
+     * printed a clock — "Halftime 0:00" on 15315884, "End of 3rd Quarter 10:45"
+     * on 15313789 (a stopped mid-quarter reading). These are the served pairs.
+     */
+    test("a break prints its name and no clock (#8937)", () => {
+      const served: Array<[string, string]> = [
+        ["Halftime", "0:00"],
+        ["End of 2nd Quarter", "0:00"],
+        ["End of 3rd Quarter", "0:00"],
+        ["End of 3rd Quarter", "15:00"],
+        ["End of 3rd Quarter", "10:45"],
+      ];
+      for (const [period, clock] of served) {
+        expect(trustedLiveClock(period, clock, "americanfootball_ncaaf")).toEqual({
+          period,
+          gameClock: "",
+        });
+        expect(formatLiveClockLabel(period, clock)).toBe(period);
+        expect(formatLiveClockLabel(period, clock, " · ")).toBe(period);
+      }
+      expect(formatLiveClockLabel("End of 2nd Period", "0:00", " ", "icehockey_nhl")).toBe(
+        "End of 2nd Period",
+      );
+      expect(formatLiveClockLabel("1st Intermission", "0:00")).toBe("1st Intermission");
+      expect(formatLiveClockLabel("End of Regulation", "0:00")).toBe("End of Regulation");
+    });
+
+    test("a running period that mentions a half or a quarter keeps its clock (#8937)", () => {
+      expect(trustedLiveClock("2nd Half", "0:45")).toEqual({ period: "2nd Half", gameClock: "0:45" });
+      expect(trustedLiveClock("3rd Quarter", "10:45")).toEqual({
+        period: "3rd Quarter",
+        gameClock: "10:45",
+      });
+      expect(trustedLiveClock("Halftime Show Delay", "5:00")).toEqual({
+        period: "Halftime Show Delay",
+        gameClock: "5:00",
+      });
+      expect(formatLiveClockLabel("14:48 - 3rd Quarter", "14:48")).toBe("14:48 - 3rd Quarter");
+    });
+
     test("a genuinely distinct clock survives beside its period", () => {
       expect(trustedLiveClock("1st Quarter", "8:42")).toEqual({
         period: "1st Quarter",
@@ -694,8 +735,9 @@ describe("the live clock — ESPN's PRE-GAME sentence is not a period", () => {
      */
     test.each([
       ["1st Quarter", "8:42", "1st Quarter 8:42"],
-      ["End of 1st Half", "0:00", "End of 1st Half 0:00"],
-      ["End of Regulation", "0:00", "End of Regulation 0:00"],
+      // #8937: a break keeps its long label and drops the stopped clock.
+      ["End of 1st Half", "0:00", "End of 1st Half"],
+      ["End of Regulation", "0:00", "End of Regulation"],
     ])("Sports tab now keeps the real long label %s", (p, c, expected) => {
       expect(p.length).toBeGreaterThan(10); // the old heuristic's cut-off
       expect(sportsTab(p, c)).toBe(expected);
