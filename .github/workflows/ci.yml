@@ -3709,6 +3709,22 @@ jobs:
             exit 1
           fi
 
+      - name: "#8805 a named year leads the futures window: '2028 democratic nominee' (real Postgres)"
+        # Production 2026-09-26: `2028 democratic nominee` served an empty page.
+        # The year only ordered games, so ~90 House primaries (words adjacent,
+        # higher ts_rank_cd) filled the futures window over the 2028 national
+        # board. The fix is an ORDER BY key, so the page it produces needs a real
+        # ranking; the no-DB pin is `TestTheNamedYearOrdersTheFuturesWindow` in
+        # `test_route_search_intent_5688.py`. Same skip detection as every gate here.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_search_named_year_pg_8805.py \
+            -v -rs 2>&1 | tee /tmp/namedyear8805.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/namedyear8805.txt; then
+            echo "::error::#8805 named-year futures contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#6955 club-noun rails: apply, partial CAS and the D51 undo (real Postgres)"
         # CERT-3074's named follow-up. Both club-noun rails carry ~55 guards
         # apiece and every one drives a stub session, which can prove the rail
