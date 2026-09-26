@@ -135,8 +135,9 @@ describe("the fixture has the straddle and a control", () => {
   test("both rows render, with the bad error figure", () => {
     const html = render();
     for (const c of ["table_tennis", "cricket"]) {
-      const text = eceCell(row(html, c)).replace(/<[^>]+>/g, "");
-      expect(parseFloat(text)).toBeGreaterThan(5);
+      const m = />(\d+\.\d)pp</.exec(eceCell(row(html, c)));
+      expect(m).not.toBeNull();
+      expect(parseFloat(m![1])).toBeGreaterThan(5);
     }
   });
 });
