@@ -1,0 +1,836 @@
+{
+"event_id": 15315984,
+"home_team": "Coastal Carolina Chanticleers",
+"away_team": "Liberty Flames",
+"commence_time": "2026-09-24T23:30:00+00:00",
+"completed_at": "2026-09-25T03:38:27.257426+00:00",
+"status": "completed",
+"_note": "#8652 \u2014 tail (>= 03:20Z) of the served GET /api/events/15315984/history, read 2026-09-26 ~15:46Z. Series order preserved verbatim (aggregate_line is NOT time-sorted).",
+"history": [
+{
+"timestamp": "2026-09-25T03:20:00+00:00",
+"home_probability": 0.0239,
+"away_probability": 0.9761,
+"over_under": 44.5,
+"projected_home_score": 17.5,
+"projected_away_score": 27.0,
+"bookmaker_count": 1,
+"probability_range": {
+"min": 0.0239,
+"max": 0.0239
+}
+},
+{
+"timestamp": "2026-09-25T03:21:00+00:00",
+"home_probability": null,
+"away_probability": null,
+"over_under": 44.5,
+"projected_home_score": 17.0,
+"projected_away_score": 27.5,
+"bookmaker_count": 0,
+"probability_range": {
+"min": null,
+"max": null
+}
+},
+{
+"timestamp": "2026-09-25T03:22:00+00:00",
+"home_probability": null,
+"away_probability": null,
+"over_under": null,
+"projected_home_score": null,
+"projected_away_score": null,
+"bookmaker_count": 0,
+"probability_range": {
+"min": null,
+"max": null
+}
+},
+{
+"timestamp": "2026-09-25T03:23:00+00:00",
+"home_probability": null,
+"away_probability": null,
+"over_under": 44.5,
+"projected_home_score": 17.0,
+"projected_away_score": 27.5,
+"bookmaker_count": 0,
+"probability_range": {
+"min": null,
+"max": null
+}
+},
+{
+"timestamp": "2026-09-25T03:25:00+00:00",
+"home_probability": null,
+"away_probability": null,
+"over_under": null,
+"projected_home_score": null,
+"projected_away_score": null,
+"bookmaker_count": 0,
+"probability_range": {
+"min": null,
+"max": null
+}
+},
+{
+"timestamp": "2026-09-25T03:28:00+00:00",
+"home_probability": null,
+"away_probability": null,
+"over_under": null,
+"projected_home_score": null,
+"projected_away_score": null,
+"bookmaker_count": 0,
+"probability_range": {
+"min": null,
+"max": null
+}
+},
+{
+"timestamp": "2026-09-25T03:29:00+00:00",
+"home_probability": null,
+"away_probability": null,
+"over_under": null,
+"projected_home_score": null,
+"projected_away_score": null,
+"bookmaker_count": 0,
+"probability_range": {
+"min": null,
+"max": null
+}
+},
+{
+"timestamp": "2026-09-25T03:38:00+00:00",
+"home_probability": 0.0,
+"away_probability": 1.0,
+"over_under": null,
+"projected_home_score": null,
+"projected_away_score": null,
+"bookmaker_count": 0,
+"probability_range": {
+"min": 0.0,
+"max": 0.0
+}
+}
+],
+"espn_history": [
+{
+"timestamp": "2026-09-25T03:20:17.002927+00:00",
+"home_probability": 0.0023,
+"away_probability": 0.9977,
+"home_score": 17,
+"away_score": 27,
+"game_clock": "2:26",
+"period": "2:26 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-25T03:21:17.135080+00:00",
+"home_probability": 0.001,
+"away_probability": 0.999,
+"home_score": 17,
+"away_score": 27,
+"game_clock": "1:59",
+"period": "1:59 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-25T03:22:17.009213+00:00",
+"home_probability": 0.001,
+"away_probability": 0.999,
+"home_score": 17,
+"away_score": 27,
+"game_clock": "1:59",
+"period": "1:59 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-25T03:23:17.051939+00:00",
+"home_probability": 0.001,
+"away_probability": 0.999,
+"home_score": 17,
+"away_score": 27,
+"game_clock": "1:59",
+"period": "1:59 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-25T03:24:17.018047+00:00",
+"home_probability": 0.001,
+"away_probability": 0.999,
+"home_score": 17,
+"away_score": 27,
+"game_clock": "1:59",
+"period": "1:59 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-25T03:25:17.003108+00:00",
+"home_probability": 0.001,
+"away_probability": 0.999,
+"home_score": 17,
+"away_score": 27,
+"game_clock": "1:48",
+"period": "1:48 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-25T03:26:17.042546+00:00",
+"home_probability": 0.001,
+"away_probability": 0.999,
+"home_score": 17,
+"away_score": 27,
+"game_clock": "1:07",
+"period": "1:07 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-25T03:27:17.032688+00:00",
+"home_probability": 0.001,
+"away_probability": 0.999,
+"home_score": 17,
+"away_score": 27,
+"game_clock": "1:02",
+"period": "1:02 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-25T03:31:17.068902+00:00",
+"home_probability": 0.001,
+"away_probability": 0.999,
+"home_score": 17,
+"away_score": 34,
+"game_clock": "0:54",
+"period": "0:54 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-25T03:32:17.068599+00:00",
+"home_probability": 0.001,
+"away_probability": 0.999,
+"home_score": 17,
+"away_score": 34,
+"game_clock": "0:33",
+"period": "0:33 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-25T03:33:17.029920+00:00",
+"home_probability": 0.001,
+"away_probability": 0.999,
+"home_score": 17,
+"away_score": 34,
+"game_clock": "0:33",
+"period": "0:33 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-25T03:34:17.063634+00:00",
+"home_probability": 0.001,
+"away_probability": 0.999,
+"home_score": 17,
+"away_score": 34,
+"game_clock": "0:33",
+"period": "0:33 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-25T03:35:17.062284+00:00",
+"home_probability": 0.001,
+"away_probability": 0.999,
+"home_score": 17,
+"away_score": 34,
+"game_clock": "0:00",
+"period": "End of 4th Quarter"
+},
+{
+"timestamp": "2026-09-25T03:36:17.037340+00:00",
+"home_probability": 0.0,
+"away_probability": null,
+"home_score": 17,
+"away_score": 34,
+"game_clock": "0:00",
+"period": "End of 4th Quarter"
+},
+{
+"timestamp": "2026-09-25T03:37:17.078943+00:00",
+"home_probability": 0.0,
+"away_probability": null,
+"home_score": 17,
+"away_score": 34,
+"game_clock": "0:00",
+"period": "End of 4th Quarter"
+},
+{
+"timestamp": "2026-09-25T03:38:00+00:00",
+"home_probability": 0.0,
+"away_probability": 1.0,
+"home_score": 17,
+"away_score": 34,
+"game_clock": "Final",
+"period": "Final"
+}
+],
+"win_prob_history": {
+"kalshi": [
+{
+"timestamp": "2026-09-25T03:20:28.749149+00:00",
+"home_probability": 0.01,
+"away_probability": 0.99,
+"draw_probability": null,
+"game_state": null
+},
+{
+"timestamp": "2026-09-25T03:21:18.661504+00:00",
+"home_probability": 0.01,
+"away_probability": 0.99,
+"draw_probability": null,
+"game_state": null
+},
+{
+"timestamp": "2026-09-25T03:21:55.804536+00:00",
+"home_probability": 0.01,
+"away_probability": 0.99,
+"draw_probability": null,
+"game_state": null
+},
+{
+"timestamp": "2026-09-25T03:22:42.136018+00:00",
+"home_probability": 0.01,
+"away_probability": 0.99,
+"draw_probability": null,
+"game_state": null
+},
+{
+"timestamp": "2026-09-25T03:23:31.721440+00:00",
+"home_probability": 0.01,
+"away_probability": 0.99,
+"draw_probability": null,
+"game_state": null
+},
+{
+"timestamp": "2026-09-25T03:24:39.644548+00:00",
+"home_probability": 0.01,
+"away_probability": 0.99,
+"draw_probability": null,
+"game_state": null
+},
+{
+"timestamp": "2026-09-25T03:25:25.891814+00:00",
+"home_probability": 0.01,
+"away_probability": 0.99,
+"draw_probability": null,
+"game_state": null
+},
+{
+"timestamp": "2026-09-25T03:26:14.178505+00:00",
+"home_probability": 0.01,
+"away_probability": 0.99,
+"draw_probability": null,
+"game_state": null
+},
+{
+"timestamp": "2026-09-25T03:27:04.523166+00:00",
+"home_probability": 0.01,
+"away_probability": 0.99,
+"draw_probability": null,
+"game_state": null
+},
+{
+"timestamp": "2026-09-25T03:27:56.883666+00:00",
+"home_probability": 0.01,
+"away_probability": 0.99,
+"draw_probability": null,
+"game_state": null
+},
+{
+"timestamp": "2026-09-25T03:28:42.190717+00:00",
+"home_probability": 0.01,
+"away_probability": 0.99,
+"draw_probability": null,
+"game_state": null
+},
+{
+"timestamp": "2026-09-25T03:29:32.345112+00:00",
+"home_probability": 0.01,
+"away_probability": 0.99,
+"draw_probability": null,
+"game_state": null
+},
+{
+"timestamp": "2026-09-25T03:30:18.545788+00:00",
+"home_probability": 0.01,
+"away_probability": 0.99,
+"draw_probability": null,
+"game_state": null
+},
+{
+"timestamp": "2026-09-25T03:31:09.899979+00:00",
+"home_probability": 0.01,
+"away_probability": 0.99,
+"draw_probability": null,
+"game_state": null
+},
+{
+"timestamp": "2026-09-25T03:31:47.217220+00:00",
+"home_probability": 0.01,
+"away_probability": 0.99,
+"draw_probability": null,
+"game_state": null
+},
+{
+"timestamp": "2026-09-25T03:32:51.443562+00:00",
+"home_probability": 0.01,
+"away_probability": 0.99,
+"draw_probability": null,
+"game_state": null
+},
+{
+"timestamp": "2026-09-25T03:33:38.390822+00:00",
+"home_probability": 0.01,
+"away_probability": 0.99,
+"draw_probability": null,
+"game_state": null
+},
+{
+"timestamp": "2026-09-25T03:34:34.864290+00:00",
+"home_probability": 0.01,
+"away_probability": 0.99,
+"draw_probability": null,
+"game_state": null
+},
+{
+"timestamp": "2026-09-25T03:35:22.750186+00:00",
+"home_probability": 0.01,
+"away_probability": 0.99,
+"draw_probability": null,
+"game_state": null
+},
+{
+"timestamp": "2026-09-25T03:36:15.604273+00:00",
+"home_probability": 0.01,
+"away_probability": 0.99,
+"draw_probability": null,
+"game_state": null
+},
+{
+"timestamp": "2026-09-25T03:37:04.422633+00:00",
+"home_probability": 0.01,
+"away_probability": 0.99,
+"draw_probability": null,
+"game_state": null
+},
+{
+"timestamp": "2026-09-25T03:37:56.318514+00:00",
+"home_probability": 0.01,
+"away_probability": 0.99,
+"draw_probability": null,
+"game_state": null
+},
+{
+"timestamp": "2026-09-25T03:38:50.277588+00:00",
+"home_probability": 0.01,
+"away_probability": 0.99,
+"draw_probability": null,
+"game_state": null
+},
+{
+"timestamp": "2026-09-25T03:39:38.655781+00:00",
+"home_probability": 0.01,
+"away_probability": 0.99,
+"draw_probability": null,
+"game_state": null
+},
+{
+"timestamp": "2026-09-25T03:40:34.141918+00:00",
+"home_probability": 0.01,
+"away_probability": 0.99,
+"draw_probability": null,
+"game_state": null
+},
+{
+"timestamp": "2026-09-25T03:41:20.128514+00:00",
+"home_probability": 0.01,
+"away_probability": 0.99,
+"draw_probability": null,
+"game_state": null,
+"evidence": {
+"kind": "terminal_row"
+}
+},
+{
+"timestamp": "2026-09-25T03:38:00+00:00",
+"home_probability": 0.0,
+"away_probability": 1.0,
+"draw_probability": null,
+"game_state": null,
+"evidence": {
+"kind": "final"
+}
+}
+],
+"polymarket": [
+{
+"timestamp": "2026-09-25T03:44:44.187229+00:00",
+"home_probability": 0.31,
+"away_probability": 0.69,
+"draw_probability": null,
+"game_state": null,
+"evidence": {
+"kind": "terminal_row"
+}
+},
+{
+"timestamp": "2026-09-25T03:38:00+00:00",
+"home_probability": 0.0,
+"away_probability": 1.0,
+"draw_probability": null,
+"game_state": null,
+"evidence": {
+"kind": "final"
+}
+}
+],
+"stat_model": [
+{
+"timestamp": "2026-09-25T03:20:17.002927+00:00",
+"home_probability": 0.001,
+"away_probability": 0.999,
+"draw_probability": null,
+"game_state": {
+"clock": "2:26",
+"period": "2:26 - 4th Quarter",
+"away_score": 27,
+"home_score": 17,
+"time_source": "espn"
+}
+},
+{
+"timestamp": "2026-09-25T03:21:17.135080+00:00",
+"home_probability": 0.001,
+"away_probability": 0.999,
+"draw_probability": null,
+"game_state": {
+"clock": "1:59",
+"period": "1:59 - 4th Quarter",
+"away_score": 27,
+"home_score": 17,
+"time_source": "espn"
+}
+},
+{
+"timestamp": "2026-09-25T03:25:17.003108+00:00",
+"home_probability": 0.001,
+"away_probability": 0.999,
+"draw_probability": null,
+"game_state": {
+"clock": "1:48",
+"period": "1:48 - 4th Quarter",
+"away_score": 27,
+"home_score": 17,
+"time_source": "espn"
+}
+},
+{
+"timestamp": "2026-09-25T03:26:17.042546+00:00",
+"home_probability": 0.001,
+"away_probability": 0.999,
+"draw_probability": null,
+"game_state": {
+"clock": "1:07",
+"period": "1:07 - 4th Quarter",
+"away_score": 27,
+"home_score": 17,
+"time_source": "espn"
+}
+},
+{
+"timestamp": "2026-09-25T03:27:17.032688+00:00",
+"home_probability": 0.001,
+"away_probability": 0.999,
+"draw_probability": null,
+"game_state": {
+"clock": "1:02",
+"period": "1:02 - 4th Quarter",
+"away_score": 27,
+"home_score": 17,
+"time_source": "espn"
+}
+},
+{
+"timestamp": "2026-09-25T03:30:17.085953+00:00",
+"home_probability": 0.001,
+"away_probability": 0.999,
+"draw_probability": null,
+"game_state": {
+"clock": "0:54",
+"period": "0:54 - 4th Quarter",
+"away_score": 34,
+"home_score": 17,
+"time_source": "espn"
+}
+},
+{
+"timestamp": "2026-09-25T03:32:17.068599+00:00",
+"home_probability": 0.001,
+"away_probability": 0.999,
+"draw_probability": null,
+"game_state": {
+"clock": "0:33",
+"period": "0:33 - 4th Quarter",
+"away_score": 34,
+"home_score": 17,
+"time_source": "espn"
+}
+},
+{
+"timestamp": "2026-09-25T03:35:17.062284+00:00",
+"home_probability": 0.001,
+"away_probability": 0.999,
+"draw_probability": null,
+"game_state": {
+"clock": "0:00",
+"period": "End of 4th Quarter",
+"away_score": 34,
+"home_score": 17,
+"time_source": "espn"
+},
+"evidence": {
+"kind": "terminal_row"
+}
+},
+{
+"timestamp": "2026-09-25T03:38:00+00:00",
+"home_probability": 0.0,
+"away_probability": 1.0,
+"draw_probability": null,
+"game_state": null,
+"evidence": {
+"kind": "final"
+}
+}
+],
+"espn": [
+{
+"timestamp": "2026-09-25T03:20:17.002927+00:00",
+"home_probability": 0.0023,
+"away_probability": 0.9977,
+"draw_probability": null,
+"game_state": {
+"clock": "2:26",
+"period": "2:26 - 4th Quarter",
+"away_score": 27,
+"home_score": 17
+}
+},
+{
+"timestamp": "2026-09-25T03:21:17.135080+00:00",
+"home_probability": 0.001,
+"away_probability": 0.999,
+"draw_probability": null,
+"game_state": {
+"clock": "1:59",
+"period": "1:59 - 4th Quarter",
+"away_score": 27,
+"home_score": 17
+}
+},
+{
+"timestamp": "2026-09-25T03:25:17.003108+00:00",
+"home_probability": 0.001,
+"away_probability": 0.999,
+"draw_probability": null,
+"game_state": {
+"clock": "1:48",
+"period": "1:48 - 4th Quarter",
+"away_score": 27,
+"home_score": 17
+}
+},
+{
+"timestamp": "2026-09-25T03:26:17.042546+00:00",
+"home_probability": 0.001,
+"away_probability": 0.999,
+"draw_probability": null,
+"game_state": {
+"clock": "1:07",
+"period": "1:07 - 4th Quarter",
+"away_score": 27,
+"home_score": 17
+}
+},
+{
+"timestamp": "2026-09-25T03:27:17.032688+00:00",
+"home_probability": 0.001,
+"away_probability": 0.999,
+"draw_probability": null,
+"game_state": {
+"clock": "1:02",
+"period": "1:02 - 4th Quarter",
+"away_score": 27,
+"home_score": 17
+}
+},
+{
+"timestamp": "2026-09-25T03:31:17.068902+00:00",
+"home_probability": 0.001,
+"away_probability": 0.999,
+"draw_probability": null,
+"game_state": {
+"clock": "0:54",
+"period": "0:54 - 4th Quarter",
+"away_score": 34,
+"home_score": 17
+}
+},
+{
+"timestamp": "2026-09-25T03:32:17.068599+00:00",
+"home_probability": 0.001,
+"away_probability": 0.999,
+"draw_probability": null,
+"game_state": {
+"clock": "0:33",
+"period": "0:33 - 4th Quarter",
+"away_score": 34,
+"home_score": 17
+}
+},
+{
+"timestamp": "2026-09-25T03:35:17.062284+00:00",
+"home_probability": 0.001,
+"away_probability": 0.999,
+"draw_probability": null,
+"game_state": {
+"clock": "0:00",
+"period": "End of 4th Quarter",
+"away_score": 34,
+"home_score": 17
+}
+},
+{
+"timestamp": "2026-09-25T03:36:17.037340+00:00",
+"home_probability": 0.0,
+"away_probability": null,
+"draw_probability": null,
+"game_state": {
+"clock": "0:00",
+"period": "End of 4th Quarter",
+"away_score": 34,
+"home_score": 17
+},
+"evidence": {
+"kind": "terminal_row"
+}
+},
+{
+"timestamp": "2026-09-25T03:38:00+00:00",
+"home_probability": 0.0,
+"away_probability": 1.0,
+"draw_probability": null,
+"game_state": null,
+"evidence": {
+"kind": "final"
+}
+}
+]
+},
+"aggregate_line": [
+{
+"timestamp": "2026-09-25T03:20:00+00:00",
+"home_probability": 0.01
+},
+{
+"timestamp": "2026-09-25T03:21:00+00:00",
+"home_probability": 0.01
+},
+{
+"timestamp": "2026-09-25T03:22:00+00:00",
+"home_probability": 0.01
+},
+{
+"timestamp": "2026-09-25T03:23:00+00:00",
+"home_probability": 0.01
+},
+{
+"timestamp": "2026-09-25T03:24:00+00:00",
+"home_probability": 0.01
+},
+{
+"timestamp": "2026-09-25T03:25:00+00:00",
+"home_probability": 0.01
+},
+{
+"timestamp": "2026-09-25T03:26:00+00:00",
+"home_probability": 0.01
+},
+{
+"timestamp": "2026-09-25T03:27:00+00:00",
+"home_probability": 0.01
+},
+{
+"timestamp": "2026-09-25T03:28:00+00:00",
+"home_probability": 0.01
+},
+{
+"timestamp": "2026-09-25T03:29:00+00:00",
+"home_probability": 0.01
+},
+{
+"timestamp": "2026-09-25T03:30:00+00:00",
+"home_probability": 0.01
+},
+{
+"timestamp": "2026-09-25T03:31:00+00:00",
+"home_probability": 0.01
+},
+{
+"timestamp": "2026-09-25T03:32:00+00:00",
+"home_probability": 0.01
+},
+{
+"timestamp": "2026-09-25T03:33:00+00:00",
+"home_probability": 0.01
+},
+{
+"timestamp": "2026-09-25T03:34:00+00:00",
+"home_probability": 0.01
+},
+{
+"timestamp": "2026-09-25T03:35:00+00:00",
+"home_probability": 0.01
+},
+{
+"timestamp": "2026-09-25T03:36:00+00:00",
+"home_probability": 0.01
+},
+{
+"timestamp": "2026-09-25T03:37:00+00:00",
+"home_probability": 0.01
+},
+{
+"timestamp": "2026-09-25T03:38:00+00:00",
+"home_probability": 0.01
+},
+{
+"timestamp": "2026-09-25T03:39:00+00:00",
+"home_probability": 0.01
+},
+{
+"timestamp": "2026-09-25T03:40:00+00:00",
+"home_probability": 0.01
+},
+{
+"timestamp": "2026-09-25T03:41:00+00:00",
+"home_probability": 0.01
+},
+{
+"timestamp": "2026-09-25T03:44:00+00:00",
+"home_probability": 0.01
+},
+{
+"timestamp": "2026-09-25T03:38:00+00:00",
+"home_probability": 0.0
+}
+],
+"scoring_plays": [
+{
+"timestamp": "2026-09-25T03:28:17.016443+00:00",
+"description": "E. Vasko pass to K. Davis for 6 yds, for a TD (T. Black KICK)",
+"short_text": "",
+"team": "Liberty Flames",
+"type": "Passing Touchdown",
+"home_score": 17,
+"away_score": 34,
+"period": "4",
+"clock": "1:02",
+"timestamp_resolved": true
+}
+]
+}

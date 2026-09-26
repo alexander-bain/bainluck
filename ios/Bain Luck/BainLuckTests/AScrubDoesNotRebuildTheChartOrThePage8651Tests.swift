@@ -115,7 +115,7 @@ final class AScrubDoesNotRebuildTheChartOrThePage8651Tests: XCTestCase {
         XCTAssertTrue(chart.contains("@StateprivatevarselectedPlayPoint:GamePlayPoint?"),
                       "the chart no longer owns the scrubbed moment")
         XCTAssertFalse(chart.contains("@BindingvarselectedPlayPoint"), "the scrubbed moment is bound to a parent again")
-        XCTAssertEqual(chart.components(separatedBy: "ifletreadout{readout.showing(selectedPlayPoint)}").count - 1, 2,
+        XCTAssertEqual(chart.components(separatedBy: "ifletreadout{readout.resting(on:Self.restingPlayPoint(in:dataPoints,sportKey:sportKey)).showing(selectedPlayPoint)}").count - 1, 2,
                        "both places the chart draws the readout (inline + fullscreen) must hand it the scrub")
     }
 
