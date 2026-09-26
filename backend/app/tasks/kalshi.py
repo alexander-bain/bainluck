@@ -1167,6 +1167,36 @@ def _partition_new_events_first(events, existing_tickers):
     return new_events, existing_events
 
 
+def _floor_series_first(events):
+    """#8586: the guaranteed-floor series (``_ALWAYS_FETCH_SERIES``) are
+    upserted before everything else, new events included.
+
+    The floor exists so a daily-turnover row is rewritten from the venue EVERY
+    beat, but the fetch only guarantees they are FETCHED — the upsert loop
+    still ran them in the existing partition, behind every new event. Measured
+    2026-09-26 02:45Z, heavy v96: the beat fetched 4,813 new events (midterm
+    county / turnout markets), processed 3,694 before the loop deadline, and
+    so reached ZERO existing rows (`scan_verdict: frozen`). All 5 open
+    `KXATPEXACTMATCH` rows kept the scheduled start as `resolution_date`, the 3
+    closed on the start date stayed `resolved` while Kalshi listed them
+    `active`, and `KXATPMATCH` / `KXRAIN` went unwritten for two beats.
+
+    The floor is ~285 open events; the new events it displaces are still new
+    next beat and go first then, so creation is delayed a beat, never lost.
+    Relative order within each group is preserved."""
+    from app.services.kalshi_api import _ALWAYS_FETCH_SERIES, event_series_ticker
+
+    floor = [
+        e for e in events
+        if event_series_ticker(e.event_ticker) in _ALWAYS_FETCH_SERIES
+    ]
+    rest = [
+        e for e in events
+        if event_series_ticker(e.event_ticker) not in _ALWAYS_FETCH_SERIES
+    ]
+    return floor + rest
+
+
 def _alarm_on_series_discovery(series_discovery, stats: dict) -> list:
     """#2927 / gotcha #53: an empty discovery yield is a response shape, not an
     absence. Copy the receipt's headline into ``stats`` and page when a selected
@@ -1277,6 +1307,9 @@ async def _poll_kalshi_markets():
     service = KalshiAPIService()
     stats = {
         "events_processed": 0,
+        # #8586: existing rows the loop reached, counted directly — the floor
+        # runs ahead of the new partition, so `processed - new` no longer is.
+        "existing_events_processed": 0,
         "markets_processed": 0,
         "outcomes_updated": 0,
         "snapshots_created": 0,
@@ -1538,7 +1571,7 @@ async def _poll_kalshi_markets():
             new_events, existing_events = _partition_new_events_first(
                 events, existing_tickers
             )
-            events = new_events + existing_events
+            events = _floor_series_first(new_events + existing_events)
             stats["new_events_fetched"] = len(new_events)
             stats["existing_events_fetched"] = len(existing_events)
             if new_events:
@@ -1901,6 +1934,8 @@ async def _poll_kalshi_markets():
                     result = await session.execute(market_stmt)
                     futures_market_id = result.scalar_one()
                     stats["events_processed"] += 1
+                    if event.event_ticker in existing_tickers:
+                        stats["existing_events_processed"] += 1
 
                     # First pass: compute probabilities and names for all outcomes
                     outcome_data = []
@@ -2336,7 +2371,7 @@ async def _poll_kalshi_markets():
             _n_existing = int(stats.get("existing_events_fetched") or 0)
             _processed = int(stats.get("events_processed") or 0)
             _total = _n_new + _n_existing
-            _reached_existing = max(0, _processed - _n_new)
+            _reached_existing = int(stats.get("existing_events_processed") or 0)
             _report = KalshiScanReport(
                 started_at=_scan_started_at,
                 finished_at=datetime.now(timezone.utc).isoformat(),

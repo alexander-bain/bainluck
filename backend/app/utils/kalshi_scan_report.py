@@ -43,7 +43,9 @@ and WHY it stopped. In particular:
   That fix is correct for creation and, by construction, starves UPDATES: every
   event the deadline cuts off is an EXISTING one, i.e. exactly the displayed
   markets that go stale. This pair is the measurement that confirms or refutes
-  that reading, and no existing counter captures it.
+  that reading, and no existing counter captures it. (#8586: the guaranteed-
+  floor series now run ahead of the new partition, so the caller counts the
+  existing rows it reached directly; ``processed - new`` is no longer that.)
 
 Nothing here changes scan behaviour. It is read-only telemetry.
 
@@ -445,7 +447,9 @@ class KalshiScanReport:
             return self.stop_reason
         if not self.reconciles():
             return "instrument_broken"
-        reached_existing = self.events_processed - self.events_new
+        # #8586: read from the caller's own count, not `processed - new` —
+        # the floor series are upserted ahead of the new partition.
+        reached_existing = self.events_existing - self.unreached_existing
         if self.events_existing > 0 and reached_existing <= 0:
             return "frozen"
         if self.unreached_existing > 0:
