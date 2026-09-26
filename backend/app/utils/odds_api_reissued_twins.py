@@ -41,19 +41,34 @@ names and times cannot tell it from a re-issue.
 WHY THE GHOST MUST BE THE OLDER ID
 ═════════════════════════════════
 
-A re-issue replaces an old id with a new one. So the unlisted row must carry
-the EARLIER-first-seen id. The one live counter-specimen: WNBA Lynx v Liberty,
-``15318133`` (Sep 26, unlisted) and ``15318132`` (Sep 27, listed), where the
-UNLISTED id is the NEWER one — a game the provider added and withdrew, not a
-second copy of the Sunday game. Labelling it "duplicate of" Sunday would be a
-false statement, so it is refused.
+A re-issue replaces an old id with a new one. So, on the schedule alone, the
+unlisted row must carry the EARLIER-first-seen id: a NEWER id the provider
+dropped could be a game it added and withdrew, and "duplicate of" would then be
+a false statement.
+
+UNLESS ITS PRICES MOVED — #8755. The newer-id refusal was written for WNBA Lynx
+v Liberty, ``15318133`` (Sep 26 00:30Z, unlisted) beside ``15318132`` (Sep 27
+18:00Z, listed, ESPN 401918014), and it was wrong about that very block. The
+ghost's one price — FanDuel ``-300/+235 · -7.5 · 173.5`` at 09-24 02:19Z — is on
+the listed row, byte for byte, from 02:24Z on. The provider did not withdraw a
+game; it split one sportsbook's listing onto a second id for eighteen minutes
+and folded it back. Nobody retired the split row, so it went ``live`` at a
+start that was never a start and served a two-day-old line as a live number.
+
+So a newer-id ghost is labelled when :func:`lines_moved` holds: it held at
+least one FULLY priced line (moneyline both sides, spread and total), and
+every such line is on the listed sibling from the same sportsbook. One book
+quoting the identical four numbers for two different games of one pair is not
+a coincidence the label needs to survive; a partial (moneyline-only) capture is
+too weak to count either way and is ignored. With no lines read, or one line
+the sibling never held, the newer-id refusal stands exactly as before.
 
 The label is ``provenance:duplicate-of:<canonical>``, whose read side
 (:func:`app.utils.proven_duplicates.not_a_proven_duplicate`) already sits on
 search, the league and team rails and the feed. Under-tagging is the intended
 failure direction: every rule here refuses rather than guesses.
 
-Refs #8422, #2693.
+Refs #8422, #8755, #2693.
 """
 
 from __future__ import annotations
@@ -96,6 +111,21 @@ class ReissueRow:
     #: authority vouching for the row outranks one provider dropping its id.
     other_anchor: bool
     already_tagged: bool
+
+
+#: One sportsbook's FULLY priced line, as ``odds_snapshots`` stores it:
+#: ``(bookmaker, home_ml, away_ml, home_spread, over_under)``, the two decimals as
+#: the text Postgres renders them so both rows go through one spelling. #8755.
+BookLine = tuple[str, int, int, str, str]
+
+
+def lines_moved(ghost_lines: frozenset, canonical_lines: frozenset) -> bool:
+    """Did every fully priced line the ghost held reappear on the sibling? #8755.
+
+    Empty ghost lines answer False: no evidence is not evidence the prices
+    moved, and the newer-id refusal must then stand.
+    """
+    return bool(ghost_lines) and ghost_lines <= canonical_lines
 
 
 @dataclass(frozen=True)
@@ -148,13 +178,19 @@ def candidate_blocks(rows: list[ReissueRow], *, now: datetime) -> list[list[Reis
 def plan_reissue_tags(
     blocks: list[list[ReissueRow]],
     schedules: dict[str, set[str]],
+    book_lines: dict[int, frozenset] | None = None,
 ) -> ReissuePlan:
     """Decide each block against the provider's schedule for its sport.
 
     ``schedules`` maps a sport key to the ids ``/events`` listed on THIS pass.
     A sport absent from it was not read (or the read failed) and every block in
     it is refused — an unread schedule is not an empty one.
+
+    ``book_lines`` maps a block member to its fully priced lines (#8755). It is
+    consulted only for a ghost holding the NEWER id; a row absent from it has
+    no lines, so the newer-id refusal stands.
     """
+    book_lines = book_lines or {}
     plan = ReissuePlan()
     for block in blocks:
         plan.blocks_examined += 1
@@ -190,7 +226,10 @@ def plan_reissue_tags(
             if ghost.other_anchor:
                 refuse(f"ghost_{ghost.event_id}_has_another_authority")
                 continue
-            if ghost.first_seen_at >= canonical.first_seen_at:
+            if ghost.first_seen_at >= canonical.first_seen_at and not lines_moved(
+                book_lines.get(ghost.event_id, frozenset()),
+                book_lines.get(canonical.event_id, frozenset()),
+            ):
                 refuse(f"ghost_{ghost.event_id}_is_the_newer_id")
                 continue
             plan.tags.append(
