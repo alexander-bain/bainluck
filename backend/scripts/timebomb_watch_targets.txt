@@ -1,0 +1,53 @@
+# Known expiry-prone fixtures — the scheduled advisory's target set (#8835).
+#
+# Read by `.github/workflows/clock-timebomb-advisory.yml` through
+# `scripts/timebomb_confirm.py --from-file`. One pytest target per line, paths
+# relative to backend/. Every file here once turned master red, or was repaired
+# before it could, because a fixture was dated to a day the calendar reached.
+# The advisory re-runs them at future fake instants so a re-armed anchor is
+# found before its date, not on it.
+#
+# Bounded on purpose: this is not the suite. Adding a file costs one pytest
+# collection per clock point (7 points). `tests/test_timebomb_advisory_8835.py`
+# fails in PR CI if a listed file is renamed or deleted.
+#
+# NOT listed, and why (measured 2026-09-26, 7 points, whole clock):
+#   tests/test_nhl_preseason_rail_reads_the_priced_twin_8700.py and
+#   tests/test_the_club_page_reaches_its_accented_row_7929.py are red at the +0d
+#   frozen-clock CONTROL (12 tests) — they need time to pass, so this method
+#   excludes every one of their tests at every point and would cover nothing.
+#   Their repairs were time-of-DAY straddles; `scripts/clock_sweep.py` is the
+#   instrument for that class.
+
+# 13e175d311 — #7807 durable-bank anchor was a dated time bomb
+tests/test_durable_venue_history_7807.py
+# 52a4608dbf — #7801 newborn-floor guards, a two-hour time bomb
+tests/test_receipt_coverage_newborn_floor_7801.py
+tests/test_match_receipts_2705.py
+# 3be0ffed99 / 08f486346e — #7611 dated anchors that turned master red
+tests/test_polymarket_stuck_status_6073.py
+tests/test_settled_champion_point_stamp_6360.py
+# f8609aae4d — #7284 chart-table fixture freezes every clock its path reads
+tests/test_the_chart_table_reads_the_board_7284.py
+# 017c969162 — #4079 dated-basis fixture offset from the clock the code reads
+tests/test_a_served_movement_number_is_dated_4079.py
+# b4223c439c — #3836 the fixture anchor that expired and took master's deploy with it
+tests/test_sports_first_page_client_deletion_3836.py
+# 7e2b45fe0d — #3736 weather hero fixture stopped expiring
+tests/test_weather_hero_answers_the_headline_3307.py
+# LAT-P181 — the anchors `tests/test_clock_anchor_applied.py` guards statically
+tests/test_gold_label_store_convergence.py
+tests/test_feed_concept_single_scan.py
+tests/test_golf_tour_badge_uxp185.py
+tests/test_sentinel_durable_evidence_298.py
+tests/test_competition_identity.py
+# 2692a8fe79 — #5531 kickoff assertion reddened master 00:00–04:00Z
+tests/test_enrich_market_hooks_requires_evidence_5461.py
+# bba562dce0 — #7993 combat control straddling 00:00 UTC
+tests/test_combat_card_priced_on_another_card_7993.py
+# e62f352c0f / cdbce24e7f — #3895 / #7464 specimens dated to a day they would outlive
+tests/integration/test_the_unpriced_card_never_reaches_the_page_3980.py
+tests/integration/test_the_degraded_page_withholds_the_slate_5728.py
+# 695edd36d1 / fbb1a83319 — route contracts that expired at 10am / with the weather dates
+tests/integration/test_route_tournaments.py
+tests/integration/test_weather_featured_leader_uxp186.py

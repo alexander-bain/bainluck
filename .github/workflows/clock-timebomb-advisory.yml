@@ -1,0 +1,139 @@
+name: Clock timebomb advisory
+
+# #8835 — PILLAR TRUTH. SHIP: user fixes stop waiting on test fixtures that
+# expire with the calendar.
+#
+# A fixture dated to a day the calendar reaches turns `backend-tests` red with
+# no code change, and every live fix queued behind it waits (2026-08-31: fifteen
+# hours, thirteen branches). This runs the known expiry-prone fixtures
+# (`backend/scripts/timebomb_watch_targets.txt`) at future FAKE instants through
+# `scripts/timebomb_confirm.py`, which reuses `scripts/clock_sweep.py`'s
+# self-checked clock patch, so a re-armed anchor is named days before its date.
+#
+# ADVISORY PHASE — THIS JOB NEVER CONCLUDES `failure`, BY DESIGN.
+#   A scheduled run attaches its check-run to master's HEAD sha, and
+#   `tools/merge-gate.sh` (notice 32) refuses ANY sha carrying a `failure`
+#   check-run. A red here would block the very merges it exists to protect. So
+#   every step that can fail is `continue-on-error`, the verdict lives in the job
+#   summary, warning annotations and the retained artifact, and the job itself is
+#   green. Not a required check; no `pull_request`/`push` trigger, so no PR waits
+#   on it. Making it required or more frequent needs a measured reliability
+#   record first (issue #8835) — not a date.
+#
+# Verdicts (the exit contract of timebomb_confirm.py):
+#   CLEAN (0) · BOMB (1: exact test id + first red fake instant) ·
+#   HARNESS FAULT (2, or no result record at all: the RUN failed, no conclusion
+#   about any test). Bombs and harness faults are reported apart, always.
+#
+# Bounded: 7 pytest runs over ~20 files (measured ~25-30s each locally), each
+# capped by --timeout-per-point; the oracle step is capped below the job cap so a
+# hang becomes a recorded fault, never a job timeout (which would be `failure`).
+# `concurrency` without cancel-in-progress: at most one running and one queued,
+# so a manual dispatch and the cron can never stack.
+
+on:
+  schedule:
+    - cron: "23 11 * * *"
+  workflow_dispatch:
+    inputs:
+      offsets:
+        description: "Days ahead to fake, comma-separated (fractions allowed)"
+        required: false
+        default: "0.5,1,32,190,400"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: clock-timebomb-advisory
+  cancel-in-progress: false
+
+jobs:
+  timebomb:
+    name: Expiring-fixture advisory (never blocks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v6
+        continue-on-error: true
+
+      - uses: actions/setup-python@v7
+        continue-on-error: true
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        id: install
+        continue-on-error: true
+        timeout-minutes: 10
+        run: pip install -r requirements.txt
+
+      - name: Run the clock oracle over known expiry-prone fixtures
+        id: oracle
+        if: steps.install.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 28
+        env:
+          OFFSETS: ${{ inputs.offsets || '0.5,1,32,190,400' }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/timebomb"
+          set +e
+          python scripts/timebomb_confirm.py \
+            --from-file scripts/timebomb_watch_targets.txt \
+            --whole-clock \
+            --offsets "$OFFSETS" \
+            --timeout-per-point 150 \
+            --json "$RUNNER_TEMP/timebomb/result.json" \
+            --summary "$GITHUB_STEP_SUMMARY" \
+            > "$RUNNER_TEMP/timebomb/oracle.log" 2>&1
+          code=$?
+          set -e
+          echo "exit=$code" >> "$GITHUB_OUTPUT"
+          cat "$RUNNER_TEMP/timebomb/oracle.log"
+          echo "timebomb_confirm exit $code"
+
+      - name: Classify (bomb vs harness fault) — advisory, never fails the job
+        if: always()
+        continue-on-error: true
+        env:
+          INSTALL_OUTCOME: ${{ steps.install.outcome }}
+          ORACLE_OUTCOME: ${{ steps.oracle.outcome }}
+          ORACLE_EXIT: ${{ steps.oracle.outputs.exit }}
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib
+          result = pathlib.Path(os.environ["RUNNER_TEMP"]) / "timebomb" / "result.json"
+          summary = open(os.environ["GITHUB_STEP_SUMMARY"], "a")
+          if not result.is_file():
+              why = (
+                  f"install {os.environ.get('INSTALL_OUTCOME') or 'not run'}, "
+                  f"oracle {os.environ.get('ORACLE_OUTCOME') or 'not run'}, "
+                  f"exit {os.environ.get('ORACLE_EXIT') or 'none'}"
+              )
+              print(f"::warning title=Clock harness fault::no result record ({why}) - no conclusion about any test")
+              summary.write(f"\n## Expiring-fixture check - HARNESS FAULT\n\nNo result record ({why}). The run failed; nothing is known about the fixtures.\n")
+              raise SystemExit(0)
+          r = json.loads(result.read_text())
+          if str(r.get("exit_code")) != os.environ.get("ORACLE_EXIT"):
+              print(f"::warning title=Clock harness fault::result record says exit {r.get('exit_code')} but the step saw {os.environ.get('ORACLE_EXIT')}")
+          for nodeid, instants in sorted(r["bombs"].items()):
+              print(f"::warning title=Expiring fixture::{nodeid} passes now and fails at fake {instants[0]} UTC")
+          for fault in r["faults"]:
+              print(f"::warning title=Clock harness fault::{fault}")
+          print(f"verdict {r['verdict']}: {len(r['bombs'])} bomb(s), {len(r['faults'])} harness fault(s), {r['elapsed_s']}s")
+          PY
+
+      - name: Retain the record
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: clock-timebomb-advisory-${{ github.run_id }}
+          path: ${{ runner.temp }}/timebomb/
+          retention-days: 30
+          if-no-files-found: warn
