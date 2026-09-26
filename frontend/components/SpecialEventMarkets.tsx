@@ -26,6 +26,12 @@ interface SpecialEventMarketsProps {
   data: GameMarketsResponse;
   eventStatus?: string;
   /**
+   * #8816: the page's ONE venue-settled answer (`venueSettledSentence !== null`),
+   * the same boolean the header pill and the hero already read (#6381, #6438).
+   * A `suspended` match the venue has graded is settled for this section too.
+   */
+  venueSettled?: boolean;
+  /**
    * Sets already played out, for a match still in progress. The event page
    * passes it for tennis only; everything else leaves it undefined and no row
    * changes. See `buildMarketSection`'s `completedSets`.
@@ -457,6 +463,7 @@ function PropMiniCard({
 export default function SpecialEventMarkets({
   data,
   eventStatus,
+  venueSettled = false,
   completedSets,
   decidedSetsWinner,
   setsWon,
@@ -495,7 +502,12 @@ export default function SpecialEventMarkets({
   // The predicate is `isSettledStatus`, not a local `=== "completed"` pair: the
   // page, `MarketMapSection` and `propDivergence` were already carrying three
   // spellings of "settled" between them, and this is the widest owned one.
-  const settled = isSettledStatus(eventStatus);
+  //
+  // #8816: OR the page's venue-settled answer. `/events/15318588` (Vacherot v
+  // Harris) is `suspended`, so `isSettledStatus` is false, while its header read
+  // "Settled · Harris wins" over an Exact Match Score card still drawing live
+  // bars (59 / 20 / 19 / 2%) from quotes three hours old.
+  const settled = isSettledStatus(eventStatus) || venueSettled;
 
   /* #4970: IS THE EVENT LIVE — not merely "not finished".
      `!settled` is the wrong test and the measurement says so. On the slate of
