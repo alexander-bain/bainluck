@@ -2206,11 +2206,12 @@ class TestAsianConfederationOutOfTheUefaGrid:
         """The control, and the reason the pattern carries the `AFC` qualifier.
 
         `\\bChampions\\s+League\\b` alone is the parent gate; narrowing it would
-        take the real competition out with the sibling.
+        take the real competition out with the sibling. ("League Phase Winner"
+        was listed here until #8893 excluded it on purpose: topping the league
+        table is not winning the trophy, and it was blended into Champion.)
         """
         for name, eid in (
             ("Champions League Winner", "KXUCL-27"),
-            ("UEFA Champions League: League Phase Winner", "994400"),
             ("UEFA Champions League 2027: Home country of champion", "994401"),
         ):
             assert _market_passes_league_filter(

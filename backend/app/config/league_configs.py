@@ -129,6 +129,14 @@ NBA_CONFIG = LeagueConfig(
     league_exclude_patterns=[
         r"\bPro\s+Basketball\s+Cup\b",
         r"\bNBA\s+Cup\b",
+        # #8893: three markets that do not ask who wins a conference were drawn
+        # on the Conference stage chart — "Conference Finals Qualifiers" (who
+        # REACHES the conference final), "Conference to Win Pro Basketball
+        # Finals" and "LeBron James' Next Conference" (outcomes are conferences:
+        # lines named "Any team in the Eastern Conference 99%").
+        r"\bConference\s+Finals\s+Qualif",
+        r"\bConference\s+to\s+Win\b",
+        r"\bNext\s+Conference\b",
     ],
     columns=[
         GridColumn(key="make_playoffs", label="Make Playoffs", order=1),
@@ -472,6 +480,12 @@ NFL_CONFIG = LeagueConfig(
     # market, not a title market — it matches \bPro\s+Football\b and would land
     # cities in the Champion column.
     external_id_exclude_prefixes=["KXSBHOST"],
+    # #8893: Kalshi KXNFLROUNDQUAL-27CONF asks who REACHES the conference title
+    # game; on the Conference stage chart its prices ("Cincinnati 25.5%") drew
+    # above the conference-winner lines. Reaching is not winning (#8885).
+    league_exclude_patterns=[
+        r"\bConference\s+Championship\s+(?:Game\s+)?Qualif",
+    ],
     stage_key="football",
     league_name_patterns=[
         r"\bNFL\b",
@@ -559,6 +573,10 @@ MLB_CONFIG = LeagueConfig(
         r"\bCollege\b",
         r"\bNCAA\b",
         r"\bCWS\b",
+        # #8893: "Pro Baseball NLCS Qualifiers" asks who REACHES the LCS; the
+        # pennant rule's \b(?:ALCS|NLCS)\b admitted it, and the AL / NL Champ
+        # chart drew "Los Angeles D 67.5%" above the real pennant line (41.5%).
+        r"\b(?:AL|NL)(?:CS|DS)\s+Qualif",
     ],
     columns=[
         GridColumn(key="make_playoffs", label="Make Playoffs", order=1),
@@ -622,6 +640,11 @@ WNBA_CONFIG = LeagueConfig(
     sport_category="basketball",
     sport_keys=["basketball_wnba"],
     external_id_prefixes=["KXWNBA"],
+    # #8893: KXWNBA3PTROUND ("3-Point Contest Championship Round Qualifiers")
+    # rides the KXWNBA prefix; its players led the Champion chart at 99%.
+    league_exclude_patterns=[
+        r"\b(?:3|Three)-?\s*Point\s+Contest\b",
+    ],
     stage_key="basketball",
     league_name_patterns=[
         r"\bWNBA\b",
@@ -742,6 +765,11 @@ NCAA_FOOTBALL_CONFIG = LeagueConfig(
         # stage fallback files it under `championship`, where it would overstate
         # every team's title odds.
         r"\bMake\b.*\bNational\s+Championship\b",
+        # #8885: Kalshi names the same question "College Football National
+        # Championship Qualifiers" (KXNCAAFFINALIST). Filed under
+        # `championship`, its ~30% finalist prices merged with the Winner
+        # market's ~12% by team name and drew the Champion chart as a sawtooth.
+        r"\bNational\s+Championship\s+(?:Game\s+)?Qualifiers?\b",
     ],
     columns=[
         GridColumn(key="make_playoffs", label="Make Playoff", order=1),
@@ -955,6 +983,11 @@ CHAMPIONS_LEAGUE_CONFIG = LeagueConfig(
     # The market is not deleted or hidden: /futures/60607650 stays reachable.
     league_exclude_patterns=[
         r"\bAFC\s+Champions\s+League\b",
+        # #8893: "League Phase Winner" asks who tops the league table, not who
+        # lifts the trophy; blended into the Champion cells it lifted Barcelona
+        # to 21% (winner market 17.7%). No league-phase market is a QF/SF/
+        # Champion question.
+        r"\bLeague\s+Phase\b",
     ],
     columns=[
         GridColumn(key="quarterfinal", label="QF", order=1),
