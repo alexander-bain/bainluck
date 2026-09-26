@@ -1660,6 +1660,82 @@ def outcome_name_is_the_whole_matchup(
     return not leftover
 
 
+def _doubles_partner_tokens(partner: str) -> frozenset[str]:
+    """The words that identify one doubles partner, for :func:`_doubles_pair_match`.
+
+    Initials carry no identity here and are dropped: our rows write
+    ``Chan H-C`` / ``Gomez F`` where the venue writes ``Hao-Ching Chan`` /
+    ``Federico Agustin Gomez``, and a one-letter token can never be found in a
+    given name. The shared stopwords go too, so ``de`` in a surname is not the
+    word that binds it. ``[^\\W_]`` is Unicode-aware, as in
+    :func:`outcome_name_is_the_whole_matchup`.
+    """
+    return frozenset(
+        token
+        for token in re.findall(r"[^\W_]+", _normalize_name(partner))
+        if len(token) >= 2 and token not in _MATCH_STOPWORDS
+    )
+
+
+def _doubles_partners(name: str) -> Optional[tuple[frozenset[str], frozenset[str]]]:
+    """Two partners' identifying words, or ``None`` unless ``name`` is exactly a pair."""
+    parts = name.split("/")
+    if len(parts) != 2:
+        return None
+    partners = tuple(_doubles_partner_tokens(part) for part in parts)
+    if not all(partners):
+        return None
+    return partners  # type: ignore[return-value]
+
+
+def _doubles_pair_match(market_team: str, event_team: str) -> bool:
+    """True when two doubles pairs name the same two players (#8722).
+
+    WHY. Kalshi writes every doubles side in full — ``Casper Ruud / Alexander
+    Zverev`` — and our rows carry surnames, ``Ruud / Zverev``.
+    :func:`_fuzzy_team_match` normalizes ``" / "`` to ``"/"``, so the short side
+    becomes the single word ``ruud/zverev``: the substring test misses and the
+    word-subset test needs two words on each side. Measured 2026-09-26: 0 of 75
+    doubles events carried a Kalshi reading across ATP, WTA, Challenger and
+    Laver Cup, and live match 15319106 held Polymarket's 57% while Kalshi moved
+    at 0.535.
+
+    THE RULE. Both names split on ``/`` into exactly two partners. One side's
+    partners must each have ALL their identifying words inside exactly ONE of the
+    other side's partners, and the two must land on different partners (a
+    one-to-one pairing). The check runs in both directions because either side
+    may be the short one. Anything else is refused, including a surname shared by
+    both partners (``Chan H-C / Chan Y-J`` against two Chans). Refusing costs one
+    reading. Accepting a wrong pair would price the wrong team.
+
+    DELIBERATELY NOT INSIDE ``_fuzzy_team_match``. The linker uses that
+    function, and this rule is only for the moneyline resolvers. They already
+    hold a market the linker attached to this event and only have to pick a side.
+    """
+    market = _doubles_partners(market_team)
+    event = _doubles_partners(event_team)
+    if market is None or event is None:
+        return False
+
+    def pairs_one_to_one(short: tuple, long_: tuple) -> bool:
+        homes: list[int] = []
+        for partner in short:
+            hits = [i for i, other in enumerate(long_) if partner <= other]
+            if len(hits) != 1:
+                return False
+            homes.append(hits[0])
+        return len(set(homes)) == 2
+
+    return pairs_one_to_one(event, market) or pairs_one_to_one(market, event)
+
+
+def _outcome_names_team(outcome_name: str, event_team: str) -> bool:
+    """The moneyline resolvers' side test: the linker's rule, plus doubles pairs."""
+    return _fuzzy_team_match(outcome_name, event_team) or _doubles_pair_match(
+        outcome_name, event_team
+    )
+
+
 def find_moneyline_outcome(
     outcomes: list,
     matchup: MatchupInfo,
@@ -1726,8 +1802,8 @@ def find_moneyline_outcome(
         # two same-city clubs sharing a token — is a name this classifier
         # cannot orient either, and a coin flip derived from it would be the
         # same lie with a different cause.
-        matches_home = _fuzzy_team_match(outcome.name, event_home_team)
-        matches_away = _fuzzy_team_match(outcome.name, event_away_team)
+        matches_home = _outcome_names_team(outcome.name, event_home_team)
+        matches_away = _outcome_names_team(outcome.name, event_away_team)
         if matches_home and matches_away:
             continue
         if matches_home:
@@ -1897,8 +1973,8 @@ def find_three_way_partition(
         if _is_prop_or_spread_outcome(outcome.name):
             continue
 
-        matches_home = _fuzzy_team_match(outcome.name, event_home_team)
-        matches_away = _fuzzy_team_match(outcome.name, event_away_team)
+        matches_home = _outcome_names_team(outcome.name, event_home_team)
+        matches_away = _outcome_names_team(outcome.name, event_away_team)
         # #4629: a name reaching BOTH teams names neither competitor. Refuse
         # the partition unless the existing draw recognizer proves that this
         # is the third member, explicitly naming this same fixture.
