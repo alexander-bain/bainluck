@@ -84,10 +84,19 @@ def test_the_card_draws_the_rungs_around_the_crossing_in_threshold_order():
     assert crossing["probability"] == 0.625
 
 
-def test_the_typeahead_draws_the_crossing_and_its_two_neighbours():
-    # #993: the dropdown and the card are one pair — both must move.
+def _printed_pair(out):
+    """What the dropdown PRINTS: the first two priced rows
+    (`frontend/lib/searchSuggestionDisplay.ts::futuresAnswer`), not all three."""
+    return [(o["name"], o["probability"]) for o in out if o["probability"] is not None][:2]
+
+
+def test_the_typeahead_prints_the_pair_that_straddles_the_crossing():
+    # #993: the dropdown and the card are one pair — both must move. The first
+    # window led with two rungs, so the dropdown printed `3.75% >99% · 4.00% 63%`
+    # — both over even — and never the rung under it.
     out = _build_search_top_outcomes(_market(), limit=3, lean=True)
-    assert _names(out) == ["Above 3.75%", "Above 4.00%", "Above 4.25%"]
+    assert _names(out) == ["Above 4.00%", "Above 4.25%", "Above 4.50%"]
+    assert _printed_pair(out) == [("Above 4.00%", 0.625), ("Above 4.25%", 0.015)]
 
 
 def test_a_ladder_wholly_on_one_side_of_even_clamps_to_the_nearest_end():
@@ -103,15 +112,106 @@ def test_a_ladder_wholly_on_one_side_of_even_clamps_to_the_nearest_end():
     ]
     out = _build_search_top_outcomes(_market(legs, name="Next Fed rate hike?"), limit=3)
     assert _names(out) == ["Before July 2026", "Before 2027", "Before July 2027"]
+    lean = _build_search_top_outcomes(
+        _market(legs, name="Next Fed rate hike?"), limit=3, lean=True
+    )
+    assert _printed_pair(lean) == [("Before July 2026", 0.85), ("Before 2027", 0.915)]
 
 
-def test_a_withheld_rung_cannot_be_the_centre_but_keeps_its_slot():
+def test_a_falling_ladder_wholly_over_even_prints_its_last_two_rungs():
+    # The mirror of the clamp above: every "Above X" rung over even, so the rungs
+    # nearest the answer are the TOP two. A 3-rung clamp would print 3.00/3.25 and
+    # hide 3.50, the rung nearest even.
+    legs = [
+        (31, "Above 2.50%", "KXFED-T2.50", 0.99, 0.98, 1.0),
+        (32, "Above 2.75%", "KXFED-T2.75", 0.98, 0.97, 0.99),
+        (33, "Above 3.00%", "KXFED-T3.00", 0.96, 0.95, 0.97),
+        (34, "Above 3.25%", "KXFED-T3.25", 0.90, 0.89, 0.91),
+        (35, "Above 3.50%", "KXFED-T3.50", 0.72, 0.70, 0.74),
+    ]
+    out = _build_search_top_outcomes(_market(legs), limit=3, lean=True)
+    assert _printed_pair(out) == [("Above 3.25%", 0.90), ("Above 3.50%", 0.72)]
+
+
+def test_a_withheld_rung_is_neither_the_centre_nor_drawn():
+    """A refused price draws no dash: the window is the priced rungs around the
+    crossing, in threshold order (see the Jan 2027 specimen below for why)."""
     out = _build_search_top_outcomes(_market(), withheld={CROSSING_ID})
-    ids = [o["id"] for o in out]
-    assert CROSSING_ID in ids, "a refused price keeps its threshold slot as a dash"
-    assert next(o for o in out if o["id"] == CROSSING_ID)["probability"] is None
+    assert CROSSING_ID not in [o["id"] for o in out]
+    assert all(o["probability"] is not None for o in out)
     names = _names(out)
     assert names == sorted(names, key=lambda n: float(n.split()[1].rstrip("%")))
+    assert names == ["Above 3.25%", "Above 3.50%", "Above 3.75%", "Above 4.25%", "Above 4.50%"]
+
+
+#: Kalshi 108626 *Fed funds rate after Jan 2027 meeting?*, all 25 rungs as stored,
+#: read via ``db-query`` 2026-09-26 17:5xZ. Four rungs are unquoted (no price, no
+#: book), and Above 5.25% is quoted at 13% on a 1c/97c book.
+JAN_2027_LEGS = [
+    (2_000 + i, f"Above {t:.2f}%", f"KXFED-27JAN-T{t:.2f}", p, b, a)
+    for i, (t, p, b, a) in enumerate([
+        (0.00, 0.98, 0.97, 0.99), (0.25, 0.96, 0.94, 0.98), (0.50, 0.975, 0.97, 0.98),
+        (0.75, 0.975, 0.97, 0.98), (1.00, 0.97, 0.96, 0.98), (1.25, 0.96, 0.94, 0.98),
+        (1.50, 0.95, 0.93, 0.97), (1.75, 0.95, 0.93, 0.97), (2.00, 0.925, 0.89, 0.96),
+        (2.25, 0.955, 0.92, 0.99), (2.50, 0.94, 0.92, 0.96), (2.75, 0.935, 0.90, 0.97),
+        (3.00, 0.94, 0.91, 0.97), (3.25, 0.92, 0.88, 0.96), (3.50, 0.925, 0.86, 0.99),
+        (3.75, 0.85, 0.78, 0.92), (4.00, 0.835, 0.75, 0.92), (4.25, 0.64, 0.56, 0.72),
+        (4.50, None, None, None), (4.75, None, None, None), (5.00, None, None, None),
+        (5.25, 0.13, 0.01, 0.97), (5.50, None, None, None), (5.75, None, None, None),
+        (6.00, 0.155, 0.01, 0.30),
+    ])
+]
+
+
+def test_unquoted_rungs_do_not_push_the_answer_off_the_card():
+    """🔴 THE REPAIR, on production's own rows. The first window kept unquoted
+    rungs in their slots and served `4.50 — · 4.75 — · 5.00 — · 5.25 13% · 5.50 —`:
+    one number and no rung above even. Over priced rungs it shows both sides."""
+    market = _market(JAN_2027_LEGS, name="Fed funds rate after Jan 2027 meeting?")
+    out = _build_search_top_outcomes(market)
+    assert _names(out) == [
+        "Above 3.75%", "Above 4.00%", "Above 4.25%", "Above 5.25%", "Above 6.00%",
+    ]
+    assert all(o["probability"] is not None for o in out)
+
+
+def test_the_typeahead_row_of_the_same_ladder_straddles_even():
+    market = _market(JAN_2027_LEGS, name="Fed funds rate after Jan 2027 meeting?")
+    out = _build_search_top_outcomes(market, limit=3, lean=True)
+    assert _names(out) == ["Above 4.25%", "Above 5.25%", "Above 6.00%"]
+    assert _printed_pair(out) == [("Above 4.25%", 0.64), ("Above 5.25%", 0.13)]
+
+
+#: `Fed funds rate after Dec 2026 meeting?` (Kalshi 109658), all 11 rungs as
+#: stored, row order as stored (ux's read; Above 4.25% re-read 2026-09-26 18:55Z
+#: at 0.495 on a 0.49/0.50 book).
+DEC_2026_LEGS = [
+    (1600178, "Above 2.75%", "KXFED-26DEC-T2.75", 0.985, 0.98, 0.99),
+    (1600179, "Above 3.00%", "KXFED-26DEC-T3.00", 0.99, 0.98, 1.0),
+    (1600180, "Above 3.25%", "KXFED-26DEC-T3.25", 0.985, 0.98, 0.99),
+    (1600181, "Above 3.50%", "KXFED-26DEC-T3.50", 0.975, 0.97, 0.98),
+    (1600182, "Above 3.75%", "KXFED-26DEC-T3.75", 0.975, 0.97, 0.98),
+    (1600183, "Above 4.00%", "KXFED-26DEC-T4.00", 0.9, 0.89, 0.91),
+    (1600184, "Above 5.00%", "KXFED-26DEC-T5.00", 0.02, 0.0, 0.02),
+    (1600185, "Above 4.75%", "KXFED-26DEC-T4.75", 0.02, 0.0, 0.02),
+    (1600186, "Above 5.25%", "KXFED-26DEC-T5.25", 0.01, 0.0, 0.01),
+    (1600187, "Above 4.25%", "KXFED-26DEC-T4.25", 0.495, 0.49, 0.5),
+    (1600188, "Above 4.50%", "KXFED-26DEC-T4.50", 0.06, 0.03, 0.09),
+]
+
+
+def test_the_dec_2026_typeahead_prints_its_answer():
+    """🔴 ux's finding on #8882, live at 390px: the dropdown printed `Above 3.75%
+    98% · Above 4.00% 90%` and never Above 4.25% at 49.5%, the rung the rate is
+    betting on — it was the window's third row, which the dropdown does not print."""
+    market = _market(DEC_2026_LEGS, name="Fed funds rate after Dec 2026 meeting?")
+    out = _build_search_top_outcomes(market, limit=3, lean=True)
+    assert _printed_pair(out) == [("Above 4.00%", 0.9), ("Above 4.25%", 0.495)]
+    # The card (limit 5) keeps its ceil(5/2) lead.
+    card = _build_search_top_outcomes(market)
+    assert _names(card) == [
+        "Above 3.50%", "Above 3.75%", "Above 4.00%", "Above 4.25%", "Above 4.50%",
+    ]
 
 
 def test_control_an_exclusive_field_keeps_its_probability_order():
