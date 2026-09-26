@@ -67,6 +67,18 @@ const LANE_TOP: Record<string, number> = {
   final: 57,
 };
 
+/**
+ * #8934 — the projection token is a 26px circle with a 2px ring, so its text
+ * has 22px. Four heavy capitals ("MICH") fill that at 8px; a side labelled by
+ * its short name ("Rebels", #8585) printed six letters at 8px straight through
+ * the ring. Longer labels step down so they stay inside.
+ */
+export function markerFallbackFontSize(label: string | undefined): number {
+  const len = (label || "").length;
+  if (len <= 4) return 8;
+  return Math.max(5, Math.floor(34 / len));
+}
+
 export default function MarketMap({
   variant,
   title,
@@ -330,7 +342,18 @@ export default function MarketMap({
                 {isProj && m.logoUrl ? (
                   <img src={m.logoUrl} alt="" style={{ width: 16, height: 16, objectFit: "contain" }} />
                 ) : isProj ? (
-                  <span style={{ fontSize: 8, fontWeight: 950, color: "var(--text-primary)" }}>
+                  // #8934: 8px fits four capitals in the 26px circle; a longer
+                  // label (a short name like "Rebels") steps down instead of
+                  // spilling past the ring.
+                  <span
+                    data-token-fallback
+                    style={{
+                      fontSize: markerFallbackFontSize(m.logoFallback),
+                      fontWeight: 950,
+                      color: "var(--text-primary)",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
                     {m.logoFallback || ""}
                   </span>
                 ) : null}
