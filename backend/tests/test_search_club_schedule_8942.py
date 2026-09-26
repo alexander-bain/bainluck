@@ -42,8 +42,9 @@ class TestTheHelper:
         assert _search_tag_boost_keys([_row("Liverpool", "soccer_epl")], "liverpool") == ()
 
     def test_no_card_keeps_the_tier(self):
-        (key,) = _search_tag_boost_keys([], "nfl")
-        assert _sql(key) == _sql(_search_tag_boost())
+        keys = _search_tag_boost_keys([], "nfl")
+        assert len(keys) == 1
+        assert _sql(keys[0]) == _sql(_search_tag_boost())
 
     def test_no_rows_read_keeps_the_tier(self):
         """A shed teams read hands the route `[]` (or None) — no card, no change."""
