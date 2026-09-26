@@ -535,10 +535,14 @@ class TestThePostgresRendering:
         )
 
     def test_the_arm_is_correlated_and_scoped_to_unattached_grouped_rows(self):
+        """#8704 moved the scope INTO the sibling key (an attached or ungrouped
+        market gets a NULL key and matches no sibling). The behavioural half is
+        `TestTheArmFailsClosed` plus the #8704 file; this pins the spelling."""
         sql = _sql(select(FuturesMarket.id).where(_futures_game_already_played()))
-        assert "futures_markets.event_id IS NULL" in sql
-        assert "futures_markets.group_id IS NOT NULL" in sql
-        assert "grp_sibling.group_id = futures_markets.group_id" in sql
+        assert (
+            "grp_sibling.group_id = CASE WHEN (futures_markets.event_id IS NULL) "
+            "THEN futures_markets.group_id END"
+        ) in sql
 
     def test_the_arm_is_a_not_exists_and_not_a_top_level_or(self):
         """The short-circuit spelling measured median 21.4 / max 133.5 ms against
