@@ -2954,3 +2954,100 @@ async def test_a_query_naming_a_college_keeps_the_college_first(
     handed to the NFL club because it is marquee."""
     teams = _team_names(await search_with_many_eagles("american eagles"))
     assert teams[0] == "American Eagles", teams
+
+
+# ---------------------------------------------------------------------------
+# #8765 — the `eagles` games list follows the club the teams card leads with
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+async def search_with_many_eagles_and_games(seeded_db, search_with_many_eagles):
+    """#8756's full window plus the games production listed, 2026-09-26:
+
+        NC Dinos v Hanwha Eagles           KBO, TOMORROW — led the games list
+        American Eagles v Navy             NCAAB, tomorrow + 1h
+        Philadelphia Eagles v Dallas ...   NFL, in 2 days — the card's leader
+    """
+    from sqlalchemy import select
+
+    from app.models.models import Event, Sport, Team
+
+    _engine, maker = seeded_db
+    now = datetime.now(timezone.utc)
+    async with maker() as session:
+        sports = {
+            s.key: s
+            for s in (
+                await session.execute(
+                    select(Sport).where(
+                        Sport.key.in_(("americanfootball_nfl", "basketball_ncaab"))
+                    )
+                )
+            ).scalars()
+        }
+        kbo = Sport(key="baseball_kbo", name="KBO")
+        session.add(kbo)
+        await session.flush()
+        session.add(Team(sport_id=kbo.id, name="Hanwha Eagles", alternate_names=["Eagles"]))
+        for sport, home, away, delta in (
+            (kbo, "NC Dinos", "Hanwha Eagles", timedelta(days=1)),
+            (sports["basketball_ncaab"], "American Eagles", "Navy Midshipmen",
+             timedelta(days=1, hours=1)),
+            (sports["americanfootball_nfl"], "Philadelphia Eagles", "Dallas Cowboys",
+             timedelta(days=2)),
+        ):
+            session.add(
+                Event(
+                    sport_id=sport.id,
+                    home_team_name=home,
+                    away_team_name=away,
+                    commence_time=now + delta,
+                    status="scheduled",
+                )
+            )
+        await session.commit()
+    return search_with_many_eagles
+
+
+async def test_eagles_games_lead_with_the_cards_philadelphia_eagles(
+    search_with_many_eagles_and_games,
+):
+    payload = await search_with_many_eagles_and_games("eagles")
+    assert _team_names(payload)[0] == "Philadelphia Eagles"
+    games = _game_pairs(payload)
+    # A key, never a filter: the namesakes' games stay, in kickoff order.
+    assert games[:3] == [
+        "Philadelphia Eagles v Dallas Cowboys",
+        "NC Dinos v Hanwha Eagles",
+        "American Eagles v Navy Midshipmen",
+    ], games
+
+
+async def test_with_the_full_window_disarm_the_kbo_game_leads_again(
+    search_with_many_eagles_and_games, monkeypatch,
+):
+    """Strawman: the pre-#8765 rule switched the key off on a FULL window —
+    the fixture's window is full, and tomorrow's KBO game leads again."""
+    from app.routes import events as events_module
+
+    real = events_module._team_card_lead_sport_keys
+
+    def disarm_when_full(rows, query):
+        if rows and len(rows) >= events_module._SEARCH_TEAM_WINDOW:
+            return None
+        return real(rows, query)
+
+    monkeypatch.setattr(events_module, "_team_card_lead_sport_keys", disarm_when_full)
+    games = _game_pairs(await search_with_many_eagles_and_games("eagles"))
+    assert games[0] == "NC Dinos v Hanwha Eagles", games
+
+
+async def test_a_query_naming_a_college_leads_with_the_colleges_game(
+    search_with_many_eagles_and_games,
+):
+    """Control: `american eagles` — the card leads with the college, and so do
+    the games; the NFL club is not followed because it is marquee."""
+    payload = await search_with_many_eagles_and_games("american eagles")
+    assert _team_names(payload)[0] == "American Eagles"
+    assert _game_pairs(payload)[0] == "American Eagles v Navy Midshipmen", _game_pairs(payload)

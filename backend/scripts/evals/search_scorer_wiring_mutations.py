@@ -83,10 +83,10 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
     (
         "M7",
         "the teams bucket is no longer ranked — raw FTS order ships",
-        "    matched_teams = _search_rank_candidates(\n"
-        "        _q_identity, [(_search_team_evidence(t), t) for t in matched_teams]\n"
-        "    )[:5]\n",
-        "    matched_teams = matched_teams[:5]\n",
+        # #8765: the card is built in ONE place, `_team_card_keyed`, read by the
+        # card and by the games list's leader key. Its last line is the ranking.
+        "    return rank_with_keys(query, [(_search_team_evidence(t), t) for t in cards])[:5]\n",
+        "    return [(None, t) for t in cards][:5]\n",
     ),
     (
         "M8",
