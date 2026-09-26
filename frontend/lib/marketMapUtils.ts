@@ -380,6 +380,36 @@ export function parseSpreadRungs(
 }
 
 /**
+ * One side's rungs can only fall: P(team wins by X) >= P(team wins by X+Y).
+ *
+ * Each side is walked from the smallest margin up, and a rung priced ABOVE the
+ * last rung kept is withheld. This was the half rails' private pass; #8773
+ * lifted it here because the full-game rail had none. Since #8739 that rail
+ * also reads Polymarket, whose far end is thinly traded and runs backwards:
+ * `/events/14781134` (Chargers @ Bills) printed `LAC by 21.5+ 9%` above
+ * `LAC by 17.5+ 4%`, which contradicts itself. The totals ladders were
+ * already forced monotone (`selectGameTotalRungs`, `selectHalfTotalRungs`).
+ *
+ * Run it after `collapseDuplicateRungs`, not before: equal duplicates pass
+ * `<=` trivially, so this pass cannot remove them.
+ */
+export function monotoneSpreadRungs(rungs: ParsedSpread[]): ParsedSpread[] {
+  const side = (items: ParsedSpread[]): ParsedSpread[] => {
+    const sorted = [...items].sort((a, b) => a.threshold - b.threshold);
+    const clean: ParsedSpread[] = [];
+    let lastProb = 1.0;
+    for (const s of sorted) {
+      if (s.probability <= lastProb) {
+        clean.push(s);
+        lastProb = s.probability;
+      }
+    }
+    return clean;
+  };
+  return [...side(rungs.filter((p) => p.isHome)), ...side(rungs.filter((p) => !p.isHome))];
+}
+
+/**
  * An outcome naming a BAND of margins — "wins by 7 to 14 points".
  *
  * Anchored on `by <digits>` at the left and a digit at the right so it cannot
