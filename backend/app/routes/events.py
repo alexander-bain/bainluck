@@ -740,6 +740,58 @@ def _is_paraphrase_of_a_kept_board(market, kept_boards: list) -> bool:
     return False
 
 
+def _search_same_question_folded_ids(
+    markets: list, withheld_by_market: dict
+) -> set[int]:
+    """The ids of rows that ask a question a better-ranked row from ANOTHER venue
+    already asks — Discover's fold, run over the search page (#8851).
+
+    `?q=oscars` (390px, production 2026-09-26 15:48Z) printed Best Picture twice
+    in one ANSWERS card: Kalshi `Oscar Winner: Best Picture` (6173044) at The
+    Odyssey 53% and Polymarket `Oscars 2027: Best Picture Winner` (57313556) at
+    49%, and the flat list did the same for Best Actor and Best Actress. The
+    #8378/#8410 key above cannot pair them — `oscar winner best picture` and
+    `oscars 2027 best picture winner` are two keys — and no key can: the pair
+    differs by a plural, a word order and a year that only one venue writes.
+
+    Discover already folds exactly this pair (#8387). This is that fold, not a
+    second one: `discover_bundles.fold_same_question_cards`, both of its gates
+    (the venues differ AND `is_same_question` over `_comparison_title`) and its
+    survivor rule (the first row in rank order) unchanged. What it is handed per
+    row is what Discover hands it — name, source, resolution date and the card's
+    top five priced legs — built by the same `_build_search_top_outcomes` the
+    card is, with #6993's refused prices already out, so a refused leg cannot
+    vote for a pairing.
+
+    The caller passes the rows BOTH reader lists are cut from, after every
+    withdrawal: a withdrawn row never folds its priced twin away. One bad row
+    must never wipe the pass (gotcha 42) — a row whose facts cannot be built is
+    left out of the comparison and kept.
+    """
+    from app.utils.discover_bundles import fold_same_question_cards
+
+    items: list[dict] = []
+    for m in markets:
+        try:
+            data = {
+                "name": m.name,
+                "source": m.source,
+                "resolution_date": m.resolution_date,
+                "top_outcomes": _build_search_top_outcomes(
+                    m, withheld=withheld_by_market.get(m.id)
+                ),
+            }
+            items.append({"type": "futures", "data": data})
+        except Exception:
+            logger.warning(
+                "search: same-question fold skipped market %s",
+                getattr(m, "id", None), exc_info=True,
+            )
+            items.append({"type": "unfolded"})
+    kept = {id(item) for item in fold_same_question_cards(items)}
+    return {m.id for m, item in zip(markets, items) if id(item) not in kept}
+
+
 #: #8628 — the line of an over/under rung: the number right after `O/U`.
 _SEARCH_LADDER_LINE = re.compile(r"(\bo/u\s+)\d+(?:\.\d+)?(?![\d.])", re.I)
 
@@ -9691,6 +9743,13 @@ async def search_events(
         )
         and m.id not in _container_parent_ids  # #8375
         and not _answers_a_served_game_card(m, _served_event_ids)  # #8734
+    ]
+    # #8851: one question, one row — filter-then-slice; families reuse the ids.
+    _same_question_folded_ids = _search_same_question_folded_ids(
+        futures_markets, _withheld_by_market
+    )
+    futures_markets = [
+        m for m in futures_markets if m.id not in _same_question_folded_ids
     ][:_SEARCH_FUTURES_PAGE]  # flat list (unchanged shape)
 
     # UX-P259/#2579: the tournament a player can win is reachable by their name.
@@ -10019,6 +10078,7 @@ async def search_events(
             if not _futures_card_has_no_answer(m, _withheld_by_market.get(m.id))
             and m.id not in _container_parent_ids
             and not _answers_a_served_game_card(m, _served_event_ids)  # #8734
+            and m.id not in _same_question_folded_ids  # #8851
         ],
         expanded,
         lambda m: _formatted_by_id[m.id],
