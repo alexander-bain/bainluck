@@ -65,6 +65,7 @@ from app.utils.game_market_club_names import (
     repair_field_outcome_name,
 )
 from app.utils.market_staleness import unobserved_board_keys
+from app.utils.nation_flags import flag_nation
 from app.utils.sport_keys import SPORT_PREFIX_TO_LLM_CATEGORY
 
 # #6923. The search card's age pip and the futures card's age mark must agree on
@@ -28142,11 +28143,23 @@ _PLACEHOLDER_CREST_SUFFIX = "/default.png"
 
 
 def _crest_for_corroboration(team) -> str | None:
-    """This row's crest, or None when it carries nothing that can vouch for a club."""
+    """This row's crest, or None when it carries nothing that can vouch for a club.
+
+    A national flag is compared as the NATION it depicts, not as a URL (#8740).
+    A nation's crest is its flag, and two CDNs draw it: the Nations League rows
+    carry ESPN's `countries/500/fra.png`, the World Cup, rugby and cricket rows
+    flagcdn's `fr.png`. Compared as URLs, France's three flagcdn rows
+    corroborated each other and outvoted its only enriched soccer row, so every
+    Nations League card for England, France, Spain, Germany and 24 other nations
+    printed a grey letter tile (28 of 56 sides this week). Compared as nations
+    they agree. A different nation's flag is still a different crest, so a row
+    carrying one is corroborated by nobody, exactly as before.
+    """
     logo = getattr(team, "logo_url_small", None)
     if not logo or logo.endswith(_PLACEHOLDER_CREST_SUFFIX):
         return None
-    return logo
+    nation = flag_nation(logo)
+    return f"flag:{nation}" if nation else logo
 
 
 #: ESPN's numbered crest: `.../teamlogos/ncaa/500/324.png` is team 324's badge.
