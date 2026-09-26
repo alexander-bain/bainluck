@@ -103,7 +103,12 @@ def _the_production_rows():
     """Both pairs as production holds them. The variant's kick-off sits eight
     minutes after the parent's, as 36 of the 40 measured pairs do."""
     now = datetime.now(timezone.utc)
-    played = (now - timedelta(days=2)).replace(second=0, microsecond=0)
+    # Offset first, then pin the hour (gotcha #44): the fold never pairs rows
+    # on either side of midnight UTC, so a clock-relative minute put the
+    # +8m32s variant on the next date for any run after 23:51:28Z.
+    played = (now - timedelta(days=2)).replace(
+        hour=2, minute=0, second=0, microsecond=0
+    )
     tonight = (now + timedelta(hours=3)).replace(second=0, microsecond=0)
     return [
         _event(
