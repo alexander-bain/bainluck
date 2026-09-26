@@ -134,6 +134,23 @@ class TestNameSimilarity:
         # Our stored "St.Louis Cardinals" vs statsapi's "St. Louis Cardinals".
         assert ss.name_similarity("St.Louis Cardinals", "St. Louis Cardinals") == 1.0
 
+    def test_accents_fold_to_base_letter(self):
+        # #8575 (filed 4×): ESPN "CF Montréal" vs our "CF Montreal" scored 0.0
+        # because "é" became a space ("montr al") — a critical MISATTACHED RED.
+        assert ss.name_similarity("CF Montreal", "CF Montréal") == 1.0
+        assert ss.name_similarity("Atletico Madrid", "Atlético Madrid") == 1.0
+
+    def test_apostrophes_are_deleted_not_spaced(self):
+        # #8576: "Hawai'i" split into "hawai i" and missed "Hawaii".
+        assert ss.name_similarity("Hawaii Rainbow Warriors", "Hawai'i Rainbow Warriors") == 1.0
+        assert ss.name_similarity("Hawaii Rainbow Warriors", "Hawaiʻi Rainbow Warriors") == 1.0
+
+    def test_folding_keeps_different_clubs_apart(self):
+        # The fold must not loosen the strict pairing: a real rename and a
+        # same-city different club still miss the bar.
+        assert ss.name_similarity("CF Montréal", "Toronto FC") < ss.MATCH_BAR
+        assert ss.name_similarity("Houston Baptist Huskies", "Houston Christian Huskies") < ss.MATCH_BAR
+
     def test_short_form_contains(self):
         assert ss.name_similarity("Red Sox", "Boston Red Sox") >= ss.MATCH_BAR
 

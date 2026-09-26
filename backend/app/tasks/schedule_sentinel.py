@@ -74,6 +74,7 @@ import logging
 import os
 import re
 import time as _time
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import date as _date
 from datetime import datetime, time as _dtime, timedelta, timezone
@@ -200,8 +201,16 @@ def _norm_name(s: Optional[str]) -> str:
 
     Punctuation becomes a SPACE rather than being deleted so ``"St.Louis
     Cardinals"`` and ``"St. Louis Cardinals"`` normalize identically — a real
-    divergence between our stored name and statsapi's."""
-    s = (s or "").lower()
+    divergence between our stored name and statsapi's.
+
+    Two exceptions, both measured false REDs (#8575, #8576): accents FOLD to
+    their base letter (ESPN's "CF Montréal" vs our "CF Montreal" — an accented
+    letter turned into a space split "montreal" into ``montr al`` and scored
+    0.0, filed four times as a critical MISATTACHED), and apostrophes are
+    DELETED ("Hawai'i" vs "Hawaii")."""
+    s = unicodedata.normalize("NFKD", s or "")
+    s = "".join(c for c in s if not unicodedata.combining(c)).lower()
+    s = re.sub(r"['‘’ʻ]", "", s)
     s = re.sub(r"[^a-z0-9]+", " ", s)
     return " ".join(s.split())
 
