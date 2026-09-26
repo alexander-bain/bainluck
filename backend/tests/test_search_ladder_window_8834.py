@@ -99,9 +99,12 @@ def test_the_typeahead_prints_the_pair_that_straddles_the_crossing():
     assert _printed_pair(out) == [("Above 4.00%", 0.625), ("Above 4.25%", 0.015)]
 
 
-def test_a_ladder_wholly_on_one_side_of_even_clamps_to_the_nearest_end():
+def test_a_ladder_wholly_on_one_side_of_even_clamps_to_the_nearest_end(monkeypatch):
     # `Next Fed rate hike?` (61461512): every rung 92–98%, a DATE ladder that
     # rises with the deadline. The nearest rung to even is the earliest.
+    # #8930: a `before` deadline earlier than today is spent and not drawn, so
+    # the clock is pinned to before this fixture's first deadline (July 2026).
+    monkeypatch.setattr("app.routes.events._search_today_ymd", lambda: 20260601.0)
     legs = [
         (1, "Before 2029", "KXFEDHIKE-29", 0.98, 0.97, 0.99),
         (2, "Before July 2028", "KXFEDHIKE-28JUL", 0.98, 0.97, 0.99),

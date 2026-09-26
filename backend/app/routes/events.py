@@ -30366,7 +30366,12 @@ from app.utils.outcome_display import (  # noqa: E402
     drop_unbacked_legs as _drop_unbacked_legs,
 )
 from app.utils.futures_liveness import leg_is_graded  # noqa: E402  #8640
-from app.utils.ladder_monotonicity import DEC, cumulative_outcome_ladder  # noqa: E402  #8834
+from app.utils.ladder_monotonicity import (  # noqa: E402  #8834, #8930
+    DEC,
+    INC,
+    cumulative_outcome_ladder,
+    parse_cumulative_date_leg,
+)
 from app.utils.duplicate_condition_outcomes import (  # noqa: E402
     drop_duplicate_legs as _drop_duplicate_legs,
 )
@@ -31252,6 +31257,13 @@ async def _search_container_parent_ids(
     ) | _search_unlinked_container_parents_among(unlinked, named_rows)
 
 
+def _search_today_ymd() -> float:
+    """Today (UTC) on the ``YYYYMMDD`` scale date rungs sort on (#8930). One
+    function so tests pin the clock instead of branching on it (gotcha #44)."""
+    today = datetime.now(timezone.utc).date()
+    return float(today.year * 10000 + today.month * 100 + today.day)
+
+
 def _search_ladder_window(
     market: "FuturesMarket",
     legs: list,
@@ -31305,9 +31317,26 @@ def _search_ladder_window(
     ladder that fits in ``limit`` is drawn whole, refused slots included.
     A ladder wholly on one side of even (``Next Fed rate hike?``, all 92–98%)
     clamps to that end, which is still the rungs nearest the answer.
-    Graded rungs (#8640) are counted at their price and stay in threshold order
-    with their grade on the wire: on a ladder the position IS the meaning, and
-    there is no headline row for a result to steal.
+    SPENT RUNGS ARE NOT DRAWN WHILE A LIVE PRICED RUNG REMAINS (#8930). This
+    said graded rungs stay in order because "there is no headline row for a
+    result to steal", and there is: the web ANSWERS row prints a date ladder's
+    FIRST priced rung (`searchFamilyDisplay.ts::leaderOutcome`) and the dropdown
+    its first two. A rising ``Before <date>`` ladder's spent rungs are its past
+    deadlines, so they always sort first. Production 2026-09-26 20:58Z,
+    ``?q=trump``, printed ``Before April 1, 2026 0%`` (109256), ``Before May 1,
+    2026 0%`` (108366) and ``Before Jun 1, 2026 <1%`` (112818), each graded NO /
+    ``api_settlement``, above answers nobody saw (``Before 2027`` 4%).
+
+    Spent is EITHER of two things, because dropping the graded rungs alone moves
+    the defect one rung along: 112818 also carries ``Before Jan 1, 2026`` at 1%,
+    ungraded (Kalshi settled rows stay open, gotcha #33) on a 0/1.00 book. The
+    six-rung window happened to start past it; with its two graded neighbours
+    gone the four live rungs fit ``limit`` and it would head the row. So a rung
+    is spent when it is graded (``leg_is_graded``) OR it is a ``before``/``by``
+    deadline earlier than today. ``after <date>`` is not: that question is still
+    open once its date passes. The results stay on the detail page. A ladder
+    with no live priced rung left is drawn as before, because then the results
+    are all there is to show.
     """
     ladder = cumulative_outcome_ladder(
         [{"name": o.name, "leg": o} for o in legs],
@@ -31318,6 +31347,21 @@ def _search_ladder_window(
         return None
     rungs, direction = ladder
     ordered = [row["leg"] for _value, row in rungs]
+    # `leg_is_graded`, not `is_winner`: False is the column default, and the
+    # retraction badge `ungradeable_result` is not a verdict (#8640's rule).
+    # The one-affix rule means every rung is a date leg if the first one is.
+    deadline_ladder = direction == INC and parse_cumulative_date_leg(ordered[0].name) is not None
+    today = _search_today_ymd() if deadline_ladder else None
+    live = [
+        o
+        for o, (value, _row) in zip(ordered, rungs)
+        if not leg_is_graded(
+            getattr(o, "is_winner", None), getattr(o, "resolution_source", None)
+        )
+        and not (today is not None and value < today)
+    ]
+    if any(o.id not in withheld_ids and o.current_probability is not None for o in live):
+        ordered = live
     priced = [
         index
         for index, o in enumerate(ordered)
