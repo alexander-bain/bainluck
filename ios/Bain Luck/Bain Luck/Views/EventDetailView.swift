@@ -17,7 +17,6 @@ private struct SourceRowWidthKey: PreferenceKey {
 struct EventDetailView: View {
     let eventId: Int
     @StateObject private var vm: EventDetailViewModel
-    @State private var selectedPlayPoint: GamePlayPoint?
     /// Closed for every reader. Starts open only when the LOOK rig asks
     /// (`-launch_expand_sections`), which is the only way this list can be
     /// photographed — the rig cannot tap a chevron. See `LaunchRig`.
@@ -321,7 +320,6 @@ struct EventDetailView: View {
                                      forcedDomain: sharedChartDomain,
                                      pageAxisPlotWidth: pageAxisPlotWidth,
                                      selectedRange: $chartRange,
-                                     selectedPlayPoint: $selectedPlayPoint,
                                      preloadedHistory: vm.history,
                                      // #920 — the pushed blends the hero is
                                      // already showing, so the chart's right
@@ -334,7 +332,6 @@ struct EventDetailView: View {
                                      // under the tab bar, in Alex's recording).
                                      readout: (isLive || isFinished) && vm.history?.scoringPlays?.isEmpty == false
                                         ? GamePlayCardView(
-                                            selectedPoint: selectedPlayPoint,
                                             homeTeam: event.homeTeam,
                                             awayTeam: event.awayTeam,
                                             homeTeamColor: teamColors(event).home,

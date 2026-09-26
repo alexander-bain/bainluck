@@ -7,7 +7,9 @@ import SwiftUI
 /// - Scoring play description (when hovering over one)
 /// - Win probability (when between scoring plays)
 struct GamePlayCardView: View {
-    let selectedPoint: GamePlayPoint?
+    /// The scrubbed moment. The page builds this card without one; the chart,
+    /// which owns the scrub, supplies it where it places the card (#8651).
+    var selectedPoint: GamePlayPoint? = nil
     let homeTeam: String
     let awayTeam: String
     var homeTeamColor: Color = .primary
@@ -19,6 +21,14 @@ struct GamePlayCardView: View {
 
     private var point: GamePlayPoint? {
         selectedPoint ?? lastPoint
+    }
+
+    /// #8651 — this card showing `point` as the scrubbed moment. The chart
+    /// calls it with its own selection so a scrub never reaches page state.
+    func showing(_ point: GamePlayPoint?) -> GamePlayCardView {
+        var card = self
+        card.selectedPoint = point
+        return card
     }
 
     var body: some View {
