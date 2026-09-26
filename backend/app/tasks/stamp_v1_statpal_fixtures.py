@@ -158,8 +158,9 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 from typing import Any, Callable, Optional
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import text
 
@@ -498,6 +499,25 @@ MAX_SAFE_WINDOW = BACK_TO_BACK_SEPARATION / 2
 
 #: How far either side of the read fixtures the candidate query reaches.
 CANDIDATE_SLACK = MATCH_WINDOW
+
+#: The calendar a placeholder start's DATE is read in (#8961).
+#:
+#: A StatPal postseason `week[]` game carries an on-the-hour placeholder clock
+#: (`fixture.start_is_placeholder`, #8841): the date is StatPal's, the hour is
+#: nobody's. ±`MATCH_WINDOW` around an hour nobody set is not a window, and it is
+#: why Red Sox @ Yankees Wild Card Game 1 sat on the site as two rows — StatPal's
+#: at its 20:00Z placeholder and The Odds API's at its own guessed 23:10Z, 3h10m
+#: apart, so this pass saw one candidate and never handed the drain the shared
+#: id. ESPN (`2026-09-29T04:00Z`, `timeValid=false`) and MLB (`startTimeTBD`)
+#: publish the same game as a date alone, and ESPN's date-only stamp is midnight
+#: EASTERN, so Eastern is the calendar the date belongs to.
+#:
+#: Safe for the same reason `MATCH_WINDOW` is, re-made for this population: a
+#: window is only as safe as the closest two meetings of one pair it can reach.
+#: A postseason pair meets at most once per date — no doubleheaders in October —
+#: so the date holds exactly one game of the series. MLB only, because the
+#: placeholder mark is (`start_placeholder.STATPAL_PLACEHOLDER_START_SPORTS`).
+PLACEHOLDER_DATE_TZ = ZoneInfo("America/New_York")
 
 #: Every row for the league in the window, linked or not, with its column value.
 #: Deliberately NOT filtered to `statpal_fixture_id IS NULL` — that guard is what
@@ -892,6 +912,60 @@ def _twin_of_an_identified_row(
     return [unlinked[0], identified[0]]
 
 
+def fixture_match_bounds(
+    fixture: StatPalFixture,
+) -> Optional[tuple[datetime, datetime]]:
+    """The span of our `commence_time`s that can be this contest, or None.
+
+    ±`MATCH_WINDOW` around StatPal's start, inclusive both ends — except for a
+    placeholder start (#8961), which vouches for its DATE and nothing finer, so
+    its span is that Eastern calendar date: `[00:00 ET, next 00:00 ET)`. The end
+    is reported inclusive like the ±1h span; `in_match_bounds` applies the
+    half-open rule. Pure.
+    """
+    start = fixture.start_time
+    if start is None:
+        return None
+    if not getattr(fixture, "start_is_placeholder", False):
+        return start - MATCH_WINDOW, start + MATCH_WINDOW
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    day = start.astimezone(PLACEHOLDER_DATE_TZ).date()
+    # Both midnights are Eastern wall-clock, so the November date the clocks go
+    # back spans 25 hours of UTC, as it should.
+    lo = datetime.combine(day, time(0), tzinfo=PLACEHOLDER_DATE_TZ)
+    hi = datetime.combine(day + timedelta(days=1), time(0), tzinfo=PLACEHOLDER_DATE_TZ)
+    return lo.astimezone(timezone.utc), hi.astimezone(timezone.utc)
+
+
+def in_match_bounds(fixture: StatPalFixture, commence_time: datetime) -> bool:
+    """Can a row starting at `commence_time` be this contest? See `fixture_match_bounds`."""
+    bounds = fixture_match_bounds(fixture)
+    if bounds is None:
+        return False
+    lo, hi = bounds
+    if getattr(fixture, "start_is_placeholder", False):
+        return lo <= commence_time < hi
+    return lo <= commence_time <= hi
+
+
+def candidate_window(
+    fixtures: list[StatPalFixture], now: datetime
+) -> tuple[datetime, datetime]:
+    """The `commence_time` span the candidate query reads. Pure.
+
+    The union of every fixture's own match span, so the pool reaches every row
+    `classify_fixture` could accept: a placeholder's Eastern date runs up to 8h
+    past its 20:00Z stamp, further than `CANDIDATE_SLACK` alone reaches (#8961).
+    For fixtures with no placeholder this is exactly the old
+    `min(start) - slack .. max(start) + slack`.
+    """
+    spans = [b for b in (fixture_match_bounds(f) for f in fixtures) if b]
+    if not spans:
+        return now - CANDIDATE_SLACK, now + CANDIDATE_SLACK
+    return min(lo for lo, _ in spans), max(hi for _, hi in spans)
+
+
 def classify_fixture(
     fixture: StatPalFixture,
     pool: list[dict[str, Any]],
@@ -936,7 +1010,7 @@ def classify_fixture(
         c
         for c in pool
         if c.get("commence_time") is not None
-        and abs(c["commence_time"] - fixture.start_time) <= MATCH_WINDOW
+        and in_match_bounds(fixture, c["commence_time"])
         and pair_rule(
             (fixture.home_team, fixture.away_team), (c["home"], c["away"])
         )
@@ -1578,9 +1652,7 @@ async def _run_stamp_v1_statpal_fixtures(
             },
         }
 
-    starts = [f.start_time for f in fixtures if f.start_time]
-    window_start = (min(starts) if starts else now) - CANDIDATE_SLACK
-    window_end = (max(starts) if starts else now) + CANDIDATE_SLACK
+    window_start, window_end = candidate_window(fixtures, now)
     #: WIDER than the write window, and read separately for that reason. Writing
     #: ids only makes sense where StatPal has a fixture to match, but MEASURING
     #: "of the games we list, does StatPal have them?" over StatPal's own span

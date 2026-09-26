@@ -1314,6 +1314,12 @@ class StatPalAPIService(BaseAPIClient):
                 f"failure, not an empty schedule"
             )
 
+        # #8961: the ingestion parser has carried this mark since #8841, and this
+        # one flattened it away. The authority stamper needs it too: a
+        # placeholder clock is no basis for a ±1h window, so a Wild Card game
+        # listed by The Odds API at another guessed hour never met its StatPal
+        # row and the two stayed on the site as two cards.
+        placeholder_ids = statpal_placeholder_fixture_ids(data, sport)
         fixtures: list[StatPalFixture] = []
         for tournament in tournaments:
             if not isinstance(tournament, dict):
@@ -1334,6 +1340,8 @@ class StatPalAPIService(BaseAPIClient):
                 fixture.season = fixture.season or season
                 fixture.tournament_id = fixture.tournament_id or tournament_id
                 fixture.stats_id = str(item.get("stats_id", "")) or None
+                if fixture.fixture_id and fixture.fixture_id in placeholder_ids:
+                    fixture.start_is_placeholder = True
                 fixtures.append(fixture)
 
         return fixtures
