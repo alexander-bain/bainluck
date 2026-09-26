@@ -40,12 +40,14 @@
 export interface HeroForEdge {
   hero_probability?: number | null;
   hero_probability_source?: string | null;
+  hero_probability_observed_at?: string | null;
 }
 
 /** The subset of the history payload this needs. */
 export interface HistoryForEdge {
   aggregate_line?: Array<{ timestamp: string; home_probability: number }> | null;
   blend_edge_pinned?: boolean | null;
+  blend_edge_observed_at?: string | null;
 }
 
 /**
@@ -82,6 +84,13 @@ export function pinChartEdgeToHero<T extends HistoryForEdge>(
 
   const last = line[line.length - 1];
   if (last.home_probability === value) return history;
+  // #8749: the pin corrects a hero-vs-edge SPLIT, never a newer edge. When both
+  // clocks are known and the edge's price was observed after the hero's, the
+  // hero is the stale one and `adoptNewerBlendEdge` moves it instead. Unknown
+  // or equal clocks (NaN compares false) keep #3911's one-number pin.
+  const heroAt = Date.parse(hero.hero_probability_observed_at ?? "");
+  const edgeAt = Date.parse(history.blend_edge_observed_at ?? "");
+  if (edgeAt > heroAt) return history;
 
   // Copy rather than mutate: `history` is SWR's cached value, and writing
   // through it would edit the cache entry every other consumer reads — the

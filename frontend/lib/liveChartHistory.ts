@@ -162,8 +162,37 @@ export type HeroObservation = {
   status?: string | null;
   hero_probability?: number | null;
   hero_probability_source?: string | null;
+  hero_probability_observed_at?: string | null;
   win_probability_sources?: Record<string, { updated_at?: string | null } | null | undefined> | null;
 };
+
+/** The subset of the SERVED history payload that dates its pinned edge. */
+export type ServedEdgeClock = ChartHistory & {
+  blend_edge_pinned?: boolean | null;
+  blend_edge_observed_at?: string | null;
+};
+
+/**
+ * When the headline's blend was observed, as the string the point is stamped
+ * with. The contract's `hero_probability_observed_at` when the payload carries
+ * the key — `null` there means provenance was incomplete, which is unknown, not
+ * a cue to guess. A payload from before the contract falls back to the newest
+ * source stamp, as #8749 first read it.
+ */
+function heroObservationStamp(hero: HeroObservation): string | null {
+  const declared = hero.hero_probability_observed_at;
+  if (declared !== undefined) {
+    return typeof declared === "string" && Number.isFinite(Date.parse(declared)) ? declared : null;
+  }
+  let stamp: string | null = null;
+  let clock = -Infinity;
+  for (const source of Object.values(hero.win_probability_sources ?? {})) {
+    const at = source?.updated_at;
+    const t = typeof at === "string" ? Date.parse(at) : NaN;
+    if (Number.isFinite(t) && t > clock) { clock = t; stamp = at as string; }
+  }
+  return stamp;
+}
 
 /**
  * #8749 — the blend the HEADLINE shows reaches the chart when it is the newer
@@ -183,9 +212,20 @@ export type HeroObservation = {
  * the newest stamp is when that blend was last fed. Three rules:
  *
  *   1. STRICTLY NEWER THAN THE LINE. An older headline never overwrites or
- *      follows a newer edge; that direction is not this function's to settle.
+ *      follows a newer edge; that direction is `adoptNewerBlendEdge`'s, which
+ *      moves the headline instead.
  *   2. NEVER MINT A SERIES. No served blend line, nothing added (#8066).
  *   3. NO INVENTED TIME. The point is stamped with the source's own string.
+ *
+ * THE SYNTHETIC EDGE (PR #8758). When the newest point is the backend's pinned
+ * "now" edge, its timestamp is the minute history was SERVED and its price may
+ * be a cached detail hero observed well before that. So it is ordered by
+ * `blend_edge_observed_at`, never by its minute: a headline observed strictly
+ * after the edge's price replaces that price in place if it falls at or before
+ * the serve minute (the line ends on the newer number without a point drawn
+ * backwards), or is appended at its own clock if it falls after. An unknown
+ * edge clock decides nothing. A `served` payload from before the contract
+ * keeps the original rule.
  *
  * Returns the SAME object whenever nothing is added, so memoized consumers see
  * no new value. When the stream later delivers this publication at the same
@@ -194,6 +234,7 @@ export type HeroObservation = {
  */
 export function appendHeroObservation<T extends ChartHistory>(
   history: T | undefined, hero: HeroObservation | null | undefined,
+  served?: ServedEdgeClock | null,
 ): T | undefined {
   if (!history || !hero || hero.status !== "live" ||
       hero.hero_probability_source !== PINNABLE_HERO_SOURCE) return history;
@@ -202,21 +243,32 @@ export function appendHeroObservation<T extends ChartHistory>(
   const line = history.aggregate_line;
   if (!line || line.length === 0) return history;
 
-  let stamp: string | null = null;
-  let clock = -Infinity;
-  for (const source of Object.values(hero.win_probability_sources ?? {})) {
-    const at = source?.updated_at;
-    const t = typeof at === "string" ? Date.parse(at) : NaN;
-    if (Number.isFinite(t) && t > clock) { clock = t; stamp = at as string; }
-  }
+  const stamp = heroObservationStamp(hero);
   if (stamp === null) return history;
+  const clock = Date.parse(stamp);
 
   let edge = line[0];
   for (const point of line) {
     if (Date.parse(point.timestamp) > Date.parse(edge.timestamp)) edge = point;
   }
   const edgeTime = Date.parse(edge.timestamp);
-  if (!Number.isFinite(edgeTime) || clock <= edgeTime || edge.home_probability === p) {
+  if (!Number.isFinite(edgeTime) || edge.home_probability === p) return history;
+
+  const servedLine = served?.aggregate_line;
+  const servedEdge = servedLine?.[servedLine.length - 1];
+  const synthetic = served?.blend_edge_pinned === true &&
+    served.blend_edge_observed_at !== undefined &&
+    servedEdge !== undefined && Date.parse(servedEdge.timestamp) === edgeTime;
+  if (synthetic) {
+    const observed = Date.parse(served.blend_edge_observed_at ?? "");
+    if (!Number.isFinite(observed) || clock <= observed) return history;
+    if (clock <= edgeTime) {
+      return {
+        ...history,
+        aggregate_line: line.map(point => point === edge ? { ...point, home_probability: p } : point),
+      };
+    }
+  } else if (clock <= edgeTime) {
     return history;
   }
   return { ...history, aggregate_line: [...line, { timestamp: stamp, home_probability: p }] };

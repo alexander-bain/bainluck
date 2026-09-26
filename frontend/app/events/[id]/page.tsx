@@ -133,6 +133,11 @@ import { SignalBars } from "@/components/discover/shared";
 import { confidenceFromSources, countProbabilitySources } from "@/lib/confidence";
 import { pinChartEdgeToHero } from "@/lib/chartEdgePin";
 import {
+  adoptNewerBlendEdge,
+  servedBlendEdgeObservation,
+  type BlendEdgeObservation,
+} from "@/lib/blendObservationClock";
+import {
   SPORT_KEY_TO_LEAGUE_PATH,
   hasAnyWinProbData,
   formatCountdown,
@@ -216,6 +221,8 @@ export default function EventPage({ params }: EventPageProps) {
   // the SWR config closes over it and the hook that sets it needs `event`.
   const streamConnectedRef = useRef(false);
   const latestLiveFrameRef = useRef<LiveFrame | null>(null);
+  // #8749: the served history's pinned edge, for the poll reconcile below.
+  const latestBlendEdgeRef = useRef<BlendEdgeObservation | null>(null);
 
   // #7621 — ONE callback for the life of the mount, and that is the whole fix.
   //
@@ -250,6 +257,7 @@ export default function EventPage({ params }: EventPageProps) {
     () => fetchEventWithLiveFrame(
       () => fetchEvent(eventId),
       () => latestLiveFrameRef.current,
+      () => latestBlendEdgeRef.current,
     ),
     {
       // live/034 S2 — when the SSE stream is delivering, the 32s poll stands
@@ -693,10 +701,21 @@ export default function EventPage({ params }: EventPageProps) {
       // #8749: and so is the blend a detail refresh delivered — when it is
       // newer than the line's edge, the line gets it at its own clock, so the
       // headline never moves alone.
-      return isLive ? appendHeroObservation(joined, event) : joined;
+      return isLive ? appendHeroObservation(joined, event, servedHistory) : joined;
     },
     [servedHistory, event, isLive, chartPoints],
   );
+
+  // #8749 / #837: the other direction. A history response whose pinned edge
+  // was OBSERVED after the headline's blend (PR #8758's clocks — never the
+  // edge's serve minute) moves the headline, through the same cache a frame
+  // writes; the next poll is reconciled against the same edge in the fetcher.
+  useEffect(() => {
+    const edge = servedBlendEdgeObservation(servedHistory);
+    latestBlendEdgeRef.current = edge;
+    if (!edge) return;
+    refreshEvent((prev) => adoptNewerBlendEdge(prev, edge), { revalidate: false });
+  }, [servedHistory, refreshEvent]);
 
   /* #8066: the chart's blend line must be the BACKEND's blend, and after #920
      `historyData.aggregate_line` can no longer answer that — it holds the
