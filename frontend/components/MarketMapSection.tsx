@@ -1380,6 +1380,10 @@ export default function MarketMapSection({
           value: projMargin,
           label: isDone || noForecast ? "Pre-game" : "Projection",
           displayValue: formatMarginLabel(projMargin, projTeam, closest50.threshold),
+          // #8934: the full-game token draws the favoured side's logo; this one
+          // drew only the label, and "Rebels" (#8585's short name) spilled out
+          // of the circle on `/events/15313790`.
+          logoUrl: projMargin > 0 ? homeLogo : projMargin < 0 ? awayLogo : undefined,
           logoFallback: projTeam,
         });
       }
