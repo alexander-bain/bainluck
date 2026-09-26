@@ -653,15 +653,21 @@ class TestThePromotionCannotPutAPersonOnTheCard:
 
         assert _drop_contentless_team_cards([card]) == []
 
-    def test_a_real_field_is_never_displaced(self):
-        """Promotion only ever FILLS an empty card."""
+    def test_individuals_already_on_a_cup_card_give_way_to_the_team_pair(self):
+        """#8769 reversed "promotion only ever FILLS an empty card".
+
+        A cup has no individual champion, so golfers on a cup card are never a
+        real field to protect — on production they were Kalshi's points-leader
+        field, ranked under a lone "USA" as if it were the cup's leader. The
+        team pair leads and the players go (see the #8769 file).
+        """
         card = _cup_card(
             [_team_matchup()],
             golfers=[{"name": "Ludvig Aberg", "probability": 0.105}],
         )
 
-        assert _promote_team_matchup_to_card([card]) == 0
-        assert [g["name"] for g in card["golfers"]] == ["Ludvig Aberg"]
+        assert _promote_team_matchup_to_card([card]) == 1
+        assert [g["name"] for g in card["golfers"]] == ["Team USA", "Team World"]
 
     def test_a_stroke_play_card_is_never_promoted(self):
         """Scope control: this rule exists for two tournaments in the world."""
