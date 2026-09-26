@@ -148,7 +148,7 @@ def test_the_pre_fix_summary_shape_would_have_been_false_green():
 
 def _summary_for(rows, *, redis_raises=False, query_raises=False,
                  grid=None, chunk_raises=None, monkeypatch=None,
-                 deadline=None, seconds_per_chunk=None):
+                 deadline=None, seconds_per_chunk=None, durable_status="ok"):
     """Run the real writer against a stubbed session + Redis.
 
     ``seconds_per_chunk`` installs a FAKE clock that advances only when the
@@ -233,16 +233,40 @@ def _summary_for(rows, *, redis_raises=False, query_raises=False,
         async def __aexit__(self, *a):
             return False
 
+    # #8905: the writer lands a durable survivor BEFORE the Redis write. It is
+    # stubbed here because it opens its OWN session (`publish_snapshot_standalone`
+    # imports `app.tasks.base.get_task_session`, not `bw`'s), so without this the
+    # harness would reach for a real database. `order` is shared with the Redis
+    # double so a test can read which write happened first.
+    order = []
+
     class _Redis:
         def __init__(self):
             self.written = None
+            self.durable = []
+            self.order = order
 
         def setex(self, key, ttl, value):
+            order.append("redis")
             if redis_raises:
                 raise RuntimeError("connection refused")
             self.written = (key, ttl, value)
 
     redis = _Redis()
+
+    async def _publish(envelope):
+        order.append("durable")
+        redis.durable.append(envelope)
+        return {
+            "status": durable_status,
+            "identity": envelope.identity,
+            "generation": envelope.generation,
+            **({"error": "db unreachable"} if durable_status == "error" else {}),
+        }
+
+    monkeypatch.setattr(
+        "app.services.durable_snapshots.publish_snapshot_standalone", _publish
+    )
     session = _Session()
     monkeypatch.setattr(bw, "get_task_session", lambda: session)
     monkeypatch.setattr(

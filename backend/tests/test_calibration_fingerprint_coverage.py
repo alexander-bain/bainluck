@@ -277,7 +277,17 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         # — and that is correct here rather than a hole: it is read once when
         # the payload is assembled, never per unit, so two units can never be
         # built under two different disclosures.
-        assert artifact["input_count"] == 75
+        # #8905: 75 -> 79. The bookmaker curve's durable survivor adds
+        # `BOOKMAKER_CURVE_DURABLE_IDENTITY`, `BOOKMAKER_CURVE_DURABLE_SCHEMA`,
+        # `BOOKMAKER_CURVE_MAX_AGE_S` and `_BOOKMAKER_CURVE_DURABLE`. All four
+        # are in the build module, all four are `behavior_or_evidence` with
+        # `sql_interpolated: false`, and `uncovered_sql_shaping` holds at 27:
+        # they decide WHERE the already-published bookmaker rows are read from
+        # when Redis has lost them, never which rows qualify, and every row
+        # still passes the same container and row refusals. No hashed root
+        # moved (`hashed_root_sha16` is identical across the change), so the
+        # in-flight bank survives the deploy.
+        assert artifact["input_count"] == 79
         # CAL-P162: 4 -> 5. `MEX_NORMALIZE_THRESHOLD` joined the by-value set on
         # the deploy that made it decide PUBLICATION rather than only pricing.
         # CAL-P164 added no by-value input, so this stands still.
@@ -312,7 +322,10 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         # a carried cursor stays resumable, and this one changes no row at all.
         # The `population_predicate_fingerprint` is unmoved across the change
         # that added it, which is the check that says so.
-        assert artifact["uncovered_count"] == 62
+        # #8905: 62 -> 66, the four durable-survivor names above. Where-from,
+        # not which-rows: none reaches SQL and none widens the surface this
+        # census measures.
+        assert artifact["uncovered_count"] == 66
         assert artifact["uncovered_count"] == artifact["input_count"] - len(
             artifact["covered_by_value"]
         )
@@ -631,7 +644,11 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         # the cross list is unchanged -- which is the property this line is
         # really pinning, and the reason the repair could not have widened the
         # unguarded tier without reddening it here.
-        assert len(cross) + 50 == artifact["uncovered_count"]
+        # 50 -> 54 at #8905: the bookmaker curve's durable survivor — its
+        # identity, schema, age bound and the context variable that carries
+        # the producer's read. All four are defined in this module, so they
+        # land in the non-cross tier and the cross list is unchanged.
+        assert len(cross) + 54 == artifact["uncovered_count"]
 
 
 class TestInterpolationDetectionCoversNonFStringSql:
