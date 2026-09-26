@@ -518,7 +518,7 @@ RECENT_FINAL_SELECT_SQL = """
                              AND sib.source = 'kalshi'
                              AND sib.status = 'resolved'
                              AND sfo.is_winner IS TRUE
-                             AND sfo.resolution_source = 'api_settlement'
+                             AND sfo.resolution_source IN ('api_settlement')
                     )
               )
             )
