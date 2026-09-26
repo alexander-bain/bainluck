@@ -2873,6 +2873,9 @@ export default function EventPage({ params }: EventPageProps) {
               <SpecialEventMarkets
                 data={gameMarkets}
                 eventStatus={event.status}
+                // #8816 — the page's ONE settled answer again (#6438's slot, the
+                // header pill): a graded `suspended` match freezes its props too.
+                venueSettled={venueSettledSentence !== null}
                 completedSets={completedSetsForTennis(event.sport, gameMarkets)}
                 decidedSetsWinner={decidedSetsWinnerFor(event.sport, gameMarkets)}
                 setsWon={tennisSetsWonFor(event.sport, gameMarkets)}
