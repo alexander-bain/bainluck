@@ -1,6 +1,6 @@
 import { PINNABLE_HERO_SOURCE } from "./chartEdgePin";
 import type { LiveStreamFrame } from "./liveStreamController";
-import type { WinProbHistoryPoint } from "./types";
+import type { OddsHistoryPoint, WinProbHistoryPoint } from "./types";
 
 // One hour at the nominal five-second publication cadence. This is a bound on
 // session memory, not a sampling rule: every accepted frame keeps its own time.
@@ -26,6 +26,7 @@ export type LiveChartFrame = LiveChartPoint & {
 export type ChartHistory = {
   aggregate_line?: LiveChartPoint[] | null;
   win_prob_history?: Record<string, WinProbHistoryPoint[]> | null;
+  history?: OddsHistoryPoint[] | null;
 };
 
 /** Record the published BLEND, never the individual venue's source_value. */
@@ -120,6 +121,33 @@ function extendServedSourceSeries(
 }
 
 /**
+ * Sportsbook consensus lives in `history`, not `win_prob_history.betting`.
+ * Without a served blend, it is MODE B's existing primary line. Extend that
+ * line with the betting source's own observations, never the blended `p` or
+ * invented individual bookmaker quotes. The frame carries no away/draw,
+ * total or projected scores, so those fields stay unknown on its new point.
+ */
+function extendServedBettingHistory(
+  served: OddsHistoryPoint[] | null | undefined, points: LiveChartFrame[],
+): OddsHistoryPoint[] | null {
+  if (!served?.length) return null;
+  const last = served[served.length - 1];
+  const edge = Math.max(Date.parse(last.timestamp), Date.parse(last.valid_until ?? last.timestamp));
+  if (!Number.isFinite(edge)) return null;
+  const added = points.filter(point => point.source === "betting" &&
+    typeof point.source_probability === "number" &&
+    Number.isFinite(point.source_probability) &&
+    point.source_probability >= 0 && point.source_probability <= 1 &&
+    Date.parse(point.timestamp) > edge);
+  if (added.length === 0) return null;
+  return [...served, ...added.map(point => ({
+    timestamp: point.timestamp, home_probability: point.source_probability!,
+    away_probability: null, over_under: null,
+    projected_home_score: null, projected_away_score: null, bookmaker: "aggregate",
+  }))];
+}
+
+/**
  * Add actual publications received while this page was open. Polls can be
  * coarser than push; retaining the session's observations preserves a real
  * spike and reversal in the input series between polls. The main chart still
@@ -144,7 +172,10 @@ export function mergeLiveChartHistory<T extends ChartHistory>(
   const extended = served.length === 0
     ? extendServedSourceSeries(history.win_prob_history, points)
     : null;
-  if (added.length === 0 && extended === null) return history;
+  const betting = served.length === 0
+    ? extendServedBettingHistory(history.history, points)
+    : null;
+  if (added.length === 0 && extended === null && betting === null) return history;
   const next = { ...history };
   if (added.length > 0) {
     // Plot points, not frames: the source reading rides in the buffer so the
@@ -154,6 +185,7 @@ export function mergeLiveChartHistory<T extends ChartHistory>(
     )].sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
   }
   if (extended !== null) next.win_prob_history = extended;
+  if (betting !== null) next.history = betting;
   return next;
 }
 
