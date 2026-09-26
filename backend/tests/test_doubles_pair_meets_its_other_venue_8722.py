@@ -128,6 +128,51 @@ def test_laver_cup_non_matches_stay_out(name):
     assert is_game_level_market(name, "game_prop") is False
 
 
+# ── 2b. every tournament's draw label, not only the Laver Cup's ─────────────
+# After half 2 went live (heavy v96, 2026-09-26 01:00Z) the first matcher pass
+# still rejected 62358022 "Hangzhou Open (Doubles): Reynolds/Watt vs King/Stevens"
+# not_game_level: 803 of 1,000 Polymarket doubles titles in 30 days (all but
+# the US Open's and the Laver Cup's) never stripped, so the match-winner leg
+# never met Kalshi's row 15318843 or its own props' row 15318865.
+
+@pytest.mark.parametrize(
+    "name, pair",
+    [
+        ("Hangzhou Open (Doubles): Reynolds/Watt vs King/Stevens", ("Reynolds/Watt", "King/Stevens")),
+        ("Genoa 2 (Doubles): Cervantes/Molchanov vs Niklas-Salminen/Vrbensky",
+         ("Cervantes/Molchanov", "Niklas-Salminen/Vrbensky")),
+        ("St. Tropez (Doubles): Arneodo/Kittay vs Grevelius/Heinonen", ("Arneodo/Kittay", "Grevelius/Heinonen")),
+        ("Winston-Salem Open (Doubles): Arribage/Guinard vs Krajicek/Mektic",
+         ("Arribage/Guinard", "Krajicek/Mektic")),
+        ("US Open Juniors, Girls (Doubles): Alame/Frodin vs Ayrault/Preston", ("Alame/Frodin", "Ayrault/Preston")),
+    ],
+)
+def test_any_tournaments_doubles_match_winner_is_game_level(name, pair):
+    assert is_game_level_market(name, "game_prop") is True
+    matchup = extract_matchup(name)
+    assert (matchup.team_a, matchup.team_b) == pair
+
+
+def test_the_hangzhou_leg_orients_onto_the_kalshi_row():
+    matchup = extract_matchup("Hangzhou Open (Doubles): Reynolds/Watt vs King/Stevens")
+    oriented = match_teams_to_event(matchup, "Reynolds / Watt", "King / Stevens")
+    assert oriented is not None and oriented["yes_is_home"] is True
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        # The label AFTER the question is an outright, not a draw's match title.
+        "2026 Veolia Arizona Open: To Reach the Final (Mixed Doubles)",
+        "2026 Veolia Arizona Open: Winner (Mixed Doubles)",
+        # A prop keeps its own prefix; the label branch needs "(Doubles):".
+        "Set 1 Winner: Reynolds/Watt vs King/Stevens",
+    ],
+)
+def test_a_draw_label_is_not_a_licence_for_non_matches(name):
+    assert is_game_level_market(name, "game_prop") is False
+
+
 # ── 3. the venue's fixture instant corrects Kalshi's expiration ──────────────
 
 @pytest.mark.parametrize("kalshi_source", ["kalshi", "kalshi_occurrence"])

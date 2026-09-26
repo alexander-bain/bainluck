@@ -393,6 +393,14 @@ _CATEGORY_PREFIX_RE = re.compile(
     # row stood alone. "2026 Laver Cup: Winner" leads with the year and stays out.
     r'|Laver Cup'
     r'|[\w][\w\s\-\.]*?\s+(?:Open|Classic|Masters|Championships?|International|Invitational)(?=\s*:)'  # "Stuttgart Open:", "Cincinnati Masters:", etc.
+    # #8722: ANY tournament name the draw label follows — "Hangzhou Open
+    # (Doubles):", "Genoa 2 (Doubles):", "St. Tropez (Doubles):". The label is
+    # the anchor: Polymarket writes it only on a draw's match titles, and the
+    # "Open" branch above cannot see it (its lookahead wants the colon at once).
+    # Unstripped, ~900 doubles match-winner markets in 30 days read not
+    # game-level — every one outside the US Open — so none reached the row
+    # Kalshi or their own props made.
+    r'|[\w][\w\s\-\.,\']*?(?=\s*\((?:Doubles|Singles|Mixed(?:\s+Doubles)?)\)\s*:)'
     r'|PGA|LIV Golf|DP World Tour'
     r'|Formula\s*1|F1|NASCAR|IndyCar'
     r'|Cricket|IPL|Big Bash|The Ashes'
