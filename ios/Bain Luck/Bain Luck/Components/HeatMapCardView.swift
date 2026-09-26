@@ -49,7 +49,12 @@ struct HeatMapCardView: View {
 
     /// #4081 — a UTC-midnight `resolution_date` is a declared calendar date, not
     /// an instant; localising it drew the day before west of UTC.
-    private var resolvesText: String? {
+    /// #8836 — a date ladder whose rungs run past the served date prints no line
+    /// at all rather than one rung's close as the card's; see
+    /// `heatMapDateLadderRunsPastResolution`. Internal so the guard reads the
+    /// header the card draws, not only the helper it calls.
+    var resolvesText: String? {
+        if heatMapDateLadderRunsPastResolution(sortedPoints, resolutionDate: data.resolutionDate) { return nil }
         guard let text = CalendarDeadline.format(data.resolutionDate, style: .monthDay) else { return nil }
         return "Resolves \(text)"
     }
@@ -265,6 +270,58 @@ func heatMapBetterThanEvenRung(_ points: [FeedDiscoverThresholdPoint]) -> FeedDi
     let above = points.filter { ($0.probability ?? 0) >= 0.50 }
     let isDateLadder = !points.isEmpty && points.allSatisfy { $0.source == "date_bucket" }
     return isDateLadder ? above.first : above.last
+}
+
+// MARK: - The date the header may print
+
+/// #8836 — does a date ladder carry a rung that runs past the date the card would
+/// print as "Resolves <date>"?
+///
+/// Production, 2026-09-26 14:57Z: "Will the U.S. confirm that aliens exist?"
+/// (futures 109435, Kalshi KXALIENS) headed its ladder "Resolves Jan 1, 2027" over
+/// rungs running to "Before Jan 20, 2029". Kalshi closes each rung on its own date;
+/// the served `resolution_date` is the "Before 2027" rung's close. The payload
+/// carries no per-rung close, so the card cannot print the right date — it can only
+/// stop printing the wrong one.
+///
+/// A date-bucket rung's `value` is YYYYMMDD (`_date_bucket_points`; month-only and
+/// year-only rungs carry day 00, "Before 2028" is 20280100). A value outside that
+/// shape is not read as a date and the card keeps its line. The two-day slack keeps
+/// a rung the venue closes the evening before its label's date from counting as
+/// later than itself. Reads EVERY rung, not only the five drawn cells: the "+N more"
+/// footer names the rest, and a hidden 2029 rung makes a 2027 header just as wrong.
+/// Web applies the same rule (FuturesCard.tsx `dateRungRunsPastResolution`,
+/// PR #8844): one card family, notice 35.
+func heatMapDateLadderRunsPastResolution(
+    _ points: [FeedDiscoverThresholdPoint],
+    resolutionDate: String?
+) -> Bool {
+    guard !points.isEmpty, points.allSatisfy({ $0.source == "date_bucket" }),
+          let resolves = heatMapResolutionInstant(resolutionDate) else { return false }
+    let values = points.compactMap(\.value)
+    guard values.count == points.count, let latestValue = values.max(),
+          latestValue.rounded() == latestValue, latestValue >= 19_000_000, latestValue <= 29_991_231
+    else { return false }
+    let latest = Int(latestValue)
+    let month = (latest / 100) % 100
+    guard month <= 12 else { return false }
+    var cal = Calendar(identifier: .gregorian)
+    cal.timeZone = TimeZone(identifier: "UTC")!
+    guard let rungDate = cal.date(from: DateComponents(
+        year: latest / 10_000, month: max(month, 1), day: max(latest % 100, 1)
+    )) else { return false }
+    return rungDate.timeIntervalSince(resolves) > 2 * 24 * 3600
+}
+
+/// The served `resolution_date` as an instant: a full timestamp as written, a bare
+/// calendar date (`CalendarDeadline.declaredDay`) as its UTC midnight.
+private func heatMapResolutionInstant(_ raw: String?) -> Date? {
+    guard let raw else { return nil }
+    if let date = raw.asDate { return date }
+    guard let day = CalendarDeadline.declaredDay(raw) else { return nil }
+    var cal = Calendar(identifier: .gregorian)
+    cal.timeZone = TimeZone(identifier: "UTC")!
+    return cal.date(from: DateComponents(year: day.year, month: day.month, day: day.day))
 }
 
 // MARK: - Cell model
