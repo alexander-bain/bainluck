@@ -17,6 +17,10 @@ whole statement the route composes, not of the helper alone.
 The CONTROL is the upcoming half: tags still order games not yet played. It is
 what fails if the settled gate is widened to every row, so the fix cannot pass by
 deleting the boost.
+
+#8942: the specimen seeds no `teams` row, so there is no TEAMS card and the
+control exercises the no-club arm. A query that names a club orders its upcoming
+games by date instead (`test_search_club_schedule_date_order_pg_8942.py`).
 """
 
 from __future__ import annotations
