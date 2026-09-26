@@ -198,7 +198,7 @@ DIRECTIONAL_FRAME_REFUSED = [
 # into "What will", and inventing one is composing copy rather than re-voicing
 # the venue's. One measured row; it keeps the hole.
 EMBEDDED_UNTOUCHED = [
-    "Will any AI model reach ___ Overall Arena Score by December 31?",
+    "Will Venezuelan crude oil production reach __ barrels per day in 2026?",
     "Nasdaq 100 (NDX) above ___ end of 2026?",
     "Claude Code Commits hit ___ by May 31?",
     "Will a Chinese company have a top ___ AI model by December 31?",
@@ -258,6 +258,52 @@ ADJECTIVE_SLOT_UNTOUCHED = [
     "Will USD hit ___ Iranian rials by March 31?",
     "Will USD hit ___ Indonesian rupiah by June 30?",
     "Will Crude Oil (CL) hit__ Week of March 16?",
+]
+
+# (stored name, what a reader should see) for the SCORE-SLOT rule — all four
+# open rows of the family on 2026-09-26, the first photographed on Discover
+# page one inside the AI bundle.
+SCORE_SLOT_REWRITTEN = [
+    (
+        "Will any AI model reach ___ Coding Arena Score by December 31?",
+        "What Coding Arena Score will any AI model reach by December 31?",
+    ),
+    (
+        "Will any AI model reach ___ Math Arena Score by December 31?",
+        "What Math Arena Score will any AI model reach by December 31?",
+    ),
+    (
+        "Will any AI model reach ___ Overall Arena Score by December 31?",
+        "What Overall Arena Score will any AI model reach by December 31?",
+    ),
+    (
+        "Will any AI model reach ___ Overall Arena Score by September 30?",
+        "What Overall Arena Score will any AI model reach by September 30?",
+    ),
+]
+
+# 🔴 THE SCORE-SLOT CONTROL: (stored, the word that refuses it, the word that
+# would make it fire). Each is one feature away from the rule, so a control the
+# rule could never reach cannot pass while testing nothing.
+SCORE_SLOT_REFUSED = [
+    # A unit, not a scale: "What barrels per day will …" is worse than the hole.
+    (
+        "Will Venezuelan crude oil production reach __ barrels per day in 2026?",
+        "barrels per day",
+        "Production Score",
+    ),
+    # "hit" is the object-slot rule's verb; its adjective slot stays refused.
+    (
+        "Will MrBeast hit ___ Billion Score by September 30?",
+        " hit ",
+        " reach ",
+    ),
+    # A tail that is not a measured preposition.
+    (
+        "Will any AI model reach ___ Coding Arena Score or more by December 31?",
+        "or more by",
+        "by",
+    ),
 ]
 
 # Real open markets with no placeholder — the overwhelming majority of the
@@ -699,6 +745,44 @@ _MATCHUP_RE = re.compile(r"\b(vs\.?|v\.?|def\.?|beats?)\b", re.I)
 _AWARDS_STEMS = ("academy award", "oscar", "emmy", "grammy", "tony award")
 
 
+class TestTheScoreSlotQuestionIsRevoiced:
+    """"Will X reach ___ Arena Score by D?" -> "What Arena Score will X reach by D?".
+
+    The scale moves to the front and the verb stays, so each rung (1560 · 36%)
+    still reads as the venue's own member question: a floor the score reaches.
+    """
+
+    @pytest.mark.parametrize("stored,shown", SCORE_SLOT_REWRITTEN)
+    def test_the_reader_gets_the_wh_question(self, stored, shown):
+        assert clean_market_display_name(stored) == shown
+
+    @pytest.mark.parametrize("stored,shown", SCORE_SLOT_REWRITTEN)
+    def test_no_blank_survives(self, stored, shown):
+        assert not re.search(r"_{2,}|\.{3,}", clean_market_display_name(stored))
+
+    @pytest.mark.parametrize("stored,shown", SCORE_SLOT_REWRITTEN)
+    def test_the_verb_and_the_scale_survive(self, stored, shown):
+        result = clean_market_display_name(stored)
+        scale = re.search(r"(\w+ Arena Score)", stored).group(1)
+        assert " reach " in result and scale in result
+
+    @pytest.mark.parametrize("stored,shown", SCORE_SLOT_REWRITTEN)
+    def test_exactly_one_question_mark_and_it_is_last(self, stored, shown):
+        result = clean_market_display_name(stored)
+        assert result.count("?") == 1 and result.endswith("?")
+
+    @pytest.mark.parametrize("stored,_r,_f", SCORE_SLOT_REFUSED)
+    def test_the_control_is_byte_identical(self, stored, _r, _f):
+        assert clean_market_display_name(stored) == stored
+
+    @pytest.mark.parametrize("stored,refused,restored", SCORE_SLOT_REFUSED)
+    def test_each_control_is_one_feature_from_firing(self, stored, refused, restored):
+        assert stored.count(refused) == 1
+        fixed = stored.replace(refused, restored)
+        assert clean_market_display_name(fixed).startswith("What ")
+        assert " reach " in clean_market_display_name(fixed)
+
+
 def _interpreted_verdicts(name: str) -> tuple[bool, tuple[bool, ...]]:
     """Every decision a client makes FROM this string, as a comparable value."""
     winner = bool(_WINNER_RE.search(name)) and not _MATCHUP_RE.search(name)
@@ -741,6 +825,8 @@ class TestCleaningNeverChangesADecisionAClientMakesFromTheName:
         + [stored for stored, _ in OBJECT_SLOT_REWRITTEN]
         + [stored for stored, _ in DIRECTIONAL_REWRITTEN]
         + [stored for stored, _c, _r in DIRECTIONAL_FRAME_REFUSED]
+        + [stored for stored, _ in SCORE_SLOT_REWRITTEN]
+        + [stored for stored, _r, _f in SCORE_SLOT_REFUSED]
         + [
             # The live specimens, carried so the corpus cannot lose them.
             "Will Novak Djokovic announce his retirement by...?",

@@ -48,9 +48,12 @@ rewrite yields a card WORSE than the one it replaces:
       the rewrite would print "What will MrBeast hit Billion views by June
       30?". Refused by a measured rule, not by a name list.
 
-  EMBEDDED, everything else (13 of the 52 open rows left) — "Will any AI model
-      reach ___ Overall Arena Score by December 31?", "Will Claude go down on
-      __ days in September?": a blank mid-sentence under no rule here.
+  EMBEDDED, everything else (13 of the 52 open rows left) — "Will Claude go
+      down on __ days in September?", "Will Venezuelan crude oil production
+      reach __ barrels per day in 2026?": a blank mid-sentence under no rule
+      here. The four "Will any AI model reach ___ … Arena Score by D?" rows
+      that sat in this class now have a FOURTH rule (``_rewrite_score_slot``)
+      because one of them reached page one of Discover on 2026-09-26.
 
 Applied to the live open population: 87 rows printed a hole after the trailing
 rule alone, **52 after both** (37 + 2 + 13 above). That is the honest remainder
@@ -230,6 +233,52 @@ def _rewrite_directional(name: str) -> str:
     return name
 
 
+# --- the score-slot rule (the fourth half of #3513) ---------------------------
+#
+# The object-slot rule refuses "reach ___ Coding Arena Score" at its tail, and
+# rightly: moving the blank's noun is not the same move as dropping it. But
+# for this one family the noun phrase CAN move, because it names the scale the
+# ladder is measured on. Photographed on Discover page one, 2026-09-26 23:38Z,
+# 390px, inside the AI bundle:
+#
+#     Will any AI model reach ___ Coding Arena Score …    1560 · 36%
+#
+# Measured over the open population the same minute (Postgres regex, blank not
+# at the end): exactly four rows carry "reach" + blank + "… Score", all four
+# "Will any AI model reach ___ {Coding|Math|Overall} Arena Score by D?".
+# Each becomes "What Coding Arena Score will any AI model reach by December
+# 31?". The verb survives, so every rung still reads as the venue's own member
+# question ("Will any AI model reach 1560 Coding Arena Score?") — a floor, the
+# same reading "What will OpenAI's valuation hit" gives its rungs.
+#
+# Closed on purpose: only ``reach``, and the phrase after the blank must end
+# in ``Score``. "Will Venezuelan crude oil production reach __ barrels per day
+# in 2026?" is the control — "What barrels per day will …" is worse than the
+# hole — and "hit ___ Billion views" never reaches this rule at all.
+_SCORE_SLOT = re.compile(
+    r"\AWill\s+(?P<subject>.+?)\s+reach\s*"
+    + _BLANK
+    + r"\s*(?P<scale>(?:[A-Z][A-Za-z]*\s+)*Score)\s+(?P<tail>.+?)\s*\?\Z"
+)
+
+
+def _rewrite_score_slot(name: str) -> str:
+    """Turn "Will X reach ___ Arena Score by D?" into "What Arena Score will X reach by D?".
+
+    Returns ``name`` byte-identical unless the whole shape matches and the
+    tail opens with one of the object-slot rule's measured prepositions.
+    """
+    match = _SCORE_SLOT.match(name.strip())
+    if match is None:
+        return name
+
+    tail = match.group("tail")
+    if tail.split()[0].lower() not in _OBJECT_SLOT_TAIL_OPENERS:
+        return name
+
+    return f"What {match.group('scale')} will {match.group('subject')} reach {tail}?"
+
+
 def clean_market_display_name(name: str | None) -> str | None:
     """Return ``name`` with Polymarket's template blank gone.
 
@@ -242,6 +291,8 @@ def clean_market_display_name(name: str | None) -> str | None:
 
     "Meta (META) closes above ___ on September 25?"
                                                -> "How high will Meta (META) close on September 25?"
+    "Will any AI model reach ___ Coding Arena Score by December 31?"
+                                               -> "What Coding Arena Score will any AI model reach by December 31?"
 
     Anything this module does not positively recognise is returned UNCHANGED
     and byte-identical — including ``None``, the empty string, a name with no
@@ -251,12 +302,15 @@ def clean_market_display_name(name: str | None) -> str | None:
     if not name:
         return name
 
-    # Three rules in order, each returning its input byte-identical when it
+    # Four rules in order, each returning its input byte-identical when it
     # does not recognise the shape. They cannot both fire: the trailing rule
     # only returns a changed string with the blank already gone, and the
     # object-slot and directional patterns each require one. The directional
-    # frames need "above" before the blank, which neither earlier rule accepts.
-    return _rewrite_directional(_rewrite_object_slot(_strip_trailing_blank(name)))
+    # frames need "above" before the blank, which neither earlier rule accepts,
+    # and the score slot needs "reach", which none of the other three accepts.
+    return _rewrite_score_slot(
+        _rewrite_directional(_rewrite_object_slot(_strip_trailing_blank(name)))
+    )
 
 
 def _trailing_blank_parts(name: str) -> tuple[str, str, str] | None:
