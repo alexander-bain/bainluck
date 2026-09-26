@@ -85,4 +85,13 @@ nonisolated enum CalibrationPopulation {
                ? ", so a row here can show fewer than \(label) in the Outcomes column."
                : ".")
     }
+
+    /// #8917 — a listed row that is thin IN THE VIEW ON SCREEN (web twin:
+    /// `isThinInView` in `frontend/lib/calibrationPopulation.ts`). The bar is
+    /// all-cohort, the Outcomes column is cohort-scoped, so a category can clear
+    /// the bar on its total and render far under it: Table Tennis, 26 traded
+    /// outcomes of 4,772, printed 21.6pp and headlined "Needs attention" on
+    /// 2026-09-26. Same `<` as `categoryTableNote`, so the caption's "a row here
+    /// can show fewer" clause and the thin rows are always the same rows.
+    static func isThinInView(n: Int, bar: Int) -> Bool { n < bar }
 }

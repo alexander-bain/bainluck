@@ -444,3 +444,35 @@ export function describeCategoryPublishBar(
       : `.`)
   );
 }
+
+/**
+ * #8917 — a published row that is thin IN THE VIEW ON SCREEN.
+ *
+ * The bar decides which categories exist (all-cohort, #7195 / #7302, unchanged
+ * here); the Outcomes column is cohort-scoped (#7190). So a category can clear
+ * the bar on its total and render far below it: on production 2026-09-26 in the
+ * default (traded) view, Table Tennis printed 26 outcomes (4,772 counting the
+ * untraded ones) and 21.6pp in the warning colour, as the table's last row, one
+ * fold below a note calling anything under the bar "statistical noise, not a
+ * calibration signal". The phone headlined the same row as "Needs attention".
+ *
+ * Nothing is hidden: the row keeps every number (L2-127's rule for thin chart
+ * buckets — every populated bucket is shown, only the weight changes). It loses
+ * the quality colour and carries the word the charts already use for a sample
+ * under the floor, "thin". Same `n < bar` comparison as
+ * `describeCategoryPublishBar`, so the note's "a row here can show fewer" clause
+ * and the marked rows are always the same rows; a NaN count is not marked.
+ */
+export function isThinInView(n: number, bar: number): boolean {
+  return n < bar;
+}
+
+/** Tooltip for the "thin" mark — method belongs in a tooltip (notice 34). */
+export function describeThinRow(n: number, bar: number): string {
+  return (
+    `Only ${n.toLocaleString()} outcomes in this view, under the ` +
+    `${bar.toLocaleString()} we need before an error figure means much. ` +
+    `The category is listed because it clears that bar counting every ` +
+    `resolved outcome, traded or not.`
+  );
+}
