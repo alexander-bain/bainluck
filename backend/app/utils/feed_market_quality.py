@@ -1131,6 +1131,42 @@ def is_templated_flat_ladder(
     )
 
 
+def is_lone_midpoint_field(
+    outcomes: "Sequence[tuple[float | None, float | None, float | None]]",
+    mutually_exclusive: "bool | None",
+) -> bool:
+    """True if a one-winner field's ONLY price is the midpoint of a wide book (#8867).
+
+    ``outcomes`` is ``[(probability, yes_bid, yes_ask), ...]`` for the legs the card
+    would print (after every leg filter).
+
+    The reader who forced this: page one, 2026-09-26, printed ``2027 Men's Rugby
+    World Cup Winner / 80% South Africa / South Africa leads at 80%``. Kalshi
+    ``KXRUGBYWC-27``: South Africa bid 0.60 / ask 0.99 on 312 contracts ever; the
+    other 23 teams carry no bid at all, so we store no price for them. The 0.795
+    is that one book's midpoint, and "leads" compares it with nothing.
+
+    :func:`classify_fabricated_book` spares the leg on purpose — a 60c bid is a real
+    buyer (#7808, do not touch that clause) — and a leg is all it can judge. This
+    asks the card-level question: does the card show a field, or one quote?
+
+    ALL of these, or False:
+      1. the venue says exactly one leg can win (``mutually_exclusive`` is True) —
+         unknown is not a claim;
+      2. the card holds two or more legs and exactly ONE carries a price;
+      3. that price IS the midpoint of a wide book (:func:`is_fabricated_midpoint`).
+
+    A lone leg with a traded or tight price is spared (a real favourite quoted
+    before the rest of the field is), and so is any field with a second price.
+    """
+    if mutually_exclusive is not True or len(outcomes) < 2:
+        return False
+    priced = [(p, bid, ask) for p, bid, ask in outcomes if p]
+    if len(priced) != 1:
+        return False
+    return is_fabricated_midpoint(*priced[0])
+
+
 # #1004: unresolved markets whose leader is pinned at a dead extreme render as a
 # lone "100%" (or "0%") card — the locked-near-certain junk class Manus flagged
 # (split from #921; cf. gotcha #23). Suppress them UNLESS there's live interest:
