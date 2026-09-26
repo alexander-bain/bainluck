@@ -5,12 +5,23 @@
 import type { FuturesFamily, FuturesMarket, FuturesOutcome } from "@/lib/types";
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import { stripSeasonYear } from "@/lib/searchSuggestionDisplay";
+import { answerRung, inThresholdOrder } from "@/lib/discover/leaderOrder";
 
 /** The leader outcome to display (leader-pick already applied server-side): the
- *  first top_outcome with a probability. */
+ *  first top_outcome with a probability.
+ *
+ *  #8834 — EXCEPT on a threshold ladder. Search serves a ladder as the rungs
+ *  around its crossing in threshold order, so "the first" is the loosest rung:
+ *  `Fed funds rate after Oct 2026 meeting?` printed `Above 3.50% 99%` in the
+ *  Fed & Rates card, true and empty. A ladder row prints the rung nearest even
+ *  (`Above 4.00% 63%`), the same row `FuturesCard` highlights. Recognised over
+ *  the whole shipped set by `inThresholdOrder`, the gate that card uses. */
 export function leaderOutcome(market: FuturesMarket): FuturesOutcome | null {
-  const outs = (market.top_outcomes ?? []).filter((o) => o.probability != null);
-  return outs.length ? outs[0] : null;
+  const shipped = market.top_outcomes ?? [];
+  const outs = shipped.filter((o) => o.probability != null);
+  if (!outs.length) return null;
+  if (inThresholdOrder(shipped.map((o) => o.name))) return answerRung(outs);
+  return outs[0];
 }
 
 /**
