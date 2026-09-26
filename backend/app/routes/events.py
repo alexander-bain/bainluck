@@ -35,6 +35,7 @@ from app.services.anchor_channel import (
 )
 from app.services.same_instant_refutation import same_instant_refuted_on_page
 from app.utils.agent_origin import ORIGIN_HEADER, ORIGIN_USER
+from app.utils.start_placeholder import start_is_tbd
 # #7369: the one place either search payload may answer "Conference". Module-level
 # and safe — `market_label_normalization` imports only `utils.futures_categorization`,
 # so there is no cycle to defer around; `tests/test_startup.py` is the guard.
@@ -29067,6 +29068,11 @@ def _format_event(
         "home_team": event.home_team_name,
         "away_team": event.away_team_name,
         "commence_time": event.commence_time.isoformat(),
+        # #8841: the venue listed the game before its start was announced and
+        # `commence_time` is a placeholder — print the date, not the clock.
+        "start_is_tbd": start_is_tbd(
+            getattr(event, "event_tags", None), event.commence_time, event.status
+        ),
         # Emit completed_at so finished-event cards (My Stuff, etc.) have an
         # authoritative game-date fallback instead of showing a stale/future
         # commence_time on a FINAL card (Queue #189 §B; gotcha #22 family).
