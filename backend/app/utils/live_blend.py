@@ -213,6 +213,9 @@ class BlendReading:
     #: not a complement or composite. This proves home orientation only: it
     #: does not assert an away/draw partition (#8814).
     named_home_quote: bool = False
+    #: Both actual contributors prove the home-oriented composite, including
+    #: positive two-way contract evidence for any away complement (#8814).
+    named_two_way_devig: bool = False
 
 
 def has_named_three_way_partition(reading: BlendReading) -> bool:
@@ -230,8 +233,10 @@ def has_named_three_way_partition(reading: BlendReading) -> bool:
 
 def has_proven_home_orientation(reading: BlendReading) -> bool:
     """Named-side provenance outranks a price-based orientation guess."""
-    return has_named_three_way_partition(reading) or getattr(
-        reading, "named_home_quote", False
+    return (
+        has_named_three_way_partition(reading)
+        or getattr(reading, "named_home_quote", False)
+        or getattr(reading, "named_two_way_devig", False)
     )
 
 
@@ -246,6 +251,62 @@ def _is_unique_named_home_quote(
         and not _fuzzy_team_match(candidate.name, away_team_name)
     ]
     return len(named_home) == 1 and named_home[0] is outcome
+
+
+def _is_named_two_way_devig(
+    contributors: Sequence[tuple[MarketOutcomes, float, Any, float]],
+    home_team_name: str,
+    away_team_name: str,
+) -> bool:
+    """Prove both selected rows AND their transformations, never just the primary.
+
+    Only Kalshi's full-game NBA per-team pair is positively two-way here. A
+    named away row alone does not prove its complement is home: an unknown
+    contract or a draw-bearing game cannot borrow this proof. Other series
+    retain their existing safeguards until their format is established.
+    """
+    from app.utils.venue_settlement import _names_a_draw
+
+    if len(contributors) != 2:
+        return False
+    fixture = None
+    suffixes = set()
+    sides = set()
+    for entry, home_prob, outcome, yes_prob in contributors:
+        ticker = (getattr(entry.market, "external_id", None) or "").upper().split("-")
+        if (
+            entry.market.source != "kalshi"
+            or len(ticker) != 3
+            or ticker[0] != "KXNBAGAME"
+            or not ticker[1]
+            or not ticker[2]
+        ):
+            return False
+        if fixture is not None and ticker[1] != fixture:
+            return False
+        fixture = ticker[1]
+        suffixes.add(ticker[2])
+        if any(
+            _names_a_draw(candidate.name, home_team_name, away_team_name)
+            or _names_a_draw(
+                candidate.name, contributors[0][2].name, contributors[1][2].name
+            )
+            for candidate in entry.outcomes
+        ):
+            return False
+        if (
+            home_prob == yes_prob
+            and _is_unique_named_home_quote(entry, outcome, home_team_name, away_team_name)
+        ):
+            sides.add("home")
+        elif (
+            home_prob == 1.0 - yes_prob
+            and _is_unique_named_home_quote(entry, outcome, away_team_name, home_team_name)
+        ):
+            sides.add("away")
+        else:
+            return False
+    return len(suffixes) == 2 and sides == {"home", "away"}
 
 
 def _home_probability_for_market(
@@ -1190,6 +1251,9 @@ def compute_source_home_probability(
     # it last seen", and a stamp needs the second. Kept in lockstep with
     # `contributors` below — if one grows an entry the other must.
     contributing_outcomes = [outcome]
+    # Retain the actual pre-average transformations alongside their rows. A
+    # named speaker must never confer its proof on an unproven sibling.
+    orientation_contributors = [(speaker, home_prob, outcome, yes_prob)]
 
     if len(entries) == 2:
         for sibling in entries:
@@ -1295,6 +1359,7 @@ def compute_source_home_probability(
                 # the sibling's own row, which until #5661 was discarded here.
                 # It is half the published number and it ages on its own fetch.
                 contributing_outcomes.append(sibling_reading[1])
+                orientation_contributors.append((sibling, *sibling_reading))
 
     return BlendReading(
         home_probability=home_prob,
@@ -1302,6 +1367,12 @@ def compute_source_home_probability(
         outcome=outcome,
         yes_probability=yes_prob,
         devigged=devigged,
+        named_two_way_devig=(
+            devigged
+            and _is_named_two_way_devig(
+                orientation_contributors, home_team_name, away_team_name
+            )
+        ),
         named_home_quote=(
             not devigged
             and home_prob == yes_prob
