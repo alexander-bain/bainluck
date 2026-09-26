@@ -10077,12 +10077,15 @@ async def search_events(
     # reader buckets meet — `formatted_futures` above and `futures_families`
     # below hold the SAME dicts, so repairing the map repairs both, and
     # repairing either list alone would repair one and not the other.
+    _formatted_facts = [_market_facts(m) for m in (*deduped_futures, *futures_markets)]
     await _repair_search_card_club_names(
         db,
         list(_formatted_by_id.values()),
-        [_market_facts(m) for m in (*deduped_futures, *futures_markets)],
+        _formatted_facts,
         card_fields=SEARCH_CARD_FIELDS,
     )
+    # #8906: same map, same reason — both reader buckets hold these dicts.
+    await _stamp_linked_event_kickoff(db, _formatted_by_id, _formatted_facts)
 
     # #993 L2-41: backend-composed topical families (additive; flat `futures`
     # above is unchanged for compatibility). Composed from the full deduped set,
@@ -32459,3 +32462,43 @@ def _format_futures_for_search(
         # it); this is the additive field the age pip reads instead.
         "prices_updated_at": _served_prices_as_of(market, top_outcomes, withheld),
     }
+
+
+async def _stamp_linked_event_kickoff(
+    db: AsyncSession,
+    cards: dict[int, dict],
+    facts: list[tuple[Optional[int], Optional[str], Optional[int]]],
+) -> int:
+    """#8906: a card linked to a game carries that game's kickoff.
+
+    `/search?q=chiefs` printed `KC Chiefs vs MIA Dolphins: Spread … · Sep 29`
+    two cards below the GAMES row for the same game reading `Tomorrow 10:00 AM`
+    (Sep 27). The card could only print `resolution_date`, and for a Kalshi game
+    prop that is the venue's settlement date, ~2 days after kickoff. Both
+    specimens (61806201, 61970727) are correctly linked to event 14781701; the
+    payload just never said so.
+
+    Additive-when-linked: `event_commence_time` is the linked event's
+    `commence_time`, and a card with no link (Fed, elections, championships)
+    gets no key at all, so its settlement label is untouched. `resolution_date`
+    is unmoved on every card — ux's consumer half chooses which to print.
+
+    One `IN` on the primary key for the whole page, or nothing when no card is
+    linked. `facts` are `_market_facts` triples, not ORM rows (gotcha #6), and
+    `market.event` is never read — the futures query does not eager-load it, so
+    touching it would be a lazy load inside async.
+    """
+    linked = {mid: eid for mid, _ticker, eid in facts if mid in cards and eid is not None}
+    if not linked:
+        return 0
+    rows = await db.execute(
+        select(Event.id, Event.commence_time).where(Event.id.in_(set(linked.values())))
+    )
+    kickoff = {eid: ct for eid, ct in rows.all() if ct is not None}
+    stamped = 0
+    for mid, eid in linked.items():
+        ct = kickoff.get(eid)
+        if ct is not None:
+            cards[mid]["event_commence_time"] = ct.isoformat()
+            stamped += 1
+    return stamped
