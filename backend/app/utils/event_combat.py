@@ -1477,7 +1477,9 @@ def card_is_called_off(bouts) -> bool:
     return bool(rows) and not any(_bout_going_ahead(b) for b in rows)
 
 
-def card_status_from_bouts(bouts, now, *, fallback_first=None, fallback_last=None):
+def card_status_from_bouts(
+    bouts, now, *, fallback_first=None, fallback_last=None, anchored_ids=None
+):
     """The card's status — THE sanctioned entry point for all three serve paths.
 
     CERT-2727 blocked the first spelling of #5603 because the all-called-off case
@@ -1489,19 +1491,22 @@ def card_status_from_bouts(bouts, now, *, fallback_first=None, fallback_last=Non
 
     ``fallback_*`` is the pair to use when we hold no bout rows of our own (a
     Kalshi-only card): unknown, not off, so it classifies exactly as before.
+
+    ``anchored_ids`` (#8881) is the set of bout ids a venue prices ON THIS CARD —
+    see :func:`card_status_span`. ``None`` or empty keeps the date-token span.
     """
     if card_is_called_off(bouts):
         # Terminal, so it drops out of the upcoming/live surfaces. NOT routed
         # through `combat_status`: there is no time arithmetic that can make
         # "nothing will be fought" produce a live window.
         return "settled"
-    first, last = card_status_span(bouts)
+    first, last = card_status_span(bouts, anchored_ids)
     if last is None:
         first, last = fallback_first, fallback_last
     return combat_status(last, now, first)
 
 
-def card_status_span(bouts):
+def card_status_span(bouts, anchored_ids=None):
     """The ``(first, last)`` commence pair that decides a card's LIVE window.
 
     #5603. `combat_status` opens the pill at the card's first bout (#4505), and
@@ -1522,10 +1527,18 @@ def card_status_span(bouts):
     to ``upcoming`` while the main card is on air. A false negative bought with a
     false positive is not a repair.
 
-    Scope: this fixes a span set by a bout that will not be fought. It does NOT
-    fix same-day cross-promotion grouping — a *completed* early bout from another
-    promotion still shares the token and still drags the window back. That is the
-    date-token key itself (#5602, lane1/D35) and is not touched here.
+    #8881 — same-day cross-promotion grouping. The token is a date, so a card
+    the venue lists also holds every OTHER promotion's bout that day, and those
+    are real fights, not called off. On 2026-09-26 six bouts from other
+    promotions were ``live`` at 16:00Z inside ``26sep26``, and "Fight Night:
+    Rosas Jr vs Barcelos" wore the pill from 16:00Z although its first bout the
+    venue lists (Jauregui vs Demopoulos, 15314294) was at 21:10Z. So when the
+    caller knows which bouts a venue prices ON THIS CARD (``anchored_ids``), the
+    window OPENS at the earliest of those. Only the opening moves: the closing
+    arm keeps the full span, so no card can settle earlier than it did. A card
+    whose own early prelims carry no venue market waits for its first priced
+    bout — the under-claim `combat_status` already chooses when it lacks a
+    first bout. With no anchored bout (events-only cards) nothing changes.
 
     Returns ``(None, None)`` when no bout is going ahead — either there are no
     usable rows at all, or every one of them has been called off. A card with no
@@ -1547,7 +1560,12 @@ def card_status_span(bouts):
     # min/max, not [0]/[-1]: the callers' sorts are total orders over the FULL
     # list, and dropping rows out of the middle must not make the pair depend on
     # which ones happened to be dropped.
-    return min(times), max(times)
+    anchored = [
+        b.commence_time
+        for b in going_ahead
+        if anchored_ids and getattr(b, "id", None) in anchored_ids
+    ]
+    return min(anchored or times), max(times)
 
 
 def _fighter_identity(name: str | None) -> str:
@@ -1940,6 +1958,59 @@ async def _open_markets_for_events(cfg: CombatSportConfig, db: AsyncSession, eve
     )
 
 
+async def _card_tokens_by_bout(
+    cfg: CombatSportConfig, db: AsyncSession, event_ids
+) -> dict[int, set[str]]:
+    """``{event_id: {card token, ...}}`` — the card each bout is priced ON. #8881.
+
+    Read off the bout's own linked markets: a ticker's date token, or a venue
+    row's promotion-scoped token. Deliberately NOT filtered to open markets, as
+    `_open_markets_for_events` is: a bout's market settles minutes after the
+    fight, and a card whose finished prelims stopped counting as its own would
+    drop to ``upcoming`` while its main card is on air (the false negative
+    `card_status_span` refuses). Best-effort: ``{}`` on no ids.
+    """
+    ids = [i for i in event_ids if i is not None]
+    if not ids:
+        return {}
+
+    from sqlalchemy.orm import load_only
+
+    from app.models import FuturesMarket
+
+    markets = (
+        (
+            await db.execute(
+                select(FuturesMarket)
+                .options(
+                    load_only(
+                        FuturesMarket.event_id,
+                        FuturesMarket.external_id,
+                        FuturesMarket.name,
+                        FuturesMarket.market_metadata,
+                    )
+                )
+                .where(
+                    FuturesMarket.llm_sport_category == cfg.llm_category,
+                    FuturesMarket.event_id.in_(ids),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    out: dict[int, set[str]] = {}
+    for m in markets:
+        event_id = getattr(m, "event_id", None)
+        ext_id = getattr(m, "external_id", None)
+        token = any_card_token(cfg, ext_id) or venue_card_token(
+            cfg, getattr(m, "name", None), getattr(m, "market_metadata", None)
+        )
+        if event_id is not None and token is not None:
+            out.setdefault(event_id, set()).add(token)
+    return out
+
+
 def _apply_token_fold(cards: dict, event_bouts: dict, survivor: dict) -> tuple:
     """Re-key `cards` and `event_bouts` onto their surviving tokens.
 
@@ -2065,13 +2136,10 @@ async def list_card_concepts(
     # Before the rollover fold, so a card that is both a twin and a
     # midnight-crosser resolves its venue identity once and then folds as one
     # card rather than as two halves of two cards.
-    cards, event_bouts = _apply_token_fold(
-        cards,
-        event_bouts,
-        fold_venue_scoped_tokens(
-            {t: [f["name"] for f in c["fights"]] for t, c in cards.items()}
-        ),
+    _venue_fold = fold_venue_scoped_tokens(
+        {t: [f["name"] for f in c["fights"]] for t, c in cards.items()}
     )
+    cards, event_bouts = _apply_token_fold(cards, event_bouts, _venue_fold)
 
     _spans = card_span_by_token(
         {t: [f["commence"] for f in c["fights"]] for t, c in cards.items()},
@@ -2094,6 +2162,24 @@ async def list_card_concepts(
                 cfg, await _open_markets_for_events(cfg, db, _orphan_ids)
             ).items()
         }
+
+    # #8881: the card each bout is priced ON, for tokens a venue lists — the
+    # status window opens at THAT card's first bout, not at another promotion's
+    # same-day fight. Mapped through both folds so it names a surviving token.
+    def _survivor(t):
+        v = _venue_fold.get(t, t)
+        return _rollover.get(v, v)
+
+    _anchored_on: dict[str, set[int]] = {}
+    _listed_ids = [
+        b.id for t, group in event_bouts.items() if t in cards for b in group
+    ]
+    if _listed_ids:
+        for event_id, tokens in (
+            await _card_tokens_by_bout(cfg, db, _listed_ids)
+        ).items():
+            for t in tokens:
+                _anchored_on.setdefault(_survivor(t), set()).add(event_id)
 
     # #4485: the venue's published card listing, read ONCE for the whole pass
     # rather than per card — it is one small Redis value and the loop below runs
@@ -2147,7 +2233,11 @@ async def list_card_concepts(
         # the rendered bout list — is untouched, so a suspended bout still shows.
         # CERT-2727: and a card whose bouts are ALL called off can never be live.
         status = card_status_from_bouts(
-            bouts, now, fallback_first=earliest, fallback_last=latest
+            bouts,
+            now,
+            fallback_first=earliest,
+            fallback_last=latest,
+            anchored_ids=_anchored_on.get(token),
         )
         if status not in statuses:
             continue
@@ -2556,11 +2646,21 @@ class CombatEventAdapter:
         # #5603: the STATUS pair skips bouts that have been called off, so the page
         # behind the card agrees with the card about whether the night is on.
         # `authoritative_commence` still carries `start_date` — display unchanged.
+        # #8881: the window opens at the first bout a venue prices ON this card,
+        # the same rule the lister applies, so page and card agree.
+        _priced_on_card = {
+            event_id
+            for event_id, tokens in (
+                await _card_tokens_by_bout(cfg, db, [b.id for b in bouts])
+            ).items()
+            if tokens & card_tokens
+        }
         card_status_value = card_status_from_bouts(
             bouts,
             now,
             fallback_first=first_commence,
             fallback_last=authoritative_commence,
+            anchored_ids=_priced_on_card,
         )
 
         # #1803, second reachable instance — found by censusing the class rather
