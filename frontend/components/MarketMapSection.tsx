@@ -1289,7 +1289,20 @@ export default function MarketMapSection({
       // a dead half ladder is a book that has CLOSED. Kickoff is the line
       // between those two readings of the same silence, so kickoff is the gate.
       const playHasStarted = isLive || isDone;
-      if (!playHasStarted || probabilitiesQuoteALine(parsed.map((p) => p.probability))) {
+      // #8721, one card lower: the full-game rail's rule for a sport whose
+      // sportsbook spread is not a margin (baseball). There a rung stands in
+      // for a projection only before first pitch and only at even money or
+      // better. Kalshi's smallest First 5 cut is 1.5 runs, so on
+      // `/events/15318868` (Dodgers @ Giants, LAD 75%) the rung nearest a coin
+      // flip was "SF -1.5 first 5 innings" at 24% — the iPhone printed
+      // `PRE-GAME SF by 1.5+` off it (native, PR #8775). Points sports keep
+      // `closest50` whatever its price: a dense ladder always has a rung near 50%.
+      const halfRungIsAProjection =
+        vocab.sportsbookSpreadIsAMargin || (!playHasStarted && closest50.probability >= 0.5);
+      if (
+        halfRungIsAProjection &&
+        (!playHasStarted || probabilitiesQuoteALine(parsed.map((p) => p.probability)))
+      ) {
         halfMarkers.push({
           key: "proj",
           // #5206: the half maps already made this exact distinction for a

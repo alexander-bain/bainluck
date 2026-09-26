@@ -187,3 +187,148 @@ describe("#8721 controls — a sport whose spread IS a margin keeps both tiles",
     expect(text).toMatch(/Projection\s+BUF by 3\.5\+/);
   });
 });
+
+/**
+ * #8721, one card lower — the FIRST 5 INNINGS margin card.
+ *
+ * Found by native on the iPhone twin (PR #8775): before first pitch the half
+ * card names the rung nearest 50% whatever its price. Specimen, production
+ * 2026-09-26 03:25Z, `/events/15318868` (Dodgers @ Giants, scheduled, LAD
+ * 74.5%): Kalshi's First 5 ladder is `San Francisco -1.5 first 5 innings` 24%
+ * and `-2.5` 18%, so the nearest-to-even rung is a 24% long shot and the
+ * iPhone read `PRE-GAME SF by 1.5+`.
+ *
+ * ⚠️ LATENT ON WEB, NOT VISIBLE. Read on production the same minute, the web
+ * page draws no First 5 margin card for any MLB game, for two reasons outside
+ * this card: Kalshi's "First 5 Spread" is classified as a full-game `spread`
+ * (and `isFullGameSpread` drops it; re-filed as `half_spread` its outcome
+ * parses as a 5-run line, because the parser takes the LAST number and that is
+ * the "5" in "first 5 innings"), and Polymarket's `1st 5 Innings Spread: X (-1.5)`
+ * reaches `half_spread` but the #8739 reader is anchored at `^Spread:`. The
+ * floor is here so the card is right the day either path opens.
+ *
+ * So the rows below are the banked First 5 prices (24% / 18%) in the outcome
+ * spelling this parser reads today — Kalshi's full-game "wins by over N runs" —
+ * filed as `half_spread`. The rule is the full-game rail's: for baseball a rung
+ * stands in only before first pitch and only at even money or better.
+ */
+import sched15318868 from "../fixtures/ux8721_game_markets_15318868.20260926T0325Z.json";
+
+type Row = Record<string, unknown> & { market_name: string; outcome_name: string; probability: number };
+
+const f5Rung = (outcome: string, probability: number): Row => ({
+  market_name: "Los Angeles Dodgers vs San Francisco: First 5 Spread",
+  outcome_name: outcome,
+  threshold: null,
+  probability,
+  source: "kalshi",
+  is_winner: null,
+  resolution_source: null,
+});
+
+function withFirstFiveHalfCard(extra: Row[] = [], status = "scheduled") {
+  // The banked prices the rows below carry.
+  const banked = (sched15318868.spreads as Row[])
+    .filter((r) => /First 5 Spread/.test(r.market_name))
+    .map((r) => [r.outcome_name, r.probability]);
+  expect(banked).toEqual([
+    ["San Francisco -1.5 first 5 innings", 0.24],
+    ["San Francisco -2.5 first 5 innings", 0.18],
+  ]);
+  const f5 = [
+    f5Rung("San Francisco wins by over 1.5 runs", 0.24),
+    f5Rung("San Francisco wins by over 2.5 runs", 0.18),
+    ...extra,
+  ];
+  return {
+    gameMarkets: {
+      ...sched15318868,
+      status,
+      home_score: status === "live" ? 0 : null,
+      away_score: status === "live" ? 2 : null,
+      period_markets: [
+        ...sched15318868.period_markets,
+        ...f5.map((r) => ({ ...r, market_type: "half_spread", period: "1H" })),
+      ],
+    },
+    eventStatus: status,
+    homeTeam: "San Francisco Giants",
+    awayTeam: "Los Angeles Dodgers",
+    homeAbbr: "SF",
+    awayAbbr: "LAD",
+    homeWinProb: 0.255,
+    awayWinProb: 0.745,
+    homeSpread: 1.9,
+    openingHomeSpread: null,
+    sportKey: "baseball_mlb",
+  };
+}
+
+const ladEvenMoney = f5Rung("Los Angeles Dodgers wins by over 1.5 runs", 0.55);
+
+describe("#8721 — the First 5 innings margin card never names a long shot", () => {
+  it("scheduled 15318868: no `Projection SF by 1.5+` off a 24% rung; the card still draws", () => {
+    const text = render(withFirstFiveHalfCard());
+    expect(text).toContain("First 5 innings margin");
+    expect(text).toMatch(/SF by 1\.5\+\s+24%/); // the ladder row is untouched
+    expect(text).not.toMatch(/(Projection|Pre-game)\s+SF by/);
+  });
+
+  it("scheduled, a rung at even money or better still reads as the Projection", () => {
+    const text = render(withFirstFiveHalfCard([ladEvenMoney]));
+    expect(text).toMatch(/Projection\s+LAD by 1\.5\+/);
+  });
+
+  it("live: a baseball First 5 rung is never a Projection, even at even money", () => {
+    const text = render(withFirstFiveHalfCard([ladEvenMoney], "live"));
+    expect(text).toContain("First 5 innings margin");
+    expect(text).toMatch(/LAD by 1\.5\+\s+55%/);
+    expect(text).not.toMatch(/(Projection|Pre-game)\s+\w+ by 1\.5/);
+  });
+});
+
+describe("#8721 half-card control — a points sport keeps its nearest-to-even rung", () => {
+  it("NBA 1st half, scheduled: `Projection` from a 40% rung is unchanged", () => {
+    const m = "Celtics vs Knicks: 1st Half Spread";
+    const rung = (outcome: string, probability: number) => ({
+      market_name: m,
+      outcome_name: outcome,
+      threshold: null,
+      probability,
+      source: "kalshi",
+      market_type: "half_spread",
+      period: "1H",
+      is_winner: null,
+      resolution_source: null,
+    });
+    const text = render({
+      gameMarkets: {
+        event_id: 2,
+        home_team: "Boston Celtics",
+        away_team: "New York Knicks",
+        home_score: null,
+        away_score: null,
+        status: "scheduled",
+        player_props: [],
+        team_totals: [],
+        period_markets: [rung("Boston Celtics -2.5", 0.4), rung("Boston Celtics -5.5", 0.25)],
+        matchups: [],
+        other: [],
+        pace: null,
+        props_script: [],
+        spreads: [],
+        totals: [],
+      },
+      eventStatus: "scheduled",
+      homeTeam: "Boston Celtics",
+      awayTeam: "New York Knicks",
+      homeAbbr: "BOS",
+      awayAbbr: "NYK",
+      homeWinProb: 0.6,
+      awayWinProb: 0.4,
+      sportKey: "basketball_nba",
+    });
+    expect(text).toContain("1st half margin");
+    expect(text).toMatch(/Projection\s+BOS by 2\.5\+/);
+  });
+});
