@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from zoneinfo import ZoneInfo
 from typing import Annotated, Optional, Sequence
 
@@ -194,6 +195,7 @@ from app.utils.feed_market_quality import (
     has_no_real_price,
     is_empty_book_midpoint,
 )
+from app.utils.futures_unsupported_price import price_refuted_by_live_book  # #8753
 from app.utils.proven_duplicates import (
     FoldedBlendView,
     bridged_canonical_ids,
@@ -19208,6 +19210,38 @@ def _resolve_pregame_mark(market, outcome, is_over, is_under, opening_over, comm
     return opening_over
 
 
+def _stored_number(value) -> Optional[float]:
+    """A `Numeric` column as a float, or None when it holds no number.
+
+    None for anything that is not a number, not only for NULL: a book we cannot
+    read is no book, and no book refutes nothing — the leg stays PRICED. That is
+    the fail-open direction `_search_withheld_price_ids` records for the same
+    arms (withholding on an unreadable row risks deleting a result). Production
+    hands `Decimal` or None; the doubles in the route suites hand an unset
+    MagicMock, whose `float()` is 1.0 — a "bid" of 1.0 would refute every price.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float, Decimal)):
+        return None
+    return float(value)
+
+
+def _leg_price_refuted_by_its_book(market, outcome) -> bool:
+    """#8753: does this leg serve a price its own stored book prices out?
+
+    #6532's arm, called — never re-spelled — so the game page refuses exactly
+    what `/futures/{id}` refuses on the same row. The predicate owns the Kalshi
+    scope and the graded-winner exemption.
+    """
+    return price_refuted_by_live_book(
+        market.source,
+        outcome.resolution_source,
+        outcome.is_winner,
+        _stored_number(outcome.current_probability),
+        _stored_number(outcome.current_yes_bid),
+        _stored_number(outcome.current_yes_ask),
+    )
+
+
 def _settled_market_prices_an_unstarted_game(event, market, market_outcomes, now) -> bool:
     """A market our own row says is SETTLED, on a game that has not kicked off (#5771).
 
@@ -20948,6 +20982,14 @@ async def _build_game_markets(
             if not is_empty_book_midpoint(
                 o.current_probability, o.current_yes_bid, o.current_yes_ask
             )
+            # #8753 — and a price its own live book prices out (#6532's arm,
+            # the one `/futures/{id}` already refuses on these same rows).
+            # `/events/15315945` served Indiana "scores first TD" 0.96 above its
+            # own 0.95 ask in `other[]`, so the card's three exclusive legs
+            # summed to 139% while the board's detail page withheld that leg.
+            # Same placement as #5247 so every section is covered by one rule;
+            # the predicate owns the graded-winner exemption and the Kalshi scope.
+            and not _leg_price_refuted_by_its_book(market, o)
         ]
 
         if not market_outcomes:

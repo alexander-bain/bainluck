@@ -68,6 +68,7 @@ async def _run_kalshi_ws_consumer():
     )
     from app.services.kalshi_ws import KalshiWebSocket
     from app.tasks.base import get_task_session
+    from app.tasks.kalshi import _kalshi_yes_probability  # #8753
     from app.tasks.live_blend_refresh import (
         LiveBlendRefresher, event_ids_for_outcomes,
     )
@@ -182,7 +183,10 @@ async def _run_kalshi_ws_consumer():
     }
 
     # -- Buffered price updates --
-    price_buffer: dict[int, float] = {}  # outcome_id → probability
+    # outcome_id → (probability, yes_bid, yes_ask). #8753: the book travels WITH
+    # the price it produced, so the row the flush writes is one instant's quote —
+    # price and book together — and never a socket price beside a REST book.
+    price_buffer: dict[int, tuple[float, float | None, float | None]] = {}
     buffer_lock = asyncio.Lock()
     # Q460: outcome → linked event, for the blend re-stamp after each flush.
     event_id_by_outcome: dict[int, int] = {
@@ -224,7 +228,15 @@ async def _run_kalshi_ws_consumer():
         written_outcome_ids: list[int] = []
         try:
             async with get_task_session() as session:
-                for outcome_id, prob in batch.items():
+                for outcome_id, (prob, yes_bid, yes_ask) in batch.items():
+                    # #8753: the book columns are written only when the tick
+                    # carried BOTH sides. Half a book beside the other half from
+                    # an older REST poll is a quote nobody ever offered.
+                    book_values = (
+                        {"current_yes_bid": yes_bid, "current_yes_ask": yes_ask}
+                        if yes_bid is not None and yes_ask is not None
+                        else {}
+                    )
                     result = await session.execute(
                         update(FuturesOutcome)
                         .where(
@@ -278,6 +290,7 @@ async def _run_kalshi_ws_consumer():
                                 FuturesOutcome.price_changed_at,
                                 prob,
                             ),
+                            **book_values,
                         )
                     )
                     # #5411 — a settled row matches the id and fails the guard, so
@@ -336,8 +349,8 @@ async def _run_kalshi_ws_consumer():
         # it must survive to the next flush rather than be dropped as "already
         # written". Same contract, enforced at removal instead of at re-queue.
         async with buffer_lock:
-            for outcome_id, prob in batch.items():
-                if price_buffer.get(outcome_id) == prob:
+            for outcome_id, entry in batch.items():
+                if price_buffer.get(outcome_id) == entry:
                     del price_buffer[outcome_id]
 
         # Q460 — THE SHIP. Prices in `futures_outcomes` are invisible; the card
@@ -417,19 +430,24 @@ async def _run_kalshi_ws_consumer():
         yes_bid = _parse_dollar(msg.get("yes_bid_dollars"))
         yes_ask = _parse_dollar(msg.get("yes_ask_dollars"))
 
-        if last_price is not None and 0 < last_price < 1:
-            prob = last_price
-        elif yes_bid is not None and yes_ask is not None:
-            mid = (yes_bid + yes_ask) / 2
-            if 0 < mid < 1:
-                prob = mid
-            else:
-                return
-        else:
+        # #8753 — THE REST WRITER'S RULE, CALLED, NEVER RE-SPELLED. This used to
+        # store the last trade whenever there was one, so a trade the live book
+        # had already moved past became the stored price between polls: on
+        # `/events/15315945` (Northwestern @ Indiana, live) the socket stored
+        # Indiana "scores first TD" at 0.96 above its own 0.95 ask, and the
+        # three exclusive legs of that card summed to 139%. The poll that wrote
+        # the same row two minutes earlier would have stored the 0.77 midpoint;
+        # the socket, being faster, won every time. One price policy per venue:
+        # tight book → midpoint, else a trade the book does not refute, else a
+        # longshot ask, else nothing (a wide book with no trade is not a price).
+        prob = _kalshi_yes_probability(yes_bid, yes_ask, last_price)
+        # The socket's historical open bounds, kept: a terminal 0 or 1 is
+        # settlement's to write (`handle_lifecycle`), never a streamed tick's.
+        if prob is None or not 0 < prob < 1:
             return
 
         async with buffer_lock:
-            price_buffer[outcome_id] = prob
+            price_buffer[outcome_id] = (prob, yes_bid, yes_ask)
 
     async def handle_lifecycle(msg: dict):
         ticker = (msg.get("market_ticker") or "").upper()
@@ -454,7 +472,8 @@ async def _run_kalshi_ws_consumer():
         # Capture closing price from the buffer before flushing
         async with buffer_lock:
             ids = ticker_to_ids.get(ticker)
-            closing_price = price_buffer.get(ids[1]) if ids else None
+            buffered = price_buffer.get(ids[1]) if ids else None
+            closing_price = buffered[0] if buffered else None
 
         try:
             async with get_task_session() as session:
