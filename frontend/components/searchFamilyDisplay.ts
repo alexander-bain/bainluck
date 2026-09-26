@@ -58,6 +58,25 @@ export function resolutionLabel(date: string | null | undefined): string | null 
   return new Date(date).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
+/**
+ * #8906: the date a search answer row prints. A market linked to a game is
+ * dated by the game's kickoff (`event_commence_time`), not by
+ * `resolution_date`, which for a Kalshi game prop is the settlement date ~2 days
+ * later: `/search?q=chiefs` printed `KC Chiefs vs MIA Dolphins: Spread … · Sep 29`
+ * two cards below the same game reading `Tomorrow 10:00 AM` (Sep 27).
+ *
+ * When the kickoff is served it is the ONLY date considered: a game already
+ * under way prints no date rather than falling back to the settlement one,
+ * which would put the wrong date back on the row. A market with no link (the
+ * key absent — Fed, elections, older payloads) keeps its settlement label.
+ */
+export function answerDateLabel(
+  market: Pick<FuturesMarket, "resolution_date" | "event_commence_time">,
+): string | null {
+  if (market.event_commence_time) return resolutionLabel(market.event_commence_time);
+  return resolutionLabel(market.resolution_date);
+}
+
 /** Strip a trailing season year / question mark for a cleaner row title. A year
  *  the question needs ("…cuts in 2026?") stays (#8407). */
 export function cleanName(name: string): string {
