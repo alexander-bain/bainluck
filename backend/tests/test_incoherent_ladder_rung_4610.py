@@ -351,7 +351,13 @@ def _scoring_outcomes(pairs):
             "probability": probability,
             "probability_change_24h": movements.get(name),
             "rank": position + 1,
-            "rank_change_24h": 4 if name == "Above 67" else -1,
+            # #8784 — the leader's change must name a board that existed. The
+            # old flat `-1` gave the coherent twin's leader ("Above 52", rank 1)
+            # an old rank of 0, which `rank_claim_is_evidence` rightly refuses as
+            # no overtake. `+1` there (was 2nd, now 1st) is the overtake this
+            # control needs; the served specimen's leader is "Above 67" (+4)
+            # either way, so the incoherent side does not move.
+            "rank_change_24h": 4 if name == "Above 67" else (1 if position == 0 else -1),
             "opening_probability": openings.get(name),
         }
         for position, (name, probability) in enumerate(ranked)
