@@ -4647,6 +4647,27 @@ jobs:
             exit 1
           }
 
+      - name: "#8755 a withdrawn listing is not a start (real Postgres)"
+        # A WNBA playoff game read LIVE two days early: its only source, the
+        # Odds API, had dropped the row from a feed it was still publishing,
+        # and the clock promoted it at its made-up start. The hold decides on
+        # two SQL sightings (`GREATEST(captured_at, valid_until)`, and a
+        # PRE-GAME-only sibling read so a LIVE_ONLY quota night withdraws
+        # nothing) that only Postgres can compute. Reuses the #7617 database:
+        # this file drops and creates its own tables, after that step.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_a_withdrawn_listing_is_not_a_start_pg_8755.py \
+            -v -rs 2>&1 | tee /tmp/withdrawn8755.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/withdrawn8755.txt; then
+            echo "::error::#8755 withdrawn-listing contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]6 passed," /tmp/withdrawn8755.txt || {
+            echo "::error::#8755 withdrawn-listing contract did not run all six cases"
+            exit 1
+          }
+
       - name: "#7878 win-prob evidence collapse — provision the disposable database"
         # Its own database for the reason the #7617 step above gives: the file
         # drops and creates the five tables it touches.

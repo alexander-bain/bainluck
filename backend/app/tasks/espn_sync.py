@@ -4440,6 +4440,51 @@ async def _transition_event_statuses_impl() -> dict:
         # JSONB already loaded on the row.
         stats["held_authority_not_started"] = 0
 
+        # #8755: A START THE ONLY SOURCE HAS WITHDRAWN IS NOT A START.
+        #
+        # The third hold. An odds_api start is a reported start — until the Odds
+        # API drops the event from a feed it is still publishing. Liberty @ Lynx
+        # (15318133) was last listed 46h before its made-up 00:30Z start, was
+        # promoted at it, and read LIVE with no score under a two-day-old line
+        # while ESPN had the game on Sunday. One read for the candidates that
+        # could be held (odds_api, no authority id, no play), none otherwise.
+        stats["held_withdrawn_listing"] = 0
+        from app.utils.espn_helpers import play_evidence
+        from app.utils.event_completion import (
+            ODDS_API_COMMENCE_SOURCE,
+            ODDS_API_LISTING_SIGHTINGS_SQL,
+            WITHDRAWN_LISTING_GAP,
+            odds_api_listing_withdrawn,
+            row_carries_an_authority_id,
+        )
+
+        listing_candidates = [
+            event.id
+            for event in started_events
+            if event.commence_time_source == ODDS_API_COMMENCE_SOURCE
+            and not row_carries_an_authority_id(event.espn_id, event.statpal_fixture_id)
+            and not play_evidence(
+                event.home_score, event.away_score, event.period, event.game_clock
+            )
+        ]
+        listing_sightings: dict[int, tuple] = {}
+        if listing_candidates:
+            from sqlalchemy import text as _sql_text
+
+            sighting_rows = (await session.execute(
+                _sql_text(ODDS_API_LISTING_SIGHTINGS_SQL),
+                {
+                    "event_ids": listing_candidates,
+                    "stale_before": now - WITHDRAWN_LISTING_GAP,
+                    "siblings_from": now - timedelta(hours=24),
+                    "siblings_to": now + timedelta(days=7),
+                },
+            )).all()
+            listing_sightings = {
+                r.listing_event_id: (r.listing_last_seen, r.sport_last_seen)
+                for r in sighting_rows
+            }
+
         for event in started_events:
             if not commence_time_is_a_reported_start(event.commence_time_source):
                 stats["held_derived_start"] += 1
@@ -4453,6 +4498,17 @@ async def _transition_event_statuses_impl() -> dict:
                 game_clock=event.game_clock,
             ):
                 stats["held_authority_not_started"] += 1
+                continue
+            if event.id in listing_sightings and odds_api_listing_withdrawn(
+                event.commence_time_source,
+                event.espn_id,
+                event.statpal_fixture_id,
+                play_evidence(
+                    event.home_score, event.away_score, event.period, event.game_clock
+                ),
+                *listing_sightings[event.id],
+            ):
+                stats["held_withdrawn_listing"] += 1
                 continue
             event.status = "live"
             stats["scheduled_to_live"] += 1
@@ -5122,13 +5178,15 @@ async def _transition_event_statuses_impl() -> dict:
                 or stats["repaired_bogus_completed"] > 0
                 or stats["unsettled_future_commence"] > 0
                 or stats["held_derived_start"] > 0
+                or stats["held_withdrawn_listing"] > 0
                 or stats["withdrew_illegal_tennis_score"] > 0
                 or stats["unreachable_suspended_retired"] > 0):
             logger.info(
                 "Status transitions: %d scheduled→live, %d live→suspended, "
                 "%d suspended→live, %d repaired, %d un-settled-future-commence, "
                 "%d illegal tennis scores withdrawn, "
-                "%d held (derived start), %d held (still running), "
+                "%d held (derived start), %d held (withdrawn listing), "
+                "%d held (still running), "
                 "%d suspended→%s (unreachable, budget %d)",
                 stats["scheduled_to_live"], stats["live_to_suspended"],
                 stats["suspended_to_live"],
@@ -5136,6 +5194,7 @@ async def _transition_event_statuses_impl() -> dict:
                 stats["unsettled_future_commence"],
                 stats["withdrew_illegal_tennis_score"],
                 stats["held_derived_start"],
+                stats["held_withdrawn_listing"],
                 stats["held_still_running"],
                 stats["unreachable_suspended_retired"],
                 UNREACHABLE_SUSPENDED_TERMINAL,

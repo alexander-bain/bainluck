@@ -164,6 +164,98 @@ def commence_time_is_a_reported_start(commence_time_source) -> bool:
     return commence_time_source not in DERIVED_COMMENCE_SOURCES
 
 
+#: How long the Odds API must have been listing the row's sport, pre-game,
+#: WITHOUT this row in the feed before the row's start stops counting (#8755).
+#:
+#: One ``/odds`` call returns every listed event of a sport, so a sport that
+#: was polled pre-game while this row's own sightings stopped is a sport whose
+#: feed no longer contains it. The margin is the polling cadence, not a guess
+#: at the answer: the slowest tier's ``later`` interval is 4h
+#: (``SPORT_TIER_MULTIPLIERS[3]`` × 1h) before adaptive slowdown, so 12h is
+#: three missed polls of the slowest sport. The specimen's gap was 46h.
+WITHDRAWN_LISTING_GAP = timedelta(hours=12)
+
+#: One row per candidate: when the Odds API last listed THIS row, and when it
+#: last listed any OTHER row of the same sport while that row was still a
+#: future game. ``GREATEST(captured_at, valid_until)`` because an unchanged
+#: line is written once and re-sighted into ``valid_until`` (#7617). The sport
+#: read is inside a ``CASE`` so it only runs for a row whose own sightings are
+#: already older than the gap — a listed row costs one index lookup.
+#:
+#: The sibling sighting is PRE-GAME only (clamped to the sibling's kickoff).
+#: Under the quota guard's LIVE_ONLY mode the sport's live games keep being
+#: seen while every pre-game row goes quiet, and a live-only sighting would
+#: then read every real fixture as withdrawn.
+ODDS_API_LISTING_SIGHTINGS_SQL = """
+    SELECT c.id AS listing_event_id,
+           own.last_seen AS listing_last_seen,
+           CASE WHEN own.last_seen < :stale_before THEN (
+               SELECT max(LEAST(GREATEST(o.captured_at, o.valid_until),
+                                s.commence_time))
+               FROM events s
+               JOIN odds_snapshots o ON o.event_id = s.id
+               WHERE s.sport_id = c.sport_id
+                 AND s.commence_time >= :siblings_from
+                 AND s.commence_time <= :siblings_to
+                 AND o.captured_at < s.commence_time
+           ) END AS sport_last_seen
+    FROM events c
+    CROSS JOIN LATERAL (
+        SELECT max(GREATEST(o.captured_at, o.valid_until)) AS last_seen
+        FROM odds_snapshots o
+        WHERE o.event_id = c.id
+    ) own
+    WHERE c.id = ANY(:event_ids)
+"""
+
+
+def odds_api_listing_withdrawn(
+    commence_time_source,
+    espn_id,
+    statpal_fixture_id,
+    has_play_evidence,
+    listing_last_seen,
+    sport_last_seen,
+) -> bool:
+    """Has the only source that ever listed this row stopped listing it? (#8755)
+
+    True ⇒ ``scheduled → live`` must not promote it on the clock. The row's
+    start was reported by the Odds API, the Odds API has since dropped the
+    event from a feed it is still publishing, and nothing else — no authority,
+    no play — has spoken about the row. Its start is a withdrawn report.
+
+    MEASURED, production 2026-09-26. ``/events/15318133`` Liberty @ Lynx went
+    LIVE at 00:30Z 9/26 and read LIVE with no score for 2.5h over a FanDuel
+    line from Wednesday. The Odds API last listed it at 02:36Z 9/24 and was
+    still listing other WNBA games minutes before the promotion; ESPN has the
+    game on Sunday. Over the three days before, four unanchored odds_api rows
+    had their last sighting 2h+ before their own start, and none of the four
+    ever received a score. A held row that the Odds API lists again is promoted
+    on the next pass — the hold ends on evidence, not a timer.
+
+    Every clause is a way the row could still be real, so every clause fails
+    OPEN:
+
+    * any other provenance — only the Odds API's feed is being read here;
+    * an ``espn_id`` or ``statpal_fixture_id`` — an authority knows the row and
+      its own passes decide the state (``authority_not_started_holds``);
+    * play evidence — a score, period or clock beats a missing listing;
+    * no sighting of the row at all — nothing to compare; rows born from the
+      scores path carry no odds and do get results (Allsvenskan, 9/25);
+    * no pre-game sighting of the sport — the feed may simply not be polled
+      (quota FULL_STOP), which says nothing about this row.
+    """
+    if commence_time_source != ODDS_API_COMMENCE_SOURCE:
+        return False
+    if row_carries_an_authority_id(espn_id, statpal_fixture_id):
+        return False
+    if has_play_evidence:
+        return False
+    if listing_last_seen is None or sport_last_seen is None:
+        return False
+    return sport_last_seen - listing_last_seen >= WITHDRAWN_LISTING_GAP
+
+
 # ── WHEN DID THIS FINISHED GAME END? (D109) ──────────────────────────────────
 
 
