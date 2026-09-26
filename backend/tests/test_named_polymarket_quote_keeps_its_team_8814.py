@@ -52,9 +52,9 @@ def reading(probability=0.35, names=None):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("probability", [0.35, 0.355, 0.36])
-async def test_actual_named_pm_quote_survives_stale_book_and_cached_flip(probability):
-    source = reading(probability)
-    assert source.draw_probability is None, "fixture must reach the unpaid PM arm"
+async def test_incomplete_named_pm_quote_survives_stale_book_and_cached_flip(probability):
+    source = reading(probability, names=[("Bulgaria", probability)])
+    assert source.draw_probability is None, "fixture must test named home without partition proof"
     assert source.outcome.name == "Bulgaria"
     s = Session(0.66)
     arm = LiveBlendRefresher("polymarket")
@@ -69,8 +69,8 @@ async def test_actual_named_pm_quote_survives_stale_book_and_cached_flip(probabi
     assert 15290678 not in arm._inversion
 
 
-def test_exact_wrapped_draw_fixture_keeps_named_home_proof_without_inventing_partition():
-    source = reading()
+def test_single_named_home_keeps_proof_without_inventing_partition():
+    source = reading(names=[("Bulgaria", 0.35)])
     assert getattr(source, "named_home_quote", False)
     assert source.home_probability == source.yes_probability == 0.35
     assert source.away_probability is None and source.draw_probability is None
@@ -162,7 +162,7 @@ async def test_ws_writer_streams_selected_pm_home_without_inventing_partition(
     import time
     from tests.test_live_blend_refresh import _RecordingSession
 
-    source = reading()
+    source = reading(names=[("Bulgaria", 0.35)])
     event = SimpleNamespace(
         id=15290678,
         home_team_name="Bulgaria",

@@ -1899,10 +1899,19 @@ def find_three_way_partition(
 
         matches_home = _fuzzy_team_match(outcome.name, event_home_team)
         matches_away = _fuzzy_team_match(outcome.name, event_away_team)
-        # #4629's rule, unchanged: a name reaching BOTH teams names neither.
-        # Here it disqualifies the whole reading rather than the row — an
-        # outcome we cannot orient is not a member we can put in a partition.
+        # #4629: a name reaching BOTH teams names neither competitor. Refuse
+        # the partition unless the existing draw recognizer proves that this
+        # is the third member, explicitly naming this same fixture.
         if matches_home and matches_away:
+            # #8814: "Draw (Bulgaria vs. Luxembourg)" names the fixture,
+            # not either competitor. Reuse the anchored draw recognizer and
+            # its same-fixture identity check; the full partition still needs
+            # unique side members, the selected home anchor and a coherent sum.
+            from app.utils.venue_settlement import _names_a_draw
+
+            if _names_a_draw(outcome.name, event_home_team, event_away_team):
+                others.append(outcome)
+                continue
             return None
         if matches_home:
             home_members.append(outcome)
