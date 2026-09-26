@@ -384,7 +384,11 @@ CREATE TABLE futures_outcomes (
     -- file seeds is TOUCHED AT `now` unless it says otherwise (see `_select`),
     -- because these cases are about the two book signatures and a row that
     -- silently read as un-polled would be selected by the other screen entirely.
-    last_updated TEXT
+    last_updated TEXT,
+    -- #8807's sibling screen reads a grade on ANOTHER market of the same event.
+    -- Ungraded by default, as a leg nobody has settled is; `grades=` sets them.
+    is_winner INTEGER DEFAULT 0,
+    resolution_source TEXT
 );
 """
 
@@ -394,7 +398,7 @@ def _iso(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
-def _select(markets, events, outcomes, *, now=NOW):
+def _select(markets, events, outcomes, *, now=NOW, grades=()):
     """Run the REAL statement over real rows and return the selected ids.
 
     The one substitution is `CAST(:frozen_gap AS numeric)` -> `CAST(... AS REAL)`:
@@ -423,6 +427,11 @@ def _select(markets, events, outcomes, *, now=NOW):
         # change the answer to a question about the BOOK. A case that wants a
         # stale row passes a sixth element.
         [tuple(o) + (_iso(now),) if len(o) == 5 else tuple(o) for o in outcomes],
+    )
+    # `(outcome_id, is_winner, resolution_source)` — #8807's sibling cases.
+    con.executemany(
+        "UPDATE futures_outcomes SET is_winner = ?, resolution_source = ? WHERE id = ?",
+        [(int(w), src, oid) for oid, w, src in grades],
     )
     sql = sweep.RECENT_FINAL_SELECT_SQL.replace(
         "CAST(:frozen_gap AS numeric)", "CAST(:frozen_gap AS REAL)"
@@ -591,6 +600,106 @@ class TestThePredicateOnRealRows:
             outcomes=[(1, 10, 0.14, 0.16, 0.15 + gap)],
         )
         assert selected == {10}
+
+
+#: #8807's specimen, Vacherot–Harris (event 15318588), as production held it at
+#: 2026-09-26 13:05Z: the exact-score book last touched mid-match, tight and
+#: agreeing with its own probabilities, beside the match-winner row the venue
+#: had already graded.
+VACHAR_EXACT = "KXATPEXACTMATCH-26SEP25VACHAR"
+VACHAR_MATCH = "KXATPMATCH-26SEP25VACHAR"
+VACHAR_EXACT_LEGS = [
+    (1, 62279636, 0.01, 0.02, 0.015),  # VAC20
+    (2, 62279636, 0.57, 0.61, 0.59),   # HAR20 — the venue's `yes`
+    (3, 62279636, 0.17, 0.21, 0.19),   # VAC21
+    (4, 62279636, 0.18, 0.22, 0.20),   # HAR21
+]
+#: The match-winner row after the 12:54Z sweep: resolved, empty book, graded.
+VACHAR_MATCH_LEGS = [
+    (5, 62279596, 0.0, 1.0, 1.0),  # Harris
+    (6, 62279596, 0.0, 1.0, 0.0),  # Vacherot
+]
+VACHAR_GRADES = [(5, True, "api_settlement"), (6, False, "api_settlement")]
+
+
+def _vachar(*, event_status="suspended", match_status="resolved", grades=VACHAR_GRADES,
+            match_event=1, commence=datetime(2026, 9, 12, 10, 0, tzinfo=timezone.utc)):
+    events = [(1, event_status, None, _iso(commence))]
+    if match_event != 1:
+        events.append(_suspended_event(match_event))
+    return _select(
+        markets=[
+            _market(62279636, 1, external_id=VACHAR_EXACT),
+            _market(62279596, match_event, status=match_status, external_id=VACHAR_MATCH),
+        ],
+        events=events,
+        outcomes=VACHAR_EXACT_LEGS + VACHAR_MATCH_LEGS,
+        grades=grades,
+    )
+
+
+class TestASiblingTheVenueGradedSelectsTheRow:
+    """#8807. A tight, self-consistent book on a suspended event is invisible to
+    both book screens. A sibling on the same event that the venue has already
+    graded is what makes it worth one question."""
+
+    def test_the_vachar_exact_score_row_is_selected(self):
+        """RED before #8807: no leg carries either book signature, so the
+        suspended arm returns nothing and the row stays open for hours."""
+        assert _vachar() == {62279636}
+
+    def test_without_the_graded_sibling_the_book_alone_selects_nothing(self):
+        """The control that makes the test above mean something: the SAME legs,
+        with no graded sibling, are refused. Without this, the case above could
+        pass because a book screen widened."""
+        assert _vachar(grades=()) == set()
+
+    def test_a_sibling_we_graded_by_inference_is_not_evidence(self):
+        """Only the venue's own grade says the venue is done. A winner we
+        derived from prices says nothing about what Kalshi has settled."""
+        grades = [(5, True, "price_resolution"), (6, False, "price_resolution")]
+        assert _vachar(grades=grades) == set()
+
+    def test_a_resolved_sibling_with_no_winning_leg_is_not_evidence(self):
+        """Resolved with every leg a loser is how a void or a retraction looks.
+        Nothing was decided, so there is nothing to ask about."""
+        grades = [(5, False, "api_settlement"), (6, False, "api_settlement")]
+        assert _vachar(grades=grades) == set()
+
+    def test_a_sibling_still_open_is_not_evidence(self):
+        """A part-graded ladder on the same event (a winning leg, market still
+        open) does not show the venue has finished with the event. The open
+        match row IS taken, by its own empty book; the exact-score row is not."""
+        assert _vachar(match_status="open") == {62279596}
+
+    def test_a_graded_market_on_another_event_is_not_a_sibling(self):
+        """The join is on `event_id`. A predicate that looked for any graded
+        market at all would ask about every suspended row."""
+        assert _vachar(match_event=2) == set()
+
+    def test_a_market_is_not_its_own_sibling(self):
+        """A field market whose first winner the venue graded while it is still
+        open must not select itself on that grade. No `sib.id <> fm.id` is
+        needed: the row being selected is `open` and a sibling must be
+        `resolved`, so they can never be the same row. This pins that."""
+        selected = _select(
+            markets=[_market(62279636, 1, external_id=VACHAR_EXACT)],
+            events=[_suspended_event(1)],
+            outcomes=VACHAR_EXACT_LEGS,
+            grades=[(2, True, "api_settlement")],
+        )
+        assert selected == set()
+
+    def test_the_screen_stays_inside_the_suspended_arm(self):
+        """A live event's sibling is graded in play all the time (set one, the
+        first touchdown). Letting the screen out of the suspended arm would ask
+        about every market on every live game each run."""
+        assert _vachar(event_status="live", commence=NOW - timedelta(hours=2)) == set()
+        assert _vachar(event_status="scheduled") == set()
+
+    def test_the_suspended_floor_still_leashes_it(self):
+        stale = NOW - timedelta(hours=sweep.SUSPENDED_EVENT_WINDOW_HOURS + 24)
+        assert _vachar(commence=stale) == set()
 
 
 class TestTheSpecimenReachesTheWrite:
