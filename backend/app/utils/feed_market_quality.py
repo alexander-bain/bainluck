@@ -617,6 +617,37 @@ def is_empty_book_midpoint(
     )
 
 
+def is_bidless_empty_book_midpoint(
+    probability: "float | None",
+    yes_bid: "float | None",
+    yes_ask: "float | None",
+) -> bool:
+    """:func:`is_empty_book_midpoint` for a book with NO bid recorded (#8916).
+
+    The one-sided mirror, and deliberately a SEPARATE predicate: the six consumers
+    of :func:`is_empty_book_midpoint` (three of them writers) keep its missing-side
+    pass-through untouched. This one is read-side only and search is its only caller.
+
+    Polymarket writes a bid-less leg's price as the midpoint of ``(0, ask)`` — on
+    2026-09-26 every open ungraded bid-less leg with an ask sat on ``ask/2`` or was
+    off it by a trade. So the missing bid IS the zero side of the book the price was
+    computed from, and the question becomes #5247's own: does ``[0, ask]`` bound
+    nothing, and is the price its centre? The same constants answer it — spread
+    ``ask >= EMPTY_BOOK_MIN_SPREAD``, centre within ``EMPTY_BOOK_MIDPOINT_TOLERANCE``
+    — so the reachable band is the lower half of #6727's, ``[0.44, 0.51]``, and a bid-less longshot
+    (``ask 0.36 -> 0.18``, the lines #5247 kept) is unreachable by arithmetic.
+
+    Specimen: market 61844344 *Ohio State vs. Iowa* served ``Spread -20.5 50%`` and
+    ``Spread -5.5 50%`` on NULL / 0.99. Measured population: 243 legs, prices
+    0.46-0.51, 23 with any trade evidence; of five checked on Gamma, one
+    (Reds–Jays 1st-5 O/U 4.5, 0.51 on NULL/1.00) matches its last trade — a traded
+    number whose book has since emptied is withdrawn, the same named cost #5333 took.
+    """
+    if yes_bid is not None or yes_ask is None:
+        return False
+    return is_empty_book_midpoint(probability, 0.0, yes_ask)
+
+
 def bout_price_is_supported(sides: "Iterable[tuple]") -> bool:
     """May this two-sided bout show numbers at all? (#6777)
 
