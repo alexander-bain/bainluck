@@ -82,6 +82,9 @@ DEFAULT_INVERSION_TTL_S = 150.0
 #: still worth making occasionally — `updated_at` is what drives the hero's
 #: recency decay (#1829), so a source that goes quiet must still look ALIVE
 #: rather than progressively losing weight. Just not every five seconds.
+#:
+#: #5661 — and only when the venue WAS re-read. "Quiet" and "dead" recompute
+#: the same number from the same rows; see `restamp_records_no_observation`.
 UNCHANGED_RESTAMP_INTERVAL_S = 45.0
 
 #: Per-event floor between fast-lane CHART points. Deliberately slower than the
@@ -209,7 +212,9 @@ class TailReceipts:
     caller: a receipt that fails must never cost a price (gotcha #42).
     """
 
-    COALESCIBLE = frozenset({"stamped", "unchanged", "no_reading", "no_row", "no_market"})
+    COALESCIBLE = frozenset(
+        {"stamped", "unchanged", "unobserved", "no_reading", "no_row", "no_market"}
+    )
 
     def __init__(self, source: str, *, coalesce_s: float = TAIL_RECEIPT_COALESCE_S) -> None:
         import uuid
@@ -369,7 +374,7 @@ class TailReceipts:
         value = previous = stamped_at = None
         if result == "stamped":
             _, value, stamped_at, previous = disposition
-        elif result == "unchanged":
+        elif result in ("unchanged", "unobserved"):
             value = disposition[1]
         moved = result == "stamped" and (previous is None or previous != value)
 
@@ -497,6 +502,59 @@ def atomic_stamp_expression(
     )
 
 
+def restamp_records_no_observation(
+    value: float, observed_at, sources, source: str,
+) -> bool:
+    """True when stamping ``value`` now would re-date a price nobody re-read.
+
+    #5661, production 2026-09-26 14:24Z, Slovenia v Scotland (15290677): the
+    moneyline's three Polymarket rows were last written at 13:28Z and Gamma was
+    trading Slovenia at 0.225, while the served `polymarket` leg read 0.405
+    stamped 14:24:35Z. This lane is handed an event whenever ANY of its
+    outcomes flushes — the exact-score and corners books were ticking — so it
+    recomputed 0.405 from the frozen moneyline, found it unchanged, and the
+    45-second re-stamp above dated it with the database clock. It also drew a
+    fresh 0.405 chart point each time, so the source line ran flat to the edge
+    and looked current.
+
+    That is #4028's forgery arriving through the one writer its fix never
+    reached — the 120s poll and the 15-minute matcher both stamp
+    `oldest_observation_time` — and here it does a second kind of damage: the
+    poll orders its population stalest-first by exactly this stamp and drops
+    the freshest end when its fetch window closes (2,534 Polymarket rows that
+    pass). A forged-fresh stamp therefore parks the event behind every other
+    game, so the one writer that WOULD re-read Gamma never reaches it. The
+    fake heartbeat is what keeps the real refresh away.
+
+    So the rule `source_observation_time` states — a re-stamp is only honest
+    when it records a re-observation — applies here too: an UNCHANGED value may
+    be re-stamped only if the rows it came from were seen AFTER the stamp the
+    row already carries. A socket tick or a poll touch writes `last_updated`,
+    so a quiet-but-healthy book still re-stamps; a book no writer has seen does
+    not. Nothing is lost on weight: the hero's relative decay has a 10-minute
+    grace, and the leg that ages past it is exactly the one that should.
+
+    Deliberately narrow, and it ABSTAINS (returns False, i.e. today's
+    behaviour) whenever it cannot know:
+
+    * a MOVED value is never refused — every real move keeps #837's database
+      clock, which the clients use to order frames;
+    * ``observed_at`` None (a contributor that cannot say when it was seen,
+      `oldest_observation_time`'s contract) or no parseable stored entry means
+      there is nothing to compare, and "unknown" is not "stale".
+    """
+    from app.utils.aggregation import parse_source_entry
+
+    if observed_at is None or not isinstance(sources, dict):
+        return False
+    stored_value, stored_at = parse_source_entry(sources.get(source))
+    if stored_value is None or stored_at is None:
+        return False
+    if round(stored_value, 4) != value:
+        return False
+    return observed_at <= stored_at
+
+
 def heartbeat_deadline(max_gap_s: float, sample_interval_s: float) -> float:
     """The age at which an unchanged value must be re-recorded, given sampling.
 
@@ -565,6 +623,9 @@ class LiveBlendRefresher:
             "no_reading": 0,
             "stamped": 0,
             "unchanged_skipped": 0,
+            # #5661 — an unchanged value whose rows no writer has re-read since
+            # the stored stamp. Not re-dated; see `restamp_records_no_observation`.
+            "unobserved_skipped": 0,
             "snapshots_written": 0,
             "snapshots_deduped": 0,
             "errors": 0,
@@ -712,6 +773,7 @@ class LiveBlendRefresher:
         from app.tasks.base import get_task_session
         from app.utils.aggregation import (
             compute_aggregate_probability,
+            oldest_observation_time,
         )
         from app.utils.live_blend import (
             MarketOutcomes, compute_source_home_probability,
@@ -829,6 +891,24 @@ class LiveBlendRefresher:
                         session, event_id, reading.home_probability,
                     )
                     value = round(home_prob, 4)
+
+                    # #5661 — before the throttle decides WHEN to re-stamp, ask
+                    # WHETHER there is anything to re-stamp. The row's own
+                    # stored entry is the reference (not this process's memory,
+                    # which a dyno restart empties), and the reading's rows are
+                    # the ones the number came from, as the 120s poll dates it.
+                    if restamp_records_no_observation(
+                        value,
+                        oldest_observation_time(
+                            getattr(reading, "contributing_outcomes", None)
+                            or (getattr(reading, "outcome", None),)
+                        ),
+                        getattr(event, "win_probability_sources", None),
+                        self.source,
+                    ):
+                        self.stats["unobserved_skipped"] += 1
+                        self._dispositions[event_id] = ("unobserved", value)
+                        continue
 
                     if not self._should_write(event_id, value, now):
                         self.stats["unchanged_skipped"] += 1

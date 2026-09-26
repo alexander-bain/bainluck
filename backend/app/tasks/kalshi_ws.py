@@ -554,13 +554,14 @@ async def _run_kalshi_ws_consumer():
             logger.info(
                 "Kalshi WS: %d updates, %d flushes, %d settlements, %d errors, "
                 "%d msgs | blend stamped=%d no_reading=%d throttled=%d errors=%d "
-                "lock_skipped=%d",
+                "lock_skipped=%d unobserved=%d",
                 stats["price_updates"], stats["flushes"],
                 stats["settlements"], stats["errors"],
                 ws.stats.get("messages", 0),
                 blend["stamped"], blend["no_reading"],
                 blend["throttled"], blend["errors"],
                 blend.get("lock_skipped", 0),
+                blend.get("unobserved_skipped", 0),
             )
             _report_liveness(
                 "kalshi", "streaming" if ws.is_connected else "disconnected",
