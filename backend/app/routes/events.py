@@ -102,6 +102,7 @@ from app.utils.event_completion import (
 )
 from app.utils.current_odds_probability import current_odds_probability
 from app.utils.draw_priced_winner import printable_away
+from app.utils.market_identity import ticker_game_date
 from app.utils.game_market_class import (
     is_game_winner_market,
     outcomes_refute_game_winner,
@@ -863,6 +864,41 @@ def _live_twin_first(markets: list, now: Optional[datetime] = None) -> list:
         for slot, i in zip(idxs, ordered):
             out[slot] = markets[i]
     return out
+
+
+def _search_market_is_past_and_frozen(market, now: Optional[datetime] = None) -> bool:
+    """A Kalshi board whose own ticker date has passed and whose prices stopped.
+
+    #8852 — `?q=recession` (390px, 2026-09-26) served "What will Truist Financial
+    say during their next earnings call?" at four `>99%` rows, stamped Apr 17:
+    market 8665864, `KXEARNINGSMENTIONTFC-26APR17`, no price written since
+    2026-04-17, still stored `open` (gotcha #33; the stored field is #2644's).
+    Kalshi's own event reads "On Apr 17, 2026" with `markets: []`. The `>99%`
+    rows are April's settled YES legs printed as live prices. `_live_twin_first`
+    already knows the row is frozen, but only orders it below a live twin, and
+    this one has none.
+
+    BOTH clauses, because each alone withdraws something true:
+
+    * the ticker date alone would withdraw a past-dated board still being
+      priced (a stale field, not a stale answer);
+    * the frozen bound alone would withdraw a season board no one has traded in
+      two weeks, which is #8417's twin-ordering case and deliberately not a
+      withdrawal.
+
+    A row with no dated ticker, no printable price stamp, or not from Kalshi is
+    "cannot say" and stays.
+    """
+    if getattr(market, "source", None) != "kalshi":
+        return False
+    ticker_date = ticker_game_date(getattr(market, "external_id", None))
+    if ticker_date is None:
+        return False
+    now = now or datetime.now(timezone.utc)
+    if ticker_date >= now.astimezone(ZoneInfo(_EASTERN_TZ_NAME)).date():
+        return False
+    stamp = _newest_price_stamp(market)
+    return stamp is not None and stamp < now - _SEARCH_TWIN_FROZEN_AFTER
 
 
 # Common sport abbreviation mapping — short queries like "NBA", "NFL"
@@ -9844,6 +9880,8 @@ async def search_events(
     futures_markets = [
         m for m in futures_markets
         if not _futures_market_prices_all_withheld(m, _withheld_by_market[m.id])
+        # #8852: a promoted contender that closed in April is not the headline.
+        and not _search_market_is_past_and_frozen(m)
         # #8734: a promoted headline contender is asked too.
         and not _answers_a_served_game_card(m, _served_event_ids)
     ]
@@ -11942,6 +11980,14 @@ async def typeahead_search(
         # later wants consistency between the two surfaces, that is a product
         # decision about what a dropdown row is FOR — measure it, and expect to
         # argue with #4723's control row, not with this comment.
+        #
+        # #8852 is NOT that population and does filter here: a board whose
+        # ticker date has passed and whose prices stopped still carries an
+        # answer (`top_outcomes` below prints April's settled legs as `>99%`),
+        # so its row is a stale claim, not an honest title. Asked before the
+        # dedup key so a live row sharing the key can take it.
+        if _search_market_is_past_and_frozen(market):
+            continue
         dedup_key = _normalize_futures_dedup_key(market)
         if dedup_key in seen_futures_keys:
             continue
@@ -30263,6 +30309,10 @@ def _futures_card_has_no_answer(
     answer. A board whose every priced leg is refused draws a ranked ladder of
     dashes — #6327's defect, reached through the refusal instead of the column.
     ``None`` (nobody asked) is the old four-arm question exactly.
+
+    #8852 adds a sixth: a board whose own ticker date has passed and whose
+    prices stopped (`_search_market_is_past_and_frozen`). Its numbers are real
+    but they answer a question that already closed, printed as if it were open.
     """
     return (
         _futures_market_has_no_outcome_rows(market)
@@ -30270,6 +30320,7 @@ def _futures_card_has_no_answer(
         or _futures_market_prices_only_empty_books(market)
         or _futures_board_is_mostly_unserved(market)
         or _futures_market_prices_all_withheld(market, withheld)
+        or _search_market_is_past_and_frozen(market)
     )
 
 
