@@ -44,6 +44,7 @@ from app.utils.game_market_class import (
     outcomes_refute_game_winner,
 )
 from app.utils.prediction_market_matching import (
+    _fuzzy_team_match,
     _strip_category_prefix,
     extract_matchup_with_ticker_fallback,
     feeds_win_prob_blend,
@@ -208,6 +209,10 @@ class BlendReading:
     #: cannot carry one.
     away_probability: Optional[float] = None
     draw_probability: Optional[float] = None
+    #: The admitted PM reading is its unique home-named outcome's raw quote,
+    #: not a complement or composite. This proves home orientation only: it
+    #: does not assert an away/draw partition (#8814).
+    named_home_quote: bool = False
 
 
 def has_named_three_way_partition(reading: BlendReading) -> bool:
@@ -221,6 +226,26 @@ def has_named_three_way_partition(reading: BlendReading) -> bool:
         getattr(reading, "away_probability", None) is not None
         and getattr(reading, "draw_probability", None) is not None
     )
+
+
+def has_proven_home_orientation(reading: BlendReading) -> bool:
+    """Named-side provenance outranks a price-based orientation guess."""
+    return has_named_three_way_partition(reading) or getattr(
+        reading, "named_home_quote", False
+    )
+
+
+def _is_unique_named_home_quote(
+    entry: MarketOutcomes, outcome: Any, home_team_name: str, away_team_name: str
+) -> bool:
+    """Use the resolver's identity rules, retaining ambiguous binary safeguards."""
+    named_home = [
+        candidate
+        for candidate in entry.outcomes
+        if candidate.name and _fuzzy_team_match(candidate.name, home_team_name)
+        and not _fuzzy_team_match(candidate.name, away_team_name)
+    ]
+    return len(named_home) == 1 and named_home[0] is outcome
 
 
 def _home_probability_for_market(
@@ -1262,6 +1287,14 @@ def compute_source_home_probability(
         outcome=outcome,
         yes_probability=yes_prob,
         devigged=devigged,
+        named_home_quote=(
+            speaker.market.source == "polymarket"
+            and not devigged
+            and home_prob == yes_prob
+            and _is_unique_named_home_quote(
+                speaker, outcome, home_team_name, away_team_name
+            )
+        ),
         away_probability=away_prob,
         draw_probability=draw_prob,
         contributing_outcomes=tuple(contributing_outcomes),

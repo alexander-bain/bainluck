@@ -76,7 +76,7 @@ from app.utils.live_blend import (
     admissible_speakers_can_never_price_a_side,
     compute_source_home_probability as _compute_source_home_probability,
     count_admissible_speakers,
-    has_named_three_way_partition,
+    has_proven_home_orientation,
     select_primary_market as _select_primary_market,
 )
 from app.utils.venue_competition import venue_refuses_placement
@@ -2595,12 +2595,11 @@ def _second_slot(reading, home_prob: float) -> tuple:
 
 
 async def _orient_blend_reading(session, event_id: int, reading, source: str) -> float:
-    """A proven three-way home quote must never become ``P(not home)`` (#8814).
+    """A proven named home quote must never become ``P(not home)`` (#8814).
 
-    Keep the legacy binary heuristic only when the resolver could not prove
-    the side identities from a coherent home/away/draw partition.
+    Keep the legacy binary heuristic when the resolver lacks identity proof.
     """
-    if has_named_three_way_partition(reading):
+    if has_proven_home_orientation(reading):
         return reading.home_probability
     return await _check_and_fix_inversion(
         session, event_id, reading.home_probability, source,
