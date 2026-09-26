@@ -43,7 +43,7 @@ class TestDictContents:
         assert SPORT_LEAGUE_MAP["soccer_epl"] == ("soccer", "eng.1")
 
     def test_espn_sport_mapping_size(self):
-        assert len(ESPN_SPORT_MAPPING) == 27  # +soccer_uefa_nations_league, #8675
+        assert len(ESPN_SPORT_MAPPING) == 28  # +soccer_uefa_nations_league #8675, +americanfootball_ncaaf_fcs #5697
 
     def test_espn_sport_mapping_sample(self):
         assert ESPN_SPORT_MAPPING["basketball_nba"] == "basketball/nba"
@@ -124,8 +124,18 @@ class TestCrossConsistency:
     """Verify dicts are consistent with each other."""
 
     def test_espn_mapping_keys_are_subset_of_sport_league_map(self):
-        """ESPN_SPORT_MAPPING keys should all be in SPORT_LEAGUE_MAP."""
-        assert set(ESPN_SPORT_MAPPING.keys()).issubset(set(SPORT_LEAGUE_MAP.keys()))
+        """Every ESPN_SPORT_MAPPING key resolves to an ESPN path.
+
+        Through SPORT_LEAGUE_MAP, or — for a competition ESPN files under
+        another key's league path (#5697, FCS) — through
+        ESPN_GROUP_SCOPED_BOARDS, which is kept OUT of SPORT_LEAGUE_MAP so
+        `league_identity` does not fold it into that league.
+        """
+        from app.utils.sport_keys import ESPN_GROUP_SCOPED_BOARDS
+
+        resolvable = set(SPORT_LEAGUE_MAP) | set(ESPN_GROUP_SCOPED_BOARDS)
+        assert set(ESPN_SPORT_MAPPING.keys()).issubset(resolvable)
+        assert not set(ESPN_GROUP_SCOPED_BOARDS) & set(SPORT_LEAGUE_MAP)
 
     def test_kalshi_ticker_prefixes_subset_of_ticker_to_sport_key(self):
         """KALSHI_GAME_TICKER_PREFIXES should be a subset of KALSHI_TICKER_TO_SPORT_KEY

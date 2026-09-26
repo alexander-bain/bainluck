@@ -2079,8 +2079,22 @@ async def create_events_from_unmatched_espn(session, our_events, espn_events, sp
 
     ESPN is a first-class source. If ESPN has a game and we don't, create it.
     Other sources (Odds API, StatPal) will find it later via the Event Registry.
+
+    NOT for a group-scoped board (#5697, ``ESPN_GROUP_SCOPED_BOARDS``). ESPN's
+    FCS group lists every game an FCS school plays, so it carries FBS home
+    games too (``BUCK @ PITT``, ``HOW @ RUTG`` on 2026-09-26's board). A create
+    from it would file Pittsburgh's home game under FCS — the misclassification
+    that key exists to prevent — and take the ESPN id its FBS row needs. Those
+    boards ATTACH to rows we already hold and never mint one.
     """
     from app.models.models import Event, ESPNSnapshot
+    from app.utils.sport_keys import ESPN_GROUP_SCOPED_BOARDS
+
+    if sport_key in ESPN_GROUP_SCOPED_BOARDS:
+        stats["espn_create_skipped_group_scoped"] = (
+            stats.get("espn_create_skipped_group_scoped", 0) + 1
+        )
+        return
 
     matched_espn_ids = set()
     for event in our_events:
