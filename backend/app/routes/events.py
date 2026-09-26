@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager, suppress
 
 logger = logging.getLogger(__name__)
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, fields as dataclass_fields, replace as dataclass_replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from zoneinfo import ZoneInfo
@@ -28997,7 +28997,50 @@ def _team_for_event(team_lookup, name: str | None, sport_key: str | None):
         return default
     if identity in rows:
         return rows[identity]
-    return _refuse_other_sport_row(default, sport_key, rows)
+    row = _refuse_other_sport_row(default, sport_key, rows)
+    if row is not None and league_identity(getattr(row, "sport_key", None)) != identity:
+        # #5697: a row borrowed from ANOTHER league lends its crest, never its
+        # season. Harvard @ Brown (FCS, 2026-09-26) had no FCS row under the
+        # name, so the corroborated `lacrosse_ncaa` row answered — the right
+        # crest (one school, one badge, #7262) and a lacrosse "9-5" printed on
+        # a football card. Compared by LEAGUE, not sport: an FBS row's record
+        # on an FCS card is another league's season too.
+        return _crest_only(row)
+    return row
+
+
+#: The `TeamSnapshot` fields that describe one LEAGUE's row rather than the
+#: institution: its season (record, board, stats), its team page and its ids.
+#: A cross-league borrow clears exactly these and keeps crest, colours and
+#: abbreviation (#5697).
+_LEAGUE_BOUND_TEAM_FIELDS = (
+    "id",
+    "slug",
+    "current_record",
+    "standings_data",
+    "standings_updated_at",
+    "season_stats",
+    "espn_id",
+)
+
+
+def _crest_only(team) -> TeamSnapshot:
+    """`team` with its league-bound fields cleared — the crest a borrow may lend.
+
+    Returns a NEW snapshot; the cached row is frozen and shared by every request
+    (#2107), so the borrow cannot be allowed to edit it. Accepts any object with
+    the `Team` attribute surface, because a test (or a future caller) may hand
+    this something other than a `TeamSnapshot`.
+    """
+    cleared = dict.fromkeys(_LEAGUE_BOUND_TEAM_FIELDS)
+    if isinstance(team, TeamSnapshot):
+        return dataclass_replace(team, **cleared)
+    kept = {
+        f.name: getattr(team, f.name, f.default)
+        for f in dataclass_fields(TeamSnapshot)
+        if f.name not in cleared
+    }
+    return TeamSnapshot(**kept, **cleared)
 
 
 def _sport_family(sport_key: str | None) -> str | None:

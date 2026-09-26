@@ -234,15 +234,21 @@ def test_the_page_reads_the_football_row_once_it_exists():
     write there was none, and the card fell back to the lacrosse row."""
     from app.routes.events import TeamNameLookup, _team_for_event
 
-    lacrosse = SimpleNamespace(name="Harvard Crimson", record="9-5")
-    football = SimpleNamespace(name="Harvard Crimson", record="2-1")
+    lacrosse = SimpleNamespace(
+        name="Harvard Crimson", sport_key="lacrosse_ncaa", current_record="9-5"
+    )
+    football = SimpleNamespace(name="Harvard Crimson", sport_key=FCS, current_record="2-1")
     lax_identity = league_identity("lacrosse_ncaa")
 
     before = TeamNameLookup(
         {"Harvard Crimson": lacrosse},
         {"Harvard Crimson": {lax_identity: lacrosse}},
     )
-    assert _team_for_event(before, "Harvard Crimson", FCS) is lacrosse  # the defect
+    # Before this write the card fell back to the lacrosse row — and since the
+    # crest half of #5697 it borrows that row's crest, never its "9-5".
+    borrowed = _team_for_event(before, "Harvard Crimson", FCS)
+    assert borrowed is not lacrosse
+    assert borrowed.current_record is None
 
     after = TeamNameLookup(
         {"Harvard Crimson": lacrosse},
