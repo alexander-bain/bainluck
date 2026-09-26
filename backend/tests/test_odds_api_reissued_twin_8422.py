@@ -5,8 +5,9 @@ kick-off — not twice, 19 hours apart.** (Pillar: MATCHING.)
 
 The specimens are production's, read 2026-09-25 01:45Z: the Fleetwood block
 (old id unlisted by `/events`, new id listed) is tagged; the WNBA Lynx v Liberty
-block (the UNLISTED id is the newer one) and every block where both ids are
-still listed are refused. The SQL half runs against real Postgres in
+block (the UNLISTED id is the newer one) is refused unless every fully priced
+line it held is on the listed row (#8755), and every block where both ids are
+still listed is refused. The SQL half runs against real Postgres in
 `tests/integration/test_odds_api_reissued_twin_8422_pg.py`.
 """
 
@@ -20,6 +21,7 @@ import pytest
 from app.utils.odds_api_reissued_twins import (
     ReissueRow,
     candidate_blocks,
+    lines_moved,
     plan_reissue_tags,
     relisted_banked_ids,
 )
@@ -43,8 +45,26 @@ GHOST = row(15313977, OLD, datetime(2026, 10, 28, 15, tzinfo=UTC), datetime(2026
 CANON = row(15314731, NEW, datetime(2026, 10, 27, 20, tzinfo=UTC), datetime(2026, 9, 18, 22, 7, tzinfo=UTC))
 
 
-def plan_for(rows, schedules):
-    return plan_reissue_tags(candidate_blocks(rows, now=NOW), schedules)
+def plan_for(rows, schedules, lines=None):
+    return plan_reissue_tags(candidate_blocks(rows, now=NOW), schedules, lines)
+
+
+# #8755 — production's WNBA block, read 2026-09-26 01:55Z. The ghost holds the
+# NEWER id (first seen 90 s later) and one FanDuel line; that line is on Sunday's
+# row byte for byte from 02:24Z. First-seen times are production's; the starts
+# are moved past NOW so the pair is inside the sweep's window.
+WNBA = "basketball_wnba"
+SUNDAY = row(15318132, "4a5f", datetime(2026, 9, 27, 18, tzinfo=UTC),
+             datetime(2026, 9, 24, 2, 16, 38, tzinfo=UTC), sport=WNBA,
+             home="Minnesota Lynx", away="New York Liberty")
+FRIDAY = row(15318133, "430c", datetime(2026, 9, 26, 0, 30, tzinfo=UTC),
+             datetime(2026, 9, 24, 2, 18, 9, tzinfo=UTC), sport=WNBA,
+             home="Minnesota Lynx", away="New York Liberty")
+FANDUEL = ("fanduel", -300, 235, "-7.5", "173.5")
+SUNDAY_LINES = frozenset({
+    ("draftkings", -205, 170, "-5.5", "174.5"), ("draftkings", -270, 220, "-6.5", "173.5"),
+    FANDUEL, ("fanduel", -310, 240, "-7.5", "173.5"),
+})
 
 
 class TestTheJudgement:
@@ -58,17 +78,50 @@ class TestTheJudgement:
         plan = plan_for([GHOST, CANON], {EFL: {OLD, NEW}})
         assert plan.tags == [] and plan.refusals[0]["reason"] == "all_listed"
 
-    def test_wnba_the_unlisted_id_is_the_newer_one_and_is_refused(self):
-        wnba = "basketball_wnba"
-        sunday = row(15318132, "4a5f", datetime(2026, 9, 27, 18, tzinfo=UTC),
-                     datetime(2026, 9, 23, 1, tzinfo=UTC), sport=wnba,
-                     home="Minnesota Lynx", away="New York Liberty")
-        friday = row(15318133, "430c", datetime(2026, 9, 26, 0, 30, tzinfo=UTC),
-                     datetime(2026, 9, 23, 2, tzinfo=UTC), sport=wnba,
-                     home="Minnesota Lynx", away="New York Liberty")
-        plan = plan_for([sunday, friday], {wnba: {"4a5f"}})
+    def test_wnba_a_newer_id_ghost_with_no_lines_read_is_refused(self):
+        plan = plan_for([SUNDAY, FRIDAY], {WNBA: {"4a5f"}})
         assert plan.tags == []
         assert plan.refusals[0]["reason"] == "ghost_15318133_is_the_newer_id"
+
+    def test_wnba_a_newer_id_ghost_whose_every_line_moved_is_tagged(self):
+        plan = plan_for([SUNDAY, FRIDAY], {WNBA: {"4a5f"}},
+                        {15318132: SUNDAY_LINES, 15318133: frozenset({FANDUEL})})
+        assert [(t.duplicate_id, t.canonical_id) for t in plan.tags] == [(15318133, 15318132)]
+        assert plan.refusals == []
+
+    def test_a_newer_id_ghost_with_one_line_the_sibling_never_held_is_refused(self):
+        other_game = ("fanduel", -300, 235, "-8.5", "173.5")  # one number off
+        plan = plan_for([SUNDAY, FRIDAY], {WNBA: {"4a5f"}},
+                        {15318132: SUNDAY_LINES, 15318133: frozenset({FANDUEL, other_game})})
+        assert plan.tags == [] and plan.refusals[0]["reason"] == "ghost_15318133_is_the_newer_id"
+
+    def test_the_same_numbers_from_another_sportsbook_do_not_count(self):
+        dk = ("draftkings", -300, 235, "-7.5", "173.5")
+        plan = plan_for([SUNDAY, FRIDAY], {WNBA: {"4a5f"}},
+                        {15318132: frozenset({FANDUEL}), 15318133: frozenset({dk})})
+        assert plan.tags == []
+
+    def test_lines_on_the_ghost_alone_are_not_evidence(self):
+        # The sibling holds no line at all: nothing reappeared anywhere.
+        plan = plan_for([SUNDAY, FRIDAY], {WNBA: {"4a5f"}}, {15318133: frozenset({FANDUEL})})
+        assert plan.tags == []
+
+    def test_lines_never_rescue_a_ghost_the_schedule_still_lists(self):
+        plan = plan_for([SUNDAY, FRIDAY], {WNBA: {"4a5f", "430c"}},
+                        {15318132: SUNDAY_LINES, 15318133: frozenset({FANDUEL})})
+        assert plan.tags == [] and plan.refusals[0]["reason"] == "all_listed"
+
+    def test_lines_never_outrank_another_authority_on_the_ghost(self):
+        anchored = row(15318133, "430c", FRIDAY.commence_time, FRIDAY.first_seen_at, sport=WNBA,
+                       home="Minnesota Lynx", away="New York Liberty", other_anchor=True)
+        plan = plan_for([SUNDAY, anchored], {WNBA: {"4a5f"}},
+                        {15318132: SUNDAY_LINES, 15318133: frozenset({FANDUEL})})
+        assert plan.tags == []
+
+    def test_lines_moved_needs_evidence_and_containment(self):
+        assert lines_moved(frozenset(), SUNDAY_LINES) is False
+        assert lines_moved(frozenset({FANDUEL}), frozenset()) is False
+        assert lines_moved(frozenset({FANDUEL}), SUNDAY_LINES) is True
 
     def test_an_unread_schedule_is_not_an_empty_one(self):
         plan = plan_for([GHOST, CANON], {})
@@ -140,7 +193,8 @@ def sweep(monkeypatch):
     import app.tasks.base as base
     import app.tasks.odds_api_reissued_twin_sweep as mod
 
-    state = {"rows": [GHOST, CANON], "banked": {}, "written": [], "lifted": {}, "confirmed": None}
+    state = {"rows": [GHOST, CANON], "banked": {}, "written": [], "lifted": {}, "confirmed": None,
+             "lines": {}, "lines_asked": [], "lines_fail": False}
 
     @asynccontextmanager
     async def fake_session():
@@ -160,6 +214,12 @@ def sweep(monkeypatch):
     async def load_banked(session):
         return state["banked"]
 
+    async def load_book_lines(session, ids):
+        state["lines_asked"].append(sorted(ids))
+        if state["lines_fail"]:
+            raise RuntimeError("statement timeout")
+        return {i: v for i, v in state["lines"].items() if i in ids}
+
     async def ensure_backup(session, tags, current):
         return len(tags)
 
@@ -177,6 +237,7 @@ def sweep(monkeypatch):
     monkeypatch.setattr(base, "get_task_session", fake_session)
     monkeypatch.setattr(mod, "load_rows", load_rows)
     monkeypatch.setattr(mod, "load_banked_labels", load_banked)
+    monkeypatch.setattr(mod, "load_book_lines", load_book_lines)
     monkeypatch.setattr(mod, "ensure_backup", ensure_backup)
     monkeypatch.setattr(mod, "write_tags", write_tags)
     monkeypatch.setattr(mod, "tagged_now", tagged_now)
@@ -206,6 +267,23 @@ class TestThePass:
         service = FakeService()
         out = run(mod, service)
         assert out["terminal"] == "complete" and service.calls == []
+        assert state["lines_asked"] in ([], [[]])  # and odds_snapshots is not read
+
+    def test_the_wnba_ghost_is_tagged_and_lines_are_read_for_block_members_only(self, sweep):
+        mod, state = sweep
+        state["rows"] = [GHOST, CANON, SUNDAY, FRIDAY]
+        state["lines"] = {15318132: SUNDAY_LINES, 15318133: frozenset({FANDUEL}), 900001: frozenset({FANDUEL})}
+        out = run(mod, FakeService({EFL: {NEW}, WNBA: {"4a5f"}}))
+        assert out["terminal"] == "complete" and sorted(state["written"]) == [15313977, 15318133]
+        assert state["lines_asked"] == [[15313977, 15314731, 15318132, 15318133]]  # no filler
+
+    def test_a_failed_line_read_is_damage_and_the_newer_id_refusal_stands(self, sweep):
+        mod, state = sweep
+        state["rows"] = [SUNDAY, FRIDAY]
+        state["lines_fail"] = True
+        out = run(mod, FakeService({WNBA: {"4a5f"}}))
+        assert out["terminal"] == "partial" and state["written"] == []
+        assert "book lines" in out["errors"][0]
 
     def test_a_failed_schedule_read_is_damage_not_a_quiet_zero(self, sweep):
         mod, _ = sweep

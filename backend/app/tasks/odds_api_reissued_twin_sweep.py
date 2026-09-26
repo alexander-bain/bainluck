@@ -31,7 +31,11 @@ the population fell under :data:`MIN_ROWS_FLOOR`, or the consumer predicate is
 gone. A schedule read that raised is DAMAGE (``errors``), never a quiet zero:
 its blocks are refused, and the run cannot read ``complete``.
 
-Refs #8422, #2693.
+A NEWER id the provider dropped is labelled only when its fully priced lines
+all reappear on the listed sibling (#8755, :func:`lines_moved`); the pass reads
+``odds_snapshots`` for block members only, so a quiet pass still reads nothing.
+
+Refs #8422, #8755, #2693.
 """
 
 from __future__ import annotations
@@ -74,7 +78,7 @@ def sweep_is_disabled() -> bool:
     return bool(os.getenv(REISSUED_TWIN_SWEEP_DISABLED_ENV, "").strip())
 
 
-_POPULATION_SQL = """
+_ROW_SELECT = """
 SELECT e.id, s.key AS sport_key, e.home_team_name, e.away_team_name,
        e.commence_time, e.status,
        array_agg(a.source_id ORDER BY a.source_id) AS odds_api_ids,
@@ -88,10 +92,34 @@ FROM events e
 JOIN sports s ON s.id = e.sport_id
 JOIN event_provider_anchors a
   ON a.event_id = e.id AND a.source = 'odds_api' AND a.id_kind = 'game'
+"""
+
+_POPULATION_SQL = _ROW_SELECT + """
 WHERE e.status IN ('scheduled', 'suspended')
   AND e.commence_time > now()
   AND e.commence_time < now() + make_interval(days => :lookahead)
 GROUP BY e.id, s.key
+"""
+
+#: The same row shape for NAMED ids, with no status or clock filter — the
+#: one-off repair's read (`scripts/repair_8755_newer_id_twin.py`), whose rows
+#: are past the start the sweep's window requires. The judgement is unchanged.
+_BY_ID_SQL = _ROW_SELECT + """
+WHERE e.id = ANY(:ids)
+GROUP BY e.id, s.key
+"""
+
+#: Each block member's FULLY priced lines (#8755). Distinct, so a row's hundreds
+#: of snapshots cost one line per price change. The decimals are rendered by
+#: Postgres on both rows, so the ghost and its sibling share one spelling.
+_BOOK_LINES_SQL = """
+SELECT DISTINCT event_id, bookmaker, home_moneyline, away_moneyline,
+       CAST(home_spread AS text) AS home_spread, CAST(over_under AS text) AS over_under
+FROM odds_snapshots
+WHERE event_id = ANY(:ids)
+  AND bookmaker IS NOT NULL
+  AND home_moneyline IS NOT NULL AND away_moneyline IS NOT NULL
+  AND home_spread IS NOT NULL AND over_under IS NOT NULL
 """
 
 
@@ -107,6 +135,33 @@ async def load_rows(session, *, lookahead: int) -> tuple[list[ReissueRow], dict[
     result = await session.execute(
         text(_POPULATION_SQL), {"lookahead": int(lookahead)}
     )
+    return _rows_from(result)
+
+
+async def load_rows_by_id(session, ids) -> tuple[list[ReissueRow], dict[int, str]]:
+    """The planner's row shape for NAMED ids, with no status or clock filter."""
+    from sqlalchemy import text
+
+    return _rows_from(await session.execute(text(_BY_ID_SQL), {"ids": list(ids)}))
+
+
+async def load_book_lines(session, ids) -> dict[int, frozenset]:
+    """``{event_id: frozenset of BookLine}`` for the named rows. #8755."""
+    from sqlalchemy import text
+
+    if not ids:
+        return {}
+    lines: dict[int, set] = {}
+    result = await session.execute(text(_BOOK_LINES_SQL), {"ids": list(ids)})
+    for r in result:
+        lines.setdefault(r.event_id, set()).add(
+            (r.bookmaker, int(r.home_moneyline), int(r.away_moneyline),
+             r.home_spread, r.over_under)
+        )
+    return {eid: frozenset(v) for eid, v in lines.items()}
+
+
+def _rows_from(result) -> tuple[list[ReissueRow], dict[int, str]]:
     rows, current_tags = [], {}
     for r in result:
         tags_text = r.tags_text or "[]"
@@ -379,7 +434,13 @@ async def run_odds_api_reissued_twin_sweep(
         blocks = candidate_blocks(rows, now=now)
         sports = {b[0].sport_key for b in blocks} | {s for s, _, _ in banked.values()}
         schedules, errors = await read_schedules(sports, service=service)
-        plan = plan_reissue_tags(blocks, schedules)
+        lines: dict[int, frozenset] = {}
+        try:
+            lines = await load_book_lines(session, [m.event_id for b in blocks for m in b])
+        except Exception as exc:  # noqa: BLE001 — unread lines refuse, and say so
+            await session.rollback()
+            errors.append(f"book lines: {type(exc).__name__}: {exc}"[:200])
+        plan = plan_reissue_tags(blocks, schedules, lines)
         relisted = relisted_banked_ids(
             {eid: (s, oid) for eid, (s, oid, _) in banked.items()}, schedules
         )
