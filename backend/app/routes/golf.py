@@ -34,6 +34,8 @@ from app.utils.majors_calendar import _as_utc_date  # one parser for the calenda
 from app.utils.odds_math import probability_to_american
 from app.utils.golf_event_format import (  # #7985
     is_team_match_play_key,
+    is_team_side_name,
+    normalize_team_side_name,
     select_team_side_matchup,
     withhold_individual_market,
 )
@@ -2457,17 +2459,32 @@ def _promote_team_matchup_to_card(tournaments: list[dict]) -> int:
     `_drop_contentless_team_cards`, so a card that gets its teams here is no
     longer contentless and survives on them.
 
-    Only ever fills a card that has NO golfers, so it cannot displace a real
-    field, and `select_team_side_matchup` only ever returns a pair whose two
-    sides both name teams, so it cannot put a person back at the top of the
-    card. Returns the number of cards led.
+    #8769: it used to fill only a card with NO golfers, on the reading that
+    whatever golfers a cup card had were "a real field". A cup has no individual
+    champion, so they never are. On production 2026-09-26 the live Presidents
+    Cup card read "47.0% USA — Leader" over Matsuyama 21.5% · Kim 14.0% while
+    International led on both venues. Polymarket's winner market is `USA` /
+    `International` — one word each, so `_is_h2h_matchup` does not take it —
+    and `_PROP_OUTCOME_RE`'s region arm drops `International` as a nationality
+    prop, leaving `USA` alone at the head of Kalshi's points-leader field.
+    The card had 14 entries, so it never became a cup, and the correct pair
+    (Team International 49.5 v Team USA 42.5) sat in `h2h_matchups` unread.
+
+    So on a team match-play card the team pair leads WHATEVER the card holds,
+    and the individuals go: the cup renderer draws two sides and nothing under
+    them. `select_team_side_matchup` only ever returns a pair whose two sides
+    both name teams, so this still cannot put a person at the top of the card.
+    Where there is no pair, a lone team side is taken off the card
+    (`_strip_lone_team_side`) — one team with no opponent is never a hero.
+    Returns the number of cards led.
     """
     promoted = 0
     for t in tournaments:
-        if not is_team_match_play_key(t.get("key")) or t.get("golfers"):
+        if not is_team_match_play_key(t.get("key")):
             continue
         matchup = select_team_side_matchup(t.get("h2h_matchups"))
         if not matchup:
+            _strip_lone_team_side(t)
             continue
 
         # Shaped exactly like `_build_tournament_entry`'s golfers, because the
@@ -2503,6 +2520,33 @@ def _promote_team_matchup_to_card(tournaments: list[dict]) -> int:
             sides[1]["name"], sides[1]["probability"] * 100,
         )
     return promoted
+
+
+def _strip_lone_team_side(t: dict) -> None:
+    """Take a team side with no opponent off a team match-play card. (#8769)
+
+    Reached only when the card has no team pair to lead with. A clean pair
+    already in `golfers` (two DIFFERENT sides and nothing else) is left alone;
+    anything else that names a side is a fragment of a team market whose other
+    side was dropped upstream, and ranked beside players it reads as the
+    leader of a field it is not in. Players are left where they were — what
+    leads a cup card with no team market is #7985's question, not this one.
+    """
+    golfers = t.get("golfers") or []
+    sides = {normalize_team_side_name(g.get("name")) for g in golfers if is_team_side_name(g.get("name"))}
+    if not sides or (len(golfers) == 2 and len(sides) == 2):
+        return
+    kept = [g for g in golfers if not is_team_side_name(g.get("name"))]
+    for rank, g in enumerate(kept, start=1):
+        g["rank"] = rank
+    t["golfers"] = kept
+    t["_all_golfers"] = [
+        g for g in t.get("_all_golfers", []) if not is_team_side_name(g.get("name"))
+    ]
+    logger.info(
+        "Golf #8769: took %d lone team side(s) off team match-play card '%s'",
+        len(golfers) - len(kept), t.get("name") or t.get("key"),
+    )
 
 
 def _drop_contentless_team_cards(tournaments: list[dict]) -> list[dict]:
