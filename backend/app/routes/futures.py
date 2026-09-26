@@ -1987,6 +1987,10 @@ async def get_playoff_grid(
         "division_winner": "division",
         "make_playoffs": "make_playoffs",
         "pennant": "pennant",
+        # #3047: pennants key as their own question, not "championship" —
+        # without these two the grid's key-driven fetch would stop seeing them.
+        "al_pennant": "pennant",
+        "nl_pennant": "pennant",
         # Golf
         "win": "win",
         "top_5": "top_5",
