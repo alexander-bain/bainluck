@@ -257,7 +257,12 @@ class TestTheLadderStopsPrintingOneLabelTwice:
         m = _ceasefire_board()
         ladder = _ladder(m)
         assert len(ladder) == _SEARCH_LADDER_LIMIT
-        assert ladder[-1] == "November 30", (
+        # #8834: "cancelled by...?" is a date ladder, so the card now runs in
+        # deadline order and `November 30` is no longer its LAST row. The claim
+        # is unchanged: five DISTINCT rungs, the slot the twin held filled by a
+        # rung that existed all along rather than left empty.
+        assert len(set(ladder)) == _SEARCH_LADDER_LIMIT
+        assert "November 30" in ladder, (
             "a rung that existed all along and was truncated away by the twin"
         )
 

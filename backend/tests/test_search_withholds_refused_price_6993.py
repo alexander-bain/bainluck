@@ -283,9 +283,20 @@ def test_withheld_none_is_a_pass_through():
     assert before == explicit_empty
     # And the pass-through still serves the defect, which is what makes the
     # tests above meaningful rather than vacuous: with nobody asking, the
-    # refused leg is still the headline at 1.0.
-    assert before[0]["id"] == WITHHELD_ID
-    assert before[0]["probability"] == pytest.approx(1.0)
+    # refused leg is still printed at 1.0.
+    #
+    # #8834: ON THE SHORT LADDER, because the full nineteen-leg specimen no
+    # longer reaches it on either path. A cumulative ladder's card is now the
+    # rungs around its crossing (22,400–23,200 here), and `24,800 or below` sits
+    # far above it, so "the refused leg leads the full card" stopped being true
+    # for a reason that has nothing to do with the refusal. The short ladder is
+    # where the withholding tests above actually bite, so the defect is shown
+    # there.
+    short = {WITHHELD_ID, GRADED_CONTROL_ID, 1597363, 1597362}
+    unrefused = _by_id(
+        _build_search_top_outcomes(_market(_legs(only=short)), limit=5, lean=False)
+    )
+    assert unrefused[WITHHELD_ID]["probability"] == pytest.approx(1.0)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

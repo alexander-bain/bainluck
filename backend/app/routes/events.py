@@ -29661,6 +29661,7 @@ from app.utils.outcome_display import (  # noqa: E402
     drop_unbacked_legs as _drop_unbacked_legs,
 )
 from app.utils.futures_liveness import leg_is_graded  # noqa: E402  #8640
+from app.utils.ladder_monotonicity import DEC, cumulative_outcome_ladder  # noqa: E402  #8834
 from app.utils.duplicate_condition_outcomes import (  # noqa: E402
     drop_duplicate_legs as _drop_duplicate_legs,
 )
@@ -30535,6 +30536,82 @@ async def _search_container_parent_ids(
     ) | _search_unlinked_container_parents_among(unlinked, named_rows)
 
 
+def _search_ladder_window(
+    market: "FuturesMarket",
+    legs: list,
+    withheld_ids: set[int],
+    limit: int,
+) -> Optional[list]:
+    """``limit`` rungs around a cumulative ladder's 50% crossing, in threshold
+    order — or ``None`` when the legs are not ONE ladder, and the caller's
+    probability sort stands.
+
+    #8834, measured live 2026-09-26 at 390px: ``?q=fed rate`` drew *Fed funds
+    rate after Oct 2026 meeting?* (Kalshi 109947, 11 rungs) as ``Above 2.75%
+    >99% · Above 3.75% >99% · Above 3.00% >99% · Above 3.25% >99% · Above 3.50%
+    99%``. Top-N by probability is the favourites on an exclusive board and the
+    LOOSEST, always-true rungs on a nested one — "above 2.75%" beats "above 4%"
+    for the reason "heads or tails" beats "heads" (#4640's words) — and the ties
+    at 0.995 then fell back to row order, which is why the thresholds came out
+    scrambled. The rungs that carry the answer (Above 4.00% 63%, Above 4.25% 2%)
+    were never drawn.
+
+    The gate is ``cumulative_outcome_ladder`` with ``dates=True`` and the market
+    question, the one discriminator the feed's divisor, its leader copy and
+    ``drop_incoherent_ladder_outcomes`` already share (#4640, #7641, #7650,
+    #7674): every leg a rung, one direction, one affix, no duplicate value. A
+    band set, a mixed ``↑``/``↓`` board and every exclusive field come back
+    ``None`` and keep their order byte-for-byte.
+
+    THE CROSSING IS COUNTED, NOT SEARCHED FOR. A venue ladder is noisy — 109947
+    prices Above 3.75% over Above 3.50%, and the Nasdaq-100 board #6993 was
+    written for (109485) carries graded winners and a stray ``24,200 or below``
+    at 0.76 that no nested ladder can hold. "The rung nearest 0.5" lands on that
+    stray 0.76, five rungs from where the live rungs actually cross; "the first
+    rung past 0.5" answers about whichever noise it meets first. Counting the
+    priced rungs on the near side of even is the ladder's median: on a clean
+    ladder it is exactly the crossing, and one mispriced rung can move it by at
+    most one slot. The window then takes ``ceil(limit/2)`` rungs before that
+    boundary and the rest after it, so the card shows both sides of the answer.
+
+    Withheld (#6993) and unpriced rungs are not counted, but they keep their
+    place in the window — a dash in its threshold slot is honest, deleting the
+    slot is not. A ladder wholly on one side of even (``Next Fed rate hike?``,
+    all 92–98%) clamps to that end, which is still the rungs nearest the answer.
+    Graded rungs (#8640) are counted at their price and stay in threshold order
+    with their grade on the wire: on a ladder the position IS the meaning, and
+    there is no headline row for a result to steal.
+    """
+    ladder = cumulative_outcome_ladder(
+        [{"name": o.name, "leg": o} for o in legs],
+        dates=True,
+        question=getattr(market, "name", None),
+    )
+    if ladder is None:
+        return None
+    rungs, direction = ladder
+    ordered = [row["leg"] for _value, row in rungs]
+    priced = [
+        index
+        for index, o in enumerate(ordered)
+        if o.id not in withheld_ids and o.current_probability is not None
+    ]
+    if not priced:
+        return None
+    # Rungs run in ascending threshold order. A falling ladder ("Above X") is
+    # likely at the low end, so its near side is the rungs at or over even; a
+    # rising one ("X or below", "Before <date>") is the reverse.
+    falling = direction == DEC
+    near = sum(
+        1
+        for index in priced
+        if (float(ordered[index].current_probability) >= 0.5) == falling
+    )
+    boundary = priced[near] if near < len(priced) else priced[-1] + 1
+    start = max(0, min(boundary - (limit + 1) // 2, len(ordered) - limit))
+    return ordered[start : start + limit]
+
+
 def _build_search_top_outcomes(
     market: "FuturesMarket",
     limit: int = 5,
@@ -30667,14 +30744,21 @@ def _build_search_top_outcomes(
             return 1
         return 2
 
-    real.sort(
-        key=lambda o: (
-            _headline_tier(o),
-            0 if o.id in _withheld_ids else (o.current_probability or 0),
-        ),
-        reverse=True,
-    )
-    top = real[:limit]
+    # #8834: a cumulative ladder is drawn as the rungs around its crossing, in
+    # threshold order, and never reaches the probability sort below. See
+    # `_search_ladder_window` for why the sort is wrong on exactly this shape.
+    window = _search_ladder_window(market, real, _withheld_ids, limit)
+    if window is not None:
+        top = window
+    else:
+        real.sort(
+            key=lambda o: (
+                _headline_tier(o),
+                0 if o.id in _withheld_ids else (o.current_probability or 0),
+            ),
+            reverse=True,
+        )
+        top = real[:limit]
     # #6479, and it is the SAME rung a reader meets on the detail page. Search
     # ranks these boards by probability, so the truncated name is not buried in
     # the tail: `?q=Los Angeles` led `2027 Pro Football Champion` with `Los
