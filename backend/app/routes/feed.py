@@ -178,6 +178,7 @@ from app.utils.feed_market_quality import (
     FIRST_PAGE_WHY_NOW_WINDOW,
     has_no_real_price,
     is_locked_near_certain,
+    is_templated_flat_ladder,
     range_ladder_missing_middle,
 )
 from app.utils.feed_reasons import (
@@ -11078,6 +11079,17 @@ async def _score_sports_mode_futures(
             lambda o: float(o.current_probability) if o.current_probability is not None else None,
             market.name,
         )
+        # #8826: and no card whose leading rungs are one copied, untraded quote
+        # ("Above 0.00% 80% / Above 0.25% 80% / …"). Asked of the survivors, so it
+        # judges the legs the card would print — see `is_templated_flat_ladder`.
+        if is_templated_flat_ladder(
+            [
+                (o.name, o.current_probability, o.current_yes_bid, o.current_yes_ask)
+                for o in sorted_outcomes
+            ],
+            market.name,
+        ):
+            continue
         outcomes_data = []
         leader_name = None
         leader_prob = None
@@ -12736,6 +12748,17 @@ async def _score_futures(
                 ),
                 market.name,
             )
+
+            # #8826: nor one whose leading rungs are one copied, untraded quote.
+            # Both serializers print the same card, so this lands in both (#4610).
+            if is_templated_flat_ladder(
+                [
+                    (o.name, o.current_probability, o.current_yes_bid, o.current_yes_ask)
+                    for o in sorted_outcomes
+                ],
+                market.name,
+            ):
+                continue
 
             # #6552 — completion happens at the print step, never in place.
             display_names = _card_display_names(sorted_outcomes[:10])
