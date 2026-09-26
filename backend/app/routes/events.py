@@ -30775,10 +30775,20 @@ def _search_ladder_window(
     most one slot. The window then takes ``ceil(limit/2)`` rungs before that
     boundary and the rest after it, so the card shows both sides of the answer.
 
-    Withheld (#6993) and unpriced rungs are not counted, but they keep their
-    place in the window — a dash in its threshold slot is honest, deleting the
-    slot is not. A ladder wholly on one side of even (``Next Fed rate hike?``,
-    all 92–98%) clamps to that end, which is still the rungs nearest the answer.
+    THE WINDOW IS TAKEN OVER PRICED RUNGS ONLY. Withheld (#6993) and unpriced
+    rungs are neither counted nor drawn. The first version kept them in their
+    threshold slots as dashes, and the after-check on production (2026-09-26
+    17:5xZ) showed why that fails: *Fed funds rate after Jan 2027 meeting?*
+    (108626) prices every rung up to Above 4.25% (64%), then leaves 4.50, 4.75
+    and 5.00 unquoted, then quotes Above 5.25% at 13% on a 1¢/97¢ book. The
+    boundary fell on 5.25, the three slots before it were the three dashes, and
+    the card drew ``— · — · — · 13% · —``: one number, and no rung on the near
+    side of even at all. Taken over priced rungs, the same ladder draws 3.75%
+    85% · 4.00% 84% · 4.25% 64% · 5.25% 13% · 6.00% 16% — both sides of the
+    answer. A dash is only dropped when it would displace a priced rung: a
+    ladder that fits in ``limit`` is drawn whole, refused slots included.
+    A ladder wholly on one side of even (``Next Fed rate hike?``, all 92–98%)
+    clamps to that end, which is still the rungs nearest the answer.
     Graded rungs (#8640) are counted at their price and stay in threshold order
     with their grade on the wire: on a ladder the position IS the meaning, and
     there is no headline row for a result to steal.
@@ -30799,6 +30809,10 @@ def _search_ladder_window(
     ]
     if not priced:
         return None
+    if len(ordered) <= limit:
+        # Every rung fits, so a dash displaces nothing: a refused price stays in
+        # its slot, present and null (#6993's short-ladder contract).
+        return ordered
     # Rungs run in ascending threshold order. A falling ladder ("Above X") is
     # likely at the low end, so its near side is the rungs at or over even; a
     # rising one ("X or below", "Before <date>") is the reverse.
@@ -30808,9 +30822,10 @@ def _search_ladder_window(
         for index in priced
         if (float(ordered[index].current_probability) >= 0.5) == falling
     )
-    boundary = priced[near] if near < len(priced) else priced[-1] + 1
-    start = max(0, min(boundary - (limit + 1) // 2, len(ordered) - limit))
-    return ordered[start : start + limit]
+    # `near` is also the first far-side rung's place in `priced`, so the window
+    # takes ceil(limit/2) priced rungs before it and the rest after it.
+    start = max(0, min(near - (limit + 1) // 2, len(priced) - limit))
+    return [ordered[index] for index in priced[start : start + limit]]
 
 
 def _search_query_matched_leg(market, board: list, top: list, query_terms, withheld: set):

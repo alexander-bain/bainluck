@@ -105,13 +105,52 @@ def test_a_ladder_wholly_on_one_side_of_even_clamps_to_the_nearest_end():
     assert _names(out) == ["Before July 2026", "Before 2027", "Before July 2027"]
 
 
-def test_a_withheld_rung_cannot_be_the_centre_but_keeps_its_slot():
+def test_a_withheld_rung_is_neither_the_centre_nor_drawn():
+    """A refused price draws no dash: the window is the priced rungs around the
+    crossing, in threshold order (see the Jan 2027 specimen below for why)."""
     out = _build_search_top_outcomes(_market(), withheld={CROSSING_ID})
-    ids = [o["id"] for o in out]
-    assert CROSSING_ID in ids, "a refused price keeps its threshold slot as a dash"
-    assert next(o for o in out if o["id"] == CROSSING_ID)["probability"] is None
+    assert CROSSING_ID not in [o["id"] for o in out]
+    assert all(o["probability"] is not None for o in out)
     names = _names(out)
     assert names == sorted(names, key=lambda n: float(n.split()[1].rstrip("%")))
+    assert names == ["Above 3.25%", "Above 3.50%", "Above 3.75%", "Above 4.25%", "Above 4.50%"]
+
+
+#: Kalshi 108626 *Fed funds rate after Jan 2027 meeting?*, all 25 rungs as stored,
+#: read via ``db-query`` 2026-09-26 17:5xZ. Four rungs are unquoted (no price, no
+#: book), and Above 5.25% is quoted at 13% on a 1c/97c book.
+JAN_2027_LEGS = [
+    (2_000 + i, f"Above {t:.2f}%", f"KXFED-27JAN-T{t:.2f}", p, b, a)
+    for i, (t, p, b, a) in enumerate([
+        (0.00, 0.98, 0.97, 0.99), (0.25, 0.96, 0.94, 0.98), (0.50, 0.975, 0.97, 0.98),
+        (0.75, 0.975, 0.97, 0.98), (1.00, 0.97, 0.96, 0.98), (1.25, 0.96, 0.94, 0.98),
+        (1.50, 0.95, 0.93, 0.97), (1.75, 0.95, 0.93, 0.97), (2.00, 0.925, 0.89, 0.96),
+        (2.25, 0.955, 0.92, 0.99), (2.50, 0.94, 0.92, 0.96), (2.75, 0.935, 0.90, 0.97),
+        (3.00, 0.94, 0.91, 0.97), (3.25, 0.92, 0.88, 0.96), (3.50, 0.925, 0.86, 0.99),
+        (3.75, 0.85, 0.78, 0.92), (4.00, 0.835, 0.75, 0.92), (4.25, 0.64, 0.56, 0.72),
+        (4.50, None, None, None), (4.75, None, None, None), (5.00, None, None, None),
+        (5.25, 0.13, 0.01, 0.97), (5.50, None, None, None), (5.75, None, None, None),
+        (6.00, 0.155, 0.01, 0.30),
+    ])
+]
+
+
+def test_unquoted_rungs_do_not_push_the_answer_off_the_card():
+    """🔴 THE REPAIR, on production's own rows. The first window kept unquoted
+    rungs in their slots and served `4.50 — · 4.75 — · 5.00 — · 5.25 13% · 5.50 —`:
+    one number and no rung above even. Over priced rungs it shows both sides."""
+    market = _market(JAN_2027_LEGS, name="Fed funds rate after Jan 2027 meeting?")
+    out = _build_search_top_outcomes(market)
+    assert _names(out) == [
+        "Above 3.75%", "Above 4.00%", "Above 4.25%", "Above 5.25%", "Above 6.00%",
+    ]
+    assert all(o["probability"] is not None for o in out)
+
+
+def test_the_typeahead_row_of_the_same_ladder_straddles_even():
+    market = _market(JAN_2027_LEGS, name="Fed funds rate after Jan 2027 meeting?")
+    out = _build_search_top_outcomes(market, limit=3, lean=True)
+    assert _names(out) == ["Above 4.00%", "Above 4.25%", "Above 5.25%"]
 
 
 def test_control_an_exclusive_field_keeps_its_probability_order():
