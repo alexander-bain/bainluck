@@ -311,15 +311,22 @@ struct ChampionshipPathView: View {
     }
 
     private func stageBar(stage: ProgressionStageData, color: Color) -> some View {
-        let prob = stage.probability ?? 0
+        let display = ChampionshipRowLayout.display(for: stage)
         return GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(Color.secondary.opacity(0.08))
-                Capsule()
-                    .fill(ChampionshipRowLayout.isClinched(probability: stage.probability)
-                          ? Color.green : color)
-                    .frame(width: max(2, geo.size.width * min(1.0, prob)))
+            // #8691 — a withheld row draws no track either. The bar is a picture
+            // of a quantity, and an empty track beside a stage with no number
+            // reads as "0%" drawn instead of written. The clear frame keeps the
+            // row's height and the badge column where the priced rows put them.
+            if let fraction = display.barFraction {
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Color.secondary.opacity(0.08))
+                    Capsule()
+                        .fill(display == .clinched ? Color.green : color)
+                        .frame(width: max(2, geo.size.width * min(1.0, fraction)))
+                }
+            } else {
+                Color.clear
             }
         }
         // Deliberately no `minWidth`. The minimum is the *criterion* the layout
@@ -379,8 +386,7 @@ struct ChampionshipStageBadges: View {
     }
 
     private func badges(_ layout: AnyLayout) -> some View {
-        let prob = stage.probability ?? 0
-        let isClinched = ChampionshipRowLayout.isClinched(probability: stage.probability)
+        let display = ChampionshipRowLayout.display(for: stage)
 
         return layout {
             // #4108 — a settled row carries no movement. This drew
@@ -397,7 +403,11 @@ struct ChampionshipStageBadges: View {
             // else, and a stage at 0.1% is a long shot rather than an
             // elimination. `LadderCardView`'s `eliminated` arm has no counterpart
             // here to keep in step with.
-            if !isClinched,
+            //
+            // #8691 — and a WITHHELD row carries none either: a delta is a
+            // statement about the very level the row declines to state, so
+            // `↑0.5%` beside a blank would assert a price and then not name it.
+            if case .priced = display,
                let trend = stage.trend24h,
                ChampionshipRowLayout.showsTrendBadge(trend: trend) {
                 HStack(spacing: 1) {
@@ -424,7 +434,8 @@ struct ChampionshipStageBadges: View {
                 )
             }
 
-            if isClinched {
+            switch display {
+            case .clinched:
                 HStack(spacing: 2) {
                     Image(systemName: "checkmark")
                         .font(.system(size: 8, weight: .bold))
@@ -433,7 +444,7 @@ struct ChampionshipStageBadges: View {
                         .lineLimit(1)
                 }
                 .foregroundStyle(.green)
-            } else {
+            case .priced(let prob):
                 // `lineLimit(1)` stays, and it is now genuinely a backstop rather
                 // than the thing standing between the reader and the number: the
                 // arrangement above gives first, so this only ever fires on a
@@ -446,6 +457,11 @@ struct ChampionshipStageBadges: View {
                     .monospacedDigit()
                     .lineLimit(1)
                     .foregroundStyle(color)
+            // #8691 — the stage keeps its label and the badge says nothing.
+            // Not "—", not "no price": notice 34 (and web's #8203) leave the
+            // space empty. This arm is what `<1%` used to be.
+            case .withheld:
+                EmptyView()
             }
         }
     }

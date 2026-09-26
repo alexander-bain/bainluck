@@ -99,6 +99,25 @@ enum ChampionshipRowShape: Equatable {
     case badgesAboveBar
 }
 
+/// What one Championship Path row shows — see `ChampionshipRowLayout.display(for:)`.
+enum ChampionshipStageDisplay: Equatable {
+    /// Decided in the team's favour: `✓ clinched` over a full bar.
+    case clinched
+    /// Trading: the percentage, its bar, and the 24h move.
+    case priced(Double)
+    /// Nothing we can vouch for: the label alone, no bar, no badge (#8691).
+    case withheld
+
+    /// How much of the track the bar fills; `nil` draws no bar at all.
+    var barFraction: Double? {
+        switch self {
+        case .clinched: return 1
+        case .priced(let p): return p
+        case .withheld: return nil
+        }
+    }
+}
+
 enum ChampionshipRowLayout {
 
     // MARK: Measured constants
@@ -183,6 +202,29 @@ enum ChampionshipRowLayout {
         (probability ?? 0) > clinchedProbability
     }
 
+    /// What one row shows (#8691). Every drawing decision on the row — bar,
+    /// badge, trend — reads this and nothing else.
+    ///
+    /// A stage served `probability: null` printed `<1%` over a 2 pt bar, because
+    /// the row coerced `stage.probability ?? 0` and `formatProb(0)` is `<1%`. The
+    /// specimen is the Dodgers at 97-62 with three games left: "Make Playoffs
+    /// <1% · Division <1%" directly above "NL Champ 42%". The payload had no
+    /// number; the grid behind it had graded both cells `won`.
+    ///
+    /// So: a `won` stage is clinched whatever it was last priced at; any other
+    /// declared non-live state, or no number at all, is WITHHELD — the label
+    /// stays and the row shows nothing, which is web's #8203 treatment and
+    /// notice 34's remedy (leave the space empty; never draw a false zero,
+    /// never explain the emptiness). No state declared is the pre-register
+    /// payload, where the number alone decides, as it always did.
+    static func display(for stage: ProgressionStageData) -> ChampionshipStageDisplay {
+        let declared = GridCellRenderState.declared(stage.state)
+        if declared == .won { return .clinched }
+        if let declared, declared != .live { return .withheld }
+        guard let p = stage.probability, p.isFinite, p >= 0, p <= 1 else { return .withheld }
+        return isClinched(probability: p) ? .clinched : .priced(p)
+    }
+
     static func showsTrendBadge(trend: Double?) -> Bool {
         guard let trend else { return false }
         return abs(trend) >= minimumTrendToShow
@@ -202,7 +244,7 @@ enum ChampionshipRowLayout {
     /// clinched row was the wider of the two.
     static func badgeWidth(for stages: [ProgressionStageData]) -> CGFloat {
         guard !stages.isEmpty else { return valueBadgeWidth }
-        return stages.allSatisfy { isClinched(probability: $0.probability) }
+        return stages.allSatisfy { display(for: $0) == .clinched }
             ? allClinchedBadgeWidth
             : valueBadgeWidth
     }

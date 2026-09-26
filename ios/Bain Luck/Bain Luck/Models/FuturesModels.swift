@@ -28,9 +28,14 @@ nonisolated struct ProgressionStageData: Decodable, Sendable {
     let probability: Double?
     /// `trend_24h`. See `TolerantNumeric` for why the key is spelled `trend24H`.
     @TolerantNumeric var trend24h: Double?
+    /// #8691 — the grid cell's reader state (`won` / `eliminated` / `live` / …),
+    /// the same register `/api/playoffs/{league}` serves on every cell. Optional
+    /// because `/team-progression` does not carry it yet; read through
+    /// `ChampionshipRowLayout.display(for:)`, never directly.
+    let state: String?
 
     private enum CodingKeys: String, CodingKey {
-        case key, label, probability
+        case key, label, probability, state
         case trend24h = "trend24H"
     }
 }
