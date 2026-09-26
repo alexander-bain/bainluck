@@ -340,7 +340,8 @@ export function parseSpreadRungs(
   }>,
   homeTeam: string,
   awayTeam: string,
-  railUnit: string
+  railUnit: string,
+  opts: { keepUnpriced?: boolean } = {}
 ): ParsedSpread[] {
   /* #8739: a Polymarket market's uncovered leg is read as its cover rung at
      1 − p. Where the cover leg itself is served, that leg IS the reading and
@@ -348,15 +349,26 @@ export function parseSpreadRungs(
      Dodgers 0.500, Giants 0.505 → 0.495), which `collapseDuplicateRungs` can
      then keep as the row it prints. So the complement is used only for a
      market whose cover leg is absent. */
+  /* #8811: on a QUOTING ladder a rung the venue has never priced
+     (`probability: null`) is not a 0% rung. Read as 0 it printed `0%` six times
+     on a WNBA 1st half card, and its fake zero sorted ahead of the one priced
+     rung, which the monotonicity pass then dropped. Filtered first, so an
+     unpriced cover leg is also absent for the complement rule above.
+     `keepUnpriced` is for a GRADED ladder (#6203): it grades each rung against
+     the final score, prints no percentage, and a settled venue serves `null`
+     for rungs it lost — those rows are the "not cleared" half of the card. */
+  const priced = rows
+    .filter((s) => opts.keepUnpriced || (typeof s.probability === "number" && Number.isFinite(s.probability)))
+    .map((s) => ({ ...s, probability: s.probability ?? 0 }));
   const coverServed = new Set(
-    rows.filter((s) => polymarketLegRole(s.market_name, s.outcome_name) === "cover").map((s) => s.market_name)
+    priced.filter((s) => polymarketLegRole(s.market_name, s.outcome_name) === "cover").map((s) => s.market_name)
   );
-  return rows
+  return priced
     .filter((s) => !(polymarketLegRole(s.market_name, s.outcome_name) === "other" && coverServed.has(s.market_name)))
     .map((s) =>
       parseSpreadOutcome(
         s.outcome_name ?? "",
-        s.probability ?? 0,
+        s.probability,
         s.source ?? "",
         homeTeam,
         awayTeam,
@@ -856,7 +868,10 @@ export function selectHalfTotalRungs(
       p.market_type === "half_total" &&
       isGameTotal(p.outcome_name) &&
       !isTeamScopedHalfTotal(p.market_name) &&
-      derivePeriod(p) === halfKey
+      derivePeriod(p) === halfKey &&
+      // #8811: on a quoting card an unpriced rung is absent, not a 0% rung
+      // (see parseSpreadRungs); a graded card keeps it for its row grade.
+      (marketMapIsGraded(eventStatus) || Number.isFinite(p.over_probability ?? p.probability))
   );
 
   // One rung per threshold, before the monotonicity pass and before the

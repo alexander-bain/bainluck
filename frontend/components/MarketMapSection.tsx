@@ -483,7 +483,11 @@ export default function MarketMapSection({
        rung as a disagreement and left a SET rung to draw the projection —
        `TIA by 1.5+` over a hero reading Tiafoe 27%. A rung that states no unit
        is kept, which is every points sport; see `spreadRungMatchesRail`. */
-    const parsedRaw = parseSpreadRungs(fullGameSpreads, homeTeam, awayTeam, vocab.unit);
+    // #8811: a graded rail (the `finalMarginGraded` gate below) keeps unpriced
+    // rungs to grade them; a quoting rail drops them rather than print 0%.
+    const parsedRaw = parseSpreadRungs(fullGameSpreads, homeTeam, awayTeam, vocab.unit, {
+      keepUnpriced: status === "done" && homeScore != null && awayScore != null,
+    });
 
     // One rung per (side, threshold). Duplicates arrive when several games'
     // markets are linked to one event; see collapseDuplicateRungs.
@@ -1145,7 +1149,21 @@ export default function MarketMapSection({
 
       // #4598: the same seam as the full-game rail above, deliberately the same
       // CALL and not the same rule written twice — see `parseSpreadRungs`.
-      const rawParsedAll = parseSpreadRungs(spreads, homeTeam, awayTeam, vocab.unit);
+      /* #6203, the period half of the same rule. The half TOTALS card already
+         grades (see its `gradeRung` below); leaving the half MARGIN card
+         quoting would reproduce, one card lower, the exact two-tenses defect
+         this ship is closing on the full-game pair. Same gate as this card's
+         own FINAL marker — `isDone && halfScores` — computed ONCE so the marker,
+         the grade and #8811's unpriced-rung rule cannot disagree about one card. */
+      const halfFinalMargin =
+        isDone && halfScores
+          ? half === "1H"
+            ? halfScores.h1Home - halfScores.h1Away
+            : halfScores.h2Home - halfScores.h2Away
+          : null;
+      const rawParsedAll = parseSpreadRungs(spreads, homeTeam, awayTeam, vocab.unit, {
+        keepUnpriced: halfFinalMargin != null,
+      });
       // Collapse before the monotonicity pass: equal duplicates satisfy
       // `prob <= lastProb` trivially, so that guard cannot remove them.
       const rawParsed = collapseDuplicateRungs(
@@ -1185,19 +1203,6 @@ export default function MarketMapSection({
         const marginB = b.isHome ? b.threshold : -b.threshold;
         return marginA - marginB;
       });
-      /* #6203, the period half of the same rule. The half TOTALS card already
-         grades (see its `gradeRung` below); leaving the half MARGIN card
-         quoting would reproduce, one card lower, the exact two-tenses defect
-         this ship is closing on the full-game pair. Same gate as this card's
-         own FINAL marker — `isDone && halfScores` — computed ONCE so the marker
-         and the grade cannot disagree about one card. */
-      const halfFinalMargin =
-        isDone && halfScores
-          ? half === "1H"
-            ? halfScores.h1Home - halfScores.h1Away
-            : halfScores.h2Home - halfScores.h2Away
-          : null;
-
       const ladder: MarketMapLadderRow[] = allSorted.map((s) => ({
         label: marginLadderLabel(s.isHome ? hAbbr : aAbbr, s.threshold),
         probability: Math.round(s.probability * 100),
