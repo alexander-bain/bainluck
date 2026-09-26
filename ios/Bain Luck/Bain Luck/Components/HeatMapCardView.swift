@@ -30,14 +30,20 @@ struct HeatMapCardView: View {
             .sorted { ($0.value ?? 0) < ($1.value ?? 0) }
     }
 
+    /// #8713 — the rungs the cells draw: a window around the rung the caption
+    /// names, not the first five. See `heatMapDrawnRungs`.
     private var cells: [HeatMapCell] {
-        Array(sortedPoints.prefix(maxCells)).map { point in
+        heatMapDrawnRungs(sortedPoints, maxCells: maxCells).map { point in
             HeatMapCell(
                 label: compactThresholdLabel(point.label),
                 probability: point.probability ?? 0
             )
         }
     }
+
+    /// The labels of the cells the card draws, in order. Internal so the guard
+    /// reads what the card draws, not only the helper it calls.
+    var drawnLabels: [String] { cells.map(\.label) }
 
     private var overflowCount: Int {
         max(0, sortedPoints.count - maxCells)
@@ -267,9 +273,40 @@ struct HeatMapCardView: View {
 /// 2029 or later") has at most one rung over even, so it reads the same. Web
 /// applies the same rule (FuturesCard.tsx, PR #8650): one card family, notice 35.
 func heatMapBetterThanEvenRung(_ points: [FeedDiscoverThresholdPoint]) -> FeedDiscoverThresholdPoint? {
-    let above = points.filter { ($0.probability ?? 0) >= 0.50 }
+    heatMapBetterThanEvenIndex(points).map { points[$0] }
+}
+
+/// The position of `heatMapBetterThanEvenRung` in `points`.
+func heatMapBetterThanEvenIndex(_ points: [FeedDiscoverThresholdPoint]) -> Int? {
+    let isOverEven: (FeedDiscoverThresholdPoint) -> Bool = { ($0.probability ?? 0) >= 0.50 }
     let isDateLadder = !points.isEmpty && points.allSatisfy { $0.source == "date_bucket" }
-    return isDateLadder ? above.first : above.last
+    return isDateLadder ? points.firstIndex(where: isOverEven) : points.lastIndex(where: isOverEven)
+}
+
+// MARK: - The rungs the cells draw
+
+/// #8713 — which `maxCells` rungs the card draws when the ladder has more.
+///
+/// The cells were the first five rungs in ladder order. On a long date ladder
+/// those are the near-term, near-zero ones: the Anthropic-IPO card (futures
+/// 8430022, ten rungs) drew 1% 1% 1% 2% 6% over the caption "More likely than
+/// not: Before Dec 1, 2026", and the rungs that carry the story (56% … 90%) sat
+/// behind "+5 more". The card said two things.
+///
+/// The cells are now a contiguous window centred on the rung the caption names,
+/// clamped to the ladder's ends, so the reader sees the crossover with a rung or
+/// two either side of it. A ladder with no rung over even ("All below 50%") keeps
+/// the first rungs, as before. A ladder that fits draws every rung.
+func heatMapDrawnRungs(
+    _ points: [FeedDiscoverThresholdPoint],
+    maxCells: Int
+) -> [FeedDiscoverThresholdPoint] {
+    guard maxCells > 0, points.count > maxCells,
+          let anchor = heatMapBetterThanEvenIndex(points) else {
+        return Array(points.prefix(max(0, maxCells)))
+    }
+    let start = min(max(0, anchor - maxCells / 2), points.count - maxCells)
+    return Array(points[start..<(start + maxCells)])
 }
 
 // MARK: - The date the header may print
