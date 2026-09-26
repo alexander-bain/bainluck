@@ -436,8 +436,14 @@ function _cleanPropLabel(marketName: string, tournamentName: string): string {
   if (tournamentName) {
     const tn = tournamentName.replace(/^The\s+/i, "");
     label = label.replace(new RegExp(tn.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"), "").trim();
-    // Clean up leftover separators
-    label = label.replace(/^\s*·\s*/, "").replace(/\s*·\s*$/, "").trim();
+    // Clean up leftover separators. #8782: Kalshi writes "Presidents Cup:
+    // Hole-in-One", so a colon (or dash) is left behind as often as a "·". A
+    // leading hyphen is only a separator when a space follows it — "-3.5" keeps
+    // its sign.
+    label = label
+      .replace(/^\s*(?:[·:–—]|-(?=\s))\s*/, "")
+      .replace(/\s*[·:–—-]\s*$/, "")
+      .trim();
   }
   return label || marketName;
 }

@@ -179,10 +179,24 @@ describe("UX-P180 artifact", () => {
 
     // ── CONTROL: the fix is invisible everywhere it should be ──
     expect(pulses(midWindow)).toBe(true);
+    // #8782 — this panel's prop heading legitimately moves: the served market
+    // name "TOUR Championship: Hole-in-One" lost its tournament name but kept
+    // the colon, so the frozen card prints ": Hole-in-One". Split like #8139
+    // below (notice 50): remainder byte-identical, the heading asserted
+    // POSITIVELY on both sides — the legacy side must still carry the colon.
+    const midWindowLegacy = at(MID_WINDOW, () => card(TournamentCardLegacy, TOUR_CHAMPIONSHIP));
+    const PROP_HEADING =
+      /<div class="text-\[10px\] font-semibold text-text-tertiary uppercase tracking-wider mb-0\.5">[^<]*<\/div>/g;
     assertOnlyTheMovementUnitMoved(
-      midWindow,
-      at(MID_WINDOW, () => card(TournamentCardLegacy, TOUR_CHAMPIONSHIP)),
+      midWindow.replace(PROP_HEADING, ""),
+      midWindowLegacy.replace(PROP_HEADING, ""),
     );
+    expect(midWindowLegacy.match(PROP_HEADING)).toEqual([
+      '<div class="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider mb-0.5">: Hole-in-One</div>',
+    ]);
+    expect(midWindow.match(PROP_HEADING)).toEqual([
+      '<div class="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider mb-0.5">Hole-in-One</div>',
+    ]);
     // #8139 — this panel's row is the one whose eyebrow date legitimately
     // moves: no `start_date`, a `commence_time` of 2028-01-14, read here on a
     // 2026 clock, so the frozen card's yearless "Jan 14" becomes "Jan 14, 2028".
