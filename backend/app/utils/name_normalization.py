@@ -133,6 +133,27 @@ _NATION_NAME_ALIASES: dict[str, str] = {
 }
 
 
+def nation_spelling(name: str | None) -> str | None:
+    """The one spelling of a country a feed writes two ways, or None. #8818.
+
+    WHOLE NAME ONLY, and deliberately not through :func:`normalize_name`: that
+    strips reserve/youth suffixes, so `Czechia U21` would come back as the
+    senior side's spelling and fold two squads into one card. Here the name must
+    BE the alias key once diacritics, case and runs of spaces are gone.
+
+    Examples:
+        "Czechia"                -> "czech republic"
+        "Türkiye"                -> "turkey"
+        "Bosnia-Herzegovina"     -> "bosnia & herzegovina"
+        "Czechia U21"            -> None
+        "Czech Republic"         -> None   (already the one spelling)
+    """
+    if not name:
+        return None
+    key = " ".join(strip_diacritics(name).lower().split())
+    return _NATION_NAME_ALIASES.get(key)
+
+
 def expand_search_terms(terms: list[str]) -> list[tuple[str, str | None]]:
     """Expand search terms using city, general abbreviation and diacritic folds.
 

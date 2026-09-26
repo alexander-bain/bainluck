@@ -163,7 +163,7 @@ from app.utils.kalshi_occurrence_start import (
     loaded_sport_key,
     recover_kalshi_occurrence_starts,
 )
-from app.utils.name_normalization import strip_diacritics
+from app.utils.name_normalization import nation_spelling, strip_diacritics
 from app.utils.proven_duplicates import merge_opening_line
 from app.utils.soccer_team_matching import club_alias_tokens, soccer_pair_matches
 from app.utils.sport_keys import is_season_variant, league_identity
@@ -2328,10 +2328,37 @@ def _pair_matches_after_transliteration(left: tuple, right: tuple) -> bool:
         return True
     folded_left = tuple(_collapse_transliteration(name) for name in left)
     folded_right = tuple(_collapse_transliteration(name) for name in right)
-    if folded_left == tuple(left) and folded_right == tuple(right):
-        # Nothing collapsed, so the retry is the same question. Most pairs.
+    if (folded_left != tuple(left) or folded_right != tuple(right)) and (
+        soccer_pair_matches(folded_left, folded_right)
+    ):
+        return True
+    return _pair_matches_after_nation_spelling(left, right)
+
+
+def _pair_matches_after_nation_spelling(left: tuple, right: tuple) -> bool:
+    """:func:`soccer_pair_matches`, retried once with each country spelled once.
+
+    #8818. `Czechia v Croatia` (Polymarket, `soccer_other`) and `Czech Republic
+    v Croatia` (ESPN, Nations League) are one game at one minute, and the soccer
+    predicate cannot see it: `czechia` and `czech republic` share no token. The
+    registry learned the spelling in #8675 (:data:`name_normalization.
+    _NATION_NAME_ALIASES`), but only for rows claimed after it, so the rows
+    minted before it went on drawing two cards in search — one with the
+    sportsbooks, one with Kalshi and Polymarket.
+
+    Same shape and same argument as the transliteration retry above: asked only
+    after the strict question said no, so nothing that folds today can stop
+    folding, and it lives in this serve-time pass rather than inside
+    :func:`soccer_pair_matches`, which also decides anchors that get WRITTEN.
+    Whole-name only (:func:`nation_spelling`), so `Czechia U21` is never
+    spelled as the senior side.
+    """
+    spelled_left = tuple(nation_spelling(name) or name for name in left)
+    spelled_right = tuple(nation_spelling(name) or name for name in right)
+    if spelled_left == tuple(left) and spelled_right == tuple(right):
+        # No country in either pair is one the feeds spell two ways. Most pairs.
         return False
-    return soccer_pair_matches(folded_left, folded_right)
+    return soccer_pair_matches(spelled_left, spelled_right)
 
 
 @lru_cache(maxsize=4096)
