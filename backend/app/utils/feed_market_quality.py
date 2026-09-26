@@ -2280,6 +2280,17 @@ _OTHER_LEADERS_CABINET_RE = re.compile(
 )
 _AMBASSADOR_RE = re.compile(r"\bambassador\b", re.IGNORECASE)
 _NON_US_OFFICE_RE = re.compile(r"\bministers?\b", re.IGNORECASE)
+#: 5. A PARTY's nomination is a primary, not an office Washington fills: nobody
+#: holds power by leading the Democratic field on October 31. The #8742
+#: docstring names that row as a slot-10 defect and the first cut kept it; the
+#: served page then showed its race twice — AOC at 53% under "Who holds power in
+#: Washington?", Ossoff at 17% under "Who wins in 2028?". The party word must sit
+#: directly before `nomination`, so "Trump's Supreme Court nomination" stays.
+_PARTY_NOMINATION_RE = re.compile(
+    r"\b(gop|republican|democratic|democrat|party|presidential)\s+"
+    r"(presidential\s+)?nomination\b",
+    re.IGNORECASE,
+)
 
 
 def _is_us_federal_power(name: str) -> bool:
@@ -2289,7 +2300,7 @@ def _is_us_federal_power(name: str) -> bool:
         return False
     if _STATE_OFFICE_RE.search(name) or _OTHER_LEADERS_CABINET_RE.search(name):
         return False
-    if _NON_US_OFFICE_RE.search(lower):
+    if _NON_US_OFFICE_RE.search(lower) or _PARTY_NOMINATION_RE.search(lower):
         return False
     if _NON_US_JURISDICTION_RE.search(lower) and not _AMBASSADOR_RE.search(lower):
         return False

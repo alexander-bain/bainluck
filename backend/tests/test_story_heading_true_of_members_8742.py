@@ -39,6 +39,9 @@ from app.utils.feed_market_quality import _story_key
 
 FED = "story:us_federal_power"
 
+# Production id 61998713, verbatim (open, 2026-09-26), served in the slot-10 pair.
+DEM_NOMINATION = "Democratic nomination odds leader on October 31?"
+
 # Production id 31266896, verbatim (open, 2026-09-26).
 LULA = "Will Lula announce nomination of a Supreme Court minister by...?"
 
@@ -66,6 +69,12 @@ EVICTED = [
     (LULA, "politics"),
     ("Will Lula announce the nomination of an individual for Minister of the Supreme Federal Court of Brazil by September 30?", "politics"),
     ("Will Lula announce the nomination of an individual for Minister of the Supreme Federal Court of Brazil by December 31?", "politics"),
+    # Arm 5: a party's nomination is a primary, not a Washington office. The
+    # three production rows the old vocabulary seated (ids 61998713, 61998708,
+    # 61876970); the first is this file's own slot-10 specimen.
+    (DEM_NOMINATION, "politics"),
+    ("Republican nomination odds leader on October 31?", "politics"),
+    ("Rubio flips Vance for GOP nomination by October 31?", "politics"),
 ]
 
 KEPT = [
@@ -84,13 +93,15 @@ KEPT = [
     ("New Supreme Court justice confirmed?", "legal"),
     ("Kash Patel out as FBI Director?", "politics"),
     ("Will the SAVE Act become law?", "politics"),
-    ("Democratic nomination odds leader on October 31?", "politics"),
     ("Who will be the next Deputy Attorney General?", "politics"),
     # A state named AFTER the court is a Washington case, not a state office.
     ("Will the Supreme Court hear Texas's challenge to the tariffs?", "legal"),
     # The US question of the Lula row's exact shape names a justice, not a
     # minister, and must survive the arm that evicts it.
     ("Will Trump announce nomination of a Supreme Court justice by...?", "politics"),
+    # A party word that is not directly before `nomination` names who acts on
+    # a Washington nomination, not whose primary it is.
+    ("Will Republicans block Trump's Supreme Court nomination?", "politics"),
 ]
 
 
@@ -129,7 +140,7 @@ def test_the_served_washington_pair_no_longer_folds_under_the_heading():
     """The slot-10 pair, end to end: Burnham leaves, so there is no pair to fold,
     and both markets come back as their own cards rather than disappearing."""
     items = [
-        _futures(61998713, "Democratic nomination odds leader on October 31?", "politics", 60.0),
+        _futures(61998713, DEM_NOMINATION, "politics", 60.0),
         _futures(59693461, "Who will be the next to leave the Burnham Cabinet?", "politics", 58.0),
     ]
     out = assemble_story_theme_bundles(list(items))
@@ -141,7 +152,7 @@ def test_a_real_washington_pair_still_folds():
     """Control: two members the heading is true of still make the bundle, so the
     test above is measuring the eviction and not a broken bundler."""
     items = [
-        _futures(61998713, "Democratic nomination odds leader on October 31?", "politics", 60.0),
+        _futures(8817578, "Kash Patel out as FBI Director?", "politics", 60.0),
         _futures(108332, "Who will leave Trump's Cabinet next?", "politics", 58.0),
     ]
     bundles = _bundles(items)
@@ -192,7 +203,7 @@ def test_a_washington_bundle_still_forms_beside_the_lula_row_without_it():
     fold — so the test above is measuring the Lula eviction, not a bundler that
     folds nothing — and the Lula row is outside it, as its own card."""
     items = [
-        _futures(61998713, "Democratic nomination odds leader on October 31?", "politics", 60.0),
+        _futures(8817578, "Kash Patel out as FBI Director?", "politics", 60.0),
         _futures(108332, "Who will leave Trump's Cabinet next?", "politics", 59.0),
         _futures(31266896, LULA, "politics", 58.0),
     ]
@@ -200,6 +211,20 @@ def test_a_washington_bundle_still_forms_beside_the_lula_row_without_it():
     bundles = _bundles(out)
     assert len(bundles) == 1
     assert bundles[0]["data"]["shared_question"] == "Who holds power in Washington?"
-    assert sorted(bundles[0]["data"]["member_ids"]) == [108332, 61998713]
+    assert sorted(bundles[0]["data"]["member_ids"]) == [108332, 8817578]
     loose = [i for i in out if i.get("type") == "futures"]
     assert [i["data"]["id"] for i in loose] == [31266896]
+
+
+def test_the_2028_race_is_no_longer_split_across_two_page_one_stories():
+    """Arm 5, end to end, as served 2026-09-26 00:4xZ: the Democratic
+    nomination-odds row beside a true Washington member. It no longer folds under
+    "Who holds power in Washington?" and comes back as its own card; the
+    Washington member, alone, is not a bundle either."""
+    items = [
+        _futures(61998713, DEM_NOMINATION, "politics", 60.0),
+        _futures(108332, "Who will leave Trump's Cabinet next?", "politics", 58.0),
+    ]
+    out = assemble_story_theme_bundles(list(items))
+    assert _bundles(out) == []
+    assert {i["data"]["id"] for i in out} == {61998713, 108332}
