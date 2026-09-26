@@ -223,6 +223,11 @@ class _Row:
         # untouched.
         self.period = None
         self.game_clock = None
+        # #8755: the promotion arm reads the authority ids to decide whether an
+        # odds_api row could be a withdrawn listing. None on every row here, and
+        # the sightings read below answers empty, so the hold fails open.
+        self.espn_id = None
+        self.statpal_fixture_id = None
         self.home_team_name = "Home"
         self.away_team_name = "Away"
         self.sport = type("S", (), {"key": sport_key})()
@@ -253,6 +258,10 @@ class _NetSession:
         if "AS winner_source" in sql:
             return type("R", (), {"all": lambda _s: []})()
         if "GROUP BY x.event_id" in sql:
+            return type("R", (), {"all": lambda _s: []})()
+        # #8755: the withdrawn-listing sightings read. Empty = no sighting of
+        # the row, which is the hold's fail-open case.
+        if "AS listing_last_seen" in sql:
             return type("R", (), {"all": lambda _s: []})()
         if sql.startswith("UPDATE"):
             return None
