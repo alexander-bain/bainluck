@@ -19,7 +19,9 @@ from app.utils.event_completion import authority_may_settle, play_resumes
 from app.utils.game_state import _sanitize_period, live_write_would_revert
 from app.utils.live_state_write import write_live_state_if_unmoved
 from app.utils.start_time_authority import provider_may_set_start
-from app.utils.espn_start_time import espn_start_time
+from app.utils.espn_start_time import espn_announced_start, espn_start_time
+from app.utils.start_placeholder import start_placeholder_tag, start_placeholder_tags
+from app.utils.start_placeholder_write import retire_start_placeholder_tags
 from app.utils.name_normalization import (
     names_match as _canonical_names_match,
     normalize_name as _normalize_name,
@@ -1257,6 +1259,57 @@ def orient_espn_event_to_row(event, ee, stats=None):
 # Live event field updates
 # ---------------------------------------------------------------------------
 
+async def espn_confirms_start_placeholder(session, event, ee, stats) -> bool:
+    """#8841 equal-instant: ESPN ANNOUNCES the minute StatPal's placeholder sits on.
+
+    StatPal parks unannounced MLB postseason games on the hour (20:00Z) and the
+    row carries ``provenance:start-placeholder:statpal:<instant>`` so readers
+    print "TBD". If ESPN later says ``timeValid: true`` at exactly that minute,
+    nothing moves — the correction rails only fire beyond five minutes — so the
+    tag would keep a real first pitch on "TBD" for good. Here ESPN vouches for
+    the stamp instead: every start-placeholder tag is dropped (Core rewrite,
+    other tags untouched, gotcha #4) and, where the ranking lets ESPN, the stamp
+    becomes ``espn`` — which is also what stops StatPal's schedule pass writing
+    the tag back on its next run.
+
+    Only an explicit ``timeValid: true`` vouches (``espn_announced_start``); a
+    ``false`` or absent flag leaves the tag exactly as it is.
+    """
+    placeholder_tags = start_placeholder_tags(getattr(event, "event_tags", None))
+    if not placeholder_tags:
+        return False
+    announced = espn_announced_start(ee)
+    commence = getattr(event, "commence_time", None)
+    if announced is None or commence is None:
+        return False
+    # Same formatter both sides, so "equal" means the same UTC minute.
+    if start_placeholder_tag(announced) != start_placeholder_tag(commence):
+        return False
+
+    await retire_start_placeholder_tags(session, event.id)
+    remaining = [t for t in event.event_tags if t not in placeholder_tags]
+    # Mirror the Core write on the loaded row WITHOUT dirtying it, so no later
+    # ORM flush in this session re-sends the tags it read.
+    from sqlalchemy import inspect as _sa_inspect
+    from sqlalchemy.orm.attributes import set_committed_value
+
+    if _sa_inspect(event, raiseerr=False) is not None:
+        set_committed_value(event, "event_tags", remaining)
+    else:
+        event.event_tags = remaining
+    if provider_may_set_start(getattr(event, "commence_time_source", None), "espn"):
+        event.commence_time_source = "espn"
+    stats["espn_start_placeholder_retired"] = (
+        stats.get("espn_start_placeholder_retired", 0) + 1
+    )
+    logger.info(
+        "ESPN: announced start %s equals the StatPal placeholder on event %s "
+        "(%s vs %s) — TBD retired (#8841)",
+        announced.isoformat(), event.id, event.home_team_name, event.away_team_name,
+    )
+    return True
+
+
 async def update_event_fields_from_espn(
     session, event, ee, claimed_espn_ids, stats, *, allow_unstarted: bool = False
 ):
@@ -1314,6 +1367,8 @@ async def update_event_fields_from_espn(
             event.commence_time = espn_start
             event.commence_time_source = "espn"
             changed = True
+    if await espn_confirms_start_placeholder(session, event, ee, stats):
+        changed = True
 
     # ── #6056: is this fetch OLDER, in game time, than the row already is? ────
     #
@@ -2377,6 +2432,7 @@ async def sync_scheduled_events(session, sport_key, espn_events, stats):
                 )
                 event.commence_time = espn_start
                 event.commence_time_source = "espn"
+        await espn_confirms_start_placeholder(session, event, ee, stats)
         if ee.broadcasts and not event.broadcast_info:
             event.broadcast_info = ", ".join(ee.broadcasts)
 

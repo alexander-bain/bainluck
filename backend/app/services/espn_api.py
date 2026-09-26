@@ -366,6 +366,28 @@ class ESPNEvent:
     # no rail may write it as a start time; they read
     # `app.utils.espn_start_time.espn_start_time`.
     time_valid: bool = True
+    # #8841 equal-instant: ESPN said `timeValid: true` IN SO MANY WORDS. Not the
+    # negation of `time_valid` — an absent key is "valid" there (no payload
+    # moves) but is no announcement here, so it can never vouch that a start
+    # already on the row is real. Read by `espn_start_time.espn_announced_start`.
+    time_announced: bool = False
+
+
+def _espn_time_valid_flag(competition: dict, event_data: dict):
+    """ESPN's raw ``timeValid`` — competition first, then the event/header level."""
+    flag = competition.get("timeValid")
+    if flag is None:
+        flag = event_data.get("timeValid")
+    return flag
+
+
+def espn_time_announced(competition: dict, event_data: dict) -> bool:
+    """Did ESPN explicitly say ``timeValid: true``? (#8841 equal-instant)
+
+    Only a literal ``True`` counts: absent, ``None`` or anything else is not an
+    announcement. Same two payload shapes as :func:`espn_time_valid`.
+    """
+    return _espn_time_valid_flag(competition, event_data) is True
 
 
 def espn_time_valid(competition: dict, event_data: dict) -> bool:
@@ -379,10 +401,7 @@ def espn_time_valid(competition: dict, event_data: dict) -> bool:
     (``header.competitions[0]`` absent). Only an explicit ``False`` counts —
     an absent key is the pre-#8841 reading (valid), so no other payload moves.
     """
-    flag = competition.get("timeValid")
-    if flag is None:
-        flag = event_data.get("timeValid")
-    return flag is not False
+    return _espn_time_valid_flag(competition, event_data) is not False
 
 
 def espn_terminal_state(status_type: dict) -> Optional[str]:
@@ -1111,6 +1130,7 @@ class ESPNAPIService:
                 season_type=season_type_val,
                 stopped_without_result=espn_stopped_without_result(status_type),
                 time_valid=espn_time_valid(competition, event_data),
+                time_announced=espn_time_announced(competition, event_data),
             )
         except Exception as e:
             logger.error(f"Error parsing ESPN event: {e}")
