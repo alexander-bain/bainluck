@@ -17,7 +17,7 @@ import { cn } from "@/lib/utils";
 import { Card } from "@/components/ui/card";
 import { fadeIn, staggerContainer, staggerItem } from "@/lib/animations";
 import { outcomeDisplayNames } from "@/lib/outcomeLabels";
-import { leaderFirstSlice } from "@/lib/discover/leaderOrder";
+import { answerRung, inThresholdOrder, ladderSlice, leaderFirstSlice } from "@/lib/discover/leaderOrder";
 import { renderedOutcomeRowPercents } from "@/lib/renderedPercent";
 import { renderedPricesAsOf } from "@/lib/futuresCardPriceAge";
 // #5552 — the SAME predicate `components/futures/OutcomeRow` uses, imported rather
@@ -125,7 +125,6 @@ export default function FuturesCard({
     displayName: outcomeLabels[index],
     probability: outcome.probability,
   }));
-  const topOutcomes = leaderFirstSlice(labelled, 5);
   // #2831: a market with exactly two outcomes prints BOTH sides of one question,
   // and rounding them independently makes `0.925/0.075` read "93% / 8%". Decide
   // the pair once. Keyed over the WHOLE shipped set rather than the sliced five,
@@ -141,6 +140,16 @@ export default function FuturesCard({
   // set for the same reason `outcomeLabels` is: a ladder is only recognisable
   // from its siblings, and the sliced five must not be able to manufacture one.
   const numericLadder = isNumericLadder(outcomes.map((o) => o.name));
+  // #8834: a ladder served in threshold order keeps it — search serves the rungs
+  // around the crossing that way, and a probability sort swapped the near-tied
+  // ones (`Above 3.75%` 0.995 drawn over `Above 3.50%` 0.99). The same five rows
+  // survive either way (`ladderSlice` keeps the leader, #1526). Its highlighted
+  // row is the rung nearest even — the one that says where the number lands —
+  // rather than whichever rung happens to be served first. Anything that is not
+  // visibly a ladder in order is sorted leader-first exactly as before (#2789).
+  const servedLadder = inThresholdOrder(outcomes.map((o) => o.name));
+  const topOutcomes = servedLadder ? ladderSlice(labelled, 5) : leaderFirstSlice(labelled, 5);
+  const highlighted = servedLadder ? answerRung(topOutcomes) : topOutcomes[0];
   const isResolved = market.status === "resolved";
   // UX-P276 (#2710). Resolved once here rather than in the chip so the chip's
   // truthiness gate and the text it renders are the same value — a chip that
@@ -246,16 +255,16 @@ export default function FuturesCard({
             initial="hidden"
             animate="visible"
           >
-            {topOutcomes.map(({ outcome, displayName }, index) => (
-              <motion.div key={outcome.id} variants={staggerItem}>
+            {topOutcomes.map((row, index) => (
+              <motion.div key={row.outcome.id} variants={staggerItem}>
                 <OutcomeRow
-                  outcome={outcome}
+                  outcome={row.outcome}
                   rank={index + 1}
-                  isLeader={index === 0}
+                  isLeader={row === highlighted}
                   isResolved={isResolved}
                   marketCategory={market.llm_sport_category}
-                  displayName={displayName}
-                  rendered={renderedById.get(outcome.id) ?? null}
+                  displayName={row.displayName}
+                  rendered={renderedById.get(row.outcome.id) ?? null}
                   numericLadder={numericLadder}
                 />
               </motion.div>

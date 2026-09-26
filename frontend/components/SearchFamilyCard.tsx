@@ -6,7 +6,8 @@
  * probability · 24h movement arrow ≥2pts · resolution date if <30d). One tap →
  * /futures/{id}. D1: probabilities only — NO odds, NO source/venue names.
  * Design-system tokens only (light mode). Leader-pick + #23 normalization are
- * applied server-side; we display top_outcomes as given.
+ * applied server-side; we display top_outcomes as given — except that a
+ * threshold ladder's row prints its rung nearest even (#8834, `leaderOutcome`).
  */
 
 import Link from "next/link";
