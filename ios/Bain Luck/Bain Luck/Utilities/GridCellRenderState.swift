@@ -47,14 +47,11 @@ nonisolated enum GridCellRenderState: String, Sendable, CaseIterable {
     var isTerminal: Bool { self == .won || self == .eliminated }
 }
 
-extension GridCell {
-    /// The state the payload declared, read fail-closed.
-    ///
-    /// `nil` means the payload declared nothing at all — a pre-register cached
-    /// response — which is the one case where the number alone decides. An
-    /// unrecognised string is `.unavailable`, never `.live`: this build cannot
-    /// say what a state it has never heard of means.
-    var declaredRenderState: GridCellRenderState? {
+extension GridCellRenderState {
+    /// A served `state` string, read fail-closed. One reading for every surface
+    /// that carries the register — the grid cell here, and since #8691 the
+    /// Championship Path stage — so the two cannot disagree about a word.
+    static func declared(_ state: String?) -> GridCellRenderState? {
         guard let state else { return nil }
         if let known = GridCellRenderState(rawValue: state) { return known }
         // The register vocabulary is won/eliminated; "clinched" is the web and
@@ -63,6 +60,18 @@ extension GridCell {
         // `unavailable`. (Same clause as `readDeclaredState` on the web side.)
         if state == "clinched" { return .won }
         return .unavailable
+    }
+}
+
+extension GridCell {
+    /// The state the payload declared, read fail-closed.
+    ///
+    /// `nil` means the payload declared nothing at all — a pre-register cached
+    /// response — which is the one case where the number alone decides. An
+    /// unrecognised string is `.unavailable`, never `.live`: this build cannot
+    /// say what a state it has never heard of means.
+    var declaredRenderState: GridCellRenderState? {
+        GridCellRenderState.declared(state)
     }
 
     /// What a reader should be shown for this cell.

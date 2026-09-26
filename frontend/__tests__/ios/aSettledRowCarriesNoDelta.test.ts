@@ -40,12 +40,17 @@ function bodyOf(path: string, declaration: string): string {
 }
 
 describe("both components suppress the delta on a settled row", () => {
-  it("ChampionshipStageBadges gates its trend badge on !isClinched", () => {
+  it("ChampionshipStageBadges gates its trend badge on a PRICED row", () => {
     const body = bodyOf(CHAMPIONSHIP, "struct ChampionshipStageBadges");
-    // Pin the GUARD, not the mere presence of `isClinched` — the clinched branch
+    // Pin the GUARD, not the mere presence of `.priced` — the badge switch
     // below references it too, so a scan for the identifier alone would pass on
     // the ungated view this issue is about.
-    expect(body).toMatch(/if\s+!isClinched\s*,\s*\n\s*let trend = stage\.trend24h/);
+    //
+    // #8691 narrowed `!isClinched` to `.priced`: a WITHHELD row (served with no
+    // number) carries no delta either, since a move is a statement about the
+    // level the row declines to state. Clinched stays excluded, as #4108 wants.
+    expect(body).toContain("let display = ChampionshipRowLayout.display(for: stage)");
+    expect(body).toMatch(/if\s+case\s+\.priced\s*=\s*display\s*,\s*\n\s*let trend = stage\.trend24h/);
     expect(body).toContain("ChampionshipRowLayout.showsTrendBadge(trend: trend)");
   });
 
