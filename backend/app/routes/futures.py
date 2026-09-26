@@ -4451,6 +4451,57 @@ async def _game_container_leg_sides(
     }
 
 
+async def _game_container_lead_leg(
+    db: AsyncSession, market: FuturesMarket, leg_sides: dict[str, str]
+) -> str | None:
+    """The external id of a game container's match-winner leg, or ``None`` (#8892).
+
+    WHAT A READER SAW. ``/futures/61778284`` at 390px, 2026-09-26 18:49Z — "LoL:
+    Cloud9 vs Team Liquid (BO5)". The hero read **"71% Over — O/U 3.5 Games"**.
+    The number that answers the title, "Cloud9 — Match Winner 36%", was row 6.
+    Every client heroes the highest-priced outcome. On a container the legs are
+    answers to DIFFERENT questions, so the highest one is just the most lopsided.
+
+    ``leg_sides`` is `_game_container_leg_sides`'s map, so this reads only a board
+    that has already passed #8669's container test, and only its two-sided legs.
+    The leg is typed by its sibling row's stored understanding (#5273), never by
+    its title. A leg leads only when that understanding is a full-contest
+    ``moneyline`` AND the venue's own ``sportsMarketType`` CORROBORATES it.
+    Measured on the specimen: "Game 1/2/3 Winner" also classify as moneyline, but
+    the venue says ``child_moneyline``, so they are CONTRADICTED. An UNCONFIRMED
+    per-game winner would otherwise tie the real one. Exactly one such leg leads.
+    None, or more than one, means ``None``, and the client keeps its own rule.
+    """
+    if not leg_sides:
+        return None
+    from app.utils.content_understanding import (
+        CORROBORATED,
+        FULL_CONTEST_WINNER_CLASS,
+        understanding_from_metadata,
+    )
+
+    rows = (
+        await db.execute(
+            select(FuturesMarket.external_id, FuturesMarket.market_metadata).where(
+                FuturesMarket.source == "polymarket",
+                FuturesMarket.group_id == market.group_id,
+                FuturesMarket.id != market.id,
+                FuturesMarket.external_id.in_(list(leg_sides)),
+            )
+        )
+    ).all()
+    winners = set()
+    for external_id, metadata in rows:
+        understanding = understanding_from_metadata(metadata)
+        if (
+            understanding
+            and understanding.get("semantic_type") == FULL_CONTEST_WINNER_CLASS
+            and understanding.get("agreement") == CORROBORATED
+        ):
+            winners.add(external_id)
+    return winners.pop() if len(winners) == 1 else None
+
+
 def _leg_side_label(side: str, question: str) -> str:
     """The side first, then the question it answers: ``Infinite — Match Winner``.
 
@@ -4692,13 +4743,16 @@ async def get_futures_market(
     # read here rather than inside the formatter because the formatter is sync
     # and holds no session — the same split `unsupported_price_ids` already uses
     # one line up, for the same reason.
+    # #8664 page half: a game container's legs name their side.
+    leg_sides = await _game_container_leg_sides(db, market)
     detail = _format_market_detail(
         market,
         bookmakers,
         unsupported_price_ids,
         fleet_newest_observation=await _fleet_newest_observation(db, market),
-        # #8664 page half: a game container's legs name their side.
-        leg_sides=await _game_container_leg_sides(db, market),
+        leg_sides=leg_sides,
+        # #8892: and the one leg that answers "who wins" is named.
+        lead_leg=await _game_container_lead_leg(db, market, leg_sides),
     )
     if len(bookmakers) > 1 and source_breakdown:
         detail["source_breakdown"] = source_breakdown
@@ -8202,11 +8256,16 @@ def _format_market_detail(
     *,
     fleet_newest_observation: "datetime | None" = None,
     leg_sides: "dict[str, str] | None" = None,
+    lead_leg: "str | None" = None,
 ) -> dict:
     """Format a market for detail view with all outcomes.
 
     ``leg_sides`` is `_game_container_leg_sides`'s map (#8664). A leg named in it
     is served as ``"<side> — <question>"``, because its price is that side's.
+
+    ``lead_leg`` is `_game_container_lead_leg`'s answer (#8892). It is served as
+    ``lead_outcome_id``, the id of the outcome that answers "who wins", but only
+    while that outcome is still on the board with a price.
 
     #993: the click-through must MATCH the answer search shows. Apply the SAME
     shared display pipeline (app.utils.outcome_display) — placeholder filter
@@ -9166,6 +9225,21 @@ def _format_market_detail(
     if hook_withheld:
         hook_description = None
 
+    # #8892: named by ID, and only if the display pipeline above kept the row and
+    # left it a price. A dropped or withheld leg is never offered as a hero.
+    lead_outcome_id = None
+    if lead_leg:
+        lead_ids = {
+            o.id for o in (market.outcomes or []) if o.external_id == lead_leg
+        }
+        served_leads = [
+            o["id"]
+            for o in outcomes
+            if o["id"] in lead_ids and o.get("probability") is not None
+        ]
+        if len(served_leads) == 1:
+            lead_outcome_id = served_leads[0]
+
     # B7 (L2-91): the up-link mesh. Resolve this market's event-concept key
     # (`event:<domain>:<slug>`, richer per-event page) and its competition hub slug
     # (`/hub/<slug>`) via the shared server-side resolver so the frontend breadcrumb
@@ -9237,6 +9311,10 @@ def _format_market_detail(
         "resolution_date": market.resolution_date.isoformat() if market.resolution_date else None,
         "outcomes": outcomes,
         "outcome_count": len(outcomes),
+        # #8892: on a game container, the outcome a hero should lead with — the
+        # match winner — rather than whichever leg is priced highest. Always
+        # present; null everywhere else, so absence means an old build.
+        "lead_outcome_id": lead_outcome_id,
         # #5539: true when this field's openings were refused as incoherent, so a
         # probe can tell a withheld opening from one that never existed. Always
         # present so its absence means an old build, not a coherent field.

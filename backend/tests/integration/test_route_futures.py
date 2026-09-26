@@ -224,6 +224,10 @@ class TestFuturesMarketDetail:
             "resolution_date",
             "outcomes",
             "outcome_count",
+            # #8892: a game container's match-winner outcome id, null on every
+            # other board. Present for the same reason as the lines below: a
+            # probe must be able to tell "no lead" from "this build cannot lead".
+            "lead_outcome_id",
             # #5539: whether this field's openings were refused as incoherent, so
             # a probe can tell a withheld opening from one that never existed.
             # Always present — its absence would mean an old build, not a
