@@ -604,6 +604,29 @@ function printedMovePoints(
 const MORE_PROPS_LABEL = "More props";
 
 /**
+ * #8833 — WHAT HIT's bound.
+ *
+ * WHAT HIT used to list every graded row, grouped but uncollapsed. That was fine
+ * at 25 props (#8230's page). On a finished MLB game carrying 1,051 props
+ * (Astros @ Athletics, `/events/15318645`, 390px, 2026-09-26) it was 549 rows and
+ * 43,828px, 89% of the page: about fifty screens of `Over 0.0 — miss` before the
+ * footer. One family, the venue's `1+ … 5+` ladder for a single stat, held 90
+ * rows by itself, so capping families alone would not bound it. Two caps are
+ * needed:
+ *   - a family prints its first WHAT_HIT_FAMILY_ROWS rows (payload order, which
+ *     is the endpoint's prominence order). The rest fold inside the family.
+ *   - the section prints its first WHAT_HIT_FAMILIES families. The rest fold
+ *     behind one disclosure at the foot of the section.
+ * The disclosure markup and the D111 wording are the same as THE SCRIPT's fold.
+ * Nothing is dropped (gotcha #43, D102): each folded row is in the DOM behind a
+ * `<details>` that states its count. A fold of one row is never drawn, because
+ * it would take a line to hide a line. So a page under the caps (plus one)
+ * renders exactly as it did before.
+ */
+const WHAT_HIT_FAMILIES = 6;
+const WHAT_HIT_FAMILY_ROWS = 3;
+
+/**
  * A row THE SCRIPT holds no number for, and can therefore say nothing about.
  *
  * A `pending_label` row is NOT this: it carries a deliberate, plain-English,
@@ -724,6 +747,13 @@ export default function PropsSection({
   // in THE SCRIPT, THE DIVERGENCE and WHAT HIT alike.
   const labelOverrides = grouped ? familyLabelOverrides(groups) : EMPTY_LABEL_OVERRIDES;
 
+  // #8833: WHAT HIT's section-level bound. See WHAT_HIT_FAMILIES.
+  const boundFamilies =
+    activeState === "graded" && shownGroups.length > WHAT_HIT_FAMILIES + 1;
+  const leadGroups = boundFamilies ? shownGroups.slice(0, WHAT_HIT_FAMILIES) : shownGroups;
+  const restGroups = boundFamilies ? shownGroups.slice(WHAT_HIT_FAMILIES) : [];
+  const restCount = restGroups.reduce((n, g) => n + g.items.length, 0);
+
   const renderRow = (item: PropMark) =>
     isBinaryBarMark(item) ? (
       <BinaryBarRow
@@ -758,19 +788,39 @@ export default function PropsSection({
 
       {rows.length > 0 &&
         (grouped ? (
-          <div className="space-y-4">
-            {shownGroups.map((group, i) => (
-              <PropFamilyBlock
-                // Index-qualified: #4866 strips per family, so two distinct
-                // families can now collapse to the same display name and a
-                // bare name would be a duplicate React key.
-                key={`${group.name ?? "unnamed"}-${i}`}
-                group={group}
-                state={activeState}
-                renderRow={renderRow}
-                divergencePairs={divergencePairs}
-              />
-            ))}
+          <div>
+            <div className="space-y-4">
+              {leadGroups.map((group, i) => (
+                <PropFamilyBlock
+                  // Index-qualified: #4866 strips per family, so two distinct
+                  // families can now collapse to the same display name and a
+                  // bare name would be a duplicate React key.
+                  key={`${group.name ?? "unnamed"}-${i}`}
+                  group={group}
+                  state={activeState}
+                  renderRow={renderRow}
+                  divergencePairs={divergencePairs}
+                />
+              ))}
+            </div>
+            {restGroups.length > 0 && (
+              <details className="mt-4">
+                <summary className="cursor-pointer select-none py-1 text-[11px] text-text-muted">
+                  {MORE_PROPS_LABEL} ({restCount})
+                </summary>
+                <div className="mt-3 space-y-4">
+                  {restGroups.map((group, i) => (
+                    <PropFamilyBlock
+                      key={`${group.name ?? "unnamed"}-${i + leadGroups.length}`}
+                      group={group}
+                      state={activeState}
+                      renderRow={renderRow}
+                      divergencePairs={divergencePairs}
+                    />
+                  ))}
+                </div>
+              </details>
+            )}
           </div>
         ) : (
           (() => {
@@ -829,9 +879,10 @@ function PropFamilyBlock({
    *  is not half of a complement pair — those keep the raw test. */
   divergencePairs?: ReadonlyMap<PropMark["key"], DivergencePair>;
 }) {
-  // Only THE DIVERGENCE has a notion of "didn't move". THE SCRIPT and WHAT HIT
-  // list everything, grouped but uncollapsed — except THE SCRIPT's own hole,
-  // the rows it has no mark for, which fold (D102 / #4530).
+  // Only THE DIVERGENCE has a notion of "didn't move". THE SCRIPT lists
+  // everything, grouped but uncollapsed — except its own hole, the rows it has
+  // no mark for, which fold (D102 / #4530). WHAT HIT prints a bounded head of
+  // each family and folds the rest (#8833, WHAT_HIT_FAMILY_ROWS).
   const collapsible = state === "divergence";
   const { listed, folded } = partitionScript(group.items, state);
   // #5296: a paired row is "unchanged" when the badge it prints is absent, not
@@ -849,6 +900,12 @@ function PropFamilyBlock({
   };
   const moved = collapsible ? listed.filter((i) => !didNotMove(i)) : listed;
   const unchanged = collapsible ? listed.filter(didNotMove) : [];
+  // #8833: WHAT HIT's per-family bound. `moved` is the whole family outside THE
+  // DIVERGENCE, and THE SCRIPT's fold is empty in WHAT HIT, so the overflow and
+  // `folded` are never both non-empty.
+  const boundRows = state === "graded" && moved.length > WHAT_HIT_FAMILY_ROWS + 1;
+  const head = boundRows ? moved.slice(0, WHAT_HIT_FAMILY_ROWS) : moved;
+  const overflow = boundRows ? moved.slice(WHAT_HIT_FAMILY_ROWS) : [];
 
   // #5241: when the fold takes the WHOLE family — the common case for a two-leg
   // O/U family with no baseline on either leg, 27 of 110 families across three
@@ -868,7 +925,7 @@ function PropFamilyBlock({
           {group.name}
         </div>
       )}
-      {moved.length > 0 && <div className="space-y-2">{moved.map(renderRow)}</div>}
+      {head.length > 0 && <div className="space-y-2">{head.map(renderRow)}</div>}
       {unchanged.length > 0 && (
         <details className={moved.length > 0 ? "mt-1.5" : ""}>
           <summary className="cursor-pointer select-none py-1 text-[11px] text-text-muted">
@@ -878,7 +935,7 @@ function PropFamilyBlock({
         </details>
       )}
       <ScriptFold
-        items={folded}
+        items={overflow.length > 0 ? overflow : folded}
         renderRow={renderRow}
         className={moved.length > 0 || unchanged.length > 0 ? "mt-1.5" : ""}
         familyName={foldIsWholeFamily ? group.name : null}
