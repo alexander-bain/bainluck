@@ -455,6 +455,15 @@ export interface EventDetailResponse extends Event {
     | "final_unresolved";
   /** Present only alongside `hero_probability_source === "settled"`. */
   hero_settled_result?: "home" | "away" | "draw";
+  /**
+   * #8749 / PR #8758: when the blend behind `hero_probability` was observed —
+   * the newest write among the tier-1 sources it folded, carried WITH the value
+   * (a cached hero keeps its cached clock). `null` on a non-blend hero or when
+   * any admitted source lacked a clock: unknown, never "now". A frame applied by
+   * `applyLiveFrame` restamps it with the frame's own `updated_at`. Absent on a
+   * payload from before the contract. See `lib/blendObservationClock.ts`.
+   */
+  hero_probability_observed_at?: string | null;
   bookmaker_odds?: BookmakerOddsDetail[];
   ei?: EIData;
   /** @deprecated Use `ei` instead */
@@ -618,6 +627,14 @@ export interface EventHistoryResponse {
    * two disagreeing owners for "settled". See `lib/chartEdgePin.ts`.
    */
   blend_edge_pinned?: boolean;
+  /**
+   * #8749 / PR #8758: when the pinned edge's PRICE was observed. The edge's own
+   * `timestamp` is the serve minute, which says nothing about how new its value
+   * is, so it must never be ordered against a real observation clock. `null`
+   * when there is no pin or its provenance is incomplete; absent on a payload
+   * from before the contract.
+   */
+  blend_edge_observed_at?: string | null;
   /**
    * #6948: true iff the backend ACTUALLY removed points before kick-off, i.e. iff a second request
    * without `range=since_start` would answer with more. `false` on every payload served without the

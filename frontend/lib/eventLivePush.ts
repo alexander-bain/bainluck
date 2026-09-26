@@ -366,6 +366,9 @@ export function applyLiveFrame<T>(prev: T | undefined, frame: LiveFrame): T | un
     // this is the number the hero actually renders.
     hero_probability: frame.p,
     hero_probability_away: 1 - frame.p,
+    // #8749: the frame's blend is dated by the write that produced it — the
+    // detail payload's clock belonged to the value this replaces.
+    hero_probability_observed_at: frame.updated_at,
     win_probability_sources: {
       ...sources,
       [frame.source]: {
