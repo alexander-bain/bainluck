@@ -68,6 +68,25 @@ interface MarketMapSectionProps {
   homeSpread?: number | null;
   overUnder?: number | null;
   /**
+   * ═══ #8922: THE HERO'S PROJECTED FINAL, EXACTLY AS THE HERO PRINTS IT ═══
+   *
+   * The page answered "how does this finish?" three ways. On `/events/15315949`
+   * (Notre Dame 35–3 Purdue, end of Q3, 2026-09-26 20:30Z) the hero read
+   * `Projected final: 6 – 47`, the margin map `PROJECTION ND by 36.1+` and the
+   * points map `PROJECTION 51.0`. The hero is the market ladders
+   * (`pm_spread_data.projected_final`); the margin tile was the sportsbook MEAN
+   * (`current_odds.spread`, which that minute still counted four books frozen
+   * at kickoff); the points tile was the scoring PACE run forward over the
+   * clock. One question, one number: while the hero prints a pair, both live
+   * PROJECTION tiles are that pair — its difference and its sum.
+   *
+   * Already rounded and already gated: the page passes the very pair its hero
+   * line renders (`heroProjectedFinal`), or `null` whenever the hero prints
+   * none, and then each tile keeps the value it had before. So this can never
+   * show a projection the hero has declined.
+   */
+  projectedFinal?: { home: number; away: number } | null;
+  /**
    * ═══ #5414: WHAT THE MARKET QUOTED BEFORE PLAY, FOR THE TILE THAT SAYS SO ═══
    *
    * `homeSpread` / `overUnder` above are the LATEST snapshot. Three of this
@@ -274,7 +293,8 @@ function marginLadderLabel(teamAbbr: string, threshold: number | string): string
  * The `+` is not a slip in `marginLadderLabel`: a rung IS a threshold, and
  * `gradeMarginRung` grades it `>=` for exactly that reason. It stays on rungs,
  * and on the PRE-GAME / PROJECTION tiles, which quote a cover line — a handicap,
- * not a measurement. This is the other case: ACTUAL and FINAL are the scoreboard,
+ * not a measurement. (Except a PROJECTION that is the hero's projected final,
+ * #8922: that is a scoreline, `6 – 47`, and is stated like one.) This is the other case: ACTUAL and FINAL are the scoreboard,
  * and a scoreboard is stated.
  *
  * NOT `BC +7`, which is the spelling the half rail reached for and the one #2442
@@ -384,6 +404,7 @@ export default function MarketMapSection({
   awayWinProb,
   homeSpread,
   overUnder,
+  projectedFinal = null,
   openingHomeSpread,
   openingOverUnder,
   sportKey,
@@ -706,8 +727,16 @@ export default function MarketMapSection({
     // block). Tennis therefore keeps its `Pre-game` tile and draws no live
     // projection, which is the honest pair for a sport this page may not
     // invent a spread for.
+    //
+    // #8922: and while the hero prints a projected final, THIS tile is that
+    // final's margin — see the `projectedFinal` prop. Same two gates, so a
+    // sport that drew no live projection before still draws none.
+    const heroProjectedMargin =
+      projectedFinal != null ? projectedFinal.home - projectedFinal.away : null;
     const liveProjValue =
-      sportsbookSpreadIsAMargin && vocab.hasDerivedSpread && homeSpread != null ? -homeSpread : null;
+      sportsbookSpreadIsAMargin && vocab.hasDerivedSpread
+        ? heroProjectedMargin ?? (homeSpread != null ? -homeSpread : null)
+        : null;
     const liveProjTeamAbbr =
       liveProjValue != null ? (liveProjValue > 0 ? hAbbr : liveProjValue < 0 ? aAbbr : "TIE") : null;
     const liveProjLogo =
@@ -775,7 +804,13 @@ export default function MarketMapSection({
           value: liveProjValue,
           type: "proj",
           label: "Projection",
-          displayValue: formatMargin(liveProjValue, liveProjTeamAbbr || ""),
+          // #8922: the hero's final is a scoreline, stated the way the hero
+          // states it (`6 – 47` → `ND by 41`); a sportsbook mean is a cover
+          // line and keeps its `+` (see `exactMarginLabel`).
+          displayValue:
+            heroProjectedMargin != null
+              ? exactMarginLabel(liveProjTeamAbbr || "", liveProjValue)
+              : formatMargin(liveProjValue, liveProjTeamAbbr || ""),
           logoUrl: liveProjLogo,
           logoFallback: liveProjTeamAbbr || "",
         });
@@ -887,7 +922,7 @@ export default function MarketMapSection({
       markers,
       ladder,
     };
-  }, [gameMarkets.spreads, status, isDone, homeScore, awayScore, homeWinProb, awayWinProb, homeSpread, openingHomeSpread, homeTeam, awayTeam, hAbbr, aAbbr, homeLogo, awayLogo, sportKey, vocab]);
+  }, [gameMarkets.spreads, status, isDone, homeScore, awayScore, homeWinProb, awayWinProb, homeSpread, projectedFinal, openingHomeSpread, homeTeam, awayTeam, hAbbr, aAbbr, homeLogo, awayLogo, sportKey, vocab]);
 
   // ── Total Map ──
   const totalData = useMemo(() => {
@@ -906,9 +941,19 @@ export default function MarketMapSection({
     const maxThresh = gameTotals[gameTotals.length - 1].threshold;
     const actualTotal = homeScore != null && awayScore != null ? homeScore + awayScore : null;
     const paceProj = (vocab.scoreboardCountsTheUnit ? gameMarkets.pace?.projected_total : null) ?? null;
+    // #8922: while the hero prints a projected final, the points projection is
+    // that final's SUM — not the pace run forward, which is a second answer to
+    // the same question (`Projected final: 6 – 47` over a points map reading
+    // `Projected 51`). Only where the scoreboard counts this rail's unit, the
+    // same rule `pace` is held to here.
+    const heroProjectedTotal =
+      projectedFinal != null && vocab.scoreboardCountsTheUnit
+        ? projectedFinal.home + projectedFinal.away
+        : null;
     const allValues = [minThresh, maxThresh];
     if (actualTotal != null) allValues.push(actualTotal);
     if (paceProj != null) allValues.push(paceProj);
+    if (heroProjectedTotal != null) allValues.push(heroProjectedTotal);
     if (overUnder != null) allValues.push(overUnder);
     // #5414: the number `ouVal` now prefers has to be inside the rail it is
     // drawn on, or the marker pins to an end and reads as an extreme.
@@ -959,7 +1004,9 @@ export default function MarketMapSection({
        rail is unchanged either way, and leaving it keeps this diff to the one
        question it is answering. */
     const projectedRaw = pace?.projected_total ?? null;
-    const projected = projectedRaw != null && projectedRaw > 0 ? projectedRaw : null;
+    // #8922: see `heroProjectedTotal` at the top of this block.
+    const projected =
+      heroProjectedTotal ?? (projectedRaw != null && projectedRaw > 0 ? projectedRaw : null);
     // #5414: the quoted pre-game total first, for the same reason the margin
     // map takes the quoted pre-game spread first — this value feeds a marker
     // labelled `Pre-game` on the live and settled arms, and `overUnder` is the
@@ -1055,7 +1102,8 @@ export default function MarketMapSection({
           value: projected,
           type: "proj",
           label: "Projection",
-          displayValue: String(projected.toFixed(1)),
+          displayValue:
+            heroProjectedTotal != null ? String(heroProjectedTotal) : String(projected.toFixed(1)),
           // #3360: rounded, not `toFixed(1)`. Measured in the real browser on
           // the real dot (Inter, 8px, weight 950, 22px inner box): "36.4" is
           // 20.72px and only just fits, but "108.5" is 25.36px and OVERFLOWS a
@@ -1156,7 +1204,7 @@ export default function MarketMapSection({
       markers,
       ladder,
     };
-  }, [gameMarkets.totals, gameMarkets.pace, status, eventStatus, homeScore, awayScore, overUnder, openingOverUnder, vocab, sportKey]);
+  }, [gameMarkets.totals, gameMarkets.pace, status, eventStatus, homeScore, awayScore, overUnder, projectedFinal, openingOverUnder, vocab, sportKey]);
 
   // #3240: `derivePeriod` now lives in `marketMapUtils` beside the half-total
   // selector that also needs it.

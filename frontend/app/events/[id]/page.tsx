@@ -1128,6 +1128,40 @@ export default function EventPage({ params }: EventPageProps) {
     (Math.round(projectedFinalPair.home_score) >= bestHomeScore &&
       Math.round(projectedFinalPair.away_score) >= bestAwayScore);
 
+  // #8922: THE PAIR THE HERO PRINTS, DECIDED ONCE. The hero's
+  // `Projected final` line and the margin/points maps' live PROJECTION tiles
+  // answer one question, and on `/events/15315949` they answered it three ways
+  // (`6 – 47` · `ND by 36.1+` · `51.0`). Every gate the hero line has always
+  // carried is here, unchanged, and the hero now renders THIS value — so the
+  // maps receive exactly what the hero shows, or `null` when it shows nothing.
+  // Rounded here, per side, the way the line has always rounded, so a map can
+  // never state a margin the printed scoreline does not add up to.
+  const heroProjectedHome =
+    event &&
+    projectedFinalPair &&
+    sportVocab(event.sport || undefined).hasDerivedSpread &&
+    event.status !== "completed" &&
+    event.status !== "closed" &&
+    !isSuspended &&
+    projectionHasGameStateToFrame &&
+    projectedPairIsAPossibleResult &&
+    projectedPairIsReachableFromTheScore &&
+    projectedFinalPair.home_score > 0 &&
+    projectedFinalPair.away_score > 0
+      ? Math.round(projectedFinalPair.home_score)
+      : null;
+  const heroProjectedAway =
+    heroProjectedHome != null && projectedFinalPair
+      ? Math.round(projectedFinalPair.away_score)
+      : null;
+  const heroProjectedFinal = useMemo(
+    () =>
+      heroProjectedHome != null && heroProjectedAway != null
+        ? { home: heroProjectedHome, away: heroProjectedAway }
+        : null,
+    [heroProjectedHome, heroProjectedAway]
+  );
+
   // #4571 — the age of the score PAIR the two lines above just resolved.
   //
   // `lastChartPoint` runs the same cascade internally and reports the clock of
@@ -2316,18 +2350,14 @@ export default function EventPage({ params }: EventPageProps) {
                   is always false. `projectedPairIsReachableFromTheScore` rounds
                   the way this line does and reads `bestHomeScore`/`bestAwayScore`,
                   the values in the score slots, never the event row. */}
-              {sportVocab(event.sport || undefined).hasDerivedSpread &&
-                historyData?.pm_spread_data?.projected_final &&
-                event.status !== "completed" && event.status !== "closed" &&
-                !isSuspended &&
-                projectionHasGameStateToFrame &&
-                projectedPairIsAPossibleResult &&
-                projectedPairIsReachableFromTheScore &&
-                historyData.pm_spread_data.projected_final.home_score > 0 &&
-                historyData.pm_spread_data.projected_final.away_score > 0 && (
+              {/* #8922: every gate above is now evaluated once, in
+                  `heroProjectedFinal`, because the margin and points maps print
+                  the same pair and must never disagree with this line about
+                  whether there is one. */}
+              {heroProjectedFinal && (
                 <div className="mt-1.5">
                   <span className="text-[11px] text-text-muted">
-                    Projected final: {Math.round(historyData.pm_spread_data.projected_final.home_score)}{"\u2009\u2013\u2009"}{Math.round(historyData.pm_spread_data.projected_final.away_score)}
+                    Projected final: {heroProjectedFinal.home}{"\u2009\u2013\u2009"}{heroProjectedFinal.away}
                   </span>
                 </div>
               )}
@@ -2752,6 +2782,9 @@ export default function EventPage({ params }: EventPageProps) {
              quote, and it is the one `hasDerivedSpread` governs. */
           homeSpread={event.current_odds?.spread ?? null}
           overUnder={event.current_odds?.over_under ?? null}
+          /* #8922: the hero's projected final, so the maps' live PROJECTION
+             tiles print the same finish the hero does. */
+          projectedFinal={heroProjectedFinal}
           /* #5414: what the market quoted BEFORE play, which is what the three
              markers labelled `Pre-game` are asking for. Served by the detail
              route as of this same change; `?? null` because 90.5% / 95.0% of
