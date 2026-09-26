@@ -15,13 +15,22 @@ from types import SimpleNamespace
 from app.utils.odds_filtering import filter_stale_bookmaker_snapshots as _filter_stale_bookmaker_snapshots
 
 
-def _snap(bookmaker: str, captured_at: datetime, home_prob: float = 0.5, valid_until: datetime = None):
+def _snap(
+    bookmaker: str,
+    captured_at: datetime,
+    home_prob: float = 0.5,
+    valid_until: datetime = None,
+    home_spread: float = None,
+    over_under: float = None,
+):
     """Create a lightweight snapshot-like object for testing."""
     return SimpleNamespace(
         bookmaker=bookmaker,
         captured_at=captured_at,
         home_win_probability=home_prob,
         valid_until=valid_until,
+        home_spread=home_spread,
+        over_under=over_under,
     )
 
 
@@ -289,3 +298,92 @@ class TestRecencyFilter:
         ]
         result = _filter_stale_bookmaker_snapshots(snaps, "live", commence_time)
         assert len(result) == 1
+
+
+class TestLiveBooksThatPulledTheMoneyline:
+    """#8922: a live book with no moneyline still quotes the spread and total.
+
+    Specimen: production 2026-09-26 20:30Z, /events/15315949, Notre Dame 35–3
+    Purdue at the end of the 3rd quarter (kickoff 18:00Z). Every live book had
+    pulled its moneyline; four books froze at kickoff still carrying one. The
+    filter read the live set as empty and re-admitted the frozen four, so
+    `current_odds` served spread 36.5 / total 54.2 — the mean of all eleven —
+    and the margin map printed `PROJECTION ND by 36.1+` under a headline of
+    `Projected final: 6 – 47`.
+    """
+
+    KICKOFF = datetime(2026, 9, 26, 18, 0, 0, tzinfo=timezone.utc)
+
+    def _specimen(self):
+        k = self.KICKOFF
+        live = [  # (book, captured, home spread) — all total 52.5, no moneyline
+            ("betmgm", k + timedelta(hours=2, minutes=29), 43.5),
+            ("bovada", k + timedelta(hours=2, minutes=26), 41.5),
+            ("draftkings", k + timedelta(hours=2, minutes=26), 41.5),
+            ("fanatics", k + timedelta(hours=2, minutes=30), 40.5),
+            ("fanduel", k + timedelta(hours=2, minutes=30), 42.5),
+            ("mybookieag", k + timedelta(hours=2, minutes=27), 41.5),
+            ("williamhill_us", k + timedelta(hours=2, minutes=26), 41.5),
+        ]
+        frozen = [  # (book, captured, home prob, home spread, total)
+            ("betonlineag", k - timedelta(minutes=24), 0.0567, 27.0, 57.0),
+            ("betrivers", k - timedelta(minutes=24), 0.0561, 27.5, 57.5),
+            ("betus", k - timedelta(hours=1, minutes=18), 0.0567, 27.0, 57.0),
+            ("lowvig", k - timedelta(minutes=24), 0.0567, 27.0, 57.0),
+        ]
+        return [
+            _snap(b, t, None, home_spread=sp, over_under=52.5) for b, t, sp in live
+        ] + [
+            _snap(b, t, p, home_spread=sp, over_under=ou) for b, t, p, sp, ou in frozen
+        ]
+
+    def test_frozen_pregame_books_stay_out(self):
+        result = _filter_stale_bookmaker_snapshots(self._specimen(), "live", self.KICKOFF)
+        assert sorted(s.bookmaker for s in result) == [
+            "betmgm", "bovada", "draftkings", "fanatics",
+            "fanduel", "mybookieag", "williamhill_us",
+        ]
+
+    def test_served_line_is_the_live_books_not_the_pregame_mean(self):
+        """The number the reader sees: ND by ~41.8 / 52.5, not 36.5 / 54.2."""
+        from app.utils.odds_math import aggregate_bookmaker_odds
+
+        result = _filter_stale_bookmaker_snapshots(self._specimen(), "live", self.KICKOFF)
+        agg = aggregate_bookmaker_odds(result)
+        assert agg["home_spread"] == 41.8
+        assert agg["over_under"] == 52.5
+        # No live book prices the winner, so there is no sportsbook consensus
+        # to serve — never the frozen 5.6% under a live stamp (#7221's class).
+        assert agg["home_probability"] is None
+
+    def test_strawman_the_old_probe_reproduces_production(self):
+        """The unfiltered eleven give exactly what production served."""
+        from app.utils.odds_math import aggregate_bookmaker_odds
+
+        agg = aggregate_bookmaker_odds(self._specimen())
+        assert (agg["home_spread"], agg["over_under"]) == (36.5, 54.2)
+
+    def test_completed_game_filters_the_same_way(self):
+        result = _filter_stale_bookmaker_snapshots(self._specimen(), "completed", self.KICKOFF)
+        assert len(result) == 7
+        assert all(s.home_win_probability is None for s in result)
+
+    def test_recency_layer_drops_a_silent_moneyline_book_behind_a_spread_only_one(self):
+        """Layer 2 asks the same question: a fresh spread-only book is enough."""
+        k = self.KICKOFF
+        snaps = [
+            _snap("went_quiet", k + timedelta(minutes=10), 0.30, home_spread=3.5),
+            _snap("still_live", k + timedelta(minutes=60), None, home_spread=-10.5),
+        ]
+        result = _filter_stale_bookmaker_snapshots(snaps, "live", k)
+        assert [s.bookmaker for s in result] == ["still_live"]
+
+    def test_a_live_row_quoting_nothing_still_falls_back(self):
+        """Control: a post-kickoff row with no quote at all is not evidence."""
+        k = self.KICKOFF
+        snaps = [
+            _snap("frozen", k - timedelta(minutes=30), 0.40, home_spread=2.5, over_under=45.0),
+            _snap("empty_live", k + timedelta(minutes=30), None),
+        ]
+        result = _filter_stale_bookmaker_snapshots(snaps, "live", k)
+        assert result == snaps

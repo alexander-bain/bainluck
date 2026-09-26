@@ -21,6 +21,30 @@ def _effective_time(snapshot) -> datetime:
     return snapshot.captured_at
 
 
+def _carries_a_quote(snapshot) -> bool:
+    """Does this snapshot price ANYTHING — a moneyline, a spread or a total?
+
+    #8922: the "does the narrower set still hold something" probes below used
+    to ask about the moneyline alone. In a blowout every live sportsbook pulls
+    its moneyline and keeps quoting the spread and total, so the probe read the
+    live set as empty and fell back to ALL snapshots — re-admitting the books
+    that froze at kickoff. Measured on production 2026-09-26 20:30Z,
+    /events/15315949 (Notre Dame 35–3 Purdue, end of Q3): seven live books at
+    ND −40.5…−43.5 / total 52.5, all `home_moneyline: null`, plus four pre-game
+    books frozen at ND −27 / 57. `current_odds` served their mean, 36.5 / 54.2,
+    and the margin map printed `PROJECTION ND by 36.1+` under a headline of
+    `Projected final: 6 – 47`.
+
+    A live book with no moneyline is still live evidence for the fields it
+    does quote. A snapshot quoting nothing at all is evidence of nothing, and
+    the fall-back-to-all behaviour for that case is unchanged.
+    """
+    return any(
+        getattr(snapshot, field, None) is not None
+        for field in ("home_win_probability", "home_spread", "over_under")
+    )
+
+
 def filter_stale_bookmaker_snapshots(
     snapshots: list, event_status: str, commence_time: datetime = None
 ) -> list:
@@ -54,8 +78,9 @@ def filter_stale_bookmaker_snapshots(
         s for s in snapshots if _effective_time(s) >= commence_time
     ]
 
-    # Only use filtered list if we have at least one with valid probability
-    if not any(s.home_win_probability is not None for s in live_snapshots):
+    # Only use filtered list if at least one live book still quotes something
+    # (#8922: a spread or total counts — not only a moneyline)
+    if not any(_carries_a_quote(s) for s in live_snapshots):
         return snapshots
 
     # Layer 2 (live only): exclude bookmakers that stopped updating
@@ -68,8 +93,8 @@ def filter_stale_bookmaker_snapshots(
             s for s in live_snapshots
             if _effective_time(s) >= recency_cutoff
         ]
-        # Only apply recency filter if it leaves at least one snapshot
-        if any(s.home_win_probability is not None for s in recent_snapshots):
+        # Only apply recency filter if it leaves at least one quoting snapshot
+        if any(_carries_a_quote(s) for s in recent_snapshots):
             live_snapshots = recent_snapshots
 
     return live_snapshots
