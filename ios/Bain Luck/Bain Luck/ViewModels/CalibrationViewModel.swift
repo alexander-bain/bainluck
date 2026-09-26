@@ -583,62 +583,43 @@ final class CalibrationViewModel: ObservableObject {
 
     // MARK: - Freshness and population contract (Queue 297 / L2-231 Item 2)
 
-    /// True when the served payload is a dated last-good copy rather than a
-    /// current one. Web banners this; native rendered it as live.
-    var isStale: Bool { data?.cache?.isStale == true }
-
-    /// "Showing the last complete snapshot" subtitle: when it was actually built,
-    /// and how old that is. Nil when the payload is current.
+    /// #8959: what the reader must be told about how current these numbers are,
+    /// decided exactly as web decides it (`CalibrationStaleness`, a port of
+    /// `frontend/lib/calibrationStaleness.ts`). `nil` = say nothing.
     ///
-    /// Deliberately falls back to the payload's own `generated_at` and then to a
-    /// bare "earlier": a stale payload whose envelope omits the date is still
-    /// stale, and dropping the banner because we cannot format a date would
-    /// present it as live — the exact failure the banner exists to prevent.
-    var staleBannerDetail: String? {
-        guard let cache = data?.cache, cache.isStale else { return nil }
-        let built = cache.generatedAt ?? data?.generatedAt
-        let whenText: String
-        if let built, let date = Self.parseISO(built) {
-            let f = DateFormatter()
-            f.dateFormat = "MMM d, h:mm a"
-            whenText = f.string(from: date)
-        } else {
-            whenText = "earlier"
-        }
-        let age = cache.ageS.map { " (\(Self.formatAge($0)) ago)" } ?? ""
-        let schedule = scheduleClause.map { " " + $0 } ?? ""
-        return "These numbers were built \(whenText)\(age) and are not being "
-            + "refreshed right now.\(schedule)"
+    /// This used to read `cache` alone, which only a fallback tier attaches — so
+    /// a main-tier payload declaring `availability: "stale"` over market data
+    /// staged 15 hours earlier rendered on the phone as current.
+    var stalenessNotice: CalibrationStalenessNotice? {
+        guard let data else { return nil }
+        return CalibrationStaleness.decide(
+            availability: data.availability,
+            generatedAt: data.generatedAt,
+            cache: data.cache,
+            producer: data.producer,
+            staged: data.staged
+        )
     }
+
+    /// True when the served payload is a dated last-good copy rather than a
+    /// current one. Since #8959 (web's #4046) a fallback-tier serve whose
+    /// producer proves the curve current is NOT a last-good copy.
+    var isStale: Bool { stalenessNotice?.kind == .lastGood }
+
+    /// The banner's bold lead, web's `stalenessHeadline`. Nil when nothing is owed.
+    var staleBannerHeadline: String? { stalenessNotice.map(CalibrationStaleness.headline) }
+
+    /// The banner's body under the headline, web's banner branch for branch.
+    ///
+    /// A last-good payload whose envelope omits the date still banners, with a
+    /// bare "earlier": dropping the banner because we cannot format a date would
+    /// present it as live — the exact failure the banner exists to prevent.
+    var staleBannerDetail: String? { stalenessNotice.map(CalibrationStaleness.body) }
 
     /// The closing sentence about the hourly schedule, or `nil` for "say nothing".
-    ///
-    /// #2649. This used to be the literal tail of `staleBannerDetail`: "The curve
-    /// rebuilds hourly.", unconditionally. On 2026-09-02 the payload carrying it
-    /// also carried `producer: { stalled: true, beats_missed: 51 }` — so both
-    /// surfaces spent 51 hours telling readers to come back in an hour, for a
-    /// stall that could not self-resolve (the publish gate was refusing every
-    /// rebuild and binning it).
-    ///
-    /// Kept as a sentence rather than deleted, because when the beat IS landing
-    /// the cadence is useful and checkable. What changed is that it must now be
-    /// earned. Mirrors `frontend/lib/calibrationStaleness.ts`
-    /// `stalenessScheduleClause` state for state — the cross-client contract
-    /// means a web-only fix would leave this surface saying the false thing.
-    ///
-    /// Three readings, and absence is deliberately NOT the reassuring one
-    /// (gotcha #53): a payload with no `producer` block is not evidence of a
-    /// healthy beat, so it gets silence rather than the promise.
-    var scheduleClause: String? {
-        guard let producer = data?.producer else { return nil }
-        if producer.beatIsLanding { return "The curve rebuilds hourly." }
-        guard producer.stalled == true else { return nil }
-        guard let missed = producer.beatsMissed, missed > 0 else {
-            return "Hourly rebuilds are not currently succeeding."
-        }
-        let noun = missed == 1 ? "hourly rebuild has" : "hourly rebuilds have"
-        return "\(missed) \(noun) come and gone without one succeeding."
-    }
+    /// #2649 / #4113 / #5042 — see `CalibrationStaleness.scheduleClause`. Absence
+    /// of a `producer` block is deliberately NOT the reassuring reading.
+    var scheduleClause: String? { stalenessNotice.flatMap(CalibrationStaleness.scheduleClause) }
 
     /// The population contracts THIS BUILD's labels honestly describe.
     ///
@@ -865,16 +846,6 @@ final class CalibrationViewModel: ObservableObject {
         return "We're not showing calibration numbers right now — we can't confirm this "
             + "app's descriptions match the data the server sent, and labelling them "
             + "wrong would be worse than not showing them. Please check back shortly."
-    }
-
-    /// "3h" / "45m" / "20s" — mirrors the web page's `formatAge`. Pure, so it is
-    /// `nonisolated`: the class is `@MainActor` and a static would otherwise
-    /// inherit that isolation for no reason.
-    nonisolated static func formatAge(_ seconds: Double) -> String {
-        let s = max(0, Int(seconds.rounded()))
-        if s >= 3600 { return "\(s / 3600)h" }
-        if s >= 60 { return "\(s / 60)m" }
-        return "\(s)s"
     }
 
     // MARK: - Payload-v2 trust content

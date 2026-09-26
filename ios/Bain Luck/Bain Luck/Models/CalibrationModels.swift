@@ -68,6 +68,9 @@ nonisolated struct CalibrationCacheState: Decodable, Sendable {
 nonisolated struct CalibrationProducerState: Decodable, Sendable {
     let stalled: Bool?
     let beatsMissed: Int?
+    /// #8959: the artifact's age at SERVE time, recomputed by `_serve` on every
+    /// tier. The banner's age when `cache` (fallback tiers only) is absent.
+    let ageS: Double?
 
     /// True only when the server AFFIRMATIVELY said the beat is landing.
     /// Absence is not health, so it answers `false` here.
@@ -217,6 +220,12 @@ nonisolated struct CalibrationData: Decodable, Sendable {
     /// read); the label path then falls back to its own formatter, so a raw key
     /// is never the answer either way.
     let sourceLabels: [String: CalibrationSourceLabel]?
+    /// #8959. The server's availability word (ruling 025). `nil` is an older
+    /// payload with no envelope — never read as `fresh`, never as a problem.
+    let availability: String?
+    /// #8959 / #2007. When the market data behind the curve was last staged.
+    /// Web has bannered off it since CAL-P077; native never decoded it.
+    let staged: CalibrationStagedState?
 
     // MARK: - Partial-decode provenance (L2-231 Item 1)
 
@@ -235,7 +244,7 @@ nonisolated struct CalibrationData: Decodable, Sendable {
         case mceCiLower, mceCiUpper, mceClosingLine, mceOpeningPrice
         case generatedAt, minCategoryOutcomes, smallSampleCategories
         case corrections, dateRange, cache, populationVersion, producer
-        case quarantine, sourceLabels
+        case quarantine, sourceLabels, availability, staged
     }
 
     init(from decoder: Decoder) throws {
@@ -266,5 +275,7 @@ nonisolated struct CalibrationData: Decodable, Sendable {
         quarantine = (try? c.decode(LossyArray<CalibrationQuarantine>.self,
                                     forKey: .quarantine))?.elements
         sourceLabels = try? c.decodeIfPresent([String: CalibrationSourceLabel].self, forKey: .sourceLabels)
+        availability = try? c.decodeIfPresent(String.self, forKey: .availability)
+        staged = try? c.decodeIfPresent(CalibrationStagedState.self, forKey: .staged)
     }
 }
