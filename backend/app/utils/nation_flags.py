@@ -140,3 +140,67 @@ def flag_url(name: str | None, size: str = "w160") -> str | None:
     if iso is None:
         return None
     return f"https://flagcdn.com/{size}/{iso}.png"
+
+
+# ESPN's national-team flag code -> the flagcdn code above (#8740). ESPN names a
+# nation's flag `.../teamlogos/countries/500/<code>.png` with its own codes —
+# mostly FIFA's (`fra`, `ger`, `ned`), not always (`rom`, `sba`, `kosovo`) — so
+# no rule derives one from the other; this is a curated table like the map
+# above. Only nations that map above are listed: a flag can corroborate another
+# row only where a flagcdn row for the same nation can exist, and those are
+# written from `_NATION_TO_ISO` (`scripts/backfill_nation_flags.py`). Every
+# entry read off production's `soccer_uefa_nations_league` rows 2026-09-26.
+_ESPN_FLAG_CODE_TO_ISO: dict[str, str] = {
+    "alb": "al",
+    "aut": "at",
+    "bel": "be",
+    "bih": "ba",
+    "cro": "hr",
+    "cze": "cz",
+    "den": "dk",
+    "eng": "gb-eng",
+    "esp": "es",
+    "fra": "fr",
+    "ger": "de",
+    "isl": "is",
+    "ita": "it",
+    "kosovo": "xk",
+    "mkd": "mk",
+    "ned": "nl",
+    "nir": "gb-nir",
+    "nor": "no",
+    "pol": "pl",
+    "por": "pt",
+    "rom": "ro",
+    "sco": "gb-sct",
+    "sui": "ch",
+    "svk": "sk",
+    "swe": "se",
+    "tur": "tr",
+    "ukr": "ua",
+    "wal": "gb-wls",
+}
+
+_KNOWN_ISO: frozenset[str] = frozenset(_NATION_TO_ISO.values())
+
+_FLAGCDN_URL = re.compile(r"^https?://flagcdn\.com/[wh]\d+/([a-z]{2}(?:-[a-z]{3})?)\.png$")
+_ESPN_FLAG_URL = re.compile(r"/teamlogos/countries/500/([a-z.]+)\.png$")
+
+
+def flag_nation(url: str | None) -> str | None:
+    """The nation (flagcdn code) a flag URL depicts, or None if it is not a known flag.
+
+    Two CDNs draw one flag: `flagcdn.com/w80/fr.png` and ESPN's
+    `countries/500/fra.png` are both France. A club crest, an unknown code or
+    any other URL returns None, so this can only say two flags are the same
+    nation — never that a crest is a flag.
+    """
+    if not url:
+        return None
+    m = _FLAGCDN_URL.search(url)
+    if m:
+        return m.group(1) if m.group(1) in _KNOWN_ISO else None
+    m = _ESPN_FLAG_URL.search(url)
+    if m:
+        return _ESPN_FLAG_CODE_TO_ISO.get(m.group(1))
+    return None
