@@ -212,11 +212,15 @@ d("a draw is not the away team on iOS", () => {
   /** Both "Opened …" captions, settled and live, go through the same rule. */
   it("both opening-line captions withhold the same slot", () => {
     const code = stripComments(detail());
+    // #8622: the settled caption now prints the resolved pre-match reading
+    // (`pregame`), the live one still the opening line — both through the rule.
     const opened =
       code.match(
-        /DrawPricedWinner\.printablePair\(\s*away: event\.openingOdds\?\.awayProbability,\s*home: event\.openingOdds\?\.homeProbability,\s*sport: event\.sport\)/g
+        /DrawPricedWinner\.printablePair\(\s*away: (?:event\.openingOdds\?|pregame)\.awayProbability,\s*home: (?:event\.openingOdds\?|pregame)\.homeProbability,\s*sport: event\.sport\)/g
       ) ?? [];
     expect(opened).toHaveLength(2);
+    expect(code).toMatch(/printablePair\(\s*away: pregame\.awayProbability/);
+    expect(code).toMatch(/printablePair\(\s*away: event\.openingOdds\?\.awayProbability/);
 
     // Neither caption reads the opening pair straight off the model any more.
     expect(code).not.toMatch(
@@ -461,8 +465,9 @@ d("a draw is not the away team on iOS", () => {
     expect(code).toMatch(
       /side == \.home\s*\?\s*event\.currentOdds\?\.homeProbability\s*:\s*\(awayIsWithheld \? nil : event\.currentOdds\?\.awayProbability\)/
     );
+    // #8622: the settled row reads the resolved pre-match reading, same gate.
     expect(code).toMatch(
-      /side == \.home\s*\?\s*opening\?\.homeProbability\s*:\s*\(awayIsWithheld \? nil : opening\?\.awayProbability\)/
+      /side == \.home\s*\?\s*reading\?\.homeProbability\s*:\s*\(awayIsWithheld \? nil : reading\?\.awayProbability\)/
     );
     // Both bars keep the remainder and drop the colour.
     const neutralised =

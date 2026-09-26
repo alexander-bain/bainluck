@@ -126,9 +126,11 @@ d("the iOS event detail hero prints a decided pair", () => {
     // Both "Opened {Home} 47%" captions, settled and live. #8320 moved the
     // live one off the hero into Game Info, where `openedText` RETURNS the
     // string rather than drawing a `Text` — same sentence, same rounding.
+    // #8622: the settled caption's word is `pregameWord` ("Pre-match" on the
+    // served reading, "Opened" on the fallback); its rounding is unchanged.
     const openedSolo =
       view.match(
-        /(?:Text\(|return )"Opened \\\(named\.home\) \\\(formatProbability\(opened\.home\)\)"/g,
+        /(?:Text\(|return )"(?:Opened|\\\(pregameWord\)) \\\(named\.home\) \\\(formatProbability\(opened\.home\)\)"/g,
       ) ?? [];
     expect(openedSolo).toHaveLength(2);
 
@@ -151,8 +153,17 @@ d("the iOS event detail hero prints a decided pair", () => {
     // "Opened away – home". Fixing one and not the other is the shape this
     // counts against: two distinct `renderedDuelPercents(away:` call sites for
     // opening probabilities, plus the hero's own.
+    //
+    // #8622: the settled caption's pair is now `pregame.percents`, decided in
+    // `PrematchReading.resolve` through the same two shared helpers — so one
+    // opening-duel call stays in this file and the other moved there.
     const duelCalls = view.match(/renderedDuelPercents\(/g) ?? [];
-    expect(duelCalls.length).toBeGreaterThanOrEqual(3);
+    expect(duelCalls.length).toBeGreaterThanOrEqual(2);
+    const resolver = readFileSync(
+      join(IOS_ROOT, "Utilities/PrematchReading.swift"), "utf8");
+    expect(resolver).toMatch(/percents: duelPercents\(/);
+    expect(resolver).toMatch(/percents: renderedDuelPercents\(away: away, home: home\)/);
+    expect(view).toMatch(/let openDuel = pregame\.percents/);
     // Whitespace-tolerant: SwiftFormat wraps a long argument list, and a guard
     // that a reformat can turn red is a guard nobody keeps.
     //
@@ -164,7 +175,7 @@ d("the iOS event detail hero prints a decided pair", () => {
       view.match(
         /renderedDuelPercents\(\s*away: awayOpen,\s*home: opened\.home\s*\)/g,
       ) ?? [];
-    expect(openingDuels).toHaveLength(2);
+    expect(openingDuels).toHaveLength(1);
 
     // …and each of the two is guarded by its own withholding check, so a
     // caption that lost its guard and printed the complement again fails here.

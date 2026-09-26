@@ -257,9 +257,12 @@ describe("#3049 — every probability the card prints came from a pair", () => {
     // and is therefore invisible to every sum assertion in this file.
     const src = swiftCode(read(CARD));
     expect(src).toMatch(/side == \.home \? livePercents\[1\] : livePercents\[0\]/);
-    expect(src).toMatch(/side == \.home \? openingPercents\[1\] : openingPercents\[0\]/);
+    // #8622: the finished row reads the resolved pre-match reading's pair
+    // (`PrematchReading.percents`, also `[away, home]`), not `openingPercents`.
+    expect(src).toMatch(/reading\?\.percents\[side == \.home \? 1 : 0\]/);
     expect(src).not.toMatch(/side == \.home \? livePercents\[0\]/);
     expect(src).not.toMatch(/side == \.home \? openingPercents\[0\]/);
+    expect(src).not.toMatch(/percents\[side == \.home \? 0 : 1\]/);
   });
 
   it("the card keeps no second, private opinion about the pair", () => {

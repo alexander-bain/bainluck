@@ -166,6 +166,28 @@ nonisolated struct OpeningOdds: Decodable, Sendable {
     let overUnder: Double?
 }
 
+/// The server's one pre-match reading for a game, decoded from `prematch_odds`
+/// by the decoder's `.convertFromSnakeCase` (#8622, the iPhone half of #8315).
+///
+/// The server walks Alex's ladder (Kalshi, then Polymarket, then sportsbooks)
+/// once and serves the rung it landed on here. `opening_odds` is only the
+/// sportsbook median, so a card printing it beside a server reason written
+/// from this reading showed "24%" over "won as a 22% underdog". Read it through
+/// `PrematchReading.resolve`, never directly.
+///
+/// Every field optional: a feed response is cached, so a build can meet a
+/// payload older than the key, and the resolver falls back to `opening_odds`.
+nonisolated struct PrematchOdds: Decodable, Sendable {
+    let homeProbability: Double?
+    let awayProbability: Double?
+    /// The pair rounded ONCE, server-side (UX-P114). These describe THIS
+    /// reading, so unlike `current_odds`' pair they may be printed beside it.
+    let homeRenderedPercent: Int?
+    let awayRenderedPercent: Int?
+    /// The rung: `kalshi`, `polymarket` or `books`.
+    let source: String?
+}
+
 // MARK: - Excitement Index
 
 /// Excitement Index score and presentation metadata for an event.
