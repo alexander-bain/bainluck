@@ -179,6 +179,12 @@ nonisolated struct FuturesMarketDetail: Decodable, Identifiable, Sendable {
     let outcomes: [FuturesOutcome]
     let hookDescription: String?
     let imageUrl: String?
+    /// `lead_outcome_id` (#8892, served by #8894): on a game container, the id of
+    /// the one outcome that answers "who wins" — the match-winner leg — so the
+    /// hero stops leading with whichever leg is most lopsided. Null on every other
+    /// board, and absent from builds before #8894; both decode to `nil` and the
+    /// page keeps its highest-priced rule. See `futuresDetailHeroOutcome`.
+    let leadOutcomeId: Int?
 }
 
 // MARK: - Futures Outcome
