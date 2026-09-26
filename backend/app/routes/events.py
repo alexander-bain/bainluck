@@ -1527,6 +1527,50 @@ def _intent_day_order_key(intent, now: datetime):
     return None
 
 
+def _futures_season_order_key(intent):
+    """#8805: the year the reader typed, as a FUTURES window sort key — or ``None``.
+
+    `parse_intent` lifts the year out of ``2028 democratic nominee`` and the
+    route searches on the subject, ``democratic nominee``. Until this key the
+    year then reached only `_intent_day_order_key`, which orders GAMES; the
+    futures window never saw it, so the two queries fetched the same twenty
+    rows. Production, 2026-09-26: 94 open markets carry both words and about
+    90 are House primaries ("TX-21 Democratic nominee?"). They rank 0.10 on
+    `ts_rank_cd` because the two words sit side by side; "Democratic
+    Presidential Nominee 2028" ranks 0.05 with a word between them. The
+    primaries filled the window and every one was refused later, so the page
+    was EMPTY, and ``2028 republican nominee`` served one Louisiana primary.
+
+    Rows whose NAME carries the year as a whole number sort first, inside
+    their name tier and above `ts_rank_cd`. It orders; it removes nothing. That
+    is `_intent_day_order_key`'s "a band, not a filter" rule: ``2028 nba
+    champion`` still reaches a board whose name carries no year, just below
+    one that does. The name test, not ``resolution_date``: a nominee board
+    resolves before its election and a season board after its year, so the
+    date would miss the rows the reader named. ``None`` for every query without
+    a year, so their SQL is byte-identical to before.
+    """
+    if (
+        intent is None
+        or intent.kind != INTENT_SEASON_YEAR
+        or intent.season is None
+    ):
+        return None
+    # The year is bound as an INTEGER, as `_intent_day_order_key` binds it: no
+    # string the route binds carries it, so #5688's guard (a named year is never
+    # a term a row must MATCH) reads this sort key as what it is.
+    whole_year = (
+        literal("(^|[^[:alnum:]])")
+        + cast(literal(int(intent.season), Integer), String)
+        + literal("($|[^[:alnum:]])")
+    )
+    # `~*` and `||` share one precedence in Postgres, so the pattern is grouped.
+    names_year = FuturesMarket.name.op("~*", is_comparison=True)(
+        whole_year.self_group()
+    )
+    return case((names_year, 0), else_=1)
+
+
 def _strip_search_scaffolding(terms: list[str]) -> list[str]:
     """Drop generic scaffolding words from a >=3-term query; never strip to empty.
     Pure — safe to unit test. Leaves 1-2 word queries untouched (name collisions
@@ -9035,6 +9079,11 @@ async def search_events(
     if _futures_nickname_arms:
         _futures_tier_whens.append((or_(*_futures_nickname_arms), 1))
     _futures_name_tier = case(*_futures_tier_whens, else_=2)
+    # #8805: the named year, inside the tier and above the rank. `[]` without one.
+    _futures_season_key = _futures_season_order_key(_intent)
+    _futures_season_order = (
+        [] if _futures_season_key is None else [_futures_season_key.asc()]
+    )
 
     def _futures_window_query(candidate_filter):
         """The futures window statement over a given candidate filter.
@@ -9055,6 +9104,7 @@ async def search_events(
             )
             .order_by(
                 _futures_name_tier.asc(),
+                *_futures_season_order,
                 futures_search_rank.desc(),
                 # #4572: a real prefix beats an interior substring, but ONLY
                 # among rows the rank above could not separate. Empty list for a

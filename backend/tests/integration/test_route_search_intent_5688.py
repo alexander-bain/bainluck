@@ -232,6 +232,21 @@ class _Recorder:
                 out.append(sql[upper.rindex("ORDER BY"):])
         return out
 
+    def futures_order_bys(self) -> list[str]:
+        """#8805: the outermost ORDER BY of every futures WINDOW SELECT.
+
+        The window is the statement ordered by `ts_rank_cd`; the recall arms
+        and the container reads carry no rank, so that is what selects it.
+        """
+        out: list[str] = []
+        for sql, _params in self.statements:
+            upper = sql.upper()
+            if "futures_markets" in sql and "ORDER BY" in upper:
+                clause = sql[upper.rindex("ORDER BY"):]
+                if "ts_rank_cd" in clause:
+                    out.append(clause)
+        return out
+
 
 @pytest.fixture
 def recorder():
@@ -587,6 +602,58 @@ class TestTheNamedDayLeads:
         await client.get(f"{SEARCH}?q=lazio playoffs")
         assert not [c for c in recorder.event_order_bys() if "timezone" in c], (
             "a question naming no day still added a day sort key"
+        )
+
+
+class TestTheNamedYearOrdersTheFuturesWindow:
+    """#8805: the year reaches the FUTURES window, not only the games.
+
+    ``2028 democratic nominee`` searched markets on the subject alone, so it
+    fetched exactly the twenty rows ``democratic nominee`` did. Ninety House
+    primaries rank above the 2028 national boards on `ts_rank_cd`, so the page
+    came back empty. The served-payload proof is
+    `test_search_named_year_pg_8805.py`. This one reads the compiled ORDER BY
+    and runs without a database, so a skipped Postgres gate cannot hide a
+    reverted key.
+    """
+
+    async def test_a_named_year_sorts_the_futures_window_above_the_rank(
+        self, client, recorder
+    ):
+        await client.get(f"{SEARCH}?q=lazio 2026")
+        clauses = recorder.futures_order_bys()
+        assert clauses, "no futures window was built — the guard is vacuous"
+        for clause in clauses:
+            assert "~*" in clause, (
+                "the year the reader typed never reached the futures window's "
+                f"ORDER BY; clause was {clause}"
+            )
+            # Position, not presence: below the rank, the key breaks ties only,
+            # and ninety tied-high House primaries still fill the window.
+            assert clause.index("~*") < clause.index("ts_rank_cd"), (
+                "the year key sorts BELOW ts_rank_cd, so rows that rank higher "
+                f"without the year still fill the window; clause was {clause}"
+            )
+        bound = [
+            v
+            for sql, params in recorder.statements
+            if "futures_markets" in sql and "ts_rank_cd" in sql
+            for v in params.values()
+        ]
+        assert 2026 in bound, (
+            "the season the reader named was never bound into the key"
+        )
+
+    @pytest.mark.parametrize("query", ["lazio", "lazio today", "lazio playoffs"])
+    async def test_no_named_year_leaves_the_futures_order_untouched(
+        self, client, recorder, query
+    ):
+        """No year, no key. A key keyed on 'an intent exists' fails `today`."""
+        await client.get(f"{SEARCH}?q={query}")
+        clauses = recorder.futures_order_bys()
+        assert clauses, "no futures window was built — the guard is vacuous"
+        assert not [c for c in clauses if "~*" in c], (
+            f"{query!r} named no year but grew a futures year key; {clauses}"
         )
 
 
