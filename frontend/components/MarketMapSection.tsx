@@ -36,7 +36,7 @@ import {
   TOTAL_MAP_HALVES,
 } from "@/lib/marketMapUtils";
 import { formatProbability } from "@/lib/api";
-import { teamShortName } from "@/lib/teamShortName";
+import { isNonDistinctiveTrailingWord, teamShortName, teamShortNames } from "@/lib/teamShortName";
 
 /**
  * The rail colours, named once (#3210).
@@ -340,8 +340,33 @@ function deriveAbbr(team: string, provided?: string, sportKey?: string): string 
     if (!ABBREVIATIONS_THAT_READ_AS_WORDS.has(provided.trim().toUpperCase())) return provided;
     return teamShortName(team, null, sportKey) || provided;
   }
-  const words = team.split(" ");
-  return words[words.length - 1].slice(0, 3).toUpperCase();
+  const words = team.trim().split(/\s+/);
+  const last = words[words.length - 1];
+  // #8870 — "Granada CF" and "Andorra CF" both sliced to "CF". A club-type
+  // suffix names no side, so take the hero's short name instead, as #8585 does.
+  if (isNonDistinctiveTrailingWord(last)) return teamShortName(team, null, sportKey) || team;
+  return last.slice(0, 3).toUpperCase();
+}
+
+/**
+ * #8870 — the card's two side labels, decided as a PAIR. One side alone cannot
+ * see that it shortens to the same word as the other ("Georgia Bulldogs" and
+ * "Mississippi State Bulldogs" both slice to "BUL"), and a margin card whose
+ * two ends read the same names neither side. On a collision this takes the
+ * hero's pair (`teamShortNames`), which itself falls back to the full names.
+ */
+export function marginSideLabels(
+  homeTeam: string,
+  awayTeam: string,
+  homeAbbr?: string,
+  awayAbbr?: string,
+  sportKey?: string
+): { home: string; away: string } {
+  const home = deriveAbbr(homeTeam, homeAbbr, sportKey);
+  const away = deriveAbbr(awayTeam, awayAbbr, sportKey);
+  const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+  if (!same(home, away)) return { home, away };
+  return teamShortNames({ name: homeTeam }, { name: awayTeam }, sportKey);
 }
 
 export default function MarketMapSection({
@@ -366,8 +391,7 @@ export default function MarketMapSection({
   linescore,
   noResultReported = false,
 }: MarketMapSectionProps) {
-  const hAbbr = deriveAbbr(homeTeam, homeAbbr, sportKey);
-  const aAbbr = deriveAbbr(awayTeam, awayAbbr, sportKey);
+  const { home: hAbbr, away: aAbbr } = marginSideLabels(homeTeam, awayTeam, homeAbbr, awayAbbr, sportKey);
   const vocab = sportVocab(sportKey);
 
   const isLive = eventStatus === "live";
