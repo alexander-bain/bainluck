@@ -102,6 +102,17 @@ def _side_is_nameable(side: str) -> bool:
     return True
 
 
+def names_a_prop_qualifier(text: str | None) -> bool:
+    """Does ``text`` carry the Shape-2 vocabulary above — a question NARROWER than who wins?
+
+    The public face of :data:`_PROP_QUALIFIER`, for a caller that has already
+    split a matchup name and needs to judge ONE part of it — a leading
+    ``"Set 1 Winner"`` against a leading ``"Hangzhou Open (Doubles)"`` (#8829).
+    Same word anchoring, same vocabulary, so the two callers cannot drift apart.
+    """
+    return bool(text) and _PROP_QUALIFIER.search(text) is not None
+
+
 def bare_matchup_sides(market_name: str | None) -> tuple[str, str] | None:
     """The two sides of ``name``, but ONLY when the name is nothing but a matchup.
 

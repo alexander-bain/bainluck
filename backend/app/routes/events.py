@@ -17329,6 +17329,17 @@ def _match_winner_side(
     if first_token in _MATCH_WINNER_DRAW_TOKENS:
         return "draw"
 
+    # #8829 — a doubles PAIR is spelled with and without spaces round its slash:
+    # Polymarket's leg is "Reynolds/Watt", our stored side is "Reynolds / Watt",
+    # and `names_match` reads the unspaced form as ONE token, so the pair's own
+    # match-winner market named no side and was drawn twice on its page. Spaced
+    # here, on both operands, rather than inside `names_match`, which the matcher
+    # also reads. Kalshi's "Finn Reynolds / James Watt" already answered.
+    if "/" in name:
+        name = _spaced_pair_slash(name)
+        home_name = _spaced_pair_slash(home_name)
+        away_name = _spaced_pair_slash(away_name)
+
     is_home = bool(home_name) and names_match(name, home_name)
     is_away = bool(away_name) and names_match(name, away_name)
     # A leg that answers to BOTH clubs has named neither of them, and a derby of
@@ -17341,6 +17352,18 @@ def _match_winner_side(
     if is_away:
         return "away"
     return None
+
+
+#: "Game 1" — a playoff series' game number, which names WHICH match rather than
+#: a narrower question about it (#8829; see `_market_is_event_match_winner`).
+_SERIES_GAME_NUMBER_RE = re.compile(r"^game\s+\d+$", re.IGNORECASE)
+
+
+def _spaced_pair_slash(name: Optional[str]) -> Optional[str]:
+    """``"Reynolds/Watt"`` → ``"Reynolds / Watt"``: one spelling of a doubles pair (#8829)."""
+    if not name:
+        return name
+    return re.sub(r"\s*/\s*", " / ", name)
 
 
 def _market_is_event_match_winner(
@@ -17371,7 +17394,23 @@ def _market_is_event_match_winner(
     reused for what it does say (the name is a matchup, and a TAIL colon
     disqualifies) and the separator this population actually uses is added here,
     beside the specimen, rather than by editing a regex three other callers read.
+
+    🔴 AND A LEADING QUALIFIER CAN BE A PROP TOO (#8829). The regex swallows any
+    ``X:`` prefix into the first side, which is right for Polymarket's tournament
+    prefix ("Hangzhou Open (Doubles): Reynolds/Watt vs King/Stevens" IS the
+    match) and wrong for its set markets: "Set 1 Winner: Alec Deckers vs Philip
+    Henning" has the same two legs, passed test 1, and was folded out of BOTH
+    doors — measured on `/events/15319072`, where Set 1 Winner `62422520` and Set
+    2 Winner `62526440` reached neither `/game-markets` nor `/related-futures`.
+    The prefix is judged with `matchup_sides`' measured Shape-2 vocabulary (Set
+    Handicap, Game Spread, Set N Winner) rather than a list written here — with
+    ONE carve-out, measured on every open event-linked name that vocabulary
+    catches (2026-09-26): Kalshi's playoff "Game 1: Dallas vs Golden State" is a
+    series game NUMBER, not a scope, and all four such rows are their event's own
+    verified winner speaker. A bare ``Game N`` prefix therefore still qualifies.
     """
+    from app.utils.matchup_sides import names_a_prop_qualifier
+
     if not rows:
         return False
 
@@ -17380,6 +17419,10 @@ def _market_is_event_match_winner(
         return False
     if not _MONEYLINE_MATCHUP_RE.match(market_name):
         return False
+    if ":" in market_name:
+        prefix = market_name.rsplit(":", 1)[0].strip()
+        if names_a_prop_qualifier(prefix) and not _SERIES_GAME_NUMBER_RE.match(prefix):
+            return False
 
     sides = set()
     for row in rows:
@@ -17605,6 +17648,7 @@ def _fold_event_match_winner_futures(
     event_id: int,
     home_name: Optional[str],
     away_name: Optional[str],
+    headline_market_ids: frozenset = frozenset(),
 ) -> tuple[list, list]:
     """Bigger Picture does not repeat the fixture's own result (#4646).
 
@@ -17670,6 +17714,13 @@ def _fold_event_match_winner_futures(
     After `dedup_by_merge_group` a leg can be speaking for a market it did not
     come from (see :func:`_snapshot_row_market_ids`), and a fold keyed on
     `market_id` would then take legs belonging to markets it never judged.
+
+    🔴 THE HERO'S OWN MARKET IS KNOWN BY ID, SO IT FOLDS BY ID (#8829).
+    ``headline_market_ids`` is every market the hero's blend names as a verified
+    ``full_event_winner`` speaker (:func:`_headline_winner_market_ids`). Such a
+    market IS the fixture's result by a rule that already judged it, so it folds
+    whatever its legs are spelled — the name test above is for the markets no
+    rule has judged. Still bounded to markets linked to this event.
     """
     if not home_futures and not away_futures:
         return home_futures, away_futures
@@ -17686,7 +17737,9 @@ def _fold_event_match_winner_futures(
         market = row_markets.get(market_id)
         if market is None or market.event_id != event_id:
             continue
-        if _market_is_event_match_winner(rows, home_name, away_name):
+        if market_id in headline_market_ids or _market_is_event_match_winner(
+            rows, home_name, away_name
+        ):
             folded.add(market_id)
 
     if not folded:
@@ -17696,6 +17749,34 @@ def _fold_event_match_winner_futures(
         [r for r in home_futures if r.get("market_id") not in folded],
         [r for r in away_futures if r.get("market_id") not in folded],
     )
+
+
+def _headline_winner_market_ids(win_probability_sources: object) -> frozenset:
+    """Every market the hero's blend names as its verified winner speaker (#8829).
+
+    Read through `probability_eligibility`'s own reader, so a legacy float, a
+    malformed record or an unverified reading contributes nothing — the fold
+    this feeds can only ever get narrower for a record it cannot read.
+    """
+    from app.utils.probability_eligibility import (
+        MARKET_DERIVED_SOURCES,
+        SCOPE_FULL_EVENT_WINNER,
+        VERIFIED,
+        contributing_market_ids,
+        from_entry,
+    )
+
+    if not isinstance(win_probability_sources, dict):
+        return frozenset()
+    ids: set[int] = set()
+    for source in MARKET_DERIVED_SOURCES:
+        record = from_entry(win_probability_sources.get(source))
+        if record is None or record.status != VERIFIED:
+            continue
+        if record.scope != SCOPE_FULL_EVENT_WINNER:
+            continue
+        ids.update(contributing_market_ids(record))
+    return frozenset(ids)
 
 
 def _snapshot_row_market_ids(rows: list) -> list:
@@ -24242,6 +24323,7 @@ async def _build_related_futures(
         event_id,
         event.home_team_name,
         event.away_team_name,
+        headline_market_ids=_headline_winner_market_ids(event.win_probability_sources),
     )
 
     # ── Cross-source deduplication ──────────────────────────────────
