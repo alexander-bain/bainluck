@@ -257,7 +257,9 @@ describe("#4067 — no supplier word from /api/calibration reaches the rendered 
     const text = visibleText(renderPage());
     expect(text).toContain("Calibration");
     expect(text).toContain("Liquidity filter (Kalshi)");
-    expect(text).toContain("9,000 included");
+    // #8955: "passed" — the Kalshi counts are over every Kalshi outcome checked,
+    // before the other rules, so "included" read as rows in the curve.
+    expect(text).toContain("9,000 passed");
   });
 
   it("prints no banned word anywhere on the page, from any payload field", () => {
@@ -281,7 +283,7 @@ describe("#4067 — no supplier word from /api/calibration reaches the rendered 
     expect(text).toContain("777 excluded");
     expect(text).toContain("Void filter (did-not-play / withdrew)");
     expect(text).toContain("333 excluded");
-    expect(text).toContain("Non-partition bundle filter");
+    expect(text).toContain("Separate bets listed as one market");
 
     // Dropped: the method note. Asserted by a distinctive fragment of each rule
     // that carries no banned word, so these arms stay meaningful even if the
@@ -297,7 +299,14 @@ describe("#4067 — no supplier word from /api/calibration reaches the rendered 
     // taken the ruling's own sentences with it, that is a different regression
     // wearing the same diff.
     const text = visibleText(renderPage());
-    expect(text).toContain("kalshi/economics 1,500");
+    // #8955: the per-cell counts stay (the ruling), under a reader's name for
+    // the cell rather than the payload key — and the server's own revert
+    // condition is not printed; the page writes its own.
+    expect(text).toContain("Kalshi Economics 1,500");
+    expect(text).toContain("Polymarket Baseball — returns when we fix the bug");
+    expect(text).not.toContain("kalshi/economics");
+    expect(text).not.toContain("polymarket/baseball");
+    expect(text).not.toContain("the writer is repaired");
     expect(text).toMatch(/shrank the curve rather than improving it/i);
     expect(text).toMatch(/never read as a fixed one/i);
     expect(text).toMatch(/temporary by design/i);
