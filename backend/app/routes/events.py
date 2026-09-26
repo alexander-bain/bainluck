@@ -30742,6 +30742,7 @@ def _search_ladder_window(
     legs: list,
     withheld_ids: set[int],
     limit: int,
+    lean: bool = False,
 ) -> Optional[list]:
     """``limit`` rungs around a cumulative ladder's 50% crossing, in threshold
     order — or ``None`` when the legs are not ONE ladder, and the caller's
@@ -30824,7 +30825,17 @@ def _search_ladder_window(
     )
     # `near` is also the first far-side rung's place in `priced`, so the window
     # takes ceil(limit/2) priced rungs before it and the rest after it.
-    start = max(0, min(near - (limit + 1) // 2, len(priced) - limit))
+    if lean:
+        # The dropdown prints only the FIRST TWO priced rows
+        # (`searchSuggestionDisplay.ts::futuresAnswer`), so its window opens ONE
+        # rung before the crossing and those two straddle it. With a lead of 2
+        # both printed rows sat on the near side (ux on #8882, 2026-09-26 18:28Z):
+        # Dec 2026 (109658) printed "Above 3.75% 98% · Above 4.00% 90%" and never
+        # its answer, Above 4.25% at 49.5%. A ladder wholly on the near side
+        # clamps so the printed pair is its LAST two rungs, the nearest to even.
+        start = max(0, min(near - 1, len(priced) - 2))
+    else:
+        start = max(0, min(near - (limit + 1) // 2, len(priced) - limit))
     return [ordered[index] for index in priced[start : start + limit]]
 
 
@@ -30999,7 +31010,7 @@ def _build_search_top_outcomes(
     # #8834: a cumulative ladder is drawn as the rungs around its crossing, in
     # threshold order, and never reaches the probability sort below. See
     # `_search_ladder_window` for why the sort is wrong on exactly this shape.
-    window = _search_ladder_window(market, real, _withheld_ids, limit)
+    window = _search_ladder_window(market, real, _withheld_ids, limit, lean)
     pinned = None
     if window is not None:
         top = window
