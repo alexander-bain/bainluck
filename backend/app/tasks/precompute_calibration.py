@@ -7,6 +7,7 @@ with results cached in Redis lets the API endpoints serve instantly.
 
 import asyncio
 import contextlib
+import contextvars
 import json
 import logging
 import math
@@ -79,6 +80,44 @@ _MAIN_KEY = "bainluck:calibration:main"
 BOOKMAKER_CURVE_REDIS_KEY = "bainluck:bookmaker_calibration"
 BOOKMAKER_CURVE_ABSENT_REFUSAL = "bookmaker_curve_key_absent"
 BOOKMAKER_CURVE_UNREADABLE_REFUSAL = "bookmaker_curve_key_unreadable"
+
+# #8905. The Redis key above is not a store, it is a guess that `allkeys-lru`
+# will leave a multi-MB key read once an hour alone. Measured 2026-09-26: it
+# did not — evicted less than 3.5 h after a 14:55Z write, against a 24 h TTL —
+# and the writer, which runs on the MAIN app, was torn down by release v5103
+# before it could replace it. Either alone is survivable; together they froze
+# the accuracy page twice in one day, every beat refusing with
+# `bookmaker_curve_key_absent`.
+#
+# So the writer also lands the curve in `durable_state_snapshots` under this
+# identity, BEFORE its `setex` (the Queue 298 pattern `calibration:main` uses),
+# and the producer hands that row to the reader, which falls back to it only
+# when the Redis key is absent or unreachable.
+#
+# The age bound is the key's own TTL, and that is the whole honesty argument:
+# the durable copy may serve exactly as long as the Redis copy could have, and
+# not one second longer. It survives EVICTION, never AGE — a curve the writer
+# has not replaced in 24 h is still refused as absent, for the reason the
+# writer's own docstring gives (a stale curve presented as current is strictly
+# worse than a missing one).
+BOOKMAKER_CURVE_DURABLE_IDENTITY = "calibration:bookmaker_curve"
+BOOKMAKER_CURVE_DURABLE_SCHEMA = "bookmaker-curve/v1"
+BOOKMAKER_CURVE_MAX_AGE_S = 86400
+
+#: The durable read the producer made for THIS build, or ``None`` when no
+#: producer made one (the route's cold-cache fallback, tests, scripts).
+#:
+#: A context variable and not an argument, because the only call site is inside
+#: ``compute_calibration_payload`` — a HASHED ROOT of
+#: ``_main_input_fingerprint``. Editing that function to pass a new argument
+#: moves the digest, and a moved digest discards every banked unit of the
+#: in-flight build and restarts a multi-day convergence: the exact publish
+#: outage this fallback exists to end, bought on purpose. The producer sets it
+#: around its one ``compute_calibration_payload`` call and resets it after, so
+#: it can never leak into another build or into a request.
+_BOOKMAKER_CURVE_DURABLE = contextvars.ContextVar(
+    "bookmaker_curve_durable", default=None
+)
 
 #: CERT-502 P1. The ONLY value `source` may hold in a row under
 #: `BOOKMAKER_CURVE_REDIS_KEY` — `_precompute_bookmaker_calibration` emits it as a
@@ -251,7 +290,75 @@ def _bookmaker_row_defect(row: dict) -> str | None:
     return None
 
 
-def read_bookmaker_curve_rows(rc, *, refuse: bool, json_module=None):
+async def read_bookmaker_curve_durable():
+    """The writer's durable copy of the bookmaker curve, as an ``EnvelopeRead``.
+
+    #8905. Never raises: ``read_snapshot_standalone`` already classifies a
+    database problem as ``unavailable``, and anything that escapes it (an
+    import, a session that will not open) is classified the same way here. A
+    survivor that cannot be read must leave the reader exactly where it was
+    before the survivor existed — refusing by name — and never take the build
+    down with it.
+    """
+    from app.services.durable_snapshots import TIER_DURABLE, read_snapshot_standalone
+    from app.utils.durable_state import failed_read
+
+    try:
+        return await read_snapshot_standalone(
+            BOOKMAKER_CURVE_DURABLE_IDENTITY,
+            expected_version=BOOKMAKER_CURVE_DURABLE_SCHEMA,
+            max_age_s=BOOKMAKER_CURVE_MAX_AGE_S,
+        )
+    except Exception as exc:  # noqa: BLE001 — classified, the reader names it
+        return failed_read(TIER_DURABLE, exc)
+
+
+def _bookmaker_durable_verdict(durable, *, now: datetime | None = None):
+    """May this durable read stand in for an absent Redis key? ``(ok, note)``.
+
+    #8905. ``durable`` is the ``EnvelopeRead`` the producer took before the
+    build started, or ``None`` when nobody took one. ``note`` is a clause for
+    the refusal message either way, so an operator reading
+    ``bookmaker_curve_key_absent`` learns whether the survivor was missing,
+    stale or simply never consulted — three different next steps.
+
+    The age is checked AGAIN here, at the moment of use, and that is not
+    redundant with ``read_snapshot``'s own bound: the producer reads the row
+    before phases 1-2, which run for many minutes, so a row that was 23h59m old
+    at the read can be past 24 h by the time Phase 3 would serve it. The bound
+    is "no older than the key could have been", measured when the curve is
+    used, not when it was fetched.
+    """
+    if durable is None:
+        return False, "no durable survivor was consulted for this build"
+    if not getattr(durable, "ok", False) or durable.envelope is None:
+        return False, (
+            f"the durable survivor is {durable.status}"
+            + (f" ({durable.error})" if durable.error else "")
+        )
+    envelope = durable.envelope
+    if (
+        envelope.identity != BOOKMAKER_CURVE_DURABLE_IDENTITY
+        or envelope.schema_version != BOOKMAKER_CURVE_DURABLE_SCHEMA
+    ):
+        return False, (
+            f"the durable read is {envelope.identity}@{envelope.schema_version}, "
+            f"which is not the bookmaker writer's row"
+        )
+    age_s = ((now or datetime.now(timezone.utc)) - envelope.generated_at).total_seconds()
+    if age_s < 0 or age_s > BOOKMAKER_CURVE_MAX_AGE_S:
+        return False, (
+            f"the durable survivor {envelope.identity} is {round(age_s)}s old, "
+            f"outside the key's own 24 h TTL, so it is refused as stale exactly "
+            f"as the key would have expired"
+        )
+    return True, (
+        f"served from the durable survivor {envelope.identity} "
+        f"(generation {envelope.generation}, {round(age_s)}s old)"
+    )
+
+
+def read_bookmaker_curve_rows(rc, *, refuse: bool, json_module=None, durable=None):
     """The per-bookmaker curve, or a NAMED refusal. Never a silent zero.
 
     D21 (#1978, CAL-P150) — freeze exception GRANTED by Alex 2026-08-30, and
@@ -306,8 +413,19 @@ def read_bookmaker_curve_rows(rc, *, refuse: bool, json_module=None):
     distinguishes them from SUCCESS is the whole point. They are still told
     apart from each other, by two distinct reason codes, because "Redis is down"
     and "the writer has not landed a sweep" want different operators.
+
+    #8905 — THE DURABLE SURVIVOR. When the key is absent or Redis cannot be
+    read, ``durable`` (default: the read the producer put in
+    ``_BOOKMAKER_CURVE_DURABLE``) is used instead, if it is the writer's row and
+    no older than the key's own 24 h TTL. Its payload goes through every
+    container and row refusal below unchanged — the durable copy is a second
+    place the same bytes live, not a second, laxer contract. When it cannot
+    serve, the refusal is the one this function always gave, with a clause
+    saying what the survivor was.
     """
     _json = json_module or json
+    if durable is None:
+        durable = _BOOKMAKER_CURVE_DURABLE.get()
 
     # 🔴 THIS QUEUE RAISED A PINNED TRIPWIRE — `uncovered_sql_shaping` 21 -> 22 —
     # AND THE REASON BELONGS BESIDE THE LINE THAT DID IT.
@@ -350,40 +468,66 @@ def read_bookmaker_curve_rows(rc, *, refuse: bool, json_module=None):
         )
         return [], 0, reason
 
+    # Where the rows below came from, for the container and row refusals. The
+    # Redis key unless the durable survivor stood in for it (#8905) — a refusal
+    # naming the key over rows that came from Postgres would send an operator
+    # to read the one store that is known to be empty.
+    _where = BOOKMAKER_CURVE_REDIS_KEY
+
+    fetch_exc = None
     try:
         cached = rc.get(BOOKMAKER_CURVE_REDIS_KEY)
     except Exception as exc:
-        return _degrade(
-            BOOKMAKER_CURVE_UNREADABLE_REFUSAL,
-            "could not read %s from Redis, so the per-bookmaker curve (~%s "
-            "outcomes, source odds_api_bookmaker) cannot be assembled. Nothing "
-            "published, prior snapshot preserved."
-            % (BOOKMAKER_CURVE_REDIS_KEY, _expected),
-            exc,
-        )
+        cached, fetch_exc = None, exc
 
     if not cached:
-        return _degrade(
-            BOOKMAKER_CURVE_ABSENT_REFUSAL,
-            "%s is absent, so the candidate would publish ~%s outcomes short. "
-            "Its only writer is precompute_bookmaker_calibration "
-            "(backfill_winners.py, every 6 h, 24 h TTL, fails closed), so an "
-            "absent key means that task has not landed a COMPLETE sweep inside "
-            "one TTL. Fire it detached and confirm by_source carries "
-            "odds_api_bookmaker before expecting this build to publish. "
-            "Nothing published, prior snapshot preserved."
-            % (BOOKMAKER_CURVE_REDIS_KEY, _expected),
-        )
-
-    try:
-        raw = _json.loads(cached)
-    except Exception as exc:
-        return _degrade(
-            BOOKMAKER_CURVE_UNREADABLE_REFUSAL,
-            "%s is present but is not JSON this reader can parse. Nothing "
-            "published, prior snapshot preserved." % (BOOKMAKER_CURVE_REDIS_KEY,),
-            exc,
-        )
+        _durable_ok, _durable_note = _bookmaker_durable_verdict(durable)
+        if _durable_ok:
+            # WARNING, not INFO: the build is healthy, but the Redis copy of a
+            # curve its writer landed is gone, and how often that happens is
+            # the number that says whether the writer's cadence is enough.
+            logger.warning(
+                "bookmaker curve: %s %s — %s",
+                BOOKMAKER_CURVE_REDIS_KEY,
+                "unreadable" if fetch_exc is not None else "absent",
+                _durable_note,
+            )
+            raw = durable.envelope.payload
+            _where = "durable row %s (generation %d)" % (
+                durable.envelope.identity,
+                durable.envelope.generation,
+            )
+        elif fetch_exc is not None:
+            return _degrade(
+                BOOKMAKER_CURVE_UNREADABLE_REFUSAL,
+                "could not read %s from Redis, so the per-bookmaker curve (~%s "
+                "outcomes, source odds_api_bookmaker) cannot be assembled, and "
+                "%s. Nothing published, prior snapshot preserved."
+                % (BOOKMAKER_CURVE_REDIS_KEY, _expected, _durable_note),
+                fetch_exc,
+            )
+        else:
+            return _degrade(
+                BOOKMAKER_CURVE_ABSENT_REFUSAL,
+                "%s is absent, so the candidate would publish ~%s outcomes short, "
+                "and %s. Its only writer is precompute_bookmaker_calibration "
+                "(backfill_winners.py, every 2 h, 24 h TTL, fails closed), so an "
+                "absent key with no fresh survivor means that task has not landed "
+                "a COMPLETE sweep inside one TTL. Fire it detached and confirm "
+                "by_source carries odds_api_bookmaker before expecting this build "
+                "to publish. Nothing published, prior snapshot preserved."
+                % (BOOKMAKER_CURVE_REDIS_KEY, _expected, _durable_note),
+            )
+    else:
+        try:
+            raw = _json.loads(cached)
+        except Exception as exc:
+            return _degrade(
+                BOOKMAKER_CURVE_UNREADABLE_REFUSAL,
+                "%s is present but is not JSON this reader can parse. Nothing "
+                "published, prior snapshot preserved." % (BOOKMAKER_CURVE_REDIS_KEY,),
+                exc,
+            )
 
     # 🔴 CERT-485 P1-b. `json.loads` returning is proof the bytes were JSON. It
     # is NOT proof they are a list of bookmaker rows, and until this check
@@ -421,7 +565,7 @@ def read_bookmaker_curve_rows(rc, *, refuse: bool, json_module=None):
             "writes an empty list — it reports no_work and writes nothing — so "
             "this value did not come from a healthy sweep. Nothing published, "
             "prior snapshot preserved."
-            % (BOOKMAKER_CURVE_REDIS_KEY, _shape_of(raw), _expected),
+            % (_where, _shape_of(raw), _expected),
         )
 
     # 🔴 CERT-497 P1. The gate above proves the CONTAINER; this one proves the
@@ -456,7 +600,7 @@ def read_bookmaker_curve_rows(rc, *, refuse: bool, json_module=None):
                 "come from a healthy sweep. Nothing published, prior snapshot "
                 "preserved."
                 % (
-                    BOOKMAKER_CURVE_REDIS_KEY,
+                    _where,
                     len(raw),
                     _idx,
                     _defect,
@@ -9127,9 +9271,19 @@ async def _run_calibration_main_build(runner=None):
         # its commit clears the transaction-local setting.
         await runner.tag_session(db)
 
+        # #8905: take the bookmaker curve's durable survivor BEFORE the build,
+        # because the one place it is needed (Phase 3's reader) is synchronous
+        # and sits inside the hashed root — see `_BOOKMAKER_CURVE_DURABLE`. Read
+        # every beat, not only when the key looks absent: phases 1-2 run for
+        # many minutes, and a key present at this line can be evicted by the
+        # time Phase 3 reads it, which is the failure this exists to survive.
+        durable_token = _BOOKMAKER_CURVE_DURABLE.set(
+            await read_bookmaker_curve_durable()
+        )
         try:
             response = await compute_calibration_payload(db, runner=runner)
         finally:
+            _BOOKMAKER_CURVE_DURABLE.reset(durable_token)
             await release_overlap_lock(db, MAIN_BUILD_TASK)
     # ^ the `async with` exit rolls back, closes and DISPOSES the per-task
     # engine. That teardown is real wall-clock the old `compute_ms` swallowed.

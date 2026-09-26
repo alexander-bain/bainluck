@@ -11225,6 +11225,55 @@ async def _precompute_bookmaker_calibration(deadline: float | None = None):
                 # invisible staleness, and a stale curve presented as current is
                 # strictly worse than a missing one. The absence is what the
                 # terminal above and below makes loud; the TTL stays honest.
+                #
+                # #8905 — DURABLE FIRST. Redis is `allkeys-lru`, and on
+                # 2026-09-26 it evicted this key under 3.5 h into its 24 h TTL
+                # while releases kept killing this writer, so the accuracy page
+                # froze twice. The durable row is the survivor the reader falls
+                # back to, bounded by the same 24 h (see
+                # `precompute_calibration.BOOKMAKER_CURVE_MAX_AGE_S`), so it
+                # buys survival against eviction and nothing against age.
+                #
+                # Unlike `calibration:main`, a failed durable write does NOT
+                # skip the Redis write. There, no reader may see a volatile copy
+                # the durable store does not back. Here the reader always
+                # prefers Redis and consults the durable row only when the key
+                # is gone, so a Redis copy ahead of the durable one is never
+                # served as anything but itself — and skipping it would turn a
+                # database blip into the very absence this exists to prevent.
+                # It is not GREEN either: the error is recorded, so the verdict
+                # reads PARTIAL, because the next eviction is now unprotected.
+                from app.services.durable_snapshots import (
+                    PUBLISH_STATUS_DURABLE,
+                    publish_snapshot_standalone,
+                )
+                from app.tasks.precompute_calibration import (
+                    BOOKMAKER_CURVE_DURABLE_IDENTITY,
+                    BOOKMAKER_CURVE_DURABLE_SCHEMA,
+                )
+                from app.utils.durable_state import DurableEnvelope
+
+                durable_stage = await publish_snapshot_standalone(
+                    DurableEnvelope.build(
+                        identity=BOOKMAKER_CURVE_DURABLE_IDENTITY,
+                        schema_version=BOOKMAKER_CURVE_DURABLE_SCHEMA,
+                        payload=buckets,
+                        source="precompute_bookmaker_calibration",
+                    )
+                )
+                stats["durable"] = durable_stage["status"]
+                if durable_stage["status"] not in PUBLISH_STATUS_DURABLE:
+                    stats["errors"].append(
+                        f"durable survivor NOT written "
+                        f"({durable_stage.get('error') or durable_stage['status']}); "
+                        f"the Redis copy is unprotected against eviction"
+                    )
+                    logger.error(
+                        "Bookmaker calibration: durable write FAILED (%s) — "
+                        "writing Redis anyway; an eviction before the next run "
+                        "will freeze the accuracy page (#8905)",
+                        durable_stage.get("error") or durable_stage["status"],
+                    )
                 try:
                     redis_client = get_redis_client()
                     redis_client.setex(

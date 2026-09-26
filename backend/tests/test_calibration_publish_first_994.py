@@ -606,6 +606,18 @@ def orchestrator(monkeypatch):
         return {"status": "ok"}
 
     monkeypatch.setattr(ds, "publish_snapshot_standalone", fake_publish)
+
+    # #8905: every beat now reads the bookmaker curve's durable survivor before
+    # the build, on its OWN short session (`read_snapshot_standalone`) — the
+    # same way the durable publish above uses its own. Stubbed for the same
+    # reason: `sessions["opened"]` counts the BUILD and REBUILD sessions these
+    # tests are about, and the survivor read is neither. Sharing the build's
+    # session instead would be worse, not tidier: a failed read aborts the
+    # transaction the compute runs in.
+    async def fake_durable_read(identity, **kw):
+        return dstate.EnvelopeRead(status="missing", tier="durable")
+
+    monkeypatch.setattr(ds, "read_snapshot_standalone", fake_durable_read)
     return pc, sessions
 
 

@@ -30,7 +30,7 @@
     "compute_calibration_payload",
     "identity_quarantine_ctes"
   ],
-  "input_count": 75,
+  "input_count": 79,
   "inputs": [
     {
       "covered_by_value": false,
@@ -47,11 +47,44 @@
       "covered_by_value": false,
       "definition_sha16": null,
       "impact": "behavior_or_evidence",
+      "name": "BOOKMAKER_CURVE_DURABLE_IDENTITY",
+      "origin": "app.tasks.precompute_calibration:BOOKMAKER_CURVE_DURABLE_IDENTITY",
+      "sql_interpolated": false,
+      "used_in": [
+        "_bookmaker_durable_verdict"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "BOOKMAKER_CURVE_DURABLE_SCHEMA",
+      "origin": "app.tasks.precompute_calibration:BOOKMAKER_CURVE_DURABLE_SCHEMA",
+      "sql_interpolated": false,
+      "used_in": [
+        "_bookmaker_durable_verdict"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
       "name": "BOOKMAKER_CURVE_EXPECTED_OUTCOMES",
       "origin": "app.tasks.precompute_calibration:BOOKMAKER_CURVE_EXPECTED_OUTCOMES",
       "sql_interpolated": false,
       "used_in": [
         "read_bookmaker_curve_rows"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "BOOKMAKER_CURVE_MAX_AGE_S",
+      "origin": "app.tasks.precompute_calibration:BOOKMAKER_CURVE_MAX_AGE_S",
+      "sql_interpolated": false,
+      "used_in": [
+        "_bookmaker_durable_verdict"
       ]
     },
     {
@@ -815,6 +848,17 @@
       "covered_by_value": false,
       "definition_sha16": null,
       "impact": "behavior_or_evidence",
+      "name": "_BOOKMAKER_CURVE_DURABLE",
+      "origin": "app.tasks.precompute_calibration:_BOOKMAKER_CURVE_DURABLE",
+      "sql_interpolated": false,
+      "used_in": [
+        "read_bookmaker_curve_rows"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
       "name": "_BOOKMAKER_ROW_REQUIRED_KEYS",
       "origin": "app.tasks.precompute_calibration:_BOOKMAKER_ROW_REQUIRED_KEYS",
       "sql_interpolated": false,
@@ -897,8 +941,8 @@
   ],
   "schema": "calibration-fingerprint-derived/v1",
   "source": "backend/app/tasks/precompute_calibration.py",
-  "source_sha256": "895e23ad21f38d1b86fdecc5ed8e73c7090b2ec10ff2d2943922bfe2d215955f",
-  "uncovered_behavior_or_evidence": 35,
-  "uncovered_count": 62,
+  "source_sha256": "fd69c6d984a0e128b775614c65b243088ee3dd6e2aaf34b8f5e67a49308a5c86",
+  "uncovered_behavior_or_evidence": 39,
+  "uncovered_count": 66,
   "uncovered_sql_shaping": 27
 }
