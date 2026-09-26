@@ -507,6 +507,36 @@ def _extract_timing(
         tags.add("timing:national_tv")
 
 
+# ── Provenance: tags this module does not own ─────────────────────────
+#
+# #8422. `provenance:` elements (`duplicate-of:<N>`, `source:<p>`, `unanchored`)
+# are written by the registry and the twin sweeps, never by
+# `compute_event_tags`. The refresh arm of `update_event_tags` REPLACES a row's
+# tags with the computed set, so without a carry it erased every sweep's
+# `duplicate-of` label on the 500 farthest-future scheduled rows every ~30 min —
+# Fleetwood Town v Arsenal was labelled at :51 and back in search by :07.
+
+PROVENANCE_TAG_PREFIX = "provenance:"
+
+
+def carry_provenance_tags(existing_tags, computed_tags: list[str]) -> list[str]:
+    """``computed_tags`` plus every ``provenance:`` element of ``existing_tags``.
+
+    Existing provenance keeps its order and follows the computed set; nothing
+    else survives from ``existing_tags`` (a stale ``status:``/``signal:`` must
+    still be replaced). A non-list ``existing_tags`` carries nothing.
+    """
+    out = list(computed_tags)
+    if not isinstance(existing_tags, list):
+        return out
+    seen = set(out)
+    for t in existing_tags:
+        if isinstance(t, str) and t.startswith(PROVENANCE_TAG_PREFIX) and t not in seen:
+            out.append(t)
+            seen.add(t)
+    return out
+
+
 # ── LLM enrichment constants ──────────────────────────────────────────
 
 LLM_ENRICHMENT_NAMESPACES = {"stakes", "narrative", "audience", "competitive_structure"}

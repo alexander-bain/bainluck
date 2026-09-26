@@ -17,6 +17,7 @@ from app.models.models import Event, FuturesMarket
 from app.utils.aggregation import compute_aggregate_probability
 from app.utils.event_taxonomy import (
     NON_SPORT_CATEGORIES,
+    carry_provenance_tags,
     compute_event_tags,
     compute_market_tags,
 )
@@ -70,7 +71,8 @@ async def _update_event_tags_impl(limit: int = 500) -> dict:
 
         for event in events:
             try:
-                tags = _tag_event(event)
+                # A REPLACE, so carry what this task does not own (#8422).
+                tags = carry_provenance_tags(event.event_tags, _tag_event(event))
                 event.event_tags = tags
                 tagged += 1
             except Exception:
