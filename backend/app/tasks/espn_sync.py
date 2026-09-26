@@ -32,6 +32,7 @@ from app.utils.name_normalization import (
     token_overlap_score as _team_name_match_score,
     names_match as _canonical_names_match,
     normalize_name as _normalize_name_canonical,
+    shared_token_rivals as _shared_token_rivals,
 )
 
 logger = logging.getLogger(__name__)
@@ -187,6 +188,33 @@ def espn_team_matches(our_names: list, espn_team) -> bool:
     for espn_name in get_espn_name_variants(espn_team):
         if _espn_names_match_any(our_names, espn_name):
             return True
+    return False
+
+
+def espn_team_matches_distinctly(our_names: list, espn_team) -> bool:
+    """:func:`espn_team_matches` with the shared-token rival veto (#8810).
+
+    `espn_team_matches` says ``Bristol Rovers`` is ``Tranmere Rovers``. This
+    says no, and still says yes to ``Chesterfield FC``/``Chesterfield`` and
+    ``Newport County``/``Newport``. It is a PREFERENCE among name hits —
+    `select_authorized_espn_candidate`'s ``is_distinct_match`` — never a
+    matcher on its own, so a row whose only hit is a rival keeps it.
+    """
+    espn_names = [
+        getattr(espn_team, attr, None)
+        for attr in ("display_name", "short_name", "name", "location")
+    ]
+    for espn_name in espn_names:
+        if not isinstance(espn_name, str) or not espn_name:
+            continue
+        for name in our_names:
+            if (
+                isinstance(name, str)
+                and name
+                and _canonical_names_match(name, espn_name)
+                and not _shared_token_rivals(name, espn_name)
+            ):
+                return True
     return False
 
 
@@ -4105,6 +4133,10 @@ async def _backfill_espn_ids(limit: int = 1000):
                             is_name_match=lambda ee: (
                                 espn_team_matches(home_names, ee.home_team)
                                 and espn_team_matches(away_names, ee.away_team)
+                            ),
+                            is_distinct_match=lambda ee: (
+                                espn_team_matches_distinctly(home_names, ee.home_team)
+                                and espn_team_matches_distinctly(away_names, ee.away_team)
                             ),
                             # FF1/#2058: this rail targets events with no id, so
                             # the anchor is normally absent — pass it anyway so a

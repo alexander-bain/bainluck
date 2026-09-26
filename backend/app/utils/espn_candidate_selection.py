@@ -271,6 +271,21 @@ def authorize_espn_pair(
     return (False, f"unverifiable-{gap / 3600:.1f}h-sibling-possible")
 
 
+def prefer_distinct_matches(
+    matches: Sequence[Any], is_distinct_match: Callable[[Any], bool]
+) -> list:
+    """Of two or more name hits, keep the ones ``is_distinct_match`` accepts (#8810).
+
+    A lone hit, and a pool where nothing is distinct, come back unchanged: this
+    narrows, it never refuses. See `select_authorized_espn_candidate` for why.
+    """
+    matches = list(matches)
+    if len(matches) < 2:
+        return matches
+    distinct = [ee for ee in matches if is_distinct_match(ee)]
+    return distinct or matches
+
+
 def select_authorized_espn_candidate(
     candidates: Sequence[Any],
     commence_time: Optional[datetime],
@@ -278,6 +293,7 @@ def select_authorized_espn_candidate(
     is_name_match: Callable[[Any], bool],
     exclude_ids: Optional[Iterable[str]] = None,
     anchor_espn_id: Optional[str] = None,
+    is_distinct_match: Optional[Callable[[Any], bool]] = None,
 ) -> tuple[Optional[Any], str]:
     """The shared primitive every ``espn_id`` writer selects through.
 
@@ -304,6 +320,25 @@ def select_authorized_espn_candidate(
     ]
     if not matches:
         return (None, "no-name-match")
+
+    # ── #8810: a rival's game is not a same-teams sibling ────────────────────
+    #
+    # ``is_name_match`` is built on `names_match`, a RECALL instrument that
+    # admits any two clubs sharing a suffix — Bristol Rovers/Tranmere Rovers,
+    # Crawley Town/Swindon Town. So a pool holding Bristol Rovers v Colchester
+    # United AND Tranmere Rovers v Rotherham United, both 18:45Z on 2026-09-01's
+    # League Two board, name-matches BOTH for either row; they tie on distance
+    # and `min` hands whichever ESPN listed first to both — one row gets the
+    # other game's id, score and final.
+    #
+    # ``is_distinct_match`` is the same question with the shared-token rival
+    # veto in front of it. It only NARROWS a pool of two or more, and only when
+    # something survives: a lone name hit, and a pool where nothing is
+    # distinct, are exactly what they were. Narrowing comes BEFORE the
+    # corroboration read below, because a rival that lost is not "a same-teams
+    # sibling present on the slate" and must not widen the clock.
+    if is_distinct_match is not None:
+        matches = prefer_distinct_matches(matches, is_distinct_match)
 
     def _distance(ee: Any):
         date = _as_utc(getattr(ee, "date", None))

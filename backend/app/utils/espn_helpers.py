@@ -28,6 +28,7 @@ from app.utils.name_normalization import (
     shared_token_rivals as _shared_token_rivals,
 )
 from app.utils.espn_candidate_selection import (
+    prefer_distinct_matches as _prefer_distinct_matches,
     select_authorized_espn_candidate as _select_authorized_espn_candidate,
 )
 from app.utils.espn_id_stamp import (
@@ -1040,7 +1041,10 @@ def match_event_to_espn(event, espn_events, espn_by_id, claimed_espn_ids, espn_n
 
     Arm 1 is untouched: an id-anchored hit already carries ESPN's own identity.
     """
-    from app.tasks.espn_sync import get_event_name_variations
+    from app.tasks.espn_sync import (
+        espn_team_matches_distinctly,
+        get_event_name_variations,
+    )
     from app.utils.espn_candidate_selection import select_authorized_espn_candidate
 
     # 1. Match by ESPN ID (most reliable — set during scheduled sync)
@@ -1056,6 +1060,12 @@ def match_event_to_espn(event, espn_events, espn_by_id, claimed_espn_ids, espn_n
         is_name_match=lambda ee: (
             espn_names_match(home_names, ee.home_team)
             and espn_names_match(away_names, ee.away_team)
+        ),
+        # #8810: of two same-kickoff name hits, the one that is not a
+        # shared-suffix rival (Bristol Rovers, not Tranmere Rovers).
+        is_distinct_match=lambda ee: (
+            espn_team_matches_distinctly(home_names, ee.home_team)
+            and espn_team_matches_distinctly(away_names, ee.away_team)
         ),
         exclude_ids=claimed_espn_ids,
         # FF1/#2058: an id we already hold is ESPN's own identity evidence.
@@ -2276,7 +2286,11 @@ async def sync_scheduled_events(session, sport_key, espn_events, stats):
     """
     from app.models.models import Event, Team
     from sqlalchemy.orm import selectinload
-    from app.tasks.espn_sync import get_event_name_variations, espn_team_matches
+    from app.tasks.espn_sync import (
+        espn_team_matches,
+        espn_team_matches_distinctly,
+        get_event_name_variations,
+    )
 
     events_result = await session.execute(
         select(Event)
@@ -2338,8 +2352,16 @@ async def sync_scheduled_events(session, sport_key, espn_events, stats):
         # then dereferences. The pairing verdict below is the date half of the
         # identity; UNKNOWN (ESPN gave no date) REFUSES, because an id is an
         # identity claim and this row already has none worth defending.
+        #
+        # #8810: the FIRST same-day hit is not the game when a rival shares the
+        # slot. Bristol Rovers v Colchester United and Tranmere Rovers v
+        # Rotherham United kicked off together on 2026-09-01, and each
+        # name-matches the other. So every same-day hit is collected, and of two
+        # or more the ones free of a shared-suffix rival are preferred — the
+        # narrowing `select_authorized_espn_candidate` applies on the other rails.
         if not matched_espn:
             home_names, away_names = get_event_name_variations(event)
+            same_day_hits = []
             for ee in espn_events:
                 if not ee.home_team or not ee.away_team:
                     continue
@@ -2347,8 +2369,16 @@ async def sync_scheduled_events(session, sport_key, espn_events, stats):
                     if pair_verdict(event.commence_time, ee.date) is not Pairing.SAME:
                         stats["scheduled_pair_refused"] = stats.get("scheduled_pair_refused", 0) + 1
                         continue
-                    matched_espn = ee
-                    break
+                    same_day_hits.append(ee)
+            same_day_hits = _prefer_distinct_matches(
+                same_day_hits,
+                lambda ee: (
+                    espn_team_matches_distinctly(home_names, ee.home_team)
+                    and espn_team_matches_distinctly(away_names, ee.away_team)
+                ),
+            )
+            if same_day_hits:
+                matched_espn = same_day_hits[0]
 
         # 3. Commence_time proximity fallback REMOVED
         # Caused massive logo contamination for college sports.
@@ -2692,7 +2722,10 @@ async def backfill_missing_scores(session, stats):
     from app.services.espn_api import ESPNAPIService
     from app.models.models import Event, Team
     from app.tasks.config import ESPN_SPORT_MAPPING
-    from app.tasks.espn_sync import get_event_name_variations
+    from app.tasks.espn_sync import (
+        espn_team_matches_distinctly,
+        get_event_name_variations,
+    )
     # #6215 follow-up `6215-REMOVE-ACCIDENTAL-BACKFILL-IMPORTS`. The rival veto
     # and `normalize_name` were imported here and never used — and they must
     # NOT be wired in, which is why this comment replaces them rather than a
@@ -2802,6 +2835,10 @@ async def backfill_missing_scores(session, stats):
                                     away_names,
                                     ee.away_team.display_name or ee.away_team.name or "",
                                 )
+                            ),
+                            is_distinct_match=lambda ee: (  # #8810
+                                espn_team_matches_distinctly(home_names, ee.home_team)
+                                and espn_team_matches_distinctly(away_names, ee.away_team)
                             ),
                         )
                         if _matched is None:
