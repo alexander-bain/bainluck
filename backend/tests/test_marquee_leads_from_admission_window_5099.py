@@ -86,6 +86,10 @@ def _game(
     if media:
         data["home_team_data"] = {"logo_small": "h"}
         data["away_team_data"] = {"logo_small": "a"}
+    if status == "live":
+        # A game in progress here is an ELIGIBLE one, so it paints a score the
+        # way it paints both crests (a scoreless live card does not lead, d537).
+        data["home_score"], data["away_score"] = 7, 3
     return {
         "type": "event",
         "score": score,

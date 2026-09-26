@@ -48,6 +48,10 @@ def item(
     if kind == "event":
         data.update({"status": status or "live", "home_team_data": {"logo_small": "x"},
                      "away_team_data": {"logo_small": "y"}})
+        # `game:live` denotes an ELIGIBLE live game, so it paints a score the way
+        # it paints both crests (a scoreless live card does not lead, d537).
+        if data["status"] == "live":
+            data.update({"home_score": 0, "away_score": 0})
         if soon:
             data["commence_time"] = (NOW + timedelta(hours=1)).isoformat()
     return {

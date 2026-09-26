@@ -27,7 +27,10 @@ MEDIA = {"home_team_data": {"logo_small": "x"}, "away_team_data": {"logo_small":
 
 
 def game(name, status="live", starts_in_hours=None, score=30, media=True, **extra):
-    data = {"status": status, "id": name, **({} if not media else MEDIA), **extra}
+    # A live game paints a score by default, as it paints crests by default: a
+    # live card with no score does not lead (d537). `extra` can null it.
+    scores = {"home_score": 1, "away_score": 0} if status == "live" else {}
+    data = {"status": status, "id": name, **({} if not media else MEDIA), **scores, **extra}
     if starts_in_hours is not None:
         data["commence_time"] = (NOW + timedelta(hours=starts_in_hours)).isoformat()
     return {"type": "event", "score": score, "_rank_score": float(score), "data": data}
@@ -275,3 +278,43 @@ class TestAHalfIdentifiedGameNeverLeads:
                     sport="soccer_uefa_nations_league")
         assert ids(select_tonights_games([future("a"), live, soon], NOW)) == [
             "both-live", "both-soon"]
+
+
+class TestALiveGameWithNoScoreNeverLeads:
+    """d537. Production 2026-09-26 13:47Z at 390px: Napoli @ Juventus (event
+    15319146, Kalshi-minted, no provider id) led Discover at slot 1 — score 35,
+    status `live` 3h17m after a 10:30Z kickoff, `home_score`/`away_score` both
+    null, "Live" between the crests and "Juventus 99%". The card's scoreboard is
+    those two fields and nothing else (`EventCard.tsx`), so the lead slot went
+    to a card with no game on it. The bar is now the field the card paints."""
+
+    def test_the_reported_page(self):
+        feed = [
+            future("world-series", score=95),
+            game("nap-juv", status="live", score=35,
+                 sport="soccer_italy_serie_a", home_score=None, away_score=None),
+            game("pit-det", status="scheduled", starts_in_hours=3, score=65,
+                 sport="baseball_mlb"),
+        ]
+        out = ids(lead_with_tonights_games(feed, NOW))
+        assert out[0] == "pit-det"
+        # Never dropped: it keeps the place the ranker gave it, below the 95.
+        assert out.index("nap-juv") > out.index("world-series")
+        assert sorted(out) == sorted(ids(feed))
+
+    def test_absent_score_keys_are_the_same_as_null(self):
+        live = game("no-keys", status="live")
+        del live["data"]["home_score"], live["data"]["away_score"]
+        assert select_tonights_games([future("a"), live], NOW) == []
+
+    @pytest.mark.parametrize("home, away", [(0, 0), (3, 1), (0, 2)])
+    def test_a_painted_score_still_leads_including_a_0_0_kickoff(self, home, away):
+        # Both directions (#1091): 0-0 is a score, not an absence.
+        live = game("scored", status="live", home_score=home, away_score=away)
+        assert ids(select_tonights_games([future("a"), live], NOW)) == ["scored"]
+
+    def test_the_scheduled_arm_is_untouched(self):
+        # A game that has not started has no score because it has not started.
+        soon = game("soon", status="scheduled", starts_in_hours=1,
+                    home_score=None, away_score=None)
+        assert ids(select_tonights_games([future("a"), soon], NOW)) == ["soon"]
