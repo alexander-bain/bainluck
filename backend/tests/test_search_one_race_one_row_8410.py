@@ -40,7 +40,7 @@ def _page(rows):
     """Run rows through the route's own per-row decision, in order."""
     seen: set = set()
     kept: dict = {}
-    return [m.id for m in rows if events_route._admit_search_future(m, seen, kept)]
+    return [m.id for m in rows if events_route._admit_search_future(m, seen, kept, [])]
 
 
 def test_the_specimen_maine_prints_once():

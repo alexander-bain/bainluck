@@ -59,7 +59,7 @@ def _page(rows):
     """Run rows through the route's own per-row decision, in order."""
     seen: set = set()
     kept: dict = {}
-    return [m.id for m in rows if events_route._admit_search_future(m, seen, kept)]
+    return [m.id for m in rows if events_route._admit_search_future(m, seen, kept, [])]
 
 
 def test_precondition_the_old_keys_keep_every_rung_apart():
@@ -122,8 +122,8 @@ def test_the_fold_survives_the_refill_loop_sharing_the_bookkeeping():
     cannot come back through the refill."""
     seen: set = set()
     kept: dict = {}
-    window = [m for m in CARRICK_RUNGS[:2] if events_route._admit_search_future(m, seen, kept)]
-    refill = [m for m in CARRICK_RUNGS[2:] if events_route._admit_search_future(m, seen, kept)]
+    window = [m for m in CARRICK_RUNGS[:2] if events_route._admit_search_future(m, seen, kept, [])]
+    refill = [m for m in CARRICK_RUNGS[2:] if events_route._admit_search_future(m, seen, kept, [])]
     assert [m.id for m in window] == [CARRICK_RUNGS[0].id] and refill == []
 
 

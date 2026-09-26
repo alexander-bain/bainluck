@@ -44,7 +44,7 @@ def _page(rows):
     """Run rows through the route's own per-row decision, in order."""
     seen: set = set()
     kept_sources: dict = {}
-    return [m.id for m in rows if events_route._admit_search_future(m, seen, kept_sources)]
+    return [m.id for m in rows if events_route._admit_search_future(m, seen, kept_sources, [])]
 
 
 # --- the specimen, and the other two cross-venue pairs -------------------------
