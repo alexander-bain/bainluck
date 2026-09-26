@@ -10679,6 +10679,9 @@ async def _score_events(
                 raw_ei=float(event.raw_ei) if event.raw_ei else None,
                 inline_tags=inline_tags,
                 ended_at=ended_at,
+                # #8954 / #8841 — the STORED tags, where the start-placeholder mark
+                # lives; `inline_tags` above are recomputed and never carry it.
+                stored_tags=event.event_tags,
                 prematch_by_source=prematch_by_event.get(event.id),
                 # #4971 / D136 rung 3 — the card carries the one number, resolved
                 # by the same cascade the event page calls. `event` and not a

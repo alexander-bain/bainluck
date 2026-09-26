@@ -1431,6 +1431,10 @@ export interface FeedEventData {
   home_team: string;
   away_team: string;
   commence_time: string;
+  // #8954 / #8841: `commence_time` is a placeholder the venue has not announced —
+  // print the day, never the clock. Only an explicit `true` suppresses the clock;
+  // absent (a cached payload from before the field) prints it as before.
+  start_is_tbd?: boolean | null;
   /**
    * D109 (#4676) — when the game ENDED, present-only, settled rows only.
    *
