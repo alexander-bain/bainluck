@@ -114,7 +114,11 @@ describe("#8647 a date ladder names the earliest rung over even", () => {
     expect(highlightedRungs(html)).toEqual(["Before Dec 1, 2026"]);
   });
 
-  test("CONTROL: a comparator ladder still names its last rung over even and marks its highest", () => {
+  // #8788 — this control used to pin the mark on "Above 52", the highest rung.
+  // On an at-least ladder that is the loosest question, and the mark and the
+  // caption pointed at different rows. The caption half is unchanged; the mark
+  // now follows it.
+  test("CONTROL: a comparator ladder still names its last rung over even, and marks that rung", () => {
     const html = render(
       [
         { label: "Above 52", probability: 0.92, value: 52 },
@@ -125,7 +129,7 @@ describe("#8647 a date ladder names the earliest rung over even", () => {
       "Netflix App Downloads in September",
     );
     expect(footerSentence(html)).toBe("More likely than not: Above 64");
-    expect(highlightedRungs(html)).toEqual(["Above 52"]);
+    expect(highlightedRungs(html)).toEqual(["Above 64"]);
   });
 
   test("CONTROL: an exclusive date ladder reads the same (one rung can clear even)", () => {
