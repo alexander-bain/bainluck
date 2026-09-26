@@ -15,7 +15,8 @@ whose hero already names the winner.
 THE CONTROLS. Every fold test has a neighbour the fold must leave: the Set 1 /
 Set 2 Winner and Set Handicap markets #8829 brought back, a Completed Match
 leaning `No` (#8288's void signal), and every page whose hero does NOT name the
-winner — live, scheduled, suspended with no venue grade, finished with no score.
+winner — live, a future fixture, suspended with no venue grade — and every scored
+finished page, whose graded moneyline #6627 / #6312 own.
 """
 
 import inspect
@@ -187,20 +188,20 @@ class TestTheHeroNamesTheResult:
         assert venue.calls == []
 
     @pytest.mark.asyncio
-    async def test_a_finished_event_with_its_score(self, venue):
-        assert await _settled_hero_names_the_result(None, _event("completed", 2, 0), NOW)
+    async def test_a_finished_event_with_its_score_keeps_its_graded_moneyline(self, venue):
+        """#6627 / #6312 own that card: a scored row never asks the venue."""
+        assert not await _settled_hero_names_the_result(None, _event("completed", 2, 0), NOW)
         assert venue.calls == []
 
     @pytest.mark.asyncio
-    async def test_a_finished_event_without_a_score_does_not(self, venue):
-        assert not await _settled_hero_names_the_result(None, _event("completed"), NOW)
+    async def test_a_suspended_row_holding_a_score_never_asks_the_venue(self, venue):
+        assert not await _settled_hero_names_the_result(None, _event("suspended", 2, 0), NOW)
+        assert venue.calls == []
 
     @pytest.mark.asyncio
-    async def test_a_completed_row_starting_in_the_future_is_not_finished(self, venue):
-        """#46 shape: `_event_is_really_finished` refuses it, and it has a score, so no venue ask."""
-        assert not await _settled_hero_names_the_result(
-            None, _event("completed", 2, 0, start=NOW + timedelta(hours=5)), NOW
-        )
+    async def test_a_started_scheduled_row_the_venue_graded_folds(self, venue):
+        """#6381's other population: kickoff passed, still `scheduled`, venue graded."""
+        assert await _settled_hero_names_the_result(None, _event("scheduled"), NOW)
 
 
 class TestTheBuildCallsTheFold:

@@ -17682,30 +17682,30 @@ def _markets_the_settled_hero_answers(
 
 
 async def _settled_hero_names_the_result(db: AsyncSession, event, now) -> bool:
-    """Will this event's page open on a hero that names who won? (#8874)
+    """Does this page's hero name a winner the VENUE graded? (#8874)
 
-    The two ways the detail route gets there, asked the way it asks them:
+    Asked exactly as the detail route asks it in its #6381 block:
+    :func:`venue_settlement_is_askable` over the values it serves, then
+    :func:`_venue_settlement`. Same two calls, so a card is never folded on a
+    page whose hero still says "No result reported".
 
-    * **A finished event holding its score** — the Final hero.
-    * **A row with no result of its own that the venue graded** — the detail
-      route's #6381 block: :func:`venue_settlement_is_askable` over the values it
-      serves, then :func:`_venue_settlement`. The same two calls, so this cannot
-      fold a card on a page whose hero still says "No result reported".
+    🔴 A FINISHED EVENT HOLDING ITS SCORE IS DELIBERATELY NOT IN SCOPE. There the
+    graded moneyline is an owned surface: #6627 and #6312 pin that its verdict
+    rows (``Colorado · Won``, a draw's ``Tie · Won``) keep rendering. The askable
+    gate refuses any row with a score, so that population never reaches here.
 
     ``live_claim_is_unbacked`` is passed ``False``: the detail route's third arm
     needs a flatness read this route does not make, and leaving it out can only
     keep a card, never remove one.
     """
-    if _event_is_really_finished(event, now):
-        return event.home_score is not None and event.away_score is not None
-    served = {
-        "status": served_event_status(event.status, event.commence_time, now),
-        "started_without_result": started_without_result(
+    served = dict(
+        status=served_event_status(event.status, event.commence_time, now),
+        started_without_result=started_without_result(
             event.status, event.commence_time, now
         ),
-        "home_score": event.home_score,
-        "away_score": event.away_score,
-    }
+        home_score=event.home_score,
+        away_score=event.away_score,
+    )
     if not venue_settlement_is_askable(served, live_claim_is_unbacked=False):
         return False
     settlement = await _venue_settlement(db, event)
