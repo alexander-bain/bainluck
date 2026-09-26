@@ -24459,6 +24459,12 @@ async def get_team_progression(
         for col in league_ctx["columns"]:
             prob = team_ctx["cells"].get(col["key"])
             trend = team_ctx["changes_24h"].get(col["key"])
+            # #8691 — the grid's own verdict for this cell, verbatim. A clinched
+            # rung is `probability: null` + `state: "won"`; without the state the
+            # iPhone could only draw the null (it drew `<1%` for the 97-62
+            # Dodgers' Make Playoffs and Division). `None` when the grid carried
+            # no cell, which clients read as "the number decides".
+            state = (team_ctx.get("states") or {}).get(col["key"])
             # Build per-stage sources from the sources_available list
             sources = [
                 {"source": s, "probability": prob}
@@ -24470,6 +24476,7 @@ async def get_team_progression(
                 "probability": prob,
                 "trend_24h": trend,
                 "sources": sources,
+                "state": state,
             })
         # #7798 — the grid already decided this club's label and crest, so take
         # them rather than minting a second answer. The last-word line this

@@ -56,6 +56,13 @@ class TeamLeagueContext:
     # Dynamic cells — keyed by GridColumn.key, varies per league
     cells: dict[str, float] = field(default_factory=dict)
     changes_24h: dict[str, float] = field(default_factory=dict)
+    # #8691 — the grid cell's declared ``state`` (live / won / eliminated /
+    # missing / unavailable), keyed like ``cells``. A graded cell carries a
+    # RESULT and ``merged_probability: null``, so ``cells`` alone cannot tell
+    # "clinched" from "no price": the iPhone Championship Path drew the
+    # Dodgers' two clinched rungs as ``<1%``. Defaults empty so a cache entry
+    # written before this field existed still decodes.
+    states: dict[str, str] = field(default_factory=dict)
     column_labels: dict[str, str] = field(default_factory=dict)
     sources_available: list[str] = field(default_factory=list)
 
@@ -166,6 +173,7 @@ async def _compute_league_context(
         norm_name = normalize_name(name)
         cells: dict[str, float] = {}
         changes: dict[str, float] = {}
+        states: dict[str, str] = {}
         sources: set[str] = set()
 
         # Golf format: team["cells"] = {col_key: {merged_probability, sources, trend_24h}}
@@ -178,6 +186,9 @@ async def _compute_league_context(
                     trend = cell_data.get("trend_24h")
                     if trend is not None:
                         changes[col_key] = trend
+                    state = cell_data.get("state")
+                    if isinstance(state, str) and state:
+                        states[col_key] = state
                     for s in cell_data.get("sources", []):
                         sources.add(s.get("source", ""))
 
@@ -191,6 +202,9 @@ async def _compute_league_context(
                 trend = stage.get("trend_24h")
                 if trend is not None:
                     changes[col_key] = trend
+                state = stage.get("state")
+                if isinstance(state, str) and state:
+                    states[col_key] = state
                 for s in stage.get("sources", []):
                     sources.add(s.get("source", ""))
 
@@ -207,6 +221,7 @@ async def _compute_league_context(
             record=team.get("record"),
             cells=cells,
             changes_24h=changes,
+            states=states,
             column_labels=column_labels,
             sources_available=sorted(s for s in sources if s),
         )
@@ -358,6 +373,7 @@ async def enrich_event_with_context(
         result["home_team"] = {
             "cells": home_ctx.cells,
             "changes_24h": home_ctx.changes_24h,
+            "states": home_ctx.states,
             "record": home_ctx.record,
             "conference": home_ctx.conference,
             "sources_available": home_ctx.sources_available,
@@ -371,6 +387,7 @@ async def enrich_event_with_context(
         result["away_team"] = {
             "cells": away_ctx.cells,
             "changes_24h": away_ctx.changes_24h,
+            "states": away_ctx.states,
             "record": away_ctx.record,
             "conference": away_ctx.conference,
             "sources_available": away_ctx.sources_available,
