@@ -31,6 +31,16 @@ struct GamePlayCardView: View {
         return card
     }
 
+    /// #8652 — this card resting on the chart's own last drawn point, so the
+    /// unscrubbed readout prints the number the line ends on. Nil keeps the
+    /// page's point (a chart with no primary line has no end to name).
+    func resting(on point: GamePlayPoint?) -> GamePlayCardView {
+        guard let point else { return self }
+        var card = self
+        card.lastPoint = point
+        return card
+    }
+
     var body: some View {
         if let point {
             // #925 — this card now sits ABOVE the plot (see `OddsChartView.readout`)

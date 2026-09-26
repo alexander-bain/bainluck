@@ -708,7 +708,7 @@ struct OddsChartView: View {
                         .frame(maxWidth: .infinity)
                         .frame(height: chartHeight)
                 } else {
-                    if let readout { readout.showing(selectedPlayPoint) }
+                    if let readout { readout.resting(on: Self.restingPlayPoint(in: dataPoints, sportKey: sportKey)).showing(selectedPlayPoint) }
                     // Chart with vertical team labels alongside Y-axis
                     HStack(spacing: 0) {
                         // Vertical team labels on left (#2903 — the run is stated so
@@ -837,7 +837,7 @@ struct OddsChartView: View {
                             }
                             // #925 — fullscreen covers the page, and the page
                             // was the only place a scrub could be read.
-                            if let readout { readout.showing(selectedPlayPoint) }
+                            if let readout { readout.resting(on: Self.restingPlayPoint(in: dataPoints, sportKey: sportKey)).showing(selectedPlayPoint) }
                             HStack(spacing: 0) {
                                 // #2903 — fullscreen has no fixed chart height, so the
                                 // run is measured rather than assumed.
@@ -983,14 +983,20 @@ struct OddsChartView: View {
     /// commence_time and the first data point, start from the first data point
     /// instead — prevents empty chart space from schedule delays.
     private var gameEndDate: Date? {
+        Self.gameEndDate(status: status, history: vm.history)
+    }
+
+    /// Where a finished game's drawn line is clipped. Static (#8652) so the
+    /// resting readout's specimen test clips the payload the way the chart does.
+    static func gameEndDate(status: String?, history: EventHistoryResponse?) -> Date? {
         guard EventState.isFinished(status) else { return nil }
         // Prefer actual game data endpoints (ESPN, stat_model) over completedAt
         // (completedAt is a backend processing timestamp, often 30-45 min after game end)
         var candidates: [Date] = []
-        if let espn = vm.history?.espnHistory, let last = espn.last, let d = last.timestamp.asDate {
+        if let espn = history?.espnHistory, let last = espn.last, let d = last.timestamp.asDate {
             candidates.append(d)
         }
-        if let wp = vm.history?.winProbHistory {
+        if let wp = history?.winProbHistory {
             for (source, points) in wp where source == "espn" || source == "stat_model" || source == "mlb" || source == "fangraphs" {
                 if let last = points.last, let d = last.timestamp.asDate {
                     candidates.append(d)
@@ -1001,7 +1007,7 @@ struct OddsChartView: View {
             return latest.addingTimeInterval(120)
         }
         // Fallback to completedAt only if no game-end data
-        if let ca = vm.history?.completedAt, let d = ca.asDate {
+        if let ca = history?.completedAt, let d = ca.asDate {
             return d
         }
         return nil
@@ -2286,9 +2292,19 @@ struct OddsChartView: View {
 
     /// Latest real snapshot on the primary line (used for the resting accessibility
     /// read-out when nothing is scrubbed).
+    ///
+    /// #8652 — a tie on the latest stamp goes to the point drawn LAST: the line
+    /// is drawn in point order, so that is the vertex it ends on. 15315984
+    /// serves its terminal 0% at 03:38 after a 1% at the same minute, and
+    /// `max(by:)` returns the FIRST of equal elements.
     static func latestPrimaryPoint(in points: [ChartDataPoint]) -> ChartDataPoint? {
         let primary = primarySource(in: points)
-        return points.filter { $0.source == primary }.max { $0.date < $1.date }
+        var latest: ChartDataPoint?
+        for point in points where point.source == primary {
+            if let l = latest, point.date < l.date { continue }
+            latest = point
+        }
+        return latest
     }
 
     /// Human/VoiceOver read-out for a snapshot, in the SAME probability basis as
@@ -2517,26 +2533,43 @@ struct OddsChartView: View {
             return
         }
 
-        selectedPlayPoint = GamePlayPoint(
-            timestamp: nearest.date.ISO8601Format(),
-            homeProb: nearest.probability,
+        selectedPlayPoint = Self.playPoint(for: nearest, sportKey: sportKey)
+    }
+
+    /// One chart point as the readout prints it — the scrubbed moment and the
+    /// resting one (#8652) are the same read of the same kind of point.
+    static func playPoint(for point: ChartDataPoint, sportKey: String?) -> GamePlayPoint {
+        GamePlayPoint(
+            timestamp: point.date.ISO8601Format(),
+            homeProb: point.probability,
             // #5271 — nil on a draw-priced sport rather than the complement.
             awayProb: DrawPricedWinner.printablePair(
-                away: 1.0 - nearest.probability,
-                home: nearest.probability,
+                away: 1.0 - point.probability,
+                home: point.probability,
                 sport: sportKey)?.away,
-            homeScore: nearest.homeScore,
-            awayScore: nearest.awayScore,
-            period: nearest.period,
-            clock: nearest.clock,
-            scoringPlay: nearest.scoringPlay,
-            periodObservedAt: nearest.periodObservedAt,
-            clockObservedAt: nearest.clockObservedAt,
-            scoreObservedAt: nearest.scoreObservedAt,
-            periodApprox: nearest.periodApprox,
-            clockApprox: nearest.clockApprox,
-            scoreApprox: nearest.scoreApprox
+            homeScore: point.homeScore,
+            awayScore: point.awayScore,
+            period: point.period,
+            clock: point.clock,
+            scoringPlay: point.scoringPlay,
+            periodObservedAt: point.periodObservedAt,
+            clockObservedAt: point.clockObservedAt,
+            scoreObservedAt: point.scoreObservedAt,
+            periodApprox: point.periodApprox,
+            clockApprox: point.clockApprox,
+            scoreApprox: point.scoreApprox
         )
+    }
+
+    /// #8652 — the readout's resting moment: the last point of the line this
+    /// chart DRAWS (the primary series, after the finished-game clip and the
+    /// window), read exactly as a scrub to the line's end reads it. The page's
+    /// own last point took its number from the newest point of ANY source, so
+    /// on Liberty's final (build 23) a late venue print at 31% sat above a blend
+    /// line that ended at 0. Nil when there is no primary line to end on; the
+    /// page's point stands then.
+    static func restingPlayPoint(in points: [ChartDataPoint], sportKey: String?) -> GamePlayPoint? {
+        latestPrimaryPoint(in: points).map { playPoint(for: $0, sportKey: sportKey) }
     }
 
     // MARK: - Source Styling
