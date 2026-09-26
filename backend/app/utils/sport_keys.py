@@ -43,6 +43,12 @@ SPORT_LEAGUE_MAP: dict[str, tuple[str, str]] = {
     "soccer_germany_bundesliga": ("soccer", "ger.1"),
     "soccer_italy_serie_a": ("soccer", "ita.1"),
     "soccer_france_ligue_one": ("soccer", "fra.1"),
+    # #8810: without it a postponed League Two match never hears so — it keeps
+    # a frozen price and reads "No result reported". eng.4's clubs share
+    # suffixes (seven "Town", two "Rovers", three "City", two "United") and
+    # kick off together, which is why `select_authorized_espn_candidate` takes
+    # `is_distinct_match`.
+    "soccer_england_league2": ("soccer", "eng.4"),
     # Golf
     "golf_pga": ("golf", "pga"),
     "golf_lpga": ("golf", "lpga"),
@@ -134,6 +140,7 @@ EXPECTED_GAME_STATE_INDICATORS: dict[str, int | None] = {
     "soccer_usa_mls": 2,
     "soccer_uefa_champs_league": 2,
     "soccer_uefa_nations_league": 2,
+    "soccer_england_league2": 2,
     "soccer_spain_la_liga": 2,
     "soccer_germany_bundesliga": 2,
     "soccer_italy_serie_a": 2,
@@ -191,6 +198,7 @@ ESPN_SPORT_MAPPING: dict[str, str] = {
     "soccer_germany_bundesliga": "soccer/ger.1",
     "soccer_italy_serie_a": "soccer/ita.1",
     "soccer_france_ligue_one": "soccer/fra.1",
+    "soccer_england_league2": "soccer/eng.4",  # #8810
     # Lacrosse
     "lacrosse_ncaa": "lacrosse/mens-college-lacrosse",
     "lacrosse_pll": "lacrosse/pll",
