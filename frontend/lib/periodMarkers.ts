@@ -503,6 +503,30 @@ export type PeriodLabelPosition = "insideTopLeft" | "insideTopRight";
  * #3541 made the same trade for the `Final` marker and it is the right one: an
  * unreadable label is worse than an absent one, and this only ever reaches the
  * newest marker at the right edge.
+ *
+ * ── #8831: THE OTHER ROW CANNOT OVERLAP IT, BUT IT CAN OUT-ORDER IT ─────────
+ *
+ * #7876 was right that a label a row apart cannot TOUCH a flipped one. It can
+ * still start to its right. On `/events/15318645` (Astros @ Athletics, final,
+ * 390px) the right edge read `… T8 … T9 B8`: `T9` was last, so it flipped onto
+ * row 1 and grew leftward, while `B8`, ten minutes earlier on row 0, grew
+ * rightward from its own rule. One ink is wider than ten minutes there, so
+ * `T9`'s caption began left of `B8`'s. A reader pairs captions with rules left
+ * to right, so they read "B8" as the last line of the game.
+ *
+ * On a three-hour MLB span one ink is about 23 minutes and a half-inning about
+ * ten, so this is the ordinary shape of every live MLB page, not an edge case.
+ * The remedy follows from that:
+ *   - FLIP THE PREDECESSOR when its own row has the same two inks of room
+ *     behind it that a flipped label always needs. Both captions then grow
+ *     leftward and end at their rules, so they read in order and both are kept.
+ *   - Otherwise DROP THE PREDECESSOR, never the flipped marker. The flipped
+ *     marker is the newest one, the one a live reader is following, and
+ *     `placePeriodLabels` already settles overflow the same way: the later
+ *     marker wins.
+ * The predecessor never ends up out of order with anything behind it: the
+ * flipped marker's own row is two inks clear, so anything else is at least one
+ * ink behind the predecessor's new left edge.
  */
 export function anchorPeriodLabels<T extends { timestamp: string; labelRow: number }>(
   ascending: T[],
@@ -512,9 +536,9 @@ export function anchorPeriodLabels<T extends { timestamp: string; labelRow: numb
   const ink = chartDurationMs * PERIOD_LABEL_INK_FRACTION;
   const out: Array<T & { labelPosition: PeriodLabelPosition }> = [];
 
-  /** How far this marker sits from the last label drawn on `row`. */
-  const clearanceOn = (row: number, t: number) => {
-    for (let i = out.length - 1; i >= 0; i--) {
+  /** How far this marker sits from the last label drawn on `row` before `out[before]`. */
+  const clearanceOn = (row: number, t: number, before = out.length) => {
+    for (let i = before - 1; i >= 0; i--) {
       if (out[i].labelRow === row) return t - new Date(out[i].timestamp).getTime();
     }
     return Infinity; // nothing on that row yet
@@ -536,6 +560,24 @@ export function anchorPeriodLabels<T extends { timestamp: string; labelRow: numb
     const rows = b.labelRow === 0 ? [0, 1] : [1];
     const row = rows.find((r) => clearanceOn(r, t) >= 2 * ink);
     if (row === undefined) continue; // no room on any row: draw no marker here
+
+    // #8831: the caption must not START left of a caption on the other row that
+    // belongs to an earlier marker, or the two read in the wrong order. See the
+    // docblock. Walk back over markers inside one ink of this rule; anything
+    // older starts behind this caption's left edge.
+    for (let k = out.length - 1; k >= 0; k--) {
+      const prev = out[k];
+      const tp = new Date(prev.timestamp).getTime();
+      if (tp <= t - ink) break;
+      // A flipped caption also starts behind this one. No same-row test: this
+      // row is two inks clear (above), so nothing inside the window is on it.
+      if (prev.labelPosition === "insideTopRight") continue;
+      if (clearanceOn(prev.labelRow, tp, k) >= 2 * ink) {
+        out[k] = { ...prev, labelPosition: "insideTopRight" };
+      } else {
+        out.splice(k, 1);
+      }
+    }
 
     out.push({ ...b, labelRow: row, labelPosition: "insideTopRight" });
   }

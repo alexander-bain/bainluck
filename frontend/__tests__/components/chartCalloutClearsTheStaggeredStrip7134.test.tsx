@@ -101,6 +101,13 @@ function points(probs: number[]) {
  *
  * That is `B8` on row 0 and `T9` on row 1 against the right-hand rule, which is
  * the pair the production frame photographed.
+ *
+ * #8831: that pair also read in the wrong order. `T9` flips at the right rule
+ * and grows leftward, so its caption began at minute 101, left of `B8`'s at 103
+ * (the `T9 B8` of `/events/15318645`). `B8` is 18 min behind `B7`, short of the
+ * 30 min a flip needs, so the anchor pass now drops `B8` and the strip reads
+ * `T6 B7` over `T9`. What this file needs is unchanged: a strip two rows deep,
+ * with `T9` on row 1 against the right rule beside the callout.
  */
 const STAGGERED_MINUTES: Array<[number, string]> = [
   [55, "T6"],
@@ -256,15 +263,15 @@ describe("#7134 — the end-value callout clears a TWO-row period strip", () => 
     expect(stripBand(html)).toBe("top");
 
     const rows = /data-period-label-rows="([^"]*)"/.exec(html)?.[1];
-    expect(rows).toBe("0,0,0,1");
+    expect(rows).toBe("0,0,1");
 
     const drawn = chips(html);
-    expect(drawn.map((c) => c.label)).toEqual(["T6", "B7", "B8", "T9"]);
+    // #8831: `B8` is dropped rather than read after `T9` (see STAGGERED_MINUTES).
+    expect(drawn.map((c) => c.label)).toEqual(["T6", "B7", "T9"]);
     // The drop is real ink one row down, not a row index in an attribute: the
-    // first three share a row and `T9` sits exactly one row below them.
+    // first two share a row and `T9` sits exactly one row below them.
     expect(drawn[1].inkTop).toBeCloseTo(drawn[0].inkTop, 5);
-    expect(drawn[2].inkTop).toBeCloseTo(drawn[0].inkTop, 5);
-    expect(drawn[3].inkTop - drawn[2].inkTop).toBeCloseTo(PERIOD_LABEL_ROW_HEIGHT_PX, 5);
+    expect(drawn[2].inkTop - drawn[1].inkTop).toBeCloseTo(PERIOD_LABEL_ROW_HEIGHT_PX, 5);
 
     expect(calloutDot(html)).toBeCloseTo(plotRect(html).top, 5);
   });
@@ -287,8 +294,8 @@ describe("#7134 — the end-value callout clears a TWO-row period strip", () => 
     const html = render(SERIES, staggeredBoundaries());
     expect(stripBand(html)).toBe("bottom");
     // The stagger itself is unchanged — #7940 reflects the strip, it does not
-    // re-pack it, so the same four markers land on the same two rows.
-    expect(/data-period-label-rows="([^"]*)"/.exec(html)?.[1]).toBe("0,0,0,1");
+    // re-pack it, so the same three markers land on the same two rows.
+    expect(/data-period-label-rows="([^"]*)"/.exec(html)?.[1]).toBe("0,0,1");
 
     const plot = plotRect(html);
     const plate = calloutPlate(html);
