@@ -664,6 +664,31 @@ def _aliased_rung_tokens(rung_tokens: list[str]) -> list[str]:
     return list(_RUNG_TOKEN_ALIASES.get(tuple(rung_tokens), rung_tokens))
 
 
+def _rung_is_code_and_nickname(rung_tokens: list[str], side_tokens: list[str]) -> bool:
+    """``KC Chiefs`` names ``Kansas City Chiefs``: a city CODE, then the nickname.
+
+    Kalshi's NFL spread rungs switched to this form — ``KC Chiefs``, ``JAC
+    Jaguars``, ``LA Rams``, ``SF 49ers`` — and the in-place rule below refuses
+    every one (``kc`` is not ``kansas``): 412 of 412 open NFL rungs on
+    production 2026-09-26, so every NFL page lost its Kalshi spread (#8898).
+
+    Both halves are required. The nickname must EQUAL the side's last word, and
+    the code must be the initials of the city words (``kc``, ``ny``, ``la``) or
+    a prefix of the first one (``jac``, ``mia``, ``ten``). ``LA Rams`` therefore
+    names the Rams and never the Chargers, and ``NY Jets`` never the Giants; a
+    rung that would still name both sides is refused by `resolve_rung_side`.
+    """
+    if len(rung_tokens) != 2 or len(side_tokens) < 2:
+        return False
+    code, nickname = rung_tokens
+    if nickname != side_tokens[-1]:
+        return False
+    city = side_tokens[:-1]
+    return code == "".join(token[0] for token in city) or (
+        len(code) >= 2 and city[0].startswith(code)
+    )
+
+
 def _rung_names_side(rung_tokens: list[str], side_tokens: list[str]) -> bool:
     """Could this rung's team text be naming the team called ``side_tokens``?
 
@@ -676,6 +701,8 @@ def _rung_names_side(rung_tokens: list[str], side_tokens: list[str]) -> bool:
     """
     if not rung_tokens or not side_tokens or len(rung_tokens) > len(side_tokens):
         return False
+    if _rung_is_code_and_nickname(rung_tokens, side_tokens):
+        return True
     for rung_token, side_token in zip(rung_tokens[:-1], side_tokens):
         if rung_token != side_token:
             return False
@@ -916,3 +943,21 @@ def extract_total_threshold(text: str) -> Optional[float]:
                 except ValueError:
                     continue
     return None
+
+
+# A rung that states nothing but the line: "O/U 44.5", "Over 45.5 points scored".
+_BARE_TOTAL_RUNG_RE = re.compile(r"^\s*(?:over|o/u|under)\s+\d", re.IGNORECASE)
+
+
+def total_rung_states_only_the_line(text: str) -> bool:
+    """Is this outcome the GAME's total, rather than a total with a subject?
+
+    Asked only of a market whose label names no quantity (`other`, a matchup
+    title), where each outcome has to say what it prices. Across every open
+    over/under outcome on production 2026-09-26, the game's own total is
+    written bare. Anything in front of the line is the subject of a different
+    quantity: a player (``Xavier Worthy: over 16.5 yards``), a team (``Dolphins
+    O/U 16.5``), a period (``1H O/U 22.5``). On every NFL page those subjects
+    priced the game total at ~17 and printed ``Projected final: 9 – 8`` (#8898).
+    """
+    return bool(_BARE_TOTAL_RUNG_RE.match(text or ""))
