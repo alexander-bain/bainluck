@@ -58,12 +58,14 @@ import {
   gradedWinner,
   movementExplanation as movementExplanationHelper,
   boardOutcomeLabel,
+  chartSeedsWithLead,
   movementWindowLabel,
   noPricedOutcomesNote,
   partitionOutcomesByPrice,
   pickCaptionSubject,
   pickChartSeedOutcomes,
   pickHeroOutcome,
+  servedLeadOutcome,
   sortFuturesOutcomes,
   visibleChartOutcomes,
 } from "@/lib/futuresDetailDisplay";
@@ -441,13 +443,23 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     );
   }, [market?.outcomes]);
 
-  // The leader is always the outcome with highest probability (independent of sort)
+  // #8892 — on a live game container the server names the match-winner leg,
+  // and that leg leads: the hero, its movement and the row badge follow it.
+  // Null on every other board, which keeps the price rule below untouched.
+  const leadOutcome = useMemo(
+    () => servedLeadOutcome(market?.outcomes ?? [], market?.lead_outcome_id, market?.status),
+    [market?.outcomes, market?.lead_outcome_id, market?.status],
+  );
+
+  // The leader is the outcome with highest probability (independent of sort),
+  // unless the server named a lead leg (#8892).
   const leader = useMemo(() => {
+    if (leadOutcome) return leadOutcome;
     if (!market?.outcomes || market.outcomes.length === 0) return null;
     return [...market.outcomes].sort(
       (a, b) => (b.probability ?? 0) - (a.probability ?? 0)
     )[0];
-  }, [market?.outcomes]);
+  }, [market?.outcomes, leadOutcome]);
 
   // L2-156 Item 2 — the chart is never an empty "select outcomes below" state.
   // Default to the top 2-3 outcomes; on a settled market default to the WINNER
@@ -465,7 +477,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     // Behaviour on settled markets is unchanged (L2-156 Item 2); on a LIVE,
     // non-mutually-exclusive field it no longer seeds a row already graded won,
     // which is what drew a flat 100% line across an open market's trend.
-    const seeds: FuturesOutcome[] = pickChartSeedOutcomes(
+    const priceSeeds: FuturesOutcome[] = pickChartSeedOutcomes(
       market.outcomes,
       market.status === "resolved",
       market.mutually_exclusive,
@@ -474,6 +486,8 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     // Prefer ids that have history rows. If history hasn't loaded yet, fall back to
     // the computed seed — the effect re-runs when historyOutcomes arrives.
     const historyIds = new Set(historyOutcomes.map((o) => o.outcome_id));
+    // #8892 — a container's chart draws the line its hero leads with (see helper).
+    const seeds = chartSeedsWithLead(priceSeeds, leadOutcome, historyIds);
     let seedIds = seeds.map((o) => o.id);
     if (historyIds.size > 0) {
       const withHistory = seedIds.filter((id) => historyIds.has(id));
@@ -484,7 +498,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
       didInitSelection.current = true;
       setSelectedOutcomes(new Set(seedIds));
     }
-  }, [market?.outcomes, market?.status, market?.mutually_exclusive, historyOutcomes]);
+  }, [market?.outcomes, market?.status, market?.mutually_exclusive, historyOutcomes, leadOutcome]);
 
   // #883: the clarification that EXPLAINS the blend line's movement (#871-style,
   // deterministic from opening vs current — no per-source detail, blend-only).
@@ -737,12 +751,11 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   // helper because the mutex half of that population must NOT move — see the
   // fork documented on `pickHeroOutcome`. `resolvedFeatured` above passes a
   // literal `true` and is unaffected.
-  const heroOutcome = pickHeroOutcome(
-    market.outcomes,
-    leader,
-    isResolved,
-    market.mutually_exclusive,
-  );
+  // #8892 — a named lead leg outranks `pickLiveLeader`: a game container is
+  // `mutually_exclusive: false`, so without this the hero kept its O/U leg.
+  const heroOutcome =
+    leadOutcome ??
+    pickHeroOutcome(market.outcomes, leader, isResolved, market.mutually_exclusive);
   // #6301 — the GRADE, asked for BY NAME through the one helper that owns the test.
   // `gradedWinner` returns the featured row only when `is_winner === true`, and null
   // on every settled field that never graded one. `layout.tsx` adopted it under #6079
