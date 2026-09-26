@@ -1170,7 +1170,7 @@ def _tier1_readings(
 
 
 def newest_source_reading_time(
-    event, event_status: Optional[str] = None
+    event, event_status: Optional[str] = None, *, require_complete: bool = False
 ) -> Optional[datetime]:
     """When the freshest source behind this event's hero was observed (#3898).
 
@@ -1184,8 +1184,17 @@ def newest_source_reading_time(
     ESPN and then to the opening line, and neither of those carries a time — so a
     hero resting on a fallback tier honestly has no observation time, and saying
     so is the whole point.
+
+    ``require_complete`` additionally returns None if any admitted tier-1 input
+    lacks a clock, so callers ordering whole probability snapshots cannot borrow
+    another input's clock to date an unclocked contribution.
     """
-    _, stamps = _tier1_readings(event, event_status)
+    # Ordering a whole probability snapshot needs every admitted source's clock.
+    # A known older source cannot date a blend whose other input is unstamped.
+    # Keep the historical pin predicate's permissive behavior unless requested.
+    values, stamps = _tier1_readings(event, event_status)
+    if require_complete and values.keys() != stamps.keys():
+        return None
     return max(stamps.values()) if stamps else None
 
 
