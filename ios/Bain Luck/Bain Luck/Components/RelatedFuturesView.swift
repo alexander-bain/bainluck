@@ -418,6 +418,32 @@ func awardPlayerGroups(
     return (away: group(.away), home: group(.home))
 }
 
+// MARK: - Whose chance a Season Outlook row is (#8902)
+
+/// #8902: the player a SEASON OUTLOOK row belongs to, or nil when the row is
+/// the team's own. The tile printed only the market label and the number, so a
+/// per-player row that lands there — "NL Reliever of the Year Winner?", served
+/// `season_stat` with outcome "Tanner Scott" — read as "NL Reliever of the Year
+/// 3%" under the Dodgers, the team's chance. The server marks nothing, so the
+/// test is on the outcome: a team row names its team ("Washington Capitals",
+/// "Chicago WS", "Carolina") and shares a word with it; a player's name shares
+/// none. Answers, lines and abbreviations ("Yes", "Over 92.5", "LAD") are
+/// never a name — a player takes two words, so a mononym stays unnamed.
+func seasonOutlookPlayerName(_ future: RelatedFuture, teamName: String) -> String? {
+    func words(_ s: String) -> [String] {
+        s.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+            .split { !$0.isLetter && !$0.isNumber }
+            .map(String.init)
+    }
+    let outcome = future.outcomeName.trimmingCharacters(in: .whitespaces)
+    let outcomeWords = words(outcome)
+    guard outcomeWords.count >= 2,
+          outcomeWords.allSatisfy({ $0.first?.isLetter == true }),
+          !["yes", "no", "over", "under", "field", "other"].contains(outcomeWords[0])
+    else { return nil }
+    return Set(outcomeWords).isDisjoint(with: words(teamName)) ? outcome : nil
+}
+
 // MARK: - View
 
 struct RelatedFuturesView: View {
@@ -852,12 +878,23 @@ struct RelatedFuturesView: View {
                 let label = (future.cleanLabel ?? future.marketName)
                     .replacingOccurrences(of: #"^(NBA|NFL|NHL|MLB|MLS|WNBA)\s+"#, with: "", options: .regularExpression)
 
+                let player = seasonOutlookPlayerName(future, teamName: teamName)
+
                 NavigationLink(value: Route.futuresDetail(id: future.marketId)) {
                     HStack(spacing: 4) {
-                        Text(label)
-                            .font(.caption2)
-                            .foregroundStyle(isEliminated(future) ? .tertiary : .secondary)
-                            .lineLimit(2)
+                        VStack(alignment: .leading, spacing: 0) {
+                            if let player {
+                                Text(player)
+                                    .font(.caption2)
+                                    .fontWeight(.semibold)
+                                    .foregroundStyle(isEliminated(future) ? .tertiary : .primary)
+                                    .lineLimit(1)
+                            }
+                            Text(label)
+                                .font(.caption2)
+                                .foregroundStyle(isEliminated(future) ? .tertiary : .secondary)
+                                .lineLimit(2)
+                        }
                         Spacer()
                         Text(settledProbabilityText(future))
                             .font(.caption2)
