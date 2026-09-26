@@ -9142,7 +9142,14 @@ def _format_market_detail(
     leader_probability = reader_leader.get("probability") if reader_leader else None
     hook_description = market.hook_description
     hook_withheld = bool(hook_description) and (
-        is_hook_stale(
+        # #8729 — a settled market's stored hook was written while it was open
+        # (the writer selects `status == 'open'` only, so nothing replaces it),
+        # and it reads as upcoming under the page's WON result: "Liquid and
+        # Chicken Coop Esports are scheduled to compete on September 25, 2026."
+        # Keyed on the same flag the page reads for its settled view
+        # (`app/futures/[id]/page.tsx`, `isResolved = market.status === "resolved"`).
+        market.status == "resolved"
+        or is_hook_stale(
             hook_description=hook_description,
             hook_generated_at=getattr(market, "hook_generated_at", None),
             hook_leader_at_generation=getattr(
