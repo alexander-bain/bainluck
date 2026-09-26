@@ -1811,7 +1811,10 @@ def _kalshi_window_to_write(
         return None
     if _is_kalshi_game_ticker(external_id) or _is_dated_fixture_ticker(external_id):
         return None
-    window = derive_resolution_window(markets)
+    # Stated, not defaulted: the ticker gate above already returned for every
+    # single contest, so what reaches the rule here is a future (#8586's guard
+    # asks every caller to say which it is).
+    window = derive_resolution_window(markets, single_contest=False)
     resolution_date = window.resolution_date
     if resolution_date is None or window.used_expiration_fallback:
         return None

@@ -436,6 +436,12 @@ class TestTheRuleStillHasAWriterOnTheAppThatRunsIt:
         kalshi_resolution_sweep.py `handle` (in `run_backfill`)
                                        settle_kalshi_recent_finals      realtime   main    no (see below)
                                        "                                background main    YES, 04:20Z daily
+        futures_price_refresh.py `_kalshi_window_to_write` (#8871, added 2026-09-26)
+                                       refresh_stale_futures_prices     heavy      heavy   YES, hourly — futures only,
+                                                                                           backstop rows only, future
+                                                                                           dates only; live only once
+                                                                                           a `bainluck-heavy` release
+                                                                                           carries it (notice 48)
 
     Two of those three main-app arms carry the rule but are BARRED FROM FIRING IT
     STRUCTURALLY, which is why they are not a substitute for the sweep:
@@ -446,7 +452,9 @@ class TestTheRuleStillHasAWriterOnTheAppThatRunsIt:
     likewise collapsed to the settlement instant.
 
     So ``sweep_kalshi_resolution_window`` is the ONLY arm that can move a
-    pad-shaped row on the main app. That is a single point of failure worth one
+    pad-shaped row on the main app. (The #8871 refresher arm can move one too,
+    but it runs on ``heavy``, so it is an addition for the rows it visits, never
+    a substitute for the sweep.) That is a single point of failure worth one
     assertion: move it onto ``heavy`` and #2644 goes inert on production, silently,
     with this file green.
     """
@@ -457,6 +465,7 @@ class TestTheRuleStillHasAWriterOnTheAppThatRunsIt:
         ("app/tasks/kalshi.py", "_poll_kalshi_markets"),
         ("app/tasks/kalshi.py", "_create_settled_market"),
         ("app/tasks/kalshi_resolution_sweep.py", "handle"),
+        ("app/tasks/futures_price_refresh.py", "_kalshi_window_to_write"),
     }
 
     @staticmethod
