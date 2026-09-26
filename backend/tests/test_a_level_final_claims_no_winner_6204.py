@@ -139,11 +139,12 @@ class TestUnderdogIsClaimedOnlyWhenTheBoardShowsIt:
             == ""
         )
 
-    def test_a_one_point_printed_gap_is_enough(self):
-        """The test is on the printed percents, so 49/51 is a real underdog.
-
-        The other direction of the bound: a refusal keyed on a probability
-        epsilon would swallow this true sentence.
+    def test_a_one_point_printed_gap_is_a_close_matchup_not_an_underdog(self):
+        """This used to pin 49/51 as a real underdog: the direction test is on
+        the printed percents, so a probability epsilon could not swallow it.
+        That still holds — but #2753 added a SIZE bar on the same printed
+        integers (`CLOSE_MATCHUP_MIN`), and a 49% side is half of a close
+        matchup. The sentence declines; the card keeps its two percents.
         """
         assert (
             reason(
@@ -152,7 +153,7 @@ class TestUnderdogIsClaimedOnlyWhenTheBoardShowsIt:
                 away_score=1,
                 prematch_percents={"home": 49, "away": 51},
             )
-            == "Home FC won as a 49% underdog"
+            == ""
         )
 
 

@@ -168,10 +168,13 @@ class TestTheAlarmSurvives:
     """
 
     def test_the_villarreal_chip_is_kept(self):
+        # 0.6535 is the row's stored opening (#6529's measurement); this used
+        # the Orebro specimen's 0.598, which puts Betis at 40.2% — inside the
+        # close band #2753 now refuses, and not what Villarreal opened at.
         result = _finished(
             home_score=1,
             away_score=2,
-            opening_home_prob=0.598,
+            opening_home_prob=0.6535,
             current_home_prob=0.425,
             sport_key="soccer_spain_la_liga",
         )
@@ -183,8 +186,12 @@ class TestTheAlarmSurvives:
         side of 0.5 where the switch still fires: the verdict is identical.
         A gate that read the served pair could not give the same answer twice.
         """
-        left = _finished(home_score=1, away_score=2, current_home_prob=0.425)
-        right = _finished(home_score=1, away_score=2, current_home_prob=0.10)
+        left = _finished(
+            home_score=1, away_score=2, opening_home_prob=0.6535, current_home_prob=0.425
+        )
+        right = _finished(
+            home_score=1, away_score=2, opening_home_prob=0.6535, current_home_prob=0.10
+        )
         assert left.flags.is_upset is right.flags.is_upset is True
 
 
@@ -296,8 +303,10 @@ class TestTheRankingHalf:
     def test_the_drawn_final_loses_the_upset_bonus(self):
         """RED ON THE PARENT. The only difference between these two rows is the
         scoreline, so the gap is exactly the weight and nothing else."""
-        drawn = _finished(home_score=1, away_score=1)
-        decided = _finished(home_score=1, away_score=2)
+        # Both at Villarreal's 0.6535: at the default 0.598 the away winner
+        # sits at 40.2%, which #2753 refuses on size before the draw matters.
+        drawn = _finished(home_score=1, away_score=1, opening_home_prob=0.6535)
+        decided = _finished(home_score=1, away_score=2, opening_home_prob=0.6535)
         assert decided.score - drawn.score == WEIGHTS["recent_finish_upset"]
 
     def test_the_drawn_final_no_longer_escapes_the_discover_demotion(self):

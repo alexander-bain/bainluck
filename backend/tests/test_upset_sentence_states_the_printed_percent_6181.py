@@ -213,11 +213,13 @@ class TestTheCardAndTheSentenceAgree:
             # The specimen: kalshi rung, books opening a half-point away.
             ({"kalshi": (0.385, 0.615)}, SPECIMEN_BOOKS_HOME, 0.6092),
             # Polymarket rung.
-            ({"polymarket": (0.445, 0.555)}, 0.47, 0.53),
+            # (#2753 moved both off 0.44/0.42: a winner at or above
+            # CLOSE_MATCHUP_MIN now gets no sentence to agree with.)
+            ({"polymarket": (0.345, 0.655)}, 0.37, 0.63),
             # Books only — the sentence must still take the DUEL percent.
             (None, 0.385, 0.615),
             # A pair sitting exactly on the .5 grid, both sides.
-            ({"kalshi": (0.425, 0.575)}, 0.425, 0.575),
+            ({"kalshi": (0.325, 0.675)}, 0.325, 0.675),
             ({"kalshi": (0.005001, 0.994999)}, 0.2, 0.8),
         ],
     )
