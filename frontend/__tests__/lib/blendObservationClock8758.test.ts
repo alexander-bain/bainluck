@@ -127,10 +127,10 @@ describe('history newer than the headline (PIT@DET line 421 direction)', () => {
 
 describe('SSE precedence', () => {
   test('a frame restamps the headline clock, so an older edge cannot take the headline back', () => {
-    const frame = frameAt('2026-09-25T23:10:45Z', 0.349);
+    const frame = frameAt('2026-09-25T23:11:03Z', 0.349);
     const pushed = applyLiveFrame(detail, frame)!;
-    expect(pushed.hero_probability_observed_at).toBe('2026-09-25T23:10:45Z');
-    const edgeBetween = { ...served, blend_edge_observed_at: '2026-09-25T23:10:44Z' };
+    expect(pushed.hero_probability_observed_at).toBe('2026-09-25T23:11:03Z');
+    const edgeBetween = { ...served, blend_edge_observed_at: '2026-09-25T23:11:02Z' };
     expect(headlineOf(edgeBetween, pushed)).toBe(pushed);
   });
 

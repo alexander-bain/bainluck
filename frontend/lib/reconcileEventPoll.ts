@@ -34,6 +34,9 @@ export function reconcileEventPoll<T extends PolledEvent>(
   // sources it folded; any source's stamp is the fallback for a payload that
   // does not carry one.
   const observed = Date.parse(polled.hero_probability_observed_at ?? '');
+  // Explicit null/invalid provenance is not a legacy payload: another source
+  // cannot date an admitted unclocked contribution to this whole blend.
+  if (polled.hero_probability_observed_at !== undefined && !Number.isFinite(observed)) return polled;
   const sourceTimes = Number.isFinite(observed) ? [observed]
     : Object.values(polled.win_probability_sources ?? {})
       .map(source => Date.parse(source.updated_at ?? ''))

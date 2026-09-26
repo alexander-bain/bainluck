@@ -352,6 +352,22 @@ export interface LiveFrame {
  */
 export function applyLiveFrame<T>(prev: T | undefined, frame: LiveFrame): T | undefined {
   if (!prev) return prev;
+  // #8749: history or detail can reach this cache before an older SSE frame.
+  // Arrival order is not observation order. Keep the newer paired value/clock
+  // and its source metadata; the transport still records the frame separately.
+  const current = prev as {
+    status?: string;
+    hero_probability_source?: string;
+    hero_probability?: number | null;
+    hero_probability_observed_at?: string | null;
+  };
+  const currentAt = Date.parse(current.hero_probability_observed_at ?? "");
+  const frameAt = Date.parse(frame.updated_at);
+  if (current.status === "live" && current.hero_probability_source === "blend" &&
+      typeof current.hero_probability === "number" && Number.isFinite(current.hero_probability) &&
+      Number.isFinite(currentAt) && Number.isFinite(frameAt) && frameAt < currentAt) {
+    return prev;
+  }
   // A source entry carries display metadata (`display_name`, `type`, `color`)
   // that a frame cannot know, so the merge is structural and the type is
   // asserted at this one boundary — the same escape the inline version made
