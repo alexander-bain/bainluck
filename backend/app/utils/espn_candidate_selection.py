@@ -167,6 +167,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Callable, Iterable, Optional, Sequence
 
+from app.utils.espn_start_time import espn_start_time
 from app.utils.event_merge_invariant import MAX_ABSORPTION_SEPARATION_SECONDS
 from app.utils.name_normalization import names_match
 
@@ -375,4 +376,6 @@ def select_espn_candidate(
     )
     if best is None:
         return (None, None)
-    return (best.date, best.espn_id)
+    # #8841: the id still joins; a `timeValid=false` date is not a start, so the
+    # caller keeps its own listing time rather than ESPN's midnight placeholder.
+    return (espn_start_time(best), best.espn_id)
