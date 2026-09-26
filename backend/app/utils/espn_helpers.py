@@ -228,6 +228,54 @@ def espn_scheduled_demotes_live(
     return not play_evidence(home_score, away_score, period, game_clock)
 
 
+def espn_pregame_filler(
+    espn_status,
+    espn_period,
+    espn_clock,
+    espn_home_score,
+    espn_away_score,
+    period=None,
+    game_clock=None,
+    home_score=None,
+    away_score=None,
+) -> dict:
+    """The row's live-state columns that hold nothing but the not-started
+    board's own filler, each mapped to ``None`` — #5324's team-sport half.
+
+    ESPN publishes ``displayClock "0:00"`` (and on MLB the detail
+    ``"Scheduled"``, which ``_sanitize_period`` keeps) and score ``"0"`` on
+    every ``STATUS_SCHEDULED`` game. ``update_event_fields_from_espn`` no
+    longer copies them, but a row that took them before that — or during a
+    delayed start that outlived a release — still carries them, and
+    :func:`play_evidence` reads a clock or a period as play. So the demotion
+    would stay refused on a value the authority itself wrote while saying the
+    game had not begun. A value identical to the filler the same board is
+    publishing right now cannot testify against that board.
+
+    ``espn_period`` is the SANITIZED detail (what the updater would store).
+    Only exact matches are filler; a period or clock written by any other
+    writer (``mlb_sync``'s ``"Top 1st"``, StatPal's countdown) differs from
+    the board's and stays evidence, which is the point of the refusal.
+
+    Empty unless the board says ``scheduled`` with no score of its own, and a
+    stored score is withdrawn only when it is zero — a non-zero score is play
+    and the caller never reaches a demotion on it. Pure.
+    """
+    if espn_status != "scheduled" or play_evidence(espn_home_score, espn_away_score):
+        return {}
+    withdrawn: dict = {}
+    if period is not None and espn_period is not None and period == espn_period:
+        withdrawn["period"] = None
+    if game_clock is not None and espn_clock is not None and game_clock == espn_clock:
+        withdrawn["game_clock"] = None
+    if play_evidence(home_score, away_score):
+        return withdrawn
+    for column, stored in (("home_score", home_score), ("away_score", away_score)):
+        if stored == 0 and not isinstance(stored, bool):
+            withdrawn[column] = None
+    return withdrawn
+
+
 # ───────────────────────────────────────────────────────────────────────────
 # THE DEMOTION HAS TO SURVIVE THE CLOCK (#5324, CERT-2777's required repair)
 # ───────────────────────────────────────────────────────────────────────────
@@ -1405,12 +1453,35 @@ async def update_event_fields_from_espn(
             stats.get("unstarted_live_writes_refused", 0) + 1
         )
 
+    # ── #5324 (team-sport half): A NOT-STARTED BOARD HAS NO LIVE STATE TO GIVE ──
+    #
+    # Measured at the venue 2026-09-25 23:29Z (notice 26 — ESPN's own board):
+    # every `STATUS_SCHEDULED` NHL game publishes `displayClock "0:00"`, every
+    # MLB one `displayClock "0:00"` with detail `"Scheduled"`, and both publish
+    # score `"0"`. Copied onto the row they read as play: `play_evidence` counts
+    # any clock or period, so the authority demotion below this call refused on
+    # EVERY anchored team-sport row and the start latch was never corrected —
+    # 15314764 (NHL) and 15318665 (MLB) went `live` at 23:30:17Z carrying
+    # `0:00`/`Scheduled`/0-0 while ESPN still read `pre`.
+    #
+    # The same filler `_unstarted_and_unsettled` refuses for the straggler arm,
+    # on the board's word rather than the caller's flag, and with the same
+    # safety valve: a non-zero board score still lands.
+    _board_says_not_started = ee.status == "scheduled" and not play_evidence(
+        ee.home_score, ee.away_score
+    )
+    if _board_says_not_started and not _unstarted_and_unsettled:
+        stats["pregame_board_live_writes_refused"] = (
+            stats.get("pregame_board_live_writes_refused", 0) + 1
+        )
+    _withhold_live_state = _unstarted_and_unsettled or _board_says_not_started
+
     # Update game clock
     if (
         ee.clock
         and event.game_clock != ee.clock
         and not _live_state_is_stale
-        and not _unstarted_and_unsettled
+        and not _withhold_live_state
     ):
         _live_values["game_clock"] = ee.clock
 
@@ -1438,7 +1509,7 @@ async def update_event_fields_from_espn(
         if (
             event.period != _new_period
             and not _live_state_is_stale
-            and not _unstarted_and_unsettled
+            and not _withhold_live_state
         ):
             _live_values["period"] = _new_period
     elif ee.status_detail and event.period is not None and _sanitize_period(event.period) is None:
@@ -1460,7 +1531,7 @@ async def update_event_fields_from_espn(
         ee.home_score is not None
         and event.home_score != ee.home_score
         and not _live_state_is_stale
-        and not _unstarted_and_unsettled
+        and not _withhold_live_state
     ):
         _live_values["home_score"] = ee.home_score
         score_changed = True
@@ -1468,7 +1539,7 @@ async def update_event_fields_from_espn(
         ee.away_score is not None
         and event.away_score != ee.away_score
         and not _live_state_is_stale
-        and not _unstarted_and_unsettled
+        and not _withhold_live_state
     ):
         _live_values["away_score"] = ee.away_score
         score_changed = True
