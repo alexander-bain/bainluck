@@ -758,3 +758,50 @@ export function formatLiveClockLabel(
   const trusted = trustedLiveClock(period, gameClock, sportKey);
   return [trusted.period, trusted.gameClock].filter(Boolean).join(separator);
 }
+
+/**
+ * #8841 — the start line of a game whose start time has not been announced:
+ * "Today · TBD", "Tomorrow · TBD", "Sep 29 · TBD". Returns "" (render nothing)
+ * for an absent or unparseable time.
+ *
+ * THE DAY IS REAL, THE CLOCK IS NOT. StatPal lists MLB postseason games before
+ * MLB sets their times and stamps them on the hour (the Red Sox @ Yankees Wild
+ * Card games sat at 20:00Z and printed "Sep 29 1:00 PM"). The server says so in
+ * `start_is_tbd`; this is the one wording the card, the search result and the
+ * team page print for it — the same `<day> · TBD` form as the tournament slate's
+ * `formatMatchTime` and the event hero's `formatEventStartLabel`.
+ *
+ * THE DAY IS READ IN UTC, NOT THE READER'S ZONE (#4344's rule, `placeholderDayKey`
+ * in `lib/slate.ts`). A placeholder is not an instant, so there is nothing to
+ * localise: ESPN's midnight-in-the-venue placeholder lands on the previous day
+ * for a Pacific reader if it is carried west. "Today"/"Tomorrow" still compare
+ * against the READER's calendar day, which is the frame they are standing in.
+ */
+export function formatTbdStartLabel(
+  commenceTime: string | null | undefined,
+  now: number = Date.now(),
+): string {
+  if (!commenceTime) return "";
+  const at = new Date(commenceTime);
+  if (Number.isNaN(at.getTime())) return "";
+  const placeholderDay = Date.UTC(
+    at.getUTCFullYear(),
+    at.getUTCMonth(),
+    at.getUTCDate(),
+  );
+  const nowDate = new Date(now);
+  const readerToday = Date.UTC(
+    nowDate.getFullYear(),
+    nowDate.getMonth(),
+    nowDate.getDate(),
+  );
+  const deltaDays = Math.round((placeholderDay - readerToday) / MS_PER_DAY);
+  if (deltaDays === 0) return "Today · TBD";
+  if (deltaDays === 1) return "Tomorrow · TBD";
+  const day = at.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
+  return `${day} · TBD`;
+}

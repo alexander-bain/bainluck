@@ -19,7 +19,11 @@ import { renderedDuelPercents } from "@/lib/renderedPercent";
 import { awayIsTheComplement } from "@/lib/drawPricedWinner";
 import { PREMATCH_SAID, prematchReading } from "@/lib/prematchReading";
 import { teamCrestInitials, teamShortNames } from "@/lib/teamShortName";
-import { formatFinishedGameLabel, formatLiveClockLabel } from "@/lib/gameTimeLabel";
+import {
+  formatFinishedGameLabel,
+  formatLiveClockLabel,
+  formatTbdStartLabel,
+} from "@/lib/gameTimeLabel";
 import type { HostCue } from "@/lib/sameFixtureHostCue";
 import { providerGameNumber } from "@/lib/teamGames";
 import { PinIcon } from "@/components/PinButton";
@@ -538,12 +542,15 @@ export default function EventCard({
     minute: "2-digit",
   });
   
-  // For upcoming: show "Today 7:00 PM" or "Mar 8 7:00 PM"
-  const dateTimeStr = isToday
-    ? `Today ${timeStr}`
-    : isTomorrow
-      ? `Tomorrow ${timeStr}`
-      : `${gameTime.toLocaleDateString("en-US", { month: "short", day: "numeric" })} ${timeStr}`;
+  // For upcoming: show "Today 7:00 PM" or "Mar 8 7:00 PM" — or, when the
+  // start has not been announced (#8841), the day and "TBD" with no clock.
+  const dateTimeStr = event.start_is_tbd === true
+    ? formatTbdStartLabel(event.commence_time, now.getTime())
+    : isToday
+      ? `Today ${timeStr}`
+      : isTomorrow
+        ? `Tomorrow ${timeStr}`
+        : `${gameTime.toLocaleDateString("en-US", { month: "short", day: "numeric" })} ${timeStr}`;
   
   // For finished: show just the date. The impossible-state guard (L2-112 Item 2 /
   // gotcha #14 — a FINAL game can't be in the future when commence_time actually

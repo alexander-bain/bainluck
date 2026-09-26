@@ -591,6 +591,10 @@ export function formatEventStartLabel(
     month: "short",
     day: "numeric",
     year: "numeric",
+    // #8841: a placeholder's day is read in UTC, the frame `placeholderDayKey`
+    // and `formatTbdStartLabel` read it in — so the hero and the card cannot
+    // name two different days for one unannounced start (#4344).
+    ...(state === "tbd" ? { timeZone: "UTC" } : {}),
   });
   if (state === "pending") return day;
   if (state === "tbd") return `${day} · TBD`;

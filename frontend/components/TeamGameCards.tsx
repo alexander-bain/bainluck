@@ -7,6 +7,7 @@ import { SUSPENDED_LABEL } from "@/lib/eventState";
 import { isGameLive, teamLastScore, teamResult } from "@/lib/teamGames";
 import { teamShortNames } from "@/lib/teamShortName";
 import { teamTextColor } from "@/lib/teamColors";
+import { formatTbdStartLabel } from "@/lib/gameTimeLabel";
 
 // ---------------------------------------------------------------------------
 // Team-page game cards (L2-158). Extracted from the team page so the
@@ -98,7 +99,7 @@ export function UpcomingGameCard({
           </span>
         ) : (
           <span className="text-[11px] text-text-muted flex-shrink-0">
-            {game.commence_time ? `Starts ${formatTime(game.commence_time)}` : "TBD"}
+            {upcomingStartLabel(game, true)}
           </span>
         )}
       </div>
@@ -139,7 +140,7 @@ export function UpcomingGameCard({
         </>
       ) : (
         <div className="text-sm text-text-secondary">
-          {game.commence_time ? formatTime(game.commence_time) : "TBD"}
+          {upcomingStartLabel(game, false)}
         </div>
       )}
     </Link>
@@ -270,6 +271,20 @@ export function RecentGameCard({
       )}
     </Link>
   );
+}
+
+/**
+ * The upcoming card's start line. #8841: a start the venue has not announced
+ * prints its day and "TBD" ("Sep 29 · TBD") and no clock and no "Starts" —
+ * "Starts Sep 29 · TBD" promises the start the flag says we do not know.
+ */
+function upcomingStartLabel(game: TeamGameBrief, withVerb: boolean): string {
+  if (!game.commence_time) return "TBD";
+  if (game.start_is_tbd === true) {
+    return formatTbdStartLabel(game.commence_time) || "TBD";
+  }
+  const time = formatTime(game.commence_time);
+  return withVerb ? `Starts ${time}` : time;
 }
 
 function formatTime(iso: string): string {

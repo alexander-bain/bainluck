@@ -599,7 +599,9 @@ export default function EventPage({ params }: EventPageProps) {
   // `startClockState`, which is pure and guarded. This page only supplies the
   // three facts it is the one that holds.
   const startClock = startClockState({
-    startIsTbd: eventTournament?.start_is_tbd,
+    // #8841: the event payload's own flag (a StatPal placeholder start, any
+    // sport) joins the tournament slate's; either one's `true` is enough.
+    startIsTbd: event?.start_is_tbd === true || eventTournament?.start_is_tbd,
     isTournamentSport: isTournamentSportKey(event?.sport),
     tournamentResolved: eventTournament !== undefined,
   });
