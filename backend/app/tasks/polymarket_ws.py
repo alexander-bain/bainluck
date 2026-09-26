@@ -381,7 +381,8 @@ def _log_stats_line(stats: dict, ws_stats: dict, blend: dict) -> None:
     logger.info(
         "Polymarket WS: %d prices, %d trades, %d resolutions, %d errors, "
         "%d msgs | coverage shards=%d/%d served=%d/%d wire=%d by_shard=%s "
-        "| blend stamped=%d no_reading=%d throttled=%d errors=%d lock_skipped=%d",
+        "| blend stamped=%d no_reading=%d throttled=%d errors=%d lock_skipped=%d "
+        "unobserved=%d",
         stats["price_updates"], stats["trade_updates"],
         stats["resolutions"], stats["errors"],
         ws_stats.get("messages", 0),
@@ -394,6 +395,8 @@ def _log_stats_line(stats: dict, ws_stats: dict, blend: dict) -> None:
         blend["throttled"], blend["errors"],
         # #837 tail: stamps re-queued rather than left waiting on a row lock.
         blend.get("lock_skipped", 0),
+        # #5661: unchanged prices not re-dated because no writer re-read them.
+        blend.get("unobserved_skipped", 0),
     )
 
 
