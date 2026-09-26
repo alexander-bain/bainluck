@@ -338,6 +338,9 @@ class TestLeagueContextService:
             "home_team": {
                 "cells": {"championship": 0.22},
                 "changes_24h": {"championship": 0.02},
+                # #8691 — the grid cell's verdict travels too; this fixture
+                # declares none, so it arrives empty rather than absent.
+                "states": {},
                 "record": "64-18",
                 "conference": "Eastern",
                 "sources_available": ["kalshi"],
