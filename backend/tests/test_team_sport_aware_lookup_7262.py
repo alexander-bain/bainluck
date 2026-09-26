@@ -355,15 +355,20 @@ def test_a_club_in_two_competitions_is_unaffected_4978():
 
 
 def test_a_league_with_no_row_falls_back_to_todays_answer():
-    """A third competition is not a reason to withhold a club's own crest."""
+    """A third competition is not a reason to withhold a club's own crest.
+
+    It is a reason to withhold that competition's SEASON (#5697): the fallback
+    row is another league's, so its record never reaches this card.
+    """
     crest = "https://a.espncdn.com/i/teamlogos/soccer/500/104.png"
     rows = [
-        _row(1, "AS Roma", "soccer_italy_serie_a", crest),
-        _row(2, "AS Roma", "soccer_uefa_champs_league", crest),
+        _row(1, "AS Roma", "soccer_italy_serie_a", crest, record="3-1-1"),
+        _row(2, "AS Roma", "soccer_uefa_champs_league", crest, record="1-0-0"),
     ]
     for lookup in _every_order(rows):
         fallback = _team_for_event(lookup, "AS Roma", "soccer_fa_cup")
-        assert fallback is lookup["AS Roma"]
+        assert fallback.logo_url_small == lookup["AS Roma"].logo_url_small == crest
+        assert fallback.current_record is None
 
 
 def test_a_season_variant_answers_its_parent_league():

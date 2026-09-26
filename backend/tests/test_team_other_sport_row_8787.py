@@ -131,7 +131,12 @@ def test_a_champions_league_fixture_keeps_the_domestic_league_crest():
     league-level refusal would have stripped every such UCL crest."""
     arsenal = _row(359, "Arsenal", EPL, ARSENAL_CREST, record="4-1-0", abbr="ARS")
     for lookup in _every_order([arsenal]):
-        assert _team_for_event(lookup, "Arsenal", UCL) is arsenal
+        ucl = _team_for_event(lookup, "Arsenal", UCL)
+        assert ucl.logo_url_small == ARSENAL_CREST
+        assert ucl.abbreviation == "ARS"
+        # #5697: the crest, never the Premier League season.
+        assert ucl.current_record is None
+        assert ucl.id is None
 
 
 def test_a_schools_corroborated_crest_from_another_sport_stays():
@@ -144,5 +149,8 @@ def test_a_schools_corroborated_crest_from_another_sport_stays():
     for lookup in _every_order(rows):
         default = lookup.get("Syracuse Orange")
         assert default is not None
-        assert _team_for_event(lookup, "Syracuse Orange", BASEBALL_NCAA) is default
+        baseball = _team_for_event(lookup, "Syracuse Orange", BASEBALL_NCAA)
+        assert baseball.logo_url_small == default.logo_url_small == SYRACUSE_CREST
+        # #5697: the school's crest, never another sport's record.
+        assert baseball.current_record is None
         assert _team_for_event(lookup, "Syracuse Orange", NCAAF).id == 17075
