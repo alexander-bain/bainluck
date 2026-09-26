@@ -315,7 +315,8 @@ final class CalibrationSurfaceTests: XCTestCase {
         XCTAssertFalse(detail.contains("earlier"), "banner must date the snapshot: \(detail)")
         XCTAssertTrue(detail.contains("Aug"), "banner must name the month: \(detail)")
         // The age IS timezone-free, so it is asserted exactly.
-        XCTAssertTrue(detail.contains("19h ago"), "banner must age the snapshot: \(detail)")
+        // #8959: web's floored ladder, "19 hr", not the old native-only "19h".
+        XCTAssertTrue(detail.contains("(19 hr ago)"), "banner must age the snapshot: \(detail)")
         // #2649: this fixture carries NO `producer` block, and absence is not
         // evidence of a healthy beat. It used to assert the opposite — that the
         // banner promises "rebuilds hourly" regardless — which is exactly the
@@ -374,17 +375,22 @@ final class CalibrationSurfaceTests: XCTestCase {
     }
 
     @MainActor
-    func testHealthyProducerStillStatesTheCadence() throws {
-        // The control, and it matters: deleting the sentence is not a fix for the
-        // sentence being wrong. When the beat is landing, the cadence is true and
-        // worth telling a reader — a suite that only banned the string would be
-        // satisfied by ripping the copy out entirely.
+    func testFallbackTierServeOfAProvenCurrentCurveIsNotADatedCopy() throws {
+        // #8959, porting web's #4046. This test used to assert the banner said
+        // "not being refreshed right now … The curve rebuilds hourly." over a
+        // producer that had missed NO beat — the sentence contradicting itself.
+        // `main` is evicted ahead of `last_good` by design, so which tier
+        // answered is storage, not a claim about the numbers: a proven-current
+        // producer means there is nothing to tell the reader.
         let vm = try model(Self.healthy(
             cache: Self.staleCache,
             producer: #"{"stalled": false, "beats_missed": 0}"#
         ))
-        let detail = try XCTUnwrap(vm.staleBannerDetail)
-        XCTAssertTrue(detail.contains("The curve rebuilds hourly."), detail)
+        XCTAssertFalse(vm.isStale)
+        XCTAssertNil(vm.staleBannerDetail)
+        XCTAssertNil(vm.staleBannerHeadline)
+        // The cadence control — the sentence is still earned where it is true —
+        // lives in `CalibrationStalenessTests8959`, on the state that reaches it.
     }
 
     @MainActor
@@ -394,7 +400,8 @@ final class CalibrationSurfaceTests: XCTestCase {
             producer: #"{"stalled": true}"#
         ))
         let detail = try XCTUnwrap(vm.staleBannerDetail)
-        XCTAssertTrue(detail.contains("not currently succeeding"), detail)
+        // #8959: web's #5042 wording — the count measures the artifact, not runs.
+        XCTAssertTrue(detail.contains("Hourly rebuilds have not produced a new snapshot."), detail)
         XCTAssertFalse(detail.contains("rebuilds hourly"), detail)
         XCTAssertFalse(detail.contains("0 hourly"), detail)
     }
@@ -408,10 +415,12 @@ final class CalibrationSurfaceTests: XCTestCase {
         let stalled = try model(Self.healthy(
             cache: Self.staleCache, producer: #"{"stalled": true, "beats_missed": 1}"#))
         XCTAssertEqual(stalled.scheduleClause,
-                       "1 hourly rebuild has come and gone without one succeeding.")
+                       "1 hourly rebuild has come and gone without a new snapshot.")
+        // #4113: `stalled: false` is a four-hour verdict. With no `beats_missed`
+        // the hour is unproven, so the promise is withheld, not asserted.
         let landing = try model(Self.healthy(
             cache: Self.staleCache, producer: #"{"stalled": false}"#))
-        XCTAssertEqual(landing.scheduleClause, "The curve rebuilds hourly.")
+        XCTAssertNil(landing.scheduleClause)
         let absent = try model(Self.healthy(cache: Self.staleCache))
         XCTAssertNil(absent.scheduleClause)
     }
@@ -423,11 +432,19 @@ final class CalibrationSurfaceTests: XCTestCase {
         XCTAssertNil(vm.staleBannerDetail)
     }
 
-    func testFormatAgeMatchesTheWebBanner() {
-        XCTAssertEqual(CalibrationViewModel.formatAge(45), "45s")
-        XCTAssertEqual(CalibrationViewModel.formatAge(600), "10m")
-        XCTAssertEqual(CalibrationViewModel.formatAge(68_400), "19h")
-        XCTAssertEqual(CalibrationViewModel.formatAge(-10), "0s")
+    func testAgeLabelMatchesTheWebBannerRungForRung() {
+        // #8959: `stalenessAgeLabel`'s table in
+        // `frontend/__tests__/components/calibrationAgeLadderFloors7634.test.tsx`.
+        // The old `formatAge` said "3h" where web says "3 hr", and rounded.
+        let cases: [(Double, String)] = [
+            (89, "moments"), (90, "1 min"), (5_369, "89 min"), (5_399, "89 min"),
+            (5_400, "1 hr"), (7_199, "1 hr"), (7_200, "2 hr"), (172_799, "47 hr"),
+            (172_800, "2 days"), (479_048, "5 days"), (-86_400, "moments"),
+            (.nan, "moments"), (5_399.99, "89 min"),
+        ]
+        for (seconds, expected) in cases {
+            XCTAssertEqual(CalibrationStaleness.ageLabel(seconds), expected, "\(seconds)s")
+        }
     }
 
     // MARK: - 4. Version mismatch

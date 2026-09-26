@@ -211,11 +211,16 @@ struct CalibrationSurfaceView: View {
     // A stale curve is fine; a stale curve presented as live is not — and native
     // had no decode for the freshness envelope at all, so it presented every
     // degraded payload as current.
+    //
+    // #8959: and until then it read `cache` alone, which the main tier never
+    // attaches — so "the market data behind this curve is 15 hours old" reached
+    // the website and not the phone. The headline and body now come from the
+    // same three-state decision web uses (`CalibrationStaleness`).
     @ViewBuilder
     private var staleBanner: some View {
-        if let detail = viewModel.staleBannerDetail {
+        if let headline = viewModel.staleBannerHeadline, let detail = viewModel.staleBannerDetail {
             VStack(alignment: .leading, spacing: 3) {
-                Text("Showing the last complete snapshot.")
+                Text(headline)
                     .font(.caption.weight(.semibold)).foregroundStyle(.primary)
                 Text(detail).font(.caption2).foregroundStyle(.secondary)
             }

@@ -127,7 +127,7 @@ final class CalibrationAvailabilityTests: XCTestCase {
         let vm = try prodModel()
         XCTAssertTrue(vm.isStale)
         let detail = try XCTUnwrap(vm.staleBannerDetail)
-        XCTAssertTrue(detail.contains("24h ago"), detail)
+        XCTAssertTrue(detail.contains("(24 hr ago)"), detail)
         XCTAssertFalse(detail.contains("earlier"), detail)
         // Stale is a freshness state, not a refusal — the curve still renders.
         XCTAssertTrue(vm.hasRenderableCurve)
