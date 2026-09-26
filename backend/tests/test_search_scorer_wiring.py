@@ -536,9 +536,10 @@ class TestEveryConceptCallSiteIsRouted:
         return inspect.getsource(search_events)
 
     def test_all_four_sites_use_the_shared_upsert(self):
-        assert self._source().count("_upsert_search_query_derived_concept(") == 4, (
-            "three `_detect_query_*` sites plus the #206 team bridge — a guard "
-            "fixed at three of four sites still decides provenance at the fourth"
+        assert self._source().count("_upsert_search_query_derived_concept(") == 5, (
+            "three `_detect_query_*` sites, the #8923 UFC card, plus the #206 team "
+            "bridge — a guard fixed at four of five sites still decides provenance "
+            "at the fifth"
         )
 
     def test_no_first_writer_wins_skip_survives(self):

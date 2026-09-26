@@ -1953,6 +1953,59 @@ def _detect_query_awards_concept(q: str | None) -> dict | None:
     }
 
 
+# #8923: a UFC CARD is a first-class event concept too, but unlike a golf major or
+# a ceremony it has no fixed key a phrase can map to — tonight's card is
+# `event:ufc:26sep26`, next week's another token. And the market-name path above
+# cannot reach it from the promotion's name: fight markets read "Will X win…",
+# bouts carry fighter names, and neither contains "ufc". So on fight night
+# `q=UFC` answered with five championship futures and no card (82 markets, first
+# bout 21:10Z, 9/26). When the QUERY names the promotion, the card comes from the
+# same lister the MMA hub's rail uses — live/upcoming only, so never a dead page.
+_UFC_CARD_QUERY_RE = re.compile(r"\bufc\b|\bmma\b|\bmixed\s+martial\s+arts?\b", re.I)
+
+
+def _detect_query_names_ufc(q: str | None) -> bool:
+    """True when the query names the promotion (`ufc`, `mma`, `mixed martial arts`).
+
+    Word-boundary anchored: "ufcw" or "comma" never fire it."""
+    return bool(q) and bool(_UFC_CARD_QUERY_RE.search(q))
+
+
+def _pick_ufc_card_concept(q: str | None, cards: list[dict]) -> dict | None:
+    """The one card a promotion query should lead with, as a `/search` concept row.
+
+    A LIVE card first — that is the card a reader searching on fight night means —
+    then the upcoming card that opens soonest. The lister sorts marquee-first
+    (numbered cards ahead of fight nights) for the hub rail, which would answer
+    fight night with next month's numbered card, so this reads its own order.
+
+    A query that names a card NUMBER ("ufc 332") takes only that card, and nothing
+    if the number is not on a live/upcoming card: a fight night is not an answer to
+    a numbered card."""
+    from datetime import datetime, timezone
+
+    from app.utils.event_ufc import ufc_card_number
+
+    wanted = ufc_card_number(q)
+    pool = [
+        c for c in cards
+        if c.get("key") and c.get("name") and c.get("status") in ("live", "upcoming")
+    ]
+    if wanted is not None:
+        pool = [c for c in pool if ufc_card_number(c["name"]) == wanted]
+    if not pool:
+        return None
+    _far = datetime.max.replace(tzinfo=timezone.utc)
+    best = min(
+        pool,
+        key=lambda c: (
+            0 if c["status"] == "live" else 1,
+            c.get("opens_at") or c.get("latest_commence") or _far,
+        ),
+    )
+    return {"key": best["key"], "name": best["name"], "domain": "ufc", "market_id": None}
+
+
 def _upsert_query_derived_concept_row(
     pool: list[dict],
     seen: set[str],
@@ -10342,6 +10395,37 @@ async def search_events(
         event_concepts = _upsert_search_query_derived_concept(
             event_concepts, _seen_concept_keys, _awards_concept,
         )
+
+    # #8923: prepend the live-or-next UFC card when the QUERY names the promotion.
+    # The only prepend that reads the database, so it runs in its own savepoint
+    # under the request deadline like the evidence stages above: a timeout sheds
+    # the card (and marks the answer degraded so it is not cached), never the page.
+    if (
+        _detect_query_names_ufc(_q_identity)
+        and (not sport or sport.startswith("mma"))
+        and time.monotonic() <= _deadline
+    ):
+        from app.utils.event_ufc import list_ufc_card_concepts as _list_ufc_cards
+
+        await _apply_search_statement_timeout(db, _deadline)
+        _ufc_savepoint = await db.begin_nested()
+        try:
+            _ufc_cards = await _list_ufc_cards(db)
+        except Exception as exc:  # noqa: BLE001
+            await _ufc_savepoint.rollback()
+            if _is_query_timeout(exc):
+                degraded.append("ufc_card")
+            else:
+                logger.warning("search ufc card lister failed: %s", exc)
+            await _apply_search_statement_timeout(db, _deadline)
+            _ufc_cards = []
+        else:
+            await _ufc_savepoint.commit()
+        _ufc_concept = _pick_ufc_card_concept(_q_identity, _ufc_cards)
+        if _ufc_concept:
+            event_concepts = _upsert_search_query_derived_concept(
+                event_concepts, _seen_concept_keys, _ufc_concept,
+            )
 
     _mark("futures_format_concepts")
     # Suppress individual-sport "teams" (tennis players, MMA fighters, golfers,
