@@ -7661,6 +7661,8 @@ def _top_outcomes_for_trace(
                 ),
                 "rank": outcome.rank,
                 "rank_change_24h": outcome.rank_change_24h,
+                # #8784 — see `rank_claim_is_evidence`.
+                "prior_priced": outcome.probability_change_24h is not None,
                 "opening_probability": (
                     float(outcome.opening_probability)
                     if outcome.opening_probability is not None
@@ -11101,6 +11103,9 @@ async def _score_sports_mode_futures(
                     "probability_change_24h": change,
                     "rank": o.rank,
                     "rank_change_24h": o.rank_change_24h,
+                    # #8784 — see `rank_claim_is_evidence`. `change` above
+                    # folds a stored 0.0 into None, so it cannot say this.
+                    "prior_priced": o.probability_change_24h is not None,
                     "opening_probability": (
                         float(o.opening_probability) if o.opening_probability else None
                     ),
@@ -12754,6 +12759,9 @@ async def _score_futures(
                         "probability_change_24h": change,
                         "rank": o.rank,
                         "rank_change_24h": o.rank_change_24h,
+                        # #8784 — see `rank_claim_is_evidence`. `change` above
+                        # folds a stored 0.0 into None, so it cannot say this.
+                        "prior_priced": o.probability_change_24h is not None,
                         "opening_probability": (
                             float(o.opening_probability) if o.opening_probability else None
                         ),
