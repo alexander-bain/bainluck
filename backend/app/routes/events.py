@@ -2570,10 +2570,19 @@ def _rerank_search_futures(
 def _query_name_match(market, expanded: list[tuple[str, str | None]]) -> bool:
     """True if the market NAME contains every query term (or its expansion) —
     i.e. the market is ABOUT the query, not merely an outcome match."""
+    return _text_names_every_term(market.name, expanded)
+
+
+def _text_names_every_term(text: str | None, expanded: list[tuple[str, str | None]]) -> bool:
+    """Every query term (or its expansion) is a substring of ``text``, case-folded.
+
+    The one rule `_query_name_match` asks of a market NAME and
+    `_search_query_matched_leg` (#8842) asks of an outcome name.
+    """
     low = [(t.lower(), (e or "").lower()) for t, e in expanded]
     if not low:
         return False
-    n = (market.name or "").lower()
+    n = (text or "").lower()
     return all((t in n) or (e and e in n) for t, e in low)
 
 
@@ -9887,7 +9896,9 @@ async def search_events(
         and not _answers_a_served_game_card(m, _served_event_ids)
     ]
     _formatted_by_id = {
-        m.id: _format_futures_for_search(m, _withheld_by_market.get(m.id))
+        m.id: _format_futures_for_search(
+            m, _withheld_by_market.get(m.id), query_terms=expanded  # #8842
+        )
         for m in (*deduped_futures, *futures_markets)
     }
     formatted_futures = [_formatted_by_id[m.id] for m in futures_markets]
@@ -12036,6 +12047,7 @@ async def typeahead_search(
                 limit=3,
                 lean=True,
                 withheld=await _search_withheld_price_ids(db, market),
+                query_terms=ta_expanded,  # #8842
             ),
             # RANKING evidence, private and stripped before the response. The
             # three rows above are a DISPLAY cut; using them as the market's
@@ -30801,14 +30813,50 @@ def _search_ladder_window(
     return ordered[start : start + limit]
 
 
+def _search_query_matched_leg(market, board: list, top: list, query_terms, withheld: set):
+    """The priced leg that NAMES the query and fell below the card's cut, or None.
+
+    #8842 — `?q=ohtani` (390px, 2026-09-26 ~15:15Z) served four cards on which
+    Ohtani appeared nowhere: `MLB: Home Runs Leader` (12516244) showed Schwarber,
+    Crow-Armstrong, Alonso, Caminero, Goodman. Search recalled the market through
+    its Ohtani outcome and then cut the card to the top five by probability,
+    which never looks at the query. `?q=yankees` did the same to `MLB: Team to
+    make postseason` (8861163), whose Yankees leg is a settled winner.
+
+    Asked only when the market NAME does not answer the query (a title match is
+    about the query already, and its card is left exactly as it was), and only
+    of legs the card can print a number for: a withheld or unpriced leg would
+    pin a dash, which names the player but tells the reader nothing. Of several
+    matches, the highest-priced one.
+    """
+    if not query_terms or _query_name_match(market, query_terms):
+        return None
+    shown = {id(o) for o in top}
+    matched = [
+        o for o in board
+        if id(o) not in shown
+        and o.id not in withheld
+        and _outcome_prints_a_price(o)
+        and _text_names_every_term(o.name, query_terms)
+    ]
+    if not matched:
+        return None
+    return max(matched, key=lambda o: o.current_probability or 0)
+
+
 def _build_search_top_outcomes(
     market: "FuturesMarket",
     limit: int = 5,
     lean: bool = False,
     withheld: Optional[set[int]] = None,
+    query_terms: Optional[list[tuple[str, str | None]]] = None,
 ) -> list[dict]:
     """Top-N real outcomes for search surfaces, normalized (#23). Shared by the
     full search formatter and the typeahead futures branch.
+
+    #8842: ``query_terms`` (the handler's expanded terms) lets a card that was
+    recalled through an OUTCOME name carry that outcome. See
+    `_search_query_matched_leg`.
 
     ``lean=True`` returns the minimal typeahead payload (name / probability /
     movement only — no id/odds/rank) to keep the dropdown response small.
@@ -30937,6 +30985,7 @@ def _build_search_top_outcomes(
     # threshold order, and never reaches the probability sort below. See
     # `_search_ladder_window` for why the sort is wrong on exactly this shape.
     window = _search_ladder_window(market, real, _withheld_ids, limit)
+    pinned = None
     if window is not None:
         top = window
     else:
@@ -30948,6 +30997,12 @@ def _build_search_top_outcomes(
             reverse=True,
         )
         top = real[:limit]
+        # #8842: a card recalled through an outcome name shows that outcome, in
+        # the last row, when the probability cut left it out. Not on the ladder
+        # window above: a threshold rung is never a player or a team.
+        pinned = _search_query_matched_leg(market, real, top, query_terms, _withheld_ids)
+        if pinned is not None:
+            top = top[: limit - 1] + [pinned]
     # #6479, and it is the SAME rung a reader meets on the detail page. Search
     # ranks these boards by probability, so the truncated name is not buried in
     # the tail: `?q=Los Angeles` led `2027 Pro Football Champion` with `Los
@@ -31042,6 +31097,15 @@ def _build_search_top_outcomes(
     # headlining the one surface a reader meets FIRST — a fix that reads as
     # shipped and withholds nothing. `named` and `out` are built from the same
     # list in the same order in both branches, so the zip is exact.
+    if pinned is not None and not lean:
+        for (o, _name), od in zip(named, out):
+            if o is pinned:
+                od["query_match"] = True
+                od["matched_rank"] = 1 + sum(
+                    1 for leg in real
+                    if leg.id not in _withheld_ids
+                    and (leg.current_probability or 0) > (o.current_probability or 0)
+                )
     if _withheld_ids:
         for (o, _name), od in zip(named, out):
             if o.id in _withheld_ids:
@@ -31862,7 +31926,9 @@ async def _repair_search_card_club_names(
 
 
 def _format_futures_for_search(
-    market: FuturesMarket, withheld: Optional[set[int]] = None
+    market: FuturesMarket,
+    withheld: Optional[set[int]] = None,
+    query_terms: Optional[list[tuple[str, str | None]]] = None,
 ) -> dict:
     """Format a futures market for search results (answer-first, #23-normalized).
 
@@ -31874,7 +31940,11 @@ def _format_futures_for_search(
     # top_outcomes: top 5 real outcomes, placeholder-filtered + #23-normalized
     # (shared with typeahead via _build_search_top_outcomes).
     top_outcomes = _build_search_top_outcomes(
-        market, limit=_SEARCH_LADDER_LIMIT, lean=False, withheld=withheld
+        market,
+        limit=_SEARCH_LADDER_LIMIT,
+        lean=False,
+        withheld=withheld,
+        query_terms=query_terms,  # #8842
     )
     # #6585: COUNT THE LEGS THE LADDER DRAWS FROM, not the rows behind it.
     #
