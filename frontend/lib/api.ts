@@ -696,6 +696,8 @@ export interface TeamGameBrief {
   // carries. One definition, spent here.
   status: EventStatus;
   commence_time: string | null;
+  // #8841: a placeholder start the venue has not announced — date, no clock.
+  start_is_tbd?: boolean | null;
   sport_key: string | null;
   is_home: boolean;
   opponent: string;

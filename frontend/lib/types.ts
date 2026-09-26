@@ -176,6 +176,10 @@ export interface Event {
   home_team: string;
   away_team: string;
   commence_time: string;
+  // #8841: the venue listed the game before its start was announced, so
+  // `commence_time` is a placeholder — print the date, never the clock. Only an
+  // explicit `true` suppresses a clock; absent means "print it as before".
+  start_is_tbd?: boolean | null;
   // Authoritative finished-event date; prefer over commence_time for FINAL cards
   // to avoid rendering a stale/future date beside a Final badge (Queue #189 §B).
   completed_at?: string | null;
