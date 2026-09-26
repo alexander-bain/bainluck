@@ -2459,6 +2459,16 @@ async def _process_event_batch(
         now = datetime.now(timezone.utc)
 
         for event in events:
+            # #8935: one savepoint per event. The batch shares one transaction
+            # and one closing COMMIT, and a failed statement (a deadlock, a value
+            # too long) aborts that transaction on Postgres: every later event
+            # then failed with "current transaction is aborted", and the COMMIT
+            # became a silent ROLLBACK of every event written before it — up to
+            # 50 events' prices, status flips and stamps, with `events_processed`
+            # still counting them. Rolling back to the savepoint drops only the
+            # failing event's writes. `continue` inside the try RELEASEs it in
+            # `finally`, like a clean pass.
+            savepoint = await session.begin_nested()
             try:
                 if not event.markets:
                     continue
@@ -3600,8 +3610,12 @@ async def _process_event_batch(
                     )
 
             except Exception as e:
+                await savepoint.rollback()
                 stats["errors"].append(f"{event.id}: {str(e)}")
                 continue
+            finally:
+                if savepoint.is_active:
+                    await savepoint.commit()
 
         # The parent→sub-market event_id sweep used to run HERE, once per batch.
         # It is now `link_polymarket_sub_markets`, called ONCE per poll — see that

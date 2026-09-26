@@ -1034,6 +1034,23 @@ jobs:
             exit 1
           fi
 
+      - name: "#8935 one failing event rolls back only itself, not its whole Polymarket write batch (real Postgres)"
+        # #8935. `_process_event_batch` wrote a batch in one transaction with one
+        # closing COMMIT; a failed statement (production: a deadlock) aborted it,
+        # every later event failed "current transaction is aborted", and the
+        # COMMIT silently rolled back the events written before it. A session
+        # double neither aborts nor turns COMMIT into ROLLBACK; only Postgres
+        # does. Wired here because this job names each PG file explicitly (the
+        # shards skip it).
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_polymarket_batch_savepoint_8935_pg.py \
+            -v -rs 2>&1 | tee /tmp/batchsavepoint8935.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/batchsavepoint8935.txt; then
+            echo "::error::#8935 batch-savepoint gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#8692 a between-rounds golf source keeps its basis for the card's move (real Postgres)"
         # #8692. The golf card's "up N points today" averages the sources with a
         # ~24h-ago basis, and the basis is now each outcome's latest write at or

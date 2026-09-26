@@ -251,6 +251,18 @@ class _FakeResult:
         return 0
 
 
+class _Savepoint:
+    """#8935: the per-event savepoint `_process_event_batch` opens."""
+
+    is_active = True
+
+    async def commit(self):
+        self.is_active = False
+
+    async def rollback(self):
+        self.is_active = False
+
+
 class _FakeSession:
     """A recording stand-in for the task session: captures every statement
     the real writer emits without touching a database."""
@@ -272,6 +284,10 @@ class _FakeSession:
 
     async def commit(self):
         self.commits += 1
+
+    async def begin_nested(self):
+        # #8935: the writer opens one savepoint per event.
+        return _Savepoint()
 
 
 def _outcome_inserts(fake):
