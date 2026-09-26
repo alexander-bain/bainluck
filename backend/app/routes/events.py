@@ -1047,6 +1047,17 @@ def _team_marquee_rank(sport_key: str | None) -> int:
     return 0 if sport_key in _MARQUEE_TEAM_SPORT_KEYS else 1
 
 
+def _team_marquee_order():
+    """`_team_marquee_rank` as SQL, for the teams window's ORDER BY (#8756).
+
+    Built from the same set so the fetch and the Python sort cannot disagree
+    about which leagues are marquee."""
+    return case(
+        (Sport.key.in_(sorted(_MARQUEE_TEAM_SPORT_KEYS)), 0),
+        else_=1,
+    )
+
+
 def _dedupe_prefix_duplicate_team_rows(rows: list) -> list:
     """Drop the odds-provider city-only duplicate that shadows the real franchise.
 
@@ -7299,7 +7310,13 @@ async def search_events(
                 if roster_team_ids
                 else _build_team_search_filter(_q_identity)
             )
-            .order_by(team_rank.desc(), Team.name)
+            # #8756: the marquee tiebreak BEFORE the name one. `ts_rank_cd` counts
+            # how often the word appears across name + aliases, so `eagles` put
+            # six college rows at 4.5 and Philadelphia Eagles at 3.0 among 19
+            # other ties — and `Team.name` sorted "Philadelphia" to row 26 of a
+            # 25-row window. It was never fetched, so nothing below could rank
+            # it. Rank still leads; only equal-rank rows reorder.
+            .order_by(team_rank.desc(), _team_marquee_order(), Team.name)
             .limit(_SEARCH_TEAM_WINDOW)
         )
         if sport:
@@ -10003,7 +10020,7 @@ async def search_events(
     # Suppress individual-sport "teams" (tennis players, MMA fighters, golfers,
     # boxers) — artifacts of the Odds API modelling 1v1 sports as team-vs-team;
     # users still find these athletes via event and futures results. Then apply the
-    # rank-first / marquee tie-break ordering before capping at 5.
+    # rank-first / marquee tie-break ordering; the scorer below caps at 5 (#8756).
     # #4489: the same-name collapse picks the club's own competition instead of
     # whichever row the heap handed over first. It runs AFTER the sort so a name
     # group still occupies its first member's slot.
@@ -10028,8 +10045,22 @@ async def search_events(
             # is JSON and has been observed holding non-string members.
             "_aliases": [a for a in (row.alternate_names or []) if isinstance(a, str)],
         })
-        if len(matched_teams) >= 5:
-            break
+    # #8756: the scorer runs over the WHOLE window, and its `[:5]` is the card's
+    # cap. The loop above used to stop at 5 by FTS rank, before the scorer ran,
+    # so the scorer only ever reordered five rows that alias repetition had
+    # chosen. `eagles`: five colleges repeating "Eagles" three times each filled
+    # the card, and Philadelphia Eagles (owns the alias "Eagles" too, MC0,
+    # prominent) never reached the scorer that ranks it first — the answer
+    # typeahead gives, because its pool is ordered the way the scorer ranks.
+    # Ranked HERE, before the World Cup check below, so that check still reads
+    # the card a reader sees and not the whole window.
+    # The scorer's import lives here, its first use (#8756); `event_concepts`
+    # reuses it below.
+    from app.utils.search_match_class import rank as _search_rank_candidates
+
+    matched_teams = _search_rank_candidates(
+        _q_identity, [(_search_team_evidence(t), t) for t in matched_teams]
+    )[:5]
 
     # #206 Item 1b: positively surface the never-dead World Cup concept for a bare
     # WC-participant country query ("france") — the deriver guard above stops the
@@ -10084,7 +10115,7 @@ async def search_events(
     # `rank()` reorders and drops only UNRANKABLE rows, and only derived-only
     # evidence is UNRANKABLE — a non-derived row that matches nothing lands in
     # MC5 and still ships. Recall belongs to the SQL that built the candidate set.
-    from app.utils.search_match_class import rank as _search_rank_candidates
+    # (`_search_rank_candidates` is imported above, where `teams` is ranked.)
 
     # On the SUBJECT (#5688), and this is the site where the substitution matters
     # MOST rather than least. `rank()` does not merely order — it DROPS rows it
@@ -10097,9 +10128,7 @@ async def search_events(
     event_concepts = _search_rank_candidates(
         _q_identity, [(_search_concept_evidence(c), c) for c in event_concepts]
     )[:5]
-    matched_teams = _search_rank_candidates(
-        _q_identity, [(_search_team_evidence(t), t) for t in matched_teams]
-    )[:5]
+    # `teams` is ranked above (#8756), before the World Cup check reads it.
     # Private ranking evidence never reaches the wire. Typeahead learned this by
     # nearly shipping 40 outcome strings per keystroke; here it is two keys, and
     # the discipline is the same one either way.
