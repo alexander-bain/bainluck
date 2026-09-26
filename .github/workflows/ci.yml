@@ -5003,10 +5003,11 @@ jobs:
         # Postgres, paused after its compared read, while a second session sends
         # the WS lane's own `atomic_stamp_expression` UPDATE. Row locks, the
         # server-side merge and commit ordering are what is under test, so a
-        # session double cannot run it. 3 = race (the WS write waits on the poll's
+        # session double cannot run it. 4 = race (the WS write waits on the poll's
         # lock; newer stamp + sibling survive) + refused (older reading writes no
-        # stamp, no point) + control. Lock removed: race red; guard removed:
-        # refused red.
+        # stamp, no point) + released (the refusal lets go of the row before its
+        # next statement) + control. Lock removed: race red; guard removed:
+        # refused red; refusal's commit removed: released red.
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_live_poll_stamp_race_8910_pg.py \
@@ -5015,8 +5016,8 @@ jobs:
             echo "::error::#8910 stamp-race gate SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]3 passed[,[:space:]]" /tmp/stamprace8910.txt || {
-            echo "::error::#8910 stamp-race gate did not run all three cases"
+          grep -qE "[^0-9]4 passed[,[:space:]]" /tmp/stamprace8910.txt || {
+            echo "::error::#8910 stamp-race gate did not run all four cases"
             exit 1
           }
 
