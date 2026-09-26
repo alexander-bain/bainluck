@@ -596,13 +596,25 @@ class LiveBlendRefresher:
 
     # ── inversion orientation, cached ────────────────────────────────────────
 
-    async def _oriented(self, session, event_id: int, home_prob: float) -> float:
+    async def _oriented(
+        self, session, event_id: int, home_prob: float, *, reading=None,
+    ) -> float:
         """Apply the inversion verdict, computing it at most once per TTL.
 
         Returns the home probability the poll would have written. The verdict is
         cached as a BOOLEAN (did this linkage need flipping), not as a value —
         caching the value would pin a price, which is the opposite of the point.
         """
+        from app.utils.live_blend import has_named_three_way_partition
+
+        if reading is not None and has_named_three_way_partition(reading):
+            # #8814: a stale book can disagree with a correctly named soccer
+            # quote. Its cached binary flip would also erase the real draw.
+            # Discard that contradicted verdict, including for later ticks
+            # whose partial board no longer proves the full partition.
+            self._inversion.pop(event_id, None)
+            return reading.home_probability
+
         now = time.monotonic()
         cached = self._inversion.get(event_id)
         if cached is not None and now < cached[0]:
@@ -826,7 +838,7 @@ class LiveBlendRefresher:
                         continue
 
                     home_prob = await self._oriented(
-                        session, event_id, reading.home_probability,
+                        session, event_id, reading.home_probability, reading=reading,
                     )
                     value = round(home_prob, 4)
 
