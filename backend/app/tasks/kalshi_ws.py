@@ -229,14 +229,12 @@ async def _run_kalshi_ws_consumer():
         try:
             async with get_task_session() as session:
                 for outcome_id, (prob, yes_bid, yes_ask) in batch.items():
-                    # #8753: the book columns are written only when the tick
-                    # carried BOTH sides. Half a book beside the other half from
-                    # an older REST poll is a quote nobody ever offered.
-                    book_values = (
-                        {"current_yes_bid": yes_bid, "current_yes_ask": yes_ask}
-                        if yes_bid is not None and yes_ask is not None
-                        else {}
-                    )
+                    # #8753: the book columns move only when the tick carried
+                    # BOTH sides; otherwise each is set to itself (a no-op). Half
+                    # a book beside the other half from an older REST poll is a
+                    # quote nobody ever offered. Spelled as keywords, not a
+                    # splat, so the #4958 writer scan can read the mapping.
+                    tick_has_book = yes_bid is not None and yes_ask is not None
                     result = await session.execute(
                         update(FuturesOutcome)
                         .where(
@@ -290,7 +288,16 @@ async def _run_kalshi_ws_consumer():
                                 FuturesOutcome.price_changed_at,
                                 prob,
                             ),
-                            **book_values,
+                            current_yes_bid=(
+                                yes_bid
+                                if tick_has_book
+                                else FuturesOutcome.current_yes_bid
+                            ),
+                            current_yes_ask=(
+                                yes_ask
+                                if tick_has_book
+                                else FuturesOutcome.current_yes_ask
+                            ),
                         )
                     )
                     # #5411 — a settled row matches the id and fails the guard, so
