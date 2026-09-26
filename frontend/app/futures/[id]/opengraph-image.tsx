@@ -4,7 +4,11 @@ import type { FuturesMarketDetailResponse, FuturesOutcome } from "@/lib/types";
 import { UnfurlCard } from "@/components/og/UnfurlCard";
 import { truncateShareText } from "@/lib/share";
 import { categoryKeyLabel } from "@/lib/sportCategories";
-import { futuresBoardPrice, futuresUnfurlCopy } from "@/lib/futuresDetailDisplay";
+import {
+  futuresBoardPrice,
+  futuresUnfurlCopy,
+  servedLeadOutcome,
+} from "@/lib/futuresDetailDisplay";
 import { unresolvedCardCopy } from "@/lib/unresolvedCardCopy";
 import type { ResolutionFailure } from "@/lib/unresolvedShareMeta";
 import { unfurlImageOptions } from "@/lib/unfurlImageCache";
@@ -55,6 +59,9 @@ async function fetchMarket(id: string): Promise<MarketLookup> {
 function topOutcome(market: FuturesMarketMetadata): FuturesOutcome | null {
   const outcomes = market.outcomes ?? market.top_outcomes ?? [];
   if (outcomes.length === 0) return null;
+  // #8892 — a live game container leads with its match-winner leg, as the page does.
+  const lead = servedLeadOutcome(outcomes, market.lead_outcome_id, market.status);
+  if (lead) return lead;
   return [...outcomes].sort((a, b) => (b.probability ?? -1) - (a.probability ?? -1))[0];
 }
 

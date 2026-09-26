@@ -177,6 +177,58 @@ export function pickLiveLeader<
 }
 
 /**
+ * #8892 — A GAME CONTAINER LEADS WITH WHO WINS, NOT WITH ITS MOST LOPSIDED LEG.
+ *
+ * A Polymarket game container carries legs that answer DIFFERENT questions, so
+ * "the highest-priced outcome" is just the most one-sided one. Production,
+ * `/futures/61778284` — *LoL: Cloud9 vs Team Liquid (BO5)*, 2026-09-26:
+ *
+ *     Over — O/U 3.5 Games     71%    <- the hero, the unfurl title, the card
+ *     ...
+ *     Cloud9 — Match Winner    36%    <- the number the title asks for, row 6
+ *
+ * The server names that leg (`lead_outcome_id`, #8894): the one full-contest
+ * winner leg the venue corroborates, null everywhere else. Null keeps every
+ * caller's own rule, so every other board is byte-identical.
+ *
+ * Returns the named row only while it is on the board with a price. On a
+ * settled market it returns null: the grade decides that hero (#8280 already
+ * prefers the side-naming graded row), not a pre-game pointer.
+ */
+export function servedLeadOutcome<T extends { id: number; probability?: number | null }>(
+  outcomes: readonly T[],
+  leadOutcomeId: number | null | undefined,
+  status: string | null | undefined,
+): T | null {
+  if (leadOutcomeId == null || status === "resolved") return null;
+  const lead = outcomes.find((o) => o.id === leadOutcomeId);
+  return lead && lead.probability != null ? lead : null;
+}
+
+/**
+ * #8892 — the chart a game container opens on draws the line its hero leads with,
+ * ALONE.
+ *
+ * The container's other legs answer other questions, and the caption under the
+ * chart names the highest-priced DRAWN line (`pickCaptionSubject`, #8016). Seeding
+ * the lead beside the price seeds would print "Over — O/U 3.5 Games down 1.5 pts
+ * from opening" under a hero reading "Cloud9 — Match Winner". Every leg stays in
+ * the list and toggles onto the chart as before.
+ *
+ * With no lead, or a lead the loaded history has no rows for, the price seeds
+ * stand: an empty chart is worse than a chart about another leg. An empty
+ * `historyIds` means history has not loaded yet, not that the lead has none.
+ */
+export function chartSeedsWithLead<T extends { id: number }>(
+  priceSeeds: readonly T[],
+  lead: T | null,
+  historyIds: ReadonlySet<number>,
+): readonly T[] {
+  if (lead && (historyIds.size === 0 || historyIds.has(lead.id))) return [lead];
+  return priceSeeds;
+}
+
+/**
  * #7439 — the outcomes the trend chart selects on FIRST PAINT.
  *
  * Lifted out of the page's seed effect so the rule can be asserted directly.

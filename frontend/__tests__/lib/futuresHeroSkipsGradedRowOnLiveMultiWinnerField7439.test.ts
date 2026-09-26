@@ -444,8 +444,10 @@ describe("#7439 page wiring — the real field reaches both call sites", () => {
   test("the seed effect re-runs when the flag changes", () => {
     // The rule now reads `mutually_exclusive`, so it belongs in the dep array;
     // without it a market whose flag arrives late would keep its first seed.
+    // #8892 appends `leadOutcome` (the served match-winner leg seeds first), so
+    // later deps are allowed; the four this rule reads are still required, in order.
     expect(code).toMatch(
-      /\[\s*market\?\.outcomes\s*,\s*market\?\.status\s*,\s*market\?\.mutually_exclusive\s*,\s*historyOutcomes\s*\]/,
+      /\[\s*market\?\.outcomes\s*,\s*market\?\.status\s*,\s*market\?\.mutually_exclusive\s*,\s*historyOutcomes\s*(,\s*\w+\s*)*\]/,
     );
   });
 });
