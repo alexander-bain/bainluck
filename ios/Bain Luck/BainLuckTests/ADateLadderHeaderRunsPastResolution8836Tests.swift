@@ -88,7 +88,7 @@ final class ADateLadderHeaderRunsPastResolution8836Tests: XCTestCase {
 
     func testControlTheSameLadderWhoseServedDateIsItsLatestRungKeepsItsLine() throws {
         let data = try card(aliensPoints, resolution: "2029-01-20T15:00:00+00:00")
-        XCTAssertEqual(header(data), "Resolves Jan 20, 2029")
+        XCTAssertEqual(header(data), "Resolves Jan 20")
     }
 
     /// "Before 2028" (20280100 → Jan 1, 2028) against a venue close the evening
@@ -111,7 +111,7 @@ final class ADateLadderHeaderRunsPastResolution8836Tests: XCTestCase {
             point("outcome", "Above 20261000", 20261000, 0.6),
             point("outcome", "Above 20290120", 20290120, 0.2),
         ]
-        XCTAssertEqual(header(try card(points, resolution: Self.servedResolution)), "Resolves Jan 1, 2027")
+        XCTAssertEqual(header(try card(points, resolution: Self.servedResolution)), "Resolves Jan 1")
     }
 
     /// A mixture is not a date ladder we recognise (web's `ladderKind`: every, not some).

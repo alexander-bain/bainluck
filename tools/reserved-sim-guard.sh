@@ -63,8 +63,15 @@
 # empty allowlist. Adding a UDID here is how a device becomes protected;
 # removing one is how it stops. `BAINLUCK_RESERVED_SIMULATOR` (space- or
 # comma-separated, one or many) only ever ADDS.
+#
+# 9B7A32DA (`iPhone 17 Codex build23`) holds Codex's phone-acceptance evidence
+# for an exact tested build (Codex, 2026-09-25 18:45Z: "protect 9B7A32DA
+# additively in BL_RESERVED_SIMS"). The ask sat unlanded for a day and
+# native-gates.sh, picking by model name, installed its test host there
+# (native, 2026-09-26, gating #8836).
 BL_RESERVED_SIMS="76D961F0-8575-479F-ABCE-652D8A79DBF9
-DD0DC456-E7C7-4740-8F5A-6BE6F61B606C"
+DD0DC456-E7C7-4740-8F5A-6BE6F61B606C
+9B7A32DA-CE68-4F38-845E-26EE9B57DAFB"
 if [ -n "${BAINLUCK_RESERVED_SIMULATOR:-}" ]; then
     BL_RESERVED_SIMS="${BL_RESERVED_SIMS}
 $(printf '%s' "$BAINLUCK_RESERVED_SIMULATOR" | tr ', ' '\n\n')"
