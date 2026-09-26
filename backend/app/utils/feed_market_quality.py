@@ -15,7 +15,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import Iterable, Literal
+from typing import Iterable, Literal, Sequence
 
 from app.utils.card_integrity import is_anonymized_market
 from app.utils.feed_reasons import RESOLVING_WITHIN_MONTH_HEADLINE
@@ -1063,6 +1063,72 @@ def classify_fabricated_book(
         ),
     )
     return keep_mask, drop
+
+
+# #8826: how many of a ladder card's leading rungs are read. Three is the card's
+# printed arity — both serializers slice `[:3]` before `_apply_card_percents`, and a
+# bundle row prints the first of those three.
+TEMPLATED_LADDER_LEADING_RUNGS = 3
+
+
+def is_templated_flat_ladder(
+    outcomes: "Sequence[tuple[str, float | None, float | None, float | None]]",
+    question: "str | None" = None,
+) -> bool:
+    """True if a ladder card's leading rungs are one copied, untraded quote (#8826).
+
+    ``outcomes`` is ``[(name, probability, yes_bid, yes_ask), ...]`` in the order the
+    card prints them (after the phantom, rank and incoherent-rung filters).
+
+    The reader who forced this: page one's *Fed & Rates* bundle, 2026-09-26, printed
+    ``Fed funds rate after Dec 2027 meeting? / Above 0.00% / 80%`` — a 20% chance of
+    zero rates that no market states. Kalshi ``KXFED-27DEC`` quotes bid 0.60 / ask
+    1.00 on every rung from 0.00% to 3.25%, 0 contracts in 24h: one market maker's
+    standing quote copied down the ladder. We store its midpoint, 0.80, fourteen
+    times, so the card's three legs read 80% / 80% / 80%.
+
+    Every guard upstream is right on its own terms, which is why none caught it.
+    :func:`classify_fabricated_book` spares a midpoint with a real buyer (#7808 — do
+    not touch that clause; Sinner's 7c bid was a real leg), and the ladder law in
+    ``ladder_monotonicity`` is non-strict (a flat run "is not a proof"). This asks
+    the card-level question neither of them can: does anything the card shows come
+    from a price somebody agreed on?
+
+    ALL of these, or False:
+      1. the outcome list is ONE cumulative ladder (``cumulative_outcome_ladder``) —
+         a race whose top three tie is a different card and is not judged here;
+      2. its leading ``TEMPLATED_LADDER_LEADING_RUNGS`` legs are all priced and
+         print the SAME whole percent — the card shows no information;
+      3. every one of those prices IS the midpoint of a wide book
+         (:func:`is_fabricated_midpoint`) — nobody traded any of them.
+
+    Two independent signals, deliberately. Flat alone would refuse a genuinely
+    near-certain ladder (``Above 0% / 0.25% / 0.5%`` all traded at 99%); midpoint
+    alone would re-open #7808. Together they describe a template, not a market.
+    """
+    from app.utils.graded_card import rendered_percent
+    from app.utils.ladder_monotonicity import cumulative_outcome_ladder
+
+    leading = list(outcomes[:TEMPLATED_LADDER_LEADING_RUNGS])
+    if len(leading) < TEMPLATED_LADDER_LEADING_RUNGS:
+        return False
+    if any(probability is None for _, probability, _, _ in leading):
+        return False
+    if len({rendered_percent(probability) for _, probability, _, _ in leading}) != 1:
+        return False
+    if not all(
+        is_fabricated_midpoint(probability, bid, ask)
+        for _, probability, bid, ask in leading
+    ):
+        return False
+    return (
+        cumulative_outcome_ladder(
+            [{"name": name or ""} for name, _, _, _ in outcomes],
+            dates=True,
+            question=question,
+        )
+        is not None
+    )
 
 
 # #1004: unresolved markets whose leader is pinned at a dead extreme render as a
