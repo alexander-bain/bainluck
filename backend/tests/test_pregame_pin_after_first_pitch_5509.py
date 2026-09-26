@@ -432,8 +432,12 @@ async def late_pin_client():
     def _leg(oid, market_id, name, current, opening):
         o = _make_outcome(id=oid, market_id=market_id, name=name, probability=current)
         o.opening_probability = opening
-        o.current_yes_bid = 0.80
-        o.current_yes_ask = 0.88
+        # A tight book AROUND each leg's own price. One shared 0.80/0.88 book
+        # put Chapman's 0.70 below its own bid, which #8753's read-side arm
+        # (#6532's rule) correctly refuses — the control vanished for a reason
+        # this file is not about.
+        o.current_yes_bid = round(current - 0.04, 2)
+        o.current_yes_ask = round(current + 0.04, 2)
         return o
 
     outcomes = [
