@@ -16117,8 +16117,20 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
     # settled and opening arms are unaffected: the view changes only
     # `win_probability_sources`.
     _hero = resolve_hero(blend_view)
+    # #8749: cache the observation clock WITH the value it dates. History can
+    # serve this cached probability while reading a newer event row; borrowing
+    # that row's clock would falsely promote an older cached price to new truth.
+    response["hero_probability_observed_at"] = None
     if _hero is not None:
         response["hero_probability"] = _hero.home_probability
+        if _hero.source == "blend":
+            from app.utils.aggregation import newest_source_reading_time
+
+            observed_at = newest_source_reading_time(
+                blend_view, require_complete=True
+            )
+            if observed_at is not None:
+                response["hero_probability_observed_at"] = observed_at.isoformat()
         # ── #6238: THE SAME WITHHOLD, AND IT STOPS AT `settled` ──────────────
         #
         # Two of `resolve_hero`'s three arms build the away side as `1 - home`
@@ -26896,6 +26908,7 @@ async def get_event_odds_history(
     # a pin that cannot fire.
     pin_event = event
     served_blend = None
+    blend_edge_observed_at = None
     if aggregate_line:
         # THE NUMBER THE HERO IS ACTUALLY SHOWING, when one is being served.
         # `_cached_detail_payload` applies the identical TTL ladder `get_event`
@@ -26910,6 +26923,9 @@ async def get_event_odds_history(
             and _served.get("hero_probability_source") == _PINNABLE_HERO_SOURCE
         ):
             served_blend = _served.get("hero_probability")
+            # The clock belongs to this cached value, not the fresh row below.
+            # An older cache entry without provenance remains honestly unknown.
+            blend_edge_observed_at = _served.get("hero_probability_observed_at")
 
         if served_blend is None:
             # Nothing is being served, so the chart computes it — from the same
@@ -26923,6 +26939,14 @@ async def get_event_odds_history(
 
             pin_event = FoldedBlendView(
                 event, await folded_probability_sources(db, event)
+            )
+            from app.utils.aggregation import newest_source_reading_time
+
+            observed_at = newest_source_reading_time(
+                pin_event, require_complete=True
+            )
+            blend_edge_observed_at = (
+                observed_at.isoformat() if observed_at is not None else None
             )
 
     # 🔴 The RETURN VALUE travels (#3911, CERT-2243). `_event_detail_cache` is
@@ -27339,6 +27363,13 @@ async def get_event_odds_history(
         # hero it was served. False on a settled row, on a stale pre-match line
         # and whenever there is no line at all.
         "blend_edge_pinned": blend_edge_pinned,
+        # The pin's probability was observed at this source-write clock, while
+        # its plotted timestamp may be a synthetic serve-time minute. Clients
+        # can compare detail/history/SSE truth without treating that minute as
+        # a new price. Null means no pin or incomplete observation provenance.
+        "blend_edge_observed_at": (
+            blend_edge_observed_at if blend_edge_pinned else None
+        ),
         # #6925: true iff `range=since_start` actually removed points, i.e. iff
         # a second request without it would tell this caller more. False on
         # every payload served today, including every `range=all` one.
