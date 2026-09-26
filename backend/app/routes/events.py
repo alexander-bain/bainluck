@@ -28355,19 +28355,56 @@ def _team_for_event(team_lookup, name: str | None, sport_key: str | None):
     if team_lookup is None or not name:
         return None
     default = team_lookup.get(name)
-    by_league = getattr(team_lookup, "by_league", None)
-    if not by_league:
-        return default
-    rows = by_league.get(name)
-    if not rows:
-        return default
+    by_league = getattr(team_lookup, "by_league", None) or {}
+    rows = by_league.get(name) or {}
     identity = league_identity(sport_key)
     if identity is None:
         # No key travelled with the event, so nothing can be matched against a
         # league — never against `_team_league_identity`'s `sport_id` fallback,
         # which is a row id and would equate two different questions.
         return default
-    return rows.get(identity, default)
+    if identity in rows:
+        return rows[identity]
+    return _refuse_other_sport_row(default, sport_key, rows)
+
+
+def _sport_family(sport_key: str | None) -> str | None:
+    """The SPORT a key names (`soccer_mexico_ligamx` → `soccer`), or ``None``.
+
+    Every sport key is `<sport>_<league…>`; the prefix is the one term two
+    leagues of one sport share and two sports never do.
+    """
+    if not sport_key:
+        return None
+    return sport_key.split("_", 1)[0]
+
+
+def _refuse_other_sport_row(default, sport_key: str | None, rows: dict):
+    """`default`, unless it is another SPORT's team that nothing vouches for (#8787).
+
+    `.get(name)` answers the NAME, not the club. Liga MX "Atlas" has no enriched
+    row, so the only row answering to "Atlas" was the New York Atlas lacrosse
+    team's alias, and a live Tijuana v Atlas card wore the PLL crest and a 3-9
+    lacrosse record. No crest is better than a wrong one — the rule the
+    cross-league guard already follows.
+
+    Refused on SPORT, not league: a Champions League fixture drawing Arsenal's
+    Premier League row is the right crest (#4978's single-enriched-row clubs
+    render only through this fallback), and soccer ≠ lacrosse is a question
+    league identity cannot separate from that one. And a row another row under
+    the same name corroborates (`_rows_by_league` — one school, one crest across
+    its sports, #7262) stays: that crest is the institution's, whichever sport
+    carries it.
+    """
+    if default is None:
+        return None
+    event_family = _sport_family(sport_key)
+    row_family = _sport_family(getattr(default, "sport_key", None))
+    if event_family is None or row_family is None or event_family == row_family:
+        return default
+    if any(row is default for row in rows.values()):
+        return default
+    return None
 
 
 def _standings_vintage(team):

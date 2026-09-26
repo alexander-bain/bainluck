@@ -276,7 +276,11 @@ def test_two_placeholders_cannot_corroborate_each_other():
     ]
     for lookup in _every_order(rows):
         assert "Blank State" not in lookup.by_league
-        assert _team_for_event(lookup, "Blank State", NCAAF) is lookup.get("Blank State")
+        # #8787: the bare `.get` still keeps the key, but on a football card
+        # that answer is the BASEBALL row (blank shield, 9-9) and nothing
+        # vouches for it, so the sport-aware reader refuses it.
+        assert lookup.get("Blank State") is not None
+        assert _team_for_event(lookup, "Blank State", NCAAF) is None
 
 
 # ── 3. The safety rail: a wrong-identity row is refused ──────────────────────
@@ -434,8 +438,11 @@ def test_a_plain_dict_degrades_to_todays_answer():
     """The no-`by_league` branch. Noted as the path NO production caller takes:
     every one of them passes a `TeamNameLookup`, so a suite that exercised only
     this shape would be testing the branch nothing runs."""
+    plain = {"Syracuse Orange": SYRACUSE_ROWS[0]}
+    assert _team_for_event(plain, "Syracuse Orange", NCAAF).id == 17075
+    # #8787: with no per-league map nothing can vouch for another sport's row.
     plain = {"Syracuse Orange": SYRACUSE_ROWS[3]}
-    assert _team_for_event(plain, "Syracuse Orange", NCAAF).id == 1432
+    assert _team_for_event(plain, "Syracuse Orange", NCAAF) is None
 
 
 # ── 6. Does it reach the reader? Drive the rail's own formatter ──────────────
