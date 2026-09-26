@@ -402,6 +402,39 @@ RESOLVED_VOID_SELECT_SQL = """
 #:
 #: FINALS STILL WIN, unchanged: a suspended event has `completed_at` NULL, so
 #: `NULLS LAST` keeps every one of these behind every genuine final.
+#:
+#: THE SUSPENDED ARM'S THIRD SCREEN: A SIBLING THE VENUE HAS GRADED (#8807).
+#: Both book screens above depend on a price poll landing AFTER the venue
+#: finalizes the market, because that later poll is what leaves the empty or
+#: frozen book behind. If the poller last touched the book while the market was
+#: still trading, the stored quote stays tight and matches its own probability,
+#: and neither screen can ever see it.
+#:
+#: THE DATED SPECIMEN, Vacherot–Harris (event 15318588, `suspended`), Sat
+#: 2026-09-26. Kalshi finalized `KXATPEXACTMATCH-26SEP25VACHAR` at 10:40:37Z,
+#: HAR20 `yes`. Our legs were last touched at 09:35:32Z, mid-match, with a
+#: 0.57/0.61 book beside 0.59. At 13:05Z the row was still `open`, and the page
+#: read "Settled · Harris wins" over live-looking exact-score prices. The same
+#: event's match-winner row had been graded `api_settlement` at 12:54Z.
+#:
+#: Measured on production 2026-09-26 13:06Z with exactly this clause: **21 open
+#: rows on 9 suspended events**. Only 2 of them carried a book signature. Asked
+#: at Kalshi by event ticker, **10 of 11 were `finalized`**: VACHAR exact score,
+#: game total and game spread, CINMUL exact score, NPB HANYOK game and total,
+#: ITF PAWHAT, and three esports map totals. The one still `active` was Laver
+#: Cup ALCFRI, whose resolved "sibling" is a doubles match linked to the same
+#: event. It costs one question and no write (`UPDATE_SQL`'s `ELSE status`).
+#: The whole statement run on production at 13:10Z with the binds `run_recent_finals`
+#: supplies: 11 rows before this screen, 33 after. Every added row is on a
+#: suspended event, and none of the 11 dropped out.
+#:
+#: The sibling must carry the VENUE'S OWN grade (`api_settlement` on a winning
+#: leg). A row we resolved by inference is not evidence that the venue is done
+#: with the event. Being on the same event is not a verdict either: a set-one
+#: winner is graded while the match is still being played. So this screen only
+#: decides whom to ASK, and `derive_venue_settlement` decides the write. The
+#: population is the 21 above, so the cost is a couple of dozen extra venue
+#: reads per 10-minute run.
 RECENT_FINAL_SELECT_SQL = """
     SELECT fm.id, fm.external_id, fm.resolution_date, fm.commence_time,
            fm.market_tier
@@ -452,26 +485,41 @@ RECENT_FINAL_SELECT_SQL = """
               e.status = 'suspended'
               AND e.commence_time IS NOT NULL
               AND e.commence_time >= :suspended_floor
-              AND EXISTS (
-                    SELECT 1
-                      FROM futures_outcomes fo
-                     WHERE fo.market_id = fm.id
-                       AND (
-                             -- #5024's signature: both sides gone.
-                             (fo.current_yes_bid = 0 AND fo.current_yes_ask = 1)
-                             -- #5596's: a tight two-sided book frozen beside a
-                             -- probability that has already run to the tail.
-                             -- The row refutes itself; see FROZEN_BOOK_GAP.
-                          OR (
-                               fo.current_yes_bid > 0
-                               AND fo.current_yes_ask < 1
-                               AND fo.current_probability IS NOT NULL
-                               AND ABS(
-                                     fo.current_probability
-                                     - (fo.current_yes_bid + fo.current_yes_ask) / 2
-                                   ) > CAST(:frozen_gap AS numeric)
-                             )
-                           )
+              AND (
+                    EXISTS (
+                          SELECT 1
+                            FROM futures_outcomes fo
+                           WHERE fo.market_id = fm.id
+                             AND (
+                                   -- #5024's signature: both sides gone.
+                                   (fo.current_yes_bid = 0 AND fo.current_yes_ask = 1)
+                                   -- #5596's: a tight two-sided book frozen beside a
+                                   -- probability that has already run to the tail.
+                                   -- The row refutes itself; see FROZEN_BOOK_GAP.
+                                OR (
+                                     fo.current_yes_bid > 0
+                                     AND fo.current_yes_ask < 1
+                                     AND fo.current_probability IS NOT NULL
+                                     AND ABS(
+                                           fo.current_probability
+                                           - (fo.current_yes_bid + fo.current_yes_ask) / 2
+                                         ) > CAST(:frozen_gap AS numeric)
+                                   )
+                                 )
+                    )
+                    -- #8807's: the venue has already GRADED another question on
+                    -- this same event. The book can be healthy-looking forever
+                    -- once the poller stops touching it. See the note above.
+                 OR EXISTS (
+                          SELECT 1
+                            FROM futures_markets sib
+                            JOIN futures_outcomes sfo ON sfo.market_id = sib.id
+                           WHERE sib.event_id = fm.event_id
+                             AND sib.source = 'kalshi'
+                             AND sib.status = 'resolved'
+                             AND sfo.is_winner IS TRUE
+                             AND sfo.resolution_source IN ('api_settlement')
+                    )
               )
             )
       )
