@@ -283,6 +283,22 @@ def _calls_within(node):
     }
 
 
+def _calls_reaching(tree, node):
+    """Calls in `node`, plus calls in any module function `node` calls directly.
+
+    #8765 moved /search's card into `_team_card_keyed` (ONE definition read by the
+    card and the games list's leader key), so the picker is one hop from the route.
+    One hop, not a closure: a helper the route never calls cannot satisfy this.
+    """
+    direct = _calls_within(node)
+    reached = set(direct)
+    for name in direct:
+        helper = _function_named(tree, name)
+        if helper is not None:
+            reached |= _calls_within(helper)
+    return reached
+
+
 @pytest.mark.parametrize("route_function", ["search_events", "typeahead_search"])
 def test_both_reproducing_surfaces_actually_call_the_picker(route_function):
     tree = _events_module_tree()
@@ -291,7 +307,7 @@ def test_both_reproducing_surfaces_actually_call_the_picker(route_function):
         f"{route_function} is gone or renamed — this guard is now blind, which is "
         "the failure mode it exists to prevent. Re-point it, do not delete it."
     )
-    assert "_pick_team_row_per_name" in _calls_within(node), (
+    assert "_pick_team_row_per_name" in _calls_reaching(tree, node), (
         f"{route_function} no longer calls _pick_team_row_per_name. #4489 was "
         "reproduced on BOTH the search team card and the typeahead dropdown; a "
         "fix wired to one of them leaves the other serving the women's row."
