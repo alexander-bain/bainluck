@@ -330,6 +330,13 @@ CLUB_NAME_ALIASES: dict[tuple[str, ...], tuple[str, ...]] = {
     ("racing", "club", "de", "lens"): ("rc", "lens"),
     ("los", "angeles", "galaxy"): ("la", "galaxy"),
     ("go", "ahead", "eagles"): ("ga", "eagles"),
+    # #3391: the Odds API writes `Los Angeles FC`, ESPN writes `LAFC`, and every
+    # LAFC fixture this season is two rows — production 2026-09-26 carries seven
+    # pairs back to 08-29, tonight's FC Dallas v LAFC with its 96 markets on the
+    # long-named row and none on the short one. `lafc` is one token, so no
+    # initialism rule reaches it (`_initials_match` makes `laf`/`la`). The whole
+    # name keys it, so `Los Angeles FC II` and `LA Galaxy` stay out of reach.
+    ("los", "angeles", "fc"): ("lafc",),
 }
 
 #: Tokens that mark a DIFFERENT SQUAD of the same club. Disagreement about any
