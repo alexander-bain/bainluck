@@ -278,11 +278,12 @@ class TestNothingAboveTheNewBranchMoves:
             == "New York Giants won as a 38% underdog"
         )
 
-    def test_the_price_gated_branch_keeps_its_own_bar_free_wording(self):
-        """#2753's 49% case still prints on the `"upset"` path. Whether it
-        SHOULD is #2753's question on #2753's surface; this ship does not answer
-        it, and this test exists so that staying silent is a decision on the
-        record rather than an oversight."""
+    def test_the_price_gated_branch_now_holds_the_same_bar(self):
+        """#2753's 49% case used to print on the `"upset"` path, pinned here so
+        that staying silent was a decision on the record. #2753 answered it:
+        the chip needs the winner beneath `CLOSE_MATCHUP_MIN` on the opening
+        pair, and the sentence declines at the same printed bar as this
+        file's branch (15318549, "Boston Red Sox won as a 49% underdog")."""
         assert (
             generate_event_reason(
                 home_team="Home FC",
@@ -294,7 +295,7 @@ class TestNothingAboveTheNewBranchMoves:
                 away_score=1,
                 prematch_percents={"home": 49, "away": 51},
             )
-            == "Home FC won as a 49% underdog"
+            == ""
         )
 
     def test_the_price_gated_branch_still_fails_open_on_unknown_percents(self):

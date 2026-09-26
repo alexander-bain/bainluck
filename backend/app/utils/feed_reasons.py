@@ -1624,6 +1624,18 @@ def generate_event_reason(
                     return ""
                 if not lead_is_printable(loser_printed, winner_printed):
                     return ""
+                # #2753 — THE SAME BAR AS THE CHIP AND AS #6477 BELOW. The chip
+                # now asks the opening pair whether the winner was a real
+                # underdog; the printed rung can still disagree (15290672:
+                # opening share 0.28, printed three-way row 54/46), and a
+                # sentence reading "won as a 46% underdog" states a number
+                # the system itself calls half of a close matchup. Decline;
+                # the chip and the two percents stay.
+                if (
+                    winner_printed is not None
+                    and int(winner_printed) >= CLOSE_MATCHUP_MIN * 100
+                ):
+                    return ""
                 pct = _display_pct(winner_opening_prob, winner_printed)
                 return _underdog_sentence(winner, pct)
             return "Upset result"

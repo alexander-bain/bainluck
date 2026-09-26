@@ -117,13 +117,14 @@ def _the_specimen():
 
 
 def _a_genuine_upset():
-    """15312659 — Arizona Diamondbacks 2 - 4 Miami Marlins, same read.
+    """15304205 — Syracuse 18 - 21 California, same read.
 
-    The control from the same page: home opened 0.5903 and LOST, and the card's
-    caption ("Miami Marlins won as a 40% underdog") agrees with its chip. It
-    differs from the specimen in the scoreline and nothing else.
+    The control from the same page: home opened 0.6308 and LOST. Until #2753
+    this was 15312659 (Diamondbacks 2 - 4 Marlins, home opened 0.5903), which
+    puts the winner at 41% — inside the close band #2753 now refuses on size,
+    so it can no longer stand for "a genuine upset keeps everything".
     """
-    return _finished(home_score=2, away_score=4, opening_home_prob=0.5903)
+    return _finished(home_score=18, away_score=21, opening_home_prob=0.6308)
 
 
 class TestTheDeterminationItself:
@@ -277,13 +278,13 @@ class TestTheControls:
         [
             # Every genuine upset from the 2026-09-16 10:0xZ reader-scale read
             # that the specimen was measured in, by its opening pair and score.
+            # #2753 moved three of them out (Cubs - Braves, Mets - Orioles,
+            # Blue Jays - Tigers: winners opened at 44%, 45%, 44%) — they now
+            # lose the chip on size, pinned in the #2753 test file.
             (18, 21, 0.6308, 0.30),  # 15304205 Syracuse - California
             (4, 3, 0.3982, 0.70),  # 15310521 Marlins - Dodgers
-            (3, 6, 0.5649, 0.20),  # 15312654 Cubs - Braves
             (2, 1, 0.3982, 0.80),  # 15312658 Angels - Mariners
-            (5, 7, 0.5472, 0.10),  # 15312653 Mets - Orioles
             (9, 3, 0.3623, 0.90),  # 15312858 Rockies - Padres
-            (1, 10, 0.5624, 0.05),  # 15312873 Blue Jays - Tigers
             (2, 3, 0.7085, 0.15),  # 15308140 Rakow - Zaglebie
             (0, 1, 0.8293, 0.05),  # 15307345 Hibernian - Kilmarnock
             (2, 1, 0.3383, 0.85),  # 15308141 Falkirk - Hearts
@@ -350,8 +351,10 @@ class TestTheRankingHalf:
     def test_the_favourites_win_loses_the_upset_bonus(self):
         """RED ON THE PARENT. The only difference between these two rows is the
         scoreline, so the gap is exactly the weight and nothing else."""
-        favourite_won = _the_specimen()
-        underdog_won = _finished(home_score=6, away_score=7)
+        # Both at 0.6308 (#2753): at the specimen's 0.5878 the away winner
+        # opened at 41%, which is now refused on size before direction.
+        favourite_won = _finished(home_score=7, away_score=6, opening_home_prob=0.6308)
+        underdog_won = _finished(home_score=6, away_score=7, opening_home_prob=0.6308)
         assert underdog_won.score - favourite_won.score == WEIGHTS["recent_finish_upset"]
 
     def test_the_favourites_win_no_longer_escapes_the_discover_demotion(self):

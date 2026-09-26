@@ -479,6 +479,8 @@ class EventFlags:
     # #5047 — how much doubt the market has left in an upset the scoreboard has
     # already earned. Tri-state for the same reason: None is "cannot say".
     upset_is_no_longer_in_doubt: Optional[bool] = None
+    # #2753 — did the winner open beneath the close-matchup line? Tri-state.
+    winner_was_a_real_underdog: Optional[bool] = None
     # #2757 — the sport, carried so that labels can be named in its own words.
     # `get_highlight_label(result)` takes no sport argument and is called from
     # three sites in two route modules, so the alternative was changing that
@@ -588,6 +590,44 @@ def score_is_decided(
     if home_score is None or away_score is None:
         return None
     return home_score != away_score
+
+
+def winner_opened_as_a_real_underdog(
+    opening_home_prob: Optional[float],
+    home_score: Optional[int],
+    away_score: Optional[int],
+    opening_away_prob: Optional[float] = None,
+) -> Optional[bool]:
+    """Did the side that WON open beneath the close-matchup line? (#2753)
+
+    "Recent upset" had a direction (#6279, #6529, #7055) and never a size, so a
+    49/51 board earned the same chip, the same orange and the same score bonus
+    as an 11% shock. Served on Discover 2026-09-25 23:44Z, slot 11: 15318549
+    Cubs 3 @ Red Sox 4, opening 0.4704 / 0.5296, chipped `Recent upset` over
+    "Boston Red Sox won as a 49% underdog" — while the live card two slots up
+    called a 49/51 board "Coin flip". A side this module classifies as half of a
+    close matchup is not an underdog, so the bar is ``CLOSE_MATCHUP_MIN``, the
+    same line #6477's settled sentence already holds (feed_reasons).
+
+    The winner's SHARE of the two legs, not its raw leg: on a draw-priced board
+    the pair sums to ~0.74 (#7055), and Ukraine at 0.3194 against Hungary's
+    0.3729 is a 46/54 two-way — under 0.40 raw, inside the close band once the
+    draw is set aside. A two-way pair sums to 1, so there the share IS the leg.
+
+    Tri-state like its siblings: ``None`` when a score or the opening price is
+    missing, or nobody won — unreadable is not a denial, and a draw is refused
+    by ``score_is_decided``'s own clause, not here.
+    """
+    if opening_home_prob is None or home_score is None or away_score is None:
+        return None
+    if home_score == away_score:
+        return None
+    away = opening_away_prob if opening_away_prob is not None else 1 - opening_home_prob
+    total = opening_home_prob + away
+    if total <= 0:
+        return None
+    winner = opening_home_prob if home_score > away_score else away
+    return winner / total < CLOSE_MATCHUP_MIN
 
 
 def upset_is_no_longer_in_doubt(
@@ -1015,6 +1055,9 @@ def compute_highlight(
     flags.upset_is_no_longer_in_doubt = upset_is_no_longer_in_doubt(
         opening_home_prob, current_home_prob
     )
+    flags.winner_was_a_real_underdog = winner_opened_as_a_real_underdog(
+        opening_home_prob, home_score, away_score, opening_away_prob
+    )
 
     # Ensure commence_time is timezone-aware
     if commence_time.tzinfo is None:
@@ -1313,10 +1356,17 @@ def compute_highlight(
                 #
                 # `None` is still tolerated on both, for #4580's reason: an
                 # unreadable scoreboard is not a denial.
+                #
+                # #2753 — AND THE WINNER HAS TO HAVE BEEN A REAL UNDERDOG. The
+                # three clauses above settle direction; none of them settles
+                # size, so a 47/53 opening won by the 47 wore the same chip as
+                # an 11% shock. `winner_was_a_real_underdog` holds it to
+                # `CLOSE_MATCHUP_MIN` on the winner's share of the opening pair.
                 if (
                     flags.is_recently_finished
                     and flags.someone_is_leading is not False
                     and flags.underdog_is_leading is not False
+                    and flags.winner_was_a_real_underdog is not False
                 ):
                     flags.is_upset = True
                     result.score += WEIGHTS["recent_finish_upset"]
