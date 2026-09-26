@@ -210,6 +210,19 @@ class BlendReading:
     draw_probability: Optional[float] = None
 
 
+def has_named_three_way_partition(reading: BlendReading) -> bool:
+    """The resolver already proved named home/away members and a coherent sum.
+
+    These two fields are populated only by ``find_three_way_partition``;
+    they are absent for binary, complemented and devigged readings. Price
+    disagreement with another provider cannot overturn that identity proof.
+    """
+    return (
+        getattr(reading, "away_probability", None) is not None
+        and getattr(reading, "draw_probability", None) is not None
+    )
+
+
 def _home_probability_for_market(
     entry: MarketOutcomes, matchup: Any, home_team_name: str, away_team_name: str
 ) -> Optional[tuple[float, Any, float]]:

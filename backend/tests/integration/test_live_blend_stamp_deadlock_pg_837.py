@@ -172,7 +172,10 @@ async def _run_both_arms(maker, monkeypatch, *, reverse_arm=None):
         calls = {"n": 0}
         other = "polymarket" if source == "kalshi" else "kalshi"
 
-        async def _oriented(session, event_id, home_prob, _calls=calls, _me=source, _other=other):
+        async def _oriented(
+            session, event_id, home_prob, _calls=calls, _me=source, _other=other,
+            *, reading=None,
+        ):
             _calls["n"] += 1
             if _calls["n"] == 2:  # first event's UPDATE is done: its row is locked
                 holding[_me].set()
@@ -300,7 +303,7 @@ async def _one_arm_behind_a_foreign_lock(maker, monkeypatch, *, lock_timeout_ms)
     arm = lbr.LiveBlendRefresher("polymarket", stamp_lock_timeout_ms=lock_timeout_ms)
     frames = []
 
-    async def _oriented(session, event_id, home_prob):
+    async def _oriented(session, event_id, home_prob, *, reading=None):
         return home_prob
 
     async def _publish(batch):
