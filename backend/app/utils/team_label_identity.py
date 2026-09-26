@@ -95,10 +95,12 @@ __all__ = [
     "build_label_identity",
     "label_is_another_club",
     "label_names_another_club",
+    "label_qualifies_a_shared_mascot",
 ]
 
 
 _PUNCT = re.compile(r"[^\w\s]")
+_WORD = re.compile(r"\w+")
 _WS = re.compile(r"\s+")
 
 
@@ -126,10 +128,17 @@ class LabelIdentity:
 
     claims: Mapping[str, frozenset]
     own: frozenset
+    # #8896 — our clubs' abbreviations (``ott``, ``dal``), which venues print as
+    # a qualifier (``OTT Senators vs DAL Stars``) and `claims` does not carry.
+    own_abbreviations: frozenset = frozenset()
     # Per-token memo of the foreign aliases that could cover it: the alias
     # scan is over the whole family (thousands of strings on a soccer page)
     # and the same handful of tokens recur on every row of one request.
     _covering: dict = field(default_factory=dict, compare=False, repr=False)
+    # #8896 memos: the words of our own names, and per token whether a
+    # foreign club also ends its name with it (or lists it bare).
+    _own_words: dict = field(default_factory=dict, compare=False, repr=False)
+    _shared: dict = field(default_factory=dict, compare=False, repr=False)
 
     def is_armed(self) -> bool:
         return bool(self.claims) and bool(self.own)
@@ -145,6 +154,38 @@ class LabelIdentity:
                 if len(alias) > len(needle) and needle in alias and not (ids & self.own)
             ]
             self._covering[needle] = cached
+        return cached
+
+    def own_words(self) -> frozenset:
+        """Every word of every name, location or alias one of ours claims,
+        plus the initials of each multi-word one (``los angeles`` → ``la``)."""
+        cached = self._own_words.get("words")
+        if cached is None:
+            words: set = set()
+            for alias, ids in self.claims.items():
+                if not (ids & self.own):
+                    continue
+                parts = _WORD.findall(alias)
+                words.update(parts)
+                if len(parts) > 1:
+                    words.add("".join(w[0] for w in parts))
+            words.update(self.own_abbreviations)
+            cached = frozenset(words)
+            self._own_words["words"] = cached
+        return cached
+
+    def foreign_club_shares(self, needle: str) -> bool:
+        """True when a club that is not ours carries ``needle`` as its whole
+        listed alias or as the trailing words of its name (``rebels`` for
+        ``ole miss rebels``) — i.e. the token does not tell the two apart."""
+        cached = self._shared.get(needle)
+        if cached is None:
+            tail = " " + needle
+            cached = any(
+                not (ids & self.own) and (alias == needle or alias.endswith(tail))
+                for alias, ids in self.claims.items()
+            )
+            self._shared[needle] = cached
         return cached
 
 
@@ -209,6 +250,11 @@ def build_label_identity(
     return LabelIdentity(
         claims={k: frozenset(v) for k, v in claims.items()},
         own=frozenset(own),
+        own_abbreviations=frozenset(
+            (row.get("abbreviation") or "").strip().lower()
+            for row in rows
+            if row.get("id") in own and (row.get("abbreviation") or "").strip()
+        ),
     )
 
 
@@ -286,3 +332,79 @@ def label_is_another_club(
         return False
     own = frozenset().union(*(i.own for i in armed))
     return not (claimants & own)
+
+
+#: Words that sit before a club's name without qualifying it.
+_CONNECTOR_WORDS = frozenset({"the", "vs", "v", "at", "and", "or", "of"})
+_QUALIFIER_BEFORE = re.compile(r"(\w+)\s+$")
+
+
+def _qualifier_is_ours(qualifier: str, own_words: frozenset) -> bool:
+    if qualifier in own_words:
+        return True
+    # A clipped form of one of our words is still ours: `Miss` is how `Ole
+    # Miss` clips `Mississippi`, `Pitt` how the Panthers clip `Pittsburgh`.
+    if len(qualifier) < 4:
+        return False
+    return any(
+        len(w) >= 4 and (qualifier.startswith(w) or w.startswith(qualifier))
+        for w in own_words
+    )
+
+
+def label_qualifies_a_shared_mascot(
+    label: Optional[str],
+    patterns: Iterable[str],
+    identity: Optional[LabelIdentity],
+) -> bool:
+    """#8896 — True when every pattern occurrence in ``label`` is a token a
+    foreign club ALSO carries, qualified by a word that is none of ours.
+
+    `label_names_another_club` refuses a token that sits inside a longer KNOWN
+    foreign name. Venues also print a school by a name ``teams`` does not hold:
+    Polymarket's ``Mississippi Rebels`` is Ole Miss, and no row carries
+    ``Mississippi Rebels`` or ``Mississippi``, so the bare mascot ``Rebels`` —
+    which UNLV and Ole Miss BOTH list — put Ole Miss's 9% national-title chance
+    on the settled UNLV page (/events/15315996, production 2026-09-26).
+
+    A shared mascot is not an identity: it names two clubs, and the word in
+    front of it is what says which. So an occurrence is refused when (1) a club
+    that is not ours ends its name with the same token or lists it bare, AND
+    (2) the label puts a word directly before it, AND (3) that word is none of
+    our own words — not equal to one, not a clipped form of one either way
+    (``Miss``/``Mississippi``), not the initials of a multi-word name of ours,
+    not one of our abbreviations (``OTT Senators vs DAL Stars``).
+
+        UNLV Rebels  | Mississippi Rebels  `Rebels` shared with Ole Miss,
+                                           `Mississippi` not UNLV's          REFUSED
+        Ole Miss     | Mississippi Rebels  `Mississippi` clips to `Miss`     admitted
+        UNLV Rebels  | UNLV Rebels         the full name is not shared       admitted
+        UNLV Rebels  | Rebels              no qualifier — unknown, not
+                                           contradictory                     admitted
+
+    One occurrence that fails any clause admits the row, exactly as today.
+    Disarmed with nothing resolved, as `label_names_another_club` is.
+    """
+    if not label or identity is None or not identity.is_armed():
+        return False
+
+    occurrences: list = []
+    for p in patterns:
+        occurrences.extend(pattern_token_spans(label, p))
+    if not occurrences:
+        return False
+
+    hay = label.lower()
+    own_words = identity.own_words()
+    for start, end in occurrences:
+        if not identity.foreign_club_shares(hay[start:end]):
+            return False
+        m = _QUALIFIER_BEFORE.search(hay[:start])
+        if m is None:
+            return False
+        qualifier = m.group(1)
+        if not qualifier.isalpha() or qualifier in _CONNECTOR_WORDS:
+            return False
+        if _qualifier_is_ours(qualifier, own_words):
+            return False
+    return True

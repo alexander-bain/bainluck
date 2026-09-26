@@ -24394,6 +24394,7 @@ async def _build_related_futures(
         build_label_identity,
         label_is_another_club,
         label_names_another_club,
+        label_qualifies_a_shared_mascot,
     )
     from app.utils.award_person_claim import AWARD_MARKET_TIER, outcome_claim_patterns
 
@@ -24657,11 +24658,21 @@ async def _build_related_futures(
                 market.market_tier, outcome.name, away_patterns, away_team_patterns,
                 known_person=known_person,
             )
-            is_home = _matches_any(outcome.name, home_claim) and not label_names_another_club(
-                outcome.name, home_claim, home_label_identity
+            # #8896: a mascot two clubs share, qualified by a word that is not
+            # ours (`Mississippi Rebels` on UNLV), is the other school's too.
+            is_home = (
+                _matches_any(outcome.name, home_claim)
+                and not label_names_another_club(outcome.name, home_claim, home_label_identity)
+                and not label_qualifies_a_shared_mascot(
+                    outcome.name, home_claim, home_label_identity
+                )
             )
-            is_away = _matches_any(outcome.name, away_claim) and not label_names_another_club(
-                outcome.name, away_claim, away_label_identity
+            is_away = (
+                _matches_any(outcome.name, away_claim)
+                and not label_names_another_club(outcome.name, away_claim, away_label_identity)
+                and not label_qualifies_a_shared_mascot(
+                    outcome.name, away_claim, away_label_identity
+                )
             )
 
         if not is_home and not is_away and outcome.market_id not in field_of_clubs_market_ids:
