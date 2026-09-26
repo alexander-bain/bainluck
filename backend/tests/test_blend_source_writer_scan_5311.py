@@ -115,7 +115,10 @@ STAMP = "stamp_source_reading"
 #: ledger is for writes that are NOT readings. Parking a real reading there
 #: would exempt the fast lane from #1829's recency contract — the precise
 #: protection this file exists to hold — while looking like housekeeping.
-STAMPERS: dict[str, int] = {STAMP: 1, "atomic_stamp_expression": 0}
+# #8761 centralizes nonvenue writes while keeping each caller's source visible.
+STAMPERS: dict[str, int] = {
+    STAMP: 1, "atomic_stamp_expression": 0, "write_nonvenue_probability": 2,
+}
 PRUNE = "prune_blend_source"
 UPDATE_FUNCS = {"update", "sa_update"}
 
@@ -192,12 +195,6 @@ from app.utils.probability_eligibility import MARKET_DERIVED_SOURCES  # noqa: E4
 #    `prune_blend_source` callers, the admin "clear kalshi" repair, and the raw
 #    SQL that deletes `stat_model`/`espn`. A deletion mints no reading, so it has
 #    no observation time and no market to name.
-#  * `espn_helpers.py::retire_priorless_stat_model` — PRUNE, #8522. When a
-#    priorless stat model defers to a market, both stat-model writers drop the
-#    `stat_model` key it wrote earlier; declining to write alone left that frozen
-#    reading outvoting the market for ~16 minutes. Removal only, in its own
-#    function so the entry exempts nothing else. Both shapes: Core update, then
-#    the ORM mirror on the ESPN path (gotcha #4/#5), as its stamp write does.
 #  * `futures_price_refresh.py::_KALSHI_WITHDRAW_EVENT_HERO_SQL` — PRUNE, #5771.
 #    When the venue has declared a result for a match that has not kicked off,
 #    the leg is withdrawn from `futures_outcomes` AND the `kalshi` key is removed
@@ -233,10 +230,6 @@ KNOWN_NON_READING_WRITES: dict[tuple[str, str, str], str] = {
      "_recover_unstarted_authority_fixtures", "update.values"): "sidecar",
     ("backend/app/tasks/futures_price_refresh.py",
      "_KALSHI_WITHDRAW_EVENT_HERO_SQL", "raw-sql"): "prune",
-    ("backend/app/utils/espn_helpers.py", "retire_priorless_stat_model",
-     "update.values"): "prune",
-    ("backend/app/utils/espn_helpers.py", "retire_priorless_stat_model",
-     "orm-assign"): "prune",
     ("backend/app/tasks/statpal_sync.py", "_set_statpal_id", "orm-assign"):
         "sidecar",
     ("backend/app/tasks/statpal_sync.py", "_sync_statpal_injuries", "update.values"):
@@ -710,12 +703,12 @@ def test_the_scan_can_see_the_writers_it_is_scanning() -> None:
 
     mints = _scan_mints()
     assert len(mints) >= 14, f"scan found only {len(mints)} mint sites"
-    # The named-mapping splat specifically: this file exists partly because a
-    # kwarg-only recogniser scores it zero.
+    # The shared nonvenue writer must remain visible after #8761 moves the
+    # ESPN/MLB/betting SQL into it. Named-splat parsing has separate unit guards.
     assert any(
-        path.endswith("espn_helpers.py") and derivation == "stamp"
+        path.endswith("nonvenue_live_push.py") and derivation == "stamp"
         for path, _, _, derivation, _ in sites
-    ), "the espn_helpers `.values(**_update_vals)` writer went unseen"
+    ), "the nonvenue `.values(win_probability_sources=...)` writer went unseen"
 
 
 def test_every_write_shape_is_one_this_scan_can_read() -> None:

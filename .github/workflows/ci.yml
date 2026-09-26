@@ -3219,6 +3219,7 @@ jobs:
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_live_blend_concurrent_stamp_pg.py \
+            tests/integration/test_nonvenue_live_push_pg_8761.py \
             -v -rs 2>&1 | tee /tmp/liveblendrace.txt
           if grep -qiE "[0-9]+ skipped" /tmp/liveblendrace.txt; then
             echo "::error::live blend concurrent stamp gate SKIPPED — the gate did not run"

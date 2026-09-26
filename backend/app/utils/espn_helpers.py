@@ -1771,7 +1771,7 @@ async def write_espn_win_probability(session, event, ee, match_method, claimed_e
 
     Returns True if any change was made.
     """
-    from app.models.models import Event, ESPNSnapshot
+    from app.models.models import ESPNSnapshot
 
     # #7338, before the probability is read: on a swapped row ESPN's
     # `homeWinPercentage` is our AWAY team's chance. Stamping it as the home leg
@@ -1803,14 +1803,7 @@ async def write_espn_win_probability(session, event, ee, match_method, claimed_e
     # Core updates on the same row.
     # #1829: value + write time, so the hero can age this reading against the
     # other sources on the event instead of trusting it forever.
-    from app.utils.aggregation import stamp_source_reading
-    _wps = stamp_source_reading(
-        event.win_probability_sources, "espn", round(ee.home_win_probability, 4)
-    )
-    _update_vals: dict = {
-        "win_probability_sources": _wps,
-        "espn_win_prob_home": ee.home_win_probability,
-    }
+    _update_vals: dict = {"espn_win_prob_home": ee.home_win_probability}
     # #2049 defence in depth: the caller is supposed to have selected through
     # the authorization gate, but codex demonstrated the manufacture by passing
     # a hand-picked 24.0h sibling STRAIGHT into this writer. A writer that will
@@ -1861,12 +1854,10 @@ async def write_espn_win_probability(session, event, ee, match_method, claimed_e
             "ESPN id stamp REFUSED at write for event %s -> %s: %s",
             getattr(event, "id", "?"), ee.espn_id, _id_reason,
         )
-    await session.execute(
-        _sql_update(Event)
-        .where(Event.id == event.id)
-        .values(**_update_vals)
+    from app.utils.nonvenue_live_push import write_nonvenue_probability
+    await write_nonvenue_probability(
+        session, event, "espn", round(ee.home_win_probability, 4), values=_update_vals,
     )
-    event.win_probability_sources = _wps
 
     # #922: skip the ESPNSnapshot append for completed/closed events — it is a
     # plain append (no dedup) and post-final cycles would stamp new espnHistory
@@ -1924,26 +1915,18 @@ async def retire_priorless_stat_model(session, event, *, mirror_orm: bool) -> bo
 
     Shared by both stat-model writers (this module's ESPN path and the odds
     poll). A key REMOVAL, not a reading — no value, no observation time — so it
-    is a PRUNE in `test_blend_source_writer_scan_5311`'s ledger, and it lives in
-    its own function so that ledger entry exempts nothing else. Core `update()`
-    (gotcha #4). ``mirror_orm`` copies the result onto the ORM row the way the
-    caller's own stamp write does, so a later stamp in the same pass does not
-    resurrect the key; the odds poll does not mirror its stamps and passes False.
+    uses the same atomic source-key writer as additions. ``mirror_orm`` remains
+    accepted for caller compatibility; both callers now receive a clean ORM
+    mirror without scheduling a second whole-column write on autoflush.
     Returns True when a key was dropped.
     """
-    from app.models.models import Event
     from app.utils.win_probability import retire_priorless_model_reading
 
     retired = retire_priorless_model_reading(event.win_probability_sources)
     if retired is None:
         return False
-    await session.execute(
-        _sql_update(Event)
-        .where(Event.id == event.id)
-        .values(win_probability_sources=retired)
-    )
-    if mirror_orm:
-        event.win_probability_sources = retired
+    from app.utils.nonvenue_live_push import write_nonvenue_probability
+    await write_nonvenue_probability(session, event, "stat_model", None)
     return True
 
 
@@ -1953,7 +1936,6 @@ async def compute_and_write_stat_model(session, event, ee, sport_key, stats):
     Only runs for espn_id matches with active game progress.
     Returns True if stat_model was computed and written.
     """
-    from app.models.models import Event
 
     # #7338: the model is fed `home_score`/`away_score` and returns a HOME win
     # probability, so a swapped feed inverts it one step downstream — the
@@ -2021,16 +2003,10 @@ async def compute_and_write_stat_model(session, event, ee, sport_key, stats):
             # #1829: `stat_model` has TWO writers — this one and
             # odds_polling.py's. Both stamp, or the source's age depends on
             # which task happened to write last.
-            from app.utils.aggregation import stamp_source_reading as _stamp2
-            _wps2 = _stamp2(
-                event.win_probability_sources, "stat_model", round(stat_wp, 4)
+            from app.utils.nonvenue_live_push import write_nonvenue_probability
+            await write_nonvenue_probability(
+                session, event, "stat_model", round(stat_wp, 4),
             )
-            await session.execute(
-                _sql_update(Event)
-                .where(Event.id == event.id)
-                .values(win_probability_sources=_wps2)
-            )
-            event.win_probability_sources = _wps2
 
             from app.tasks.snapshots import _create_or_update_win_prob_snapshot
             # #922: if OUR event is already completed/closed (ESPN can lag and
@@ -2158,24 +2134,11 @@ async def create_events_from_unmatched_espn(session, our_events, espn_events, sp
             # Write win probability snapshot (#1207: skip the pregame win-prob when
             # ESPN reports "in" but the game hasn't started — same premature leak).
             if ee.home_win_probability is not None and not _espn_premature:
-                # #1829: value + write time (see the sibling writer above).
-                from app.utils.aggregation import (
-                    stamp_source_reading as _stamp3,
+                from app.utils.nonvenue_live_push import write_nonvenue_probability
+                await write_nonvenue_probability(
+                    session, event, "espn", round(ee.home_win_probability, 4),
+                    values={"espn_win_prob_home": ee.home_win_probability},
                 )
-                _wps3 = _stamp3(
-                    event.win_probability_sources,
-                    "espn",
-                    round(ee.home_win_probability, 4),
-                )
-                await session.execute(
-                    _sql_update(Event)
-                    .where(Event.id == event.id)
-                    .values(
-                        win_probability_sources=_wps3,
-                        espn_win_prob_home=ee.home_win_probability,
-                    )
-                )
-                event.win_probability_sources = _wps3
 
                 snapshot = ESPNSnapshot(
                     event_id=event.id,

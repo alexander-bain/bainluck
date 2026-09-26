@@ -898,6 +898,11 @@ _RECORDED_ASYNC_POOL_SITES = {
     "tasks/tournament_price_refresh.py": 2,
     "utils/feed_cache.py": 1,
     "utils/live_fanout.py": 1,
+    # #8761: one client per nonempty committed nonvenue batch, independent of
+    # SSE reader count. Fanout is bounded to five seconds and its own client is
+    # explicitly closed in finally (success/failure/cancellation); empty drains
+    # build nothing. No long-lived pool is added to the per-process envelope.
+    "utils/nonvenue_live_push.py": 1,
     "utils/rate_limit.py": 1,
     "utils/request_cache.py": 1,
 }

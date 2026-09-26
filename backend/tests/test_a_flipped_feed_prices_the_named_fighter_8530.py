@@ -17,6 +17,9 @@ test that only calls the helper would pass on a tree where no writer calls it.
 """
 
 import pytest
+from tests.test_priorless_stat_model_defers_to_market_8522 import (
+    _portable_probability_writer,  # noqa: F401 - shared recording/SQLite write seam
+)
 
 from app.tasks.odds_polling import (
     BETTING_BOOK_FLOOR,

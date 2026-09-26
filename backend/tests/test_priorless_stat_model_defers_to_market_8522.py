@@ -41,6 +41,14 @@ def _array_sqlite(type_, compiler, **kw):  # pragma: no cover - test rail
     return "JSON"
 
 
+@pytest.fixture(autouse=True)
+def _portable_probability_writer(monkeypatch):
+    # These SQLite tests keep guarding the model-prior decision. #8761 separately
+    # drives the atomic write and publication through real PostgreSQL.
+    from tests.nonvenue_writer_seam import portable_nonvenue_write
+    monkeypatch.setattr("app.utils.nonvenue_live_push.write_nonvenue_probability", portable_nonvenue_write)
+
+
 KALSHI_JUST_BEFORE = 0.74  # the specimen's Kalshi reading at 02:08:48Z
 STAMP = "2026-09-25T02:09:30+00:00"
 

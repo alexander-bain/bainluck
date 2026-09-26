@@ -921,8 +921,6 @@ async def _ingest_event_odds(
         # so this branch simply stops running and the key freezes at whatever
         # it last said, with nothing in the JSONB to admit it. That frozen
         # number is what rendered "87 - 13" for a team trailing 5-0 in the 9th.
-        from sqlalchemy import update as _update
-        from app.utils.aggregation import stamp_source_reading
         betting_val = round(avg_home, 4)
         _book_count = len(all_home_probs)
 
@@ -956,19 +954,9 @@ async def _ingest_event_odds(
         elif _book_count >= BETTING_BOOK_FLOOR and _split_books is None:
             # PUBLISH ONLY WHEN BOTH REFUSALS DECLINE. The conjunction is the
             # whole branch: enough books to be a consensus (ruling 051) AND a
-            # consensus they actually reached (#7523). Written as one condition
-            # ahead of the two refusals rather than as a third `elif` behind
-            # them, because the order is read by `test_blend_source_writer_scan
-            # _5311`: that scan resolves this site's persisted value by walking
-            # to the FIRST assignment of `_current` in the function, so the
-            # stamped reading has to be the one it reaches, or a site that does
-            # go through the stamper is reported as one that does not. The
-            # scan's blindness to the other two branches is pre-existing and is
-            # not fixed here; the branches' behaviour is pinned by tests in
-            # `test_split_book_market_is_not_a_consensus_7523` instead.
-            _current = stamp_source_reading(
-                event.win_probability_sources, "betting", betting_val
-            )
+            # consensus they actually reached (#7523). The shared atomic writer
+            # below stamps the admitted value and its clock together.
+            _betting_value = betting_val
         elif _split_books is not None:
             # ── #7523: A SPLIT MARKET IS NOT A CONSENSUS EITHER ──────────────
             # Ruling 051's sentence, one case over: nothing downstream can tell
@@ -988,8 +976,7 @@ async def _ingest_event_odds(
             # `median_low` always returns a price some book quoted, and on this
             # 3/3 split it returns the STALE cluster — 20% for a team leading
             # 2-1. A real-but-superseded number is not the answer either.
-            _current = dict(event.win_probability_sources or {})
-            _current.pop("betting", None)
+            _betting_value = None
             logger.info(
                 "event %s: betting DROPPED as a split market — %d books, the "
                 "middle pair %.4f/%.4f disagree by %.1f points (would have "
@@ -1015,8 +1002,7 @@ async def _ingest_event_odds(
             # `betting` is very likely ALREADY in the JSONB from an earlier poll
             # when there were still enough books. Skipping would leave exactly
             # the frozen 0.1347 that rendered 87-13 for a team trailing 5-0.
-            _current = dict(event.win_probability_sources or {})
-            _current.pop("betting", None)
+            _betting_value = None
             logger.info(
                 "event %s: betting DROPPED below floor — %d book(s) < %d "
                 "(would have written %.4f); blend re-weights over remaining "
@@ -1049,11 +1035,11 @@ async def _ingest_event_odds(
         # the one standing behind the stored reading — that would make the count
         # describe a measurement the value never came from.
         if not _partial_under_floor:
-            _current["betting_book_count"] = _book_count
-            await session.execute(
-                _update(Event)
-                .where(Event.id == event_id)
-                .values(win_probability_sources=_current)
+            from app.utils.nonvenue_live_push import write_nonvenue_probability
+            await write_nonvenue_probability(
+                session, event, "betting",
+                _betting_value,
+                metadata={"betting_book_count": _book_count},
             )
     elif snapshots_processed:
         # gotcha #53, in the odds pipeline: "no book quotes a moneyline" (a FACT
@@ -1230,6 +1216,8 @@ async def _poll_mlb_pregame():
             )
 
         await session.commit()
+        from app.utils.nonvenue_live_push import publish_committed_nonvenue_frames
+        await publish_committed_nonvenue_frames(session)
 
     logger.info(
         "MLB pre-game poll: %d new events, %d snapshots in T-%dh..T-%dh window",
@@ -1357,6 +1345,8 @@ async def _poll_all_odds():
                 # Still run staleness detection for any live events that may have ended
                 stale_outcome = await detect_and_close_stale_events(session)
                 await session.commit()
+                from app.utils.nonvenue_live_push import publish_committed_nonvenue_frames
+                await publish_committed_nonvenue_frames(session)
                 return {
                     "events": 0,
                     "snapshots": 0,
@@ -1703,6 +1693,8 @@ async def _poll_all_odds():
                     # price delay on each live game (live/583's after-check).
                     # Nothing later in the pass needs these writes uncommitted.
                     await session.commit()
+                    from app.utils.nonvenue_live_push import publish_committed_nonvenue_frames
+                    await publish_committed_nonvenue_frames(session)
 
                 except Exception as e:
                     # #837 — a failed statement (the 40P01 be29398d lost at
@@ -2465,23 +2457,9 @@ async def _poll_all_odds():
                                             and event_obj.opening_home_probability is not None):
                                         stat_wp = float(event_obj.opening_home_probability)
                                     if stat_wp is not None:
-                                        # Update event's win_probability_sources
-                                        # Need to re-fetch to get current JSONB
-                                        # Write stat_model to win_probability_sources.
-                                        # Use event object from batch pre-load (N+1 fix).
-                                        from sqlalchemy import update as _sql_upd
-                                        from app.utils.aggregation import (
-                                            stamp_source_reading as _stamp,
-                                        )
-                                        _sm_wps = _stamp(
-                                            event_obj.win_probability_sources,
-                                            "stat_model",
-                                            round(stat_wp, 4),
-                                        )
-                                        await session.execute(
-                                            _sql_upd(Event)
-                                            .where(Event.id == event_obj.id)
-                                            .values(win_probability_sources=_sm_wps)
+                                        from app.utils.nonvenue_live_push import write_nonvenue_probability
+                                        await write_nonvenue_probability(
+                                            session, event_obj, "stat_model", round(stat_wp, 4),
                                         )
 
                                         stat_snap, is_new = await _create_or_update_win_prob_snapshot(
@@ -2518,6 +2496,8 @@ async def _poll_all_odds():
                     # commit refused after a game aborted the transaction lands
                     # in the `except` below.
                     await session.commit()
+                    from app.utils.nonvenue_live_push import publish_committed_nonvenue_frames
+                    await publish_committed_nonvenue_frames(session)
 
                 except Exception as e:
                     await _rollback_quietly(session)  # #837, as in the odds loop
@@ -2545,6 +2525,8 @@ async def _poll_all_odds():
                 live_gei_updated = await update_live_gei(session)
 
             await session.commit()
+            from app.utils.nonvenue_live_push import publish_committed_nonvenue_frames
+            await publish_committed_nonvenue_frames(session)
 
         # Compute hash and check for changes
         new_hash = compute_odds_hash(all_events_data)
@@ -2663,6 +2645,8 @@ async def _poll_sport_odds(sport_key: str):
                     total_snapshots += 1
 
             await session.commit()
+            from app.utils.nonvenue_live_push import publish_committed_nonvenue_frames
+            await publish_committed_nonvenue_frames(session)
 
         return {
             "sport": sport_key,

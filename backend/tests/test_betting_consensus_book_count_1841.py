@@ -160,7 +160,8 @@ class TestRuling051BelowTheFloorBettingIsAbsent:
         0.1347 in place — the exact bug. Only an explicit removal is honest.
         """
         src = self.src
-        assert '_current.pop("betting", None)' in src
+        assert "_betting_value = None" in src
+        assert "write_nonvenue_probability(" in src
 
     def test_the_book_count_is_still_written_when_betting_is_dropped(self):
         """The absence must be observable AS an absence, not as silence.
@@ -172,7 +173,7 @@ class TestRuling051BelowTheFloorBettingIsAbsent:
         """
         src = self.src
         # the count assignment must sit OUTSIDE the floor branch
-        assert '_current["betting_book_count"] = _book_count' in src
+        assert 'metadata={"betting_book_count": _book_count}' in src
 
     def test_specimen_15192596_yields_the_fresh_source_hero(self):
         """Alex's acceptance half 1, as arithmetic on the measured specimen.
