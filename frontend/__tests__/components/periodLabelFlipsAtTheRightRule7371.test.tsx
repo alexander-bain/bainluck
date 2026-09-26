@@ -374,7 +374,13 @@ describe("#7371 — the flip rule itself", () => {
   });
 
   it("flips only the markers with no room to their right", () => {
-    const out = anchorPeriodLabels([at(2 * INK), at(INK + 1000), at(INK - 1000)], SPAN, END);
+    // #8831 changed this fixture, not the claim. The last marker used to sit at
+    // `INK - 1000`, two seconds after the one before it. It flipped onto row 1,
+    // so its caption began a whole ink left of its predecessor's: the two read
+    // in the wrong order, which is the #8831 defect. The claim here is only
+    // about which markers flip, so the last marker now sits at the rule, where
+    // its caption starts behind its predecessor's.
+    const out = anchorPeriodLabels([at(3 * INK), at(INK + 1000), at(0)], SPAN, END);
     expect(out.map((b) => b.labelPosition)).toEqual([
       "insideTopLeft",
       "insideTopLeft",
@@ -399,17 +405,22 @@ describe("#7371 — the flip rule itself", () => {
     //
     // Four markers packed into two inks of the right rule cannot all be drawn.
     // The one that cannot is the one that is not drawn.
+    //
+    // #8831 — AND THIS ARM ALSO EXPECTED A SECOND DEFECT, this time an ordering
+    // one. It kept the `INK + 1000` marker on row 0, left-anchored, beside the
+    // flipped `INK - 1000` marker on row 1, whose caption began a whole ink to
+    // its LEFT. The two read in the wrong order: the page's `T9 B8`. That
+    // predecessor has no room to flip (it is under two inks from the first
+    // marker), so it is the one dropped. The newest marker at the right rule
+    // still has no room on either row and is still not drawn: that part of the
+    // claim is unchanged.
     const out = anchorPeriodLabels(
       [at(2 * INK), at(INK + 1000), at(INK - 1000), at(0)],
       SPAN,
       END
     );
-    expect(out).toHaveLength(3);
-    expect(out.map((b) => b.labelPosition)).toEqual([
-      "insideTopLeft",
-      "insideTopLeft",
-      "insideTopRight",
-    ]);
+    expect(out.map((b) => b.timestamp)).toEqual([at(2 * INK).timestamp, at(INK - 1000).timestamp]);
+    expect(out.map((b) => b.labelPosition)).toEqual(["insideTopLeft", "insideTopRight"]);
 
     // And it is the CROWDING that drops it, not the flip: the same marker at the
     // right rule with room behind it keeps its caption. This is #7371's own case
