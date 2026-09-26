@@ -57,9 +57,21 @@ async def db():
     from app.models.models import Event, Sport
     from app.services.database import Base
 
+    # The #7617 file runs first on this database and leaves `futures_markets`
+    # and `futures_outcomes` behind; both point at `events`, so a drop that
+    # omits them dies with `DependentObjectsStillExist` (CI, 5a989a6cd2). Same
+    # closure as that file, so either one can run after the other.
     wanted = [
         Base.metadata.tables[name]
-        for name in ("sports", "teams", "venues", "events", "win_prob_snapshots")
+        for name in (
+            "sports",
+            "teams",
+            "venues",
+            "events",
+            "win_prob_snapshots",
+            "futures_markets",
+            "futures_outcomes",
+        )
     ]
     engine = create_async_engine(DB_URL)
     async with engine.begin() as conn:
