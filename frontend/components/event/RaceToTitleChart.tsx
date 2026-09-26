@@ -92,6 +92,12 @@ export default function RaceToTitleChart({
   const [hours, setHours] = useState(168);
   const [topN, setTopN] = useState(5);
   const rankTabs = raceRankTabs(competitors.length);
+  // #8795: golf's green theme is a leader-vs-field palette — Augusta green for the
+  // frontrunner, a second green, then greys. A two-team match (Presidents Cup,
+  // Ryder Cup) is a head-to-head, so its two lines were exactly the two greens, and
+  // when they crossed at R3 a reader couldn't tell which team was which. Two sides
+  // take the default palette's blue and red.
+  const greenTheme = domain === "golf" && competitors.length !== 2;
 
   // L2-135: golf round markers (R1..R4) give the axis a real sense of time.
   const timeMarkers = useMemo(
@@ -177,7 +183,7 @@ export default function RaceToTitleChart({
           showAxes
           showLegend={showLegend}
           height={280}
-          greenTheme={domain === "golf"}
+          greenTheme={greenTheme}
           timeMarkers={timeMarkers}
         />
       ) : (
