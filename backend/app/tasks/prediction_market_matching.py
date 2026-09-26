@@ -9236,6 +9236,10 @@ async def _poll_live_prediction_market_prices():
         "futures_snapshots_written": 0,
         "snapshots_written": 0,
         "snapshots_deduped": 0,
+        # #8910: blend readings older than the stamp already stored for their
+        # source (the WS lane wrote a later price mid-pass). 0 on a quiet beat
+        # is healthy; high during goals is the refusal doing its job.
+        "stale_readings_refused": 0,
         "pregame_marks_written": 0,
         # #5682. `commits` counts the beat's DURABLE boundaries — the number of
         # times work stopped being losable. `deadlocks` and `session_recoveries`
@@ -10234,6 +10238,33 @@ async def _poll_live_prediction_market_prices():
                 )
                 away_prob, draw_prob = _second_slot(reading, home_prob)
 
+                from sqlalchemy import update as _sql_upd2
+                from app.utils.aggregation import (
+                    oldest_observation_time as _obs2,
+                    reading_predates_stored_entry as _predates2,
+                    stamp_source_reading as _stamp2,
+                )
+                _pm_r2 = await session.execute(
+                    select(Event.win_probability_sources).where(Event.id == event.id)
+                )
+                _stored_wps2 = _pm_r2.scalar_one_or_none()
+                _observed2 = _obs2(
+                    reading.contributing_outcomes or (reading.outcome,)
+                )
+
+                # #8910: this loop derives from the rows the pass loaded (or
+                # re-priced) when it BEGAN, and a pass can run minutes. If the
+                # WebSocket lane has stamped this source since, the stored
+                # entry is a later observation than ours, and writing ours
+                # puts the pre-goal price back on the hero (Czechia v Croatia,
+                # 9/26: 0.155 over the socket's post-goal 0.035, 12.6 s and
+                # then 80 s of the wrong headline). Refused BEFORE the chart
+                # point too: the stale number is the same fiction on the line.
+                # The socket just wrote this source, so nothing is left unfed.
+                if _predates2(_stored_wps2, market.source, _observed2):
+                    stats["stale_readings_refused"] += 1
+                    continue
+
                 # Write snapshot with deduplication
                 snapshot, is_new = await _create_or_update_win_prob_snapshot(
                     session,
@@ -10278,15 +10309,7 @@ async def _poll_live_prediction_market_prices():
                 else:
                     stats["snapshots_deduped"] += 1
 
-                # Write to win_probability_sources on the event
-                from sqlalchemy import update as _sql_upd2
-                from app.utils.aggregation import (
-                    oldest_observation_time as _obs2,
-                    stamp_source_reading as _stamp2,
-                )
-                _pm_r2 = await session.execute(
-                    select(Event.win_probability_sources).where(Event.id == event.id)
-                )
+                # Write to win_probability_sources on the event.
                 # #1829: value + write time. CU-4 (#5311): plus the record
                 # naming the market that spoke — `reading.eligibility`, minted
                 # by the gate, for the same reason `game_state` above names
@@ -10321,7 +10344,7 @@ async def _poll_live_prediction_market_prices():
                 # relative decay demote a frozen leg at all, which forged
                 # freshness makes impossible.
                 _pm_wps2 = _stamp2(
-                    _pm_r2.scalar_one_or_none(), market.source, round(home_prob, 4),
+                    _stored_wps2, market.source, round(home_prob, 4),
                     eligibility=reading.eligibility,
                     now=_obs2(
                         reading.contributing_outcomes or (reading.outcome,)

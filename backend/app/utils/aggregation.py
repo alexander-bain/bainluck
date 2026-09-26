@@ -381,6 +381,41 @@ def oldest_observation_time(
     return min(observed)
 
 
+def reading_predates_stored_entry(
+    sources: Optional[dict], source: str, observed_at: Optional[datetime]
+) -> bool:
+    """True when the stored entry for ``source`` was observed AFTER this reading.
+
+    #8910, production 2026-09-26, Czechia v Croatia (15311809). Croatia scored;
+    the WebSocket lane stamped Kalshi at 0.035 at 19:51:23Z; the two-minute
+    poll then stamped Kalshi 0.155 at 19:52:05Z — byte-equal to the socket's
+    19:50:14Z value, the price from BEFORE the goal. The poll derives its blend
+    from the outcome rows it loaded (or re-priced) when the pass began, and a
+    pass can run minutes; by the time it reaches the stamp stage the socket
+    has already written a later price. The reader saw "Czechia 10%" for 12.6 s
+    after the goal, and at the equalizer 80 s of the pre-equalizer number.
+
+    The rule is the one every recency clause here already assumes and none
+    enforced: a reading may not replace one that was observed later than it
+    was. ``observed_at`` is the writer's own `oldest_observation_time`; the
+    stored ``updated_at`` is an observation time too (#4028 made every writer
+    stamp it that way; the WS lane stamps its database clock at the write).
+
+    ABSTAINS — returns False, i.e. today's behaviour — whenever it cannot
+    know: ``observed_at`` None, no stored entry, or a stored entry with no
+    parseable stamp (a bare float from an older writer). Unknown is not stale.
+    Strictly earlier only: an equal stamp is the same observation.
+    """
+    if observed_at is None or not isinstance(sources, dict):
+        return False
+    _value, stored_at = parse_source_entry(sources.get(source))
+    if stored_at is None:
+        return False
+    if observed_at.tzinfo is None:
+        observed_at = observed_at.replace(tzinfo=timezone.utc)
+    return observed_at < stored_at
+
+
 def wps_numeric_sql(source: str, column: str = "win_probability_sources") -> str:
     """SQL that reads one source's numeric probability out of the JSONB.
 
