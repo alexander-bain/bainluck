@@ -3771,6 +3771,19 @@ jobs:
             exit 1
           fi
 
+      - name: "#6974 NHL duplicate clubs — strip, repoint, fold, re-run and undo against real Postgres"
+        # Same shape as the MLS gate above, plus a mapping repointed BEFORE the
+        # fold (the delete's CASCADE would destroy it) and the after-state read
+        # back through the search route's own Teams filter and rank.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_repair_6974_fold_nhl_apply_restore_pg.py \
+            -v -rs 2>&1 | tee /tmp/fold6974nhl.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/fold6974nhl.txt; then
+            echo "::error::#6974 NHL fold apply/restore gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#4079 numeric movement acceptance — provision the disposable database"
         # The acceptance suite DROPS AND RECREATES THE WHOLE SCHEMA, so it refuses
         # to touch any database that does not carry a sentinel row holding a nonce
