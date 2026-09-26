@@ -175,7 +175,7 @@ def test_one_speaker_alone_is_not_a_disagreement():
     assert _members_span_multiple_seasons(mixed) is False
     bundle = _make_theme_bundle_item("story:ai", mixed)
     assert bundle is not None
-    assert bundle["data"]["shared_question"] == "Which AI model comes out on top?"
+    assert bundle["data"]["shared_question"] == "What happens next in AI?"
 
 
 # ── End to end: SPLIT means split, not delete ────────────────────────────────
