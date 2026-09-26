@@ -253,8 +253,18 @@ class TestTheLadderStopsPrintingOneLabelTwice:
         assert "December 31" in ladder, "the LIVE leg is the one that stays"
 
     def test_the_freed_slot_goes_to_an_honest_rung_not_to_a_shorter_ladder(self):
-        """The whole argument for dropping BEFORE the `[:limit]` slice."""
+        """The whole argument for dropping BEFORE the `[:limit]` slice.
+
+        #8930: a ladder no longer draws graded rungs while a live one remains,
+        and every date on the stored board but the live `December 31` is graded,
+        so the stored board draws one row (next test). The slot argument is
+        asserted on the same board with only the TWIN still graded, which is the
+        shape it was written about.
+        """
         m = _ceasefire_board()
+        for o in m.outcomes:
+            if o.id != 69760067:  # the superseded `December 31` twin
+                o.resolution_source = None
         ladder = _ladder(m)
         assert len(ladder) == _SEARCH_LADDER_LIMIT
         # #8834: "cancelled by...?" is a date ladder, so the card now runs in
@@ -265,6 +275,11 @@ class TestTheLadderStopsPrintingOneLabelTwice:
         assert "November 30" in ladder, (
             "a rung that existed all along and was truncated away by the twin"
         )
+
+    def test_the_stored_board_draws_only_its_live_rung(self):
+        """#8930: the graded deadlines are results for the detail page; the card
+        answers with the one rung still trading."""
+        assert _ladder(_ceasefire_board()) == ["December 31"]
 
     def test_a_short_board_ends_honestly_instead_of_inventing_a_filler(self):
         m = _korea_open_board()
