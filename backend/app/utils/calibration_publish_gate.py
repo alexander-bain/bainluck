@@ -167,6 +167,51 @@ DECLARED_PREDICATE_SUCCESSIONS: dict[tuple[str, str], dict] = {
     },
 }
 
+#: Category RE-FILINGS that reached the curve without a version bump, declared by
+#: the category that shrank. Rule 3 reads a collapse as a lost cohort; a re-filing
+#: moves the same rows to another category, and the total barely moves.
+#:
+#: #2280. lane1b's resolved sport-category drains (#2526 on 2026-09-24, 15,766
+#: markets; #8460 on 2026-09-24/25, 51,829 markets) moved settled real-tennis
+#: Polymarket markets that had been filed ``table_tennis`` to ``tennis``, the
+#: correct sport. The 249-unit bank that finished at 07:32Z on 2026-09-26 reads
+#: ``llm_sport_category`` as it is now. The 07:25Z artifact it has to replace was
+#: folded from the older bank. Every beat since 08:15Z has been refused:
+#: table_tennis 37,916 -> 4,772, while tennis went 80,086 -> 119,386 in the same
+#: served fold (-33,144 / +39,300 over the futures sources).
+#:
+#: Why a declaration and not a bump: the version is hashed into
+#: ``_main_input_fingerprint``, so a bump throws away the finished bank (about 30
+#: beats). This module is hashed by neither fingerprint, so this re-keys nothing.
+#:
+#: What an entry admits, and only that: a collapse of the declared category when
+#: the category it was re-filed INTO grew by at least ``min_recovered_share`` of
+#: the loss in the same comparison, when the loss is within ``max_moved_outcomes``,
+#: and when the baseline was built before ``baseline_built_before``. A loss that
+#: did not reappear next door still refuses, and so does a loss larger than the
+#: re-filing could have caused.
+#:
+#: ``max_moved_outcomes`` is two outcomes per re-filed market (these are
+#: two-player match markets) over both drains' receipts: 2 x (15,766 + 51,829).
+#: That is an upper bound. Most of those rows never reached the curve.
+#:
+#: One-shot by construction: once a candidate carrying the re-filing publishes,
+#: the baseline is built after ``baseline_built_before`` and the entry goes quiet.
+#: The cutoff is compared to the baseline's own ``generated_at``, never to a clock.
+DECLARED_RECATEGORIZATIONS: dict[str, dict] = {
+    "table_tennis": {
+        "into": "tennis",
+        "cause": (
+            "#2526/#8460 resolved sport-category drains (2026-09-24/25): settled "
+            "real-tennis Polymarket markets re-filed from table_tennis to tennis"
+        ),
+        "issue": 2280,
+        "baseline_built_before": "2026-09-26T08:00:00Z",
+        "max_moved_outcomes": 135_190,
+        "min_recovered_share": 0.9,
+    },
+}
+
 #: How many per-category rows the ledger record carries. The diff is written into
 #: ``calibration:main:phase_ledger`` on EVERY build, so it is bounded; it is
 #: sorted by absolute movement, so the bound keeps what mattered; and the tail it
@@ -1044,6 +1089,55 @@ def _newly_excluded_in(cand: dict, prev: dict, category: str) -> list[dict]:
     return rows
 
 
+def _judge_recategorization(
+    category: str, cand: dict, prev: dict
+) -> tuple[Optional[dict], Optional[str]]:
+    """Whether a declared re-filing explains ``category``'s collapse.
+
+    Returns ``(None, None)`` when no entry applies (not declared, or the baseline
+    is not one the entry was written for), so the collapse refuses exactly as it
+    always has. Otherwise ``(record, None)`` when the loss reappears in the
+    declared destination within bounds, else ``(record, reason)``.
+    """
+    entry = DECLARED_RECATEGORIZATIONS.get(category)
+    if entry is None:
+        return None, None
+    built = _parse_generated_at(prev.get("generated_at"))
+    cutoff = _parse_generated_at(entry["baseline_built_before"])
+    # An undated baseline is not one this entry can be shown to be about.
+    if built is None or cutoff is None or built >= cutoff:
+        return None, None
+    into = entry["into"]
+    prev_n = int(prev["categories"].get(category, 0))
+    cand_n = int(cand["categories"].get(category, 0))
+    lost = prev_n - cand_n
+    gained = int(cand["categories"].get(into, 0)) - int(
+        prev["categories"].get(into, 0)
+    )
+    record = {
+        "category": category,
+        "into": into,
+        "cause": entry["cause"],
+        "issue": entry["issue"],
+        "lost": lost,
+        "gained_into": gained,
+        "max_moved_outcomes": entry["max_moved_outcomes"],
+        "min_recovered_share": entry["min_recovered_share"],
+    }
+    if lost > entry["max_moved_outcomes"]:
+        return record, (
+            f"the declared re-filing into {into!r} ({entry['cause']}) can explain "
+            f"at most {entry['max_moved_outcomes']:,} outcomes and {lost:,} left"
+        )
+    if gained < entry["min_recovered_share"] * lost:
+        return record, (
+            f"a declared re-filing into {into!r} ({entry['cause']}) should show up "
+            f"there, but {into!r} moved {gained:+,} against a loss of {lost:,} "
+            f"(needs at least {entry['min_recovered_share']:.0%} of it)"
+        )
+    return record, None
+
+
 def _probe_baseline(
     durable_probe: Optional[Callable[[], baseline_probe.BaselineProbe]],
 ) -> baseline_probe.BaselineProbe:
@@ -1625,15 +1719,37 @@ def evaluate_publish(
                 # bump branch waives it: a cohort whose membership provably
                 # changed cannot be compared against its own former error rate.
                 continue
+            # #2280: a DECLARED re-filing. The rows were moved to another
+            # category, not lost, and the destination has to show them.
+            recat, recat_refusal = _judge_recategorization(name, cand, prev)
+            if recat is not None and recat_refusal is None:
+                observe(
+                    "category_collapse_declared_recategorization",
+                    f"category {name!r} fell {drop * 100:.1f}% "
+                    f"({prev_n:,} -> {cand_n:,}), past the "
+                    f"{CATEGORY_DROP_TOLERANCE * 100:.0f}% limit, and is "
+                    f"RECORDED rather than refused: {recat['cause']} (#"
+                    f"{recat['issue']}), and {recat['into']!r} grew "
+                    f"{recat['gained_into']:+,} in the same comparison",
+                    category=name,
+                    previous=prev_n,
+                    candidate=cand_n,
+                    drop_pct=round(drop * 100, 2),
+                    recategorization=recat,
+                )
+                # Same reason as the disclosed branch: its membership changed.
+                continue
             reject(
                 "category_collapse",
                 f"category {name!r} fell {drop * 100:.1f}% "
                 f"({prev_n:,} -> {cand_n:,}), limit "
-                f"{CATEGORY_DROP_TOLERANCE * 100:.0f}%, without a version bump",
+                f"{CATEGORY_DROP_TOLERANCE * 100:.0f}%, without a version bump"
+                + (f"; {recat_refusal}" if recat_refusal else ""),
                 category=name,
                 previous=prev_n,
                 candidate=cand_n,
                 drop_pct=round(drop * 100, 2),
+                **({"recategorization": recat} if recat is not None else {}),
             )
             continue
         # Sample size held but accuracy fell off a cliff — the cricket shape. Only
@@ -1721,6 +1837,12 @@ def gate_ledger_record(verdict: PublishVerdict) -> dict:
         "disclosed_exclusions_omitted": max(
             0, len(excused) - LEDGER_CATEGORY_DIFF_LIMIT
         ),
+        # #2280: which declared re-filing excused a collapse, with its numbers.
+        "declared_recategorizations": [
+            o.get("recategorization")
+            for o in verdict.observations
+            if o.get("code") == "category_collapse_declared_recategorization"
+        ],
         "version_bumped": verdict.version_bumped,
         "first_publish": verdict.first_publish,
         "baseline_source": verdict.baseline_source,
