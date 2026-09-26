@@ -22,7 +22,7 @@ import { withoutEventOwnMoneyline } from "@/lib/eventOwnMoneyline";
 import { teamTextColor } from "@/lib/teamColors";
 import { useLiveEventStream, type LiveFrame } from "@/hooks/useLiveEventStream";
 import { fetchEventWithLiveFrame } from "@/lib/reconcileEventPoll";
-import { mergeLiveChartHistory } from "@/lib/liveChartHistory";
+import { appendHeroObservation, mergeLiveChartHistory } from "@/lib/liveChartHistory";
 import FreshnessChip from "@/components/event/FreshnessChip";
 import {
   applyLiveFrame,
@@ -689,7 +689,11 @@ export default function EventPage({ params }: EventPageProps) {
       const pushed = mergeLiveChartHistory(servedHistory, isLive ? chartPoints : []);
       // A push is an observation at its own time, not permission to rewrite
       // the previous poll's endpoint with today's hero value (#920).
-      return pushed !== servedHistory ? pushed : pinChartEdgeToHero(servedHistory, event);
+      const joined = pushed !== servedHistory ? pushed : pinChartEdgeToHero(servedHistory, event);
+      // #8749: and so is the blend a detail refresh delivered — when it is
+      // newer than the line's edge, the line gets it at its own clock, so the
+      // headline never moves alone.
+      return isLive ? appendHeroObservation(joined, event) : joined;
     },
     [servedHistory, event, isLive, chartPoints],
   );

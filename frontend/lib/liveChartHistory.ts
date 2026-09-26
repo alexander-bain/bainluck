@@ -1,3 +1,4 @@
+import { PINNABLE_HERO_SOURCE } from "./chartEdgePin";
 import type { LiveStreamFrame } from "./liveStreamController";
 import type { WinProbHistoryPoint } from "./types";
 
@@ -154,4 +155,69 @@ export function mergeLiveChartHistory<T extends ChartHistory>(
   }
   if (extended !== null) next.win_prob_history = extended;
   return next;
+}
+
+/** The subset of the detail payload `appendHeroObservation` reads. */
+export type HeroObservation = {
+  status?: string | null;
+  hero_probability?: number | null;
+  hero_probability_source?: string | null;
+  win_probability_sources?: Record<string, { updated_at?: string | null } | null | undefined> | null;
+};
+
+/**
+ * #8749 — the blend the HEADLINE shows reaches the chart when it is the newer
+ * of the two.
+ *
+ * The headline reads the detail payload and the frames; the blend line reads
+ * the history payload and the frames. Once a frame has arrived the page no
+ * longer pins the line's edge to the headline (#920 — a push is an observation
+ * at its own time), so a routine detail refresh that carries a newer blend
+ * moved the headline and left the line where it was. Production, live/617:
+ * TB@PHI read 35% over a line ending 36.3 until the stream delivered the same
+ * price 1.24 s later; PIT@DET read 53% over 53.2 for nine seconds.
+ *
+ * The headline's blend is an observation like any frame, and it carries the
+ * same clock a frame does: `applyLiveFrame` writes a frame's `updated_at` into
+ * its source, and the detail route serves every source's own write stamp, so
+ * the newest stamp is when that blend was last fed. Three rules:
+ *
+ *   1. STRICTLY NEWER THAN THE LINE. An older headline never overwrites or
+ *      follows a newer edge; that direction is not this function's to settle.
+ *   2. NEVER MINT A SERIES. No served blend line, nothing added (#8066).
+ *   3. NO INVENTED TIME. The point is stamped with the source's own string.
+ *
+ * Returns the SAME object whenever nothing is added, so memoized consumers see
+ * no new value. When the stream later delivers this publication at the same
+ * instant, `mergeLiveChartHistory` has already put it on the line and the
+ * frame's point simply coincides with it.
+ */
+export function appendHeroObservation<T extends ChartHistory>(
+  history: T | undefined, hero: HeroObservation | null | undefined,
+): T | undefined {
+  if (!history || !hero || hero.status !== "live" ||
+      hero.hero_probability_source !== PINNABLE_HERO_SOURCE) return history;
+  const p = hero.hero_probability;
+  if (typeof p !== "number" || !Number.isFinite(p) || p < 0 || p > 1) return history;
+  const line = history.aggregate_line;
+  if (!line || line.length === 0) return history;
+
+  let stamp: string | null = null;
+  let clock = -Infinity;
+  for (const source of Object.values(hero.win_probability_sources ?? {})) {
+    const at = source?.updated_at;
+    const t = typeof at === "string" ? Date.parse(at) : NaN;
+    if (Number.isFinite(t) && t > clock) { clock = t; stamp = at as string; }
+  }
+  if (stamp === null) return history;
+
+  let edge = line[0];
+  for (const point of line) {
+    if (Date.parse(point.timestamp) > Date.parse(edge.timestamp)) edge = point;
+  }
+  const edgeTime = Date.parse(edge.timestamp);
+  if (!Number.isFinite(edgeTime) || clock <= edgeTime || edge.home_probability === p) {
+    return history;
+  }
+  return { ...history, aggregate_line: [...line, { timestamp: stamp, home_probability: p }] };
 }
