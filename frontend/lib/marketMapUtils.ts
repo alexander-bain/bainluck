@@ -332,14 +332,36 @@ export function spreadRungMatchesRail(rung: ParsedSpread, railUnit: string): boo
  * fall behind with.
  */
 export function parseSpreadRungs(
-  rows: Array<{ outcome_name?: string | null; probability?: number | null; source?: string | null }>,
+  rows: Array<{
+    outcome_name?: string | null;
+    market_name?: string | null;
+    probability?: number | null;
+    source?: string | null;
+  }>,
   homeTeam: string,
   awayTeam: string,
   railUnit: string
 ): ParsedSpread[] {
+  /* #8739: a Polymarket market's uncovered leg is read as its cover rung at
+     1 − p. Where the cover leg itself is served, that leg IS the reading and
+     the complement only adds the other token's midpoint noise (Dodgers −2.5:
+     Dodgers 0.500, Giants 0.505 → 0.495), which `collapseDuplicateRungs` can
+     then keep as the row it prints. So the complement is used only for a
+     market whose cover leg is absent. */
+  const coverServed = new Set(
+    rows.filter((s) => polymarketLegRole(s.market_name, s.outcome_name) === "cover").map((s) => s.market_name)
+  );
   return rows
+    .filter((s) => !(polymarketLegRole(s.market_name, s.outcome_name) === "other" && coverServed.has(s.market_name)))
     .map((s) =>
-      parseSpreadOutcome(s.outcome_name ?? "", s.probability ?? 0, s.source ?? "", homeTeam, awayTeam)
+      parseSpreadOutcome(
+        s.outcome_name ?? "",
+        s.probability ?? 0,
+        s.source ?? "",
+        homeTeam,
+        awayTeam,
+        s.market_name ?? ""
+      )
     )
     .filter((p): p is ParsedSpread => p != null)
     .filter((p) => spreadRungMatchesRail(p, railUnit));
@@ -360,7 +382,8 @@ export function parseSpreadOutcome(
   probability: number,
   source: string,
   homeTeam: string,
-  awayTeam: string
+  awayTeam: string,
+  marketName = ""
 ): ParsedSpread | null {
   const lower = outcomeName.toLowerCase();
   const homeWords = homeTeam.toLowerCase().split(" ");
@@ -396,13 +419,104 @@ export function parseSpreadOutcome(
   if (NAMES_A_MARGIN_BAND.test(outcomeName)) return null;
 
   const matches = outcomeName.match(/(\d+\.?\d*)/g);
-  if (!matches || matches.length === 0) return null;
+  if (!matches || matches.length === 0) {
+    return parseLineFromMarketName(marketName, outcomeName, probability, source, homeTeam, awayTeam);
+  }
   const threshold = parseFloat(matches[matches.length - 1]);
 
   const team = isHome ? homeTeam : awayTeam;
   const margin = isHome ? threshold : -threshold;
 
   return { team, threshold, probability, source, isHome, margin, unit: spreadUnitOf(outcomeName) };
+}
+
+/**
+ * #8739: POLYMARKET PUTS THE LINE IN THE MARKET, NOT THE OUTCOME.
+ *
+ * Kalshi names the rung in the outcome (`"Texas -7.5"`). Polymarket names it
+ * in the market and leaves only a team in each leg:
+ *
+ *   market_name "Spread: Texas (-7.5)"   outcome "Texas"      p 0.405
+ *   market_name "Spread: Texas (-7.5)"   outcome "Tennessee"  p 0.595
+ *
+ * Reading the outcome alone, every row had no number, so a college football
+ * page carrying 52 priced Polymarket spread rows (`/events/14870011`, Texas @
+ * Tennessee) drew no margin map at all.
+ *
+ * The market asks ONE question: does Texas win by more than 7.5? The Texas
+ * leg is that rung. The Tennessee leg is NOT a "Tennessee by 7.5+" rung — it
+ * is Tennessee +7.5, "Texas does not cover" — so it is read as the same rung
+ * at `1 − p` — used only when the Texas leg is not served (live Polymarket
+ * often serves one leg; see `parseSpreadRungs`).
+ *
+ * Fails closed: only a `-N` line is read (a `+N` market is a different
+ * question and none is served today); a leg must name exactly one of the two
+ * teams (Texas vs Texas Tech would match both); and a leg must be either the
+ * named team or the other one.
+ */
+const POLYMARKET_SPREAD_MARKET = /^\s*spread:\s*(.+?)\s*\(\s*-\s*(\d+(?:\.\d+)?)\s*\)\s*$/i;
+
+/** Which leg of a `Spread: <Team> (-N)` market a numberless outcome is, if any. */
+function polymarketLegRole(
+  marketName: string | null | undefined,
+  outcomeName: string | null | undefined
+): "cover" | "other" | null {
+  const outcome = (outcomeName ?? "").trim().toLowerCase();
+  if (!outcome || /\d/.test(outcome)) return null;
+  const m = (marketName ?? "").match(POLYMARKET_SPREAD_MARKET);
+  if (!m) return null;
+  return m[1].trim().toLowerCase() === outcome ? "cover" : "other";
+}
+
+function namesTeam(text: string, team: string): boolean {
+  const lower = text.toLowerCase();
+  return team
+    .toLowerCase()
+    .split(" ")
+    .some((w) => w.length >= 3 && lower.includes(w));
+}
+
+function parseLineFromMarketName(
+  marketName: string,
+  outcomeName: string,
+  probability: number,
+  source: string,
+  homeTeam: string,
+  awayTeam: string
+): ParsedSpread | null {
+  const m = marketName.match(POLYMARKET_SPREAD_MARKET);
+  if (!m) return null;
+  const coverTeam = m[1].trim().toLowerCase();
+  const threshold = parseFloat(m[2]);
+  const outcome = outcomeName.trim().toLowerCase();
+  if (!outcome || !Number.isFinite(threshold)) return null;
+
+  const outcomeIsHome = namesTeam(outcome, homeTeam);
+  const outcomeIsAway = namesTeam(outcome, awayTeam);
+  if (outcomeIsHome === outcomeIsAway) return null;
+
+  let isHome: boolean;
+  let p: number;
+  if (outcome === coverTeam) {
+    isHome = outcomeIsHome;
+    p = probability;
+  } else if (namesTeam(coverTeam, outcomeIsHome ? awayTeam : homeTeam)) {
+    isHome = !outcomeIsHome;
+    p = 1 - probability;
+  } else {
+    return null;
+  }
+
+  const team = isHome ? homeTeam : awayTeam;
+  return {
+    team,
+    threshold,
+    probability: p,
+    source,
+    isHome,
+    margin: isHome ? threshold : -threshold,
+    unit: spreadUnitOf(outcomeName),
+  };
 }
 
 export function isFullGameSpread(marketName: string): boolean {
