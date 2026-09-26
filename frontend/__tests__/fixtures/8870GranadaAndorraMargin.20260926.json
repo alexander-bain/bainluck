@@ -1,0 +1,66 @@
+{
+ "event_id": 15315297,
+ "home_team": "Granada CF",
+ "away_team": "Andorra CF",
+ "home_score": 2,
+ "away_score": 3,
+ "status": "completed",
+ "spreads": [
+  {
+   "market_name": "Granada vs Andorra: Spread",
+   "outcome_name": "Granada wins by more than 1.5 goals",
+   "observed_at": "2026-09-26T00:48:31.329535+00:00",
+   "threshold": 1.5,
+   "probability": 0.0,
+   "source": "kalshi",
+   "is_winner": false,
+   "resolution_source": "api_settlement",
+   "_market_id": 62418942,
+   "_score_proves_verdict": true
+  },
+  {
+   "market_name": "Granada vs Andorra: Spread",
+   "outcome_name": "Andorra wins by more than 1.5 goals",
+   "observed_at": "2026-09-26T00:48:31.329535+00:00",
+   "threshold": 1.5,
+   "probability": 0.0,
+   "source": "kalshi",
+   "is_winner": false,
+   "resolution_source": "api_settlement",
+   "_market_id": 62418942,
+   "_score_proves_verdict": true
+  },
+  {
+   "market_name": "Granada vs Andorra: Spread",
+   "outcome_name": "Andorra wins by more than 2.5 goals",
+   "observed_at": null,
+   "threshold": 2.5,
+   "probability": 0.0,
+   "source": "kalshi",
+   "is_winner": false,
+   "resolution_source": "api_settlement",
+   "_market_id": 62418942,
+   "_score_proves_verdict": true
+  },
+  {
+   "market_name": "Granada vs Andorra: Spread",
+   "outcome_name": "Granada wins by more than 2.5 goals",
+   "observed_at": "2026-09-26T00:48:31.329535+00:00",
+   "threshold": 2.5,
+   "probability": 0.0,
+   "source": "kalshi",
+   "is_winner": false,
+   "resolution_source": "api_settlement",
+   "_market_id": 62418942,
+   "_score_proves_verdict": true
+  }
+ ],
+ "totals": [],
+ "player_props": [],
+ "team_totals": [],
+ "period_markets": [],
+ "matchups": [],
+ "other": [],
+ "props_script": [],
+ "pace": null
+}

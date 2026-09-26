@@ -508,7 +508,18 @@ function LadderRows({
             margin: "5px 0",
           }}
         >
-          <div style={{ fontSize: 10, color: "var(--text-secondary)", fontWeight: 850 }}>{row.label}</div>
+          <div
+            style={{
+              fontSize: 10,
+              color: "var(--text-secondary)",
+              fontWeight: 850,
+              // #8870: a graded row has no bar, so a side named in full
+              // ("Andorra CF by 2.5+") keeps one line instead of wrapping.
+              whiteSpace: graded ? "nowrap" : undefined,
+            }}
+          >
+            {row.label}
+          </div>
           {graded ? (
             // #3769: a settled rung has a result, not a chance. No bar, because
             // there is no longer a quantity to draw — the line either came in or
