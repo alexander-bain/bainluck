@@ -225,7 +225,7 @@ def _served_market_ids(payload):
     for fam in payload.get("futures_families") or []:
         if fam.get("headline"):
             ids.append(fam["headline"]["id"])
-        ids.extend(m["id"] for m in fam.get("markets") or [])
+        ids.extend(m["id"] for m in fam["members"])  # #8851: the served key
     return set(ids)
 
 

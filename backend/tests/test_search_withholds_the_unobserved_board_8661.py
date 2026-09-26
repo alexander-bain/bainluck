@@ -284,9 +284,12 @@ def test_the_route_asks_before_it_filters_and_slices():
     ask = src.index("_withheld_by_market = {")
     flat = src.index("m for m in deduped_futures if not _futures_card_has_no_answer(")
     assert ask < flat
-    assert src[flat:flat + 400].index("m, _withheld_by_market.get(m.id)") < src[
-        flat:flat + 400
-    ].index("][:_SEARCH_FUTURES_PAGE]")
+    # #8851 put the same-question fold between the filter and the slice, so the
+    # slice is found from the filter onward rather than inside a fixed window.
+    rest = src[flat:]
+    assert rest.index("m, _withheld_by_market.get(m.id)") < rest.index(
+        "][:_SEARCH_FUTURES_PAGE]"
+    )
 
 
 def test_every_reader_list_passes_the_refusal_set():
