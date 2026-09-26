@@ -241,6 +241,9 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
     // recognise, so a separator gated on the raw field prints a lone "·" beside
     // nothing on a card whose tier is a typo or a new backend value.
     const drawsConfidenceGlyph = normalizeTier(data.confidence_tier) != null;
+    // #8836 — a ladder whose drawn rungs run past the served date says nothing
+    // about when it resolves, rather than naming one rung's close as the card's.
+    const heatmapResolveText = dateRungRunsPastResolution(shownCells, data.resolution_date) ? "" : resolveText;
     // UX-1052 item 4 — the leader is the highest-probability rung, marked in
     // place. On a date ladder the rows are chronological, so "the answer" is
     // not the top row and had nothing pointing at it.
@@ -308,8 +311,8 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
                 the market that has nothing to do with sourcing. Here it is
                 unconditional, and the footer is free to be only the summary. */}
             <span className="ml-auto flex items-center gap-1.5 text-[11px] text-text-muted">
-              {resolveText && <span>{resolveText}</span>}
-              {drawsConfidenceGlyph && resolveText && <span>·</span>}
+              {heatmapResolveText && <span>{heatmapResolveText}</span>}
+              {drawsConfidenceGlyph && heatmapResolveText && <span>·</span>}
               <SignalBars tier={data.confidence_tier} />
             </span>
           </div>
@@ -989,6 +992,42 @@ function ladderKind(rows: HeatmapRow[]): LadderKind {
   return rows.length > 0 && rows.every((row) => row.source === "date_bucket")
     ? "date"
     : "threshold";
+}
+
+/**
+ * #8836 — does a date ladder draw a rung that runs past the date the card
+ * would print as "Resolves <date>"?
+ *
+ * Production, 390px, 2026-09-26 14:57Z: "Will the U.S. confirm that aliens
+ * exist?" (futures 109435, Kalshi KXALIENS) headed its ladder "Resolves Jan 1,
+ * 2027" over rungs running to "Before Jan 20, 2029 — 19%", the highlighted one.
+ * Kalshi closes each rung on its own date; the served `resolution_date` is the
+ * "Before 2027" rung's close, stored on the market row. The card said it
+ * resolves two years before its own headline rung does.
+ *
+ * The payload carries no per-rung close, so the card cannot print the right
+ * date — it can only stop printing the wrong one. A rung's date is read off
+ * its `sortValue`, which for a date-bucket rung is YYYYMMDD (#7403,
+ * `discover_card_archetypes._date_bucket_points`; month-only and year-only
+ * rungs carry day 00, "Before 2028" is 20280100). A value outside that shape
+ * is not read as a date and the card keeps its line. The two-day slack keeps
+ * a rung whose venue closes it the evening before its label's date ("Before
+ * 2028" closing Dec 31) from counting as later than itself.
+ */
+const LADDER_CLOSE_SLACK_MS = 2 * 24 * 36e5;
+
+function dateRungRunsPastResolution(rows: HeatmapRow[], resolutionDate: string | null | undefined): boolean {
+  if (!resolutionDate || ladderKind(rows) !== "date") return false;
+  const resolves = new Date(resolutionDate).getTime();
+  if (Number.isNaN(resolves)) return false;
+  const latest = Math.max(...rows.map((row) => row.sortValue));
+  if (!Number.isInteger(latest) || latest < 19000000 || latest > 29991231) return false;
+  const year = Math.floor(latest / 10000);
+  const month = Math.floor(latest / 100) % 100;
+  const day = latest % 100;
+  if (month > 12) return false;
+  const rungDate = Date.UTC(year, Math.max(month, 1) - 1, Math.max(day, 1));
+  return rungDate - resolves > LADDER_CLOSE_SLACK_MS;
 }
 
 /**
