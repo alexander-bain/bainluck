@@ -728,16 +728,25 @@ def _is_paraphrase_of_a_kept_board(market, kept_boards: list) -> bool:
     from app.utils.cross_source_matching import is_same_question
 
     for kept_source, kept_name, kept_names in kept_boards:
-        if kept_source == source or not kept_names:
+        if kept_source == source:
             continue
-        if len(names) <= 2 and len(kept_names) <= 2:
-            if names != kept_names:
-                continue
-        elif len(names & kept_names) < _SEARCH_SAME_FIELD_MIN_SHARED:
+        if not _search_boards_list_the_same_field(names, kept_names):
             continue
         if is_same_question(market.name, kept_name):
             return True
     return False
+
+
+def _search_boards_list_the_same_field(names: frozenset, kept_names: frozenset) -> bool:
+    """#8843's field gate, shared with #8851's fold: at least
+    `_SEARCH_SAME_FIELD_MIN_SHARED` listed names in common, or, when both boards
+    list two or fewer (Yes/No), the same names. A board listing nothing never
+    matches."""
+    if not names or not kept_names:
+        return False
+    if len(names) <= 2 and len(kept_names) <= 2:
+        return names == kept_names
+    return len(names & kept_names) >= _SEARCH_SAME_FIELD_MIN_SHARED
 
 
 def _search_same_question_folded_ids(
@@ -763,6 +772,15 @@ def _search_same_question_folded_ids(
     card is, with #6993's refused prices already out, so a refused leg cannot
     vote for a pairing.
 
+    One gate is added, and it is #8843's: the two boards must also list the
+    same field (`_search_boards_list_the_same_field`). Discover's title rule
+    drops a trailing parenthetical, so on its own it folds Kalshi's `2028
+    Presidential Election winner? (Party)` (Democratic / Republican) onto
+    Polymarket's person board — the pair #8843 keeps apart, and after #8843
+    drops Kalshi's person board, exactly the order `?q=election` serves. On
+    production (2026-09-26 18:28Z) the gate keeps every Oscars pair the fold
+    finds but one: Best Picture shares 16 names, Best Actor 12, Best Actress 5.
+
     The caller passes the rows BOTH reader lists are cut from, after every
     withdrawal: a withdrawn row never folds its priced twin away. One bad row
     must never wipe the pass (gotcha 42) — a row whose facts cannot be built is
@@ -770,26 +788,37 @@ def _search_same_question_folded_ids(
     """
     from app.utils.discover_bundles import fold_same_question_cards
 
-    items: list[dict] = []
+    folded: set[int] = set()
+    kept: list[tuple] = []  # (listed names, card item), rank order
     for m in markets:
         try:
-            data = {
-                "name": m.name,
-                "source": m.source,
-                "resolution_date": m.resolution_date,
-                "top_outcomes": _build_search_top_outcomes(
-                    m, withheld=withheld_by_market.get(m.id)
-                ),
+            item = {
+                "type": "futures",
+                "data": {
+                    "name": m.name,
+                    "source": m.source,
+                    "resolution_date": m.resolution_date,
+                    "top_outcomes": _build_search_top_outcomes(
+                        m, withheld=withheld_by_market.get(m.id)
+                    ),
+                },
             }
-            items.append({"type": "futures", "data": data})
+            names = _search_listed_names(m)
         except Exception:
             logger.warning(
                 "search: same-question fold skipped market %s",
                 getattr(m, "id", None), exc_info=True,
             )
-            items.append({"type": "unfolded"})
-    kept = {id(item) for item in fold_same_question_cards(items)}
-    return {m.id for m, item in zip(markets, items) if id(item) not in kept}
+            continue
+        if any(
+            _search_boards_list_the_same_field(names, kept_names)
+            and len(fold_same_question_cards([kept_item, item])) == 1
+            for kept_names, kept_item in kept
+        ):
+            folded.add(m.id)
+            continue
+        kept.append((names, item))
+    return folded
 
 
 #: #8628 — the line of an over/under rung: the number right after `O/U`.

@@ -172,6 +172,62 @@ def test_one_bad_row_does_not_wipe_the_pass():
     assert _folded([broken, k_picture(), p_picture()]) == {P_PICTURE}
 
 
+# #8843's specimen, production 2026-09-26 18:3xZ: after #8843 drops Kalshi's
+# person board, `?q=election` hands this fold the Polymarket person board
+# followed by Kalshi's Party board.
+P_PRESIDENT, K_PARTY = 112897, 108327
+ELECTION_CLOSE = datetime(2029, 1, 21, 15, 0, tzinfo=timezone.utc)
+
+
+def p_president():
+    return _market(P_PRESIDENT, "Presidential Election Winner 2028", "polymarket", ELECTION_CLOSE, (
+        ("JD Vance", 0.21), ("Gavin Newsom", 0.18), ("Alexandria Ocasio-Cortez", 0.08),
+        ("Marco Rubio", 0.07), ("Jon Ossoff", 0.05),
+    ))
+
+
+def k_party():
+    return _market(K_PARTY, "2028 Presidential Election winner? (Party)", "kalshi", ELECTION_CLOSE, (
+        ("Democratic party", 0.52), ("Republican party", 0.46),
+    ))
+
+
+def test_precondition_discovers_title_rule_alone_pairs_the_party_board():
+    """Without this the next test is vacuous: Discover's fold drops the
+    trailing `(Party)` and calls the two boards one question."""
+    from app.utils.discover_bundles import fold_same_question_cards
+
+    items = [
+        {"type": "futures", "data": {
+            "name": m.name, "source": m.source, "resolution_date": m.resolution_date,
+            "top_outcomes": [{"name": o.name, "probability": o.probability} for o in m.outcomes],
+        }}
+        for m in (p_president(), k_party())
+    ]
+    assert len(fold_same_question_cards(items)) == 1
+
+
+def test_the_party_board_survives_the_person_board():
+    """🔴 #8843's field gate binds this fold too: the boards share no listed
+    name, so Kalshi's Party board stays on the page."""
+    assert _folded([p_president(), k_party()]) == set()
+
+
+def test_the_field_gate_does_not_cost_the_oscars_fold():
+    """Control for the gate: every Oscars pair still folds with it on (each
+    pair lists at least three of the same names)."""
+    rows = [k_picture(), k_actor(), k_actress(), p_picture(), p_actor(), p_actress()]
+    assert _folded(rows) == {P_PICTURE, P_ACTOR, P_ACTRESS}
+
+
+def test_a_board_listing_two_of_the_same_names_does_not_fold():
+    """Two shared names are not a field (#8843's threshold is three)."""
+    poly = p_picture()
+    for o, name in zip(poly.outcomes[3:], ("Zzz One", "Zzz Two")):
+        o.name = name  # shared now: The Odyssey, Dune: Part Three
+    assert _folded([k_picture(), poly]) == set()
+
+
 # ── the route ───────────────────────────────────────────────────────────────
 
 
