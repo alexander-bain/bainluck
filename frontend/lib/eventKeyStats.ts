@@ -2366,6 +2366,33 @@ export function computeLastChartPoint(
   const periodReading = newestEspnField((row) => row.period?.toString() ?? null);
   const clockReading = newestEspnField((row) => row.game_clock ?? null);
 
+  // #8967 — THE RESTING PLAY MUST BE THE PLAY THAT PRODUCED THE SCORE BESIDE IT.
+  //
+  // The readout under the chart prints this play's sentence and badge on the
+  // same row as `homeScore`/`awayScore` above, so the row reads as "this play
+  // made this score". The two come from different feeds: the score from the
+  // score cascade, the play from the box score's `scoring_plays`, which lags.
+  // Production 2026-09-26 23:07Z, `/events/15313791` (Iowa 20 @ Michigan 19,
+  // won on the last play): the row read `Final · 19 – 20 · Passing Touchdown ·
+  // B. Underwood pass to JJ Buchanan for 49 yds, for a TD` — Michigan's 3:22 PM
+  // touchdown, which made it 19–14, printed as the play that won Iowa the game.
+  // Iowa's winning play had not arrived in `scoring_plays` yet.
+  //
+  // Each play carries the score it produced. When that score and the one this
+  // row prints are both known and differ, the play is not this score's play and
+  // is not shown. The card falls back to its probability line, which is true.
+  // No score on either side is no evidence either way, so that play stays as before.
+  const restingPlay =
+    latestPlay &&
+    latestPlay.home_score != null &&
+    latestPlay.away_score != null &&
+    resolvedHomeScore !== null &&
+    resolvedAwayScore !== null &&
+    (latestPlay.home_score !== resolvedHomeScore ||
+      latestPlay.away_score !== resolvedAwayScore)
+      ? null
+      : latestPlay;
+
   return {
     timestamp:
       lastEspn?.timestamp ||
@@ -2385,7 +2412,7 @@ export function computeLastChartPoint(
     ...(clockReading.carried
       ? { clockApprox: true, clockObservedAt: clockReading.at }
       : {}),
-    scoringPlay: latestPlay,
+    scoringPlay: restingPlay,
     scoreStamp,
     scoreFrom,
   };
