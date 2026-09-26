@@ -2778,3 +2778,97 @@ async def test_the_refill_from_the_window_serves_what_the_refill_query_served(
     assert [f.get("id") for f in fast["futures"]] == [
         f.get("id") for f in slow["futures"]
     ]
+
+
+# ---------------------------------------------------------------------------
+# #8756 — `eagles` shows the Philadelphia Eagles on the teams card
+# ---------------------------------------------------------------------------
+
+#: Six college rows that say "Eagles" THREE times across name + aliases — they
+#: score 4.5 on `ts_rank_cd`, above Philadelphia's 3.0 (name + one alias).
+_EAGLES_REPEATERS = (
+    ("American Eagles", ["Eagles", "American", "American University Eagles"]),
+    ("Coppin St Eagles", ["Eagles", "Coppin St", "Coppin State Eagles"]),
+    ("Morehead St Eagles", ["Morehead State Eagles", "Eagles", "Morehead St"]),
+    ("Georgia Southern Eagles", ["Eagles", "GA Southern", "Georgia Southern Eagles"]),
+    ("Eastern Washington Eagles", ["Eagles", "E Washington", "Eastern Washington Eagles"]),
+    ("Boston College Eagles", ["Eagles", "Boston College", "Boston College Eagles"]),
+)
+#: Twenty rows tied with Philadelphia at 3.0 whose names sort BEFORE it — so the
+#: old `rank, name` window put Philadelphia at row 27 of 25 (production: 26).
+_EAGLES_TIES = tuple(
+    (f"{school} Eagles", ["Eagles", school])
+    for school in (
+        "Abilene", "Akron", "Albany", "Alcorn", "Auburn", "Ball", "Baylor",
+        "Belmont", "Brown", "Butler", "Campbell", "Canisius", "Cornell",
+        "Dayton", "Drake", "Elon", "Furman", "Hofstra", "Idaho", "Lamar",
+    )
+)
+
+
+@pytest.fixture
+async def search_with_many_eagles(seeded_db, search):
+    """`?q=eagles` on production 2026-09-26, reduced to its shape (#8756)."""
+    from sqlalchemy import select
+
+    from app.models.models import Sport, Team
+
+    _engine, maker = seeded_db
+    async with maker() as session:
+        # Both sports are in the base seed.
+        sports = {
+            s.key: s
+            for s in (
+                await session.execute(
+                    select(Sport).where(
+                        Sport.key.in_(("americanfootball_nfl", "basketball_ncaab"))
+                    )
+                )
+            ).scalars()
+        }
+        nfl, ncaab = sports["americanfootball_nfl"], sports["basketball_ncaab"]
+        session.add(
+            Team(
+                sport_id=nfl.id, name="Philadelphia Eagles",
+                abbreviation="PHI", alternate_names=["Eagles"],
+            )
+        )
+        for name, aliases in _EAGLES_REPEATERS + _EAGLES_TIES:
+            session.add(Team(sport_id=ncaab.id, name=name, alternate_names=aliases))
+        await session.commit()
+    return search
+
+
+def _team_names(payload: dict) -> list[str]:
+    return [t.get("name") for t in payload.get("teams") or []]
+
+
+async def test_eagles_leads_the_teams_card_with_the_philadelphia_eagles(
+    search_with_many_eagles,
+):
+    teams = _team_names(await search_with_many_eagles("eagles"))
+    assert teams[0] == "Philadelphia Eagles", teams
+    assert len(teams) == 5, teams
+
+
+async def test_without_the_marquee_tiebreak_philadelphia_is_never_fetched(
+    search_with_many_eagles, monkeypatch,
+):
+    """Strawman: the old `rank, name` window. Philadelphia sorts past row 25, so
+    no ranking below can reach it — the fixture reproduces the defect."""
+    from sqlalchemy import literal
+
+    from app.routes import events as events_module
+
+    monkeypatch.setattr(events_module, "_team_marquee_order", lambda: literal(0))
+    teams = _team_names(await search_with_many_eagles("eagles"))
+    assert "Philadelphia Eagles" not in teams, teams
+
+
+async def test_a_query_naming_a_college_keeps_the_college_first(
+    search_with_many_eagles,
+):
+    """Control: the scorer still ranks text first — `american eagles` is not
+    handed to the NFL club because it is marquee."""
+    teams = _team_names(await search_with_many_eagles("american eagles"))
+    assert teams[0] == "American Eagles", teams
