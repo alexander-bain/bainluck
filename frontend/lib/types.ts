@@ -927,6 +927,18 @@ export interface FuturesMarket {
    * keeps today's behaviour rather than silently suppressing every chip.
    */
   market_tier?: number | null;
+  /**
+   * #8906 — the kickoff of the game this market is LINKED to (the event's
+   * `commence_time`), served by `/api/events/search` only. For a Kalshi game
+   * prop `resolution_date` is the venue's settlement date, ~2 days after the
+   * game, so a search answer dated by it read `Sep 29` under a GAMES row for the
+   * same game reading `Tomorrow`.
+   *
+   * OPTIONAL, and absent is a third state: an unlinked market (Fed, elections,
+   * championships) never carries the key, and Vercel ships ahead of Heroku, so
+   * an older payload omits it too. Absent keeps the settlement-date label.
+   */
+  event_commence_time?: string | null;
   source_count?: number;
   group_id?: string | null;
   canonical_market_key?: string | null;

@@ -17,7 +17,7 @@ import { outcomeRowVerdict } from "@/components/futures/OutcomeRow";
 import {
   leaderOutcome,
   movementArrow,
-  resolutionLabel,
+  answerDateLabel,
   familyRowTitles,
   familySharedHead,
 } from "@/components/searchFamilyDisplay";
@@ -49,7 +49,8 @@ function AnswerRow({
   // today's price.
   const verdict = ld ? outcomeRowVerdict(ld, market.status === "resolved") : null;
   const arrow = ld && verdict === null ? movementArrow(ld.movement) : null;
-  const reso = resolutionLabel(market.resolution_date);
+  // #8906: a row about a game is dated by its kickoff, not its settlement.
+  const reso = answerDateLabel(market);
   const nameClass = prominent
     ? "text-sm font-medium text-text-primary"
     : "text-sm text-text-secondary";
