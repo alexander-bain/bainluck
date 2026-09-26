@@ -273,25 +273,32 @@ export const PROP_SCRIPT_FOLD = 0.94;
 export const PROP_STRUCTURAL_CERTAINTY = 0.44;
 
 /**
- * ── THE MOVEMENT FLOOR: WHERE "IT MOVED" STOPS BEING A JUDGEMENT CALL ────────
+ * ── THE MOVEMENT LINE IS THE PRINTED NUMBER ─────────────────────────────────
  *
- * UX-P108. Extracted, not introduced: this is the literal `0.005` that has
- * always typed `DivergenceRow.direction`, given a name so that the pregame
- * ranking and the rendered bar cannot hold two different opinions about which
- * rows moved.
+ * UX-P108 named the literal that has always typed `DivergenceRow.direction`
+ * so that the pregame ranking and the rendered bar could not hold two opinions
+ * about which rows moved. `hasTravelled` below is `direction !== "flat"`, so **a
+ * row is in the movement tier exactly when its own bar draws a journey** — and
+ * Alex verifies this rail from a screenshot, so the ranking and the picture must
+ * not be able to disagree.
  *
- * That matters more here than it reads. `hasTravelled` below is defined as
- * `direction !== "flat"`, so **a row is in the movement tier exactly when its
- * own bar draws a journey.** Alex verifies this rail from a screenshot; a
- * ranking whose top tier is not the set of rows that visibly moved would be
- * unreviewable at the only bar that has ever been applied to it. A second
- * constant here — even one set to the same 0.005 — would be free to drift.
- *
- * Half a point is also the resolution the surface actually has: `pct()` renders
- * whole percent, so below this line "opened at 27% — it's 27% now" is the
- * sentence the reader gets.
+ * #8754: the literal was a raw half-point floor on `|current - pregameMark|`,
+ * standing in for "the two printed numbers differ". It is not the same line.
+ * Marks sit on a half-point grid, so a move of EXACTLY half a point off a `.5`
+ * mark prints both ends the same: `/events/15315945` (2026-09-26 00:40Z, 390px)
+ * led "What's moving" 4th with Indiana's `2+ team receiving touchdowns —
+ * opened 67% · now 67%`, served `0.665 → 0.67`, a travel of 0.005 that is not
+ * below the floor. The converse is wrong too: `0.674 → 0.676` prints `67% → 68%`
+ * and read flat. So the line is now the printed number itself, taken with the
+ * rounding `PropTravelBar` prints with — one function, two callers.
  */
-export const PROP_TRAVEL_FLOOR = 0.005;
+export function railPercentPoints(p: number): number {
+  return Math.round(p * 100);
+}
+
+function printsAsMoved(from: number, to: number): boolean {
+  return railPercentPoints(from) !== railPercentPoints(to);
+}
 
 /**
  * ── TWO LEGS OF ONE QUESTION THAT DISAGREE ABOUT WHERE IT OPENED (#8313) ──────
@@ -386,8 +393,8 @@ function ladderFamilyKey(row: Pick<DivergenceRow, "player" | "stat">): string {
 /**
  * Did this question actually move before first pitch?
  *
- * Defined off `direction`, NOT off a second comparison against
- * `PROP_TRAVEL_FLOOR`, and that is the whole point: the movement tier is then
+ * Defined off `direction`, NOT off a second comparison of the printed
+ * numbers (`railPercentPoints`), and that is the whole point: the movement tier is then
  * the set of rows whose own bar renders a journey, by construction rather than
  * by agreement. A screenshot is the bar this rail is judged at, so the ranking
  * and the picture must not be able to disagree.
@@ -530,7 +537,7 @@ export interface DivergenceRow {
   current: number;
   /** |current - pregameMark|, 0..1. */
   travel: number;
-  /** Which way it travelled. `flat` when travel rounds to nothing. */
+  /** Which way it travelled. `flat` when both ends print the same number (#8754). */
   direction: "over" | "under" | "flat";
   /**
    * In-game: travel at or above PROP_SURPRISE_TRAVEL. Post-game: surprise at or
@@ -1386,8 +1393,11 @@ function buildCandidates(input: DivergenceInput): BuiltCandidates {
       pregameMark,
       current,
       travel,
-      direction:
-        travel < PROP_TRAVEL_FLOOR ? "flat" : current > pregameMark ? "over" : "under",
+      direction: !printsAsMoved(pregameMark, current)
+        ? "flat"
+        : current > pregameMark
+          ? "over"
+          : "under",
       surprising: travelAtOrAbove(travel, PROP_SURPRISE_TRAVEL),
       sentence: null,
       settled,
@@ -1634,8 +1644,8 @@ function scriptSalience(row: DivergenceRow): number {
  *
  * `scriptSalience` is kept there rather than replaced by raw conviction so the
  * rail and the detail fold keep sharing one function. It costs nothing: every
- * row in tier 2 has travel below `PROP_TRAVEL_FLOOR`, so its travel term is at
- * most 0.005/0.20 = 0.025 and the conviction term decides. Asserted in the
+ * row in tier 2 prints both ends the same (#8754), so its travel is under one
+ * point and its travel term under 0.01/0.20 = 0.05; the conviction term decides. Asserted in the
  * suite rather than left as a comment.
  */
 function byScript(a: DivergenceRow, b: DivergenceRow): number {

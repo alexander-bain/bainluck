@@ -63,10 +63,11 @@ const PERMITTED: Record<string, { count: number; because: string }> = {
     because: "bar width only; the label is formatProbability",
   },
   "components/event/PropsSection.tsx": {
-    count: 5,
+    count: 4,
     because:
-      "two movement deltas in points, a fill width, a tick POSITION and an " +
-      "outcome-bar width — the printed number goes through `pct()`, which routes",
+      "one movement delta in points (the outcome card's), a fill width, a tick " +
+      "POSITION and an outcome-bar width — the printed number goes through `pct()`, " +
+      "which routes; #8754 routed THE DIVERGENCE's delta and unchanged test",
   },
   "components/event/TwoSidedTimeline.tsx": {
     count: 1,

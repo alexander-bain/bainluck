@@ -36,7 +36,7 @@ import {
   PROP_SCRIPT_CONVICTION,
   PROP_STRUCTURAL_CERTAINTY,
   PROP_SURPRISE_TRAVEL,
-  PROP_TRAVEL_FLOOR,
+  railPercentPoints,
   RAIL_MAX_PER_LADDER,
   RAIL_MAX_PER_PLAYER,
   RAIL_MAX_ROWS,
@@ -164,7 +164,8 @@ describe("movement ranks first — a TIER, not a blend", () => {
     // fold share one function. That is only harmless because every tier-2 row
     // has travel below the floor, so its travel term cannot reach the conviction
     // term. Asserted, not asserted-in-a-comment.
-    const maxTravelTerm = PROP_TRAVEL_FLOOR / PROP_SURPRISE_TRAVEL;
+    // #8754: a flat row prints both ends the same, so its travel is under a point.
+    const maxTravelTerm = 0.01 / PROP_SURPRISE_TRAVEL;
     for (const [id, rows] of ALL) {
       const flat = candidates(rows).filter((r) => r.direction === "flat");
       for (const row of flat) {
@@ -176,15 +177,17 @@ describe("movement ranks first — a TIER, not a blend", () => {
     }
   });
 
-  it("the floor is the same half-point line that types the bar", () => {
+  it("a row is flat exactly when its bar prints the same number at both ends", () => {
     // `hasTravelled` is defined as `direction !== "flat"`, so the movement tier
     // is exactly the set of rows whose own bar draws a journey. If these two
     // ever diverge, a screenshot stops being able to check the ranking — and a
     // screenshot is the only bar this surface has ever been judged at.
-    expect(PROP_TRAVEL_FLOOR).toBe(0.005);
+    // #8754: the line is the printed number, not a raw half-point floor.
     for (const [, rows] of ALL) {
       for (const row of candidates(rows)) {
-        expect(row.direction === "flat").toBe(row.travel < PROP_TRAVEL_FLOOR);
+        expect(row.direction === "flat").toBe(
+          railPercentPoints(row.pregameMark) === railPercentPoints(row.current),
+        );
       }
     }
   });
