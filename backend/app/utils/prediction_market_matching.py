@@ -486,7 +486,17 @@ _DERIVATIVE_MARKET_TYPE = (
     # Seahawks - Highest Scoring Quarter" named an away team on production
     # 2026-09-05, twice. The segment alternation above cannot reach it — the
     # period word is the TAIL of the market type here, not a leading "1st Half".
-    r'|Highest\s+Scoring\s+(?:Quarter|Half|Period|Inning))'
+    r'|Highest\s+Scoring\s+(?:Quarter|Half|Period|Inning)'
+    # #8854: a LINEUP prop, and the first market type measured with a TEAM in
+    # front of it — "Croatia vs. England - Croatia Starting 11". It minted 55
+    # phantom games from 2026-09-25 04:26Z, two per Nations League fixture
+    # ("Croatia / England - Croatia Starting 11"), every one id-less. The team
+    # slot is up to six words joined by a space or a BARE hyphen, so
+    # "Bosnia-Herzegovina" is one team while the spaced " - " separator can never
+    # be crossed — the earlier `[^-]` slot cleaned that name to "Wales - Bosnia".
+    # No lazy quantifier and no `\s` inside brackets: this pattern also runs in
+    # Postgres (`repair_2871_phantom_derivative_events.DERIV_RE`).
+    r"|(?:[^ –—:-]+(?:[ -][^ –—:-]+){0,5}\s+)?Starting\s+(?:11|XI|Eleven|Line-?ups?))"
 )
 # NOTE: "- Game N" is deliberately NOT here. It designates a distinct real game
 # in a series, so stripping it would merge Games 1-5 into one event — a
