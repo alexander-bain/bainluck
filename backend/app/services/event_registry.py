@@ -459,6 +459,10 @@ class EventIdentity:
     # Optional enrichment
     commence_time_source: Optional[str] = None  # "odds_api", "espn", "statpal"
     status: Optional[str] = None  # "scheduled" or "live"
+    # #8841: ``commence_time`` is a date-only placeholder (ESPN ``timeValid=false``
+    # — midnight Eastern), good for matching and for minting a row, never for
+    # overwriting the clock of a row that already has one.
+    commence_time_is_placeholder: bool = False
 
 
 async def find_or_create_event(
@@ -1311,7 +1315,7 @@ def _update_fields_by_priority(
         identity.claim.source,
         same_record_revision=same_record,
     )
-    if identity.commence_time and outranks:
+    if identity.commence_time and outranks and not identity.commence_time_is_placeholder:
         apply_authorized_commence_time(
             event,
             identity.commence_time,

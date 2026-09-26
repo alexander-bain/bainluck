@@ -19,6 +19,7 @@ from app.utils.event_completion import authority_may_settle, play_resumes
 from app.utils.game_state import _sanitize_period, live_write_would_revert
 from app.utils.live_state_write import write_live_state_if_unmoved
 from app.utils.start_time_authority import provider_may_set_start
+from app.utils.espn_start_time import espn_start_time
 from app.utils.name_normalization import (
     names_match as _canonical_names_match,
     normalize_name as _normalize_name,
@@ -1280,20 +1281,23 @@ async def update_event_fields_from_espn(
     # Correct commence_time from ESPN if significantly different
     # The Odds API occasionally returns local times as UTC
     # Only where the registry's start-time ranking lets ESPN overwrite (#8653)
-    if ee.date and event.commence_time:
-        time_diff = abs((ee.date - event.commence_time).total_seconds())
+    # #8841: and only a start ESPN has ANNOUNCED — `timeValid=false` is a
+    # midnight-Eastern placeholder, never a correction.
+    espn_start = espn_start_time(ee)
+    if espn_start and event.commence_time:
+        time_diff = abs((espn_start - event.commence_time).total_seconds())
         # #190 guard: never move commence_time to AFTER an already-recorded
         # completed_at — that inverts the invariant (a game finishing before it
         # starts) and is a signal this ESPN game belongs to a different sibling.
         _would_invert = commence_correction_inverts_completion(
-            ee.date, getattr(event, "completed_at", None)
+            espn_start, getattr(event, "completed_at", None)
         )
         if _would_invert:
             logger.warning(
                 "ESPN fold guard: refused commence_time correction on event %d "
                 "(%s vs %s) — new commence %s is after completed_at %s (#190/gotcha #32)",
                 event.id, event.home_team_name, event.away_team_name,
-                ee.date.isoformat(), event.completed_at.isoformat(),
+                espn_start.isoformat(), event.completed_at.isoformat(),
             )
         # #8653: the registry's ranking decides, not a hard-coded "defer to
         # StatPal" — espn outranks statpal, so a stale StatPal start no longer
@@ -1304,10 +1308,10 @@ async def update_event_fields_from_espn(
             logger.info(
                 f"ESPN: Correcting commence_time for event {event.id} "
                 f"({event.home_team_name} vs {event.away_team_name}): "
-                f"{event.commence_time.isoformat()} -> {ee.date.isoformat()} "
+                f"{event.commence_time.isoformat()} -> {espn_start.isoformat()} "
                 f"(diff: {time_diff/3600:.1f}h)"
             )
-            event.commence_time = ee.date
+            event.commence_time = espn_start
             event.commence_time_source = "espn"
             changed = True
 
@@ -2132,6 +2136,10 @@ async def create_events_from_unmatched_espn(session, our_events, espn_events, sp
                 claim=_EC("espn", ee.espn_id, schedule_derived=True),
                 commence_time_source="espn",
                 status=_create_status,
+                # #8841: an unannounced start still matches and still mints (a
+                # game ESPN lists must exist), but never moves a matched row's
+                # clock onto ESPN's midnight-Eastern placeholder.
+                commence_time_is_placeholder=espn_start_time(ee) is None,
             )
             event, created = await _foc(session, identity)
 
@@ -2340,9 +2348,12 @@ async def sync_scheduled_events(session, sport_key, espn_events, stats):
         # and the answer to a wrong id is never to move the game to meet it. Refuse
         # and count, so the wrongly-keyed row stays findable instead of being tidied
         # into plausibility.
-        if ee.date and event.commence_time:
-            time_diff = abs((ee.date - event.commence_time).total_seconds())
-            if time_diff > 300 and pair_verdict(event.commence_time, ee.date) is not Pairing.SAME:
+        #
+        # #8841: a `timeValid=false` date is a placeholder, not a start — no move.
+        espn_start = espn_start_time(ee)
+        if espn_start and event.commence_time:
+            time_diff = abs((espn_start - event.commence_time).total_seconds())
+            if time_diff > 300 and pair_verdict(event.commence_time, espn_start) is not Pairing.SAME:
                 stats["scheduled_commence_move_refused"] = (
                     stats.get("scheduled_commence_move_refused", 0) + 1
                 )
@@ -2351,7 +2362,7 @@ async def sync_scheduled_events(session, sport_key, espn_events, stats):
                     "%s -> %s is %.1fh, beyond the same-game window — the espn_id "
                     "on this row (%s) points at a different game (#1947)",
                     event.id, event.home_team_name, event.away_team_name,
-                    event.commence_time.isoformat(), ee.date.isoformat(),
+                    event.commence_time.isoformat(), espn_start.isoformat(),
                     time_diff / 3600, event.espn_id,
                 )
             elif time_diff > 300 and provider_may_set_start(
@@ -2361,10 +2372,10 @@ async def sync_scheduled_events(session, sport_key, espn_events, stats):
                 logger.info(
                     f"ESPN: Correcting commence_time for scheduled event {event.id} "
                     f"({event.home_team_name} vs {event.away_team_name}): "
-                    f"{event.commence_time.isoformat()} -> {ee.date.isoformat()} "
+                    f"{event.commence_time.isoformat()} -> {espn_start.isoformat()} "
                     f"(diff: {time_diff/3600:.1f}h)"
                 )
-                event.commence_time = ee.date
+                event.commence_time = espn_start
                 event.commence_time_source = "espn"
         if ee.broadcasts and not event.broadcast_info:
             event.broadcast_info = ", ".join(ee.broadcasts)

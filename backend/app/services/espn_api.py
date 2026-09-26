@@ -360,6 +360,29 @@ class ESPNEvent:
     # reader of `status` compares it against "in"/"post"/"final" and none of
     # them should change meaning; see `espn_stopped_without_result`.
     stopped_without_result: bool = False
+    # #8841: ESPN's `timeValid`. False means `date` is the date-only placeholder
+    # (T04:00Z = midnight Eastern), not a start anybody announced. `date` stays
+    # set — the Eastern DATE is right and matching/board-day reads need it — but
+    # no rail may write it as a start time; they read
+    # `app.utils.espn_start_time.espn_start_time`.
+    time_valid: bool = True
+
+
+def espn_time_valid(competition: dict, event_data: dict) -> bool:
+    """Has ESPN announced a start time for this competition? (#8841)
+
+    Two payload shapes, like ``status``/``date`` in ``_parse_event``: the
+    scoreboard puts ``timeValid`` on ``competitions[0]``; the summary puts it on
+    ``header``, which ``get_event`` spreads into the top level. Measured
+    2026-09-26 on BOS @ NYY 401907924: scoreboard ``competitions[0].timeValid``
+    False (event level absent); summary ``header.timeValid`` False
+    (``header.competitions[0]`` absent). Only an explicit ``False`` counts —
+    an absent key is the pre-#8841 reading (valid), so no other payload moves.
+    """
+    flag = competition.get("timeValid")
+    if flag is None:
+        flag = event_data.get("timeValid")
+    return flag is not False
 
 
 def espn_terminal_state(status_type: dict) -> Optional[str]:
@@ -1087,6 +1110,7 @@ class ESPNAPIService:
                 home_win_probability=home_win_prob,
                 season_type=season_type_val,
                 stopped_without_result=espn_stopped_without_result(status_type),
+                time_valid=espn_time_valid(competition, event_data),
             )
         except Exception as e:
             logger.error(f"Error parsing ESPN event: {e}")

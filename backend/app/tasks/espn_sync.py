@@ -2480,6 +2480,13 @@ async def _recover_unstarted_authority_fixtures(session, espn, now, stats):
             # Gate 1 — absent or dark, indistinguishable here and both silent.
             stats["unstarted_recovery_no_answer"] += 1
         else:
+            # Deliberately `date`, NOT `espn_start_time` (#8841). Every other
+            # rail refuses a `timeValid=false` placeholder because the row's own
+            # clock is the better answer; here the row's clock is the defect — a
+            # past start holding an unplayed game `live` — and refusing would
+            # leave it live. ESPN's midnight-Eastern placeholder is on the right
+            # date and in the future, so it un-lives the row; the next announced
+            # start corrects it through `espn_helpers`.
             starts_at = getattr(espn_event, "date", None)
             if starts_at is not None and starts_at.tzinfo is None:
                 starts_at = starts_at.replace(tzinfo=timezone.utc)
