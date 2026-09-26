@@ -176,6 +176,21 @@ nonisolated struct SearchFuturesOutcome: Decodable, Identifiable, Sendable {
     let americanOdds: Int?
     let rank: Int?
     let movement: Double?
+    /// #8640: the leg's grade and who wrote it (latency's #8648). Read only
+    /// through `OutcomeVerdict` — `is_winner` alone is not a grade. `var` with a
+    /// default so the memberwise init keeps its old shape; `Decodable` still
+    /// reads both keys.
+    var isWinner: Bool? = nil
+    var resolutionSource: String? = nil
+
+    /// Has the venue already called this leg, as the row may say it?
+    func verdict(in market: SearchFuturesMarket) -> OutcomeVerdict? {
+        OutcomeVerdict.verdict(
+            isWinner: isWinner,
+            resolutionSource: resolutionSource,
+            marketResolved: market.status == "resolved"
+        )
+    }
 }
 
 /// Pagination metadata for search results.
