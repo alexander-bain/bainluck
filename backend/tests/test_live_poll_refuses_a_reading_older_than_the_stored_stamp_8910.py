@@ -30,7 +30,9 @@ the ordering signal was on the row the whole time; nothing compared it.
 * atomic (independent review, 2026-09-26): the read the comparison is made on
   takes the event row's lock and holds it to the write's commit. Unlocked, a
   socket stamp landing between read and write is never compared, and the
-  whole-column write erases it and any sibling stamped in the gap.
+  whole-column write erases it and any sibling stamped in the gap;
+* release: a REFUSED reading lets go of that lock at once (commit before the
+  next statement), so the socket is never held behind a reading we dropped.
 """
 
 from __future__ import annotations
@@ -205,6 +207,26 @@ class TestTheComparisonHoldsAtTheCommit:
         assert ("commit", None) not in journal[read_at:write_at], (
             "the lock is released between the comparison and the write",
             journal[read_at : write_at + 1],
+        )
+
+    async def test_a_refusal_lets_go_of_the_lock_before_anything_else(
+        self, monkeypatch
+    ):
+        """Codex review of 104d7bd4: the refused branch kept the row lock."""
+        now = _now()
+        stamped, _points, stats = await _written(
+            monkeypatch,
+            _beat(last_seen=now - timedelta(seconds=150)),
+            _stored_at(now - timedelta(seconds=15)),
+        )
+        assert stats["stale_readings_refused"] == 1 and stamped == [], (
+            "control: the beat never refused"
+        )
+        journal = _written.last_session.journal
+        read_at = journal.index(("execute", "select:win_probability_sources"))
+        assert journal[read_at + 1] == ("commit", None), (
+            "the refused reading's row lock is carried into the next statement",
+            journal[read_at : read_at + 3],
         )
 
 

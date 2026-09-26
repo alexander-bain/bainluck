@@ -29,7 +29,10 @@ the venue stubbed; the WebSocket write is the WS lane's own statement
   commits inside the pause and the poll erases both;
 * refused: the WS stamp commits after the pass fetched but before its read — the
   poll's reading is the older observation, so neither hero stamp nor chart point
-  is written (ab20943d's own arm, here on real Postgres).
+  is written (ab20943d's own arm, here on real Postgres);
+* released (Codex review of 104d7bd4): after that refusal, the next statement
+  the poll sends finds the event row unlocked — a second session takes it
+  NOWAIT. Without the refusal's commit the lock rides into the next event.
 
 Runs where `SEARCH_TEST_DATABASE_URL` is set (CI `search-recall`).
 """
@@ -124,7 +127,26 @@ async def _ws_stamp(Session, event_id: int) -> None:
         await ws.commit()
 
 
-async def _run_poll(Session, *, before_read=None, at_chart_point=None):
+async def _row_is_locked(Session, event_id: int) -> bool:
+    """Does another transaction hold the event row? A second session asks NOWAIT."""
+    from sqlalchemy.exc import DBAPIError
+
+    async with Session() as probe:
+        try:
+            await probe.execute(
+                text("SELECT 1 FROM events WHERE id = :id FOR UPDATE NOWAIT"),
+                {"id": event_id},
+            )
+        except DBAPIError:
+            return True
+        finally:
+            await probe.rollback()
+    return False
+
+
+async def _run_poll(
+    Session, *, before_read=None, at_chart_point=None, after_locked_read=None
+):
     """The REAL beat on its own session; only the venue is stubbed."""
     from app.services.kalshi_api import KalshiAPIService
     from app.tasks import prediction_market_matching as pmm
@@ -150,6 +172,21 @@ async def _run_poll(Session, *, before_read=None, at_chart_point=None):
         return await real_orient(session, event_id, reading, source)
 
     async with Session() as poll_session:
+        if after_locked_read is not None:
+            # The first statement the poll sends after its FOR UPDATE read.
+            real_execute = poll_session.execute
+            state = {"locked_read": False}
+
+            async def _execute(stmt, *a, **kw):
+                if state["locked_read"]:
+                    state["locked_read"] = False
+                    await after_locked_read()
+                result = await real_execute(stmt, *a, **kw)
+                if getattr(stmt, "_for_update_arg", None) is not None:
+                    state["locked_read"] = True
+                return result
+
+            poll_session.execute = _execute
 
         @asynccontextmanager
         async def _session_cm(**_budget):
@@ -243,6 +280,29 @@ class TestSocketCommitBeforeTheReadIsRefused:
         assert stored["kalshi"]["value"] == WS_KALSHI, stored
         assert stored["polymarket"]["value"] == WS_POLYMARKET, stored
         assert await _kalshi_points(Session, event_id) == []
+
+    async def test_the_refusal_releases_the_row_before_its_next_statement(
+        self, pg
+    ):
+        Session, event_id = pg
+        seen: dict = {}
+
+        async def before_read():
+            await _ws_stamp(Session, event_id)
+
+        async def after_locked_read():
+            seen["locked"] = await _row_is_locked(Session, event_id)
+
+        stats = await _run_poll(
+            Session, before_read=before_read, after_locked_read=after_locked_read
+        )
+
+        assert stats["stale_readings_refused"] == 1, stats
+        assert "locked" in seen, "control: the poll sent nothing after its read"
+        assert seen["locked"] is False, (
+            "the refused reading still holds the event row: the socket's next "
+            "write to this game waits on a reading the poll already dropped"
+        )
 
     async def test_control_with_no_socket_write_the_poll_stamps(self, pg):
         Session, event_id = pg

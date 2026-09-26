@@ -10272,6 +10272,11 @@ async def _poll_live_prediction_market_prices():
                 # The socket just wrote this source, so nothing is left unfed.
                 if _predates2(_stored_wps2, market.source, _observed2):
                     stats["stale_readings_refused"] += 1
+                    # #8910 review: the refusal still holds the FOR UPDATE
+                    # above. Carried into the next event it would stall the
+                    # socket's writes to THIS game, and consecutive refusals
+                    # would pile up row locks across games.
+                    await _commit_boundary()
                     continue
 
                 # Write snapshot with deduplication
