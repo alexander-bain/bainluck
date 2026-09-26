@@ -222,8 +222,8 @@ nonisolated struct ESPNData: Decodable, Sendable {
 /// One source's win probability value and display metadata.
 nonisolated struct WinProbSource: Decodable, Sendable {
     /// The source write clock, used to reconcile cached REST against live push.
-    let updatedAt: String?
-    let value: WinProbValue?
+    var updatedAt: String?
+    var value: WinProbValue?
     let displayName: String?
     let type: String?
     let color: String?
@@ -266,7 +266,7 @@ nonisolated struct WinProbSource: Decodable, Sendable {
 /// the point — a source the blend reads is a source the app names.
 enum WinProbSourceCatalog {
     /// The seven keys the backend blends. Everything else in the map is metadata.
-    static let realSourceKeys: Set<String> = [
+    nonisolated static let realSourceKeys: Set<String> = [
         "final_result", "betting", "espn", "stat_model", "kalshi", "polymarket", "mlb",
     ]
 
