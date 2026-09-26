@@ -84,9 +84,8 @@ final class CalibrationQuarantineTests8476: XCTestCase {
         XCTAssertEqual(
             vm.quarantineCaption,
             "2,069 resolved outcomes are excluded from every curve on this page while we check them. "
-                + "They are not graded, not counted, and not deleted \u{2014} a held-out row is a stated "
-                + "exclusion we can reverse, which is the difference between a quarantine and a "
-                + "quietly shorter denominator.")
+                + "They are not graded, not counted, and not deleted, so the ones that check out can "
+                + "be put back.")
         // The full number, not `compactCount`'s "2.1K": the two screens must print the same figure.
         XCTAssertEqual(vm.quarantineCount(2069), "2,069")
     }

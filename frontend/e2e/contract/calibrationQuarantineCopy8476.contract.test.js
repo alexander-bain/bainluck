@@ -33,8 +33,7 @@ const swiftView = swiftText(read("ios/Bain Luck/Bain Luck/Views/CalibrationView.
 
 const SENTENCE =
   "excluded from every curve on this page while we check them. They are not graded, " +
-  "not counted, and not deleted — a held-out row is a stated exclusion we can " +
-  "reverse, which is the difference between a quarantine and a quietly shorter denominator.";
+  "not counted, and not deleted, so the ones that check out can be put back.";
 
 describe("#8476 held-out card copy: web and native carry the same words", () => {
   it("web still prints the caption sentence this file pins", () => {
@@ -53,6 +52,13 @@ describe("#8476 held-out card copy: web and native carry the same words", () => 
     }
     assert.ok(web.includes("Held out, under review"), "web card title changed");
     assert.ok(swiftView.includes('"Held out, under review"'), "native card title differs from web");
+  });
+
+  // #8939: the caption used to end "the difference between a quarantine and a quietly
+  // shorter denominator" — words for a reviewer, not a reader (D102). The pin above makes
+  // both surfaces agree; this keeps the pin itself in plain English.
+  it("the pinned caption carries no reviewer jargon (#8939)", () => {
+    assert.ok(!/quarantine|denominator/i.test(SENTENCE), "the caption is back to reviewer words");
   });
 
   it("guard is not vacuous: a one-word edit to either copy is detected", () => {

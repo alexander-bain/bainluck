@@ -906,9 +906,8 @@ final class CalibrationViewModel: ObservableObject {
         let total = quarantineTotal
         return "\(Self.fmt(total)) resolved \(total == 1 ? "outcome is" : "outcomes are") "
             + "excluded from every curve on this page while we check them. They are not "
-            + "graded, not counted, and not deleted \u{2014} a held-out row is a stated "
-            + "exclusion we can reverse, which is the difference between a quarantine and a "
-            + "quietly shorter denominator."
+            + "graded, not counted, and not deleted, so the ones that check out can be put "
+            + "back."
     }
 
     // MARK: - Chart point conversion (rendering only)
