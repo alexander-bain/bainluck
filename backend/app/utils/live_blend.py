@@ -209,7 +209,7 @@ class BlendReading:
     #: cannot carry one.
     away_probability: Optional[float] = None
     draw_probability: Optional[float] = None
-    #: The admitted PM reading is its unique home-named outcome's raw quote,
+    #: The admitted reading is its unique home-named outcome's raw quote,
     #: not a complement or composite. This proves home orientation only: it
     #: does not assert an away/draw partition (#8814).
     named_home_quote: bool = False
@@ -270,6 +270,21 @@ def _home_probability_for_market(
         return None
 
     outcome, yes_is_home = ml_result
+    if (
+        not yes_is_home
+        and _fuzzy_team_match(outcome.name, away_team_name)
+        and not _fuzzy_team_match(outcome.name, home_team_name)
+    ):
+        from app.utils.venue_settlement import _names_a_draw
+
+        # A named away win plus an explicit draw is not a binary complement.
+        # Draw identity survives a temporarily absent price; lacking a priced
+        # home leg means no home reading, never P(home) = 1 - P(away).
+        if any(
+            _names_a_draw(candidate.name, home_team_name, away_team_name)
+            for candidate in ordered
+        ):
+            return None
     if outcome.current_probability is None:
         return None
     yes_prob = float(outcome.current_probability)
@@ -1288,8 +1303,7 @@ def compute_source_home_probability(
         yes_probability=yes_prob,
         devigged=devigged,
         named_home_quote=(
-            speaker.market.source == "polymarket"
-            and not devigged
+            not devigged
             and home_prob == yes_prob
             and _is_unique_named_home_quote(
                 speaker, outcome, home_team_name, away_team_name

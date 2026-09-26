@@ -101,12 +101,12 @@ async def test_proven_partition_discards_old_boolean_before_a_later_two_way_read
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("away,draw", [(None, None), (0.410, None), (None, 0.305)])
-async def test_unproven_partition_keeps_existing_two_way_inversion(away, draw):
+async def test_unproven_partition_cannot_overturn_named_home_identity(away, draw):
     source = replace(
         reading(0.275, 0.410, 0.305), away_probability=away, draw_probability=draw
     )
     assert (
-        await poll._orient_blend_reading(Session(), 15314954, source, "kalshi") == 0.725
+        await poll._orient_blend_reading(Session(), 15314954, source, "kalshi") == 0.275
     )
 
 
