@@ -35,6 +35,15 @@ Usage
     python3 scripts/timebomb_confirm.py --from-file /tmp/candidates.txt
     python3 scripts/timebomb_confirm.py tests/test_a.py tests/test_b.py
     python3 scripts/timebomb_confirm.py --from-file c.txt --offsets 1,7,31,180,400
+
+Exit codes (#8835 — the scheduled advisory reads these, so they are a contract)
+-------------------------------------------------------------------------------
+``0`` no bomb and every point ran · ``1`` at least one BOMB (a real finding
+about the targets, named by test id and fake instant) · ``2`` HARNESS FAULT and
+no bomb — some point did not produce a readable result, so "no bomb" was not
+earned. Bombs outrank faults in the exit code because a bomb found at a point
+that DID run is true whatever happened at another point; the faults are still
+listed separately in the output and the ``--json``, never folded into the count.
 """
 from __future__ import annotations
 
@@ -44,17 +53,29 @@ import pathlib
 import re
 import subprocess
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 from clock_sweep import _PATCH, _PYTEST_EXIT, _SELF_CHECK_TAIL  # noqa: E402
 
-# pytest's terse output. `-q --tb=no -rf` prints one `FAILED <nodeid>` per
-# failure and one `ERROR <nodeid>` per collection/setup error; both are outcomes
-# that differ between clocks and both must be captured, because a fixture that
-# raises at import time never reaches a test and would otherwise read as absent.
+# pytest's terse output. `-q --tb=no -rfE` prints one `FAILED <nodeid>` per
+# failure and one `ERROR <nodeid>` per setup error; both are outcomes that
+# differ between clocks and both must be captured, because a fixture that raises
+# never reaches a test and would otherwise read as absent.
+#
+# #8835 — the flag was `-rf`, which REPLACES pytest's default `fE` and drops the
+# ERROR lines this regex was written to catch: a fixture that expired inside its
+# own setup exited 1 with nothing to name. `_run` now also refuses to read an
+# exit 1 that names no test (see there).
 _OUTCOME = re.compile(r"^(FAILED|ERROR)\s+(\S+)", re.MULTILINE)
+
+#: Per-subprocess wall-clock ceilings. A hung point is a HARNESS FAULT, never a
+#: silent stall: the scheduled job's own timeout would kill the whole run and
+#: turn one slow point into no evidence at all.
+DEFAULT_POINT_TIMEOUT_S = 600
+SELF_CHECK_TIMEOUT_S = 60
 
 _PYTEST_TAIL = r"""
 import sys
@@ -119,7 +140,13 @@ def _self_check(instant: datetime, whole_clock: bool) -> list[str]:
         # clock rather than surfacing later as a mystery target failure.
         src += "import sys\n" + _TIME_SELF_CHECK.format(fake=instant.isoformat())
     src += _SELF_CHECK_TAIL.format(fake=instant.isoformat())
-    proc = subprocess.run([sys.executable, "-c", src], capture_output=True, text=True)
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", src], capture_output=True, text=True,
+            timeout=SELF_CHECK_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired:
+        return [f"self-check did not finish within {SELF_CHECK_TIMEOUT_S}s"]
     if proc.returncode == 0:
         return []
     problems = [ln for ln in proc.stdout.splitlines() if ln.startswith("SELF-CHECK:")]
@@ -127,27 +154,137 @@ def _self_check(instant: datetime, whole_clock: bool) -> list[str]:
 
 
 def _run(targets: list[str], instant: datetime | None, extra: list[str],
-         whole_clock: bool = False) -> dict:
+         whole_clock: bool = False,
+         timeout_s: float = DEFAULT_POINT_TIMEOUT_S) -> dict:
     """Run the candidate set once. `instant=None` means the real clock."""
-    args = ["-q", "--tb=no", "-rf", "-p", "no:cacheprovider", *extra, *targets]
+    args = ["-q", "--tb=no", "-rfE", "-p", "no:cacheprovider", *extra, *targets]
     body = "" if instant is None else _patch_for(instant, whole_clock)
     src = body + _PYTEST_TAIL.format(args=args)
-    proc = subprocess.run([sys.executable, "-c", src], capture_output=True, text=True)
+    started = time.monotonic()
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", src], capture_output=True, text=True,
+            timeout=timeout_s,
+        )
+    except subprocess.TimeoutExpired:
+        return {
+            "exit": None,
+            "label": "FAULT",
+            "meaning": f"TIMED OUT after {timeout_s:g}s — the point never finished",
+            "readable": False,
+            "failed": [],
+            "summary": "",
+            "elapsed_s": round(time.monotonic() - started, 1),
+        }
     label, meaning = _PYTEST_EXIT.get(
         proc.returncode, ("FAULT", f"unexpected exit {proc.returncode}")
     )
     out = proc.stdout + proc.stderr
+    failed = sorted({m.group(2) for m in _OUTCOME.finditer(out)})
+    # 🔴 Only exit 0 and 1 are readable outcomes (gotcha #54 / CERT-625).
+    # Anything else means the run did not complete, and a partial failure list
+    # from an interrupted run would read as "these and no others".
+    readable = proc.returncode in (0, 1)
+    if proc.returncode == 1 and not failed:
+        # A red run that names no test cannot be compared point to point: read
+        # as-is it is "red, and nothing new failed", i.e. a silent pass (#8835).
+        readable = False
+        label, meaning = "FAULT", "pytest exited 1 but named no FAILED/ERROR test"
     return {
         "exit": proc.returncode,
         "label": label,
         "meaning": meaning,
-        # 🔴 Only exit 0 and 1 are readable outcomes (gotcha #54 / CERT-625).
-        # Anything else means the run did not complete, and a partial failure
-        # list from an interrupted run would read as "these and no others".
-        "readable": proc.returncode in (0, 1),
-        "failed": sorted({m.group(2) for m in _OUTCOME.finditer(out)}),
+        "readable": readable,
+        "failed": failed,
         "summary": out.strip().splitlines()[-1] if out.strip() else "",
+        "elapsed_s": round(time.monotonic() - started, 1),
     }
+
+
+def render_summary(result: dict) -> str:
+    """Markdown for a CI job summary: bombs, harness faults and the rest, apart.
+
+    Built from the ``--json`` payload only, so what a reader sees in the job
+    page is exactly what the retained artifact says.
+    """
+    lines = [f"## Expiring-fixture check — {result['verdict']}", ""]
+    lines.append(
+        f"Real clock `{result['real_now']}` · {result['targets']} target file(s) · "
+        f"offsets (days) `{result['offsets']}` · clock "
+        f"{'WHOLE' if result['whole_clock'] else 'datetime only (candidates, not a verdict)'} · "
+        f"elapsed {result['elapsed_s']}s"
+    )
+    lines.append("")
+    bombs = result["bombs"]
+    lines.append(f"### Bombs — tests that pass now and fail at a later fake date ({len(bombs)})")
+    if bombs:
+        lines.append("| test | first red at fake instant (UTC) |")
+        lines.append("|---|---|")
+        for nodeid in sorted(bombs):
+            lines.append(f"| `{nodeid}` | `{bombs[nodeid][0]}` |")
+    else:
+        lines.append("none")
+    lines.append("")
+    faults = result["faults"]
+    lines.append(f"### Harness faults — points that produced no readable result ({len(faults)})")
+    lines.append(
+        "These are statements about the RUN, not about any test. A point listed "
+        "here was not checked, so no bomb there is not evidence of none."
+    )
+    if faults:
+        lines.extend(f"- {f}" for f in faults)
+    else:
+        lines.append("none")
+    for key, title in (
+        ("undecidable", "Undecidable by this method (subprocess/mtime) — read by hand"),
+        ("frozen_clock_artifacts", "Frozen-clock artifacts — red at +0d too, not bombs"),
+        ("baseline_failed", "Already red at the real clock — not this class"),
+    ):
+        items = result.get(key) or []
+        if items:
+            lines += ["", f"### {title} ({len(items)})"]
+            lines.extend(f"- `{i}`" for i in items)
+    lines += ["", "### Points", "| fake instant (UTC) | result | elapsed |", "|---|---|---|"]
+    for pt in result["points"]:
+        lines.append(f"| `{pt['instant']}` | {pt['label']} {pt['note']} | {pt['elapsed_s']}s |")
+    return "\n".join(lines) + "\n"
+
+
+def _offsets(raw: str) -> str:
+    """argparse type: reject a malformed ``--offsets`` as a USAGE error (exit 2).
+
+    Left to ``float()`` inside ``main`` it raised, and an uncaught exception
+    exits 1 — the code that means BOMB (#8835).
+    """
+    try:
+        values = [float(x) for x in raw.split(",")]
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not a comma-separated list of days: {raw!r}")
+    if not values or any(v <= 0 for v in values):
+        raise argparse.ArgumentTypeError(f"offsets must be positive days: {raw!r}")
+    return raw
+
+
+def _emit(result: dict, json_path: str | None, summary_path: str | None) -> int:
+    """Write the retained record and the job summary; return the exit code.
+
+    Every exit path goes through here — including a baseline that never ran —
+    so a scheduled run always leaves a record that names what happened.
+    """
+    if result["bombs"]:
+        result["verdict"], code = "BOMB", 1
+    elif result["faults"]:
+        result["verdict"], code = "HARNESS FAULT", 2
+    else:
+        result["verdict"], code = "CLEAN", 0
+    result["exit_code"] = code
+    result["elapsed_s"] = round(time.monotonic() - result.pop("_started"), 1)
+    if json_path:
+        pathlib.Path(json_path).write_text(json.dumps(result, indent=2))
+    if summary_path:
+        with open(summary_path, "a") as fh:
+            fh.write(render_summary(result))
+    return code
 
 
 def main() -> int:
@@ -156,11 +293,22 @@ def main() -> int:
     p.add_argument("--from-file", help="file with one pytest target per line")
     p.add_argument(
         "--offsets",
+        type=_offsets,
         default="1,32,190,400",
         help="days into the future to test (default straddles the 30d bound, "
         "a half year, and a year boundary)",
     )
     p.add_argument("--json", help="write the full result here")
+    p.add_argument(
+        "--summary",
+        help="append a markdown summary here (e.g. $GITHUB_STEP_SUMMARY)",
+    )
+    p.add_argument(
+        "--timeout-per-point",
+        type=float,
+        default=DEFAULT_POINT_TIMEOUT_S,
+        help="seconds one pytest run may take before its point is a HARNESS FAULT",
+    )
     p.add_argument("--pytest-arg", action="append", default=[], dest="extra")
     p.add_argument(
         "--whole-clock",
@@ -197,53 +345,83 @@ def main() -> int:
     # and anything red there is reported as an ARTIFACT rather than counted.
     points = [now] + [now + timedelta(days=float(d)) for d in a.offsets.split(",")]
 
+    result: dict = {
+        "_started": time.monotonic(),
+        "real_now": now.isoformat(),
+        "targets": len(targets),
+        "target_list": targets,
+        "offsets": a.offsets,
+        "whole_clock": a.whole_clock,
+        "timeout_per_point_s": a.timeout_per_point,
+        "baseline": None,
+        "points": [],
+        "bombs": {},
+        "faults": [],
+        "undecidable": [],
+        "frozen_clock_artifacts": [],
+        "baseline_failed": [],
+    }
+
     print(f"{len(targets)} targets · baseline at the real clock, then {len(points)} future points\n  clock: {'WHOLE (datetime + time.time)' if a.whole_clock else 'datetime only — CANDIDATES, not a verdict'}")
 
     # --- Baseline. A target already red now cannot be shown to be a bomb. -----
-    base = _run(targets, None, a.extra, a.whole_clock)
+    base = _run(targets, None, a.extra, a.whole_clock, a.timeout_per_point)
+    result["baseline"] = {k: base[k] for k in ("exit", "label", "summary", "elapsed_s")}
     print(f"  baseline           exit {base['exit']} {base['label']}: {base['summary']}")
     if not base["readable"]:
         print("\n🔴 HARNESS FAULT: the baseline run did not complete. No conclusion drawn.")
         print(f"   {base['meaning']}")
-        return 2
+        result["faults"].append(f"baseline (real clock): exit {base['exit']} — {base['meaning']}")
+        return _emit(result, a.json, a.summary)
     already_red = set(base["failed"])
+    result["baseline_failed"] = sorted(already_red)
     if already_red:
         print(f"  {len(already_red)} test(s) already failing at the real clock — excluded, listed below")
 
-    bombs: dict[str, list[str]] = {}
+    bombs: dict[str, list[str]] = result["bombs"]
     frozen_clock_artifacts: set[str] = set()
-    faults: list[str] = []
+    faults: list[str] = result["faults"]
     # The control is points[0] BY POSITION, not by value. `--offsets 0,32` makes
     # a later point compare equal to `now`, and a value test would treat that
     # requested point as a second control and silently drop it from the run.
     for index, point in enumerate(points):
+        stamp = point.isoformat()
+        label = "+0d (control)" if index == 0 else f"+{(point - now).total_seconds() / 86400:g}d"
         problems = _self_check(point, a.whole_clock)
         if problems:
-            faults.append(f"{point.date()}: " + "; ".join(problems))
-            print(f"  {point.date()}  🔴 HARNESS FAULT — {problems[0]}")
+            faults.append(f"{stamp} ({label}): " + "; ".join(problems))
+            result["points"].append(
+                {"instant": stamp, "label": "FAULT", "note": "self-check failed", "elapsed_s": 0}
+            )
+            print(f"  {stamp}  🔴 HARNESS FAULT — {problems[0]}")
             continue
-        res = _run(targets, point, a.extra, a.whole_clock)
+        res = _run(targets, point, a.extra, a.whole_clock, a.timeout_per_point)
+        record = {"instant": stamp, "label": res["label"], "note": "", "elapsed_s": res["elapsed_s"]}
+        result["points"].append(record)
         if not res["readable"]:
-            faults.append(f"{point.date()}: exit {res['exit']} — {res['meaning']}")
-            print(f"  {point.date()}  🔴 HARNESS FAULT exit {res['exit']} — {res['meaning']}")
+            faults.append(f"{stamp} ({label}): exit {res['exit']} — {res['meaning']}")
+            record["note"] = res["meaning"]
+            print(f"  {stamp}  🔴 HARNESS FAULT exit {res['exit']} — {res['meaning']}")
             continue
         new = sorted(set(res["failed"]) - already_red)
         if index == 0:
             # The control point. Anything red here is red because the clock is
             # STOPPED, not because it moved — see the comment on `points`.
             frozen_clock_artifacts = set(new)
+            record["note"] = f"control: {len(new)} frozen-clock artifact(s)"
             print(
-                f"  {'+0d (control)':>17}  exit {res['exit']} {res['label']}: "
+                f"  {label:>17}  exit {res['exit']} {res['label']}: "
                 f"{len(new)} frozen-clock artifact(s)"
             )
             continue
         new = [n for n in new if n not in frozen_clock_artifacts]
+        record["note"] = f"{len(new)} new failure(s)"
         print(
-            f"  +{(point - now).days:>4}d {point.date()}  exit {res['exit']} "
+            f"  {label:>8} {stamp}  exit {res['exit']} "
             f"{res['label']}: {len(new)} NEW failure(s)"
         )
         for nodeid in new:
-            bombs.setdefault(nodeid, []).append(point.date().isoformat())
+            bombs.setdefault(nodeid, []).append(stamp)
 
     print()
     print("=" * 78)
@@ -280,6 +458,8 @@ def main() -> int:
         if "subprocess" in text or "os.utime" in text:
             undecidable.setdefault(str(path), []).append(nodeid)
             del bombs[nodeid]
+    result["undecidable"] = sorted(n for ids in undecidable.values() for n in ids)
+    result["frozen_clock_artifacts"] = sorted(frozen_clock_artifacts)
 
     by_file: dict[str, list[str]] = {}
     for nodeid in bombs:
@@ -313,20 +493,15 @@ def main() -> int:
         for nodeid in sorted(already_red):
             print(f"  {nodeid}")
 
-    if a.json:
-        pathlib.Path(a.json).write_text(
-            json.dumps(
-                {
-                    "targets": len(targets),
-                    "baseline_failed": sorted(already_red),
-                    "bombs": bombs,
-                    "faults": faults,
-                },
-                indent=2,
-            )
-        )
-    return 0
+    return _emit(result, a.json, a.summary)
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except Exception:  # noqa: BLE001 — a crash must never read as exit 1 (BOMB)
+        import traceback
+
+        traceback.print_exc()
+        print("\n🔴 HARNESS FAULT: timebomb_confirm itself crashed. No conclusion drawn.")
+        raise SystemExit(2)
