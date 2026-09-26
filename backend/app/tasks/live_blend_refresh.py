@@ -666,13 +666,13 @@ class LiveBlendRefresher:
         cached as a BOOLEAN (did this linkage need flipping), not as a value —
         caching the value would pin a price, which is the opposite of the point.
         """
-        from app.utils.live_blend import has_named_three_way_partition
+        from app.utils.live_blend import has_proven_home_orientation
 
-        if reading is not None and has_named_three_way_partition(reading):
+        if reading is not None and has_proven_home_orientation(reading):
             # #8814: a stale book can disagree with a correctly named soccer
             # quote. Its cached binary flip would also erase the real draw.
             # Discard that contradicted verdict, including for later ticks
-            # whose partial board no longer proves the full partition.
+            # whose partial board no longer proves the named home orientation.
             self._inversion.pop(event_id, None)
             return reading.home_probability
 
