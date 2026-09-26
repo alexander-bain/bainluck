@@ -21,7 +21,7 @@ final class TheRunLineIsNotAMarginMapProjection8721Tests: XCTestCase {
     }
 
     private static func projection(sport: String, homeSpread: Double?, rungs: [SpreadRungs.Rung], isLive: Bool) -> Double? {
-        MarketMapView.fullMarginProjection(
+        MarketMapView.marginProjection(
             homeSpread: homeSpread, rungs: rungs,
             sportsbookSpreadIsAMargin: SportVocab.forSport(sport).sportsbookSpreadIsAMargin,
             isLive: isLive
@@ -99,6 +99,23 @@ final class TheRunLineIsNotAMarginMapProjection8721Tests: XCTestCase {
 
     func testASettledLadderNamesNothing() {
         XCTAssertNil(Self.projection(sport: "baseball_mlb", homeSpread: 1.5, rungs: Self.cubsAtRedSoxFinal, isLive: false))
+    }
+
+    /// 15318868 — Dodgers @ Giants, scheduled, LAD 75%. Its First 5 ladder as
+    /// served 2026-09-26 02:20Z; master's half card read `PRE-GAME SF by 1.5+`.
+    private static let dodgersAtGiantsFirst5 = rungs([
+        ("Los Angeles Dodgers vs San Francisco: First 5", "San Francisco -1.5 first 5 innings", 1.5, 0.24),
+        ("Los Angeles Dodgers vs San Francisco: First 5", "San Francisco -2.5 first 5 innings", 2.5, 0.18),
+    ], home: "San Francisco Giants", away: "Los Angeles Dodgers")
+
+    func testAHalfCardNamesNoLongShotRung() {
+        XCTAssertFalse(Self.dodgersAtGiantsFirst5.isEmpty)
+        XCTAssertNil(Self.projection(sport: "baseball_mlb", homeSpread: nil, rungs: Self.dodgersAtGiantsFirst5, isLive: false),
+                     "the First 5 card names a 24% rung as the pre-game margin (#8721)")
+        XCTAssertEqual(
+            Self.projection(sport: "americanfootball_nfl", homeSpread: nil, rungs: Self.dodgersAtGiantsFirst5, isLive: false),
+            MarketMapView.closestToEvenMargin(Self.dodgersAtGiantsFirst5),
+            "control: a margin sport's half card keeps its nearest-even rung")
     }
 
     func testControlAMarginSportReadsExactlyAsBefore() {

@@ -463,7 +463,7 @@ struct MarketMapView: View {
         // has carried on the totals side since #3509. Without it a tennis SET
         // margin map would print the books' GAME line as its projection.
         let sportSpread = sportUnitLineApplies(data.unit) ? homeSpread : nil
-        let projValue = Self.fullMarginProjection(
+        let projValue = Self.marginProjection(
             homeSpread: sportSpread, rungs: parsed,
             sportsbookSpreadIsAMargin: vocab.sportsbookSpreadIsAMargin, isLive: isLive
         )
@@ -902,7 +902,14 @@ struct MarketMapView: View {
         let rangeMax = bounds.max
         let density = buildDensityFromSpreads(parsed, rangeMin: rangeMin, rangeMax: rangeMax)
         let zeroPos = posOnRail(0, min: rangeMin, max: rangeMax)
-        let projValue = Self.closestToEvenMargin(parsed)
+        // #8721 — a half has no sportsbook spread of its own, but the rung rule
+        // is the full card's: a baseball F5 ladder's nearest-a-coin-flip rung is
+        // a long shot too. `/events/15318868` (LAD 75%) read `PRE-GAME SF by
+        // 1.5+` here off "SF -1.5 first 5 innings" at 24%.
+        let projValue = Self.marginProjection(
+            homeSpread: nil, rungs: parsed,
+            sportsbookSpreadIsAMargin: vocab.sportsbookSpreadIsAMargin, isLive: isLive
+        )
 
         var markers: [MapMarker] = []
         // #3885 — the half cards are the shared-tile half of the issue, and they
@@ -1386,8 +1393,9 @@ struct MarketMapView: View {
         return parsed.min(by: { abs($0.probability - 0.5) < abs($1.probability - 0.5) })!.margin
     }
 
-    /// The full-game margin card's `PROJECTION` value (#8721, the iPhone twin
-    /// of web PR #8725).
+    /// A margin card's projection value (#8721, the iPhone twin of web PR
+    /// #8725). The full-game card passes its unit-gated spread; the half cards
+    /// have none and pass nil.
     ///
     /// `homeSpread` arrives already gated to a rail drawn in the sport's unit.
     /// Where the sport's sportsbook spread is NOT a margin — baseball's run
@@ -1399,7 +1407,7 @@ struct MarketMapView: View {
     /// smallest cut is 1.5 runs, so a close game's nearest rung is a long shot
     /// ("Cubs by 2+" at 35%) and naming it would be the run line again, spelled
     /// from Kalshi. Every sport whose spread is a margin reads exactly as before.
-    static func fullMarginProjection(
+    static func marginProjection(
         homeSpread: Double?, rungs: [SpreadRungs.Rung],
         sportsbookSpreadIsAMargin: Bool, isLive: Bool
     ) -> Double? {
