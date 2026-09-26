@@ -10244,8 +10244,17 @@ async def _poll_live_prediction_market_prices():
                     reading_predates_stored_entry as _predates2,
                     stamp_source_reading as _stamp2,
                 )
+                # #8910 review: FOR UPDATE, so the comparison below holds at the
+                # commit. Unlocked, the WS lane could stamp between this read
+                # and the whole-column write further down: its newer entry
+                # would never be compared, and the write would erase it along
+                # with any sibling source stamped in the gap (live/305's shape).
+                # Held until `_commit_boundary()`; event row before snapshot is
+                # the order the WS lane already takes.
                 _pm_r2 = await session.execute(
-                    select(Event.win_probability_sources).where(Event.id == event.id)
+                    select(Event.win_probability_sources)
+                    .where(Event.id == event.id)
+                    .with_for_update()
                 )
                 _stored_wps2 = _pm_r2.scalar_one_or_none()
                 _observed2 = _obs2(

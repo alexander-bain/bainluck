@@ -26,14 +26,17 @@ the ordering signal was on the row the whole time; nothing compared it.
 * control: the same beat with the stored stamp OLDER than the reading still
   writes both — the refusal is a refusal, not a harness that writes nothing;
 * abstain: a stored bare float (no stamp) and an outcome that cannot say when
-  it was seen both write as before. Unknown is not stale.
+  it was seen both write as before. Unknown is not stale;
+* atomic (independent review, 2026-09-26): the read the comparison is made on
+  takes the event row's lock and holds it to the write's commit. Unlocked, a
+  socket stamp landing between read and write is never compared, and the
+  whole-column write erases it and any sibling stamped in the gap.
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from app.tasks import prediction_market_matching as pmm
 from app.tasks import snapshots as _snapshots
 from app.utils import aggregation as _aggregation
 from app.utils.aggregation import reading_predates_stored_entry
@@ -62,10 +65,12 @@ class _StoredSession(_Session):
     def __init__(self, generations, stored):
         super().__init__(generations)
         self._stored = stored
+        self.stored_reads = []
 
     async def execute(self, stmt, params=None):
         result = await super().execute(stmt, params)
         if self.journal[-1] == ("execute", "select:win_probability_sources"):
+            self.stored_reads.append(stmt)
             return _Result(scalar_value=self._stored)
         return result
 
@@ -103,6 +108,7 @@ async def _written(monkeypatch, population, stored, *, venue_legs=()):
     session = _StoredSession([population, population], stored)
     service = _KalshiService({TICKER: list(venue_legs)}, [])
     stats = await _run(monkeypatch, session, kalshi=service, blend={})
+    _written.last_session = session
     return stamped, points, stats
 
 
@@ -174,6 +180,32 @@ class TestTheBeatRefusesAReadingOlderThanTheStoredStamp:
             _stored_at(_now() - timedelta(seconds=15)),
         )
         assert stamped == [0.155] and points == [0.155], (stamped, points)
+
+
+class TestTheComparisonHoldsAtTheCommit:
+    async def test_the_compared_read_locks_the_row_until_the_write_commits(
+        self, monkeypatch
+    ):
+        now = _now()
+        stamped, _points, _ = await _written(
+            monkeypatch,
+            _beat(last_seen=now - timedelta(seconds=60)),
+            _stored_at(now - timedelta(seconds=200)),
+        )
+        assert stamped == [0.155], "control: the beat never reached the write"
+        session = _written.last_session
+        assert len(session.stored_reads) == 1, session.stored_reads
+        assert session.stored_reads[0]._for_update_arg is not None, (
+            "the stamp is compared on an unlocked read: a socket write between "
+            "it and the whole-column write is erased uncompared"
+        )
+        journal = session.journal
+        read_at = journal.index(("execute", "select:win_probability_sources"))
+        write_at = journal.index(("execute", "update"), read_at)
+        assert ("commit", None) not in journal[read_at:write_at], (
+            "the lock is released between the comparison and the write",
+            journal[read_at : write_at + 1],
+        )
 
 
 class TestTheHelper:
