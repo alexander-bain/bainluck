@@ -111,6 +111,7 @@ import {
   nicheCatLabel,
   normalizeCat,
 } from "@/lib/calibrationCategories";
+import { exclusionCellLabel, temporaryCellCondition } from "@/lib/calibrationExclusionCopy";
 
 // L2-127 (Alex's Option 4): the 1,000-outcome floor USED to HIDE buckets from the
 // By Source / By Category charts, which made a longshot category (golf, tennis)
@@ -3209,7 +3210,7 @@ export default function CalibrationPage() {
               different words, so it passed every arm. The guard added beside
               those bans the CLAIM SHAPE and is keyed on the payload, so it goes
               quiet only if the asymmetry is actually closed. */}
-          <li data-population-sources={populationProviderNames}><strong className="text-text-primary">What&rsquo;s included?</strong> {data.total_outcomes.toLocaleString()} resolved outcomes{data.date_range?.start && data.date_range?.end ? ` from ${monthYear(data.date_range.start)}–${monthYear(data.date_range.end)}` : ""}{populationProviderNames ? ` across ${populationProviderNames}` : ""}. That published total is lower than the raw resolved-outcome count because we exclude markets that can&rsquo;t form an honest prediction &mdash; see the exclusions below. A price without participants isn&rsquo;t a prediction, so never-traded outcomes are excluded &mdash; completely on Kalshi, and on Polymarket only inside its placeholder band, which leaves some of them still counted.{refreshClause ? ` ${refreshClause}` : ""}</li>
+          <li data-population-sources={populationProviderNames}><strong className="text-text-primary">What&rsquo;s included?</strong> {data.total_outcomes.toLocaleString()} resolved outcomes{data.date_range?.start && data.date_range?.end ? ` from ${monthYear(data.date_range.start)}–${monthYear(data.date_range.end)}` : ""}{populationProviderNames ? ` across ${populationProviderNames}` : ""}. That published total is lower than the raw resolved-outcome count because we exclude markets that can&rsquo;t form an honest prediction &mdash; see the exclusions below. A price without participants isn&rsquo;t a prediction, so never-traded outcomes are excluded &mdash; completely on Kalshi, and on Polymarket only near its 50% stand-in price, which leaves some of them still counted.{refreshClause ? ` ${refreshClause}` : ""}</li>
           {/* CAL-P1217 — the exclusions stop being a handful of named rules and
               become an accounting a reader can add up.
               *
@@ -3315,14 +3316,22 @@ export default function CalibrationPage() {
                 * future `{data.x.rule}` fails the gate on the day it is written rather
                 * than on the day a cert reads production. */}
               <strong className="text-text-primary">Liquidity filter (Kalshi).</strong>{" "}
+              {/* #8955: "passed", not "included". These two Kalshi counts are
+                  taken over every Kalshi outcome checked, BEFORE the other rules
+                  (`liq_summary` over `normalized`), so "1,144,458 included" sat
+                  under a page total of 942,284 and read as more Kalshi rows in
+                  the curve than the whole curve holds. */}
               <span className="text-text-primary">
-                {data.liquidity_filter.kalshi_included.toLocaleString()} included
+                {data.liquidity_filter.kalshi_included.toLocaleString()} passed
               </span>{" "}
               &middot;{" "}
               <span className="text-text-muted">
                 {data.liquidity_filter.kalshi_excluded.toLocaleString()} excluded
               </span>{" "}
-              ({(100 * data.liquidity_filter.kalshi_excluded / (data.liquidity_filter.kalshi_included + data.liquidity_filter.kalshi_excluded)).toFixed(0)}% of the Kalshi set). A skeptical auditor can re-include them &mdash; we publish both counts so the filter is never silent.
+              ({(100 * data.liquidity_filter.kalshi_excluded / (data.liquidity_filter.kalshi_included + data.liquidity_filter.kalshi_excluded)).toFixed(0)}% of the Kalshi outcomes checked).
+              An outcome nobody ever bid on or traded is not a forecast anyone made, so it is left out.
+              This count and the one below are taken before the other rules, so they can be larger
+              than the page&rsquo;s total.
             </li>
           )}
           {/* #5401 / q270 — THE WRITER BAR, and why it is its own bullet rather
@@ -3341,13 +3350,13 @@ export default function CalibrationPage() {
             <li data-testid="calibration-writer-bar-exclusion">
               <strong className="text-text-primary">Prices nobody could have traded at (Kalshi).</strong>{" "}
               <span className="text-text-primary">
-                {data.writer_bar_filter.included.toLocaleString()} included
+                {data.writer_bar_filter.included.toLocaleString()} passed
               </span>{" "}
               &middot;{" "}
               <span className="text-text-muted">
                 {data.writer_bar_filter.excluded.toLocaleString()} excluded
               </span>{" "}
-              ({(100 * data.writer_bar_filter.excluded / (data.writer_bar_filter.included + data.writer_bar_filter.excluded)).toFixed(0)}% of the Kalshi set).
+              ({(100 * data.writer_bar_filter.excluded / (data.writer_bar_filter.included + data.writer_bar_filter.excluded)).toFixed(0)}% of the Kalshi outcomes checked).
               An opening price only counts if there was a real offer on both sides of it. Some of
               our stored openings had no one on the other side, so they were never prices anyone
               could have acted on, and we stopped scoring ourselves against them. This bar is
@@ -3386,20 +3395,20 @@ export default function CalibrationPage() {
               they were never competing answers to one question. */}
           {data.nonexclusive_bundle_filter && data.nonexclusive_bundle_filter.excluded > 0 && (
             <li data-testid="calibration-nonexclusive-bundle-exclusion">
-              <strong className="text-text-primary">Non-partition bundle filter (index ladders, prop containers).</strong>{" "}
+              <strong className="text-text-primary">Separate bets listed as one market (index ladders, player-prop bundles).</strong>{" "}
               <span className="text-text-muted">
                 {data.nonexclusive_bundle_filter.excluded.toLocaleString()} excluded
                 {data.nonexclusive_bundle_filter.excluded_by_cell
                   ? ` — ${Object.entries(data.nonexclusive_bundle_filter.excluded_by_cell)
                       .sort((a, b) => b[1] - a[1])
-                      .map(([cell, n]) => `${cell} ${n.toLocaleString()}`)
+                      .map(([cell, n]) => `${exclusionCellLabel(cell, sourceLabel)} ${n.toLocaleString()}`)
                       .join(", ")}`
                   : ""}
                 .{" "}
-                This one shrank the curve rather than improving it: the error on these cells fell
+                This one shrank the curve rather than improving it: the error in these groups fell
                 because rows that were never forecasts of a single question stopped being counted,
-                not because our prices got better. We publish the count per cell so that is
-                checkable and so the smaller curve is never read as a fixed one.
+                not because our prices got better. We show the count for each group so the smaller
+                curve is never read as a fixed one.
               </span>
               {/* CAL-P119 — Alex ruled polymarket/baseball on 2026-08-28 as
                   "EXCLUDE NOW + FIX WRITER", and the second half of that is a
@@ -3434,19 +3443,19 @@ export default function CalibrationPage() {
                       ? `${data.nonexclusive_bundle_filter.temporary_excluded.toLocaleString()} of the rows above are coming back: `
                       : ""}
                     {Object.entries(data.nonexclusive_bundle_filter.temporary_by_cell)
-                      .map(([cell, condition]) => `${cell} — returns when ${condition}`)
+                      .map(([cell]) => `${exclusionCellLabel(cell, sourceLabel)} — returns when ${temporaryCellCondition(cell)}`)
                       .join("; ")}
                     . Those rows are real questions whose published price was written wrong, not
-                    rows that were never forecasts &mdash; the market&rsquo;s own quote is intact and
-                    only our copy of it is bad. So they are set aside while that defect is fixed,
-                    and no longer: once it is, they re-enter the curve and this sentence disappears
-                    from the page.{" "}
+                    rows that were never forecasts &mdash; the market&rsquo;s own price is fine and
+                    only our copy of it is wrong. They are set aside until that is fixed; then they
+                    re-enter the curve and this note leaves the page.{" "}
                     {typeof data.nonexclusive_bundle_filter.historical_excluded === "number" &&
                     data.nonexclusive_bundle_filter.historical_excluded > 0
-                      ? `The other ${data.nonexclusive_bundle_filter.historical_excluded.toLocaleString()} are not: they are the same defect already written into the back catalogue, and repairing the writer going forward does not un-write them. They stay excluded until they are separately repaired or separately ruled on, and we are not going to describe them as temporary to make the number smaller. `
+                      ? `The other ${data.nonexclusive_bundle_filter.historical_excluded.toLocaleString()} are not: they are older rows in the back catalogue with the same fault, and fixing it from now on does not repair them. They stay excluded until they are repaired or reviewed one by one, and we will not call them temporary to make the number look smaller. `
                       : ""}
-                    We are not claiming the coming-back rows are gone for good &mdash; if this
-                    sentence outlives the fix, the exclusion is the thing that is wrong.
+                    We are not claiming the coming-back rows are gone for good. If the fix lands and
+                    they do not come back, we had the cause wrong, and this exclusion gets reconsidered
+                    from scratch rather than kept.
                   </span>
                 )}
             </li>
@@ -3506,14 +3515,17 @@ export default function CalibrationPage() {
           )}
           {data.exclusion_symmetry && (
             <li>
-              <strong className="text-text-primary">Never-traded exclusions differ by source (and we say so).</strong>{" "}
-              Kalshi excludes <em>every</em> never-traded outcome (any price); Polymarket only excludes never-traded
-              outcomes near 0.50 (the Gamma synthetic-placeholder band). So a Polymarket outcome that never traded but
-              sits outside that band is still counted.{" "}
+              {/* #8955: was "(the Gamma synthetic-placeholder band)", "poly
+                  never-traded" and "(the residual asymmetry)" — the payload's
+                  own vocabulary, written for a reviewer. */}
+              <strong className="text-text-primary">Never-traded outcomes are handled differently by source.</strong>{" "}
+              Kalshi leaves out <em>every</em> outcome that never traded. Polymarket leaves out only the
+              never-traded outcomes sitting near 50%, the stand-in price Polymarket shows before anyone
+              trades. So a Polymarket outcome that never traded but is priced away from 50% is still counted.{" "}
               <span className="text-text-muted">
-                {data.exclusion_symmetry.poly_never_traded_excluded_by_band.toLocaleString()} poly never-traded already
-                excluded by the placeholder band; {data.exclusion_symmetry.poly_never_traded_in_curve.toLocaleString()} still
-                counted (the residual asymmetry). We publish the count so it&rsquo;s never silent.
+                {data.exclusion_symmetry.poly_never_traded_excluded_by_band.toLocaleString()} never-traded Polymarket
+                outcomes are left out this way; {data.exclusion_symmetry.poly_never_traded_in_curve.toLocaleString()} are
+                still counted.
               </span>
             </li>
           )}

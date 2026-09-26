@@ -769,7 +769,9 @@ describe("the calibration page renders these strings and not its own", () => {
 
     // And the repair: the card names the asymmetry it used to deny. Without
     // this, deleting the sentence outright would pass the bans above.
-    expect(card).toMatch(/placeholder band/i);
+    // #8955: "placeholder band" became "near its 50% stand-in price" — the same
+    // asymmetry in a reader's words.
+    expect(card).toMatch(/near its 50% stand-in price/i);
     expect(card).toMatch(/still counted/i);
 
     // Keyed on the asymmetry being LIVE. While the page publishes the residual
