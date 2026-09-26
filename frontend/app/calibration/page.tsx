@@ -36,7 +36,9 @@ import {
   describeCategoryPopulation,
   describeCategoryPublishBar,
   describeCategoryTablePopulation,
+  describeThinRow,
   footerPopulationPhrase,
+  isThinInView,
 } from "@/lib/calibrationPopulation";
 import {
   anyNotProvable,
@@ -2552,9 +2554,12 @@ export default function CalibrationPage() {
                   data?.by_category ?? [],
                   cohort.key
                 );
+                // #8917: listed on its all-outcome total, thin in this view.
+                const thin = isThinInView(cm.n, minCategoryOutcomes);
                 return (
                 <tr key={cm.category} className="border-t border-surface-border"
                   data-testid="calibration-category-row" data-category={cm.category} data-n={cm.n}
+                  data-thin={thin ? "true" : "false"}
                   data-provability={cm.provability ?? "unset"}
                   data-pools={pop.pools ? "true" : "false"}
                   data-pooled-from={pop.pooledFrom.join(",")}
@@ -2584,6 +2589,15 @@ export default function CalibrationPage() {
                         className="ml-2 align-middle inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide border border-surface-border text-text-muted"
                       >
                         {prov.badgeLabel}
+                      </span>
+                    )}
+                    {thin && (
+                      <span
+                        data-testid="calibration-thin-row-badge"
+                        title={describeThinRow(cm.n, minCategoryOutcomes)}
+                        className="ml-2 align-middle inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide border border-surface-border text-text-muted"
+                      >
+                        thin
                       </span>
                     )}
                     {/* CAL-P1078 — ALEX, ON THE LIVE PAGE: a bare "56
@@ -2616,7 +2630,9 @@ export default function CalibrationPage() {
                   <td title={pop.title} className={`py-2 pr-1 sm:pr-4 text-right tabular-nums ${
                     notProvable
                       ? "font-normal text-text-muted line-through decoration-orange-400/60"
-                      : `font-semibold ${cm.ece < 3 ? "text-green-600" : cm.ece < 5 ? "text-blue-600" : "text-orange-600"}`
+                      : thin
+                        ? "font-normal text-text-muted"
+                        : `font-semibold ${cm.ece < 3 ? "text-green-600" : cm.ece < 5 ? "text-blue-600" : "text-orange-600"}`
                   }`}>
                     {cm.ece.toFixed(1)}pp
                   </td>

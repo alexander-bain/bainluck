@@ -759,19 +759,32 @@ struct CalibrationSurfaceView: View {
     }
 
     private func categoryMetricRow(_ row: CalCategoryRow, color: Color) -> some View {
-        HStack(spacing: 8) {
+        // #8917: thin in this view ⇒ numbers kept, quality colour dropped, and
+        // the word the charts use for a sample under the floor. Web twin: the
+        // `calibration-thin-row-badge` in the Category Breakdown table.
+        let thin = CalibrationPopulation.isThinInView(n: row.n, bar: viewModel.minCategoryOutcomes)
+        return HStack(spacing: 8) {
             Circle().fill(color).frame(width: 8, height: 8)
-            Text(row.name)
-                .font(.caption.weight(.medium))
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            HStack(spacing: 4) {
+                Text(row.name)
+                    .font(.caption.weight(.medium))
+                    .lineLimit(1)
+                if thin {
+                    Text("thin")
+                        .font(.caption2.weight(.semibold))
+                        .textCase(.uppercase)
+                        .foregroundStyle(.secondary)
+                        .fixedSize()
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
             Text(fmtN(row.n))
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
                 .frame(width: 72, alignment: .trailing)
             metricText(row.ece, "%.1f")
-                .font(.caption.weight(.semibold).monospacedDigit())
-                .foregroundStyle(viewModel.eceColor(row.ece))
+                .font(.caption.weight(thin ? .regular : .semibold).monospacedDigit())
+                .foregroundStyle(thin ? Color.secondary : viewModel.eceColor(row.ece))
                 .frame(width: 48, alignment: .trailing)
             metricText(row.mce, "%.1f")
                 .font(.caption.monospacedDigit())

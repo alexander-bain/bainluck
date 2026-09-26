@@ -517,7 +517,16 @@ final class CalibrationViewModel: ObservableObject {
     /// #7533: these now range over every category that clears the bar, not the
     /// ten that survived two slices. "Best calibrated" naming the best of an
     /// arbitrary subset was the headline wearing the table's defect.
-    private var measuredCategoryRows: [CalCategoryRow] { categoryRows.filter { $0.ece != nil } }
+    ///
+    /// #8917: and only rows at or above the bar IN THIS VIEW. The table keeps a
+    /// thin row (listed on its all-outcome total); a headline card does not get
+    /// to name one — 26 traded Table Tennis outcomes were "Needs attention".
+    private var measuredCategoryRows: [CalCategoryRow] {
+        let bar = minCategoryOutcomes
+        return categoryRows.filter {
+            $0.ece != nil && !CalibrationPopulation.isThinInView(n: $0.n, bar: bar)
+        }
+    }
     var bestCategoryRow: CalCategoryRow? { measuredCategoryRows.first }
     var worstCategoryRow: CalCategoryRow? { measuredCategoryRows.last }
 
