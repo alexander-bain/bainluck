@@ -14,6 +14,7 @@ from app.utils.event_rails import (
 from app.utils.event_twin_fold import fold_twin_events, team_name_fold_key
 from app.utils.aggregation import compute_aggregate_probability
 from app.utils.lifecycle import served_event_status
+from app.utils.start_placeholder import start_is_tbd
 from app.utils.season_variant_team import (
     choose_parent_league_row,
     wants_parent_league_row,
@@ -856,6 +857,10 @@ def _format_event_brief(
             event.status, event.commence_time, datetime.now(timezone.utc)
         ),
         "commence_time": event.commence_time.isoformat() if event.commence_time else None,
+        # #8841: a placeholder start the venue has not announced yet.
+        "start_is_tbd": start_is_tbd(
+            getattr(event, "event_tags", None), event.commence_time, event.status
+        ),
         "sport_key": sport.key if sport else None,
         "is_home": is_home,
         "opponent": opponent,

@@ -50,6 +50,7 @@ from typing import Optional
 import httpx
 
 from app.services.base_api import BaseAPIClient
+from app.utils.start_placeholder import statpal_placeholder_fixture_ids
 
 logger = logging.getLogger(__name__)
 
@@ -179,6 +180,11 @@ class StatPalFixture:
     # offset-1 schedule, so the ids are stable across endpoints; only this one
     # is also complete and unique.
     fallback_id_3: Optional[str] = None
+    # #8841: the venue listed this game before its start time was announced,
+    # and `start_time` is StatPal's on-the-hour placeholder. Set only by the
+    # season-schedule parse, from the payload's `week[]` bucket — see
+    # `app/utils/start_placeholder.py` for the evidence and the rule.
+    start_is_placeholder: bool = False
 
 
 @dataclass
@@ -1547,11 +1553,16 @@ class StatPalAPIService(BaseAPIClient):
         """
         fixtures = []
         items = self._extract_match_items(data)
+        # #8841: which games carry a placeholder clock is a property of the
+        # bucket they came from, which the flattening above discards.
+        placeholder_ids = statpal_placeholder_fixture_ids(data, sport)
 
         for item in items:
             try:
                 fixture = self._parse_single_fixture(item)
                 if fixture:
+                    if fixture.fixture_id and fixture.fixture_id in placeholder_ids:
+                        fixture.start_is_placeholder = True
                     fixtures.append(fixture)
             except Exception as e:
                 logger.debug(f"StatPal: skipping fixture parse error: {e}")

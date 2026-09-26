@@ -29,12 +29,13 @@ venue must not report the same thing as one that correctly wrote nothing.
 """
 
 import asyncio
+import json
 import logging
 from datetime import datetime, timezone, timedelta
 from itertools import zip_longest
 from typing import Collection, Optional, Sequence
 
-from sqlalchemy import select, update, or_, func
+from sqlalchemy import select, update, or_, func, text
 
 from app.tasks.base import get_task_session
 from app.tasks.config import STATPAL_SPORT_MAPPING
@@ -48,6 +49,11 @@ from app.utils.game_state import (
 )
 from app.utils.live_state_write import write_live_state_if_unmoved
 from app.utils.start_time_authority import provider_may_set_start
+from app.utils.start_placeholder import (
+    START_PLACEHOLDER_TAG_PREFIX,
+    desired_start_placeholder_tags,
+    needs_start_placeholder_write,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -188,6 +194,35 @@ def statpal_live_position(fixture) -> tuple[Optional[str], Optional[str]]:
     return None, clock
 
 
+async def _write_start_placeholder_tags(session, event_id: int, desired: list[str]) -> None:
+    """Replace a row's start-placeholder tags with ``desired`` (#8841).
+
+    Core SQL with a server-side rewrite, never an ORM assignment: `event_tags`
+    is JSONB (gotcha #4) and the taxonomy task replaces it wholesale, so this
+    touches only elements carrying the prefix and leaves every other tag as the
+    database holds it now, not as this session read it. The prefix is compared
+    with `left()` and a bound value rather than `LIKE`, whose `%` inside
+    `text()` is a bind-parameter trap (gotcha #45).
+    """
+    await session.execute(
+        text(
+            "UPDATE events SET event_tags = COALESCE(("
+            "  SELECT jsonb_agg(t) FROM jsonb_array_elements("
+            "    COALESCE(event_tags, '[]'::jsonb)) AS t"
+            "  WHERE NOT (jsonb_typeof(t) = 'string'"
+            "             AND left(t #>> '{}', :plen) = :prefix)"
+            "), '[]'::jsonb) || CAST(:add AS jsonb) "
+            "WHERE id = :eid"
+        ),
+        {
+            "plen": len(START_PLACEHOLDER_TAG_PREFIX),
+            "prefix": START_PLACEHOLDER_TAG_PREFIX,
+            "add": json.dumps(list(desired)),
+            "eid": event_id,
+        },
+    )
+
+
 async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
     """Sync fixture schedules from StatPal for all mapped sports.
 
@@ -305,6 +340,9 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
     schedule_fid_collision_skipped = 0
     # #8653: StatPal's start differed but the row's stamp outranks StatPal.
     schedule_commence_outranked = 0
+    # #8841: rows whose start-placeholder tag this pass wrote or retired.
+    # Always present; 0 is a reading (gotcha #53).
+    schedule_start_placeholder_written = 0
 
     # #4322. The other half of the same judgement, kept as its OWN number so the
     # twin count stays a twin count. A cross-sport hit is not a twin — it is one
@@ -707,6 +745,23 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                             if hasattr(event, "commence_time_source"):
                                 event.commence_time_source = "statpal"
                             updated = True
+                    # #8841: say whether the row's start is StatPal's
+                    # placeholder, AFTER the correction above so the tag
+                    # vouches for the stamp the row actually carries.
+                    _desired_placeholder = desired_start_placeholder_tags(
+                        fixture_is_placeholder=getattr(
+                            fixture, "start_is_placeholder", False
+                        ),
+                        fixture_start=fixture.start_time,
+                        commence_time=event.commence_time,
+                    )
+                    if needs_start_placeholder_write(
+                        getattr(event, "event_tags", None), _desired_placeholder
+                    ):
+                        await _write_start_placeholder_tags(
+                            session, event.id, _desired_placeholder
+                        )
+                        schedule_start_placeholder_written += 1
                     if fixture.fixture_id and not _get_statpal_id(event):
                         _set_statpal_id(event, fixture.fixture_id)
                         updated = True
@@ -1245,6 +1300,7 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
         # fixture in this window is claimed by two rows.
         "schedule_fid_collision_skipped": schedule_fid_collision_skipped,
         "schedule_commence_outranked": schedule_commence_outranked,
+        "schedule_start_placeholder_written": schedule_start_placeholder_written,
         # #4322 — same rule, and its own key so the twin count above stays a twin
         # count. 0 is the expected reading today: production carries zero
         # cross-sport fixture ids (measured 2026-09-09, and the generator of the
