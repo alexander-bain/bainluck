@@ -1992,7 +1992,7 @@ class _InPlayHarness(_RunHarness):
     async def run(self, monkeypatch):
         from app.tasks import futures_price_refresh as mod
 
-        async def _fetch(service, external_id):
+        async def _fetch(service, external_id, **_kw):
             self.kalshi_fetched.append(external_id)
             return None
 
