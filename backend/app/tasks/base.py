@@ -102,6 +102,9 @@ async def get_task_session(
             try:
                 yield session
                 await session.commit()
+                from app.utils.nonvenue_live_push import publish_committed_nonvenue_frames
+
+                await publish_committed_nonvenue_frames(session)
             except Exception:
                 await session.rollback()
                 raise

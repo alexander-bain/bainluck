@@ -30,6 +30,10 @@ from app.utils.win_probability import (
     model_pregame_spread,
     priorless_model_defers_to_market,
 )
+from tests.test_priorless_stat_model_defers_to_market_8522 import (
+    _portable_probability_writer,  # noqa: F401 - shared autouse SQLite writer seam
+)
+
 from tests.test_priorless_stat_model_defers_to_market_8522 import (  # noqa: F401 — registers the sqlite JSONB/ARRAY compilers
     KALSHI_JUST_BEFORE,
     STAMP,

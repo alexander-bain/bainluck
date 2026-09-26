@@ -186,22 +186,9 @@ async def _sync_mlb_win_probability():
                     else:
                         stats["snapshots_updated"] += 1
 
-                    # Write MLB win prob to win_probability_sources
-                    # via select+update to avoid ORM session caching
-                    from sqlalchemy import update as _sql_upd, select as _sql_sel
-                    from app.utils.aggregation import stamp_source_reading
-                    _mlb_r = await session.execute(
-                        _sql_sel(Event.win_probability_sources).where(Event.id == event.id)
-                    )
-                    # #1829: value + write time, so a source that goes quiet
-                    # can be aged against the ones that did not.
-                    _mlb_wps = stamp_source_reading(
-                        _mlb_r.scalar_one_or_none(), WIN_PROB_SOURCE_KEY, home_wp
-                    )
-                    await session.execute(
-                        _sql_upd(Event)
-                        .where(Event.id == event.id)
-                        .values(win_probability_sources=_mlb_wps)
+                    from app.utils.nonvenue_live_push import write_nonvenue_probability
+                    await write_nonvenue_probability(
+                        session, event, WIN_PROB_SOURCE_KEY, home_wp,
                     )
 
                     # Update Event.period for feed scoring (late-game bonus)
@@ -283,6 +270,8 @@ async def _sync_mlb_win_probability():
                     logger.error(f"MLB sync error for game {mlb_game.game_pk}: {e}")
 
             await session.commit()
+            from app.utils.nonvenue_live_push import publish_committed_nonvenue_frames
+            await publish_committed_nonvenue_frames(session)
 
     except Exception as e:
         stats["errors"].append(str(e))

@@ -47,6 +47,10 @@ from tests.test_a_settled_final_survives_the_writer_7147_e2e import (
     _score_record,
 )
 from tests.test_priorless_stat_model_defers_to_market_8522 import (
+    _portable_probability_writer,  # noqa: F401 - shared autouse SQLite writer seam
+)
+
+from tests.test_priorless_stat_model_defers_to_market_8522 import (
     KALSHI_JUST_BEFORE,
     STAMP,
     _live_row_on_disk,

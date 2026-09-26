@@ -68,6 +68,9 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from tests.test_priorless_stat_model_defers_to_market_8522 import (
+    _portable_probability_writer,  # noqa: F401 - shared recording/SQLite write seam
+)
 from sqlalchemy import event as sa_event
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.ext.compiler import compiles

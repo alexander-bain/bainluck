@@ -107,6 +107,11 @@ class _ScalarResult:
 def patched_snapshots(monkeypatch):
     """Make `_create_or_update_snapshot` return a book's quote, in order."""
 
+    # This suite asserts bookmaker admission/removal using a recording session.
+    # The production atomic/commit path is guarded against real PostgreSQL in8761.
+    from tests.nonvenue_writer_seam import portable_nonvenue_write
+    monkeypatch.setattr("app.utils.nonvenue_live_push.write_nonvenue_probability", portable_nonvenue_write)
+
     def _install(probs, spread=None, over_under=None):
         queue = list(probs)
 

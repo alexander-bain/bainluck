@@ -60,6 +60,9 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from tests.test_priorless_stat_model_defers_to_market_8522 import (
+    _portable_probability_writer,  # noqa: F401 - shared recording/SQLite write seam
+)
 from sqlalchemy import event as sa_event
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.ext.compiler import compiles
@@ -4992,13 +4995,6 @@ _DECLARED_CORE_WRITERS = {
         "statement IS the compare-and-write. Held up by "
         "`test_the_cas_is_given_a_captured_position_never_a_fresh_read_6056`."
     ),
-    "espn_helpers.compute_and_write_stat_model": (
-        "NOT AN `events` WRITE. The four names appear as keys of the "
-        "`game_state` JSON blob on a `win_prob_snapshots` row — a different "
-        "table, an append, and no position on `events` is touched. Caught here "
-        "only because this function ALSO does an unrelated Core write to "
-        "`events`, which is exactly the over-inclusion this scan prefers."
-    ),
     "espn_helpers.create_events_from_unmatched_espn": (
         "NOT AN `events` WRITE. The four names are constructor keywords on an "
         "`ESPNSnapshot` — a different table and an append. Its own Core "
@@ -5022,11 +5018,6 @@ _DECLARED_CORE_WRITERS = {
         "which are handed the row's current position to decide whether ESPN's "
         "authority demotes it. The function writes `status` and "
         "`win_probability_sources`, never a position column."
-    ),
-    "espn_helpers.write_espn_win_probability": (
-        "NOT AN `events` WRITE, same shape as above: the columns named are "
-        "`game_state` keys on the ESPN `win_prob_snapshots` row. Its own Core "
-        "statement writes `win_probability_sources` and `espn_win_prob_home`."
     ),
     "odds_polling._poll_all_odds": (
         "ARBITRATED BY A DIFFERENT MECHANISM, on purpose. This feed carries no "
