@@ -61,7 +61,7 @@ def _compose(rows, q):
     seen, kept, counts, over = set(), {}, {}, set()
     out = []
     for m in rows:
-        if not ev._admit_search_future(m, seen, kept):
+        if not ev._admit_search_future(m, seen, kept, []):
             continue
         if ev._is_over_match_cap(m, counts, _words(q)):
             over.add(m.id)
@@ -71,7 +71,7 @@ def _compose(rows, q):
 
 def test_precondition_the_old_rule_serves_seven_rows_of_one_match():
     seen, kept = set(), {}
-    admitted = [m.id for m in UNITED_PAGE if ev._admit_search_future(m, seen, kept)]
+    admitted = [m.id for m in UNITED_PAGE if ev._admit_search_future(m, seen, kept, [])]
     assert len(admitted) == 10
     assert sum(1 for i in admitted if i in SH_IDS) == 7
 

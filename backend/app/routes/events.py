@@ -673,6 +673,71 @@ def _is_repeat_of_a_kept_question(market, kept_sources_by_question: dict) -> boo
     return bool(seen) and (getattr(market, "source", None), person) not in seen
 
 
+#: #8843 — how many listed contenders two venues' boards must share before a
+#: title paraphrase counts as one question. `hub_cross_venue_fold`'s gate 6.
+_SEARCH_SAME_FIELD_MIN_SHARED = 3
+_SEARCH_CONTENDER_PUNCT = re.compile(r"[^\w\s]")
+
+
+def _search_listed_names(market) -> frozenset[str]:
+    """The board's listed contender names, compared without punctuation.
+
+    Kalshi writes `J.D. Vance` and `J.B. Pritzker`; Polymarket `JD Vance`, `JB
+    Pritzker`. Fail-open: a row whose outcomes are not loaded lists nothing, so
+    it can never fold on this arm.
+    """
+    names = set()
+    for o in getattr(market, "outcomes", None) or ():
+        name = getattr(o, "name", None)
+        if isinstance(name, str):
+            folded = " ".join(_SEARCH_CONTENDER_PUNCT.sub("", name.casefold()).split())
+            if folded:
+                names.add(folded)
+    return frozenset(names)
+
+
+def _is_paraphrase_of_a_kept_board(market, kept_boards: list) -> bool:
+    """True if another venue's row already on the page asks the same question in
+    other words AND lists the same field.
+
+    #8843 — `?q=election` (390px, 2026-09-26) printed the 2028 presidential
+    winner twice: Polymarket `Presidential Election Winner 2028` (JD Vance 21%)
+    and Kalshi `2028 U.S. Presidential Election winner?` (J.D. Vance 20%). The
+    #8378/#8410 key splits them by one qualifier (`presidential champion` vs
+    `u s presidential champion`). Stripping `U.S.` from the key is rejected:
+    `U.S. Open winner` would then key like golf's `The Open Championship`.
+
+    Both gates are required. The title gate is the house matcher,
+    `is_same_question`. The field gate is what makes it safe for a deduper: the
+    matcher alone also pairs Kalshi's `2028 Presidential Election winner?
+    (Party)` with the person board, whose two outcomes share no name with it.
+    At least `_SEARCH_SAME_FIELD_MIN_SHARED` names in common, or, when both
+    boards list two or fewer (Yes/No), the same names.
+
+    Cross-venue only, like #8378. The first row kept is the ranking's choice and
+    its numbers are shown as they are.
+    """
+    source = getattr(market, "source", None)
+    if not kept_boards or not source:
+        return False
+    names = _search_listed_names(market)
+    if not names:
+        return False
+    from app.utils.cross_source_matching import is_same_question
+
+    for kept_source, kept_name, kept_names in kept_boards:
+        if kept_source == source or not kept_names:
+            continue
+        if len(names) <= 2 and len(kept_names) <= 2:
+            if names != kept_names:
+                continue
+        elif len(names & kept_names) < _SEARCH_SAME_FIELD_MIN_SHARED:
+            continue
+        if is_same_question(market.name, kept_name):
+            return True
+    return False
+
+
 #: #8628 — the line of an over/under rung: the number right after `O/U`.
 _SEARCH_LADDER_LINE = re.compile(r"(\bo/u\s+)\d+(?:\.\d+)?(?![\d.])", re.I)
 
@@ -703,16 +768,18 @@ def _search_ladder_key(market) -> Optional[str]:
 
 
 def _admit_search_future(
-    market, seen_keys: set, kept_sources_by_question: dict
+    market, seen_keys: set, kept_sources_by_question: dict, kept_boards: list
 ) -> bool:
     """The search page's per-row dedup decision, and its bookkeeping.
 
     False = drop the row: its tiered key is already on the page (the rule since
     #993/#1769), or it is another venue's copy of a question already kept
     (#8378), or another series of one race (#8410), or another rung of an O/U
-    ladder already kept (#8628). True = keep it, and record the keys so later rows are judged
+    ladder already kept (#8628), or another venue's paraphrase of a kept board
+    with the same field (#8843). True = keep it, and record the keys so later rows are judged
     against it. Both route loops — the window and its refill — call this, so
-    the refill cannot re-admit a copy the window dropped.
+    the refill cannot re-admit a copy the window dropped. `kept_boards` is
+    required, not defaulted, for the same reason.
     """
     dkey = _normalize_futures_dedup_key(market)
     lkey = _search_ladder_key(market)
@@ -720,6 +787,7 @@ def _admit_search_future(
         dkey in seen_keys
         or (lkey is not None and lkey in seen_keys)
         or _is_repeat_of_a_kept_question(market, kept_sources_by_question)
+        or _is_paraphrase_of_a_kept_board(market, kept_boards)
     ):
         return False
     seen_keys.add(dkey)
@@ -728,6 +796,9 @@ def _admit_search_future(
     key, person = _search_question_identity(market)
     kept_sources_by_question.setdefault(key, set()).add(
         (getattr(market, "source", None), person)
+    )
+    kept_boards.append(
+        (getattr(market, "source", None), market.name, _search_listed_names(market))
     )
     return True
 
@@ -9278,6 +9349,8 @@ async def search_events(
     # already on the page is dropped even when the two classified to different
     # tiers. See `_is_repeat_of_a_kept_question`.
     kept_sources_by_question: dict[str, set] = {}
+    # #8843: (venue, title, listed names) of every kept row, for the paraphrase arm.
+    kept_boards: list = []
     # #8628 r2: rows past a fixture's cap are SUNK below every other row and do
     # not count toward a full page, so the refill below can bring in another
     # question. See `_is_over_match_cap`.
@@ -9286,7 +9359,9 @@ async def search_events(
     _over_match_cap_ids: set[int] = set()
     deduped_futures = []
     for m in reranked_futures:
-        if not _admit_search_future(m, seen_search_keys, kept_sources_by_question):
+        if not _admit_search_future(
+            m, seen_search_keys, kept_sources_by_question, kept_boards
+        ):
             continue
         if _is_over_match_cap(m, _match_counts, _query_words):
             _over_match_cap_ids.add(m.id)
@@ -9439,7 +9514,7 @@ async def search_events(
             _team_sport_categories,
         ):
             if not _admit_search_future(
-                m, seen_search_keys, kept_sources_by_question
+                m, seen_search_keys, kept_sources_by_question, kept_boards
             ):
                 continue
             if _is_over_match_cap(m, _match_counts, _query_words):

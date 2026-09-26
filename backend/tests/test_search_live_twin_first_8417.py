@@ -66,7 +66,7 @@ def _page(rows):
     """The route's own per-row dedup decision, in order."""
     seen: set = set()
     kept: dict = {}
-    return [m.id for m in rows if events_route._admit_search_future(m, seen, kept)]
+    return [m.id for m in rows if events_route._admit_search_future(m, seen, kept, [])]
 
 
 def test_precondition_one_question_and_the_frozen_row_has_the_volume():
