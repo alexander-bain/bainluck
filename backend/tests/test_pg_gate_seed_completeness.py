@@ -497,6 +497,12 @@ COVERED = (
     # re-issued-id sweep's read, write, lift and restore. Explicit ids; the
     # schema is dropped whole on teardown.
     "test_odds_api_reissued_twin_8422_pg.py",
+    # #6974 (NHL residual). Seeds `sports`, `teams`, `events`,
+    # `futures_outcomes`, `entities` and `team_identity_mapping` by raw INSERT
+    # to drive the duplicate-club fold's apply and its `--restore` against a
+    # real server. `sports.active` is the Python-side default this file exists
+    # for, and the seed names it.
+    "test_repair_6974_fold_nhl_apply_restore_pg.py",
 )
 
 INTEGRATION_DIR = Path(__file__).parent / "integration"

@@ -8,12 +8,12 @@ York Islanders. The NHL season opens 2026-10-07.
 WHAT A READER SEES (production, 2026-09-26 ~13:20Z)
 ---------------------------------------------------
 
-``GET /api/events/search?q=rangers`` → ``teams``::
+The search payload for ``rangers``, its ``teams`` block::
 
     8293  New York R          icehockey_nhl  28-33-8   <- a duplicate, first
       57  New York Rangers    icehockey_nhl  1-2-0
 
-``GET /api/events/search?q=islanders`` → ``teams``::
+The search payload for ``islanders``, its ``teams`` block::
 
     12716 New Jersey          icehockey_nhl  42-27-5   <- wears the Islanders' identity
      6181 New York I          icehockey_nhl  39-26-5   <- a duplicate
