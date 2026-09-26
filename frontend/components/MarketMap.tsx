@@ -486,6 +486,40 @@ export function ladderGraded(ladder: MarketMapLadderRow[]): boolean {
   return ladder.length > 0 && ladder.every((row) => row.outcome != null);
 }
 
+/**
+ * #8946 — A GRADED LADDER SHOWS THE LINES AROUND THE FINAL, NOT ALL OF THEM.
+ *
+ * Seen at 390px on `/events/14870011` (Texas 20 @ Tennessee 17, 37 points):
+ * 35 rows under "Each line vs the final", two `cleared` and then 33 identical
+ * `not cleared`. A graded row has no bar (#3769), so every row past the final
+ * says the same thing — ~1,500px of phone saying what the FINAL chip says.
+ *
+ * Keeps `GRADED_LADDER_EDGE` rows either side of every place the result flips
+ * (a margin ladder can flip more than once), and hides the rest behind a toggle.
+ * Nothing is removed: #6196/#6218 made the losing rungs appear and every one of
+ * them stays in the markup, one tap away. Returns `null` when the ladder is
+ * short enough to show whole, or is not graded — a quoting ladder carries a
+ * price per row and is never collapsed.
+ */
+export const GRADED_LADDER_COLLAPSE_OVER = 10;
+const GRADED_LADDER_EDGE = 2;
+
+export function gradedLadderVisibleRows(ladder: MarketMapLadderRow[]): Set<number> | null {
+  if (!ladderGraded(ladder) || ladder.length <= GRADED_LADDER_COLLAPSE_OVER) return null;
+  const keep = new Set<number>();
+  for (let i = 1; i < ladder.length; i++) {
+    if (ladder[i].outcome === ladder[i - 1].outcome) continue;
+    for (let j = i - GRADED_LADDER_EDGE; j < i + GRADED_LADDER_EDGE; j++) {
+      if (j >= 0 && j < ladder.length) keep.add(j);
+    }
+  }
+  // No flip at all (every line cleared, or none did): the first rows say it.
+  if (keep.size === 0) {
+    for (let j = 0; j < GRADED_LADDER_EDGE * 2; j++) keep.add(j);
+  }
+  return keep;
+}
+
 function ladderHeading(
   status: MarketMapProps["status"],
   variant: MarketMapProps["variant"],
@@ -515,6 +549,11 @@ function LadderRows({
   // #3769: all-or-nothing, decided by the same `ladderGraded` the heading used,
   // so one ladder can never print a graded row beside a quoted one.
   const graded = ladderGraded(ladder);
+  // #8946: the hidden rows stay rendered (`hidden`), in order, so expanding
+  // restores the ladder exactly and nothing leaves the markup.
+  const visibleRows = gradedLadderVisibleRows(ladder);
+  const [showAll, setShowAll] = useState(false);
+  const collapsed = visibleRows != null && !showAll;
   return (
     <>
       <div
@@ -529,11 +568,16 @@ function LadderRows({
       >
         {heading}
       </div>
-      {ladder.map((row, i) => (
+      {ladder.map((row, i) => {
+        const rowHidden = collapsed && !visibleRows.has(i);
+        return (
         <div
           key={i}
+          hidden={rowHidden}
+          data-ladder-row-collapsed={rowHidden ? "1" : undefined}
           style={{
-            display: "grid",
+            // The inline `display` would beat the `hidden` attribute's UA rule.
+            display: rowHidden ? "none" : "grid",
             gridTemplateColumns: "94px 1fr 38px",
             alignItems: "center",
             gap: 8,
@@ -594,7 +638,32 @@ function LadderRows({
             </>
           )}
         </div>
-      ))}
+        );
+      })}
+      {visibleRows != null && (
+        <button
+          type="button"
+          data-ladder-toggle="1"
+          aria-expanded={showAll}
+          // The card toggles its popover on click; this tap is the ladder's own.
+          onClick={(e) => {
+            e.stopPropagation();
+            setShowAll((v) => !v);
+          }}
+          style={{
+            marginTop: 4,
+            fontSize: 11,
+            fontWeight: 700,
+            color: "var(--text-secondary)",
+            background: "none",
+            border: "none",
+            padding: "4px 2px",
+            cursor: "pointer",
+          }}
+        >
+          {showAll ? "Show fewer lines" : `Show all ${ladder.length} lines`}
+        </button>
+      )}
     </>
   );
 }

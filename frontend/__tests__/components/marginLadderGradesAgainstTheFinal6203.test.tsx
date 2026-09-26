@@ -91,7 +91,11 @@ function ladderOf(text: string, cardTitle: string): string {
   if (from < 0) return "";
   const body = card.slice(from + "Each line vs the final".length);
   const second = body.indexOf("Each line vs the final");
-  return second < 0 ? body : body.slice(0, second);
+  const ladder = second < 0 ? body : body.slice(0, second);
+  // #8946: a long graded ladder ends in its "Show all N lines" toggle, which is
+  // not a rung — without this bound it reads as the last rung's verdict.
+  const toggle = ladder.indexOf("Show all ");
+  return toggle < 0 ? ladder : ladder.slice(0, toggle);
 }
 
 /**
