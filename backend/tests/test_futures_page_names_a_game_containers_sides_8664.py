@@ -252,7 +252,8 @@ async def test_the_route_serves_the_relabelled_specimen(monkeypatch):
     monkeypatch.setattr(futures_routes, "_load_market_sources", _no_sources)
     monkeypatch.setattr(futures_routes, "_withheld_price_outcome_ids", _nothing_withheld)
     monkeypatch.setattr(futures_routes, "_fleet_newest_observation", _no_fleet)
-    db = _Db(_specimen(), _rows(SIBLINGS))
+    # The third read is #8892's lead-leg read; no sibling carries an understanding.
+    db = _Db(_specimen(), _rows(SIBLINGS), [])
     payload = await get_futures_market(CONTAINER_ID, db=db)
     assert set(_served_names(payload).values()) == {
         "Infinite — Match Winner",
