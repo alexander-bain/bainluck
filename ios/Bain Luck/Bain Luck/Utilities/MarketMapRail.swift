@@ -1314,6 +1314,50 @@ enum MarketMapRail {
         return wholeContest.isEmpty ? all : wholeContest
     }
 
+    // MARK: - The name a margin map calls each side (#8793)
+
+    /// The two names every margin label on a map is built from: the ladder
+    /// rows, the axis ends and the tiles.
+    ///
+    /// #8793 — photographed on event 15310972 (`artifacts/native-8739/after-sdwave-s650.png`):
+    /// San Diego Wave FC @ Racing Louisville FC drew six ladder rows reading
+    /// `San Diego Wave F…` ×3 and `Racing Louisville F…` ×3, and the axis ran
+    /// `San Diego Wave FC by 8.5+` straight into `Tie`. `shortPair` returns a
+    /// name UNCHANGED when it has nothing to shorten — a club whose last word is
+    /// `FC` names nothing on its own — and neither NWSL team is served an
+    /// abbreviation, so the full name went into a 118 pt column
+    /// (``MarketMapLadderLayout/labelColumnWidth``) and truncation took `by N+`,
+    /// the only part of the row that tells one rung from the next.
+    ///
+    /// That column's own doc says what to do when a label outgrows it: shorten
+    /// the label, never grow the column. So when either side comes back as the
+    /// whole multi-word name, the map uses the badge pair instead — `SDW`/`RAC`,
+    /// the same codes the page title on that screen already reads. Both sides
+    /// move together so one map never mixes a badge with a name.
+    ///
+    /// Everything that shortens is untouched: served abbreviations (`LAR`), a
+    /// tennis surname (`Zandschulp`), a nickname (`Red Sox`).
+    static func mapSideLabels(
+        away: String,
+        home: String,
+        awayServed: String? = nil,
+        homeServed: String? = nil
+    ) -> (away: String, home: String) {
+        let labels = TeamShortName.shortPair(
+            away: away, home: home, awayServed: awayServed, homeServed: homeServed
+        )
+        func unshortened(_ label: String, _ name: String) -> Bool {
+            let words = name.split(separator: " ").filter { !$0.isEmpty }
+            return words.count > 1 && label == words.joined(separator: " ")
+        }
+        guard unshortened(labels.away, away) || unshortened(labels.home, home) else {
+            return labels
+        }
+        return TeamShortName.abbreviationPair(
+            away: away, home: home, awayServed: awayServed, homeServed: homeServed
+        )
+    }
+
     // MARK: - One grammar for a margin (#7905, porting #2442 and #7380)
 
     /// `LAR by 3.5+` — a MARGIN, not a handicap.

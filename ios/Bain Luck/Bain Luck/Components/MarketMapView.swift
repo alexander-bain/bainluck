@@ -89,8 +89,10 @@ struct MarketMapView: View {
     private static let markerStrokeWidth: CGFloat = 2
 
     /// #3430 — both competitors of one matchup, so the pair rule decides.
+    /// #8793 — through the map's own rule, which swaps a name the pair rule
+    /// could not shorten for its badge, so `by N+` survives the label column.
     private var sides: (away: String, home: String) {
-        TeamShortName.shortPair(
+        MarketMapRail.mapSideLabels(
             away: awayTeam, home: homeTeam,
             awayServed: awayAbbr, homeServed: homeAbbr
         )
