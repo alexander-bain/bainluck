@@ -256,6 +256,7 @@ async def run_mlb_reschedule_ghost_sweep(
                 "board_games_read": plan.board_games_read,
                 "anchored_board_games": plan.anchored_board_games,
                 "rescheduled_games_seen": plan.rescheduled_games_seen,
+                "same_day_games_with_extra_rows": plan.same_day_games_with_extra_rows,
                 "already_tagged": plan.already_tagged,
                 "tags_to_write": len(plan.tags),
                 "tag_sample": [

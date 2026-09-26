@@ -27,6 +27,11 @@ D — and it must be the ONLY such row on D.
 between the two teams — so D is genuinely empty for this matchup, not a
 doubleheader day and not a series whose other game we would be hiding.
 
+A SAME-DAY move (#8952) carries no note: ESPN just lists the game at a new hour.
+That arm reads one board: ESPN lists the pairing exactly once on D, exactly one
+row carries that game's id and is dated D, and the ONE other row for the teams
+on D has no id and no score. See the loop at the end of the planner.
+
 Anything short of exactly one canonical and exactly one ghost is a refusal, not
 a guess. Cubs @ Red Sox on the same day is the control: its game 1 is
 "Rescheduled from Sep. 27", our Saturday row for that matchup is a real game
@@ -169,8 +174,60 @@ class ReschedulePlan:
     #: canonical side stands on. Its collapse is the rule losing its population.
     anchored_board_games: int = 0
     rescheduled_games_seen: int = 0
+    #: Sole-on-its-board games that had a second row for the pairing that day.
+    same_day_games_with_extra_rows: int = 0
     already_tagged: int = 0
     dark_days: list[date] = field(default_factory=list)
+
+
+def _decide(
+    plan: ReschedulePlan,
+    rows: list[MlbRow],
+    decided: dict[int, GhostTag],
+    contested: set[int],
+    canonical: MlbRow,
+    day: date,
+    label: str,
+    *,
+    reason: str,
+    refuse_empty: bool,
+) -> bool:
+    """Label the ONE other row for ``canonical``'s pairing on ``day``, or refuse.
+
+    Returns whether any other row existed. ``refuse_empty`` is False for the
+    same-day arm, where no second row is simply the normal case.
+    """
+    home, away = _team(canonical.home_team_name), _team(canonical.away_team_name)
+    others = [
+        r
+        for r in rows
+        if r.event_id != canonical.event_id
+        and _team(r.home_team_name) == home
+        and _team(r.away_team_name) == away
+        and local_date(r.commence_time) == day
+    ]
+    if not others and not refuse_empty:
+        return False
+    if len(others) != 1:
+        plan.refusals.append(f"{label}: {len(others)} rows for the matchup on {day}")
+        return bool(others)
+    ghost = others[0]
+    if ghost.espn_id or ghost.has_final_score:
+        plan.refusals.append(
+            f"{label}: row {ghost.event_id} on {day} is anchored or scored"
+        )
+        return True
+    if ghost.is_duplicate_tagged:
+        plan.already_tagged += 1
+        return True
+    tag = GhostTag(
+        ghost_id=ghost.event_id, canonical_id=canonical.event_id, reason=reason
+    )
+    prior = decided.get(ghost.event_id)
+    if prior and prior.canonical_id != tag.canonical_id:
+        contested.add(ghost.event_id)
+    decided.setdefault(ghost.event_id, tag)
+    return True
 
 
 def plan_reschedule_ghosts(
@@ -235,43 +292,58 @@ def plan_reschedule_ghosts(
                 )
                 continue
 
-            home, away = _team(canonical.home_team_name), _team(
-                canonical.away_team_name
-            )
-            on_origin = [
-                r
-                for r in rows
-                if r.event_id != canonical.event_id
-                and _team(r.home_team_name) == home
-                and _team(r.away_team_name) == away
-                and local_date(r.commence_time) == moved_from
-            ]
-            if len(on_origin) != 1:
-                plan.refusals.append(
-                    f"{label}: {len(on_origin)} rows for the matchup on {moved_from}"
-                )
-                continue
-            ghost = on_origin[0]
-            if ghost.espn_id or ghost.has_final_score:
-                plan.refusals.append(
-                    f"{label}: row {ghost.event_id} on {moved_from} is anchored or scored"
-                )
-                continue
-            if ghost.is_duplicate_tagged:
-                plan.already_tagged += 1
-                continue
-
-            tag = GhostTag(
-                ghost_id=ghost.event_id,
-                canonical_id=canonical.event_id,
+            _decide(
+                plan,
+                rows,
+                decided,
+                contested,
+                canonical,
+                moved_from,
+                label,
                 reason=f"mlb_reschedule: {label}",
+                refuse_empty=True,
             )
-            prior = decided.get(ghost.event_id)
-            if prior and prior.canonical_id != tag.canonical_id:
-                contested.add(ghost.event_id)
-            decided.setdefault(ghost.event_id, tag)
+
+    # THE SAME-DAY ARM (#8952). A game moved to another hour of the SAME day
+    # carries no "Rescheduled from" note, so the loop above never sees it. On
+    # 2026-09-27 ESPN moved BAL @ NYY from 19:20Z to 17:05Z; the odds_api row at
+    # 17:05 took ESPN's id, and StatPal's pre-load row stayed at 19:20. The
+    # evidence is the same shape, read off one board instead of two: ESPN lists
+    # the pairing EXACTLY ONCE on D (so D is not a doubleheader), exactly one of
+    # our rows carries that game's id and is dated D, and one other row for the
+    # same teams on D has no id and no score. Anything else is left alone.
+    for day, games in sorted(boards.items()):
+        games = games or ()
+        for game in games:
+            if not (game.home_team_id and game.away_team_id):
+                continue
+            pair = {game.home_team_id, game.away_team_id}
+            if sum({g.home_team_id, g.away_team_id} == pair for g in games) != 1:
+                continue
+            canonicals = by_espn.get(game.espn_id, [])
+            if len(canonicals) != 1:
+                continue
+            canonical = canonicals[0]
+            if (
+                canonical.is_duplicate_tagged
+                or local_date(canonical.commence_time) != day
+            ):
+                continue
+            label = f"espn {game.espn_id} (sole {day.isoformat()} game for the pair)"
+            if _decide(
+                plan,
+                rows,
+                decided,
+                contested,
+                canonical,
+                day,
+                label,
+                reason=f"mlb_same_day_move: {label}",
+                refuse_empty=False,
+            ):
+                plan.same_day_games_with_extra_rows += 1
 
     for ghost_id in sorted(contested):
-        plan.refusals.append(f"row {ghost_id}: two rescheduled games claim it")
+        plan.refusals.append(f"row {ghost_id}: two canonical games claim it")
     plan.tags = [t for gid, t in sorted(decided.items()) if gid not in contested]
     return plan
