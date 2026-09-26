@@ -1730,10 +1730,16 @@ async def _poll_kalshi_markets():
 
                     # Detect league and season for cross-source matching
                     league = detect_league(market_name, sport_category=sport_category)
+                    # #3047: the season is read from `resolution_date` — when
+                    # the question is decided — never from `expiration_time`,
+                    # the legal backstop CAL-P989 moved into its own column.
+                    # KXMLB-26 (World Series, closes 2026-11-01) and KXWNBA-26
+                    # carry a 2028 backstop, so they keyed season 2028 and no
+                    # other source's key could ever meet theirs.
                     season = detect_season(
                         market_name,
                         league,
-                        expiration_time,
+                        resolution_date,
                     )
                     canon_category = detect_market_type(market_name)
                     if sport_category == "olympics":

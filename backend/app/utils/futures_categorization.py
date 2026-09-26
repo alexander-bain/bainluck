@@ -1519,6 +1519,14 @@ LEAGUE_PATTERNS: list[tuple[re.Pattern, str]] = [
     # Baseball
     (re.compile(r"\b(mlb|world\s+series|american\s+league|national\s+league)\b", re.I), "MLB"),
     (re.compile(r"\b(al|nl)\s+(mvp|cy\s*young|rookie|reliever)\b", re.I), "MLB"),
+    # #3047: Kalshi titles its World Series event without the league's name
+    # ("Pro Baseball Champion", KXMLB-26), so it keyed `baseball::` while every
+    # other source keys `baseball:MLB:` and it could never fold with them —
+    # Discover served the World Series twice. Only the CHAMPION phrase: "Toronto
+    # pro baseball wins this season?" is not re-keyed by this line, nor is "Pro
+    # Baseball Championship Series Matchup" (a pairs market; its bucket-mate in
+    # the feed's one-survivor-per-key dedupe could shadow the World Series).
+    (re.compile(r"\bpro\s+baseball\s+champion\b", re.I), "MLB"),
     # Hockey
     (re.compile(r"\b(nhl|stanley\s+cup)\b", re.I), "NHL"),
     (re.compile(r"\b(hart\s+trophy|vezina|calder|conn\s+smythe|norris\s+trophy|selke|rocket\s+richard)\b", re.I), "NHL"),
@@ -1912,6 +1920,14 @@ _MARKET_TYPE_PATTERNS: list[tuple["re.Pattern[str]", str]] = [
     # Market types
     (re.compile(r"\bwin\s+total|over.?under\s+wins\b", re.I), "win_totals"),
     (re.compile(r"\bmake\s+playoffs\b", re.I), "make_playoffs"),
+    # #3047: a pennant is not the World Series. Both used to fall through to
+    # "championship", so once the Kalshi World Series and pennants carried the
+    # same season they shared one key with the World Series and the feed's
+    # canonical dedupe could fold "American League Champion" into it (AL teams
+    # sit in both top-outcome lists). "AL Central Champion" does not match — the
+    # league word must touch "champion"/"pennant" — and stays a division row.
+    (re.compile(r"\b(?:al|american\s+league)\s+(?:champion|pennant)", re.I), "al_pennant"),
+    (re.compile(r"\b(?:nl|national\s+league)\s+(?:champion|pennant)", re.I), "nl_pennant"),
     (re.compile(r"\bdivision\s+(?:winner|champion)\b", re.I), "division_winner"),
     (re.compile(r"\bconference\s+(?:winner|champion|finals)\b", re.I), "conference_winner"),
     # Championship (fallback for sports markets)
