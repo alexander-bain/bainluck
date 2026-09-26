@@ -377,6 +377,47 @@ private func categorizeFutures(_ futures: [RelatedFuture]) -> CategorizedFutures
     return cats
 }
 
+// MARK: - Side of a future (#8684)
+
+/// Which team's list the server filed a future under.
+enum RelatedFutureSide: Equatable, Sendable { case away, home }
+
+/// #8684: a future's side is the list the server filed it in — never a test on
+/// its outcome name. An award's outcome is a PLAYER ("Logan Webb"), whose name
+/// contains no team, so `outcomeName.contains("Giants")` sent every Giants
+/// player under the Dodgers header. An outcome filed in both lists stays on the
+/// away side, the order the merged list has always been drawn in.
+func relatedFutureSides(away: [RelatedFuture], home: [RelatedFuture]) -> [Int: RelatedFutureSide] {
+    var sides: [Int: RelatedFutureSide] = [:]
+    for f in home { sides[f.outcomeId] = .home }
+    for f in away { sides[f.outcomeId] = .away }
+    return sides
+}
+
+typealias AwardPlayerGroup = (name: String, awards: [(label: String, prob: Double, future: RelatedFuture)])
+
+/// The AWARDS rows: one per player, strongest award first, split by the side
+/// each award was filed on (#8684). An outcome that arrives twice is counted once.
+func awardPlayerGroups(
+    _ awards: [RelatedFuture],
+    sides: [Int: RelatedFutureSide]
+) -> (away: [AwardPlayerGroup], home: [AwardPlayerGroup]) {
+    func group(_ side: RelatedFutureSide) -> [AwardPlayerGroup] {
+        var order: [String] = []
+        var map: [String: [(label: String, prob: Double, future: RelatedFuture)]] = [:]
+        var seen: Set<Int> = []
+        for a in awards where (sides[a.outcomeId] ?? .away) == side && seen.insert(a.outcomeId).inserted {
+            let entry = (label: shortAwardLabel(a.marketName, cleanLabel: a.cleanLabel), prob: a.probability ?? 0, future: a)
+            map[a.outcomeName, default: []].append(entry)
+            if !order.contains(a.outcomeName) { order.append(a.outcomeName) }
+        }
+        return order
+            .map { (name: $0, awards: map[$0]!.sorted { $0.prob > $1.prob }) }
+            .sorted { $0.awards.first?.prob ?? 0 > $1.awards.first?.prob ?? 0 }
+    }
+    return (away: group(.away), home: group(.home))
+}
+
 // MARK: - View
 
 struct RelatedFuturesView: View {
@@ -452,6 +493,7 @@ struct RelatedFuturesView: View {
             let homeColor = homeTeamColor
             let awayColor = awayTeamColor
 
+            let sides = relatedFutureSides(away: awayFutures, home: homeFutures)
             let mergedAwards = awayCats.awards + homeCats.awards
             let mergedStatLeaders = awayCats.statLeaders + homeCats.statLeaders
             let mergedNovelty = (awayCats.novelty + homeCats.novelty)
@@ -485,7 +527,7 @@ struct RelatedFuturesView: View {
                     // Awards — compact rows grouped by player
                     if !mergedAwards.isEmpty {
                         sectionHeader(icon: "star.fill", label: "AWARDS")
-                        awardsByPlayer(mergedAwards, homeColor: homeColor, awayColor: awayColor)
+                        awardsByPlayer(mergedAwards, sides: sides, homeColor: homeColor, awayColor: awayColor)
                     }
 
                     // Season Outlook (win totals, division winners minus stat leaders)
@@ -509,6 +551,7 @@ struct RelatedFuturesView: View {
                     if !mergedStatLeaders.isEmpty {
                         statLeadersSection(
                             leaders: mergedStatLeaders,
+                            sides: sides,
                             homeColor: homeColor,
                             awayColor: awayColor
                         )
@@ -556,31 +599,14 @@ struct RelatedFuturesView: View {
         .foregroundStyle(.secondary)
     }
 
-    private func teamColorForFuture(_ future: RelatedFuture, homeColor: Color, awayColor: Color) -> Color {
-        let homeShort = TeamShortName.short(homeTeam)
-        return future.outcomeName.localizedCaseInsensitiveContains(homeShort) ? homeColor : awayColor
+    private func teamColorForFuture(_ future: RelatedFuture, sides: [Int: RelatedFutureSide], homeColor: Color, awayColor: Color) -> Color {
+        sides[future.outcomeId] == .home ? homeColor : awayColor
     }
 
-    private func awardsByPlayer(_ awards: [RelatedFuture], homeColor: Color, awayColor: Color) -> some View {
-        // Group awards by player name
-        var playerOrder: [String] = []
-        var playerMap: [String: [(label: String, prob: Double, future: RelatedFuture)]] = [:]
-
-        for a in awards {
-            let player = a.outcomeName
-            let label = shortAwardLabel(a.marketName, cleanLabel: a.cleanLabel)
-            let entry = (label: label, prob: a.probability ?? 0, future: a)
-            playerMap[player, default: []].append(entry)
-            if !playerOrder.contains(player) { playerOrder.append(player) }
-        }
-
-        let sorted = playerOrder
-            .map { (name: $0, awards: playerMap[$0]!.sorted { $0.prob > $1.prob }) }
-            .sorted { $0.awards.first?.prob ?? 0 > $1.awards.first?.prob ?? 0 }
-
-        let homeShort = TeamShortName.short(homeTeam)
-        let homePlayers = sorted.filter { $0.awards.first?.future.outcomeName.localizedCaseInsensitiveContains(homeShort) == true }
-        let awayPlayers = sorted.filter { !($0.awards.first?.future.outcomeName.localizedCaseInsensitiveContains(homeShort) == true) }
+    private func awardsByPlayer(_ awards: [RelatedFuture], sides: [Int: RelatedFutureSide], homeColor: Color, awayColor: Color) -> some View {
+        let groups = awardPlayerGroups(awards, sides: sides)
+        let homePlayers = groups.home
+        let awayPlayers = groups.away
 
         let columns = [GridItem(.adaptive(minimum: 280), spacing: 10)]
         return VStack(alignment: .leading, spacing: 8) {
@@ -719,7 +745,7 @@ struct RelatedFuturesView: View {
     }
 
     @ViewBuilder
-    private func statLeadersSection(leaders: [RelatedFuture], homeColor: Color, awayColor: Color) -> some View {
+    private func statLeadersSection(leaders: [RelatedFuture], sides: [Int: RelatedFutureSide], homeColor: Color, awayColor: Color) -> some View {
         let grouped = Dictionary(grouping: leaders) { f -> String in
             let label = (f.cleanLabel ?? f.marketName)
                 .replacingOccurrences(of: #"^(MLB|NBA|NFL|NHL|MLS|WNBA)\s+"#, with: "", options: .regularExpression)
@@ -731,7 +757,7 @@ struct RelatedFuturesView: View {
 
         LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
             ForEach(Array(sortedGroups.prefix(8).enumerated()), id: \.offset) { _, group in
-                statLeaderCard(title: group.key, players: group.value, homeColor: homeColor, awayColor: awayColor)
+                statLeaderCard(title: group.key, players: group.value, sides: sides, homeColor: homeColor, awayColor: awayColor)
             }
         }
 
@@ -743,7 +769,7 @@ struct RelatedFuturesView: View {
         }
     }
 
-    private func statLeaderCard(title: String, players: [RelatedFuture], homeColor: Color, awayColor: Color) -> some View {
+    private func statLeaderCard(title: String, players: [RelatedFuture], sides: [Int: RelatedFutureSide], homeColor: Color, awayColor: Color) -> some View {
         let sorted = players
             .sorted { ($0.probability ?? 0) > ($1.probability ?? 0) }
 
@@ -755,7 +781,7 @@ struct RelatedFuturesView: View {
                 .lineLimit(1)
 
             ForEach(Array(sorted.prefix(4).enumerated()), id: \.element.id) { _, future in
-                compactAwardRow(future: future, homeColor: homeColor, awayColor: awayColor)
+                compactAwardRow(future: future, sides: sides, homeColor: homeColor, awayColor: awayColor)
             }
         }
         .padding(8)
@@ -770,11 +796,11 @@ struct RelatedFuturesView: View {
     }
 
     @ViewBuilder
-    private func compactAwardRow(future: RelatedFuture, homeColor: Color, awayColor: Color) -> some View {
+    private func compactAwardRow(future: RelatedFuture, sides: [Int: RelatedFutureSide], homeColor: Color, awayColor: Color) -> some View {
         let nameParts = future.outcomeName.split(separator: " ")
         let lastName: String = nameParts.last.map(String.init) ?? future.outcomeName
         let nameColor: Color = isEliminated(future) ? Color.secondary.opacity(0.5) : .primary
-        let probColor: Color = isClinched(future) ? .green : (isEliminated(future) ? Color.secondary.opacity(0.5) : teamColorForFuture(future, homeColor: homeColor, awayColor: awayColor))
+        let probColor: Color = isClinched(future) ? .green : (isEliminated(future) ? Color.secondary.opacity(0.5) : teamColorForFuture(future, sides: sides, homeColor: homeColor, awayColor: awayColor))
 
         HStack(spacing: 4) {
             if let headshot = future.matchedPlayer?.headshot, let url = URL(string: headshot) {
@@ -782,7 +808,7 @@ struct RelatedFuturesView: View {
                     if case .success(let image) = phase {
                         image.resizable().scaledToFill()
                     } else {
-                        Circle().fill(teamColorForFuture(future, homeColor: homeColor, awayColor: awayColor).opacity(0.2))
+                        Circle().fill(teamColorForFuture(future, sides: sides, homeColor: homeColor, awayColor: awayColor).opacity(0.2))
                     }
                 }
                 .frame(width: 16, height: 16)
