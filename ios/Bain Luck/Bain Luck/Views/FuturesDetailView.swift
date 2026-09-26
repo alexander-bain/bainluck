@@ -56,6 +56,28 @@ nonisolated func futuresDetailRenderedPercents(_ outcomes: [FuturesOutcome]) -> 
     return byOutcomeId
 }
 
+/// The outcome the hero and the share sentence lead with.
+///
+/// #8892. Production `/futures/61778284`, 2026-09-26 — *LoL: Cloud9 vs Team
+/// Liquid (BO5)*, `mutually_exclusive: false` — heroed **71% "Over — O/U 3.5
+/// Games"**, while "Cloud9 — Match Winner 36%", the number the title asks for,
+/// sat sixth in the table. A game container's legs answer DIFFERENT questions,
+/// so the highest-priced one is only the most one-sided.
+///
+/// The server names the match-winner leg as `lead_outcome_id`. It leads while
+/// it is on the board with a price and the market is not resolved: a settled
+/// hero is decided by the grade, not by a pre-game pointer. Otherwise, and on
+/// every board that serves no lead, this is the highest-priced outcome exactly
+/// as before.
+nonisolated func futuresDetailHeroOutcome(_ market: FuturesMarketDetail) -> FuturesOutcome? {
+    if let leadId = market.leadOutcomeId, market.status != "resolved",
+       let lead = market.outcomes.first(where: { $0.id == leadId }),
+       lead.probability != nil {
+        return lead
+    }
+    return market.outcomes.max(by: { ($0.probability ?? 0) < ($1.probability ?? 0) })
+}
+
 // MARK: - View
 
 struct FuturesDetailView: View {
@@ -72,7 +94,8 @@ struct FuturesDetailView: View {
 
     private var shareMessage: String {
         guard let market = viewModel.market else { return "Check this out on Bain Luck" }
-        let leader = market.outcomes.max(by: { ($0.probability ?? 0) < ($1.probability ?? 0) })
+        // The hero's own choice, so a share never quotes a leg the page does not lead with (#8892).
+        let leader = futuresDetailHeroOutcome(market)
         if let leader, let prob = leader.probability {
             // The sentence quotes the same integer the hero and the leader row
             // print. Rounding it here again is how a share read "60%" off a page
@@ -197,7 +220,8 @@ struct FuturesDetailView: View {
     // MARK: - Hero Section
 
     private func heroSection(_ market: FuturesMarketDetail) -> some View {
-        let leader = market.outcomes.max(by: { ($0.probability ?? 0) < ($1.probability ?? 0) })
+        // #8892: a game container leads with its match-winner leg, not its most lopsided one.
+        let leader = futuresDetailHeroOutcome(market)
         let isResolved = market.status == "resolved"
         // One decision for the whole market, shared with the rows below and the
         // share sentence above (#8097).
