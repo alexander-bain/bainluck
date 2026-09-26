@@ -342,8 +342,8 @@ RESOLVED_VOID_SELECT_SQL = """
 #: still selected an hour after its game ended is a leg the venue has not
 #: finalized yet, which is exactly the row we want to keep asking about.
 #:
-#: `LIKE 'KX%'` mirrors `SELECT_SQL`'s prefix for the same reason it does — the
-#: derivation downstream reads Kalshi event tickers and nothing else.
+#: `LIKE 'KX%'` is kept here although `SELECT_SQL` dropped it (#2773): this arm
+#: selects game families linked to an event, and those are all `KX` tickers.
 #:
 #: THE LIVE ARM — #5024, and the reason `e.status = 'completed'` alone was not
 #: enough. Kalshi markets `can_close_early`: "This market will close and expire
@@ -616,14 +616,21 @@ def _parse(value: Optional[str]) -> Optional[datetime]:
 #: marker gave, keyed on the fact that makes the row done rather than on the fact
 #: that we looked at it.
 #:
-#: `LIKE 'KX%'` rather than `~ '^KX'`: identical semantics for a left-anchored
-#: literal prefix, sargable, and executable by the guard in
-#: `tests/test_kalshi_resolution_backfill_script_989.py`, which runs this exact
-#: string against a seeded table. A regex operator would have made the starvation
-#: guard un-runnable, and an un-runnable guard is how the post-LIMIT floor shipped
-#: in the first place. (It also excludes 211 legacy non-`KX` rows — all measured as
-#: genuinely-future 2027-2032 political/macro markets, so not a dead-card source
-#: today; named in #2773 rather than widened here.)
+#: NO TICKER PREFIX — #2773. This used to read `external_id LIKE 'KX%'`, which shut
+#: out every legacy-ticker row on the stated grounds that all of them were
+#: genuinely-future 2027-2032 political/macro markets. That expired: the
+#: `SENATE*-26` / `HOUSE*-26` / `GOVPARTY*-26` families are the November 2026
+#: midterms, stored on Kalshi's one-year backstop, so a tier-1 page printed
+#: "Maine Senate winner? — Resolves Nov 3, 2027" five weeks before election day.
+#: Venue-read 2026-09-26 of all 209 open legacy rows through this module's own
+#: derivation: 124 move EARLIER onto `expected_expiration_time` (every one still in
+#: the future, earliest 2027-01-04), 85 unchanged, 0 later, 0 past-dated, 0
+#: settled — so the pad-only `min()` cannot resolve any of them early (#8586).
+#: The venue read is by event ticker whatever its prefix, and nothing downstream of
+#: the SELECT parses `KX`. `external_id IS NOT NULL` is the one screen the prefix
+#: was also doing: a row with no ticker has nothing to ask the venue.
+#: The two sibling selects (`RESOLVED_VOID_SELECT_SQL`, `RECENT_FINAL_SELECT_SQL`)
+#: keep their prefix — they select played games, which are all `KX` tickers.
 #:
 #: ORDERING — `updated_at ASC`, NOT `market_tier ASC`. Tier-first is what the
 #: original backlog wanted, but on the provisional population it starves: measured
@@ -643,7 +650,7 @@ SELECT_SQL = """
     FROM futures_markets
     WHERE source = 'kalshi'
       AND status = 'open'
-      AND external_id LIKE 'KX%'
+      AND external_id IS NOT NULL
       AND (expiration_time IS NULL
            OR resolution_date IS NULL
            OR resolution_date >= expiration_time)
@@ -935,7 +942,7 @@ COUNT_SQL = f"""
     FROM futures_markets
     WHERE source = 'kalshi'
       AND status = 'open'
-      AND external_id LIKE 'KX%'
+      AND external_id IS NOT NULL
       AND (expiration_time IS NULL
            OR resolution_date IS NULL
            OR resolution_date >= expiration_time)
