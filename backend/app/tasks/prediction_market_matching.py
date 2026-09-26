@@ -10607,6 +10607,29 @@ async def _backfill_polymarket_win_prob_history(
         outcome, yes_is_home = ml_result
         moneyline_condition_id = outcome.external_id
 
+        # #8814: identity is stable across time; today's sportsbook is not.
+        # Ask the moneyline resolver to admit each candidate first (including
+        # its prop/settled filters), then require an unambiguous named side.
+        # Generic Yes/No and full-matchup fallbacks are not named-side proof.
+        named_side = []
+        for candidate in all_outcomes:
+            admitted = find_moneyline_outcome(
+                [candidate], matchup, event.home_team_name, event.away_team_name,
+            )
+            if not admitted or admitted[0] is not candidate:
+                continue
+            matches_home = bool(candidate.name) and _fuzzy_team_match(
+                candidate.name, event.home_team_name,
+            )
+            matches_away = bool(candidate.name) and _fuzzy_team_match(
+                candidate.name, event.away_team_name,
+            )
+            if matches_home == matches_away:
+                continue
+            if admitted[1] == yes_is_home == matches_home:
+                named_side.append(candidate)
+        named_orientation = len(named_side) == 1 and named_side[0] is outcome
+
         # Fetch the Polymarket event to get clobTokenIds
         from app.services.polymarket_api import PolymarketAPIService
         service = PolymarketAPIService()
@@ -10662,13 +10685,13 @@ async def _backfill_polymarket_win_prob_history(
                 len(history), market_id, event_id,
             )
 
-            # Check for inversion against sportsbook consensus ONCE before
-            # writing the entire history (avoids N queries in the loop).
-            # Use a mid-history sample point to determine if we need to flip.
+            # Retain legacy protection for unresolved identity only. A named
+            # team's past quote must not be inverted because today's line moved.
+            # This does not reconstruct an unobserved historical draw partition.
             sample_idx = len(history) // 2
             sample_price = history[sample_idx].get("p") if history else None
             needs_flip = False
-            if sample_price is not None:
+            if sample_price is not None and not named_orientation:
                 sample_yes = float(sample_price)
                 if 0 < sample_yes < 1:
                     if yes_is_home:
