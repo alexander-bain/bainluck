@@ -7,6 +7,7 @@ import type { GameMarketsResponse } from "@/lib/api";
 import type { PlayedLinescore, SportScoringVocab } from "@/lib/marketMapUtils";
 import {
   parseSpreadRungs,
+  monotoneSpreadRungs,
   isFullGameSpread,
   isGameTotal,
   buildDensityFromSpreads,
@@ -485,17 +486,23 @@ export default function MarketMapSection({
        is kept, which is every points sport; see `spreadRungMatchesRail`. */
     // #8811: a graded rail (the `finalMarginGraded` gate below) keeps unpriced
     // rungs to grade them; a quoting rail drops them rather than print 0%.
+    const railGrades = status === "done" && homeScore != null && awayScore != null;
     const parsedRaw = parseSpreadRungs(fullGameSpreads, homeTeam, awayTeam, vocab.unit, {
-      keepUnpriced: status === "done" && homeScore != null && awayScore != null,
+      keepUnpriced: railGrades,
     });
 
     // One rung per (side, threshold). Duplicates arrive when several games'
     // markets are linked to one event; see collapseDuplicateRungs.
-    const parsed = collapseDuplicateRungs(
+    const collapsed = collapseDuplicateRungs(
       parsedRaw,
       (p) => `${p.isHome ? "H" : "A"}|${p.threshold}`,
       (p) => p.probability,
     ).rows;
+    // #8773: a quoting rail's ladder only falls on each side; see
+    // `monotoneSpreadRungs`. A graded rail is left alone: it grades each rung
+    // against the final score, and its unpriced rungs are held at 0 (#8811),
+    // so a price order there would drop won rungs sitting past a null one.
+    const parsed = railGrades ? collapsed : monotoneSpreadRungs(collapsed);
 
     if (parsed.length === 0) return null;
 
@@ -1174,22 +1181,7 @@ export default function MarketMapSection({
       if (rawParsed.length === 0) continue;
 
       // Enforce monotonicity per team: P(team wins by X) >= P(team wins by X+Y)
-      const enforceMonotonic = (items: typeof rawParsed): typeof rawParsed => {
-        const sorted = [...items].sort((a, b) => a.threshold - b.threshold);
-        const clean: typeof rawParsed = [];
-        let lastProb = 1.0;
-        for (const s of sorted) {
-          if (s.probability <= lastProb) {
-            clean.push(s);
-            lastProb = s.probability;
-          }
-        }
-        return clean;
-      };
-
-      const homeClean = enforceMonotonic(rawParsed.filter((p) => p.isHome));
-      const awayClean = enforceMonotonic(rawParsed.filter((p) => !p.isHome));
-      const parsed = [...homeClean, ...awayClean];
+      const parsed = monotoneSpreadRungs(rawParsed);
       if (parsed.length === 0) continue;
 
       // #2441: same declared reach as the full-game rail above.
