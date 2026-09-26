@@ -1198,10 +1198,16 @@ struct SearchView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
-                    Text(formatProbability(probability))
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .monospacedDigit()
+                    // #8640: a leader the venue has already called is a result,
+                    // not a price — "Kevin Warsh Won", never "Kevin Warsh >99%".
+                    if let verdict = leader.verdict(in: market) {
+                        searchVerdictText(verdict, font: .subheadline)
+                    } else {
+                        Text(formatProbability(probability))
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                            .monospacedDigit()
+                    }
                 }
                 .layoutPriority(1)
             } else if let count = market.outcomeCount {
@@ -1261,7 +1267,9 @@ struct SearchView: View {
                     Text(top.name)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    if let prob = top.probability {
+                    if let verdict = top.verdict(in: market) {
+                        searchVerdictText(verdict, font: .caption)
+                    } else if let prob = top.probability {
                         Text(formatProbability(prob))
                             .font(.caption)
                             .fontWeight(.medium)
@@ -1271,6 +1279,16 @@ struct SearchView: View {
             }
         }
         .padding(.vertical, 2)
+    }
+
+    /// "Won" / "Lost" in the slot the percentage would take (#8640). Web's
+    /// ANSWERS row colours them the same way: a win in the live accent, a loss
+    /// muted.
+    private func searchVerdictText(_ verdict: OutcomeVerdict, font: Font) -> some View {
+        Text(verdict.label)
+            .font(font)
+            .fontWeight(verdict == .won ? .semibold : .regular)
+            .foregroundStyle(verdict == .won ? DS.emerald : Color.secondary)
     }
 
     @ViewBuilder
