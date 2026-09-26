@@ -84,10 +84,18 @@ def test_polymarket_link_rate_uses_matcher_game_level_predicate():
         "championship",
         "456",
     ) is True
+    # #8722: a draw's doubles match title is game-level for every tournament,
+    # not only the US Open's — the diagnostic follows the matcher. This row
+    # was pinned False (2026-05) while the matcher still refused it.
     assert _is_polymarket_matcher_game_level(
         "Internationaux de Strasbourg (Doubles): Kichenok/Krawczyk vs Mihalikova/Nicholls",
         "championship",
         "493607",
+    ) is True
+    assert _is_polymarket_matcher_game_level(
+        "2026 Veolia Arizona Open: To Reach the Final (Mixed Doubles)",
+        "championship",
+        "493608",
     ) is False
     assert _is_polymarket_matcher_game_level(
         "World Championships: Czechia vs. Italy",
