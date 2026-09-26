@@ -588,6 +588,21 @@ jobs:
             exit 1
           fi
 
+      - name: Search club-schedule date order (real Postgres)
+        # #8942. `q=arsenal` opened with an EFL Cup tie a month away above the
+        # next league game: the cup tie's `importance:playoff` tag outranked the
+        # date. A query whose TEAMS card names a club now orders its upcoming
+        # games by date; no card keeps the tag tier (the control). The club gate
+        # reads the route's teams statement, so it needs the route and Postgres.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_search_club_schedule_date_order_pg_8942.py \
+            -v -rs 2>&1 | tee /tmp/clubschedule.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/clubschedule.txt; then
+            echo "::error::search club-schedule contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: Proven-duplicate search BRIDGE contract (real Postgres)
         # #5821 / CERT-3073. The step above proves the tagged twin stops being a
         # second search result. This proves the reader still reaches the game:
