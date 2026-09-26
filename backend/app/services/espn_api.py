@@ -75,7 +75,10 @@ ESPN_FULL_SLATE_GROUPS: dict[str, str] = {
 }
 
 # Mapping from our sport keys to ESPN sport/league paths
-from app.utils.sport_keys import SPORT_LEAGUE_MAP  # noqa: E402
+from app.utils.sport_keys import (  # noqa: E402
+    ESPN_GROUP_SCOPED_BOARDS,
+    SPORT_LEAGUE_MAP,
+)
 
 #: Which identity served a request. Recorded and logged on change so an
 #: operator can see, without a repro, whether we are on the primary path.
@@ -610,8 +613,18 @@ class ESPNAPIService:
             raise self._dark(url, error=f"{type(e).__name__}: {e}") from e
 
     def _get_espn_path(self, sport_key: str) -> Optional[tuple[str, str]]:
-        """Get ESPN sport/league path from our sport key."""
-        return SPORT_LEAGUE_MAP.get(sport_key)
+        """Get ESPN sport/league path from our sport key.
+
+        A group-scoped key (#5697, FCS) answers its shared league path: every
+        per-EVENT endpoint (summary, win probability, roster) is keyed by id and
+        is right on it. The LIST that is not — the scoreboard — adds the group
+        in :meth:`get_scoreboard`.
+        """
+        path = SPORT_LEAGUE_MAP.get(sport_key)
+        if path:
+            return path
+        scoped = ESPN_GROUP_SCOPED_BOARDS.get(sport_key)
+        return (scoped[0], scoped[1]) if scoped else None
 
     def _parse_color(self, color: Optional[str]) -> Optional[str]:
         """Parse ESPN color to hex format."""
@@ -700,6 +713,13 @@ class ESPNAPIService:
         path = self._get_espn_path(sport_key)
         if not path:
             logger.warning(f"No ESPN mapping for sport key: {sport_key}")
+            return []
+        if sport_key in ESPN_GROUP_SCOPED_BOARDS:
+            # #5697. `/teams` does not honour `groups` (measured: `groups=81`
+            # still lists 300 schools across divisions), so this list would be
+            # the whole shared league, not the key's competition — the input a
+            # name matcher binds the wrong school from. Teams for these keys
+            # come off their own group-scoped scoreboard instead.
             return []
 
         sport, league = path
@@ -884,7 +904,9 @@ class ESPNAPIService:
             sport_key: Our internal sport key
             date: Optional date in YYYYMMDD format (defaults to today)
             groups: Optional ESPN group id (``"80"`` = FBS); see
-                :data:`ESPN_FULL_SLATE_GROUPS`
+                :data:`ESPN_FULL_SLATE_GROUPS`. Defaults to the key's own group
+                when it is group-scoped (``ESPN_GROUP_SCOPED_BOARDS``, #5697) —
+                so every caller, dated or not, asks FCS for the FCS board.
 
         Returns:
             List of ESPNEvent objects, ``[]`` when ESPN's slate is genuinely
@@ -898,6 +920,8 @@ class ESPNAPIService:
 
         sport, league = path
         url = f"{ESPN_API_BASE}/{sport}/{league}/scoreboard"
+        if groups is None and sport_key in ESPN_GROUP_SCOPED_BOARDS:
+            groups = ESPN_GROUP_SCOPED_BOARDS[sport_key][2]
         query = []
         if date:
             query.append(f"dates={date}")

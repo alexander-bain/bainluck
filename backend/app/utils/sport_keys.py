@@ -66,6 +66,34 @@ SPORT_LEAGUE_MAP: dict[str, tuple[str, str]] = {
 
 
 # =============================================================================
+# 1a. ESPN_GROUP_SCOPED_BOARDS — a competition ESPN files under ANOTHER key's
+#     league path, told apart only by its `groups` id (#5697)
+# =============================================================================
+#
+# FCS is not FBS (see TOUR_LEAGUES_INCLUDING_TOURNAMENTS below), but ESPN serves
+# both under `football/college-football`. Measured against ESPN's own API
+# 2026-09-26 04:4xZ (standing notice 26):
+#
+#     GET .../college-football/scoreboard?dates=20260925             5 events, no HARV @ BRWN
+#     GET .../college-football/scoreboard?groups=81&dates=20260925   2 events, HARV @ BRWN 401867806
+#     GET .../college-football/scoreboard?groups=81                 65 events (the FCS week)
+#
+# So the path alone is the WRONG board: without `groups=81` an FCS-v-FCS game is
+# never on it, and Brown v Harvard played to a 14-10 final while we served
+# `live` with no score, then `suspended`.
+#
+# 🔴 DELIBERATELY NOT IN `SPORT_LEAGUE_MAP`. `league_identity` treats two keys
+# sharing a `SPORT_LEAGUE_MAP` value as ONE league, so an entry there would fold
+# FCS rows, teams and records into FBS — the naive collapse. A key here keeps its
+# own identity everywhere; only the ESPN client reads the path and the group.
+#
+# Value: (espn_sport, espn_league, espn_groups_id).
+ESPN_GROUP_SCOPED_BOARDS: dict[str, tuple[str, str, str]] = {
+    "americanfootball_ncaaf_fcs": ("football", "college-football", "81"),
+}
+
+
+# =============================================================================
 # 1b. EXPECTED_GAME_STATE_INDICATORS — how many distinct period/quarter/inning
 #     labels we expect to see for a COMPLETED event in each sport.
 #
@@ -175,6 +203,9 @@ ESPN_SPORT_MAPPING: dict[str, str] = {
     "baseball_ncaa": "baseball/college-baseball",
     # UFL
     "americanfootball_ufl": "football/ufl",
+    # #5697. Same path as FBS; the ESPN client adds `groups=81` from
+    # `ESPN_GROUP_SCOPED_BOARDS`, which is the only thing that makes it FCS.
+    "americanfootball_ncaaf_fcs": "football/college-football",
 }
 
 
