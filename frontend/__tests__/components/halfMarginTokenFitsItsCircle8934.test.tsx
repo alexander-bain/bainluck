@@ -117,7 +117,7 @@ describe("#8934 the 2nd half margin token on Ole Miss @ Florida", () => {
 });
 
 describe("#8934 markerFallbackFontSize", () => {
-  it("keeps 8px for the four-capital codes that already fit (MICH, FLA)", () => {
+  it("keeps 8px for the four-capital codes that already fit: MICH, FLA", () => {
     expect(markerFallbackFontSize("MICH")).toBe(8);
     expect(markerFallbackFontSize("FLA")).toBe(8);
     expect(markerFallbackFontSize("")).toBe(8);
