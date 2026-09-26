@@ -3737,33 +3737,81 @@ def enforce_first_page_quality_floor(
     new_window = list(window)
     new_tail = list(tail)
     used: set[int] = set()
+    demoted = 0
 
-    # Pair each offender with the highest-placed card that is clean AT THE SLOT
-    # IT WOULD FILL. The bar is position-dependent — a card with no why-now is a
-    # legal replacement at slot 14 and not at slot 3 — so the candidate list
-    # cannot be computed once up front. The tail is already in served order, so
-    # "first available" IS "best".
+    # A vacancy is filled FROM THE PAGE FIRST (#8797). The card beneath it that
+    # is clean at that slot moves up, which opens ITS slot, and so on down; only
+    # the last opening is filled from beyond the page. The old pairing put the
+    # tail card straight into the offender's slot, so the best clean card from
+    # past slot twenty outranked every clean card on page one: on 2026-09-26 a
+    # 49-point esports LAN ("Chicken Coop 86%", one source, low confidence) and a
+    # 45-point Obamacare card sat at slots 5-6 above three 95-point cards —
+    # Brazil's election, China/Taiwan, the Iran ceasefire — that had done nothing
+    # wrong. A card from the tail is the weakest clean card in the pool, so it
+    # enters at the bottom of the page, where "never fill a slot with a weak
+    # card" costs least.
+    #
+    # The bar stays position-dependent — a card with no why-now is a legal
+    # occupant of slot 14 and not of slot 3 — so every step asks
+    # `_is_clean_replacement_for` at the slot being filled, page and tail alike.
+    # A card lifted from further down the page IS being promoted into a freed
+    # slot, so it clears the same type-agnostic bar a tail card does (a game card
+    # does not climb into a vacancy freed for naming no reason —
+    # `_is_reasonless`). Anchors are never lifted: their slot is somebody else's
+    # guarantee (`_spacing_is_anchor`). Offenders are never lifted either — none
+    # of them is clean at a slot above its own — so offender positions hold still
+    # while the chains run. Clean cards on the page keep their relative order
+    # except where one climbs past a card that could not legally take the slot.
     for w_idx in offender_positions:
-        pick = None
-        for t_idx, candidate in enumerate(new_tail):
-            if t_idx in used:
-                continue
-            if not _is_clean_replacement_for(
-                candidate, position=w_idx, why_now_window=effective_why_now_window
-            ):
-                continue
-            pick = t_idx
-            break
-        if pick is None:
-            # No clean card left for this slot. The offender STAYS (gotcha #53 —
-            # a short page is a worse failure than a boring one) and `unreplaced`
-            # says so.
-            continue
-        used.add(pick)
-        new_window[w_idx], new_tail[pick] = new_tail[pick], new_window[w_idx]
+        moves: list[tuple[int, int]] = []  # (vacancy, lifted-from)
+        vacancy = w_idx
+        while True:
+            lift = next(
+                (
+                    idx
+                    for idx in range(vacancy + 1, window_size)
+                    if not _spacing_is_anchor(new_window[idx])
+                    and _is_clean_replacement_for(
+                        new_window[idx],
+                        position=vacancy,
+                        why_now_window=effective_why_now_window,
+                    )
+                ),
+                None,
+            )
+            if lift is None:
+                break
+            moves.append((vacancy, lift))
+            vacancy = lift
 
-    meta["demoted"] = len(used)
-    meta["unreplaced"] = len(offender_positions) - len(used)
+        # The tail is already in served order, so "first available" IS "best".
+        pick = next(
+            (
+                t_idx
+                for t_idx, candidate in enumerate(new_tail)
+                if t_idx not in used
+                and _is_clean_replacement_for(
+                    candidate, position=vacancy, why_now_window=effective_why_now_window
+                )
+            ),
+            None,
+        )
+        if pick is None:
+            # No clean card left for the last opening. The offender STAYS
+            # (gotcha #53 — a short page is a worse failure than a boring one),
+            # the page is left exactly as it was, and `unreplaced` says so.
+            continue
+
+        offender = new_window[w_idx]
+        for to_idx, from_idx in moves:
+            new_window[to_idx] = new_window[from_idx]
+        new_window[vacancy] = new_tail[pick]
+        new_tail[pick] = offender
+        used.add(pick)
+        demoted += 1
+
+    meta["demoted"] = demoted
+    meta["unreplaced"] = len(offender_positions) - demoted
 
     return new_window + new_tail, meta
 
