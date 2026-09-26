@@ -131,6 +131,13 @@ class LabelIdentity:
     # #8896 — our clubs' abbreviations (``ott``, ``dal``), which venues print as
     # a qualifier (``OTT Senators vs DAL Stars``) and `claims` does not carry.
     own_abbreviations: frozenset = frozenset()
+    # #8920 — False when the route resolved NO id for this side (Brown Bears,
+    # FCS, no `teams` row anywhere in the family). Such an identity is armed
+    # only for `label_names_another_club`'s name-only clause; `own` then holds
+    # the family rows named like the event, and `name_words` the event name's
+    # own words.
+    resolved: bool = True
+    name_words: frozenset = frozenset()
     # Per-token memo of the foreign aliases that could cover it: the alias
     # scan is over the whole family (thousands of strings on a soccer page)
     # and the same handful of tokens recur on every row of one request.
@@ -141,7 +148,12 @@ class LabelIdentity:
     _shared: dict = field(default_factory=dict, compare=False, repr=False)
 
     def is_armed(self) -> bool:
-        return bool(self.claims) and bool(self.own)
+        return self.resolved and bool(self.claims) and bool(self.own)
+
+    def is_name_armed(self) -> bool:
+        """#8920 — the unresolved side's narrower mode; see
+        `label_names_another_club`."""
+        return not self.resolved and bool(self.claims) and bool(self.name_words)
 
     def foreign_aliases_containing(self, needle: str) -> list:
         """Every alias strictly longer than ``needle`` that contains it and
@@ -204,14 +216,16 @@ def build_label_identity(
     """
     rows = list(rows)
     own: set = {tid for tid in own_team_ids if tid is not None}
-    if not own:
-        # Nothing resolved ⇒ nothing is ours ⇒ nothing can be foreign. The
-        # name and abbreviation folds below WIDEN a resolved identity; they
-        # never conjure one, or an event whose teams the route could not find
-        # would start refusing rows on the strength of a name fold alone.
-        return LabelIdentity(claims={}, own=frozenset())
     own_names = {_norm(n) for n in own_team_names if n}
     own_names.discard("")
+    if not own:
+        # Nothing resolved ⇒ the name and abbreviation folds below never
+        # conjure an identity: an event whose teams the route could not find
+        # must not start refusing rows on the strength of a name fold alone.
+        # #8920 — but "nothing is ours" left EVERY guard disarmed, so Brown
+        # Bears (FCS, no `teams` row) claimed the Chicago Bears' Super Bowl
+        # legs. The unresolved side gets the name-only mode instead.
+        return _name_only_identity(rows, own_names)
 
     # Pass 1 — the same club under the same name anywhere in the family.
     for row in rows:
@@ -233,6 +247,18 @@ def build_label_identity(
             if abbr and abbr in own_abbrevs.get(row.get("sport_id"), ()):
                 own.add(row["id"])
 
+    return LabelIdentity(
+        claims=_claims(rows),
+        own=frozenset(own),
+        own_abbreviations=frozenset(
+            (row.get("abbreviation") or "").strip().lower()
+            for row in rows
+            if row.get("id") in own and (row.get("abbreviation") or "").strip()
+        ),
+    )
+
+
+def _claims(rows: list) -> dict:
     claims: dict = {}
     for row in rows:
         tid = row.get("id")
@@ -246,15 +272,44 @@ def build_label_identity(
             key = (t or "").strip().lower()
             if key:
                 claims.setdefault(key, set()).add(tid)
+    return {k: frozenset(v) for k, v in claims.items()}
 
+
+def _name_only_identity(rows: list, own_names: set) -> LabelIdentity:
+    """#8920 — the identity of a side the route resolved no id for.
+
+    `own` is every family row whose normalized name equals the event's name or
+    extends it (or is extended by it) word by word — ``Brown`` / ``Brown
+    Bears`` — so a longer row that may well be this very club never counts as
+    the foreign name covering its own token. `name_words` is the event name's
+    words plus its initials; `label_names_another_club` requires every extra
+    word of a covering name to be none of them.
+    """
+    if not own_names:
+        return LabelIdentity(claims={}, own=frozenset(), resolved=False)
+    own_tokens = [n.split() for n in own_names]
+    own: set = set()
+    for row in rows:
+        if row.get("id") is None:
+            continue
+        toks = _norm(row.get("name")).split()
+        if not toks:
+            continue
+        for mine in own_tokens:
+            k = min(len(mine), len(toks))
+            if toks[:k] == mine[:k]:
+                own.add(row["id"])
+                break
+    words: set = set()
+    for mine in own_tokens:
+        words.update(mine)
+        if len(mine) > 1:
+            words.add("".join(w[0] for w in mine))
     return LabelIdentity(
-        claims={k: frozenset(v) for k, v in claims.items()},
+        claims=_claims(rows),
         own=frozenset(own),
-        own_abbreviations=frozenset(
-            (row.get("abbreviation") or "").strip().lower()
-            for row in rows
-            if row.get("id") in own and (row.get("abbreviation") or "").strip()
-        ),
+        resolved=False,
+        name_words=frozenset(words),
     )
 
 
@@ -267,8 +322,26 @@ def label_names_another_club(
     club's name. False on any uncertainty — see the module docstring.
 
     ``patterns`` arrive ILIKE-escaped, as `_team_name_patterns` emits them.
+
+    #8920 — NAME-ONLY MODE, for a side the route resolved no id for. The same
+    cover test, plus one clause: every extra word the covering name adds to
+    the occurrence must be none of the event name's own words (equal, clipped
+    either way, initials). "Nothing resolved" means the family may hold this
+    very club under a longer name, so a covering name only counts as foreign
+    when it disagrees with ours on every word it adds.
+
+        Brown Bears (no row) | Chicago Bears        `Chicago` not ours   REFUSED
+        Brown Bears (no row) | California Golden Bears                    REFUSED
+        Brown Bears (no row) | Brown                no cover             admitted
+        Miami Hurricanes (no row) | Miami (FL) Hurricanes  `Miami` ours  admitted
     """
-    if not label or identity is None or not identity.is_armed():
+    if not label or identity is None:
+        return False
+    if identity.is_armed():
+        name_words = None
+    elif identity.is_name_armed():
+        name_words = identity.name_words
+    else:
         return False
 
     occurrences: list = []
@@ -289,6 +362,10 @@ def label_names_another_club(
         for alias_pattern in identity.foreign_aliases_containing(needle):
             for a_start, a_end in pattern_token_spans(label, alias_pattern):
                 if a_start <= start and end <= a_end and (a_end - a_start) > (end - start):
+                    if name_words is not None and _adds_a_word_of_ours(
+                        hay[a_start:start] + " " + hay[end:a_end], name_words
+                    ):
+                        continue
                     covered = True
                     break
             if covered:
@@ -298,6 +375,14 @@ def label_names_another_club(
         covered_spans.append((start, end))
 
     return bool(covered_spans)
+
+
+def _adds_a_word_of_ours(extra: str, name_words: frozenset) -> bool:
+    return any(
+        _qualifier_is_ours(w, name_words)
+        for w in _WORD.findall(extra)
+        if w not in _CONNECTOR_WORDS
+    )
 
 
 def label_is_another_club(
