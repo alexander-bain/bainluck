@@ -215,15 +215,58 @@ def test_the_team_page_brief_serves_start_is_tbd():
     assert _format_event_brief(moved, team)["start_is_tbd"] is False
 
 
+def _model_row(**over):
+    """A real `Event` (every column `_format_event` reads exists on the model)."""
+    from app.models import Event, Sport
+
+    fields = dict(
+        id=15319235,
+        sport_id=1,
+        sport=Sport(id=1, key="baseball_mlb", name="MLB"),
+        home_team_name="New York Yankees",
+        away_team_name="Boston Red Sox",
+        home_score=None,
+        away_score=None,
+        commence_time=GAME_1_STAMP,
+        status="scheduled",
+        event_tags=["provenance:source:statpal", start_placeholder_tag(GAME_1_STAMP)],
+    )
+    fields.update(over)
+    return Event(**fields)
+
+
 def test_the_shared_event_formatter_serves_start_is_tbd():
-    """`_format_event` feeds search, the event page and every list route."""
-    import inspect
+    """`_format_event` feeds search, the event page and every list route.
 
-    from app.routes import events
+    Executed, not read as source (CERT-3567 follow-up
+    8841-SERVED-PAYLOAD-BEHAVIOR-GUARD): a formatter that printed the key with
+    a constant, or read the wrong column, passes a string match and fails here.
+    """
+    from app.routes.events import _format_event
 
-    src = inspect.getsource(events._format_event)
-    assert '"start_is_tbd": start_is_tbd(' in src
-    assert events.start_is_tbd is start_is_tbd
+    assert _format_event(_model_row())["start_is_tbd"] is True
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        # Another rail wrote a real start: the tag no longer vouches for it.
+        {"commence_time": GAME_1_STAMP + timedelta(minutes=8)},
+        # A game that has started has a start, whatever the stamp says.
+        {"status": "live"},
+        {"status": "completed"},
+        # No tag, or only unrelated tags.
+        {"event_tags": None},
+        {"event_tags": ["provenance:source:statpal"]},
+        # A tag for a different instant than the row carries.
+        {"event_tags": [start_placeholder_tag(GAME_1_STAMP + timedelta(days=1))]},
+    ],
+    ids=["moved", "live", "completed", "no-tags", "unrelated-tag", "other-instant"],
+)
+def test_the_shared_event_formatter_serves_a_real_start_as_not_tbd(over):
+    from app.routes.events import _format_event
+
+    assert _format_event(_model_row(**over))["start_is_tbd"] is False
 
 
 # ─────────────────────────────────────────────────────────────────────────────
