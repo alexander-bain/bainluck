@@ -941,7 +941,15 @@ struct EventDetailView: View {
                     }
                     .foregroundStyle(.secondary)
                 }
-                if carriesContext,
+                // #8841 — an unannounced start prints its day and "TBD", never
+                // the placeholder's clock.
+                if carriesContext, event.startIsTbd == true,
+                   let tbd = RelativeTimeText.tbdText(
+                    for: event.commenceTime, relativeDays: false) {
+                    Text(tbd)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                } else if carriesContext,
                    let commenceTime = event.commenceTime, let date = commenceTime.asDate {
                     Text(date, format: .dateTime.month(.abbreviated).day().hour().minute())
                         .font(.caption2)
@@ -1439,7 +1447,8 @@ struct EventDetailView: View {
             StatusBadge(
                 status: "scheduled",
                 commenceTime: event.commenceTime,
-                venueSettled: event.venueSettled == true)
+                venueSettled: event.venueSettled == true,
+                startIsTbd: event.startIsTbd == true)
         }
     }
 
@@ -1512,6 +1521,13 @@ struct EventDetailView: View {
                                 // next week. It DID start; the date stays
                                 // because the day is the surprising part.
                                 Text("Started \(date, format: .dateTime.month(.abbreviated).day()) at \(date, format: .dateTime.hour().minute())")
+                                    .font(.caption)
+                                    .fontWeight(.medium)
+                            } else if event.startIsTbd == true,
+                                      let tbd = RelativeTimeText.tbdText(
+                                        for: commenceTime, relativeDays: false) {
+                                // #8841 — the day, not the placeholder's clock.
+                                Text(tbd)
                                     .font(.caption)
                                     .fontWeight(.medium)
                             } else {

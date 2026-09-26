@@ -1050,7 +1050,9 @@ struct SearchView: View {
                             .foregroundStyle(.secondary)
                     }
                     // #4021 — see StatusBadge: the suspended arm is clock-gated.
-                    StatusBadge(status: event.status, commenceTime: event.commenceTime)
+                    StatusBadge(
+                        status: event.status, commenceTime: event.commenceTime,
+                        startIsTbd: event.startIsTbd == true)
                     // #6444 — EVERY ROW SAYS WHEN. This was gated on
                     // `status == "scheduled"`, which drew the date on the rows
                     // whose badge already reads "In 3h" and withheld it from
@@ -1066,7 +1068,9 @@ struct SearchView: View {
                         // "4:15 PM" this row measured at before it.
                         RelativeTimeText(
                             dateString: commenceTime,
-                            style: EventState.isFinished(event.status) ? .dayOnly : .full
+                            style: EventState.isFinished(event.status) ? .dayOnly : .full,
+                            // #8841 — an unannounced start prints "Sep 29 · TBD".
+                            startIsTbd: event.startIsTbd == true
                         )
                     }
                 }

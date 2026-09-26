@@ -842,8 +842,10 @@ describe("#6381 — the hero stops denying a result the venue already gave us", 
     expect(code).toMatch(
       /StatusBadge\(\s*status: "suspended",\s*commenceTime: event\.commenceTime,\s*venueSettled: event\.venueSettled == true\)/,
     );
+    // #8841 — the pregame arm also hands on `start_is_tbd`, AFTER the flag
+    // this test is about; the served venue flag must still be passed verbatim.
     expect(code).toMatch(
-      /StatusBadge\(\s*status: "scheduled",\s*commenceTime: event\.commenceTime,\s*venueSettled: event\.venueSettled == true\)/,
+      /StatusBadge\(\s*status: "scheduled",\s*commenceTime: event\.commenceTime,\s*venueSettled: event\.venueSettled == true(,\s*startIsTbd: event\.startIsTbd == true)?\)/,
     );
   });
 

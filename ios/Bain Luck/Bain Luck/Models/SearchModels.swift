@@ -83,6 +83,13 @@ nonisolated struct SearchEvent: Decodable, Identifiable, Sendable {
     let homeTeam: String
     let awayTeam: String
     let commenceTime: String?
+    /// #8841 — the server's word that `commenceTime` is a PLACEHOLDER the venue
+    /// has not announced (StatPal lists MLB postseason games on the hour before
+    /// MLB sets a time; the Red Sox @ Yankees Wild Card games sat at 20:00Z and
+    /// printed "Sep 29 1:00 PM"). The day is real, the clock is not. Optional
+    /// because an older server or cache omits it; absent reads as `false` — read
+    /// it as `startIsTbd == true`, never as a third state.
+    let startIsTbd: Bool?
     let status: String?
     let homeScore: Int?
     let awayScore: Int?
