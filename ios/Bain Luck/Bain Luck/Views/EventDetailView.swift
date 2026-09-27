@@ -2667,6 +2667,18 @@ private struct SegmentBreakdown {
         let resolvedHome = finalHomeScore ?? lastObserved?.homeScore ?? 0
         let resolvedAway = finalAwayScore ?? lastObserved?.awayScore ?? 0
 
+        // #9067 — and the segments may not add up to something those totals
+        // disagree with (`StoredLineScore.squared`).
+        guard let squared = StoredLineScore.squared(
+            home: segments.map(\.home), away: segments.map(\.away),
+            homeTotal: finalHomeScore, awayTotal: finalAwayScore,
+            lastObserved: renderedLabels.lastIndex { latestByLabel[$0] != nil } ?? -1
+        ) else { return nil }
+        segments = segments.indices.map {
+            GameSegment(label: segments[$0].label, home: squared.home[$0], away: squared.away[$0])
+        }
+        sawUnknown = sawUnknown || squared.home.contains(.unknown) || squared.away.contains(.unknown)
+
         // A ladder in which nothing is knowable is a row of dots — it tells the
         // reader nothing and occupies the space where a scoreboard should be.
         let knownSegments = segments.filter { $0.home != .unknown }
