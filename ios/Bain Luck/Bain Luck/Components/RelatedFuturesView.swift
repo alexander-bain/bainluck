@@ -600,10 +600,11 @@ struct RelatedFuturesView: View {
                         sectionHeader(icon: "sparkles", label: "NOVELTY & FUN")
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 10) {
-                                ForEach(Array(mergedNovelty.enumerated()), id: \.element.id) { idx, future in
-                                    NoveltyCardView(future: future, index: idx)
+                                ForEach(Array(noveltyCards(mergedNovelty).enumerated()), id: \.element.id) { idx, card in
+                                    NoveltyCardView(card: card, index: idx)
                                 }
                             }
+                            .fixedSize(horizontal: false, vertical: true)
                         }
                     }
                 }
@@ -1461,39 +1462,128 @@ private let noveltyGradients: [(Color, Color)] = [
     (Color.teal.opacity(0.15), Color.green.opacity(0.08)),
 ]
 
+/// #9022 — one NOVELTY card per market, every leg named by its own outcome.
+///
+/// `/related-futures` serves one entry per OUTCOME, and the card printed only the
+/// market label beside the probability. On 15315948 (GT vs STAN) the "4th Quarter"
+/// winner market arrived as three entries with one `clean_label`, so a card read
+/// "Georgia Tech vs Stanford: 4th Quarter  12%" — the Tie leg, unnamed — beside
+/// 23 more same-titled cards carrying bare numbers. `internal` so tests can pin it.
+struct NoveltyCard: Identifiable {
+    let marketId: Int
+    let label: String
+    /// Strongest first; one entry per outcome.
+    let legs: [RelatedFuture]
+    var id: Int { marketId }
+}
+
+/// Groups novelty legs by market in first-appearance order. An outcome filed on
+/// both sides arrives twice in the merged list and is kept once.
+func noveltyCards(_ futures: [RelatedFuture]) -> [NoveltyCard] {
+    var order: [Int] = []
+    var legsByMarket: [Int: [RelatedFuture]] = [:]
+    var seenOutcomes = Set<Int>()
+    for f in futures where seenOutcomes.insert(f.outcomeId).inserted {
+        if legsByMarket[f.marketId] == nil { order.append(f.marketId) }
+        legsByMarket[f.marketId, default: []].append(f)
+    }
+    return order.compactMap { marketId in
+        guard let legs = legsByMarket[marketId], let first = legs.first else { return nil }
+        return NoveltyCard(
+            marketId: marketId,
+            label: first.cleanLabel ?? first.marketName,
+            legs: legs.sorted { ($0.probability ?? 0) > ($1.probability ?? 0) }
+        )
+    }
+}
+
+/// The name printed beside a leg's number, or nil when the card's label already
+/// IS the claim: a lone leg whose outcome is "Yes" or repeats the label. Any
+/// market with two or more legs names every one — that is the whole defect.
+func noveltyLegName(_ leg: RelatedFuture, in card: NoveltyCard) -> String? {
+    let name = leg.outcomeName.trimmingCharacters(in: .whitespaces)
+    guard card.legs.count == 1 else { return name }
+    if name.isEmpty || name.caseInsensitiveCompare("Yes") == .orderedSame
+        || name.caseInsensitiveCompare(card.label) == .orderedSame
+        || name.caseInsensitiveCompare(leg.marketName) == .orderedSame {
+        return nil
+    }
+    return name
+}
+
 private struct NoveltyCardView: View {
-    let future: RelatedFuture
+    let card: NoveltyCard
     let index: Int
+
+    private static let maxLegs = 3
 
     private var gradient: (Color, Color) {
         noveltyGradients[index % noveltyGradients.count]
     }
 
+    /// The lead leg. `noveltyCards` never builds a card without one.
+    private var future: RelatedFuture { card.legs[0] }
+
+    private var namesLegs: Bool {
+        noveltyLegName(future, in: card) != nil
+    }
+
     var body: some View {
-        NavigationLink(value: Route.futuresDetail(id: future.marketId)) {
+        NavigationLink(value: Route.futuresDetail(id: card.marketId)) {
             VStack(alignment: .leading, spacing: 8) {
-                Text(future.cleanLabel ?? future.marketName)
+                Text(card.label)
                     .font(.caption)
                     .fontWeight(.medium)
                     .foregroundStyle(.primary)
                     .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
 
-                Spacer()
-
-                HStack {
-                    if let prob = future.probability {
-                        Text(formatProbability(prob))
-                            .font(.title3)
-                            .fontWeight(.bold)
-                            .monospacedDigit()
+                if namesLegs {
+                    VStack(alignment: .leading, spacing: 5) {
+                        ForEach(card.legs.prefix(Self.maxLegs)) { leg in
+                            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                Text(noveltyLegName(leg, in: card) ?? leg.outcomeName)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Spacer(minLength: 4)
+                                if let prob = leg.probability {
+                                    Text(formatProbability(prob))
+                                        .font(.subheadline)
+                                        .fontWeight(.bold)
+                                        .monospacedDigit()
+                                }
+                            }
+                        }
                     }
+                    Spacer(minLength: 0)
+                    HStack {
+                        if card.legs.count > Self.maxLegs {
+                            Text("+\(card.legs.count - Self.maxLegs) more")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+                        Spacer()
+                        SourceBadge(source: future.source)
+                    }
+                } else {
                     Spacer()
-                    SourceBadge(source: future.source)
+                    HStack {
+                        if let prob = future.probability {
+                            Text(formatProbability(prob))
+                                .font(.title3)
+                                .fontWeight(.bold)
+                                .monospacedDigit()
+                        }
+                        Spacer()
+                        SourceBadge(source: future.source)
+                    }
                 }
             }
             .padding(12)
-            .frame(width: 180, height: 110)
+            .frame(width: namesLegs ? 230 : 180, alignment: .topLeading)
+            .frame(minHeight: 110, maxHeight: .infinity, alignment: .topLeading)
             .background(
                 LinearGradient(
                     colors: [gradient.0, gradient.1],
