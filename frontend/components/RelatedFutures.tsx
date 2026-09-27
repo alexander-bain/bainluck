@@ -15,6 +15,7 @@ import { groupAwardsByPlayer, playerAwardKey } from "@/lib/playerAwardRows";
 import { withoutGamePropsDrawnAbove } from "@/lib/gamePropsDrawnAbove";
 import EntityImage from "./EntityImage";
 import AdvancementPath from "@/components/event/AdvancementPath";
+import PlayerAwardsList from "@/components/event/PlayerAwardsList";
 
 interface TeamStandings {
   wins?: number;
@@ -3008,24 +3009,7 @@ export default function RelatedFutures({
                   return (
                     <div className="mt-4">
                       <div className="text-[10px] font-semibold uppercase tracking-wide text-text-muted mb-2">PLAYER AWARDS</div>
-                      <div className="space-y-1">
-                        {sorted.map((p) => {
-                          const initials = p.name.split(" ").map((w) => w[0]).join("").slice(0, 2);
-                          return (
-                            <div key={p.name} className="flex items-center gap-2 py-1">
-                              <div className="w-6 h-6 rounded-full grid place-items-center font-mono font-bold text-white text-[9px] shrink-0" style={{ background: hColor }}>{initials}</div>
-                              <span className="text-xs font-semibold w-24 truncate shrink-0">{p.name}</span>
-                              <div className="flex items-center gap-3 flex-wrap">
-                                {p.awards.map((a, i) => (
-                                  <span key={i} className="text-[10px] text-text-secondary">
-                                    {a.label} <span className="font-bold font-mono" style={{ color: teamTextColor(hColor) || "var(--text-primary)" }}>{Math.round(a.prob * 100)}%</span>
-                                  </span>
-                                ))}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
+                      <PlayerAwardsList rows={sorted} color={hColor} />
                     </div>
                   );
                 })()}
@@ -3072,24 +3056,7 @@ export default function RelatedFutures({
                   return (
                     <div className="mt-4">
                       <div className="text-[10px] font-semibold uppercase tracking-wide text-text-muted mb-2">PLAYER AWARDS</div>
-                      <div className="space-y-1">
-                        {sorted.map((p) => {
-                          const initials = p.name.split(" ").map((w) => w[0]).join("").slice(0, 2);
-                          return (
-                            <div key={p.name} className="flex items-center gap-2 py-1">
-                              <div className="w-6 h-6 rounded-full grid place-items-center font-mono font-bold text-white text-[9px] shrink-0" style={{ background: aColor }}>{initials}</div>
-                              <span className="text-xs font-semibold w-24 truncate shrink-0">{p.name}</span>
-                              <div className="flex items-center gap-3 flex-wrap">
-                                {p.awards.map((a, i) => (
-                                  <span key={i} className="text-[10px] text-text-secondary">
-                                    {a.label} <span className="font-bold font-mono" style={{ color: teamTextColor(aColor) || "var(--text-primary)" }}>{Math.round(a.prob * 100)}%</span>
-                                  </span>
-                                ))}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
+                      <PlayerAwardsList rows={sorted} color={aColor} />
                     </div>
                   );
                 })()}
