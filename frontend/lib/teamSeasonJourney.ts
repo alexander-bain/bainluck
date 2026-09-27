@@ -16,6 +16,21 @@ import type { TeamFutureItem } from "./api";
 // Tier preference for the single journey line. Lower array index = preferred.
 const JOURNEY_TIER_PRIORITY = [1, 2, 4];
 
+// #9113: a player's destination market ("Neymar: Next Club", "Kevin Durant's
+// Next Team", Polymarket's "Where will Cristiano Ronaldo go next?") lists teams
+// as its outcomes, so the team futures list carries it — but the number is the
+// chance a PLAYER joins, not anything about this team's season. With no tier
+// 1/2/4 market it used to win the fallback and LAFC's hero read
+// `CHAMPIONSHIP 1%` (Neymar to LAFC) above a "Season journey" of that prop.
+// Matched on the NAME because the name is what the payload serves for every
+// row; the venue's canonical key filed all 80+ open ones as `championship`.
+// "Next Team to Score" is a game prop, not a destination — hence the `to` guard.
+const PLAYER_DESTINATION_RE = /\bnext\s+(?:club|team)\b(?!\s+to\b)|\bgo\s+next\b/i;
+
+export function isPlayerDestinationMarket(marketName: string | null | undefined): boolean {
+  return PLAYER_DESTINATION_RE.test(marketName ?? "");
+}
+
 export interface JourneyPick {
   marketId: number;
   outcomeId: number;
@@ -60,7 +75,8 @@ export function pickJourneyFuture(
       f.probability !== null &&
       f.market_id != null &&
       f.outcome_id != null &&
-      f.is_winner !== true,
+      f.is_winner !== true &&
+      !isPlayerDestinationMarket(f.market_name),
   );
   if (eligible.length === 0) return null;
 
