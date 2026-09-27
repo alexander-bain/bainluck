@@ -154,6 +154,11 @@ nonisolated struct GameMarketOutcome: Decodable, Identifiable, Sendable {
     let marketType: String?
     let movement: Double?
     let period: String?
+    /// `is_winner` / `resolution_source` (#9108): served on `period_markets`
+    /// rows. Read only through ``OutcomeVerdict`` and only by
+    /// ``HalfScoresFromGrades``; absent on older payloads, decoding to `nil`.
+    let isWinner: Bool?
+    let resolutionSource: String?
 }
 
 // MARK: - Futures Market Detail
