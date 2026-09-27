@@ -745,6 +745,31 @@ jobs:
             exit 1
           fi
 
+      - name: "#9226 the search dropdown's finished game carries its score (real Postgres)"
+        # PILLAR: FORMATTING. SHIP: the dropdown's "Final" row can print who
+        # won (24–10), not just that the game ended.
+        #
+        # The finished row exists only because #9211's arm fetched it, so only
+        # a real database can observe the score riding it. The strawman case
+        # swaps the rule for an empty one and asserts production's bare row.
+        # Three refusals: a skip, a zero count, and a short count.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_typeahead_final_score_pg_9226.py \
+            -v -rs 2>&1 | tee /tmp/ta9226.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/ta9226.txt; then
+            echo "::error::#9226 typeahead final-score gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          if grep -qiE "no tests ran|collected 0 items" /tmp/ta9226.txt; then
+            echo "::error::#9226 typeahead final-score gate collected NOTHING"
+            exit 1
+          fi
+          if ! grep -qE "^=+ 4 passed" /tmp/ta9226.txt; then
+            echo "::error::#9226 typeahead final-score gate did not report exactly 4 passed"
+            exit 1
+          fi
+
       - name: "#6354 the Browse list serves no answer-less row (real Postgres)"
         # PILLAR: TRUTH. SHIP: the iPhone Browse tab stops opening on rows that
         # show a name, a category chip and no number.
