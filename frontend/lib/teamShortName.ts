@@ -235,6 +235,70 @@ export const TWO_WORD_NICKNAMES: ReadonlySet<string> = new Set([
   "yellow jackets",
 ]);
 
+/**
+ * #5634 — a NATIONAL team's name is the country, and no word of a country's
+ * name stands for it alone. The finished-card score strip printed "REPUBLIC"
+ * beside "CROATIA" for Czech Republic (`/events/15195324`, UEFA Nations League,
+ * 2026-09-26), and the same rule gives "Zealand" for New Zealand, "Korea" for
+ * South and North Korea alike, "States", "Arabia", "Rica" and "Leone".
+ *
+ * The soccer whole-club rule already keeps these whole when its caller passes
+ * the sport, but most card call sites pass none, and national teams play rugby,
+ * cricket, hockey and basketball too — so this is not sport-gated.
+ *
+ * A list of the world, not a measurement: every sovereign country, home nation
+ * and sporting territory whose English name is more than one word, in the
+ * spellings the venues use ("Korea Republic", "Cote d'Ivoire", "St Lucia";
+ * "&" reads as "and", so "Bosnia & Herzegovina" is one entry).
+ * One-word countries need no entry — nothing shortens them. An entry only ever
+ * keeps the full name, so it can never make a label less true.
+ *
+ * Keys are `countryKey` form: letters and digits per token, accents dropped,
+ * lower case.
+ */
+export const MULTI_WORD_COUNTRIES: ReadonlySet<string> = new Set([
+  // Americas
+  "united states", "united states of america", "costa rica", "el salvador",
+  "puerto rico", "dominican republic", "trinidad and tobago",
+  "antigua and barbuda", "saint kitts and nevis", "st kitts and nevis",
+  "saint lucia", "st lucia", "saint vincent and the grenadines",
+  "st vincent and the grenadines", "cayman islands", "turks and caicos islands",
+  "british virgin islands", "us virgin islands", "west indies", "french guiana",
+  // Europe
+  "czech republic", "northern ireland", "republic of ireland", "great britain",
+  "united kingdom", "north macedonia", "bosnia and herzegovina", "san marino",
+  "faroe islands", "slovak republic", "russian federation",
+  // Asia and Oceania
+  "south korea", "north korea", "korea republic", "korea dpr",
+  "republic of korea", "saudi arabia", "united arab emirates", "sri lanka",
+  "hong kong", "hong kong china", "chinese taipei", "new zealand",
+  "papua new guinea", "new caledonia", "solomon islands", "cook islands",
+  "american samoa", "marshall islands", "east timor", "kyrgyz republic",
+  "ir iran",
+  // Africa
+  "south africa", "ivory coast", "cote divoire", "cape verde", "cabo verde",
+  "sierra leone", "burkina faso", "equatorial guinea", "south sudan",
+  "central african republic", "dr congo", "sao tome and principe",
+]);
+
+/** A whole name as `MULTI_WORD_COUNTRIES` keys it. */
+function countryKey(name: string): string {
+  return name
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .replace(/&/g, " and ")
+    .split(TOKEN_SEPARATORS)
+    .map((token) => token.replace(/[^\p{L}\p{N}]/gu, ""))
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
+/** Is this whole name a multi-word country (a national team)? */
+export function isMultiWordCountry(name: string): boolean {
+  return MULTI_WORD_COUNTRIES.has(countryKey(name));
+}
+
 /** One token as `TWO_WORD_NICKNAMES` keys it: letters and digits, lower case. */
 function nicknameKey(token: string): string {
   return token.replace(/[^\p{L}\p{N}]/gu, "").toLowerCase();
@@ -595,7 +659,7 @@ export function teamCrestBadge(
     .split(TOKEN_SEPARATORS)
     .filter(Boolean)
     .filter(token => !isNonDistinctiveTrailingWord(token));
-  const shipped = teamShortName(full).slice(0, 3).toUpperCase();
+  const shipped = shortNameByRule(full).slice(0, 3).toUpperCase();
   const initials = distinctive
     .map(word => word.charAt(0))
     .join("")
@@ -666,7 +730,7 @@ export function teamCrestBadge(
  * that issue's decision rather than this one's. Filed as #4535.
  */
 function shortNameBadge(full: string, distinctive: string[]): string {
-  const sliced = teamShortName(full).trim().slice(0, 3);
+  const sliced = shortNameByRule(full).trim().slice(0, 3);
   // The test is on the SLICE, not on the short name. `teamShortName` handing
   // back a multi-word string is only visible when the first word is shorter
   // than the badge — "AC Milan U20" cuts to "AC ", but "Abbey Hey FC" cuts to
@@ -926,6 +990,17 @@ export function teamShortName(
   sportKey?: string | null,
 ): string {
   const full = (name ?? "").trim();
+  // #5634 — "Czech Republic", never "Republic".
+  if (isMultiWordCountry(full)) return full;
+  return shortNameByRule(full, sportKey);
+}
+
+/**
+ * `teamShortName` without the country entry. The crest badges read this, so
+ * #5634's label change does not re-letter a badge: "Czech Republic" keeps
+ * `REP`, the badge the iPhone's `CrestBadgeInitialsTests.swift` mirrors.
+ */
+function shortNameByRule(full: string, sportKey?: string | null): string {
   if (!full) return "";
   // #3110: both halves of a doubles pair, or neither.
   if (isDoublesPair(full)) return full;
@@ -1016,12 +1091,14 @@ export function teamShortNames(
   // no abbreviation exists to rescue with: 0 of 252 measured), and here so it
   // stays unreachable the day one does.
   //
-  // #5634: a name that IS a two-word nickname ("Red Sox") is compact too.
+  // #5634: a name that IS a two-word nickname ("Red Sox") is compact too, and
+  // so is a country: "Czech Republic" beside "Croatia", not "CZE / CRO".
   const gaveUp = (full: string, short: string) =>
     short === full &&
     full.split(/\s+/).length >= 2 &&
     !isDoublesPair(full) &&
-    twoWordNickname(full.split(/\s+/)) === null;
+    twoWordNickname(full.split(/\s+/)) === null &&
+    !isMultiWordCountry(full);
   // #5634 — a football club's whole name is CHOSEN, not given up on, so the
   // rescue below is asked exactly as it was before that rule: from what the
   // last-word rule would have printed. Seattle Sounders FC v Real Salt Lake
