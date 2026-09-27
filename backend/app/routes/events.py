@@ -3127,6 +3127,8 @@ def _compose_futures_families(
     expanded: list[tuple[str, str | None]],
     formatter,
     serialized_ids: "set[int]",
+    *,
+    stale_game_ids: "set[int] | frozenset[int]" = frozenset(),
 ) -> list[dict]:
     """#993 L2-41 search curation. Compose the reranked, deduped, stale-suppressed
     candidate markets into topical FAMILIES (docs/search-curation-spec.md).
@@ -3150,6 +3152,10 @@ def _compose_futures_families(
     call site re-acquire #2646 silently. `more_count` is rendered as the words
     "+N more markets below", so it is a promise about this page, and it may only
     count members the page actually puts below. See the `more_count` comment.
+
+    `stale_game_ids` (#9030) are markets whose game is long `suspended`
+    (`_search_stale_game_market_ids`); they sort last within their family. The
+    route passes it; the default exists only for callers with no linked games.
     """
     from collections import OrderedDict
 
@@ -3219,6 +3225,15 @@ def _compose_futures_families(
         # scanned for the first member that can state an answer — see
         # `_family_headline`. `rest` keeps that same order minus the one drawn,
         # so `shown` and `more_below` below are unaffected except by the skip.
+        #
+        # #9030: first, a member whose game is long `suspended` goes to the back,
+        # so it neither heads the card nor takes a shown row. A stable partition,
+        # so every upstream demotion still holds; an all-stale family keeps its
+        # order and nothing is dropped.
+        if stale_game_ids:
+            members = [m for m in members if m.id not in stale_game_ids] + [
+                m for m in members if m.id in stale_game_ids
+            ]
         lead = _family_headline_index(members)
         headline = members[lead]
         rest = members[:lead] + members[lead + 1 :]
@@ -10213,6 +10228,10 @@ async def search_events(
     # #3412: same predicate still, now the wider one — a family is exactly the
     # back door a half-applied withdrawal leaves open.
     # #8375: and the container withdrawal too, or the family is its back door.
+    # #9030: a long-suspended game is ordered last inside its family.
+    _stale_game_ids = await _search_stale_game_market_ids(
+        db, _formatted_facts, datetime.now(timezone.utc)
+    )
     futures_families = _compose_futures_families(
         [
             m
@@ -10225,6 +10244,7 @@ async def search_events(
         expanded,
         lambda m: _formatted_by_id[m.id],
         {m.id for m in futures_markets},
+        stale_game_ids=_stale_game_ids,
     )
 
     # #8750: the typed text already answered, so the correction is withdrawn.
@@ -32999,3 +33019,42 @@ async def _stamp_linked_event_kickoff(
             cards[mid]["event_commence_time"] = ct.isoformat()
             stamped += 1
     return stamped
+
+
+#: #9030: how long a `suspended` game may sit past its start before its markets
+#: stop heading a search family. A rain-suspended game resumes inside a day; the
+#: specimen was six days past its start.
+STALE_SUSPENDED_GAME_HOURS = 24
+
+
+async def _search_stale_game_market_ids(
+    db: AsyncSession,
+    facts: list[tuple[Optional[int], Optional[str], Optional[int]]],
+    now: datetime,
+) -> set[int]:
+    """#9030: markets whose game was due to start more than a day ago and is `suspended`.
+
+    `/search?q=eagles` headed its ANSWERS card with `Tohoku Rakuten Golden
+    Eagles vs. Fukuoka SoftBank Hawks — Yes 41%` (61045496): an NPB game due
+    2026-09-21, still `suspended` six days later, its price frozen since that
+    day. The three Eagles–Bears members ranked above it are bundles, so
+    `_family_headline_index` correctly skipped them and landed on this.
+
+    Only `suspended`, and only past the window. `_futures_game_already_played`
+    keeps `suspended` in the pool on purpose (never proven played), and this
+    does not change that: it feeds an ORDER inside a family, never a filter.
+    `live` and `scheduled` are not read. Unlinked markets have no game and are
+    never returned. One `IN` on the primary key, or nothing when no card is linked.
+    """
+    linked = {mid: eid for mid, _ticker, eid in facts if mid is not None and eid is not None}
+    if not linked:
+        return set()
+    rows = await db.execute(
+        select(Event.id).where(
+            Event.id.in_(set(linked.values())),
+            Event.status == "suspended",
+            Event.commence_time < now - timedelta(hours=STALE_SUSPENDED_GAME_HOURS),
+        )
+    )
+    stale_events = {eid for (eid,) in rows.all()}
+    return {mid for mid, eid in linked.items() if eid in stale_events}
