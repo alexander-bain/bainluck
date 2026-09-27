@@ -12,7 +12,7 @@ import { DismissBtn, TrendBadge, ActionBar, ExpandableContextText, SignalBars, F
 import { forYouCue } from "@/lib/discover/forYouCue";
 import type { CardActionCallbacks } from "./types";
 import { shouldWithholdProbability } from "@/lib/probabilityEvidence";
-import { formatFinishedGameLabel, formatLiveClockLabel } from "@/lib/gameTimeLabel";
+import { authorityStoppageLabel, formatFinishedGameLabel, formatLiveClockLabel } from "@/lib/gameTimeLabel";
 import { probabilityAuthorityClass } from "@/lib/confidence";
 import { getSportLabel } from "@/lib/sportCategories";
 import { servedDuelPercents } from "@/lib/servedDuelPercents";
@@ -445,7 +445,7 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
               {/* #2786 — AWAY-HOME, unchanged. This is the one surface whose
                   own scores really are away-first: the hero above paints
                   `away_score` on the left and `home_score` on the right. */}
-              {suspendedSummary(data.away_score, data.home_score, "away-home")}
+              {suspendedSummary(data.away_score, data.home_score, "away-home", authorityStoppageLabel(data.espn?.period))}
             </span>
             {/* #6361 — mirrors the `finishedLabel` span in the `isDone` block
                 above: same slot, same weight, same muted treatment. AFTER the

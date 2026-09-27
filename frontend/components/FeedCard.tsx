@@ -29,6 +29,7 @@ import { isNonSportsCategory, isInternationalSport, flagUrl, espnTeamLogoByName 
 import { useAnalyticsContext } from "@/components/Analytics";
 import { feedContextSnippet, feedItemHasRenderableContent, resolvesLabel, formatConceptMovement, conceptDomainLabel, stripCardTitleHead, stripResolutionWindowClause } from "@/components/discover/utils";
 import {
+  authorityStoppageLabel,
   formatFinishedGameLabel,
   formatLiveClockLabel,
   formatScheduledGameLabel,
@@ -741,7 +742,7 @@ function EventFeedCard({
                   live score, so the suspended line is away-home. Both arms still
                   render into THIS SLOT and still agree, which is what #2786 was
                   for — and its guard is what makes them move together. */}
-              {suspendedSummary(data.away_score, data.home_score, "away-home")}
+              {suspendedSummary(data.away_score, data.home_score, "away-home", authorityStoppageLabel(data.espn?.period))}
               {/* #6361 — the date, after the words and in the same slot, so the
                   card reads "…no result reported · Sep 13" rather than going
                   undated while its FINISHED sibling below is dated. */}

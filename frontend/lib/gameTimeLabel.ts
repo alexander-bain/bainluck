@@ -632,6 +632,44 @@ export function isPregameStatusDetail(period: string | null | undefined): boolea
   return PREGAME_START_SENTENCE_RE.test(trimmed);
 }
 
+/**
+ * #8810 — what a suspended match says INSTEAD of "No result reported" when the
+ * authority that watches it has said it was stopped before it could be played —
+ * or `null`, which is the caller's signal to keep the sentence it had.
+ *
+ * ── #8810: THE AUTHORITY SAID POSTPONED AND THE PAGE SAID "NO RESULT" ──
+ *
+ * `/events/15315470` (Crawley Town v Barnet, League Two) is `suspended` with
+ * ESPN anchor 401881358, and ESPN reads it `STATUS_POSTPONED`. The page printed
+ * "No result reported · last score 0-0" over a big 22%, which is the sentence
+ * for a match whose sources went dark. This one's source did not go dark: it
+ * told us. ESPN sync stores that as `suspended` by design, and the word it
+ * writes into `period` (served as `espn.period`) is the only served difference.
+ *
+ * It lives HERE, beside `isPregameStatusDetail`, because this module is the one
+ * home for reading `espn.period` (UX-P051's anti-drift guard): every card that
+ * prints the suspended summary passes its raw period through this function.
+ *
+ * It takes the PERIOD, not the status: callers reach this only on a row that is
+ * already suspended, so the ladder (`espn_stopped_without_result` — an allowlist
+ * on ESPN's closed `state`) has already decided the state. The word only picks
+ * the label, so an exact allowlist is the right shape here: a word not listed
+ * keeps the old label, and a live period ("2nd Half", "End 9th") left on a row
+ * that went dark can never print as a stoppage.
+ */
+const AUTHORITY_STOPPAGE_WORDS: Record<string, string> = {
+  postponed: "Postponed",
+  canceled: "Canceled",
+  cancelled: "Canceled",
+};
+
+export function authorityStoppageLabel(
+  authorityPeriod: string | null | undefined,
+): string | null {
+  if (typeof authorityPeriod !== "string") return null;
+  return AUTHORITY_STOPPAGE_WORDS[authorityPeriod.trim().toLowerCase()] ?? null;
+}
+
 /** The believable half of ESPN's live clock. Empty string means "say nothing". */
 export interface TrustedLiveClock {
   period: string;

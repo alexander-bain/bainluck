@@ -260,11 +260,42 @@ export function suspendedSummary(
   awayScore: number | null | undefined,
   homeScore: number | null | undefined,
   order: ScoreOrder,
+  stoppage?: string | null,
 ): string {
-  if (awayScore == null || homeScore == null) return SUSPENDED_LABEL;
+  // #8810 — the authority's own word outranks our silence, the way the venue's
+  // grade does (#6381). `stoppage` is `authorityStoppageLabel`'s answer
+  // (`lib/gameTimeLabel`, the one home for reading ESPN's detail string), never
+  // a raw period: callers resolve it there and pass the label.
+  const label = stoppage || SUSPENDED_LABEL;
+  if (awayScore == null || homeScore == null) return label;
+  // #8960 — ESPN publishes 0-0 for both sides of a postponed fixture. Under a
+  // stoppage word that pair is filler, not a last score; a non-zero pair
+  // (stopped mid-match) is real and still prints.
+  if (stoppage && !scoresShowPlay(awayScore, homeScore)) return label;
   const [first, second] =
     order === "home-away" ? [homeScore, awayScore] : [awayScore, homeScore];
-  return `${SUSPENDED_LABEL} · last score ${first}-${second}`;
+  return `${label} · last score ${first}-${second}`;
+}
+
+/** Either side has scored — the scores-only play evidence (#8960's refusal). */
+export function scoresShowPlay(
+  awayScore: number | null | undefined,
+  homeScore: number | null | undefined,
+): boolean {
+  return (awayScore ?? 0) > 0 || (homeScore ?? 0) > 0;
+}
+
+
+/**
+ * The sentence behind a stoppage label (`authorityStoppageLabel`), where
+ * `SUSPENDED_DESCRIPTION` would sit — which says no source reported anything,
+ * and is false about a match its authority reported stopped. `null` when there
+ * is no stoppage label.
+ */
+export function authorityStoppageDescription(
+  stoppage: string | null | undefined,
+): string | null {
+  return stoppage ? `This match has been ${stoppage.toLowerCase()}.` : null;
 }
 
 /**
