@@ -114,7 +114,8 @@ struct PlayerPropsCardView: View {
         for prop in playerProps {
             let parts = prop.outcomeName.split(separator: ":", maxSplits: 1)
             guard parts.count == 2 else { continue }
-            let player = parts[0].trimmingCharacters(in: .whitespaces)
+            // #9148 — "SEA Seahawks D/ST" is named "Seahawks D/ST".
+            let player = PropSubject.display(parts[0].trimmingCharacters(in: .whitespaces))
             // Use the full marketName as the stat type key to prevent mixing
             // different stat categories (e.g., "Player Hits" vs "Player RBIs")
             let statType = prop.marketName.trimmingCharacters(in: .whitespaces)
