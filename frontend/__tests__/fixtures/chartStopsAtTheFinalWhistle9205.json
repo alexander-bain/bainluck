@@ -1,0 +1,2658 @@
+{
+"event_id": 14781702,
+"home_team": "Washington Commanders",
+"away_team": "Seattle Seahawks",
+"commence_time": "2026-09-27T17:00:00+00:00",
+"completed_at": "2026-09-27T20:27:41.958869+00:00",
+"status": "completed",
+"history": [
+{
+"timestamp": "2026-09-27T19:45:00+00:00",
+"home_probability": 0.5222,
+"away_probability": 0.4778,
+"projected_home_score": 27.5,
+"projected_away_score": 25.8
+},
+{
+"timestamp": "2026-09-27T19:46:00+00:00",
+"home_probability": 0.4785,
+"away_probability": 0.5215,
+"projected_home_score": 26.6,
+"projected_away_score": 27.5
+},
+{
+"timestamp": "2026-09-27T19:47:00+00:00",
+"home_probability": 0.4757,
+"away_probability": 0.5243,
+"projected_home_score": 26.2,
+"projected_away_score": 28.2
+},
+{
+"timestamp": "2026-09-27T19:48:00+00:00",
+"home_probability": 0.4196,
+"away_probability": 0.5804,
+"projected_home_score": 26.3,
+"projected_away_score": 28.7
+},
+{
+"timestamp": "2026-09-27T19:49:00+00:00",
+"home_probability": 0.3769,
+"away_probability": 0.6231,
+"projected_home_score": 26.3,
+"projected_away_score": 29.1
+},
+{
+"timestamp": "2026-09-27T19:50:00+00:00",
+"home_probability": 0.3114,
+"away_probability": 0.6886,
+"projected_home_score": 26.4,
+"projected_away_score": 29.8
+},
+{
+"timestamp": "2026-09-27T19:52:00+00:00",
+"home_probability": 0.3151,
+"away_probability": 0.6849,
+"projected_home_score": 26.7,
+"projected_away_score": 30.1
+},
+{
+"timestamp": "2026-09-27T19:53:00+00:00",
+"home_probability": 0.3208,
+"away_probability": 0.6792,
+"projected_home_score": 26.4,
+"projected_away_score": 29.7
+},
+{
+"timestamp": "2026-09-27T19:54:00+00:00",
+"home_probability": 0.3352,
+"away_probability": 0.6648,
+"projected_home_score": 26.8,
+"projected_away_score": 30.1
+},
+{
+"timestamp": "2026-09-27T19:55:00+00:00",
+"home_probability": 0.2808,
+"away_probability": 0.7192,
+"projected_home_score": 26.2,
+"projected_away_score": 29.6
+},
+{
+"timestamp": "2026-09-27T19:56:00+00:00",
+"home_probability": 0.3529,
+"away_probability": 0.6471,
+"projected_home_score": 26.8,
+"projected_away_score": 29.4
+},
+{
+"timestamp": "2026-09-27T19:57:00+00:00",
+"home_probability": 0.3735,
+"away_probability": 0.6265,
+"projected_home_score": 26.9,
+"projected_away_score": 29.7
+},
+{
+"timestamp": "2026-09-27T19:58:00+00:00",
+"home_probability": 0.3812,
+"away_probability": 0.6188,
+"projected_home_score": 26.9,
+"projected_away_score": 29.5
+},
+{
+"timestamp": "2026-09-27T19:59:00+00:00",
+"home_probability": 0.4654,
+"away_probability": 0.5346,
+"projected_home_score": 27.6,
+"projected_away_score": 29.6
+},
+{
+"timestamp": "2026-09-27T20:00:00+00:00",
+"home_probability": 0.5046,
+"away_probability": 0.4954,
+"projected_home_score": 29.1,
+"projected_away_score": 28.4
+},
+{
+"timestamp": "2026-09-27T20:01:00+00:00",
+"home_probability": 0.4955,
+"away_probability": 0.5045,
+"projected_home_score": 28.9,
+"projected_away_score": 28.6
+},
+{
+"timestamp": "2026-09-27T20:02:00+00:00",
+"home_probability": 0.4793,
+"away_probability": 0.5207,
+"projected_home_score": 28.3,
+"projected_away_score": 29.0
+},
+{
+"timestamp": "2026-09-27T20:03:00+00:00",
+"home_probability": 0.4831,
+"away_probability": 0.5169,
+"projected_home_score": 27.8,
+"projected_away_score": 29.8
+},
+{
+"timestamp": "2026-09-27T20:04:00+00:00",
+"home_probability": 0.4815,
+"away_probability": 0.5185,
+"projected_home_score": 28.0,
+"projected_away_score": 29.5
+},
+{
+"timestamp": "2026-09-27T20:05:00+00:00",
+"home_probability": 0.4558,
+"away_probability": 0.5442,
+"projected_home_score": 27.5,
+"projected_away_score": 29.8
+},
+{
+"timestamp": "2026-09-27T20:06:00+00:00",
+"home_probability": 0.4968,
+"away_probability": 0.5032,
+"projected_home_score": 29.1,
+"projected_away_score": 28.2
+},
+{
+"timestamp": "2026-09-27T20:07:00+00:00",
+"home_probability": 0.432,
+"away_probability": 0.568,
+"projected_home_score": 27.5,
+"projected_away_score": 30.0
+},
+{
+"timestamp": "2026-09-27T20:08:00+00:00",
+"home_probability": 0.4564,
+"away_probability": 0.5436,
+"projected_home_score": 27.8,
+"projected_away_score": 29.8
+},
+{
+"timestamp": "2026-09-27T20:09:00+00:00",
+"home_probability": 0.6512,
+"away_probability": 0.3488,
+"projected_home_score": 31.0,
+"projected_away_score": 29.1
+},
+{
+"timestamp": "2026-09-27T20:10:00+00:00",
+"home_probability": 0.9075,
+"away_probability": 0.0925,
+"projected_home_score": 35.4,
+"projected_away_score": 28.1
+},
+{
+"timestamp": "2026-09-27T20:11:00+00:00",
+"home_probability": 0.879,
+"away_probability": 0.121,
+"projected_home_score": 34.4,
+"projected_away_score": 28.8
+},
+{
+"timestamp": "2026-09-27T20:12:00+00:00",
+"home_probability": 0.8812,
+"away_probability": 0.1188,
+"projected_home_score": 34.2,
+"projected_away_score": 28.5
+},
+{
+"timestamp": "2026-09-27T20:13:00+00:00",
+"home_probability": 0.8575,
+"away_probability": 0.1425,
+"projected_home_score": 34.4,
+"projected_away_score": 29.1
+},
+{
+"timestamp": "2026-09-27T20:14:00+00:00",
+"home_probability": 0.7927,
+"away_probability": 0.2073,
+"projected_home_score": 33.6,
+"projected_away_score": 31.1
+},
+{
+"timestamp": "2026-09-27T20:15:00+00:00",
+"home_probability": 0.6924,
+"away_probability": 0.3076,
+"projected_home_score": 33.6,
+"projected_away_score": 31.9
+},
+{
+"timestamp": "2026-09-27T20:16:00+00:00",
+"home_probability": 0.6863,
+"away_probability": 0.3137,
+"projected_home_score": 33.2,
+"projected_away_score": 31.7
+},
+{
+"timestamp": "2026-09-27T20:17:00+00:00",
+"home_probability": 0.7059,
+"away_probability": 0.2941,
+"projected_home_score": 33.0,
+"projected_away_score": 31.5
+},
+{
+"timestamp": "2026-09-27T20:18:00+00:00",
+"home_probability": 0.6841,
+"away_probability": 0.3159,
+"projected_home_score": 33.0,
+"projected_away_score": 31.5
+},
+{
+"timestamp": "2026-09-27T20:19:00+00:00",
+"home_probability": 0.6803,
+"away_probability": 0.3197,
+"projected_home_score": 33.0,
+"projected_away_score": 31.5
+},
+{
+"timestamp": "2026-09-27T20:20:00+00:00",
+"home_probability": 0.6722,
+"away_probability": 0.3278,
+"projected_home_score": 33.2,
+"projected_away_score": 31.8
+},
+{
+"timestamp": "2026-09-27T20:21:00+00:00",
+"home_probability": 0.6114,
+"away_probability": 0.3886,
+"projected_home_score": 33.2,
+"projected_away_score": 31.8
+},
+{
+"timestamp": "2026-09-27T20:22:00+00:00",
+"home_probability": 0.7042,
+"away_probability": 0.2958,
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:23:00+00:00",
+"home_probability": 0.8126,
+"away_probability": 0.1874,
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:24:00+00:00",
+"home_probability": 0.7962,
+"away_probability": 0.2038,
+"projected_home_score": 33.5,
+"projected_away_score": 32.0
+},
+{
+"timestamp": "2026-09-27T20:25:00+00:00",
+"home_probability": 0.7945,
+"away_probability": 0.2055,
+"projected_home_score": 33.5,
+"projected_away_score": 32.0
+},
+{
+"timestamp": "2026-09-27T20:35:00+00:00",
+"home_probability": 0.7862,
+"away_probability": 0.2138,
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:27:00+00:00",
+"home_probability": 1.0,
+"away_probability": 0.0,
+"projected_home_score": null,
+"projected_away_score": null
+}
+],
+"score_history": [
+{
+"timestamp": "2026-09-27T17:03:37.792924+00:00",
+"home_score": 0,
+"away_score": 0
+},
+{
+"timestamp": "2026-09-27T17:21:37.894061+00:00",
+"home_score": 7,
+"away_score": 0
+},
+{
+"timestamp": "2026-09-27T17:51:37.585201+00:00",
+"home_score": 7,
+"away_score": 6
+},
+{
+"timestamp": "2026-09-27T17:52:37.708273+00:00",
+"home_score": 7,
+"away_score": 7
+},
+{
+"timestamp": "2026-09-27T18:12:39.029159+00:00",
+"home_score": 14,
+"away_score": 7
+},
+{
+"timestamp": "2026-09-27T18:42:38.263173+00:00",
+"home_score": 14,
+"away_score": 10
+},
+{
+"timestamp": "2026-09-27T18:47:38.624740+00:00",
+"home_score": 17,
+"away_score": 10
+},
+{
+"timestamp": "2026-09-27T18:47:43.311864+00:00",
+"home_score": 14,
+"away_score": 10
+},
+{
+"timestamp": "2026-09-27T18:48:38.234547+00:00",
+"home_score": 17,
+"away_score": 10
+},
+{
+"timestamp": "2026-09-27T19:12:38.596567+00:00",
+"home_score": 24,
+"away_score": 10
+},
+{
+"timestamp": "2026-09-27T19:13:43.060582+00:00",
+"home_score": 17,
+"away_score": 10
+},
+{
+"timestamp": "2026-09-27T19:14:28.597954+00:00",
+"home_score": 24,
+"away_score": 10
+},
+{
+"timestamp": "2026-09-27T19:22:38.802111+00:00",
+"home_score": 24,
+"away_score": 16
+},
+{
+"timestamp": "2026-09-27T19:23:38.688914+00:00",
+"home_score": 24,
+"away_score": 17
+},
+{
+"timestamp": "2026-09-27T19:23:40.215289+00:00",
+"home_score": 24,
+"away_score": 16
+},
+{
+"timestamp": "2026-09-27T19:24:38.700976+00:00",
+"home_score": 24,
+"away_score": 17
+},
+{
+"timestamp": "2026-09-27T19:26:39.653090+00:00",
+"home_score": 24,
+"away_score": 11
+},
+{
+"timestamp": "2026-09-27T19:27:40.798213+00:00",
+"home_score": 24,
+"away_score": 17
+},
+{
+"timestamp": "2026-09-27T19:50:39.165651+00:00",
+"home_score": 24,
+"away_score": 23
+},
+{
+"timestamp": "2026-09-27T19:52:30.659793+00:00",
+"home_score": 24,
+"away_score": 24
+},
+{
+"timestamp": "2026-09-27T19:55:33.868804+00:00",
+"home_score": 24,
+"away_score": 23
+},
+{
+"timestamp": "2026-09-27T19:55:41.840305+00:00",
+"home_score": 24,
+"away_score": 24
+},
+{
+"timestamp": "2026-09-27T20:03:41.641643+00:00",
+"home_score": 27,
+"away_score": 24
+},
+{
+"timestamp": "2026-09-27T20:10:45.408556+00:00",
+"home_score": 33,
+"away_score": 24
+},
+{
+"timestamp": "2026-09-27T20:15:42.532504+00:00",
+"home_score": 33,
+"away_score": 30
+},
+{
+"timestamp": "2026-09-27T20:16:41.252585+00:00",
+"home_score": 33,
+"away_score": 31
+}
+],
+"espn_history": [
+{
+"timestamp": "2026-09-27T19:45:41.970912+00:00",
+"home_probability": 0.6341,
+"away_probability": 0.3659,
+"home_score": 24,
+"away_score": 17,
+"period": "15:00 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-27T19:46:40.140579+00:00",
+"home_probability": 0.6249,
+"away_probability": 0.3751,
+"home_score": 24,
+"away_score": 17,
+"period": "14:19 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-27T19:47:38.643948+00:00",
+"home_probability": 0.5883,
+"away_probability": 0.4117,
+"home_score": 24,
+"away_score": 17,
+"period": "14:19 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-27T19:48:41.144271+00:00",
+"home_probability": 0.5565,
+"away_probability": 0.4435,
+"home_score": 24,
+"away_score": 17,
+"period": "14:08 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-27T19:49:38.923337+00:00",
+"home_probability": 0.4981,
+"away_probability": 0.5019,
+"home_score": 24,
+"away_score": 17,
+"period": "12:37 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-27T19:50:39.165651+00:00",
+"home_probability": 0.3996,
+"away_probability": 0.6004,
+"home_score": 24,
+"away_score": 23,
+"period": "11:53 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-27T19:52:40.677875+00:00",
+"home_probability": 0.3944,
+"away_probability": 0.6056,
+"home_score": 24,
+"away_score": 24,
+"period": "11:53 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-27T19:53:41.114166+00:00",
+"home_probability": 0.3944,
+"away_probability": 0.6056,
+"home_score": 24,
+"away_score": 24,
+"period": "11:53 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-27T19:54:42.403281+00:00",
+"home_probability": 0.4244,
+"away_probability": 0.5756,
+"home_score": 24,
+"away_score": 24,
+"period": "11:53 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-27T19:55:41.840305+00:00",
+"home_probability": 0.3767,
+"away_probability": 0.6233,
+"home_score": 24,
+"away_score": 24,
+"period": "11:17 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-27T19:56:40.984727+00:00",
+"home_probability": 0.4785,
+"away_probability": 0.5215,
+"home_score": 24,
+"away_score": 24,
+"period": "10:35 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-27T19:57:42.039991+00:00",
+"home_probability": 0.4424,
+"away_probability": 0.5576,
+"home_score": 24,
+"away_score": 24,
+"period": "9:53 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-27T19:58:41.258716+00:00",
+"home_probability": 0.3987,
+"away_probability": 0.6013,
+"home_score": 24,
+"away_score": 24,
+"period": "9:18 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-27T19:59:42.274058+00:00",
+"home_probability": 0.524,
+"away_probability": 0.476,
+"home_score": 24,
+"away_score": 24,
+"period": "7:59 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-27T20:00:41.095448+00:00",
+"home_probability": 0.6076,
+"away_probability": 0.3924,
+"home_score": 24,
+"away_score": 24,
+"period": "7:19 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-27T20:01:41.468839+00:00",
+"home_probability": 0.5893,
+"away_probability": 0.4107,
+"home_score": 24,
+"away_score": 24,
+"period": "6:01 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-27T20:02:41.150314+00:00",
+"home_probability": 0.5683,
+"away_probability": 0.4317,
+"home_score": 24,
+"away_score": 24,
+"period": "5:21 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-27T20:03:41.641643+00:00",
+"home_probability": 0.6331,
+"away_probability": 0.3669,
+"home_score": 27,
+"away_score": 24,
+"period": "4:34 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-27T20:04:41.316325+00:00",
+"home_probability": 0.6331,
+"away_probability": 0.3669,
+"home_score": 27,
+"away_score": 24,
+"period": "4:34 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-27T20:05:41.585719+00:00",
+"home_probability": 0.6331,
+"away_probability": 0.3669,
+"home_score": 27,
+"away_score": 24,
+"period": "4:34 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-27T20:06:41.441196+00:00",
+"home_probability": 0.6063,
+"away_probability": 0.3937,
+"home_score": 27,
+"away_score": 24,
+"period": "4:34 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-27T20:07:41.415854+00:00",
+"home_probability": 0.5036,
+"away_probability": 0.4964,
+"home_score": 27,
+"away_score": 24,
+"period": "4:24 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-27T20:08:42.044397+00:00",
+"home_probability": 0.6028,
+"away_probability": 0.3972,
+"home_score": 27,
+"away_score": 24,
+"period": "4:24 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-27T20:09:45.962202+00:00",
+"home_probability": 0.6309,
+"away_probability": 0.3691,
+"home_score": 27,
+"away_score": 24,
+"period": "4:17 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-27T20:10:45.408556+00:00",
+"home_probability": 0.9719,
+"away_probability": 0.0281,
+"home_score": 33,
+"away_score": 24,
+"period": "3:57 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-27T20:12:41.331426+00:00",
+"home_probability": 0.9413,
+"away_probability": 0.0587,
+"home_score": 33,
+"away_score": 24,
+"period": "3:57 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-27T20:13:41.237054+00:00",
+"home_probability": 0.8863,
+"away_probability": 0.1137,
+"home_score": 33,
+"away_score": 24,
+"period": "3:52 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-27T20:14:41.528289+00:00",
+"home_probability": 0.7626,
+"away_probability": 0.2374,
+"home_score": 33,
+"away_score": 24,
+"period": "2:58 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-27T20:15:42.532504+00:00",
+"home_probability": 0.6732,
+"away_probability": 0.3268,
+"home_score": 33,
+"away_score": 30,
+"period": "2:51 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-27T20:17:41.129062+00:00",
+"home_probability": 0.7049,
+"away_probability": 0.2951,
+"home_score": 33,
+"away_score": 31,
+"period": "2:51 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-27T20:18:41.678490+00:00",
+"home_probability": 0.6334,
+"away_probability": 0.3666,
+"home_score": 33,
+"away_score": 31,
+"period": "2:46 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-27T20:19:42.236725+00:00",
+"home_probability": 0.6726,
+"away_probability": 0.3274,
+"home_score": 33,
+"away_score": 31,
+"period": "2:00 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-27T20:20:46.132523+00:00",
+"home_probability": 0.6726,
+"away_probability": 0.3274,
+"home_score": 33,
+"away_score": 31,
+"period": "2:00 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-27T20:21:41.622461+00:00",
+"home_probability": 0.6726,
+"away_probability": 0.3274,
+"home_score": 33,
+"away_score": 31,
+"period": "2:00 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-27T20:22:41.878528+00:00",
+"home_probability": 0.911,
+"away_probability": 0.089,
+"home_score": 33,
+"away_score": 31,
+"period": "1:47 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-27T20:23:41.285911+00:00",
+"home_probability": 0.8734,
+"away_probability": 0.1266,
+"home_score": 33,
+"away_score": 31,
+"period": "1:42 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-27T20:24:41.172937+00:00",
+"home_probability": 0.8734,
+"away_probability": 0.1266,
+"home_score": 33,
+"away_score": 31,
+"period": "1:42 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-27T20:25:41.471571+00:00",
+"home_probability": 0.9207,
+"away_probability": 0.0793,
+"home_score": 33,
+"away_score": 31,
+"period": "1:36 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-27T20:26:41.215516+00:00",
+"home_probability": 0.999,
+"away_probability": 0.001,
+"home_score": 33,
+"away_score": 31,
+"period": "0:52 - 4th Quarter"
+},
+{
+"timestamp": "2026-09-27T20:27:00+00:00",
+"home_probability": 1.0,
+"away_probability": 0.0,
+"home_score": 33,
+"away_score": 31,
+"period": "Final"
+}
+],
+"win_prob_history": {
+"espn": [
+{
+"timestamp": "2026-09-27T19:46:40.140579+00:00",
+"home_probability": 0.6249,
+"away_probability": 0.3751,
+"game_state": {
+"clock": "14:19",
+"period": "14:19 - 4th Quarter",
+"away_score": 17,
+"home_score": 24
+}
+},
+{
+"timestamp": "2026-09-27T19:47:38.643948+00:00",
+"home_probability": 0.5883,
+"away_probability": 0.4117,
+"game_state": {
+"clock": "14:19",
+"period": "14:19 - 4th Quarter",
+"away_score": 17,
+"home_score": 24
+}
+},
+{
+"timestamp": "2026-09-27T19:48:41.144271+00:00",
+"home_probability": 0.5565,
+"away_probability": 0.4435,
+"game_state": {
+"clock": "14:08",
+"period": "14:08 - 4th Quarter",
+"away_score": 17,
+"home_score": 24
+}
+},
+{
+"timestamp": "2026-09-27T19:49:38.923337+00:00",
+"home_probability": 0.4981,
+"away_probability": 0.5019,
+"game_state": {
+"clock": "12:37",
+"period": "12:37 - 4th Quarter",
+"away_score": 17,
+"home_score": 24
+}
+},
+{
+"timestamp": "2026-09-27T19:50:39.165651+00:00",
+"home_probability": 0.3996,
+"away_probability": 0.6004,
+"game_state": {
+"clock": "11:53",
+"period": "11:53 - 4th Quarter",
+"away_score": 23,
+"home_score": 24
+}
+},
+{
+"timestamp": "2026-09-27T19:52:40.677875+00:00",
+"home_probability": 0.3944,
+"away_probability": 0.6056,
+"game_state": {
+"clock": "11:53",
+"period": "11:53 - 4th Quarter",
+"away_score": 24,
+"home_score": 24
+}
+},
+{
+"timestamp": "2026-09-27T19:54:42.403281+00:00",
+"home_probability": 0.4244,
+"away_probability": 0.5756,
+"game_state": {
+"clock": "11:53",
+"period": "11:53 - 4th Quarter",
+"away_score": 24,
+"home_score": 24
+}
+},
+{
+"timestamp": "2026-09-27T19:55:41.840305+00:00",
+"home_probability": 0.3767,
+"away_probability": 0.6233,
+"game_state": {
+"clock": "11:17",
+"period": "11:17 - 4th Quarter",
+"away_score": 24,
+"home_score": 24
+}
+},
+{
+"timestamp": "2026-09-27T19:56:40.984727+00:00",
+"home_probability": 0.4785,
+"away_probability": 0.5215,
+"game_state": {
+"clock": "10:35",
+"period": "10:35 - 4th Quarter",
+"away_score": 24,
+"home_score": 24
+}
+},
+{
+"timestamp": "2026-09-27T19:57:42.039991+00:00",
+"home_probability": 0.4424,
+"away_probability": 0.5576,
+"game_state": {
+"clock": "9:53",
+"period": "9:53 - 4th Quarter",
+"away_score": 24,
+"home_score": 24
+}
+},
+{
+"timestamp": "2026-09-27T19:58:41.258716+00:00",
+"home_probability": 0.3987,
+"away_probability": 0.6013,
+"game_state": {
+"clock": "9:18",
+"period": "9:18 - 4th Quarter",
+"away_score": 24,
+"home_score": 24
+}
+},
+{
+"timestamp": "2026-09-27T19:59:42.274058+00:00",
+"home_probability": 0.524,
+"away_probability": 0.476,
+"game_state": {
+"clock": "7:59",
+"period": "7:59 - 4th Quarter",
+"away_score": 24,
+"home_score": 24
+}
+},
+{
+"timestamp": "2026-09-27T20:00:41.095448+00:00",
+"home_probability": 0.6076,
+"away_probability": 0.3924,
+"game_state": {
+"clock": "7:19",
+"period": "7:19 - 4th Quarter",
+"away_score": 24,
+"home_score": 24
+}
+},
+{
+"timestamp": "2026-09-27T20:01:41.468839+00:00",
+"home_probability": 0.5893,
+"away_probability": 0.4107,
+"game_state": {
+"clock": "6:01",
+"period": "6:01 - 4th Quarter",
+"away_score": 24,
+"home_score": 24
+}
+},
+{
+"timestamp": "2026-09-27T20:02:41.150314+00:00",
+"home_probability": 0.5683,
+"away_probability": 0.4317,
+"game_state": {
+"clock": "5:21",
+"period": "5:21 - 4th Quarter",
+"away_score": 24,
+"home_score": 24
+}
+},
+{
+"timestamp": "2026-09-27T20:03:41.641643+00:00",
+"home_probability": 0.6331,
+"away_probability": 0.3669,
+"game_state": {
+"clock": "4:34",
+"period": "4:34 - 4th Quarter",
+"away_score": 24,
+"home_score": 27
+}
+},
+{
+"timestamp": "2026-09-27T20:06:41.441196+00:00",
+"home_probability": 0.6063,
+"away_probability": 0.3937,
+"game_state": {
+"clock": "4:34",
+"period": "4:34 - 4th Quarter",
+"away_score": 24,
+"home_score": 27
+}
+},
+{
+"timestamp": "2026-09-27T20:07:41.415854+00:00",
+"home_probability": 0.5036,
+"away_probability": 0.4964,
+"game_state": {
+"clock": "4:24",
+"period": "4:24 - 4th Quarter",
+"away_score": 24,
+"home_score": 27
+}
+},
+{
+"timestamp": "2026-09-27T20:08:42.044397+00:00",
+"home_probability": 0.6028,
+"away_probability": 0.3972,
+"game_state": {
+"clock": "4:24",
+"period": "4:24 - 4th Quarter",
+"away_score": 24,
+"home_score": 27
+}
+},
+{
+"timestamp": "2026-09-27T20:09:45.962202+00:00",
+"home_probability": 0.6309,
+"away_probability": 0.3691,
+"game_state": {
+"clock": "4:17",
+"period": "4:17 - 4th Quarter",
+"away_score": 24,
+"home_score": 27
+}
+},
+{
+"timestamp": "2026-09-27T20:10:45.408556+00:00",
+"home_probability": 0.9719,
+"away_probability": 0.0281,
+"game_state": {
+"clock": "3:57",
+"period": "3:57 - 4th Quarter",
+"away_score": 24,
+"home_score": 33
+}
+},
+{
+"timestamp": "2026-09-27T20:12:41.331426+00:00",
+"home_probability": 0.9413,
+"away_probability": 0.0587,
+"game_state": {
+"clock": "3:57",
+"period": "3:57 - 4th Quarter",
+"away_score": 24,
+"home_score": 33
+}
+},
+{
+"timestamp": "2026-09-27T20:13:41.237054+00:00",
+"home_probability": 0.8863,
+"away_probability": 0.1137,
+"game_state": {
+"clock": "3:52",
+"period": "3:52 - 4th Quarter",
+"away_score": 24,
+"home_score": 33
+}
+},
+{
+"timestamp": "2026-09-27T20:14:41.528289+00:00",
+"home_probability": 0.7626,
+"away_probability": 0.2374,
+"game_state": {
+"clock": "2:58",
+"period": "2:58 - 4th Quarter",
+"away_score": 24,
+"home_score": 33
+}
+},
+{
+"timestamp": "2026-09-27T20:15:42.532504+00:00",
+"home_probability": 0.6732,
+"away_probability": 0.3268,
+"game_state": {
+"clock": "2:51",
+"period": "2:51 - 4th Quarter",
+"away_score": 30,
+"home_score": 33
+}
+},
+{
+"timestamp": "2026-09-27T20:17:41.129062+00:00",
+"home_probability": 0.7049,
+"away_probability": 0.2951,
+"game_state": {
+"clock": "2:51",
+"period": "2:51 - 4th Quarter",
+"away_score": 31,
+"home_score": 33
+}
+},
+{
+"timestamp": "2026-09-27T20:18:41.678490+00:00",
+"home_probability": 0.6334,
+"away_probability": 0.3666,
+"game_state": {
+"clock": "2:46",
+"period": "2:46 - 4th Quarter",
+"away_score": 31,
+"home_score": 33
+}
+},
+{
+"timestamp": "2026-09-27T20:19:42.236725+00:00",
+"home_probability": 0.6726,
+"away_probability": 0.3274,
+"game_state": {
+"clock": "2:00",
+"period": "2:00 - 4th Quarter",
+"away_score": 31,
+"home_score": 33
+}
+},
+{
+"timestamp": "2026-09-27T20:22:41.878528+00:00",
+"home_probability": 0.911,
+"away_probability": 0.089,
+"game_state": {
+"clock": "1:47",
+"period": "1:47 - 4th Quarter",
+"away_score": 31,
+"home_score": 33
+}
+},
+{
+"timestamp": "2026-09-27T20:23:41.285911+00:00",
+"home_probability": 0.8734,
+"away_probability": 0.1266,
+"game_state": {
+"clock": "1:42",
+"period": "1:42 - 4th Quarter",
+"away_score": 31,
+"home_score": 33
+}
+},
+{
+"timestamp": "2026-09-27T20:24:41.172937+00:00",
+"home_probability": 0.8734,
+"away_probability": 0.1266,
+"game_state": {
+"clock": "1:42",
+"period": "1:42 - 4th Quarter",
+"away_score": 31,
+"home_score": 33
+}
+},
+{
+"timestamp": "2026-09-27T20:25:41.471571+00:00",
+"home_probability": 0.9207,
+"away_probability": 0.0793,
+"game_state": {
+"clock": "1:36",
+"period": "1:36 - 4th Quarter",
+"away_score": 31,
+"home_score": 33
+}
+},
+{
+"timestamp": "2026-09-27T20:26:41.215516+00:00",
+"home_probability": 0.999,
+"away_probability": 0.001,
+"game_state": {
+"clock": "0:52",
+"period": "0:52 - 4th Quarter",
+"away_score": 31,
+"home_score": 33
+}
+},
+{
+"timestamp": "2026-09-27T20:27:00+00:00",
+"home_probability": 1.0,
+"away_probability": 0.0,
+"game_state": null
+}
+],
+"stat_model": [
+{
+"timestamp": "2026-09-27T19:46:40.140579+00:00",
+"home_probability": 0.7754,
+"away_probability": 0.2246,
+"game_state": {
+"clock": "14:19",
+"period": "14:19 - 4th Quarter",
+"away_score": 17,
+"home_score": 24,
+"time_source": "espn"
+}
+},
+{
+"timestamp": "2026-09-27T19:48:41.144271+00:00",
+"home_probability": 0.778,
+"away_probability": 0.222,
+"game_state": {
+"clock": "14:08",
+"period": "14:08 - 4th Quarter",
+"away_score": 17,
+"home_score": 24,
+"time_source": "espn"
+}
+},
+{
+"timestamp": "2026-09-27T19:49:38.923337+00:00",
+"home_probability": 0.801,
+"away_probability": 0.199,
+"game_state": {
+"clock": "12:37",
+"period": "12:37 - 4th Quarter",
+"away_score": 17,
+"home_score": 24,
+"time_source": "espn"
+}
+},
+{
+"timestamp": "2026-09-27T19:50:39.165651+00:00",
+"home_probability": 0.4545,
+"away_probability": 0.5455,
+"game_state": {
+"clock": "11:53",
+"period": "11:53 - 4th Quarter",
+"away_score": 23,
+"home_score": 24,
+"time_source": "espn"
+}
+},
+{
+"timestamp": "2026-09-27T19:52:40.677875+00:00",
+"home_probability": 0.3893,
+"away_probability": 0.6107,
+"game_state": {
+"clock": "11:53",
+"period": "11:53 - 4th Quarter",
+"away_score": 24,
+"home_score": 24,
+"time_source": "espn"
+}
+},
+{
+"timestamp": "2026-09-27T19:55:41.840305+00:00",
+"home_probability": 0.392,
+"away_probability": 0.608,
+"game_state": {
+"clock": "11:17",
+"period": "11:17 - 4th Quarter",
+"away_score": 24,
+"home_score": 24,
+"time_source": "espn"
+}
+},
+{
+"timestamp": "2026-09-27T19:56:40.984727+00:00",
+"home_probability": 0.3953,
+"away_probability": 0.6047,
+"game_state": {
+"clock": "10:35",
+"period": "10:35 - 4th Quarter",
+"away_score": 24,
+"home_score": 24,
+"time_source": "espn"
+}
+},
+{
+"timestamp": "2026-09-27T19:57:42.039991+00:00",
+"home_probability": 0.3988,
+"away_probability": 0.6012,
+"game_state": {
+"clock": "9:53",
+"period": "9:53 - 4th Quarter",
+"away_score": 24,
+"home_score": 24,
+"time_source": "espn"
+}
+},
+{
+"timestamp": "2026-09-27T19:58:41.258716+00:00",
+"home_probability": 0.4018,
+"away_probability": 0.5982,
+"game_state": {
+"clock": "9:18",
+"period": "9:18 - 4th Quarter",
+"away_score": 24,
+"home_score": 24,
+"time_source": "espn"
+}
+},
+{
+"timestamp": "2026-09-27T19:59:42.274058+00:00",
+"home_probability": 0.4088,
+"away_probability": 0.5912,
+"game_state": {
+"clock": "7:59",
+"period": "7:59 - 4th Quarter",
+"away_score": 24,
+"home_score": 24,
+"time_source": "espn"
+}
+},
+{
+"timestamp": "2026-09-27T20:00:41.095448+00:00",
+"home_probability": 0.4127,
+"away_probability": 0.5873,
+"game_state": {
+"clock": "7:19",
+"period": "7:19 - 4th Quarter",
+"away_score": 24,
+"home_score": 24,
+"time_source": "espn"
+}
+},
+{
+"timestamp": "2026-09-27T20:01:41.468839+00:00",
+"home_probability": 0.4207,
+"away_probability": 0.5793,
+"game_state": {
+"clock": "6:01",
+"period": "6:01 - 4th Quarter",
+"away_score": 24,
+"home_score": 24,
+"time_source": "espn"
+}
+},
+{
+"timestamp": "2026-09-27T20:02:41.150314+00:00",
+"home_probability": 0.4252,
+"away_probability": 0.5748,
+"game_state": {
+"clock": "5:21",
+"period": "5:21 - 4th Quarter",
+"away_score": 24,
+"home_score": 24,
+"time_source": "espn"
+}
+},
+{
+"timestamp": "2026-09-27T20:03:41.641643+00:00",
+"home_probability": 0.737,
+"away_probability": 0.263,
+"game_state": {
+"clock": "4:34",
+"period": "4:34 - 4th Quarter",
+"away_score": 24,
+"home_score": 27,
+"time_source": "espn"
+}
+},
+{
+"timestamp": "2026-09-27T20:07:41.415854+00:00",
+"home_probability": 0.743,
+"away_probability": 0.257,
+"game_state": {
+"clock": "4:24",
+"period": "4:24 - 4th Quarter",
+"away_score": 24,
+"home_score": 27,
+"time_source": "espn"
+}
+},
+{
+"timestamp": "2026-09-27T20:09:45.962202+00:00",
+"home_probability": 0.7473,
+"away_probability": 0.2527,
+"game_state": {
+"clock": "4:17",
+"period": "4:17 - 4th Quarter",
+"away_score": 24,
+"home_score": 27,
+"time_source": "espn"
+}
+},
+{
+"timestamp": "2026-09-27T20:10:45.408556+00:00",
+"home_probability": 0.9928,
+"away_probability": 0.0072,
+"game_state": {
+"clock": "3:57",
+"period": "3:57 - 4th Quarter",
+"away_score": 24,
+"home_score": 33,
+"time_source": "espn"
+}
+},
+{
+"timestamp": "2026-09-27T20:13:41.237054+00:00",
+"home_probability": 0.9933,
+"away_probability": 0.0067,
+"game_state": {
+"clock": "3:52",
+"period": "3:52 - 4th Quarter",
+"away_score": 24,
+"home_score": 33,
+"time_source": "espn"
+}
+},
+{
+"timestamp": "2026-09-27T20:14:41.528289+00:00",
+"home_probability": 0.9979,
+"away_probability": 0.0021,
+"game_state": {
+"clock": "2:58",
+"period": "2:58 - 4th Quarter",
+"away_score": 24,
+"home_score": 33,
+"time_source": "espn"
+}
+},
+{
+"timestamp": "2026-09-27T20:15:42.532504+00:00",
+"home_probability": 0.8121,
+"away_probability": 0.1879,
+"game_state": {
+"clock": "2:51",
+"period": "2:51 - 4th Quarter",
+"away_score": 30,
+"home_score": 33,
+"time_source": "espn"
+}
+},
+{
+"timestamp": "2026-09-27T20:16:41.252585+00:00",
+"home_probability": 0.707,
+"away_probability": 0.293,
+"game_state": {
+"clock": "2:51",
+"period": "2:51 - 4th Quarter",
+"away_score": 31,
+"home_score": 33,
+"time_source": "espn"
+}
+},
+{
+"timestamp": "2026-09-27T20:18:41.678490+00:00",
+"home_probability": 0.7112,
+"away_probability": 0.2888,
+"game_state": {
+"clock": "2:46",
+"period": "2:46 - 4th Quarter",
+"away_score": 31,
+"home_score": 33,
+"time_source": "espn"
+}
+},
+{
+"timestamp": "2026-09-27T20:19:42.236725+00:00",
+"home_probability": 0.7577,
+"away_probability": 0.2423,
+"game_state": {
+"clock": "2:00",
+"period": "2:00 - 4th Quarter",
+"away_score": 31,
+"home_score": 33,
+"time_source": "espn"
+}
+},
+{
+"timestamp": "2026-09-27T20:22:41.878528+00:00",
+"home_probability": 0.7744,
+"away_probability": 0.2256,
+"game_state": {
+"clock": "1:47",
+"period": "1:47 - 4th Quarter",
+"away_score": 31,
+"home_score": 33,
+"time_source": "espn"
+}
+},
+{
+"timestamp": "2026-09-27T20:23:41.285911+00:00",
+"home_probability": 0.7814,
+"away_probability": 0.2186,
+"game_state": {
+"clock": "1:42",
+"period": "1:42 - 4th Quarter",
+"away_score": 31,
+"home_score": 33,
+"time_source": "espn"
+}
+},
+{
+"timestamp": "2026-09-27T20:25:41.471571+00:00",
+"home_probability": 0.7903,
+"away_probability": 0.2097,
+"game_state": {
+"clock": "1:36",
+"period": "1:36 - 4th Quarter",
+"away_score": 31,
+"home_score": 33,
+"time_source": "espn"
+}
+},
+{
+"timestamp": "2026-09-27T20:26:41.215516+00:00",
+"home_probability": 0.8772,
+"away_probability": 0.1228,
+"game_state": {
+"clock": "0:52",
+"period": "0:52 - 4th Quarter",
+"away_score": 31,
+"home_score": 33,
+"time_source": "espn"
+}
+},
+{
+"timestamp": "2026-09-27T20:27:00+00:00",
+"home_probability": 1.0,
+"away_probability": 0.0,
+"game_state": null
+}
+]
+},
+"bookmaker_history": {
+"draftkings": [
+{
+"timestamp": "2026-09-27T19:45:00+00:00",
+"home_probability": 0.5232,
+"away_probability": 0.4768,
+"valid_until": "2026-09-27T19:46:00+00:00",
+"projected_home_score": 27.5,
+"projected_away_score": 26.0
+},
+{
+"timestamp": "2026-09-27T19:46:00+00:00",
+"home_probability": 0.4494,
+"away_probability": 0.5506,
+"valid_until": "2026-09-27T19:47:00+00:00",
+"projected_home_score": 26.5,
+"projected_away_score": 28.0
+},
+{
+"timestamp": "2026-09-27T19:47:00+00:00",
+"home_probability": 0.482,
+"away_probability": 0.518,
+"valid_until": "2026-09-27T19:48:00+00:00",
+"projected_home_score": 26.5,
+"projected_away_score": 28.0
+},
+{
+"timestamp": "2026-09-27T19:48:00+00:00",
+"home_probability": 0.4539,
+"away_probability": 0.5461,
+"valid_until": "2026-09-27T19:48:00+00:00",
+"projected_home_score": 26.5,
+"projected_away_score": 28.0
+},
+{
+"timestamp": "2026-09-27T19:48:00+00:00",
+"home_probability": 0.417,
+"away_probability": 0.583,
+"valid_until": "2026-09-27T19:49:00+00:00",
+"projected_home_score": 26.0,
+"projected_away_score": 28.5
+},
+{
+"timestamp": "2026-09-27T19:49:00+00:00",
+"home_probability": 0.4096,
+"away_probability": 0.5904,
+"valid_until": "2026-09-27T19:50:00+00:00",
+"projected_home_score": 26.0,
+"projected_away_score": 28.5
+},
+{
+"timestamp": "2026-09-27T19:50:00+00:00",
+"home_probability": 0.3099,
+"away_probability": 0.6901,
+"valid_until": "2026-09-27T19:53:00+00:00",
+"projected_home_score": 26.5,
+"projected_away_score": 30.0
+},
+{
+"timestamp": "2026-09-27T19:53:00+00:00",
+"home_probability": 0.3334,
+"away_probability": 0.6666,
+"valid_until": "2026-09-27T19:55:00+00:00",
+"projected_home_score": 26.5,
+"projected_away_score": 30.0
+},
+{
+"timestamp": "2026-09-27T19:55:00+00:00",
+"home_probability": 0.2835,
+"away_probability": 0.7165,
+"valid_until": "2026-09-27T19:56:00+00:00",
+"projected_home_score": 26.0,
+"projected_away_score": 29.5
+},
+{
+"timestamp": "2026-09-27T19:56:00+00:00",
+"home_probability": 0.378,
+"away_probability": 0.622,
+"valid_until": "2026-09-27T19:57:00+00:00",
+"projected_home_score": 27.0,
+"projected_away_score": 29.5
+},
+{
+"timestamp": "2026-09-27T19:57:00+00:00",
+"home_probability": 0.3875,
+"away_probability": 0.6125,
+"valid_until": "2026-09-27T19:58:00+00:00",
+"projected_home_score": 27.5,
+"projected_away_score": 30.0
+},
+{
+"timestamp": "2026-09-27T19:58:00+00:00",
+"home_probability": 0.3763,
+"away_probability": 0.6237,
+"valid_until": "2026-09-27T20:00:00+00:00",
+"projected_home_score": 26.5,
+"projected_away_score": 29.0
+},
+{
+"timestamp": "2026-09-27T20:00:00+00:00",
+"home_probability": 0.5192,
+"away_probability": 0.4808,
+"valid_until": "2026-09-27T20:00:00+00:00",
+"projected_home_score": 29.5,
+"projected_away_score": 28.0
+},
+{
+"timestamp": "2026-09-27T20:00:00+00:00",
+"home_probability": 0.495,
+"away_probability": 0.505,
+"valid_until": "2026-09-27T20:01:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:01:00+00:00",
+"home_probability": 0.4771,
+"away_probability": 0.5229,
+"valid_until": "2026-09-27T20:03:00+00:00",
+"projected_home_score": 28.0,
+"projected_away_score": 29.5
+},
+{
+"timestamp": "2026-09-27T20:03:00+00:00",
+"home_probability": 0.4747,
+"away_probability": 0.5253,
+"valid_until": "2026-09-27T20:05:00+00:00",
+"projected_home_score": 28.0,
+"projected_away_score": 29.5
+},
+{
+"timestamp": "2026-09-27T20:05:00+00:00",
+"home_probability": 0.4747,
+"away_probability": 0.5253,
+"valid_until": "2026-09-27T20:05:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:05:00+00:00",
+"home_probability": 0.4747,
+"away_probability": 0.5253,
+"valid_until": "2026-09-27T20:06:00+00:00",
+"projected_home_score": 28.0,
+"projected_away_score": 29.5
+},
+{
+"timestamp": "2026-09-27T20:06:00+00:00",
+"home_probability": 0.4838,
+"away_probability": 0.5162,
+"valid_until": "2026-09-27T20:07:00+00:00",
+"projected_home_score": 28.0,
+"projected_away_score": 29.5
+},
+{
+"timestamp": "2026-09-27T20:07:00+00:00",
+"home_probability": 0.3973,
+"away_probability": 0.6027,
+"valid_until": "2026-09-27T20:07:00+00:00",
+"projected_home_score": 27.5,
+"projected_away_score": 30.0
+},
+{
+"timestamp": "2026-09-27T20:07:00+00:00",
+"home_probability": 0.426,
+"away_probability": 0.574,
+"valid_until": "2026-09-27T20:08:00+00:00",
+"projected_home_score": 27.5,
+"projected_away_score": 30.0
+},
+{
+"timestamp": "2026-09-27T20:08:00+00:00",
+"home_probability": 0.4756,
+"away_probability": 0.5244,
+"valid_until": "2026-09-27T20:09:00+00:00",
+"projected_home_score": 28.0,
+"projected_away_score": 29.5
+},
+{
+"timestamp": "2026-09-27T20:09:00+00:00",
+"home_probability": 0.9289,
+"away_probability": 0.0711,
+"valid_until": "2026-09-27T20:11:00+00:00",
+"projected_home_score": 35.5,
+"projected_away_score": 28.0
+},
+{
+"timestamp": "2026-09-27T20:11:00+00:00",
+"home_probability": 0.9107,
+"away_probability": 0.0893,
+"valid_until": "2026-09-27T20:13:00+00:00",
+"projected_home_score": 34.5,
+"projected_away_score": 29.0
+},
+{
+"timestamp": "2026-09-27T20:13:00+00:00",
+"home_probability": 0.8832,
+"away_probability": 0.1168,
+"valid_until": "2026-09-27T20:14:00+00:00",
+"projected_home_score": 34.0,
+"projected_away_score": 29.5
+},
+{
+"timestamp": "2026-09-27T20:14:00+00:00",
+"home_probability": 0.7746,
+"away_probability": 0.2254,
+"valid_until": "2026-09-27T20:15:00+00:00",
+"projected_home_score": 33.5,
+"projected_away_score": 31.0
+},
+{
+"timestamp": "2026-09-27T20:15:00+00:00",
+"home_probability": 0.6619,
+"away_probability": 0.3381,
+"valid_until": "2026-09-27T20:16:00+00:00",
+"projected_home_score": 34.0,
+"projected_away_score": 32.5
+},
+{
+"timestamp": "2026-09-27T20:16:00+00:00",
+"home_probability": 0.6974,
+"away_probability": 0.3026,
+"valid_until": "2026-09-27T20:16:00+00:00",
+"projected_home_score": 33.0,
+"projected_away_score": 31.5
+},
+{
+"timestamp": "2026-09-27T20:16:00+00:00",
+"home_probability": 0.7219,
+"away_probability": 0.2781,
+"valid_until": "2026-09-27T20:17:00+00:00",
+"projected_home_score": 33.0,
+"projected_away_score": 31.5
+},
+{
+"timestamp": "2026-09-27T20:17:00+00:00",
+"home_probability": 0.7101,
+"away_probability": 0.2899,
+"valid_until": "2026-09-27T20:18:00+00:00",
+"projected_home_score": 33.0,
+"projected_away_score": 31.5
+},
+{
+"timestamp": "2026-09-27T20:18:00+00:00",
+"home_probability": 0.703,
+"away_probability": 0.297,
+"valid_until": "2026-09-27T20:19:00+00:00",
+"projected_home_score": 33.0,
+"projected_away_score": 31.5
+},
+{
+"timestamp": "2026-09-27T20:19:00+00:00",
+"home_probability": 0.6956,
+"away_probability": 0.3044,
+"valid_until": "2026-09-27T20:20:00+00:00",
+"projected_home_score": 33.0,
+"projected_away_score": 31.5
+},
+{
+"timestamp": "2026-09-27T20:20:00+00:00",
+"home_probability": 0.6853,
+"away_probability": 0.3147,
+"valid_until": "2026-09-27T20:20:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:20:00+00:00",
+"home_probability": 0.6747,
+"away_probability": 0.3253,
+"valid_until": "2026-09-27T20:21:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:21:00+00:00",
+"home_probability": 0.5706,
+"away_probability": 0.4294,
+"valid_until": "2026-09-27T20:22:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:22:00+00:00",
+"home_probability": 0.8729,
+"away_probability": 0.1271,
+"valid_until": "2026-09-27T20:23:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:23:00+00:00",
+"home_probability": 0.866,
+"away_probability": 0.134,
+"valid_until": "2026-09-27T20:24:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:24:00+00:00",
+"home_probability": 0.7306,
+"away_probability": 0.2694,
+"valid_until": "2026-09-27T20:25:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:25:00+00:00",
+"home_probability": 0.7487,
+"away_probability": 0.2513,
+"valid_until": "2026-09-27T20:35:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:35:00+00:00",
+"home_probability": 0.7487,
+"away_probability": 0.2513,
+"valid_until": "2026-09-27T20:35:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:35:00+00:00",
+"home_probability": 0.7487,
+"away_probability": 0.2513,
+"valid_until": "2026-09-27T20:39:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+}
+],
+"williamhill_us": [
+{
+"timestamp": "2026-09-27T19:46:00+00:00",
+"home_probability": 0.4487,
+"away_probability": 0.5513,
+"valid_until": "2026-09-27T19:48:00+00:00",
+"projected_home_score": 26.5,
+"projected_away_score": 28.0
+},
+{
+"timestamp": "2026-09-27T19:48:00+00:00",
+"home_probability": 0.4296,
+"away_probability": 0.5704,
+"valid_until": "2026-09-27T19:50:00+00:00",
+"projected_home_score": 26.0,
+"projected_away_score": 28.5
+},
+{
+"timestamp": "2026-09-27T19:50:00+00:00",
+"home_probability": 0.3115,
+"away_probability": 0.6885,
+"valid_until": "2026-09-27T19:52:00+00:00",
+"projected_home_score": 26.0,
+"projected_away_score": 29.5
+},
+{
+"timestamp": "2026-09-27T19:52:00+00:00",
+"home_probability": 0.3079,
+"away_probability": 0.6921,
+"valid_until": "2026-09-27T19:54:00+00:00",
+"projected_home_score": 26.5,
+"projected_away_score": 30.0
+},
+{
+"timestamp": "2026-09-27T19:54:00+00:00",
+"home_probability": 0.3279,
+"away_probability": 0.6721,
+"valid_until": "2026-09-27T19:56:00+00:00",
+"projected_home_score": 26.5,
+"projected_away_score": 30.0
+},
+{
+"timestamp": "2026-09-27T19:56:00+00:00",
+"home_probability": 0.3722,
+"away_probability": 0.6278,
+"valid_until": "2026-09-27T19:58:00+00:00",
+"projected_home_score": 27.0,
+"projected_away_score": 28.5
+},
+{
+"timestamp": "2026-09-27T19:58:00+00:00",
+"home_probability": 0.3858,
+"away_probability": 0.6142,
+"valid_until": "2026-09-27T20:00:00+00:00",
+"projected_home_score": 27.0,
+"projected_away_score": 29.5
+},
+{
+"timestamp": "2026-09-27T20:00:00+00:00",
+"home_probability": 0.4525,
+"away_probability": 0.5475,
+"valid_until": "2026-09-27T20:03:00+00:00",
+"projected_home_score": 27.5,
+"projected_away_score": 30.0
+},
+{
+"timestamp": "2026-09-27T20:03:00+00:00",
+"home_probability": 0.4785,
+"away_probability": 0.5215,
+"valid_until": "2026-09-27T20:05:00+00:00",
+"projected_home_score": 27.5,
+"projected_away_score": 30.0
+},
+{
+"timestamp": "2026-09-27T20:05:00+00:00",
+"home_probability": 0.4785,
+"away_probability": 0.5215,
+"valid_until": "2026-09-27T20:05:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:05:00+00:00",
+"home_probability": 0.4785,
+"away_probability": 0.5215,
+"valid_until": "2026-09-27T20:07:00+00:00",
+"projected_home_score": 27.5,
+"projected_away_score": 30.0
+},
+{
+"timestamp": "2026-09-27T20:07:00+00:00",
+"home_probability": 0.4085,
+"away_probability": 0.5915,
+"valid_until": "2026-09-27T20:09:00+00:00",
+"projected_home_score": 27.5,
+"projected_away_score": 30.0
+},
+{
+"timestamp": "2026-09-27T20:09:00+00:00",
+"home_probability": 0.4797,
+"away_probability": 0.5203,
+"valid_until": "2026-09-27T20:10:00+00:00",
+"projected_home_score": 28.0,
+"projected_away_score": 29.5
+},
+{
+"timestamp": "2026-09-27T20:10:00+00:00",
+"home_probability": 0.9099,
+"away_probability": 0.0901,
+"valid_until": "2026-09-27T20:12:00+00:00",
+"projected_home_score": 35.5,
+"projected_away_score": 28.0
+},
+{
+"timestamp": "2026-09-27T20:12:00+00:00",
+"home_probability": 0.8947,
+"away_probability": 0.1053,
+"valid_until": "2026-09-27T20:16:00+00:00",
+"projected_home_score": 35.0,
+"projected_away_score": 28.5
+},
+{
+"timestamp": "2026-09-27T20:16:00+00:00",
+"home_probability": 0.7017,
+"away_probability": 0.2983,
+"valid_until": "2026-09-27T20:18:00+00:00",
+"projected_home_score": 33.0,
+"projected_away_score": 31.5
+},
+{
+"timestamp": "2026-09-27T20:18:00+00:00",
+"home_probability": 0.7108,
+"away_probability": 0.2892,
+"valid_until": "2026-09-27T20:20:00+00:00",
+"projected_home_score": 33.0,
+"projected_away_score": 31.5
+},
+{
+"timestamp": "2026-09-27T20:20:00+00:00",
+"home_probability": 0.6806,
+"away_probability": 0.3194,
+"valid_until": "2026-09-27T20:21:00+00:00",
+"projected_home_score": 33.0,
+"projected_away_score": 31.5
+},
+{
+"timestamp": "2026-09-27T20:21:00+00:00",
+"home_probability": 0.5656,
+"away_probability": 0.4344,
+"valid_until": "2026-09-27T20:23:00+00:00",
+"projected_home_score": 33.0,
+"projected_away_score": 31.5
+},
+{
+"timestamp": "2026-09-27T20:23:00+00:00",
+"home_probability": 0.8092,
+"away_probability": 0.1908,
+"valid_until": "2026-09-27T20:35:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:35:00+00:00",
+"home_probability": 0.8092,
+"away_probability": 0.1908,
+"valid_until": "2026-09-27T20:35:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:35:00+00:00",
+"home_probability": 0.8092,
+"away_probability": 0.1908,
+"valid_until": "2026-09-27T20:38:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+}
+],
+"betrivers": [
+{
+"timestamp": "2026-09-27T19:45:00+00:00",
+"home_probability": 0.5167,
+"away_probability": 0.4833,
+"valid_until": "2026-09-27T19:46:00+00:00",
+"projected_home_score": 27.0,
+"projected_away_score": 26.0
+},
+{
+"timestamp": "2026-09-27T19:46:00+00:00",
+"home_probability": 0.4833,
+"away_probability": 0.5167,
+"valid_until": "2026-09-27T19:46:00+00:00",
+"projected_home_score": 26.2,
+"projected_away_score": 27.2
+},
+{
+"timestamp": "2026-09-27T19:46:00+00:00",
+"home_probability": 0.4737,
+"away_probability": 0.5263,
+"valid_until": "2026-09-27T19:48:00+00:00",
+"projected_home_score": 26.5,
+"projected_away_score": 27.5
+},
+{
+"timestamp": "2026-09-27T19:48:00+00:00",
+"home_probability": 0.4355,
+"away_probability": 0.5645,
+"valid_until": "2026-09-27T19:48:00+00:00",
+"projected_home_score": 26.0,
+"projected_away_score": 28.5
+},
+{
+"timestamp": "2026-09-27T19:48:00+00:00",
+"home_probability": 0.4028,
+"away_probability": 0.5972,
+"valid_until": "2026-09-27T19:49:00+00:00",
+"projected_home_score": 26.2,
+"projected_away_score": 28.8
+},
+{
+"timestamp": "2026-09-27T19:49:00+00:00",
+"home_probability": 0.4101,
+"away_probability": 0.5899,
+"valid_until": "2026-09-27T19:50:00+00:00",
+"projected_home_score": 26.0,
+"projected_away_score": 28.5
+},
+{
+"timestamp": "2026-09-27T19:50:00+00:00",
+"home_probability": 0.295,
+"away_probability": 0.705,
+"valid_until": "2026-09-27T19:50:00+00:00",
+"projected_home_score": 26.2,
+"projected_away_score": 29.2
+},
+{
+"timestamp": "2026-09-27T19:50:00+00:00",
+"home_probability": 0.2901,
+"away_probability": 0.7099,
+"valid_until": "2026-09-27T19:53:00+00:00",
+"projected_home_score": 26.2,
+"projected_away_score": 29.2
+},
+{
+"timestamp": "2026-09-27T19:53:00+00:00",
+"home_probability": 0.2823,
+"away_probability": 0.7177,
+"valid_until": "2026-09-27T19:53:00+00:00",
+"projected_home_score": 26.8,
+"projected_away_score": 30.2
+},
+{
+"timestamp": "2026-09-27T19:53:00+00:00",
+"home_probability": 0.309,
+"away_probability": 0.691,
+"valid_until": "2026-09-27T19:54:00+00:00",
+"projected_home_score": 26.2,
+"projected_away_score": 29.2
+},
+{
+"timestamp": "2026-09-27T19:54:00+00:00",
+"home_probability": 0.332,
+"away_probability": 0.668,
+"valid_until": "2026-09-27T19:55:00+00:00",
+"projected_home_score": 27.0,
+"projected_away_score": 30.0
+},
+{
+"timestamp": "2026-09-27T19:55:00+00:00",
+"home_probability": 0.2665,
+"away_probability": 0.7335,
+"valid_until": "2026-09-27T19:56:00+00:00",
+"projected_home_score": 26.0,
+"projected_away_score": 29.5
+},
+{
+"timestamp": "2026-09-27T19:56:00+00:00",
+"home_probability": 0.377,
+"away_probability": 0.623,
+"valid_until": "2026-09-27T19:57:00+00:00",
+"projected_home_score": 27.0,
+"projected_away_score": 30.0
+},
+{
+"timestamp": "2026-09-27T19:57:00+00:00",
+"home_probability": 0.3856,
+"away_probability": 0.6144,
+"valid_until": "2026-09-27T19:58:00+00:00",
+"projected_home_score": 27.0,
+"projected_away_score": 30.0
+},
+{
+"timestamp": "2026-09-27T19:58:00+00:00",
+"home_probability": 0.3789,
+"away_probability": 0.6211,
+"valid_until": "2026-09-27T19:59:00+00:00",
+"projected_home_score": 27.0,
+"projected_away_score": 30.0
+},
+{
+"timestamp": "2026-09-27T19:59:00+00:00",
+"home_probability": 0.4866,
+"away_probability": 0.5134,
+"valid_until": "2026-09-27T20:00:00+00:00",
+"projected_home_score": 28.2,
+"projected_away_score": 29.2
+},
+{
+"timestamp": "2026-09-27T20:00:00+00:00",
+"home_probability": 0.4702,
+"away_probability": 0.5298,
+"valid_until": "2026-09-27T20:00:00+00:00",
+"projected_home_score": 28.0,
+"projected_away_score": 29.5
+},
+{
+"timestamp": "2026-09-27T20:00:00+00:00",
+"home_probability": 0.5498,
+"away_probability": 0.4502,
+"valid_until": "2026-09-27T20:01:00+00:00",
+"projected_home_score": 30.0,
+"projected_away_score": 27.5
+},
+{
+"timestamp": "2026-09-27T20:01:00+00:00",
+"home_probability": 0.5052,
+"away_probability": 0.4948,
+"valid_until": "2026-09-27T20:03:00+00:00",
+"projected_home_score": 29.2,
+"projected_away_score": 28.2
+},
+{
+"timestamp": "2026-09-27T20:03:00+00:00",
+"home_probability": 0.5167,
+"away_probability": 0.4833,
+"valid_until": "2026-09-27T20:04:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:04:00+00:00",
+"home_probability": 0.4833,
+"away_probability": 0.5167,
+"valid_until": "2026-09-27T20:05:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:05:00+00:00",
+"home_probability": 0.4833,
+"away_probability": 0.5167,
+"valid_until": "2026-09-27T20:05:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:05:00+00:00",
+"home_probability": 0.4833,
+"away_probability": 0.5167,
+"valid_until": "2026-09-27T20:06:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:06:00+00:00",
+"home_probability": 0.4885,
+"away_probability": 0.5115,
+"valid_until": "2026-09-27T20:07:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:07:00+00:00",
+"home_probability": 0.3685,
+"away_probability": 0.6315,
+"valid_until": "2026-09-27T20:07:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:07:00+00:00",
+"home_probability": 0.4112,
+"away_probability": 0.5888,
+"valid_until": "2026-09-27T20:08:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:08:00+00:00",
+"home_probability": 0.4677,
+"away_probability": 0.5323,
+"valid_until": "2026-09-27T20:09:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:09:00+00:00",
+"home_probability": 0.3685,
+"away_probability": 0.6315,
+"valid_until": "2026-09-27T20:10:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:10:00+00:00",
+"home_probability": 0.9136,
+"away_probability": 0.0864,
+"valid_until": "2026-09-27T20:11:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:11:00+00:00",
+"home_probability": 0.9005,
+"away_probability": 0.0995,
+"valid_until": "2026-09-27T20:13:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:13:00+00:00",
+"home_probability": 0.8599,
+"away_probability": 0.1401,
+"valid_until": "2026-09-27T20:14:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:14:00+00:00",
+"home_probability": 0.8309,
+"away_probability": 0.1691,
+"valid_until": "2026-09-27T20:15:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:15:00+00:00",
+"home_probability": 0.7131,
+"away_probability": 0.2869,
+"valid_until": "2026-09-27T20:16:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:16:00+00:00",
+"home_probability": 0.7147,
+"away_probability": 0.2853,
+"valid_until": "2026-09-27T20:17:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:17:00+00:00",
+"home_probability": 0.7294,
+"away_probability": 0.2706,
+"valid_until": "2026-09-27T20:18:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:18:00+00:00",
+"home_probability": 0.7786,
+"away_probability": 0.2214,
+"valid_until": "2026-09-27T20:19:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:19:00+00:00",
+"home_probability": 0.7116,
+"away_probability": 0.2884,
+"valid_until": "2026-09-27T20:20:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:20:00+00:00",
+"home_probability": 0.6716,
+"away_probability": 0.3284,
+"valid_until": "2026-09-27T20:21:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:21:00+00:00",
+"home_probability": 0.5468,
+"away_probability": 0.4532,
+"valid_until": "2026-09-27T20:22:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:22:00+00:00",
+"home_probability": 0.8257,
+"away_probability": 0.1743,
+"valid_until": "2026-09-27T20:23:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:23:00+00:00",
+"home_probability": 0.8296,
+"away_probability": 0.1704,
+"valid_until": "2026-09-27T20:23:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:23:00+00:00",
+"home_probability": 0.8492,
+"away_probability": 0.1508,
+"valid_until": "2026-09-27T20:24:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:24:00+00:00",
+"home_probability": 0.8161,
+"away_probability": 0.1839,
+"valid_until": "2026-09-27T20:25:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:25:00+00:00",
+"home_probability": 0.8008,
+"away_probability": 0.1992,
+"valid_until": "2026-09-27T20:35:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:35:00+00:00",
+"home_probability": 0.8008,
+"away_probability": 0.1992,
+"valid_until": "2026-09-27T20:35:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:35:00+00:00",
+"home_probability": 0.8008,
+"away_probability": 0.1992,
+"valid_until": "2026-09-27T20:39:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+}
+],
+"fanduel": [
+{
+"timestamp": "2026-09-27T19:46:00+00:00",
+"home_probability": 0.5428,
+"away_probability": 0.4572,
+"valid_until": "2026-09-27T19:46:00+00:00",
+"projected_home_score": 28.0,
+"projected_away_score": 25.5
+},
+{
+"timestamp": "2026-09-27T19:46:00+00:00",
+"home_probability": 0.5289,
+"away_probability": 0.4711,
+"valid_until": "2026-09-27T19:46:00+00:00",
+"projected_home_score": 28.0,
+"projected_away_score": 25.5
+},
+{
+"timestamp": "2026-09-27T19:46:00+00:00",
+"home_probability": 0.4812,
+"away_probability": 0.5188,
+"valid_until": "2026-09-27T19:48:00+00:00",
+"projected_home_score": 26.5,
+"projected_away_score": 28.0
+},
+{
+"timestamp": "2026-09-27T19:48:00+00:00",
+"home_probability": 0.4456,
+"away_probability": 0.5544,
+"valid_until": "2026-09-27T19:48:00+00:00",
+"projected_home_score": 26.5,
+"projected_away_score": 28.0
+},
+{
+"timestamp": "2026-09-27T19:48:00+00:00",
+"home_probability": 0.4106,
+"away_probability": 0.5894,
+"valid_until": "2026-09-27T19:50:00+00:00",
+"projected_home_score": 26.5,
+"projected_away_score": 29.0
+},
+{
+"timestamp": "2026-09-27T19:50:00+00:00",
+"home_probability": 0.3147,
+"away_probability": 0.6853,
+"valid_until": "2026-09-27T19:54:00+00:00",
+"projected_home_score": 26.0,
+"projected_away_score": 29.5
+},
+{
+"timestamp": "2026-09-27T19:54:00+00:00",
+"home_probability": 0.3569,
+"away_probability": 0.6431,
+"valid_until": "2026-09-27T19:55:00+00:00",
+"projected_home_score": 27.5,
+"projected_away_score": 30.0
+},
+{
+"timestamp": "2026-09-27T19:55:00+00:00",
+"home_probability": 0.2699,
+"away_probability": 0.7301,
+"valid_until": "2026-09-27T19:56:00+00:00",
+"projected_home_score": 26.5,
+"projected_away_score": 30.0
+},
+{
+"timestamp": "2026-09-27T19:56:00+00:00",
+"home_probability": 0.3658,
+"away_probability": 0.6342,
+"valid_until": "2026-09-27T19:57:00+00:00",
+"projected_home_score": 27.0,
+"projected_away_score": 29.5
+},
+{
+"timestamp": "2026-09-27T19:57:00+00:00",
+"home_probability": 0.3866,
+"away_probability": 0.6134,
+"valid_until": "2026-09-27T19:58:00+00:00",
+"projected_home_score": 27.0,
+"projected_away_score": 29.5
+},
+{
+"timestamp": "2026-09-27T19:58:00+00:00",
+"home_probability": 0.4669,
+"away_probability": 0.5331,
+"valid_until": "2026-09-27T19:59:00+00:00",
+"projected_home_score": 27.5,
+"projected_away_score": 30.0
+},
+{
+"timestamp": "2026-09-27T19:59:00+00:00",
+"home_probability": 0.4812,
+"away_probability": 0.5188,
+"valid_until": "2026-09-27T20:00:00+00:00",
+"projected_home_score": 27.5,
+"projected_away_score": 30.0
+},
+{
+"timestamp": "2026-09-27T20:00:00+00:00",
+"home_probability": 0.5467,
+"away_probability": 0.4533,
+"valid_until": "2026-09-27T20:00:00+00:00",
+"projected_home_score": 30.0,
+"projected_away_score": 27.5
+},
+{
+"timestamp": "2026-09-27T20:00:00+00:00",
+"home_probability": 0.5428,
+"away_probability": 0.4572,
+"valid_until": "2026-09-27T20:02:00+00:00",
+"projected_home_score": 30.0,
+"projected_away_score": 27.5
+},
+{
+"timestamp": "2026-09-27T20:02:00+00:00",
+"home_probability": 0.5,
+"away_probability": 0.5,
+"valid_until": "2026-09-27T20:03:00+00:00",
+"projected_home_score": 30.0,
+"projected_away_score": 27.5
+},
+{
+"timestamp": "2026-09-27T20:03:00+00:00",
+"home_probability": 0.4854,
+"away_probability": 0.5146,
+"valid_until": "2026-09-27T20:05:00+00:00",
+"projected_home_score": 27.5,
+"projected_away_score": 30.0
+},
+{
+"timestamp": "2026-09-27T20:05:00+00:00",
+"home_probability": 0.4854,
+"away_probability": 0.5146,
+"valid_until": "2026-09-27T20:05:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:05:00+00:00",
+"home_probability": 0.4854,
+"away_probability": 0.5146,
+"valid_until": "2026-09-27T20:06:00+00:00",
+"projected_home_score": 27.5,
+"projected_away_score": 30.0
+},
+{
+"timestamp": "2026-09-27T20:06:00+00:00",
+"home_probability": 0.5104,
+"away_probability": 0.4896,
+"valid_until": "2026-09-27T20:07:00+00:00",
+"projected_home_score": 30.0,
+"projected_away_score": 27.5
+},
+{
+"timestamp": "2026-09-27T20:07:00+00:00",
+"home_probability": 0.4958,
+"away_probability": 0.5042,
+"valid_until": "2026-09-27T20:10:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:10:00+00:00",
+"home_probability": 0.8986,
+"away_probability": 0.1014,
+"valid_until": "2026-09-27T20:11:00+00:00",
+"projected_home_score": 35.5,
+"projected_away_score": 29.0
+},
+{
+"timestamp": "2026-09-27T20:11:00+00:00",
+"home_probability": 0.895,
+"away_probability": 0.105,
+"valid_until": "2026-09-27T20:13:00+00:00",
+"projected_home_score": 34.5,
+"projected_away_score": 29.0
+},
+{
+"timestamp": "2026-09-27T20:13:00+00:00",
+"home_probability": 0.8708,
+"away_probability": 0.1292,
+"valid_until": "2026-09-27T20:14:00+00:00",
+"projected_home_score": 34.5,
+"projected_away_score": 29.0
+},
+{
+"timestamp": "2026-09-27T20:14:00+00:00",
+"home_probability": 0.8792,
+"away_probability": 0.1208,
+"valid_until": "2026-09-27T20:14:00+00:00",
+"projected_home_score": 34.5,
+"projected_away_score": 29.0
+},
+{
+"timestamp": "2026-09-27T20:14:00+00:00",
+"home_probability": 0.8346,
+"away_probability": 0.1654,
+"valid_until": "2026-09-27T20:15:00+00:00",
+"projected_home_score": 33.0,
+"projected_away_score": 30.5
+},
+{
+"timestamp": "2026-09-27T20:15:00+00:00",
+"home_probability": 0.7947,
+"away_probability": 0.2053,
+"valid_until": "2026-09-27T20:15:00+00:00",
+"projected_home_score": 33.5,
+"projected_away_score": 31.0
+},
+{
+"timestamp": "2026-09-27T20:15:00+00:00",
+"home_probability": 0.7139,
+"away_probability": 0.2861,
+"valid_until": "2026-09-27T20:16:00+00:00",
+"projected_home_score": 33.0,
+"projected_away_score": 31.5
+},
+{
+"timestamp": "2026-09-27T20:16:00+00:00",
+"home_probability": 0.7008,
+"away_probability": 0.2992,
+"valid_until": "2026-09-27T20:17:00+00:00",
+"projected_home_score": 33.0,
+"projected_away_score": 31.5
+},
+{
+"timestamp": "2026-09-27T20:17:00+00:00",
+"home_probability": 0.7229,
+"away_probability": 0.2771,
+"valid_until": "2026-09-27T20:18:00+00:00",
+"projected_home_score": 33.0,
+"projected_away_score": 31.5
+},
+{
+"timestamp": "2026-09-27T20:18:00+00:00",
+"home_probability": 0.705,
+"away_probability": 0.295,
+"valid_until": "2026-09-27T20:19:00+00:00",
+"projected_home_score": 33.0,
+"projected_away_score": 31.5
+},
+{
+"timestamp": "2026-09-27T20:19:00+00:00",
+"home_probability": 0.6853,
+"away_probability": 0.3147,
+"valid_until": "2026-09-27T20:20:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:20:00+00:00",
+"home_probability": 0.6853,
+"away_probability": 0.3147,
+"valid_until": "2026-09-27T20:21:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:21:00+00:00",
+"home_probability": 0.6342,
+"away_probability": 0.3658,
+"valid_until": "2026-09-27T20:22:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:22:00+00:00",
+"home_probability": 0.5289,
+"away_probability": 0.4711,
+"valid_until": "2026-09-27T20:23:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:23:00+00:00",
+"home_probability": 0.9141,
+"away_probability": 0.0859,
+"valid_until": "2026-09-27T20:23:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:23:00+00:00",
+"home_probability": 0.7857,
+"away_probability": 0.2143,
+"valid_until": "2026-09-27T20:24:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:24:00+00:00",
+"home_probability": 0.8218,
+"away_probability": 0.1782,
+"valid_until": "2026-09-27T20:24:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:24:00+00:00",
+"home_probability": 0.8285,
+"away_probability": 0.1715,
+"valid_until": "2026-09-27T20:25:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+},
+{
+"timestamp": "2026-09-27T20:25:00+00:00",
+"home_probability": 0.8115,
+"away_probability": 0.1885,
+"valid_until": "2026-09-27T20:39:00+00:00",
+"projected_home_score": null,
+"projected_away_score": null
+}
+]
+},
+"_banked": "served /api/events/14781702/history read 2026-09-27T20:39Z (ux, #9205); win_prob_history trimmed to game-end sources, bookmaker_history to 4 books; every series trimmed to >= 19:45Z (the window END is the subject), fields trimmed to what the domain reads"
+}
