@@ -71,6 +71,11 @@ PLAIN_ROW = 568
 ACCENTED_ROW = 3706
 FRAGMENT_ROW = 12651
 TORONTO = 115
+#: Stands in for 19692, the club's `icehockey_nhl_preseason` row (no crest, no
+#: colour). A LOWER id than 568 on purpose: SQLite returns rows in id order, so
+#: this hands the preseason row the first cluster in the futures collapse — an
+#: order Postgres's heap is free to produce, and the one where it would claim.
+PRESEASON_ROW = 500
 
 PLAIN = "Montreal Canadiens"
 ACCENTED = "Montréal Canadiens"
@@ -82,6 +87,8 @@ SECOND_ROUND = 1002
 STANLEY_CUP = 1003
 #: CONTROL — another club's market in the same sport must stay off the page.
 LEAFS_ONLY = 1004
+#: An accented, UNBOUND leg: only a name match can claim it.
+PRESIDENTS = 1005
 
 
 #: Identity-mapping counts per spelling. Production is the tie (3, 3), and a
@@ -111,6 +118,8 @@ def _world(team_order=(PLAIN_ROW, ACCENTED_ROW), mappings=TIE):
         s.add(Sport(id=S_NHL_PRE, key="icehockey_nhl_preseason", name="NHL Preseason"))
         for tid in team_order:
             s.add(teams[tid])
+        s.add(Team(id=PRESEASON_ROW, sport_id=S_NHL_PRE, name=ACCENTED,
+                   slug="montral-canadiens-nhl-preseason"))
         s.add(Team(id=FRAGMENT_ROW, sport_id=S_NHL, name="Montreal",
                    slug="montreal-nhl", espn_id="10"))
         s.add(Team(id=TORONTO, sport_id=S_NHL, name="Toronto Maple Leafs",
@@ -130,6 +139,7 @@ def _world(team_order=(PLAIN_ROW, ACCENTED_ROW), mappings=TIE):
             (STANLEY_CUP, "2026-27 Stanley Cup Finals Winner", 1, ACCENTED,
              ACCENTED_ROW, 0.045),
             (LEAFS_ONLY, "NHL Norris Trophy", 4, "Toronto Maple Leafs", TORONTO, 0.2),
+            (PRESIDENTS, "NHL Presidents' Trophy Winner", 3, ACCENTED, None, 0.04),
         ):
             s.add(FuturesMarket(
                 id=mid, source="kalshi", external_id=f"K-{mid}", name=name,
@@ -175,15 +185,19 @@ def _futures(eng, team_ids):
     return {i["market_id"] for i in data["items"]}
 
 
-def _page(eng, slug):
+def _page_items(eng, slug):
     with Session(eng) as s:
         with patch.object(futures_route, "withheld_price_outcome_ids_for_markets",
                           _nothing_refused):
             page = asyncio.run(teams_route.get_team(slug, db=_AsyncSession(s)))
-    return {i["market_id"] for i in page["futures"]}
+    return page["futures"]
 
 
-CANADIENS_MARKETS = {ATLANTIC, SECOND_ROUND, STANLEY_CUP}
+def _page(eng, slug):
+    return {i["market_id"] for i in _page_items(eng, slug)}
+
+
+CANADIENS_MARKETS = {ATLANTIC, SECOND_ROUND, STANLEY_CUP, PRESIDENTS}
 
 
 @pytest.mark.parametrize("mappings", [TIE, PLAIN_WINS, ACCENTED_WINS], ids=["tie", "plain-wins", "accented-wins"])
@@ -232,11 +246,20 @@ def test_strawman_the_accented_winner_hides_the_plain_legs_from_a_canonical_only
         accented_named = {
             o.market_id for o in s.query(FuturesOutcome) if ACCENTED in o.name
         }
-    assert (bound | accented_named) == {STANLEY_CUP}
+    assert (bound | accented_named) == {STANLEY_CUP, PRESIDENTS}
 
 
 def test_strawman_the_url_row_alone_misses_the_division_markets():
     """STRAWMAN — the fixture carries the defect. Asked for the URL's row only
     (the pre-fix call), the accented page reads the accented leg and nothing
     named "Montreal Canadiens"."""
-    assert _futures(_world(), [ACCENTED_ROW]) == {STANLEY_CUP}
+    assert _futures(_world(), [ACCENTED_ROW]) == {STANLEY_CUP, PRESIDENTS}
+
+
+def test_no_leg_is_claimed_by_the_crestless_preseason_row():
+    """The games rails reach the club's preseason row (#7929, league family);
+    the futures section asks only for rows in the team's own sport, so the
+    preseason row cannot claim a leg and print it with a blank badge."""
+    items = _page_items(_world(), "montral-canadiens")
+    assert {i["market_id"] for i in items} == CANADIENS_MARKETS
+    assert PRESEASON_ROW not in {i["matched_team"]["id"] for i in items}
