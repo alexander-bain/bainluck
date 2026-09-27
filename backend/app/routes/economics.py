@@ -33,6 +33,7 @@ from app.utils.cross_source_matching import (
 )
 from app.utils.duplicate_condition_outcomes import drop_duplicate_legs
 from app.utils.inflation_release_identity import fold_same_release
+from app.utils.feed_market_quality import book_bounds_nothing, is_fabricated_midpoint
 from app.utils.economics_headline import (
     LadderCandidate,
     RecessionCandidate,
@@ -875,6 +876,54 @@ def _reads_as_cumulative(outcomes: list) -> bool:
     )
 
 
+def _rung_is_quoted(outcome) -> bool:
+    """Does this priced rung carry a number somebody could trade at? (#9214)
+
+    Two existing shared predicates, no new constant: the book must bound
+    something (:func:`book_bounds_nothing` — a 1c/99c quote locates nothing, so
+    the last trade stored beside it is not a current price either), and the
+    price must not be that book's own midpoint (:func:`is_fabricated_midpoint`
+    — #8826's one market-maker quote copied down a ladder). A rung with no book
+    at all is a model price and passes, the predicates' own fail-open.
+    """
+    probability = getattr(outcome, "current_probability", None)
+    bid = getattr(outcome, "current_yes_bid", None)
+    ask = getattr(outcome, "current_yes_ask", None)
+    return not book_bounds_nothing(bid, ask) and not is_fabricated_midpoint(
+        probability, bid, ask
+    )
+
+
+def _ladder_is_mostly_quoted(outcomes: list) -> bool:
+    """May this ladder be drawn as a distribution at all? (#9214)
+
+    ``_cumulative_to_discrete`` differences whatever is stored, so a ladder whose
+    prices come from nobody draws a confident column anyway. On production
+    2026-09-27 the rate path drew three:
+
+        column     priced rungs  quoted  drawn
+        Jun 2027   17            2       91% at 3.25%
+        Jul 2027   14            0       99% at 3.25%
+        Sep 2027   14            0       80% at 3.25%
+
+    while the five real meetings (Oct 2026 - Apr 2027) had 11-18 quoted rungs
+    and at least 74% of their priced rungs quoted. A majority is the rule: most
+    of what the column draws must come from a price somebody agreed on.
+    Otherwise the column is left out (notice 34: leave the space empty).
+
+    Why not repair the ladder rung by rung instead, measured over the 22
+    cumulative ladders the page served that morning: dropping unpriced rungs
+    moves Apr's 56% onto "5.50%" (a stale 83c trade on a dead rung that the
+    zero had been masking), and dropping only empty-book rungs turns Jun into
+    "96% at 0.00%". A ladder this empty has no honest partial reading.
+    """
+    priced = [o for o in outcomes if getattr(o, "current_probability", None) is not None]
+    if not priced:
+        return False
+    quoted = sum(1 for o in priced if _rung_is_quoted(o))
+    return quoted * 2 > len(priced)
+
+
 def _cumulative_to_discrete(outcomes: list, max_buckets: int = 8) -> list[list]:
     """Convert cumulative 'Above X' outcomes to discrete bracket probabilities.
 
@@ -1238,6 +1287,10 @@ async def get_economics(db: AsyncSession):
 
     for m in fomc_source:
         outcomes = _outcomes_sorted(m)
+        # #9214: a meeting nobody is trading gets no column, rather than a
+        # confident one differenced out of 1c/99c books and copied quotes.
+        if not _ladder_is_mostly_quoted(outcomes):
+            continue
         has_cumulative = _reads_as_cumulative(outcomes)
         if has_cumulative:
             discrete = _cumulative_to_discrete(outcomes, max_buckets=10)
