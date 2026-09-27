@@ -371,9 +371,14 @@ struct EventDetailView: View {
                     // chart, pushing the chart off the first screen. It is detail
                     // for the score the hero already states, so it follows the
                     // chart instead of standing in front of it.
-                    if let history = vm.history, (isLive || isFinished) {
+                    // #9067 — the stored line score needs no history, so a
+                    // failed history fetch no longer hides the card with it.
+                    if isLive || isFinished,
+                       vm.history != nil || event.boxScoreData != nil {
                         GameSegmentsView(
-                            history: history,
+                            history: vm.history,
+                            lineScore: event.boxScoreData,
+                            isFinished: isFinished,
                             sportKey: event.sport,
                             homeTeam: event.homeTeam,
                             awayTeam: event.awayTeam,
@@ -2330,7 +2335,9 @@ private struct ScrollViewportTopPreferenceKey: PreferenceKey {
 // MARK: - Game Segments
 
 private struct GameSegmentsView: View {
-    let history: EventHistoryResponse
+    let history: EventHistoryResponse?
+    var lineScore: EventBoxScoreData?
+    var isFinished: Bool = false
     var sportKey: String?
     let homeTeam: String
     let awayTeam: String
@@ -2376,6 +2383,8 @@ private struct GameSegmentsView: View {
     var body: some View {
         if let breakdown = SegmentBreakdown(
             history: history,
+            lineScore: lineScore,
+            isFinished: isFinished,
             sportKey: sportKey,
             finalHomeScore: finalHomeScore,
             finalAwayScore: finalAwayScore
@@ -2444,13 +2453,13 @@ private struct GameSegmentsView: View {
                         segmentRow(
                             team: awayShort,
                             color: awayTeamColor,
-                            scores: breakdown.segments.map(\.awayScore),
+                            cells: breakdown.segments.map(\.away),
                             total: breakdown.awayTotal
                         )
                         segmentRow(
                             team: homeShort,
                             color: homeTeamColor,
-                            scores: breakdown.segments.map(\.homeScore),
+                            cells: breakdown.segments.map(\.home),
                             total: breakdown.homeTotal
                         )
                     }
@@ -2463,7 +2472,7 @@ private struct GameSegmentsView: View {
         }
     }
 
-    private func segmentRow(team: String, color: Color, scores: [Int?], total: Int) -> some View {
+    private func segmentRow(team: String, color: Color, cells: [LineScoreCell], total: Int) -> some View {
         GridRow {
             // UX-P090: 54 -> 44, matching the header row above. See the geometry
             // note there — the two must move together or the columns shear.
@@ -2471,12 +2480,14 @@ private struct GameSegmentsView: View {
             // camera can measure it; the reasoning lives on `GameSegmentTeamBadge`.
             GameSegmentTeamBadge(team: team, color: color)
 
-            ForEach(Array(scores.enumerated()), id: \.offset) { _, score in
+            ForEach(Array(cells.enumerated()), id: \.offset) { _, cell in
                 // `·` for an inning we never observed. Printing `0` there would
-                // assert nobody scored, which we do not know (#1831).
-                Text(score.map(String.init) ?? "·")
+                // assert nobody scored, which we do not know (#1831). A period
+                // still to come is blank and baseball's unneeded half is `X`
+                // (#9067) — neither is a gap, so neither is dimmed as one.
+                Text(cell.text)
                     .font(.caption.monospacedDigit())
-                    .foregroundStyle(score == nil ? .tertiary : .secondary)
+                    .foregroundStyle(cell == .unknown ? .tertiary : .secondary)
                     .frame(minWidth: 22)
             }
 
@@ -2508,8 +2519,11 @@ private struct GameSegmentsView: View {
 /// 2. **The totals come from the scoreboard**, not from summing observed
 ///    segments, so this card cannot contradict the hero above it.
 ///
-/// The real fix is ingesting ESPN's linescore; until then this stays honest
-/// rather than complete.
+/// #9067 — ESPN's linescore IS ingested now (`box_score_data.home_period_scores`)
+/// and, when the payload carries it, `StoredLineScore` builds the card from it
+/// instead: the inference above broke its "never wrong" promise on every live
+/// game whose scoreboard ran ahead of the last polled row (rage #159). What
+/// follows is the fallback for a payload without the arrays.
 private struct SegmentBreakdown {
     let segments: [GameSegment]
     let homeTotal: Int
@@ -2518,12 +2532,38 @@ private struct SegmentBreakdown {
     let hasUnknownSegments: Bool
 
     init?(
-        history: EventHistoryResponse,
+        history: EventHistoryResponse?,
+        lineScore: EventBoxScoreData? = nil,
+        isFinished: Bool = false,
         sportKey: String?,
         finalHomeScore: Int? = nil,
         finalAwayScore: Int? = nil
     ) {
-        guard let espnHistory = history.espnHistory else { return nil }
+        if let columns = StoredLineScore.columns(
+            homePeriods: lineScore?.homePeriodScores,
+            awayPeriods: lineScore?.awayPeriodScores,
+            sportKey: sportKey,
+            homeTotal: finalHomeScore,
+            awayTotal: finalAwayScore,
+            isFinished: isFinished
+        ) {
+            let segments = columns.map {
+                GameSegment(label: $0.label, home: $0.home, away: $0.away)
+            }
+            let homeTotal = finalHomeScore
+                ?? columns.reduce(0) { $0 + ($1.home.points ?? 0) }
+            let awayTotal = finalAwayScore
+                ?? columns.reduce(0) { $0 + ($1.away.points ?? 0) }
+            self.segments = segments
+            self.homeTotal = homeTotal
+            self.awayTotal = awayTotal
+            self.hasUnknownSegments = segments.contains {
+                $0.home == .unknown || $0.away == .unknown
+            }
+            return
+        }
+
+        guard let espnHistory = history?.espnHistory else { return nil }
 
         let cumulativeByPeriod = espnHistory
             .compactMap { point -> CumulativeSegment? in
@@ -2619,7 +2659,7 @@ private struct SegmentBreakdown {
 
         // A ladder in which nothing is knowable is a row of dots — it tells the
         // reader nothing and occupies the space where a scoreboard should be.
-        let knownSegments = segments.filter { $0.homeScore != nil }
+        let knownSegments = segments.filter { $0.home != .unknown }
         guard !segments.isEmpty, !knownSegments.isEmpty else { return nil }
         guard resolvedHome + resolvedAway > 0 else { return nil }
 
@@ -2663,11 +2703,27 @@ private struct SegmentBreakdown {
 
 private struct GameSegment: Identifiable {
     let label: String
-    /// `nil` when this segment's split was never observed — rendered `·`, never `0`.
-    let homeScore: Int?
-    let awayScore: Int?
+    /// `.unknown` when this segment's split was never observed — rendered `·`,
+    /// never `0`.
+    let home: LineScoreCell
+    let away: LineScoreCell
 
     var id: String { label }
+
+    init(label: String, home: LineScoreCell, away: LineScoreCell) {
+        self.label = label
+        self.home = home
+        self.away = away
+    }
+
+    /// The `espn_history` inference's shape: a split is known or it is not.
+    init(label: String, homeScore: Int?, awayScore: Int?) {
+        self.init(
+            label: label,
+            home: homeScore.map(LineScoreCell.score) ?? .unknown,
+            away: awayScore.map(LineScoreCell.score) ?? .unknown
+        )
+    }
 }
 
 private struct CumulativeSegment {
