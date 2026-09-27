@@ -478,6 +478,29 @@ IN_PLAY_GRACE_HOURS = 36
 #: identity arm (taken before the budget) into an unbounded one.
 IN_PLAY_LIMIT = 200
 
+#: #9220 — the playoff SERIES markets a game page's Series card renders
+#: (``routes/events.py`` "Pass 3": tier 5, ``event_id`` NULL, found by name).
+#: They fail every value test above — measured 2026-09-27 22:30Z, all 18 open
+#: rows (12 WNBA, 6 MLB wildcard) carried volume 8-1,519, no liquidity, tier 5
+#: — so their only writer was the discovery poll. That poll cannot reach them:
+#: ``SERIES`` is a heavy token, so series discovery declines them, they are not
+#: on the rescue list, and the main scan stops at ``max_pages`` behind its
+#: deadline every beat (16,067 existing events unreached on the 20:45Z beat).
+#: Every ``KXWNBASERIES*`` row last wrote 2026-09-26 05:02Z, and the Liberty-Lynx
+#: page printed Minnesota 76% to win the series (Kalshi 45%) and 44% to sweep a
+#: series New York had already taken a game of.
+#:
+#: Selected by ticker FAMILY rather than by the page's name match, because the
+#: name match needs a game's two team names and this task has no game. The
+#: family is anchored on the league and the dash so ``KXTOPSERIESNFLX`` and
+#: ``KXNASCARCUPSERIES`` stay out; NBA and NHL are named before their playoffs
+#: start so the first round does not repeat this.
+SERIES_CARD_TICKER_RE = r"^KX(WNBA|NBA|NHL|MLB)SERIES(GAMES|SCORE)?-"
+
+#: A ceiling, not a fence, for the reason :data:`IN_PLAY_LIMIT` is one: 18 open
+#: today, and an NBA + NHL first round together is 16 series x 3 families = 48.
+SERIES_CARD_LIMIT = 150
+
 #: Markets refreshed per run, PER SOURCE, because the two sources cost 20x
 #: different amounts per market and one shared cap over two unequally-priced
 #: populations does not bound cost — it silently decides which source gets swept.
@@ -915,6 +938,33 @@ _IN_PLAY_CANDIDATE_SQL = text(
 )
 
 
+#: #9220 — the Series card's markets, stale for longer than
+#: :data:`IN_PLAY_REFRESH_MINUTES`. They share the in-play clock because they
+#: ARE in play: a series price moves with every game of the series, and the
+#: identity attempt marker is already sized off that window. The liveness
+#: bounds are the shared ones, verbatim.
+_SERIES_CARD_CANDIDATE_SQL = text(
+    f"""
+    SELECT fm.id, fm.source, fm.external_id, fm.volume,
+           {_POLY_EVENT_ID_SQL},
+           fm.market_metadata->>'{VENUE_SETTLED_KEY}' AS venue_settled_since
+      FROM futures_markets fm
+     WHERE {LIVE_MARKET_SQL}
+       AND fm.source = 'kalshi'
+       AND fm.external_id ~ :series_ticker_re
+       AND NOT EXISTS (
+             SELECT 1
+               FROM futures_outcomes fo
+               JOIN futures_odds_snapshots s ON s.outcome_id = fo.id
+              WHERE fo.market_id = fm.id
+                AND s.captured_at > NOW() - make_interval(mins => :stale_minutes)
+           )
+     ORDER BY fm.resolution_date, fm.id
+     LIMIT :series_card_limit
+    """
+)
+
+
 #: The arm a candidate came in on. ``class`` is the value sweep; the other two
 #: are identity arms. Kept as a NAME rather than as a pair of booleans because
 #: three of the run's decisions read it and each wants a different grouping:
@@ -926,6 +976,7 @@ _ARM_CLASS = "class"
 _ARM_REGISTERED = "registered"
 _ARM_SERVED = "served"
 _ARM_IN_PLAY = "in_play"
+_ARM_SERIES_CARD = "series_card"
 
 
 def _rows_to_markets(rows, *, arm: str) -> list[dict]:
@@ -1143,6 +1194,23 @@ async def _scan_in_play_candidates(
         )
     ).fetchall()
     return _rows_to_markets(rows, arm=_ARM_IN_PLAY)
+
+
+async def _scan_series_card_candidates(
+    session, *, stale_minutes: int, limit: int = SERIES_CARD_LIMIT
+) -> list[dict]:
+    """Stale playoff-series markets a game page's Series card renders (#9220)."""
+    rows = (
+        await session.execute(
+            _SERIES_CARD_CANDIDATE_SQL,
+            {
+                "stale_minutes": stale_minutes,
+                "series_ticker_re": SERIES_CARD_TICKER_RE,
+                "series_card_limit": limit,
+            },
+        )
+    ).fetchall()
+    return _rows_to_markets(rows, arm=_ARM_SERIES_CARD)
 
 
 #: How many served ids this task CAN price. The unreachable count is derived
@@ -3128,6 +3196,10 @@ async def _refresh_stale_futures_prices(
         "in_play_candidates": 0,
         "in_play_attempted": 0,
         "in_play_priced": 0,
+        # #9220: the Series card's playoff-series markets, same attribution rule.
+        "series_card_candidates": 0,
+        "series_card_attempted": 0,
+        "series_card_priced": 0,
         # Served ids this task structurally cannot refresh: an `odds_api` row
         # (LIVE_MARKET_SQL is Kalshi/Polymarket only) or a market the liveness
         # bounds retired. Counted so a page-one card that stays wrong has a
@@ -3201,6 +3273,9 @@ async def _refresh_stale_futures_prices(
         in_play_scan = await _scan_in_play_candidates(
             session, stale_minutes=in_play_refresh_minutes
         )
+        series_card_scan = await _scan_series_card_candidates(
+            session, stale_minutes=in_play_refresh_minutes
+        )
         class_scan = await _scan_candidates(
             session,
             volume_floor=volume_floor,
@@ -3230,10 +3305,16 @@ async def _refresh_stale_futures_prices(
         # for the same reason as above — the 6h attempt TTL would undo it.
         in_play_scan = [m for m in in_play_scan if m["id"] not in priority_ids]
         priority_ids |= {m["id"] for m in in_play_scan}
+        # #9220: the Series card ranks after in-play, same rule — a row already
+        # attributed keeps its arm, and a series market that is ALSO a class
+        # candidate keeps the identity classification.
+        series_card_scan = [m for m in series_card_scan if m["id"] not in priority_ids]
+        priority_ids |= {m["id"] for m in series_card_scan}
         scan = (
             served_scan
             + registered_scan
             + in_play_scan
+            + series_card_scan
             + [m for m in class_scan if m["id"] not in priority_ids]
         )
 
@@ -3241,6 +3322,7 @@ async def _refresh_stale_futures_prices(
         stats["registered_candidates"] = len(registered_scan)
         stats["served_candidates"] = len(served_scan)
         stats["in_play_candidates"] = len(in_play_scan)
+        stats["series_card_candidates"] = len(series_card_scan)
 
         skip_ids = _load_attempt_skips([m["id"] for m in scan])
         eligible = [m for m in scan if m["id"] not in skip_ids]
@@ -3274,7 +3356,7 @@ async def _refresh_stale_futures_prices(
             # opposite states, so they get different terminals.
             stats["terminal"] = "complete" if not scan else "no_work"
             stats["reason"] = (
-                "no stale valuable, registered, served or in-play markets"
+                "no stale valuable, registered, served, in-play or series-card markets"
                 if not scan
                 else "every stale market was attempted inside the current window"
             )
@@ -3303,6 +3385,8 @@ async def _refresh_stale_futures_prices(
                 stats["served_attempted"] += 1
             if market["arm"] == _ARM_IN_PLAY:
                 stats["in_play_attempted"] += 1
+            if market["arm"] == _ARM_SERIES_CARD:
+                stats["series_card_attempted"] += 1
             if market["priority"]:
                 priority_attempted_ids.append(market["id"])
             else:
@@ -3602,6 +3686,8 @@ async def _refresh_stale_futures_prices(
                         stats["served_priced"] += 1
                     if market["arm"] == _ARM_IN_PLAY:
                         stats["in_play_priced"] += 1
+                    if market["arm"] == _ARM_SERIES_CARD:
+                        stats["series_card_priced"] += 1
                     await _clear_if_stamped(session, market, stats)
                 else:
                     stats["unpriceable"] += 1
