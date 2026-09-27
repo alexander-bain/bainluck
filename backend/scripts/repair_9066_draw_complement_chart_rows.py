@@ -27,6 +27,14 @@ each group below passed ``away_leg_complement_is_not_home`` over its market's
 real outcomes and the event's own team names, and this script re-asks it at
 apply time.
 
+ROUND 2. Heavy ran v104 (no code half) until 12:56Z, and its backfill kept
+writing away-leg rows after round 1's census: 20 more on Hungary v Georgia
+(so run.8781 refused that group, 117 > 97) and 1,432 on LA Galaxy v Colorado
+(#9130's page, whose dashed Kalshi line still started Galaxy at 70.5%).
+``ROUND_2`` pins those two groups. Re-running is safe: groups run.8781 already
+cleared read "already repaired" and are skipped. Both rounds bank into the
+same table, so the one-command undo restores both.
+
 ------------------------------------------------------------------------------
 ONE TABLE, BECAUSE THE PAGE READS ONE
 ------------------------------------------------------------------------------
@@ -96,8 +104,8 @@ SHAPE_TOLERANCE = 0.0005
 
 #: ``(event_id, market_id, away_leg_name, banked_row_count)``, measured
 #: 2026-09-27 ~08:10Z over every event carrying a Kalshi ``KX*GAME-`` market
-#: with a Tie/Draw leg (4,073 events).
-EXPECTED: tuple[tuple[int, int, str, int], ...] = (
+#: with a Tie/Draw leg (4,073 events). Applied as run.8781, 13:33:52Z.
+ROUND_1: tuple[tuple[int, int, str, int], ...] = (
     (14655755, 7042354, "Western Michigan", 1),  # 2026-05-13 18:35Z closed    Penn State v Michigan
     (14657756, 2954990, "Minnesota", 3),  # 2026-05-13 18:35Z closed    Ferris State v Minnesota State
     (14657756, 3974481, "Minnesota", 1),  # 2026-05-13 18:35Z closed    Ferris State v Minnesota State
@@ -197,6 +205,21 @@ EXPECTED: tuple[tuple[int, int, str, int], ...] = (
     (15316103, 62384018, "Scotland", 1),  # 2026-10-03 18:45Z scheduled North Macedonia v Scotland
     (15317811, 62383856, "Spain", 1),  # 2026-10-06 18:45Z scheduled Croatia v Spain
     (15316568, 62455759, "Columbus", 1),  # 2026-10-10 23:30Z scheduled Orlando City SC v Columbus Crew SC
+)
+
+#: Re-census 2026-09-27 ~14:30Z of the rows the chart backfill wrote AFTER
+#: round 1's census, on heavy v104, before heavy v105 (12:56Z) carried #9066's
+#: code half (9abb549612). Same population rule, same predicate; every
+#: draw-bearing Kalshi group with an away-leg row above round 1's highest
+#: banked id (13842066) is here, and none has a row written since v105.
+#: A round-2 entry REPLACES the round-1 entry for its key.
+ROUND_2: tuple[tuple[int, int, str, int], ...] = (
+    (15314891, 62398778, "Georgia", 117),  # round 1 banked 97, so run.8781 skipped it; v104 added 20 (ids 13969614-13969633)
+    (15314006, 61485166, "Colorado", 1432),  # 2026-09-27 02:30Z completed LA Galaxy v Colorado Rapids (#9130), ids 13969977-13971408
+)
+
+EXPECTED: tuple[tuple[int, int, str, int], ...] = tuple(
+    {(e, m, leg): (e, m, leg, c) for e, m, leg, c in ROUND_1 + ROUND_2}.values()
 )
 EXPECTED_KEYS = {(e, m, leg) for e, m, leg, _ in EXPECTED}
 
