@@ -79,7 +79,13 @@ DEC_2036 = (57774192, "US headline CPI inflation in December 2036", "2037-02-01"
 DEC_2034 = (57774198, "US headline CPI inflation in December 2034", "2035-02-01")
 DEC_2030 = (57774209, "US headline CPI inflation in December 2030", "2031-02-01")
 ARGENTINA = (60760395, "Argentina Monthly Inflation - September", "2026-10-13")
-US_SEP = (60760502, "September Inflation US - Monthly", "2026-10-15")
+# #8018: the 09-17 payload's "September Inflation US - Monthly" (60760502) is
+# the SAME release as `CPI in September` below (US headline MoM, September) and
+# the card now folds it — so as a served-card fixture it would stop being one
+# of nine distinct releases and hand its slot to a market from the 2030s. The
+# same-day Annual market is a different release (headline YoY) with the same
+# month and resolution date, which is all this file needs from it.
+US_SEP = (60760504, "September Inflation US - Annual", "2026-10-15")
 SOUTH_KOREA = (128704, "South Korea Annual Inflation 2026", "2026-12-31")
 
 # The three that LOST their slots to the markets from the 2030s. `CPI in

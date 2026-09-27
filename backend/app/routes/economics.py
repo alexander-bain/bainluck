@@ -32,6 +32,7 @@ from app.utils.cross_source_matching import (
     source as _source,
 )
 from app.utils.duplicate_condition_outcomes import drop_duplicate_legs
+from app.utils.inflation_release_identity import fold_same_release
 from app.utils.economics_headline import (
     LadderCandidate,
     RecessionCandidate,
@@ -1343,6 +1344,8 @@ async def get_economics(db: AsyncSession):
                 "peakIs": modal_idx,
                 "market_id": m.id,
                 "_sort_key": _cpi_release_sort_key(m),
+                "_volume": getattr(m, "volume", None),
+                "_resolves": getattr(m, "resolution_date", None),
             })
         else:
             _row = _market_row(m)
@@ -1355,6 +1358,21 @@ async def get_economics(db: AsyncSession):
     # Market id breaks the ties, and there are many: eight Kalshi markets price
     # the same September print to the same minute. A stable sort would leave
     # those in DB order, which is the undefined order this is replacing.
+    # One block per release (#8018). Two venues — three, for the US print —
+    # price the same release as separate ladders: Argentina's September MoM
+    # opened the card twice, once from Polymarket and once from Kalshi, and the
+    # US September print had three ladders for each of its four measures. The
+    # most-traded ladder of each release stays; a title whose release cannot be
+    # read with certainty is never folded (`inflation_release_identity`).
+    # BEFORE the `[:6]` for the same reason the sort is: a twin that is not
+    # folded here takes a slot a different release should have had.
+    cpi_releases = fold_same_release(
+        cpi_releases,
+        name=lambda r: r["q"],
+        volume=lambda r: r["_volume"],
+        resolves=lambda r: r["_resolves"],
+        key=lambda r: r["market_id"],
+    )
     cpi_releases.sort(key=lambda r: (r["_sort_key"], r["market_id"]))
     for _i, _release in enumerate(cpi_releases):
         # Exactly one block may claim to be next, and it is the first one only
@@ -1362,7 +1380,7 @@ async def get_economics(db: AsyncSession):
         # rather than inferred from array position by each client: a superlative
         # read off an index is true only for as long as nobody re-orders.
         _release["is_next"] = _i == 0
-        del _release["_sort_key"]
+        del _release["_sort_key"], _release["_volume"], _release["_resolves"]
 
     # --- Jobs section ---
     jobs_side = [r for m in jobs_markets if (r := _market_row(m))]
