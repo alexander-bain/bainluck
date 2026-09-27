@@ -23,6 +23,9 @@ struct GamePlayCardView: View {
     /// scoring play's description in place of the numbers left the reader with
     /// no number anywhere on screen.
     var pinsProbabilities = false
+    /// #9015 — the game is over. A line's settled end (exactly 0 or 1) is then
+    /// the result and prints 100% / 0%, not the live `>99%` / `<1%`.
+    var gameFinished = false
 
     private var point: GamePlayPoint? {
         selectedPoint ?? lastPoint
@@ -43,6 +46,13 @@ struct GamePlayCardView: View {
     func pinningProbabilities() -> GamePlayCardView {
         var card = self
         card.pinsProbabilities = true
+        return card
+    }
+
+    /// #9015 — this card on a game that is over (see `gameFinished`).
+    func finished(_ finished: Bool) -> GamePlayCardView {
+        var card = self
+        card.gameFinished = finished
         return card
     }
 
@@ -158,7 +168,8 @@ struct GamePlayCardView: View {
     /// Both sides' chances for `point`, as one line where it fits (#925).
     @ViewBuilder
     private func probabilities(_ point: GamePlayPoint) -> some View {
-        let printed = Self.printedPercents(home: point.homeProb, away: point.awayProb)
+        let printed = Self.printedLabels(home: point.homeProb, away: point.awayProb,
+                                         gameFinished: gameFinished)
         let homeProb = printed.home
         let awayProb = printed.away
         ViewThatFits(in: .horizontal) {
@@ -276,10 +287,10 @@ struct GamePlayCardView: View {
     /// One side's name and chance as ONE run that cannot break (#925).
     /// `shrinks` is the last-resort arrangement's permission to scale the type
     /// down instead of clipping; no arrangement may wrap inside a name.
-    private func probRun(_ name: String, _ pct: Int, _ color: Color, shrinks: Bool = false) -> some View {
+    private func probRun(_ name: String, _ pct: String, _ color: Color, shrinks: Bool = false) -> some View {
         HStack(spacing: 0) {
             Text(name).foregroundStyle(.secondary)
-            Text(" \(pct)%").fontWeight(.semibold).foregroundStyle(color)
+            Text(" \(pct)").fontWeight(.semibold).foregroundStyle(color)
         }
             .font(.caption2)
             .lineLimit(1)
@@ -304,6 +315,26 @@ struct GamePlayCardView: View {
         }
         let pair = renderedDuelPercents(away: away, home: home)
         return (pair[1] ?? 0, pair[0])
+    }
+
+    /// #9015 — the two percents as the card prints them. `printedPercents`
+    /// decides the integers; `formatProbability` keeps its `<1%` / `>99%` claim
+    /// about the value, as the hero does. A bare integer printed a live 0.996
+    /// as "Jaguars 100% — Patriots 0%" under a hero reading ">99%" / "<1%"
+    /// (Patriots at Jaguars, 14782706, 4th quarter).
+    ///
+    /// A finished game's line ends on exactly 1.0 or 0.0 (14782706's last
+    /// `aggregate_line` point, at `completed_at`): that is the result, beside a
+    /// hero reading "Jaguars Win", and prints "100%" / "0%". A live 1.0 keeps
+    /// the guard, because the live hero guards it.
+    static func printedLabels(home: Double, away: Double?,
+                              gameFinished: Bool = false) -> (home: String, away: String?) {
+        let printed = printedPercents(home: home, away: away)
+        if gameFinished, home == 0 || home == 1 {
+            return ("\(printed.home)%", printed.away.map { "\($0)%" })
+        }
+        return (formatProbability(home, renderedPercent: printed.home),
+                away.map { formatProbability($0, renderedPercent: printed.away) })
     }
 
     /// #3430 — both competitors of one matchup, so the pair rule decides.

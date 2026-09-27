@@ -194,6 +194,58 @@ final class FullscreenChartAlwaysPrintsTheNumbers9185Tests: XCTestCase {
         }
     }
 
+    // MARK: - VoiceOver speaks the line the card prints
+
+    /// 15318006: the fullscreen card printed the lone Polymarket line, while
+    /// the chart's VoiceOver value looked up only the primary series and said
+    /// "No probability data".
+    func testVoiceOverSpeaksTheLoneLineTheFullscreenCardPrints() {
+        let resting = OddsChartView.accessibilityValue(
+            dataPoints: lonePolymarket, selectedDate: nil,
+            homeShort: "Spain", awayShort: "DPR Korea", pageGaveCard: false)
+        XCTAssertEqual(resting, "Spain 2%, DPR Korea 98%")
+        let scrubbed = OddsChartView.accessibilityValue(
+            dataPoints: lonePolymarket, selectedDate: "2026-09-27T16:05:00Z".asDate,
+            homeShort: "Spain", awayShort: "DPR Korea", pageGaveCard: false)
+        XCTAssertEqual(scrubbed, "Spain 30%, DPR Korea 70%")
+    }
+
+    /// The inline chart and the page's card keep the old value: no primary
+    /// line, nothing spoken — the same rule as the card (#8652).
+    func testWithThePagesCardVoiceOverStillSpeaksNoLoneLine() {
+        XCTAssertEqual(OddsChartView.accessibilityValue(
+            dataPoints: lonePolymarket, selectedDate: nil,
+            homeShort: "Spain", awayShort: "DPR Korea"), "No probability data")
+        XCTAssertEqual(OddsChartView.accessibilityValue(
+            dataPoints: lonePolymarket, selectedDate: nil,
+            homeShort: "Spain", awayShort: "DPR Korea", pageGaveCard: true), "No probability data")
+    }
+
+    /// Two unblended venues: no one number, so VoiceOver picks none either.
+    func testVoiceOverPicksNoVenueBetweenTwo() {
+        let points = [
+            pt("2026-09-27T16:00:00Z", 0.30, "polymarket"),
+            pt("2026-09-27T16:00:00Z", 0.35, "kalshi"),
+        ]
+        XCTAssertEqual(OddsChartView.accessibilityValue(
+            dataPoints: points, selectedDate: nil,
+            homeShort: "Spain", awayShort: "DPR Korea", pageGaveCard: false), "No probability data")
+    }
+
+    /// With a blend, VoiceOver speaks the blend for either card.
+    func testVoiceOverSpeaksTheBlendWhenDrawn() {
+        let points = [
+            pt("2026-09-27T16:00:00Z", 0.60, "aggregate"),
+            pt("2026-09-27T16:05:00Z", 0.90, "polymarket"),
+        ]
+        for pageGaveCard in [true, false] {
+            XCTAssertEqual(OddsChartView.accessibilityValue(
+                dataPoints: points, selectedDate: "2026-09-27T16:05:00Z".asDate,
+                homeShort: "Spain", awayShort: "DPR Korea", pageGaveCard: pageGaveCard),
+                "Spain 60%, DPR Korea 40%")
+        }
+    }
+
     // MARK: - The rig can open it
 
     func testTheFullscreenLaunchFlagIsOffUnlessAsked() {

@@ -186,7 +186,7 @@ final class AGameChartScrubHoldsThePage925Tests: XCTestCase {
     /// copy below the chart.
     func testTheReadoutIsDrawnAboveThePlotNotBelowTheChart() throws {
         let chart = try code(at: "Bain Luck/Components/OddsChartView.swift")
-        guard let readout = chart.range(of: "if let readout { OddsChartSelectionReadout(selection: selection, readout: readout, dataPoints: dataPoints, sportKey: sportKey) }"),
+        guard let readout = chart.range(of: "if let readout { OddsChartSelectionReadout(selection: selection, readout: readout.finished(EventState.isFinished(status)), dataPoints: dataPoints, sportKey: sportKey) }"),
               let plotRow = chart.range(of: "ChartGutter.run(chartHeight: chartHeight, verticalPadding: 8)") else {
             return XCTFail("the chart no longer places its readout")
         }

@@ -68,6 +68,9 @@ struct OddsChartSelectionOverlay: View {
     let homeShort: String
     let awayShort: String
     let moments: [ChartMoment]
+    /// #9185 — the readout card's `pageGaveCard`, so VoiceOver speaks the
+    /// series the card prints (`readoutSource`).
+    var pageGaveCard = true
 
     var body: some View {
         ZStack {
@@ -84,7 +87,8 @@ struct OddsChartSelectionOverlay: View {
         .accessibilityLabel("Win probability over time")
         .accessibilityValue(OddsChartView.accessibilityValue(
             dataPoints: dataPoints, selectedDate: selection.date,
-            homeShort: homeShort, awayShort: awayShort, moments: moments))
+            homeShort: homeShort, awayShort: awayShort, moments: moments,
+            pageGaveCard: pageGaveCard))
     }
 }
 
