@@ -940,10 +940,11 @@ def _variant_group_is_collapsible(members: list) -> bool:
 
 
 #: #5821 — the statuses the SEASON-VARIANT pass may see in a pair it folds under
-#: :func:`_live_variant_pair_is_licensed`. `live` joins the set there and nowhere
-#: else: the two #8100 passes still read :data:`_VARIANT_COLLAPSIBLE_STATUSES`,
-#: because their asymmetry (anchored vs id-less) says nothing about which row
-#: carries the faster score. An unknown status stays refused everywhere.
+#: :func:`_live_variant_pair_is_licensed`, and (#8100 live residual) the statuses
+#: the anchored-claim KICKOFF pass may see in a pair it folds under
+#: :func:`_live_anchored_claim_pair_is_licensed`. The anchored-claim NAME pass
+#: still reads :data:`_VARIANT_COLLAPSIBLE_STATUSES`. An unknown status stays
+#: refused everywhere.
 _VARIANT_LIVE_LICENSED_STATUSES: frozenset = _VARIANT_COLLAPSIBLE_STATUSES | {"live"}
 
 
@@ -1000,6 +1001,33 @@ def _live_variant_pair_is_licensed(
     (`icehockey_nhl_preseason`, Odds API, 59%), two live cards for one game.
     """
     return parent_espn is True and variant_espn is False
+
+
+def _live_anchored_claim_pair_is_licensed(claim_members: list) -> bool:
+    """May an anchored/id-less pair with a LIVE row in it fold? #8100 residual.
+
+    The live refusal exists because a fold elects ONE score, and electing the
+    stale copy shows a wrong score as the only score. That needs a score on the
+    side that could LOSE the election. Here that side is readable: it is the
+    id-less claim. It has no provider id, so no score feed can key to it. If it
+    holds no score, the only score on the card is the anchored row's.
+    :func:`twin_identity_rank` then elects the anchored row either way: rung 1
+    when it holds a score, rung 2 (a provider id) when neither does. Nothing is
+    lost. A claim that DOES hold a score is a copy nothing here can rank for
+    freshness, and the pair stays two cards, as before.
+
+    Production 2026-09-27 11:38Z, `/search?q=Seibu Lions`: Rakuten @ Seibu
+    `15316168` (Polymarket-born, id-less, 09:00Z, Seibu 90%) beside `15319558`
+    (Odds API, `external_id` set, 09:03Z, Seibu 87%). Two LIVE cards with two
+    answers for one game, neither row holding a score. The same pair folded
+    while it was scheduled and would fold again once completed, so the only
+    window it split in was the one a reader looks at.
+    """
+    return all(
+        getattr(member, "home_score", None) is None
+        and getattr(member, "away_score", None) is None
+        for member in claim_members
+    )
 
 
 def _group_has_season_variant(members: list) -> Optional[bool]:
@@ -1363,12 +1391,12 @@ def _anchored_claim_clusters(
     Three refusals, and each leaves both rows standing — two cards, today's
     behaviour — rather than risking one card holding two games:
 
-    * :func:`_variant_group_is_collapsible` — a LIVE row is not folded. Measured
-      inert on this pass's population today (all 15 asymmetric pairs are
-      `scheduled`, `completed` or `closed`), and kept because the reason the
-      sibling pass gives is about this pass's own hazard: while a game is live the
-      asymmetry this can read is outranked by one it cannot, which row's score is
-      current, and electing the stale copy shows a wrong score as the only score.
+    * a LIVE row folds only under :func:`_live_anchored_claim_pair_is_licensed`
+      — the id-less claim holds no score. An unknown status is refused outright
+      (:func:`_variant_group_status_is_known`). AMENDED 2026-09-27: this used to
+      refuse every live pair, which was inert on the 15 measured pairs (none was
+      live when read) and split Rakuten @ Seibu into two live cards on
+      production for as long as the game ran.
     * the asymmetry itself, which is the licence.
     * :func:`_objectively_different_games` — and this one is ARMED rather than
       decorative, which is the control #8100 said it could not find. One of the 15
@@ -1383,10 +1411,14 @@ def _anchored_claim_clusters(
     anchored = {}
     for key in bucket_keys:
         members = groups[key]
+        # A group with a live row is still a CANDIDATE; whether the pair may
+        # fold is decided in `same_fixture` by the live licence.
         collapsible[key] = _variant_group_is_collapsible(members)
         anchored[key] = _group_is_id_anchored(members)
 
-    eligible = [key for key in bucket_keys if collapsible[key]]
+    eligible = [
+        key for key in bucket_keys if _variant_group_status_is_known(groups[key])
+    ]
     if len(eligible) < 2:
         return []
 
@@ -1400,7 +1432,14 @@ def _anchored_claim_clusters(
         # already built, orientation kept. Equality, not a subset rule.
         if left[1] != right[1] or left[2] != right[2]:
             return False
-        return not _objectively_different_games(groups[left], groups[right])
+        if _objectively_different_games(groups[left], groups[right]):
+            return False
+        if collapsible[left] and collapsible[right]:
+            return True
+        # A live row is in the pair: fold only when the id-less claim holds no
+        # score, so the election cannot drop the current one.
+        claim = right if anchored[left] else left
+        return _live_anchored_claim_pair_is_licensed(groups[claim])
 
     ordered = sorted(eligible, key=lambda k: k[3])
     parent = {key: key for key in ordered}
