@@ -1969,3 +1969,66 @@ async def test_a_sweep_that_reached_the_end_is_not_flagged_as_starved():
     assert result["sweep_budget_bound"] is False
     assert "measured_nights_per_traversal" not in result
     assert result["ring_wrapped"] is True
+
+
+# ---------------------------------------------------------------------------
+# #9066 — a 3-way field never orients on its away leg's complement
+# ---------------------------------------------------------------------------
+
+
+def _three_way_group(home_prob, away_prob, tie_prob=None):
+    """The specimen's market: KXUEFANLGAME-26OCT03CROENG, market 62398724."""
+    from app.utils.live_blend import MarketOutcomes
+
+    return [
+        MarketOutcomes(
+            market=_market(
+                id=62398724,
+                external_id="KXUEFANLGAME-26OCT03CROENG",
+                name="Croatia vs England",
+            ),
+            outcomes=[
+                _outcome("England", away_prob, "KXUEFANLGAME-26OCT03CROENG-ENG", 1),
+                _outcome("Croatia", home_prob, "KXUEFANLGAME-26OCT03CROENG-CRO", 2),
+                _outcome("Tie", tie_prob, "KXUEFANLGAME-26OCT03CROENG-TIE", 3),
+            ],
+        )
+    ]
+
+
+def test_a_three_way_field_with_an_unpriced_home_leg_does_not_orient_on_away():
+    """The run that stored 180 points of 1 - P(England) as Croatia's line.
+
+    Croatia's price was absent, so the selector fell to England with
+    ``yes_is_home=False``; on a field with a Tie leg that complement is
+    P(Croatia) + P(Tie), not P(Croatia).
+    """
+    assert resolve_orientation(_three_way_group(None, 0.5), "Croatia", "England") is None
+
+
+def test_the_same_field_with_its_home_leg_priced_orients_on_home():
+    resolved = resolve_orientation(_three_way_group(0.25, 0.5), "Croatia", "England")
+
+    assert resolved is not None
+    _m, outcome, yes_is_home = resolved
+    assert outcome.external_id == "KXUEFANLGAME-26OCT03CROENG-CRO"
+    assert yes_is_home is True
+
+
+def test_a_two_way_market_still_orients_on_its_away_leg():
+    """Control: the clause is scoped to draw-bearing fields and widens nothing else."""
+    resolved = resolve_orientation(_group(None, 0.535), "Vallejo", "Monfils")
+
+    assert resolved is not None
+    _m, outcome, yes_is_home = resolved
+    assert outcome.name == "Gael Monfils"
+    assert yes_is_home is False
+
+
+def test_the_curve_and_the_live_reading_decline_the_same_three_way_field():
+    """Whatever the hero refuses, the curve refuses — one shared clause."""
+    from app.utils.live_blend import compute_source_home_probability
+
+    group = _three_way_group(None, 0.5)
+    assert compute_source_home_probability(group, "Croatia", "England") is None
+    assert resolve_orientation(group, "Croatia", "England") is None

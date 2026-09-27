@@ -309,6 +309,41 @@ def _is_named_two_way_devig(
     return len(suffixes) == 2 and sides == {"home", "away"}
 
 
+def away_leg_complement_is_not_home(
+    outcomes: Sequence[Any],
+    outcome: Any,
+    yes_is_home: bool,
+    home_team_name: str,
+    away_team_name: str,
+) -> bool:
+    """True when ``1 - P(outcome)`` would be read as home and is NOT home.
+
+    A named away win plus an explicit draw is not a binary complement.
+    Draw identity survives a temporarily absent price; lacking a priced
+    home leg means no home reading, never P(home) = 1 - P(away).
+
+    Shared by the live reading below and the chart backfill's orientation
+    (#9066): the backfill once oriented a 3-way Kalshi field on its England
+    leg while Croatia's price was absent, stored ``1 - P(England)`` =
+    P(Croatia) + P(Tie) as Croatia's line, and a later run oriented on the
+    Croatia leg — the two series interleaved into a 23%<->80% square wave.
+    One rule, one copy (#1951).
+    """
+    if yes_is_home:
+        return False
+    if not (
+        _fuzzy_team_match(outcome.name, away_team_name)
+        and not _fuzzy_team_match(outcome.name, home_team_name)
+    ):
+        return False
+    from app.utils.venue_settlement import _names_a_draw
+
+    return any(
+        _names_a_draw(candidate.name, home_team_name, away_team_name)
+        for candidate in outcomes
+    )
+
+
 def _home_probability_for_market(
     entry: MarketOutcomes, matchup: Any, home_team_name: str, away_team_name: str
 ) -> Optional[tuple[float, Any, float]]:
@@ -331,21 +366,10 @@ def _home_probability_for_market(
         return None
 
     outcome, yes_is_home = ml_result
-    if (
-        not yes_is_home
-        and _fuzzy_team_match(outcome.name, away_team_name)
-        and not _fuzzy_team_match(outcome.name, home_team_name)
+    if away_leg_complement_is_not_home(
+        ordered, outcome, yes_is_home, home_team_name, away_team_name
     ):
-        from app.utils.venue_settlement import _names_a_draw
-
-        # A named away win plus an explicit draw is not a binary complement.
-        # Draw identity survives a temporarily absent price; lacking a priced
-        # home leg means no home reading, never P(home) = 1 - P(away).
-        if any(
-            _names_a_draw(candidate.name, home_team_name, away_team_name)
-            for candidate in ordered
-        ):
-            return None
+        return None
     if outcome.current_probability is None:
         return None
     yes_prob = float(outcome.current_probability)
