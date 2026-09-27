@@ -1306,8 +1306,11 @@ function buildCandidates(input: DivergenceInput): BuiltCandidates {
   // ingest order — so every leg's verdict is collected here and reconciled by
   // `readOverSideResolution`, which maps them all onto the over axis and
   // withholds if they then disagree.
-  const seen = new Set<string>();
   const candidates: DivergenceRow[] = [];
+  /** Where each question's row sits in `candidates`, by parsed identity. */
+  const candidateAt = new Map<string, number>();
+  /** Questions whose row was built from a non-inverted (direct-price) leg. */
+  const builtFromDirectLeg = new Set<string>();
   /** Every leg of a question, in payload order, keyed by parsed identity. */
   const legs = new Map<string, PlayerPropRow[]>();
 
@@ -1379,11 +1382,44 @@ function buildCandidates(input: DivergenceInput): BuiltCandidates {
     const bucket = legs.get(key);
     if (bucket) bucket.push(row);
     else legs.set(key, [row]);
-    if (seen.has(key)) continue;
-    seen.add(key);
 
+    // #8991 — THE ROW READS THE OVER LEG'S OWN PRICE WHEN THE PAYLOAD HAS ONE.
+    //
+    // The row is labelled with the over question ("1+ home runs"), and both
+    // legs are already mapped onto that axis — but an Under leg gets there by
+    // inversion (`_inverted`, set by the route), and a thin Polymarket prop book
+    // does not sum to 100. Measured on production 15318878 (Cardinals @
+    // Brewers, live), 2026-09-27 00:28Z: "William Contreras: Home Runs O/U 0.5"
+    // served Under 0.92 (→ 0.08) FIRST and Over 0.16 second. The rail took the
+    // first leg and printed "now 8%" while THE DIVERGENCE lower on the same
+    // page, reading each leg on its own axis, printed "Over 8% → 16%". One
+    // question, two answers. Building from the Over leg makes the rail's
+    // number the question's own price — the one THE DIVERGENCE prints — and
+    // ends the payload-order coin flip. A lone Under leg keeps its inverted
+    // read: that is still the best number the page has.
+    const directLeg = !(row as PlayerPropRow & { _inverted?: boolean })._inverted;
+    const builtAt = candidateAt.get(key);
+    if (builtAt !== undefined) {
+      if (directLeg && !builtFromDirectLeg.has(key)) {
+        builtFromDirectLeg.add(key);
+        candidates[builtAt] = toCandidate(key, parsed, threshold, current, pregameMark);
+      }
+      continue;
+    }
+    candidateAt.set(key, candidates.length);
+    if (directLeg) builtFromDirectLeg.add(key);
+    candidates.push(toCandidate(key, parsed, threshold, current, pregameMark));
+  }
+
+  function toCandidate(
+    key: string,
+    parsed: NonNullable<ReturnType<typeof parsePlayerName>>,
+    threshold: number,
+    current: number,
+    pregameMark: number,
+  ): DivergenceRow {
     const travel = Math.abs(current - pregameMark);
-    candidates.push({
+    return {
       key,
       label: `${parsed.player}: ${thresholdPhrase(threshold)} ${parsed.stat.toLowerCase()}`,
       player: parsed.player,
@@ -1430,7 +1466,7 @@ function buildCandidates(input: DivergenceInput): BuiltCandidates {
       resolution: null,
       surprise: null,
       grade: null,
-    });
+    };
   }
 
   // #8313 — WITHHOLD A QUESTION WHOSE LEGS CONTRADICT EACH OTHER ON THE MARK.
