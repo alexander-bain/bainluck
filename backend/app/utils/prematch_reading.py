@@ -218,6 +218,38 @@ def _pair(
     return home_prob, round(1.0 - home_prob, 6)
 
 
+def _is_a_two_way_reading_of_a_three_way_game(
+    home: Any, away: Any, draw: Any, sport: Any
+) -> bool:
+    """May this PREDICTION-MARKET rung not answer at all? (#9130)
+
+    On a draw-priced sport a venue reading with no draw beside it, whose away is
+    ``1 − home`` (or absent), is a two-way re-normalization of a three-way game.
+    It proves nothing about either side:
+
+    * written off the HOME leg, its away is P(away) + P(draw);
+    * written off the AWAY leg, its HOME is ``1 − P(away)`` = P(home) + P(draw).
+
+    The row cannot say which, so neither number is a pre-match price. Measured
+    2026-09-27 on ``/events/15314006`` (LA Galaxy 3–2 Colorado): every Kalshi row
+    before kickoff was the chart backfill reading Colorado's leg, so the hero
+    printed "WON · 71% pregame" from 1 − 0.295 while Galaxy's own leg and the
+    books both said ~45%. ``_pair`` cannot refuse it — the pair is coherent by
+    construction — so the rung is skipped here and the ladder falls through to
+    the next venue or the books, whose draw-priced arm #7514 already handles.
+
+    A reading that carries a draw (every live Kalshi partition since #6277) never
+    reaches the second clause, and ``away_is_the_complement`` answers False for
+    every two-way sport by its own first line, so neither is touched.
+    """
+    if _as_probability(draw) is not None:
+        return False
+    home_prob = _as_probability(home)
+    if home_prob is None:
+        return False
+    return away_is_the_complement(_as_probability(away), home_prob, sport)
+
+
 def opening_consensus_has_frozen(
     commence_time: Any, status: Any, now: datetime
 ) -> bool:
@@ -352,17 +384,18 @@ def resolve_prematch_reading(
             if served is None:
                 continue
             if isinstance(served, Mapping):
-                pair = _pair(
+                home, away, draw = (
                     served.get("home"),
                     served.get("away"),
                     served.get("draw"),
-                    sport=sport,
                 )
             else:
                 # Padded to THREE so a two-element tuple — every caller before
                 # #6277, and every two-way source after it — unpacks unchanged.
                 home, away, draw = (list(served) + [None, None, None])[:3]
-                pair = _pair(home, away, draw, sport=sport)
+            if _is_a_two_way_reading_of_a_three_way_game(home, away, draw, sport):
+                continue
+            pair = _pair(home, away, draw, sport=sport)
         if pair is None:
             continue
         return {
