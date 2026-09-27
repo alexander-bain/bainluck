@@ -229,10 +229,20 @@ final class ARemovedSourceStaysOutOfTheLiveHeadline9051Tests: XCTestCase {
         struct Missing: Error {}
         var response: EventDetail
         var historyResponse: EventHistoryResponse?
+        var beforeEventResponse: (() async -> Void)?
+        var failEvent = false
         private(set) var eventFetches = 0
+        private(set) var eventResponses = 0
         private(set) var historyFetches = 0
         init(_ response: EventDetail) { self.response = response }
-        func fetchEvent(id: Int) async throws -> EventDetail { eventFetches += 1; return response }
+        func fetchEvent(id: Int) async throws -> EventDetail {
+            eventFetches += 1
+            let result = response
+            if let beforeEventResponse { await beforeEventResponse() }
+            if failEvent { throw Missing() }
+            eventResponses += 1
+            return result
+        }
         func fetchEventHistory(id: Int, hours: Int) async throws -> EventHistoryResponse {
             historyFetches += 1
             guard let historyResponse else { throw Missing() }
@@ -298,6 +308,66 @@ final class ARemovedSourceStaysOutOfTheLiveHeadline9051Tests: XCTestCase {
         XCTAssertEqual(client.eventFetches, before + 1)
         XCTAssertEqual(vm.event?.currentOdds?.homeProbability, 0.52, "the re-read's folded hero lands")
         XCTAssertEqual(vm.event?.blendFoldRevision?.revision?.rows, ["4242": 21, "999": 5])
+        XCTAssertEqual(vm.liveUpdateStatus, .live, "the accepted authoritative reread delivers the folded price")
+    }
+
+    func testUnchangedOrFailedFoldRereadsDoNotClaimLiveDelivery() async throws {
+        for fails in [false, true] {
+            let client = Client(try event(p: 0.6, revision: #"{"4242":20,"999":5}"#))
+            let handle = Handle(), vm = model(client, handle)
+            await vm.load(); handle.fire("open")
+            client.failEvent = fails
+            let before = client.eventFetches
+            handle.push(p: 0.9, at: "2026-09-25T17:10:00Z", rev: #"{"4242":21}"#)
+            await settle { client.eventFetches > before }
+            XCTAssertEqual(vm.liveUpdateStatus, .awaitingUpdate)
+            XCTAssertFalse(vm.streamHasPushedPrice)
+            vm.stopRefresh()
+        }
+    }
+
+    func testStaleFoldRereadCannotTakeCreditForAnIndependentPollAdvance() async throws {
+        let client = Client(try event(p: 0.6, revision: #"{"4242":20,"999":5}"#))
+        let handle = Handle(), vm = model(client, handle)
+        defer { vm.stopRefresh() }
+        await vm.load(); handle.fire("open")
+        var pending: CheckedContinuation<Void, Never>?
+        client.beforeEventResponse = { await withCheckedContinuation { pending = $0 } }
+        // The stream-triggered read captures old revision20, then stalls.
+        handle.push(p: 0.9, at: "2026-09-25T17:10:00Z", rev: #"{"4242":21}"#)
+        await settle { pending != nil }
+        XCTAssertNotNil(pending)
+        // An independent regular refresh adopts21 while that read is in flight.
+        client.beforeEventResponse = nil
+        client.response = try event(p: 0.52, revision: #"{"4242":21,"999":5}"#)
+        await vm.load()
+        XCTAssertEqual(vm.event?.currentOdds?.homeProbability, 0.52)
+        XCTAssertFalse(vm.streamHasPushedPrice)
+        let responses = client.eventResponses
+        pending?.resume()
+        await settle { client.eventResponses > responses }
+        XCTAssertEqual(vm.event?.currentOdds?.homeProbability, 0.52)
+        XCTAssertFalse(vm.streamHasPushedPrice, "the stale stream read delivered no new adopted price")
+        XCTAssertEqual(vm.liveUpdateStatus, .awaitingUpdate)
+    }
+
+    func testFoldRereadFinishingAfterAnOutageCannotRelightLiveStatus() async throws {
+        let client = Client(try event(p: 0.6, revision: #"{"4242":20,"999":5}"#))
+        let handle = Handle(), vm = model(client, handle)
+        defer { vm.stopRefresh() }
+        await vm.load(); handle.fire("open")
+        var pending: CheckedContinuation<Void, Never>?
+        client.beforeEventResponse = { await withCheckedContinuation { pending = $0 } }
+        client.response = try event(p: 0.52, revision: #"{"4242":21,"999":5}"#)
+        handle.push(p: 0.9, at: "2026-09-25T17:10:00Z", rev: #"{"4242":21}"#)
+        await settle { pending != nil }
+        XCTAssertNotNil(pending)
+        handle.fire("error")
+        handle.fire("open")
+        pending?.resume()
+        await settle { vm.event?.currentOdds?.homeProbability == 0.52 }
+        XCTAssertFalse(vm.streamHasPushedPrice)
+        XCTAssertEqual(vm.liveUpdateStatus, .awaitingUpdate)
     }
 
     func testAPageWithNoRevisionKeepsEveryPreContractRule() async throws {
