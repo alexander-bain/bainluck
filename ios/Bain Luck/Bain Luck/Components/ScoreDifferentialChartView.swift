@@ -191,9 +191,17 @@ struct ScoreDifferentialChartView: View {
                     }
                     if hasActual {
                         HStack(spacing: 4) {
-                            RoundedRectangle(cornerRadius: 1)
-                                .fill(Color(hex: "#0d9488"))
-                                .frame(width: 14, height: 3)
+                            // #8997 — the swatch is the shape the chart drew.
+                            if Self.actualIsALonePoint(dataPoints.map(\.actualDiff)) {
+                                Circle()
+                                    .fill(Color(hex: "#0d9488"))
+                                    .frame(width: 6, height: 6)
+                                    .frame(width: 14)
+                            } else {
+                                RoundedRectangle(cornerRadius: 1)
+                                    .fill(Color(hex: "#0d9488"))
+                                    .frame(width: 14, height: 3)
+                            }
                             Text("Actual Score Diff")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
@@ -413,6 +421,18 @@ struct ScoreDifferentialChartView: View {
         return byMinute
     }
 
+    /// #8997 — does the actual series hold exactly one point?
+    ///
+    /// A `LineMark` through one point draws nothing, and the legend advertised
+    /// "Actual Score Diff" whenever any point existed. `/events/15292394`
+    /// (Dubai 78–77 Real Madrid) serves one `score_history` row — the final,
+    /// stamped at `completed_at` — so the card named a teal line and drew none.
+    /// A lone point is drawn as a dot (and its swatch is a dot); the journey
+    /// that was never captured is not invented.
+    static func actualIsALonePoint(_ actualDiffs: [Double?]) -> Bool {
+        actualDiffs.lazy.compactMap { $0 }.prefix(2).count == 1
+    }
+
     /// Merge projected and actual into unified points. Extracted so the
     /// unit-gated early return above shares one exit with the normal path.
     private func mergeDiffPoints(
@@ -496,15 +516,25 @@ struct ScoreDifferentialChartView: View {
             }
 
             // Actual score differential (teal — high contrast against orange)
-            ForEach(dataPoints.filter { $0.actualDiff != nil }) { point in
-                LineMark(
-                    x: .value("Time", point.date),
-                    y: .value("Diff", point.actualDiff!),
-                    series: .value("Series", "actual")
+            if Self.actualIsALonePoint(dataPoints.map(\.actualDiff)),
+               let lone = dataPoints.first(where: { $0.actualDiff != nil }) {
+                PointMark(
+                    x: .value("Time", lone.date),
+                    y: .value("Diff", lone.actualDiff!)
                 )
                 .foregroundStyle(Color(hex: "#0d9488"))
-                .lineStyle(StrokeStyle(lineWidth: 2.5))
-                .interpolationMethod(.stepCenter)
+                .symbolSize(50)
+            } else {
+                ForEach(dataPoints.filter { $0.actualDiff != nil }) { point in
+                    LineMark(
+                        x: .value("Time", point.date),
+                        y: .value("Diff", point.actualDiff!),
+                        series: .value("Series", "actual")
+                    )
+                    .foregroundStyle(Color(hex: "#0d9488"))
+                    .lineStyle(StrokeStyle(lineWidth: 2.5))
+                    .interpolationMethod(.stepCenter)
+                }
             }
         }
         .chartYScale(domain: yRange)
