@@ -3114,6 +3114,58 @@ def filter_foreign_game_markets(markets, event_date):
     return [m for m, tc, _ in info if tc is None or tc in true_codes]
 
 
+# #8884 — Kalshi suffixes a doubleheader's team-code with its game number:
+# `KXMLBGAME-26SEP251305CHCBOSG1` / `…26SEP251805CHCBOSG2`. Baseball only: an
+# esports team-code can end in a G-digit on its own (`FNCG2` is Fnatic v G2).
+_DOUBLEHEADER_GAME_NUMBER_RE = re.compile(r"G([1-9])$")
+
+
+def kalshi_doubleheader_game_number(external_id: Optional[str]) -> Optional[int]:
+    """The doubleheader game number a Kalshi baseball ticker names, or None.
+
+    Examples:
+        "KXMLBGAME-26SEP251305CHCBOSG1" → 1
+        "KXMLBF5-26SEP251805CHCBOSG2"   → 2
+        "KXMLBGAME-26SEP251910CHCBOS"   → None
+    """
+    tc = kalshi_game_teams(external_id)
+    if not tc:
+        return None
+    m = _DOUBLEHEADER_GAME_NUMBER_RE.search(tc)
+    return int(m.group(1)) if m else None
+
+
+def own_doubleheader_game_numbers(markets, event_date) -> set[int]:
+    """The doubleheader game numbers an event's LINKED Kalshi markets name on
+    the event's own date. The HHMM in these tickers is not a discriminator —
+    one game-2 carried `1735`, `1805` and `1910` on 2026-09-25 as its start
+    moved — so the game number is the only id that tells the two games apart."""
+    out: set[int] = set()
+    if not event_date:
+        return out
+    for m in markets:
+        ext = getattr(m, "external_id", None)
+        n = kalshi_doubleheader_game_number(ext)
+        if n is None:
+            continue
+        d = extract_game_date_from_ticker(ext or "")
+        if d and d.date() == event_date:
+            out.add(n)
+    return out
+
+
+def is_other_doubleheader_game(external_id: Optional[str], own_numbers: set[int]) -> bool:
+    """True when the ticker names a doubleheader game this event is NOT.
+
+    Fail-open: an event whose linked markets name no game number, or name both
+    (already contaminated — nothing to anchor on), refuses nothing, and a
+    ticker with no game number is never refused."""
+    if len(own_numbers) != 1:
+        return False
+    n = kalshi_doubleheader_game_number(external_id)
+    return n is not None and n not in own_numbers
+
+
 # Combat fight-winner market names carry a leading CARD prefix that defeats the
 # anchored matchup regexes, so "A vs B" never parses out. Three observed shapes:
 #   "329: Saint-Denis vs Pimblett"            (bare sport_id number)
