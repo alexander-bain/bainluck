@@ -957,6 +957,28 @@ def _variant_group_status_is_known(members: list) -> bool:
     )
 
 
+#: #8100 suspended residual — the statuses the anchored-claim KICKOFF pass may
+#: see, and ONLY that pass. `suspended` is where every scoreless NPB row ends
+#: (#5711: 20 of 20 past Seibu games on `/api/events/search?q=Seibu Lions`,
+#: 2026-09-27 13:5xZ, none reaching `completed`), so a pair licensed while live
+#: split again the moment the game ended and stayed two cards for good. It is
+#: not collapsible: it goes through :func:`_live_anchored_claim_pair_is_licensed`
+#: exactly like `live`, so a claim holding a score still stays two cards. The
+#: season-variant pass keeps :data:`_VARIANT_LIVE_LICENSED_STATUSES`.
+_ANCHORED_CLAIM_LICENSED_STATUSES: frozenset = _VARIANT_LIVE_LICENSED_STATUSES | {
+    "suspended"
+}
+
+
+def _anchored_claim_group_status_is_known(members: list) -> bool:
+    """True when every row's status is one the anchored-claim pass can reason about."""
+    return all(
+        str(getattr(member, "status", "") or "").strip().lower()
+        in _ANCHORED_CLAIM_LICENSED_STATUSES
+        for member in members
+    )
+
+
 def _group_espn_anchoring(members: list) -> Optional[bool]:
     """``True`` when every row carries an `espn_id`, ``False`` when none does.
 
@@ -1391,12 +1413,14 @@ def _anchored_claim_clusters(
     Three refusals, and each leaves both rows standing — two cards, today's
     behaviour — rather than risking one card holding two games:
 
-    * a LIVE row folds only under :func:`_live_anchored_claim_pair_is_licensed`
-      — the id-less claim holds no score. An unknown status is refused outright
-      (:func:`_variant_group_status_is_known`). AMENDED 2026-09-27: this used to
-      refuse every live pair, which was inert on the 15 measured pairs (none was
-      live when read) and split Rakuten @ Seibu into two live cards on
-      production for as long as the game ran.
+    * a LIVE or SUSPENDED row folds only under
+      :func:`_live_anchored_claim_pair_is_licensed` — the id-less claim holds no
+      score. An unknown status is refused outright
+      (:func:`_anchored_claim_group_status_is_known`). AMENDED 2026-09-27: this
+      used to refuse every live pair, which was inert on the 15 measured pairs
+      (none was live when read) and split Rakuten @ Seibu into two live cards on
+      production for as long as the game ran. AMENDED again the same day: that
+      pair then went `suspended` (where NPB rows end, #5711) and split again.
     * the asymmetry itself, which is the licence.
     * :func:`_objectively_different_games` — and this one is ARMED rather than
       decorative, which is the control #8100 said it could not find. One of the 15
@@ -1417,7 +1441,9 @@ def _anchored_claim_clusters(
         anchored[key] = _group_is_id_anchored(members)
 
     eligible = [
-        key for key in bucket_keys if _variant_group_status_is_known(groups[key])
+        key
+        for key in bucket_keys
+        if _anchored_claim_group_status_is_known(groups[key])
     ]
     if len(eligible) < 2:
         return []

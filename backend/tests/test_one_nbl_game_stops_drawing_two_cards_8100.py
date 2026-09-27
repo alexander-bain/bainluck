@@ -329,6 +329,60 @@ def test_an_unknown_status_still_refuses_the_pair():
     assert len(result.events) == 2
 
 
+def test_a_suspended_pair_whose_claim_holds_no_score_folds():
+    """#8100 suspended residual. Production 2026-09-27 13:5xZ,
+    `/api/events/search?q=Seibu Lions`: the SAME Rakuten @ Seibu pair
+    (`15316168` id-less, `15319558` Odds API) both read `suspended` after the
+    game, no score on either — where every past NPB row ends (#5711). The live
+    licence folded it during the game; without this it split again the moment
+    the game ended and stayed two cards in search for good."""
+    claim, anchored = _perth_pair()
+    claim.status = anchored.status = "suspended"
+
+    result = fold_twin_events([claim, anchored])
+
+    assert len(result.events) == 1
+    assert result.events[0].id == 15316489, "the anchored row survives"
+    assert result.merged_sources[15316489] == {"polymarket": 0.41}
+
+
+def test_a_suspended_pair_whose_claim_holds_a_score_is_left_as_two_cards():
+    """`suspended` is licensed like `live`, never as collapsible: a score on the
+    claim is still a copy nothing here can rank, so the pair stays two."""
+    for column in ("home_score", "away_score"):
+        claim, anchored = _perth_pair()
+        claim.status = anchored.status = "suspended"
+        setattr(claim, column, 4)
+
+        assert len(fold_twin_events([claim, anchored]).events) == 2, column
+
+
+def test_one_suspended_row_beside_a_settled_one_gets_the_same_answer():
+    """A claim still `scheduled` beside a `suspended` anchored row (or the
+    reverse) is the same question."""
+    claim, anchored = _perth_pair()
+    anchored.status = "suspended"
+    assert len(fold_twin_events([claim, anchored]).events) == 1
+
+    claim, anchored = _perth_pair()
+    claim.status = "suspended"
+    anchored.status = "completed"
+    anchored.home_score, anchored.away_score = 3, 1
+    result = fold_twin_events([claim, anchored])
+    assert len(result.events) == 1
+    assert (result.events[0].home_score, result.events[0].away_score) == (3, 1)
+
+
+def test_suspended_is_admitted_by_the_anchored_claim_pass_only():
+    """The season-variant pass (#5821) and the anchored-claim NAME pass read
+    their own status sets and do not learn `suspended` from this change."""
+    from app.utils import event_twin_fold as fold
+
+    assert "suspended" in fold._ANCHORED_CLAIM_LICENSED_STATUSES
+    assert "suspended" not in fold._VARIANT_LIVE_LICENSED_STATUSES
+    assert "suspended" not in fold._VARIANT_COLLAPSIBLE_STATUSES
+
+
 def test_a_pair_past_the_bound_stays_two_cards():
     """Outside the bound means two cards, not a closer look."""
     claim, anchored = _perth_pair()
