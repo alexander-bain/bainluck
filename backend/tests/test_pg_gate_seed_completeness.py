@@ -497,6 +497,13 @@ COVERED = (
     # (pass 1b) through real Postgres retrieval. Explicit ids; the schema is
     # dropped whole on teardown.
     "test_pm_venue_name_extension_8440_pg.py",
+    # #9120. Seeds `sports`, `teams`, `events` and `futures_markets` by raw
+    # INSERT, in a private schema built by `create_all`, to drive the
+    # postponed-ticker carry's same-day and venue-ticker fences. Explicit ids;
+    # the schema is dropped whole on teardown. `sports.active` and
+    # `futures_markets.mutually_exclusive` are the Python-side defaults the
+    # seed names.
+    "test_kalshi_postponed_carry_9120_pg.py",
     # #8422. Seeds `sports`, `events` and `event_provider_anchors` by raw
     # INSERT, in a private schema built by `create_all`, to drive the
     # re-issued-id sweep's read, write, lift and restore. Explicit ids; the

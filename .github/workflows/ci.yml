@@ -892,6 +892,19 @@ jobs:
             exit 1
           fi
 
+      - name: "#9120 a moved MLB game keeps the Kalshi ticker Kalshi kept (real Postgres)"
+        # The carry's fences are SQL: same-matchup rows on the ticker's
+        # Eastern day, and the venue's own game tickers for the later row.
+        # Same skip detection.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_kalshi_postponed_carry_9120_pg.py \
+            -v -rs 2>&1 | tee /tmp/carry9120.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/carry9120.txt; then
+            echo "::error::#9120 postponed-ticker carry gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#2772 illegal settled tennis score recall (real Postgres)"
         # The arm withdraws a SCORE from a settled row, and its judgement — can
         # a completed tennis match have ended on this set count — is a rule
