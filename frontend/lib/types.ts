@@ -460,6 +460,13 @@ export interface EventDetailResponse extends Event {
   /** Present only alongside `hero_probability_source === "settled"`. */
   hero_settled_result?: "home" | "away" | "draw";
   /**
+   * #9081 / #9097: how many sportsbooks stand behind the blend hero — `0` when
+   * none do (ruling 051 dropped the consensus, or no `betting` input at all).
+   * Served only beside `hero_probability_source === "blend"`; `null`/absent
+   * means unknown, and the caption keeps its older reading.
+   */
+  hero_sportsbook_count?: number | null;
+  /**
    * #8749 / PR #8758: when the blend behind `hero_probability` was observed —
    * the newest write among the tier-1 sources it folded, carried WITH the value
    * (a cached hero keeps its cached clock). `null` on a non-blend hero or when
