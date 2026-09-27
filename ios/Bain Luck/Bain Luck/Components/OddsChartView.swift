@@ -1613,7 +1613,9 @@ struct OddsChartView: View {
                 OddsChartSelectionOverlay(selection: selection, proxy: proxy, plotFrame: plotFrame,
                                           dataPoints: dataPoints, homeShort: homeShort,
                                           awayShort: awayShort, moments: moments,
-                                          pageGaveCard: pageGaveCard)
+                                          pageGaveCard: pageGaveCard,
+                                          gameFinished: EventState.isFinished(status),
+                                          sportKey: sportKey)
                 // #925 — the scrub. `chartXSelection` lost the touch to the
                 // page's scroll the moment a thumb drifted vertically (Alex's
                 // build-20 recording, 14781697). The futures chart solved the
@@ -2391,11 +2393,18 @@ struct OddsChartView: View {
 
     /// Human/VoiceOver read-out for a snapshot, in the SAME probability basis as
     /// the plotted line and axis labels (home %, away %, plus real game state).
+    /// The percents are the readout card's — its point (`playPoint`) through its
+    /// labels (`GamePlayCardView.printedLabels`) — so VoiceOver says ">99%" where
+    /// the card prints it (a bare integer spoke a live 0.996 as "100%", #9015's
+    /// class) and speaks no away number where the card withholds one (#5271).
     static func selectionReadout(for point: ChartDataPoint, homeShort: String, awayShort: String,
-                                 moment: ChartMoment? = nil) -> String {
-        let homePct = Int((point.probability * 100).rounded())
-        let awayPct = 100 - homePct
-        var parts = ["\(homeShort) \(homePct)%", "\(awayShort) \(awayPct)%"]
+                                 moment: ChartMoment? = nil, gameFinished: Bool = false,
+                                 sportKey: String? = nil) -> String {
+        let play = playPoint(for: point, sportKey: sportKey)
+        let printed = GamePlayCardView.printedLabels(home: play.homeProb, away: play.awayProb,
+                                                     gameFinished: gameFinished)
+        var parts = ["\(homeShort) \(printed.home)"]
+        if let away = printed.away { parts.append("\(awayShort) \(away)") }
         if let hs = point.homeScore, let a = point.awayScore { parts.append("score \(hs)–\(a)") }
         if let period = point.period, !period.isEmpty { parts.append(period) }
         if let clock = point.clock, !clock.isEmpty { parts.append(clock) }
@@ -2414,7 +2423,9 @@ struct OddsChartView: View {
     static func accessibilityValue(dataPoints: [ChartDataPoint], selectedDate: Date?,
                                    homeShort: String, awayShort: String,
                                    moments: [ChartMoment] = [],
-                                   pageGaveCard: Bool = true) -> String {
+                                   pageGaveCard: Bool = true,
+                                   gameFinished: Bool = false,
+                                   sportKey: String? = nil) -> String {
         let source = readoutSource(in: dataPoints, pageGaveCard: pageGaveCard)
             ?? primarySource(in: dataPoints)
         let point: ChartDataPoint?
@@ -2427,7 +2438,7 @@ struct OddsChartView: View {
         }
         guard let point else { return "No probability data" }
         return selectionReadout(for: point, homeShort: homeShort, awayShort: awayShort,
-                                moment: moment)
+                                moment: moment, gameFinished: gameFinished, sportKey: sportKey)
     }
 
     // MARK: - Game State Enrichment
