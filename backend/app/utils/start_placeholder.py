@@ -38,6 +38,14 @@ STATPAL_PLACEHOLDER_START_SPORTS = frozenset({"mlb"})
 
 START_PLACEHOLDER_TAG_PREFIX = "provenance:start-placeholder:statpal:"
 
+#: ESPN's own placeholder (#8981). ESPN lists a college football game weeks
+#: before its kickoff is set, at midnight Eastern with ``timeValid=false``
+#: (Clemson–Miami, 401858249: ``2026-10-03T04:00Z``, "10/3 - TBD"), and rows
+#: stamped from ESPN before #8841 sit on that instant. A SIBLING prefix, not a
+#: second use of StatPal's: each provider's writer rewrites only its own prefix,
+#: so StatPal's schedule pass can never erase ESPN's mark or the reverse.
+ESPN_START_PLACEHOLDER_TAG_PREFIX = "provenance:start-placeholder:espn:"
+
 _ON_THE_HOUR_RE = re.compile(r"^\s*\d{1,2}:00\s*$")
 _TAG_INSTANT_FORMAT = "%Y-%m-%dT%H:%MZ"
 
@@ -92,14 +100,27 @@ def start_placeholder_tag(instant: datetime) -> str:
     return START_PLACEHOLDER_TAG_PREFIX + _utc_minute(instant).strftime(_TAG_INSTANT_FORMAT)
 
 
-def start_placeholder_tags(event_tags: Any) -> list[str]:
-    """Every start-placeholder tag on a row, in stored order."""
+def _tags_with_prefix(event_tags: Any, prefix: str) -> list[str]:
     if not isinstance(event_tags, list):
         return []
-    return [
-        t for t in event_tags
-        if isinstance(t, str) and t.startswith(START_PLACEHOLDER_TAG_PREFIX)
-    ]
+    return [t for t in event_tags if isinstance(t, str) and t.startswith(prefix)]
+
+
+def start_placeholder_tags(event_tags: Any) -> list[str]:
+    """Every StatPal start-placeholder tag on a row, in stored order."""
+    return _tags_with_prefix(event_tags, START_PLACEHOLDER_TAG_PREFIX)
+
+
+def espn_start_placeholder_tag(instant: datetime) -> str:
+    """The tag vouching that ESPN listed ``instant`` as a placeholder (#8981)."""
+    return ESPN_START_PLACEHOLDER_TAG_PREFIX + _utc_minute(instant).strftime(
+        _TAG_INSTANT_FORMAT
+    )
+
+
+def espn_start_placeholder_tags(event_tags: Any) -> list[str]:
+    """Every ESPN start-placeholder tag on a row, in stored order."""
+    return _tags_with_prefix(event_tags, ESPN_START_PLACEHOLDER_TAG_PREFIX)
 
 
 def start_is_tbd(
@@ -107,12 +128,48 @@ def start_is_tbd(
 ) -> bool:
     """True when the row's start is a placeholder nobody has since replaced.
 
+    Either provider's mark counts, and only for the instant the row still
+    carries — a rail that writes a real start retires the TBD by writing it.
     Only a ``scheduled`` row can be TBD — once a game is live or final, it has
     started, whatever its stored stamp says.
     """
     if status != "scheduled" or commence_time is None:
         return False
-    return start_placeholder_tag(commence_time) in start_placeholder_tags(event_tags)
+    if start_placeholder_tag(commence_time) in start_placeholder_tags(event_tags):
+        return True
+    return espn_start_placeholder_tag(commence_time) in espn_start_placeholder_tags(
+        event_tags
+    )
+
+
+def desired_espn_start_placeholder_tags(
+    *,
+    time_valid: bool,
+    time_announced: bool,
+    espn_date: Optional[datetime],
+    commence_time: Optional[datetime],
+) -> Optional[list[str]]:
+    """What the row's ESPN start-placeholder tags should be after reading ESPN (#8981).
+
+    Three answers, because ESPN has three things to say:
+
+    * ``timeValid`` explicitly ``false`` AND the row still sits on ESPN's
+      placeholder minute → ``[tag]``. A row another rail has moved gets none.
+    * ``timeValid`` explicitly ``true`` → ``[]``: ESPN has announced a start, so
+      no mark of ESPN's may stand — including the equal-instant case, where the
+      announced kickoff is the placeholder minute itself.
+    * Anything else (the key absent) → ``None``: leave the row as it is. An
+      absent flag is not an announcement, and it is not a placeholder either.
+    """
+    if time_announced:
+        return []
+    if time_valid:
+        return None
+    if espn_date is None or commence_time is None:
+        return []
+    if _utc_minute(espn_date) != _utc_minute(commence_time):
+        return []
+    return [espn_start_placeholder_tag(espn_date)]
 
 
 def desired_start_placeholder_tags(

@@ -262,6 +262,9 @@ class TestBeatScheduleCompleteness:
         # limit is 300s rather than 240s). The fifth stamper and the first that
         # had to buy its schedule with a measured first pass under D51.
         "stamp-soccer-statpal-fixtures-hourly",
+        # #8981 — ESPN's date-only placeholder marked so readers print TBD
+        # (background, hourly, :29 by the 2026-09-27 minute census).
+        "mark-espn-start-placeholders-hourly",
         "sync-statpal-standings-daily",
         "mark-resolved-futures",
         "backfill-winners",
