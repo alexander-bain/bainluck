@@ -30,6 +30,7 @@ import {
   selectGameTotalRungs,
   selectHalfTotalRungs,
   settledHalfTotalsFromGrades,
+  settledHalfScoresFromGrades,
   ladderQuotesALine,
   settledLadderQuotesALine,
   probabilitiesQuoteALine,
@@ -500,9 +501,22 @@ export default function MarketMapSection({
         `${vocab.unit} — ${playedCountAbsence(vocab.unit, isDone)}.`
       : null;
 
+  // #9108: with no halftime row, the one split of the final the half rows'
+  // own grades allow (`settledHalfScoresFromGrades`). The ESPN row wins
+  // wherever it exists; every consumer below still gates on `isDone`.
   const halfScores = useMemo(
-    () => deriveHalfScores(espnHistory, homeScore, awayScore, vocab),
-    [espnHistory, homeScore, awayScore, vocab]
+    () =>
+      deriveHalfScores(espnHistory, homeScore, awayScore, vocab) ??
+      settledHalfScoresFromGrades(
+        gameMarkets.period_markets,
+        eventStatus,
+        homeScore,
+        awayScore,
+        homeTeam,
+        awayTeam,
+        vocab.unit
+      ),
+    [espnHistory, homeScore, awayScore, vocab, gameMarkets.period_markets, eventStatus, homeTeam, awayTeam]
   );
 
   const currentHalf = useMemo(

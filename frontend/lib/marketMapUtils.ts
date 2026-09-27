@@ -877,6 +877,119 @@ export function settledHalfTotalsFromGrades(
   return none;
 }
 
+/** A graded half row as a claim a candidate half score either meets or does not. */
+type HalfScoreVote = {
+  half: "1H" | "2H";
+  won: boolean;
+  holds: (home: number, away: number) => boolean;
+};
+
+/**
+ * Each half's SCORE on a finished game, from the grades on its half rows, or
+ * `null` unless those grades leave exactly one possibility. #9108.
+ *
+ * `/events/15315795`, Cruz Azul 3-3 Toluca: `espn_history` empty, so the half
+ * MARGIN cards had no halftime row to grade against and drew a bare forecast
+ * band, while the half GOALS cards below them printed `FINAL 2` / `FINAL 4`
+ * off #5527's grades. The venue had graded the margin rows too: `Cruz Azul
+ * wins the 1H by more than 1.5 goals` and `Toluca wins the 2H by more than
+ * 1.5 goals` both `is_winner: true, api_settlement`.
+ *
+ * This keeps #6169's rule the way `settledHalfTotalsFromGrades` does: a grade
+ * is used only to find a NUMBER, never to grade a rung on its own. Every way
+ * the final can split into two halves (`1H + 2H = final`, per side) is a
+ * candidate, and a candidate survives only if it agrees with every graded half
+ * row — totals (`halfRungRowGrade`), margins (`parseSpreadRungs`) and half
+ * winners. One survivor is the answer. None means the grades contradict each
+ * other or the final (`/events/14637256`'s eight all-`true` Kalshi 2H rows),
+ * and two or more means they do not decide it; both draw nothing.
+ *
+ * On Cruz Azul 3-3 Toluca the 1H total is 2 (`1.5` in, `2.5` out) and Cruz
+ * Azul won the 1H by 2 or more, which leaves 2-0 — and the 2H's 1-3 agrees
+ * with every 2H row.
+ *
+ * Fails closed on every row it cannot read one way only: an integer line (a
+ * push, where `>` and `>=` disagree), a row naming both sides or neither, and
+ * a Polymarket leg that names the side opposite its own line.
+ *
+ * PURE: no I/O, no React.
+ */
+export function settledHalfScoresFromGrades(
+  periodMarkets: PeriodTotalRow[] | null | undefined,
+  eventStatus: string | null | undefined,
+  finalHome: number | null,
+  finalAway: number | null,
+  homeTeam: string,
+  awayTeam: string,
+  railUnit: string
+): { h1Home: number; h1Away: number; h2Home: number; h2Away: number } | null {
+  if (!marketMapIsGraded(eventStatus) || finalHome == null || finalAway == null) return null;
+  if (finalHome < 0 || finalAway < 0) return null;
+
+  const onALine = (threshold: number) => Number.isFinite(threshold) && !Number.isInteger(threshold);
+  const namesOnly = (text: string, side: "home" | "away") =>
+    namesTeam(text, side === "home" ? homeTeam : awayTeam) &&
+    !namesTeam(text, side === "home" ? awayTeam : homeTeam);
+
+  const votes: HalfScoreVote[] = [];
+  for (const half of TOTAL_MAP_HALVES) {
+    const rows = (periodMarkets || []).filter((p) => derivePeriod(p) === half);
+
+    // Totals: one verdict per line, from the same row rule the goals card uses.
+    const totals = rows.filter(
+      (p) => p.market_type === "half_total" && isGameTotal(p.outcome_name) && !isTeamScopedHalfTotal(p.market_name)
+    );
+    for (const threshold of new Set(totals.map((p) => p.threshold ?? NaN))) {
+      if (!onALine(threshold)) continue;
+      const grade = halfRungRowGrade(
+        totals.filter((p) => p.threshold === threshold),
+        true
+      );
+      if (grade == null) continue;
+      votes.push({ half, won: grade === "cleared", holds: (h, a) => h + a > threshold });
+    }
+
+    for (const row of rows) {
+      const verdict = outcomeRowVerdict(row, true);
+      if (verdict == null) continue;
+      const won = verdict === "won";
+      const outcome = row.outcome_name || "";
+
+      if (row.market_type === "half_spread") {
+        const [rung] = parseSpreadRungs([row], homeTeam, awayTeam, railUnit, { keepUnpriced: true });
+        if (!rung || !onALine(rung.threshold)) continue;
+        if (!namesOnly(outcome, rung.isHome ? "home" : "away")) continue;
+        const { isHome, threshold } = rung;
+        votes.push({ half, won, holds: (h, a) => (isHome ? h - a : a - h) > threshold });
+      } else if (row.market_type === "half_winner") {
+        if (/^\s*(tie|draw)\b/i.test(outcome)) {
+          votes.push({ half, won, holds: (h, a) => h === a });
+        } else if (namesOnly(outcome, "home")) {
+          votes.push({ half, won, holds: (h, a) => h > a });
+        } else if (namesOnly(outcome, "away")) {
+          votes.push({ half, won, holds: (h, a) => a > h });
+        }
+      }
+    }
+  }
+  if (votes.length === 0) return null;
+
+  let found: { h1Home: number; h1Away: number; h2Home: number; h2Away: number } | null = null;
+  for (let h1Home = 0; h1Home <= finalHome; h1Home++) {
+    for (let h1Away = 0; h1Away <= finalAway; h1Away++) {
+      const h2Home = finalHome - h1Home;
+      const h2Away = finalAway - h1Away;
+      const agrees = votes.every((v) =>
+        v.half === "1H" ? v.holds(h1Home, h1Away) === v.won : v.holds(h2Home, h2Away) === v.won
+      );
+      if (!agrees) continue;
+      if (found) return null;
+      found = { h1Home, h1Away, h2Home, h2Away };
+    }
+  }
+  return found;
+}
+
 /**
  * The rungs one half's totals map is drawn from. A rail needs two rungs to be
  * a rail, so fewer than two — before or after the monotonicity pass — means
