@@ -66,8 +66,17 @@ class _RevisionedSession(_RouteSession):
         if is_blend_fold(sql):
             assert "events.win_probability_sources_rev" in sql, sql
             self.blend_fold_lookups += 1
+            # Production's one-snapshot answer: the canonical AND its twin.
             return _Result(
                 [
+                    (
+                        CANON_ID,
+                        self.event.home_team_name,
+                        self.event.away_team_name,
+                        self.event.win_probability_sources,
+                        self.event.win_probability_sources_rev,
+                        False,
+                    ),
                     (
                         GHOST_ID,
                         "Shelton",
@@ -79,7 +88,8 @@ class _RevisionedSession(_RouteSession):
                             }
                         },
                         self.twin_rev,
-                    )
+                        True,
+                    ),
                 ]
             )
         return await super().execute(statement, *a, **kw)

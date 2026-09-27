@@ -24,6 +24,9 @@ survivor quotes and re-admissions still land.
       equal to what is now stored.
 * R5  the migration's own upgrade installs exactly the column + trigger the
       model's `after_create` does, and its downgrade removes them.
+* R6  (CERT-3625) a canonical row the route loaded BEFORE two removals
+      committed is not folded stale beside the fresh twin: the fold reads every
+      row it folds in one statement.
 
 Runs where `SEARCH_TEST_DATABASE_URL` is set (CI `search-recall`).
 """
@@ -256,6 +259,32 @@ class TestTheRevisionIsTheDatabasesCommitOrder:
         assert _dominates(mid, before)
         assert _dominates(after, mid)
         assert not _dominates(mid, after), "the older fold would be adopted"
+
+    async def test_r6_a_canonical_loaded_before_a_commit_is_not_folded_stale(
+        self, pg
+    ):
+        """CERT-3625's interleaving. The route loads the canonical at revision
+        0; another session then commits the canonical's ESPN removal and the
+        twin's Kalshi removal. The fold must read the canonical in the SAME
+        statement as the twin: at fb9713bec4 it served the loaded bag (ESPN
+        still in it) beside the fresh twin under `{canonical: 0, twin: 1}`."""
+        from app.models.models import Event
+        from app.utils.proven_duplicates import (
+            folded_probability_sources_with_revision,
+        )
+
+        _engine, Session = pg
+        async with Session() as session:
+            event = await session.get(Event, CANON)
+            assert event.win_probability_sources_rev == 0
+            assert "espn" in event.win_probability_sources
+            await _drop_source(Session, CANON, "espn")
+            await _drop_source(Session, TWIN, "kalshi")
+            sources, vector = await folded_probability_sources_with_revision(
+                session, event
+            )
+        assert vector == {str(CANON): 1, str(TWIN): 1}, vector
+        assert set(sources) == {"polymarket"}, sources
 
     async def test_r4_a_nonvenue_frame_names_the_revision_its_update_returned(
         self, pg
