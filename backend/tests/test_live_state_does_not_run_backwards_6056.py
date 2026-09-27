@@ -806,7 +806,7 @@ class _EspnEvent:
 
 async def _drive_espn(
     spec, ee, *, interloper=None, monkeypatch=None,
-    sport_key="americanfootball_nfl",
+    sport_key="americanfootball_nfl", espn_snapshots=(),
 ):
     """Drive the real ESPN writer against a real row, and read the DATABASE back.
 
@@ -826,16 +826,24 @@ async def _drive_espn(
     the fetch is not a reversion, and before it writes. Hung on
     `live_write_would_revert` rather than on a sleep, for the same reason the
     schedule rail does it: a timing test that passes by luck is not a test.
+
+    ``espn_snapshots`` seeds the row's ESPN board history as ``(captured_at,
+    period)`` pairs — the #9020 wall-clock rule reads it to learn since when the
+    row has stood at its position.
     """
     from sqlalchemy import create_engine, select
     from sqlalchemy.orm import Session
 
-    from app.models.models import Base, Event, ScoreSnapshot, Sport
+    from app.models.models import Base, ESPNSnapshot, Event, ScoreSnapshot, Sport
     from app.utils.espn_helpers import update_event_fields_from_espn
 
     engine = create_engine("sqlite://")
     Base.metadata.create_all(
-        engine, tables=[Event.__table__, Sport.__table__, ScoreSnapshot.__table__]
+        engine,
+        tables=[
+            Event.__table__, Sport.__table__, ScoreSnapshot.__table__,
+            ESPNSnapshot.__table__,
+        ],
     )
     session = Session(engine, expire_on_commit=False)
 
@@ -865,6 +873,11 @@ async def _drive_espn(
     session.add(event)
     session.commit()
     event_id = event.id
+    for captured_at, snap_period in espn_snapshots:
+        session.add(
+            ESPNSnapshot(event_id=event_id, captured_at=captured_at, period=snap_period)
+        )
+    session.commit()
 
     class _AsyncShim:
         """The writer is async and this engine is not; nothing else is shimmed."""
