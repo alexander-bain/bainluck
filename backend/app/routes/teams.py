@@ -14,6 +14,7 @@ from app.utils.event_rails import (
 from app.utils.event_twin_fold import fold_twin_events, team_name_fold_key
 from app.utils.aggregation import compute_aggregate_probability
 from app.utils.lifecycle import served_event_status
+from app.utils.market_team_sport import link_crosses_sport, sport_key_llm_category
 from app.utils.start_placeholder import start_is_tbd
 from app.utils.season_variant_team import (
     choose_parent_league_row,
@@ -544,7 +545,7 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
     champ_path: list = []
     try:
         champ_path = await _get_championship_path(
-            team.id, db, league_slug=league_slug, now=now
+            team.id, db, league_slug=league_slug, now=now, team_sport_key=sport_key
         )
     except Exception:
         logger.exception("team page: championship path failed for team %s", team.id)
@@ -1009,6 +1010,7 @@ async def _get_championship_path(
     db: AsyncSession,
     league_slug: str | None = None,
     now: datetime | None = None,
+    team_sport_key: str | None = None,
 ) -> list[dict]:
     """Get championship/conference/division probabilities for a team.
 
@@ -1022,6 +1024,13 @@ async def _get_championship_path(
       3. Future-season markets (e.g. "2027 Champion" when it is 2025-26).
       4. Markets whose question is not the one their tier labels them with
          (#1752) — see :data:`_NOT_A_TITLE_QUESTION`.
+      5. Markets of ANOTHER sport linked to this team (#2593) — the stored
+         ``team_id`` was written by city-name matching across sports, so FC
+         Cincinnati's hero read "Championship" off the NCAAB Championship's
+         Cincinnati Bearcats leg and Austin FC's off golfer Austin Eckroat's
+         PGA Championship price. Refused only when the market claims a sport
+         and ``team_sport_key`` names a different one; a caller that passes no
+         sport key gets the old behaviour.
 
     Averages probabilities when multiple sources provide markets at the same
     tier, and stamps each entry with the season it describes. A tier whose
@@ -1046,6 +1055,7 @@ async def _get_championship_path(
     current_base = _season_base_year(current_season)
 
     tier_labels = {1: "Championship", 2: "Conference", 4: "Division"}
+    team_category = sport_key_llm_category(team_sport_key)
 
     # Collect all valid outcomes per tier, then pick the best per tier.
     # dict: tier → list of (probability, outcome, market) tuples
@@ -1060,6 +1070,10 @@ async def _get_championship_path(
         # with (#1752) — a qualification or award market rendered as "Win
         # Division" / "Win Championship" is a claim the team never made.
         if not _answers_its_tier(market.name):
+            continue
+
+        # #2593: another sport's market linked to this team by city name.
+        if link_crosses_sport(getattr(market, "llm_sport_category", None), team_category):
             continue
 
         # Skip prior-season markets: the market's own season predates the current
