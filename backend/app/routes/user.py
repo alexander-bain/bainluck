@@ -21,6 +21,10 @@ from app.models.models import (
 )
 from app.services.database import get_db, get_db_rw
 from app.utils.game_market_club_names import repair_field_outcome_name
+from app.utils.market_team_sport import (
+    link_crosses_sport as _link_crosses_sport,
+    sport_key_llm_category as _sport_key_llm_category,
+)
 from app.utils.name_normalization import names_match as _names_match
 
 logger = logging.getLogger(__name__)
@@ -1385,13 +1389,7 @@ async def _query_team_futures(
     team_sport_categories: dict[int, str] = {}
     for t, sport_key in result.all():
         teams[t.id] = t
-        root = sport_key.split("_")[0].lower() if sport_key else ""
-        if root == "americanfootball":
-            cat = "football"
-        elif root == "icehockey":
-            cat = "hockey"
-        else:
-            cat = root
+        cat = _sport_key_llm_category(sport_key)
         if cat:
             team_sport_categories[t.id] = cat
 
@@ -1612,18 +1610,30 @@ async def _query_team_futures(
         # Derive market sport category for cross-sport filtering (BR53).
         market_sport_cat: str | None = market.llm_sport_category
         if not market_sport_cat and market_sport_key:
-            root = market_sport_key.split("_")[0].lower()
-            if root == "americanfootball":
-                market_sport_cat = "football"
-            elif root == "icehockey":
-                market_sport_cat = "hockey"
-            else:
-                market_sport_cat = root
+            market_sport_cat = _sport_key_llm_category(market_sport_key)
 
-        # Direct team_id match (always correct — team_id is sport-scoped).
-        # Resolve dup ids onto the canonical row so a market linked to a
-        # bare-location dupe still matches the followed canonical team.
+        # Direct team_id match. Resolve dup ids onto the canonical row so a
+        # market linked to a bare-location dupe still matches the followed
+        # canonical team.
+        #
+        # #2593 — A STORED team_id IS NOT SPORT-SCOPED. This branch used to be
+        # trusted as "always correct", but the link was written by city-name
+        # matching across sports: the Dallas Mavericks' page served "MLS Western
+        # Conference Champion — Dallas 7.5%" (market 23500, outcome linked to NBA
+        # team 37) and the Seattle Storm's the same for "Seattle". Measured over
+        # open season markets 2026-09-27: ~150 links whose market names one sport
+        # and whose team plays another (Big Ten basketball on college football
+        # rows, "Team Specials" on MLB clubs, the Masters on Austin FC); every
+        # one sampled is wrong. So the FK match takes the SAME BR53 test the name
+        # branch below already applies — but only when the market claims a
+        # sport; a non-sport market keeps its link (utils/market_team_sport.py).
+        # A refused link falls through to the name/roster branches, which run
+        # their own sport check.
         canonical_id = id_to_canonical.get(outcome.team_id) if outcome.team_id else None
+        if canonical_id and _link_crosses_sport(
+            market_sport_cat, team_sport_categories.get(canonical_id)
+        ):
+            canonical_id = None
         if canonical_id and canonical_id in teams:
             t = teams[canonical_id]
             return {
