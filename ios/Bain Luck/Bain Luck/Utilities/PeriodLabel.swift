@@ -325,6 +325,29 @@ enum PeriodLabel {
         return fallback
     }
 
+    /// The header of column `n` (1-based) of a STORED line score — ESPN's
+    /// per-period arrays, where the period has no string at all, only a
+    /// position (#9067).
+    ///
+    /// Within regulation the unit comes from ``barePeriodUnit``; baseball is
+    /// its inning digit, the column vocabulary ``columnLabel(_:)`` gives it.
+    /// Past regulation the first extra period is `OT`, the next `2OT` — the
+    /// spelling `columnLabel` already admits. Whether a sport's extras are
+    /// overtimes at all is the CALLER's question (`StoredLineScore` refuses
+    /// soccer's extra time and an NHL fifth entry); this only names them.
+    /// `nil` for a sport nobody has declared.
+    static func lineScoreColumn(_ n: Int, sport: String?) -> String? {
+        guard n > 0 else { return nil }
+        let key = sport?.lowercased() ?? ""
+        if key.hasPrefix("baseball_") { return String(n) }
+        guard let entry = barePeriodUnit.first(where: { key.hasPrefix($0.prefix) }) else {
+            return nil
+        }
+        if n <= entry.regulation { return entry.label(n) }
+        let extra = n - entry.regulation
+        return extra == 1 ? "OT" : "\(extra)OT"
+    }
+
     /// Render an inning number as a self-explaining ordinal. A non-positive or
     /// unparseable inning is not a period and yields `""` (no chip).
     static func inning<S: StringProtocol>(_ digits: S) -> String {
