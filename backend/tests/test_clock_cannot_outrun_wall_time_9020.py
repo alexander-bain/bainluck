@@ -128,12 +128,17 @@ def _smu_row():
     return row
 
 
-#: The board as ESPN published it before the rollover pass, oldest first.
-SMU_BOARD = [
-    (_ago(180), "0:42 - 3rd Quarter"),
-    (_ago(120), "End of 3rd Quarter"),
-    (_ago(60), "End of 3rd Quarter"),
-]
+def _smu_board():
+    """The board as ESPN published it before the rollover pass, oldest first.
+
+    Built per call, never at import: a module constant is stamped at collection
+    and CI reaches these tests ~18 min later, when wall time allows the rollover.
+    """
+    return [
+        (_ago(180), "0:42 - 3rd Quarter"),
+        (_ago(120), "End of 3rd Quarter"),
+        (_ago(60), "End of 3rd Quarter"),
+    ]
 
 
 class TestTheRealEspnWriter:
@@ -145,7 +150,7 @@ class TestTheRealEspnWriter:
             clock=ROLLOVER[1], status_detail=ROLLOVER[0], home_score=21, away_score=10
         )
         row, _snaps, stats = await _drive_espn(
-            _smu_row(), ee, sport_key="americanfootball_ncaaf", espn_snapshots=SMU_BOARD,
+            _smu_row(), ee, sport_key="americanfootball_ncaaf", espn_snapshots=_smu_board(),
         )
         assert (row.period, row.game_clock) == END_Q3, (
             "the rollover reading reached the row"
@@ -158,7 +163,7 @@ class TestTheRealEspnWriter:
             clock=REAL_Q4[1], status_detail=REAL_Q4[0], home_score=21, away_score=10
         )
         row, _snaps, stats = await _drive_espn(
-            _smu_row(), ee, sport_key="americanfootball_ncaaf", espn_snapshots=SMU_BOARD,
+            _smu_row(), ee, sport_key="americanfootball_ncaaf", espn_snapshots=_smu_board(),
         )
         assert (row.period, row.game_clock) == REAL_Q4
         assert stats.get("live_clock_outran_wall_refused", 0) == 0, stats
@@ -170,7 +175,7 @@ class TestTheRealEspnWriter:
             clock=ROLLOVER[1], status_detail=ROLLOVER[0], home_score=21, away_score=17
         )
         row, snaps, stats = await _drive_espn(
-            _smu_row(), ee, sport_key="americanfootball_ncaaf", espn_snapshots=SMU_BOARD,
+            _smu_row(), ee, sport_key="americanfootball_ncaaf", espn_snapshots=_smu_board(),
         )
         assert (row.home_score, row.away_score) == (21, 17)
         assert [(s.home_score, s.away_score) for s in snaps] == [(21, 17)]
@@ -259,7 +264,7 @@ class TestTheRealEspnWriter:
             espn_snapshots=[
                 (_ago(900), "End of 3rd Quarter"),
                 (_ago(840), "3:10 - 3rd Quarter"),
-                *SMU_BOARD,
+                *_smu_board(),
             ],
         )
         assert (row.period, row.game_clock) == END_Q3
