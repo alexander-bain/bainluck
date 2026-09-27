@@ -45,6 +45,13 @@ _BASEBALL_HALF_ALIASES = {
     "end": "End",
 }
 _NON_BASEBALL_PERIODS = {"1h", "2h", "ht", "halftime", "1st half", "2nd half"}
+#: The twin of `AUTHORITY_STOPPAGE_WORDS` in `frontend/lib/gameTimeLabel.ts`
+#: (#8810): the words ESPN writes into `period` on a game called off.
+_AUTHORITY_STOPPAGE_WORDS = {
+    "postponed": "Postponed",
+    "canceled": "Canceled",
+    "cancelled": "Canceled",
+}
 
 
 def _ordinal_inning(value: str) -> str | None:
@@ -98,6 +105,15 @@ def normalize_live_game_state(
     """Return display-safe ``(period, game_clock)`` for API payloads."""
     if not sport_key or not sport_key.startswith("baseball"):
         return period, game_clock
+
+    # #9208: ESPN's stoppage word is not an inning, and baseball kept only
+    # innings — so a called-off game served no period, and the web's
+    # `authorityStoppageLabel` (#8810) printed "No result reported" over a
+    # "Start" line for Orioles @ Yankees 15319530, stored `Postponed`. The same
+    # exact words the web allowlists; ESPN's "0:00" filler clock stays dropped.
+    stoppage = _AUTHORITY_STOPPAGE_WORDS.get(str(period or "").strip().lower())
+    if stoppage:
+        return stoppage, None
 
     inning_label = _baseball_inning_label(period) or _baseball_inning_label(game_clock)
     return inning_label, None
