@@ -214,6 +214,10 @@ COVERED = (
     # (search_path pinned per pooled connection, since the repair under test
     # commits). Carries every NOT NULL column so the rows are real-shaped.
     "test_dangling_duplicate_tag_8308_pg.py",
+    # #9187 follow-up (CERT-3662 9187-CAS-ANCHOR-SCORE-AT-WRITE). Seeds `events`
+    # by raw INSERT into a narrow table in a private schema; every NOT NULL
+    # column is supplied so the ghost row is real-shaped.
+    "test_ghost_label_refuses_a_row_that_changed_9187_pg.py",
     # #7345. Seeds narrow `events` + `futures_markets` tables by raw INSERT in a
     # private schema; kick-offs are dated from the server's `now()` because the
     # verdict carries `commence_time < :now`.

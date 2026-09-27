@@ -285,3 +285,149 @@ class TestTheSweep:
         boards = asyncio.run(sweep.fetch_boards([TUE, WED], sweep.NHL_SPORT_KEY))
         assert asked == [("icehockey_nhl", "20260929"), ("icehockey_nhl", "20260930")]
         assert boards[TUE][0].espn_id == EID and boards[WED] is None
+
+
+class TestTheApplyReportsARowThatChangedUnderIt:
+    """CERT-3662 follow-up ``9187-CAS-ANCHOR-SCORE-AT-WRITE``: the write re-asserts
+    what the plan read (the SQL itself is proven in
+    ``tests/integration/test_ghost_label_refuses_a_row_that_changed_9187_pg.py``).
+    Here: what the pass SENDS, and how it reports a refused row."""
+
+    def _apply(self, monkeypatch, *, update_rowcount, tagged_after, espn_now=None):
+        sent = []
+
+        class _R:
+            def __init__(self, r):
+                self.id, self.home_team_name, self.away_team_name = (
+                    r.event_id, r.home_team_name, r.away_team_name)
+                self.commence_time, self.espn_id = r.commence_time, r.espn_id
+                self.home_score = self.away_score = None
+                self.status = "scheduled"
+                self.tags_text = "[]"
+
+        class _Res:
+            def __init__(self, rows=(), rowcount=0):
+                self._rows, self.rowcount = list(rows), rowcount
+
+            def all(self):
+                return self._rows
+
+        class _Id:
+            def __init__(self, i):
+                self.id = i
+
+        class _S:
+            async def execute(self, clause, params=None):
+                sql = " ".join(str(clause).split())
+                if "FROM events e" in sql:
+                    return _Res([_R(r) for r in _rows()])
+                if sql.startswith("UPDATE events"):
+                    sent.append((sql, dict(params)))
+                    return _Res(rowcount=update_rowcount)
+                if sql.startswith("SELECT id, espn_id, home_score, away_score, status"):
+                    # The row as it reads AFTER the write: ESPN may have anchored it.
+                    rows = [_R(r) for r in _rows() if r.event_id in params["ids"]]
+                    for r in rows:
+                        if r.id == GHOST and espn_now:
+                            r.espn_id = espn_now
+                    return _Res(rows)
+                if sql.startswith("SELECT id FROM events"):
+                    return _Res([_Id(i) for i in tagged_after])
+                return _Res(rowcount=1)  # backup DDL / INSERT
+
+            async def commit(self):
+                return None
+
+            async def rollback(self):
+                return None
+
+        @contextlib.asynccontextmanager
+        async def _sess():
+            yield _S()
+
+        async def _boards(_days, sport_key=sweep.SPORT_KEY):
+            return {TUE: TUE_BOARD, WED: WED_BOARD}
+
+        import app.tasks.base as base
+
+        monkeypatch.setattr(base, "get_task_session", _sess)
+        monkeypatch.setattr(sweep, "fetch_boards", _boards)
+        monkeypatch.setattr(sweep, "fold_is_live", lambda: True)
+        monkeypatch.setattr(sweep, "band_refusal_reason", lambda plan: None)
+        summary = asyncio.run(
+            sweep.run_mlb_reschedule_ghost_sweep(
+                apply=True, sport_key=sweep.NHL_SPORT_KEY
+            )
+        )
+        return summary, sent
+
+    def test_the_write_carries_the_state_the_plan_read(self, monkeypatch):
+        summary, sent = self._apply(monkeypatch, update_rowcount=1, tagged_after=[GHOST])
+        assert len(sent) == 1
+        sql, params = sent[0]
+        assert "NULLIF(espn_id, '') IS NULL" in sql
+        assert "home_score IS NOT DISTINCT FROM :home_score" in sql
+        assert "away_score IS NOT DISTINCT FROM :away_score" in sql
+        assert "status IS NOT DISTINCT FROM :status" in sql
+        assert params["eid"] == GHOST
+        assert (params["home_score"], params["away_score"], params["status"]) == (
+            None, None, "scheduled")
+        assert f"duplicate-of:{CANON}" in params["tag_array"]
+        assert summary["terminal"] == "complete" and summary["written"] == 1
+        assert summary["changed_under_us"] == []
+
+    def test_a_row_that_changed_is_reported_not_counted_a_failure(self, monkeypatch):
+        summary, sent = self._apply(
+            monkeypatch, update_rowcount=0, tagged_after=[], espn_now=EID
+        )
+        assert len(sent) == 1
+        assert summary["written"] == 0
+        assert summary["changed_under_us"] == [GHOST]
+        assert summary["still_untagged"] == []
+        assert summary["failed_ids"] == []
+        assert summary["terminal"] == "complete"
+        assert "changed between read and write" in summary["reason"]
+
+    def test_an_unchanged_row_the_write_missed_stays_a_problem(self, monkeypatch):
+        # rowcount 0 alone is ambiguous; the re-read shows nothing moved, so this
+        # is a write that did not land, not a refusal — it must stay loud.
+        summary, _sent = self._apply(monkeypatch, update_rowcount=0, tagged_after=[])
+        assert summary["changed_under_us"] == []
+        assert summary["still_untagged"] == [GHOST]
+        assert summary["terminal"] == "partial"
+
+    def test_a_row_labelled_by_another_writer_is_neither(self, monkeypatch):
+        summary, _sent = self._apply(monkeypatch, update_rowcount=0, tagged_after=[GHOST])
+        assert summary["changed_under_us"] == []
+        assert summary["still_untagged"] == []
+
+    def test_a_write_that_landed_nothing_it_claimed_is_still_a_problem(self, monkeypatch):
+        # rowcount says written, the read-back says no label: gotcha #53 stays loud.
+        summary, _sent = self._apply(monkeypatch, update_rowcount=1, tagged_after=[])
+        assert summary["still_untagged"] == [GHOST]
+        assert summary["terminal"] == "partial"
+
+
+class TestTheGuardRefusesWithoutAsking:
+    def test_a_ghost_it_never_read_is_refused_without_a_write(self):
+        from app.utils.mlb_reschedule_ghosts import GhostTag
+
+        class _S:
+            async def execute(self, *_a, **_k):
+                raise AssertionError("must not write")
+
+        tag = GhostTag(ghost_id=GHOST, canonical_id=CANON, reason="x")
+        out = asyncio.run(sweep.write_tags_if_unchanged(_S(), [tag], {}))
+        assert out == (0, [GHOST], [])
+
+    def test_a_ghost_read_anchored_is_refused_without_a_write(self):
+        from app.utils.mlb_reschedule_ghosts import GhostTag
+
+        class _S:
+            async def execute(self, *_a, **_k):
+                raise AssertionError("must not write")
+
+        tag = GhostTag(ghost_id=GHOST, canonical_id=CANON, reason="x")
+        observed = {GHOST: ("401891775", None, None, "scheduled")}
+        out = asyncio.run(sweep.write_tags_if_unchanged(_S(), [tag], observed))
+        assert out == (0, [GHOST], [])
