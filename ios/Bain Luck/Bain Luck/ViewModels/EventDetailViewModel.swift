@@ -96,6 +96,20 @@ final class EventDetailViewModel: ObservableObject {
     private var latestAcceptedSourceDates: [String: Date] = [:]
     private var latestAcceptedPriceDate: Date?
 
+    /// #9051 — the "this held blend cannot be ordered, read it again" requests.
+    /// A folded hero refuses every raw-row frame, and each refusal says the
+    /// blend moved, so the page re-reads detail and history — at most once per
+    /// `revisionRefetchWindow`, and never dropping the LAST request of a burst:
+    /// one arriving inside the window or during a read schedules exactly one
+    /// more (web's `createFoldedRefetchScheduler`, FOLDED_FRAME_REFETCH_MS).
+    static let revisionRefetchWindow: TimeInterval = 5
+    private var revisionRefetchTask: Task<Void, Never>?
+    private var revisionRefetchPending = false
+    private var lastRevisionRefetchAt: TimeInterval?
+    /// The held revision the chart last asked history to catch up to, so one
+    /// accepted fold asks once (`chartRevisionRefreshKey`).
+    private var requestedChartRevisionKey: String?
+
     private var stream: LiveStreamController?
     private var streamTickTask: Task<Void, Never>?
     /// Injected so tests can drive the lifecycle without a socket. `nil` means
@@ -166,58 +180,7 @@ final class EventDetailViewModel: ObservableObject {
 
         // Await primary fetch (controls loading state)
         do {
-            var fetched = try await client.fetchEvent(id: eventId)
-            if awaitingServedFinal {
-                if EventState.isFinished(fetched.status) {
-                    awaitingServedFinal = false
-                } else {
-                    // The detail payload is cached for up to 30s while live, so the
-                    // first load after a pushed final can still say `live`. The push
-                    // is the newer fact: keep it, take everything else, ask again.
-                    fetched.status = event?.status
-                }
-            }
-            // Delivery can pause while a socket recovers. Keep its last
-            // proven observation, but terminal refusal makes REST authoritative.
-            // Check controller state here: error -> refusal need not emit a
-            // second false delivery callback.
-            let streamRecoverable = stream?.state.stopped == false
-            fetched = LiveEventPriceReconciliation.preservingLiveStatus(
-                latestPriceFrame, current: event, polled: fetched,
-                streamRecoverable: streamRecoverable, now: Date(timeIntervalSince1970: now())
-            )
-            if LiveEventPriceReconciliation.shouldPreserve(
-                latestPriceFrame, over: fetched, streamRecoverable: streamRecoverable
-            ) {
-                fetched = LiveEventPriceReconciliation.applying(
-                    latestPriceFrame, to: fetched, streamRecoverable: streamRecoverable
-                )
-            } else {
-                // A newer REST reading, a refusal, or an unrankable response
-                // retires the override. A later cache hit must not resurrect a
-                // pushed price that REST has already superseded.
-                latestPriceFrame = nil
-                // Unknown or older REST may remain authoritative, but neither
-                // erases a clock already proved by a served/pushed reading.
-                // Otherwise its next stale replay could move the hero while
-                // the chart correctly rejects that older point.
-                if let servedAt = LiveEventPriceReconciliation.newestSourceDate(in: fetched),
-                   latestAcceptedPriceDate.map({ servedAt > $0 }) ?? true {
-                    latestAcceptedPriceDate = servedAt
-                }
-            }
-            // Retiring an override must not erase an observation already known:
-            // a later cache hit cannot make a replayed older source frame new.
-            for (key, date) in LiveEventSourceReconciliation.observationDates(in: fetched) {
-                if latestAcceptedSourceDates[key].map({ date > $0 }) ?? true {
-                    latestAcceptedSourceDates[key] = date
-                }
-            }
-            fetched = LiveEventSourceReconciliation.reconciling(
-                &latestSourceFrames, over: fetched, streamRecoverable: streamRecoverable
-            )
-            event = fetched
-            probabilityAtLastLoad = fetched.currentOdds?.homeProbability
+            adopt(try await client.fetchEvent(id: eventId))
             error = nil
         } catch {
             self.error = error.localizedDescription
@@ -232,6 +195,7 @@ final class EventDetailViewModel: ObservableObject {
         // (preserve existing data when a refresh returns nil or empty results)
         if let h = await historyTask.value {
             history = h
+            requestChartRevisionRefreshIfNeeded()
         }
         if let related = await relatedFuturesTask.value {
             if relatedFutures == nil || related.homeTeamFutures != nil || related.awayTeamFutures != nil || related.sharedFutures != nil || related.boxScore != nil {
@@ -259,6 +223,123 @@ final class EventDetailViewModel: ObservableObject {
         // Stamp the honest "last updated" moment — this load has completed. The
         // refresh countdown counts down from here to the next scheduled auto-refresh.
         lastLoadedAt = Date()
+    }
+
+    /// One detail response into the page: every price, source and status rule a
+    /// load applies, shared by `load()` and the #9051 re-read so the two can
+    /// never disagree about what a response may overwrite.
+    @MainActor
+    private func adopt(_ response: EventDetail) {
+        var fetched = response
+        if awaitingServedFinal {
+            if EventState.isFinished(fetched.status) {
+                awaitingServedFinal = false
+            } else {
+                // The detail payload is cached for up to 30s while live, so the
+                // first load after a pushed final can still say `live`. The push
+                // is the newer fact: keep it, take everything else, ask again.
+                fetched.status = event?.status
+            }
+        }
+        // #9051: a response older than the headline the page already holds
+        // (by fold revision) keeps that headline and takes everything else.
+        fetched = LiveEventPriceReconciliation.keepingNewerHeldHeadline(fetched, held: event)
+        // Delivery can pause while a socket recovers. Keep its last
+        // proven observation, but terminal refusal makes REST authoritative.
+        // Check controller state here: error -> refusal need not emit a
+        // second false delivery callback.
+        let streamRecoverable = stream?.state.stopped == false
+        fetched = LiveEventPriceReconciliation.preservingLiveStatus(
+            latestPriceFrame, current: event, polled: fetched,
+            streamRecoverable: streamRecoverable, now: Date(timeIntervalSince1970: now())
+        )
+        if LiveEventPriceReconciliation.shouldPreserve(
+            latestPriceFrame, over: fetched, streamRecoverable: streamRecoverable
+        ) {
+            fetched = LiveEventPriceReconciliation.applying(
+                latestPriceFrame, to: fetched, streamRecoverable: streamRecoverable
+            )
+        } else {
+            // A newer REST reading, a refusal, or an unrankable response
+            // retires the override. A later cache hit must not resurrect a
+            // pushed price that REST has already superseded.
+            latestPriceFrame = nil
+            // Unknown or older REST may remain authoritative, but neither
+            // erases a clock already proved by a served/pushed reading.
+            // Otherwise its next stale replay could move the hero while
+            // the chart correctly rejects that older point.
+            if let servedAt = LiveEventPriceReconciliation.newestSourceDate(in: fetched),
+               latestAcceptedPriceDate.map({ servedAt > $0 }) ?? true {
+                latestAcceptedPriceDate = servedAt
+            }
+        }
+        // Retiring an override must not erase an observation already known:
+        // a later cache hit cannot make a replayed older source frame new.
+        for (key, date) in LiveEventSourceReconciliation.observationDates(in: fetched) {
+            if latestAcceptedSourceDates[key].map({ date > $0 }) ?? true {
+                latestAcceptedSourceDates[key] = date
+            }
+        }
+        fetched = LiveEventSourceReconciliation.reconciling(
+            &latestSourceFrames, over: fetched, streamRecoverable: streamRecoverable
+        )
+        event = fetched
+        probabilityAtLastLoad = fetched.currentOdds?.homeProbability
+    }
+
+    // MARK: - #9051 fold-revision re-read
+
+    /// Ask for detail + history again because the held blend could not be
+    /// ordered against what just arrived. See `revisionRefetchWindow`.
+    @MainActor
+    private func requestRevisionRefetch() {
+        if revisionRefetchTask != nil {
+            revisionRefetchPending = true
+            return
+        }
+        let wait = lastRevisionRefetchAt.map { max(0, $0 + Self.revisionRefetchWindow - now()) } ?? 0
+        let pause = sleep
+        revisionRefetchTask = Task { @MainActor [weak self] in
+            if wait > 0 { await pause(wait) }
+            guard !Task.isCancelled, let self else { return }
+            self.revisionRefetchPending = false
+            self.lastRevisionRefetchAt = self.now()
+            await self.rereadPricePair()
+            guard !Task.isCancelled else { return }
+            self.revisionRefetchTask = nil
+            if self.revisionRefetchPending {
+                self.revisionRefetchPending = false
+                self.requestRevisionRefetch()
+            }
+        }
+    }
+
+    /// Detail and history only — the two payloads that carry the blend and its
+    /// revision. Not a `load()`: that is six requests and owns `lastLoadedAt`.
+    @MainActor
+    private func rereadPricePair() async {
+        let client = self.client
+        let id = eventId
+        let historyTask = Task { () -> EventHistoryResponse? in
+            try? await client.fetchEventHistory(id: id, hours: 168)
+        }
+        if let fetched = try? await client.fetchEvent(id: id) {
+            adopt(fetched)
+            configureAutoRefresh()
+        }
+        if let h = await historyTask.value {
+            history = h
+        }
+        requestChartRevisionRefreshIfNeeded()
+    }
+
+    @MainActor
+    private func requestChartRevisionRefreshIfNeeded() {
+        guard let key = LiveEventPriceReconciliation.chartRevisionRefreshKey(
+            event: event, history: history, liveBlend: liveBlend
+        ), key != requestedChartRevisionKey else { return }
+        requestedChartRevisionKey = key
+        requestRevisionRefetch()
     }
 
     @MainActor
@@ -324,6 +405,9 @@ final class EventDetailViewModel: ObservableObject {
     func stopRefresh() {
         refreshTask?.cancel()
         refreshTask = nil
+        revisionRefetchTask?.cancel()
+        revisionRefetchTask = nil
+        revisionRefetchPending = false
         // Cleared with the task it describes. Leaving it set would have
         // `currentRefreshPlan` name a cadence nothing is running at, and the
         // idempotence check above read a stale plan on the way back in.
@@ -419,12 +503,30 @@ final class EventDetailViewModel: ObservableObject {
         }
 
         let stamped = frame.updatedAt?.asDate
-        let priceIsNotNewer = stamped.map { stamp in
-            latestAcceptedPriceDate.map { stamp <= $0 } ?? false
-        } ?? false
+        // #9051: when the held blend carries its fold revision, commit order
+        // decides, not a clock. A frame from before a source removal still folds
+        // the removed source into its `p`, and a frame on a FOLDED hero is a
+        // raw-row value that hero never was. Only a strictly newer write to the
+        // one row the hero reads lands — even one whose clock is older. An
+        // unorderable frame still says the blend moved: read it again.
+        let foldOrder = FoldRevision.frameOrder(
+            held: LiveEventPriceReconciliation.pairedFoldRevision(in: current),
+            frame: frame.rev?.revision
+        )
+        let priceIsNotNewer: Bool
+        if let foldOrder {
+            priceIsNotNewer = foldOrder != .newer
+            if foldOrder == .incomparable { requestRevisionRefetch() }
+        } else {
+            priceIsNotNewer = stamped.map { stamp in
+                latestAcceptedPriceDate.map { stamp <= $0 } ?? false
+            } ?? false
+        }
         if !priceIsNotNewer, let p = frame.p, p.isFinite, (0...1).contains(p), var odds = current.currentOdds {
             latestPriceFrame = frame
-            if let stamped { latestAcceptedPriceDate = stamped }
+            if let stamped, latestAcceptedPriceDate.map({ stamped > $0 }) ?? true {
+                latestAcceptedPriceDate = stamped
+            }
             odds.homeProbability = p
             // Derived, exactly as the feed derives it, which is what makes the
             // pair an exact complement — and therefore what the duel contract
@@ -438,6 +540,7 @@ final class EventDetailViewModel: ObservableObject {
             odds.homeRenderedPercent = nil
             odds.awayRenderedPercent = nil
             current.currentOdds = odds
+            LiveEventPriceReconciliation.adoptFrameProvenance(frame, into: &current)
             // The hero now shows a pushed price — the only thing the page's
             // stream dot may claim (#8320).
             streamHasPushedPrice = true
