@@ -197,21 +197,22 @@ class TestTheShip:
         it to fail: demoting a rung that might still happen hides a real option,
         while keeping one costs a place in the ordering.
 
-        So the page shows the two live rungs first and then, because only two
-        are live, the best-priced expired one in slot three."""
+        So the card shows the two live rungs and nothing else: since #9109 the
+        expired ones are dropped, not parked in slot three."""
         headline, row = _headline(SPECIMENS["tim walz out as governor"], NOW)
         assert headline == "Before 2027"
         assert [o["name"] for o in row["top_outcomes"]] == [
             "Before 2027",  # live, 4.5
             "Before February",  # live — beyond the look-back, reads as next year
-            "Before Sep 1, 2026",  # expired, demoted, but nothing live is left
         ]
         assert _live("Before February", NOW)
         assert not _live("Before July", NOW)
 
 
 class TestItDemotesAndNeverDrops:
-    """The difference from `routes/feed.py`, which STRIPS the same rungs."""
+    """Name kept for history: since #9109 expired rungs ARE dropped from the
+    card's slice (as `/futures/{id}` drops them), but never from the arity and
+    never the whole board."""
 
     def test_the_outcome_count_is_unchanged(self):
         rungs = SPECIMENS["trump cbp sanctuary airport"]
