@@ -337,6 +337,12 @@ CLUB_NAME_ALIASES: dict[tuple[str, ...], tuple[str, ...]] = {
     # initialism rule reaches it (`_initials_match` makes `laf`/`la`). The whole
     # name keys it, so `Los Angeles FC II` and `LA Galaxy` stay out of reach.
     ("los", "angeles", "fc"): ("lafc",),
+    # #3391, the same page: `/search?q=lafc` 2026-09-27 drew LAFC's 09-10 win at
+    # the Red Bulls twice — ESPN's 15305754 `Red Bull New York` and the Odds
+    # API's 15298741 `New York Red Bulls`, both 0-2. The two spellings share
+    # every token but `bull`/`bulls`, so the subset tier misses them. Rare (four
+    # `Red Bull New York` rows this season against 23 of the other), but whole.
+    ("red", "bull", "new", "york"): ("new", "york", "red", "bulls"),
 }
 
 #: Tokens that mark a DIFFERENT SQUAD of the same club. Disagreement about any
