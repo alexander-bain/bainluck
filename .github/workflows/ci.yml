@@ -603,6 +603,21 @@ jobs:
             exit 1
           fi
 
+      - name: Search split-terms sink (real Postgres)
+        # #9044. `q=oregon state` served Ohio State vs Oregon Ducks 2nd (4 of 8
+        # cards were Ducks games): each word may land on either side. When the
+        # TEAMS card's leader owns every word, a game whose words split across
+        # both sides now sinks below the club's games; a matchup query and a
+        # one-word query are the controls. Reads the route's teams statement.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_search_split_terms_sink_pg_9044.py \
+            -v -rs 2>&1 | tee /tmp/splitterms.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/splitterms.txt; then
+            echo "::error::search split-terms contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: Search club-schedule date order (real Postgres)
         # #8942. `q=arsenal` opened with an EFL Cup tie a month away above the
         # next league game: the cup tie's `importance:playoff` tag outranked the
