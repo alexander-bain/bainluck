@@ -40,6 +40,10 @@ from app.utils.kalshi_occurrence_start import (
     kalshi_game_scale_commence,
 )
 from app.utils.futures_liveness import KALSHI_BOOK_SILENT_SQL
+from app.utils.polymarket_empty_book import (  # #9083, the pregame pin's book guard
+    POLYMARKET_BOOKMAKER,
+    is_empty_polymarket_book,
+)
 from app.utils.feed_market_quality import (  # #6676, the two-minute beat's third writer
     is_empty_book_midpoint,
     is_fabricated_midpoint,
@@ -96,6 +100,56 @@ logger = logging.getLogger(__name__)
 # in the final window before (or after) commence so it reflects the settled
 # pregame consensus rather than a stale hours-out price.
 _PREGAME_MARK_LEAD_MINUTES = 15
+
+
+def _pregame_pin_outcome_probs(
+    market_source, outcomes, fresh_books=None
+) -> tuple[dict, int]:
+    """The per-outcome numbers a pregame pin may hold, and how many legs it refused.
+
+    #9083: a Polymarket leg whose current book is empty (no bid above a tick, no
+    ask below a dollar less a tick) is not a price, so it is left out of the pin.
+    Its number there is a 1c/99c dust trade, and it is the same book that printed
+    "Turner's 1+ hits + runs + rbis was marked 1% — and it hit" when Phase 0c
+    promoted it into the opening. The pin outranks the opening in
+    `_resolve_pregame_mark` and stores no book, so neither the route nor the rail
+    can refuse it after it is written. The writer is the only place to refuse it.
+
+    A refused leg is left out, not zeroed. The reader then falls back to that
+    leg's opening, which Phase 0c now guards with the same rule. When every leg
+    is refused, the pin is not written this poll, and a later pregame poll can
+    still pin the market once its book fills.
+
+    WHICH BOOK (CERT-3639). ``fresh_books`` maps outcome id to the (bid, ask) this
+    poll's venue read reported, with an omitted side as None. It wins over the
+    stored ``current_yes_bid``/``current_yes_ask``, because the poller keeps the
+    last reported side when a read omits one: a leg whose book just went from a
+    0.61 bid to no bid / 1.00 ask / 0.01 trade still carries 0.61 on the row. A
+    leg this poll did not read is judged on its stored columns, the only
+    evidence there is.
+
+    Scope follows the rule's own: Polymarket only (CERT-2508's reason, the
+    predicate is venue policy), and a leg with no recorded book is not refused.
+    """
+    refuse_empty = market_source == POLYMARKET_BOOKMAKER
+    fresh_books = fresh_books or {}
+    probs: dict = {}
+    refused = 0
+    for o in outcomes:
+        if o.current_probability is None:
+            continue
+        if refuse_empty:
+            if o.id in fresh_books:
+                bid, ask = fresh_books[o.id]
+            else:
+                bid = None if o.current_yes_bid is None else float(o.current_yes_bid)
+                ask = None if o.current_yes_ask is None else float(o.current_yes_ask)
+            if is_empty_polymarket_book(bid, ask):
+                refused += 1
+                continue
+        probs[str(o.id)] = round(float(o.current_probability), 6)
+    return probs, refused
+
 
 # live/035: the cadence floor this 120s poll enforces on a LIVE event's chart.
 # The WS fast lane (`live_blend_refresh`, 45s worst case) is the primary
@@ -9436,6 +9490,8 @@ async def _poll_live_prediction_market_prices():
         # is healthy; high during goals is the refusal doing its job.
         "stale_readings_refused": 0,
         "pregame_marks_written": 0,
+        # #9083: Polymarket legs left out of a pin because their book was empty.
+        "pregame_mark_empty_book_legs_refused": 0,
         # #5682. `commits` counts the beat's DURABLE boundaries — the number of
         # times work stopped being losable. `deadlocks` and `session_recoveries`
         # count what the single-transaction shape used to hide inside one
@@ -9446,6 +9502,13 @@ async def _poll_live_prediction_market_prices():
         "session_recoveries": 0,
         "errors": [],
     }
+
+    # #9083 (CERT-3639): the Polymarket book THIS poll read, per outcome id. The
+    # outcome's stored bid/ask keep the last reported value when a read omits a
+    # side, so a book that has just emptied can still carry a stale 0.61 bid on
+    # the row. The pregame pin judges emptiness from this dict when the leg was
+    # read this poll, and from the stored columns only when it was not.
+    polymarket_fresh_books: dict[int, tuple[Optional[float], Optional[float]]] = {}
 
     now = datetime.now(timezone.utc)
 
@@ -10118,6 +10181,17 @@ async def _poll_live_prediction_market_prices():
                             if not outcome:
                                 continue
 
+                            # #9083 (CERT-3639): record the book as this read
+                            # reports it, BEFORE any refusal below, so an omitted
+                            # side reads as absent here and not as the stale value
+                            # still on the row.
+                            _fresh_bid = pm.get("bestBid")
+                            _fresh_ask = pm.get("bestAsk")
+                            polymarket_fresh_books[outcome.id] = (
+                                None if _fresh_bid is None else float(_fresh_bid),
+                                None if _fresh_ask is None else float(_fresh_ask),
+                            )
+
                             # Determine the correct price for this outcome.
                             #
                             # Polymarket outcomePrices is parallel to outcomes:
@@ -10619,10 +10693,13 @@ async def _poll_live_prediction_market_prices():
             existing_meta = market.market_metadata or {}
             if isinstance(existing_meta, dict) and "pregame_mark" in existing_meta:
                 continue
-            outcome_probs = {}
-            for o in pop.outcomes_by_market.get(market_id, []):
-                if o.current_probability is not None:
-                    outcome_probs[str(o.id)] = round(float(o.current_probability), 6)
+            # #9083: a Polymarket leg on an empty book is left out of the pin.
+            outcome_probs, _empty_legs = _pregame_pin_outcome_probs(
+                market.source,
+                pop.outcomes_by_market.get(market_id, []),
+                polymarket_fresh_books,
+            )
+            stats["pregame_mark_empty_book_legs_refused"] += _empty_legs
             if not outcome_probs:
                 continue
             # CERT-2719: `now` is the TASK-ENTRY clock, read once before the venue
