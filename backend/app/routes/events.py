@@ -84,6 +84,7 @@ from app.utils.prematch_reading import (
     resolve_prematch_reading,
 )
 from app.utils.period_window_grade import grade_period_window
+from app.utils.served_period_scores import served_period_scores
 from app.utils.final_score_margin import margin_verdict_from_final_score
 from app.utils.resolution_authority import authority_tier
 from app.utils.prop_window import prop_window_closed, prop_window_span
@@ -16875,6 +16876,14 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
         response["box_score_data"] = {
             "players": event.box_score_data.get("players"),
         }
+        # #9067: the line score rides beside `players` under its stored names,
+        # and only when it adds up to the score this response serves — a box
+        # frozen before the last points would print "7 · 3 · 3" beside 19.
+        _periods = served_period_scores(
+            event.box_score_data, response.get("home_score"), response.get("away_score")
+        )
+        if _periods is not None:
+            response["box_score_data"].update(_periods)
 
     # Q050: cache under the id the caller ASKED FOR as well as the one we
     # served. `event_id` is rebound above when a duplicate resolves, so caching
