@@ -1595,12 +1595,28 @@ async def update_event_fields_from_espn(
         _live_values["period"] = None
 
     # Update scores + capture ScoreSnapshot for score differential chart
+    #
+    # #8960: a stoppage board's "0"-"0" is filler, not a score. ESPN publishes
+    # `0` for both sides of a postponed fixture, and copied onto the row it
+    # read "No result reported · last score 0-0" on a match nobody played. A
+    # NON-ZERO score on a stopped board (abandoned mid-match) is real and
+    # still lands — the same scores-only use of `play_evidence` as above, for
+    # the same reason: ESPN's filler period/clock cannot testify here. The
+    # period is left alone on purpose; "Postponed" there is what the pill reads.
+    _stoppage_scores_are_filler = getattr(
+        ee, "stopped_without_result", False
+    ) and not play_evidence(ee.home_score, ee.away_score)
+    if _stoppage_scores_are_filler:
+        stats["stoppage_filler_scores_refused"] = (
+            stats.get("stoppage_filler_scores_refused", 0) + 1
+        )
     score_changed = False
     if (
         ee.home_score is not None
         and event.home_score != ee.home_score
         and not _live_state_is_stale
         and not _withhold_live_state
+        and not _stoppage_scores_are_filler
     ):
         _live_values["home_score"] = ee.home_score
         score_changed = True
@@ -1609,6 +1625,7 @@ async def update_event_fields_from_espn(
         and event.away_score != ee.away_score
         and not _live_state_is_stale
         and not _withhold_live_state
+        and not _stoppage_scores_are_filler
     ):
         _live_values["away_score"] = ee.away_score
         score_changed = True
@@ -1723,7 +1740,23 @@ async def update_event_fields_from_espn(
             event.status = "completed"
             changed = True
             stats["espn_completed"] = stats.get("espn_completed", 0) + 1
-    elif getattr(ee, "stopped_without_result", False) and event.status == "live":
+    elif getattr(ee, "stopped_without_result", False) and (
+        event.status == "live"
+        or (
+            # #8960: a postponement ESPN reported while the row was still
+            # `scheduled` used to be dropped here, and at kickoff the clock
+            # promotion flipped the row LIVE for a match nobody was playing
+            # (15314000, RBNY v St. Louis, 26 Sep). From kickoff on it lands
+            # `suspended` directly. BEFORE kickoff it is still left alone, which
+            # is #3397's rule (`test_a_scheduled_row_is_not_demoted`): nothing
+            # returns a `suspended` row to `scheduled`, so a fixture ESPN
+            # re-dates before its kickoff has to keep the status the upcoming
+            # rail reads.
+            event.status == "scheduled"
+            and event.commence_time is not None
+            and event.commence_time <= datetime.now(timezone.utc)
+        )
+    ):
         # #3397: the branch the settle arm above leaves open. ESPN reports
         # `state="post"` with `completed` not True — postponed, abandoned,
         # canceled — which is the authority saying BOTH "this is not being
@@ -1757,6 +1790,7 @@ async def update_event_fields_from_espn(
         # selects only `status == "scheduled"`, a suspended row is never
         # clock-promoted back into the rail behind ESPN's back.
         from app.utils.event_completion import EVENT_SUSPENDED
+        _stopped_from = event.status
         await session.execute(
             _sql_update(Event)
             .where(Event.id == event.id)
@@ -1766,9 +1800,9 @@ async def update_event_fields_from_espn(
         changed = True
         stats["espn_stopped_without_result"] = stats.get("espn_stopped_without_result", 0) + 1
         logger.info(
-            "ESPN stoppage: event %d (%s vs %s) was live but ESPN reports "
+            "ESPN stoppage: event %d (%s vs %s) was %s but ESPN reports "
             "state=post/completed=false (%s) — demoted to %s, not settled (#3397)",
-            event.id, event.home_team_name, event.away_team_name,
+            event.id, event.home_team_name, event.away_team_name, _stopped_from,
             ee.status_detail, EVENT_SUSPENDED,
         )
     elif ee.status == "in" and play_resumes(event.status):
