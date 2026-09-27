@@ -1358,6 +1358,34 @@ def _build_club_synonym_pairs() -> frozenset[tuple[str, str]]:
 _CLUB_SYNONYM_PAIRS: frozenset[tuple[str, str]] = _build_club_synonym_pairs()
 
 
+#: #8980 — a venue names a school by its STATE QUALIFIER where ESPN names it by
+#: its mascot. Kalshi writes "Miami (FL) vs Clemson"; the event row is "Miami
+#: Hurricanes". No structural rule may bridge that: dropping the qualifier makes
+#: "Miami (OH)" reach the Hurricanes just as well, and the RedHawks are a
+#: different school. ESPN itself keeps the qualifier on the RedHawks ("Miami
+#: (OH) RedHawks") and drops it on the Hurricanes, so only the Florida form ever
+#: needs bridging. Exact, whole-name, bidirectional — the same shape as
+#: ``_CLUB_SYNONYM_PAIRS`` — and kept out of ``AUTHORITY_SYNONYMS`` on purpose:
+#: that table is ESPN's naming and feeds the rail; this is a venue's.
+_STATE_QUALIFIED_SCHOOL_NAMES: dict[str, str] = {
+    "Miami (FL)": "Miami Hurricanes",
+}
+
+
+def _build_state_qualified_pairs() -> frozenset[tuple[str, str]]:
+    pairs: set[tuple[str, str]] = set()
+    for venue, espn in _STATE_QUALIFIED_SCHOOL_NAMES.items():
+        a = _normalize_for_matching(venue)
+        b = _normalize_for_matching(espn)
+        if a and b and a != b:
+            pairs.add((a, b))
+            pairs.add((b, a))
+    return frozenset(pairs)
+
+
+_STATE_QUALIFIED_PAIRS: frozenset[tuple[str, str]] = _build_state_qualified_pairs()
+
+
 def _fuzzy_team_match(market_team: str, event_team: str) -> bool:
     """
     Check if a team name from a prediction market matches an event team name.
@@ -1390,7 +1418,7 @@ def _fuzzy_team_match(market_team: str, event_team: str) -> bool:
     # Texas State. `authority_name_forms` makes exactly this argument at length
     # and answers it with an exact lookup; this consults THAT table rather than
     # starting a second one, so a club is named in one place and swept once.
-    if (mt, et) in _CLUB_SYNONYM_PAIRS:
+    if (mt, et) in _CLUB_SYNONYM_PAIRS or (mt, et) in _STATE_QUALIFIED_PAIRS:
         return True
 
     # One contains the other (for short-form vs full-form)
