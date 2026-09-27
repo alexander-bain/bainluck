@@ -143,6 +143,7 @@ import {
   type BlendEdgeObservation,
 } from "@/lib/blendObservationClock";
 import { createFoldedRefetchScheduler } from "@/lib/foldedRefetchScheduler";
+import { chartRevisionRefreshKey } from "@/lib/chartRevisionRefresh";
 import {
   SPORT_KEY_TO_LEAGUE_PATH,
   hasAnyWinProbData,
@@ -751,6 +752,25 @@ export default function EventPage({ params }: EventPageProps) {
     },
     [servedHistory, event, isLive, chartPoints],
   );
+
+  // A newer membership revision may carry an older surviving quote. Keep the
+  // real chart observations and ask history for its current-state endpoint;
+  // never give that quote a made-up timestamp or refetch for ordinary pushes.
+  const refreshHistoryRef = useRef(refreshHistory);
+  refreshHistoryRef.current = refreshHistory;
+  const [foldedHistoryRefetch] = useState(() => createFoldedRefetchScheduler(
+    () => { void refreshHistoryRef.current(); }, FOLDED_FRAME_REFETCH_MS,
+  ));
+  useEffect(() => () => foldedHistoryRefetch.cancel(), [foldedHistoryRefetch]);
+  const requestedChartRevisionRef = useRef<string | null>(null);
+  useEffect(() => {
+    const revision = chartRevisionRefreshKey(event, servedHistory, historyData);
+    if (revision === null) return;
+    const key = `${eventId}:${fullHistoryRequested}:${revision}`;
+    if (requestedChartRevisionRef.current === key) return;
+    requestedChartRevisionRef.current = key;
+    foldedHistoryRefetch.request();
+  }, [event, servedHistory, historyData, eventId, fullHistoryRequested, foldedHistoryRefetch]);
 
   // #8749 / #837: the other direction. A history response whose pinned edge
   // was OBSERVED after the headline's blend (PR #8758's clocks — never the
