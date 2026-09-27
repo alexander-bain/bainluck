@@ -16,7 +16,7 @@ from typing import Optional, Literal
 import math
 import re
 
-from app.utils.draw_priced_winner import sport_prices_a_draw
+from app.utils.draw_priced_winner import printable_away, sport_prices_a_draw
 from app.utils.league_classification import is_power_4_team
 from app.utils.lifecycle import live_start_satisfied
 from app.utils.odds_math import favorite_from_pair
@@ -798,6 +798,33 @@ def _favourite_flipped_on_a_two_way_board(
     return now != opened
 
 
+
+def _closeness_home_share(
+    home_prob: Optional[float],
+    away_prob: Optional[float],
+    sport: Optional[str],
+) -> Optional[float]:
+    """The home leg's share of the two team legs — what the closeness bands read (#9161).
+
+    Two-way: the home leg itself, so every two-way band is exactly as it was.
+
+    Draw-priced: the home leg sits under 0.5 whoever is favoured (#7055), so
+    ``home in [0.45, 0.55]`` said nothing about closeness — live Avai @ Criciuma
+    (2026-09-27 14:56Z) read "Virtually even" at home 0.46 with Criciuma opened
+    0.60 / Avai 0.14. Here the draw is taken out: ``home / (home + away)``, so
+    0.38 / 0.34 with a 0.28 draw is genuinely even and 0.46 / 0.25 is not. With
+    no independent away leg — absent, or just ``1 − home`` (``printable_away``)
+    — there is no second number to compare, so there is no closeness claim.
+    """
+    if home_prob is None:
+        return None
+    if not sport_prices_a_draw(sport):
+        return home_prob
+    away = printable_away(away_prob, home_prob, sport)
+    if away is None or home_prob + away <= 0:
+        return None
+    return home_prob / (home_prob + away)
+
 @dataclass
 class HighlightResult:
     """Complete highlight analysis for an event."""
@@ -1176,9 +1203,12 @@ def compute_highlight(
     # === Probability-based flags ===
     is_pre_game = not flags.is_live and status not in ("completed", "closed")
 
+    closeness_prob = _closeness_home_share(current_home_prob, current_away_prob, sport_key)
+    opening_closeness_prob = _closeness_home_share(opening_home_prob, opening_away_prob, sport_key)
+
     if current_home_prob is not None:
-        # Closeness
-        if CLOSE_MATCHUP_MIN <= current_home_prob <= CLOSE_MATCHUP_MAX:
+        # Closeness — read on the home share of the two team legs (#9161)
+        if closeness_prob is not None and CLOSE_MATCHUP_MIN <= closeness_prob <= CLOSE_MATCHUP_MAX:
             flags.is_close_matchup = True
 
             # For pre-game events, closeness from a single snapshot could be noise
@@ -1186,12 +1216,12 @@ def compute_highlight(
             # evidence of a trend: the line moved toward close from opening, or
             # the game is starting soon (making closeness action-relevant).
             opening_was_close = (
-                opening_home_prob is not None
-                and CLOSE_MATCHUP_MIN <= opening_home_prob <= CLOSE_MATCHUP_MAX
+                opening_closeness_prob is not None
+                and CLOSE_MATCHUP_MIN <= opening_closeness_prob <= CLOSE_MATCHUP_MAX
             )
             has_movement = (
-                opening_home_prob is not None
-                and abs(current_home_prob - opening_home_prob) >= MIN_PREGAME_MOVEMENT
+                opening_closeness_prob is not None
+                and abs(closeness_prob - opening_closeness_prob) >= MIN_PREGAME_MOVEMENT
             )
             # When opening odds exactly match current odds, the event was
             # just discovered and we have no trend data yet.  Give benefit
@@ -1200,15 +1230,15 @@ def compute_highlight(
             # after duplicate cleanup) get no close_matchup bonus and
             # fall below the feed threshold even for marquee matchups.
             no_trend_data = (
-                opening_home_prob is not None
-                and abs(current_home_prob - opening_home_prob) < 0.005
+                opening_closeness_prob is not None
+                and abs(closeness_prob - opening_closeness_prob) < 0.005
             )
             closeness_is_interesting = (
                 not is_pre_game  # Live/finished: closeness always matters
                 or flags.is_starting_soon  # Starting soon: closeness is action-relevant
                 or not opening_was_close  # Line tightened from lopsided to close
                 or has_movement  # Significant movement even if both close
-                or opening_home_prob is None  # No opening data, give benefit of doubt
+                or opening_closeness_prob is None  # No opening data, give benefit of doubt
                 or no_trend_data  # Just discovered — no movement data yet
             )
 
@@ -1216,7 +1246,7 @@ def compute_highlight(
                 result.score += WEIGHTS["close_matchup"]
                 result.reasons.append("close_matchup")
 
-            if VERY_CLOSE_MIN <= current_home_prob <= VERY_CLOSE_MAX:
+            if VERY_CLOSE_MIN <= closeness_prob <= VERY_CLOSE_MAX:
                 flags.is_very_close = True
                 if closeness_is_interesting:
                     result.score += WEIGHTS["very_close"]

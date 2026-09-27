@@ -305,8 +305,14 @@ class TestTheRankingHalf:
         scoreline, so the gap is exactly the weight and nothing else."""
         # Both at Villarreal's 0.6535: at the default 0.598 the away winner
         # sits at 40.2%, which #2753 refuses on size before the draw matters.
-        drawn = _finished(home_score=1, away_score=1, opening_home_prob=0.6535)
-        decided = _finished(home_score=1, away_score=2, opening_home_prob=0.6535)
+        # La Liga (Villarreal's own league), not the tier-4 default: since #9161
+        # a draw board with no real away leg earns no closeness points, and a
+        # tier-4 drawn row then clamps at 0, which would shrink the gap.
+        kw = dict(opening_home_prob=0.6535, sport_key="soccer_spain_la_liga")
+        drawn = _finished(home_score=1, away_score=1, **kw)
+        decided = _finished(home_score=1, away_score=2, **kw)
+        assert drawn.score > 0  # the gap below is unclamped
+        assert "close_matchup" not in drawn.reasons  # #9161: 0.425 vs 1-home is not a reading
         assert decided.score - drawn.score == WEIGHTS["recent_finish_upset"]
 
     def test_the_drawn_final_no_longer_escapes_the_discover_demotion(self):
