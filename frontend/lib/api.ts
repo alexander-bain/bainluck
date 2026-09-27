@@ -548,6 +548,10 @@ export interface TypeaheadSuggestion {
   status?: string;
   sport?: string;
   commence_time?: string;
+  // #9226: a finished event row's result, present only when the served status
+  // is completed/closed and both sides were reported (live rows never carry it).
+  home_score?: number;
+  away_score?: number;
   // Event concept fields (#999 L2-65: tournament pages)
   event_key?: string;
   // Hub fields (L2-88: competition-hub landing shortcut)
