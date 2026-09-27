@@ -433,6 +433,26 @@ struct ScoreDifferentialChartView: View {
         actualDiffs.lazy.compactMap { $0 }.prefix(2).count == 1
     }
 
+    /// #9175 — a score reading is a CHANGE LOG entry: the new score holds from the
+    /// reading that saw it. `.stepCenter` put every change at the midpoint between
+    /// two readings, so on `/events/15196509` (NED 1–0 SRB; `score_history`
+    /// 16:00:59Z 0-0, 16:30:37Z 0-1) the goal was drawn at 16:15Z, fifteen
+    /// minutes before it happened. `.stepEnd` holds each value until the next
+    /// reading and steps there — the web twin's `stepAfter`.
+    static let actualInterpolation: InterpolationMethod = .stepEnd
+
+    /// #9175 — the actual readings, oldest first, with the last one carried to
+    /// the chart's right edge. The score does not stop being true when it stops
+    /// changing: without this the NED 1–0 line ended at the goal while the game
+    /// ran on at 38'. FORWARD ONLY — a minute before the first reading has no
+    /// score to state. Same rule as the web's #7211.
+    static func actualSteps(_ readings: [(date: Date, diff: Double)],
+                            carriedTo edge: Date) -> [(date: Date, diff: Double)] {
+        let sorted = readings.sorted { $0.date < $1.date }
+        guard let last = sorted.last, edge > last.date else { return sorted }
+        return sorted + [(date: edge, diff: last.diff)]
+    }
+
     /// Merge projected and actual into unified points. Extracted so the
     /// unit-gated early return above shares one exit with the normal path.
     private func mergeDiffPoints(
@@ -525,15 +545,18 @@ struct ScoreDifferentialChartView: View {
                 .foregroundStyle(Color(hex: "#0d9488"))
                 .symbolSize(50)
             } else {
-                ForEach(dataPoints.filter { $0.actualDiff != nil }) { point in
+                let steps = Self.actualSteps(
+                    dataPoints.compactMap { p in p.actualDiff.map { (date: p.date, diff: $0) } },
+                    carriedTo: domain.upperBound)
+                ForEach(Array(steps.enumerated()), id: \.offset) { _, step in
                     LineMark(
-                        x: .value("Time", point.date),
-                        y: .value("Diff", point.actualDiff!),
+                        x: .value("Time", step.date),
+                        y: .value("Diff", step.diff),
                         series: .value("Series", "actual")
                     )
                     .foregroundStyle(Color(hex: "#0d9488"))
                     .lineStyle(StrokeStyle(lineWidth: 2.5))
-                    .interpolationMethod(.stepCenter)
+                    .interpolationMethod(Self.actualInterpolation)
                 }
             }
         }
