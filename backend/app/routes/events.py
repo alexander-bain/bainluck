@@ -7983,10 +7983,26 @@ async def search_events(
     # #9211: today's final right behind the next game (see the key). A club
     # query is exactly the one #8942 strips the tag tier from, so an empty
     # `tag_boost_keys` IS the TEAMS-card test, already paid for.
+    #
+    # The "leads the upcoming tier" window is ordered by EVERY key the page
+    # sorts that tier by, the ones ABOVE the status tier included. On
+    # production 2026-09-27 23:20Z `chiefs` printed today's final ABOVE the
+    # Raiders game: *Exeter Chiefs at Bath* (no Team row, so #8738's key is
+    # off) outranked it on text, held the window's first place, and was printed
+    # last because #8697's teamless key sinks it. The club's next game then
+    # read as "the rest".
     _todays_final_key = _todays_final_order_key(
         not tag_boost_keys,
         status_order,
         (
+            *(
+                k for k in (
+                    _intent_day_order_key(_intent, now),  # `_day_boost`, below
+                    _teamless_sport_key,
+                    _split_terms_key,
+                )
+                if k is not None
+            ),
             *( (_team_card_lead_key,) if _team_card_lead_key is not None else () ),
             search_rank.desc(),
             Event.commence_time.asc(),
