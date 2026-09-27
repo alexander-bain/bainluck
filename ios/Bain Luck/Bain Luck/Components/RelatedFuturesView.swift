@@ -1521,8 +1521,11 @@ private struct NoveltyCardView: View {
         noveltyGradients[index % noveltyGradients.count]
     }
 
+    /// The lead leg. `noveltyCards` never builds a card without one.
+    private var future: RelatedFuture { card.legs[0] }
+
     private var namesLegs: Bool {
-        card.legs.first.map { noveltyLegName($0, in: card) != nil } ?? false
+        noveltyLegName(future, in: card) != nil
     }
 
     var body: some View {
@@ -1545,10 +1548,12 @@ private struct NoveltyCardView: View {
                                     .lineLimit(2)
                                     .fixedSize(horizontal: false, vertical: true)
                                 Spacer(minLength: 4)
-                                Text(formatProbabilityOrDash(leg.probability))
-                                    .font(.subheadline)
-                                    .fontWeight(.bold)
-                                    .monospacedDigit()
+                                if let prob = leg.probability {
+                                    Text(formatProbability(prob))
+                                        .font(.subheadline)
+                                        .fontWeight(.bold)
+                                        .monospacedDigit()
+                                }
                             }
                         }
                     }
@@ -1560,19 +1565,19 @@ private struct NoveltyCardView: View {
                                 .foregroundStyle(.tertiary)
                         }
                         Spacer()
-                        SourceBadge(source: card.legs.first?.source)
+                        SourceBadge(source: future.source)
                     }
                 } else {
                     Spacer()
                     HStack {
-                        if let prob = card.legs.first?.probability {
+                        if let prob = future.probability {
                             Text(formatProbability(prob))
                                 .font(.title3)
                                 .fontWeight(.bold)
                                 .monospacedDigit()
                         }
                         Spacer()
-                        SourceBadge(source: card.legs.first?.source)
+                        SourceBadge(source: future.source)
                     }
                 }
             }
