@@ -1511,6 +1511,18 @@ const SPORT_SCORING: { match: string[]; vocab: SportScoringVocab }[] = [
     // football note: the rare thing is named by someone who measured it.
     vocab: { marginTitle: "Margin map", totalTitle: "Points map", unit: "points", unitSingular: "point", marginRange: 18, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "", winnerMarketPricesADraw: false, canEndInATie: true, gameHasAClock: true, firstHalfLabel: "1st half", firstHalfEndsAfterInning: null, sportsbookSpreadIsAMargin: true },
   },
+  {
+    match: ["mma", "boxing"],
+    // #9006: A FIGHT HAS NO POINTS SCORE. Every field is `UNSCORED_IN_POINTS`'s
+    // verbatim except `sportsbookSpreadIsAMargin`. The backend solves
+    // `projected_*_score` from a spread point and a total, and on a fight the
+    // total is a ROUNDS line and the spread is no margin of anything:
+    // `/api/events/search?q=ufc` row 15314292 (Rosas Jr v Barcelos) served
+    // spread −7.5, total 3.7 → 5.8 / −1.8, and the card printed "Proj 6--2".
+    // Declaring the fact here withholds it wherever the sportsbooks'
+    // projection is read (card, table, Score Differential gate), in one place.
+    vocab: { marginTitle: "Margin map", totalTitle: "Scoring map", unit: "", unitSingular: "", marginRange: 6, hasDerivedSpread: false, scoreboardCountsTheUnit: true, scoreboardUnit: "", winnerMarketPricesADraw: false, canEndInATie: true, gameHasAClock: true, firstHalfLabel: "1st half", firstHalfEndsAfterInning: null, sportsbookSpreadIsAMargin: false },
+  },
 ];
 
 /**
