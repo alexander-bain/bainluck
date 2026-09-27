@@ -203,6 +203,13 @@ def expand_search_terms(terms: list[str]) -> list[tuple[str, str | None]]:
             # ESPN row and printed "No price yet" beside a priced game.
             or _CLUB_NAME_ALIASES.get(lower)
             or DIACRITIC_SEARCH_FOLDS.get(lower)
+            # #8818: `czechia` also asks for `czech republic`, the #3391 shape
+            # for a country. Polymarket's `Czechia v England` and the Nations
+            # League row `Czech Republic v England` are one game; "czechia"
+            # retrieved only the copy (letter badges, venue price only) and the
+            # serve fold never saw the pair. LAST, so `turkiye` keeps its
+            # diacritic fold to `türkiye`.
+            or nation_spelling(term)
         )
         result.append((term, expansion))
     return result
