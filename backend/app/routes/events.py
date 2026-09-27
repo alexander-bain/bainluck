@@ -17973,6 +17973,16 @@ async def _settled_hero_names_the_result(db: AsyncSession, event, now) -> bool:
     needs a flatness read this route does not make, and leaving it out can only
     keep a card, never remove one.
     """
+    return bool(await _settled_hero_result(db, event, now))
+
+
+async def _settled_hero_result(db: AsyncSession, event, now) -> str | None:
+    """The sentence the settled hero prints (``"Yazmin Jauregui wins"``), or None.
+
+    One question for every reader outside the detail route, so the rails, the
+    game-markets fold (#8874) and the chart's terminal point (#8951) cannot
+    disagree with each other about whether a page says "Settled".
+    """
     served = dict(
         status=served_event_status(event.status, event.commence_time, now),
         started_without_result=started_without_result(
@@ -17982,13 +17992,37 @@ async def _settled_hero_names_the_result(db: AsyncSession, event, now) -> bool:
         away_score=event.away_score,
     )
     if not venue_settlement_is_askable(served, live_claim_is_unbacked=False):
-        return False
+        return None
     settlement = await _venue_settlement(db, event)
-    return bool(
-        settlement
-        and settlement.get("venue_settled")
-        and settlement.get("venue_settled_result")
-    )
+    if not (settlement and settlement.get("venue_settled")):
+        return None
+    return settlement.get("venue_settled_result") or None
+
+
+def venue_settled_home_won(result: str | None, home_team_name, away_team_name) -> bool | None:
+    """Which side the settled hero's sentence names — True home, False away (#8951).
+
+    Only the bare winner sentence, in OUR spelling, is read: that is the exact
+    string :func:`~app.utils.venue_settlement.choose_settled_winner` builds from
+    ``home_team_name`` / ``away_team_name``, so equality is the whole test and
+    nothing is parsed. A score sentence (the venue's own outcome name, e.g.
+    ``Sevilla FC wins 1-0``), a draw, or anything else answers None — a chart
+    that cannot orient the result keeps the line it had, which is what it did
+    before this existed.
+    """
+    from app.utils.venue_settlement import WINNER_SENTENCE
+
+    if not result:
+        return None
+    home = (home_team_name or "").strip()
+    away = (away_team_name or "").strip()
+    if not home or not away or home == away:
+        return None
+    if result == WINNER_SENTENCE.format(participant=home):
+        return True
+    if result == WINNER_SENTENCE.format(participant=away):
+        return False
+    return None
 
 
 def _withhold_partial_field_markets(other_rows: list, markets: list) -> list:
@@ -27837,86 +27871,103 @@ async def get_event_odds_history(
     # the actual outcome. For completed games with scores, inject a
     # resolved 100%/0% (or 0%/100%) point so the chart converges to
     # the correct winner.
+    #
+    # #8951: a SCORELESS event whose venue graded the winner gets the same point.
+    # A UFC bout has no score, so the arm above never fired there, and the page
+    # read "Settled · Yazmin Jauregui wins" over a chart ending on Demopoulos 14%
+    # — the pre-fight sportsbook price, which outweighs Kalshi's 0.01 in a
+    # two-source median for as long as it stays in the pool. The side comes from
+    # the hero's own sentence (`_settled_hero_result`), so the chart can only end
+    # on a result the page is already printing; a draw, a score sentence or an
+    # unorientable name keeps the line unchanged.
+    home_won = None
     if is_finished and event.home_score is not None and event.away_score is not None:
         if event.home_score != event.away_score:  # Skip ties
             home_won = event.home_score > event.away_score
-            resolved_home_prob = 1.0 if home_won else 0.0
-            resolved_away_prob = 0.0 if home_won else 1.0
+    elif aggregate_line or history or any(win_prob_history.values()):
+        home_won = venue_settled_home_won(
+            await _settled_hero_result(db, event, now),
+            event.home_team_name,
+            event.away_team_name,
+        )
+    if home_won is not None:
+        resolved_home_prob = 1.0 if home_won else 0.0
+        resolved_away_prob = 0.0 if home_won else 1.0
 
-            # Determine terminal timestamp: completed_at if available,
-            # otherwise last data point + 1 minute.
-            terminal_ts = None
-            if event.completed_at:
-                terminal_ts = event.completed_at
-            else:
-                # Find the latest timestamp across all data sources
-                latest_candidates = []
-                if history:
+        # Determine terminal timestamp: completed_at if available,
+        # otherwise last data point + 1 minute.
+        terminal_ts = None
+        if event.completed_at:
+            terminal_ts = event.completed_at
+        else:
+            # Find the latest timestamp across all data sources
+            latest_candidates = []
+            if history:
+                latest_candidates.append(
+                    datetime.fromisoformat(history[-1]["timestamp"])
+                )
+            if espn_history:
+                latest_candidates.append(
+                    datetime.fromisoformat(espn_history[-1]["timestamp"])
+                )
+            for wp_points in win_prob_history.values():
+                if wp_points:
                     latest_candidates.append(
-                        datetime.fromisoformat(history[-1]["timestamp"])
+                        datetime.fromisoformat(wp_points[-1]["timestamp"])
                     )
-                if espn_history:
-                    latest_candidates.append(
-                        datetime.fromisoformat(espn_history[-1]["timestamp"])
-                    )
-                for wp_points in win_prob_history.values():
-                    if wp_points:
-                        latest_candidates.append(
-                            datetime.fromisoformat(wp_points[-1]["timestamp"])
-                        )
-                if latest_candidates:
-                    terminal_ts = max(latest_candidates) + timedelta(minutes=1)
+            if latest_candidates:
+                terminal_ts = max(latest_candidates) + timedelta(minutes=1)
 
-            if terminal_ts:
-                terminal_iso = terminal_ts.replace(second=0, microsecond=0).isoformat()
+        if terminal_ts:
+            terminal_iso = terminal_ts.replace(second=0, microsecond=0).isoformat()
 
-                # Append to sportsbook history
-                if history:
-                    history.append({
+            # Append to sportsbook history
+            if history:
+                history.append({
+                    "timestamp": terminal_iso,
+                    "home_probability": resolved_home_prob,
+                    "away_probability": resolved_away_prob,
+                    "over_under": None,
+                    "projected_home_score": None,
+                    "projected_away_score": None,
+                    "bookmaker_count": 0,
+                    # #1854: KEPT. min == max == the number beside it (a
+                    # terminal point), so it cannot exclude its own probability.
+                    "probability_range": {
+                        "min": resolved_home_prob,
+                        "max": resolved_home_prob,
+                    },
+                })
+
+            # Append to each win_prob_history source
+            for source_key in win_prob_history:
+                if win_prob_history[source_key]:
+                    win_prob_history[source_key].append({
                         "timestamp": terminal_iso,
                         "home_probability": resolved_home_prob,
                         "away_probability": resolved_away_prob,
-                        "over_under": None,
-                        "projected_home_score": None,
-                        "projected_away_score": None,
-                        "bookmaker_count": 0,
-                        # #1854: KEPT. min == max == the number beside it (a
-                        # terminal point), so it cannot exclude its own probability.
-                        "probability_range": {
-                            "min": resolved_home_prob,
-                            "max": resolved_home_prob,
-                        },
+                        "draw_probability": None,
+                        "game_state": {"final": True},
                     })
 
-                # Append to each win_prob_history source
-                for source_key in win_prob_history:
-                    if win_prob_history[source_key]:
-                        win_prob_history[source_key].append({
-                            "timestamp": terminal_iso,
-                            "home_probability": resolved_home_prob,
-                            "away_probability": resolved_away_prob,
-                            "draw_probability": None,
-                            "game_state": {"final": True},
-                        })
+            # Append to ESPN history
+            if espn_history:
+                espn_history.append({
+                    "timestamp": terminal_iso,
+                    "home_probability": resolved_home_prob,
+                    "away_probability": resolved_away_prob,
+                    "home_score": event.home_score,
+                    "away_score": event.away_score,
+                    "game_clock": "Final",
+                    "period": "Final",
+                })
 
-                # Append to ESPN history
-                if espn_history:
-                    espn_history.append({
-                        "timestamp": terminal_iso,
-                        "home_probability": resolved_home_prob,
-                        "away_probability": resolved_away_prob,
-                        "home_score": event.home_score,
-                        "away_score": event.away_score,
-                        "game_clock": "Final",
-                        "period": "Final",
-                    })
-
-                # Append to aggregate line
-                if aggregate_line:
-                    aggregate_line.append({
-                        "timestamp": terminal_iso,
-                        "home_probability": resolved_home_prob,
-                    })
+            # Append to aggregate line
+            if aggregate_line:
+                aggregate_line.append({
+                    "timestamp": terminal_iso,
+                    "home_probability": resolved_home_prob,
+                })
 
     # ── The period-marker domain guard (#3348) ──
     # Whatever tier answered above, a marker outside the span of the series the
