@@ -1500,7 +1500,15 @@ export function computeSharedChartDomain(
         if (!isNaN(t)) bettingTs.push(t);
       }
       if (bettingTs.length > 0) {
-        const lastBetting = Math.max(...bettingTs);
+        // #9205 — THE 10-MINUTE EXTENSION OBEYS THE SAME CEILING AS #8709's.
+        // A sportsbook quote stamped after `completed_at` is not game time.
+        // /events/14781702 (Commanders 33–31 Seahawks): ESPN's last reading
+        // 20:27:00Z, `completed_at` 20:27:41Z, and a 20:35:00Z sportsbook row
+        // written after the final — inside the cap, so both charts ran to
+        // 1:35 PM for a 1:27 PM final, a flat 100% tail on Win Probability.
+        // With no `completed_at` the filter keeps every quote (today's rule).
+        const extendableTs = isNaN(caMs) ? bettingTs : bettingTs.filter((t) => t <= caMs);
+        const lastBetting = extendableTs.length > 0 ? Math.max(...extendableTs) : -Infinity;
         if (lastBetting > lastGameEnd && lastBetting - lastGameEnd <= MAX_EXTENSION_MS) {
           endMs = lastBetting;
         } else if (
