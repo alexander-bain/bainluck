@@ -182,6 +182,11 @@ COVERED = (
     # `sports.active` is exactly the Python-side default this file is named
     # after, and the seed names it.
     "test_backup_round_trip_jsonb_6215_pg.py",
+    # #9017 (CERT-3604's follow-up). Seeds `sports` and four `teams` rows by raw
+    # INSERT and drives the repair's own run() through plan, backup, a CAS'd
+    # apply racing a mid-run ESPN sync write, and the undo. `sports.active` is
+    # named, as in #6215's seed.
+    "test_foreign_espn_id_apply_cas_9017_pg.py",
     "test_polymarket_resolved_candidate_sql_pg.py",
     # #7021. Seeds ten `events` rows by raw INSERT into a PRIVATE schema to run
     # the twin drain's own candidate SELECT. The gate builds a narrow `events`

@@ -970,6 +970,21 @@ jobs:
             exit 1
           fi
 
+      - name: "#9017 repair apply CAS (real Postgres)"
+        # CERT-3604's follow-up: the attended repair clears a team's foreign ESPN
+        # identity only while the row still holds the espn_id AND name its plan
+        # judged. ESPN sync writes `teams` on the same app, so a row re-enriched
+        # between read and write must be left alone. That is a claim about an
+        # `UPDATE ... FROM unnest(...)` on a real server; this step is its reach.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_foreign_espn_id_apply_cas_9017_pg.py \
+            -v -rs 2>&1 | tee /tmp/cas9017.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/cas9017.txt; then
+            echo "::error::#9017 apply CAS SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#7501 team slug fill (real Postgres)"
         # `teams.slug` is UNIQUE, and 855 of the 4,004 slug-less clubs cannot
         # take their clean name-slug because a club in another sport holds it.
