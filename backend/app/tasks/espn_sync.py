@@ -667,6 +667,25 @@ async def _step_savepoint(session):
         await session.execute(text("SELECT 1"))
 
 
+async def _release_rows(session):
+    """Commit what the pass has written so far and push its frames (#9049).
+
+    A savepoint does not release a row lock. Committing once at the end held
+    every live game's row from its score write until the last box-score fetch
+    returned — 12-23 s idle in transaction on production 9/27, with the
+    socket's price write and the live poll's locked read queued behind it for
+    up to 10.7 s. Called only OUTSIDE a `_step_savepoint`, so a failed step
+    has already been rolled back to its own savepoint and costs nothing here.
+    The frames are the score/probability pushes those writes queued; they
+    publish on commit, so they now reach readers a sport at a time instead of
+    after the whole pass.
+    """
+    from app.utils.nonvenue_live_push import publish_committed_nonvenue_frames
+
+    await session.commit()
+    await publish_committed_nonvenue_frames(session)
+
+
 async def _sync_espn_live_events():
     """Async implementation of sync_espn_live_events.
 
@@ -792,6 +811,8 @@ async def _sync_espn_live_events():
                 )
             finally:
                 await straggler_espn.close()
+            # #9049: before the scoreboard fetches below.
+            await _release_rows(session)
 
             if not live_sport_keys:
                 return {"status": "no_live_games", **stats}
@@ -904,6 +925,9 @@ async def _sync_espn_live_events():
                             )
                     except Exception as e:
                         stats["errors"].append(f"{sport_key}: {str(e)}")
+                    # #9049: this sport's rows are free before the next sport
+                    # (whose processing can ask ESPN for a dated board) runs.
+                    await _release_rows(session)
             finally:
                 await widen_espn.close()
 
@@ -925,6 +949,8 @@ async def _sync_espn_live_events():
                         )
                 except Exception as e:
                     stats["errors"].append(f"scheduled_{sport_key}: {str(e)}")
+            # #9049: nothing below may hold a score row across its ESPN calls.
+            await _release_rows(session)
 
             # ── Third pass: completed box scores ─────────────────
             try:
@@ -932,6 +958,7 @@ async def _sync_espn_live_events():
                     await fetch_completed_box_scores(session, stats)
             except Exception as e:
                 stats["errors"].append(f"box_score_pass: {str(e)}")
+            await _release_rows(session)  # #9049
 
             # ── Fourth pass: live box scores ─────────────────────
             try:
@@ -939,6 +966,7 @@ async def _sync_espn_live_events():
                     await fetch_live_box_scores(session, stats)
             except Exception as e:
                 stats["errors"].append(f"live_box_score_pass: {str(e)}")
+            await _release_rows(session)  # #9049
 
             # ── Fifth pass: score backfill ───────────────────────
             try:
@@ -2736,7 +2764,15 @@ async def _process_live_sport(
             ),
         )
     )
-    our_events = events_result.scalars().all()
+    # CHRONOLOGICAL, whatever order the database returned (#9049, CERT-3620).
+    # Claims are taken in loop order, so an unordered query let a doubleheader's
+    # LATER row claim the earlier game and hand the earlier row the later one:
+    # two games, two swapped live scores. Sorted here rather than by ORDER BY so
+    # the order holds for every caller of this function, faked or real.
+    our_events = sorted(
+        events_result.scalars().all(),
+        key=lambda ev: (ev.commence_time, ev.id),
+    )
 
     # Batch-load teams for this sport to avoid N+1 queries in upsert_team
     sport_obj = our_events[0].sport if our_events else None
@@ -2808,25 +2844,39 @@ async def _process_live_sport(
     # has no time guard; it has one.)
     boards_by_day: dict[str, list] = {}
 
-    async def _widened_pool_for(event):
-        """(pool, by_id) for one event's own board day, or ``None``.
-
-        ``None`` means there is nothing new to match against — no fetcher, the
-        per-sport ceiling is spent, the authority went dark, or the dated board
-        added no game the undated one did not already carry.
-        """
-        if dated_board_fetcher is None:
-            return None
-        commence = getattr(event, "commence_time", None)
-        if commence is None:
-            return None
-        day = espn_board_date(commence)
-        if day not in boards_by_day:
+    # ── EVERY DATED BOARD IS ASKED FOR BEFORE THE FIRST WRITE (#9049) ──
+    #
+    # The loop below writes each matched game's row, and that row stays locked
+    # until this sport's commit. Asked from inside the loop, the dated board
+    # (a 10 s ESPN call, up to two per sport) held every earlier game's row
+    # across the wait — the socket's price write for those games queued behind
+    # it (CERT-3611). So the boards are fetched here, where nothing has been
+    # written, for the days of the games the undated board cannot account for,
+    # in loop order and under the same ceiling. The dry run must CLAIM as the
+    # loop does (CERT-3617): a doubleheader's two id-less rows both name-match
+    # game 1 on a board that lacks game 2, and only the loop's claim of game
+    # 1's id sends row 2 to the dated board. So each dry match adds its id to a
+    # private claimed set that grows in loop order, the way the writers do
+    # (`write_espn_win_probability`, `espn_id_stamp`); the loop's own set is
+    # untouched. The loop itself never touches the network.
+    if dated_board_fetcher is not None:
+        dry_claimed = set(claimed_espn_ids)
+        for event in our_events:
             if len(boards_by_day) >= MAX_DATED_BOARDS_PER_SPORT:
-                stats["dated_board_days_skipped"] = (
-                    stats.get("dated_board_days_skipped", 0) + 1
-                )
-                return None
+                break
+            matched_espn, _ = match_event_fn(
+                event, espn_events, espn_by_id, dry_claimed, espn_names_match,
+            )
+            if matched_espn:
+                if getattr(matched_espn, "espn_id", None):
+                    dry_claimed.add(matched_espn.espn_id)
+                continue
+            commence = getattr(event, "commence_time", None)
+            if commence is None:
+                continue
+            day = espn_board_date(commence)
+            if day in boards_by_day:
+                continue
             try:
                 board = await dated_board_fetcher(sport_key, day)
             except Exception as e:
@@ -2844,6 +2894,29 @@ async def _process_live_sport(
                 )
             boards_by_day[day] = board or []
 
+    def _widened_pool_for(event, *, record_skip=True):
+        """(pool, by_id) for one event's own board day, or ``None``.
+
+        ``None`` means there is nothing new to match against — no fetcher, the
+        day was not fetched above (the per-sport ceiling was spent), the
+        authority went dark, or the dated board added no game the undated one
+        did not already carry. Never asks ESPN: see the prefetch above.
+        ``record_skip=False`` asks without counting an unfetched day, for the
+        loop's first look; the skip is counted once, when a row goes unmatched.
+        """
+        if dated_board_fetcher is None:
+            return None
+        commence = getattr(event, "commence_time", None)
+        if commence is None:
+            return None
+        day = espn_board_date(commence)
+        if day not in boards_by_day:
+            if record_skip:
+                stats["dated_board_days_skipped"] = (
+                    stats.get("dated_board_days_skipped", 0) + 1
+                )
+            return None
+
         extra = [
             ee for ee in boards_by_day[day]
             if not ee.espn_id or ee.espn_id not in espn_by_id
@@ -2858,21 +2931,32 @@ async def _process_live_sport(
         return pool, by_id
 
     for event in our_events:
-        matched_espn, match_method = match_event_fn(
-            event, espn_events, espn_by_id, claimed_espn_ids, espn_names_match,
-        )
-
-        if not matched_espn:
-            widened = await _widened_pool_for(event)
-            if widened is not None:
-                pool, by_id = widened
-                matched_espn, match_method = match_event_fn(
-                    event, pool, by_id, claimed_espn_ids, espn_names_match,
+        # A row whose own day's board was fetched is matched against that FULLER
+        # pool first (#9049, CERT-3620). The matcher takes the nearest unclaimed
+        # candidate, so with both of a doubleheader's games in the pool each row
+        # gets its own game whichever is asked first; against the undated board
+        # alone, the later row's nearest game was the earlier one. Rows whose
+        # day was not fetched match exactly as before.
+        widened = _widened_pool_for(event, record_skip=False)
+        if widened is not None:
+            pool, by_id = widened
+            matched_espn, match_method = match_event_fn(
+                event, pool, by_id, claimed_espn_ids, espn_names_match,
+            )
+            if matched_espn is not None and all(
+                matched_espn is not ee for ee in espn_events
+            ):
+                stats["events_matched_on_dated_board"] = (
+                    stats.get("events_matched_on_dated_board", 0) + 1
                 )
-                if matched_espn:
-                    stats["events_matched_on_dated_board"] = (
-                        stats.get("events_matched_on_dated_board", 0) + 1
-                    )
+        else:
+            matched_espn, match_method = match_event_fn(
+                event, espn_events, espn_by_id, claimed_espn_ids, espn_names_match,
+            )
+            if not matched_espn:
+                # Counts the unfetched day; there is no pool to retry here, by
+                # construction of the branch above.
+                _widened_pool_for(event)
 
         if not matched_espn:
             stats["events_unmatched"] = stats.get("events_unmatched", 0) + 1

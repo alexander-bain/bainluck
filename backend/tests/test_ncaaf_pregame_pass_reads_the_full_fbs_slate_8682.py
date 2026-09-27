@@ -180,8 +180,10 @@ class TestThroughTheWholeTask:
             async def __aenter__(self):
                 # #8796: each step of the pass runs in a savepoint, which
                 # flushes and probes the session before it is released.
+                # #9049: and the pass commits between its steps.
                 return SimpleNamespace(
-                    begin_nested=_Ctx, flush=_nothing, execute=_nothing
+                    begin_nested=_Ctx, flush=_nothing, execute=_nothing,
+                    commit=_nothing, info={},
                 )
 
             async def __aexit__(self, *exc):
