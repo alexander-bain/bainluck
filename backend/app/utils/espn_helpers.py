@@ -1528,6 +1528,8 @@ async def update_event_fields_from_espn(
 
     # #7338, BEFORE the first read of `ee`: an id-anchored match proves the
     # fixture, not which side is which. Everything below copies by ESPN's slot.
+    # The caller's reading is kept: the #9020 verdict below is recorded on it.
+    _supplied_ee = ee
     ee = orient_espn_event_to_row(event, ee, stats)
 
     changed = False
@@ -1665,6 +1667,17 @@ async def update_event_fields_from_espn(
         stats["live_clock_outran_wall_refused"] = (
             stats.get("live_clock_outran_wall_refused", 0) + 1
         )
+    # CERT-3657: the row is not the only reader of this reading. The same pass
+    # appends it to `espn_snapshots` and `win_prob_snapshots.game_state`, which
+    # `/history` serves and the readout under the hero picks its newest clock
+    # from — so the verdict rides on the reading to those writers, or the page
+    # shows the refused clock beside the row's. Assigned on BOTH objects (the
+    # oriented copy and the caller's) and on every call, refusal or not.
+    for _reading in {id(_supplied_ee): _supplied_ee, id(ee): ee}.values():
+        try:
+            _reading.position_outran_wall = _clock_outruns_wall
+        except AttributeError:  # pragma: no cover - a frozen/slotted double
+            pass
 
     # ── #8247: `allow_unstarted` GRANTS SETTLING, AND IT GRANTS NOTHING ELSE ──
     #
@@ -2183,6 +2196,22 @@ async def write_espn_win_probability(session, event, ee, match_method, claimed_e
     # plain append (no dedup) and post-final cycles would stamp new espnHistory
     # points at `now`, extending the chart past the real final. The live-captured
     # ESPNSnapshots already cover the game through its end.
+    # #9020 / CERT-3657: a position the row refused as outrunning the wall
+    # clock is not recorded as ESPN's newest one either. `/history` serves both
+    # tables below and the readout takes its clock from the newest snapshot
+    # that HAS one, so a withheld (None) clock and period leave it on the last
+    # admitted position — the row's — while probability and score still land.
+    # The #9020 anchor read (`row_position_first_seen_at`) skips these rows,
+    # so the row's run keeps its first-seen time and the next real reading is
+    # judged against it.
+    _position_refused = bool(getattr(ee, "position_outran_wall", False))
+    _snap_clock = None if _position_refused else ee.clock
+    _snap_period = None if _position_refused else _sanitize_period(ee.status_detail)
+    if _position_refused:
+        stats["espn_history_position_withheld"] = (
+            stats.get("espn_history_position_withheld", 0) + 1
+        )
+
     if not is_completed:
         snapshot = ESPNSnapshot(
             event_id=event.id,
@@ -2190,10 +2219,10 @@ async def write_espn_win_probability(session, event, ee, match_method, claimed_e
             away_win_probability=1.0 - ee.home_win_probability if ee.home_win_probability else None,
             home_score=ee.home_score,
             away_score=ee.away_score,
-            game_clock=ee.clock,
+            game_clock=_snap_clock,
             # #5390: a snapshot's period is served back out (events.py `snap.period`),
             # so a pre-game date is as wrong here as it is on the event row.
-            period=_sanitize_period(ee.status_detail),
+            period=_snap_period,
         )
         session.add(snapshot)
         stats["snapshots_created"] = stats.get("snapshots_created", 0) + 1
@@ -2211,8 +2240,11 @@ async def write_espn_win_probability(session, event, ee, match_method, claimed_e
                 home_win_probability=ee.home_win_probability,
                 away_win_probability=1.0 - ee.home_win_probability if ee.home_win_probability else None,
                 game_state={
-                    "clock": ee.clock,
-                    "period": _sanitize_period(ee.status_detail) or (str(ee.period) if ee.period else None),
+                    "clock": _snap_clock,
+                    "period": (
+                        None if _position_refused
+                        else _snap_period or (str(ee.period) if ee.period else None)
+                    ),
                     "home_score": ee.home_score,
                     "away_score": ee.away_score,
                 },
@@ -2319,11 +2351,23 @@ async def compute_and_write_stat_model(session, event, ee, sport_key, stats):
             period_str = _sanitize_period(ee.status_detail)
             if ee.period and not period_str:
                 period_str = str(ee.period)
+            model_clock = ee.clock
+            # #9020 / CERT-3657: the row refused this reading's position as
+            # outrunning the wall clock. The model is priced at the position
+            # the row DID admit (with this pass's score, which has its own
+            # rule), and its `game_state` says so — never at the refused clock,
+            # which would chart as the newest state beside the row's.
+            if getattr(ee, "position_outran_wall", False):
+                period_str = getattr(event, "period", None)
+                model_clock = getattr(event, "game_clock", None)
+                stats["stat_model_position_from_row"] = (
+                    stats.get("stat_model_position_from_row", 0) + 1
+                )
 
             stat_wp = compute_statistical_win_prob(
                 home_score=ee.home_score,
                 away_score=ee.away_score,
-                clock=ee.clock,
+                clock=model_clock,
                 period=period_str,
                 sport_key=sport_key,
                 pregame_spread=pregame_spread,
@@ -2351,7 +2395,7 @@ async def compute_and_write_stat_model(session, event, ee, sport_key, stats):
                     home_win_probability=round(stat_wp, 4),
                     away_win_probability=round(1.0 - stat_wp, 4),
                     game_state={
-                        "clock": ee.clock,
+                        "clock": model_clock,
                         "period": period_str,
                         "home_score": ee.home_score,
                         "away_score": ee.away_score,
