@@ -27,6 +27,7 @@ import {
 import type { HostCue } from "@/lib/sameFixtureHostCue";
 import { providerGameNumber } from "@/lib/teamGames";
 import { PinIcon } from "@/components/PinButton";
+import { sportsbookProjectionDrawable } from "@/lib/scoreDifferentialHeading";
 import {
   hasNoReportedResult,
   isFinishedStatus,
@@ -227,6 +228,22 @@ export default function EventCard({
   };
   const odds = event.current_odds;
   const opening = event.opening_odds;
+
+  // #9006 — "Proj 6--2" on a UFC card. The pair is solved from a spread point
+  // and a total, so it is a score only where the sport's spread is a margin:
+  // the card asks `sportsbookProjectionDrawable`, the question the Sportsbooks
+  // table and the Score Differential gate already ask (#8617), and a fight
+  // answers no. The sign test is for every sport: no scoreboard reads below
+  // zero, so a negative half means the inputs were not a points line.
+  const projectedScore =
+    odds &&
+    odds.projected_home_score != null &&
+    odds.projected_away_score != null &&
+    odds.projected_home_score >= 0 &&
+    odds.projected_away_score >= 0 &&
+    sportsbookProjectionDrawable(event.sport ?? undefined)
+      ? { home: odds.projected_home_score, away: odds.projected_away_score }
+      : null;
 
   // UX-P166 — the live footer's "Opened 62/38" prints both sides of one question
   // in fixed positions, which makes it a duel. Rounding the two independently
@@ -1006,9 +1023,9 @@ export default function EventCard({
                   printed "Proj NaN-NaN". Found the moment the league rail — a
                   producer that carries a blend and no projection — started
                   feeding this shared card. */}
-              {!isLive && odds && odds.projected_home_score != null && odds.projected_away_score != null ? (
+              {!isLive && projectedScore ? (
                 <span className="text-text-muted">
-                  Proj <span className="font-mono text-text-secondary">{Math.round(odds.projected_home_score)}-{Math.round(odds.projected_away_score)}</span>
+                  Proj <span className="font-mono text-text-secondary">{Math.round(projectedScore.home)}-{Math.round(projectedScore.away)}</span>
                 </span>
               ) : isLive && opening && openedHomePct !== null && openedAwayWithheld ? (
                 /* #6238 — the opening pair is the same complement at an earlier

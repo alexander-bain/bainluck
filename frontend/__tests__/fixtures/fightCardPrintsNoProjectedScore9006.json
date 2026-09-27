@@ -1,0 +1,588 @@
+{
+ "14781701": {
+  "away_score": null,
+  "away_team": "Kansas City Chiefs",
+  "away_team_data": {
+   "abbreviation": "KC",
+   "logo_large": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/kc.png",
+   "logo_small": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/kc.png",
+   "primary_color": "#e31837",
+   "record": "2-0",
+   "secondary_color": "#ffb612",
+   "slug": "kansas-city-chiefs",
+   "standings": {
+    "conference": "American Football Conference",
+    "div_rank": 1,
+    "division": "AFC West",
+    "home_record": "2-0",
+    "losses": 0,
+    "pct": ".1000",
+    "road_record": "0-0",
+    "streak": "W2",
+    "ties": 0,
+    "wins": 2
+   },
+   "team_id": 560
+  },
+  "bookmaker_odds": [
+   {
+    "away_moneyline": -770,
+    "away_probability": 0.8437,
+    "bookmaker": "ballybet",
+    "captured_at": "2026-09-24T22:15:09.428343+00:00",
+    "home_moneyline": 510,
+    "home_probability": 0.1563,
+    "over_under": 46.0,
+    "projected_away_score": 28.5,
+    "projected_home_score": 17.5,
+    "spread": 11.0
+   },
+   {
+    "away_moneyline": -750,
+    "away_probability": 0.8455,
+    "bookmaker": "betanysports",
+    "captured_at": "2026-09-24T22:15:09.476267+00:00",
+    "home_moneyline": 520,
+    "home_probability": 0.1545,
+    "over_under": 46.0,
+    "projected_away_score": 28.5,
+    "projected_home_score": 17.5,
+    "spread": 11.0
+   },
+   {
+    "away_moneyline": -650,
+    "away_probability": 0.8387,
+    "bookmaker": "betmgm",
+    "captured_at": "2026-09-26T16:35:28.615991+00:00",
+    "home_moneyline": 500,
+    "home_probability": 0.1613,
+    "over_under": null,
+    "projected_away_score": null,
+    "projected_home_score": null,
+    "spread": null
+   },
+   {
+    "away_moneyline": -670,
+    "away_probability": 0.8365,
+    "bookmaker": "betonlineag",
+    "captured_at": "2026-09-27T01:07:04.703077+00:00",
+    "home_moneyline": 488,
+    "home_probability": 0.1635,
+    "over_under": null,
+    "projected_away_score": null,
+    "projected_home_score": null,
+    "spread": null
+   },
+   {
+    "away_moneyline": -770,
+    "away_probability": 0.8437,
+    "bookmaker": "betparx",
+    "captured_at": "2026-09-24T22:15:09.424012+00:00",
+    "home_moneyline": 510,
+    "home_probability": 0.1563,
+    "over_under": 46.0,
+    "projected_away_score": 28.5,
+    "projected_home_score": 17.5,
+    "spread": 11.0
+   },
+   {
+    "away_moneyline": -715,
+    "away_probability": 0.8404,
+    "bookmaker": "betrivers",
+    "captured_at": "2026-09-25T13:06:50.461329+00:00",
+    "home_moneyline": 500,
+    "home_probability": 0.1596,
+    "over_under": null,
+    "projected_away_score": null,
+    "projected_home_score": null,
+    "spread": null
+   },
+   {
+    "away_moneyline": -670,
+    "away_probability": 0.8358,
+    "bookmaker": "betus",
+    "captured_at": "2026-09-27T01:35:31.335229+00:00",
+    "home_moneyline": 485,
+    "home_probability": 0.1642,
+    "over_under": null,
+    "projected_away_score": null,
+    "projected_home_score": null,
+    "spread": null
+   },
+   {
+    "away_moneyline": -750,
+    "away_probability": 0.8411,
+    "bookmaker": "bovada",
+    "captured_at": "2026-09-26T00:05:49.570216+00:00",
+    "home_moneyline": 500,
+    "home_probability": 0.1589,
+    "over_under": null,
+    "projected_away_score": null,
+    "projected_home_score": null,
+    "spread": null
+   },
+   {
+    "away_moneyline": -623,
+    "away_probability": 0.8349,
+    "bookmaker": "courtside",
+    "captured_at": "2026-09-24T23:18:08.584720+00:00",
+    "home_moneyline": 487,
+    "home_probability": 0.1651,
+    "over_under": 32.5,
+    "projected_away_score": null,
+    "projected_home_score": null,
+    "spread": null
+   },
+   {
+    "away_moneyline": -575,
+    "away_probability": 0.8173,
+    "bookmaker": "draftkings",
+    "captured_at": "2026-09-27T01:07:04.686186+00:00",
+    "home_moneyline": 425,
+    "home_probability": 0.1827,
+    "over_under": null,
+    "projected_away_score": null,
+    "projected_home_score": null,
+    "spread": null
+   },
+   {
+    "away_moneyline": -800,
+    "away_probability": 0.8421,
+    "bookmaker": "espnbet",
+    "captured_at": "2026-09-24T22:15:09.470250+00:00",
+    "home_moneyline": 500,
+    "home_probability": 0.1579,
+    "over_under": 46.5,
+    "projected_away_score": 29.0,
+    "projected_home_score": 17.5,
+    "spread": 11.5
+   },
+   {
+    "away_moneyline": -650,
+    "away_probability": 0.8292,
+    "bookmaker": "fanatics",
+    "captured_at": "2026-09-27T01:07:04.716972+00:00",
+    "home_moneyline": 460,
+    "home_probability": 0.1708,
+    "over_under": null,
+    "projected_away_score": null,
+    "projected_home_score": null,
+    "spread": null
+   },
+   {
+    "away_moneyline": -700,
+    "away_probability": 0.84,
+    "bookmaker": "fanduel",
+    "captured_at": "2026-09-26T19:05:21.855560+00:00",
+    "home_moneyline": 500,
+    "home_probability": 0.16,
+    "over_under": null,
+    "projected_away_score": null,
+    "projected_home_score": null,
+    "spread": null
+   },
+   {
+    "away_moneyline": -890,
+    "away_probability": 0.8489,
+    "bookmaker": "fliff",
+    "captured_at": "2026-09-25T02:33:42.638828+00:00",
+    "home_moneyline": 525,
+    "home_probability": 0.1511,
+    "over_under": 45.5,
+    "projected_away_score": 28.5,
+    "projected_home_score": 17.0,
+    "spread": 11.5
+   },
+   {
+    "away_moneyline": -750,
+    "away_probability": 0.8411,
+    "bookmaker": "hardrockbet",
+    "captured_at": "2026-09-24T22:15:09.467237+00:00",
+    "home_moneyline": 500,
+    "home_probability": 0.1589,
+    "over_under": 46.5,
+    "projected_away_score": 28.8,
+    "projected_home_score": 17.8,
+    "spread": 11.0
+   },
+   {
+    "away_moneyline": -750,
+    "away_probability": 0.8411,
+    "bookmaker": "hardrockbet_fl",
+    "captured_at": "2026-09-24T22:15:09.464198+00:00",
+    "home_moneyline": 500,
+    "home_probability": 0.1589,
+    "over_under": 46.5,
+    "projected_away_score": 28.8,
+    "projected_home_score": 17.8,
+    "spread": 11.0
+   },
+   {
+    "away_moneyline": -750,
+    "away_probability": 0.8411,
+    "bookmaker": "hardrockbet_oh",
+    "captured_at": "2026-09-24T22:15:09.461133+00:00",
+    "home_moneyline": 500,
+    "home_probability": 0.1589,
+    "over_under": 46.5,
+    "projected_away_score": 28.8,
+    "projected_home_score": 17.8,
+    "spread": 11.0
+   },
+   {
+    "away_moneyline": -670,
+    "away_probability": 0.8365,
+    "bookmaker": "lowvig",
+    "captured_at": "2026-09-27T01:07:04.700837+00:00",
+    "home_moneyline": 488,
+    "home_probability": 0.1635,
+    "over_under": null,
+    "projected_away_score": null,
+    "projected_home_score": null,
+    "spread": null
+   },
+   {
+    "away_moneyline": -680,
+    "away_probability": 0.8264,
+    "bookmaker": "mybookieag",
+    "captured_at": "2026-09-27T01:35:31.346955+00:00",
+    "home_moneyline": 446,
+    "home_probability": 0.1736,
+    "over_under": null,
+    "projected_away_score": null,
+    "projected_home_score": null,
+    "spread": null
+   },
+   {
+    "away_moneyline": -649,
+    "away_probability": 0.834,
+    "bookmaker": "rebet",
+    "captured_at": "2026-09-24T22:15:09.415312+00:00",
+    "home_moneyline": 480,
+    "home_probability": 0.166,
+    "over_under": 45.5,
+    "projected_away_score": 28.5,
+    "projected_home_score": 17.0,
+    "spread": 11.5
+   },
+   {
+    "away_moneyline": -675,
+    "away_probability": 0.8336,
+    "bookmaker": "williamhill_us",
+    "captured_at": "2026-09-25T03:35:35.658682+00:00",
+    "home_moneyline": 475,
+    "home_probability": 0.1664,
+    "over_under": null,
+    "projected_away_score": null,
+    "projected_home_score": null,
+    "spread": null
+   }
+  ],
+  "commence_time": "2026-09-27T17:00:00+00:00",
+  "completed_at": null,
+  "current_odds": {
+   "away_probability": 0.845,
+   "bookmaker_count": 21,
+   "captured_at": "2026-09-27T01:35:31.346955+00:00",
+   "home_probability": 0.155,
+   "over_under": 44.8,
+   "projected_away_score": 28.7,
+   "projected_home_score": 17.5,
+   "spread": 11.2
+  },
+  "espn": {
+   "broadcast": "CBS",
+   "espn_id": "401872952",
+   "probability_sources": {
+    "betting": 0.1635,
+    "betting_book_count": 11.0,
+    "kalshi": 0.145,
+    "polymarket": 0.155
+   }
+  },
+  "external_id": "0339a0e41bcee12820eb3e64bb5fadb4",
+  "hero_probability": 0.155,
+  "hero_probability_away": 0.845,
+  "hero_probability_source": "blend",
+  "highlight": {
+   "flags": {
+    "favorite_switched": false,
+    "has_lead_changes": false,
+    "has_recent_momentum": false,
+    "is_blowout": false,
+    "is_close_matchup": false,
+    "is_live": false,
+    "is_recently_finished": false,
+    "is_starting_soon": false,
+    "is_upset": false,
+    "is_volatile": false,
+    "league_tier": 1,
+    "probability_swing": "stable",
+    "score_swing": "stable"
+   },
+   "label": null,
+   "reasons": [
+    "tier_1"
+   ],
+   "score": 20,
+   "should_feature": false
+  },
+  "home_score": null,
+  "home_team": "Miami Dolphins",
+  "home_team_data": {
+   "abbreviation": "MIA",
+   "logo_large": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/mia.png",
+   "logo_small": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/mia.png",
+   "primary_color": "#008e97",
+   "record": "0-2",
+   "secondary_color": "#fc4c02",
+   "slug": "miami-dolphins",
+   "standings": {
+    "conference": "American Football Conference",
+    "div_rank": 4,
+    "division": "AFC East",
+    "home_record": "0-0",
+    "losses": 2,
+    "pct": ".000",
+    "road_record": "0-2",
+    "streak": "L2",
+    "ties": 0,
+    "wins": 0
+   },
+   "team_id": 565
+  },
+  "id": 14781701,
+  "metadata": {
+   "gender": "men",
+   "importance": "regular_season",
+   "league": "NFL",
+   "level": "professional"
+  },
+  "sport": "americanfootball_nfl",
+  "sport_name": "NFL",
+  "start_is_tbd": false,
+  "started_without_result": false,
+  "status": "scheduled",
+  "win_probability_sources": {
+   "betting": {
+    "color": "#374151",
+    "display_name": "Betting Odds",
+    "evidence_status": "not_applicable",
+    "type": "market",
+    "updated_at": "2026-09-27T02:05:27.197661+00:00",
+    "value": 0.1635
+   },
+   "betting_book_count": {
+    "color": "#6b7280",
+    "display_name": "betting_book_count",
+    "evidence_status": "not_applicable",
+    "type": "model",
+    "value": 11.0
+   },
+   "kalshi": {
+    "color": "#22c55e",
+    "contract_version": "live_blend.admissible_as_blend_speaker@5031",
+    "display_name": "Kalshi",
+    "evidence_status": "verified",
+    "type": "market",
+    "updated_at": "2026-09-27T00:49:00.326176+00:00",
+    "value": 0.145,
+    "verified_scope": "full_event_winner"
+   },
+   "polymarket": {
+    "color": "#3b82f6",
+    "contract_version": "live_blend.admissible_as_blend_speaker@5031",
+    "display_name": "Polymarket",
+    "evidence_status": "verified",
+    "type": "market",
+    "updated_at": "2026-09-26T22:31:21.993101+00:00",
+    "value": 0.155,
+    "verified_scope": "full_event_winner"
+   }
+  }
+ },
+ "15314292": {
+  "away_flag_url": null,
+  "away_image_url": null,
+  "away_score": null,
+  "away_team": "Raoni Barcelos",
+  "bookmaker_odds": [
+   {
+    "away_moneyline": 120,
+    "away_probability": 0.4344,
+    "bookmaker": "betmgm",
+    "captured_at": "2026-09-27T02:02:38.223143+00:00",
+    "home_moneyline": -145,
+    "home_probability": 0.5656,
+    "over_under": null,
+    "projected_away_score": null,
+    "projected_home_score": null,
+    "spread": null
+   },
+   {
+    "away_moneyline": 128,
+    "away_probability": 0.4223,
+    "bookmaker": "betonlineag",
+    "captured_at": "2026-09-27T02:06:14.102470+00:00",
+    "home_moneyline": -150,
+    "home_probability": 0.5777,
+    "over_under": 3.5,
+    "projected_away_score": null,
+    "projected_home_score": null,
+    "spread": null
+   },
+   {
+    "away_moneyline": 125,
+    "away_probability": 0.4211,
+    "bookmaker": "betrivers",
+    "captured_at": "2026-09-26T11:49:38.858008+00:00",
+    "home_moneyline": -157,
+    "home_probability": 0.5789,
+    "over_under": null,
+    "projected_away_score": null,
+    "projected_home_score": null,
+    "spread": null
+   },
+   {
+    "away_moneyline": 122,
+    "away_probability": 0.4322,
+    "bookmaker": "betus",
+    "captured_at": "2026-09-27T01:51:36.518017+00:00",
+    "home_moneyline": -145,
+    "home_probability": 0.5678,
+    "over_under": 3.5,
+    "projected_away_score": null,
+    "projected_home_score": null,
+    "spread": null
+   },
+   {
+    "away_moneyline": 125,
+    "away_probability": 0.431,
+    "bookmaker": "bovada",
+    "captured_at": "2026-09-27T02:02:38.243590+00:00",
+    "home_moneyline": -142,
+    "home_probability": 0.569,
+    "over_under": 4.5,
+    "projected_away_score": -2.5,
+    "projected_home_score": 7.0,
+    "spread": -9.5
+   },
+   {
+    "away_moneyline": 120,
+    "away_probability": 0.4365,
+    "bookmaker": "draftkings",
+    "captured_at": "2026-09-27T01:58:36.492154+00:00",
+    "home_moneyline": -142,
+    "home_probability": 0.5635,
+    "over_under": 3.5,
+    "projected_away_score": -1.0,
+    "projected_home_score": 4.5,
+    "spread": -5.5
+   },
+   {
+    "away_moneyline": 130,
+    "away_probability": 0.417,
+    "bookmaker": "williamhill_us",
+    "captured_at": "2026-09-27T01:36:32.261920+00:00",
+    "home_moneyline": -155,
+    "home_probability": 0.583,
+    "over_under": 3.5,
+    "projected_away_score": null,
+    "projected_home_score": null,
+    "spread": null
+   }
+  ],
+  "commence_time": "2026-09-27T02:15:00+00:00",
+  "completed_at": null,
+  "current_odds": {
+   "away_probability": 0.431,
+   "bookmaker_count": 7,
+   "captured_at": "2026-09-27T02:06:14.102470+00:00",
+   "home_probability": 0.569,
+   "over_under": 3.7,
+   "projected_away_score": -1.8,
+   "projected_home_score": 5.8,
+   "spread": -7.5
+  },
+  "espn": {
+   "probability_sources": {
+    "betting": 0.569,
+    "betting_book_count": 7.0,
+    "kalshi": 0.585
+   }
+  },
+  "external_id": "d19d04e430828af0d2ffcbe6965388a2",
+  "hero_probability": 0.569,
+  "hero_probability_away": 0.431,
+  "hero_probability_source": "blend",
+  "highlight": {
+   "flags": {
+    "favorite_switched": false,
+    "has_lead_changes": false,
+    "has_recent_momentum": false,
+    "is_blowout": false,
+    "is_close_matchup": true,
+    "is_live": false,
+    "is_recently_finished": false,
+    "is_starting_soon": true,
+    "is_upset": false,
+    "is_volatile": false,
+    "league_tier": 2,
+    "probability_swing": "stable",
+    "score_swing": "stable"
+   },
+   "label": "Close matchup",
+   "reasons": [
+    "starting_soon",
+    "starting_very_soon",
+    "tier_2",
+    "close_matchup"
+   ],
+   "score": 60,
+   "should_feature": true
+  },
+  "home_flag_url": null,
+  "home_image_url": null,
+  "home_score": null,
+  "home_team": "Raul Rosas Jr",
+  "id": 15314292,
+  "metadata": {
+   "gender": "men",
+   "importance": "regular_season",
+   "league": "UFC",
+   "level": "professional"
+  },
+  "sport": "mma_mixed_martial_arts",
+  "sport_name": "MMA",
+  "start_is_tbd": false,
+  "started_without_result": false,
+  "status": "scheduled",
+  "win_probability_sources": {
+   "betting": {
+    "color": "#374151",
+    "display_name": "Betting Odds",
+    "evidence_status": "not_applicable",
+    "type": "market",
+    "updated_at": "2026-09-27T02:06:14.202013+00:00",
+    "value": 0.569
+   },
+   "betting_book_count": {
+    "color": "#6b7280",
+    "display_name": "betting_book_count",
+    "evidence_status": "not_applicable",
+    "type": "model",
+    "value": 7.0
+   },
+   "kalshi": {
+    "color": "#22c55e",
+    "contract_version": "live_blend.admissible_as_blend_speaker@5031",
+    "display_name": "Kalshi",
+    "evidence_status": "verified",
+    "type": "market",
+    "updated_at": "2026-09-27T02:06:26.133262+00:00",
+    "value": 0.585,
+    "verified_scope": "full_event_winner"
+   }
+  }
+ }
+}
