@@ -3904,6 +3904,19 @@ jobs:
             exit 1
           fi
 
+      - name: "#2841 Chicago Fire v Vancouver — ESPN id, Kalshi market and label moved, re-run and undo against real Postgres"
+        # One pinned pair: ESPN 761660 moved inside the real partial unique index,
+        # the market re-pointed with its immutable link-change row, and the ship read
+        # back through not_a_proven_duplicate — search shows the kept row only.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_repair_2841_chifire_van_fold_apply_restore_pg.py \
+            -v -rs 2>&1 | tee /tmp/fold2841.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/fold2841.txt; then
+            echo "::error::#2841 Chicago Fire v Vancouver fold gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#5576 venue-named competition — place, re-run and undo against real Postgres"
         # The pinned Nations League rows read their venue's listing (a
         # Polymarket slug, a Kalshi ticker) and their clubs through the
