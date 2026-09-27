@@ -21649,8 +21649,20 @@ async def _build_game_markets(
                 )
             )
             linked_ids = {m.id for m in markets}
-            from app.utils.prediction_market_matching import extract_game_date_from_ticker
+            from app.utils.prediction_market_matching import (
+                extract_game_date_from_ticker,
+                is_other_doubleheader_game,
+                own_doubleheader_game_numbers,
+            )
             event_date = event.commence_time.date() if event.commence_time else None
+            # #8884 — a doubleheader shares its date, so the date check below
+            # passes both games' markets. The game number the event's own
+            # linked tickers carry (G1/G2) is what tells them apart.
+            own_game_numbers = (
+                own_doubleheader_game_numbers(markets, event_date)
+                if sport_key and sport_key.startswith("baseball_")
+                else set()
+            )
             for m in unlinked_result.scalars().all():
                 if m.id in linked_ids:
                     continue
@@ -21661,6 +21673,8 @@ async def _build_game_markets(
                     ticker_date = extract_game_date_from_ticker(m.external_id)
                     if ticker_date and ticker_date.date() != event_date:
                         continue
+                if is_other_doubleheader_game(m.external_id, own_game_numbers):
+                    continue
                 markets.append(m)
 
     if not markets:
