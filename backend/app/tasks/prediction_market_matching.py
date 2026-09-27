@@ -5979,7 +5979,12 @@ async def _phase2_persist_group_reading(
     """
     from app.models.models import Event, FuturesOutcome
     from app.tasks.snapshots import _create_or_update_win_prob_snapshot
-    from app.utils.aggregation import oldest_observation_time, stamp_source_reading
+    from app.utils.aggregation import (
+        observation_basis,
+        oldest_observation_time,
+        reading_regresses_stored_observation,
+        stamp_source_reading,
+    )
 
     refs = [ref for ref in (group or [])]
     if not refs:
@@ -6013,6 +6018,29 @@ async def _phase2_persist_group_reading(
     )
     away_prob, draw_prob = _second_slot(reading, home_prob)
 
+    # #8910 (F1/F2 of the other-writers review). This writer derives from the
+    # rows it loaded above, then orients and snapshots before it writes; the
+    # WebSocket lane can flush a goal and stamp it anywhere in that window.
+    # Unlocked, the column read below saw the socket's post-goal entry and the
+    # whole-column write put the pre-goal price back over it (0.77 over 0.035,
+    # dated older) — or, read before the socket committed, erased a sibling
+    # source the socket stamped in the gap. So the poll's shape: read the
+    # column FOR UPDATE before the chart point (event row before snapshot, the
+    # order every writer of this row takes), refuse a reading that saw any of
+    # its rows earlier than the stored one did, and commit on refusal so the
+    # lock is never carried into the next group.
+    _pm_r = await session.execute(
+        select(Event.win_probability_sources)
+        .where(Event.id == anchor.event_id)
+        .with_for_update()
+    )
+    stored_sources = _pm_r.scalar_one_or_none()
+    basis = observation_basis(reading.contributing_outcomes or (reading.outcome,))
+    if reading_regresses_stored_observation(stored_sources, anchor.source, basis):
+        stats["stale_readings_refused"] = stats.get("stale_readings_refused", 0) + 1
+        await session.commit()
+        return None
+
     if write_snapshot:
         snapshot, is_new = await _create_or_update_win_prob_snapshot(
             session,
@@ -6041,9 +6069,6 @@ async def _phase2_persist_group_reading(
         else:
             stats["snapshots_deduped"] += 1
 
-    _pm_r = await session.execute(
-        select(Event.win_probability_sources).where(Event.id == anchor.event_id)
-    )
     # #1829: value + write time (a linked market can stop updating long before
     # anything notices it has).
     #
@@ -6067,13 +6092,14 @@ async def _phase2_persist_group_reading(
     # the same reason `game_state` above uses `reading.market` and not the
     # group's primary.
     _pm_wps = stamp_source_reading(
-        _pm_r.scalar_one_or_none(),
+        stored_sources,
         anchor.source,
         round(home_prob, 4),
         now=oldest_observation_time(
             reading.contributing_outcomes or (reading.outcome,)
         ),
         eligibility=reading.eligibility,
+        observed_basis=basis,
     )
     await session.execute(
         update(Event)
@@ -6574,6 +6600,9 @@ async def _match_prediction_markets(limit: int = 500):
         "newly_linked": 0,
         "snapshots_written": 0,
         "snapshots_deduped": 0,
+        # #8910: readings refused because another writer had already stored a
+        # later observation of the same rows (`_phase2_persist_group_reading`).
+        "stale_readings_refused": 0,
         "orphaned_snapshots_deleted": 0,
         "errors": [],
         "funnel": {
@@ -10240,8 +10269,9 @@ async def _poll_live_prediction_market_prices():
 
                 from sqlalchemy import update as _sql_upd2
                 from app.utils.aggregation import (
+                    observation_basis as _basis2,
                     oldest_observation_time as _obs2,
-                    reading_predates_stored_entry as _predates2,
+                    reading_regresses_stored_observation as _regresses2,
                     stamp_source_reading as _stamp2,
                 )
                 # #8910 review: FOR UPDATE, so the comparison below holds at the
@@ -10257,7 +10287,7 @@ async def _poll_live_prediction_market_prices():
                     .with_for_update()
                 )
                 _stored_wps2 = _pm_r2.scalar_one_or_none()
-                _observed2 = _obs2(
+                _basis_of_reading2 = _basis2(
                     reading.contributing_outcomes or (reading.outcome,)
                 )
 
@@ -10270,7 +10300,11 @@ async def _poll_live_prediction_market_prices():
                 # then 80 s of the wrong headline). Refused BEFORE the chart
                 # point too: the stale number is the same fiction on the line.
                 # The socket just wrote this source, so nothing is left unfed.
-                if _predates2(_stored_wps2, market.source, _observed2):
+                # Compared row by row against the stored entry's OBSERVATION
+                # basis, never its `updated_at`: the WS lane dates that with its
+                # publication clock, and observation-vs-publication refuses a
+                # genuinely newer reading (see the helper).
+                if _regresses2(_stored_wps2, market.source, _basis_of_reading2):
                     stats["stale_readings_refused"] += 1
                     # #8910 review: the refusal still holds the FOR UPDATE
                     # above. Carried into the next event it would stall the
@@ -10363,6 +10397,7 @@ async def _poll_live_prediction_market_prices():
                     now=_obs2(
                         reading.contributing_outcomes or (reading.outcome,)
                     ),
+                    observed_basis=_basis_of_reading2,
                 )
                 await session.execute(
                     _sql_upd2(Event)

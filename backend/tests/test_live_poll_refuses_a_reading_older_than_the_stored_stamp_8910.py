@@ -33,6 +33,17 @@ the ordering signal was on the row the whole time; nothing compared it.
   whole-column write erases it and any sibling stamped in the gap;
 * release: a REFUSED reading lets go of that lock at once (commit before the
   next statement), so the socket is never held behind a reading we dropped.
+
+## the other-writers repair (the clock domain)
+
+The comparison is now made against the stored entry's OBSERVATION basis — when
+the writer that stored it saw these same rows — and no longer against its
+`updated_at`, which the WebSocket lane dates with its publication clock. So:
+
+* clock domain: a stored entry PUBLISHED after this reading's rows were seen,
+  but whose rows were seen EARLIER, is replaced (Codex's newer-B control);
+* legacy: a stored entry with a stamp and no basis cannot be ordered and
+  abstains — the transition state for the minutes after release.
 """
 
 from __future__ import annotations
@@ -41,7 +52,11 @@ from datetime import datetime, timedelta, timezone
 
 from app.tasks import snapshots as _snapshots
 from app.utils import aggregation as _aggregation
-from app.utils.aggregation import reading_predates_stored_entry
+from app.utils.aggregation import (
+    OBSERVED_BASIS_KEY,
+    OBSERVED_VALUE_KEY,
+    stamp_source_reading,
+)
 
 from tests.test_live_poll_commit_boundary_5682 import (  # noqa: E402
     _Event,
@@ -95,7 +110,8 @@ async def _written(monkeypatch, population, stored, *, venue_legs=()):
 
     def _record_stamp(existing, source, value, **kwargs):
         stamped.append(value)
-        return real_stamp(existing, source, value, **kwargs)
+        _written.last_entry = real_stamp(existing, source, value, **kwargs)
+        return _written.last_entry
 
     async def _record_point(session, event_id, source, home_win_probability, *a, **kw):
         points.append(home_win_probability)
@@ -114,8 +130,17 @@ async def _written(monkeypatch, population, stored, *, venue_legs=()):
     return stamped, points, stats
 
 
-def _stored_at(when: datetime, value=0.035) -> dict:
-    return {"kalshi": {"value": value, "updated_at": when.isoformat()}}
+#: The beat's one outcome row (`_beat`), as keyed in an observation basis.
+ROW = "1001"
+
+
+def _stored_at(when: datetime, value=0.035, *, published=None) -> dict:
+    """The socket's stored entry: it SAW the row at ``when`` and published at
+    ``published`` (default the same instant)."""
+    return stamp_source_reading(
+        None, "kalshi", value, now=published or when,
+        observed_basis={ROW: when.timestamp()},
+    )
 
 
 class TestTheBeatRefusesAReadingOlderThanTheStoredStamp:
@@ -165,6 +190,45 @@ class TestTheBeatRefusesAReadingOlderThanTheStoredStamp:
         )
         assert stamped == [0.155] and points == [0.155], (stamped, points)
         assert stats["stale_readings_refused"] == 0
+
+    async def test_a_later_publication_of_an_earlier_observation_is_replaced(
+        self, monkeypatch
+    ):
+        """Clock domain: the socket saw the row BEFORE this reading did but
+        published after. Comparing with its publication clock refused the
+        genuinely newer reading; the observation basis admits it."""
+        now = _now()
+        stamped, points, stats = await _written(
+            monkeypatch,
+            _beat(last_seen=now - timedelta(seconds=60)),
+            _stored_at(
+                now - timedelta(seconds=90), published=now - timedelta(seconds=15),
+            ),
+        )
+        assert stamped == [0.155] and points == [0.155], (stamped, points)
+        assert stats["stale_readings_refused"] == 0
+
+    async def test_a_legacy_stamp_with_no_basis_abstains(self, monkeypatch):
+        now = _now()
+        stamped, points, _ = await _written(
+            monkeypatch,
+            _beat(last_seen=now - timedelta(seconds=150)),
+            {"kalshi": {"value": 0.035,
+                        "updated_at": (now - timedelta(seconds=15)).isoformat()}},
+        )
+        assert stamped == [0.155] and points == [0.155], (stamped, points)
+
+    async def test_the_written_entry_carries_its_basis(self, monkeypatch):
+        """What the next writer compares against is written here."""
+        now = _now()
+        seen = now - timedelta(seconds=60)
+        stamped, _points, _ = await _written(
+            monkeypatch, _beat(last_seen=seen), _stored_at(now - timedelta(seconds=200)),
+        )
+        assert stamped == [0.155]
+        entry = _written.last_entry["kalshi"]
+        assert entry[OBSERVED_BASIS_KEY] == {ROW: seen.timestamp()}, entry
+        assert entry[OBSERVED_VALUE_KEY] == 0.155, entry
 
     async def test_a_stored_bare_float_abstains(self, monkeypatch):
         now = _now()
@@ -228,40 +292,3 @@ class TestTheComparisonHoldsAtTheCommit:
             "the refused reading's row lock is carried into the next statement",
             journal[read_at : read_at + 3],
         )
-
-
-class TestTheHelper:
-    T = datetime(2026, 9, 26, 19, 51, 23, 817530, tzinfo=timezone.utc)
-
-    def test_the_specimen(self):
-        # 19:52:05's reading was last seen no later than 19:51:08, the Kalshi
-        # row's price change; the socket had stored 19:51:23.
-        stored = {"kalshi": {"value": 0.035, "updated_at": self.T.isoformat()}}
-        seen = datetime(2026, 9, 26, 19, 51, 8, tzinfo=timezone.utc)
-        assert reading_predates_stored_entry(stored, "kalshi", seen) is True
-
-    def test_equal_and_later_are_admitted(self):
-        stored = {"kalshi": {"value": 0.035, "updated_at": self.T.isoformat()}}
-        assert reading_predates_stored_entry(stored, "kalshi", self.T) is False
-        later = self.T + timedelta(seconds=1)
-        assert reading_predates_stored_entry(stored, "kalshi", later) is False
-
-    def test_it_reads_only_its_own_source(self):
-        stored = {"polymarket": {"value": 0.04, "updated_at": self.T.isoformat()}}
-        early = self.T - timedelta(minutes=5)
-        assert reading_predates_stored_entry(stored, "kalshi", early) is False
-
-    def test_abstentions(self):
-        early = self.T - timedelta(minutes=5)
-        assert reading_predates_stored_entry(None, "kalshi", early) is False
-        assert reading_predates_stored_entry({"kalshi": 0.03}, "kalshi", early) is False
-        assert reading_predates_stored_entry(
-            {"kalshi": {"value": 0.03, "updated_at": "garbage"}}, "kalshi", early
-        ) is False
-        stored = {"kalshi": {"value": 0.035, "updated_at": self.T.isoformat()}}
-        assert reading_predates_stored_entry(stored, "kalshi", None) is False
-
-    def test_a_naive_observation_is_read_as_utc(self):
-        stored = {"kalshi": {"value": 0.035, "updated_at": self.T.isoformat()}}
-        naive = (self.T - timedelta(seconds=10)).replace(tzinfo=None)
-        assert reading_predates_stored_entry(stored, "kalshi", naive) is True

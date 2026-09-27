@@ -374,7 +374,7 @@ class TailReceipts:
         value = previous = stamped_at = None
         if result == "stamped":
             _, value, stamped_at, previous = disposition
-        elif result in ("unchanged", "unobserved"):
+        elif result in ("unchanged", "unobserved", "stale"):
             value = disposition[1]
         moved = result == "stamped" and (previous is None or previous != value)
 
@@ -418,6 +418,7 @@ class TailReceipts:
 
 def atomic_stamp_expression(
     source: str, value: float, stamped_at=None, eligibility=None,
+    observed_basis=None,
 ):
     """The SET expression that stamps ONE source key WITHOUT reading it first.
 
@@ -455,13 +456,19 @@ def atomic_stamp_expression(
     `None` eligibility omits the key rather than writing a null, so it cannot
     clear a record another writer left — the same non-destructive rule the
     Python helper documents.
+
+    ``observed_basis`` follows the Python helper's OPPOSITE rule for that key
+    (#8910): given, it is written bound to ``value``; omitted, any basis on the
+    entry is removed, so a writer that cannot date its reading never leaves the
+    previous reading's observation attached to a new value.
     """
     import json
 
-    from sqlalchemy import Text, case, cast, func, literal
+    from sqlalchemy import Text, case, cast, func, literal, type_coerce
     from sqlalchemy.dialects.postgresql import JSONB
 
     from app.models.models import Event
+    from app.utils.aggregation import OBSERVED_BASIS_KEY, OBSERVED_VALUE_KEY
     from app.utils.probability_eligibility import ELIGIBILITY_KEY
 
     # Production stamps inside the UPDATE, not before waiting for its row lock.
@@ -474,6 +481,9 @@ def atomic_stamp_expression(
         entry["updated_at"] = stamped_at.isoformat()
     if eligibility is not None:
         entry[ELIGIBILITY_KEY] = eligibility.to_entry()
+    if observed_basis:
+        entry[OBSERVED_BASIS_KEY] = dict(observed_basis)
+        entry[OBSERVED_VALUE_KEY] = value
 
     empty = cast(literal("{}"), JSONB)
 
@@ -496,9 +506,77 @@ def atomic_stamp_expression(
         entry_expression = entry_expression.concat(
             func.jsonb_build_object("updated_at", func.clock_timestamp())
         )
-    merged_entry = as_object(column[source]).concat(entry_expression)
+    prior_entry = as_object(column[source])
+    if not observed_basis:
+        for key in (OBSERVED_BASIS_KEY, OBSERVED_VALUE_KEY):
+            prior_entry = type_coerce(
+                prior_entry.op("-")(cast(literal(key), Text)), JSONB
+            )
+    merged_entry = prior_entry.concat(entry_expression)
     return as_object(column).concat(
         func.jsonb_build_object(cast(literal(source), Text), merged_entry)
+    )
+
+
+def observation_admits_clause(source: str, observed_basis):
+    """WHERE clause: the stored entry saw none of these rows LATER than this reading.
+
+    #8910 (F3 of the other-writers review, plus Codex's re-observation
+    variant). This lane reads its rows, orients, then stamps; the two-minute
+    poll can re-observe the venue after a goal, compare under its row lock and
+    stamp the post-goal price inside that window. The stamp that followed wrote
+    the pre-goal price with the NEWEST clock — the worst shape, because every
+    clock guard downstream (the poll's, the phone's #920 ordering, the chart's
+    strictly-newer rule) then trusts the older price. The unchanged re-stamp arm
+    does the same when the lane re-observed the old value before the poll wrote.
+
+    The decision therefore lives IN the stamping UPDATE rather than in a read
+    before it: under READ COMMITTED an UPDATE that waited on the poll's lock
+    re-evaluates its WHERE against the row the poll committed, so the comparison
+    holds at the commit with no lock of this lane's own and no extra round trip.
+    It is `aggregation.reading_regresses_stored_observation` in SQL, and must
+    stay that: per contributor, the stored basis trusted only while bound to a
+    NUMERIC stored value (Codex, on 30162c4dd6: JSON equality alone trusted
+    `"0.6" = "0.6"`, `true = true` and `null = null`, which the Python rule
+    abstains on — a malformed entry would then refuse the very write that
+    repairs it; a jsonb number is always finite, so `number` is the whole of
+    `_finite_number`), a non-number clock on either side ignored (never cast — a
+    malformed stored string must not abort the batch), and no shared row means
+    no opinion.
+
+    ``None`` when this reading has no basis: the stamp then runs unguarded, as
+    it always has, and strips the old basis (`atomic_stamp_expression`).
+    """
+    from sqlalchemy import bindparam, text
+    from sqlalchemy.dialects.postgresql import JSONB
+
+    from app.utils.aggregation import OBSERVED_BASIS_KEY, OBSERVED_VALUE_KEY
+
+    if not observed_basis:
+        return None
+    entry = (
+        "(CASE WHEN jsonb_typeof(events.win_probability_sources) = 'object' "
+        "AND jsonb_typeof(events.win_probability_sources -> :obs_source) = 'object' "
+        "THEN events.win_probability_sources -> :obs_source "
+        "ELSE '{}'::jsonb END)"
+    )
+    stored_basis = (
+        f"(CASE WHEN jsonb_typeof({entry} -> '{OBSERVED_BASIS_KEY}') = 'object' "
+        f"AND jsonb_typeof({entry} -> 'value') = 'number' "
+        f"AND {entry} -> '{OBSERVED_VALUE_KEY}' = {entry} -> 'value' "
+        f"THEN {entry} -> '{OBSERVED_BASIS_KEY}' ELSE '{{}}'::jsonb END)"
+    )
+    return text(
+        "NOT EXISTS (SELECT 1 "
+        f"FROM jsonb_each({stored_basis}) AS stored_seen(row_key, seen) "
+        "JOIN jsonb_each(:obs_basis) AS this_seen(row_key, seen) "
+        "ON this_seen.row_key = stored_seen.row_key "
+        "WHERE jsonb_typeof(stored_seen.seen) = 'number' "
+        "AND jsonb_typeof(this_seen.seen) = 'number' "
+        "AND (stored_seen.seen)::numeric > (this_seen.seen)::numeric)"
+    ).bindparams(
+        bindparam("obs_source", value=source),
+        bindparam("obs_basis", value=dict(observed_basis), type_=JSONB),
     )
 
 
@@ -626,6 +704,9 @@ class LiveBlendRefresher:
             # #5661 — an unchanged value whose rows no writer has re-read since
             # the stored stamp. Not re-dated; see `restamp_records_no_observation`.
             "unobserved_skipped": 0,
+            # #8910 — readings refused because the poll or the matcher had
+            # already stored a later observation of the same rows.
+            "stale_readings_refused": 0,
             "snapshots_written": 0,
             "snapshots_deduped": 0,
             "errors": 0,
@@ -785,6 +866,7 @@ class LiveBlendRefresher:
         from app.tasks.base import get_task_session
         from app.utils.aggregation import (
             compute_aggregate_probability,
+            observation_basis,
             oldest_observation_time,
         )
         from app.utils.live_blend import (
@@ -909,12 +991,13 @@ class LiveBlendRefresher:
                     # stored entry is the reference (not this process's memory,
                     # which a dyno restart empties), and the reading's rows are
                     # the ones the number came from, as the 120s poll dates it.
+                    contributing = (
+                        getattr(reading, "contributing_outcomes", None)
+                        or (getattr(reading, "outcome", None),)
+                    )
                     if restamp_records_no_observation(
                         value,
-                        oldest_observation_time(
-                            getattr(reading, "contributing_outcomes", None)
-                            or (getattr(reading, "outcome", None),)
-                        ),
+                        oldest_observation_time(contributing),
                         getattr(event, "win_probability_sources", None),
                         self.source,
                     ):
@@ -942,21 +1025,49 @@ class LiveBlendRefresher:
                     # Publishing the aggregate of this arm's own private copy is
                     # the second half of live/305's flicker: the row would be
                     # right and the wire still wrong.
+                    #
+                    # #8910: and the stamp is CONDITIONAL on no other writer
+                    # having stored a later observation of these rows — every
+                    # stamp, moved or re-stamped. See `observation_admits_clause`
+                    # for why the condition lives in this UPDATE.
+                    basis = observation_basis(contributing)
+                    admits = observation_admits_clause(self.source, basis)
                     async with session.begin_nested():
+                        # `synchronize_session=False`: the ORM cannot evaluate
+                        # the guard's SQL in Python, and its "fetch" fallback
+                        # rewrites RETURNING to the primary key — the frame
+                        # would then be built from an event id, not the blend.
+                        stamp = (
+                            update(Event)
+                            .where(Event.id == event_id)
+                            .execution_options(synchronize_session=False)
+                        )
+                        if admits is not None:
+                            stamp = stamp.where(admits)
                         new_sources = (
                             await session.execute(
-                                update(Event)
-                                .where(Event.id == event_id)
-                                .values(
+                                stamp.values(
                                     win_probability_sources=atomic_stamp_expression(
                                         self.source,
                                         value,
                                         eligibility=reading.eligibility,
+                                        observed_basis=basis,
                                     )
                                 )
                                 .returning(Event.win_probability_sources)
                             )
                         ).scalar_one_or_none()
+                        if new_sources is None and admits is not None:
+                            # Refused: the poll or the matcher stored a later
+                            # observation of these rows since this batch read
+                            # them. No chart point, no frame, and NOT recorded
+                            # as written, so the next flush reads again rather
+                            # than taking this value as already stored. (A row
+                            # deleted mid-batch lands here too; skipping it is
+                            # right either way.)
+                            self.stats["stale_readings_refused"] += 1
+                            self._dispositions[event_id] = ("stale", value)
+                            continue
                         if new_sources is None:
                             # The UPDATE matched nothing, so there is no stored blend
                             # to publish an aggregate of. Reachable only if the row

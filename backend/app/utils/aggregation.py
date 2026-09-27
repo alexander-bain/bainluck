@@ -33,6 +33,7 @@ Source weights reflect depth and reliability:
   - Polymarket (0.8): Largest prediction market, good liquidity
 """
 
+import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -255,6 +256,7 @@ def stamp_source_reading(
     value: float,
     now: Optional[datetime] = None,
     eligibility: Optional[EligibilityRecord] = None,
+    observed_basis: Optional[dict] = None,
 ) -> dict:
     """Write one source into ``win_probability_sources`` WITH its write time.
 
@@ -282,6 +284,13 @@ def stamp_source_reading(
     that has not yet adopted the record would otherwise strip the evidence a
     writer that has just finished stamping — and the column would oscillate
     between substantiated and not, at whichever cadence is faster.
+
+    ``observed_basis`` is the OPPOSITE rule, deliberately (#8910): the
+    `observation_basis` of the rows this value came from. Given, it is written
+    bound to ``value``; omitted, any basis already on the entry is REMOVED. An
+    eligibility record describes the market, which does not change when the
+    price does. A basis dates one particular reading, and left in place under a
+    new value it would lend that value an observation it never had.
     """
     updated = dict(sources or {})
     stamp = now or datetime.now(timezone.utc)
@@ -301,6 +310,12 @@ def stamp_source_reading(
     entry["updated_at"] = stamp.isoformat()
     if eligibility is not None:
         entry[ELIGIBILITY_KEY] = eligibility.to_entry()
+    if observed_basis:
+        entry[OBSERVED_BASIS_KEY] = dict(observed_basis)
+        entry[OBSERVED_VALUE_KEY] = value
+    else:
+        entry.pop(OBSERVED_BASIS_KEY, None)
+        entry.pop(OBSERVED_VALUE_KEY, None)
     updated[source] = entry
     return updated
 
@@ -381,39 +396,129 @@ def oldest_observation_time(
     return min(observed)
 
 
-def reading_predates_stored_entry(
-    sources: Optional[dict], source: str, observed_at: Optional[datetime]
+#: #8910 — the private keys inside a source entry that say WHEN the rows behind
+#: its value were observed. Never served (the source serializers allowlist
+#: their fields) and never read as a publication clock: ``updated_at`` keeps
+#: its meaning for every writer, because the frames, the hero's recency decay
+#: and the chart's ordering all read that one.
+OBSERVED_BASIS_KEY = "observed_basis"
+#: The value the basis dates. A basis is trusted only while this still equals
+#: the entry's ``value`` — see `stored_observation_basis`.
+OBSERVED_VALUE_KEY = "observed_value"
+
+
+def observation_basis(rows: Any, now: Optional[datetime] = None) -> Optional[dict]:
+    """``{str(outcome id): epoch seconds}`` — when EACH contributing row was seen.
+
+    #8910. `oldest_observation_time` collapses a reading to one clock, which is
+    the right way to DATE it and the wrong way to ORDER two of them. A devigged
+    reading of a frozen leg (seen at 1) and a ticking one (seen at 4) has the
+    same minimum as a stale copy that read the ticking leg at 2; comparing
+    minimums admits the stale copy and puts the older price back. Ordering
+    needs the clock of every row, keyed by the row, so a writer can ask "did I
+    see any of these rows EARLIER than whoever wrote the stored value?".
+
+    Epoch seconds rather than ISO text so the WebSocket lane's UPDATE can
+    compare them as JSON numbers without a timestamp cast, which a malformed
+    stored string would turn into an error mid-batch.
+
+    ABSTAINS — returns ``None`` — exactly where `oldest_observation_time` does
+    (no rows, or any row that cannot say when it was seen), and also for a row
+    with no id, since a clock that cannot be matched to the same row later
+    cannot order anything.
+    """
+    rows = list(rows or ())
+    if not rows:
+        return None
+    basis: dict = {}
+    for row in rows:
+        row_id = getattr(row, "id", None)
+        seen = source_observation_time(row, now=now)
+        if seen is None or row_id is None or isinstance(row_id, bool):
+            return None
+        key = str(row_id)
+        stamp = seen.timestamp()
+        basis[key] = min(stamp, basis.get(key, stamp))
+    return basis
+
+
+def _finite_number(raw: Any) -> bool:
+    return (
+        isinstance(raw, (int, float))
+        and not isinstance(raw, bool)
+        and math.isfinite(raw)
+    )
+
+
+def stored_observation_basis(sources: Optional[dict], source: str) -> Optional[dict]:
+    """The basis a stored entry carries, or ``None`` when it cannot be trusted.
+
+    Untrusted means: no entry, a bare float, no basis, a basis that is not an
+    object, or one BOUND TO A DIFFERENT VALUE. The last is the binding rule.
+    Both stamp helpers strip the basis on any write that does not supply one,
+    but a writer outside them that changes ``value`` and copies the rest of the
+    entry would leave a basis dating the previous reading, so the basis is only
+    believed while ``observed_value`` still equals ``value``. A malformed
+    contributor clock is dropped rather than failing the whole basis.
+    """
+    if not isinstance(sources, dict):
+        return None
+    entry = sources.get(source)
+    if not isinstance(entry, dict):
+        return None
+    basis = entry.get(OBSERVED_BASIS_KEY)
+    value = entry.get("value")
+    if not isinstance(basis, dict) or not _finite_number(value):
+        return None
+    bound = entry.get(OBSERVED_VALUE_KEY)
+    if not _finite_number(bound) or float(bound) != float(value):
+        return None
+    clean = {
+        str(key): float(seen) for key, seen in basis.items() if _finite_number(seen)
+    }
+    return clean or None
+
+
+def reading_regresses_stored_observation(
+    sources: Optional[dict], source: str, basis: Optional[dict]
 ) -> bool:
-    """True when the stored entry for ``source`` was observed AFTER this reading.
+    """True when ANY row behind this reading was seen before the stored one saw it.
 
     #8910, production 2026-09-26, Czechia v Croatia (15311809). Croatia scored;
-    the WebSocket lane stamped Kalshi at 0.035 at 19:51:23Z; the two-minute
-    poll then stamped Kalshi 0.155 at 19:52:05Z — byte-equal to the socket's
-    19:50:14Z value, the price from BEFORE the goal. The poll derives its blend
-    from the outcome rows it loaded (or re-priced) when the pass began, and a
-    pass can run minutes; by the time it reaches the stamp stage the socket
-    has already written a later price. The reader saw "Czechia 10%" for 12.6 s
-    after the goal, and at the equalizer 80 s of the pre-equalizer number.
+    the WebSocket lane stamped Kalshi at 0.035; the two-minute poll then stamped
+    0.155 — the price from before the goal, derived from rows it had loaded
+    when its pass began. The reader saw "Czechia 10%" for 12.6 s after the goal.
+    Three writers stamp this entry (the poll, the 15-minute matcher and the
+    WebSocket lane) and each of them can hold a reading across the others'
+    commits, so the rule is the one every recency clause here assumes: a reading
+    may not replace one that saw the same rows later than it did.
 
-    The rule is the one every recency clause here already assumes and none
-    enforced: a reading may not replace one that was observed later than it
-    was. ``observed_at`` is the writer's own `oldest_observation_time`; the
-    stored ``updated_at`` is an observation time too (#4028 made every writer
-    stamp it that way; the WS lane stamps its database clock at the write).
+    THE CLOCK DOMAIN IS THE WHOLE RULE. The first cut compared this reading's
+    observation time with the stored ``updated_at``, and the WebSocket lane
+    stamps ``updated_at`` with its database clock at the write — a PUBLICATION
+    time. Codex's control (8910-clock-domain-control): reading A observed at
+    t1 and published at t3; a newer reading B observed at t2, t1 < t2 < t3.
+    Observation-vs-publication refuses B, the newer price. Here both sides are
+    observation clocks of the SAME rows, so publication order cannot enter.
 
-    ABSTAINS — returns False, i.e. today's behaviour — whenever it cannot
-    know: ``observed_at`` None, no stored entry, or a stored entry with no
-    parseable stamp (a bare float from an older writer). Unknown is not stale.
-    Strictly earlier only: an equal stamp is the same observation.
+    Per contributor, not per minimum (see `observation_basis`): refuses if any
+    shared row is older in this reading than in the stored one.
+
+    ABSTAINS — returns False, i.e. the write proceeds — when it cannot order
+    the two: this reading has no basis, the stored entry has no trusted basis
+    (a legacy entry, a bare float, an unbound or malformed one), or the two
+    share no row (the group changed which market speaks). Unknown is not stale,
+    and a reading that shares nothing with the stored one was not derived from
+    older copies of the same rows. An equal clock is the same observation.
     """
-    if observed_at is None or not isinstance(sources, dict):
+    if not basis:
         return False
-    _value, stored_at = parse_source_entry(sources.get(source))
-    if stored_at is None:
+    stored = stored_observation_basis(sources, source)
+    if not stored:
         return False
-    if observed_at.tzinfo is None:
-        observed_at = observed_at.replace(tzinfo=timezone.utc)
-    return observed_at < stored_at
+    return any(
+        key in stored and float(seen) < stored[key] for key, seen in basis.items()
+    )
 
 
 def wps_numeric_sql(source: str, column: str = "win_probability_sources") -> str:
