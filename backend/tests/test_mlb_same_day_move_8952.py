@@ -189,6 +189,7 @@ class TestTheSweepReportsTheArm:
                 )
                 self.commence_time, self.espn_id = r.commence_time, r.espn_id
                 self.home_score = self.away_score = None
+                self.status = "scheduled"
                 self.tags_text = "[]"
 
         class _Res:
