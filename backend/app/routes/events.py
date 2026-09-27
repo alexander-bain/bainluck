@@ -27915,6 +27915,14 @@ async def get_event_odds_history(
             for point in source_points:
                 gs = point.get("game_state") or {}
                 period_val = gs.get("period")
+                if _is_transition_sport and isinstance(period_val, str) and period_val:
+                    # #9179: football's period text carries the game clock, so the
+                    # raw string made `15:00 - 1st Quarter` and `14:51 - 1st Quarter`
+                    # two markers (12–17 per scoreless game). Key on the period; a
+                    # break or a non-state string (a pre-game date) is no marker.
+                    period_val = pm_source.football_period_label(period_val)
+                    if period_val is None:
+                        continue
                 if isinstance(period_val, str) and period_val:
                     if period_val not in first_seen_wp:
                         first_seen_wp[period_val] = point["timestamp"]
