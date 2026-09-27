@@ -80,7 +80,14 @@ _THEME_BY_TICKER: list[tuple[str, str]] = [
     ("kxrtcompare", "movies"),
     ("kxrttv", "movies"),
     ("kxbeastgames", "tv_streaming"),
-    ("kxbachelor", "tv_streaming"),
+    # #9202 — `kxbachelor` was the third bare prefix. It also matched
+    # `KXBACHELOROPEN-27`, "When will Mt. Bachelor open for the 26/27 winter
+    # season?", a SKI RESORT, which the Reality TV tab printed between two Big
+    # Brother cards. Every real show series Kalshi lists under the stem is a
+    # Bachelorette one (`KXBACHELORETTE`, `…ELIMINATION`, `…FIR`, measured
+    # 2026-09-27); a bare The Bachelor series is named with its dash, like `kxrt-`.
+    ("kxbachelorette", "tv_streaming"),
+    ("kxbachelor-", "tv_streaming"),
     ("kxloveisland", "tv_streaming"),
     # Same collision, four characters and three orders of magnitude worse.
     # `kxli` was here for Love Island's real tickers (`KXLIUK…`, `KXLIUSA…`), and
@@ -98,10 +105,16 @@ _THEME_BY_TICKER: list[tuple[str, str]] = [
     ("kxmusk", "social_media"),
 ]
 
+# #9202 — the show, never the mountain. "Mt. Bachelor" / "Mount Bachelor" is an
+# Oregon ski resort whose season-opening market is a Kalshi series of its own;
+# a bare `bachelor` word match filed it as reality TV. Shared by both name
+# tables so the theme and the card kind cannot disagree about it.
+_BACHELOR = r"(?<!mt\. )(?<!mt )(?<!mount )bachelor(?:ette)?"
+
 _THEME_BY_NAME: list[tuple[re.Pattern, str]] = [
     (re.compile(r"\b(?:box\s*office|opening\s*weekend|domestic\s*gross|worldwide\s*gross|film|movie)\b", re.I), "movies"),
     (re.compile(r"\b(?:rotten\s*tomatoes|RT\s*score|critic\s*score|tomatometer)\b", re.I), "movies"),
-    (re.compile(r"\b(?:netflix|hulu|disney\+|hbo|max|streaming|series|show|season\s*\d|episode|sitcom|reality\s*tv|survivor|bachelor|big\s*brother|beast\s*games|love\s*island)\b", re.I), "tv_streaming"),
+    (re.compile(r"\b(?:netflix|hulu|disney\+|hbo|max|streaming|series|show|season\s*\d|episode|sitcom|reality\s*tv|survivor|" + _BACHELOR + r"|big\s*brother|beast\s*games|love\s*island)\b", re.I), "tv_streaming"),
     (re.compile(r"\b(?:spotify|billboard|hot\s*100|album|song|artist|concert|tour|grammy|music|rapper|singer|band)\b", re.I), "music"),
     (re.compile(r"\b(?:oscar|emmy|golden\s*globe|sag\s*award|tony|bafta|cannes|sundance|venice\s*film)\b", re.I), "awards"),
     (re.compile(r"\b(?:youtube|tiktok|instagram|twitter|x\.com|subscriber|follower|views|viral|mrbeast|influencer|streamer|twitch|podcast|elon|musk|tweet)\b", re.I), "social_media"),
@@ -117,7 +130,12 @@ _ENTERTAINMENT_EXCLUDE_RE = re.compile(
     r"launch\s+count|rocket|satellite|orbit|"
     r"richest|billionaire|fortune|wealth|"
     r"SEC\s+investigation|antitrust|lawsuit|"
-    r"company\s+stake|acquisition|acquire)\b",
+    r"company\s+stake|acquisition|acquire|"
+    # #9202 — a ski resort's season opening is weather, whatever its name
+    # sounds like ("Mt. Bachelor", and "Big Sky" is a TV show too). Its 20
+    # siblings are all stored as weather; this is the page refusing the one
+    # that was not, not a re-categorisation.
+    r"open\s+for\s+the\s+[\d/]+\s+winter\s+season|ski\s+(?:resort|season))\b",
     re.IGNORECASE,
 )
 
@@ -146,7 +164,8 @@ _KIND_BY_TICKER: list[tuple[str, str]] = [
     ("kxboxoffice", "boxoffice"),
     ("kxrottentomatoes", "rt"),
     ("kxsurvivor", "reality"),
-    ("kxbachelor", "reality"),
+    ("kxbachelorette", "reality"),
+    ("kxbachelor-", "reality"),
     ("kxbeastgames", "reality"),
     ("kxeurovision", "eurovision"),
 ]
@@ -156,7 +175,7 @@ _KIND_BY_NAME: list[tuple[re.Pattern, str]] = [
     (re.compile(r"\b(?:billboard|hot\s*100)\b", re.I), "billboard"),
     (re.compile(r"\b(?:box\s*office|opening\s*weekend|domestic\s*gross)\b", re.I), "boxoffice"),
     (re.compile(r"\b(?:rotten\s*tomatoes|tomatometer)\b", re.I), "rt"),
-    (re.compile(r"\b(?:survivor|bachelor|bachelorette|beast\s*games|big\s*brother|reality)\b", re.I), "reality"),
+    (re.compile(r"\b(?:survivor|" + _BACHELOR + r"|beast\s*games|big\s*brother|reality)\b", re.I), "reality"),
     (re.compile(r"\b(?:eurovision)\b", re.I), "eurovision"),
 ]
 
