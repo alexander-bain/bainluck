@@ -13,6 +13,19 @@ import XCTest
 /// pinned by `ALiveEventPageSaysItsFreshnessOnce8320Tests`.
 final class EventRefreshTruthTests: XCTestCase {
 
+    func testReadableStatusDoesNotConfuseConnectionDeliveryAndFailedRefresh() {
+        XCTAssertEqual(LiveUpdateStatus.decide(status: "live", delivering: true,
+                                              acceptedUpdate: false, refreshFailed: false), .awaitingUpdate)
+        XCTAssertEqual(LiveUpdateStatus.decide(status: "live", delivering: false,
+                                              acceptedUpdate: true, refreshFailed: false), .autoRefresh)
+        XCTAssertEqual(LiveUpdateStatus.decide(status: "live", delivering: false,
+                                              acceptedUpdate: false, refreshFailed: true), .interrupted)
+        XCTAssertEqual(LiveUpdateStatus.decide(status: "live", delivering: true,
+                                              acceptedUpdate: true, refreshFailed: true), .live)
+        XCTAssertEqual(LiveUpdateStatus.decide(status: "completed", delivering: true,
+                                              acceptedUpdate: true, refreshFailed: false), .hidden)
+    }
+
     // MARK: - showsRefreshStatus: only live refreshes
 
     func testLiveShowsStatus() {

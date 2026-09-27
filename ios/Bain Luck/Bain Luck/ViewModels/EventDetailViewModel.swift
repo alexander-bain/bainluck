@@ -49,18 +49,29 @@ final class EventDetailViewModel: ObservableObject {
     /// and never to a frozen number.
     @Published private(set) var streamDelivering = false
 
-    /// #8320 — whether the stream has put a PRICE on this page since it last
-    /// started delivering.
+    /// #8320 — whether a live frame or its authoritative folded-price reread
+    /// has put a PRICE on this page since the stream last started delivering.
     ///
     /// `streamDelivering` turns true on the stream's `open` event, before any
     /// price has arrived — rightly for the poll, which it stands down, because
     /// a stream that has just opened has not failed to deliver yet. It is not
     /// evidence for a reader: native/319 photographed the green dot for up to
     /// 90 seconds on an opened stream with no prices. So the dot reads this as
-    /// well. It is set only where a pushed price is written into the hero, and
+    /// well. It is set only where an accepted live update reaches the hero, and
     /// cleared on every fall back to polling, so a rollover or a quiet market
     /// has to push again before the page says it is being pushed to.
     @Published private(set) var streamHasPushedPrice = false
+
+    /// #8320: a successful stream-triggered authoritative fold read also
+    /// delivers a price. Socket open / cached unchanged reads do not.
+    private var deliveryGeneration = 0
+    private var streamRefetchGeneration: Int?
+
+    var liveUpdateStatus: LiveUpdateStatus {
+        LiveUpdateStatus.decide(status: event?.status, delivering: streamDelivering,
+                                acceptedUpdate: streamHasPushedPrice,
+                                refreshFailed: error != nil)
+    }
 
     /// Every pushed blend this page has been given, at its stamped time (#920).
     ///
@@ -323,8 +334,23 @@ final class EventDetailViewModel: ObservableObject {
         let historyTask = Task { () -> EventHistoryResponse? in
             try? await client.fetchEventHistory(id: id, hours: 168)
         }
+        let requestedGeneration = streamRefetchGeneration
         if let fetched = try? await client.fetchEvent(id: id) {
+            // Read the baseline at adoption, not request start: an unrelated
+            // poll may have advanced the held price while this read awaited.
+            let priorRevision = event.flatMap { LiveEventPriceReconciliation.pairedFoldRevision(in: $0) }
             adopt(fetched)
+            // The reread must actually advance the price the page adopted, and
+            // belong to this connection generation. A read finishing after an
+            // outage cannot relight the status using the old connection's work.
+            if requestedGeneration == deliveryGeneration,
+               streamRefetchGeneration == requestedGeneration,
+               let priorRevision, let current = event,
+               let revision = LiveEventPriceReconciliation.pairedFoldRevision(in: current),
+               FoldRevision.compare(revision, priorRevision) == .newer {
+                streamHasPushedPrice = true
+                streamRefetchGeneration = nil
+            }
             configureAutoRefresh()
         }
         if let h = await historyTask.value {
@@ -440,6 +466,8 @@ final class EventDetailViewModel: ObservableObject {
                 // that just earned it.
                 if !delivering {
                     self.streamHasPushedPrice = false
+                    self.deliveryGeneration += 1
+                    self.streamRefetchGeneration = nil
                     // The dot and fast polling reflect the outage immediately.
                     // A recoverable outage does not invalidate a price already
                     // observed; load() checks terminal refusal before using it.
@@ -472,6 +500,9 @@ final class EventDetailViewModel: ObservableObject {
 
     @MainActor
     private func stopStream() {
+        deliveryGeneration += 1
+        streamRefetchGeneration = nil
+        streamHasPushedPrice = false
         streamTickTask?.cancel()
         streamTickTask = nil
         stream?.stop()
@@ -516,7 +547,10 @@ final class EventDetailViewModel: ObservableObject {
         let priceIsNotNewer: Bool
         if let foldOrder {
             priceIsNotNewer = foldOrder != .newer
-            if foldOrder == .incomparable { requestRevisionRefetch() }
+            if foldOrder == .incomparable {
+                streamRefetchGeneration = deliveryGeneration
+                requestRevisionRefetch()
+            }
         } else {
             priceIsNotNewer = stamped.map { stamp in
                 latestAcceptedPriceDate.map { stamp <= $0 } ?? false

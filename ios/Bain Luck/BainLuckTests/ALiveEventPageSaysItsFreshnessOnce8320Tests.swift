@@ -82,27 +82,19 @@ final class ALiveEventPageSaysItsFreshnessOnce8320Tests: XCTestCase {
 
     // MARK: - One status, in the toolbar
 
-    func testTheToolbarButtonCarriesTheOneStatus() throws {
+    func testReadableStatusAndManualRefreshAreSeparate() throws {
         let page = try pageCode()
-        XCTAssertTrue(
-            page.contains("Button{Task{awaitvm.load()}}label:{refreshStatus}"),
-            "the toolbar's manual-refresh button no longer carries the page's status")
-        XCTAssertEqual(
-            occurrences(of: "LivePushDot(", in: page), 1,
-            "EventDetailView draws the push dot somewhere other than its one status")
+        XCTAssertEqual(occurrences(of: "LiveUpdateStatusView(status:vm.liveUpdateStatus)", in: page), 2)
+        XCTAssertTrue(page.contains(".accessibilityLabel(\"Refreshnow\")"))
+        XCTAssertTrue(page.contains("Button{Task{awaitvm.load()}}label:{Image(systemName:\"arrow.clockwise\")"))
+        XCTAssertEqual(occurrences(of: "LivePushDot(", in: page), 0)
     }
 
-    /// The fallback arm is not the push arm: a stream that is reconnecting or
-    /// never delivered must not read as one that is pushing.
-    func testThePolledArmIsNotAGreenDot() throws {
-        let page = try pageCode()
-        guard let polling = page.range(of: "case.polling:") else {
-            return XCTFail("refreshStatus lost its polling arm")
-        }
-        let arm = String(page[polling.upperBound...].prefix(200))
-        XCTAssertTrue(arm.contains("Image(systemName:\"arrow.clockwise\")"), arm)
-        XCTAssertFalse(arm.contains("LivePushDot"), arm)
-        XCTAssertFalse(arm.contains("#10B981"), "the polled arm is painted the push green")
+    func testOnlyProvenDeliveryGetsAGreenMarker() throws {
+        let status = try code("Components", "LiveUpdateStatusView.swift")
+        XCTAssertTrue(status.contains("ifstatus==.live{Circle().fill(.green)"))
+        XCTAssertFalse(status.contains("Timer"))
+        XCTAssertFalse(status.contains("repeatForever"))
     }
 
     // MARK: - The chart title carries none of it
