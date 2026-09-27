@@ -648,6 +648,13 @@ export interface EventHistoryResponse {
    */
   blend_edge_observed_at?: string | null;
   /**
+   * #9051: the `blend_source_removed_at` of the membership the pinned edge's
+   * blend folds — the same database clock the detail hero carries. `null`: that
+   * membership had no removal. Absent: no membership claim (decides nothing).
+   * See `lib/sourceRemovalClock.ts` `edgePredatesServedSourceRemoval`.
+   */
+  blend_edge_source_removed_at?: string | null;
+  /**
    * #6948: true iff the backend ACTUALLY removed points before kick-off, i.e. iff a second request
    * without `range=since_start` would answer with more. `false` on every payload served without the
    * parameter, and optional because a client may be reading an older payload.

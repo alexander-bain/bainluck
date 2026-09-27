@@ -1,7 +1,8 @@
 import { fetchEventWithLiveFrame, reconcileEventPoll } from '@/lib/reconcileEventPoll';
 import { applyLiveFrame, type LiveFrame } from '@/lib/eventLivePush';
 import { adoptNewerBlendEdge } from '@/lib/blendObservationClock';
-import { predatesServedSourceRemoval } from '@/lib/sourceRemovalClock';
+import { servedBlendEdgeObservation } from '@/lib/blendObservationClock';
+import { edgePredatesServedSourceRemoval, predatesServedSourceRemoval } from '@/lib/sourceRemovalClock';
 import type { LiveStreamFrame } from '@/lib/liveStreamController';
 
 // #9051, the exact-source counterexample (PR #9028 head c4318426): the page held
@@ -53,7 +54,8 @@ describe('the reported failure: a fresh post-removal response', () => {
   });
 
   test('refuses a pre-removal history edge, however much newer than the survivors quote', async () => {
-    const edge = { p: 0.6, observedAt: FRAME_AT };
+    // Computed from the membership before the removal: that membership had none.
+    const edge = { p: 0.6, observedAt: FRAME_AT, membershipRemovedAt: null };
     expect(adoptNewerBlendEdge(postRemoval, edge)).toBe(postRemoval);
     const result = await fetchEventWithLiveFrame(async () => postRemoval, () => null, () => edge);
     expect(result.hero_probability).toBe(0.4);
@@ -122,7 +124,7 @@ describe('healthy controls', () => {
 
   test('a post-removal history edge observed after the removal is adopted', () => {
     const postRemoval = served({ blend_source_removed_at: REMOVED_AT });
-    const result = adoptNewerBlendEdge(postRemoval, { p: 0.42, observedAt: NEWER_AT });
+    const result = adoptNewerBlendEdge(postRemoval, { p: 0.42, observedAt: NEWER_AT, membershipRemovedAt: REMOVED_AT });
     expect(result?.hero_probability).toBe(0.42);
     expect(result?.hero_probability_observed_at).toBe(NEWER_AT);
   });
@@ -134,7 +136,7 @@ describe('no removal claim decides nothing — every existing rule applies uncha
     // Without the producer this is the exact PR #9028 behaviour, kept on purpose:
     // the client cannot tell a removal from a pre-addition response on its own.
     expect(reconcileEventPoll(legacy, kalshiFrame).hero_probability).toBe(0.6);
-    expect(adoptNewerBlendEdge(legacy, { p: 0.6, observedAt: FRAME_AT })?.hero_probability).toBe(0.6);
+    expect(adoptNewerBlendEdge(legacy, { p: 0.6, observedAt: FRAME_AT, membershipRemovedAt: null })?.hero_probability).toBe(0.6);
   });
 
   test('an unparseable frame clock keeps its existing semantics on both paths', () => {
@@ -160,5 +162,62 @@ describe('no removal claim decides nothing — every existing rule applies uncha
     expect(predatesServedSourceRemoval({ blend_source_removed_at: REMOVED_AT }, null)).toBe(false);
     expect(predatesServedSourceRemoval({}, FRAME_AT)).toBe(false);
     expect(predatesServedSourceRemoval(null, FRAME_AT)).toBe(false);
+  });
+});
+
+// Codex source review of PR #9061 head 8472caecee (SOURCE-REVIEW.md): the edge's
+// PRICE clock cannot tell which membership it came from. All 05:00:ssZ: Polymarket
+// .4 at 00; Polymarket .5 observed 10; Kalshi removed 15; the matcher commits .5
+// at 20 into the post-removal row, stamping the observation (10), not its commit.
+describe('Codex timeline: a history edge is ordered by its MEMBERSHIP, not its price clock', () => {
+  const postRemoval = served({ blend_source_removed_at: REMOVED_AT });
+
+  test('post-removal commit of a price observed before the removal is ADOPTED (.5)', () => {
+    const edge = { p: 0.5, observedAt: FRAME_AT, membershipRemovedAt: REMOVED_AT };
+    const result = adoptNewerBlendEdge(postRemoval, edge);
+    expect(result?.hero_probability).toBe(0.5);
+    expect(result?.hero_probability_observed_at).toBe(FRAME_AT);
+  });
+
+  test('the old blend that folded the removed source is REFUSED (.4), same price clock', () => {
+    for (const membership of [null, EARLIER_REMOVAL]) {
+      const edge = { p: 0.6, observedAt: FRAME_AT, membershipRemovedAt: membership };
+      expect(adoptNewerBlendEdge(postRemoval, edge)).toBe(postRemoval);
+    }
+  });
+
+  test('an observation after the removal is adopted (.5)', () => {
+    const edge = { p: 0.5, observedAt: NEWER_AT, membershipRemovedAt: REMOVED_AT };
+    expect(adoptNewerBlendEdge(postRemoval, edge)?.hero_probability).toBe(0.5);
+  });
+
+  test('an edge with no membership claim decides nothing: price ordering stands', () => {
+    // The producer half is not shipped; the client cannot infer membership order.
+    expect(adoptNewerBlendEdge(postRemoval, { p: 0.5, observedAt: FRAME_AT })?.hero_probability).toBe(0.5);
+    expect(adoptNewerBlendEdge(postRemoval, { p: 0.5, observedAt: FRAME_AT, membershipRemovedAt: 'x' })?.hero_probability).toBe(0.5);
+  });
+
+  test('servedBlendEdgeObservation: key absent is no claim; served null IS a claim', () => {
+    const base = {
+      blend_edge_pinned: true, blend_edge_observed_at: FRAME_AT,
+      aggregate_line: [{ timestamp: NEWER_AT, home_probability: 0.5 }],
+    };
+    expect(servedBlendEdgeObservation(base)).toEqual({ p: 0.5, observedAt: FRAME_AT });
+    expect(servedBlendEdgeObservation({ ...base, blend_edge_source_removed_at: null }))
+      .toEqual({ p: 0.5, observedAt: FRAME_AT, membershipRemovedAt: null });
+    expect(servedBlendEdgeObservation({ ...base, blend_edge_source_removed_at: REMOVED_AT }))
+      .toEqual({ p: 0.5, observedAt: FRAME_AT, membershipRemovedAt: REMOVED_AT });
+  });
+
+  test('the edge predicate itself', () => {
+    const hero = { blend_source_removed_at: REMOVED_AT };
+    expect(edgePredatesServedSourceRemoval(hero, null)).toBe(true);
+    expect(edgePredatesServedSourceRemoval(hero, EARLIER_REMOVAL)).toBe(true);
+    expect(edgePredatesServedSourceRemoval(hero, REMOVED_AT)).toBe(false);
+    expect(edgePredatesServedSourceRemoval(hero, NEWER_AT)).toBe(false);
+    expect(edgePredatesServedSourceRemoval(hero, undefined)).toBe(false);
+    expect(edgePredatesServedSourceRemoval(hero, 'x')).toBe(false);
+    expect(edgePredatesServedSourceRemoval({}, null)).toBe(false);
+    expect(edgePredatesServedSourceRemoval(null, null)).toBe(false);
   });
 });

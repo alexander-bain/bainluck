@@ -39,3 +39,39 @@ export function predatesServedSourceRemoval(
   const at = Date.parse(observedAt ?? "");
   return Number.isFinite(removedAt) && Number.isFinite(at) && at <= removedAt;
 }
+
+/**
+ * #9051 (Codex review of PR #9061) — a history EDGE is not dated like a frame.
+ *
+ * A frame's `updated_at` is the database write that published it, so it orders
+ * against a database removal. A history edge's `observedAt` is the newest PRICE
+ * its blend folded, and a price observed before a removal is legitimately
+ * written into the post-removal blend after it (the matcher stamps the
+ * observation, not its commit). Timeline, all 05:00:ssZ: Polymarket .4 at 00;
+ * Polymarket .5 observed 10; Kalshi removed 15; the matcher commits .5 at 20
+ * into the post-removal row. The edge `{p: .5, observedAt: 10}` folds no
+ * removed source, yet `10 <= 15`. Two edges with identical observation clocks
+ * can come from either membership, so the price clock cannot decide.
+ *
+ * So the edge carries the MEMBERSHIP it was computed from:
+ * `blend_edge_source_removed_at` is the `blend_source_removed_at` of the blend
+ * the edge folds — the same database clock the hero carries, so the two
+ * compare like for like. An edge whose membership removal is older than the
+ * hero's (or `null`: that membership had no removal) was computed before the
+ * served removal and still folds the removed source. Equal is the same
+ * membership, and the ordinary price ordering decides.
+ *
+ * `undefined` means the history payload does not carry the key (the producer
+ * half is not shipped, or a legacy cache entry): no membership claim, so this
+ * decides nothing. An unparseable string decides nothing too.
+ */
+export function edgePredatesServedSourceRemoval(
+  served: RemovalDated | null | undefined,
+  edgeMembershipRemovedAt: string | null | undefined,
+): boolean {
+  const removedAt = Date.parse(served?.blend_source_removed_at ?? "");
+  if (!Number.isFinite(removedAt) || edgeMembershipRemovedAt === undefined) return false;
+  if (edgeMembershipRemovedAt === null) return true;
+  const edgeRemovedAt = Date.parse(edgeMembershipRemovedAt);
+  return Number.isFinite(edgeRemovedAt) && edgeRemovedAt < removedAt;
+}
