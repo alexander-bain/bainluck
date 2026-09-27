@@ -910,14 +910,58 @@ export default function EventPage({ params }: EventPageProps) {
     { revalidateOnFocus: false, dedupingInterval: 300000 }
   );
 
+  // Most recent chart point for GamePlayCard (see eventKeyStats.ts)
+  const lastChartPoint = useMemo<ActiveChartPoint | null>(
+    () =>
+      computeLastChartPoint(
+        historyData,
+        event?.home_score,
+        event?.away_score,
+        // #4571 — the event row's own clock, so the helper can date the score by
+        // the arm that supplied it rather than by its neighbouring timestamp.
+        event?.score_observed_at,
+      ),
+    [historyData, event?.home_score, event?.away_score, event?.score_observed_at],
+  );
+
+  // Best-known scores. #5521 — the comment that stood here said *"prefer latest
+  // ESPN history (more frequent updates) over event SWR"*, which is an empirical
+  // claim about relative freshness that nothing re-checked at runtime, and on
+  // 15304937 it was simply false: ESPN's last row was 4m30s OLDER than the
+  // StatPal snapshot beside it and the hero printed the wrong team ahead for an
+  // hour. `computeLastChartPoint` now ranks the two observation series by their
+  // own clocks; the event row remains the fallback beneath both.
+  const bestHomeScore = lastChartPoint?.homeScore ?? event?.home_score ?? null;
+  const bestAwayScore = lastChartPoint?.awayScore ?? event?.away_score ?? null;
+  // #8810 / #8960 — ESPN publishes 0-0 for both sides of a postponed fixture.
+  // Under a stoppage word with no side scored, the hero's two big zeros and the
+  // flat "actual score" line are a match nobody played, so neither is drawn.
+  // A stopped match WITH a score keeps it.
+  const heroScoreIsStoppageFiller =
+    stoppageLabel !== null && !scoresShowPlay(bestAwayScore, bestHomeScore);
+  // #8810 — and a match nobody played has no kick-off. Its scheduled hour is
+  // not a start, so neither chart draws a "Start" marker there, offers "Since
+  // Start", or opens on it: on 15315470 (Crawley v Barnet, postponed) the page
+  // opened on "Since Start" and drew 17 hours of flat line from a 7:30 AM
+  // "Start" that never happened. Same `false` the server sends for a venue's
+  // resolution hour (#8215/#8370), so every consumer of that flag declines the
+  // cut with no new branch. Absent a stoppage the served value passes through.
+  const commenceTimeIsKickoff = heroScoreIsStoppageFiller
+    ? false
+    : historyData?.commence_time_is_kickoff;
+
+
   // The shared range both charts run on. `history` arrives async, so this is a
   // sync effect rather than a useState initialiser — same shape as each chart's
   // own internal sync. Holding "live" unconditionally is what rendered two empty
   // grids on an event whose commence_time predates every point it has
   // (see maxPostStartSeriesPoints in eventKeyStats.ts).
   const evidenceChartTimeRange = useMemo(
-    () => defaultChartTimeRange(historyData, event?.commence_time),
-    [historyData, event?.commence_time],
+    () =>
+      commenceTimeIsKickoff === false
+        ? "all"
+        : defaultChartTimeRange(historyData, event?.commence_time),
+    [historyData, event?.commence_time, commenceTimeIsKickoff],
   );
   useEffect(() => {
     if (chartRangeUserSet) return;
@@ -975,36 +1019,6 @@ export default function EventPage({ params }: EventPageProps) {
     () => computeSharedChartDomain(historyData, chartTimeRange, event?.status, event?.commence_time, event?.sport || undefined),
     [historyData, chartTimeRange, event?.commence_time, event?.status, event?.sport],
   );
-
-  // Most recent chart point for GamePlayCard (see eventKeyStats.ts)
-  const lastChartPoint = useMemo<ActiveChartPoint | null>(
-    () =>
-      computeLastChartPoint(
-        historyData,
-        event?.home_score,
-        event?.away_score,
-        // #4571 — the event row's own clock, so the helper can date the score by
-        // the arm that supplied it rather than by its neighbouring timestamp.
-        event?.score_observed_at,
-      ),
-    [historyData, event?.home_score, event?.away_score, event?.score_observed_at],
-  );
-
-  // Best-known scores. #5521 — the comment that stood here said *"prefer latest
-  // ESPN history (more frequent updates) over event SWR"*, which is an empirical
-  // claim about relative freshness that nothing re-checked at runtime, and on
-  // 15304937 it was simply false: ESPN's last row was 4m30s OLDER than the
-  // StatPal snapshot beside it and the hero printed the wrong team ahead for an
-  // hour. `computeLastChartPoint` now ranks the two observation series by their
-  // own clocks; the event row remains the fallback beneath both.
-  const bestHomeScore = lastChartPoint?.homeScore ?? event?.home_score ?? null;
-  const bestAwayScore = lastChartPoint?.awayScore ?? event?.away_score ?? null;
-  // #8810 / #8960 — ESPN publishes 0-0 for both sides of a postponed fixture.
-  // Under a stoppage word with no side scored, the hero's two big zeros and the
-  // flat "actual score" line are a match nobody played, so neither is drawn.
-  // A stopped match WITH a score keeps it.
-  const heroScoreIsStoppageFiller =
-    stoppageLabel !== null && !scoresShowPlay(bestAwayScore, bestHomeScore);
 
   // ── #5720 — A RECORD IS NOT A SCORE, AND ON A STARTED GAME WITH NO SCORE A
   //    READER HAS NOTHING TO TELL THEM APART ────────────────────────────────
@@ -2597,8 +2611,8 @@ export default function EventPage({ params }: EventPageProps) {
               /* #8215 — served provenance, never re-derived: `false` means this hour is the
                  venue's expected resolution time, not a kick-off, so it is not a "Since Start"
                  cut. The fullscreen chart below passes no `chartStartTime`, so it needs this
-                 directly. */
-              commenceTimeIsKickoff={historyData?.commence_time_is_kickoff}
+                 directly. #8810 adds the page's one other `false`: a match nobody played. */
+              commenceTimeIsKickoff={commenceTimeIsKickoff}
               evidenceContract={historyData?.evidence_contract}
               isLive={effectivelyLive}
               bookmakerHistory={historyData?.bookmaker_history}
@@ -3210,8 +3224,8 @@ export default function EventPage({ params }: EventPageProps) {
               /* #8215 — served provenance, never re-derived: `false` means this hour is the
                  venue's expected resolution time, not a kick-off, so it is not a "Since Start"
                  cut. The fullscreen chart below passes no `chartStartTime`, so it needs this
-                 directly. */
-              commenceTimeIsKickoff={historyData?.commence_time_is_kickoff}
+                 directly. #8810 adds the page's one other `false`: a match nobody played. */
+              commenceTimeIsKickoff={commenceTimeIsKickoff}
               evidenceContract={historyData?.evidence_contract}
               isLive={effectivelyLive}
               bookmakerHistory={historyData?.bookmaker_history}
