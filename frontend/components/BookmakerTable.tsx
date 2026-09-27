@@ -124,6 +124,7 @@ export default function BookmakerTable({
   const { home: shortHomeTeam, away: shortAwayTeam } = teamShortNames(
     { name: homeTeam },
     { name: awayTeam },
+    sportKey,
   );
 
   // Check if any SHOWN sportsbook has projected scores — reading the unfiltered

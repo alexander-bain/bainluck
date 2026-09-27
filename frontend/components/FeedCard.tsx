@@ -625,7 +625,7 @@ function EventFeedCard({
       : null;
   const openedContext = openedLine
     ? openedAwayWithheld
-      ? `Opened ${teamShortNames({ name: data.home_team }, { name: data.away_team }).home} ${openedHomePct}%`
+      ? `Opened ${teamShortNames({ name: data.home_team }, { name: data.away_team }, data.sport).home} ${openedHomePct}%`
       : `Opened ${openedLine.map((side) => side.percent).join("/")}`
     : null;
   const openedSaid = openedLine
