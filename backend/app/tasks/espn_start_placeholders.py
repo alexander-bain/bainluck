@@ -24,9 +24,11 @@ exactly like StatPal's.
 but a real Hawaii home kickoff at 6 PM or 7 PM HST lands on those same
 instants. A row is marked only when ESPN's board, read by ``espn_id``, says
 ``timeValid: false`` AND the row still sits on ESPN's placeholder minute. An
-explicit ``timeValid: true`` clears the mark. That includes the equal-instant
-case, where the announced kickoff is the placeholder minute itself. An absent
-flag or a dark board changes nothing.
+explicit ``timeValid: true`` at the row's own minute clears the mark (the
+equal-instant case). ``timeValid: true`` at another minute KEEPS it: this pass
+never moves a start, so until a rail writes the announced time the row still
+carries the stand-in, and clearing served "Oct 2 9:00 PM PDT" again
+(2026-09-27). An absent flag or a dark board changes nothing.
 
 Bounded by construction: one scoreboard read per (sport, day) among the
 candidates, capped at :data:`MAX_BOARDS`. On 2026-09-27 that was 8 reads.
