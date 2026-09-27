@@ -56,14 +56,14 @@ final class ALiveEventPageSaysItsFreshnessOnce8320Tests: XCTestCase {
 
     /// Anti-vacuity: if these fail, every scan below is about the wrong file.
     func testTheScansCanSeeTheFilesTheyAreAbout() throws {
-        XCTAssertTrue(try pageCode().contains("structEventDetailView:View{"))
+        XCTAssertTrue(try code("Views", "EventDetailView.swift").contains("structEventDetailView:View{"))
         XCTAssertTrue(try chartCode().contains("structOddsChartView:View{"))
     }
 
     // MARK: - No countdown on the page
 
     func testNeitherFileCountsDownToAPoll() throws {
-        for (name, source) in [("EventDetailView", try pageCode()), ("OddsChartView", try chartCode())] {
+        for (name, source) in [("EventDetailView", try code("Views", "EventDetailView.swift")), ("OddsChartView", try chartCode())] {
             XCTAssertFalse(source.contains("refreshCountdown"),
                            "\(name) is carrying a refresh countdown again (#8320)")
             XCTAssertFalse(source.contains("\"Nextupdate"),
@@ -77,13 +77,13 @@ final class ALiveEventPageSaysItsFreshnessOnce8320Tests: XCTestCase {
     /// re-renders twice a second while nothing changed is manufacturing ticks
     /// (the brief: "never manufacture animation/ticks while unchanged").
     func testThePageRunsNoHalfSecondTimer() throws {
-        XCTAssertFalse(try pageCode().contains("Timer.scheduledTimer(withTimeInterval:0.5"))
+        XCTAssertFalse(try code("Views", "EventDetailView.swift").contains("Timer.scheduledTimer(withTimeInterval:0.5"))
     }
 
     // MARK: - One status, in the toolbar
 
     func testReadableStatusAndManualRefreshAreSeparate() throws {
-        let page = try pageCode()
+        let page = try code("Views", "EventDetailView.swift")
         XCTAssertEqual(occurrences(of: "LiveUpdateStatusView(status:vm.liveUpdateStatus)", in: page), 2)
         XCTAssertTrue(page.contains(".accessibilityLabel(\"Refreshnow\")"))
         XCTAssertTrue(page.contains("Button{Task{awaitvm.load()}}label:{Image(systemName:\"arrow.clockwise\")"))
@@ -115,11 +115,12 @@ final class ALiveEventPageSaysItsFreshnessOnce8320Tests: XCTestCase {
     /// chart scan that only bans things would pass on a fullscreen view that
     /// silently lost the status. Pin the one it keeps, and that it is gated on
     /// a delivering stream.
-    func testFullscreenKeepsThePushDotAndOnlyWhenPushed() throws {
+    func testFullscreenKeepsTheSameReadableStatusAsThePage() throws {
         let chart = try chartCode()
-        XCTAssertEqual(occurrences(of: "LivePushDot(", in: chart), 1)
-        XCTAssertTrue(chart.contains("ifstatus==\"live\"&&refreshStreaming{"
-                                     + "ToolbarItem(placement:.cancellationAction){LivePushDot(diameter:22)}}"))
+        XCTAssertEqual(occurrences(of: "LivePushDot(", in: chart), 0)
+        XCTAssertTrue(chart.contains("ifstatus==\"live\"&&liveUpdateStatus != .hidden{".replacingOccurrences(of: " ", with: "")
+                                     + "ToolbarItem(placement:.cancellationAction){LiveUpdateStatusView(status:liveUpdateStatus)}}"))
+        XCTAssertTrue(try code("Views", "EventDetailView.swift").contains("liveUpdateStatus:vm.liveUpdateStatus"))
     }
 
     /// The Final chip is a settled-state label, not a freshness claim, and

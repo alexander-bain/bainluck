@@ -33,6 +33,8 @@ final class EventDetailViewModel: ObservableObject {
     /// chrome from real request completion instead of a self-resetting timer that
     /// fakes a refresh cycle no request performs (C43 P2). `nil` until first load.
     @Published private(set) var lastLoadedAt: Date?
+    /// Accepted price receipt; socket state and load completion never manufacture one.
+    @Published private(set) var priceActivity: LivePriceActivity?
 
     private var refreshTask: Task<Void, Never>?
     /// The cadence the installed `refreshTask` is running at, so a `load()` that
@@ -240,7 +242,8 @@ final class EventDetailViewModel: ObservableObject {
     /// load applies, shared by `load()` and the #9051 re-read so the two can
     /// never disagree about what a response may overwrite.
     @MainActor
-    private func adopt(_ response: EventDetail) {
+    private func adopt(_ response: EventDetail, recordsPriceActivity: Bool = true) {
+        let prior = event
         var fetched = response
         if awaitingServedFinal {
             if EventState.isFinished(fetched.status) {
@@ -295,7 +298,29 @@ final class EventDetailViewModel: ObservableObject {
             &latestSourceFrames, over: fetched, streamRecoverable: streamRecoverable
         )
         event = fetched
+        if recordsPriceActivity, let prior, LivePriceActivity.isNewer(fetched, than: prior) {
+            recordPriceActivity(from: prior, to: fetched)
+        }
         probabilityAtLastLoad = fetched.currentOdds?.homeProbability
+    }
+
+    @MainActor
+    private func recordPriceActivity(from prior: EventDetail, to current: EventDetail) {
+        guard prior.id == current.id, prior.status == "live", current.status == "live" else { return }
+        let before = LivePriceActivity.displayedPercents(in: prior)
+        let after = LivePriceActivity.displayedPercents(in: current)
+        guard after.home != nil || after.away != nil else { return }
+        let beforeLabels = LivePriceActivity.displayedLabels(in: prior)
+        let afterLabels = LivePriceActivity.displayedLabels(in: current)
+        priceActivity = LivePriceActivity(
+            sequence: (priceActivity?.sequence ?? 0) + 1,
+            receivedAt: Date(timeIntervalSince1970: now()),
+            homeProbability: current.currentOdds?.homeProbability,
+            previousHomePercent: before.home, previousAwayPercent: before.away,
+            homePercent: after.home, awayPercent: after.away,
+            previousHomeLabel: beforeLabels.home, previousAwayLabel: beforeLabels.away,
+            homeLabel: afterLabels.home, awayLabel: afterLabels.away
+        )
     }
 
     // MARK: - #9051 fold-revision re-read
@@ -339,7 +364,12 @@ final class EventDetailViewModel: ObservableObject {
             // Read the baseline at adoption, not request start: an unrelated
             // poll may have advanced the held price while this read awaited.
             let priorRevision = event.flatMap { LiveEventPriceReconciliation.pairedFoldRevision(in: $0) }
-            adopt(fetched)
+            // An old connection's in-flight read may still supply data, but
+            // cannot claim a fresh receipt for a connection that replaced it.
+            let recordsActivity = requestedGeneration == nil || (
+                requestedGeneration == deliveryGeneration && streamRefetchGeneration == requestedGeneration
+            )
+            adopt(fetched, recordsPriceActivity: recordsActivity)
             // The reread must actually advance the price the page adopted, and
             // belong to this connection generation. A read finishing after an
             // outage cannot relight the status using the old connection's work.
@@ -520,6 +550,8 @@ final class EventDetailViewModel: ObservableObject {
     @MainActor
     private func apply(_ frame: LiveStreamFrame) {
         guard var current = event, current.id == frame.eventId else { return }
+        let prior = current
+        var acceptedNewPrice = false
         var armScoreCatchUp = false
 
         // Source ordering is independent of the blend: a delayed Kalshi quote
@@ -557,6 +589,9 @@ final class EventDetailViewModel: ObservableObject {
             } ?? false
         }
         if !priceIsNotNewer, let p = frame.p, p.isFinite, (0...1).contains(p), var odds = current.currentOdds {
+            // A clockless unversioned frame remains handled as before, but
+            // cannot prove a newer receipt for freshness or motion.
+            acceptedNewPrice = foldOrder == .newer || (foldOrder == nil && stamped != nil)
             latestPriceFrame = frame
             if let stamped, latestAcceptedPriceDate.map({ stamped > $0 }) ?? true {
                 latestAcceptedPriceDate = stamped
@@ -617,6 +652,7 @@ final class EventDetailViewModel: ObservableObject {
         }
 
         event = current
+        if acceptedNewPrice { recordPriceActivity(from: prior, to: current) }
         // Re-planned only when the window OPENS: a move inside an open window
         // extends it and the loop is already on the fast cadence. Only a live
         // page, because `configureAutoRefresh` stops the stream on anything else
