@@ -176,13 +176,17 @@ class TestThroughTheWholeTask:
         async def _nothing(*a, **k):
             return None
 
+        async def _no_rows(*a, **k):
+            # #9143: the pre-game prefetch reads rows; none are scheduled here.
+            return SimpleNamespace(all=lambda: [])
+
         class _Ctx:
             async def __aenter__(self):
                 # #8796: each step of the pass runs in a savepoint, which
                 # flushes and probes the session before it is released.
                 # #9049: and the pass commits between its steps.
                 return SimpleNamespace(
-                    begin_nested=_Ctx, flush=_nothing, execute=_nothing,
+                    begin_nested=_Ctx, flush=_nothing, execute=_no_rows,
                     commit=_nothing, info={},
                 )
 

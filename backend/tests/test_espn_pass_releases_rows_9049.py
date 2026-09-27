@@ -168,7 +168,9 @@ def _wire(monkeypatch, log):
         return None
 
     async def _execute(*a, **k):
-        return None
+        # #9143: the pre-game prefetch reads rows; an empty result, as a real
+        # session with nothing scheduled would return.
+        return SimpleNamespace(all=lambda: [])
 
     async def _commit():
         log.append("commit")

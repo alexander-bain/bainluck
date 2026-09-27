@@ -932,6 +932,26 @@ async def _sync_espn_live_events():
                 await widen_espn.close()
 
             # ── Second pass: scheduled events (team pre-population) ─
+            # #9143: today's dated board for any sport whose undated board has
+            # not rolled for one of its own id-anchored rows. Rows are free here
+            # (`_release_rows` above), so the fetch holds nothing.
+            dated_espn = ESPNAPIService()
+
+            async def _fetch_scheduled_dated(sport_key: str, board_day: str):
+                return await dated_espn.get_scoreboard(sport_key, date=board_day)
+
+            scheduled_dated_boards: dict = {}
+            try:
+                async with _step_savepoint(session):  # #8796
+                    scheduled_dated_boards = await _prefetch_scheduled_dated_boards(
+                        session, scheduled_sport_keys, espn_data, full_slate_boards,
+                        _fetch_scheduled_dated, datetime.now(timezone.utc), stats,
+                    )
+            except Exception as e:
+                stats["errors"].append(f"scheduled_dated_boards: {str(e)}")
+            finally:
+                await dated_espn.close()
+
             for sport_key in scheduled_sport_keys:
                 if sport_key not in ESPN_SPORT_MAPPING:
                     continue
@@ -939,7 +959,7 @@ async def _sync_espn_live_events():
                 # decision was taken once, before either loop.
                 if _failover.espn_reading(espn_data, sport_key) != _failover.FIXTURES:
                     continue
-                espn_events = scheduled_board_for(
+                espn_events = scheduled_dated_boards.get(sport_key) or scheduled_board_for(
                     sport_key, espn_data[sport_key], full_slate_boards
                 )
                 try:
@@ -3242,6 +3262,103 @@ def scheduled_board_for(sport_key, featured_board, full_slate_boards) -> list:
     """
     full = full_slate_boards.get(sport_key)
     return full if full else featured_board
+
+
+def scheduled_dated_board_day(board, scheduled_rows, now) -> Optional[str]:
+    """The board day the pre-game pass must ask ESPN for by date, or None (#9143).
+
+    ESPN's undated board lags its own rollover: at 13:08Z on 2026-09-27 the MLB
+    board still read ``day=2026-09-26``, so Mets @ Nationals (ESPN 401817106,
+    first pitch 17:05Z) was absent from it, and the pre-game pass — the only
+    rail allowed to revise an ``espn``-stamped start — could not reach the row
+    that still said 19:05Z. The odds poll read the right time off the dated
+    board and was refused, correctly, as a lower-ranked claimant.
+
+    So: when a scheduled row's OWN ``espn_id`` is missing from the board and the
+    row is filed under TODAY's board day, the board has not rolled for it, and
+    today's dated board is asked. Rows on later days are not: the undated board
+    never lists them anyway, and asking for them would be a fetch per row-day on
+    every pass. ``scheduled_rows`` is ``(espn_id, commence_time)`` pairs.
+    """
+    today = espn_board_date(now)
+    on_board = {ee.espn_id for ee in board if getattr(ee, "espn_id", None)}
+    for espn_id, commence in scheduled_rows:
+        if not espn_id or commence is None or espn_id in on_board:
+            continue
+        if espn_board_date(commence) == today:
+            return today
+    return None
+
+
+def with_dated_board(board, dated_board) -> list:
+    """``board`` plus every game of ``dated_board`` it does not already carry.
+
+    Only ever ADDS: a game on both keeps the board's copy, so this can move a
+    row only where the undated board had nothing to say about it.
+    """
+    on_board = {ee.espn_id for ee in board if getattr(ee, "espn_id", None)}
+    extra = [
+        ee for ee in dated_board or []
+        if not getattr(ee, "espn_id", None) or ee.espn_id not in on_board
+    ]
+    return list(board) + extra
+
+
+async def _prefetch_scheduled_dated_boards(
+    session, sport_keys, espn_data, full_slate_boards, fetch_dated, now, stats,
+) -> dict:
+    """``{sport_key: widened board}`` for the pre-game pass (#9143).
+
+    Runs BEFORE that pass touches a row (#9049: no ESPN call while a row is
+    held), with one read for every sport. A sport absent from the result keeps
+    the board it always had. At most one dated fetch per sport per run, and
+    only while the undated board is behind the day.
+    """
+    keys = [
+        k for k in sport_keys
+        if k in ESPN_SPORT_MAPPING
+        and _failover.espn_reading(espn_data, k) == _failover.FIXTURES
+    ]
+    if not keys:
+        return {}
+    rows = (
+        await session.execute(
+            select(Sport.key, Event.espn_id, Event.commence_time)
+            .join(Sport, Event.sport_id == Sport.id)
+            .where(
+                Sport.key.in_(keys),
+                Event.status == "scheduled",
+                Event.espn_id.isnot(None),
+                Event.commence_time >= now - timedelta(days=1),
+                Event.commence_time < now + timedelta(days=2),
+            )
+        )
+    ).all()
+    by_sport: dict = {}
+    for key, espn_id, commence in rows:
+        by_sport.setdefault(key, []).append((espn_id, commence))
+
+    widened: dict = {}
+    for key in keys:
+        base = scheduled_board_for(key, espn_data[key], full_slate_boards)
+        day = scheduled_dated_board_day(base, by_sport.get(key, []), now)
+        if day is None:
+            continue
+        try:
+            dated = await fetch_dated(key, day)
+        except Exception as e:
+            stats["errors"].append(f"scheduled_dated_board_{key}_{day}: {str(e)}")
+            continue
+        if dated is None:
+            stats["scheduled_dated_board_dark"] = (
+                stats.get("scheduled_dated_board_dark", 0) + 1
+            )
+            continue
+        stats["scheduled_dated_board_fetches"] = (
+            stats.get("scheduled_dated_board_fetches", 0) + 1
+        )
+        widened[key] = with_dated_board(base, dated)
+    return widened
 
 def espn_abbreviation_corresponds(abbreviation, *names) -> bool:
     """True when an ESPN abbreviation can be derived from the club's own name.
