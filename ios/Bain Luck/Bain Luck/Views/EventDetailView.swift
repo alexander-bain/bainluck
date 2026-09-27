@@ -634,19 +634,29 @@ struct EventDetailView: View {
     /// card that draws no result, which is the behaviour every half map had
     /// before this.
     private func halfScores(_ event: EventDetail) -> HalfScores.Pair {
-        guard let espnHistory = vm.history?.espnHistory else { return .none }
-        let readings = espnHistory.compactMap { point -> HalfScoreReading? in
+        let readings = (vm.history?.espnHistory ?? []).compactMap { point -> HalfScoreReading? in
             guard let period = point.period,
                   let home = point.homeScore,
                   let away = point.awayScore,
                   let date = point.timestamp.asDate else { return nil }
             return HalfScoreReading(period: period, home: home, away: away, date: date)
         }
-        return HalfScores.split(
+        let fromHistory = HalfScores.split(
             readings: readings,
             currentHome: event.homeScore,
             currentAway: event.awayScore,
             isDone: isFinished
+        )
+        // #9108 — a finished game with no halftime reading takes each half's
+        // score from its graded half rows. A halftime reading still wins
+        // wherever one exists.
+        guard fromHistory.first == nil, isFinished else { return fromHistory }
+        return HalfScoresFromGrades.split(
+            rows: vm.gameMarkets?.periodMarkets ?? [],
+            finalHome: event.homeScore,
+            finalAway: event.awayScore,
+            home: event.homeTeam,
+            away: event.awayTeam
         )
     }
 
