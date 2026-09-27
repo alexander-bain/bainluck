@@ -314,11 +314,13 @@ def espn_pregame_filler(
 # past that the clock wins again and the row promotes normally. A test asserts
 # this constant against the beat's own cadence rather than against a literal,
 # because two records of one capability drift.
-ESPN_NOT_STARTED_KEY = "espn_not_started_at"
-_ESPN_LIVE_BEAT_SECONDS = 60
-_AUTHORITY_NOT_STARTED_MISSED_PASSES = 15
-AUTHORITY_NOT_STARTED_TTL = timedelta(
-    seconds=_ESPN_LIVE_BEAT_SECONDS * _AUTHORITY_NOT_STARTED_MISSED_PASSES
+# #9195: the key, the TTL and its derivation live in `event_completion` now (the
+# rail predicates read the stamp too, and this module imports that one); the two
+# public names are re-exported unchanged.
+from app.utils.event_completion import (  # noqa: E402
+    AUTHORITY_NOT_STARTED_TTL,
+    ESPN_NOT_STARTED_KEY,
+    authority_not_started_fresh,
 )
 
 
@@ -379,21 +381,9 @@ def authority_not_started_holds(
     """
     if play_evidence(home_score, away_score, period, game_clock):
         return False
-
-    raw = (sources or {}).get(ESPN_NOT_STARTED_KEY)
-    if not isinstance(raw, str):
-        return False
-    try:
-        stamped = datetime.fromisoformat(raw)
-    except (ValueError, TypeError):
-        return False
-    if stamped.tzinfo is None:
-        stamped = stamped.replace(tzinfo=timezone.utc)
-    age = now - stamped
-    if age < timedelta(0):
-        # A stamp from the future is a clock fault, not an authority statement.
-        return False
-    return age <= ttl
+    # A stamp from the future is a clock fault, not an authority statement; the
+    # shared reader refuses it (and every other unreadable value).
+    return authority_not_started_fresh(sources, now, ttl)
 
 
 # ───────────────────────────────────────────────────────────────────────────

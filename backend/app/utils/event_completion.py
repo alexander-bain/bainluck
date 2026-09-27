@@ -35,7 +35,7 @@ START?* — because both nets measure elapsed time from ``commence_time`` and
 neither ever asked whether that field held a start anybody reported. See
 ``commence_time_is_a_reported_start``.
 """
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from app.utils.sport_keys import statpal_anchor_is_shadow
@@ -531,7 +531,56 @@ RECENT_RAIL_STATUSES = ["completed", "closed", EVENT_SUSPENDED]
 UPCOMING_GRACE = timedelta(hours=2)
 
 
-def started_without_result(status, commence_time, now) -> bool:
+# ── The authority's "not started", as the clock predicates read it (#9195) ──
+#
+# Written by ESPN's live pass into the `win_probability_sources` JSONB mirror
+# while ESPN reports an anchored row as not begun (#5324 / CERT-2777; the WHY
+# of the key, the column and the TTL is in `espn_helpers`, which re-exports
+# these names). Defined HERE because the rail predicates below must read it and
+# `espn_helpers` already imports this module.
+ESPN_NOT_STARTED_KEY = "espn_not_started_at"
+_ESPN_LIVE_BEAT_SECONDS = 60
+_AUTHORITY_NOT_STARTED_MISSED_PASSES = 15
+AUTHORITY_NOT_STARTED_TTL = timedelta(
+    seconds=_ESPN_LIVE_BEAT_SECONDS * _AUTHORITY_NOT_STARTED_MISSED_PASSES
+)
+#: How far past its own listing a row's "not started" stamp still moves it off
+#: the no-result class (#9195). The writers only visit a `scheduled` row inside
+#: the promoter's 24h window, so a fresh stamp older than this cannot be written
+#: today; the bound exists so the SQL half has an index range to walk, and the
+#: Python half applies the same bound so the two cannot disagree.
+AUTHORITY_NOT_STARTED_HORIZON = timedelta(hours=24)
+
+
+def authority_not_started_fresh(sources, now, ttl=AUTHORITY_NOT_STARTED_TTL) -> bool:
+    """The authority said within ``ttl`` that this row has not begun.
+
+    Only the stamp: no play-evidence clause (`espn_helpers.
+    authority_not_started_holds` adds that for the promoter). Fails CLOSED to
+    "no statement" on every unreadable input — absent key, non-string,
+    unparseable, a stamp from the future — so a corrupt value can only leave a
+    row where the clock alone would put it. :func:`authority_not_started_rows`
+    in `event_rails` is the SQL half and must agree with this one.
+    """
+    if now is None:
+        return False
+    raw = (sources or {}).get(ESPN_NOT_STARTED_KEY) if isinstance(sources, dict) else None
+    if not isinstance(raw, str):
+        return False
+    try:
+        stamped = datetime.fromisoformat(raw)
+    except (ValueError, TypeError):
+        return False
+    if stamped.tzinfo is None:
+        stamped = stamped.replace(tzinfo=timezone.utc)
+    try:
+        age = now - stamped
+    except TypeError:
+        return False
+    return timedelta(0) <= age <= ttl
+
+
+def started_without_result(status, commence_time, now, sources=None) -> bool:
     """Has this row's kickoff passed while it still claims to be a fixture?
 
     🔴 THE THIRD STATUS THROUGH THE SAME HOLE — #3211, lane1/134.
@@ -584,12 +633,28 @@ def started_without_result(status, commence_time, now) -> bool:
     ``None`` for either time is False. A row we cannot place on the clock is a
     row we have no standing to move off the schedule — the same rule
     :func:`is_retired_event_status` applies to an unrecognised status.
+
+    ``sources`` is the row's ``win_probability_sources``; a fresh authority
+    "not started" stamp in it answers False (#9195, below). Callers that omit it
+    get the clock-only answer they always had.
     """
     if status != "scheduled":
         return False
     if commence_time is None or now is None:
         return False
+    # #9195: THE AUTHORITY OUTRANKS THE CLOCK HERE TOO. A game ESPN still lists
+    # as not begun — a rain delay before first pitch, BAL @ NYY 15319530 on
+    # 2026-09-27, still `pre` three hours past its 17:05Z listing — has not run
+    # out of clock; it is late. Read as "started without a result" it printed
+    # "No result reported" and sank to the bottom of search. The stamp is
+    # refreshed every live pass while ESPN says so and expires after
+    # AUTHORITY_NOT_STARTED_TTL, so a row ESPN stops reporting falls back to the
+    # clock within fifteen minutes: bounded, never a new way to strand a row.
     try:
+        if commence_time >= now - AUTHORITY_NOT_STARTED_HORIZON and (
+            authority_not_started_fresh(sources, now)
+        ):
+            return False
         return commence_time < now - UPCOMING_GRACE
     except TypeError:
         # 🔴 #6057. A tz-naive `commence_time` against a tz-aware `now` raises

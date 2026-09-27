@@ -283,6 +283,7 @@ async def attach_venue_settlement(db, events: Sequence, briefs: list[dict], now)
             ),
             getattr(event, "commence_time", None),
             now,
+            getattr(event, "win_probability_sources", None),
         )
         for event_id, event in by_id.items()
     }
