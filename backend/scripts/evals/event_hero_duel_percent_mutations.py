@@ -206,15 +206,16 @@ RESOLVER_MUTATIONS += [
     },
     {
         "id": "M7-scheduled-branch-forgets-the-served-pair",
+        # Re-targeted after #9097 put the hero-sportsbook comment where the
+        # `const count` line used to follow; the mutant (drop the flag in the
+        # scheduled branch) is unchanged.
         "needle": """    homeProb = odds?.home_probability ?? null;
     awayProb = odds?.away_probability ?? null;
     fromCurrentOdds = true;
-    const count = odds?.bookmaker_count ?? 0;
-    if (count > 0) {""",
+    // #9097 — count the sportsbooks behind the NUMBER, not every served book""",
         "replacement": """    homeProb = odds?.home_probability ?? null;
     awayProb = odds?.away_probability ?? null;
-    const count = odds?.bookmaker_count ?? 0;
-    if (count > 0) {""",
+    // #9097 — count the sportsbooks behind the NUMBER, not every served book""",
         "why": "The scheduled hero stops honouring the server's decision and "
         "always re-derives. The printed numbers still sum to 100 and are "
         "usually identical — so this is only visible to a test that asserts "
