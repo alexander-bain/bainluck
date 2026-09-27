@@ -115,6 +115,10 @@ def _create_schema(md):
         # NULL by every row here, so every row takes the plain floor.
         Column("external_id", String),
         Column("commence_time_source", String),
+        # #9195: `started_without_result_rows` now reads the authority's
+        # "not started" stamp out of this JSONB. NULL on every row here, so no
+        # row carries a stamp and nothing below changes meaning.
+        Column("win_probability_sources", String),
     )
     sports = Table(
         "sports",

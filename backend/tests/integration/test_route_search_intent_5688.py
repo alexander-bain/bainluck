@@ -101,6 +101,25 @@ pytestmark = pytest.mark.asyncio
 SEARCH = "/api/events/search"
 
 
+def _is_iso_datetime(value: str) -> bool:
+    """A complete ISO-8601 datetime is a clock bound, never the reader's term.
+
+    #9195's freshness window binds `now - 15 min` and `now` as UTC ISO text
+    (`authority_not_started_rows`), and in 2026 both contain the substring
+    '2026' — CI failed 'lazio 2026' on exactly those two values. A term the
+    route leaked would be '2026' or '%2026%', and neither parses as a datetime
+    with a time part, so excluding these keeps the check's bite (see
+    `test_a_leaked_year_term_is_not_mistaken_for_a_clock_bound`).
+    """
+    if "T" not in value:
+        return False
+    try:
+        datetime.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
+
+
 def _team_row():
     return SimpleNamespace(
         id=701,
@@ -848,11 +867,25 @@ class TestANonTimeQuestionKeepsItsAnswer:
         """
         await client.get(f"{SEARCH}?q={query.replace(' ', '%20')}")
         word = query.split()[-1]
-        leaked = [v for v in recorder.all_values() if word in v.lower()]
+        leaked = [
+            v
+            for v in recorder.all_values()
+            if word in v.lower() and not _is_iso_datetime(v)
+        ]
         assert not leaked, (
             f"'{query}' still binds '{word}' as a term to match — the page it "
             f"emptied on production is empty again: {leaked}"
         )
+
+    @pytest.mark.parametrize(
+        "leak", ["2026", "%2026%", "lazio 2026", "2026%", "%today%"]
+    )
+    async def test_a_leaked_year_term_is_not_mistaken_for_a_clock_bound(
+        self, leak
+    ):
+        """The exclusion above must not swallow the leak it exists to catch."""
+        assert not _is_iso_datetime(leak)
+        assert _is_iso_datetime("2026-09-27T19:43:24.391617+00:00")
 
     async def test_the_substituted_set_is_exactly_the_two_time_kinds(self):
         """The set itself, so a widening is a deliberate edit with a guard.

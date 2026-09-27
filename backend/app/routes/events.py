@@ -18238,7 +18238,8 @@ async def _settled_hero_result(db: AsyncSession, event, now) -> str | None:
     served = dict(
         status=served_event_status(event.status, event.commence_time, now),
         started_without_result=started_without_result(
-            event.status, event.commence_time, now
+            event.status, event.commence_time, now,
+            getattr(event, "win_probability_sources", None),
         ),
         home_score=event.home_score,
         away_score=event.away_score,
@@ -30548,7 +30549,8 @@ def _format_event(
         # `started_without_result: false` from clocks microseconds apart, which
         # is the contradiction this key exists to end.
         "started_without_result": started_without_result(
-            event.status, event.commence_time, _served_now
+            event.status, event.commence_time, _served_now,
+            getattr(event, "win_probability_sources", None),
         ),
         "home_score": event.home_score,
         "away_score": event.away_score,
