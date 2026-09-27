@@ -1491,7 +1491,8 @@ func noveltyCards(_ futures: [RelatedFuture]) -> [NoveltyCard] {
         guard let legs = legsByMarket[marketId], let first = legs.first else { return nil }
         return NoveltyCard(
             marketId: marketId,
-            label: first.cleanLabel ?? first.marketName,
+            // #9170 — "SEA Seahawks vs WAS Commanders: …" prints as the page names teams.
+            label: TickerMatchupName.display(first.cleanLabel ?? first.marketName),
             legs: legs.sorted { ($0.probability ?? 0) > ($1.probability ?? 0) }
         )
     }
@@ -1500,12 +1501,17 @@ func noveltyCards(_ futures: [RelatedFuture]) -> [NoveltyCard] {
 /// The name printed beside a leg's number, or nil when the card's label already
 /// IS the claim: a lone leg whose outcome is "Yes" or repeats the label. Any
 /// market with two or more legs names every one — that is the whole defect.
+///
+/// #9170 — a leg is named with the same nicknames its market's matchup title
+/// uses ("SEA Seahawks wins 4Q…" → "Seahawks wins 4Q…"); see `TickerMatchupName`.
 func noveltyLegName(_ leg: RelatedFuture, in card: NoveltyCard) -> String? {
-    let name = leg.outcomeName.trimmingCharacters(in: .whitespaces)
+    let matchup = leg.cleanLabel ?? leg.marketName
+    let name = TickerMatchupName.display(
+        leg.outcomeName.trimmingCharacters(in: .whitespaces), matchup: matchup)
     guard card.legs.count == 1 else { return name }
     if name.isEmpty || name.caseInsensitiveCompare("Yes") == .orderedSame
         || name.caseInsensitiveCompare(card.label) == .orderedSame
-        || name.caseInsensitiveCompare(leg.marketName) == .orderedSame {
+        || name.caseInsensitiveCompare(TickerMatchupName.display(leg.marketName, matchup: matchup)) == .orderedSame {
         return nil
     }
     return name
@@ -1542,7 +1548,8 @@ private struct NoveltyCardView: View {
                     VStack(alignment: .leading, spacing: 5) {
                         ForEach(card.legs.prefix(Self.maxLegs)) { leg in
                             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                                Text(noveltyLegName(leg, in: card) ?? leg.outcomeName)
+                                Text(noveltyLegName(leg, in: card)
+                                     ?? TickerMatchupName.display(leg.outcomeName, matchup: leg.cleanLabel ?? leg.marketName))
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
                                     .lineLimit(2)
