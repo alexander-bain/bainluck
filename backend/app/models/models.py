@@ -6,6 +6,7 @@ from datetime import date, datetime
 from typing import Optional
 
 from sqlalchemy import (
+    DDL,
     BigInteger,
     Boolean,
     CheckConstraint,
@@ -25,9 +26,11 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
+from sqlalchemy import event as sa_event
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.services.database import Base
+from app.utils import wps_revision as _wps_revision
 
 # The one runtime allowlist for `discover_interactions.provenance`, imported
 # rather than re-spelled: a second copy of this tuple is how the enum and its
@@ -210,6 +213,14 @@ class Event(Base):
     win_probability_sources: Mapped[Optional[dict]] = mapped_column(
         JSONB
     )  # {"espn": 0.65, "betting": 0.60}
+    # #9051: bumped by the database, never by a writer, whenever the bag above
+    # changes (`app/utils/wps_revision.py`). Commit-ordered per row, so a client
+    # can order two folds without trusting a quote clock. `server_default`, not
+    # `default=`: raw INSERTs in the real-Postgres gates must store what
+    # production stores.
+    win_probability_sources_rev: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, server_default=text("0")
+    )
 
     # StatPal enrichment
     statpal_fixture_id: Mapped[Optional[str]] = mapped_column(String(100), index=True)
@@ -262,6 +273,21 @@ class Event(Base):
     scoring_plays: Mapped[list["ScoringPlay"]] = relationship(
         back_populates="event", cascade="all, delete-orphan"
     )
+
+
+# #9051: the revision trigger is part of the table. `create_all` on Postgres (every
+# real-Postgres gate) installs the same statements the migration runs, so no gate
+# tests a table production does not have. SQLite has no plpgsql and skips it.
+sa_event.listen(
+    Event.__table__,
+    "after_create",
+    DDL(_wps_revision.CREATE_FUNCTION_SQL).execute_if(dialect="postgresql"),
+)
+sa_event.listen(
+    Event.__table__,
+    "after_create",
+    DDL(_wps_revision.CREATE_TRIGGER_SQL).execute_if(dialect="postgresql"),
+)
 
 
 class ScoringPlay(Base):

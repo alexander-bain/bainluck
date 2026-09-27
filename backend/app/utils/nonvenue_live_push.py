@@ -125,13 +125,14 @@ async def write_nonvenue_probability(
                 Event.espn_win_prob_home,
                 Event.opening_home_probability,
                 func.clock_timestamp().label("removed_at"),
+                Event.win_probability_sources_rev,
             )
             .execution_options(synchronize_session=False)
         )
     ).first()
     if row is None:
         return None
-    sources, status, espn, opening, removed_at = row
+    sources, status, espn, opening, removed_at, rev = row
     # Mirror a Core update without marking the JSONB dirty: a later autoflush
     # must not overwrite an intervening venue write with this private copy.
     mapped = event if inspect(event, raiseerr=False) is not None else None
@@ -156,6 +157,7 @@ async def write_nonvenue_probability(
             source_value=value,
             updated_at=at,
             status=status,
+            rev=rev,
         ),
         mapped,
         previous,

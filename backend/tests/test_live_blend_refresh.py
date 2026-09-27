@@ -438,9 +438,10 @@ class TestSnapshotContainment:
 class _Result:
     """Just enough of a SQLAlchemy Result for the three shapes used here."""
 
-    def __init__(self, rows=None, scalar=None):
+    def __init__(self, rows=None, scalar=None, rev=None):
         self._rows = rows or []
         self._scalar = scalar
+        self._rev = rev
 
     def all(self):
         return self._rows
@@ -453,6 +454,10 @@ class _Result:
 
     def scalar_one_or_none(self):
         return self._scalar
+
+    def first(self):
+        # The stamp's `RETURNING win_probability_sources, ..._rev` (#9051).
+        return None if self._scalar is None else (self._scalar, self._rev)
 
 
 class _RecordingSession:
@@ -469,6 +474,8 @@ class _RecordingSession:
         self._market_rows = market_rows
         self._outcomes = outcomes
         self._returned = returned
+        #: #9051 — the revision the stamp's RETURNING reports beside the bag.
+        self.returned_rev = None
         self._selects = 0
         self.updates = []
         #: #837 — each event's stamp runs in a SAVEPOINT; this records how each
@@ -480,7 +487,7 @@ class _RecordingSession:
 
         if isinstance(statement, Update):
             self.updates.append(statement)
-            return _Result(scalar=self._returned)
+            return _Result(scalar=self._returned, rev=self.returned_rev)
         self._selects += 1
         if self._selects == 1:
             return _Result(rows=self._market_rows)
@@ -539,6 +546,8 @@ class TestTheFrameCarriesTheStoredBlend:
         )
         market = SimpleNamespace(id=10, event_id=1, name="Twins vs Yankees")
         session = _RecordingSession([(market, event)], [], returned)
+        # #9051: the revision the SAME UPDATE returned rides the frame.
+        session.returned_rev = 7
 
         @asynccontextmanager
         async def _fake_session():
@@ -588,6 +597,7 @@ class TestTheFrameCarriesTheStoredBlend:
         assert len(published) == 1, "the fast lane published nothing"
         assert published[0]["updated_at"] == returned["kalshi"]["updated_at"]
         assert r._dispositions[1][2] == published[0]["updated_at"]
+        assert published[0]["rev"] == {"1": 7}
         # `p` is the aggregate the hero renders — the field live/305's capture
         # showed disagreeing with itself 89 ms apart.
         got = published[0]["p"]

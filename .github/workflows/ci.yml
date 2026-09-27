@@ -5241,6 +5241,30 @@ jobs:
             exit 1
           }
 
+      - name: "#9051 the fold's revision vector orders two reads of a folded blend (real Postgres)"
+        # #9051 producer. 6 = R1 only a changed bag moves the row's revision +
+        # R2 the second writer to COMMIT gets the higher revision (row-lock wait)
+        # + R3 Codex's twin removals through the real fold: the later vector
+        # dominates, where a max removal clock could not order them + R4 a
+        # nonvenue frame names the revision its own UPDATE returned + R5 the
+        # migration's upgrade/downgrade install/remove the same trigger + R6
+        # (CERT-3625) a canonical loaded before two removals committed is not
+        # folded stale beside the fresh twin. Trigger hook removed: 6 red;
+        # frame rev dropped: R4 red; fold's twin revision dropped: R3 red;
+        # canonical taken off the loaded row: R6 red.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_fold_revision_9051_pg.py \
+            -v -rs 2>&1 | tee /tmp/foldrev9051.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/foldrev9051.txt; then
+            echo "::error::#9051 fold-revision gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]6 passed[,[:space:]]" /tmp/foldrev9051.txt || {
+            echo "::error::#9051 fold-revision gate did not run all six cases"
+            exit 1
+          }
+
   frontend-build:
     runs-on: ubuntu-latest
     defaults:

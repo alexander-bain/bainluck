@@ -613,16 +613,18 @@ class TestTheRealRoute:
     def test_mutant_unfolded_blend_loses_the_hero_entirely(self, serve, monkeypatch):
         """MUTANT 1 — the fold itself.
 
-        `folded_probability_sources` returning the canonical's own dict makes the
-        route compile to exactly the `compute_aggregate_probability(event)` read
-        it replaced. The ship must vanish.
+        The fold returning the canonical's own dict makes the route compile to
+        exactly the `compute_aggregate_probability(event)` read it replaced. The
+        ship must vanish. Since #9051 the route reads the fold through
+        `folded_probability_sources_with_revision`, so that is the seam patched.
         """
 
         async def _unfolded(_db, event, absorbed=()):
-            return event.win_probability_sources or {}
+            return event.win_probability_sources or {}, None
 
         monkeypatch.setattr(
-            "app.utils.proven_duplicates.folded_probability_sources", _unfolded
+            "app.utils.proven_duplicates.folded_probability_sources_with_revision",
+            _unfolded,
         )
         payload, _ = serve(
             _route_event(sources=None),

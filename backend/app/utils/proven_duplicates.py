@@ -856,6 +856,55 @@ async def folded_probability_sources(db, event, absorbed: Sequence = ()) -> dict
 
     Errors are not swallowed, for the reason given in :func:`folded_event_ids`.
     """
+    sources, _revision = await folded_probability_sources_with_revision(
+        db, event, absorbed
+    )
+    return sources
+
+
+def _fold_row(row) -> tuple:
+    """``(id, home, away, sources, rev, tagged)`` off one fold row.
+
+    A production ``Row`` has all six columns. The route rigs that answer this
+    lookup by hand predate #9051 and hand back the old four-wide twin rows:
+    those came from the tagged-only query, so they are tagged, and they carry no
+    revision, which :func:`~app.utils.wps_revision.fold_revision_vector` turns
+    into "no claim" for the whole vector, never into a zero.
+    """
+    rev = row[4] if len(row) > 4 else None
+    tagged = bool(row[5]) if len(row) > 5 else True
+    return row[0], row[1], row[2], row[3], rev, tagged
+
+
+async def folded_probability_sources_with_revision(
+    db, event, absorbed: Sequence = ()
+) -> tuple[dict, dict[str, int] | None]:
+    """:func:`folded_probability_sources`, plus the fold's revision vector (#9051).
+
+    The vector is ``{"<row_id>": win_probability_sources_rev}`` for the
+    canonical, every orientation-agreeing twin and every absorbed row: every row
+    whose bag this fold READ, whether or not it contributed a source. A twin
+    whose only source was just removed contributes nothing to the new fold, and
+    its bumped revision is what tells a client the old fold is stale.
+
+    🔴 ONE STATEMENT, ONE SNAPSHOT (CERT-3625). The canonical is read HERE, with
+    its twins and absorbed rows, not taken off the ORM row the caller loaded
+    earlier. With two reads, a canonical and a twin removal committed between
+    them served the canonical's OLD bag beside the twin's NEW one: a fold no
+    instant of the database ever held, under a vector `{canonical: 0, twin: 1}`
+    that a client would adopt as newer than `{0, 0}`. In one statement every
+    bag and every revision come from the same snapshot, so the vector names a
+    state that existed, and a later read's vector is at least as large in every
+    component (``app/utils/wps_revision.py``).
+
+    A row the statement does not return (deleted meanwhile, or a rig that does
+    not answer it) keeps the bag the caller holds, exactly as before #9051, and
+    the vector is ``None``: a fold that is not one snapshot makes no claim.
+    Orientation and the tagged-then-absorbed order are unchanged.
+    """
+    from app.utils.wps_revision import fold_revision_vector
+
+    absorbed_by_id = {row.id: row for row in absorbed if row.id != event.id}
     rows = (
         await db.execute(
             select(
@@ -863,23 +912,62 @@ async def folded_probability_sources(db, event, absorbed: Sequence = ()) -> dict
                 Event.home_team_name,
                 Event.away_team_name,
                 Event.win_probability_sources,
-            ).where(tagged_duplicate_of(event.id))
+                Event.win_probability_sources_rev,
+                tagged_duplicate_of(event.id).label("tagged"),
+            ).where(
+                or_(
+                    Event.id == event.id,
+                    tagged_duplicate_of(event.id),
+                    Event.id.in_(sorted(absorbed_by_id)),
+                )
+            )
         )
     ).all()
+    read = {}
+    for row in rows:
+        row_id, home, away, sources, rev, tagged = _fold_row(row)
+        read[row_id] = (home, away, sources, rev, tagged)
+
+    one_snapshot = event.id in read
+    if one_snapshot:
+        canonical_sources, canonical_rev = read[event.id][2], read[event.id][3]
+    else:
+        canonical_sources = event.win_probability_sources
+        canonical_rev = None
 
     oriented = [
-        (twin_id, sources)
-        for twin_id, home, away, sources in rows
-        if twin_id != event.id
-        and orientation_agrees(event.home_team_name, event.away_team_name, home, away)
+        (row_id, sources, rev)
+        for row_id, (home, away, sources, rev, tagged) in read.items()
+        if row_id != event.id
+        and tagged
+        and orientation_agrees(
+            event.home_team_name, event.away_team_name, home, away
+        )
     ]
-    seen = {twin_id for twin_id, _ in oriented}
-    oriented += [
-        (row.id, row.win_probability_sources)
-        for row in absorbed
-        if row.id != event.id and row.id not in seen
-    ]
-    return merge_probability_sources(event.win_probability_sources, oriented)
+    seen = {twin_id for twin_id, _, _ in oriented}
+    for row_id in sorted(absorbed_by_id):
+        if row_id in seen:
+            continue
+        if row_id in read:
+            oriented.append((row_id, read[row_id][2], read[row_id][3]))
+        else:
+            one_snapshot = False
+            oriented.append(
+                (row_id, absorbed_by_id[row_id].win_probability_sources, None)
+            )
+
+    merged = merge_probability_sources(
+        canonical_sources,
+        [(twin_id, sources) for twin_id, sources, _ in oriented],
+    )
+    revision = (
+        fold_revision_vector(
+            event.id, canonical_rev, [(twin_id, rev) for twin_id, _, rev in oriented]
+        )
+        if one_snapshot
+        else None
+    )
+    return merged, revision
 
 
 def _tag_elements(tags: object) -> list[str]:
