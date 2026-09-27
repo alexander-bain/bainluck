@@ -618,6 +618,20 @@ jobs:
             exit 1
           fi
 
+      - name: Search finished games newest-day first over the card leader (real Postgres)
+        # #9040. `q=texas` on the night Texas beat Tennessee put 27 Texas Rangers
+        # finals (the TEAMS card's leader, #8738) above that result — page 3.
+        # Finished games now order by Eastern day first, the leader within it;
+        # the upcoming tier still follows the leader (the control).
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_search_settled_day_over_lead_club_pg_9040.py \
+            -v -rs 2>&1 | tee /tmp/settledday.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/settledday.txt; then
+            echo "::error::search settled-day contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: Proven-duplicate search BRIDGE contract (real Postgres)
         # #5821 / CERT-3073. The step above proves the tagged twin stops being a
         # second search result. This proves the reader still reaches the game:

@@ -2662,6 +2662,36 @@ def _team_card_lead_order_key(lead_keys: frozenset | None):
     return case((Sport.key.in_(sorted(lead_keys)), 0), else_=1)
 
 
+def _settled_day_order_key(lead_keys: frozenset | None):
+    """#9040: a finished game's Eastern DAY, newest first — above #8738's key.
+
+    `texas` on production 2026-09-26, the night Texas beat Tennessee 20–17: the
+    card led with Texas Rangers, so #8738's key put every Rangers final in the
+    30-day window (27 of them — baseball plays daily) above every other club's
+    result, and Texas @ Tennessee was on page 3. #8738's specimen was an
+    UPCOMING game (Växjö Lakers tomorrow over LA Lakers' Oct 21); a finished
+    game answers "what just happened", which is #8505's reading.
+
+    So in the finished tier the day leads and the card's leader orders WITHIN
+    the day. Live and upcoming rows all read NULL, one constant, so their order
+    is untouched. `_SEARCH_SETTLED_STATUSES`, the route's descending time arm's
+    set: `suspended` sorts with the finals. Eastern, because that is
+    this file's calendar for a game's day (`_intent_day_order_key`).
+
+    Armed exactly when #8738's key is (same input), so every other query
+    compiles the SQL it did before. None when disarmed.
+    """
+    if not lead_keys:
+        return None
+    eastern_day = cast(
+        func.timezone(_EASTERN_TZ_NAME, Event.commence_time), Date
+    )
+    return case(
+        (Event.status.in_(_SEARCH_SETTLED_STATUSES), eastern_day),
+        else_=None,
+    ).desc().nulls_last()
+
+
 # Award-narrowing scope tokens. A market whose NAME carries one of these but the
 # QUERY does not is a sub-award (e.g. "Eastern Conference Finals MVP" vs the bare
 # season "MVP Winner"). Word-boundary matched so "final" inside another word can't
@@ -7769,9 +7799,10 @@ async def search_events(
         _team_evidence_sport_categories(_early_team_rows, _SEARCH_TEAM_WINDOW)
     )
     # #8738: the games list follows the TEAMS card's leader (see the key).
-    _team_card_lead_key = _team_card_lead_order_key(
-        _team_card_lead_sport_keys(_early_team_rows, _q_identity)
-    )
+    _team_card_lead_sports = _team_card_lead_sport_keys(_early_team_rows, _q_identity)
+    _team_card_lead_key = _team_card_lead_order_key(_team_card_lead_sports)
+    # #9040: ...except among finished games, where the newest day leads first.
+    _settled_day_key = _settled_day_order_key(_team_card_lead_sports)
     _mark("team_evidence")
 
     # Build base query - search both home and away team names
@@ -7832,6 +7863,8 @@ async def search_events(
         # team's games. Absent when disarmed, like `_day_boost`.
         *( (_teamless_sport_key,) if _teamless_sport_key is not None else () ),
         status_order,
+        # #9040: among finished games, the newest day first (armed with #8738).
+        *( (_settled_day_key,) if _settled_day_key is not None else () ),
         # #8738: within a state, the club the TEAMS card leads with first.
         *( (_team_card_lead_key,) if _team_card_lead_key is not None else () ),
         *tag_boost_keys,
