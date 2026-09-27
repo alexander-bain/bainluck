@@ -525,8 +525,11 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
     _ftime: dict = {}
     try:
         from app.routes.user import _query_team_futures
+        # #9219: the club's rows, not only the URL's row — the same set the
+        # games rails use (#7929), so a spelling the page reaches for games it
+        # also reaches for futures.
         futures_data = await _query_team_futures(
-            [team.id], db, limit=30, timings=_ftime if debug_timing else None
+            club_id_list, db, limit=30, timings=_ftime if debug_timing else None
         )
         futures_items = futures_data.get("items", [])
     except Exception:
