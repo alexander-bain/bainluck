@@ -256,11 +256,12 @@ final class TheRestingReadoutPrintsWhereTheLineEnds8652Tests: XCTestCase {
             .appendingPathComponent("Bain Luck/Components/OddsChartView.swift")
         let chart = try String(contentsOf: url, encoding: .utf8)
         XCTAssertEqual(chart.components(
-            separatedBy: "OddsChartSelectionReadout(selection: selection, readout: readout, dataPoints: dataPoints, sportKey: sportKey)").count - 1, 1)
+            separatedBy: "OddsChartSelectionReadout(selection: selection, readout: readout.finished(EventState.isFinished(status)), dataPoints: dataPoints, sportKey: sportKey)").count - 1, 1)
         // #9185 — the fullscreen site's card is `fullscreenReadout`'s, flagged
-        // as the chart's own only when the page gave none.
+        // as the chart's own only when the page gave none. #9015 — both sites
+        // tell the card whether the game is over.
         XCTAssertEqual(chart.components(
-            separatedBy: "readout: card, dataPoints: dataPoints,\n                                                          sportKey: sportKey, pageGaveCard: readout != nil)").count - 1, 1)
+            separatedBy: "readout: card.finished(EventState.isFinished(status)),\n                                                          dataPoints: dataPoints,\n                                                          sportKey: sportKey, pageGaveCard: readout != nil)").count - 1, 1)
         let selectionURL = url.deletingLastPathComponent().appendingPathComponent("OddsChartSelection.swift")
         let selection = try String(contentsOf: selectionURL, encoding: .utf8)
         // `readoutSource` takes the primary line first, and the inline card

@@ -745,7 +745,7 @@ struct OddsChartView: View {
                         .frame(maxWidth: .infinity)
                         .frame(height: chartHeight)
                 } else {
-                    if let readout { OddsChartSelectionReadout(selection: selection, readout: readout, dataPoints: dataPoints, sportKey: sportKey) }
+                    if let readout { OddsChartSelectionReadout(selection: selection, readout: readout.finished(EventState.isFinished(status)), dataPoints: dataPoints, sportKey: sportKey) }
                     // Chart with vertical team labels alongside Y-axis
                     HStack(spacing: 0) {
                         // Vertical team labels on left (#2903 — the run is stated so
@@ -789,7 +789,8 @@ struct OddsChartView: View {
 
                         chartView(dataPoints: dataPoints, sources: history.winProbSources ?? [:],
                                   periodMarkers: periodMarkers, moments: moments,
-                                  plotWidth: $inlinePlotWidth, sharesPageAxis: true)
+                                  plotWidth: $inlinePlotWidth, sharesPageAxis: true,
+                                  pageGaveCard: true)
                     }
                     .frame(height: chartHeight)
 
@@ -880,7 +881,9 @@ struct OddsChartView: View {
                             if let card = Self.fullscreenReadout(
                                 page: readout, homeTeam: homeTeamName, awayTeam: awayTeamName,
                                 colors: teamColors, homeLogo: homeTeamLogo, awayLogo: awayTeamLogo) {
-                                OddsChartSelectionReadout(selection: selection, readout: card, dataPoints: dataPoints,
+                                OddsChartSelectionReadout(selection: selection,
+                                                          readout: card.finished(EventState.isFinished(status)),
+                                                          dataPoints: dataPoints,
                                                           sportKey: sportKey, pageGaveCard: readout != nil)
                             }
                             HStack(spacing: 0) {
@@ -928,7 +931,8 @@ struct OddsChartView: View {
 
                                 chartView(dataPoints: dataPoints, sources: history.winProbSources ?? [:],
                                           periodMarkers: periodMarkers, moments: moments,
-                                          plotWidth: $fullscreenPlotWidth, sharesPageAxis: false)
+                                          plotWidth: $fullscreenPlotWidth, sharesPageAxis: false,
+                                          pageGaveCard: readout != nil)
                             }
                             legendView(dataPoints: dataPoints, sources: history.winProbSources ?? [:])
                             momentCaption(moments)
@@ -1520,7 +1524,8 @@ struct OddsChartView: View {
     /// sheet does neither, and its 800pt axis stays its own.
     private func chartView(dataPoints: [ChartDataPoint], sources: [String: WinProbSourceInfo],
                            periodMarkers: [PeriodMarker], moments: [ChartMoment],
-                           plotWidth: Binding<CGFloat>, sharesPageAxis: Bool) -> some View {
+                           plotWidth: Binding<CGFloat>, sharesPageAxis: Bool,
+                           pageGaveCard: Bool) -> some View {
         // Filter period markers to visible data range
         let visibleMarkers: [PeriodMarker]
         if let minDate = dataPoints.map(\.date).min(),
@@ -1607,7 +1612,8 @@ struct OddsChartView: View {
                 }
                 OddsChartSelectionOverlay(selection: selection, proxy: proxy, plotFrame: plotFrame,
                                           dataPoints: dataPoints, homeShort: homeShort,
-                                          awayShort: awayShort, moments: moments)
+                                          awayShort: awayShort, moments: moments,
+                                          pageGaveCard: pageGaveCard)
                 // #925 — the scrub. `chartXSelection` lost the touch to the
                 // page's scroll the moment a thumb drifted vertically (Alex's
                 // build-20 recording, 14781697). The futures chart solved the
@@ -2402,16 +2408,22 @@ struct OddsChartView: View {
 
     /// Accessibility value for the chart: the scrubbed snapshot when one is
     /// selected, else the latest primary snapshot. Always the 0–100 basis.
+    /// #9185 — on the series the readout card reads (`readoutSource`), so the
+    /// fullscreen chart's lone venue line is spoken as it is printed; before,
+    /// VoiceOver said "No probability data" under a card showing 67% – 33%.
     static func accessibilityValue(dataPoints: [ChartDataPoint], selectedDate: Date?,
                                    homeShort: String, awayShort: String,
-                                   moments: [ChartMoment] = []) -> String {
+                                   moments: [ChartMoment] = [],
+                                   pageGaveCard: Bool = true) -> String {
+        let source = readoutSource(in: dataPoints, pageGaveCard: pageGaveCard)
+            ?? primarySource(in: dataPoints)
         let point: ChartDataPoint?
         var moment: ChartMoment?
         if let selectedDate {
-            point = nearestSnapshot(to: selectedDate, in: dataPoints)
+            point = nearestSnapshot(to: selectedDate, in: dataPoints, source: source)
             moment = nearestMoment(to: selectedDate, in: moments)
         } else {
-            point = latestPrimaryPoint(in: dataPoints)
+            point = latestPoint(in: dataPoints, source: source)
         }
         guard let point else { return "No probability data" }
         return selectionReadout(for: point, homeShort: homeShort, awayShort: awayShort,

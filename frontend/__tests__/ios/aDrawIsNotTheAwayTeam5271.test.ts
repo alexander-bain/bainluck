@@ -364,8 +364,15 @@ d("a draw is not the away team on iOS", () => {
     );
     const row = card.split("private func probabilities(_ point: GamePlayPoint)")[1]
       .split("private func stateLine")[0];
+    // #9015's second specimen: the row prints `printedLabels` (the hero's
+    // <1% / >99%), which takes `printedPercents`'s pair and keeps a nil away nil.
     expect(row).toMatch(
-      /let printed = Self\.printedPercents\(home: point\.homeProb, away: point\.awayProb\)/
+      /let printed = Self\.printedLabels\(home: point\.homeProb, away: point\.awayProb,\s*gameFinished: gameFinished\)/
+    );
+    const labels = card.split("static func printedLabels(")[1].split("private var sides")[0];
+    expect(labels).toMatch(/let printed = printedPercents\(home: home, away: away\)/);
+    expect(labels).toMatch(
+      /away\.map \{ formatProbability\(\$0, renderedPercent: printed\.away\) \}/
     );
     expect(row).toMatch(/let awayProb = printed\.away/);
     const awayRuns = row.match(/probRun\(awayShort, awayProb, awayTeamColor/g) ?? [];
