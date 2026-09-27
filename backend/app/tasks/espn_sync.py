@@ -2764,7 +2764,15 @@ async def _process_live_sport(
             ),
         )
     )
-    our_events = events_result.scalars().all()
+    # CHRONOLOGICAL, whatever order the database returned (#9049, CERT-3620).
+    # Claims are taken in loop order, so an unordered query let a doubleheader's
+    # LATER row claim the earlier game and hand the earlier row the later one:
+    # two games, two swapped live scores. Sorted here rather than by ORDER BY so
+    # the order holds for every caller of this function, faked or real.
+    our_events = sorted(
+        events_result.scalars().all(),
+        key=lambda ev: (ev.commence_time, ev.id),
+    )
 
     # Batch-load teams for this sport to avoid N+1 queries in upsert_team
     sport_obj = our_events[0].sport if our_events else None
@@ -2886,13 +2894,15 @@ async def _process_live_sport(
                 )
             boards_by_day[day] = board or []
 
-    def _widened_pool_for(event):
+    def _widened_pool_for(event, *, record_skip=True):
         """(pool, by_id) for one event's own board day, or ``None``.
 
         ``None`` means there is nothing new to match against — no fetcher, the
         day was not fetched above (the per-sport ceiling was spent), the
         authority went dark, or the dated board added no game the undated one
         did not already carry. Never asks ESPN: see the prefetch above.
+        ``record_skip=False`` asks without counting an unfetched day, for the
+        loop's first look; the skip is counted once, when a row goes unmatched.
         """
         if dated_board_fetcher is None:
             return None
@@ -2901,9 +2911,10 @@ async def _process_live_sport(
             return None
         day = espn_board_date(commence)
         if day not in boards_by_day:
-            stats["dated_board_days_skipped"] = (
-                stats.get("dated_board_days_skipped", 0) + 1
-            )
+            if record_skip:
+                stats["dated_board_days_skipped"] = (
+                    stats.get("dated_board_days_skipped", 0) + 1
+                )
             return None
 
         extra = [
@@ -2920,21 +2931,32 @@ async def _process_live_sport(
         return pool, by_id
 
     for event in our_events:
-        matched_espn, match_method = match_event_fn(
-            event, espn_events, espn_by_id, claimed_espn_ids, espn_names_match,
-        )
-
-        if not matched_espn:
-            widened = _widened_pool_for(event)
-            if widened is not None:
-                pool, by_id = widened
-                matched_espn, match_method = match_event_fn(
-                    event, pool, by_id, claimed_espn_ids, espn_names_match,
+        # A row whose own day's board was fetched is matched against that FULLER
+        # pool first (#9049, CERT-3620). The matcher takes the nearest unclaimed
+        # candidate, so with both of a doubleheader's games in the pool each row
+        # gets its own game whichever is asked first; against the undated board
+        # alone, the later row's nearest game was the earlier one. Rows whose
+        # day was not fetched match exactly as before.
+        widened = _widened_pool_for(event, record_skip=False)
+        if widened is not None:
+            pool, by_id = widened
+            matched_espn, match_method = match_event_fn(
+                event, pool, by_id, claimed_espn_ids, espn_names_match,
+            )
+            if matched_espn is not None and all(
+                matched_espn is not ee for ee in espn_events
+            ):
+                stats["events_matched_on_dated_board"] = (
+                    stats.get("events_matched_on_dated_board", 0) + 1
                 )
-                if matched_espn:
-                    stats["events_matched_on_dated_board"] = (
-                        stats.get("events_matched_on_dated_board", 0) + 1
-                    )
+        else:
+            matched_espn, match_method = match_event_fn(
+                event, espn_events, espn_by_id, claimed_espn_ids, espn_names_match,
+            )
+            if not matched_espn:
+                # Counts the unfetched day; there is no pool to retry here, by
+                # construction of the branch above.
+                _widened_pool_for(event)
 
         if not matched_espn:
             stats["events_unmatched"] = stats.get("events_unmatched", 0) + 1

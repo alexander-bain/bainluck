@@ -446,3 +446,129 @@ async def test_a_doubleheaders_second_game_still_reaches_the_dated_board():
     assert rec.updated == [(row_1.id, "9049001"), (row_2.id, "9049002")], rec.updated
     assert (row_2.home_score, row_2.away_score) == (0, 14)
     assert stats["events_matched_on_dated_board"] == 1
+
+
+# ── CERT-3620: the assignment does not depend on the order the rows arrive ──
+
+
+def _doubleheader():
+    from tests.test_undated_board_is_a_slice_5697 import KICKOFF, _espn_event
+
+    game_1 = _espn_event(
+        "9049001", "Purdue Boilermakers", "Purdue",
+        "Wake Forest Demon Deacons", "Wake Forest", 7, 3,
+    )
+    game_2 = _espn_event(
+        "9049002", "Purdue Boilermakers", "Purdue",
+        "Wake Forest Demon Deacons", "Wake Forest", 0, 14,
+        when=KICKOFF + timedelta(hours=2, minutes=30),
+    )
+    return game_1, game_2
+
+
+async def _run_live_sport(rows, undated, fetch):
+    from app.tasks.espn_sync import _process_live_sport, espn_team_matches
+    from app.utils.espn_helpers import match_event_to_espn
+    from tests.test_undated_board_is_a_slice_5697 import (
+        NOW,
+        SPORT,
+        _FakeSession,
+        _Recorder,
+    )
+
+    class _Claiming(_Recorder):
+        async def update_fields(self, session, event, ee, claimed, stats):
+            claimed.add(ee.espn_id)
+            return await super().update_fields(session, event, ee, claimed, stats)
+
+    rec = _Claiming()
+    stats = {"events_synced": 0, "events_updated": 0, "errors": []}
+    await _process_live_sport(
+        _FakeSession(rows), SPORT, undated, stats,
+        NOW - timedelta(hours=6), NOW - timedelta(hours=5),
+        espn_team_matches, rec.upsert_team, rec.register_identities,
+        match_event_to_espn, rec.update_fields, rec.write_win_prob,
+        rec.compute_stat_model, rec.create_unmatched,
+        dated_board_fetcher=fetch,
+    )
+    return dict(rec.updated), stats
+
+
+@pytest.mark.parametrize("order", ["as-listed", "reversed"])
+async def test_a_doubleheader_keeps_each_game_on_its_own_row_in_either_order(order):
+    """CERT-3620's case. The live query has no ORDER BY; when the LATER row came
+    back first it claimed game 1 off the undated board and the earlier row then
+    took game 2 off the dated one: two swapped live scores. RED `reversed` at
+    942e466df3 (row 2 got 9049001, row 1 got 9049002)."""
+    from tests.test_undated_board_is_a_slice_5697 import KICKOFF, _FakeEvent
+
+    game_1, game_2 = _doubleheader()
+    row_1 = _FakeEvent("Purdue Boilermakers", "Wake Forest Demon Deacons")
+    row_2 = _FakeEvent(
+        "Purdue Boilermakers", "Wake Forest Demon Deacons",
+        commence=KICKOFF + timedelta(hours=2, minutes=30),
+    )
+    rows = [row_1, row_2] if order == "as-listed" else [row_2, row_1]
+
+    async def _fetch(sport_key, board_day):
+        return [game_1, game_2]
+
+    assigned, _ = await _run_live_sport(rows, [game_1], _fetch)
+    assert assigned == {row_1.id: "9049001", row_2.id: "9049002"}, assigned
+    assert (row_2.home_score, row_2.away_score) == (0, 14)
+    assert (row_1.home_score, row_1.away_score) == (7, 3)
+
+
+async def test_a_row_is_matched_on_its_own_days_board_when_that_board_was_fetched():
+    """The pool arm alone, which chronological order cannot supply. Game 1's row
+    is not ours; another game on the same day sends the pass to the dated board.
+    Against the undated board, row 2's nearest name match is game 1 (2.5 h
+    away, inside the window) and it would print game 1's score. Against its own
+    day's board, game 2 is nearer. RED with the dated pool asked only after an
+    undated miss."""
+    from tests.test_undated_board_is_a_slice_5697 import (
+        KICKOFF,
+        _espn_event,
+        _FakeEvent,
+    )
+
+    game_1, game_2 = _doubleheader()
+    other = _espn_event(
+        "9049003", "Iowa Hawkeyes", "Iowa",
+        "Ohio State Buckeyes", "Ohio State", 21, 17,
+    )
+    row_2 = _FakeEvent(
+        "Purdue Boilermakers", "Wake Forest Demon Deacons",
+        commence=KICKOFF + timedelta(hours=2, minutes=30),
+    )
+    row_other = _FakeEvent("Iowa Hawkeyes", "Ohio State Buckeyes")
+
+    async def _fetch(sport_key, board_day):
+        return [game_1, game_2, other]
+
+    assigned, stats = await _run_live_sport([row_other, row_2], [game_1], _fetch)
+    assert assigned == {row_other.id: "9049003", row_2.id: "9049002"}, assigned
+    assert (row_2.home_score, row_2.away_score) == (0, 14)
+    assert stats["events_matched_on_dated_board"] == 2
+
+
+async def test_with_no_dated_board_the_later_row_cannot_take_the_earlier_game():
+    """The order arm alone, which the pool cannot supply: the dated board is
+    dark, so only the undated board (game 1) exists. In chronological order row
+    1 takes game 1 and row 2 honestly has no game. Asked later-row-first, row 2
+    took game 1 and printed the other game's score. RED without the sort."""
+    from tests.test_undated_board_is_a_slice_5697 import KICKOFF, _FakeEvent
+
+    game_1, _game_2 = _doubleheader()
+    row_1 = _FakeEvent("Purdue Boilermakers", "Wake Forest Demon Deacons")
+    row_2 = _FakeEvent(
+        "Purdue Boilermakers", "Wake Forest Demon Deacons",
+        commence=KICKOFF + timedelta(hours=2, minutes=30),
+    )
+
+    async def _dark(sport_key, board_day):
+        return None
+
+    assigned, _ = await _run_live_sport([row_2, row_1], [game_1], _dark)
+    assert assigned == {row_1.id: "9049001"}, assigned
+    assert (row_2.home_score, row_2.away_score) == (None, None)
