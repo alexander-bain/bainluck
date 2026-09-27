@@ -1454,6 +1454,31 @@ def _seasons_with_a_parent_row(rows: list) -> set:
     }
 
 
+# #8993: a school holds one same-name row PER SPORT — Notre Dame Fighting Irish
+# is football, men's and women's basketball, baseball and lacrosse — and every
+# one of them is `_TEAM_COMP_LEAGUE`, so the heap order chose. On CFB Saturday
+# 2026-09-26 `notre dame` answered with the lacrosse row (13-3) above eight
+# football games. Football, then men's basketball, then the rest. Every
+# non-college key reads 0, so no pro or soccer name group can move on this.
+_COLLEGE_SPORT_AUDIENCE_RANK: dict[str, int] = {
+    "americanfootball_ncaaf": 0,
+    "basketball_ncaab": 1,
+}
+_COLLEGE_SPORT_OTHER_RANK = 2
+
+
+def _college_sport_audience_rank(sport_key: str | None) -> int:
+    """Tiebreak between a school's same-name sport rows. Pure.
+
+    A key containing `ncaa` is a college key; one this map does not name
+    (lacrosse, baseball, hockey, a new sport) ranks behind football and men's
+    basketball. Anything else is 0 — not a college row, nothing to decide."""
+    key = (sport_key or "").lower()
+    if "ncaa" not in key:
+        return 0
+    return _COLLEGE_SPORT_AUDIENCE_RANK.get(key, _COLLEGE_SPORT_OTHER_RANK)
+
+
 def _pick_team_row_per_name(rows: list) -> list:
     """Collapse same-name team rows to one, keeping the club's own competition.
 
@@ -1496,7 +1521,12 @@ def _pick_team_row_per_name(rows: list) -> list:
             is_season_variant(sport_key)
             and (name, league_identity(sport_key)) in parents
         )
-        candidate = (int(spring_row), _team_competition_rank(sport_key), index)
+        candidate = (
+            int(spring_row),
+            _team_competition_rank(sport_key),
+            _college_sport_audience_rank(sport_key),
+            index,
+        )
         if name not in best:
             order.append(name)
             best[name] = (candidate, row)
