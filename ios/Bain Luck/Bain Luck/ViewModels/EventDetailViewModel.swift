@@ -84,6 +84,13 @@ final class EventDetailViewModel: ObservableObject {
     /// keeps the live cadence until a load comes back finished.
     private var awaitingServedFinal = false
 
+    /// #9056 — the home probability the last completed load left in the hero,
+    /// and the moment a pushed price moved `EventRefreshPlan.scoreCatchUpMove`
+    /// away from it. The push carries no score, so a big move is the page's only
+    /// sign that the score it is showing has probably just gone out of date.
+    private var probabilityAtLastLoad: Double?
+    private var scoreCatchUpUntil: TimeInterval?
+
     private var latestPriceFrame: LiveStreamFrame?
     private var latestSourceFrames: [String: LiveStreamFrame] = [:]
     private var latestAcceptedSourceDates: [String: Date] = [:]
@@ -210,6 +217,7 @@ final class EventDetailViewModel: ObservableObject {
                 &latestSourceFrames, over: fetched, streamRecoverable: streamRecoverable
             )
             event = fetched
+            probabilityAtLastLoad = fetched.currentOdds?.homeProbability
             error = nil
         } catch {
             self.error = error.localizedDescription
@@ -267,13 +275,15 @@ final class EventDetailViewModel: ObservableObject {
         // Decided AFTER the socket work, never before it: `stopStream()` clears
         // `streamDelivering`, and that is an input. Reading it first would let a
         // page that just lost its stream keep the slow push cadence.
+        if let until = scoreCatchUpUntil, now() >= until { scoreCatchUpUntil = nil }
         let plan: EventRefreshPlan = awaitingServedFinal
             ? .poll(every: EventRefreshPlan.livePollInterval)
             : EventRefreshPlan.decide(
                 status: event?.status,
                 streamDelivering: streamDelivering,
                 commenceTime: event?.commenceTime?.asDate,
-                now: Date(timeIntervalSince1970: now())
+                now: Date(timeIntervalSince1970: now()),
+                catchingUp: scoreCatchUpUntil != nil
             )
 
         guard case .poll(let interval) = plan else {
@@ -395,6 +405,7 @@ final class EventDetailViewModel: ObservableObject {
     @MainActor
     private func apply(_ frame: LiveStreamFrame) {
         guard var current = event, current.id == frame.eventId else { return }
+        var armScoreCatchUp = false
 
         // Source ordering is independent of the blend: a delayed Kalshi quote
         // can still advance its own bar after a newer Polymarket blend frame.
@@ -430,6 +441,12 @@ final class EventDetailViewModel: ObservableObject {
             // The hero now shows a pushed price — the only thing the page's
             // stream dot may claim (#8320).
             streamHasPushedPrice = true
+            // #9056 — measured against the last LOAD, not the last frame, so a
+            // play priced in over several small frames still counts as one move.
+            if let base = probabilityAtLastLoad, abs(p - base) >= EventRefreshPlan.scoreCatchUpMove {
+                armScoreCatchUp = scoreCatchUpUntil == nil
+                scoreCatchUpUntil = now() + EventRefreshPlan.scoreCatchUpWindow
+            }
         }
 
         // The same number, kept for the chart (#920). The hero renders the most
@@ -463,6 +480,11 @@ final class EventDetailViewModel: ObservableObject {
         }
 
         event = current
+        // Re-planned only when the window OPENS: a move inside an open window
+        // extends it and the loop is already on the fast cadence. Only a live
+        // page, because `configureAutoRefresh` stops the stream on anything else
+        // and this runs inside the stream's own callback.
+        if armScoreCatchUp, current.status == "live" { configureAutoRefresh() }
         // NOT `lastLoadedAt`: that field means "a load completed" and drives the
         // refresh countdown chrome. A pushed frame is not a load, and claiming
         // one would make the countdown describe a request that never happened
