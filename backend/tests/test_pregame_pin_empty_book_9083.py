@@ -168,6 +168,33 @@ class TestWhichBookDecides:
             "polymarket", [leg], {1: (None, None)}
         ) == ({"1": 0.4}, 0)
 
+    def test_a_leg_read_but_not_priced_is_refused_whatever_its_book(self):
+        """After-check RED 14:04Z: a declined read leaves an older poll's price
+        on the row, so the leg leaves the pin even on a two-sided book."""
+        leg = _leg(1, 0.495, 0.01, 0.99)
+        assert _pregame_pin_outcome_probs(
+            "polymarket", [leg], {1: (None, None)}, {1}
+        ) == ({}, 1)
+        assert _pregame_pin_outcome_probs(
+            "polymarket", [_leg(2, 0.4, 0.39, 0.41)], {2: (0.39, 0.41)}, {2}
+        ) == ({}, 1)
+
+    def test_only_the_unpriced_leg_leaves(self):
+        priced, unpriced = _leg(1, 0.62, 0.61, 0.63), _leg(2, 0.495, 0.01, 0.99)
+        assert _pregame_pin_outcome_probs(
+            "polymarket",
+            [priced, unpriced],
+            {1: (0.61, 0.63), 2: (None, None)},
+            {2},
+        ) == ({"1": 0.62}, 1)
+
+    def test_kalshi_ignores_the_unpriced_reads(self):
+        leg = _leg(1, 0.4, 0.39, 0.41)
+        assert _pregame_pin_outcome_probs("kalshi", [leg], {}, {1}) == (
+            {"1": 0.4},
+            0,
+        )
+
     def test_kalshi_ignores_the_fresh_books(self):
         leg = _leg(1, 0.01, None, 1.0)
         assert _pregame_pin_outcome_probs(
@@ -297,6 +324,91 @@ class TestThroughTheLivePoll:
         assert pins == [], f"pins written: {pins}"
         assert stats["pregame_marks_written"] == 0
         assert stats["pregame_mark_empty_book_legs_refused"] == 1
+
+    async def _pin_after_a_declined_read(self, monkeypatch, payload):
+        """One pregame market whose row holds the specimen's stored state (0.495
+        on a 0.01/0.99 book, last priced days ago), polled with ``payload``."""
+        journal = []
+        commence = _now() + timedelta(minutes=_PREGAME_MARK_LEAD_MINUTES / 2)
+        beat = _Population(
+            [(_Market(1, "polymarket", "poly-evt-1"), _Event(301, commence=commence))],
+            [_Outcome(3001, 1, "cond-1", "Los Angeles R")],
+        )
+        prior = beat.outcomes[0]
+        prior.current_probability = 0.495
+        prior.current_yes_bid = 0.01
+        prior.current_yes_ask = 0.99
+        session = _Session([beat, beat], journal=journal)
+        poly = _PolyService({"poly-evt-1": payload}, journal)
+
+        pins: list[dict] = []
+        real_execute = session.execute
+
+        async def _recording_execute(stmt, params=None):
+            if "pregame_mark" in str(stmt) and params:
+                pins.append(params)
+            return await real_execute(stmt, params)
+
+        session.execute = _recording_execute
+        stats = await _run(monkeypatch, session, poly=poly)
+        return prior, pins, stats
+
+    @pytest.mark.parametrize(
+        "ask",
+        [None, 0.6],
+        ids=["no-book-at-all", "a-lone-ask-inside-the-tick"],
+    )
+    async def test_a_read_the_poller_declines_is_not_pinned(self, monkeypatch, ask):
+        """The 14:04Z specimen, market 61230222: no bid and no trade on the read,
+        so the poller keeps the 2026-09-17 price on the row. Neither book shape
+        here is empty by the tick rule, which is how the old check let 0.495 in.
+        """
+        prior, pins, stats = await self._pin_after_a_declined_read(
+            monkeypatch,
+            _poly_payload(
+                "cond-1", prices='["0.495", "0.505"]', last=None, bid=None, ask=ask
+            ),
+        )
+        # Precondition: the poller declined the read and left the old row alone.
+        assert float(prior.current_probability) == 0.495
+        assert stats["outcomes_updated"] == 0
+
+        assert pins == [], f"pins written: {pins}"
+        assert stats["pregame_marks_written"] == 0
+        assert stats["pregame_mark_empty_book_legs_refused"] == 1
+
+    async def test_a_phantom_midpoint_the_poller_refuses_is_not_pinned(
+        self, monkeypatch
+    ):
+        """Siblings of the specimen (61252633, 61230260) were pinned 0.495/0.505
+        on 0.02/0.98 books: a midpoint the poller refuses to price. With a
+        trade on the read it passes the no-activity skip and is declined later.
+        """
+        prior, pins, stats = await self._pin_after_a_declined_read(
+            monkeypatch,
+            _poly_payload(
+                "cond-1", prices='["0.5", "0.5"]', last=0.5, bid=0.02, ask=0.98
+            ),
+        )
+        assert stats["polymarket_phantom_midpoints_refused"] == 1
+        assert float(prior.current_probability) == 0.495
+
+        assert pins == [], f"pins written: {pins}"
+        assert stats["pregame_mark_empty_book_legs_refused"] == 1
+
+    async def test_a_read_the_poller_prices_is_still_pinned(self, monkeypatch):
+        """Control on the same row: a two-sided read is priced, cleared from the
+        declined set, and pinned at this poll's number."""
+        prior, pins, stats = await self._pin_after_a_declined_read(
+            monkeypatch,
+            _poly_payload(
+                "cond-1", prices='["0.62", "0.38"]', last=0.62, bid=0.61, ask=0.63
+            ),
+        )
+        assert float(prior.current_probability) == pytest.approx(0.62)
+        assert [p["id"] for p in pins] == [1], f"pins written: {pins}"
+        assert '"3001": 0.62' in pins[0]["mark"]
+        assert stats["pregame_mark_empty_book_legs_refused"] == 0
 
     def test_the_writer_calls_the_guard(self):
         """The helper arms cannot see whether the loop still calls it."""
