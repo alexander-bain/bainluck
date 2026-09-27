@@ -40,6 +40,7 @@ from app.utils.economics_headline import (
     select_recession_headline,
 )
 from app.utils.market_staleness import (
+    CUMULATIVE_THRESHOLD_PREFIXES,
     featured_leader_probability,
     outcome_names_are_cumulative_ladder,
     should_exclude_from_featured,
@@ -842,6 +843,38 @@ _SUFFIX_THRESHOLD_RE = re.compile(
 )
 
 
+def _reads_as_cumulative(outcomes: list) -> bool:
+    """True when a ladder's rows may be differenced by ``_cumulative_to_discrete``.
+
+    ONE "OR ABOVE" DOES NOT MAKE A LADDER CUMULATIVE (#9104). Every section of
+    this page used to ask ``any("above" in name)``, and a partition can carry
+    the word on a single leg. On production 2026-09-27 two did:
+
+        market                         legs                          the page
+        US real GDP growth in 2036?    12 ranges + "6.1% or Above"   "0.0% or Below" 2%
+        Sep 2026 CPI MoM Combo         12 joint legs, 6 say "above"  one leg, 1%
+
+    Kalshi's leader on the first is "1.6% to 2.0%" at 22%, and on the second
+    "Headline: 0.5% or above, Core: 0.3% or above" at 37.5%. Both books sum to
+    about 100%; differencing them as if each row were P(above X) leaves small
+    leftovers under the wrong labels, and neither leader reached the card.
+
+    So the old test still gates — a ladder with no "above" anywhere keeps the
+    path it has always had — and every leg must ALSO be a threshold: a prefix
+    from ``CUMULATIVE_THRESHOLD_PREFIXES`` or the bare "X or above" suffix.
+    Over the 79 markets the page served that morning this flips exactly the two
+    rows above; every other ladder is all-threshold and unchanged.
+    """
+    names = [(o.name or "").strip() for o in outcomes]
+    if not any("above" in n.lower() for n in names):
+        return False
+    return all(
+        n.lower().startswith(CUMULATIVE_THRESHOLD_PREFIXES)
+        or _SUFFIX_THRESHOLD_RE.match(n)
+        for n in names
+    )
+
+
 def _cumulative_to_discrete(outcomes: list, max_buckets: int = 8) -> list[list]:
     """Convert cumulative 'Above X' outcomes to discrete bracket probabilities.
 
@@ -1205,7 +1238,7 @@ async def get_economics(db: AsyncSession):
 
     for m in fomc_source:
         outcomes = _outcomes_sorted(m)
-        has_cumulative = any("above" in (o.name or "").lower() for o in outcomes)
+        has_cumulative = _reads_as_cumulative(outcomes)
         if has_cumulative:
             discrete = _cumulative_to_discrete(outcomes, max_buckets=10)
             # Reverse so highest rate is first (top of heatmap)
@@ -1311,7 +1344,7 @@ async def get_economics(db: AsyncSession):
     for m in inflation_markets:
         name_lower = (m.name or "").lower()
         outcomes = _outcomes_sorted(m)
-        has_cumulative = any("above" in (o.name or "").lower() for o in outcomes)
+        has_cumulative = _reads_as_cumulative(outcomes)
         if ("cpi" in name_lower or "inflation" in name_lower) and len(outcomes) >= 3:
             if has_cumulative:
                 brackets = _cumulative_to_discrete(outcomes, max_buckets=6)
@@ -1419,7 +1452,7 @@ async def get_economics(db: AsyncSession):
             if _row:
                 rec_rows.append((m.id, _row))
         elif "gdp" in name_lower and len(outcomes) >= 3:
-            has_cumulative = any("above" in (o.name or "").lower() for o in outcomes)
+            has_cumulative = _reads_as_cumulative(outcomes)
             if has_cumulative:
                 brackets = _cumulative_to_discrete(outcomes, max_buckets=6)
             else:
@@ -1469,7 +1502,7 @@ async def get_economics(db: AsyncSession):
     for m in energy_markets:
         name_lower = (m.name or "").lower()
         outcomes = _outcomes_sorted(m)
-        has_cumulative = any("above" in (o.name or "").lower() for o in outcomes)
+        has_cumulative = _reads_as_cumulative(outcomes)
         if ("gas" in name_lower or "oil" in name_lower or "wti" in name_lower or "brent" in name_lower or "natural gas" in name_lower) and len(outcomes) >= 3:
             # #3004. Only the OIL half is re-routed — `_oil_row` refuses a gas
             # market itself, so the histogram card's path stays byte-identical —
@@ -1535,7 +1568,7 @@ async def get_economics(db: AsyncSession):
         outcomes = _outcomes_sorted(m)
         brackets = None
         if len(outcomes) >= 3:
-            has_cumulative = any("above" in (o.name or "").lower() for o in outcomes)
+            has_cumulative = _reads_as_cumulative(outcomes)
             if has_cumulative:
                 brackets = _cumulative_to_discrete(outcomes, max_buckets=6)
             else:
