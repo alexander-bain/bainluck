@@ -647,6 +647,20 @@ jobs:
             exit 1
           fi
 
+      - name: Search today's final right behind the next game (real Postgres)
+        # #9211. `q=chiefs` two hours after the Chiefs won printed 13 upcoming
+        # games (through January) above the result. The next game still leads
+        # (D107); today's final is second. Strawman, a no-final-day control and
+        # the #8738 leader case (a namesake tomorrow is not "next").
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_search_todays_final_behind_next_pg_9211.py \
+            -v -rs 2>&1 | tee /tmp/todaysfinal.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/todaysfinal.txt; then
+            echo "::error::search today's-final contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: Proven-duplicate search BRIDGE contract (real Postgres)
         # #5821 / CERT-3073. The step above proves the tagged twin stops being a
         # second search result. This proves the reader still reaches the game:
