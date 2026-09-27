@@ -1027,8 +1027,8 @@ def _build_presidential(
 # requires the literal word "control".
 #
 # So the party-containment arms are GONE and the phrasings are named instead.
-# `_SENATE_CONTROL_KEYWORDS` below already knew "which party"; it feeds the
-# senate MAP, not this selector, which is how the gap survived.
+# The senate MAP's old keyword skip already knew "which party"; it fed the
+# map, not this selector, which is how the gap survived.
 _SENATE_CONTROL_RE = re.compile(
     r"(?:\bsenate\s+control\b"
     r"|\bcontrol\s+(?:of\s+)?(?:the\s+)?senate\b"
@@ -1206,26 +1206,68 @@ _STATE_ABBREV: dict[str, str] = {
     "wisconsin": "WI", "wyoming": "WY",
 }
 
-_SENATE_STATE_TICKER_RE = re.compile(r"kxsenate[-_]?\d{2}[-_]([a-z]{2})", re.I)
-
-_SENATE_CONTROL_KEYWORDS = re.compile(
-    r"\b(?:control|majority|flip|which party)\b", re.I
+# #9199: the map is one question per state — "who wins this state's U.S. Senate
+# seat" — so it is read ONLY off a market that asks exactly that. The old
+# builder took the FIRST congressional market whose name contained a state, in
+# heap order (the query has no ORDER BY), and production painted Maryland 7% D
+# off "Maryland State Senate District 2 winner?" and coloured 14 states with no
+# 2026 race off their "(2028)" seats. Anchored at both ends, so "Texas State
+# Senate", "District 2", county, primary, margin, turnout and combo questions
+# cannot match. Venue shapes (measured 2026-09-27): Kalshi "Texas Senate
+# winner?" / "... winner? (2028)" / "... winner? (Person)", Polymarket "Texas
+# Senate Election Winner".
+_STATE_NAME_ALT = "|".join(
+    re.escape(n) for n in sorted(_STATE_ABBREV, key=len, reverse=True)
 )
+_SENATE_SEAT_RE = re.compile(
+    rf"^(?:who (?:wins|will win) (?:the )?)?(?P<state>{_STATE_NAME_ALT}) senate "
+    r"(?:election winner|winner|race|election)"
+    r"(?: (?P<year>20\d\d))?\??(?: \((?:person|(?P<year2>20\d\d))\))?\s*\??$",
+    re.I,
+)
+# Kalshi's year suffix: SENATETX-26, KXSENATELA-26NOV, KXIASENATE-26.
+_SENATE_TICKER_YEAR_RE = re.compile(r"-(\d{2})(?:[A-Z]{3})?(?:-|$)")
 
 
-def _extract_senate_state(market: FuturesMarket) -> str | None:
-    ext = (market.external_id or "")
-    m = _SENATE_STATE_TICKER_RE.search(ext)
-    if m:
-        return m.group(1).upper()
-    name_lower = (market.name or "").lower()
-    for full, abbr in _STATE_ABBREV.items():
-        if full in name_lower:
-            return abbr
-    for abbr in _STATE_ABBREV.values():
-        if re.search(rf"\b{abbr}\b", market.name or ""):
-            return abbr
-    return None
+def _senate_seat(market: FuturesMarket) -> tuple[str, int | None] | None:
+    """(state, election year) if this market asks who wins a state's Senate seat.
+
+    The state is read from the NAME, never the ticker: Kalshi files Kentucky's
+    2026 seat as `SENATELA-26`. The year is the name's own "(2028)" first, then
+    the ticker's two-digit suffix, then the resolution date rounded down to an
+    even year (federal elections are even-year; seats resolve the next January).
+    None when nothing states it — a yearless name is the venue's current race.
+    """
+    m = _SENATE_SEAT_RE.match((market.name or "").strip())
+    if not m:
+        return None
+    state = _STATE_ABBREV[m.group("state").lower()]
+    year_text = m.group("year") or m.group("year2")
+    if year_text:
+        return state, int(year_text)
+    t = _SENATE_TICKER_YEAR_RE.search(market.external_id or "")
+    if t:
+        return state, 2000 + int(t.group(1))
+    if market.resolution_date is not None:
+        y = market.resolution_date.year
+        return state, y if y % 2 == 0 else y - 1
+    return state, None
+
+
+def _stated_party(name: str) -> str:
+    """The party an outcome's own text STATES — "(D)", "Democratic party" — else "".
+
+    Deliberately not `_detect_party`: its surname allowlists are substring
+    matches, so "Barry Moore" (R, Alabama) reads D off "moore", and "Scott
+    Colom" (D, Mississippi) reads R off "scott". A state's colour on the map is
+    a claim about a real race; it is made only on the venue's own word.
+    """
+    n = name.lower()
+    if "republican" in n or "(r)" in n:
+        return "R"
+    if "democrat" in n or "(d)" in n:
+        return "D"
+    return ""
 
 
 def _extract_dem_prob(market: FuturesMarket) -> float | None:
@@ -1233,8 +1275,7 @@ def _extract_dem_prob(market: FuturesMarket) -> float | None:
     if not outcomes:
         return None
     for o in outcomes:
-        name_lower = (o.name or "").lower()
-        if "(d)" in name_lower or "democrat" in name_lower:
+        if _stated_party(o.name or "") == "D":
             return float(o.current_probability or 0)
     market_name = (market.name or "").lower()
     if len(outcomes) <= 2:
@@ -1246,34 +1287,46 @@ def _extract_dem_prob(market: FuturesMarket) -> float | None:
                     return 1.0 - prob
                 if "democrat" in market_name:
                     return prob
-    for o in outcomes:
-        party = _detect_party(o.name or "")
-        if party == "D":
-            return float(o.current_probability or 0)
-    for o in outcomes:
-        party = _detect_party(o.name or "")
-        if party == "R":
-            return 1.0 - float(o.current_probability or 0)
+        # Two-way only: in a wider field (an Independent, say) the rest of the
+        # book is not the Democrat's.
+        for o in outcomes:
+            if _stated_party(o.name or "") == "R":
+                return 1.0 - float(o.current_probability or 0)
     return None
 
 
 def _build_senate_map(congressional_markets: list[FuturesMarket]) -> dict[str, float]:
-    state_probs: dict[str, float] = {}
+    """Per-state Dem chance of the Senate seat, for the NEAREST election cycle only.
+
+    Order-independent: every venue's seat market for the state is blended (a
+    plain mean of the ones that state a Democrat's price), so the colour no
+    longer depends on which row the heap returned first. A state whose only
+    open seat market is a later cycle is left off rather than painted with a
+    race two years out; once the near cycle resolves, the next one is nearest.
+    """
+    seats: list[tuple[str, int | None, float]] = []
     for m in congressional_markets:
-        if _is_resolved(m):
-            continue
-        name = (m.name or "").lower()
-        if "house" in name:
-            continue
-        if _SENATE_CONTROL_KEYWORDS.search(name):
-            continue
-        state = _extract_senate_state(m)
-        if not state or state in state_probs:
+        # No `_is_resolved` price test here: it calls any leg at 99% settled,
+        # which greyed out Rhode Island (Reed 99%) — the safest seats vanished
+        # from the map. The pool is already filtered by `market_reads_settled`,
+        # the shared settlement answer, before it reaches this builder.
+        seat = _senate_seat(m)
+        if seat is None:
             continue
         dem_prob = _extract_dem_prob(m)
-        if dem_prob is not None:
-            state_probs[state] = round(dem_prob * 100, 1)
-    return state_probs
+        if dem_prob is None:
+            continue
+        seats.append((seat[0], seat[1], dem_prob))
+    years = [y for _, y, _ in seats if y is not None]
+    cycle = min(years) if years else None
+    by_state: dict[str, list[float]] = defaultdict(list)
+    for state, year, dem_prob in seats:
+        if year is None or year == cycle:
+            by_state[state].append(dem_prob)
+    return {
+        state: round(sum(ps) / len(ps) * 100, 1)
+        for state, ps in sorted(by_state.items())
+    }
 
 
 # ---------------------------------------------------------------------------
