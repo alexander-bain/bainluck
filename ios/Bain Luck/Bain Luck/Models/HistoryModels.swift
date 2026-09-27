@@ -37,6 +37,11 @@ nonisolated struct EventHistoryResponse: Decodable, Sendable {
     /// keeps its pre-contract gap rule. Optional and never-throwing: additive,
     /// and a malformed contract must not blank the chart.
     let evidenceContract: EvidenceContract?
+    /// #9051 — whether the aggregate line's last point is the server's live pin
+    /// of the detail hero, and the fold revision that pinned value was computed
+    /// from (detail's `blend_fold_revision` twin; null when there is no pin).
+    let blendEdgePinned: Bool?
+    let blendEdgeFoldRevision: ServedFoldRevision?
     let points: Int?
     let bookmakerCount: Int?
     let snapshotCount: Int?

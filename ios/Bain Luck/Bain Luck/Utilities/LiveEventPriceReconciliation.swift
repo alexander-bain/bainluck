@@ -33,12 +33,78 @@ nonisolated enum LiveEventPriceReconciliation {
             ? candidate : polled
     }
 
+    /// #9051 — the page is showing the server's live blend: a live event whose
+    /// hero resolved to `"blend"` and whose printed number IS that hero. Only
+    /// then does `blendFoldRevision` date what the reader sees.
+    static func holdsLiveBlend(_ event: EventDetail) -> Bool {
+        guard event.status == "live", event.heroProbabilitySource == "blend",
+              let hero = event.heroProbability, hero.isFinite,
+              let shown = event.currentOdds?.homeProbability else { return false }
+        return shown == hero
+    }
+
+    /// #9051 — the fold revision of the number on screen, or `nil` (no claim):
+    /// no live blend, or no well-formed vector. A revision is never read off a
+    /// payload whose printed number is some other value (an opening line, a
+    /// sportsbook consensus): it would date a number the page is not showing.
+    static func pairedFoldRevision(in event: EventDetail) -> FoldRevision? {
+        holdsLiveBlend(event) ? event.blendFoldRevision?.revision : nil
+    }
+
+    /// #9051 — a completed poll against the headline the page ALREADY accepted
+    /// (web's `keepNewerHeldHeadline`).
+    ///
+    /// Frames move the held headline between polls, and `latestPriceFrame`
+    /// holds only the latest one. So the poll is compared with the page itself:
+    /// a response whose fold revision is strictly OLDER — or which carries none
+    /// against a held one, since a value is never tagged with a revision
+    /// borrowed from another value — keeps the held headline, its sources, clock
+    /// and revision, and takes everything else (score, status, metadata) from
+    /// the response. A newer, equal or incomparable response is the
+    /// authoritative read and wins whole; that is how a changed fold is adopted.
+    /// A response that ends the game or leaves the live blend wins whole, and a
+    /// page holding no revision takes every response as before.
+    static func keepingNewerHeldHeadline(_ polled: EventDetail, held: EventDetail?) -> EventDetail {
+        guard let held, held.id == polled.id,
+              let heldRevision = pairedFoldRevision(in: held),
+              polled.status == "live", polled.heroProbabilitySource == "blend",
+              let polledHero = polled.heroProbability, polledHero.isFinite else { return polled }
+        if let polledRevision = pairedFoldRevision(in: polled),
+           FoldRevision.compare(polledRevision, heldRevision) != .older { return polled }
+        var kept = polled
+        if var odds = kept.currentOdds, let heldOdds = held.currentOdds {
+            odds.homeProbability = heldOdds.homeProbability
+            // A withheld away side (#6238, draw-priced sports) stays withheld.
+            odds.awayProbability = odds.awayProbability == nil ? nil : heldOdds.awayProbability
+            odds.homeRenderedPercent = heldOdds.homeRenderedPercent
+            odds.awayRenderedPercent = heldOdds.awayRenderedPercent
+            kept.currentOdds = odds
+        } else {
+            kept.currentOdds = held.currentOdds
+        }
+        kept.heroProbability = held.heroProbability
+        kept.heroProbabilityObservedAt = held.heroProbabilityObservedAt
+        kept.winProbabilitySources = held.winProbabilitySources
+        kept.blendFoldRevision = held.blendFoldRevision
+        return kept
+    }
+
     static func shouldPreserve(_ frame: LiveStreamFrame?, over polled: EventDetail, streamRecoverable: Bool) -> Bool {
         guard streamRecoverable, let frame, frame.eventId == polled.id,
               polled.status == "live",
               let p = frame.p, p.isFinite, (0...1).contains(p),
-              let served = polled.currentOdds?.homeProbability, served.isFinite,
-              let source = frame.source,
+              let served = polled.currentOdds?.homeProbability, served.isFinite else { return false }
+        // #9051: when the response's blend carries its fold revision, commit
+        // order decides BEFORE any clock or source-presence rule. A frame from
+        // before a source removal still folds the removed source into its `p`,
+        // and the surviving quote that dates the fresh blend can be OLDER than
+        // that frame — the clocks below kept a stale 60% over a fresh 40%.
+        if let order = FoldRevision.frameOrder(
+            held: pairedFoldRevision(in: polled), frame: frame.rev?.revision
+        ) {
+            return order == .newer
+        }
+        guard let source = frame.source,
               polled.winProbabilitySources?[source] != nil,
               let pushedAt = frame.updatedAt?.asDate,
               let newest = newestSourceDate(in: polled) else { return false }
@@ -50,13 +116,56 @@ nonisolated enum LiveEventPriceReconciliation {
 
     static func applying(_ frame: LiveStreamFrame?, to polled: EventDetail, streamRecoverable: Bool) -> EventDetail {
         guard shouldPreserve(frame, over: polled, streamRecoverable: streamRecoverable),
-              let p = frame?.p, var odds = polled.currentOdds else { return polled }
+              let frame, let p = frame.p, var odds = polled.currentOdds else { return polled }
         odds.homeProbability = p
         odds.awayProbability = 1 - p
         odds.homeRenderedPercent = nil
         odds.awayRenderedPercent = nil
         var reconciled = polled
         reconciled.currentOdds = odds
+        adoptFrameProvenance(frame, into: &reconciled)
         return reconciled
+    }
+
+    /// #9051 — the hero now prints this frame's `p`, so its clock and revision
+    /// are the frame's too: the frame's own revision, or none. Never the held
+    /// one — that dated the value this frame replaced.
+    static func adoptFrameProvenance(_ frame: LiveStreamFrame, into event: inout EventDetail) {
+        event.heroProbability = frame.p
+        event.heroProbabilityObservedAt = frame.updatedAt
+        if frame.rev?.revision != nil || event.blendFoldRevision?.revision != nil {
+            event.blendFoldRevision = ServedFoldRevision(frame.rev?.revision)
+        }
+    }
+
+    /// #9051 — web's `chartRevisionRefreshKey`. A removal can advance the fold
+    /// while leaving only an OLDER surviving quote, so the chart's right edge can
+    /// still end on the pre-removal blend after the headline has moved. When the
+    /// held revision is newer than (or incomparable with) the one the history's
+    /// pinned edge was computed from, and the line the chart draws does not end
+    /// on the headline, the page asks for history again. Returns a stable key
+    /// (the held vector) so it asks once per accepted fold; an unchanged cached
+    /// response cannot loop, and the ordinary poll stays the retry.
+    static func chartRevisionRefreshKey(
+        event: EventDetail?, history: EventHistoryResponse?, liveBlend: [LiveBlendPoint]
+    ) -> String? {
+        guard let event, let history, history.blendEdgePinned == true,
+              let heldRevision = pairedFoldRevision(in: event),
+              let servedRevision = history.blendEdgeFoldRevision?.revision,
+              let hero = event.currentOdds?.homeProbability, (0...1).contains(hero) else { return nil }
+        let order = FoldRevision.compare(heldRevision, servedRevision)
+        guard order == .newer || order == .incomparable else { return nil }
+        let served = (history.aggregateLine ?? []).compactMap { point in
+            point.timestamp.asDate.map { (date: $0, p: point.homeProbability) }
+        }
+        guard let publishedEdge = served.max(by: { $0.date < $1.date }) else { return nil }
+        // The chart draws the served line carried forward by the pushed frames
+        // past its edge (`OddsChartView.extendingBlendToLiveEdge`).
+        let drawnEdge = liveBlend.filter { $0.date > publishedEdge.date }
+            .max(by: { $0.date < $1.date })
+            .map { (date: $0.date, p: $0.homeProbability) } ?? publishedEdge
+        guard drawnEdge.p != hero else { return nil }
+        return heldRevision.rows.sorted { $0.key < $1.key }
+            .map { "\($0.key):\($0.value)" }.joined(separator: ",")
     }
 }

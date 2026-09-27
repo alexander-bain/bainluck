@@ -60,6 +60,21 @@ nonisolated struct LiveStreamFrame: Decodable, Sendable, Equatable {
     let sourceValue: Double?
     let updatedAt: String?
     let status: String?
+    /// #9051 — the written row's revision, `{"<event_id>": rev}`. `p` is that
+    /// ROW's aggregate, so it orders only against a held one-row vector; see
+    /// `FoldRevision.frameOrder`. Absent from a producer before the contract.
+    let rev: ServedFoldRevision?
+
+    init(eventId: Int, p: Double?, source: String?, sourceValue: Double?,
+         updatedAt: String?, status: String?, rev: ServedFoldRevision? = nil) {
+        self.eventId = eventId
+        self.p = p
+        self.source = source
+        self.sourceValue = sourceValue
+        self.updatedAt = updatedAt
+        self.status = status
+        self.rev = rev
+    }
 }
 
 // MARK: - Transport
