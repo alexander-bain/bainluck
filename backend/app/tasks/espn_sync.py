@@ -4455,7 +4455,10 @@ async def _transition_event_statuses_impl() -> dict:
     )
     # #5324: the authority's "not started" reaches this zero-API-call task
     # through the row, so honouring it costs an import and no query.
-    from app.utils.espn_helpers import authority_not_started_holds
+    from app.utils.espn_helpers import (
+        authority_not_started_holds,
+        authority_stopped_holds,
+    )
 
     stats = {"scheduled_to_live": 0, "live_to_suspended": 0, "suspended_to_live": 0}
     # Declared out here because it is RELEASED out here — after the session
@@ -4519,6 +4522,7 @@ async def _transition_event_statuses_impl() -> dict:
         # backstop for a dead poller. Zero extra queries — the marker rides the
         # JSONB already loaded on the row.
         stats["held_authority_not_started"] = 0
+        stats["held_authority_stopped"] = 0
 
         # #8755: A START THE ONLY SOURCE HAS WITHDRAWN IS NOT A START.
         #
@@ -4578,6 +4582,18 @@ async def _transition_event_statuses_impl() -> dict:
                 game_clock=event.game_clock,
             ):
                 stats["held_authority_not_started"] += 1
+                continue
+            # #8960: the authority reported this fixture POSTPONED before
+            # kickoff. The live pass will suspend it once kickoff has passed;
+            # until then the clock must not badge it live. See
+            # `espn_helpers.ESPN_STOPPED_KEY`.
+            if authority_stopped_holds(
+                event.win_probability_sources,
+                now,
+                home_score=event.home_score,
+                away_score=event.away_score,
+            ):
+                stats["held_authority_stopped"] += 1
                 continue
             if event.id in listing_sightings and odds_api_listing_withdrawn(
                 event.commence_time_source,
