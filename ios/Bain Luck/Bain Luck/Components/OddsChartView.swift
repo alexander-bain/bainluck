@@ -365,6 +365,8 @@ struct OddsChartView: View {
     /// fullscreen chart, which covers the page's toolbar and so carries the
     /// page's one freshness status itself (#8320).
     var refreshStreaming: Bool = false
+    var liveUpdateStatus: LiveUpdateStatus = .hidden
+    var priceActivity: LivePriceActivity?
     /// Shared domain from parent — ensures OddsChart and ScoreDiffChart have identical x-axes
     var forcedDomain: ClosedRange<Date>?
     /// Blends pushed to the page since it opened (#920), drawn as the live end
@@ -491,6 +493,8 @@ struct OddsChartView: View {
          homeTeamAbbrev: String? = nil, awayTeamAbbrev: String? = nil,
          sportKey: String? = nil,
          refreshStreaming: Bool = false,
+         liveUpdateStatus: LiveUpdateStatus = .hidden,
+         priceActivity: LivePriceActivity? = nil,
          forcedDomain: ClosedRange<Date>? = nil,
          pageAxisPlotWidth: CGFloat = 0,
          selectedRange: Binding<OddsTimeRange> = .constant(.sinceStart),
@@ -512,6 +516,8 @@ struct OddsChartView: View {
         self.awayTeamAbbrev = awayTeamAbbrev
         self.sportKey = sportKey
         self.refreshStreaming = refreshStreaming
+        self.liveUpdateStatus = liveUpdateStatus
+        self.priceActivity = priceActivity
         self.forcedDomain = forcedDomain
         self.pageAxisPlotWidth = pageAxisPlotWidth
         self.liveFrames = liveFrames
@@ -939,9 +945,9 @@ struct OddsChartView: View {
                 // #8320 — fullscreen covers the page toolbar, so the page's one
                 // status travels with it: the stream dot when pushed, nothing
                 // otherwise. There is no refresh button here to draw.
-                if status == "live" && refreshStreaming {
+                if status == "live" && liveUpdateStatus != .hidden {
                     ToolbarItem(placement: .cancellationAction) {
-                        LivePushDot(diameter: 22)
+                        LiveUpdateStatusView(status: liveUpdateStatus)
                     }
                 }
                 // #9185 — a word, not a grey `xmark` in a glass circle: Alex
@@ -1586,6 +1592,18 @@ struct OddsChartView: View {
                         .background(.ultraThinMaterial)
                         .clipShape(RoundedRectangle(cornerRadius: 4))
                         .position(x: plotFrame.minX + placement.centerX, y: 10)
+                }
+                if let latest = Self.latestPrimaryPoint(in: dataPoints),
+                   let x = proxy.position(forX: latest.date),
+                   let y = proxy.position(forY: latest.probability),
+                   x >= 0, x <= plotFrame.width, y >= 0, y <= plotFrame.height {
+                    LiveChartEndpointFeedback(selection: selection, activity: priceActivity,
+                                              probability: latest.probability,
+                                              isLive: status == "live" && liveUpdateStatus != .interrupted,
+                                              color: teamColors?.home ?? .accentColor)
+                        .position(x: plotFrame.minX + x, y: plotFrame.minY + y)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
                 }
                 OddsChartSelectionOverlay(selection: selection, proxy: proxy, plotFrame: plotFrame,
                                           dataPoints: dataPoints, homeShort: homeShort,

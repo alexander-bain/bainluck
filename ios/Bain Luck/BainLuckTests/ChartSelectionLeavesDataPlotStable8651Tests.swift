@@ -11,6 +11,7 @@ final class ChartSelectionLeavesDataPlotStable8651Tests: XCTestCase {
 
     private final class LiveInput: ObservableObject {
         @Published var frames: [LiveBlendPoint] = []
+        @Published var activity: LivePriceActivity?
     }
 
     private struct LiveFixture: View {
@@ -20,9 +21,11 @@ final class ChartSelectionLeavesDataPlotStable8651Tests: XCTestCase {
         let selection: OddsChartSelection
         var body: some View {
             OddsChartView(eventId: 1, status: "live", homeTeamName: "Home", awayTeamName: "Away",
+                          priceActivity: input.activity,
                           preloadedHistory: payload, liveFrames: input.frames,
                           readout: GamePlayCardView(homeTeam: "Home", awayTeam: "Away", lastPoint: nil),
                           model: model, selection: selection)
+                .environment(\.scenePhase, .active)
         }
     }
 
@@ -109,6 +112,15 @@ final class ChartSelectionLeavesDataPlotStable8651Tests: XCTestCase {
         XCTAssertTrue(model.enrichedChartPoints(liveFrames: input.frames).contains {
             $0.date == start.addingTimeInterval(1_201) && $0.probability == 0.73
         })
+        input.activity = LivePriceActivity(sequence: 1, receivedAt: Date(), homeProbability: 0.73,
+            previousHomePercent: 77, previousAwayPercent: 23, homePercent: 73, awayPercent: 27,
+            previousHomeLabel: "77%", previousAwayLabel: "23%", homeLabel: "73%", awayLabel: "27%")
+        pump(host, times: 3)
+        let afterActivity = plotBuilds
+        pump(host, times: 40)
+        XCTAssertEqual(plotBuilds, afterActivity, "endpoint animation rebuilt expensive chart marks")
+        XCTAssertEqual(model.enrichmentBuildCount, enrichments + 2,
+                       "receipt-only feedback must not enrich the history again")
         print("#8651 render counts: selection=0, release=0, initial=\(before), after-history=\(afterHistory), after-push=\(plotBuilds); enrichment \(enrichments)->\(model.enrichmentBuildCount)")
     }
 
