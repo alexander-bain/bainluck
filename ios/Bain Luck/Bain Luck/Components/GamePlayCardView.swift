@@ -111,15 +111,9 @@ struct GamePlayCardView: View {
                 }
             }
         } else {
-            let homeProb = Int((point.homeProb * 100).rounded())
-            // #5271 — the away half is drawn only where an away price exists.
-            // `awayProb` was `1 - home` at both of this point's construction
-            // sites, and on a draw-priced sport that is the away side's chances
-            // with the draw folded in.
-            let awayProb: Int? = {
-                if let away = point.awayProb { return Int((away * 100).rounded()) }
-                return nil
-            }()
+            let printed = Self.printedPercents(home: point.homeProb, away: point.awayProb)
+            let homeProb = printed.home
+            let awayProb = printed.away
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 0) {
                     probRun(homeShort, homeProb, homeTeamColor)
@@ -245,6 +239,25 @@ struct GamePlayCardView: View {
             .lineLimit(1)
             .minimumScaleFactor(shrinks ? 0.5 : 1)
             .fixedSize(horizontal: !shrinks, vertical: false)
+    }
+
+    /// #9015 — the two whole percents this card prints for one chart moment.
+    ///
+    /// Each side used to be rounded on its own, so a half-cent moment printed
+    /// both halves up: Oregon at USC's 02:10Z point (home 0.255) read
+    /// "Trojans 26% — Ducks 75%" under a hero that said 25%. The pair goes
+    /// through the same duel rule as the hero and every game card — the
+    /// favourite rounded once, the other side `100 −` it. No served values:
+    /// a chart point is not `current_odds` (see `duelPercents`).
+    ///
+    /// #5271 — the away half exists only where an away price does. On a
+    /// draw-priced sport `away` is nil and the home side prints alone.
+    static func printedPercents(home: Double, away: Double?) -> (home: Int, away: Int?) {
+        guard let away else {
+            return (renderedPercent(home) ?? 0, nil)
+        }
+        let pair = renderedDuelPercents(away: away, home: home)
+        return (pair[1] ?? 0, pair[0])
     }
 
     /// #3430 — both competitors of one matchup, so the pair rule decides.
