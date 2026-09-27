@@ -16828,6 +16828,11 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
         response["hero_probability_source"] = _hero.source
         if _hero.settled_result is not None:
             response["hero_settled_result"] = _hero.settled_result
+        if _hero.source == "blend":
+            # #9081: the caption counts the books behind THIS number.
+            from app.utils.hero_probability import hero_sportsbook_count
+
+            response["hero_sportsbook_count"] = hero_sportsbook_count(blend_view)
 
     # #5077: this page says LIVE, ticks a 20s refresh, shows no score, and its
     # number has not moved in hours — while the venue settled every market on the
@@ -26693,6 +26698,75 @@ def _blend_outlives_edge(event, last_ts: datetime, *, event_status=None) -> bool
     return blend_ts >= last_ts
 
 
+def _sportsbook_withdrawal(
+    snapshots: list,
+    history: list,
+    *,
+    hero_sources: list[str] | None,
+    is_finished: bool,
+    status: str | None,
+) -> datetime | None:
+    """When the chart's sportsbook series must stop speaking, or ``None`` (#9081).
+
+    Ruling 051 drops ``betting`` from ``win_probability_sources`` when fewer
+    than ``BETTING_BOOK_FLOOR`` books quote the game, and #7523 drops it for a
+    split market. The hero obeys both. This series did not: it averages the
+    books in each odds snapshot minute, whatever their number, and before
+    kickoff nothing decays (#4976), so the refused consensus kept deciding the
+    line's right edge. Specimen /events/14870012 (Clemson v Miami, 06:50Z
+    2026-09-27): hero 13% from Kalshi alone, ``betting_book_count`` 2, over a
+    Bain Luck line ending at 0.1045 — the mean of the two books the ruling
+    refused.
+
+    The question "does the hero count the sportsbooks" is asked of the hero's
+    own function (``hero_sources`` is ``effective_source_weights``'s keys, the
+    #6863 pattern), not re-derived here. ``None`` means the caller could not
+    ask it — a folded event, whose hero can rest on a sibling row — and fails
+    open: the line is unchanged.
+
+    WHY THE EDGE AND NOT EVERY BUCKET. The per-minute book count cannot be
+    rebuilt from ``odds_snapshots``: when a book reprices, its previous row's
+    ``valid_until`` is overwritten with the reprice instant, erasing when that
+    book was last actually seen. On the specimen fanduel's row reads as standing
+    from 15:41Z to 07:35Z, straddling the 06:40Z poll that counted two books. So
+    the withdrawal lands at the latest measurement — the newest instant any book
+    was read — which is the poll whose count the hero is standing on. Earlier
+    buckets keep the history they had.
+
+    Settled, suspended and finished rows are left alone: their right edge
+    belongs to the terminal-point injection and the settled hero, not to
+    today's bag. A ``suspended`` row is where #8951's venue-graded result point
+    lands; ungraded, it keeps the line it had.
+    """
+    if hero_sources is None or "betting" in hero_sources:
+        return None
+    if is_finished or status in SETTLED_STATUSES or status == EVENT_SUSPENDED:
+        return None
+    if not history:
+        return None
+    latest: datetime | None = None
+    for snap in snapshots:
+        for stamp in (snap.captured_at, snap.valid_until):
+            if stamp is None:
+                continue
+            if stamp.tzinfo is None:
+                stamp = stamp.replace(tzinfo=timezone.utc)
+            if latest is None or stamp > latest:
+                latest = stamp
+    try:
+        last_point = datetime.fromisoformat(history[-1]["timestamp"])
+    except (TypeError, ValueError, KeyError):
+        return latest
+    if last_point.tzinfo is None:
+        last_point = last_point.replace(tzinfo=timezone.utc)
+    # A history point can sit later than every stamp (the cutoff arm writes a
+    # synthetic one at `now`); the withdrawal must not land before it, or the
+    # refused value speaks again after it.
+    if latest is None or last_point > latest:
+        return last_point
+    return latest
+
+
 def _pin_blend_edge(
     aggregate_line: list,
     event,
@@ -28273,6 +28347,19 @@ async def get_event_odds_history(
                 for h in history
                 if h.get("home_probability") is not None
             ]
+            # #9081: the Bain Luck line stops hearing the sportsbooks when the
+            # hero has stopped counting them. See `_sportsbook_withdrawal`.
+            _withdrawal = _sportsbook_withdrawal(
+                snapshots,
+                history,
+                hero_sources=_hero_sources,
+                is_finished=is_finished,
+                status=getattr(event, "status", None),
+            )
+            if _withdrawal is not None and agg_sources["betting"]:
+                agg_sources["betting"].append(
+                    TimestampedProb(timestamp=_withdrawal, home_probability=None)
+                )
 
         # Add each win_prob source
         for source_key, points in win_prob_history.items():

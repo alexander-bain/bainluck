@@ -225,3 +225,32 @@ def blend_provenance(event: Any) -> tuple[int, Optional[datetime]]:
             freshest = stamp
 
     return len(keys), freshest
+
+
+def hero_sportsbook_count(event: Any) -> Optional[int]:
+    """How many sportsbooks stand behind the blend hero — ``0`` when none do (#9081).
+
+    The page captioned a Kalshi-only 13% "4 sportsbooks" because the caption
+    counted the served ``bookmaker_odds`` rows — including a quote 53 days old —
+    while ruling 051 had dropped the sportsbook consensus from the number
+    (``betting_book_count`` 2, under ``BETTING_BOOK_FLOOR``). The count belongs
+    to the number it sits beside, so it is read from the same
+    ``effective_source_weights`` the blend is computed from: no ``betting`` among
+    the hero's inputs means no sportsbook is behind it, whatever the snapshot
+    table holds.
+
+    When ``betting`` does feed the hero, the count is the one its writer stored
+    beside it — the books that poll actually read. ``None`` when that count is
+    missing or unreadable (a folded bag can carry a sibling's reading without
+    it), so a caller keeps whatever it did before rather than printing a guess.
+    """
+    keys, _values, _weights = effective_source_weights(event)
+    if "betting" not in keys:
+        return 0
+    sources = getattr(event, "win_probability_sources", None)
+    if not isinstance(sources, dict):
+        return None
+    count = sources.get("betting_book_count")
+    if isinstance(count, bool) or not isinstance(count, int) or count <= 0:
+        return None
+    return count
