@@ -299,6 +299,17 @@ _TAG_TO_CATEGORY: dict[str, str] = {
     # `championship` + 401 `game_prop` rows), and it has no key in
     # `LLM_CATEGORY_TO_SPORT_PREFIX`, so it labels the card and opens no rail.
     "chess": "chess",
+    # #8636 follow-up 2: the venue tags every volleyball event `Volleyball`
+    # (Gamma 2026-09-27: `vbeuro-ita2-slo4-2026-09-17` tags [Sports, Games,
+    # Volleyball, Volleyball European Championship]) and this key was absent,
+    # so the parent fell through to the `sports` catch-all and its children
+    # were guessed from the country names. 55 volleyball fixtures since July
+    # became events of OURS on `soccer_other`, `baseball_other`,
+    # `americanfootball_other` and `basketball_other` — five of them in the
+    # UEFA Nations League, where `/search?q=italy` printed Italy v Slovenia as a
+    # soccer game. Like `chess`, `volleyball` has no key in
+    # `LLM_CATEGORY_TO_SPORT_PREFIX`, so it labels the card and mints nothing.
+    "volleyball": "volleyball",
     "cycling": "other",
     "swimming": "olympics",
     "track and field": "olympics",
@@ -444,6 +455,9 @@ _SPORT_CATEGORIES = {
     # #8507, for the same reason as the two above: a `Chess` tag must yield
     # ("championship", "chess"), which is what the resolved chess rows carry.
     "chess",
+    # #8636, the same reason again: a `Volleyball` tag yields
+    # ("championship", "volleyball"), never a sport name in `category`.
+    "volleyball",
 }
 
 
