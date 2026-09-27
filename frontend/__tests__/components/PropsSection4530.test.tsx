@@ -90,8 +90,9 @@ describe("#4530 THE SCRIPT folds the rows it has no opening price for", () => {
     const html = script(MIXED);
     // The marked rows and their numbers render before the disclosure opens.
     expect(html.indexOf("A: 20+")).toBeLessThan(html.indexOf("<details"));
-    expect(html).toContain("73%");
-    expect(html).toContain("31%");
+    // #9131: a marked row prints its live price (0.75 / 0.33), not its opening.
+    expect(html).toContain("75%");
+    expect(html).toContain("33%");
   });
 
   test("a folded row shows the file's absent-data mark, not a second explanation", () => {

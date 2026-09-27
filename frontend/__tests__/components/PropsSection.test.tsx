@@ -31,11 +31,14 @@ describe("deriveState (settled-means-settled)", () => {
 });
 
 describe("PropsSection rendering", () => {
-  test("THE SCRIPT shows pregame marks when present", () => {
+  // #9131: before kickoff the live price IS the market's pregame expectation; the
+  // pregame mark there is the opening price, which can be days old.
+  test("THE SCRIPT prints the live price for a marked row", () => {
     const html = renderToStaticMarkup(<PropsSection items={ITEMS} state="script" />);
     expect(html).toContain("The script");
     expect(html).toContain("LeBron 25+ points");
-    expect(html).toContain("60%"); // pregame_mark
+    expect(html).toContain("72%"); // current
+    expect(html).not.toContain("60%"); // the opening price it used to print
   });
 
   test("THE DIVERGENCE shows pregame → current with a signed delta", () => {

@@ -259,15 +259,49 @@ function familyLabelOverrides(
   return byKey;
 }
 
+/**
+ * #9131 — the number THE SCRIPT prints: the live price when there is one, the
+ * pregame mark only when there is not.
+ *
+ * THE SCRIPT is reachable only for an event that has not started (`deriveState`),
+ * so `current` there IS a pregame price — it is what the market expects before
+ * the event, now. `pregame_mark` before kickoff is not the commence-time pin
+ * (the poller writes that inside 15 minutes of the start); it is
+ * `_resolve_pregame_mark`'s fallback, each outcome's OPENING price, which can be
+ * days old and, per #4534, of a different vintage from its own ladder's rungs.
+ *
+ * MEASURED on `/events/14781701` (Chiefs @ Dolphins, scheduled, 5h out, 390px,
+ * 2026-09-27): THE SCRIPT printed `Miami: 4+ 26%` under a rail on the same page
+ * reading "opened at 26% — it's 6% now", and `Patrick Mahomes: 300+ 16%` a few
+ * rows above `Passing Yards O/U 299.5 · Over 10%` — one question, two numbers,
+ * while Kalshi and Polymarket both priced it 9.5% at that moment. 28 of the 210
+ * marked rows sat 5+ points off their current price.
+ *
+ * This REVERSES the reasoning #4530 recorded below ("WHY NOT FALL BACK TO
+ * `current`"). That argument's own evidence — the two fields differing by up to
+ * 22.5 points on an unstarted event — is the stale opening price, not a reason
+ * to print it. THE DIVERGENCE and WHAT HIT still measure from `pregame_mark`;
+ * only THE SCRIPT's printed number moves.
+ *
+ * SCOPED to rows that carry a mark. A row with no mark keeps the em dash and the
+ * fold (D102 / D111, and the #5240 / #5408 controls that pin it): whether a
+ * folded row should print its live price is a separate question from this one,
+ * and this change does not move a single row into or out of the fold.
+ */
+function scriptNumber(item: PropMark): number | null {
+  if (item.pregame_mark == null) return null;
+  return item.current ?? item.pregame_mark;
+}
+
 function scriptPairPercents(
   groups: ReadonlyArray<{ name: string | null; items: PropMark[] }>,
 ): Map<PropMark["key"], number> {
   const byKey = new Map<PropMark["key"], number>();
   for (const group of groups) {
     if (group.name == null) continue;
-    const marked = group.items.filter((i) => i.pregame_mark != null);
+    const marked = group.items.filter((i) => scriptNumber(i) != null);
     if (marked.length !== 2) continue;
-    const [a, b] = renderedOutcomeRowPercents(marked.map((i) => i.pregame_mark));
+    const [a, b] = renderedOutcomeRowPercents(marked.map(scriptNumber));
     if (a == null || b == null) continue;
     byKey.set(marked[0].key, a);
     byKey.set(marked[1].key, b);
@@ -600,6 +634,10 @@ function printedMovePoints(
  * rows carried a live price) and what made "No opening price" accurate but
  * diagnostic. A reader is told there are more props and how many; the reason
  * they are folded is not their problem. The `current` fallback stays forbidden.
+ *
+ * #9131 (2026-09-27): a row that HAS a mark now prints its live price before
+ * kickoff (`scriptNumber`, which answers the argument above). A row without one
+ * still folds and still prints the em dash; this block's rule for it is untouched.
  */
 const MORE_PROPS_LABEL = "More props";
 
@@ -627,13 +665,14 @@ const WHAT_HIT_FAMILIES = 6;
 const WHAT_HIT_FAMILY_ROWS = 3;
 
 /**
- * A row THE SCRIPT holds no number for, and can therefore say nothing about.
+ * A row with no pregame mark — THE SCRIPT's fold (D102 / D111). THE SCRIPT holds
+ * no number for it (`scriptNumber` returns null), so it can say nothing about it.
  *
  * A `pending_label` row is NOT this: it carries a deliberate, plain-English,
  * family-level sentence ("Opens after Round 1" — L2-123 / #199) that is an
  * answer rather than a hole, and it stays in plain sight in every state.
  */
-function hasNoScriptNumber(item: PropMark): boolean {
+function hasNoPregameMark(item: PropMark): boolean {
   if (item.pending_label?.trim()) return false;
   return item.pregame_mark == null;
 }
@@ -653,8 +692,8 @@ function partitionScript(
 ): { listed: PropMark[]; folded: PropMark[] } {
   if (state !== "script") return { listed: items, folded: [] };
   return {
-    listed: items.filter((i) => !hasNoScriptNumber(i)),
-    folded: items.filter(hasNoScriptNumber),
+    listed: items.filter((i) => !hasNoPregameMark(i)),
+    folded: items.filter(hasNoPregameMark),
   };
 }
 
@@ -1107,8 +1146,10 @@ function ScriptValue({
   item: PropMark;
   pairedPercent?: number;
 }) {
-  if (item.pregame_mark == null) {
-    // #195 seam: neither a pinned commence-time mark nor an opening price.
+  const value = scriptNumber(item);
+  if (value == null) {
+    // #195 seam: no live price, and neither a pinned commence-time mark nor an
+    // opening price (#9131: the live price is printed first — see `scriptNumber`).
     //
     // D102 / #4530: this used to print the chip `pregame mark pending` — grey
     // monospace on 89 of 298 rows of one NFL event page. "Pregame mark" is our
@@ -1124,7 +1165,7 @@ function ScriptValue({
     <span className="font-mono text-sm font-semibold text-text-primary tabular-nums shrink-0">
       {/* #5240: the family's decision when this row is half of a pair, this
           row's own rounding when it is not. */}
-      {pairedPercent != null ? `${pairedPercent}%` : pct(item.pregame_mark)}
+      {pairedPercent != null ? `${pairedPercent}%` : pct(value)}
     </span>
   );
 }

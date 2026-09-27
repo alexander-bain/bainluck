@@ -41,9 +41,16 @@ const ALBIES: PropMark[] = [
   { key: "Ozzie Albies: Total Bases O/U 3.5|Over", label: "Over", pregame_mark: 0.085, current: 0.08 },
 ];
 
+/**
+ * #9131: THE SCRIPT prints `current` for a marked row, and ALBIES' currents
+ * (0.92 / 0.08) already sum to 100 — on them the pair rule below would pass with
+ * the rule deleted. The script tests read the same complement from `current`.
+ */
+const ALBIES_SCRIPT: PropMark[] = ALBIES.map((i) => ({ ...i, current: i.pregame_mark }));
+
 describe("#5240 THE SCRIPT's two legs stop summing to 101%", () => {
   test("THE SHIP: the pair prints 92% / 8%, not 92% / 9%", () => {
-    const html = script(ALBIES);
+    const html = script(ALBIES_SCRIPT);
     expect(html).toContain("92%");
     expect(html).toContain("8%");
   });
@@ -51,19 +58,21 @@ describe("#5240 THE SCRIPT's two legs stop summing to 101%", () => {
   test("THE SHIP: the leg that used to round up on its own no longer does", () => {
     // `pct(0.085)` is `Math.round(8.5)` = 9. Derived from its sibling it is 8.
     // "9%" cannot appear from "92%" — that string ends `2%`.
-    expect(script(ALBIES)).not.toContain("9%");
+    expect(script(ALBIES_SCRIPT)).not.toContain("9%");
   });
 
   test("CONTROL: the headline leg is untouched — this corrects the pair, not the number", () => {
     // 0.915 rounds to 92 both before and after. A fix that moved the FAVOURITE
     // would be changing the answer rather than making the pair coherent.
-    expect(script(ALBIES)).toContain("92%");
+    expect(script(ALBIES_SCRIPT)).toContain("92%");
   });
 
   test("CONTROL: a family of three is not a pair and rounds exactly as before", () => {
     const three: PropMark[] = [
-      { key: "Total Runs|Over", label: "Over", pregame_mark: 0.915, current: 0.9 },
-      { key: "Total Runs|Under", label: "Under", pregame_mark: 0.085, current: 0.1 },
+      // #9131: THE SCRIPT prints `current` for a marked row, so the rounding
+      // this control pins has to live in `current` too.
+      { key: "Total Runs|Over", label: "Over", pregame_mark: 0.915, current: 0.915 },
+      { key: "Total Runs|Under", label: "Under", pregame_mark: 0.085, current: 0.085 },
       { key: "Total Runs|Exactly", label: "Exactly", pregame_mark: 0.5, current: 0.5 },
     ];
     // Arity ≠ 2 means "no override": every leg keeps its own rounding, so the
@@ -88,8 +97,9 @@ describe("#5240 THE SCRIPT's two legs stop summing to 101%", () => {
     // `propFamilyName` returns null and the two rows are unrelated questions.
     // Pairing them would invent a complement out of two separate markets.
     const unnamed: PropMark[] = [
-      { key: "884411", label: "Rory McIlroy", pregame_mark: 0.915, current: 0.9 },
-      { key: "884412", label: "Scottie Scheffler", pregame_mark: 0.085, current: 0.1 },
+      // #9131: `current` carries the rounding this control pins (see above).
+      { key: "884411", label: "Rory McIlroy", pregame_mark: 0.915, current: 0.915 },
+      { key: "884412", label: "Scottie Scheffler", pregame_mark: 0.085, current: 0.085 },
     ];
     expect(script(unnamed)).toContain("9%");
   });

@@ -124,7 +124,8 @@ describe("#5241 a fully folded prop family costs one line, not two", () => {
     expect(html).toContain("More props (1)");
     // Its header still precedes its own listed row.
     expect(html.indexOf("Total Bases")).toBeLessThan(html.indexOf("Albies: 2+"));
-    expect(html).toContain("61%");
+    // #9131: a marked row prints its live price (0.63), not its opening (0.61).
+    expect(html).toContain("63%");
   });
 
   test("CONTROL: the folded rows are still present and reachable, not deleted", () => {
