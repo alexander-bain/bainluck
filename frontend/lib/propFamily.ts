@@ -351,7 +351,17 @@ export function stripEventMatchupPrefix(
     const remainder = name.slice(i + 2).trim();
     // Never strip a name down to nothing (same guard as sharedFamilyPrefix).
     if (!remainder) return name;
-    return headNamesMatchup(name.slice(0, i), home, away) ? remainder : name;
+    const head = name.slice(0, i);
+    if (headNamesMatchup(head, home, away)) return remainder;
+    // #9001: the other venue puts the matchup at the TAIL, after a question —
+    // "Will the game go to extra innings?: Los Angeles Angels vs. Seattle
+    // Mariners". THE SCRIPT printed that whole, "?:" and all, on every MLB page.
+    // The question is the header; the tail goes only when it names THIS event's
+    // two teams, the same fail-safe as the head.
+    if (head.trim().endsWith("?") && headNamesMatchup(remainder, home, away)) {
+      return head.trim();
+    }
+    return name;
   });
 }
 
