@@ -23947,6 +23947,40 @@ def _is_mens_fixture_by_event(
     return True
 
 
+def _settled_before_the_game(market, commence_time) -> bool:
+    """True when a resolved/closed market's resolution date is before this game's start (#9042).
+
+    WHAT A READER SAW, 2026-09-27 03:57Z. `/events/15315689` (Lightning–Panthers,
+    Sep 26) printed "Andrei Vasilevskiy · Hart Trophy 1%". That 1% was market 344,
+    the 2025-26 Hart, `resolved` on Jun 30, which he did not win. The same payload
+    carried last season's Vezina (113167), Rocket Richard (113166) and "Which
+    teams will play in the 2026 Stanley Cup?" (386) as current odds.
+
+    `rf_status_filter` admits `resolved`/`closed` markets for a finished game so
+    that a market this game settled (a Cup-clinching Game 7) still shows. It has
+    no date bound, so it also admits every market settled BEFORE the game
+    started, and none of those were ever season context for it. The bound is
+    applied here, per event, and not in that filter, because season discovery
+    is cached per sport and shared by every finished game in it
+    (`test_season_market_discovery_lat_p144`).
+
+    Keeps the row whenever the question can't be answered: an open or
+    NULL-status market, a NULL resolution date, or a NULL start time. Kalshi
+    stores a far-future scheduled end in `resolution_date`, which errs toward
+    keeping.
+    """
+    if (getattr(market, "status", None) or "") not in ("resolved", "closed"):
+        return False
+    resolved_at = getattr(market, "resolution_date", None)
+    if resolved_at is None or commence_time is None:
+        return False
+    if resolved_at.tzinfo is None:
+        resolved_at = resolved_at.replace(tzinfo=timezone.utc)
+    if commence_time.tzinfo is None:
+        commence_time = commence_time.replace(tzinfo=timezone.utc)
+    return resolved_at < commence_time
+
+
 async def _related_futures_withheld_ids(db: AsyncSession, market_ids) -> set[int]:
     """The outcome ids each market's OWN page refuses to price (#9008).
 
@@ -24884,6 +24918,10 @@ async def _build_related_futures(
 
         market = outcome.market
 
+        # #9042 — last season's settled market is not this game's season context.
+        if _settled_before_the_game(market, event.commence_time):
+            continue
+
         # ── Ticker-based sport validation ──
         # Reject markets whose Kalshi game ticker indicates a different sport
         # family than the event. Catches LLM miscategorization (e.g., NHL game
@@ -25396,8 +25434,8 @@ async def _build_related_futures(
             if not outcomes_list:
                 continue
             mkt = outcomes_list[0].market
-            if not mkt:
-                continue
+            if not mkt or _settled_before_the_game(mkt, event.commence_time):
+                continue  # #9042 — a series settled before this game started
             top_outcomes = []
             for so in outcomes_list[:10]:  # cap outcomes per market
                 refused = so.id in series_withheld
