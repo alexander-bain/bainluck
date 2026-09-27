@@ -409,7 +409,10 @@ describe("the two surfaces publish the same protocol", () => {
       "outcomesHook",
       "eceHook",
       "brierHook",
-      "marketsHook",
+      // #8985: was "marketsHook", on a tile printing `total_markets` (every
+      // resolved market in the table, 1,183,348 beside a 505,595-outcome curve).
+      // The tile is web's Sources card now, so its hook must match web's id.
+      "sourcesHook",
     ];
     for (const name of required) {
       assert.ok(
@@ -420,7 +423,7 @@ describe("the two surfaces publish the same protocol", () => {
       );
     }
 
-    for (const name of ["generatedAtHook", "outcomesHook", "eceHook", "brierHook"]) {
+    for (const name of ["generatedAtHook", "outcomesHook", "eceHook", "brierHook", "sourcesHook"]) {
       assert.ok(
         ids.has(hooks[name]),
         `native hook ${name}="${hooks[name]}" has no matching data-testid/testId on ` +

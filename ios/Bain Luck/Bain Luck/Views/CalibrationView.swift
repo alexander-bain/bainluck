@@ -166,7 +166,11 @@ struct CalibrationSurfaceView: View {
     static let outcomesHook = "calibration-stat-outcomes"
     static let eceHook = "calibration-stat-ece"
     static let brierHook = "calibration-stat-brier"
-    static let marketsHook = "calibration-stat-markets"
+    /// #8985: this was `marketsHook`, on a tile printing `total_markets` — every
+    /// resolved market in the database (1,183,348) beside a 505,595-outcome curve,
+    /// more markets than outcomes. Web dropped that figure in July (#887); the
+    /// tile is now web's Sources card and carries web's own testid.
+    static let sourcesHook = "calibration-stat-sources"
     /// #8476: web's `data-testid="calibration-quarantine"`, carrying the same
     /// total web publishes as `data-quarantine-total`.
     static let quarantineHook = "calibration-quarantine"
@@ -307,9 +311,9 @@ struct CalibrationSurfaceView: View {
                 miniStatCard("OUTCOMES", viewModel.formattedCohortOutcomes, "checkmark.circle.fill", .blue)
                     .accessibilityIdentifier(Self.outcomesHook)
                     .accessibilityValue(String(viewModel.parity.cohortN))
-                miniStatCard("MARKETS", viewModel.formattedMarkets, "chart.bar.fill", .purple)
-                    .accessibilityIdentifier(Self.marketsHook)
-                    .accessibilityValue(String(viewModel.parity.markets))
+                miniStatCard("SOURCES", viewModel.formattedCohortSources, "chart.bar.fill", .purple)
+                    .accessibilityIdentifier(Self.sourcesHook)
+                    .accessibilityValue(String(viewModel.cohortSourceCount))
                 miniStatCard("BRIER", String(format: "%.3f", viewModel.cohortBrier), "target", .orange)
                     .accessibilityIdentifier(Self.brierHook)
                     .accessibilityValue(String(format: "%.4f", viewModel.parity.brier))

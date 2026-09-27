@@ -600,7 +600,6 @@ final class CalibrationAvailabilityTests: XCTestCase {
         XCTAssertNil(vm.data?.totalOutcomes)
         XCTAssertNil(vm.data?.totalMarkets)
         XCTAssertEqual(vm.formattedTotalOutcomes, "\u{2014}")
-        XCTAssertEqual(vm.formattedMarkets, "\u{2014}")
         XCTAssertNotEqual(vm.formattedTotalOutcomes, "0")
         // The buckets are fine, so the curve renders.
         XCTAssertTrue(vm.hasRenderableCurve)
