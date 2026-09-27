@@ -848,7 +848,21 @@ export function travelAtOrAbove(travel: number, threshold: number): boolean {
  * own words.
  */
 function thresholdPhrase(threshold: number): string {
-  return `${Math.ceil(threshold)}+`;
+  return `${inclusiveRung(threshold)}+`;
+}
+
+/**
+ * The inclusive rung a line asks about — the `N` of the printed `N+`.
+ *
+ * #9178: this is also the threshold half of the dedupe key, so two venues'
+ * lines for one question share a row. Polymarket "O/U 0.5" and Kalshi `1.0`
+ * ("Manny Machado: 1+") both print "1+ home runs"; keyed on the raw threshold
+ * they were two rows, and a settled Padres page read "Machado's 1+ home runs
+ * was marked 10%" and then "... 17%". The key and the label read one function,
+ * so they cannot disagree about which question a line is.
+ */
+function inclusiveRung(threshold: number): number {
+  return Math.ceil(threshold);
 }
 
 /**
@@ -1357,11 +1371,19 @@ function buildCandidates(input: DivergenceInput): BuiltCandidates {
   // ingest order — so every leg's verdict is collected here and reconciled by
   // `readOverSideResolution`, which maps them all onto the over axis and
   // withholds if they then disagree.
+  //
+  // #9178 WIDENS THE THRESHOLD HALF TO THE INCLUSIVE RUNG. Polymarket's
+  // "O/U 0.5" Over and Kalshi's `1.0` "1+" are the same question from two
+  // venues, and the label already printed both as "1+"; the raw threshold kept
+  // them apart, so a settled page asked it twice at two marks. Both venues'
+  // legs now share one bucket — their verdicts reconcile in
+  // `readOverSideResolution` and their marks meet #8313's disagreement check,
+  // exactly as an Over/Under pair's do.
   const candidates: DivergenceRow[] = [];
   /** Where each question's row sits in `candidates`, by parsed identity. */
   const candidateAt = new Map<string, number>();
-  /** Questions whose row was built from a non-inverted (direct-price) leg. */
-  const builtFromDirectLeg = new Set<string>();
+  /** `legRank` of the leg each question's row was built from. */
+  const builtRank = new Map<string, number>();
   /** Every leg of a question, in payload order, keyed by parsed identity. */
   const legs = new Map<string, PlayerPropRow[]>();
 
@@ -1427,7 +1449,7 @@ function buildCandidates(input: DivergenceInput): BuiltCandidates {
       continue;
     }
 
-    const key = `${parsed.player}|${parsed.stat}|${threshold}`;
+    const key = `${parsed.player}|${parsed.stat}|${inclusiveRung(threshold)}`;
     // The sibling Over/Under leg of the SAME question: it contributes no second
     // row, but it DOES contribute its verdict.
     const bucket = legs.get(key);
@@ -1448,18 +1470,36 @@ function buildCandidates(input: DivergenceInput): BuiltCandidates {
     // number the question's own price — the one THE DIVERGENCE prints — and
     // ends the payload-order coin flip. A lone Under leg keeps its inverted
     // read: that is still the best number the page has.
-    const directLeg = !(row as PlayerPropRow & { _inverted?: boolean })._inverted;
+    //
+    // #9178 — WHEN TWO VENUES ASK IT, THE LEG WHOSE OWN LINE IS THE PRINTED
+    // QUESTION WINS. The row says "1+ home runs"; Kalshi's `1.0` rung IS that
+    // question, Polymarket's "O/U 0.5" Over is its half-point restatement. Same
+    // reason as #8991 — the row quotes the price of the question it prints —
+    // and, like it, independent of which venue the payload listed first. On
+    // the specimen the half-point books were also the thin ones (0.095 against
+    // Kalshi's 0.17 on Machado, roughly half on all four).
+    const rank = legRank(row, threshold);
     const builtAt = candidateAt.get(key);
     if (builtAt !== undefined) {
-      if (directLeg && !builtFromDirectLeg.has(key)) {
-        builtFromDirectLeg.add(key);
+      if (rank > (builtRank.get(key) as number)) {
+        builtRank.set(key, rank);
         candidates[builtAt] = toCandidate(key, parsed, threshold, current, pregameMark);
       }
       continue;
     }
     candidateAt.set(key, candidates.length);
-    if (directLeg) builtFromDirectLeg.add(key);
+    builtRank.set(key, rank);
     candidates.push(toCandidate(key, parsed, threshold, current, pregameMark));
+  }
+
+  /**
+   * Which leg of a question the row is built from, highest first: a direct
+   * price (#8991) outranks an inverted one, and within that a line equal to
+   * its printed rung (#9178) outranks a half-point restatement of it.
+   */
+  function legRank(row: PlayerPropRow, threshold: number): number {
+    const direct = !(row as PlayerPropRow & { _inverted?: boolean })._inverted;
+    return (direct ? 2 : 0) + (threshold === inclusiveRung(threshold) ? 1 : 0);
   }
 
   function toCandidate(
@@ -1528,8 +1568,17 @@ function buildCandidates(input: DivergenceInput): BuiltCandidates {
   // first, so it is withheld — the same answer `readOverSideResolution` gives
   // when the legs' verdicts disagree. Runs before the structural pass so a
   // withheld row cannot anchor a sibling rung.
+  //
+  // #9178: the check reads the row's OWN line — the legs of one market, which
+  // is what #8313 measured (Over/Under pairs, ≤0.12 apart but for the defect).
+  // A second venue's mark on the same question is not a mis-stored leg: the
+  // row is built from one venue by `legRank`, not by payload order, so there
+  // is no coin flip to withhold. Two venues apart is a separate question
+  // (#9178 names it, unmeasured) and never erases the question here.
   for (let i = candidates.length - 1; i >= 0; i--) {
-    const questionLegs = legs.get(candidates[i].key) ?? [];
+    const questionLegs = (legs.get(candidates[i].key) ?? []).filter(
+      (leg) => leg.threshold === candidates[i].threshold,
+    );
     const marks = questionLegs.map(
       (leg) => (leg as PlayerPropRow & { pregame_mark: number }).pregame_mark,
     );
@@ -1549,9 +1598,14 @@ function buildCandidates(input: DivergenceInput): BuiltCandidates {
   // printed "opened 9% · now 10%" on the rail, "Over 8% → 9%" below it. Same
   // gate, same helper, so the two cannot disagree; `direction` follows the
   // printed ends (#8754).
+  //
+  // #9178: only the row's OWN line's legs pair. A question's bucket can now
+  // hold two venues, and pairing Kalshi's rung with Polymarket's Under would
+  // print a pair no section of the page prints.
   for (const row of candidates) {
-    if (!builtFromDirectLeg.has(row.key)) continue;
-    const pair = legPairPoints(legs.get(row.key) ?? []);
+    if ((builtRank.get(row.key) as number) < 2) continue;
+    const ownLine = (legs.get(row.key) ?? []).filter((leg) => leg.threshold === row.threshold);
+    const pair = legPairPoints(ownLine);
     if (!pair) continue;
     row.printedMark = pair.mark;
     row.printedCurrent = pair.current;
