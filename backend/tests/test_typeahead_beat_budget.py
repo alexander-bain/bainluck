@@ -1167,6 +1167,12 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
     names `background` explicitly. The census below RUN over the assembled
     schedule printed `explicit 89 implicit 43 total 132`. Caught by the
     `grep -l beat_schedule tests/` band before push.
+
+    🔴 **RE-DERIVED at calibration (2026-09-27, #8905): 132 → 131, explicit
+    89 → 88, fall-through UNMOVED at 43.** `precompute-bookmaker-calibration`
+    moves from `background` to `heavy` (HEAVY_TASKS) — main-app releases were
+    killing every run. The census below RUN over the tree rebased onto
+    `d5749e5772` printed `explicit 88 implicit 43 total 131`.
     """
     from app.tasks import celery_app
     from app.utils.typeahead_beat_budget import BACKGROUND_BEAT_COUNT
@@ -1183,9 +1189,9 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
         elif named is None and conf.task_default_queue == "background":
             implicit += 1
 
-    assert explicit == 89, f"explicitly-routed background beats moved: {explicit}"
+    assert explicit == 88, f"explicitly-routed background beats moved: {explicit}"
     assert implicit == 43, f"default-queue fall-through moved: {implicit}"
-    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 132
+    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 131
 
     # ruling 110's two movers are OFF this queue and ON heavy — asserted here
     # too, so a silent revert cannot restore the count without being noticed.

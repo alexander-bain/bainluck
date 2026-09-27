@@ -52,13 +52,30 @@ def test_bookmaker_calibration_has_a_dedicated_beat():
     )
     entry = schedule["precompute-bookmaker-calibration"]
     assert entry["task"] == "app.tasks.precompute_bookmaker_calibration"
-    assert entry["options"]["queue"] == "background"
+    assert entry["options"]["queue"] == "heavy"
+
+
+def test_the_writer_runs_on_the_worker_main_app_releases_do_not_cycle():
+    """#8905: on `background` every main-app release SIGTERMed the ~332 s run.
+
+    All three fires after the durable survivor shipped (22:55Z, 00:55Z, 02:55Z)
+    died that way, so the survivor row was never written. Both the task route
+    (ad-hoc `.delay()`) and the beat dispatch must say `heavy`; the beat options
+    override the route, so either one alone would leave a path on `background`.
+    """
+    from app.tasks import HEAVY_TASKS, celery_app
+
+    task = "app.tasks.precompute_bookmaker_calibration"
+    assert task in HEAVY_TASKS
+    assert celery_app.conf.task_routes[task] == {"queue": "heavy"}
+    dispatch = celery_app.conf.beat_schedule["precompute-bookmaker-calibration"]
+    assert dispatch["options"]["queue"] == "heavy"
 
 
 def test_bookmaker_beat_does_not_collide_with_the_heavy_calibration_beats():
     """#183 Item 3's lesson: a long co-scheduled task starves a beat.
 
-    The background worker has two slots. This asserts the bookmaker beat never
+    The heavy worker (like background before #8905) has two slots. This asserts the bookmaker beat never
     shares a (minute, hour) with the other long calibration grinders — the exact
     contention that kept `compute_calibration_prices` from ever being dispatched.
     """
