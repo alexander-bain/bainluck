@@ -3159,6 +3159,7 @@ def _compose_futures_families(
     serialized_ids: "set[int]",
     *,
     stale_game_ids: "set[int] | frozenset[int]" = frozenset(),
+    team_sport_categories: frozenset | None = None,
 ) -> list[dict]:
     """#993 L2-41 search curation. Compose the reranked, deduped, stale-suppressed
     candidate markets into topical FAMILIES (docs/search-curation-spec.md).
@@ -3186,6 +3187,11 @@ def _compose_futures_families(
     `stale_game_ids` (#9030) are markets whose game is long `suspended`
     (`_search_stale_game_market_ids`); they sort last within their family. The
     route passes it; the default exists only for callers with no linked games.
+
+    `team_sport_categories` (#7355 r3) is `_team_evidence_sport_categories`'
+    answer for this query. A market from a sport none of the matched teams play
+    joins NO family: it stays in the flat list, where `_demote_teamless_sport`
+    already sank it. None (disarmed) changes nothing.
     """
     from collections import OrderedDict
 
@@ -3196,6 +3202,16 @@ def _compose_futures_families(
     entity_key = f"entity:{query_label.lower()}" if query_label else None
 
     def _family_key(m):
+        # #7355 r3: the demotion sank these rows in the flat list, and the card
+        # pulled them straight back. `?q=thunder` on production 2026-09-27: the
+        # Thunder card was two Oklahoma City rows then three esports rows
+        # (Thunder Talk Gaming, THUNDER dOWNUNDER), and a second "Other Sports"
+        # card held nothing but Counter-Strike maps. An ANSWERS card is the
+        # page's claim about what the reader meant; a nickname cousin from a
+        # sport with no club of that name is not it. So it forms no family —
+        # entity or story — and competes on its own, below the club's rows.
+        if _is_teamless_sport(m, team_sport_categories):
+            return None
         sk = _story_key(m.name or "", m.llm_sport_category or "")
         if sk:
             return sk
@@ -10278,6 +10294,7 @@ async def search_events(
         lambda m: _formatted_by_id[m.id],
         {m.id for m in futures_markets},
         stale_game_ids=_stale_game_ids,
+        team_sport_categories=_team_sport_categories,  # #7355 r3
     )
 
     # #8750: the typed text already answered, so the correction is withdrawn.
