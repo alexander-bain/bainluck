@@ -14,7 +14,11 @@ from app.utils.event_rails import (
 from app.utils.event_twin_fold import fold_twin_events, team_name_fold_key
 from app.utils.aggregation import compute_aggregate_probability
 from app.utils.lifecycle import served_event_status
-from app.utils.market_team_sport import link_crosses_sport, sport_key_llm_category
+from app.utils.market_team_sport import (
+    link_crosses_league,
+    link_crosses_sport,
+    sport_key_llm_category,
+)
 from app.utils.start_placeholder import start_is_tbd
 from app.utils.season_variant_team import (
     choose_parent_league_row,
@@ -937,6 +941,8 @@ _NOT_A_TITLE_QUESTION: tuple[str, ...] = (
     "playoff qualifier",  # qualifying for the playoffs is not winning a title
     "of the year",  # awards are tier 3's question, not a championship
     "halftime",  # entertainment markets carrying a football tier
+    "leave their conference",  # realignment, not winning the conference (#2593)
+    "will host",  # a host-city question ("Who will host the 2031 Pro Football Championship?")
 )
 
 
@@ -1031,6 +1037,12 @@ async def _get_championship_path(
          PGA Championship price. Refused only when the market claims a sport
          and ``team_sport_key`` names a different one; a caller that passes no
          sport key gets the old behaviour.
+      6. Markets of another LEAGUE of the same sport (#2593) — "West Coast
+         Conference Men's Tournament Champion"'s Seattle U leg printed "Win
+         Conference 20%" on the WNBA's Storm, and the College Football
+         National Championship's "Washington" leg sat among the Commanders'
+         title candidates. Read off the market's venue id — Kalshi series,
+         Odds API outright key (:func:`link_crosses_league`).
 
     Averages probabilities when multiple sources provide markets at the same
     tier, and stamps each entry with the season it describes. A tier whose
@@ -1074,6 +1086,14 @@ async def _get_championship_path(
 
         # #2593: another sport's market linked to this team by city name.
         if link_crosses_sport(getattr(market, "llm_sport_category", None), team_category):
+            continue
+        # ...and another LEAGUE of the same sport (a college tournament's Seattle U
+        # leg on the WNBA's Storm), read off the market's own venue id.
+        if link_crosses_league(
+            getattr(market, "source", None),
+            getattr(market, "external_id", None),
+            team_sport_key,
+        ):
             continue
 
         # Skip prior-season markets: the market's own season predates the current

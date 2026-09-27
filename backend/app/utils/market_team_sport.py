@@ -23,7 +23,13 @@ refuses only when BOTH sides say which sport they are and the two disagree:
 
 from __future__ import annotations
 
-from app.utils.sport_keys import NON_SPORT_LLM_CATEGORIES, SPORT_PREFIX_TO_LLM_CATEGORY
+from app.utils.sport_keys import (
+    NON_SPORT_LLM_CATEGORIES,
+    SPORT_LEAGUE_MAP,
+    SPORT_PREFIX_TO_LLM_CATEGORY,
+    get_sport_key_from_ticker,
+    league_family_identity,
+)
 
 # Team sport-key prefixes `SPORT_PREFIX_TO_LLM_CATEGORY` does not carry — the
 # same three `routes/events.py` translates for #7355 (rugbyleague 31 teams,
@@ -60,3 +66,113 @@ def link_crosses_sport(market_category: str | None, team_category: str | None) -
     if not claims_a_sport(market_category) or not team_category:
         return False
     return market_category.strip().lower() != team_category
+
+
+# Sports where a team row plays in exactly ONE league, so a market of another
+# league cannot be the team's own title question. Soccer is left out on purpose:
+# a club's own path can hold a cup or a continental competition beside its
+# league (measured 2026-09-27: 0 of the soccer links below disagree today, so
+# leaving it out costs nothing and keeps a Champions League row from being
+# refused the day one is linked). Tennis, golf and motorsport players are not
+# league-scoped the same way either.
+_ONE_LEAGUE_TEAM_CATEGORIES = frozenset({"basketball", "football", "baseball", "hockey"})
+
+
+# Kalshi series the ticker maps do not carry, each a single league, that sit in
+# team championship paths. Read-side only: adding them to
+# `KALSHI_FUTURES_TICKER_TO_SPORT_KEY` would also reclassify these markets at
+# ingest, which is a different change with a different review. Without them the
+# check UNMASKS wrong rows: a path tier that was being withheld because a mapped
+# wrong-league candidate disagreed with an unmapped one clears, and the unmapped
+# one prints — measured on the 2026-09-27 replay, "Pro Football Teams to go
+# Undefeated in their Division" on the Houston and Buffalo college football
+# pages, "United Athletic Conference Men's Tournament Champion" on Tarleton
+# State's women's page, "Men's Championship Game Qualifiers" on Baylor's.
+_SERIES_LEAGUE_SUPPLEMENT: dict[str, str] = {
+    "kxnflseed": "americanfootball_nfl",
+    "kxnfl1seed": "americanfootball_nfl",
+    "kxnfldivundefeated": "americanfootball_nfl",
+    "kxnflroundqual": "americanfootball_nfl",
+    "kxsbhost": "americanfootball_nfl",
+    "kxmarmad": "basketball_ncaab",
+    "kxmarmadround": "basketball_ncaab",
+    "kxwmarmad": "basketball_wncaab",
+    "kxwmarmadround": "basketball_wncaab",
+    "kxncaambuac": "basketball_ncaab",
+}
+
+
+def _series_league_supplement(external_id: str | None) -> str | None:
+    """A sport key for a series only :data:`_SERIES_LEAGUE_SUPPLEMENT` declares.
+
+    Matched on the SERIES (the ticker up to its first ``-``) exactly, never as a
+    loose prefix: ``KXMARMAD`` and ``KXMARMADROUND`` are each listed, because
+    a bare ``startswith("kxnfl")`` would also claim a series that merely shares
+    the stem (Netflix trades as ``NFLX``).
+    """
+    series = (external_id or "").split("-", 1)[0].lower()
+    return _SERIES_LEAGUE_SUPPLEMENT.get(series)
+
+
+# The Odds API names an outright by its league's sport key plus the question:
+# ``basketball_ncaab_championship_winner``, ``americanfootball_nfl_super_bowl_winner``.
+_ODDS_API_OUTRIGHT_SUFFIXES = ("_championship_winner", "_super_bowl_winner")
+
+
+def _odds_api_outright_league(external_id: str | None) -> str | None:
+    """The league sport key an Odds API outright id carries, when it is a known league."""
+    ext = (external_id or "").lower()
+    for suffix in _ODDS_API_OUTRIGHT_SUFFIXES:
+        if ext.endswith(suffix):
+            base = ext[: -len(suffix)]
+            return base if base in SPORT_LEAGUE_MAP else None
+    return None
+
+
+def _market_league_sport_key(source: str | None, external_id: str | None) -> str | None:
+    """The sport key of the league a market's own venue id names; None when it names none."""
+    venue = (source or "").lower()
+    if venue == "kalshi":
+        return get_sport_key_from_ticker(external_id or "") or _series_league_supplement(
+            external_id
+        )
+    if venue == "odds_api":
+        return _odds_api_outright_league(external_id)
+    return None
+
+
+def link_crosses_league(
+    market_source: str | None,
+    market_external_id: str | None,
+    team_sport_key: str | None,
+) -> bool:
+    """True when a market's own venue id names a different league than the team's.
+
+    :func:`link_crosses_sport` cannot see a wrong LEAGUE inside one sport: both
+    sides of "West Coast Conference Men's Tournament Champion — Seattle" (Seattle
+    U) linked to the Seattle Storm say ``basketball``, so the WNBA team's page
+    printed "Win Conference 20%". The same city-name linking put the College
+    Football National Championship's "Washington" leg on the Commanders, the
+    NFC Championship's "Carolina" leg on the North Carolina Tar Heels and the
+    NEC men's tournament's "Central Connecticut St." on the Connecticut Sun —
+    102 open tier-1/2/4 Kalshi links on 2026-09-27, every one sampled wrong.
+
+    The market's league is read off its venue's own id (D55: an explicit key,
+    never a name) — a Kalshi SERIES through the ticker → sport-key maps, an Odds
+    API outright through the sport key it is named with — the team's off its
+    sport key, and both are compared as :func:`league_family_identity` (season
+    variants and tour tournaments collapse onto their league). Refuses only when:
+
+    * the venue id names a league — an unmapped Kalshi series (``KXNFLPOTM``), a
+      Polymarket numeric id or an unknown Odds API key is no claim;
+    * the team plays a one-league sport (:data:`_ONE_LEAGUE_TEAM_CATEGORIES`);
+    * both leagues are known and differ.
+    """
+    if not team_sport_key:
+        return False
+    if sport_key_llm_category(team_sport_key) not in _ONE_LEAGUE_TEAM_CATEGORIES:
+        return False
+    market_sport_key = _market_league_sport_key(market_source, market_external_id)
+    if not market_sport_key:
+        return False
+    return league_family_identity(market_sport_key) != league_family_identity(team_sport_key)
