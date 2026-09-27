@@ -1180,7 +1180,16 @@ export function resolveProbability(
     homeProb = odds?.home_probability ?? null;
     awayProb = odds?.away_probability ?? null;
     fromCurrentOdds = true;
-    const count = odds?.bookmaker_count ?? 0;
+    // #9097 — count the sportsbooks behind the NUMBER, not every served book
+    // row. `bookmaker_count` counts rows, so a 53-day-old quote made a
+    // Kalshi-only 13% read "4 sportsbooks" (Clemson v Miami, /events/14870012).
+    // The server knows which books the blend admitted (`hero_sportsbook_count`,
+    // 0 = none); absent means unknown, and the row count stands as before.
+    const heroBooks = event.hero_sportsbook_count;
+    const count =
+      typeof heroBooks === "number" && event.hero_probability_source === "blend"
+        ? heroBooks
+        : (odds?.bookmaker_count ?? 0);
     if (count > 0) {
       probSourceLabel = `${count} sportsbook${count !== 1 ? "s" : ""}`;
     } else if (homeProb !== null && odds?.source === "aggregate") {
