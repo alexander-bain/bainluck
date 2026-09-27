@@ -156,8 +156,29 @@ async def test_ce1_matcher_makes_no_fabricated_write_or_snapshot(monkeypatch):
     for row in board.outcomes:
         row.market_id = 60933567
     session = _FakeSession(board.outcomes, _EventRow(15290678, old, opening=0.4))
-    # Actual resolver and retirement path, not a mocked None reading.
-    monkeypatch.setattr(poll, "_blend_group_for_refs", lambda *a: [board])
+    # #9050 re-reads current scalar event/market rows under its event lock.
+    # Supply those database rows too; exercise the real group construction,
+    # resolver and retirement path rather than mocking a None reading.
+    execute = session.execute
+
+    async def current_rows(stmt):
+        sql = str(stmt)
+        if "FROM events" in sql and "events.home_team_name" in sql:
+            assert "FOR UPDATE" in sql
+            return SimpleNamespace(first=lambda: SimpleNamespace(
+                id=15290678, win_probability_sources=old,
+                home_team_name="Bulgaria", away_team_name="Luxembourg",
+                commence_time=None, completed_at=None,
+            ))
+        if "FROM futures_markets" in sql:
+            return SimpleNamespace(all=lambda: [SimpleNamespace(
+                id=board.market.id, source=board.market.source,
+                external_id=board.market.external_id, name=board.market.name,
+                status="open",
+            )])
+        return await execute(stmt)
+
+    session.execute = current_rows
 
     async def snapshot(*a, **kw):
         pytest.fail("a refused home reading cannot create a snapshot")

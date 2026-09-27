@@ -62,6 +62,7 @@ import ast
 import inspect
 import textwrap
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 
@@ -104,6 +105,9 @@ class _Result:
     def scalars(self):
         return self
 
+    def first(self):
+        return self._rows[0] if self._rows else None
+
     def scalar_one_or_none(self):
         return self._scalar
 
@@ -121,6 +125,7 @@ class _FakeSession:
     def __init__(self, outcomes, event_row):
         self._outcomes = outcomes
         self._event_row = event_row
+        self.current_refs = []
         self.updates = []
         self.added = []
         self.commits = 0
@@ -142,6 +147,17 @@ class _FakeSession:
             return _Result([], scalar=None)
         if "odds_snapshots" in text:
             return _Result([], scalar=None)
+        if "FROM futures_markets" in text:
+            return _Result(self.current_refs)
+        if "events" in text and "events.home_team_name" in text:
+            ref = self.current_refs[0]
+            return _Result([SimpleNamespace(
+                id=self._event_row.id,
+                win_probability_sources=self._event_row.win_probability_sources,
+                home_team_name=ref.home_team_name, away_team_name=ref.away_team_name,
+                commence_time=ref.event_commence_time,
+                completed_at=NOW if ref.event_has_result else None,
+            )])
         if "events" in text:
             return _Result([], scalar=self._event_row.win_probability_sources)
         raise AssertionError(f"unexpected statement: {text[:160]}")
@@ -285,6 +301,7 @@ class TestTheComposedWriterPersistsTheChild:
         from app.tasks.prediction_market_matching import _phase2_persist_group_reading
 
         session = _FakeSession([], _EventRow(15299603))
+        session.current_refs = _cert759_group()
         stats = {"snapshots_written": 0, "snapshots_deduped": 0, "errors": []}
 
         spoke = await _phase2_persist_group_reading(
@@ -293,7 +310,7 @@ class TestTheComposedWriterPersistsTheChild:
 
         assert spoke is None
         assert session.updates == []
-        assert session.commits == 0
+        assert session.commits == 1  # no-op retirement releases its event lock
 
     async def test_a_derivative_child_is_never_fallen_back_onto(self):
         """The reason the fallback is gated at all.
@@ -314,6 +331,7 @@ class TestTheComposedWriterPersistsTheChild:
         )
         stats = {"snapshots_written": 0, "snapshots_deduped": 0, "errors": []}
 
+        session.current_refs = group
         assert await _phase2_persist_group_reading(session, group, stats) is None
         assert session.updates == []
 
@@ -332,6 +350,7 @@ class TestTheComposedWriterPersistsTheChild:
         )
         stats = {"snapshots_written": 0, "snapshots_deduped": 0, "errors": []}
 
+        session.current_refs = group
         assert await _phase2_persist_group_reading(session, group, stats) is None
         assert session.updates == []
 
