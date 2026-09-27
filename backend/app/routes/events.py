@@ -10197,6 +10197,26 @@ async def search_events(
         {m.id for m in futures_markets},
     )
 
+    # #8750: the typed text already answered, so the correction is withdrawn.
+    # The fuzzy arm above runs on "no GAMES matched" and before the futures
+    # stage, so it cannot see that `Warsh`, `kevin warsh` and `taylor swift`
+    # each matched ten markets. It answered them with `Ware FC`, `Kevin Walsh`
+    # and `Taylor Sullivan`, and the page was headed "Showing results for
+    # Taylor Sullivan" above ten Taylor Swift markets — plus an FA Cup game and
+    # an "FA Cup" pill for `Warsh`. Every real misspelling measured on
+    # production (`yankes`, `red socks`, `celtcs`, `lakrs`, `manchster united`,
+    # `red sax`) serves 0 markets for the typed text, so this is decided on the
+    # SERVED lists: a correction the page needs is never withdrawn. Withdrawn
+    # whole — banner, the corrected query's games, and their pills and counts —
+    # because a half-withdrawal would show games for a name nobody typed.
+    if fuzzy_corrected and (formatted_futures or futures_families):
+        fuzzy_corrected = None
+        formatted_results = []
+        sports_found = {}
+        sport_facets = []
+        total_count = 0
+        total_pages = 0
+
     # L2-65 Item 1c: surface EVENT CONCEPTS (tournament pages) as first-class
     # results, above individual markets. Derived from the winner-field markets we
     # already matched, via the SAME adapter logic the frontend helper uses
