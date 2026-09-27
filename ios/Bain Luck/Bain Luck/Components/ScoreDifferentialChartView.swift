@@ -46,15 +46,26 @@ struct ScoreDifferentialChartView: View {
     @State private var plotWidth: CGFloat = 0
 
     /// #3430 — the two ends of one differential axis. If both read the same, a
-    /// curve above the midline says nothing about who is ahead.
-    private var sides: (away: String, home: String) {
-        TeamShortName.shortPair(
+    /// curve above the midline says nothing about who is ahead, so the pair
+    /// rule decides.
+    ///
+    /// #8425 — the names the gutter prints: the pair rule's labels when both
+    /// fit this chart's shorter run whole, otherwise both crest codes
+    /// (``ChartGutter/sideLabels``). `DUBAI BASKETBALL` fits the Win
+    /// Probability gutter above and was cut to `DUBAI BA…` here.
+    private func gutterLabels(run: CGFloat, fontSize: CGFloat) -> (away: String, home: String) {
+        let awayCrest = ChartGutterCrest.resolvedURL(
+            servedURL: awayTeamLogo, teamName: awayTeam, sportKey: sportKey) != nil
+        let homeCrest = ChartGutterCrest.resolvedURL(
+            servedURL: homeTeamLogo, teamName: homeTeam, sportKey: sportKey) != nil
+        return ChartGutter.sideLabels(
             away: awayTeam, home: homeTeam,
-            awayServed: awayTeamAbbrev, homeServed: homeTeamAbbrev
+            awayServed: awayTeamAbbrev, homeServed: homeTeamAbbrev,
+            fontSize: fontSize,
+            awayRun: ChartGutter.nameRun(run: run, hasCrest: awayCrest),
+            homeRun: ChartGutter.nameRun(run: run, hasCrest: homeCrest)
         )
     }
-    private var homeShort: String { sides.home }
-    private var awayShort: String { sides.away }
 
     private var isGameStarted: Bool {
         eventStatus == "live" || isFinished
@@ -127,6 +138,8 @@ struct ScoreDifferentialChartView: View {
                     // footprint rather than overdrawing the heading beside it.
                     VStack {
                         let run = ChartGutter.run(chartHeight: Self.chartHeight, verticalPadding: 8)
+                        let gutterFont: CGFloat = 10
+                        let gutter = gutterLabels(run: run, fontSize: gutterFont)
                         // #4117 — the crest, from the same shared rung the Win
                         // Probability gutter above this one climbs. Without it this
                         // page drew crests in one gutter and bare abbreviations in
@@ -137,8 +150,8 @@ struct ScoreDifferentialChartView: View {
                                     servedURL: homeTeamLogo, teamName: homeTeam, sportKey: sportKey) {
                                     ChartGutterCrest(url: url)
                                 }
-                                Text(homeShort.uppercased())
-                                    .font(.system(size: 10, weight: .bold))
+                                Text(gutter.home.uppercased())
+                                    .font(.system(size: gutterFont, weight: .bold))
                                     .foregroundStyle(homeTeamColor ?? .blue)
                                     .lineLimit(1)
                             }
@@ -150,8 +163,8 @@ struct ScoreDifferentialChartView: View {
                                     servedURL: awayTeamLogo, teamName: awayTeam, sportKey: sportKey) {
                                     ChartGutterCrest(url: url)
                                 }
-                                Text(awayShort.uppercased())
-                                    .font(.system(size: 10, weight: .bold))
+                                Text(gutter.away.uppercased())
+                                    .font(.system(size: gutterFont, weight: .bold))
                                     .foregroundStyle(awayTeamColor ?? .red)
                                     .lineLimit(1)
                             }
