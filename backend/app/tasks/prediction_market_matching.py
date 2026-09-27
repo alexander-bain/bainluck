@@ -11,6 +11,7 @@ Runs after Kalshi (:45) and Polymarket (:15) polling to pick up fresh data.
 """
 
 import logging
+import re
 import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
@@ -1729,6 +1730,154 @@ async def _event_commence_time(session, event_id: int):
     return value if isinstance(value, datetime) else None
 
 
+# ── #9120: Kalshi's postponement contract carries an MLB ticker forward ──────
+# Kalshi does not re-mint a game's ticker when the game moves. Every KXMLBGAME
+# market states it in its own rules (read at the venue 2026-09-27):
+#
+#   "...the Chicago C vs Boston professional baseball game originally scheduled
+#    for Sep 26, 2026 at 7:15 PM EDT. If this game is postponed or delayed, the
+#    market will remain open and close after the rescheduled game has finished
+#    (within two days)."
+#
+# MLB moved that game to Sun 9/27 19:05Z at Tropicana Field. Kalshi's open
+# KXMLBGAME list that morning was 14 × `26SEP27…` plus `26SEP261915CHCBOS` —
+# no ticker of its own for the Sunday game — while the ±3h date guard read the
+# ticker's 9/26 23:15Z as a different game from the row's 9/27 19:05Z, refused
+# the link 195 times and unlinked it 95 times. The page showed Kalshi's Extra
+# Innings and First Inning Run (same segment, carried by a twin merge) but not
+# Kalshi's winner.
+#
+# The carry is the contract, fenced so it can never put one game's price on
+# the next game of a series:
+#   * MLB only (`kxmlb*`), a timed ticker, no doubleheader game number;
+#   * forward only — the row starts AFTER the ticker's slot, within Kalshi's
+#     two days. A game moved EARLIER (into a doubleheader, #8547) Kalshi
+#     re-mints, and that path is untouched;
+#   * the ticker's slot has passed, and no live row for this matchup exists on
+#     the ticker's Eastern day — so the game did not happen when Kalshi said;
+#   * the row is ESPN-anchored (the authority lists the game on the later day);
+#   * Kalshi minted no KXMLBGAME ticker of its own that fits the row. In an
+#     ordinary series every day has its own ticker, so the next day's row is
+#     held by it and this refuses.
+_KALSHI_POSTPONED_CARRY_PREFIX = "kxmlb"
+_KALSHI_POSTPONED_CARRY_GAME_SERIES = "KXMLBGAME"
+_KALSHI_POSTPONED_CARRY_MAX_HOURS = 48
+_KALSHI_POSTPONED_CARRY_DEAD_STATUSES = ("postponed", "cancelled", "canceled")
+_KALSHI_SEGMENT_MATCHUP_RE = re.compile(
+    r"^[A-Z0-9]+-\d{2}[A-Z]{3}\d{2}\d{4}([A-Z]+?)(G\d)?(?:-|$)"
+)
+
+
+def _kalshi_postponed_carry_matchup(external_id) -> str | None:
+    """The team block of a timed, single-game MLB ticker, or None.
+
+    ``KXMLBRFI-26SEP261915CHCBOS`` → ``CHCBOS``. A doubleheader ticker
+    (``…CHCBOSG1``) returns None: which game moved is not something the ticker
+    can say, so the carry does not guess.
+    """
+    if _kalshi_prefix(external_id)[: len(_KALSHI_POSTPONED_CARRY_PREFIX)] != (
+        _KALSHI_POSTPONED_CARRY_PREFIX
+    ):
+        return None
+    m = _KALSHI_SEGMENT_MATCHUP_RE.match((external_id or "").upper())
+    if not m or m.group(2):
+        return None
+    return m.group(1)
+
+
+async def _kalshi_postponed_game_carries(
+    session, external_id, ticker_date, event_id: int, *, now=None,
+) -> bool:
+    """True when Kalshi's postponement contract makes ``event_id`` the game
+    this ticker names, although the ticker's date disagrees with it. #9120.
+
+    Only consulted after :func:`_ticker_date_conflicts_with_event` has said
+    "different game". Every missing signal returns False — the date guard's
+    refusal stands.
+    """
+    from app.models.models import Event, FuturesMarket
+
+    matchup = _kalshi_postponed_carry_matchup(external_id)
+    start = ticker_start_utc(ticker_date)
+    if matchup is None or start is None:
+        return False
+    now = now or datetime.now(timezone.utc)
+    if now < start:
+        return False
+
+    ev = (
+        await session.execute(
+            select(
+                Event.id, Event.commence_time, Event.espn_id, Event.sport_id,
+                Event.home_team_id, Event.away_team_id,
+                Event.home_team_name, Event.away_team_name,
+            ).where(Event.id == event_id)
+        )
+    ).first()
+    if ev is None or not ev.espn_id or not isinstance(ev.commence_time, datetime):
+        return False
+    ec = ev.commence_time if ev.commence_time.tzinfo else ev.commence_time.replace(tzinfo=timezone.utc)
+    gap_hours = (ec - start).total_seconds() / 3600
+    if not 0 < gap_hours <= _KALSHI_POSTPONED_CARRY_MAX_HOURS:
+        return False
+
+    # The game did not happen when Kalshi said: no live row for this matchup on
+    # the ticker's Eastern day. Names in either orientation, and ids when the
+    # row has both, so a row minted under another spelling still counts.
+    day = start.astimezone(_KALSHI_TICKER_TZ).date()
+    day_start = datetime(day.year, day.month, day.day, tzinfo=_KALSHI_TICKER_TZ)
+    day_end = day_start + timedelta(days=1)
+    same_matchup = [
+        and_(Event.home_team_name == ev.home_team_name, Event.away_team_name == ev.away_team_name),
+        and_(Event.home_team_name == ev.away_team_name, Event.away_team_name == ev.home_team_name),
+    ]
+    if ev.home_team_id is not None and ev.away_team_id is not None:
+        same_matchup += [
+            and_(Event.home_team_id == ev.home_team_id, Event.away_team_id == ev.away_team_id),
+            and_(Event.home_team_id == ev.away_team_id, Event.away_team_id == ev.home_team_id),
+        ]
+    on_ticker_day = (
+        await session.execute(
+            select(func.count()).select_from(Event).where(
+                Event.sport_id == ev.sport_id,
+                Event.id != ev.id,
+                Event.commence_time >= day_start.astimezone(timezone.utc),
+                Event.commence_time < day_end.astimezone(timezone.utc),
+                or_(Event.status.is_(None), Event.status.notin_(_KALSHI_POSTPONED_CARRY_DEAD_STATUSES)),
+                or_(*same_matchup),
+            )
+        )
+    ).scalar()
+    if on_ticker_day:
+        return False
+
+    # Kalshi minted no game ticker of its own for the later game.
+    venue_tickers = (
+        await session.execute(
+            select(FuturesMarket.external_id).where(
+                FuturesMarket.source == "kalshi",
+                FuturesMarket.external_id.like(
+                    f"{_KALSHI_POSTPONED_CARRY_GAME_SERIES}-%{matchup}%"
+                ),
+            )
+        )
+    ).scalars().all()
+    for other in venue_tickers:
+        other_td = extract_game_date_from_ticker(other)
+        if other_td is not None and not _ticker_date_conflicts_with_event(
+            other_td, ec, _KALSHI_POSTPONED_CARRY_GAME_SERIES.lower(),
+        ):
+            return False
+
+    logger.info(
+        "Kalshi postponement carry (#9120): %s (slot %s) names event %d "
+        "(commence %s, %.1fh later) — no row on the slot's day, no ticker of "
+        "Kalshi's own for the later game",
+        external_id, start.isoformat(), ev.id, ec.isoformat(), gap_hours,
+    )
+    return True
+
+
 def venue_game_start(market):
     """A Polymarket market's own fixture instant, tz-aware UTC, or None.
 
@@ -2300,7 +2449,11 @@ async def _check_duplicate_kalshi_linkage_reason(
     td = ticker_game_date or extract_game_date_from_ticker(market.external_id)
     if td is not None and not _is_combat_kalshi_prefix(prefix):
         event_commence = await _event_commence_time(session, event_id)
-        if _ticker_date_conflicts_with_event(td, event_commence, prefix):
+        if _ticker_date_conflicts_with_event(
+            td, event_commence, prefix,
+        ) and not await _kalshi_postponed_game_carries(
+            session, market.external_id, td, event_id,
+        ):
             logger.warning(
                 "Event-date linkage blocked (#1811): %s ticker=%s would link to "
                 "event %d (commence=%s) — the ticker defines the referent, so "
@@ -7114,6 +7267,10 @@ async def _match_prediction_markets(limit: int = 500):
                 td = extract_game_date_from_ticker(m.external_id)
                 if not _ticker_date_conflicts_with_event(td, ec, prefix):
                     continue
+                if await _kalshi_postponed_game_carries(
+                    session, m.external_id, td, ev_ref.event_id, now=now,
+                ):
+                    continue  # #9120: Kalshi kept a moved game's ticker
                 # Report the diff from the instant the decision was made on, not
                 # from the raw ticker stamp — a log line that disagrees with the
                 # rule it explains is how this bug survived twelve days.
@@ -7237,6 +7394,10 @@ async def _match_prediction_markets(limit: int = 500):
                         and not is_kalshi_match_segment_ticker(market.external_id)
                         and _ticker_date_conflicts_with_event(
                             ticker_date, market.event_commence_time, _prefix
+                        )
+                        and not await _kalshi_postponed_game_carries(
+                            session, market.external_id, ticker_date,
+                            market.event_id, now=now,
                         )
                     ):
                         _td = ticker_start_utc(ticker_date) or (
