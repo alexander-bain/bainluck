@@ -47,6 +47,21 @@ CURATED_TEAM_ALIASES: dict[tuple[str, str], list[str]] = {
     ("baseball_mlb", "Arizona Diamondbacks"): ["dbacks"],
     ("basketball_nba", "Dallas Mavericks"): ["mavs"],
     ("americanfootball_nfl", "Jacksonville Jaguars"): ["jags"],
+    # #9076 — five college football nicknames, measured on production 2026-09-27
+    # 06:3xZ. Before: `noles` served no Florida State team or game, `horns` served
+    # Portland Thorns FC and a novel, `bama` five Alabama politics markets ahead of
+    # the Alabama game, `vols` only the Icelandic club Volsungur. Each last-word
+    # token names exactly ONE ncaaf club over 120 days of events, and no open
+    # football futures market carries `Tide`/`Volunteers` in another club's name.
+    # FOOTBALL ONLY, on purpose: the same school in basketball_ncaab is a second
+    # claimant, and `_alias_claim_counts` refuses a contested alias in both maps.
+    # Refused: `canes` (see #8685), `dawgs` (four schools), `zags` (its token
+    # would be `Bulldogs`), `cuse` (token `Orange` reaches Orange Bowl markets).
+    ("americanfootball_ncaaf", "Florida State Seminoles"): ["noles"],
+    ("americanfootball_ncaaf", "Texas Longhorns"): ["horns"],
+    ("americanfootball_ncaaf", "Alabama Crimson Tide"): ["bama"],
+    ("americanfootball_ncaaf", "Tennessee Volunteers"): ["vols"],
+    ("americanfootball_ncaaf", "Nebraska Cornhuskers"): ["huskers"],
     # #8084 — NOT a colloquial nickname: the school's own formal name. Our row is
     # spelled `NC State Wolfpack`, the college feeds spell it `North Carolina St.`,
     # and nothing anywhere holds the form in between. Measured on production

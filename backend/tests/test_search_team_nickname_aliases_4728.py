@@ -87,6 +87,10 @@ def test_the_derived_expansions_are_exactly_these() -> None:
         "cubbies": ("Cubs", "baseball"),
         "mavs": ("Mavericks", "basketball"),
         "jags": ("Jaguars", "football"),
+        # #9076 — `noles`/`horns`/`huskers` are spelled inside their tokens
+        # (Semi*noles*, Long*horns*, Corn*huskers*), so only `bama`/`vols` get an arm.
+        "bama": ("Tide", "football"),
+        "vols": ("Volunteers", "football"),
     }
 
 
@@ -150,6 +154,8 @@ def test_a_query_with_no_nickname_produces_no_arm() -> None:
         ("yanks", "Yankees", "baseball"),
         ("mavs", "Mavericks", "basketball"),
         ("jags", "Jaguars", "football"),
+        ("bama", "Tide", "football"),
+        ("vols", "Volunteers", "football"),
     ],
 )
 def test_the_arm_matches_the_token_and_pins_the_sport(alias, token, category) -> None:

@@ -117,6 +117,9 @@ def test_search_and_game_card_expansions_are_byte_identical_to_before():
         "cubbies": ("Cubs", "baseball"),
         "mavs": ("Mavericks", "basketball"),
         "jags": ("Jaguars", "football"),
+        # #9076: five college nicknames added after this pin; none is this alias.
+        "bama": ("Tide", "football"),
+        "vols": ("Volunteers", "football"),
     }
     assert team_nickname_event_expansions() == {
         "pats": ("Patriots", "americanfootball_nfl"),
@@ -137,6 +140,11 @@ def test_search_and_game_card_expansions_are_byte_identical_to_before():
         "dbacks": ("Diamondbacks", "baseball_mlb"),
         "mavs": ("Mavericks", "basketball_nba"),
         "jags": ("Jaguars", "americanfootball_nfl"),
+        "noles": ("Seminoles", "americanfootball_ncaaf"),
+        "horns": ("Longhorns", "americanfootball_ncaaf"),
+        "bama": ("Tide", "americanfootball_ncaaf"),
+        "vols": ("Volunteers", "americanfootball_ncaaf"),
+        "huskers": ("Cornhuskers", "americanfootball_ncaaf"),
     }
 
 

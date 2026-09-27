@@ -85,6 +85,12 @@ def test_the_derived_event_expansions_are_exactly_these() -> None:
         "dbacks": ("Diamondbacks", "baseball_mlb"),
         "mavs": ("Mavericks", "basketball_nba"),
         "jags": ("Jaguars", "americanfootball_nfl"),
+        # #9076 — college football, scoped to ncaaf (the game arm keeps the inside-token three).
+        "noles": ("Seminoles", "americanfootball_ncaaf"),
+        "horns": ("Longhorns", "americanfootball_ncaaf"),
+        "bama": ("Tide", "americanfootball_ncaaf"),
+        "vols": ("Volunteers", "americanfootball_ncaaf"),
+        "huskers": ("Cornhuskers", "americanfootball_ncaaf"),
     }
 
 
@@ -111,7 +117,8 @@ def test_the_two_rails_diverge_only_where_their_matchers_do() -> None:
     # #8685 added two more of the same shape: `dbacks` inside `Diamondbacks`,
     # `nucks` inside `Canucks`. Production 2026-09-25 served each 10 markets and 0
     # games before they were curated — the 9ers hole, twice more.
-    assert only_events == {"9ers", "dbacks", "nucks"}, (
+    # #9076 added three more: `noles`/`horns`/`huskers` inside Seminoles/Longhorns/Cornhuskers.
+    assert only_events == {"9ers", "dbacks", "nucks", "noles", "horns", "huskers"}, (
         "the rails diverge somewhere new. Only an alias spelled inside its own "
         "token (`9ers`/`49ers`, `dbacks`/`Diamondbacks`, `nucks`/`Canucks`) may be "
         "event-only, because the FTS arm cannot word-match a substring: "
@@ -209,6 +216,9 @@ def test_a_query_with_no_nickname_produces_no_event_arm() -> None:
         ("dbacks", "Diamondbacks", "baseball_mlb"),
         ("cubbies", "Cubs", "baseball_mlb"),
         ("jags", "Jaguars", "americanfootball_nfl"),
+        ("noles", "Seminoles", "americanfootball_ncaaf"),
+        ("horns", "Longhorns", "americanfootball_ncaaf"),
+        ("bama", "Tide", "americanfootball_ncaaf"),
     ],
 )
 def test_the_event_arm_matches_the_token_and_pins_the_sport(
