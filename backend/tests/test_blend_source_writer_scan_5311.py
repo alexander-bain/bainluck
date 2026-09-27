@@ -190,6 +190,14 @@ from app.utils.probability_eligibility import MARKET_DERIVED_SOURCES  # noqa: E4
 #    residue — and is otherwise merged onto whatever the deep arm wrote in the
 #    same pass, which is safe because the session's identity map hands both arms
 #    the same ORM object and that arm mirrors its own stamp (gotcha #4/#5).
+#  * `espn_helpers.py::record_authority_stoppage` — SIDECAR, #8960/CERT-3598,
+#    and #5324's shape for a different fact: the scheduled pass records, under
+#    the non-probability key `espn_stopped_at`, that ESPN reports an id-anchored
+#    `scheduled` row POSTPONED before kickoff, so the zero-API promoter holds it
+#    instead of badging a match nobody is playing live. Cleared by the next
+#    anchored pass that does not report the stoppage. No source, no market, no
+#    reading. Both shapes for `_process_live_sport`'s reason — one Core update,
+#    then the ORM object mirrored (gotcha #4/#5).
 #  * `prediction_market_matching.py` / `admin_matching.py` / `source_intelligence.py`
 #    — PRUNE. Each REMOVES a source key rather than writing a value: the two
 #    `prune_blend_source` callers, the admin "clear kalshi" repair, and the raw
@@ -214,6 +222,10 @@ KNOWN_NON_READING_WRITES: dict[tuple[str, str, str], str] = {
      "_prune_orphaned_blend_source", "update.values"): "prune",
     ("backend/app/tasks/prediction_market_matching.py",
      "_retire_unbacked_blend_source", "update.values"): "prune",
+    ("backend/app/utils/espn_helpers.py", "record_authority_stoppage", "orm-assign"):
+        "sidecar",
+    ("backend/app/utils/espn_helpers.py", "record_authority_stoppage", "update.values"):
+        "sidecar",
     ("backend/app/tasks/espn_sync.py", "_process_live_sport", "orm-assign"):
         "sidecar",
     ("backend/app/tasks/espn_sync.py", "_process_live_sport", "update.values"):

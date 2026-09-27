@@ -389,6 +389,102 @@ def authority_not_started_holds(
     return age <= ttl
 
 
+# ───────────────────────────────────────────────────────────────────────────
+# A POSTPONEMENT HAS TO SURVIVE THE CLOCK TOO (#8960, CERT-3598's required repair)
+# ───────────────────────────────────────────────────────────────────────────
+#
+# The #3397 stoppage arm cannot touch a row before kickoff: nothing moves
+# `suspended` back to `scheduled`, and a fixture ESPN re-dates must keep the
+# status the upcoming rail reads. The live pass does not even SEE a scheduled
+# row before kickoff (it selects `commence_time <= now`). So at kickoff two
+# 60-second beats race for a postponed fixture — the promoter reads a clock and
+# flips it LIVE, the live pass reads the authority and demotes it — and the
+# reader sees a match nobody is playing badged live until the second one runs.
+#
+# The authority's statement therefore travels to the promoter the way #5324's
+# does: a stamp in the `win_probability_sources` JSONB mirror, written by the
+# scheduled pass (which DOES read every `scheduled` row against today's board)
+# and only for a row matched by its own `espn_id`. It is a different fact from
+# ESPN_NOT_STARTED_KEY and gets a different key, because the hold it grants has
+# to ignore a different field: the sync writes `period='Postponed'` and ESPN
+# publishes a filler clock on exactly these rows, so only a non-zero SCORE may
+# release it (the scores-only `play_evidence`, as in the #5501 refusal).
+#
+# Refreshed every pass while ESPN keeps reporting the stoppage, cleared by the
+# first anchored pass that does not, and bounded by the same derived TTL, so a
+# fixture ESPN re-dates off today's board simply ages out of the hold.
+ESPN_STOPPED_KEY = "espn_stopped_at"
+
+
+def stamp_authority_stopped(sources, now):
+    """A NEW sources dict carrying "the authority reports this stopped, at ``now``"."""
+    updated = dict(sources or {})
+    updated[ESPN_STOPPED_KEY] = now.isoformat()
+    return updated
+
+
+def clear_authority_stopped(sources):
+    """A NEW sources dict without the marker, or the original when absent."""
+    if not sources or ESPN_STOPPED_KEY not in sources:
+        return sources
+    updated = dict(sources)
+    updated.pop(ESPN_STOPPED_KEY, None)
+    return updated
+
+
+def authority_stopped_holds(
+    sources, now, home_score=None, away_score=None, ttl=AUTHORITY_NOT_STARTED_TTL
+) -> bool:
+    """True when the clock may NOT promote this row: within ``ttl`` the authority
+    reported it stopped without a result (postponed, canceled) and no side has
+    scored. Fails OPEN on every unreadable stamp, exactly as
+    :func:`authority_not_started_holds` does and for its reason."""
+    if play_evidence(home_score, away_score):
+        return False
+    raw = (sources or {}).get(ESPN_STOPPED_KEY)
+    if not isinstance(raw, str):
+        return False
+    try:
+        stamped = datetime.fromisoformat(raw)
+    except (ValueError, TypeError):
+        return False
+    if stamped.tzinfo is None:
+        stamped = stamped.replace(tzinfo=timezone.utc)
+    age = now - stamped
+    if age < timedelta(0):
+        return False
+    return age <= ttl
+
+
+async def record_authority_stoppage(session, event, ee, stats, now=None) -> None:
+    """The scheduled pass's half of the hold: stamp, refresh or clear the marker
+    on an id-anchored `scheduled` row from what ESPN's board says right now.
+
+    Core UPDATE and the ORM mirrored after it — the #5324 idiom, for gotcha #4:
+    a JSONB value changed in place is never flushed.
+    """
+    from app.models.models import Event
+
+    sources = getattr(event, "win_probability_sources", None)
+    if getattr(ee, "stopped_without_result", False):
+        updated = stamp_authority_stopped(
+            sources, now or datetime.now(timezone.utc)
+        )
+        key = "authority_stopped_stamped"
+    else:
+        updated = clear_authority_stopped(sources)
+        if updated is sources:
+            return
+        key = "authority_stopped_cleared"
+    await session.execute(
+        _sql_update(Event)
+        .where(Event.id == event.id)
+        .values(win_probability_sources=updated)
+    )
+    event.win_probability_sources = updated
+    stats[key] = stats.get(key, 0) + 1
+
+
 def espn_terminal_write_is_fold(event_commence, now, slack=_FOLD_GUARD_SLACK) -> bool:
     """True when writing terminal/live ESPN state onto an EXISTING event whose own
     ``commence_time`` is still in the future (beyond ``slack``) — i.e. an ESPN game
@@ -1595,12 +1691,28 @@ async def update_event_fields_from_espn(
         _live_values["period"] = None
 
     # Update scores + capture ScoreSnapshot for score differential chart
+    #
+    # #8960: a stoppage board's "0"-"0" is filler, not a score. ESPN publishes
+    # `0` for both sides of a postponed fixture, and copied onto the row it
+    # read "No result reported · last score 0-0" on a match nobody played. A
+    # NON-ZERO score on a stopped board (abandoned mid-match) is real and
+    # still lands — the same scores-only use of `play_evidence` as above, for
+    # the same reason: ESPN's filler period/clock cannot testify here. The
+    # period is left alone on purpose; "Postponed" there is what the pill reads.
+    _stoppage_scores_are_filler = getattr(
+        ee, "stopped_without_result", False
+    ) and not play_evidence(ee.home_score, ee.away_score)
+    if _stoppage_scores_are_filler:
+        stats["stoppage_filler_scores_refused"] = (
+            stats.get("stoppage_filler_scores_refused", 0) + 1
+        )
     score_changed = False
     if (
         ee.home_score is not None
         and event.home_score != ee.home_score
         and not _live_state_is_stale
         and not _withhold_live_state
+        and not _stoppage_scores_are_filler
     ):
         _live_values["home_score"] = ee.home_score
         score_changed = True
@@ -1609,6 +1721,7 @@ async def update_event_fields_from_espn(
         and event.away_score != ee.away_score
         and not _live_state_is_stale
         and not _withhold_live_state
+        and not _stoppage_scores_are_filler
     ):
         _live_values["away_score"] = ee.away_score
         score_changed = True
@@ -1723,7 +1836,23 @@ async def update_event_fields_from_espn(
             event.status = "completed"
             changed = True
             stats["espn_completed"] = stats.get("espn_completed", 0) + 1
-    elif getattr(ee, "stopped_without_result", False) and event.status == "live":
+    elif getattr(ee, "stopped_without_result", False) and (
+        event.status == "live"
+        or (
+            # #8960: a postponement ESPN reported while the row was still
+            # `scheduled` used to be dropped here, and at kickoff the clock
+            # promotion flipped the row LIVE for a match nobody was playing
+            # (15314000, RBNY v St. Louis, 26 Sep). From kickoff on it lands
+            # `suspended` directly. BEFORE kickoff it is still left alone, which
+            # is #3397's rule (`test_a_scheduled_row_is_not_demoted`): nothing
+            # returns a `suspended` row to `scheduled`, so a fixture ESPN
+            # re-dates before its kickoff has to keep the status the upcoming
+            # rail reads.
+            event.status == "scheduled"
+            and event.commence_time is not None
+            and event.commence_time <= datetime.now(timezone.utc)
+        )
+    ):
         # #3397: the branch the settle arm above leaves open. ESPN reports
         # `state="post"` with `completed` not True — postponed, abandoned,
         # canceled — which is the authority saying BOTH "this is not being
@@ -1757,6 +1886,7 @@ async def update_event_fields_from_espn(
         # selects only `status == "scheduled"`, a suspended row is never
         # clock-promoted back into the rail behind ESPN's back.
         from app.utils.event_completion import EVENT_SUSPENDED
+        _stopped_from = event.status
         await session.execute(
             _sql_update(Event)
             .where(Event.id == event.id)
@@ -1766,9 +1896,9 @@ async def update_event_fields_from_espn(
         changed = True
         stats["espn_stopped_without_result"] = stats.get("espn_stopped_without_result", 0) + 1
         logger.info(
-            "ESPN stoppage: event %d (%s vs %s) was live but ESPN reports "
+            "ESPN stoppage: event %d (%s vs %s) was %s but ESPN reports "
             "state=post/completed=false (%s) — demoted to %s, not settled (#3397)",
-            event.id, event.home_team_name, event.away_team_name,
+            event.id, event.home_team_name, event.away_team_name, _stopped_from,
             ee.status_detail, EVENT_SUSPENDED,
         )
     elif ee.status == "in" and play_resumes(event.status):
@@ -2338,8 +2468,10 @@ async def sync_scheduled_events(session, sport_key, espn_events, stats):
         matched_espn = None
 
         # 1. Match by ESPN ID (most reliable)
+        id_anchored = False
         if event.espn_id and event.espn_id in espn_by_id_sched:
             matched_espn = espn_by_id_sched[event.espn_id]
+            id_anchored = True
 
         # 2. Fall back to name matching (using all ESPN name variants)
         #
@@ -2492,6 +2624,12 @@ async def sync_scheduled_events(session, sport_key, espn_events, stats):
             if espn_importance and event.llm_importance != espn_importance:
                 if not (event.llm_importance == "championship" and espn_importance == "playoff"):
                     event.llm_importance = espn_importance
+
+        # #8960: a postponement ESPN reports before kickoff reaches the promoter
+        # as a hold. Only on the row's OWN espn_id — a same-day name match is a
+        # matchup, not this fixture (#1947).
+        if id_anchored:
+            await record_authority_stoppage(session, event, ee, stats)
 
 
 # ---------------------------------------------------------------------------

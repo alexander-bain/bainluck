@@ -164,13 +164,26 @@ class _Session:
         self.added.append(obj)
 
 
-async def _sync(client, payload, *, row_status="live"):
+async def _sync(client, payload, *, row_status="live", commence_time=None, no_kickoff=False):
     ee = client._parse_event(payload)
     event = _Event(status=row_status)
+    if commence_time is not None:
+        event.commence_time = commence_time
+    if no_kickoff:
+        event.commence_time = None
     session = _Session()
     stats: dict = {}
     await update_event_fields_from_espn(session, event, ee, set(), stats)
     return event, stats, session
+
+
+def _dated(payload: dict, when: datetime) -> dict:
+    """The same board, published for ``when`` (ESPN's `YYYY-MM-DDTHH:MMZ`)."""
+    import copy
+
+    dated = copy.deepcopy(payload)
+    dated["date"] = when.strftime("%Y-%m-%dT%H:%MZ")
+    return dated
 
 
 def _written(session) -> dict:
@@ -387,12 +400,76 @@ class TestALiveRowLeavesTheRailWhenEspnSaysItStopped:
     async def test_a_scheduled_row_is_not_demoted(self, client):
         """Out of scope on purpose. A fixture that has not reached kickoff is
         correctly `scheduled` already, and moving it to `suspended` would take a
-        re-dated match off the upcoming rail, which needs `scheduled`."""
+        re-dated match off the upcoming rail, which needs `scheduled`.
+
+        #8960: the rig used to hand this test the module's KICKOFF — an hour
+        ago — so it pinned a row PAST kickoff, which is not what the sentence
+        above says. It now states the future kickoff its own scope names; the
+        past-kickoff row is `test_a_scheduled_row_past_kickoff_never_goes_live`.
+        """
+        # ESPN's own date, not only ours: the sync corrects `commence_time` to
+        # the board's start before the status chain reads it, so a board still
+        # dated in the past would move our kickoff behind us.
+        later = datetime.now(timezone.utc) + timedelta(hours=3)
         event, stats, _session = await _sync(
-            client, BRAGA_GIL_VICENTE_POSTPONED, row_status="scheduled")
+            client, _dated(BRAGA_GIL_VICENTE_POSTPONED, later),
+            row_status="scheduled", commence_time=later)
 
         assert event.status == "scheduled"
         assert stats.get("espn_stopped_without_result") is None
+
+    async def test_a_scheduled_row_past_kickoff_never_goes_live(self, client):
+        """#8960 (15314000, RBNY v St. Louis): ESPN had the match POSTPONED
+        before kickoff; the row stayed `scheduled`, the clock promotion flipped
+        it LIVE at 23:30Z, and only the next ESPN pass demoted it. Once kickoff
+        has passed there is no re-date to protect, so the stoppage lands now."""
+        event, stats, session = await _sync(
+            client, BRAGA_GIL_VICENTE_POSTPONED, row_status="scheduled",
+            commence_time=datetime.now(timezone.utc) - timedelta(minutes=1))
+
+        assert event.status == EVENT_SUSPENDED
+        assert _written(session).get("status") == EVENT_SUSPENDED
+        assert stats.get("espn_stopped_without_result") == 1
+        assert "completed_at" not in _written(session)
+
+    async def test_a_scheduled_row_with_no_kickoff_is_left_alone(self, client):
+        """No kickoff means no evidence the re-date window has closed."""
+        event, stats, _session = await _sync(
+            client, BRAGA_GIL_VICENTE_POSTPONED, row_status="scheduled",
+            no_kickoff=True)
+
+        assert event.status == "scheduled"
+        assert stats.get("espn_stopped_without_result") is None
+
+    @pytest.mark.parametrize(
+        "payload", CAPTURED_STOPPAGES, ids=lambda p: p["status"]["type"]["name"]
+    )
+    @pytest.mark.parametrize("row_status", ["live", "scheduled"])
+    async def test_a_stoppage_writes_no_filler_score(self, client, payload, row_status):
+        """#8960's residue: ESPN's "0"-"0" on a postponed board read "last score
+        0-0" on a match nobody played. A stoppage board with no non-zero score
+        writes no score, on either status arm."""
+        event, stats, session = await _sync(
+            client, payload, row_status=row_status,
+            commence_time=datetime.now(timezone.utc) - timedelta(minutes=1))
+        written = _written(session)
+
+        assert "home_score" not in written and "away_score" not in written, (
+            f"{payload['shortName']} ({row_status}) was given a score nobody played"
+        )
+        assert stats.get("stoppage_filler_scores_refused") == 1
+
+    async def test_a_real_score_on_a_stopped_board_still_lands(self, client):
+        """The safety valve: a match abandoned at 1-0 was played, and a non-zero
+        score is not a value a board invents."""
+        import copy
+
+        abandoned = copy.deepcopy(BRAGA_GIL_VICENTE_POSTPONED)
+        abandoned["competitions"][0]["competitors"][0]["score"] = "1"
+        event, stats, session = await _sync(client, abandoned)
+
+        assert _written(session).get("home_score") == 1
+        assert stats.get("stoppage_filler_scores_refused") is None
 
 
 class TestTheRowComesBackByItselfWhenPlayStarts:
