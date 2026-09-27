@@ -488,11 +488,11 @@ class TestOneBadRowCannotPinTheCohortBehindIt:
         real = pmm._retire_unbacked_blend_source
         raised_for: list[int] = []
 
-        async def _raise_once(session, anchor, blend_group, stats):
+        async def _raise_once(session, anchor, blend_group, stats, **kwargs):
             if not raised_for:
                 raised_for.append(anchor.event_id)
                 raise RuntimeError("simulated retirement failure")
-            return await real(session, anchor, blend_group, stats)
+            return await real(session, anchor, blend_group, stats, **kwargs)
 
         monkeypatch.setattr(pmm, "_retire_unbacked_blend_source", _raise_once)
 

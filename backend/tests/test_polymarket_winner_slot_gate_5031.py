@@ -57,6 +57,7 @@ match winner on the word alone (#5698). The dispatch stands; its specimens moved
 """
 
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 
@@ -121,6 +122,9 @@ class _Result:
     def scalars(self):
         return self
 
+    def first(self):
+        return self._rows[0] if self._rows else None
+
     def scalar_one_or_none(self):
         return self._scalar
 
@@ -134,6 +138,7 @@ class _FakeSession:
     def __init__(self, event_row, outcomes=()):
         self._event_row = event_row
         self._outcomes = list(outcomes)
+        self.current_refs = []
         self.updates = []
         self.added = []
         self.commits = 0
@@ -153,6 +158,18 @@ class _FakeSession:
             return _Result([], scalar=None)
         if "odds_snapshots" in text:
             return _Result([], scalar=None)
+        if "FROM futures_markets" in text:
+            return _Result(self.current_refs)
+        if "events" in text and "events.home_team_name" in text:
+            ref = self.current_refs[0] if self.current_refs else None
+            return _Result([SimpleNamespace(
+                id=self._event_row.id,
+                win_probability_sources=self._event_row.win_probability_sources,
+                home_team_name=ref.home_team_name if ref else HOME,
+                away_team_name=ref.away_team_name if ref else AWAY,
+                commence_time=ref.event_commence_time if ref else None,
+                completed_at=(NOW if ref and ref.event_has_result else None),
+            )])
         if "events" in text:
             return _Result([], scalar=self._event_row.win_probability_sources)
         raise AssertionError(f"unexpected statement: {text[:160]}")
@@ -526,6 +543,7 @@ class TestTheWriterRetiresALegNoWinnerMarketCanBack:
             },
         )
         session = _FakeSession(event_row)
+        session.current_refs = [_ref(59852281, f"{HOME} vs. {AWAY} - Exact Score"), _ref(59852290, f"{HOME} vs. {AWAY} - First Team to Score")]
         stats = {"snapshots_written": 0, "snapshots_deduped": 0, "errors": []}
 
         spoke = await _phase2_persist_group_reading(
@@ -559,6 +577,7 @@ class TestTheWriterRetiresALegNoWinnerMarketCanBack:
             15301219, {"polymarket": {"value": 0.42, "updated_at": "x"}}
         )
         session = _FakeSession(event_row)
+        session.current_refs = [_ref(59852281, f"{HOME} vs. {AWAY} - Exact Score"), _ref(59852299, f"{HOME} vs. {AWAY}")]
         stats = {"snapshots_written": 0, "snapshots_deduped": 0, "errors": []}
 
         spoke = await _phase2_persist_group_reading(
@@ -588,7 +607,7 @@ class TestTheWriterRetiresALegNoWinnerMarketCanBack:
         )
 
         assert session.updates == []
-        assert session.commits == 0
+        assert session.commits == 1  # even a no-op promptly releases the row lock
 
     async def test_a_group_that_speaks_never_reaches_the_retirement(self):
         """The winner child speaks, so the leg is UPDATED rather than dropped."""

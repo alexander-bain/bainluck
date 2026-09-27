@@ -52,6 +52,8 @@ cannot be shown honestly, leave the space empty".
 
 from datetime import datetime, timedelta, timezone
 
+from types import SimpleNamespace
+
 import pytest
 
 from app.models.models import Event
@@ -111,6 +113,9 @@ class _Result:
     def scalars(self):
         return self
 
+    def first(self):
+        return self._rows[0] if self._rows else None
+
     def scalar_one_or_none(self):
         return self._scalar
 
@@ -121,8 +126,10 @@ class _Result:
 class _FakeSession:
     """Serves the SELECT the retirement issues and records its UPDATEs."""
 
-    def __init__(self, wps):
+    def __init__(self, wps, *, current_group=None, home=HOME, away=AWAY):
         self.wps = wps
+        self.current_group = current_group if current_group is not None else [_draw_only_container()]
+        self.home, self.away = home, away
         self.updates = []
         self.commits = 0
 
@@ -131,8 +138,24 @@ class _FakeSession:
         if text.lstrip().upper().startswith("UPDATE"):
             self.updates.append(stmt)
             return _Result([])
+        if "FROM futures_markets" in text:
+            return _Result([SimpleNamespace(
+                id=g.market.id, source=g.market.source, external_id=g.market.external_id,
+                name=g.market.name, status=getattr(g.market, "status", None),
+            ) for g in self.current_group])
+        if "FROM futures_outcomes" in text:
+            rows = []
+            for group in self.current_group:
+                for outcome in group.outcomes:
+                    outcome.market_id = group.market.id
+                    rows.append(outcome)
+            return _Result(rows)
         if "events" in text:
-            return _Result([], scalar=self.wps)
+            return _Result([SimpleNamespace(
+                id=EVENT_ID, win_probability_sources=self.wps,
+                home_team_name=self.home, away_team_name=self.away,
+                commence_time=NOW + timedelta(hours=15), completed_at=None,
+            )])
         raise AssertionError(f"unexpected statement: {text[:160]}")
 
     async def commit(self):
@@ -460,7 +483,9 @@ class TestTheRetirementFires:
 
     async def test_a_settled_book_still_counts_as_a_settled_book(self):
         """The branch this arm now shares with #5548 must not steal its counter."""
-        session = _FakeSession(_wps(polymarket=0.069))
+        session = _FakeSession(_wps(polymarket=0.069),
+            current_group=[_entry(60258512, "San Diego Padres vs. San Francisco Giants", [(1, "San Diego Padres", 1.0)])],
+            home="San Francisco Giants", away="San Diego Padres")
         stats = {"funnel": {}}
         await _retire_unbacked_blend_source(
             session, _ref(60258512, "San Diego Padres vs. San Francisco Giants",
@@ -473,7 +498,9 @@ class TestTheRetirementFires:
 
     async def test_a_healthy_board_is_not_retired(self):
         """The whole point of the controls, at the call site."""
-        session = _FakeSession(_wps(polymarket=0.285))
+        session = _FakeSession(_wps(polymarket=0.285),
+            current_group=[_entry(60347030, "ACF Fiorentina vs. SSC Napoli", [(1, "SSC Napoli", 0.425), (2, "ACF Fiorentina", 0.285), (3, "Draw (ACF Fiorentina vs. SSC Napoli)", 0.285)])],
+            home="ACF Fiorentina", away="SSC Napoli")
         stats = {"funnel": {}}
         retired = await _retire_unbacked_blend_source(
             session, _ref(60347030, "ACF Fiorentina vs. SSC Napoli",
