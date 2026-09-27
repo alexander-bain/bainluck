@@ -178,3 +178,31 @@ class TestTheFoldServesTonightsGameOnceWithItsPrice:
                       sources={"betting": {"value": 0.5}})
         fold = fold_twin_events([galaxy, espn])
         assert fold.dropped_ids == []
+
+
+class TestSearchingLafcReachesTheRowWithThePrice:
+    """The half #8969 could not reach. After it went live (2026-09-27 00:16Z) the MLS
+    page served FC Dallas v LAFC once at 43%, but `/search?q=lafc` still printed "No
+    price yet": the fold can only join rows that are both on the page, and "lafc"
+    retrieved only ESPN's row. The priced row is named `Los Angeles FC`."""
+
+    def test_the_query_term_expands_to_the_other_name(self):
+        from app.utils.name_normalization import expand_search_terms
+
+        assert expand_search_terms(["lafc"]) == [("lafc", "los angeles fc")]
+        assert expand_search_terms(["LAFC"]) == [("LAFC", "los angeles fc")]
+
+    def test_the_event_predicate_asks_for_both_spellings(self):
+        from app.routes.events import _event_name_match
+        from app.utils.name_normalization import expand_search_terms
+
+        term, expansion = expand_search_terms(["lafc"])[0]
+        patterns = set(_event_name_match(term, expansion).compile().params.values())
+        assert {"%lafc%", "%los angeles fc%"} <= patterns
+
+    def test_the_city_abbreviation_keeps_its_own_expansion(self):
+        """Control: the club entry fills an empty slot and displaces nothing."""
+        from app.utils.name_normalization import expand_search_terms
+
+        assert expand_search_terms(["la"]) == [("la", "los angeles")]
+        assert expand_search_terms(["galaxy"]) == [("galaxy", None)]

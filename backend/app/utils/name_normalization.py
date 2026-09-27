@@ -197,6 +197,11 @@ def expand_search_terms(terms: list[str]) -> list[tuple[str, str | None]]:
         expansion = (
             _CITY_ABBREVIATIONS.get(lower)
             or _GENERAL_ABBREVIATIONS.get(lower)
+            # #3391: `lafc` also asks for `los angeles fc`, so the Odds row that
+            # holds an LAFC game's price is on the page beside ESPN's row and the
+            # serve fold can join them. Before this, "lafc" retrieved only the
+            # ESPN row and printed "No price yet" beside a priced game.
+            or _CLUB_NAME_ALIASES.get(lower)
             or DIACRITIC_SEARCH_FOLDS.get(lower)
         )
         result.append((term, expansion))
