@@ -557,6 +557,7 @@ def _orient_one_market(
     """
     from app.utils.live_blend import (
         admissible_as_blend_speaker,
+        away_leg_complement_is_not_home,
         is_game_winner_market,
     )
     from app.utils.prediction_market_matching import (
@@ -615,6 +616,19 @@ def _orient_one_market(
         return None
 
     outcome, yes_is_home = result
+    # THE LIVE READING'S DRAW CLAUSE, ASKED HERE TOO (#9066). On a 3-way field
+    # (home / Tie / away) `find_moneyline_outcome` falls to the away leg
+    # whenever the home leg is unpriced, and `orient_points` then stores
+    # `1 - P(away)` = P(home) + P(draw) as the home line. A later run, home leg
+    # priced, orients on home, and `_existing_minutes` only dedups minutes, so
+    # the two series interleave: Croatia vs England drew 23% <-> 80% every half
+    # hour. The live blend already declines this (#8814); declining here too is
+    # "whatever the hero refuses, the curve refuses" — the next run, home leg
+    # priced, draws the true series.
+    if away_leg_complement_is_not_home(
+        ordered, outcome, yes_is_home, home_team_name, away_team_name
+    ):
+        return None
     # Unwrap the proxy so callers get the real ORM row back — they stamp
     # `outcome.external_id` into the candlestick request, and a wrapper that
     # leaked would fetch a ticker nobody has.
