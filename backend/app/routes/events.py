@@ -11991,12 +11991,22 @@ async def typeahead_search(
     for event in _ta_events[:_EVENT_POOL_SIZE]:
         home = event.home_team
         away = event.away_team
+        _ta_served_status = served_event_status(
+            event.status, event.commence_time, datetime.now(timezone.utc)
+        )
         event_pool.append({
             "type": "event",
             "text": f"{event.away_team_name} at {event.home_team_name}",
             "event_id": event.id,
-            "status": served_event_status(
-                event.status, event.commence_time, datetime.now(timezone.utc)
+            "status": _ta_served_status,
+            # #9226: a finished row carries its result. This pool is the only
+            # one that can hold a finished row (the fuzzy pool below selects
+            # live/scheduled only). `getattr`: the route's session-double
+            # rigs build rows without score columns.
+            **_typeahead_final_score(
+                _ta_served_status,
+                getattr(event, "home_score", None),
+                getattr(event, "away_score", None),
             ),
             "sport_key": event.sport.key if event.sport else None,
             "commence_time": event.commence_time.isoformat() if event.commence_time else None,
@@ -33084,6 +33094,23 @@ def _place_todays_finals(rows: list, finals: list, is_next) -> list:
     start = min(at, max(0, _EVENT_POOL_SIZE - 1 - len(finals)))
     rest = [*rows[:at], *rows[at + 1:]]
     return [*rest[:start], rows[at], *finals, *rest[start:]]
+
+
+def _typeahead_final_score(served_status: str | None, home_score, away_score) -> dict:
+    """#9226: the result a finished dropdown row prints, keyed as the row stores it.
+
+    Once #9211 offered today's final, the dropdown drew it as a bare "Final": the
+    payload carried no score, so a reader learned the game was over but not who
+    won. Only a FINISHED row gets the keys, and only when both sides were
+    reported. A live score in a cached dropdown would go stale between
+    keystrokes. A half score is not a result, and printing one would put a
+    number where the product has none. `0` is a score (`0-0`); `None` is not.
+    """
+    if served_status not in ("completed", "closed"):
+        return {}
+    if home_score is None or away_score is None:
+        return {}
+    return {"home_score": home_score, "away_score": away_score}
 
 
 #: #8428: how many previous meetings a MATCHUP query adds beside the next one.

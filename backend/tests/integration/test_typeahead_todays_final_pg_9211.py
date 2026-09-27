@@ -126,7 +126,9 @@ async def _seed(session):
         # The doubleheader: game 1 finished earlier today, game 2 is being played.
         _game(mlb, "Tampa Bay Rays", "Boston Red Sox", earlier_today - timedelta(minutes=1),
               "completed", home_score=3, away_score=2),
-        _game(mlb, "New York Yankees", "Boston Red Sox", now - timedelta(minutes=30), "live"),
+        # #9226: scored, so the rule that a live row carries no score testifies.
+        _game(mlb, "New York Yankees", "Boston Red Sox", now - timedelta(minutes=30), "live",
+              home_score=1, away_score=0),
     ])
     await session.commit()
 
