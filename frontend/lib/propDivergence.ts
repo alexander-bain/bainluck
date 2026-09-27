@@ -22,6 +22,11 @@ import { parsePlayerName } from "./playerPropsGrouping";
 import type { PlayerPropRow } from "./playerPropsGrouping";
 import type { PropGrade } from "./propGrade";
 import { readOverSideResolution } from "./propResolution";
+import {
+  isComplementPair,
+  renderedOutcomeRowPercents,
+  renderedPercent,
+} from "./renderedPercent";
 import { isPregameStatus, isSettledStatus } from "./settledQuote";
 
 /**
@@ -293,7 +298,19 @@ export const PROP_STRUCTURAL_CERTAINTY = 0.44;
  * rounding `PropTravelBar` prints with — one function, two callers.
  */
 export function railPercentPoints(p: number): number {
-  return Math.round(p * 100);
+  // #9003: the contract's rounding, the one THE DIVERGENCE prints with.
+  // `Math.round(p * 100)` disagreed with it on 0.145 / 0.285 / 0.565 / 0.575.
+  return renderedPercent(p) ?? Math.round(p * 100);
+}
+
+/** The whole percent this row PRINTS for where it opened (#9003). */
+export function printedMarkPoints(row: DivergenceRow): number {
+  return row.printedMark ?? railPercentPoints(row.pregameMark);
+}
+
+/** The whole percent this row PRINTS for where it is now (#9003). */
+export function printedCurrentPoints(row: DivergenceRow): number {
+  return row.printedCurrent ?? railPercentPoints(row.current);
 }
 
 function printsAsMoved(from: number, to: number): boolean {
@@ -537,6 +554,14 @@ export interface DivergenceRow {
   current: number;
   /** |current - pregameMark|, 0..1. */
   travel: number;
+  /**
+   * #9003: the two whole percents the row prints, when they are not simply
+   * `railPercentPoints` of the raw ends — i.e. when the question's Over and Under
+   * legs are complements and the pair is rounded once, as THE DIVERGENCE rounds
+   * it. Read through `printedMarkPoints` / `printedCurrentPoints`.
+   */
+  printedMark?: number;
+  printedCurrent?: number;
   /** Which way it travelled. `flat` when both ends print the same number (#8754). */
   direction: "over" | "under" | "flat";
   /**
@@ -915,7 +940,7 @@ function possessive(player: string, matchup?: string): string {
 }
 
 function pct(p: number): string {
-  return `${Math.round(p * 100)}%`;
+  return `${railPercentPoints(p)}%`;
 }
 
 /**
@@ -1220,16 +1245,42 @@ function withSentence(row: DivergenceRow, settled: boolean): DivergenceRow {
   if (!row.surprising) return row;
   return {
     ...row,
+    // #9003: the sentence sits on top of the bar and quotes the bar's own
+    // printed ends, so a paired row cannot say "opened at 9%" over "opened 8%".
     sentence: divergenceSentence(
       row.player,
       row.label,
-      row.pregameMark,
-      row.current,
+      printedMarkPoints(row) / 100,
+      printedCurrentPoints(row) / 100,
       settled,
       row.resolution,
       row.matchup,
     ),
   };
+}
+
+/**
+ * #9003: the Over leg's printed mark and current when a question's first Over
+ * leg and first Under leg are complements at BOTH ends — the gate
+ * `divergencePairPercents` uses — else null. An Under leg arrives on the over
+ * axis (`_inverted`), so its own price is `1 - x`.
+ */
+function legPairPoints(
+  questionLegs: readonly PlayerPropRow[],
+): { mark: number; current: number } | null {
+  type Leg = PlayerPropRow & { _inverted?: boolean; pregame_mark?: number | null };
+  const all = questionLegs as readonly Leg[];
+  const over = all.find((leg) => !leg._inverted);
+  const under = all.find((leg) => leg._inverted);
+  if (!over || !under) return null;
+  const own = (x: number | null | undefined) => (isFiniteNumber(x) ? 1 - x : null);
+  const currents = [over.over_probability, own(under.over_probability)];
+  const marks = [over.pregame_mark, own(under.pregame_mark)];
+  if (!isComplementPair(currents) || !isComplementPair(marks)) return null;
+  const [current] = renderedOutcomeRowPercents(currents);
+  const [mark] = renderedOutcomeRowPercents(marks);
+  if (current == null || mark == null) return null;
+  return { mark, current };
 }
 
 interface BuiltCandidates {
@@ -1487,6 +1538,25 @@ function buildCandidates(input: DivergenceInput): BuiltCandidates {
       noteDrop("conflicting_legs", (questionLegs[0]?.market_name || "").trim());
       candidates.splice(i, 1);
     }
+  }
+
+  // #9003 — THE ROW PRINTS THE PAIR THE WAY THE PAGE PRINTS IT.
+  //
+  // THE DIVERGENCE rounds a question's Over and Under legs once, as a pair,
+  // when both ends are complements (`divergencePairPercents`, #5240). The rail
+  // rounded the Over number alone, so a half-cent quote split them: production
+  // 15318878, 2026-09-27 01:26Z, Jordan Walker 1+ HR served 0.085 → 0.095 and
+  // printed "opened 9% · now 10%" on the rail, "Over 8% → 9%" below it. Same
+  // gate, same helper, so the two cannot disagree; `direction` follows the
+  // printed ends (#8754).
+  for (const row of candidates) {
+    if (!builtFromDirectLeg.has(row.key)) continue;
+    const pair = legPairPoints(legs.get(row.key) ?? []);
+    if (!pair) continue;
+    row.printedMark = pair.mark;
+    row.printedCurrent = pair.current;
+    row.direction =
+      pair.mark === pair.current ? "flat" : row.current > row.pregameMark ? "over" : "under";
   }
 
   // PREGAME: TWO SIGNALS, NOT ONE — AND THE FIRST DRAFT OF THIS GOT IT WRONG.

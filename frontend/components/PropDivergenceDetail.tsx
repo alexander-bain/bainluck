@@ -29,7 +29,8 @@ import {
 import type { PlayerPropRow } from "@/lib/playerPropsGrouping";
 import { SETTLED_NO_GRADE_LABEL } from "@/lib/propGrade";
 import PropTravelBar, {
-  pct,
+  markPct,
+  nowPct,
   resolutionLabel,
   signedTravelPoints,
   surprisePoints,
@@ -93,10 +94,10 @@ function Row({ row, settled }: { row: DivergenceRow; settled: boolean }) {
               // row (UX-P107). Labelled with its referent, it is not the
               // unlabelled column Alex ruled out — a screen reader hears
               // "93 pts from the mark", never a bare number in a grey column.
-              `Script said ${pct(row.pregameMark)}; it ${
+              `Script said ${markPct(row)}; it ${
                 row.resolution === 1 ? "hit" : "missed"
               }${points ? ` — ${points} from the mark` : ""}.`
-            : `Script said ${pct(row.pregameMark)}, now ${pct(row.current)}.`}
+            : `Script said ${markPct(row)}, now ${nowPct(row)}.`}
         </p>
       )}
     </div>
@@ -192,7 +193,7 @@ export default function PropDivergenceDetail({ playerProps, status }: Props) {
               >
                 <span>{row.label}</span>
                 <span className="tabular-nums shrink-0">
-                  marked {pct(row.pregameMark)}
+                  marked {markPct(row)}
                 </span>
               </li>
             ))}

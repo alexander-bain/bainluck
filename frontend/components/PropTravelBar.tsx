@@ -25,7 +25,11 @@
  * two halves of one screen disagree about whether a game is over.
  */
 
-import { railPercentPoints } from "@/lib/propDivergence";
+import {
+  printedCurrentPoints,
+  printedMarkPoints,
+  railPercentPoints,
+} from "@/lib/propDivergence";
 import type { DivergenceRow } from "@/lib/propDivergence";
 import { propVerdictLabel, SETTLED_NO_GRADE_LABEL } from "@/lib/propGrade";
 
@@ -33,6 +37,16 @@ import { propVerdictLabel, SETTLED_NO_GRADE_LABEL } from "@/lib/propGrade";
 // printed ends cannot disagree.
 export function pct(p: number): string {
   return `${railPercentPoints(p)}%`;
+}
+
+/** #9003: where the row opened, as the row prints it (pair-rounded when paired). */
+export function markPct(row: DivergenceRow): string {
+  return `${printedMarkPoints(row)}%`;
+}
+
+/** #9003: where the row is now, as the row prints it (pair-rounded when paired). */
+export function nowPct(row: DivergenceRow): string {
+  return `${printedCurrentPoints(row)}%`;
 }
 
 /**
@@ -50,12 +64,23 @@ export function pct(p: number): string {
  * before the third vocabulary exists rather than after.
  */
 export function chanceLabel(overProbability: number): string {
-  return `${pct(overProbability)} chance`;
+  return chancePhrase(pct(overProbability));
+}
+
+/** The same phrase, over the number the row prints (#9003). */
+export function rowChanceLabel(row: DivergenceRow): string {
+  return chancePhrase(nowPct(row));
+}
+
+function chancePhrase(printed: string): string {
+  return `${printed} chance`;
 }
 
 /** Signed travel in points, the mock's "−40" pill. In-game only. */
 export function signedTravelPoints(row: DivergenceRow): string {
-  const pts = Math.round((row.current - row.pregameMark) * 100);
+  // #9003: the difference of the printed ends (#2951's rule), so the pill
+  // cannot disagree with the two numbers it sits between.
+  const pts = printedCurrentPoints(row) - printedMarkPoints(row);
   if (pts === 0) return "0";
   return pts > 0 ? `+${pts}` : `${pts}`;
 }
@@ -113,7 +138,7 @@ function ResolvedMark({ row }: { row: DivergenceRow }) {
   if (label == null) {
     return (
       <div className="mt-1.5 flex items-baseline justify-between gap-3 text-[11px]">
-        <span className="text-text-muted">marked {pct(row.pregameMark)}</span>
+        <span className="text-text-muted">marked {markPct(row)}</span>
         <span className="text-text-muted">{SETTLED_NO_GRADE_LABEL}</span>
       </div>
     );
@@ -125,12 +150,12 @@ function ResolvedMark({ row }: { row: DivergenceRow }) {
     <div
       className="mt-1.5 flex items-baseline justify-between gap-3 text-[11px] tabular-nums"
       role="img"
-      aria-label={`${row.label}: marked ${pct(row.pregameMark)}, ${
+      aria-label={`${row.label}: marked ${markPct(row)}, ${
         row.resolution === 1 ? "hit" : "missed"
       }`}
     >
       <span className="text-text-muted">
-        marked {pct(row.pregameMark)} <span aria-hidden="true">&rarr;</span>{" "}
+        marked {markPct(row)} <span aria-hidden="true">&rarr;</span>{" "}
         <span className={`font-semibold ${tone}`}>{label}</span>
       </span>
       {/* UX-P107: the unlabelled "93 pts" that used to sit here is GONE. See
@@ -219,7 +244,7 @@ function ScriptMark({ row }: { row: DivergenceRow }) {
         // ONE DIRECTION HERE TOO, and it is the same string the sighted reader
         // gets. The aria-label used to be the second place the direction was
         // spelled out in words, so it was the second place the flip could hide.
-        aria-label={`${row.label}: ${chanceLabel(row.current)}`}
+        aria-label={`${row.label}: ${rowChanceLabel(row)}`}
       >
         {/* The coin flip. Every claim on the page is measured from here. */}
         <div className="absolute left-1/2 -top-0.5 h-3 w-px -translate-x-1/2 bg-text-muted" />
@@ -244,7 +269,7 @@ function ScriptMark({ row }: { row: DivergenceRow }) {
           judgement about the number, which is the verdict problem again. */}
       <div className="mt-1 flex justify-end text-[11px] tabular-nums">
         <span className="text-text-secondary font-medium">
-          {chanceLabel(row.current)}
+          {rowChanceLabel(row)}
         </span>
       </div>
     </div>
@@ -264,9 +289,9 @@ export default function PropTravelBar({ row }: { row: DivergenceRow }) {
   // `<`: when the two coincide there is no travel to mis-describe and no reason
   // to disturb the reading order, so "opened" keeps the left.
   const currentIsLeft = row.current < row.pregameMark;
-  const openedCaption = <span>opened {pct(row.pregameMark)}</span>;
+  const openedCaption = <span>opened {markPct(row)}</span>;
   const nowCaption = (
-    <span className="text-text-secondary font-medium">now {pct(row.current)}</span>
+    <span className="text-text-secondary font-medium">now {nowPct(row)}</span>
   );
 
   // Direction by colour, design-system tokens only (the site is light-mode
@@ -289,7 +314,7 @@ export default function PropTravelBar({ row }: { row: DivergenceRow }) {
       <div
         className="relative h-2 rounded-full bg-surface-border/40"
         role="img"
-        aria-label={`${row.label}: opened at ${pct(row.pregameMark)}, now ${pct(row.current)}`}
+        aria-label={`${row.label}: opened at ${markPct(row)}, now ${nowPct(row)}`}
       >
         {/* the travel */}
         <div
