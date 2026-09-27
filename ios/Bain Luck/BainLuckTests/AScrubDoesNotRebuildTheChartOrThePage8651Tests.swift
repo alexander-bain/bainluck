@@ -112,10 +112,10 @@ final class AScrubDoesNotRebuildTheChartOrThePage8651Tests: XCTestCase {
         XCTAssertFalse(page.contains("selectedPoint:"), "the page hands the readout a scrubbed moment again")
 
         let chart = try code("Bain Luck/Components/OddsChartView.swift")
-        XCTAssertTrue(chart.contains("@StateprivatevarselectedPlayPoint:GamePlayPoint?"),
+        XCTAssertTrue(chart.contains("@Stateprivatevarselection:OddsChartSelection"),
                       "the chart no longer owns the scrubbed moment")
         XCTAssertFalse(chart.contains("@BindingvarselectedPlayPoint"), "the scrubbed moment is bound to a parent again")
-        XCTAssertEqual(chart.components(separatedBy: "ifletreadout{readout.resting(on:Self.restingPlayPoint(in:dataPoints,sportKey:sportKey)).showing(selectedPlayPoint)}").count - 1, 2,
+        XCTAssertEqual(chart.components(separatedBy: "ifletreadout{OddsChartSelectionReadout(selection:selection,readout:readout,dataPoints:dataPoints,sportKey:sportKey)}").count - 1, 2,
                        "both places the chart draws the readout (inline + fullscreen) must hand it the scrub")
     }
 
