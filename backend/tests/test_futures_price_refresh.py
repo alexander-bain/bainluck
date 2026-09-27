@@ -220,6 +220,9 @@ class TestSelectionPredicate:
             # rows a priced condition is written onto, so a liveness clause that
             # skipped it would re-price a twin every other asker has retired.
             "task.CONDITION_TWIN_MARKETS_SQL": fpr.CONDITION_TWIN_MARKETS_SQL,
+            # #9220: the twelfth. The Series card arm is an identity arm like
+            # in-play, so the same 45-minute re-price of a retired market.
+            "task._SERIES_CARD_CANDIDATE_SQL": fpr._SERIES_CARD_CANDIDATE_SQL.text,
         }
         for name, sql in askers.items():
             assert shared in _normalise(sql), f"{name} does not compose LIVE_MARKET_SQL"
@@ -262,7 +265,10 @@ class TestSelectionPredicate:
         #
         # 10 -> 11 for #4983's condition-twin lookup
         # (`CONDITION_TWIN_MARKETS_SQL`), enrolled above before this moved.
-        enrolled = 11
+        #
+        # 11 -> 12 for #9220's Series card arm (`_SERIES_CARD_CANDIDATE_SQL`),
+        # enrolled above before this moved.
+        enrolled = 12
         # SITES THAT ARE NOT ASKERS, ACCOUNTED SEPARATELY RATHER THAN FOLDED IN.
         # An asker is a statement that selects live markets; the dictionary
         # enrols those by name. Two interpolation sites are neither:
@@ -303,12 +309,13 @@ class TestSelectionPredicate:
         # interpolation and the module carries the result. Assert on the source:
         # there is no module-level constant to read for this one.
         assert "{LIVE_MARKET_SQL}" in _MODULE_SRC
-        assert _MODULE_SRC.count("{LIVE_MARKET_SQL}") == 8, (
+        assert _MODULE_SRC.count("{LIVE_MARKET_SQL}") == 9, (
             "all THREE pool branches (#5781 added liquid_pool), the by-id "
             "selector, the reachability census, #4253's reach arm "
             "(_KALSHI_UNREACHED_FROZEN_SQL), #8718's in-play arm "
-            "(_IN_PLAY_CANDIDATE_SQL) and #4983's condition-twin lookup "
-            "(CONDITION_TWIN_MARKETS_SQL)"
+            "(_IN_PLAY_CANDIDATE_SQL), #4983's condition-twin lookup "
+            "(CONDITION_TWIN_MARKETS_SQL) and #9220's Series card arm "
+            "(_SERIES_CARD_CANDIDATE_SQL)"
         )
         # #3315: the census now composes the whole ELIGIBLE POOL, not just the
         # liveness clause. A census that kept the liveness bounds but not the
@@ -2149,3 +2156,163 @@ class TestTheRunPricesConditionTwins:
         assert harness.written_market_ids == [112996]
         assert stats["twin_markets_priced"] == 0
         assert stats["twin_snapshots_written"] == 0
+
+
+# --- #9220: the Series card's playoff-series markets are re-priced on the short clock ---
+
+
+class TestSeriesCardMarketsAreRepricedOnTheShortClock:
+    """#9220. `/events/15318132` (Liberty 91-75 Lynx, Game 1) printed Minnesota
+    76% to win the series (Kalshi 45%) and 44% to sweep under a New York win:
+    every `KXWNBASERIES*` row last wrote 2026-09-26 05:02Z. They are tier 5,
+    volume 8-1,519, no liquidity and no `event_id`, so no arm could see them and
+    the discovery poll that did stopped reaching them.
+    """
+
+    #: Every open family the page's "Pass 3" served on 2026-09-27, verbatim.
+    PRODUCTION_SERIES_TICKERS = (
+        "KXWNBASERIES-26NYMINR1",
+        "KXWNBASERIESGAMES-26NYMINR1",
+        "KXWNBASERIESSCORE-26NYMINR1",
+        "KXMLBSERIES-26BOSNYYWC",
+        "KXMLBSERIESGAMES-26CHCSDWC",
+        "KXMLBSERIESSCORE-26BOSNYYWC",
+        # Named before their playoffs so round one does not repeat this.
+        "KXNBASERIES-26MINSASR2",
+        "KXNBASERIESGAMES-26MINSASR2",
+        "KXNHLSERIESSCORE-26EDMFLAR4",
+    )
+
+    #: Open Kalshi rows whose NAME says "series" on the same day, and which are
+    #: not a game's series: the family must not reach them.
+    NOT_A_PLAYOFF_SERIES = (
+        "KXTOPSERIESNFLX-27APR25",
+        "KXNASCARCUPSERIES-26",
+        "KXAISTREAMSERIES-27",
+        "KXMLB-26",  # the World Series WINNER, a championship
+        "KXWNBAGAME-26SEP29MINNY",
+        "KXWNBAMATCHUP-26FIN",
+        "KXTEAMSINWS-26",
+        "XKXWNBASERIES-26NYMINR1",
+        # Hypothetical, and the reason the family ends on the dash: a series-MVP
+        # or series-leader family would share the whole prefix.
+        "KXNBASERIESMVP-26WCF",
+    )
+
+    def _sql(self) -> str:
+        return _normalise(fpr._SERIES_CARD_CANDIDATE_SQL.text)
+
+    def test_the_family_selects_every_playoff_series_and_nothing_else(self):
+        import re
+
+        family = re.compile(fpr.SERIES_CARD_TICKER_RE)
+        missed = [t for t in self.PRODUCTION_SERIES_TICKERS if not family.search(t)]
+        leaked = [t for t in self.NOT_A_PLAYOFF_SERIES if family.search(t)]
+        assert missed == [] and leaked == [], (missed, leaked)
+
+    def test_the_arm_is_kalshi_only_on_the_shared_liveness_and_minute_clock(self):
+        from app.utils.futures_liveness import LIVE_MARKET_SQL
+
+        sql = self._sql()
+        assert _normalise(LIVE_MARKET_SQL) in sql
+        assert "fm.source = 'kalshi'" in sql
+        assert "fm.external_id ~ :series_ticker_re" in sql
+        # The identity arms' MINUTE clock, not the class arm's hours.
+        assert "make_interval(mins => :stale_minutes)" in sql
+        assert "stale_hours" not in sql
+        assert "limit :series_card_limit" in sql
+        # No value test: failing every one of them is why this arm exists.
+        assert ":volume_floor" not in sql and "market_tier" not in sql
+
+    def test_the_ceiling_is_above_a_full_first_round_and_below_the_budget(self):
+        # NBA + NHL first rounds together: 16 series x 3 families.
+        assert 16 * 3 < fpr.SERIES_CARD_LIMIT < fpr.KALSHI_MARKET_BUDGET
+
+    @pytest.mark.asyncio
+    async def test_the_scan_binds_every_parameter_on_the_in_play_clock_and_tags_the_arm(self):
+        seen = {}
+
+        class _S:
+            async def execute(self, statement, params=None):
+                seen["sql"] = str(statement)
+                seen["params"] = params
+                return _FakeResult(
+                    [(62383749, "kalshi", "KXWNBASERIES-26NYMINR1", 1177, None, None)]
+                )
+
+        out = await fpr._scan_series_card_candidates(
+            _S(), stale_minutes=fpr.IN_PLAY_REFRESH_MINUTES
+        )
+        assert seen["params"] == {
+            "stale_minutes": fpr.IN_PLAY_REFRESH_MINUTES,
+            "series_ticker_re": fpr.SERIES_CARD_TICKER_RE,
+            "series_card_limit": fpr.SERIES_CARD_LIMIT,
+        }
+        assert [m["id"] for m in out] == [62383749]
+        assert out[0]["arm"] == fpr._ARM_SERIES_CARD
+        assert out[0]["priority"] is True
+        assert out[0]["registered"] is False and out[0]["served"] is False
+
+    def test_a_series_row_is_taken_ahead_of_an_exhausted_class_budget(self):
+        series = fpr._rows_to_markets(
+            [(62383749, "kalshi", "KXWNBASERIES-26NYMINR1", 1177, None, None)],
+            arm=fpr._ARM_SERIES_CARD,
+        )
+        klass = fpr._rows_to_markets(
+            [(1, "kalshi", "KXBIG", 9_000_000, None, None)], arm=fpr._ARM_CLASS
+        )
+        taken = fpr._take_for_source(series + klass, "kalshi", budget=0)
+        assert [m["id"] for m in taken] == [62383749]
+
+
+class _SeriesCardHarness(_InPlayHarness):
+    """The real entry point with one Series card row and NOTHING on any other
+    arm — the production shape: no class, served, registered or in-play arm
+    returned `KXWNBASERIES-26NYMINR1`."""
+
+    SERIES_ROW = (62383749, "kalshi", "KXWNBASERIES-26NYMINR1", 1177, None, None)
+
+    def __init__(self, *, signal):
+        super().__init__(signal=signal)
+        self.class_rows = []
+
+    class _Session(_InPlayHarness._Session):
+        async def execute(self, statement, params=None):
+            sql = str(statement)
+            if "series_ticker_re" in sql:
+                return _RunHarness._Result([_SeriesCardHarness.SERIES_ROW])
+            if "in_play_hours" in sql:
+                return _RunHarness._Result([])
+            return await super().execute(statement, params)
+
+
+class TestTheRunRepricesTheSeriesCard:
+    @pytest.mark.asyncio
+    async def test_counted_attempted_fetched_and_marked_on_the_short_ttl(
+        self, monkeypatch
+    ):
+        from app.utils.feed_served_markets import SERVED_EMPTY
+
+        signal = type(
+            "Sig",
+            (),
+            {
+                "ids": [],
+                "state": SERVED_EMPTY,
+                "green_allowed": True,
+                "shapes": 0,
+                "stale_shapes": 0,
+                "unreadable_shapes": 0,
+            },
+        )()
+        h = _SeriesCardHarness(signal=signal)
+        stats = await h.run(monkeypatch)
+
+        assert stats["series_card_candidates"] == 1
+        assert stats["candidates"] == 1
+        assert stats["series_card_attempted"] == 1
+        assert stats["in_play_attempted"] == 0
+        assert h.kalshi_fetched == ["KXWNBASERIES-26NYMINR1"]
+        # The identity TTL, never the class 6h — otherwise the next five beats
+        # skip it and a series card goes back to printing the pre-game price.
+        assert h.marks.get((62383749,)) == fpr.IN_PLAY_REFRESH_MINUTES * 60
