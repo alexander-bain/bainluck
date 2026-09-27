@@ -148,6 +148,20 @@ interface EventHeroProbabilityPairProps {
    * for). Defaults false, so every existing caller keeps the string it has.
    */
   venueSettled?: boolean;
+  /**
+   * #8810 — has the match's AUTHORITY reported it stopped before it could be
+   * played (ESPN "Postponed")?
+   *
+   * The hero printed the last pre-kickoff reading — a big 22% on
+   * `/events/15315470` — over a pill that now reads "Postponed". A number
+   * between the crests is a live call, and nobody is playing this match. So
+   * the slot goes empty, exactly as it does for `venueSettled`: the pill
+   * carries the state, and the container stays for the probes that anchor on
+   * its `data-testid`. The pre-match journey stays in the chart below.
+   *
+   * Defaults false, so every existing caller renders exactly as before.
+   */
+  stopped?: boolean;
 }
 
 /** How long the count takes. Comfortably under the 5s minimum between updates. */
@@ -247,6 +261,7 @@ export default function EventHeroProbabilityPair({
   awayWithheld = false,
   started = false,
   venueSettled = false,
+  stopped = false,
 }: EventHeroProbabilityPairProps) {
   // #5696 — THE BIGGEST NUMBER ON THE SITE, PAINTED WHITE ON A WHITE CARD.
   //
@@ -301,6 +316,18 @@ export default function EventHeroProbabilityPair({
   // the shot showed "81" printed across the Chargers bolt. Trading an
   // off-screen crest for an overlapping numeral is not a fix.
   const noReading = homeProb === null && awayProb === null;
+
+  if (stopped) {
+    return (
+      <div
+        className="flex items-baseline"
+        data-testid="event-hero-probability"
+        data-probability=""
+        data-probability-source={probSourceLabel ?? ""}
+        data-stopped="true"
+      />
+    );
+  }
 
   if (noReading) {
     return (

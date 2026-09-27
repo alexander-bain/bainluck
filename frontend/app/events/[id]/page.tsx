@@ -113,7 +113,7 @@ import {
 import { isCloseGame, calculateMinutesToStart } from "@/lib/analytics";
 import { isPregameStatus } from "@/lib/settledQuote";
 import { derivePeriodBoundaries } from "@/lib/periodMarkers";
-import { formatLiveClockLabel } from "@/lib/gameTimeLabel";
+import { authorityStoppageLabel, formatLiveClockLabel } from "@/lib/gameTimeLabel";
 import {
   SUSPENDED_DESCRIPTION,
   VENUE_SETTLED_DESCRIPTION,
@@ -123,6 +123,8 @@ import {
   startBadgeLabel,
   suspendedSummary,
   venueSettledSummary,
+  authorityStoppageDescription,
+  scoresShowPlay,
 } from "@/lib/eventState";
 import type { ActiveChartPoint, TeamData } from "@/lib/types";
 import TeamNameLink from "@/components/TeamNameLink";
@@ -467,6 +469,16 @@ export default function EventPage({ params }: EventPageProps) {
   const venueSettledSentence = isSuspended
     ? venueSettledSummary(event?.venue_settled, event?.venue_settled_result)
     : null;
+
+  // #8810 — and the AUTHORITY'S word, when it reported the match stopped before
+  // it could be played ("Postponed"). Same shape as #6381: beside `isSuspended`,
+  // never inside it, so the flag's suppressions (countdown, projected final,
+  // age stamp) stay exactly as they are — a postponed match has nothing to
+  // forecast either. The venue's grade still outranks it.
+  const stoppageLabel =
+    isSuspended && !venueSettledSentence
+      ? authorityStoppageLabel(event?.espn?.period)
+      : null;
 
   // When the stream stops delivering, refetch ONCE. This does two jobs: it
   // settles the page on a number that came from the database rather than the
@@ -986,6 +998,12 @@ export default function EventPage({ params }: EventPageProps) {
   // own clocks; the event row remains the fallback beneath both.
   const bestHomeScore = lastChartPoint?.homeScore ?? event?.home_score ?? null;
   const bestAwayScore = lastChartPoint?.awayScore ?? event?.away_score ?? null;
+  // #8810 / #8960 — ESPN publishes 0-0 for both sides of a postponed fixture.
+  // Under a stoppage word with no side scored, the hero's two big zeros and the
+  // flat "actual score" line are a match nobody played, so neither is drawn.
+  // A stopped match WITH a score keeps it.
+  const heroScoreIsStoppageFiller =
+    stoppageLabel !== null && !scoresShowPlay(bestAwayScore, bestHomeScore);
 
   // ── #5720 — A RECORD IS NOT A SCORE, AND ON A STARTED GAME WITH NO SCORE A
   //    READER HAS NOTHING TO TELL THEM APART ────────────────────────────────
@@ -1661,7 +1679,7 @@ export default function EventPage({ params }: EventPageProps) {
   // #8617: and only a projection the chart will draw. Baseball's served
   // projection is the ±1.5 run line, which the chart withholds; counting it
   // here would open the card over nothing on a game with no played score.
-  const hasScoreDiffData = (effectivelyLive || isFinished || hasStarted) && !!historyData && (
+  const hasScoreDiffData = (effectivelyLive || isFinished || hasStarted) && !heroScoreIsStoppageFiller && !!historyData && (
     (sportsbookProjectionDrawable(event?.sport || undefined) && (historyData.history ?? []).some(
       (p) => p.projected_home_score != null && p.projected_away_score != null
     )) ||
@@ -1915,9 +1933,15 @@ export default function EventPage({ params }: EventPageProps) {
                  says why in a sentence below. */
               <span
                 className="text-[10px] font-semibold text-text-muted"
-                title={venueSettledSentence ? VENUE_SETTLED_DESCRIPTION : SUSPENDED_DESCRIPTION}
+                title={
+                  venueSettledSentence
+                    ? VENUE_SETTLED_DESCRIPTION
+                    : authorityStoppageDescription(stoppageLabel) ??
+                      SUSPENDED_DESCRIPTION
+                }
                 data-testid="event-hero-suspended"
                 data-venue-settled={venueSettledSentence ? "true" : undefined}
+                data-stoppage={stoppageLabel ?? undefined}
               >
                 {/* #6381 — the venue's own grade outranks our silence. When a
                     source that carried this match's markets has settled them, the
@@ -1931,7 +1955,14 @@ export default function EventPage({ params }: EventPageProps) {
                 {/* #2786 — HOME-AWAY, matching this page's own hero, which
                     stacks the home score above the away score. */}
                 {venueSettledSentence ??
-                  suspendedSummary(event?.away_score, event?.home_score, "home-away")}
+                  suspendedSummary(
+                    event?.away_score,
+                    event?.home_score,
+                    "home-away",
+                    // #8810 — "Postponed" when ESPN said so. Null on every
+                    // other row, which keeps the sentence it had.
+                    stoppageLabel,
+                  )}
               </span>
             ) : (
               <span className="flex items-center gap-1.5">
@@ -2076,7 +2107,7 @@ export default function EventPage({ params }: EventPageProps) {
                   {event.standings_context?.home || event.home_team_data?.record}
                 </span>
               )}
-              {(isLive || isFinished || hasStarted) && bestHomeScore !== null && (
+              {(isLive || isFinished || hasStarted) && bestHomeScore !== null && !heroScoreIsStoppageFiller && (
                 /* L2-163 Item 2a: once there's a real score it is the hero's
                    biggest element after the probability — Alex's 0-4 exhibit
                    rendered it nearly invisible at text-2xl. */
@@ -2158,6 +2189,11 @@ export default function EventPage({ params }: EventPageProps) {
                 // this slot cannot drift apart — the exact failure
                 // `venueSettledSummary` was centralised to end.
                 venueSettled={venueSettledSentence !== null}
+                // #8810 — a match its authority reported postponed has no price
+                // to print: the pill above says "Postponed", and a big 22%
+                // between the crests reads as a live call on a match nobody
+                // is playing. The slot goes empty, as it does for #6438.
+                stopped={stoppageLabel !== null}
               />
               )}
 
@@ -2418,7 +2454,7 @@ export default function EventPage({ params }: EventPageProps) {
                   {event.standings_context?.away || event.away_team_data?.record}
                 </span>
               )}
-              {(isLive || isFinished || hasStarted) && bestAwayScore !== null && (
+              {(isLive || isFinished || hasStarted) && bestAwayScore !== null && !heroScoreIsStoppageFiller && (
                 /* L2-163 Item 2a: score is the hero's biggest element after the
                    probability once the game is underway. */
                 <span className="text-4xl sm:text-[42px] font-black text-text-primary tabular-nums font-mono leading-none mt-1">

@@ -775,7 +775,10 @@ describe("anti-drift: one home for the live-clock trust rule", () => {
    * through. That is the difference between a delegate and a fifth copy.
    */
   const RAW_FIELD_RE = /espn\??\.\s*(?:period|game_clock)/;
-  const DELEGATES_RE = /trustedLiveClock|formatLiveClockLabel/;
+  // #8810 — `authorityStoppageLabel` lives in this same module and reads the
+  // period only for ESPN's stoppage words (Postponed/Canceled); a site passing
+  // the raw period to it is delegating, not deciding.
+  const DELEGATES_RE = /trustedLiveClock|formatLiveClockLabel|authorityStoppageLabel/;
 
   test.each(LIVE_CLOCK_SITES)("%s only reads the raw espn clock to delegate it", (rel) => {
     const offenders = read(rel)

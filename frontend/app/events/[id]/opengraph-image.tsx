@@ -17,6 +17,7 @@ import { resolveEventOutcome } from "@/lib/eventOutcome";
 import { prematchReading } from "@/lib/prematchReading";
 import { awayIsTheComplement } from "@/lib/drawPricedWinner";
 import { suspendedSummary, venueSettledSummary } from "@/lib/eventState";
+import { authorityStoppageLabel } from "@/lib/gameTimeLabel";
 
 export const runtime = "edge";
 export const alt = "Bain Luck game probability";
@@ -119,7 +120,7 @@ function eventStatus(event: EventDetailResponse): string {
   if (noReportedResult(event)) {
     return (
       venueSettledSummary(event.venue_settled, event.venue_settled_result) ??
-      suspendedSummary(event.away_score, event.home_score, "away-home")
+      suspendedSummary(event.away_score, event.home_score, "away-home", authorityStoppageLabel(event.espn?.period))
     );
   }
   if (event.status === "live") return "Live now";

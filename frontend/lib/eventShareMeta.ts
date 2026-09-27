@@ -88,9 +88,11 @@
 import type { SettledOutcome } from "./eventOutcome";
 import { awayIsTheComplement } from "./drawPricedWinner";
 import { liveClaimIsUnbacked } from "./eventLivePush";
+import { authorityStoppageLabel } from "./gameTimeLabel";
 import {
   hasNoReportedResult,
   SUSPENDED_DESCRIPTION,
+  authorityStoppageDescription,
   VENUE_SETTLED_DESCRIPTION,
   suspendedSummary,
   venueSettledSummary,
@@ -121,6 +123,9 @@ export interface EventShareMetaInput {
   venue_settled?: boolean;
   /** @see EventDetailResponse.venue_settled — #6381. */
   venue_settled_result?: string | null;
+  /** #8810 — ESPN's status detail; read ONLY for a stoppage word.
+   *  @see authorityStoppageLabel */
+  espn?: { period?: string | null } | null;
 }
 
 /**
@@ -598,14 +603,18 @@ export function buildEventShareCopy(
       event.venue_settled,
       event.venue_settled_result,
     );
+    const stoppage = authorityStoppageLabel(event.espn?.period);
     const summary =
       settledByVenue ??
-      suspendedSummary(event.away_score, event.home_score, "away-home");
+      suspendedSummary(event.away_score, event.home_score, "away-home", stoppage);
+    // #8810 — a match its authority reported postponed gets that sentence, not
+    // "no source has reported a result".
+    const description = settledByVenue
+      ? VENUE_SETTLED_DESCRIPTION
+      : authorityStoppageDescription(stoppage) ?? SUSPENDED_DESCRIPTION;
     return {
       title: `${matchup}: ${summary}`,
-      description: truncate(
-        `${summary}. ${settledByVenue ? VENUE_SETTLED_DESCRIPTION : SUSPENDED_DESCRIPTION}`,
-      ),
+      description: truncate(`${summary}. ${description}`),
       settled: false,
     };
   }

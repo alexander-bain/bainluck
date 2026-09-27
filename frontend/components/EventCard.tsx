@@ -20,6 +20,7 @@ import { awayIsTheComplement } from "@/lib/drawPricedWinner";
 import { PREMATCH_SAID, prematchReading } from "@/lib/prematchReading";
 import { teamCrestInitials, teamShortNames } from "@/lib/teamShortName";
 import {
+  authorityStoppageLabel,
   formatFinishedGameLabel,
   formatLiveClockLabel,
   formatTbdStartLabel,
@@ -734,7 +735,7 @@ export default function EventCard({
                   data-venue-settled={venueSettledSentence ? "true" : undefined}
                 >
                   {venueSettledSentence ??
-                    suspendedSummary(event.away_score, event.home_score, "home-away")}
+                    suspendedSummary(event.away_score, event.home_score, "home-away", authorityStoppageLabel(event.espn?.period))}
                   {finishedDateStr && <> · {finishedDateStr}</>}
                 </span>
               )}
