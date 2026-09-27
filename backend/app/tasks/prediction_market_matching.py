@@ -5879,7 +5879,58 @@ _RETIREMENT_CAUSE_SENTENCES = {
 }
 
 
-async def _retire_unbacked_blend_source(session, anchor, blend_group, stats) -> bool:
+async def _lock_current_retirement_group(session, event_id, source, *, settled_only=False):
+    """Serialize retirement with blend writers, then reload its actual evidence.
+
+    #9050: the caller's group can predate both a new speaker and a newer quote.
+    Locking its old negative decision only serializes the wrong deletion. Read
+    the event first (the shared blend-writer lock order), then its CURRENT linked
+    markets/outcomes, using scalar rows so an ORM identity-map hit cannot hand
+    back the old prices or lifecycle. No remote work belongs inside this lock.
+    """
+    from app.models.models import Event, FuturesMarket, FuturesOutcome
+
+    current = (await session.execute(
+        select(
+            Event.id, Event.win_probability_sources, Event.home_team_name,
+            Event.away_team_name, Event.commence_time, Event.completed_at,
+        ).where(Event.id == event_id).with_for_update()
+    )).first()
+    if current is None:
+        return None, []
+
+    markets = (await session.execute(
+        select(FuturesMarket.__table__).where(
+            FuturesMarket.event_id == event_id, FuturesMarket.source == source,
+        )
+    )).all()
+    outcomes_by_market = {}
+    if markets:
+        outcomes = (await session.execute(
+            select(FuturesOutcome.__table__).where(
+                FuturesOutcome.market_id.in_([market.id for market in markets])
+            ).order_by(FuturesOutcome.rank)
+        )).all()
+        for outcome in outcomes:
+            outcomes_by_market.setdefault(outcome.market_id, []).append(outcome)
+    refs = [
+        _LinkedMarketRef(
+            market_id=market.id, source=market.source,
+            external_id=market.external_id, name=market.name, event_id=event_id,
+            # Phase 2c remains the settled-without-result sweep; it never gains
+            # authority to retire a merely pre-kickoff observation (#5820).
+            event_commence_time=None if settled_only else current.commence_time,
+            home_team_name=current.home_team_name,
+            away_team_name=current.away_team_name, status=market.status,
+            event_has_result=current.completed_at is not None,
+        ) for market in markets
+    ]
+    return current, _blend_group_for_refs(refs, outcomes_by_market)
+
+
+async def _retire_unbacked_blend_source(
+    session, anchor, blend_group, stats, *, settled_only=False,
+) -> bool:
     """Drop a stored source leg no admissible market in the group can back (#5031).
 
     THE GATE THAT ONLY REFUSES TO WRITE FREEZES THE OLD VALUE. `#5031`'s gate
@@ -5925,6 +5976,24 @@ async def _retire_unbacked_blend_source(session, anchor, blend_group, stats) -> 
     """
     from app.models.models import Event
 
+    # The passed group is only a candidate, never authority for deletion.
+    # Every normal exit after the lock commits promptly: a refused retirement
+    # must not hold this game's price writer behind work on the next game.
+    current, blend_group = await _lock_current_retirement_group(
+        session, anchor.event_id, anchor.source, settled_only=settled_only,
+    )
+    if current is None:
+        await session.commit()
+        return False
+    if settled_only and not admissible_speakers_are_settled_without_result(blend_group):
+        await session.commit()
+        return False
+    if _compute_source_home_probability(
+        blend_group, current.home_team_name, current.away_team_name,
+    ) is not None:
+        await session.commit()
+        return False
+
     # TWO WAYS A SOURCE FALLS PERMANENTLY SILENT, and only the first was caught.
     # Zero admissible speakers is structural silence (#5031). A group whose every
     # admissible speaker is a SETTLED book is structural silence too (#5548): the
@@ -5962,16 +6031,15 @@ async def _retire_unbacked_blend_source(session, anchor, blend_group, stats) -> 
     # 312 Kalshi ones. Permanence comes from asking the real resolver again with
     # the prices held mid-band — see the predicate's docstring.
     unpriceable = admissible_speakers_can_never_price_a_side(
-        blend_group, anchor.home_team_name, anchor.away_team_name
+        blend_group, current.home_team_name, current.away_team_name
     )
     if speakers > 0 and not settled_book and not unpriceable:
+        await session.commit()
         return False
 
-    result = await session.execute(
-        select(Event.win_probability_sources).where(Event.id == anchor.event_id)
-    )
-    new_wps, changed = prune_blend_source(result.scalar_one_or_none(), anchor.source, 0)
+    new_wps, changed = prune_blend_source(current.win_probability_sources, anchor.source, 0)
     if not changed:
+        await session.commit()
         return False
 
     await session.execute(
@@ -6649,7 +6717,9 @@ async def _phase2c_decide_page(
         if not admissible_speakers_are_settled_without_result(blend_group):
             continue
         try:
-            await _retire_unbacked_blend_source(session, refs[0], blend_group, stats)
+            await _retire_unbacked_blend_source(
+                session, refs[0], blend_group, stats, settled_only=True,
+            )
         except Exception as e:  # noqa: BLE001 — one event must not stop the sweep
             await session.rollback()
             stats.setdefault("errors", []).append(

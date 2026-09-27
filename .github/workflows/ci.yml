@@ -5132,6 +5132,25 @@ jobs:
             exit 1
           }
 
+      - name: "#9050 source retirement preserves concurrent live prices (real Postgres)"
+        # Uses #8910's disposable full-schema fixture. Two writer races,
+        # three healthy controls, fresh membership/lifecycle and two no-op locks.
+        run: |
+          python -m pytest tests/integration/test_retirement_preserves_live_sources_9050_pg.py \
+            -v -rs > /tmp/retirement9050.txt 2>&1 || {
+            cat /tmp/retirement9050.txt
+            exit 1
+          }
+          cat /tmp/retirement9050.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/retirement9050.txt; then
+            echo "::error::#9050 retirement gate skipped — no concurrency proof"
+            exit 1
+          fi
+          grep -qE "[^0-9]9 passed([,[:space:]]|$)" /tmp/retirement9050.txt || {
+            echo "::error::#9050 retirement gate did not run all nine cases"
+            exit 1
+          }
+
   frontend-build:
     runs-on: ubuntu-latest
     defaults:

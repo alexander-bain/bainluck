@@ -45,6 +45,7 @@ winners. That is why the clause asks `event_has_result is False` and not
 """
 
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 
@@ -129,6 +130,9 @@ class _Result:
     def scalars(self):
         return self
 
+    def first(self):
+        return self._rows[0] if self._rows else None
+
     def scalar_one_or_none(self):
         return self._scalar
 
@@ -142,6 +146,7 @@ class _FakeSession:
     def __init__(self, event_row, outcomes=()):
         self._event_row = event_row
         self._outcomes = list(outcomes)
+        self.current_refs = []
         self.updates = []
         self.added = []
         self.commits = 0
@@ -161,6 +166,18 @@ class _FakeSession:
             return _Result([], scalar=None)
         if "odds_snapshots" in text:
             return _Result([], scalar=None)
+        if "FROM futures_markets" in text:
+            return _Result(self.current_refs)
+        if "events" in text and "events.home_team_name" in text:
+            ref = self.current_refs[0] if self.current_refs else None
+            return _Result([SimpleNamespace(
+                id=self._event_row.id,
+                win_probability_sources=self._event_row.win_probability_sources,
+                home_team_name=ref.home_team_name if ref else HOME,
+                away_team_name=ref.away_team_name if ref else AWAY,
+                commence_time=ref.event_commence_time if ref else None,
+                completed_at=(NOW if ref and ref.event_has_result else None),
+            )])
         if "events" in text:
             return _Result([], scalar=self._event_row.win_probability_sources)
         raise AssertionError(f"unexpected statement: {text[:160]}")
@@ -519,6 +536,7 @@ class TestTheFrozenLegIsRetired:
                 _Outcome(2, AWAY, 0.01, market_id=MARKET_ID),
             ],
         )
+        session.current_refs = [_ref(MARKET_ID, f"{HOME} vs {AWAY}")]
         stats = {"snapshots_written": 0, "snapshots_deduped": 0, "errors": []}
 
         spoke = await _phase2_persist_group_reading(
@@ -664,9 +682,19 @@ class _SweepSession:
             # pager forever.
             return _Result(self._pages.pop(0) if self._pages else [])
         if "FROM futures_markets" in sql:
-            return _Result(self._markets)
+            params = stmt.compile().params
+            event_id = params.get("event_id_1")
+            return _Result([m for m in self._markets if event_id is None
+                            or m.event_id in (event_id if isinstance(event_id, list) else [event_id])])
         if "FROM futures_outcomes" in sql:
             return _Result(self._outcomes)
+        if "events" in sql and "events.home_team_name" in sql:
+            event_id = stmt.compile().params["id_1"]
+            return _Result([SimpleNamespace(
+                id=event_id, win_probability_sources=self._wps,
+                home_team_name=HOME, away_team_name=AWAY,
+                commence_time=KICKOFF, completed_at=None,
+            )])
         if "events" in sql:
             return _Result([], scalar=self._wps)
         raise AssertionError(f"unexpected statement: {sql[:160]}")
