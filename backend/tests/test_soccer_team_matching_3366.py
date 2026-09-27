@@ -662,6 +662,8 @@ class TestTheWholeNameInitialisms:
             ("G.A. Eagles", "Go Ahead Eagles"),
             # #3391: ESPN's against the Odds API's, every LAFC fixture this season.
             ("LAFC", "Los Angeles FC"),
+            # #3391: ESPN's 15305754 against the Odds API's 15298741, 2026-09-10.
+            ("New York Red Bulls", "Red Bull New York"),
         ],
     )
     def test_every_entry_is_exercised_by_the_pair_that_earned_it(self, short, long):
@@ -686,6 +688,8 @@ class TestTheWholeNameInitialisms:
                 "Go Ahead Eagles",
                 # #3391: the Odds API's name for LAFC, production 2026-09-26.
                 "Los Angeles FC",
+                # #3391: ESPN's name for the Red Bulls on 15305754, 2026-09-10.
+                "Red Bull New York",
             )
         }
         assert set(CLUB_NAME_ALIASES) <= measured

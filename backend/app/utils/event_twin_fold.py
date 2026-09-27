@@ -210,6 +210,62 @@ standing next to each other.
 """
 
 
+SETTLED_SOCCER_KICKOFF_DRIFT = timedelta(minutes=25)
+"""The soccer drift bound for a pair that has already FINISHED on one scoreline. #3391.
+
+THE PAGE. `/search?q=lafc` at 390px, 2026-09-27 01:5xZ: tonight's game once,
+then three finished LAFC games twice each — San Jose 2-2 (09-19), Sporting KC
+3-1 (09-13), Red Bulls 0-2 (09-10). One row of each pair is ESPN's (`espn_id`,
+kick-off 23:30Z) and the other is the Odds API's (`external_id`, 23:40Z). Ten
+and eleven minutes is past :data:`SOCCER_KICKOFF_DRIFT`, so the names were
+never asked.
+
+WHY THE SCORELINE CAN BUY CLOCK AND NOTHING ELSE CAN. The five-minute bound
+exists because a pair with no result is a question about the SCHEDULE: two
+fixtures of one club on one day (a re-mint, a reschedule) are real, and only the
+clock separates them. A pair where both rows are final and report the SAME
+score is not a schedule question any more. The two sides already agree about
+what happened; the only thing left in dispute is when kick-off was written down.
+So the wider bound applies only when every row on both sides is terminal
+(`completed`/`closed`), every row carries both scores, the two sides hold one
+scoreline between them, and they do not hold two different `espn_id`s. The name
+rule, orientation, the squad-marker refusal and the clique refusal are unchanged.
+
+MEASURED on production 2026-09-27 01:5xZ with this module's own
+:func:`_pair_matches`, over every soccer pair from the last 120 days with both
+rows terminal, identical scores, 5 to 60 minutes apart:
+
+    candidate pairs (same sport, same score)          65
+    …the name rule says one fixture                    4   at 10, 11, 15, 20 min
+    …every one of the 4 holds exactly one espn_id      4
+    name-matching pairs from 21 to 60 min              0
+
+The four are the two LAFC pairs above (the Red Bulls pair needed the club alias
+as well), LA Galaxy 0-3 LAFC (07-18, 20 min) and Lille 2-2 PSG (08-28, 15 min).
+Twenty-five sits in the empty band above 20 and below the 30-minute re-mint
+class #5918 refuses, which is out of reach here anyway: a re-mint has no score.
+"""
+
+
+def _settled_on_one_scoreline(left: list, right: list) -> bool:
+    """Are both sides final, fully scored, on ONE scoreline, with at most one espn_id?"""
+    scores: set = set()
+    espn_ids: set = set()
+    for member in (*left, *right):
+        status = str(getattr(member, "status", "") or "").strip().lower()
+        if status not in ("completed", "closed"):
+            return False
+        home = getattr(member, "home_score", None)
+        away = getattr(member, "away_score", None)
+        if home is None or away is None:
+            return False
+        scores.add((home, away))
+        espn_id = getattr(member, "espn_id", None)
+        if espn_id is not None:
+            espn_ids.add(espn_id)
+    return len(scores) == 1 and len(espn_ids) <= 1
+
+
 def _squash(name: Optional[str]) -> str:
     """Alphanumeric-only, lowercase, diacritic-free form of a team name.
 
@@ -2553,7 +2609,14 @@ def _name_clusters(bucket_keys: list[tuple], groups: dict[tuple, list]) -> list[
         both clubs, orientation kept, squad-marker refusal, clique refusal.
         """
         if not (dateless[left] or dateless[right]):
-            if abs(left[3] - right[3]) > SOCCER_KICKOFF_DRIFT:
+            drift = abs(left[3] - right[3])
+            if drift > SETTLED_SOCCER_KICKOFF_DRIFT:
+                return False
+            # #3391 — past five minutes only a pair already final on one
+            # scoreline may be asked the name question.
+            if drift > SOCCER_KICKOFF_DRIFT and not _settled_on_one_scoreline(
+                groups[left], groups[right]
+            ):
                 return False
         return _pair_matches(pairs[left], pairs[right])
 
@@ -2579,10 +2642,14 @@ def _name_clusters(bucket_keys: list[tuple], groups: dict[tuple, list]) -> list[
     # as a no-op with green tests. A dateless `left` therefore scans its whole
     # day-bucket. That is 13 rows' worth of full scan across the fleet today, and
     # only a dateless group pays it — every other row keeps the sliding window.
+    #
+    # #3391 — the window is the WIDER bound, for the #6007 reason: a settled pair
+    # eleven minutes apart must reach `same_fixture`, which applies the narrow
+    # bound to everything else.
     in_time_order = sorted(bucket_keys, key=lambda key: key[3])
     for i, left in enumerate(in_time_order):
         for right in in_time_order[i + 1 :]:
-            if not dateless[left] and right[3] - left[3] > SOCCER_KICKOFF_DRIFT:
+            if not dateless[left] and right[3] - left[3] > SETTLED_SOCCER_KICKOFF_DRIFT:
                 break
             if same_fixture(left, right):
                 parent[find(left)] = find(right)
