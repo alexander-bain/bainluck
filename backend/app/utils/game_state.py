@@ -486,6 +486,53 @@ def _score_would_regress(
     return ih < sh or ia < sa
 
 
+def _authority_scoreboard_is_ahead_of_the_row(
+    incoming_is_authority: bool,
+    stored_home: object,
+    stored_away: object,
+    incoming_home: object,
+    incoming_away: object,
+) -> bool:
+    """Does the AUTHORITY offer a scoreboard strictly ahead of the row's?
+
+    #9020, production 2026-09-27, Oregon at USC (14870010). At ~02:26Z the row
+    took '1:27 - 4th Quarter' — a THIRD-quarter clock (ESPN's play-by-play has
+    a play at 1:27 of Q3 and none at 1:27 of Q4 by then) under a fourth-quarter
+    label. The strictly-earlier rule then refused every ESPN write for the rest
+    of the game, because ESPN's true clock (12:41, 8:35, 2:03 …) always sat
+    "earlier" than the bogus 1:27. Worker log 02:58:44: row '1:27'/27-27, ESPN
+    offered '2:03'/27-41. The served score stayed 27-27 for 34 minutes, through
+    two Oregon touchdowns, on /sports and search.
+
+    The discriminator is the scoreboard, and only from the authority. A real
+    scoreboard does not run backwards, and ESPN's own feed does not lag behind
+    itself (`_authority_is_correcting_itself`), so an ESPN observation that is
+    ahead on one side and behind on neither cannot be an older view of the game
+    the row describes: the row's POSITION is what is stale. Accepting it is how
+    the row heals; refusing it pins a bad clock until the real one happens to
+    pass under it.
+
+    WHY ONLY THE AUTHORITY. From a secondary feed an earlier position with a
+    higher score is the lagging feed's most convincing disguise (#6251's pinned
+    case, `test_an_earlier_inning_is_still_refused_whatever_the_score_says`):
+    StatPal or the odds feed can be pointed at the wrong game or mid-rewrite,
+    and the row's position is the better evidence. That refusal is unchanged.
+
+    ``False`` unless all four scores are readable, so a comparison missing a
+    side changes nothing. Equal scores are not "ahead" — a tie on the board says
+    nothing about which clock is right, and the strictly-earlier rule stands.
+    """
+    if not incoming_is_authority:
+        return False
+    sh = _as_score(stored_home)
+    sa = _as_score(stored_away)
+    ih = _as_score(incoming_home)
+    ia = _as_score(incoming_away)
+    if sh is None or sa is None or ih is None or ia is None:
+        return False
+    return ih >= sh and ia >= sa and (ih > sh or ia > sa)
+
+
 def _authority_is_correcting_itself(incoming_is_authority: bool) -> bool:
     """At a span tie, is this the authority feed correcting its OWN reading?
 
@@ -580,9 +627,12 @@ def live_write_would_revert(
     keyword-only and default to absent, so a caller that does not write scores
     — and therefore cannot revert one — asks the same question it always did.
 
-    ``incoming_is_authority`` exempts the SPAN TIE-BREAK ONLY — see
-    `_authority_is_correcting_itself`. It never touches the strictly-earlier
-    rule above it.
+    ``incoming_is_authority`` exempts the SPAN TIE-BREAK — see
+    `_authority_is_correcting_itself` — and one case of the strictly-earlier
+    rule: an authority scoreboard strictly ahead of the row's, which proves the
+    row's position is the stale value (#9020,
+    `_authority_scoreboard_is_ahead_of_the_row`). From any other feed the
+    strictly-earlier rule is unchanged.
     """
     incoming = live_progress_position(incoming_period, incoming_clock)
     if incoming is None:
@@ -591,7 +641,13 @@ def live_write_would_revert(
     if stored is None:
         return False
     if incoming < stored:
-        return True
+        return not _authority_scoreboard_is_ahead_of_the_row(
+            incoming_is_authority,
+            stored_home_score,
+            stored_away_score,
+            incoming_home_score,
+            incoming_away_score,
+        )
     if (
         incoming == stored
         and _position_names_a_span(stored_period)
