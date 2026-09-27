@@ -67,6 +67,7 @@ from app.utils.game_market_club_names import (
 )
 from app.utils.market_staleness import unobserved_board_keys
 from app.utils.nation_flags import flag_nation
+from app.utils.series_card_labels import relabel_series_card
 from app.utils.sport_keys import SPORT_PREFIX_TO_LLM_CATEGORY
 
 # #6923. The search card's age pip and the futures card's age mark must agree on
@@ -25742,6 +25743,11 @@ async def _build_related_futures(
             })
         # Limit to 10 series markets total
         formatted_series = formatted_series[:10]
+        # #9139 — a bare "Yes" rung names its games count, and "New York Y"
+        # names its club, from each outcome's own ticker.
+        relabel_series_card(
+            formatted_series, {so.id: so.external_id for so in series_outcomes}
+        )
 
     resp = {
         "event_id": event_id,
