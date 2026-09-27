@@ -652,14 +652,23 @@ def _display_name_from_markets(tourn_key: str, tourn_markets: list) -> str | Non
     restore characters the slug erased and can never change WHICH tournament
     the card is about. A member carrying a different event, or chrome we do not
     strip, is refused and the caller keeps its existing fallback.
+
+    The one part of a key that no venue wrote is the `_womens` suffix the
+    grouping appends when a member matches `_WOMENS_RE`. No member slugifies
+    to `nw_arkansas_championship_womens`, so every LPGA card fell through to
+    re-casing its key and read "Nw Arkansas Championship Womens" (#8124). A
+    candidate may therefore match the key with that suffix removed. Gender is
+    not lost: the card's `is_womens` and its LPGA tour label are computed from
+    the member names, not from this string.
     """
+    identity_keys = {tourn_key, tourn_key.removesuffix("_womens")}
     counts: dict[str, int] = {}
     for market in tourn_markets:
         name = getattr(market, "name", None)
         if not name:
             continue
         candidate = _strip_market_chrome(name)
-        if not candidate or _slug_tournament(candidate) != tourn_key:
+        if not candidate or _slug_tournament(candidate) not in identity_keys:
             continue
         counts[candidate] = counts.get(candidate, 0) + 1
 
