@@ -555,9 +555,9 @@ class TestEverySurfaceThatPrintsOneCardPerGame:
         from app.routes import events
 
         source = inspect.getsource(events)
-        assert source.count("not_a_proven_duplicate()") == 11, (
-            "one of the eleven call sites in this module is gone — see CERT-439 "
-            "(and #5918 for the eleventh, `list_events`)"
+        assert source.count("not_a_proven_duplicate()") == 12, (
+            "one of the twelve call sites in this module is gone — see CERT-439 "
+            "(#5918 for the eleventh, `list_events`; #9211 for the twelfth)"
         )
 
     def test_the_behavioural_search_gate_exists_and_is_wired_into_ci(self):
