@@ -71,8 +71,8 @@ final class CalibrationMathTests: XCTestCase {
     func testWellTradedCohort() throws {
         let cd = try decode()
         let agg = CalibrationMath.aggregate(cd.buckets, filter: wellTraded)
-        XCTAssertEqual(CalibrationMath.ece(agg), 2.1714, accuracy: 0.001)   // n-weighted headline
-        XCTAssertEqual(CalibrationMath.mce(agg), 3.35, accuracy: 0.001)     // equal-weighted bucket mean
+        XCTAssertEqual(CalibrationMath.ece(agg), 2.1429, accuracy: 0.001)   // n-weighted headline (#9000: unrounded gaps, 1500/700; was 2.1714 off 0.1pp-rounded)
+        XCTAssertEqual(CalibrationMath.mce(agg), 3.3333, accuracy: 0.001)   // equal-weighted bucket mean (was 3.35)
         XCTAssertEqual(CalibrationMath.brier(cd.buckets, filter: wellTraded), 0.208571, accuracy: 0.0001)
         XCTAssertEqual(CalibrationMath.totalN(cd.buckets, filter: wellTraded), 700)
     }
@@ -80,8 +80,8 @@ final class CalibrationMathTests: XCTestCase {
     func testAllCohort() throws {
         let cd = try decode()
         let agg = CalibrationMath.aggregate(cd.buckets)
-        XCTAssertEqual(CalibrationMath.ece(agg), 3.0267, accuracy: 0.001)
-        XCTAssertEqual(CalibrationMath.mce(agg), 7.2333, accuracy: 0.001)
+        XCTAssertEqual(CalibrationMath.ece(agg), 3.0, accuracy: 0.001)      // #9000 (was 3.0267)
+        XCTAssertEqual(CalibrationMath.mce(agg), 7.2222, accuracy: 0.001)   // #9000 (was 7.2333)
         XCTAssertEqual(CalibrationMath.totalN(cd.buckets), 750)
     }
 

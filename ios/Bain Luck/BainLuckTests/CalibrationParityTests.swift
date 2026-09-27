@@ -222,8 +222,8 @@ final class CalibrationParityTests: XCTestCase {
         XCTAssertTrue(value.contains("unchanged_n=\(Self.publishedUnchangedN)"), value)
         XCTAssertTrue(value.contains("not_applicable_n=\(Self.publishedNotApplicableN)"), value)
         XCTAssertTrue(value.contains("markets=\(Self.publishedMarkets)"), value)
-        XCTAssertTrue(value.contains("ece=1.5425"), value)
-        XCTAssertTrue(value.contains("mce=1.4500"), value)
+        XCTAssertTrue(value.contains("ece=1.5455"), value)
+        XCTAssertTrue(value.contains("mce=1.4506"), value)
         XCTAssertTrue(value.contains("brier=0.1649"), value)
 
         // Raw, never display-formatted: no "pp" UNIT suffix on any value and no
