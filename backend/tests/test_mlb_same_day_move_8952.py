@@ -216,7 +216,7 @@ class TestTheSweepReportsTheArm:
         async def _sess():
             yield _S()
 
-        async def _boards(_days):
+        async def _boards(_days, _sport_key=sweep.SPORT_KEY):
             return {SUN: SUN_BOARD}
 
         import app.tasks.base as base

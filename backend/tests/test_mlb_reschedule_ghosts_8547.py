@@ -347,7 +347,7 @@ def _run(monkeypatch, *, rows=None, boards=None, apply=True, fold_live=True, **k
     async def _fake_session():
         yield session
 
-    async def _boards_for(_days):
+    async def _boards_for(_days, _sport_key=sweep.SPORT_KEY):
         return boards if boards is not None else _boards()
 
     async def _no_sleep(_s):

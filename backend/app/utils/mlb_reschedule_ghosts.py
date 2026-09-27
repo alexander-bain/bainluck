@@ -44,6 +44,20 @@ dated off D, or it carries the id of a game whose note says "Makeup from D";
 and the one other row for the teams on D has no id and no result. A 0-0 on a
 row that is not completed is not a result (StatPal writes it on a rain-out).
 
+An UNLISTED ADJACENT-DAY row (#9187) is the same shape one day over, and it
+is not MLB's: on 2026-09-27 the Odds API listed Chicago @ Vegas twice — its real
+event at 2026-09-30T02:40Z and a phantom ``ec5a4b4a…`` at 21:30:10Z, nineteen
+hours later — while ESPN listed ONE game (401891775, 02:30Z, the 29th in ET).
+Our row for the phantom (15320181) has no ESPN id, and search showed the game on
+two days. That arm reads two boards: ESPN lists the pairing exactly once on D
+and exactly one row carries that game's id, dated D; ESPN's board for the
+neighbouring day, READ and listing other games, lists no game between the two
+teams in either orientation; and the one row for the same home and away team on that
+neighbouring day has no id and no score. It is enabled per sport by the caller
+(``adjacent_day_arm``), and it refuses any board game that is not preseason or
+regular season — ESPN lists a postseason's "If Necessary" games, but a series is
+where consecutive-day games between one pair are real, so it is not asked.
+
 Anything short of exactly one canonical and exactly one ghost is a refusal, not
 a guess. Cubs @ Red Sox on the same day is the control: its game 1 is
 "Rescheduled from Sep. 27", our Saturday row for that matchup is a real game
@@ -55,7 +69,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Iterable, Mapping, Optional
 from zoneinfo import ZoneInfo
 
@@ -70,6 +84,9 @@ _MAKEUP_RE = re.compile(r"makeup\s+from\s+([a-z]{3,9})\.?\s+(\d{1,2})", re.I)
 
 #: ESPN's status for a game called off on its day and owed a makeup.
 ESPN_POSTPONED = "STATUS_POSTPONED"
+#: ESPN's ``season.type``: 1 preseason, 2 regular season, 3 postseason. The
+#: adjacent-day arm (#9187) acts only on the first two.
+ESPN_UNSERIALISED_SEASON_TYPES = frozenset({1, 2})
 
 #: Statuses on which a 0-0 is a placeholder, not a result: StatPal leaves a
 #: rained-out row ``suspended`` at 0-0 (15317711, 2026-09-22).
@@ -160,6 +177,7 @@ class BoardGame:
     rescheduled_from: Optional[date]
     status: Optional[str] = None
     makeup_from: Optional[date] = None
+    season_type: Optional[int] = None
 
 
 def board_game_from_espn(event: Mapping) -> Optional[BoardGame]:
@@ -183,6 +201,10 @@ def board_game_from_espn(event: Mapping) -> Optional[BoardGame]:
     ]
     played_on = local_date(start)
     status = ((event.get("status") or {}).get("type") or {}).get("name")
+    try:
+        season_type: Optional[int] = int((event.get("season") or {}).get("type"))
+    except (TypeError, ValueError):
+        season_type = None
     return BoardGame(
         espn_id=espn_id,
         home_team_id=teams.get("home"),
@@ -191,6 +213,7 @@ def board_game_from_espn(event: Mapping) -> Optional[BoardGame]:
         rescheduled_from=rescheduled_from(headlines, played_on=played_on),
         status=str(status) if status else None,
         makeup_from=makeup_from(headlines, played_on=played_on),
+        season_type=season_type,
     )
 
 
@@ -225,6 +248,9 @@ class ReschedulePlan:
     #: Sole-on-its-board games that had a second row for the pairing that day.
     same_day_games_with_extra_rows: int = 0
     postponed_games_seen: int = 0
+    #: Sole-on-its-board games with a row for the pairing on a neighbouring day
+    #: whose board lists no game between the two teams (#9187).
+    adjacent_day_games_with_extra_rows: int = 0
     already_tagged: int = 0
     dark_days: list[date] = field(default_factory=list)
 
@@ -286,12 +312,15 @@ def _decide(
 def plan_reschedule_ghosts(
     rows: Iterable[MlbRow],
     boards: Mapping[date, Optional[tuple[BoardGame, ...]]],
+    *,
+    adjacent_day_arm: bool = False,
 ) -> ReschedulePlan:
     """Decide every reschedule ghost in the window. Pure.
 
     ``boards`` maps each ET date in the window to that day's games, or ``None``
     when ESPN did not answer — a dark board proves nothing and every decision
-    that needs it is refused.
+    that needs it is refused. ``adjacent_day_arm`` enables the #9187 arm; the
+    caller names the sports it is for.
     """
     rows = list(rows)
     plan = ReschedulePlan(rows_considered=len(rows))
@@ -449,6 +478,56 @@ def plan_reschedule_ghosts(
                 refuse_empty=False,
                 placeholder_score_ok=True,
             )
+
+    # THE ADJACENT-DAY ARM (#9187) — see the module docstring for the specimen.
+    # The same-day arm's evidence with the ghost one ET day over, plus the
+    # second board: ESPN's board for that neighbouring day is READ and lists no
+    # game between the two teams, in either orientation, so the row there is
+    # not a home-and-home, a series game or a doubleheader ESPN knows about.
+    for day, games in sorted(boards.items()) if adjacent_day_arm else ():
+        games = games or ()
+        for game in games:
+            if not (game.home_team_id and game.away_team_id):
+                continue
+            if game.season_type not in ESPN_UNSERIALISED_SEASON_TYPES:
+                continue
+            pair = {game.home_team_id, game.away_team_id}
+            if sum({g.home_team_id, g.away_team_id} == pair for g in games) != 1:
+                continue
+            canonicals = by_espn.get(game.espn_id, [])
+            if len(canonicals) != 1:
+                continue
+            canonical = canonicals[0]
+            if (
+                canonical.is_duplicate_tagged
+                or local_date(canonical.commence_time) != day
+            ):
+                continue
+            for neighbour in (day - timedelta(days=1), day + timedelta(days=1)):
+                board = boards.get(neighbour)
+                # Dark proves nothing, and neither does an EMPTY board: ESPN's
+                # answer for "no games that day" and "nothing to report" is the
+                # same body (gotcha #53), and here that absence is the licence.
+                if not board:
+                    continue
+                if any({g.home_team_id, g.away_team_id} == pair for g in board):
+                    continue
+                label = (
+                    f"espn {game.espn_id} (sole {day.isoformat()} game for the pair; "
+                    f"none on {neighbour.isoformat()})"
+                )
+                if _decide(
+                    plan,
+                    rows,
+                    decided,
+                    contested,
+                    canonical,
+                    neighbour,
+                    label,
+                    reason=f"unlisted_adjacent_day: {label}",
+                    refuse_empty=False,
+                ):
+                    plan.adjacent_day_games_with_extra_rows += 1
 
     for ghost_id in sorted(contested):
         plan.refusals.append(f"row {ghost_id}: two canonical games claim it")

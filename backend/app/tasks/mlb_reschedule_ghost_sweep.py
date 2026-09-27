@@ -27,6 +27,15 @@ unplayed game with no result forever. So the window covers past days as well as
 the next few, and a board is read for every ET day in it (ESPN's MLB scoreboard
 refuses a date range — measured 2026-09-25, HTTP 400 — so one call per day).
 
+THE NHL PASS (#9187)
+════════════════════
+
+The same pass runs a second time for ``icehockey_nhl`` under its own task,
+:data:`NHL_SPORT_KEY`, with the planner's adjacent-day arm on — Chicago @ Vegas
+was listed on two days because the Odds API carried a phantom second event that
+ESPN does not. Same label, same fold guard, same backup table (ghost ids are
+event ids, unique across sports), same undo.
+
 VERDICT CONTRACT
 ════════════════
 
@@ -57,8 +66,16 @@ from app.utils.mlb_reschedule_ghosts import (
 from app.utils.soccer_ghost_twins import row_has_final_score
 
 SPORT_KEY = "baseball_mlb"
+NHL_SPORT_KEY = "icehockey_nhl"
+
+#: Sports whose pass runs the planner's adjacent-day arm (#9187). MLB is not in
+#: it: its series put one pair on consecutive days all season, and nothing yet
+#: says it carries the phantom this arm removes.
+ADJACENT_DAY_SPORTS = frozenset({NHL_SPORT_KEY})
 
 #: D51 backup, its own table so this undo never touches another sweep's ghosts.
+#: The MLB and NHL passes of THIS module share it (#9187): the restore removes
+#: the one label from every banked row of either sport.
 BAK_TABLE = "bak_8547_mlb_reschedule_ghost_tags"
 
 DEFAULT_LOOKBACK_DAYS = 7
@@ -97,7 +114,9 @@ SELECT e.id,
 """
 
 
-async def load_rows(session, *, lookback: int, lookahead: int):
+async def load_rows(
+    session, *, lookback: int, lookahead: int, sport_key: str = SPORT_KEY
+):
     """Every MLB row in the window, one day wider each side than the boards so a
     row near midnight ET is never outside the read while its day is inside it."""
     from sqlalchemy import text
@@ -106,7 +125,7 @@ async def load_rows(session, *, lookback: int, lookahead: int):
         await session.execute(
             text(_POPULATION_SQL),
             {
-                "sport_key": SPORT_KEY,
+                "sport_key": sport_key,
                 "lookback": lookback + 1,
                 "lookahead": lookahead + 1,
             },
@@ -121,7 +140,7 @@ def window_days(now: datetime, *, lookback: int, lookahead: int) -> list[date]:
     ]
 
 
-async def fetch_boards(days: list[date]) -> dict:
+async def fetch_boards(days: list[date], sport_key: str = SPORT_KEY) -> dict:
     """ESPN's MLB board for each day: a tuple of games, or ``None`` when dark.
 
     ``get_combat_card_board`` is the client's raw-scoreboard read; nothing in it
@@ -134,7 +153,7 @@ async def fetch_boards(days: list[date]) -> dict:
     boards: dict = {}
     for day in days:
         body = await service.get_combat_card_board(
-            SPORT_KEY, dates=day.strftime("%Y%m%d")
+            sport_key, dates=day.strftime("%Y%m%d")
         )
         if body is None:
             boards[day] = None
@@ -222,14 +241,18 @@ async def run_mlb_reschedule_ghost_sweep(
     apply: bool = True,
     lookback: int = DEFAULT_LOOKBACK_DAYS,
     lookahead: int = DEFAULT_LOOKAHEAD_DAYS,
+    sport_key: str = SPORT_KEY,
 ) -> dict:
-    """One scheduled pass: read rows and boards, plan, bank, tag."""
+    """One scheduled pass for ``sport_key``: read rows and boards, plan, bank, tag."""
     from app.tasks.base import get_task_session
 
     now = datetime.now(timezone.utc)
     summary: dict = {
-        "task": "mlb_reschedule_ghost_sweep",
-        "issue": "#8547",
+        "task": "mlb_reschedule_ghost_sweep"
+        if sport_key == SPORT_KEY
+        else "nhl_adjacent_day_ghost_sweep",
+        "issue": "#8547" if sport_key == SPORT_KEY else "#9187",
+        "sport_key": sport_key,
         "apply": apply,
         "measured": True,
         "lookback_days": lookback,
@@ -238,7 +261,9 @@ async def run_mlb_reschedule_ghost_sweep(
 
     async with get_task_session() as session:
         try:
-            raw_rows = await load_rows(session, lookback=lookback, lookahead=lookahead)
+            raw_rows = await load_rows(
+                session, lookback=lookback, lookahead=lookahead, sport_key=sport_key
+            )
         except Exception as exc:  # noqa: BLE001 — "I could not look" is not "nothing to do"
             await session.rollback()
             return {
@@ -249,9 +274,13 @@ async def run_mlb_reschedule_ghost_sweep(
             }
 
         boards = await fetch_boards(
-            window_days(now, lookback=lookback, lookahead=lookahead)
+            window_days(now, lookback=lookback, lookahead=lookahead), sport_key
         )
-        plan = plan_reschedule_ghosts(build_rows(raw_rows), boards)
+        plan = plan_reschedule_ghosts(
+            build_rows(raw_rows),
+            boards,
+            adjacent_day_arm=sport_key in ADJACENT_DAY_SPORTS,
+        )
         folding = fold_is_live()
         summary.update(
             {
@@ -263,6 +292,9 @@ async def run_mlb_reschedule_ghost_sweep(
                 "rescheduled_games_seen": plan.rescheduled_games_seen,
                 "same_day_games_with_extra_rows": plan.same_day_games_with_extra_rows,
                 "postponed_games_seen": plan.postponed_games_seen,
+                "adjacent_day_games_with_extra_rows": (
+                    plan.adjacent_day_games_with_extra_rows
+                ),
                 "already_tagged": plan.already_tagged,
                 "tags_to_write": len(plan.tags),
                 "tag_sample": [
@@ -293,7 +325,7 @@ async def run_mlb_reschedule_ghost_sweep(
                 **summary,
                 "terminal": "no_work",
                 "written": 0,
-                "reason": "no MLB rows and no ESPN games in the window (off-season)",
+                "reason": f"no {sport_key} rows and no ESPN games in the window (off-season)",
             }
 
         blocked = band_refusal_reason(plan)
