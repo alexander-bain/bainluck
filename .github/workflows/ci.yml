@@ -558,6 +558,21 @@ jobs:
             exit 1
           fi
 
+      - name: Did-you-mean withdrawn contract (real Postgres)
+        # #8750. `taylor swift` was headed "Showing results for Taylor Sullivan"
+        # above ten Taylor Swift markets. The correction is withdrawn when the
+        # typed text matched markets; the controls (the market closed, `tigerz`)
+        # are properties of which rows the route returns, so they need the route
+        # and a real database. Same skip detection as above.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_search_did_you_mean_withdrawn_8750_pg.py \
+            -v -rs 2>&1 | tee /tmp/didyoumean.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/didyoumean.txt; then
+            echo "::error::did-you-mean withdrawn contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: Matchup last-meeting typeahead contract (real Postgres)
         # #8428. `dallas washington` names both sides of the next fixture, so the
         # dropdown offers the game they just played beside the rematch — the
