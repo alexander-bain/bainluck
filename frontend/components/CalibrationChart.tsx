@@ -207,6 +207,103 @@ export function nLabelPlacement(pointY: number, r: number, plotTop: number): NLa
   return { y: pointY + r + N_LABEL_BELOW_OFFSET, below: true };
 }
 
+/**
+ * Per-character advance for the `n=` label's 9px `system-ui`, in the chart's own user units.
+ * `nSampleLabelsClearTheChartKey7434.test.tsx` derived it from production rects (`n=3` painted
+ * 16.6 units over 3 characters) and rounded UP, so the box over-states the ink.
+ */
+export const N_LABEL_CHAR_ADVANCE_PX = 5.6;
+
+/** The white halo (`strokeWidth` 2.5) reaches half its width past the glyphs on every side. It
+ *  sizes a stacked row, but not the collision box: two halos touching erase nothing, and a label
+ *  moved for a gap no reader could see drifts off its point for no gain (n=456 on DataGolf did). */
+const N_LABEL_HALO = 1.25;
+
+export interface NLabelCandidate {
+  x: number;
+  /** characters in the printed label, e.g. 5 for `n=764` */
+  chars: number;
+  /** placements in order of preference; the first is the one drawn before #8979 */
+  options: NLabelPlacement[];
+}
+
+interface LabelBox {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+}
+
+function nLabelBox(x: number, chars: number, y: number): LabelBox {
+  const half = (chars * N_LABEL_CHAR_ADVANCE_PX) / 2;
+  return {
+    left: x - half,
+    right: x + half,
+    top: y - N_LABEL_FONT_PX,
+    bottom: y + N_LABEL_FONT_PX * 0.25,
+  };
+}
+
+function boxesMeet(a: LabelBox, b: LabelBox): boolean {
+  return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+}
+
+/**
+ * #8979 — WHY ONE SERIES' LABELS ARE PLACED TOGETHER.
+ *
+ * `nLabelPlacement` decides each label alone, so nothing stopped two neighbours from landing on
+ * each other. On a 300-unit panel one bucket step is 22.5 units and `n=764` is ~28 wide, so
+ * wherever the curve runs flat the labels overlap. Production, 2026-09-26, By Source →
+ * DataGolf at 390px: the 20-50% buckets (764, 645, 710 outcomes, all within 3pp actual) printed
+ * as one smear, `n=764n=645n=710`, which is the only place a reader learns how little is behind
+ * those faded points.
+ *
+ * Left to right, each label takes the first option that overlaps no label already placed. The
+ * first option is always today's position. The others count only if their whole box sits inside
+ * the plot, so #7434's invariant (never in the key's band above `plotTop`) holds for every moved
+ * label. If no option is free the label keeps today's position. Nothing is dropped, and a chart
+ * with no collision draws exactly what it drew before.
+ */
+export function dodgeNLabels(
+  candidates: NLabelCandidate[],
+  plotTop: number,
+  plotBottom: number,
+): NLabelPlacement[] {
+  const placed: LabelBox[] = [];
+  return candidates.map(c => {
+    const free = (p: NLabelPlacement) => {
+      const box = nLabelBox(c.x, c.chars, p.y);
+      return placed.every(o => !boxesMeet(box, o));
+    };
+    const inside = (p: NLabelPlacement) => {
+      const box = nLabelBox(c.x, c.chars, p.y);
+      return box.top >= plotTop && box.bottom <= plotBottom;
+    };
+    const chosen =
+      c.options.find((p, i) => (i === 0 || inside(p)) && free(p)) ?? c.options[0];
+    placed.push(nLabelBox(c.x, c.chars, chosen.y));
+    return chosen;
+  });
+}
+
+/** The ordered options for one label: today's spot first, then the other side, then one row out. */
+export function nLabelOptions(
+  pointY: number,
+  r: number,
+  plotTop: number,
+  preferBelow: boolean,
+): NLabelPlacement[] {
+  const above = { y: pointY - r - N_LABEL_GAP, below: false };
+  const below = { y: pointY + r + N_LABEL_BELOW_OFFSET, below: true };
+  // One row = the label's full box (ascent + descent + halo both sides), so a stacked label clears.
+  const row = Math.ceil(N_LABEL_FONT_PX * 1.25 + 2 * N_LABEL_HALO);
+  if (preferBelow) return [below, above, { y: below.y + row, below: true }];
+  const first = nLabelPlacement(pointY, r, plotTop);
+  return first.below
+    ? [first, { y: first.y + row, below: true }]
+    : [first, below, { y: first.y - row, below: false }];
+}
+
 export function curveRuns(ns: number[], thinFloor: number): CurveRun[] {
   const runs: CurveRun[] = [];
   for (let i = 0; i + 1 < ns.length; i++) {
@@ -355,6 +452,23 @@ export default function CalibrationChart({
       {series.map((s, si) => {
         if (!s.data.length) return null;
         const maxN = Math.max(...s.data.map(d => d.n));
+        const radius = (n: number) => 4 + 6 * Math.sqrt(n / maxN);
+        // #8979: which points print a label, and where — decided for the series at once so
+        // neighbours cannot land on each other. Same two rules as the marks below.
+        const allN = showAllN && series.length === 1;
+        const labelled = s.data
+          .map((d, di) => ({ d, di }))
+          .filter(({ d }) => allN || d.n < thinFloor);
+        const placements = new Map<number, NLabelPlacement>();
+        dodgeNLabels(
+          labelled.map(({ d }) => ({
+            x: px(d.midpoint),
+            chars: (allN ? d.n.toLocaleString() : `n=${d.n}`).length,
+            options: nLabelOptions(py(d.actual), radius(d.n), padT, allN),
+          })),
+          padT,
+          height - padB,
+        ).forEach((p, i) => placements.set(labelled[i].di, p));
         return (
           <g key={si}>
             {/* #7399: one polyline per run, not one for the whole curve. See
@@ -391,7 +505,7 @@ export default function CalibrationChart({
               );
             })}
             {s.data.map((d, di) => {
-              const r = 4 + 6 * Math.sqrt(d.n / maxN);
+              const r = radius(d.n);
               // L2-75 §B: thin buckets (below the n-floor) are faded + dashed-ring
               // + show their n, so a small sample is visibly less certain.
               const thin = d.n < thinFloor;
@@ -421,8 +535,9 @@ export default function CalibrationChart({
                     strokeDasharray={thin ? "2,2" : undefined}
                   />
                   {thin && !(showAllN && singleSeries) && (() => {
-                    // #7434: above the point unless that would put it in the key's band.
-                    const place = nLabelPlacement(py(d.actual), r, padT);
+                    // #7434: above the point unless that would put it in the key's band;
+                    // #8979: moved off a neighbour when the two would overlap.
+                    const place = placements.get(di) ?? nLabelPlacement(py(d.actual), r, padT);
                     return (
                       <text
                         x={px(d.midpoint)} y={place.y}
@@ -439,16 +554,19 @@ export default function CalibrationChart({
                       </text>
                     );
                   })()}
-                  {showAllN && singleSeries && (
+                  {showAllN && singleSeries && (() => {
+                    const place = placements.get(di) ?? { y: py(d.actual) + r + N_LABEL_BELOW_OFFSET, below: true };
+                    return (
                     <text
-                      x={px(d.midpoint)} y={py(d.actual) + r + N_LABEL_BELOW_OFFSET}
+                      x={px(d.midpoint)} y={place.y}
                       textAnchor="middle" fill="#a8a29e" fontSize={N_LABEL_FONT_PX}
                       stroke="white" strokeWidth="2.5" paintOrder="stroke"
-                      data-n-label-below="true"
+                      data-n-label-below={place.below ? "true" : "false"}
                     >
                       {d.n.toLocaleString()}
                     </text>
-                  )}
+                    );
+                  })()}
                   <title>
                     {d.bucket}: {d.actual.toFixed(1)}% actual at {d.midpoint}% predicted (n={d.n.toLocaleString()}{thin ? ", thin sample" : ""}, error={d.error > 0 ? "+" : ""}{d.error.toFixed(1)}pp{ciStr})
                   </title>

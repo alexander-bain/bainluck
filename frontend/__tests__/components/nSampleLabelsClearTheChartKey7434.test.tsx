@@ -335,13 +335,17 @@ describe("#7434 — CONTROL: the real sportsbook shape panels", () => {
     }
   });
 
-  test("17 of 18 do not move at all, and the one that does was the next to collide", () => {
-    // "Do not move to a worse place" measured rather than asserted. Only the 90-100%
-    // moneyline bin moves: at 94.1% actual its label cleared the key's descender by ~0.3
-    // units, so above was already the worse place for it. Every other sportsbook label
-    // is drawn exactly where it was.
+  test("14 of 18 do not move at all; the four that do were each colliding with something", () => {
+    // "Do not move to a worse place" measured rather than asserted. #7434 moves only the
+    // 90-100% moneyline bin: at 94.1% actual its label cleared the key's descender by ~0.3
+    // units, so above was already the worse place for it.
+    //
+    // #8979 moves three more, and each was overlapping its NEIGHBOUR's label on master
+    // (measured with this file's own box model, 300x230): spreads n=42 × n=793 and
+    // n=417 × n=30, totals n=34 × n=135. The later label of each pair drops under its point.
+    // Every other sportsbook label is drawn exactly where it was.
     const moved = panels.flatMap(p => p.labels.filter(l => l.below).map(l => `${p.label}:n=${l.n}`));
-    expect(moved).toEqual(["moneylines:n=547"]);
+    expect(moved).toEqual(["moneylines:n=547", "spreads:n=793", "spreads:n=30", "totals:n=135"]);
   });
 
   test("every label that stayed is still above its own marker", () => {
