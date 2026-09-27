@@ -1532,10 +1532,20 @@ async def get_politics(db: AsyncSession, stage_ms: dict | None = None):
     # **0** — 8 of 8 `/politics`, 8 of 8 `/entertainment`, 3 of 3 `/economics`
     # survive. The class closes at no cost to today's page.
     spotlight_eligible: list = []
+    # #9199: the Senate map's own pool. A map colour is not a featured card, so
+    # it is chosen by the anchored seat test rather than the theme, and the
+    # featured PRICE cap does not apply to it. Both cut real 2026 races:
+    # `probability_extreme` (leader > 0.98) dropped Rhode Island (Reed 99%),
+    # Delaware and West Virginia, and `_classify_theme` filed "New Mexico
+    # Senate winner?" under `international` off "Mexico". Every other gate
+    # below — settled, stale, off-topic — still applies to the map.
+    senate_seat_markets: list = []
     for m in all_markets:
-        if should_exclude_from_featured(
+        featured_block = should_exclude_from_featured(
             m.name, m.llm_sport_category, m.status, _leader_prob(m), now,
-        ):
+        )
+        is_seat = _senate_seat(m) is not None
+        if featured_block and not (featured_block == "probability_extreme" and is_seat):
             continue
         if _is_non_politics(m):
             continue
@@ -1573,6 +1583,10 @@ async def get_politics(db: AsyncSession, stage_ms: dict | None = None):
         # 889/333/146/36/458/3961), so the slice is binding everywhere and
         # what is dropped here backfills from the same sorted pool.
         if hard_excluded_family(m.name, m.external_id):
+            continue
+        if is_seat:
+            senate_seat_markets.append(m)
+        if featured_block:
             continue
         spotlight_eligible.append(m)
         theme = _classify_theme(m)
@@ -1659,7 +1673,7 @@ async def get_politics(db: AsyncSession, stage_ms: dict | None = None):
     # Congressional — with chamber control + senate map
     congressional_markets = themed.get("congressional", [])
     chamber_control = _find_chamber_control(congressional_markets)
-    senate_map = _build_senate_map(congressional_markets)
+    senate_map = _build_senate_map(senate_seat_markets)
     _t = _mark("congressional", _t)
 
     # Cross-source spotlight — fed the set this page ACCEPTED, not `all_markets`.
