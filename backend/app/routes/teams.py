@@ -525,8 +525,26 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
     _ftime: dict = {}
     try:
         from app.routes.user import _query_team_futures
+        # #9219: the club's rows, not only the URL's row — the same set the
+        # games rails use (#7929), so a spelling the page reaches for games it
+        # also reaches for futures. Narrowed to the team's OWN sport row: the
+        # games set spans the league family, and a preseason row (19692 carries
+        # no crest and no colour) would otherwise be its own cluster in the
+        # futures collapse and could claim a leg with a blank badge.
+        futures_team_ids = [team.id]
+        if len(club_id_list) > 1:
+            futures_team_ids = sorted(
+                (
+                    await db.execute(
+                        select(Team.id).where(
+                            Team.id.in_(club_id_list),
+                            Team.sport_id == team.sport_id,
+                        )
+                    )
+                ).scalars().all()
+            ) or [team.id]
         futures_data = await _query_team_futures(
-            [team.id], db, limit=30, timings=_ftime if debug_timing else None
+            futures_team_ids, db, limit=30, timings=_ftime if debug_timing else None
         )
         futures_items = futures_data.get("items", [])
     except Exception:

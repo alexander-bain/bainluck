@@ -1408,6 +1408,7 @@ async def _query_team_futures(
     # id_to_canonical maps EVERY loaded team id (dup + canonical) → the canonical id
     # so the team_id FK match, matched_team, and teams_list all dedup.
     id_to_canonical: dict[int, int] = {tid: tid for tid in teams}
+    loaded_teams: dict[int, Team] = dict(teams)
     if len(teams) > 1:
         # One query for identity-mapping row counts across all loaded team ids.
         tim_counts: dict[int, int] = {}
@@ -1476,18 +1477,34 @@ async def _query_team_futures(
     # Build ILIKE patterns from FULL team names only — no alternate_names,
     # no short suffixes.  This prevents "Bears" (from "Brown Bears") from
     # matching "Chicago Bears" or "Eagles" matching "Philadelphia Eagles".
+    #
+    # #9219 — EVERY MEMBER'S SPELLING, NOT ONLY THE CANONICAL'S. The patterns
+    # used to be built after the collapse, from the one row that won it. The
+    # Canadiens are 568 "Montreal Canadiens" and 3706 "Montréal Canadiens", tied
+    # on mappings and name length, so whichever won, the other spelling was
+    # never searched: the page served 3 of the club's markets while the
+    # division, playoff-round and title legs, all named "Montreal Canadiens",
+    # sat unread. A dupe row's full name is the same club's full name, so it
+    # is searched too and a hit resolves to the canonical.
     team_patterns: list[str] = []
     seen_lower: set[str] = set()
+    member_names: dict[int, list[str]] = {}
     # Build roster player name → team ID map (for Python-side matching)
     player_to_team_id: dict[str, int] = {}
 
-    for t in teams.values():
-        if t.name:
-            escaped = _escape_like(t.name.strip())
-            if escaped.lower() not in seen_lower:
-                seen_lower.add(escaped.lower())
-                team_patterns.append(escaped)
+    for member_id, member in loaded_teams.items():
+        canonical_id = id_to_canonical.get(member_id, member_id)
+        if canonical_id not in teams or not member.name:
+            continue
+        names = member_names.setdefault(canonical_id, [])
+        if member.name not in names:
+            names.append(member.name)
+        escaped = _escape_like(member.name.strip())
+        if escaped.lower() not in seen_lower:
+            seen_lower.add(escaped.lower())
+            team_patterns.append(escaped)
 
+    for t in teams.values():
         # Collect roster player names for Python-side matching (not SQL ILIKE)
         roster = t.roster_players
         if roster and isinstance(roster, list):
@@ -1646,7 +1663,10 @@ async def _query_team_futures(
         # "Bears" (from "Brown Bears") matching "Chicago Bears".
         outcome_name = outcome.name or ""
         for t in teams.values():
-            if _strict_team_name_matches(t.name, outcome_name):
+            if any(
+                _strict_team_name_matches(nm, outcome_name)
+                for nm in member_names.get(t.id, [t.name or ""])
+            ):
                 # BR53: verify sport compatibility for name matches
                 if market_sport_cat:
                     team_cat = team_sport_categories.get(t.id)
