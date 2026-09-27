@@ -52,10 +52,12 @@ VERDICT CONTRACT
 
 from __future__ import annotations
 
+import asyncio
+import json
 from datetime import date, datetime, timedelta, timezone
 
-from app.services.anchor_channel import DUPLICATE_TAG_PREFIX
-from app.tasks.soccer_ghost_twin_sweep import fold_is_live, tagged_now, write_tags
+from app.services.anchor_channel import DUPLICATE_TAG_PREFIX, duplicate_tag
+from app.tasks.soccer_ghost_twin_sweep import fold_is_live, tagged_now
 from app.utils.mlb_reschedule_ghosts import (
     MlbRow,
     board_game_from_espn,
@@ -236,6 +238,112 @@ async def ensure_backup(session, tags, current_tags: dict[int, str]) -> int:
     return banked
 
 
+#: The label lands only on the row the planner judged (CERT-3662 follow-up
+#: ``9187-CAS-ANCHOR-SCORE-AT-WRITE``). The planner reads the ghost, then ESPN's
+#: boards, then writes — seconds apart, and ``events`` is write-hot. If ESPN's
+#: pass anchors the row, or a score or status lands on it, in that gap, the
+#: evidence the plan used is gone. So the UPDATE re-asserts it: still no ESPN id,
+#: and the scores and status the plan saw, compared exactly (``IS NOT DISTINCT
+#: FROM``, so a NULL the plan saw must still be NULL). The postponed arm accepts
+#: a placeholder 0–0, so "both scores NULL" would refuse a ghost the plan
+#: rightly chose; comparing what was READ covers every arm with one clause.
+_CAS_WRITE_SQL = """
+UPDATE events
+   SET event_tags = COALESCE(event_tags, '[]'::jsonb) || CAST(:tag_array AS jsonb)
+ WHERE id = :eid
+   AND NOT COALESCE(event_tags, '[]'::jsonb) @> CAST(:tag_array AS jsonb)
+   AND NULLIF(espn_id, '') IS NULL
+   AND home_score IS NOT DISTINCT FROM :home_score
+   AND away_score IS NOT DISTINCT FROM :away_score
+   AND status IS NOT DISTINCT FROM :status
+"""
+
+
+def observed_state(rows) -> dict[int, tuple]:
+    """What the planner read for each row: ``(espn_id, home, away, status)``."""
+    return {r.id: (r.espn_id, r.home_score, r.away_score, r.status) for r in rows}
+
+
+async def write_tags_if_unchanged(session, tags, observed: dict[int, tuple]):
+    """Label each ghost, ONE ROW PER TRANSACTION, only while it is as the plan saw it.
+
+    The same patient single-row Core write as the shared ``write_tags`` (gotchas
+    #4/#5; ``NOT @>`` keeps it idempotent in the database), plus the
+    :data:`_CAS_WRITE_SQL` guard. Returns ``(written, failed_ids, zero_ids)``:
+    ``zero_ids`` wrote no row — either already labelled or changed under us, and
+    only a read-back tells those apart (:func:`tagged_now`, gotcha #53).
+    """
+    from sqlalchemy import text
+
+    written, failed, zero = 0, [], []
+    for tag in tags:
+        seen = observed.get(tag.ghost_id)
+        if seen is None or seen[0]:
+            # Never planned from a row we read unanchored; refuse, don't guess.
+            failed.append(tag.ghost_id)
+            continue
+        _espn, home, away, status = seen
+        params = {
+            "tag_array": json.dumps([duplicate_tag(tag.canonical_id)]),
+            "eid": tag.ghost_id,
+            "home_score": home,
+            "away_score": away,
+            "status": status,
+        }
+        for attempt in (1, 2, 3):
+            try:
+                result = await session.execute(text(_CAS_WRITE_SQL), params)
+                await session.commit()
+                count = result.rowcount or 0
+                written += count
+                if not count:
+                    zero.append(tag.ghost_id)
+                break
+            except Exception as exc:  # noqa: BLE001 — retry, then surface
+                await session.rollback()
+                if attempt == 3:
+                    print(f"  FAILED event {tag.ghost_id} after 3 attempts: {exc}")
+                    failed.append(tag.ghost_id)
+                else:
+                    await asyncio.sleep(attempt)
+    return written, failed, zero
+
+
+_STATE_SQL = """
+SELECT id, espn_id, home_score, away_score, status
+  FROM events
+ WHERE id = ANY(:ids)
+"""
+
+
+def _comparable(state: tuple) -> tuple:
+    espn_id, home, away, status = state
+    return (espn_id or None, home, away, status)
+
+
+async def changed_since(session, ghost_ids, observed: dict[int, tuple]) -> list[int]:
+    """Which of ``ghost_ids`` no longer read as the plan saw them.
+
+    A guarded write that touched no row is ambiguous on its own: the guard
+    refused a row that changed, or the write silently did not land. Re-reading
+    the judged columns separates them — only a row whose state actually moved
+    (or that is gone) is "changed"; an unchanged row that stayed unlabelled is
+    still a failure and is reported as one (gotcha #53).
+    """
+    from sqlalchemy import text
+
+    if not ghost_ids:
+        return []
+    rows = (await session.execute(text(_STATE_SQL), {"ids": list(ghost_ids)})).all()
+    now = {
+        r.id: _comparable((r.espn_id, r.home_score, r.away_score, r.status))
+        for r in rows
+    }
+    return [
+        g for g in ghost_ids if now.get(g) != _comparable(observed[g])
+    ]
+
+
 async def run_mlb_reschedule_ghost_sweep(
     *,
     apply: bool = True,
@@ -374,9 +482,22 @@ async def run_mlb_reschedule_ghost_sweep(
 
         current = {r.id: (r.tags_text or "[]") for r in raw_rows}
         banked = await ensure_backup(session, plan.tags, current)
-        written, failed = await write_tags(session, plan.tags)
+        observed = observed_state(raw_rows)
+        written, failed, zero = await write_tags_if_unchanged(
+            session, plan.tags, observed
+        )
         after = await tagged_now(session, [t.ghost_id for t in plan.tags])
-        still_untagged = [t.ghost_id for t in plan.tags if t.ghost_id not in after]
+        # Wrote nothing, still unlabelled, and the row no longer reads as the
+        # plan saw it: the guard refused a row that changed. Correct, not a
+        # failure — the next pass re-reads it and judges it afresh.
+        changed = await changed_since(
+            session, [g for g in zero if g not in after], observed
+        )
+        still_untagged = [
+            t.ghost_id
+            for t in plan.tags
+            if t.ghost_id not in after and t.ghost_id not in changed
+        ]
 
         problems = []
         if failed:
@@ -395,10 +516,17 @@ async def run_mlb_reschedule_ghost_sweep(
             "banked": banked,
             "failed_ids": failed[:20],
             "still_untagged": still_untagged[:20],
+            "changed_under_us": changed[:20],
             "reason": (
                 "; ".join(problems)
                 if problems
                 else f"{written} moved game(s) stopped being listed on the day they left"
+            )
+            + (
+                f"; {len(changed)} row(s) changed between read and write and were "
+                f"left unlabelled: {changed[:20]}"
+                if changed
+                else ""
             )
             + dark_note,
             "undo": "python3 scripts/restore_8547_mlb_reschedule_ghost_tags.py --apply",

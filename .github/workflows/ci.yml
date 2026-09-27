@@ -867,6 +867,20 @@ jobs:
             exit 1
           fi
 
+      - name: "#9187 a ghost label never lands on a row that changed between read and write (real Postgres)"
+        # CERT-3662 follow-up 9187-CAS-ANCHOR-SCORE-AT-WRITE: the reschedule /
+        # adjacent-day sweep's UPDATE re-asserts what the plan read — no ESPN id
+        # (NULLIF), the same scores and status (IS NOT DISTINCT FROM). SQL only a
+        # server runs; named here because a `*_pg.py` nobody adds runs nowhere.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_ghost_label_refuses_a_row_that_changed_9187_pg.py \
+            -v -rs 2>&1 | tee /tmp/ghostcas9187.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/ghostcas9187.txt; then
+            echo "::error::#9187 ghost-label write-guard gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#7345 a listing both of whose teams played someone else at that kick-off stops printing (real Postgres)"
         # Two LATERAL joins on exact `commence_time` equality with NULL-false
         # team-id `<>` — SQL only a server runs. Same skip detection.
