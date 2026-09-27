@@ -352,9 +352,15 @@ d("a draw is not the away team on iOS", () => {
   /** THE PLAY POINT — both of its construction sites. */
   it("the play point carries an optional away price from both writers", () => {
     expect(stripComments(playCard())).toMatch(/let awayProb: Double\?/);
-    // …and the card draws the away half only when there is one.
+    // …and the card draws the away half only when there is one. #9015 moved
+    // the decision into `printedPercents` (the pair is rounded together now):
+    // the card hands it the optional away price, and a nil away prints the
+    // home side ALONE rather than a complement.
     expect(stripComments(playCard())).toMatch(
-      /if let away = point\.awayProb \{/
+      /printedPercents\(home: point\.homeProb, away: point\.awayProb\)/
+    );
+    expect(stripComments(playCard())).toMatch(
+      /guard let away else \{\s*return \(renderedPercent\(home\) \?\? 0, nil\)/
     );
 
     for (const source of [detail(), chart()]) {
