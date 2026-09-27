@@ -28,7 +28,7 @@ import {
 import type { HostCue } from "@/lib/sameFixtureHostCue";
 import { providerGameNumber } from "@/lib/teamGames";
 import { PinIcon } from "@/components/PinButton";
-import { sportsbookProjectionDrawable } from "@/lib/scoreDifferentialHeading";
+import { sportsbookProjectedPair } from "@/lib/projectedFinalPair";
 import {
   hasNoReportedResult,
   isFinishedStatus,
@@ -230,21 +230,10 @@ export default function EventCard({
   const odds = event.current_odds;
   const opening = event.opening_odds;
 
-  // #9006 — "Proj 6--2" on a UFC card. The pair is solved from a spread point
-  // and a total, so it is a score only where the sport's spread is a margin:
-  // the card asks `sportsbookProjectionDrawable`, the question the Sportsbooks
-  // table and the Score Differential gate already ask (#8617), and a fight
-  // answers no. The sign test is for every sport: no scoreboard reads below
-  // zero, so a negative half means the inputs were not a points line.
-  const projectedScore =
-    odds &&
-    odds.projected_home_score != null &&
-    odds.projected_away_score != null &&
-    odds.projected_home_score >= 0 &&
-    odds.projected_away_score >= 0 &&
-    sportsbookProjectionDrawable(event.sport ?? undefined)
-      ? { home: odds.projected_home_score, away: odds.projected_away_score }
-      : null;
+  // #9006 / #9034 — the gates live in `sportsbookProjectedPair`, which the
+  // event page reads too before kickoff, so the card's `Proj` and the hero's
+  // `Projected final` are one pair.
+  const projectedScore = sportsbookProjectedPair(odds, event.sport);
 
   // UX-P166 — the live footer's "Opened 62/38" prints both sides of one question
   // in fixed positions, which makes it a duel. Rounding the two independently

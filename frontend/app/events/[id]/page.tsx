@@ -19,6 +19,7 @@ import {
 } from "@/lib/event/historyRange";
 import { canonicalEventHref } from "@/lib/canonicalEventUrl";
 import { withoutEventOwnMoneyline } from "@/lib/eventOwnMoneyline";
+import { eventPageProjectedPair } from "@/lib/projectedFinalPair";
 import { teamTextColor } from "@/lib/teamColors";
 import { useLiveEventStream, type LiveFrame } from "@/hooks/useLiveEventStream";
 import { fetchEventWithLiveFrame } from "@/lib/reconcileEventPoll";
@@ -1104,7 +1105,18 @@ export default function EventPage({ params }: EventPageProps) {
   // `marketMapUtils`; soccer and the NFL say `true` and keep their level
   // projections, because the rule is about IMPOSSIBLE results and not unlikely
   // ones. A sport nobody has declared keeps printing, by the field's default.
-  const projectedFinalPair = historyData?.pm_spread_data?.projected_final ?? null;
+  //
+  // #9034: BEFORE KICKOFF THE PAIR IS THE CARD'S. The search card one tap back
+  // printed `Proj 18-29` (sportsbooks, `current_odds`) while this line printed
+  // `17 – 28` (Kalshi ladders). `eventPageProjectedPair` hands the page the
+  // card's pair whenever the card would print one, and the ladders' otherwise;
+  // every gate below still applies to whichever it returns.
+  const projectedFinalPair = eventPageProjectedPair({
+    odds: event?.current_odds,
+    sportKey: event?.sport,
+    isLive,
+    ladderPair: historyData?.pm_spread_data?.projected_final,
+  });
   const projectedPairIsAPossibleResult =
     projectedFinalPair == null ||
     sportVocab(event?.sport || undefined).canEndInATie ||
