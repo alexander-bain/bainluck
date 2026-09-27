@@ -448,6 +448,14 @@ def kalshi_outcome_names(event_title, markets) -> dict[str, str]:
     collided group is re-derived, and only from a candidate that resolves the
     whole group distinctly. If nothing does, the ladder's answer stands — a
     duplicate name is still better than a fabricated one.
+
+    #9173: a WITHDRAWN leg (``_is_withdrawn_leg``) is not a sibling, so it never
+    joins a collision group. Kalshi withdrew ``KXMIFEPRISTONEMAIL-26-27`` and
+    re-listed it as ``…-27JAN``; both carry ``yes_sub_title='Before 2027'``, the
+    group resolved on the ticker rung, and the one live leg read ``27JAN`` in
+    the hero, the legend and the movement caption. #4356 read the same shape
+    (a withdrawn ``LARNONE`` beside a live ``NONE``) and ruled that separating
+    them "would have invented a distinction the venue explicitly denies".
     """
     markets = list(markets)
     names = {
@@ -456,6 +464,8 @@ def kalshi_outcome_names(event_title, markets) -> dict[str, str]:
 
     collided: dict[str, list] = {}
     for m in markets:
+        if _is_withdrawn_leg(getattr(m, "status", None)):
+            continue
         collided.setdefault(names[m.ticker], []).append(m)
 
     for group in collided.values():
@@ -1320,6 +1330,8 @@ async def _poll_kalshi_markets():
         # placeholder write is not reached at all". Its first non-zero read in
         # production is the honest proof this shipped.
         "unpriced_outcomes_recorded": 0,
+        # #9173: legs the venue withdrew (#4356), neither priced nor created.
+        "withdrawn_legs_skipped": 0,
         "errors": [],
         "by_category": {},
         "crypto_skipped": 0,
@@ -1955,6 +1967,17 @@ async def _poll_kalshi_markets():
                     outcome_names = kalshi_outcome_names(event.title, event.markets)
                     for market in event.markets:
                         outcome_name = outcome_names[market.ticker]
+
+                        # #9173, #4356's rule on this path. `status="open"`
+                        # filters EVENTS, not their nested legs, so a leg the
+                        # venue withdrew arrives here beside its re-listing. It
+                        # is neither priced nor born as a placeholder; it stays
+                        # in `all_tickers` below, so a price we already hold
+                        # for it is cleared by the null-out block (which still
+                        # protects a graded row).
+                        if _is_withdrawn_leg(market.status):
+                            stats["withdrawn_legs_skipped"] += 1
+                            continue
 
                         # Calculate probability from bid/ask midpoint or last price.
                         # The spread guard lives in _kalshi_yes_probability so it is
