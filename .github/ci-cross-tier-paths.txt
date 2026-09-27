@@ -139,3 +139,8 @@ frontend/lib/teamUrls.ts
 # card to what CERT-3289 blocked: a bare title with two golfers under it that
 # nothing reads.
 frontend/components/TournamentCard.tsx
+#
+# #9208: `test_a_called_off_mlb_game_serves_its_stoppage_word_9208.py` pins the
+# backend's baseball stoppage words to `AUTHORITY_STOPPAGE_WORDS` here, so a
+# word added on the web alone must still run the shard that compares them.
+frontend/lib/gameTimeLabel.ts
