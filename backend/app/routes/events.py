@@ -10964,6 +10964,11 @@ _NEXT_MATCH_LOOKAHEAD_DAYS = 120
 #: which is the whole of Alex's "the live game, else the next".
 _LEAD_TEAM_FIXTURE_LIMIT = 1
 
+#: #9211: how many of the resolved team's games that FINISHED TODAY the dropdown
+#: offers beside its next one. Two, for a doubleheader; every other day it is one
+#: row or none.
+_LEAD_TEAM_TODAYS_FINAL_LIMIT = 2
+
 #: The sport keys the scorer counts as prominent (`rank_key`'s third term).
 #: Imported rather than re-listed: two copies of this set is one copy that drifts,
 #: and the pool would then order by a definition of "prominent" the scorer no
@@ -11861,6 +11866,36 @@ async def typeahead_search(
         _ta_lead_team_row_ids |= {
             ev.id for ev in _ta_rows if _ta_is_lead_team_fixture(ev)
         }
+        # #9211: the game this team finished TODAY, right behind its live or next
+        # game (the query's docstring has the specimen). Same gate as the line
+        # above, so only a query that IS the team pays the extra ~2 ms, and it is
+        # skipped when an arm above already fetched today's result.
+        _ta_day_start = _eastern_day_start(now)
+        if not any(
+            ev.status in ("completed", "closed")
+            and ev.commence_time is not None
+            and ev.commence_time >= _ta_day_start
+            and _ta_is_lead_team_fixture(ev)
+            for ev in _ta_rows
+        ):
+            _ta_finals = (
+                await db.execute(
+                    _lead_team_todays_final_query(
+                        _ta_lead_team["team_id"], _ta_lead_team["text"], now
+                    )
+                )
+            ).scalars().all()
+            _ta_mark("lead_team_todays_final_query")
+            if _ta_finals:
+                _ta_lead_team_row_ids |= {ev.id for ev in _ta_finals}
+                _ta_rows = _place_todays_finals(
+                    _ta_rows,
+                    _ta_finals,
+                    lambda ev: (
+                        ev.status in ("live", "scheduled")
+                        and _ta_is_lead_team_fixture(ev)
+                    ),
+                )
 
     event_pool = []
     # #2580 is #2623 seen through this dropdown: typing "Alcaraz" offered the
@@ -32904,6 +32939,81 @@ def _lead_team_next_match_query(team_id: int, team_name: str, now: datetime):
         )
         .limit(_LEAD_TEAM_FIXTURE_LIMIT)
     )
+
+
+def _eastern_day_start(now: datetime) -> datetime:
+    """Midnight of `now`'s Eastern day, as an aware datetime (#9211).
+
+    The same day `_todays_final_order_key` uses on /search, so the dropdown and
+    the results page agree about which game "finished today".
+    """
+    tz = ZoneInfo(_EASTERN_TZ_NAME)
+    return datetime.combine(now.astimezone(tz).date(), datetime.min.time(), tzinfo=tz)
+
+
+def _lead_team_todays_final_query(team_id: int, team_name: str, now: datetime):
+    """#9211: the RESOLVED team's games that finished TODAY, found by identity.
+
+    `/typeahead?q=chiefs` on production 2026-09-27 21:31Z, four and a half hours
+    after the Chiefs beat Miami 24–10: the team, *Chiefs at Raiders* (Oct 4),
+    *Exeter Chiefs at Bath* (rugby), then four futures. The result was not in the
+    list. Every arm above selects `live`/`scheduled`, and #4411's or-LAST arm is
+    short-circuited whenever a next fixture exists — on purpose, because a
+    finished game must not DISPLACE the next one (T2 decision B). It still has to
+    appear beside it on the day it was played: on game day the result is the
+    answer.
+
+    The `_lead_team_next_match_query` predicate (team id OR exact name, never a
+    LIKE, for the reasons that docstring measured) over a window that opens at
+    midnight Eastern and closes at `now`. Priced before it was chosen: EXPLAIN
+    ANALYZE on production 2026-09-27 for Kansas City Chiefs, 1.5 ms execution /
+    0.5 ms planning, a BitmapAnd of `ix_events_status_commence` with the four
+    team indexes. No text predicate, so #4506's generic-plan pathology does not
+    apply and the arm is not wrapped in `_forced_custom_plan`.
+
+    `completed`/`closed` only: a `suspended` row has no result to show. Newest
+    first, so a doubleheader lists the game just played first.
+    """
+    return (
+        select(Event)
+        .join(Sport, Event.sport_id == Sport.id)
+        .options(
+            selectinload(Event.sport),
+            selectinload(Event.home_team),
+            selectinload(Event.away_team),
+        )
+        .where(
+            or_(
+                Event.home_team_id == team_id,
+                Event.away_team_id == team_id,
+                Event.home_team_name == team_name,
+                Event.away_team_name == team_name,
+            ),
+            Event.status.in_(["completed", "closed"]),
+            Event.commence_time >= _eastern_day_start(now),
+            Event.commence_time <= now,
+            not_a_proven_duplicate(),
+        )
+        .order_by(Event.commence_time.desc())
+        .limit(_LEAD_TEAM_TODAYS_FINAL_LIMIT)
+    )
+
+
+def _place_todays_finals(rows: list, finals: list, is_next) -> list:
+    """#9211: put today's finals directly BEHIND the team's live-or-next row.
+
+    Never in front of it: "next before last" (D107, T2 decision B). With no such
+    row the finals lead. The pool is cut to `_EVENT_POOL_SIZE` BEFORE anything is
+    scored, and the scorer keeps pool order between two rows of the same class,
+    so the next row and its finals move up together when the next row sits too
+    deep for both to survive the cut. Otherwise every row keeps its place.
+    """
+    at = next((i for i, ev in enumerate(rows) if is_next(ev)), None)
+    if at is None:
+        return [*finals, *rows]
+    start = min(at, max(0, _EVENT_POOL_SIZE - 1 - len(finals)))
+    rest = [*rows[:at], *rows[at + 1:]]
+    return [*rest[:start], rows[at], *finals, *rest[start:]]
 
 
 #: #8428: how many previous meetings a MATCHUP query adds beside the next one.
