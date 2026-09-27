@@ -383,3 +383,66 @@ async def test_a_sport_the_undated_board_fully_covers_asks_for_no_dated_board():
 
     assert fetched == []
     assert stats["events_synced"] == 1
+
+
+async def test_a_doubleheaders_second_game_still_reaches_the_dated_board():
+    """CERT-3617's case. Two id-less rows, same teams, same day, inside the
+    3 h name window; the undated board carries only game 1. Both rows name-match
+    game 1 unless the first one's claim is counted — and it is the LOOP's claim
+    that sends row 2 to the dated board, where game 2 is. RED at 12f612b5fa
+    (the dry run claimed nothing: no board fetched, row 2 lost its score)."""
+    from app.tasks.espn_sync import _process_live_sport, espn_team_matches
+    from app.utils.espn_helpers import match_event_to_espn
+    from tests.test_undated_board_is_a_slice_5697 import (
+        KICKOFF,
+        NOW,
+        SPORT,
+        _espn_event,
+        _FakeEvent,
+        _FakeSession,
+        _Recorder,
+    )
+
+    game_1 = _espn_event(
+        "9049001", "Purdue Boilermakers", "Purdue",
+        "Wake Forest Demon Deacons", "Wake Forest", 7, 3,
+    )
+    game_2 = _espn_event(
+        "9049002", "Purdue Boilermakers", "Purdue",
+        "Wake Forest Demon Deacons", "Wake Forest", 0, 14,
+        when=KICKOFF + timedelta(hours=2, minutes=30),
+    )
+    row_1 = _FakeEvent("Purdue Boilermakers", "Wake Forest Demon Deacons")
+    row_2 = _FakeEvent(
+        "Purdue Boilermakers", "Wake Forest Demon Deacons",
+        commence=KICKOFF + timedelta(hours=2, minutes=30),
+    )
+
+    class _Claiming(_Recorder):
+        async def update_fields(self, session, event, ee, claimed, stats):
+            # What the real writers do with a matched game's id
+            # (`write_espn_win_probability`, `espn_id_stamp`).
+            claimed.add(ee.espn_id)
+            return await super().update_fields(session, event, ee, claimed, stats)
+
+    fetched: list = []
+
+    async def _fetch(sport_key, board_day):
+        fetched.append(board_day)
+        return [game_1, game_2]
+
+    rec = _Claiming()
+    stats = {"events_synced": 0, "events_updated": 0, "errors": []}
+    await _process_live_sport(
+        _FakeSession([row_1, row_2]), SPORT, [game_1], stats,
+        NOW - timedelta(hours=6), NOW - timedelta(hours=5),
+        espn_team_matches, rec.upsert_team, rec.register_identities,
+        match_event_to_espn, rec.update_fields, rec.write_win_prob,
+        rec.compute_stat_model, rec.create_unmatched,
+        dated_board_fetcher=_fetch,
+    )
+
+    assert len(fetched) == 1, fetched
+    assert rec.updated == [(row_1.id, "9049001"), (row_2.id, "9049002")], rec.updated
+    assert (row_2.home_score, row_2.away_score) == (0, 14)
+    assert stats["events_matched_on_dated_board"] == 1

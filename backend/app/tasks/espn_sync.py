@@ -2844,24 +2844,30 @@ async def _process_live_sport(
     # across the wait — the socket's price write for those games queued behind
     # it (CERT-3611). So the boards are fetched here, where nothing has been
     # written, for the days of the games the undated board cannot account for,
-    # in loop order and under the same ceiling. `match_event_fn` is pure and the
-    # loop's claims only ever grow, so every game this dry run can match the
-    # loop could have matched too: the days fetched here are the days the loop
-    # would have fetched, and the loop itself never touches the network.
+    # in loop order and under the same ceiling. The dry run must CLAIM as the
+    # loop does (CERT-3617): a doubleheader's two id-less rows both name-match
+    # game 1 on a board that lacks game 2, and only the loop's claim of game
+    # 1's id sends row 2 to the dated board. So each dry match adds its id to a
+    # private claimed set that grows in loop order, the way the writers do
+    # (`write_espn_win_probability`, `espn_id_stamp`); the loop's own set is
+    # untouched. The loop itself never touches the network.
     if dated_board_fetcher is not None:
+        dry_claimed = set(claimed_espn_ids)
         for event in our_events:
+            if len(boards_by_day) >= MAX_DATED_BOARDS_PER_SPORT:
+                break
+            matched_espn, _ = match_event_fn(
+                event, espn_events, espn_by_id, dry_claimed, espn_names_match,
+            )
+            if matched_espn:
+                if getattr(matched_espn, "espn_id", None):
+                    dry_claimed.add(matched_espn.espn_id)
+                continue
             commence = getattr(event, "commence_time", None)
             if commence is None:
                 continue
             day = espn_board_date(commence)
             if day in boards_by_day:
-                continue
-            if len(boards_by_day) >= MAX_DATED_BOARDS_PER_SPORT:
-                break
-            matched_espn, _ = match_event_fn(
-                event, espn_events, espn_by_id, claimed_espn_ids, espn_names_match,
-            )
-            if matched_espn:
                 continue
             try:
                 board = await dated_board_fetcher(sport_key, day)
