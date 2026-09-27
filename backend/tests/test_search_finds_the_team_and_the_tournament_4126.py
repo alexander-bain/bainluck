@@ -198,6 +198,16 @@ class TestUsOpenReachesTheMatch:
         assert keys == ["baseball_mlb"]
         assert consumed == {"mlb"}, "`yankees` must stay a required term"
 
+    def test_ufc_and_mma_reach_the_key_the_fights_are_stored_under(self):
+        """Production, 2026-09-27 00:2xZ, during the live Rosas Jr vs Barcelos
+        card: `q=ufc` and `q=mma` returned 0 games while `q=rosas` returned the
+        fight. Every MMA event sits under `mma_mixed_martial_arts`; `sports` has
+        no `mma_ufc` row, and that was the only key the map named."""
+        for query in ("ufc", "mma", "UFC"):
+            keys, consumed = _resolve_sport_aliases(_expanded(query))
+            assert "mma_mixed_martial_arts" in keys, query
+            assert consumed == {query.lower()}
+
     def test_wimbledon_is_a_single_token_tournament(self):
         keys, _ = _resolve_sport_aliases(_expanded("wimbledon"))
         assert keys == ["tennis_atp_wimbledon", "tennis_wta_wimbledon"]
