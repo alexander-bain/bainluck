@@ -19,7 +19,10 @@ write (10.65 s), the live poll's locked read (8.25 s), a score write (8.21 s).
 * the task commits — and publishes the frames that commit confirmed — after
   every live sport and after every later pass, never inside a savepoint;
 * `fetch_live_box_scores` asks ESPN for every game FIRST and writes after, so no
-  game's row is written (locked) while another game's fetch is in flight.
+  game's row is written (locked) while another game's fetch is in flight;
+* inside one sport, the dated board (#5697 widening) is asked for BEFORE the
+  first game is written (CERT-3611: game A written, then game B waited on
+  ESPN with A's row locked).
 
 Real-Postgres arms (the lock itself, not the call order):
 `tests/integration/test_espn_pass_releases_rows_pg_9049.py`.
@@ -27,6 +30,7 @@ Real-Postgres arms (the lock itself, not the call order):
 
 from __future__ import annotations
 
+from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -129,7 +133,9 @@ async def test_every_game_still_gets_its_box_score():
 
 async def test_one_games_failed_fetch_or_write_costs_only_that_game():
     """The per-game try/except survives the split: a dark fetch (2) and a failed
-    write (3) each cost their own game, never a sibling's."""
+    write (3) each cost their own game here. That is the Python half only — on
+    Postgres a failed UPDATE aborts the step's savepoint and costs the whole
+    box pass (no per-game savepoint yet): #8913, CERT-3611's follow-up."""
     log: list = []
     stats = await _run_box_pass(
         [_live_event(1), _live_event(2), _live_event(3), _live_event(4)],
@@ -291,3 +297,89 @@ async def test_a_failed_sport_still_releases_before_the_next(monkeypatch):
 
     assert [e.split(":")[0] for e in stats["errors"]] == [MLB]
     assert _released_between(log, f"live:{MLB}", f"live:{NHL}"), log
+
+
+# ── inside one sport: the dated board is asked before the first write ────────
+
+
+async def test_the_dated_board_is_fetched_before_any_game_in_the_sport_is_written():
+    """CERT-3611's path. Game A (on the undated board) is written, then game B
+    (only on the dated board) waits on ESPN — A's row locked across the wait.
+    RED at 0fd0bd5ea3: `write A` came before `fetch`."""
+    from app.tasks.espn_sync import _process_live_sport, espn_team_matches
+    from app.utils.espn_helpers import match_event_to_espn
+    from tests.test_undated_board_is_a_slice_5697 import (
+        DATED_BOARD,
+        NOW,
+        SPORT,
+        UNDATED_BOARD,
+        _FakeEvent,
+        _FakeSession,
+        _Recorder,
+    )
+
+    log: list = []
+    a = _FakeEvent("Michigan Wolverines", "Oklahoma Sooners")
+    b = _FakeEvent("Purdue Boilermakers", "Wake Forest Demon Deacons")
+
+    class _Logging(_Recorder):
+        async def update_fields(self, session, event, ee, claimed, stats):
+            log.append(("write", event.id))
+            return await super().update_fields(session, event, ee, claimed, stats)
+
+    async def _fetch(sport_key, board_day):
+        log.append(("fetch", board_day))
+        return DATED_BOARD
+
+    rec = _Logging()
+    stats = {"events_synced": 0, "events_updated": 0, "errors": []}
+    await _process_live_sport(
+        _FakeSession([a, b]), SPORT, UNDATED_BOARD, stats,
+        NOW - timedelta(hours=6), NOW - timedelta(hours=5),
+        espn_team_matches, rec.upsert_team, rec.register_identities,
+        match_event_to_espn, rec.update_fields, rec.write_win_prob,
+        rec.compute_stat_model, rec.create_unmatched,
+        dated_board_fetcher=_fetch,
+    )
+
+    assert [kind for kind, _ in log] == ["fetch", "write", "write"], log
+    # WIDENING CONTROL: moving the fetch did not cost B its dated-board match.
+    assert rec.updated == [(a.id, "401856679"), (b.id, "401858224")]
+    assert stats["events_matched_on_dated_board"] == 1
+    assert stats["dated_board_fetches"] == 1
+
+
+async def test_a_sport_the_undated_board_fully_covers_asks_for_no_dated_board():
+    """The dry run must not turn into a fetch per sport: every game matched on
+    the undated board ⇒ no ESPN call, as before."""
+    from app.tasks.espn_sync import _process_live_sport, espn_team_matches
+    from app.utils.espn_helpers import match_event_to_espn
+    from tests.test_undated_board_is_a_slice_5697 import (
+        NOW,
+        SPORT,
+        UNDATED_BOARD,
+        _FakeEvent,
+        _FakeSession,
+        _Recorder,
+    )
+
+    fetched: list = []
+
+    async def _fetch(sport_key, board_day):
+        fetched.append(board_day)
+        return []
+
+    rec = _Recorder()
+    stats = {"events_synced": 0, "events_updated": 0, "errors": []}
+    await _process_live_sport(
+        _FakeSession([_FakeEvent("Michigan Wolverines", "Oklahoma Sooners")]),
+        SPORT, UNDATED_BOARD, stats,
+        NOW - timedelta(hours=6), NOW - timedelta(hours=5),
+        espn_team_matches, rec.upsert_team, rec.register_identities,
+        match_event_to_espn, rec.update_fields, rec.write_win_prob,
+        rec.compute_stat_model, rec.create_unmatched,
+        dated_board_fetcher=_fetch,
+    )
+
+    assert fetched == []
+    assert stats["events_synced"] == 1

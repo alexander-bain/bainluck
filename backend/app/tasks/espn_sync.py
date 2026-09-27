@@ -2836,25 +2836,33 @@ async def _process_live_sport(
     # has no time guard; it has one.)
     boards_by_day: dict[str, list] = {}
 
-    async def _widened_pool_for(event):
-        """(pool, by_id) for one event's own board day, or ``None``.
-
-        ``None`` means there is nothing new to match against — no fetcher, the
-        per-sport ceiling is spent, the authority went dark, or the dated board
-        added no game the undated one did not already carry.
-        """
-        if dated_board_fetcher is None:
-            return None
-        commence = getattr(event, "commence_time", None)
-        if commence is None:
-            return None
-        day = espn_board_date(commence)
-        if day not in boards_by_day:
+    # ── EVERY DATED BOARD IS ASKED FOR BEFORE THE FIRST WRITE (#9049) ──
+    #
+    # The loop below writes each matched game's row, and that row stays locked
+    # until this sport's commit. Asked from inside the loop, the dated board
+    # (a 10 s ESPN call, up to two per sport) held every earlier game's row
+    # across the wait — the socket's price write for those games queued behind
+    # it (CERT-3611). So the boards are fetched here, where nothing has been
+    # written, for the days of the games the undated board cannot account for,
+    # in loop order and under the same ceiling. `match_event_fn` is pure and the
+    # loop's claims only ever grow, so every game this dry run can match the
+    # loop could have matched too: the days fetched here are the days the loop
+    # would have fetched, and the loop itself never touches the network.
+    if dated_board_fetcher is not None:
+        for event in our_events:
+            commence = getattr(event, "commence_time", None)
+            if commence is None:
+                continue
+            day = espn_board_date(commence)
+            if day in boards_by_day:
+                continue
             if len(boards_by_day) >= MAX_DATED_BOARDS_PER_SPORT:
-                stats["dated_board_days_skipped"] = (
-                    stats.get("dated_board_days_skipped", 0) + 1
-                )
-                return None
+                break
+            matched_espn, _ = match_event_fn(
+                event, espn_events, espn_by_id, claimed_espn_ids, espn_names_match,
+            )
+            if matched_espn:
+                continue
             try:
                 board = await dated_board_fetcher(sport_key, day)
             except Exception as e:
@@ -2871,6 +2879,26 @@ async def _process_live_sport(
                     stats.get("dated_board_fetches", 0) + 1
                 )
             boards_by_day[day] = board or []
+
+    def _widened_pool_for(event):
+        """(pool, by_id) for one event's own board day, or ``None``.
+
+        ``None`` means there is nothing new to match against — no fetcher, the
+        day was not fetched above (the per-sport ceiling was spent), the
+        authority went dark, or the dated board added no game the undated one
+        did not already carry. Never asks ESPN: see the prefetch above.
+        """
+        if dated_board_fetcher is None:
+            return None
+        commence = getattr(event, "commence_time", None)
+        if commence is None:
+            return None
+        day = espn_board_date(commence)
+        if day not in boards_by_day:
+            stats["dated_board_days_skipped"] = (
+                stats.get("dated_board_days_skipped", 0) + 1
+            )
+            return None
 
         extra = [
             ee for ee in boards_by_day[day]
@@ -2891,7 +2919,7 @@ async def _process_live_sport(
         )
 
         if not matched_espn:
-            widened = await _widened_pool_for(event)
+            widened = _widened_pool_for(event)
             if widened is not None:
                 pool, by_id = widened
                 matched_espn, match_method = match_event_fn(

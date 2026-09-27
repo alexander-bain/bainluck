@@ -4858,8 +4858,8 @@ jobs:
             echo "::error::#9049 ESPN row-release gate SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]3 passed," /tmp/espnrelease9049.txt || {
-            echo "::error::#9049 ESPN row-release gate did not run all three cases"
+          grep -qE "[^0-9]4 passed," /tmp/espnrelease9049.txt || {
+            echo "::error::#9049 ESPN row-release gate did not run all four cases (CERT-3611 added the same-sport dated-board case)"
             exit 1
           }
 

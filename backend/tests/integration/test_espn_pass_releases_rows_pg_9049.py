@@ -24,6 +24,9 @@ once.
   earlier sport wrote is free — RED before #9049;
 * box pass: while ESPN is asked about game 2, game 1's row is free — RED before
   #9049 (game 1 was written before game 2 was fetched);
+* one sport (CERT-3611): while the pass asks ESPN for game B's dated board,
+  game A — on the undated board, same sport — is free. RED at 0fd0bd5ea3 (A was
+  written first and stayed locked, same savepoint, through the wait);
 * controls: the probe DOES see a lock that is held (else every arm passes on a
   blind probe), and every write still commits.
 
@@ -205,3 +208,113 @@ class TestTheBoxPassWritesAfterItFetches:
                 )
             ).scalars().all()
         assert [b["live"] for b in boxes] == [True] * 4, boxes
+
+
+def _live_board_row(espn_id):
+    """An in-progress ESPN board entry (not final: this arm is about the lock,
+    not the settle door)."""
+    from app.services.espn_api import ESPNEvent
+    from tests.test_undated_board_is_a_slice_5697 import _team
+
+    return ESPNEvent(
+        espn_id=espn_id,
+        name=f"{espn_id} away at home",
+        short_name=espn_id,
+        date=None,
+        status="in",
+        status_detail="2nd Period",
+        period=2,
+        clock="10:00",
+        home_team=_team(f"Home {espn_id}", f"H{espn_id}"),
+        away_team=_team(f"Away {espn_id}", f"A{espn_id}"),
+        home_score=1,
+        away_score=0,
+        venue=None,
+        broadcasts=[],
+        home_win_probability=None,
+    )
+
+
+@needs_postgres
+class TestOneSportsDatedBoardWaitsForNoWrittenRow:
+    async def test_a_written_game_is_free_while_a_sibling_waits_on_the_dated_board(
+        self, db
+    ):
+        """CERT-3611's path, on real rows. Game A is on the undated board and is
+        written; game B is not, so the pass asks ESPN for B's dated board. RED at
+        0fd0bd5ea3: A was written first, and its row stayed locked (same
+        sport, same savepoint, no commit) for the whole ESPN wait."""
+        from datetime import datetime, timedelta, timezone
+
+        from app.models.models import Event
+        from app.tasks.espn_sync import _process_live_sport, _step_savepoint
+
+        engine, maker, ids = db
+        a, b = ids["the_stat_model_row"], ids["a_sibling_the_pass_also_writes"]
+        async with maker() as session:
+            espn_of = dict(
+                (
+                    await session.execute(
+                        select(Event.id, Event.espn_id).where(Event.id.in_([a, b]))
+                    )
+                ).all()
+            )
+        undated = [_live_board_row(espn_of[a])]
+        dated = undated + [_live_board_row(espn_of[b])]
+
+        written: list = []
+        at_fetch: list = []
+
+        def _match(event, pool, by_id, claimed, names_match):
+            # By id only: the widening, not the name matcher, is under test.
+            if event.espn_id in by_id:
+                return by_id[event.espn_id], "espn_id"
+            return None, None
+
+        async def _update_fields(session, event, ee, claimed, stats):
+            await session.execute(
+                update(Event).where(Event.id == event.id).values(period="2nd Period")
+            )
+            written.append(event.id)
+            return True
+
+        async def _dated(sport_key, board_day):
+            at_fetch.append(
+                {row: await _is_free(engine, row) for row in (a, *written)}
+            )
+            return dated
+
+        async def _none(*a_, **k):
+            return None
+
+        async def _false(*a_, **k):
+            return False
+
+        now = datetime.now(timezone.utc)
+        stats = {"events_synced": 0, "events_updated": 0, "errors": []}
+        async with maker() as session:
+            async with _step_savepoint(session):
+                await _process_live_sport(
+                    session, NHL, undated, stats,
+                    now - timedelta(hours=6), now - timedelta(hours=5),
+                    lambda *x: False, _none, _none,
+                    _match, _update_fields, _false, _false, _none,
+                    dated_board_fetcher=_dated,
+                )
+            await session.commit()
+
+        assert at_fetch, "the dated board was never asked — the arm tested nothing"
+        assert all(all(free.values()) for free in at_fetch), at_fetch
+        # WIDENING + WRITE CONTROL: B still matched on the dated board, and both
+        # writes committed.
+        assert stats.get("events_matched_on_dated_board", 0) >= 1, stats
+        assert a in written and b in written, written
+        async with maker() as session:
+            periods = dict(
+                (
+                    await session.execute(
+                        select(Event.id, Event.period).where(Event.id.in_([a, b]))
+                    )
+                ).all()
+            )
+        assert periods == {a: "2nd Period", b: "2nd Period"}, periods
