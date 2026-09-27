@@ -168,12 +168,13 @@ describe.each([
 });
 
 describe("#9016 — only the label that left the plot moves", () => {
-  test("Polymarket at 390px: the first count goes above its point; only its neighbours follow", () => {
+  test("Polymarket at 390px: the first count leaves the axis band", () => {
     const ls = labels(render(POLYMARKET_TRADED, 318, 318));
-    // Before #9016 all ten drew below. 23,602 moves up out of the axis band; 9,856, 10,296 and
-    // 13,592 then meet the label beside them and dodge up too (#8979's rule, unchanged). The
-    // upper six never meet a moved label and keep exactly the spot they had.
-    expect(ls.map(l => l.below)).toEqual([false, false, false, false, true, true, true, true, true, true]);
+    // Before #9016 all ten drew below. 23,602 moves out of the axis band. #9026 then also moves
+    // any count the curve would strike through, so the rest of this pattern is #9026's (beside
+    // the point where the line leaves room); `sampleCountsClearTheirOwnCurve9026` guards it.
+    expect(ls[0].below).toBe(false);
+    expect(ls.map(l => l.below)).toEqual([false, false, false, true, true, true, true, true, true, false]);
   });
 
   test("dodgeNLabels: a first option already inside the plot is kept, byte for byte", () => {

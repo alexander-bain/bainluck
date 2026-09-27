@@ -171,6 +171,8 @@ export interface NLabelPlacement {
   y: number;
   /** true when the label was flipped under its point to stay inside the plot. */
   below: boolean;
+  /** #9026: horizontal offset of the label's centre from its point; set only on a side spot. */
+  dx?: number;
 }
 
 /**
@@ -248,6 +250,75 @@ function boxesMeet(a: LabelBox, b: LabelBox): boolean {
   return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
 }
 
+/** Half the curve's `strokeWidth` (2.5): a segment that passes this close to the glyphs strokes them. */
+const CURVE_HALF_STROKE = 1.25;
+
+/** One plotted point of the label's own series, in chart units: the curve runs through them in order. */
+export interface NLabelPoint {
+  x: number;
+  y: number;
+  r: number;
+}
+
+/** Liang–Barsky: does the segment (x1,y1)→(x2,y2) pass through the box? */
+function segmentMeetsBox(x1: number, y1: number, x2: number, y2: number, b: LabelBox): boolean {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  let t0 = 0;
+  let t1 = 1;
+  const edges: Array<[number, number]> = [
+    [-dx, x1 - b.left],
+    [dx, b.right - x1],
+    [-dy, y1 - b.top],
+    [dy, b.bottom - y1],
+  ];
+  for (const [p, q] of edges) {
+    if (p === 0) {
+      if (q < 0) return false;
+      continue;
+    }
+    const t = q / p;
+    if (p < 0) t0 = Math.max(t0, t);
+    else t1 = Math.min(t1, t);
+    if (t0 > t1) return false;
+  }
+  return true;
+}
+
+/** The label's own series: its curve and markers, and the plot's side edges for a side spot. */
+export interface NLabelObstacles {
+  points: NLabelPoint[];
+  plotLeft: number;
+  plotRight: number;
+}
+
+function clearOfSeries(box: LabelBox, pointX: number, o: NLabelObstacles): boolean {
+  const grown = {
+    left: box.left - CURVE_HALF_STROKE,
+    right: box.right + CURVE_HALF_STROKE,
+    top: box.top - CURVE_HALF_STROKE,
+    bottom: box.bottom + CURVE_HALF_STROKE,
+  };
+  for (let i = 0; i + 1 < o.points.length; i++) {
+    const a = o.points[i];
+    const b = o.points[i + 1];
+    if (segmentMeetsBox(a.x, a.y, b.x, b.y, grown)) return false;
+  }
+  // It also has to read as ITS point's count: its box nearer its own marker than any other. A
+  // label one row under a steep point otherwise lands beside the next point down. This is also
+  // the marker test: a box that touches another marker is nearer that one. Every spot is built
+  // off its own marker (`d >= r` while the radius stays under 10.2; it tops out at 10).
+  const own = o.points.find(c => c.x === pointX);
+  if (!own) return true;
+  const gap = (c: NLabelPoint) => {
+    const nx = Math.min(Math.max(c.x, box.left), box.right);
+    const ny = Math.min(Math.max(c.y, box.top), box.bottom);
+    return Math.hypot(c.x - nx, c.y - ny) - c.r;
+  };
+  const mine = gap(own);
+  return o.points.every(c => c === own || gap(c) > mine);
+}
+
 /**
  * #8979 — WHY ONE SERIES' LABELS ARE PLACED TOGETHER.
  *
@@ -271,47 +342,96 @@ function boxesMeet(a: LabelBox, b: LabelBox): boolean {
  * Polymarket at 390px: `23,602` printed over the axis `0%`; DataGolf: `6,257`. So a label takes
  * the first option that is inside AND free, and falls back to the old rule only when none is.
  * A label whose first option was already inside draws exactly where it did.
+ *
+ * #9026 — AND CLEAR OF ITS OWN CURVE, WHEN SOME SPOT IS.
+ * Nothing tested a label against the line it annotates. On a steep stretch the segment coming
+ * in from the lower left runs through "below" and the segment going out to the upper right runs
+ * through "above". Production, 2026-09-27, By Source → Sportsbooks at 390px: the line struck
+ * through `21,424`, `13,106`, `11,872` and `6,613`; Polymarket: `7,096` and `15,310`. So when
+ * the caller passes the series' own points, a label first looks for a spot that is inside,
+ * free, touches no segment, and sits nearer its own marker than any other (so on no marker);
+ * the options now include four spots beside the point, the diagonals a rising curve leaves open
+ * first. If no spot is that clean, the #9016 rule above
+ * decides exactly as before, so a label is never worse off than it was. Without `obstacles`
+ * nothing changes.
  */
 export function dodgeNLabels(
   candidates: NLabelCandidate[],
   plotTop: number,
   plotBottom: number,
+  obstacles?: NLabelObstacles,
 ): NLabelPlacement[] {
   const placed: LabelBox[] = [];
+  const boxOf = (c: NLabelCandidate, p: NLabelPlacement) => nLabelBox(c.x + (p.dx ?? 0), c.chars, p.y);
   return candidates.map(c => {
     const free = (p: NLabelPlacement) => {
-      const box = nLabelBox(c.x, c.chars, p.y);
+      const box = boxOf(c, p);
       return placed.every(o => !boxesMeet(box, o));
     };
     const inside = (p: NLabelPlacement) => {
-      const box = nLabelBox(c.x, c.chars, p.y);
-      return box.top >= plotTop && box.bottom <= plotBottom;
+      const box = boxOf(c, p);
+      if (box.top < plotTop || box.bottom > plotBottom) return false;
+      // A side spot is new, so it also has to stay within the plot's sides.
+      if (p.dx == null) return true;
+      return !!obstacles && box.left >= obstacles.plotLeft && box.right <= obstacles.plotRight;
     };
+    const clear = (p: NLabelPlacement) => !obstacles || clearOfSeries(boxOf(c, p), c.x, obstacles);
     const chosen =
+      (obstacles ? c.options.find(p => inside(p) && free(p) && clear(p)) : undefined) ??
       c.options.find(p => inside(p) && free(p)) ??
       c.options.find((p, i) => (i === 0 || inside(p)) && free(p)) ??
       c.options[0];
-    placed.push(nLabelBox(c.x, c.chars, chosen.y));
+    placed.push(boxOf(c, chosen));
     return chosen;
   });
 }
 
-/** The ordered options for one label: today's spot first, then the other side, then one row out. */
+/**
+ * The ordered options for one label: today's spot first, then the other side, then one row out.
+ * #9026: given the label's width in characters, four spots beside the point (lower-right,
+ * upper-left, right, left) come after the first two and before one row out. Only
+ * `dodgeNLabels` called with `obstacles` takes them.
+ */
 export function nLabelOptions(
   pointY: number,
   r: number,
   plotTop: number,
   preferBelow: boolean,
+  chars?: number,
 ): NLabelPlacement[] {
   const above = { y: pointY - r - N_LABEL_GAP, below: false };
   const below = { y: pointY + r + N_LABEL_BELOW_OFFSET, below: true };
   // One row = the label's full box (ascent + descent + halo both sides), so a stacked label clears.
   const row = Math.ceil(N_LABEL_FONT_PX * 1.25 + 2 * N_LABEL_HALO);
-  if (preferBelow) return [below, above, { y: below.y + row, below: true }];
-  const first = nLabelPlacement(pointY, r, plotTop);
-  return first.below
-    ? [first, { y: first.y + row, below: true }]
-    : [first, below, { y: first.y - row, below: false }];
+  let options: NLabelPlacement[];
+  if (preferBelow) options = [below, above, { y: below.y + row, below: true }];
+  else {
+    const first = nLabelPlacement(pointY, r, plotTop);
+    options = first.below
+      ? [first, { y: first.y + row, below: true }]
+      : [first, below, { y: first.y - row, below: false }];
+  }
+  if (chars == null) return options;
+  const half = (chars * N_LABEL_CHAR_ADVANCE_PX) / 2;
+  // Diagonals first: a rising curve leaves the lower-right and upper-left of each point open.
+  // The box's near corner sits a gap off the marker's 45-degree point.
+  const d = r * Math.SQRT1_2 + N_LABEL_GAP;
+  const lowerRight = { y: pointY + d + N_LABEL_FONT_PX, below: true, dx: d + half };
+  // A point near the ceiling would push this one into the key's band, so it slides down to the plot
+  // top instead; `dodgeNLabels` still has to find it clear of the curve and the marker.
+  const upperLeft = {
+    y: Math.max(pointY - d - N_LABEL_FONT_PX * 0.25, plotTop + N_LABEL_FONT_PX),
+    below: false,
+    dx: -(d + half),
+  };
+  // The box spans `y - FONT` to `y + FONT/4`, so this baseline puts its middle on the point.
+  const sideY = pointY + (N_LABEL_FONT_PX * 0.75) / 2;
+  const sideDx = r + N_LABEL_GAP + half;
+  const beside = [lowerRight, upperLeft, { y: sideY, below: false, dx: sideDx }, { y: sideY, below: false, dx: -sideDx }];
+  // Beside the point comes before one row out: a row out is the spot most likely to sit nearer a
+  // neighbour than its own point. Without `obstacles` the beside spots are never taken, so the
+  // order a caller without the series sees is unchanged.
+  return [...options.slice(0, 2), ...beside, ...options.slice(2)];
 }
 
 export function curveRuns(ns: number[], thinFloor: number): CurveRun[] {
@@ -471,13 +591,23 @@ export default function CalibrationChart({
           .filter(({ d }) => allN || d.n < thinFloor);
         const placements = new Map<number, NLabelPlacement>();
         dodgeNLabels(
-          labelled.map(({ d }) => ({
-            x: px(d.midpoint),
-            chars: (allN ? d.n.toLocaleString() : `n=${d.n}`).length,
-            options: nLabelOptions(py(d.actual), radius(d.n), padT, allN),
-          })),
+          labelled.map(({ d }) => {
+            const chars = (allN ? d.n.toLocaleString() : `n=${d.n}`).length;
+            const options = nLabelOptions(py(d.actual), radius(d.n), padT, allN, allN ? chars : undefined);
+            return { x: px(d.midpoint), chars, options };
+          }),
           padT,
           height - padB,
+          // #9026: the series' own curve and markers, so a count does not land on the line it
+          // annotates. Only the every-bucket counts: they sit on the solid line. A thin bucket's
+          // `n=` sits on a faded dashed stretch and keeps exactly the #8979 placement.
+          allN
+            ? {
+                points: s.data.map(d => ({ x: px(d.midpoint), y: py(d.actual), r: radius(d.n) })),
+                plotLeft: padL,
+                plotRight: width - padR,
+              }
+            : undefined,
         ).forEach((p, i) => placements.set(labelled[i].di, p));
         return (
           <g key={si}>
@@ -550,7 +680,7 @@ export default function CalibrationChart({
                     const place = placements.get(di) ?? nLabelPlacement(py(d.actual), r, padT);
                     return (
                       <text
-                        x={px(d.midpoint)} y={place.y}
+                        x={px(d.midpoint) + (place.dx ?? 0)} y={place.y}
                         textAnchor="middle" fill="#a8a29e" fontSize={N_LABEL_FONT_PX}
                         // #7434: a flipped label lands over its own CI bar (a ceiling point's
                         // bar runs the height of the plot), and either placement can land on a
@@ -568,7 +698,7 @@ export default function CalibrationChart({
                     const place = placements.get(di) ?? { y: py(d.actual) + r + N_LABEL_BELOW_OFFSET, below: true };
                     return (
                     <text
-                      x={px(d.midpoint)} y={place.y}
+                      x={px(d.midpoint) + (place.dx ?? 0)} y={place.y}
                       textAnchor="middle" fill="#a8a29e" fontSize={N_LABEL_FONT_PX}
                       stroke="white" strokeWidth="2.5" paintOrder="stroke"
                       data-n-label-below={place.below ? "true" : "false"}
