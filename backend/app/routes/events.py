@@ -26899,7 +26899,12 @@ def _pin_blend_edge(
         if live_edge is None:
             return False
 
-        edge_ts = now.replace(second=0, microsecond=0)
+        # #9051: this is the current-state presentation pin, not a quote.
+        # Keep its exact live as-of time so a genuine earlier publication in
+        # this minute remains historical rather than outliving the pin after
+        # client-side merging. The quote's observation clock stays separate.
+        # Pregame keeps its existing minute-based, overwrite-only policy.
+        edge_ts = now if is_live else now.replace(second=0, microsecond=0)
         # Compare parsed datetimes, not ISO strings: bucket timestamps carry
         # whatever tzinfo their source points had, so a "+00:00" vs "Z" style
         # difference must not silently create a duplicate-minute point.
