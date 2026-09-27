@@ -147,7 +147,10 @@ function render(opts: {
 
 const HOME_CARD = 'data-testid="home-team-card"';
 const AWAY_CARD = 'data-testid="away-team-card"';
-const CAPTION = /related futures from multiple sources/;
+// #3801 retired the visible "N related futures from multiple sources" footer;
+// the count now rides the section root as a data-attribute, so its presence is
+// still the marker for "the section rendered".
+const CAPTION = /data-related-futures-total="/;
 
 describe("a team card is drawn only when that team has something to show", () => {
   it("THE REPORTED PAGE: Porto has a championship path, Partizan has nothing — only Porto's card draws", () => {

@@ -2817,8 +2817,11 @@ export default function RelatedFutures({
 
   if (!drawsGameMarkets && !drawsSeries && !drawsTeamCards && !drawsTrades) return null;
 
+  // #3801: the payload's row count rides a data-attribute, never the page —
+  // it counted every raw row (1350 under two team cards on a Chiefs–Dolphins
+  // page), and a coverage count is not reader prose (notice 34).
   return (
-    <div>
+    <div data-related-futures-total={safeData.total_count}>
       <div className="flex items-end justify-between mb-4">
         <div>
           <h3 className="text-lg font-semibold tracking-tight">Bigger Picture</h3>
@@ -3114,13 +3117,6 @@ export default function RelatedFutures({
           />
         </div>
       )}
-
-      {/* Footer count */}
-      <div className="text-center pt-2 mt-3">
-        <span className="text-[9px] text-text-muted">
-          {safeData.total_count} related futures from multiple sources
-        </span>
-      </div>
     </div>
   );
 }

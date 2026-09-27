@@ -199,7 +199,7 @@ describe("B · a rail that is NOTHING BUT the event's own question does not open
     expect(html).not.toContain("Bigger Picture");
     expect(html).not.toContain("Carol Zhao");
     expect(html).not.toContain("Yexin Ma");
-    expect(html).not.toMatch(/related futures from multiple sources/);
+    expect(html).not.toMatch(/data-related-futures-total="/); // #3801: the caption's marker
   });
 });
 

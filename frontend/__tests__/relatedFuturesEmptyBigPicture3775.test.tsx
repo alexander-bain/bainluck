@@ -148,10 +148,12 @@ function render(futures: {
 }
 
 /**
- * The caption is the user-visible promise, so it is what the suppression cases
- * assert on — not the header. Anchored on the sentence Alex quoted.
+ * The caption was the user-visible promise, so it is what the suppression cases
+ * asserted on — not the header. #3801 took the count off the page (it counted
+ * payload rows, not cards); it now rides the section root as a data-attribute,
+ * which is present exactly when the old caption was.
  */
-const CAPTION = /related futures from multiple sources/;
+const CAPTION = /data-related-futures-total="/;
 
 describe("#3775 — the section never announces futures it does not draw", () => {
   it("THE REPORTED PAGE: two settled game props draw nothing, so nothing renders", () => {
