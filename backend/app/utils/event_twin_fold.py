@@ -1931,6 +1931,7 @@ def _catchall_claim_names_league_row(
     league: list,
     league_identity: tuple,
     identities: dict,
+    league_key: Optional[str] = None,
 ) -> bool:
     """Is this id-less catch-all row the league row, one club spelled longer? #5576.
 
@@ -1970,23 +1971,52 @@ def _catchall_claim_names_league_row(
     ``member``/``identity`` are the catch-all row the caller is iterating and its
     strict-key identity; the league row is found by ``league_identity`` so the
     names compared are that row's own, not a cluster representative's.
+
+    #7904 — BOTH CLUBS SHORTENED, ON A PROFESSIONAL LEAGUE. `/search?q=oilers` at
+    390px, 2026-09-26: `OTHER HOCKEY · Oilers 55% / Kraken 45%` (`15306594`,
+    Polymarket-minted, no id) directly beside `NHL · Edmonton Oilers / Seattle
+    Kraken` (`15319587`, StatPal), each card holding one venue. Polymarket names
+    NHL clubs by nickname alone, so NEITHER club is squash-identical and the
+    one-exact-club clause above refused every such pair. When ``league_key`` is a
+    league :func:`_both_sides_may_differ` admits (#8672: professional basketball,
+    hockey and baseball; never college, never a catch-all), both clubs may be
+    adjudicated instead — each by :func:`_one_club_named_twice` against the SAME
+    side of the league row. A reversed orientation is refused, never swapped:
+    the fold unions the catch-all's venue prices onto the survivor, and those
+    are home/away numbers. Every other clause here still holds, and the league
+    side's id may be StatPal's (:func:`_group_carries_schedule_id`).
     """
     if not (
         _variant_group_is_collapsible(catchall)
         and _variant_group_is_collapsible(league)
     ):
         return False
-    if _group_is_id_anchored(catchall) or not _group_is_id_anchored(league):
+    if _group_carries_schedule_id(catchall) or not _group_carries_schedule_id(league):
         return False
     same_away = identity[0] == league_identity[0]
     same_home = identity[1] == league_identity[1]
-    if same_away == same_home:
+    if same_away and same_home:
+        return False
+    both_differ = not same_away and not same_home
+    if both_differ and not (league_key and _both_sides_may_differ(league_key)):
         return False
     league_row = next(
         (row for row in league if identities.get(id(row)) == league_identity), None
     )
     if league_row is None:
         return False
+    if both_differ:
+        # #7904 — see the docstring's last section. Each side against the SAME
+        # side of the league row: the orientation is never swapped, because the
+        # fold unions the catch-all's venue prices onto the survivor by home and
+        # away, and a reversed pairing would hand a reader the other club's %.
+        return _one_club_named_twice(
+            getattr(member, "away_team_name", None),
+            getattr(league_row, "away_team_name", None),
+        ) and _one_club_named_twice(
+            getattr(member, "home_team_name", None),
+            getattr(league_row, "home_team_name", None),
+        )
     disputed = "home_team_name" if same_away else "away_team_name"
     return _one_club_named_twice(
         getattr(member, disputed, None), getattr(league_row, disputed, None)
@@ -2068,6 +2098,7 @@ def _catchall_name_variant_merges(
                         clusters[target],
                         target_identity,
                         identities,
+                        league_key=target_key,
                     ):
                         continue
                 elif not _pair_matches_after_transliteration(
@@ -2519,6 +2550,35 @@ def _pair_matches(left: tuple, right: tuple) -> bool:
     cross product; without it the same page cost 16.2ms cold.
     """
     return _pair_matches_after_transliteration(left, right)
+
+
+def _group_carries_schedule_id(members: list) -> bool:
+    """:func:`_group_is_id_anchored`, or a StatPal fixture id. #7904.
+
+    Asked ONLY by the catch-all pass (:func:`_catchall_claim_names_league_row`),
+    whose licence is "an id-less claim folds onto somebody's SCHEDULED fixture".
+    A row StatPal minted is exactly that — D50 makes StatPal the schedule
+    authority, and the row carries the authority's fixture id in
+    `statpal_fixture_id` — yet it has neither of the two columns
+    :func:`_group_is_id_anchored` reads. Measured on production 2026-09-27
+    08:1xZ: every NHL game from Oct 2 to Oct 4 that also has a Polymarket
+    `icehockey_other` twin is a StatPal row with no `espn_id` and no
+    `external_id`, so the catch-all pass refused all but one of them and the
+    reader got the game twice, each card holding one venue.
+
+    NOT a change to :func:`_group_is_id_anchored`. The within-league passes
+    (#6047, #8100) license a fold on EXACTLY ONE side being anchored, so adding
+    a column there turns a StatPal row beside an Odds-API row from "one
+    anchored" into "both anchored" — a refusal of a fold that serves today. The
+    catch-all pass has no such arm: the catch-all side must carry NO id and the
+    league side must carry one, and counting StatPal's id on the catch-all side
+    too only refuses more. Nothing that folds today can stop folding.
+    """
+    if _group_is_id_anchored(members):
+        return True
+    return any(
+        getattr(member, "statpal_fixture_id", None) is not None for member in members
+    )
 
 
 def _group_is_id_anchored(members: list) -> bool:
