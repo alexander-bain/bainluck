@@ -10214,12 +10214,11 @@ async def _poll_live_prediction_market_prices():
                 # would arm the clause on no evidence. This is the same
                 # tri-state discipline `MarketOutcomes` documents.
                 #
-                # `event_commence_time` IS DELIBERATELY STILL WITHHELD. It arms
-                # a DIFFERENT rule — #4854's unobserved-since-kickoff clause —
-                # over a population this change has not measured, and adopting
-                # two rules on a new surface in one step is how a fix's blast
-                # radius stops being the thing that was measured. That adoption
-                # is its own ship.
+                # #9037: live unresolved games use the matcher's kickoff
+                # admission rule too. Otherwise this writer can select a
+                # pre-kickoff book the matcher refused, replacing a fresh
+                # sibling quote even when their observation bases differ.
+                # Other lifecycle states retain their existing policy.
                 ev = pop.event_by_market_id.get(mid)
                 groups.append(
                     _LiveBlendGroup(
@@ -10227,6 +10226,13 @@ async def _poll_live_prediction_market_prices():
                         outcomes=pop.outcomes_by_market.get(mid, []),
                         event_has_result=(
                             None if ev is None else ev.completed_at is not None
+                        ),
+                        event_commence_time=(
+                            getattr(ev, "commence_time", None)
+                            if ev is not None
+                            and getattr(ev, "status", None) == "live"
+                            and ev.completed_at is None
+                            else None
                         ),
                     )
                 )

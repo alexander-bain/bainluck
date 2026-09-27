@@ -944,6 +944,16 @@ class LiveBlendRefresher:
                         # module exists to prevent. The Event row is already
                         # joined here, so it costs no query.
                         event_has_result=event.completed_at is not None,
+                        # #9037: use the same kickoff admission as the
+                        # matcher and poll for live unresolved games. A stale
+                        # pre-kickoff book must not alternate with their fresh
+                        # speaker between writes. The Event is already loaded.
+                        event_commence_time=(
+                            getattr(event, "commence_time", None)
+                            if getattr(event, "status", None) == "live"
+                            and event.completed_at is None
+                            else None
+                        ),
                     )
                 )
 
