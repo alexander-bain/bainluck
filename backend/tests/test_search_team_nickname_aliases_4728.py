@@ -75,6 +75,9 @@ def test_the_derived_expansions_are_exactly_these() -> None:
         "niners": ("49ers", "football"),
         "bucs": ("Buccaneers", "football"),
         "sixers": ("76ers", "basketball"),
+        # #9080 — `phins`/`stros` are spelled inside their tokens (Dol*phins*,
+        # A*stros*), so only `halos` gets a futures arm.
+        "halos": ("Angels", "baseball"),
         # #8685 — `dbacks` and `nucks` are absent here and only here: each is
         # spelled inside its token (`Diamon*dbacks*`, `Ca*nucks*`), so the plain
         # ILIKE arm already reaches their markets. Same rule as `9ers`.
@@ -156,6 +159,7 @@ def test_a_query_with_no_nickname_produces_no_arm() -> None:
         ("jags", "Jaguars", "football"),
         ("bama", "Tide", "football"),
         ("vols", "Volunteers", "football"),
+        ("halos", "Angels", "baseball"),
     ],
 )
 def test_the_arm_matches_the_token_and_pins_the_sport(alias, token, category) -> None:

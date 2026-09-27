@@ -107,6 +107,8 @@ def test_search_and_game_card_expansions_are_byte_identical_to_before():
         "niners": ("49ers", "football"),
         "bucs": ("Buccaneers", "football"),
         "sixers": ("76ers", "basketball"),
+        # #9080: three franchise nicknames added after this pin; none is this alias.
+        "halos": ("Angels", "baseball"),
         # #8685: eleven franchise nicknames added after this pin; none is this alias.
         "habs": ("Canadiens", "hockey"),
         "pens": ("Penguins", "hockey"),
@@ -128,6 +130,10 @@ def test_search_and_game_card_expansions_are_byte_identical_to_before():
         "9ers": ("49ers", "americanfootball_nfl"),
         "bucs": ("Buccaneers", "americanfootball_nfl"),
         "sixers": ("76ers", "basketball_nba"),
+        # #9080 (the game arm also carries the inside-token `phins`/`stros`).
+        "phins": ("Dolphins", "americanfootball_nfl"),
+        "stros": ("Astros", "baseball_mlb"),
+        "halos": ("Angels", "baseball_mlb"),
         # #8685 (the game arm also carries the inside-token `nucks`/`dbacks`, like `9ers`).
         "habs": ("Canadiens", "icehockey_nhl"),
         "pens": ("Penguins", "icehockey_nhl"),

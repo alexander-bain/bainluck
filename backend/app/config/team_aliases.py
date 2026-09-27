@@ -23,6 +23,19 @@ CURATED_TEAM_ALIASES: dict[tuple[str, str], list[str]] = {
     ("americanfootball_nfl", "San Francisco 49ers"): ["niners", "9ers"],
     ("americanfootball_nfl", "Tampa Bay Buccaneers"): ["bucs"],
     ("basketball_nba", "Philadelphia 76ers"): ["sixers"],
+    # #9080 — three more, measured on production 2026-09-27 07:1xZ. Before:
+    # `phins`, `stros` and `halos` each returned 0 games from /api/events/search
+    # while Dolphins–Chiefs, Athletics–Astros and Mariners–Angels were on today.
+    # Each last-word token names exactly ONE club in its sport over 120 days of
+    # events (Dolphins: Miami, NFL; Astros: Houston and Angels: Los Angeles, MLB),
+    # and every open baseball futures market holding `Astros` (18) or `Angels`
+    # (34) is that club's. The sport scope is what drops the namesakes: NRL's
+    # Dolphins, Tonbridge Angels FC, an Anaheim Angels naming bill (politics) and
+    # a basketball Astros. Refused: `friars` — production already sends it to the
+    # Providence Friars, whose actual name it is.
+    ("americanfootball_nfl", "Miami Dolphins"): ["phins"],
+    ("baseball_mlb", "Houston Astros"): ["stros"],
+    ("baseball_mlb", "Los Angeles Angels"): ["halos"],
     # #8685 — eleven more nicknames fans type, each measured on production
     # 2026-09-25 before it was added. Every open market in the franchise's sport
     # whose name holds the canonical token was read, and every one of them is the
