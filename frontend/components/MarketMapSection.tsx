@@ -1040,10 +1040,17 @@ export default function MarketMapSection({
     // `ouLine.threshold` is that arm's final fallback and `gameTotals` is
     // non-empty by the early return above. The `?? ouLine.threshold` is here so
     // the compiler knows it, not because the branch can be reached.
+    // #9064: and before kickoff too. #9034 made the pre-game hero print the
+    // sportsbook pair (`Projected final: 18 – 29` on Dolphins v Chiefs), so the
+    // over/under line under the same `Projection` label (`Projected 45`) became
+    // a second answer one scroll below. While the hero prints a pair, the
+    // pre-game projection is its sum — #8922's live rule; with none, the line.
+    const preProjected =
+      !noForecast && heroProjectedTotal != null ? heroProjectedTotal : null;
     const headlineValue = status === "pre"
       ? noForecast
         ? ""
-        : `Projected ${Math.round(ouVal ?? ouLine.threshold)}`
+        : `Projected ${Math.round(preProjected ?? ouVal ?? ouLine.threshold)}`
       : status === "live" && projected != null
       ? `Projected ${Math.round(projected)}`
       : "";
@@ -1052,7 +1059,8 @@ export default function MarketMapSection({
 
     if (status === "pre") {
       // CERT-2674: see `headlineValue` — on this arm `ouVal` cannot be null.
-      const preVal = ouVal ?? ouLine.threshold;
+      // #9064: the hero's sum first, the same binding the headline reads.
+      const preVal = preProjected ?? ouVal ?? ouLine.threshold;
       markers.push({
         key: noForecast ? "pre" : "proj",
         value: preVal,
