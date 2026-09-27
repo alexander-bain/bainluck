@@ -183,7 +183,11 @@ describe("#8215 — a 'Since Start' window is not cut at an expected END", () =>
     expect(charts).toHaveLength(2);
     for (const chart of charts) {
       const props = chart.slice(0, chart.indexOf("/>"));
-      expect(props).toContain("commenceTimeIsKickoff={historyData?.commence_time_is_kickoff}");
+      expect(props).toContain("commenceTimeIsKickoff={commenceTimeIsKickoff}");
     }
+    // #8810 — the page's one flag: the served value, except `false` for a match nobody played.
+    expect(source).toMatch(
+      /const commenceTimeIsKickoff = heroScoreIsStoppageFiller\s*\?\s*false\s*:\s*historyData\?\.commence_time_is_kickoff;/,
+    );
   });
 });
