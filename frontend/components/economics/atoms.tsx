@@ -142,6 +142,13 @@ export function sharedBucketPrefix(labels: string[]): string {
   return prefix;
 }
 
+/**
+ * The longest label the side column holds whole: 88px of 10px mono is ~14
+ * characters. `1.9 to 2.1%` (11) and `0.0% or Below` (13) fit; a combo leg
+ * does not.
+ */
+const SIDE_LABEL_MAX_CHARS = 14;
+
 export function Histogram({ buckets, color }: {
   buckets: [number, string][]; color: string; height?: number;
 }) {
@@ -149,6 +156,41 @@ export function Histogram({ buckets, color }: {
   const peak = buckets.reduce((best, b, i) => (b[0] > buckets[best][0] ? i : best), 0);
   const shared = sharedBucketPrefix(buckets.map(b => b[1]));
   const label = (raw: string) => (shared && raw.startsWith(shared) ? raw.slice(shared.length).trim() : raw);
+  // A combo market's buckets are two legs each — `Headline: 0.5% or above,
+  // Core: 0.3% or above`. No side column holds that: at 88px the September
+  // combo printed three identical `0.5% or above…` rows and three `Exactly
+  // 0.4%,…` rows, so 37.5% and 37% could not be told apart. When any label
+  // outgrows the column, every row puts its label on its own full-width line
+  // above the bar, unstripped (the leading `Headline:` names a leg; it is not
+  // boilerplate) and wrapping rather than truncating.
+  const stacked = buckets.some(b => label(b[1]).length > SIDE_LABEL_MAX_CHARS);
+  if (stacked) {
+    return (
+      <div className="flex flex-col gap-1.5">
+        {buckets.map((b, i) => {
+          const w = max > 0 ? (b[0] / max) * 100 : 0;
+          const isPeak = i === peak;
+          return (
+            <div key={i} className="flex flex-col gap-0.5" data-histogram-row="stacked">
+              <span className={`font-mono text-[10px] leading-snug break-words ${isPeak ? "text-text-primary font-semibold" : "text-text-secondary"}`}>{b[1]}</span>
+              <div className="flex items-center gap-1.5">
+                <div className="flex-1 h-[10px] bg-surface-secondary rounded-sm overflow-hidden">
+                  <div className="h-full rounded-sm" style={{
+                    width: `${Math.max(w, 1.5)}%`,
+                    background: color,
+                    opacity: isPeak ? 1 : 0.35 + (b[0] / max) * 0.45,
+                  }} />
+                </div>
+                <span className="font-mono text-[10px] font-semibold w-[32px] text-right shrink-0" style={{ color: isPeak ? "var(--text-primary)" : "var(--text-muted)" }}>
+                  {b[0]}%
+                </span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
   return (
     <div className="flex flex-col gap-px">
       {buckets.map((b, i) => {
