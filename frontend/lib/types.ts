@@ -475,6 +475,13 @@ export interface EventDetailResponse extends Event {
    * payload from before the contract. See `lib/blendObservationClock.ts`.
    */
   hero_probability_observed_at?: string | null;
+  /**
+   * #9051: `{ "<row id>": rev }` for every row the fold behind `hero_probability`
+   * read (cached with it); `rev` follows each row's commit order. Held frames and
+   * history edges are ordered against it by commit order, not by price clock.
+   * Absent/malformed: no claim. See `lib/foldRevision.ts`.
+   */
+  blend_fold_revision?: Record<string, number> | null;
   bookmaker_odds?: BookmakerOddsDetail[];
   ei?: EIData;
   /** @deprecated Use `ei` instead */
@@ -646,6 +653,12 @@ export interface EventHistoryResponse {
    * from before the contract.
    */
   blend_edge_observed_at?: string | null;
+  /**
+   * #9051: the `blend_fold_revision` of the fold snapshot the pinned edge comes
+   * from — the same vector the detail hero carries, so the two order by commit.
+   * Absent/malformed: no claim. See `lib/foldRevision.ts`.
+   */
+  blend_edge_fold_revision?: Record<string, number> | null;
   /**
    * #6948: true iff the backend ACTUALLY removed points before kick-off, i.e. iff a second request
    * without `range=since_start` would answer with more. `false` on every payload served without the

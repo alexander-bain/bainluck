@@ -6,7 +6,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import useSWR from "swr";
 import { fetchEvent, fetchEventHistory, fetchGameMarkets, fetchTeamProgression, fetchEventTournament, formatProbability } from "@/lib/api";
-import type { EventTournamentResponse, TeamProgressionResponse } from "@/lib/types";
+import type { EventDetailResponse, EventTournamentResponse, TeamProgressionResponse } from "@/lib/types";
 import { EVENT_BOOT_HISTORY_HOURS } from "@/lib/event/detailBoot";
 import {
   EVENT_SLOW_LOAD_NOTICE_MS,
@@ -27,6 +27,7 @@ import { appendHeroObservation, mergeLiveChartHistory } from "@/lib/liveChartHis
 import FreshnessChip from "@/components/event/FreshnessChip";
 import {
   applyLiveFrame,
+  frameInvalidatesFoldedBlend,
   eventFeedIsStalled,
   makeEventRefreshInterval,
   pageLiveClaimIsUnbacked,
@@ -137,9 +138,11 @@ import { confidenceFromSources, countProbabilitySources } from "@/lib/confidence
 import { pinChartEdgeToHero } from "@/lib/chartEdgePin";
 import {
   adoptNewerBlendEdge,
+  edgeInvalidatesHeldBlend,
   servedBlendEdgeObservation,
   type BlendEdgeObservation,
 } from "@/lib/blendObservationClock";
+import { createFoldedRefetchScheduler } from "@/lib/foldedRefetchScheduler";
 import {
   SPORT_KEY_TO_LEAGUE_PATH,
   hasAnyWinProbData,
@@ -181,6 +184,8 @@ function heroCrestImage(
 }
 
 const LIVE_REFRESH_INTERVAL = 32000; // Match backend LIVE_POLL_INTERVAL (32s)
+/** #9051: floor between detail refetches a folded hero asks for on refused frames. */
+const FOLDED_FRAME_REFETCH_MS = 5000;
 const SCHEDULED_REFRESH_INTERVAL = 120000;
 
 export default function EventPage({ params }: EventPageProps) {
@@ -226,6 +231,9 @@ export default function EventPage({ params }: EventPageProps) {
   const latestLiveFrameRef = useRef<LiveFrame | null>(null);
   // #8749: the served history's pinned edge, for the poll reconcile below.
   const latestBlendEdgeRef = useRef<BlendEdgeObservation | null>(null);
+  // #9051: the headline the page holds (written after the hook), for the poll
+  // reconcile and the refuse-and-refetch checks below.
+  const heldEventRef = useRef<EventDetailResponse | undefined>(undefined);
 
   // #7621 — ONE callback for the life of the mount, and that is the whole fix.
   //
@@ -261,6 +269,7 @@ export default function EventPage({ params }: EventPageProps) {
       () => fetchEvent(eventId),
       () => latestLiveFrameRef.current,
       () => latestBlendEdgeRef.current,
+      () => heldEventRef.current,
     ),
     {
       // live/034 S2 — when the SSE stream is delivering, the 32s poll stands
@@ -290,6 +299,19 @@ export default function EventPage({ params }: EventPageProps) {
       onSuccess: () => setLastRefresh(Date.now()),
     }
   );
+  // #9051: a ref, so the push effect does not re-run — and re-apply its frame —
+  // on every cache write.
+  heldEventRef.current = event;
+  // #9051: "this held blend cannot be ordered, read detail again" — rate-limited,
+  // with a trailing refetch so a burst's last request is never lost.
+  // Through a ref: `refreshEvent` is bound to this page's key, which changes
+  // when a client-side navigation reuses the component for another event.
+  const refreshEventRef = useRef(refreshEvent);
+  refreshEventRef.current = refreshEvent;
+  const [foldedRefetch] = useState(() => createFoldedRefetchScheduler(
+    () => { void refreshEventRef.current(); }, FOLDED_FRAME_REFETCH_MS,
+  ));
+  useEffect(() => () => foldedRefetch.cancel(), [foldedRefetch]);
 
   // ── Q050: this url named a duplicate, so correct the url ─────────────────
   //
@@ -359,6 +381,15 @@ export default function EventPage({ params }: EventPageProps) {
         || liveFrame.p === null || liveFrame.p === undefined) return;
     latestLiveFrameRef.current = liveFrame;
     const frame = { ...liveFrame, p: liveFrame.p };
+    // #9051: a FOLDED hero (canonical + twins) refuses a raw-row frame, which
+    // would otherwise hold it until the stream-connected 120s poll. The frame
+    // still says the blend moved: refetch the folded detail — and write nothing
+    // this tick, because swr drops a fetch that a later mutation (even a no-op
+    // `applyLiveFrame` returning `prev`) post-dates. See the scheduler.
+    if (frameInvalidatesFoldedBlend(heldEventRef.current, frame)) {
+      foldedRefetch.request();
+      return;
+    }
     refreshEvent(
       // `applyLiveFrame` spreads `prev` FIRST and then only the fields a frame
       // speaks for, so a frame arriving after the background poll carries the
@@ -369,7 +400,7 @@ export default function EventPage({ params }: EventPageProps) {
       { revalidate: false },
     );
     setLastRefresh(Date.now());
-  }, [liveFrame, refreshEvent, eventId]);
+  }, [liveFrame, refreshEvent, eventId, foldedRefetch]);
 
   // The freshest write across all sources — what the age stamp counts from.
   // MAX, not the pushed frame's own stamp: the hero is a blend, and its age is
@@ -729,8 +760,15 @@ export default function EventPage({ params }: EventPageProps) {
     const edge = servedBlendEdgeObservation(servedHistory);
     latestBlendEdgeRef.current = edge;
     if (!edge) return;
+    // #9051: an edge from a fold the held one cannot be ordered against (a twin
+    // joined or left) is refused; only a fresh detail read can settle it, so ask
+    // for one and write nothing this tick (same swr hazard as the push effect).
+    if (edgeInvalidatesHeldBlend(heldEventRef.current, edge)) {
+      foldedRefetch.request();
+      return;
+    }
     refreshEvent((prev) => adoptNewerBlendEdge(prev, edge), { revalidate: false });
-  }, [servedHistory, refreshEvent]);
+  }, [servedHistory, refreshEvent, foldedRefetch]);
 
   /* #8066: the chart's blend line must be the BACKEND's blend, and after #920
      `historyData.aggregate_line` can no longer answer that — it holds the
