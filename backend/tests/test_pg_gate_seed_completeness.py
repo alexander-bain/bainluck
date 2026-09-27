@@ -531,6 +531,11 @@ COVERED = (
     # one-pair fold's ESPN move, market re-point, label and `--restore`.
     # `sports.active` is the Python-side default the seed names.
     "test_repair_2841_chifire_van_fold_apply_restore_pg.py",
+    # #8636 (volleyball as Nations League soccer). Seeds `sports`, `events` and
+    # `futures_markets` by raw INSERT, in a private schema, to drive the
+    # venue-contradicted-rows repair's retire / relabel, re-run and
+    # `--restore`. `sports.active` is the Python-side default the seed names.
+    "test_repair_8636_venue_contradicted_rows_pg.py",
 )
 
 INTEGRATION_DIR = Path(__file__).parent / "integration"
