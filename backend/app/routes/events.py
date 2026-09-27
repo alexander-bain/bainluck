@@ -19246,6 +19246,44 @@ def _extract_threshold(outcome_name: str) -> Optional[float]:
     return float(m.group(1)) if m else None
 
 
+# THE PERIOD'S NUMBER IS NOT THE LINE (#9121). Kalshi names the period inside
+# the outcome, in front of the line, so `_extract_threshold`'s first-number
+# fallback took the period:
+#
+#     Cruz Azul wins the 1H by more than 1.5 goals   -> served 1.0, line 1.5
+#     CIN Bengals wins 3Q by over 6.5 points         -> served 3.0, line 6.5
+#     Cincinnati wins 2nd Half / Tie 4th Quarter     -> served 2.0 / 4.0, no line
+#
+# Measured on production 2026-09-27 (native, on #9121): 1,587 legs, 41 pages. Web
+# never read the field; the installed iPhone build (1.0.1(26)) reads it first
+# and drew "Azul by 1" on a 1.5 line. A winner leg has no line, so it serves
+# None; a spread leg serves the number left once the period token is gone
+# (every token `_HALF_PATTERNS`/`_QUARTER_PATTERNS` classify by, F5 included).
+_PERIOD_TOKEN_RE = re.compile(
+    r"\b(?:[1-4](?:st|nd|rd|th)\s+(?:half|quarter|period)|[1-4][hq]|[hq][1-4]"
+    r"|(?:first|second)\s+half|(?:first|1st)\s+5\s+innings|f5)\b",
+    re.IGNORECASE,
+)
+
+
+# …and a team name can carry digits too ("SF 49ers wins 2H by over 3.5 points",
+# "Philadelphia 76ers wins 1st Quarter"), so the line is read beside Kalshi's
+# own margin wording first, and a winner leg is None whatever its name holds.
+_PERIOD_MARGIN_LINE_RE = re.compile(
+    r"\bby\s+(?:more\s+than|over)\s+(\d+(?:\.\d+)?)", re.IGNORECASE
+)
+
+
+def _extract_period_threshold(outcome_name: str, market_type: str) -> Optional[float]:
+    """The line of a half/quarter leg, or None for a winner leg. #9121."""
+    if market_type.endswith("_winner"):
+        return None
+    m = _PERIOD_MARGIN_LINE_RE.search(outcome_name)
+    if m:
+        return float(m.group(1))
+    return _extract_threshold(_PERIOD_TOKEN_RE.sub(" ", outcome_name))
+
+
 def _is_match_scope_total(market_name: Optional[str], sport_prefix: Optional[str]) -> bool:
     """False for a totals market that is not scoped to the whole contest.
 
@@ -22505,7 +22543,7 @@ async def _build_game_markets(
         elif market_type in ("half_spread", "quarter_spread", "half_winner", "quarter_winner"):
             for o in market_outcomes:
                 prob = float(o.current_probability) if o.current_probability is not None else None
-                threshold = _extract_threshold(o.name)
+                threshold = _extract_period_threshold(o.name, market_type)
                 period_markets.append({
                     "market_name": market.name,
                     "outcome_name": o.name,
