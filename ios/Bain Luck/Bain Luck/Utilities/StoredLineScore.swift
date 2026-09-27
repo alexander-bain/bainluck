@@ -168,6 +168,26 @@ nonisolated enum StoredLineScore {
         return cells
     }
 
+    /// #9067 — the same promise for the card's `espn_history` fallback, which
+    /// runs whenever the payload serves no arrays (live/PR #9129 withholds them
+    /// exactly when they do not add up). That inference differences polled
+    /// cumulative scores, and the last poll can trail the scoreboard, so on a
+    /// live game its segments could print 7 · 3 · 7 beside a total of 20 with
+    /// no `·` to carry the missing three. One rule for both paths: a complete
+    /// row short of its total hands the gap to the last observed segment, and a
+    /// row past its total is refused (`nil`), so the card is not drawn.
+    static func squared(
+        home: [LineScoreCell], away: [LineScoreCell],
+        homeTotal: Int?, awayTotal: Int?, lastObserved: Int
+    ) -> (home: [LineScoreCell], away: [LineScoreCell])? {
+        var home = home
+        var away = away
+        guard reconcile(&home, total: homeTotal, lastPlayed: lastObserved),
+              reconcile(&away, total: awayTotal, lastPlayed: lastObserved)
+        else { return nil }
+        return (home, away)
+    }
+
     /// `false` when the row cannot be squared with its total at all.
     private static func reconcile(_ cells: inout [LineScoreCell], total: Int?, lastPlayed: Int) -> Bool {
         guard let total else { return true }
