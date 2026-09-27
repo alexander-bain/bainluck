@@ -52,6 +52,7 @@ from app.utils.mlb_reschedule_ghosts import (
     board_game_from_espn,
     local_date,
     plan_reschedule_ghosts,
+    score_is_placeholder,
 )
 from app.utils.soccer_ghost_twins import row_has_final_score
 
@@ -84,6 +85,7 @@ SELECT e.id,
        e.home_score,
        e.away_score,
        e.espn_id,
+       e.status,
        CAST(COALESCE(e.event_tags, '[]'::jsonb) AS text) AS tags_text
   FROM events e
   JOIN sports s ON s.id = e.sport_id
@@ -154,6 +156,9 @@ def build_rows(rows) -> list[MlbRow]:
                 home_score=r.home_score, away_score=r.away_score
             ),
             is_duplicate_tagged=DUPLICATE_TAG_PREFIX in (r.tags_text or ""),
+            score_is_placeholder=score_is_placeholder(
+                home_score=r.home_score, away_score=r.away_score, status=r.status
+            ),
         )
         for r in rows
     ]
@@ -257,6 +262,7 @@ async def run_mlb_reschedule_ghost_sweep(
                 "anchored_board_games": plan.anchored_board_games,
                 "rescheduled_games_seen": plan.rescheduled_games_seen,
                 "same_day_games_with_extra_rows": plan.same_day_games_with_extra_rows,
+                "postponed_games_seen": plan.postponed_games_seen,
                 "already_tagged": plan.already_tagged,
                 "tags_to_write": len(plan.tags),
                 "tag_sample": [

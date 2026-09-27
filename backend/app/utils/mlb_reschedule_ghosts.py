@@ -32,6 +32,18 @@ That arm reads one board: ESPN lists the pairing exactly once on D, exactly one
 row carries that game's id and is dated D, and the ONE other row for the teams
 on D has no id and no score. See the loop at the end of the planner.
 
+A POSTPONED game (#4865) carries no "Rescheduled from" note either. On
+2026-09-22 ESPN listed TOR @ BAL (401817035) as ``STATUS_POSTPONED`` ("Rain -
+Makeup date Sep 23") and made it up as 401923610, "Doubleheader - Game 1 -
+Makeup from Sep 22". Our odds_api row took 401817035 and moved to the makeup
+hour (15316846, final 4-2); StatPal's pre-load row stayed on the 22nd at 0-0,
+``suspended``, and search printed it as "No result reported". That arm reads:
+ESPN lists the pairing on D exactly once and that game is postponed; exactly
+one of our rows is the made-up game — it carries the postponed game's id and is
+dated off D, or it carries the id of a game whose note says "Makeup from D";
+and the one other row for the teams on D has no id and no result. A 0-0 on a
+row that is not completed is not a result (StatPal writes it on a rain-out).
+
 Anything short of exactly one canonical and exactly one ghost is a refusal, not
 a guess. Cubs @ Red Sox on the same day is the control: its game 1 is
 "Rescheduled from Sep. 27", our Saturday row for that matchup is a real game
@@ -54,6 +66,14 @@ from app.utils.soccer_ghost_twins import GhostTag
 MLB_LOCAL_TZ = ZoneInfo("America/New_York")
 
 _RESCHEDULED_RE = re.compile(r"rescheduled\s+from\s+([a-z]{3,9})\.?\s+(\d{1,2})", re.I)
+_MAKEUP_RE = re.compile(r"makeup\s+from\s+([a-z]{3,9})\.?\s+(\d{1,2})", re.I)
+
+#: ESPN's status for a game called off on its day and owed a makeup.
+ESPN_POSTPONED = "STATUS_POSTPONED"
+
+#: Statuses on which a 0-0 is a placeholder, not a result: StatPal leaves a
+#: rained-out row ``suspended`` at 0-0 (15317711, 2026-09-22).
+_PLACEHOLDER_SCORE_STATUSES = frozenset({"suspended", "scheduled"})
 _MONTHS = {
     m: i
     for i, m in enumerate(
@@ -83,9 +103,20 @@ def rescheduled_from(headlines: Iterable[object], *, played_on: date) -> Optiona
     that puts D nearest the day the game is played. Two notes naming two
     different dates are ambiguous and read as ``None``.
     """
+    return _note_date(headlines, played_on=played_on, pattern=_RESCHEDULED_RE)
+
+
+def makeup_from(headlines: Iterable[object], *, played_on: date) -> Optional[date]:
+    """The date a "Makeup from Sep 22" note says this game was postponed ON."""
+    return _note_date(headlines, played_on=played_on, pattern=_MAKEUP_RE)
+
+
+def _note_date(
+    headlines: Iterable[object], *, played_on: date, pattern: re.Pattern
+) -> Optional[date]:
     found: set[date] = set()
     for headline in headlines:
-        match = _RESCHEDULED_RE.search(str(headline or ""))
+        match = pattern.search(str(headline or ""))
         if not match:
             continue
         month = _MONTHS.get(match.group(1)[:3].lower())
@@ -103,6 +134,17 @@ def rescheduled_from(headlines: Iterable[object], *, played_on: date) -> Optiona
     return found.pop() if len(found) == 1 else None
 
 
+def score_is_placeholder(
+    *, home_score: object, away_score: object, status: object
+) -> bool:
+    """A 0-0 on a row that was never completed — not a result."""
+    return (
+        home_score == 0
+        and away_score == 0
+        and str(status or "") in _PLACEHOLDER_SCORE_STATUSES
+    )
+
+
 def local_date(moment: datetime) -> date:
     return moment.astimezone(MLB_LOCAL_TZ).date()
 
@@ -116,6 +158,8 @@ class BoardGame:
     away_team_id: Optional[str]
     local_date: date
     rescheduled_from: Optional[date]
+    status: Optional[str] = None
+    makeup_from: Optional[date] = None
 
 
 def board_game_from_espn(event: Mapping) -> Optional[BoardGame]:
@@ -138,12 +182,15 @@ def board_game_from_espn(event: Mapping) -> Optional[BoardGame]:
         if isinstance(n, Mapping)
     ]
     played_on = local_date(start)
+    status = ((event.get("status") or {}).get("type") or {}).get("name")
     return BoardGame(
         espn_id=espn_id,
         home_team_id=teams.get("home"),
         away_team_id=teams.get("away"),
         local_date=played_on,
         rescheduled_from=rescheduled_from(headlines, played_on=played_on),
+        status=str(status) if status else None,
+        makeup_from=makeup_from(headlines, played_on=played_on),
     )
 
 
@@ -158,6 +205,7 @@ class MlbRow:
     espn_id: Optional[str]
     has_final_score: bool
     is_duplicate_tagged: bool
+    score_is_placeholder: bool = False
 
 
 def _team(name: object) -> str:
@@ -176,6 +224,7 @@ class ReschedulePlan:
     rescheduled_games_seen: int = 0
     #: Sole-on-its-board games that had a second row for the pairing that day.
     same_day_games_with_extra_rows: int = 0
+    postponed_games_seen: int = 0
     already_tagged: int = 0
     dark_days: list[date] = field(default_factory=list)
 
@@ -191,6 +240,7 @@ def _decide(
     *,
     reason: str,
     refuse_empty: bool,
+    placeholder_score_ok: bool = False,
 ) -> bool:
     """Label the ONE other row for ``canonical``'s pairing on ``day``, or refuse.
 
@@ -212,7 +262,10 @@ def _decide(
         plan.refusals.append(f"{label}: {len(others)} rows for the matchup on {day}")
         return bool(others)
     ghost = others[0]
-    if ghost.espn_id or ghost.has_final_score:
+    scored = ghost.has_final_score and not (
+        placeholder_score_ok and ghost.score_is_placeholder
+    )
+    if ghost.espn_id or scored:
         plan.refusals.append(
             f"{label}: row {ghost.event_id} on {day} is anchored or scored"
         )
@@ -342,6 +395,60 @@ def plan_reschedule_ghosts(
                 refuse_empty=False,
             ):
                 plan.same_day_games_with_extra_rows += 1
+
+    # THE POSTPONED ARM (#4865) — see the module docstring for the specimen.
+    for day, games in sorted(boards.items()):
+        games = games or ()
+        for game in games:
+            if game.status != ESPN_POSTPONED:
+                continue
+            if not (game.home_team_id and game.away_team_id):
+                continue
+            plan.postponed_games_seen += 1
+            label = f"espn {game.espn_id} (postponed {day.isoformat()})"
+            pair = {game.home_team_id, game.away_team_id}
+            listed = sum({g.home_team_id, g.away_team_id} == pair for g in games)
+            if listed != 1:
+                plan.refusals.append(
+                    f"{label}: ESPN lists the matchup {listed} times on {day}"
+                )
+                continue
+            made_up = {
+                r.event_id: r
+                for r in by_espn.get(game.espn_id, [])
+                if local_date(r.commence_time) != day
+            }
+            for other in boards.values():
+                for makeup in other or ():
+                    if (
+                        makeup.makeup_from == day
+                        and {makeup.home_team_id, makeup.away_team_id} == pair
+                    ):
+                        for r in by_espn.get(makeup.espn_id, []):
+                            made_up[r.event_id] = r
+            if len(made_up) != 1:
+                plan.refusals.append(
+                    f"{label}: {len(made_up)} rows are the made-up game"
+                )
+                continue
+            canonical = next(iter(made_up.values()))
+            if canonical.is_duplicate_tagged:
+                plan.refusals.append(
+                    f"{label}: canonical {canonical.event_id} is itself a duplicate"
+                )
+                continue
+            _decide(
+                plan,
+                rows,
+                decided,
+                contested,
+                canonical,
+                day,
+                label,
+                reason=f"mlb_postponed: {label}",
+                refuse_empty=False,
+                placeholder_score_ok=True,
+            )
 
     for ghost_id in sorted(contested):
         plan.refusals.append(f"row {ghost_id}: two canonical games claim it")

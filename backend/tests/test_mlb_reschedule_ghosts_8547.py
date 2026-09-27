@@ -276,6 +276,7 @@ class _Raw:
         self.home_score = 5 if row.has_final_score else None
         self.away_score = 3 if row.has_final_score else None
         self.espn_id = row.espn_id
+        self.status = "completed" if row.has_final_score else "scheduled"
         self.tags_text = tags_text
 
 
