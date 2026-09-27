@@ -2265,6 +2265,9 @@ export interface PoliticsMarketRow {
   market_id: number;
   top_outcomes: { name: string; prob: number }[];
   outcome_count: number;
+  // Rungs `/futures/{id}` shows beyond `top_outcomes` (#9109). Absent on a
+  // payload built before it shipped.
+  more_count?: number;
 }
 
 export interface PoliticsCandidate {
