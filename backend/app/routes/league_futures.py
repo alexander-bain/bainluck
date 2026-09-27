@@ -1125,6 +1125,17 @@ def recent_results_query(
     `literal_column("0")` rather than `.offset(0)`: a bind renders `OFFSET $1`,
     which fences just as well but makes the emitted statement differ from the
     one every number above was measured on.
+
+    **The outer sort breaks kickoff ties by who finished LAST (#9060).** A
+    college Saturday puts several games on one kickoff instant, and on
+    `commence_time DESC` alone the eight-row cut picked among them arbitrarily:
+    on 2026-09-27 Oregon @ USC (23:30Z, final 03:19Z) fell off the NCAAF page
+    while LSU (final 03:06Z) and NC State (02:59Z), same kickoff, stayed on it.
+    `completed_at DESC NULLS LAST` makes "most recent" mean the game that ended
+    most recently among a tie, and `id` makes what is left deterministic. Both
+    sit on the OUTER select, so the fence and its measured plan are untouched —
+    the extra keys sort at most one league's 14-day set, which the plan already
+    sorts.
     """
     inner = (
         select(Event)
@@ -1180,7 +1191,11 @@ def recent_results_query(
         # untouched: `selectinload` is a second statement keyed on the ids this
         # one returns, never a change to this one.
         .options(selectinload(fenced_event.sport))
-        .order_by(fenced_event.commence_time.desc())
+        .order_by(
+            fenced_event.commence_time.desc(),
+            fenced_event.completed_at.desc().nulls_last(),
+            fenced_event.id.desc(),
+        )
         .limit(RESULTS_LIMIT + 1)
     )
 

@@ -128,8 +128,24 @@ MUTANTS: list[tuple[str, Path, str, str, str]] = [
         # because the four lines above now include a comment block, and a needle
         # that contains prose drifts every time somebody edits the prose. What
         # keeps it unique is unchanged: `RESULTS_LIMIT` vs `UNREPORTED_LIMIT`.
-        "        .options(selectinload(fenced_event.sport))\n        .order_by(fenced_event.commence_time.desc())\n        .limit(RESULTS_LIMIT + 1)",
-        "        .options(selectinload(fenced_event.sport))\n        .order_by(Event.commence_time.desc())\n        .limit(RESULTS_LIMIT + 1)",
+        #
+        # 🔴 RE-TARGETED by #9060, which added the `completed_at`/`id` kickoff
+        # tie-breakers to the outer sort. The mutant still moves only the
+        # leading key onto the base table — one re-correlated key is enough.
+        "        .options(selectinload(fenced_event.sport))\n"
+        "        .order_by(\n"
+        "            fenced_event.commence_time.desc(),\n"
+        "            fenced_event.completed_at.desc().nulls_last(),\n"
+        "            fenced_event.id.desc(),\n"
+        "        )\n"
+        "        .limit(RESULTS_LIMIT + 1)",
+        "        .options(selectinload(fenced_event.sport))\n"
+        "        .order_by(\n"
+        "            Event.commence_time.desc(),\n"
+        "            fenced_event.completed_at.desc().nulls_last(),\n"
+        "            fenced_event.id.desc(),\n"
+        "        )\n"
+        "        .limit(RESULTS_LIMIT + 1)",
         "sorting on the base table instead of the subquery re-correlates the two",
     ),
     (
