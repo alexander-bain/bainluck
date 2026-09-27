@@ -18319,6 +18319,80 @@ def _futures_row_market_ids(row: dict) -> set:
     return ids
 
 
+def _side_unclaimed_matchup_legs(
+    home_futures: list,
+    away_futures: list,
+    unclaimed_leg_ids: set,
+    team_leg_market_ids: set,
+) -> tuple[list, list]:
+    """A leg no club claims stands beside its own market's club legs (#9082).
+
+    WHAT A READER SAW, production 2026-09-27 06:50Z, `/events/14870012`
+    (Clemson v Miami, Oct 3, pregame), 390px. Bigger Picture drew two groups
+    headed "1ST HALF WINNER (1)": **"Tie 1st Half" 6%** in Clemson's half and
+    "Miami (FL) wins 1st Half" 77% in Miami's. Market `62398698`
+    (`KXNCAAF1H-26OCT03MIACLEM`) stores three legs, MIA .765 / CLEM .155 /
+    TIE .055. A reader was shown the Tie as Clemson's first-half chance.
+
+    WHY. The `-CLEM` leg was attributed correctly, by its ticker, and then
+    left: `/api/futures/62398698` refuses its price (`prices_withheld: 1`), so
+    #9008 drops it here as it should. The `Tie` names neither club; it reached a
+    side only through the market-name fallback, where the title names both and
+    "prefer home" breaks the tie. With Clemson's own leg gone it stood alone
+    under Clemson.
+
+    THE RULE. For a market that admitted at least one leg a club claimed on its
+    own (ticker, alias, `team_id`, outcome name), the legs placed only by its
+    title go where the surviving club legs are:
+
+      * club legs on BOTH sides, or on home only → unchanged (home);
+      * club legs on AWAY only → the unclaimed legs move to away;
+      * NO club leg survived → the unclaimed legs leave. A bare `Tie` with no
+        side's leg beside it answers no question the reader can see.
+
+    A market whose legs no club claims at all ("Boston at Golden State:
+    Rebounds" → `Over 218.5`) is untouched — its title IS the only attribution
+    it has, and this rule has nothing to align it with.
+    """
+    if not unclaimed_leg_ids:
+        return home_futures, away_futures
+
+    club_sides: dict[int, set] = {}
+    for side, rows in (("home", home_futures), ("away", away_futures)):
+        for row in rows:
+            if row.get("outcome_id") in unclaimed_leg_ids:
+                continue
+            club_sides.setdefault(row.get("market_id"), set()).add(side)
+
+    kept_home: list = []
+    moved_away: list = []
+    for row in home_futures:
+        market_id = row.get("market_id")
+        if row.get("outcome_id") not in unclaimed_leg_ids or market_id not in team_leg_market_ids:
+            kept_home.append(row)
+            continue
+        sides = club_sides.get(market_id, set())
+        if not sides:
+            continue
+        if sides == {"away"}:
+            moved_away.append(row)
+        else:
+            kept_home.append(row)
+
+    kept_away: list = []
+    for row in away_futures:
+        market_id = row.get("market_id")
+        if (
+            row.get("outcome_id") in unclaimed_leg_ids
+            and market_id in team_leg_market_ids
+            and not club_sides.get(market_id)
+        ):
+            continue
+        kept_away.append(row)
+
+    return kept_home, kept_away + moved_away
+
+
 def _fold_event_match_winner_futures(
     home_futures: list,
     away_futures: list,
@@ -24726,6 +24800,12 @@ async def _build_related_futures(
     # door asks. Only markets that reach the payload are collected; a market
     # filtered out upstream has no card to withhold.
     row_markets: dict = {}
+    # #9082 — legs that reached a side only because the MARKET's title names
+    # both clubs (a `Tie`), and the markets that also admitted a leg a club
+    # claimed on its own. `_side_unclaimed_matchup_legs` reads both after the
+    # #9008 drop.
+    unclaimed_leg_ids: set = set()
+    team_leg_market_ids: set = set()
 
     # ── Game-specific market filtering ────────────────────────────
     # Game-specific markets (stat props AND matchup markets) are tied to a
@@ -25195,6 +25275,7 @@ async def _build_related_futures(
                 )
             )
 
+        claimed_by_a_club = is_home or is_away
         if not is_home and not is_away and outcome.market_id not in field_of_clubs_market_ids:
             # Fall back to name matching on MARKET name (game props)
             # e.g., "Boston at Golden State: Rebounds" → market name matches
@@ -25290,6 +25371,10 @@ async def _build_related_futures(
             entry["matched_player"] = matched
 
         row_markets[market.id] = market
+        if claimed_by_a_club:
+            team_leg_market_ids.add(market.id)
+        elif is_home and is_away:
+            unclaimed_leg_ids.add(outcome.id)
         if side == "home":
             home_futures.append(entry)
         else:
@@ -25305,6 +25390,13 @@ async def _build_related_futures(
     if rail_withheld:
         home_futures = [f for f in home_futures if f["outcome_id"] not in rail_withheld]
         away_futures = [f for f in away_futures if f["outcome_id"] not in rail_withheld]
+
+    # #9082 — AFTER the #9008 drop, because a refused club leg is what strands a
+    # `Tie` under the other club's name. BEFORE the fold and the merges, while
+    # every leg still carries its own market's id.
+    home_futures, away_futures = _side_unclaimed_matchup_legs(
+        home_futures, away_futures, unclaimed_leg_ids, team_leg_market_ids
+    )
 
     # #4646 — the fixture's own result belongs to `/game-markets`, which draws it
     # as one labelled card. Drawn again here it becomes unlabelled chips split
