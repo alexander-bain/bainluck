@@ -332,6 +332,10 @@ nonisolated struct TeamFutureItem: Decodable, Identifiable, Sendable {
     let rank: Int?
     let totalOutcomes: Int?
     let resolutionDate: String?
+    /// `is_winner` — a graded winner. Optional: `/api/me/teams/futures` may
+    /// omit it, and absence must read as "not settled", never as a result.
+    /// #9091: undecoded, the team page drew a settled market as a live 100%.
+    let isWinner: Bool?
     let matchedTeam: TeamFutureTeam?
     let canonicalMarketKey: String?
 
@@ -341,7 +345,7 @@ nonisolated struct TeamFutureItem: Decodable, Identifiable, Sendable {
         case outcomeId, outcomeName, marketId, marketName, marketTier
         case category, source, probability
         case probabilityChange24h = "probabilityChange24H"
-        case rank, totalOutcomes, resolutionDate, matchedTeam, canonicalMarketKey
+        case rank, totalOutcomes, resolutionDate, isWinner, matchedTeam, canonicalMarketKey
     }
 }
 
