@@ -2213,9 +2213,14 @@ struct OddsChartView: View {
     /// Nearest REAL observed snapshot on the primary line to a scrub date. Never
     /// interpolates — returns an actual captured point (or nil for an empty line).
     static func nearestSnapshot(to date: Date, in points: [ChartDataPoint]) -> ChartDataPoint? {
-        let primary = primarySource(in: points)
-        return points
-            .filter { $0.source == primary }
+        nearestSnapshot(to: date, in: points, source: primarySource(in: points))
+    }
+
+    /// The same, on a named series — the fullscreen card's own line when there is
+    /// no primary one (#9185, `readoutSource`).
+    static func nearestSnapshot(to date: Date, in points: [ChartDataPoint], source: String) -> ChartDataPoint? {
+        points
+            .filter { $0.source == source }
             .min { abs($0.date.timeIntervalSince(date)) < abs($1.date.timeIntervalSince(date)) }
     }
 
@@ -2326,9 +2331,12 @@ struct OddsChartView: View {
     /// serves its terminal 0% at 03:38 after a 1% at the same minute, and
     /// `max(by:)` returns the FIRST of equal elements.
     static func latestPrimaryPoint(in points: [ChartDataPoint]) -> ChartDataPoint? {
-        let primary = primarySource(in: points)
+        latestPoint(in: points, source: primarySource(in: points))
+    }
+
+    static func latestPoint(in points: [ChartDataPoint], source: String) -> ChartDataPoint? {
         var latest: ChartDataPoint?
-        for point in points where point.source == primary {
+        for point in points where point.source == source {
             if let l = latest, point.date < l.date { continue }
             latest = point
         }
@@ -2599,16 +2607,22 @@ struct OddsChartView: View {
     /// venue's number is the comparison "the blend is the product" rules out.
     static func fullscreenRestingPoint(in points: [ChartDataPoint], sportKey: String?,
                                        pageGaveCard: Bool) -> GamePlayPoint? {
-        if let primary = restingPlayPoint(in: points, sportKey: sportKey) { return primary }
+        guard let source = readoutSource(in: points, pageGaveCard: pageGaveCard) else { return nil }
+        return latestPoint(in: points, source: source).map { playPoint(for: $0, sportKey: sportKey) }
+    }
+
+    /// #9185 — the ONE series a readout card reads, resting AND scrubbing. The
+    /// resting number used to fall back to a lone venue line while the scrub
+    /// still looked up only the primary one, so on 15318006 the crosshair moved
+    /// and the number stayed on the latest print. The primary line when it is
+    /// drawn; the chart's one line only for the fullscreen chart's own card;
+    /// otherwise nothing.
+    static func readoutSource(in points: [ChartDataPoint], pageGaveCard: Bool) -> String? {
+        let primary = primarySource(in: points)
+        if points.contains(where: { $0.source == primary }) { return primary }
         guard !pageGaveCard else { return nil }
         let drawn = defaultVisibleSources(in: points)
-        guard drawn.count == 1, let only = drawn.first else { return nil }
-        var latest: ChartDataPoint?
-        for point in points where point.source == only {
-            if let l = latest, point.date < l.date { continue }
-            latest = point
-        }
-        return latest.map { playPoint(for: $0, sportKey: sportKey) }
+        return drawn.count == 1 ? drawn.first : nil
     }
 
     // MARK: - Source Styling

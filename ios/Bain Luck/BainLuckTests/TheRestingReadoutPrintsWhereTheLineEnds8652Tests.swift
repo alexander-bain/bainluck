@@ -263,11 +263,13 @@ final class TheRestingReadoutPrintsWhereTheLineEnds8652Tests: XCTestCase {
             separatedBy: "readout: card, dataPoints: dataPoints,\n                                                          sportKey: sportKey, pageGaveCard: readout != nil)").count - 1, 1)
         let selectionURL = url.deletingLastPathComponent().appendingPathComponent("OddsChartSelection.swift")
         let selection = try String(contentsOf: selectionURL, encoding: .utf8)
-        // `fullscreenRestingPoint` asks `restingPlayPoint` first, and the inline
-        // card (pageGaveCard defaults true) never reaches the fallback.
+        // `readoutSource` takes the primary line first, and the inline card
+        // (pageGaveCard defaults true) never reaches the lone-line fallback —
+        // resting and scrubbing both ask it.
         XCTAssertTrue(selection.contains(".resting(on: OddsChartView.fullscreenRestingPoint("))
         XCTAssertTrue(selection.contains("var pageGaveCard = true"))
+        XCTAssertTrue(selection.contains("OddsChartView.readoutSource(in: points, pageGaveCard: pageGaveCard)"))
         XCTAssertEqual(chart.components(
-            separatedBy: "if let primary = restingPlayPoint(in: points, sportKey: sportKey) { return primary }").count - 1, 1)
+            separatedBy: "if points.contains(where: { $0.source == primary }) { return primary }\n        guard !pageGaveCard else { return nil }").count - 1, 1)
     }
 }

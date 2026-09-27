@@ -42,11 +42,19 @@ struct OddsChartSelectionReadout: View {
     var pageGaveCard = true
 
     var body: some View {
-        let point = selection.date.flatMap { OddsChartView.nearestSnapshot(to: $0, in: dataPoints) }
         readout
             .resting(on: OddsChartView.fullscreenRestingPoint(
                 in: dataPoints, sportKey: sportKey, pageGaveCard: pageGaveCard))
-            .showing(point.map { OddsChartView.playPoint(for: $0, sportKey: sportKey) })
+            .showing(Self.selectedPoint(at: selection.date, in: dataPoints,
+                                        sportKey: sportKey, pageGaveCard: pageGaveCard))
+    }
+
+    /// The scrubbed moment, on the same series the card rests on (#9185).
+    static func selectedPoint(at date: Date?, in points: [ChartDataPoint], sportKey: String?,
+                              pageGaveCard: Bool) -> GamePlayPoint? {
+        guard let date, let source = OddsChartView.readoutSource(in: points, pageGaveCard: pageGaveCard),
+              let nearest = OddsChartView.nearestSnapshot(to: date, in: points, source: source) else { return nil }
+        return OddsChartView.playPoint(for: nearest, sportKey: sportKey)
     }
 }
 
