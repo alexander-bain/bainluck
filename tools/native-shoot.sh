@@ -7,7 +7,7 @@
 # LaunchRigContractTests), hands it to the one router, and lands on the screen.
 #
 # Usage:
-#   tools/native-shoot.sh <label> [route] [--counts] [--cooled] [--scroll N] [--expand] [--sum]
+#   tools/native-shoot.sh <label> [route] [--counts] [--cooled] [--scroll N] [--expand] [--sum] [--fullscreen]
 #
 #   tools/native-shoot.sh discover
 #   tools/native-shoot.sh g1 '' --counts --cooled
@@ -27,6 +27,8 @@
 #              without this the combined line is unphotographable — which is how
 #              a flat 100% line on a props market went unseen. The app still
 #              decides whether a sum is meaningful, so this asks, never forces.
+#   --fullscreen open the win-probability chart fullscreen (#9185): a cover
+#              behind a button the rig cannot tap.
 #   --dwell S[,S...]  extra frames from the SAME launch at cumulative seconds,
 #              for "does this advance while the reader sits on it" (#920). Every
 #              other mode relaunches, which re-fetches and so cannot see a
@@ -120,6 +122,7 @@ while [ $# -gt 0 ]; do
     --cooled) COOLED=1 ;;
     --expand) EXPAND=1 ;;
     --sum) SUM=1 ;;
+    --fullscreen) FULLSCREEN=1 ;;
     --allow-stale) ALLOW_STALE=1 ;;
     --resolve-only) RESOLVE_ONLY=1 ;;
     --scroll)
@@ -235,6 +238,7 @@ ARGS=(-suppress_notification_prompt YES -bainluck_telemetry_consent none -discov
 [ -n "$SCROLL" ] && ARGS+=(-launch_scroll "$SCROLL")
 [ -n "$EXPAND" ] && ARGS+=(-launch_expand_sections YES)
 [ -n "$SUM" ] && ARGS+=(-launch_chart_sum YES)
+[ -n "${FULLSCREEN:-}" ] && ARGS+=(-launch_chart_fullscreen YES)
 
 LAUNCH_OUT=$(xcrun simctl launch "$SIM" "$BUNDLE" "${ARGS[@]}" 2>/dev/null)
 # `simctl launch` prints "<bundle>: <pid>". The pid is the whole dwell control:

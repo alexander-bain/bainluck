@@ -18,6 +18,11 @@ struct GamePlayCardView: View {
     var awayTeamLogo: String?
     /// Most recent chart point (shown when not scrubbing)
     var lastPoint: GamePlayPoint?
+    /// #9185 — both sides' chances print on EVERY moment, a scoring play
+    /// included. The fullscreen chart sets it: it covers the page hero, so a
+    /// scoring play's description in place of the numbers left the reader with
+    /// no number anywhere on screen.
+    var pinsProbabilities = false
 
     private var point: GamePlayPoint? {
         selectedPoint ?? lastPoint
@@ -34,6 +39,21 @@ struct GamePlayCardView: View {
     /// #8652 — this card resting on the chart's own last drawn point, so the
     /// unscrubbed readout prints the number the line ends on. Nil keeps the
     /// page's point (a chart with no primary line has no end to name).
+    /// #9185 — this card with its probability row pinned (see `pinsProbabilities`).
+    func pinningProbabilities() -> GamePlayCardView {
+        var card = self
+        card.pinsProbabilities = true
+        return card
+    }
+
+    /// #9185 — which rows print for `point`: the probability row, the play
+    /// row, or both. Off the fullscreen chart a scoring play still takes the
+    /// probability row's place, as #925 laid it out.
+    static func rows(for point: GamePlayPoint, pinsProbabilities: Bool) -> (probabilities: Bool, play: Bool) {
+        let play = point.scoringPlay != nil
+        return (pinsProbabilities || !play, play)
+    }
+
     func resting(on point: GamePlayPoint?) -> GamePlayCardView {
         guard let point else { return self }
         var card = self
@@ -74,12 +94,27 @@ struct GamePlayCardView: View {
                 // the plot under the finger that is scrubbing it: measured at
                 // 375pt, scrubbing onto a field goal (type line + description)
                 // pushed the plot down 14pt from a one-line probability row.
-                ZStack(alignment: .topLeading) {
-                    Text(verbatim: "X\nX")
-                        .font(.caption2)
-                        .hidden()
-                        .accessibilityHidden(true)
-                    detail(point)
+                let rows = Self.rows(for: point, pinsProbabilities: pinsProbabilities)
+                if pinsProbabilities {
+                    // #9185 — the numbers on a line of their own, then the play
+                    // (or nothing) in the same fixed two-line box, so the plot
+                    // still does not move under a scrubbing finger.
+                    probabilities(point)
+                    ZStack(alignment: .topLeading) {
+                        Text(verbatim: "X\nX")
+                            .font(.caption2)
+                            .hidden()
+                            .accessibilityHidden(true)
+                        if rows.play, let play = point.scoringPlay { playRow(play) }
+                    }
+                } else {
+                    ZStack(alignment: .topLeading) {
+                        Text(verbatim: "X\nX")
+                            .font(.caption2)
+                            .hidden()
+                            .accessibilityHidden(true)
+                        detail(point)
+                    }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -90,51 +125,62 @@ struct GamePlayCardView: View {
     @ViewBuilder
     private func detail(_ point: GamePlayPoint) -> some View {
         if let play = point.scoringPlay {
-            // One wrapping run, type first: two separate lines (type, then a
-            // two-line description) made this row three lines tall.
-            let description = play.description ?? play.shortText ?? ""
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                Circle()
-                    .fill(.red)
-                    .frame(width: 5, height: 5)
-                    .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1 }
-                if let type = play.type, !type.isEmpty {
-                    Text("\(Text(type).foregroundStyle(.secondary)) · \(description)")
+            playRow(play)
+        } else {
+            probabilities(point)
+        }
+    }
+
+    @ViewBuilder
+    private func playRow(_ play: ScoringPlay) -> some View {
+        // One wrapping run, type first: two separate lines (type, then a
+        // two-line description) made this row three lines tall.
+        let description = play.description ?? play.shortText ?? ""
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
+            Circle()
+                .fill(.red)
+                .frame(width: 5, height: 5)
+                .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1 }
+            if let type = play.type, !type.isEmpty {
+                Text("\(Text(type).foregroundStyle(.secondary)) · \(description)")
+                    .font(.caption2)
+                    .foregroundStyle(.primary)
+                    .lineLimit(2)
+            } else {
+                Text(description)
+                    .font(.caption2)
+                    .foregroundStyle(.primary)
+                    .lineLimit(2)
+            }
+        }
+    }
+
+    /// Both sides' chances for `point`, as one line where it fits (#925).
+    @ViewBuilder
+    private func probabilities(_ point: GamePlayPoint) -> some View {
+        let printed = Self.printedPercents(home: point.homeProb, away: point.awayProb)
+        let homeProb = printed.home
+        let awayProb = printed.away
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 0) {
+                probRun(homeShort, homeProb, homeTeamColor)
+                if let awayProb {
+                    Text(" — ")
                         .font(.caption2)
-                        .foregroundStyle(.primary)
-                        .lineLimit(2)
-                } else {
-                    Text(description)
-                        .font(.caption2)
-                        .foregroundStyle(.primary)
-                        .lineLimit(2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize()
+                    probRun(awayShort, awayProb, awayTeamColor)
                 }
             }
-        } else {
-            let printed = Self.printedPercents(home: point.homeProb, away: point.awayProb)
-            let homeProb = printed.home
-            let awayProb = printed.away
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 0) {
-                    probRun(homeShort, homeProb, homeTeamColor)
-                    if let awayProb {
-                        Text(" — ")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .fixedSize()
-                        probRun(awayShort, awayProb, awayTeamColor)
-                    }
-                }
-                VStack(alignment: .leading, spacing: 0) {
-                    probRun(homeShort, homeProb, homeTeamColor)
-                    if let awayProb { probRun(awayShort, awayProb, awayTeamColor) }
-                }
-                // Last resort (the largest accessibility sizes on the narrowest
-                // phone): shrink, never hyphenate a name.
-                VStack(alignment: .leading, spacing: 0) {
-                    probRun(homeShort, homeProb, homeTeamColor, shrinks: true)
-                    if let awayProb { probRun(awayShort, awayProb, awayTeamColor, shrinks: true) }
-                }
+            VStack(alignment: .leading, spacing: 0) {
+                probRun(homeShort, homeProb, homeTeamColor)
+                if let awayProb { probRun(awayShort, awayProb, awayTeamColor) }
+            }
+            // Last resort (the largest accessibility sizes on the narrowest
+            // phone): shrink, never hyphenate a name.
+            VStack(alignment: .leading, spacing: 0) {
+                probRun(homeShort, homeProb, homeTeamColor, shrinks: true)
+                if let awayProb { probRun(awayShort, awayProb, awayTeamColor, shrinks: true) }
             }
         }
     }

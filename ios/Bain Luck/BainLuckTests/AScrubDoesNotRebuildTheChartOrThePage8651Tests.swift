@@ -115,8 +115,12 @@ final class AScrubDoesNotRebuildTheChartOrThePage8651Tests: XCTestCase {
         XCTAssertTrue(chart.contains("@Stateprivatevarselection:OddsChartSelection"),
                       "the chart no longer owns the scrubbed moment")
         XCTAssertFalse(chart.contains("@BindingvarselectedPlayPoint"), "the scrubbed moment is bound to a parent again")
-        XCTAssertEqual(chart.components(separatedBy: "ifletreadout{OddsChartSelectionReadout(selection:selection,readout:readout,dataPoints:dataPoints,sportKey:sportKey)}").count - 1, 2,
-                       "both places the chart draws the readout (inline + fullscreen) must hand it the scrub")
+        // #9185 — the fullscreen site draws `fullscreenReadout`'s card (the page's
+        // card or the chart's own), so each site is counted by its own spelling.
+        XCTAssertEqual(chart.components(separatedBy: "ifletreadout{OddsChartSelectionReadout(selection:selection,readout:readout,dataPoints:dataPoints,sportKey:sportKey)}").count - 1, 1,
+                       "the inline readout must be handed the scrub")
+        XCTAssertEqual(chart.components(separatedBy: "OddsChartSelectionReadout(selection:selection,readout:card,dataPoints:dataPoints,sportKey:sportKey,pageGaveCard:readout!=nil)").count - 1, 1,
+                       "the fullscreen readout must be handed the scrub")
     }
 
     /// `showing(_:)` replaces the scrubbed moment and nothing else.

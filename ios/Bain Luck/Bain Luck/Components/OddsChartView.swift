@@ -642,6 +642,8 @@ struct OddsChartView: View {
             // Re-asserting it here reset the reader's choice on every appear,
             // and wrote a range the score chart below could not see.
             await vm.load()
+            // #9185 — the LOOK rig's way into the cover it cannot tap open.
+            if LaunchRig.opensChartFullscreen() { isFullscreen = true }
         }
         // #920. The page re-polls every 120 s and hands the result down; until
         // this existed, every one of those payloads was dropped on the floor by
@@ -864,7 +866,17 @@ struct OddsChartView: View {
                             }
                             // #925 — fullscreen covers the page, and the page
                             // was the only place a scrub could be read.
-                            if let readout { OddsChartSelectionReadout(selection: selection, readout: readout, dataPoints: dataPoints, sportKey: sportKey) }
+                            // #9185 — and the only place a NUMBER could be read:
+                            // the page hands a readout over only once the game
+                            // has a scoring play, so a 0–0 game opened fullscreen
+                            // printed no probability at all (Patriots at Jaguars,
+                            // 14782706, NE 42% → 39% in the first quarter).
+                            if let card = Self.fullscreenReadout(
+                                page: readout, homeTeam: homeTeamName, awayTeam: awayTeamName,
+                                colors: teamColors, homeLogo: homeTeamLogo, awayLogo: awayTeamLogo) {
+                                OddsChartSelectionReadout(selection: selection, readout: card, dataPoints: dataPoints,
+                                                          sportKey: sportKey, pageGaveCard: readout != nil)
+                            }
                             HStack(spacing: 0) {
                                 // #2903 — fullscreen has no fixed chart height, so the
                                 // run is measured rather than assumed.
@@ -932,15 +944,39 @@ struct OddsChartView: View {
                         LivePushDot(diameter: 22)
                     }
                 }
+                // #9185 — a word, not a grey `xmark` in a glass circle: Alex
+                // read that circle as a control that did nothing.
                 ToolbarItem(placement: .confirmationAction) {
-                    Button { isFullscreen = false } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundStyle(.secondary)
-                    }
+                    Button("Done") { isFullscreen = false }
+                        .accessibilityHint("Closes the fullscreen chart")
                 }
             }
         }
+    }
+
+    /// #9185 — the fullscreen chart's readout, which always exists when both
+    /// teams are named and always prints both sides' chances. The page's card
+    /// is used when it gave one (it carries the page's logos and last point);
+    /// otherwise the chart builds the same card from what it already holds.
+    static func fullscreenReadout(
+        page: GamePlayCardView?,
+        homeTeam: String?,
+        awayTeam: String?,
+        colors: (away: Color, home: Color)?,
+        homeLogo: String?,
+        awayLogo: String?
+    ) -> GamePlayCardView? {
+        if let page { return page.pinningProbabilities() }
+        guard let homeTeam, let awayTeam else { return nil }
+        return GamePlayCardView(
+            homeTeam: homeTeam,
+            awayTeam: awayTeam,
+            homeTeamColor: colors?.home ?? .blue,
+            awayTeamColor: colors?.away ?? .red,
+            homeTeamLogo: homeLogo,
+            awayTeamLogo: awayLogo,
+            lastPoint: nil
+        ).pinningProbabilities()
     }
 
     // MARK: - Time Range Picker
@@ -2199,9 +2235,14 @@ struct OddsChartView: View {
     /// Nearest REAL observed snapshot on the primary line to a scrub date. Never
     /// interpolates — returns an actual captured point (or nil for an empty line).
     static func nearestSnapshot(to date: Date, in points: [ChartDataPoint]) -> ChartDataPoint? {
-        let primary = primarySource(in: points)
-        return points
-            .filter { $0.source == primary }
+        nearestSnapshot(to: date, in: points, source: primarySource(in: points))
+    }
+
+    /// The same, on a named series — the fullscreen card's own line when there is
+    /// no primary one (#9185, `readoutSource`).
+    static func nearestSnapshot(to date: Date, in points: [ChartDataPoint], source: String) -> ChartDataPoint? {
+        points
+            .filter { $0.source == source }
             .min { abs($0.date.timeIntervalSince(date)) < abs($1.date.timeIntervalSince(date)) }
     }
 
@@ -2312,9 +2353,12 @@ struct OddsChartView: View {
     /// serves its terminal 0% at 03:38 after a 1% at the same minute, and
     /// `max(by:)` returns the FIRST of equal elements.
     static func latestPrimaryPoint(in points: [ChartDataPoint]) -> ChartDataPoint? {
-        let primary = primarySource(in: points)
+        latestPoint(in: points, source: primarySource(in: points))
+    }
+
+    static func latestPoint(in points: [ChartDataPoint], source: String) -> ChartDataPoint? {
         var latest: ChartDataPoint?
-        for point in points where point.source == primary {
+        for point in points where point.source == source {
             if let l = latest, point.date < l.date { continue }
             latest = point
         }
@@ -2574,6 +2618,33 @@ struct OddsChartView: View {
     /// page's point stands then.
     static func restingPlayPoint(in points: [ChartDataPoint], sportKey: String?) -> GamePlayPoint? {
         latestPrimaryPoint(in: points).map { playPoint(for: $0, sportKey: sportKey) }
+    }
+
+    /// #9185 — where the FULLSCREEN card rests when it is the chart's own card
+    /// (the page gave none, so there is no page point for #8652's nil to keep).
+    /// The primary line's end first; failing that, the chart's ONE drawn line:
+    /// DPR Korea v Spain (15318006) drew a lone Polymarket line and printed no
+    /// number, because `primarySource` names a series the payload does not
+    /// carry. Two or more unblended lines still rest on nothing — picking one
+    /// venue's number is the comparison "the blend is the product" rules out.
+    static func fullscreenRestingPoint(in points: [ChartDataPoint], sportKey: String?,
+                                       pageGaveCard: Bool) -> GamePlayPoint? {
+        guard let source = readoutSource(in: points, pageGaveCard: pageGaveCard) else { return nil }
+        return latestPoint(in: points, source: source).map { playPoint(for: $0, sportKey: sportKey) }
+    }
+
+    /// #9185 — the ONE series a readout card reads, resting AND scrubbing. The
+    /// resting number used to fall back to a lone venue line while the scrub
+    /// still looked up only the primary one, so on 15318006 the crosshair moved
+    /// and the number stayed on the latest print. The primary line when it is
+    /// drawn; the chart's one line only for the fullscreen chart's own card;
+    /// otherwise nothing.
+    static func readoutSource(in points: [ChartDataPoint], pageGaveCard: Bool) -> String? {
+        let primary = primarySource(in: points)
+        if points.contains(where: { $0.source == primary }) { return primary }
+        guard !pageGaveCard else { return nil }
+        let drawn = defaultVisibleSources(in: points)
+        return drawn.count == 1 ? drawn.first : nil
     }
 
     // MARK: - Source Styling
