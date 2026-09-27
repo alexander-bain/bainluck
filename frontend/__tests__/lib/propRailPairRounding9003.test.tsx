@@ -3,7 +3,7 @@
  *
  * `eventGameMarkets.15318878.halfCentPairs.json` is the REAL production
  * `player_props` + `props_script` of `GET /api/events/15318878/game-markets`
- * (Cardinals @ Brewers, live), captured 2026-09-27 01:30Z. Polymarket quotes on
+ * (Cardinals @ Brewers, live), captured 2026-09-27 01:19Z. Polymarket quotes on
  * a half-cent grid, so Jordan Walker's 1+ HR sits on `.5` at both ends:
  *
  *   Over  0.085 → 0.095      Under (own axis) 0.915 → 0.905

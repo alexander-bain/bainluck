@@ -1545,7 +1545,7 @@ function buildCandidates(input: DivergenceInput): BuiltCandidates {
   // THE DIVERGENCE rounds a question's Over and Under legs once, as a pair,
   // when both ends are complements (`divergencePairPercents`, #5240). The rail
   // rounded the Over number alone, so a half-cent quote split them: production
-  // 15318878, 2026-09-27 01:26Z, Jordan Walker 1+ HR served 0.085 → 0.095 and
+  // 15318878, 2026-09-27 01:19Z, Jordan Walker 1+ HR served 0.085 → 0.095 and
   // printed "opened 9% · now 10%" on the rail, "Over 8% → 9%" below it. Same
   // gate, same helper, so the two cannot disagree; `direction` follows the
   // printed ends (#8754).

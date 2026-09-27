@@ -1,5 +1,5 @@
 {
- "_source": "GET /api/events/15318878/game-markets, production, captured 2026-09-27 01:30Z (#9003). player_props + props_script only, verbatim.",
+ "_source": "GET /api/events/15318878/game-markets, production, captured 2026-09-27 01:19:31Z (#9003). player_props + props_script only, verbatim.",
  "status": "live",
  "player_props": [
   {
