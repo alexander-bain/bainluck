@@ -949,3 +949,45 @@ describe("#5634 — one two-word nickname list, two clients", () => {
     expect(swiftWalk).toBeGreaterThan(swiftList);
   });
 });
+
+/**
+ * #5634 — the multi-word COUNTRY list is one list with two spellings: the
+ * browser's `MULTI_WORD_COUNTRIES` (ux, PR #9180) and the iPhone's
+ * `multiWordCountries` (native, PR #9183). A country kept whole on one client
+ * and cut to its last word on the other is "Czech Republic" on the site and
+ * "Republic" on the phone for the same fixture.
+ */
+const swiftCountries = tokensInLiteral(
+  swiftSource,
+  /static let multiWordCountries\s*:\s*Set<String>\s*=/,
+);
+const webCountries = tokensInLiteral(
+  webSource,
+  /export const MULTI_WORD_COUNTRIES\s*:\s*ReadonlySet<string>\s*=/,
+);
+
+describe("#5634 — one multi-word country list, two clients", () => {
+  it("both country sets were actually found and read", () => {
+    expect(swiftCountries.length).toBeGreaterThanOrEqual(60);
+    expect(webCountries.length).toBeGreaterThanOrEqual(60);
+    expect(swiftCountries).toContain("czech republic");
+    expect(webCountries).toContain("czech republic");
+    expect(new Set(swiftCountries).size).toBe(swiftCountries.length);
+    expect(new Set(webCountries).size).toBe(webCountries.length);
+  });
+
+  it("the two country sets are identical", () => {
+    const swift = new Set(swiftCountries);
+    const web = new Set(webCountries);
+    expect([...web].filter((t) => !swift.has(t))).toEqual([]);
+    expect([...swift].filter((t) => !web.has(t))).toEqual([]);
+  });
+
+  it("both clients read the list before any shortening rule", () => {
+    // The browser's half is executed; the iPhone's is read out of source.
+    expect(teamShortName("Czech Republic")).toBe("Czech Republic");
+    expect(swiftCode).toMatch(
+      /static func short\(_ name: String, sportKey: String\? = nil\) -> String \{\s*if isMultiWordCountry\(name\) \{ return name \}\s*return shortByRule\(name, sportKey: sportKey\)/,
+    );
+  });
+});

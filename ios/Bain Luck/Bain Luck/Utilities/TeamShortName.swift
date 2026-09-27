@@ -217,6 +217,66 @@ enum TeamShortName {
         return twoWordNicknames.contains(key) ? pair.joined(separator: " ") : nil
     }
 
+    /// #5634 — a NATIONAL team's name is the country, and no word of a
+    /// country's name stands for it alone. The browser's finished-card strip
+    /// printed "REPUBLIC" beside "CROATIA" for Czech Republic (`/events/15195324`,
+    /// UEFA Nations League, 2026-09-26), and this file's last-word rule gives the
+    /// iPhone the same "Republic" — and "Zealand", "Korea" for both Koreas,
+    /// "States", "Arabia", "Rica", "Leone".
+    ///
+    /// The soccer whole-club rule already keeps these whole when the caller
+    /// passes the sport, but most call sites (`shortPair` on the cards) pass
+    /// none, and national teams play rugby, cricket and hockey too — so this is
+    /// not sport-gated.
+    ///
+    /// This is the browser's `MULTI_WORD_COUNTRIES` (`frontend/lib/teamShortName.ts`,
+    /// PR #9180), entry for entry: a list of the world, not a measurement. An
+    /// entry only ever keeps the full name, so it can never make a label less
+    /// true. Keys are the `countryKey` form.
+    static let multiWordCountries: Set<String> = [
+        // Americas
+        "united states", "united states of america", "costa rica", "el salvador",
+        "puerto rico", "dominican republic", "trinidad and tobago",
+        "antigua and barbuda", "saint kitts and nevis", "st kitts and nevis",
+        "saint lucia", "st lucia", "saint vincent and the grenadines",
+        "st vincent and the grenadines", "cayman islands", "turks and caicos islands",
+        "british virgin islands", "us virgin islands", "west indies", "french guiana",
+        // Europe
+        "czech republic", "northern ireland", "republic of ireland", "great britain",
+        "united kingdom", "north macedonia", "bosnia and herzegovina", "san marino",
+        "faroe islands", "slovak republic", "russian federation",
+        // Asia and Oceania
+        "south korea", "north korea", "korea republic", "korea dpr",
+        "republic of korea", "saudi arabia", "united arab emirates", "sri lanka",
+        "hong kong", "hong kong china", "chinese taipei", "new zealand",
+        "papua new guinea", "new caledonia", "solomon islands", "cook islands",
+        "american samoa", "marshall islands", "east timor", "kyrgyz republic",
+        "ir iran",
+        // Africa
+        "south africa", "ivory coast", "cote divoire", "cape verde", "cabo verde",
+        "sierra leone", "burkina faso", "equatorial guinea", "south sudan",
+        "central african republic", "dr congo", "sao tome and principe",
+    ]
+
+    /// A whole name as `multiWordCountries` keys it — the browser's
+    /// `countryKey`: accents dropped, "&" read as "and", split on whitespace and
+    /// dashes, letters and digits per token, lower case. So "Côte d'Ivoire",
+    /// "Bosnia & Herzegovina" and "St. Lucia" reach their entries.
+    static func countryKey(_ name: String) -> String {
+        name.folding(options: .diacriticInsensitive, locale: nil)
+            .replacingOccurrences(of: "&", with: " and ")
+            .components(separatedBy: tokenSeparators)
+            .map { String($0.filter { $0.isLetter || $0.isNumber }) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+            .lowercased()
+    }
+
+    /// Is this whole name a multi-word country (a national team)?
+    static func isMultiWordCountry(_ name: String) -> Bool {
+        multiWordCountries.contains(countryKey(name))
+    }
+
     /// Three-glyph strings that may never appear on a crest, whatever produces
     /// them.
     ///
@@ -493,6 +553,16 @@ enum TeamShortName {
     /// keeps the shipped last-word behaviour exactly, which is what every call
     /// site that does not know its sport still gets.
     static func short(_ name: String, sportKey: String? = nil) -> String {
+        // #5634 — "Czech Republic", never "Republic".
+        if isMultiWordCountry(name) { return name }
+        return shortByRule(name, sportKey: sportKey)
+    }
+
+    /// `short` without the country entry. The crest badges read this — through
+    /// `abbreviation` and `abbreviationPair`'s collision proxy — so #5634's
+    /// label change does not re-letter a badge: "Czech Republic" keeps `REP`,
+    /// exactly as the browser's `shortNameByRule` keeps it on the site.
+    private static func shortByRule(_ name: String, sportKey: String? = nil) -> String {
         // #4626 — a pair is returned WHOLE, which is #3110's decision and the
         // browser's behaviour (`teamShortName` line 401). The guard belongs
         // HERE rather than at the badge, because `short` also drives the pair
@@ -616,7 +686,9 @@ enum TeamShortName {
         // The shipped rule, still the answer for every two-part name — and the
         // fallback whenever the fork below declines. "Ipswich Town" is `IPS`,
         // "Boston Celtics" is `CEL`, "Altrincham FC" is `ALT`.
-        let shipped = glyphs(ofLabel: short(name))
+        // #5634 — `shortByRule`, not `short`: a country's LABEL is kept whole,
+        // its badge is not re-lettered ("Czech Republic" stays `REP`).
+        let shipped = glyphs(ofLabel: shortByRule(name))
         // #3110 pinned the doubles tile at three glyphs of the FIRST surname, and
         // that decision is not this function's to reopen — a pair is not a
         // compound name, it is two names. `short` returns a pair unchanged, so
@@ -943,8 +1015,10 @@ enum TeamShortName {
         // — so threading the sport here would stop detecting exactly the
         // collision the proxy exists to detect, and no badge would be repaired.
         // The club rule is the wider net, and the net is the point.
-        guard a == h || (derived && short(away) == short(home)) else { return (a, h) }
-        let widened = grown(away: away, home: home)
+        // #5634 — the proxy and the growth read `shortByRule`, so a country
+        // kept whole as a LABEL moves no badge: both are as they were.
+        guard a == h || (derived && shortByRule(away) == shortByRule(home)) else { return (a, h) }
+        let widened = grown(away: away, home: home, byRule: true)
         return (glyphs(ofLabel: widened.away), glyphs(ofLabel: widened.home))
     }
 
@@ -954,19 +1028,26 @@ enum TeamShortName {
     }
 
     /// Grow both labels leftward until they differ, or until both are whole.
+    ///
+    /// `byRule` is `abbreviationPair`'s: growth for a BADGE starts from the
+    /// width `shortByRule` returned, so #5634's country labels move no badge.
     private static func grown(
         away: String,
         home: String,
-        sportKey: String? = nil
+        sportKey: String? = nil,
+        byRule: Bool = false
     ) -> (away: String, home: String) {
+        let label: (String) -> String = {
+            byRule ? shortByRule($0, sportKey: sportKey) : short($0, sportKey: sportKey)
+        }
         let aWords = away.split(separator: " ").filter { !$0.isEmpty }.count
         let hWords = home.split(separator: " ").filter { !$0.isEmpty }.count
         // `short` may already be a whole name (a designator-ending club) or a
         // particled surname (#7163), so start wide enough that growth never
         // NARROWS what we were showing.
         var k = max(1,
-                    short(away, sportKey: sportKey).split(separator: " ").filter { !$0.isEmpty }.count,
-                    short(home, sportKey: sportKey).split(separator: " ").filter { !$0.isEmpty }.count)
+                    label(away).split(separator: " ").filter { !$0.isEmpty }.count,
+                    label(home).split(separator: " ").filter { !$0.isEmpty }.count)
         let limit = max(aWords, hWords)
         while k <= limit {
             let a = lastWords(away, k)
