@@ -21,6 +21,7 @@ struct EventDetailView: View {
     /// (`-launch_expand_sections`), which is the only way this list can be
     /// photographed — the rig cannot tap a chevron. See `LaunchRig`.
     @State private var showSources = LaunchRig.expandsCollapsedSections()
+    @State private var showProbabilityDetails = false
     /// The width of a row in the sources disclosure, reported by the
     /// `GeometryReader` behind the whole panel, so both lists inside it can size
     /// their label column against the room the row actually has rather than a
@@ -327,6 +328,8 @@ struct EventDetailView: View {
                                      // fullscreen dot cannot claim a push the
                                      // toolbar does not.
                                      refreshStreaming: refreshIndicator == .streaming,
+                                     liveUpdateStatus: vm.liveUpdateStatus,
+                                     priceActivity: vm.priceActivity,
                                      forcedDomain: sharedChartDomain,
                                      pageAxisPlotWidth: pageAxisPlotWidth,
                                      selectedRange: $chartRange,
@@ -653,6 +656,13 @@ struct EventDetailView: View {
             currentAway: event.awayScore,
             isDone: isFinished
         )
+    }
+
+    private func movementCaption(_ event: EventDetail) -> String? {
+        guard let delta = vm.priceActivity?.homeDelta, delta != 0 else { return nil }
+        let names = TeamShortName.shortPair(away: event.awayTeam, home: event.homeTeam,
+                                            sportKey: event.sport)
+        return "\(names.home) \(delta > 0 ? "↑" : "↓")\(abs(delta)) \(abs(delta) == 1 ? "pt" : "pts")"
     }
 
     // MARK: - Chart Header Bar (v2: title + freshness)
@@ -1142,12 +1152,18 @@ struct EventDetailView: View {
                                 Text(formatProbability(away, renderedPercent: awayPct))
                                     .font(.system(size: oddsFontSize, weight: .black, design: .rounded).monospacedDigit())
                                     .foregroundStyle(colors.away)
+                                    .livePriceChangeFeedback(sequence: vm.priceActivity?.sequence ?? 0,
+                                                             valueChanged: vm.priceActivity.map { $0.previousAwayLabel != $0.awayLabel } ?? false,
+                                                             color: colors.away, isEnabled: isLive && vm.liveUpdateStatus != .interrupted)
                                 Text("\u{2013}")
                                     .font(.title3)
                                     .foregroundStyle(.secondary.opacity(0.4))
                                 Text(formatProbability(home, renderedPercent: homePct))
                                     .font(.system(size: oddsFontSize, weight: .black, design: .rounded).monospacedDigit())
                                     .foregroundStyle(colors.home)
+                                    .livePriceChangeFeedback(sequence: vm.priceActivity?.sequence ?? 0,
+                                                             valueChanged: vm.priceActivity.map { $0.previousHomeLabel != $0.homeLabel } ?? false,
+                                                             color: colors.home, isEnabled: isLive && vm.liveUpdateStatus != .interrupted)
                             }
                         } else {
                             // #5271 — a draw-priced sport. There is one price
@@ -1182,6 +1198,9 @@ struct EventDetailView: View {
                                 Text(formatProbability(home))
                                     .font(.system(size: oddsFontSize, weight: .black, design: .rounded).monospacedDigit())
                                     .foregroundStyle(colors.home)
+                                    .livePriceChangeFeedback(sequence: vm.priceActivity?.sequence ?? 0,
+                                                             valueChanged: vm.priceActivity.map { $0.previousHomeLabel != $0.homeLabel } ?? false,
+                                                             color: colors.home, isEnabled: isLive && vm.liveUpdateStatus != .interrupted)
                             }
                         }
                         // Trend indicator (change since opening).
@@ -1241,15 +1260,38 @@ struct EventDetailView: View {
                         // #490: hero confidence signal (1-3 bars), computed
                         // client-side from the win-prob source count + whether the
                         // line moved off open. Mirrors the web hero (lib/confidence.ts).
-                        HStack(spacing: 6) {
-                            Text("Win Probability")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                            SignalBarsView(tier: Confidence.fromSources(
-                                sourceCount: event.winProbabilitySources?.count,
-                                hasMovement: event.openingOdds?.homeProbability
-                                    .map { abs(home - $0) > 0.001 } ?? false
-                            )?.rawValue)
+                        let confidenceTier = Confidence.fromSources(
+                            sourceCount: event.winProbabilitySources?.count,
+                            hasMovement: event.openingOdds?.homeProbability
+                                .map { abs(home - $0) > 0.001 } ?? false
+                        )?.rawValue
+                        Button { showProbabilityDetails.toggle() } label: {
+                            HStack(spacing: 6) {
+                                Text("Win Probability")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                SignalBarsView(tier: confidenceTier)
+                            }
+                            .frame(minHeight: 44)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Probability confidence and update details")
+                        .accessibilityHint("Shows connection status and when the last price update reached this phone")
+                        .popover(isPresented: $showProbabilityDetails) {
+                            FreshnessRevealView(status: vm.liveUpdateStatus,
+                                                lastReceivedAt: vm.priceActivity?.receivedAt,
+                                                confidenceTier: confidenceTier)
+                                .frame(maxWidth: 300)
+                                #if os(iOS)
+                                .presentationCompactAdaptation(.popover)
+                                #endif
+                        }
+                        if isLive {
+                            LivePriceMovementCaption(sequence: vm.priceActivity?.sequence ?? 0,
+                                                     text: movementCaption(event),
+                                                     color: colors.home,
+                                                     isEnabled: isLive && vm.liveUpdateStatus != .interrupted)
                         }
                         // #8320 — #3313's live sparkline was drawn here, and it
                         // is gone: it was a thumbnail of the full chart one card

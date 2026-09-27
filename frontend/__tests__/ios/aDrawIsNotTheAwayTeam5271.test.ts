@@ -345,11 +345,36 @@ d("a draw is not the away team on iOS", () => {
 
   /** THE PLAY POINT — both of its construction sites. */
   it("the play point carries an optional away price from both writers", () => {
-    expect(stripComments(playCard())).toMatch(/let awayProb: Double\?/);
-    // …and the card draws the away half only when there is one.
-    expect(stripComments(playCard())).toMatch(
-      /if let away = point\.awayProb \{/
+    const card = stripComments(playCard());
+    expect(card).toMatch(/let awayProb: Double\?/);
+    // #9185 shares one probability row between pinned fullscreen and inline
+    // readouts. Its formatting helper must preserve nil, and every layout
+    // alternative must conditionally draw that same optional away result.
+    expect(card).toMatch(
+      /if pinsProbabilities \{\s*probabilities\(point\)/
     );
+    expect(card).toMatch(
+      /private func detail\(_ point: GamePlayPoint\)[\s\S]*?else \{\s*probabilities\(point\)/
+    );
+    const row = card.split("private func probabilities(_ point: GamePlayPoint)")[1]
+      .split("private func stateLine")[0];
+    expect(row).toMatch(
+      /let printed = Self\.printedPercents\(home: point\.homeProb, away: point\.awayProb\)/
+    );
+    expect(row).toMatch(/let awayProb = printed\.away/);
+    const awayRuns = row.match(/probRun\(awayShort, awayProb, awayTeamColor/g) ?? [];
+    const guardedAwayRuns = row.match(
+      /if let awayProb \{[^{}]*probRun\(awayShort, awayProb, awayTeamColor[^{}]*\}/g
+    ) ?? [];
+    expect(awayRuns).toHaveLength(3);
+    expect(guardedAwayRuns).toHaveLength(awayRuns.length);
+    const rounding = card.split("static func printedPercents(home: Double, away: Double?)")[1]
+      .split("private var sides")[0];
+    expect(rounding).toMatch(
+      /guard let away else \{\s*return \(renderedPercent\(home\) \?\? 0, nil\)\s*\}/
+    );
+    expect(rounding).toMatch(/renderedDuelPercents\(away: away, home: home\)/);
+    expect(rounding).toMatch(/return \(pair\[1\] \?\? 0, pair\[0\]\)/);
 
     for (const source of [detail(), chart()]) {
       expect(stripComments(source)).toMatch(

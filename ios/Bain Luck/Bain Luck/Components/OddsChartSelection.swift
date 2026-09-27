@@ -87,3 +87,25 @@ struct OddsChartSelectionOverlay: View {
             homeShort: homeShort, awayShort: awayShort, moments: moments))
     }
 }
+
+/// The animation subscribes only to the small selection leaf. Finger movement
+/// never observes or invalidates OddsChartView's data marks.
+struct LiveChartEndpointFeedback: View {
+    @ObservedObject var selection: OddsChartSelection
+    let activity: LivePriceActivity?
+    let probability: Double
+    let isLive: Bool
+    let color: Color
+
+    var body: some View {
+        LivePriceEndpointPulse(sequence: activity?.sequence ?? 0,
+                               valueChanged: activity?.displayedValueChanged ?? false,
+                               color: color,
+                               isEnabled: isLive && selection.date == nil && matchesAcceptedPrice)
+    }
+
+    private var matchesAcceptedPrice: Bool {
+        guard let accepted = activity?.homeProbability else { return false }
+        return abs(accepted - probability) < 0.000001
+    }
+}
