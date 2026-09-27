@@ -115,8 +115,10 @@ function binErrors(rows) {
     .sort((a, b) => a[0] - b[0])
     .map(([, v]) => ({
       n: v.n,
-      // Both clients round each bucket's error to one decimal BEFORE weighting.
-      error: Math.round((v.winners / v.n - v.sumProb / v.n) * 1000) / 10,
+      // #9000: both clients weight the UNROUNDED bucket error. They used to
+      // round it to one decimal first, which printed Polymarket 1.9pp in
+      // Source Comparison beside its panel's served 2.0pp.
+      error: (v.winners / v.n - v.sumProb / v.n) * 100,
     }));
 }
 

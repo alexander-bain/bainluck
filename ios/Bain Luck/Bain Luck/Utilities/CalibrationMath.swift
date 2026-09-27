@@ -23,7 +23,8 @@ import Foundation
 nonisolated enum CalibrationMath {
 
     /// One probability bucket after aggregation across sources/categories.
-    /// Mirrors the web page's `AggBucket` (values rounded to 0.1 for parity).
+    /// Mirrors the web page's `AggBucket` (display values rounded to 0.1 for
+    /// parity; the metrics read the unrounded `errorExact`, #9000).
     nonisolated struct AggBucket: Sendable, Identifiable {
         let bucketIdx: Int
         let n: Int
@@ -32,13 +33,21 @@ nonisolated enum CalibrationMath {
         let avgProb: Double
         /// Actual win rate, percent (0–100).
         let actual: Double
-        /// actual − avgProb, percentage points.
+        /// actual − avgProb, percentage points, rounded to 0.1 for display.
         let error: Double
         /// Wilson lower bound, percent (0–100).
         let ciLower: Double
         /// Wilson upper bound, percent (0–100).
         let ciUpper: Double
+        /// #9000 (web `AggBucket.errorExact`). The same gap UNROUNDED — what
+        /// `ece`/`mce` average. Averaging the rounded `error` printed Polymarket
+        /// 1.9pp where the website's panel prints the served 2.0pp (1.950 vs
+        /// 1.963 over the same 419,094 outcomes). Always set by `aggregate`;
+        /// `nil` only on a hand-built bucket, which then falls back to `error`.
+        var errorExact: Double? = nil
 
+        /// The gap a metric averages: unrounded when carried (#9000).
+        var metricError: Double { errorExact ?? error }
         /// Bucket midpoint on the 0–100 predicted axis (5, 15, 25, …).
         var midpoint: Double { Double(bucketIdx) * 10 + 5 }
         /// e.g. "30-40%".
@@ -61,7 +70,8 @@ nonisolated enum CalibrationMath {
 
     /// Aggregate raw per-source/per-category buckets into 10 probability bins.
     /// Optionally filtered (e.g. to a cohort or a single source/category).
-    /// Rounding matches the web page exactly (0.1% / 0.1pp) so digits line up.
+    /// Display rounding matches the web page exactly (0.1% / 0.1pp) so digits
+    /// line up; `errorExact` carries the unrounded gap the metrics average.
     static func aggregate(
         _ buckets: [CalibrationBucket],
         filter: ((CalibrationBucket) -> Bool)? = nil
@@ -88,7 +98,8 @@ nonisolated enum CalibrationMath {
                 actual: round1(actual),
                 error: round1(actual - avgProb),
                 ciLower: round1(lo),
-                ciUpper: round1(hi)
+                ciUpper: round1(hi),
+                errorExact: (actual - avgProb) * 100
             )
         }
         .sorted { $0.bucketIdx < $1.bucketIdx }
@@ -103,14 +114,14 @@ nonisolated enum CalibrationMath {
     /// Shown to readers as `Bucket`.
     static func mce(_ cal: [AggBucket]) -> Double {
         guard !cal.isEmpty else { return 0 }
-        return cal.reduce(0.0) { $0 + abs($1.error) } / Double(cal.count)
+        return cal.reduce(0.0) { $0 + abs($1.metricError) } / Double(cal.count)
     }
 
     /// n-weighted mean |error| (pp). The headline calibration metric. Web `ece`.
     static func ece(_ cal: [AggBucket]) -> Double {
         let totalN = cal.reduce(0) { $0 + $1.n }
         guard totalN > 0 else { return 0 }
-        return cal.reduce(0.0) { $0 + (Double($1.n) / Double(totalN)) * abs($1.error) }
+        return cal.reduce(0.0) { $0 + (Double($1.n) / Double(totalN)) * abs($1.metricError) }
     }
 
     /// Mean Brier (average squared error) over the raw buckets. Web `brierScore`.

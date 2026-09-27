@@ -222,6 +222,16 @@ function rows(html: string): Record<string, { ece: string | null; state: string 
   return out;
 }
 
+/**
+ * The figure as a reader sees it. The panel's `data-panel-ece` is already at
+ * display precision (`toDisplay`); the row's `data-row-ece` is the raw pooled
+ * figure. Their raw strings matched only while both were built from bucket
+ * errors pre-rounded to 0.1pp; since #9000 the row carries the unrounded
+ * figure (kalshi 0.9999999999999999 against the panel's 1), so the pairing is
+ * read where the two are printed.
+ */
+const shown = (v: string | null) => (v === null ? null : Number(v).toFixed(1));
+
 /* ──────────────────────────────── the arms ───────────────────────────── */
 
 describe("#7422 — the fixture is adversarial (arm 2, read first)", () => {
@@ -261,7 +271,7 @@ describe("#7422 — a panel's ECE is its own row's ECE, for EVERY provider (arm 
         expect(p[provider].ece).toBeNull();
         continue;
       }
-      expect({ provider, ece: p[provider].ece }).toEqual({ provider, ece: row.ece });
+      expect({ provider, ece: shown(p[provider].ece) }).toEqual({ provider, ece: shown(row.ece) });
     }
   });
 
@@ -292,14 +302,14 @@ describe("#7422 — no-change arms (arm 3)", () => {
     // A fix that moved this number would be the regression, not the repair.
     const html = render();
     expect(Number(panels(html).kalshi.ece)).toBeCloseTo(1.0, 1);
-    expect(panels(html).kalshi.ece).toBe(rows(html).kalshi.ece);
+    expect(shown(panels(html).kalshi.ece)).toBe(shown(rows(html).kalshi.ece));
   });
 
   it("the multi-shape sportsbook panel is pooled, exactly as before", () => {
     const html = render();
     const family = Object.keys(panels(html)).find(k => k.includes("odds_api"))!;
     expect(panels(html)[family].basis).toBe("pooled");
-    expect(panels(html)[family].ece).toBe(rows(html)[family].ece);
+    expect(shown(panels(html)[family].ece)).toBe(shown(rows(html)[family].ece));
   });
 });
 

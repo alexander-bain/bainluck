@@ -68,7 +68,7 @@ describe("#7564 the /about proof card's population and error figure", () => {
     expect(f).not.toBeNull();
     // 449,027 = 293,900 moved + 155,127 sportsbook. The 298,001 untraded are out.
     expect(f!.outcomes).toBe(449_027);
-    expect(f!.errorPp).toBeCloseTo(0.917, 2);
+    expect(f!.errorPp).toBeCloseTo(0.911, 2); // #9000: unrounded bucket gaps (was 0.917 off 0.1pp-rounded ones); still prints "0.9"
     expect(proofCalibrationErrorText(ALL)).toBe("0.9");
     expect(compactOutcomeCount(f!.outcomes)).toBe("449K");
   });
@@ -81,9 +81,12 @@ describe("#7564 the /about proof card's population and error figure", () => {
     expect(f.errorPp).toBe(ece(pageAgg));
     expect(f.outcomes).toBe(pageAgg.reduce((s, b) => s + b.n, 0));
 
-    // And it is the value the live page published in its `data-plain-ece`
-    // attribute the day this was measured: 0.9171802586481436 over n=449,027.
-    expect(f.errorPp).toBeCloseTo(0.9171802586481436, 6);
+    // The live page published 0.9171802586481436 in its `data-plain-ece`
+    // attribute the day this was measured (n=449,027). That figure averaged
+    // bucket errors pre-rounded to 0.1pp; since #9000 both pages average the
+    // unrounded gap, and the same payload measures 0.9113095426332948. The
+    // printed "0.9" did not move.
+    expect(f.errorPp).toBeCloseTo(0.9113095426332948, 6);
   });
 
   it("the count and the figure describe the same population", () => {
@@ -188,6 +191,6 @@ describe("#7564 the proof figures tolerate a payload that omits an unused field"
     const f = proofCohortFigures(withoutSumSqErr);
     expect(f).not.toBeNull();
     expect(f!.outcomes).toBe(449_027);
-    expect(f!.errorPp).toBeCloseTo(0.917, 2);
+    expect(f!.errorPp).toBeCloseTo(0.911, 2); // #9000: unrounded bucket gaps (was 0.917 off 0.1pp-rounded ones); still prints "0.9"
   });
 });

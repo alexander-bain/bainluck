@@ -56,7 +56,13 @@ export interface AggBucket {
   winners: number;
   avgProb: number;
   actual: number;
+  /** actual - avgProb, pp, rounded to 0.1 for display. */
   error: number;
+  /**
+   * #9000. The same gap unrounded — what `ece()`/`mce()` average. Always set
+   * by `aggregateBuckets`; optional only so hand-built fixtures still compile.
+   */
+  errorExact?: number;
   bucket: string;
   ciLower: number;
   ciUpper: number;
@@ -98,6 +104,7 @@ export function aggregateBuckets<T extends ParityBucket>(
         avgProb: Math.round(avgProb * 1000) / 10,
         actual: Math.round(actual * 1000) / 10,
         error: Math.round((actual - avgProb) * 1000) / 10,
+        errorExact: (actual - avgProb) * 100,
         bucket: `${i * 10}-${i * 10 + 10}%`,
         ciLower: Math.round(ciLo * 1000) / 10,
         ciUpper: Math.round(ciHi * 1000) / 10,

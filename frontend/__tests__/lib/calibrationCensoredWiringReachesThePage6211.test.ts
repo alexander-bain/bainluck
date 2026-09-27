@@ -47,7 +47,7 @@ const source = fs.readFileSync(PAGE, "utf8");
 function providerMetricsBlock(): string {
   const start = source.indexOf("const providerMetrics = useMemo(");
   expect(start).toBeGreaterThan(-1);
-  const end = source.indexOf("}, [normalized, sources, cohortFilter]);", start);
+  const end = source.indexOf("}, [normalized, sources, cohortFilter, data]);", start);
   expect(end).toBeGreaterThan(start);
   return source.slice(start, end);
 }

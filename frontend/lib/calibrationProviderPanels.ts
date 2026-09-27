@@ -230,6 +230,28 @@ export function eceInputsForPanel(
 }
 
 /**
+ * The ECE a Source Comparison ROW prints (#9000): the panel's rule, read the
+ * other way round.
+ *
+ * Where `eceInputsForPanel` hands the panel the server's figure, the row takes
+ * that same figure — so the two are one number by construction, not by two
+ * derivations happening to round alike. Production 2026-09-27 printed
+ * Polymarket 1.9pp in the row (a browser recompute) beside 2.0pp on its panel
+ * (the served 1.96). Everywhere else — a multi-key provider, any cohort-filtered
+ * view, or a served row that is absent — the row keeps its own pooled figure,
+ * which is also what the panel is handed in those cases.
+ */
+export function servedEceForRow(
+  sourceCount: number,
+  cohortFiltered: boolean,
+  serverEce: number | null | undefined,
+  pooledEce: number,
+): number {
+  const { publishedEce } = eceInputsForPanel(sourceCount, cohortFiltered, serverEce, pooledEce);
+  return typeof publishedEce === "number" && Number.isFinite(publishedEce) ? publishedEce : pooledEce;
+}
+
+/**
  * Order the provider panels and give each the numbers a shared-area layout
  * would otherwise erase.
  *

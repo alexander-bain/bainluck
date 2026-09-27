@@ -98,10 +98,10 @@ function pp1(v: number): string {
  *  derived "at display precision" because both of ITS inputs are on screen. This
  *  is that rule, applied to the one cell on the page that had neither.
  *
- *  This is the RENDER, not the measurement. `AggBucket.error` keeps its full
- *  precision and is untouched: `ece()` and `mce()` read it to produce the
- *  headline pp figure and every Source Comparison row, and a 0.05pp-per-bucket
- *  shift there would move published numbers to fix a display. The cost here is
+ *  This is the RENDER, not the measurement. `ece()` and `mce()` do not read
+ *  this cell: they average `AggBucket.errorExact`, the unrounded gap (#9000 —
+ *  `error` itself is 0.1pp-rounded, and averaging THAT is what printed
+ *  Polymarket 1.9pp beside its panel's 2.0pp). The cost here is
  *  bounded at 0.05pp on a column whose values run 0.3-2.7pp inside intervals
  *  ~0.7pp wide — below this table's own resolution, where the disagreement was
  *  not. */
