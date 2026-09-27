@@ -125,11 +125,58 @@ def test_an_empty_group_is_already_repaired_and_a_missing_event_refuses():
 
 
 def test_the_pin_is_the_measured_census():
-    assert len(repair.EXPECTED) == 99
-    assert len(repair.EXPECTED_KEYS) == 99
-    assert sum(c for *_, c in repair.EXPECTED) == 9414
-    assert len({e for e, *_ in repair.EXPECTED}) == 97
+    assert len(repair.ROUND_1) == 99
+    assert sum(c for *_, c in repair.ROUND_1) == 9414
+    assert len(repair.EXPECTED) == 100
+    assert len(repair.EXPECTED_KEYS) == 100
+    # Round 1's 9,414, less Georgia's 97, plus round 2's 117 + 1,432.
+    assert sum(c for *_, c in repair.EXPECTED) == 10866
+    assert len({e for e, *_ in repair.EXPECTED}) == 98
     assert _banked(SPECIMEN_KEY) == 185
+
+
+#: /events/15314006, LA Galaxy v Colorado Rapids, KXMLSGAME-26SEP26LAGCOL (#9130).
+GALAXY_KEY = (15314006, 61485166, "Colorado")
+GALAXY_EVENT = {
+    "id": 15314006,
+    "home_team_name": "LA Galaxy",
+    "away_team_name": "Colorado Rapids",
+}
+#: The market's real legs, read from production 2026-09-27.
+GALAXY_OUTCOMES = ["Los Angeles G", "Colorado", "Tie"]
+GEORGIA_KEY = (15314891, 62398778, "Georgia")
+
+
+def test_round_two_replaces_round_ones_georgia_count():
+    assert (15314891, 62398778, "Georgia", 97) in repair.ROUND_1
+    assert _banked(GEORGIA_KEY) == 117
+    assert sum(1 for e, m, leg, _ in repair.EXPECTED if (e, m, leg) == GEORGIA_KEY) == 1
+
+
+def test_the_galaxy_away_leg_group_is_pinned_and_deletable():
+    # Last pre-kick-off row as stored: 0.7050 = 1 - P(Colorado) = P(Galaxy) + P(Tie).
+    rows = [_row(13971390, home=0.705, yes=0.295), _row(13969977, home=0.51, yes=0.49)]
+    assert _banked(GALAXY_KEY) == 1432
+    assert (
+        repair.group_is_deletable(
+            GALAXY_KEY, _banked(GALAXY_KEY), GALAXY_EVENT, GALAXY_OUTCOMES, rows
+        )
+        is None
+    )
+
+
+def test_the_galaxy_home_leg_is_never_pinned():
+    assert not any(
+        e == 15314006 and leg != "Colorado" for e, _, leg, _ in repair.EXPECTED
+    )
+
+
+def test_a_galaxy_row_written_after_the_recensus_stops_the_group():
+    rows = [_row(i, home=0.705, yes=0.295) for i in range(_banked(GALAXY_KEY) + 1)]
+    why = repair.group_is_deletable(
+        GALAXY_KEY, _banked(GALAXY_KEY), GALAXY_EVENT, GALAXY_OUTCOMES, rows
+    )
+    assert why is not None and "since the census" in why
 
 
 @pytest.mark.parametrize("app", [None, "bainluck", "bainluck-staging"])
