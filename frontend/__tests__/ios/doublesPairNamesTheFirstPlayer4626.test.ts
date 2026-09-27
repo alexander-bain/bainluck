@@ -79,7 +79,10 @@ describe("#4626 the doubles rule exists on the Swift side", () => {
    * pair LABELS — still returns one player. The guard has to be in `short`.
    */
   it("guards `short`, not only the badge", () => {
-    expect(swiftFuncBody(swift, "short")).toContain("isDoublesPair");
+    // #5634 — `short` keeps a multi-word country whole and hands every other
+    // name to `shortByRule`, so the label path's pair guard lives THERE.
+    expect(swiftFuncBody(swift, "short")).toContain("return shortByRule(name");
+    expect(swiftFuncBody(swift, "shortByRule")).toContain("isDoublesPair");
     expect(swiftFuncBody(swift, "abbreviation")).toContain("isDoublesPair");
   });
 });
