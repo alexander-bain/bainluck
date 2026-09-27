@@ -138,6 +138,20 @@ enum LaunchRig {
         defaults.bool(forKey: chartSumKey)
     }
 
+    /// Launch-argument key that opens the event page's win-probability chart
+    /// FULLSCREEN once it has a line to draw.
+    /// `xcrun simctl launch <sim> <bundle> -launch_chart_fullscreen YES`.
+    ///
+    /// #9185: the fullscreen chart is a cover behind a button the rig cannot tap,
+    /// so it had never been photographed — and it is where Alex found no numbers
+    /// on the live Patriots at Jaguars page. Off unless asked for; the button a
+    /// reader taps is unchanged.
+    static let chartFullscreenKey = "launch_chart_fullscreen"
+
+    static func opensChartFullscreen(defaults: UserDefaults = .standard) -> Bool {
+        defaults.bool(forKey: chartFullscreenKey)
+    }
+
     /// Launch-argument key that starts the Accuracy screen's "include untraded"
     /// toggle ON. `xcrun simctl launch <sim> <bundle> -launch_include_untraded YES`.
     ///

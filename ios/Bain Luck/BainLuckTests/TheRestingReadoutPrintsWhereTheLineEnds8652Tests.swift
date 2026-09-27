@@ -256,9 +256,18 @@ final class TheRestingReadoutPrintsWhereTheLineEnds8652Tests: XCTestCase {
             .appendingPathComponent("Bain Luck/Components/OddsChartView.swift")
         let chart = try String(contentsOf: url, encoding: .utf8)
         XCTAssertEqual(chart.components(
-            separatedBy: "OddsChartSelectionReadout(selection: selection, readout: readout, dataPoints: dataPoints, sportKey: sportKey)").count - 1, 2)
+            separatedBy: "OddsChartSelectionReadout(selection: selection, readout: readout, dataPoints: dataPoints, sportKey: sportKey)").count - 1, 1)
+        // #9185 — the fullscreen site's card is `fullscreenReadout`'s, flagged
+        // as the chart's own only when the page gave none.
+        XCTAssertEqual(chart.components(
+            separatedBy: "readout: card, dataPoints: dataPoints,\n                                                          sportKey: sportKey, pageGaveCard: readout != nil)").count - 1, 1)
         let selectionURL = url.deletingLastPathComponent().appendingPathComponent("OddsChartSelection.swift")
         let selection = try String(contentsOf: selectionURL, encoding: .utf8)
-        XCTAssertTrue(selection.contains(".resting(on: OddsChartView.restingPlayPoint(in: dataPoints, sportKey: sportKey))"))
+        // `fullscreenRestingPoint` asks `restingPlayPoint` first, and the inline
+        // card (pageGaveCard defaults true) never reaches the fallback.
+        XCTAssertTrue(selection.contains(".resting(on: OddsChartView.fullscreenRestingPoint("))
+        XCTAssertTrue(selection.contains("var pageGaveCard = true"))
+        XCTAssertEqual(chart.components(
+            separatedBy: "if let primary = restingPlayPoint(in: points, sportKey: sportKey) { return primary }").count - 1, 1)
     }
 }
