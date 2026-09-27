@@ -216,6 +216,10 @@ class TestSelectionPredicate:
             # the budget), so a liveness clause that skipped it would re-price a
             # market every other asker has retired — every 45 minutes.
             "task._IN_PLAY_CANDIDATE_SQL": fpr._IN_PLAY_CANDIDATE_SQL.text,
+            # #4983: the eleventh. The condition-twin lookup picks which OTHER
+            # rows a priced condition is written onto, so a liveness clause that
+            # skipped it would re-price a twin every other asker has retired.
+            "task.CONDITION_TWIN_MARKETS_SQL": fpr.CONDITION_TWIN_MARKETS_SQL,
         }
         for name, sql in askers.items():
             assert shared in _normalise(sql), f"{name} does not compose LIVE_MARKET_SQL"
@@ -255,7 +259,10 @@ class TestSelectionPredicate:
         #
         # 9 -> 10 for #8718's in-play arm (`_IN_PLAY_CANDIDATE_SQL`), enrolled
         # above before this number moved.
-        enrolled = 10
+        #
+        # 10 -> 11 for #4983's condition-twin lookup
+        # (`CONDITION_TWIN_MARKETS_SQL`), enrolled above before this moved.
+        enrolled = 11
         # SITES THAT ARE NOT ASKERS, ACCOUNTED SEPARATELY RATHER THAN FOLDED IN.
         # An asker is a statement that selects live markets; the dictionary
         # enrols those by name. Two interpolation sites are neither:
@@ -296,11 +303,12 @@ class TestSelectionPredicate:
         # interpolation and the module carries the result. Assert on the source:
         # there is no module-level constant to read for this one.
         assert "{LIVE_MARKET_SQL}" in _MODULE_SRC
-        assert _MODULE_SRC.count("{LIVE_MARKET_SQL}") == 7, (
+        assert _MODULE_SRC.count("{LIVE_MARKET_SQL}") == 8, (
             "all THREE pool branches (#5781 added liquid_pool), the by-id "
             "selector, the reachability census, #4253's reach arm "
-            "(_KALSHI_UNREACHED_FROZEN_SQL) and #8718's in-play arm "
-            "(_IN_PLAY_CANDIDATE_SQL)"
+            "(_KALSHI_UNREACHED_FROZEN_SQL), #8718's in-play arm "
+            "(_IN_PLAY_CANDIDATE_SQL) and #4983's condition-twin lookup "
+            "(CONDITION_TWIN_MARKETS_SQL)"
         )
         # #3315: the census now composes the whole ELIGIBLE POOL, not just the
         # liveness clause. A census that kept the liveness bounds but not the
@@ -2079,3 +2087,65 @@ class TestTheRunTreatsAnInPlayOutrightAsIdentity:
         # undone.
         assert h.marks.get((16757297,)) == fpr.IN_PLAY_REFRESH_MINUTES * 60
         assert h.marks.get(()) == fpr.STALE_AFTER_HOURS * 3600
+
+
+class _TwinHarness(_RunHarness):
+    """#4983: the run hands every priced condition to the twin lookup, with the
+    rows it already addressed excluded, and writes the twin the lookup names."""
+
+    TWIN_ID = 999
+
+    def __init__(self, *, twin_rows, **kw):
+        super().__init__(**kw)
+        self.twin_rows = twin_rows
+        self.twin_params: list[dict] = []
+        self.written_market_ids: list[int] = []
+
+    class _Session(_RunHarness._Session):
+        async def execute(self, statement, params=None):
+            sql = str(statement)
+            if "fo.external_id = ANY(:leg_keys)" in sql:
+                self.outer.twin_params.append(dict(params or {}))
+                return _RunHarness._Result(self.outer.twin_rows)
+            if "SELECT id, external_id FROM futures_outcomes" in sql:
+                self.outer.written_market_ids.append((params or {}).get("mid"))
+            return await super().execute(statement, params)
+
+
+class TestTheRunPricesConditionTwins:
+    @pytest.mark.asyncio
+    async def test_the_twin_the_lookup_names_is_written(self, monkeypatch):
+        from app.utils.feed_served_markets import SERVED_EMPTY, ServedSignal
+
+        harness = _TwinHarness(
+            twin_rows=[(_TwinHarness.TWIN_ID, "0xabc")],
+            signal=ServedSignal(state=SERVED_EMPTY, ids=[], shapes=2),
+            class_rows=_brazil_class_row(),
+        )
+        stats = await harness.run(monkeypatch)
+
+        assert len(harness.twin_params) == 1
+        params = harness.twin_params[0]
+        assert params["exclude_ids"] == [112996], (
+            "the addressed row must be excluded or it is written twice"
+        )
+        assert set(params["leg_keys"]) == {"0xabc", "0xabc_yes", "0xabc_no"}
+        assert harness.written_market_ids == [112996, _TwinHarness.TWIN_ID]
+        assert stats["twin_markets_priced"] == 1
+        assert stats["twin_snapshots_written"] == 1
+
+    @pytest.mark.asyncio
+    async def test_no_twin_writes_nothing_extra(self, monkeypatch):
+        """THE CONTROL: an empty lookup leaves the run exactly as it was."""
+        from app.utils.feed_served_markets import SERVED_EMPTY, ServedSignal
+
+        harness = _TwinHarness(
+            twin_rows=[],
+            signal=ServedSignal(state=SERVED_EMPTY, ids=[], shapes=2),
+            class_rows=_brazil_class_row(),
+        )
+        stats = await harness.run(monkeypatch)
+
+        assert harness.written_market_ids == [112996]
+        assert stats["twin_markets_priced"] == 0
+        assert stats["twin_snapshots_written"] == 0

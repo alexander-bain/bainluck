@@ -2044,6 +2044,109 @@ ELIGIBLE_OUTCOMES_SQL = (
 )
 
 
+#: #4983 — THE OTHER ROWS THAT CARRY A CONDITION THIS PASS JUST PRICED.
+#:
+#: This task addresses a Polymarket row by its Gamma EVENT and writes the legs
+#: of that one row. ``_process_event_batch`` stores a Gamma event two ways at
+#: once (#3868): a PARENT ladder keyed on the event id, one bare ``<cid>`` leg
+#: per child, and a SUB-MARKET row per child keyed ``external_id = <cid>`` with
+#: ``<cid>_yes`` / ``<cid>_no`` legs. So pricing the parent left every
+#: sub-market twin on its old number. Reader-visible 2026-09-27 03:30Z on
+#: ``/search?q=dodgers``: the ladder leg for condition ``0x298b73b5…`` read 71%
+#: (written 02:50:48Z, a ``:50`` beat of this task) while the standalone row for
+#: the SAME condition printed "Yes 49.5%" from 09:34Z the day before. Measured
+#: the same hour: 3,002 open sub-market ``_yes`` legs (created ≤60 days) sat
+#: more than an hour behind a twin written in the last 24h, 2,853 of them more
+#: than six hours behind, and the fresher twin's minute-of-hour was ``:50``–
+#: ``:55`` for at least 2,312 of them — this task.
+#:
+#: ``polymarket_condition_refresh`` already writes both rows for a condition
+#: (``tournament_price_refresh._write_refreshed_prices``'s ``by_condition``);
+#: this is the same reach for the rail that runs hourly on heavy.
+#:
+#: Returns ``(market_id, bare condition id)``. Keyed through the LEGS on the
+#: ``ix_futures_outcomes_external_id`` index, and fenced by the same two
+#: refusals every writer here applies — the market must be live
+#: (:data:`LIVE_MARKET_SQL`) and the leg writable — so a twin is only ever
+#: offered a write :func:`_write_prices` would have accepted on its own.
+CONDITION_TWIN_MARKETS_SQL = f"""
+    SELECT DISTINCT fo.market_id,
+           regexp_replace(fo.external_id, '_(yes|no)$', '') AS condition_id
+      FROM futures_outcomes fo
+      JOIN futures_markets fm ON fm.id = fo.market_id
+     WHERE fo.external_id = ANY(:leg_keys)
+       AND fm.source = 'polymarket'
+       AND NOT (fm.id = ANY(:exclude_ids))
+       AND fo.is_winner IS NOT TRUE
+       AND fo.resolution_source IS DISTINCT FROM 'api_settlement'
+       AND {LIVE_MARKET_SQL}
+"""
+
+
+async def _condition_twins(
+    session, priced: list[dict], exclude_ids: list[int]
+) -> dict[int, list[dict]]:
+    """Every other live Polymarket row carrying a condition in ``priced``.
+
+    Maps market id → the priced items whose condition that row carries, so the
+    twin is handed only its own conditions: :func:`_write_prices` counts an item
+    it cannot place as ``unknown_outcomes``, and passing a sub-market the whole
+    event would bill that counter once per sibling condition it never held.
+    """
+    by_cid = {item["external_id"]: item for item in priced if item.get("external_id")}
+    if not by_cid:
+        return {}
+    leg_keys: list[str] = []
+    for cid in by_cid:
+        leg_keys.extend((cid, f"{cid}_yes", f"{cid}_no"))
+    rows = (
+        await session.execute(
+            text(CONDITION_TWIN_MARKETS_SQL),
+            {"leg_keys": leg_keys, "exclude_ids": list(exclude_ids)},
+        )
+    ).fetchall()
+    twins: dict[int, list[dict]] = {}
+    for market_id, cid in rows:
+        item = by_cid.get(cid)
+        if item is not None:
+            twins.setdefault(market_id, []).append(item)
+    return twins
+
+
+async def _write_condition_twins(
+    session, priced: list[dict], exclude_ids: list[int], stats: dict
+) -> None:
+    """Give each condition twin the price its sibling row was just given (#4983).
+
+    Same writer, same refusals, same transaction shape as the addressed row:
+    :func:`_write_prices` then the field re-rank, committed per twin. One twin
+    failing rolls back only itself (gotcha #42). The #4000 withdrawal is NOT
+    repeated here — it is keyed to the addressed market's payload and this
+    change adds reach for a price, not for a retirement.
+    """
+    try:
+        twins = await _condition_twins(session, priced, exclude_ids)
+    except Exception as exc:  # noqa: BLE001 — counted, never swallowed
+        await session.rollback()
+        stats["errors"].append(f"polymarket twin lookup: {exc}")
+        return
+    for twin_id, items in twins.items():
+        try:
+            written = await _write_prices(session, twin_id, "polymarket", items, stats)
+            if written:
+                await session.execute(rerank_market_field_stmt(twin_id))
+            await session.commit()
+        except Exception as exc:  # noqa: BLE001
+            await session.rollback()
+            stats["errors"].append(f"polymarket twin {twin_id}: {exc}")
+            continue
+        if written:
+            stats["twin_markets_priced"] = stats.get("twin_markets_priced", 0) + 1
+            stats["twin_snapshots_written"] = (
+                stats.get("twin_snapshots_written", 0) + written
+            )
+
+
 #: Legs that claim CERTAINTY on a contract nobody has graded (#4253).
 #:
 #: Three conditions, and the third is the one that took the measuring:
@@ -2899,6 +3002,11 @@ async def _refresh_stale_futures_prices(
         # arrive as silence otherwise.
         "polymarket_legs_declined": 0,
         "polymarket_legs_declined_quoted": 0,
+        # #4983: the sub-market / parent-ladder rows that carry a condition this
+        # pass priced on another row. Zero is a real reading (no twins), so the
+        # keys exist on every run rather than only when one was written.
+        "twin_markets_priced": 0,
+        "twin_snapshots_written": 0,
         # #5869, the write-side half. `_write_prices` applies its own range guard
         # after the fetch already applied one, so a value that survived
         # `_resolve_market_probability` can still be dropped here — `prob >= 1` is
@@ -3323,6 +3431,13 @@ async def _refresh_stale_futures_prices(
                                 await _clear_if_stamped(session, market, stats)
                             else:
                                 stats["unpriceable"] += 1
+                        if isinstance(priced, list):
+                            await _write_condition_twins(
+                                session,
+                                priced,
+                                [m["id"] for m in by_event[event_id]],
+                                stats,
+                            )
                     await asyncio.sleep(0.3)
             finally:
                 await poly_service.close()
