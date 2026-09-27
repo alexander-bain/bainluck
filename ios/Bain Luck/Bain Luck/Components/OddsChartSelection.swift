@@ -37,11 +37,15 @@ struct OddsChartSelectionReadout: View {
     let readout: GamePlayCardView
     let dataPoints: [ChartDataPoint]
     let sportKey: String?
+    /// #9185 — false only for the fullscreen chart's OWN card (the page gave
+    /// none), which may rest on a lone venue line; see `fullscreenRestingPoint`.
+    var pageGaveCard = true
 
     var body: some View {
         let point = selection.date.flatMap { OddsChartView.nearestSnapshot(to: $0, in: dataPoints) }
         readout
-            .resting(on: OddsChartView.restingPlayPoint(in: dataPoints, sportKey: sportKey))
+            .resting(on: OddsChartView.fullscreenRestingPoint(
+                in: dataPoints, sportKey: sportKey, pageGaveCard: pageGaveCard))
             .showing(point.map { OddsChartView.playPoint(for: $0, sportKey: sportKey) })
     }
 }
