@@ -355,6 +355,8 @@ _QUARTER_RANK = 100
 _BREAK_OFFSET = 50
 _HALFTIME_RANK = 260
 _OVERTIME_BASE = 500
+#: A football quarter's clock before its first second has run (#9179).
+_QUARTER_OPENING_CLOCK = "15:00"
 
 
 def _ordinal(n: int) -> str:
@@ -395,6 +397,68 @@ def _football_state(raw: Any) -> Optional[tuple[int, Optional[str]]]:
     return (rank, "Overtime" if n == 1 else f"{_ordinal(n)} Overtime")
 
 
+def _football_clock(raw: Any) -> Optional[str]:
+    """The game clock on a football state row (`'14:44'`), or ``None``."""
+    if not isinstance(raw, str):
+        return None
+    m = _FOOTBALL_STATE.match(raw.strip())
+    return m.group("clock") if m else None
+
+
+def football_period_label(raw: Any) -> Optional[str]:
+    """The period a football state row is IN (`'1st Quarter'`), clock stripped.
+
+    ``None`` for a break (`End of 1st Quarter`) and for text that is not football
+    state at all (a pre-game date string, `Final`). The win-prob tier keys on this
+    so `15:00 - 1st Quarter` and `14:51 - 1st Quarter` are one period, not two
+    markers (#9179).
+    """
+    state = _football_state(raw)
+    return state[1] if state else None
+
+
+def _opening_clock_bracket(
+    rows: list, i: int, can_bound: list[bool]
+) -> Optional[tuple[int, int]]:
+    """``(last opening-clock row, first running-clock row)`` for the quarter first
+    seen at ``rows[i]``, or ``None``.
+
+    #9179: the first period of a stream has no earlier STATE to bound it — the
+    stream opens on `15:00 - 1st Quarter` — so it got no marker and the chain fell
+    to the first-SCORE tier (Q1 drawn at LAC@BUF's touchdown, 7.5 min late; on
+    SEA@WSH 17.5). But the quarter's own clock brackets it: at the last `15:00`
+    reading no second of it had run, and by the first reading below that it had.
+    That is a lower and an upper bound from two observations, which is what #6718
+    demands — NOT a start clock standing in for the bracket. A lone `15:00` with
+    nothing after it, or a stream that opens already running, still gets nothing.
+
+    It is only ever `first_seen`: the clock can sit at 15:00 through a touchback
+    kickoff, so "the clock had not run" is a slightly later instant than "the
+    quarter had not begun". Quarters only; an overtime clock's opening value is not
+    fixed (10:00 regular season, 15:00 playoffs), and every overtime follows a
+    4th quarter the transition tier already brackets it from.
+    """
+    rank = rows[i][1]
+    if rank % _QUARTER_RANK or not (_QUARTER_RANK <= rank <= 4 * _QUARTER_RANK):
+        return None
+    last_open: Optional[int] = None
+    for j in range(i, len(rows)):
+        r, clock = rows[j][1], rows[j][5]
+        if r != rank:
+            # Another period's row. A later row of THIS period after the stream
+            # moved on is a regression, which `can_bound` already refuses.
+            continue
+        if not can_bound[j] or clock is None:
+            continue
+        if clock == _QUARTER_OPENING_CLOCK:
+            last_open = j
+        elif last_open is not None:
+            return (last_open, j)
+        else:
+            return None  # opened already running: nothing earlier to bound it
+    return None
+
+
 def observed_transition_markers(
     sport_key: Optional[str],
     observations: Iterable[dict],
@@ -413,7 +477,7 @@ def observed_transition_markers(
     if not sport_key or not sport_key.startswith(TRANSITION_SPORT_PREFIXES):
         return []
 
-    rows: list[tuple[datetime, int, Optional[str], Any, Any]] = []
+    rows: list[tuple[datetime, int, Optional[str], Any, Any, Optional[str]]] = []
     seen: set[tuple[datetime, int]] = set()
     for obs in observations or ():
         when = _parse((obs or {}).get("timestamp"))
@@ -421,7 +485,10 @@ def observed_transition_markers(
         if when is None or state is None or (when, state[0]) in seen:
             continue
         seen.add((when, state[0]))
-        rows.append((when, state[0], state[1], obs.get("timestamp"), obs.get("source")))
+        rows.append((
+            when, state[0], state[1], obs.get("timestamp"), obs.get("source"),
+            _football_clock(obs.get("period")),
+        ))
     if not rows:
         return []
     rows.sort(key=lambda r: (r[0], r[1]))
@@ -477,7 +544,7 @@ def observed_transition_markers(
     placed: set[str] = set()
     unbracketed: set[str] = set()
 
-    for i, (when, rank, label, raw_ts, source) in enumerate(rows):
+    for i, (when, rank, label, raw_ts, source, _clock) in enumerate(rows):
         if is_blip[i]:
             if label:
                 unbracketed.add(label)
@@ -494,9 +561,23 @@ def observed_transition_markers(
                 bound = rows[j]
                 break
         if bound is None:
-            # No observation places this period's start after anything. Absent,
-            # never kickoff — and never dressed as an observation.
+            # No earlier STATE places this period's start after anything. The one
+            # bracket left is the period's own clock leaving its opening value
+            # (#9179) — without it, absent, never kickoff.
+            clock_bracket = _opening_clock_bracket(rows, i, can_bound)
+            if clock_bracket is None:
+                placed.add(label)
+                continue
+            last_open, first_run = clock_bracket
             placed.add(label)
+            if rows[first_run][0] - rows[last_open][0] <= MAX_FIRST_SEEN_BRACKET:
+                markers.append({
+                    "timestamp": rows[first_run][3],
+                    "period": label,
+                    "source": rows[first_run][4] or SOURCE_WIN_PROB,
+                    "precision": PRECISION_FIRST_SEEN,
+                    "not_before": rows[last_open][3],
+                })
             continue
 
         gap = when - bound[0]

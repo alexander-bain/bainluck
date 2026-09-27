@@ -402,29 +402,33 @@ GAME = [
 
 class TestTransitionRules:
     def test_completed_game_replay(self):
-        """#6718: Q1 IS ABSENT, and that is the correction, not a loss.
+        """#6718, revised by #9179: Q1 comes from the CLOCK bracket, never the row.
 
         `GAME` opens on `15:00 - 1st Quarter` with nothing before it, which is
         also what production holds — 14638896's `espn_history` begins at that
-        exact row. Nothing in the stream says the game had not already started,
-        so the first cut served Q1 at our first poll wearing
-        `boundary_observed` and `not_before: null`: the tightest label the
-        vocabulary has, on an unbounded claim. The `15:00` clock does not
-        rescue it, because a start clock persists until play begins — on this
-        very payload it reads `15:00` at 00:17:12 AND at 00:18:12, so the
-        kickoff is somewhere after our first sighting, not on it.
+        exact row. #6718 refused to serve Q1 at that first poll wearing
+        `boundary_observed` and `not_before: null`, because a start clock
+        persists until play begins. That refusal stands: no marker sits on a
+        `15:00` row and none is unbounded.
 
-        Absent is the honest answer and it is already known to render: 14780138
-        has served no Q1 since #5140 and both of its charts read correctly at
-        390px. The three quarters and the break that ARE bracketed are
-        unchanged.
+        What #9179 corrected is the conclusion that Q1 must then be ABSENT. The
+        stream brackets it: at minute 0 the clock read 15:00 (no second had run)
+        and at minute 1 it read 14:20. So Q1 is served at minute 1, `first_seen`,
+        `not_before` minute 0 — two observations, the shape #6718 demands. Absent
+        was not harmless: the route then fell to the first-score tier, and once
+        Q2 was observed the whole chain replaced it, so a live page drew Q1 at a
+        touchdown and then lost it (LAC@BUF 14781134, 2026-09-27).
         """
         got = [(m["period"], m["timestamp"]) for m in _markers(GAME)]
         assert got == [
+            ("1st Quarter", _obs(1, "")["timestamp"]),
             ("2nd Quarter", _obs(36, "")["timestamp"]),
             ("Halftime", _obs(79, "")["timestamp"]), ("3rd Quarter", _obs(93, "")["timestamp"]),
             ("4th Quarter", _obs(131, "")["timestamp"]),
         ]
+        q1 = _at(_markers(GAME), "1st Quarter")
+        assert q1["precision"] == pm.PRECISION_FIRST_SEEN
+        assert q1["not_before"] == _obs(0, "")["timestamp"]
         assert all(m["not_before"] for m in _markers(GAME)), "no marker without a bracket"
 
     def test_delivery_order_and_duplicates_change_nothing(self):
