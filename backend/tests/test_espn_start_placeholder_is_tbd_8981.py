@@ -40,6 +40,8 @@ CLEMSON_MIAMI = datetime(2026, 10, 3, 4, 0, tzinfo=timezone.utc)
 #: 401858296 Miami v Duke: midnight Eastern under EST.
 MIAMI_DUKE = datetime(2026, 11, 14, 5, 0, tzinfo=timezone.utc)
 TAG = "provenance:start-placeholder:espn:2026-10-03T04:00Z"
+#: 401858249 once ESPN announced it (read 2026-09-27 04:47Z): 7:30 PM EDT.
+ANNOUNCED = datetime(2026, 10, 3, 23, 30, tzinfo=timezone.utc)
 
 
 def _ee(espn_id="401858249", date=CLEMSON_MIAMI, *, time_valid, time_announced):
@@ -89,12 +91,24 @@ class TestDesiredTags:
             espn_date=CLEMSON_MIAMI, commence_time=CLEMSON_MIAMI + timedelta(hours=15, minutes=30),
         ) == []
 
-    def test_an_announced_start_clears_the_mark(self):
+    def test_an_announced_start_the_row_does_not_carry_keeps_the_mark(self):
+        # Production 2026-09-27: ESPN announced 401858249 for 7:30 PM EDT
+        # (23:30Z). The row still sat on 04:00Z, and clearing the mark served
+        # "Oct 2 9:00 PM PDT" again. Nothing has written the real time yet, so
+        # the row's own stamp is still a stand-in.
         assert desired_espn_start_placeholder_tags(
             time_valid=True, time_announced=True,
-            espn_date=CLEMSON_MIAMI + timedelta(hours=19, minutes=30),
+            espn_date=ANNOUNCED,
             commence_time=CLEMSON_MIAMI,
-        ) == []
+        ) == [TAG]
+
+    def test_the_kept_mark_names_the_rows_stamp_not_espns(self):
+        kept = desired_espn_start_placeholder_tags(
+            time_valid=True, time_announced=True,
+            espn_date=ANNOUNCED, commence_time=CLEMSON_MIAMI,
+        )
+        assert kept == [espn_start_placeholder_tag(CLEMSON_MIAMI)]
+        assert kept != [espn_start_placeholder_tag(ANNOUNCED)]
 
     def test_an_announced_start_on_the_placeholder_minute_clears_it_too(self):
         # A real Hawaii kickoff (7 PM HST in November) IS 05:00Z. ESPN saying
@@ -160,6 +174,23 @@ class TestPlanRow:
 
     def test_an_announced_kickoff_clears_a_stale_mark(self):
         assert plan_row(_row(tags=[TAG]), {"401858249": _announced_ee()}) == ("clear", [])
+
+    def test_the_specimen_after_espn_announced_is_marked_again(self):
+        # The production state this fix heals: the mark already cleared, the
+        # row still on 04:00Z, ESPN now at 23:30Z with timeValid true.
+        board = {"401858249": _announced_ee(date=ANNOUNCED)}
+        assert plan_row(_row(tags=["sport:football"]), board) == ("mark", [TAG])
+
+    def test_a_marked_row_keeps_its_mark_when_espn_announces_another_time(self):
+        board = {"401858249": _announced_ee(date=ANNOUNCED)}
+        assert plan_row(_row(tags=[TAG]), board) == ("unchanged", None)
+
+    def test_the_reader_sees_tbd_until_the_announced_time_is_written(self):
+        board = {"401858249": _announced_ee(date=ANNOUNCED)}
+        _outcome, desired = plan_row(_row(tags=[]), board)
+        assert start_is_tbd(desired, CLEMSON_MIAMI, "scheduled") is True
+        # The nightly move (#3023) writes 23:30Z; the kept mark goes inert.
+        assert start_is_tbd(desired, ANNOUNCED, "scheduled") is False
 
     def test_an_announced_kickoff_on_an_unmarked_row_writes_nothing(self):
         assert plan_row(_row(commence=MIAMI_DUKE), {"401858249": _announced_ee(date=MIAMI_DUKE)}) == (

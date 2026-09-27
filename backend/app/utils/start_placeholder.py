@@ -155,13 +155,28 @@ def desired_espn_start_placeholder_tags(
 
     * ``timeValid`` explicitly ``false`` AND the row still sits on ESPN's
       placeholder minute → ``[tag]``. A row another rail has moved gets none.
-    * ``timeValid`` explicitly ``true`` → ``[]``: ESPN has announced a start, so
-      no mark of ESPN's may stand — including the equal-instant case, where the
-      announced kickoff is the placeholder minute itself.
+    * ``timeValid`` explicitly ``true`` AT the row's minute → ``[]``: ESPN
+      vouches for the stamp the row already carries (the equal-instant case,
+      including a real Hawaii kickoff on 05:00Z).
+    * ``timeValid`` explicitly ``true`` at ANOTHER minute → ``[tag]`` for the
+      row's own stamp: ESPN has announced a start, but nothing has written it
+      onto the row yet, so the row still carries the stand-in. Clearing here
+      put "Oct 2 9:00 PM PDT" back on Clemson–Miami 14870012 once ESPN
+      announced 7:30 PM EDT (23:30Z) — this pass never moves a start, and the
+      scoreboard passes only reach the row in its game week. The mark retires
+      by construction once a rail (the nightly placeholder move, #3023) writes
+      the announced time, because ``start_is_tbd`` honours a mark only while
+      the row still carries its instant.
     * Anything else (the key absent) → ``None``: leave the row as it is. An
       absent flag is not an announcement, and it is not a placeholder either.
     """
     if time_announced:
+        if (
+            espn_date is not None
+            and commence_time is not None
+            and _utc_minute(espn_date) != _utc_minute(commence_time)
+        ):
+            return [espn_start_placeholder_tag(commence_time)]
         return []
     if time_valid:
         return None
