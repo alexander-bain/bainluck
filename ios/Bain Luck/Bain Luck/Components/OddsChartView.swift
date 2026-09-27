@@ -456,6 +456,24 @@ struct OddsChartView: View {
     private var homeShort: String { axisLabels.home }
     private var awayShort: String { axisLabels.away }
 
+    /// #8820 — the names the GUTTER prints: the axis labels when both fit their
+    /// run whole, otherwise both crest codes (``ChartGutter/sideLabels``).
+    /// The scrub readout keeps `axisLabels`; it has a whole line to itself.
+    private func gutterLabels(run: CGFloat, fontSize: CGFloat) -> (away: String, home: String) {
+        guard let away = awayTeamName, let home = homeTeamName else { return axisLabels }
+        let awayCrest = ChartGutterCrest.resolvedURL(
+            servedURL: awayTeamLogo, teamName: awayTeamName, sportKey: sportKey) != nil
+        let homeCrest = ChartGutterCrest.resolvedURL(
+            servedURL: homeTeamLogo, teamName: homeTeamName, sportKey: sportKey) != nil
+        return ChartGutter.sideLabels(
+            away: away, home: home,
+            awayServed: awayTeamAbbrev, homeServed: homeTeamAbbrev,
+            fontSize: fontSize,
+            awayRun: ChartGutter.nameRun(run: run, hasCrest: awayCrest),
+            homeRun: ChartGutter.nameRun(run: run, hasCrest: homeCrest)
+        )
+    }
+
     init(eventId: Int, teamColors: (away: Color, home: Color)? = nil,
          commenceTime: String? = nil, status: String? = nil,
          venueSettled: Bool = false,
@@ -717,6 +735,8 @@ struct OddsChartView: View {
                         // section heading beside it).
                         VStack {
                             let run = ChartGutter.run(chartHeight: chartHeight, verticalPadding: 8)
+                            let gutterFont: CGFloat = 11
+                            let gutter = gutterLabels(run: run, fontSize: gutterFont)
                             // Home team (top)
                             ChartGutterLabel(run: run) {
                                 HStack(spacing: 3) {
@@ -724,8 +744,8 @@ struct OddsChartView: View {
                                         servedURL: homeTeamLogo, teamName: homeTeamName, sportKey: sportKey) {
                                         ChartGutterCrest(url: url)
                                     }
-                                    Text(homeShort.uppercased())
-                                        .font(.system(size: 11, weight: .bold))
+                                    Text(gutter.home.uppercased())
+                                        .font(.system(size: gutterFont, weight: .bold))
                                         .foregroundStyle(teamColors?.home ?? .blue)
                                         .lineLimit(1)
                                 }
@@ -738,8 +758,8 @@ struct OddsChartView: View {
                                         servedURL: awayTeamLogo, teamName: awayTeamName, sportKey: sportKey) {
                                         ChartGutterCrest(url: url)
                                     }
-                                    Text(awayShort.uppercased())
-                                        .font(.system(size: 11, weight: .bold))
+                                    Text(gutter.away.uppercased())
+                                        .font(.system(size: gutterFont, weight: .bold))
                                         .foregroundStyle(teamColors?.away ?? .red)
                                         .lineLimit(1)
                                 }
@@ -843,6 +863,8 @@ struct OddsChartView: View {
                                 // run is measured rather than assumed.
                                 GeometryReader { geo in
                                     let run = ChartGutter.run(chartHeight: geo.size.height, verticalPadding: 0)
+                                    let gutterFont: CGFloat = 10
+                                    let gutter = gutterLabels(run: run, fontSize: gutterFont)
                                     VStack {
                                         // #4117 — the same crest as the inline gutter.
                                         // #3988 fixed the chart above and left its own
@@ -855,8 +877,8 @@ struct OddsChartView: View {
                                                     servedURL: homeTeamLogo, teamName: homeTeamName, sportKey: sportKey) {
                                                     ChartGutterCrest(url: url)
                                                 }
-                                                Text(homeShort.uppercased())
-                                                    .font(.system(size: 10, weight: .bold))
+                                                Text(gutter.home.uppercased())
+                                                    .font(.system(size: gutterFont, weight: .bold))
                                                     .foregroundStyle(teamColors?.home ?? .blue)
                                                     .lineLimit(1)
                                             }
@@ -868,8 +890,8 @@ struct OddsChartView: View {
                                                     servedURL: awayTeamLogo, teamName: awayTeamName, sportKey: sportKey) {
                                                     ChartGutterCrest(url: url)
                                                 }
-                                                Text(awayShort.uppercased())
-                                                    .font(.system(size: 10, weight: .bold))
+                                                Text(gutter.away.uppercased())
+                                                    .font(.system(size: gutterFont, weight: .bold))
                                                     .foregroundStyle(teamColors?.away ?? .red)
                                                     .lineLimit(1)
                                             }

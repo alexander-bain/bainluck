@@ -1,4 +1,7 @@
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// A participant's name printed sideways in the left gutter of a chart.
 ///
@@ -195,5 +198,75 @@ enum ChartGutter {
     static func run(chartHeight: CGFloat, verticalPadding: CGFloat) -> CGFloat {
         let usable = chartHeight - (verticalPadding * 2) - interLabelGap
         return max(0, usable / 2)
+    }
+
+    // MARK: - The names a gutter prints (#8820, #8425)
+
+    /// The gap between a gutter label's crest and its name — the `HStack`
+    /// spacing every gutter writes, named so the fit test below charges it.
+    static let crestSpacing: CGFloat = 3
+
+    /// How much of a label's run is left for the NAME once its crest is placed.
+    ///
+    /// The crest is laid out along the run (``ChartGutterCrest/side``), so a
+    /// side that draws one has that much less of the run for its letters.
+    static func nameRun(run: CGFloat, hasCrest: Bool) -> CGFloat {
+        max(0, run - (hasCrest ? ChartGutterCrest.side + crestSpacing : 0))
+    }
+
+    /// Per-character fallback for a platform that cannot measure text. Never
+    /// used on iOS.
+    static let fallbackCharacterWidth: CGFloat = 7
+
+    /// The ink an uppercased gutter name occupies at `fontSize` bold — the face
+    /// every gutter draws in.
+    static func nameWidth(_ name: String, fontSize: CGFloat) -> CGFloat {
+        let text = name.uppercased()
+        #if canImport(UIKit)
+        let font = UIFont.systemFont(ofSize: fontSize, weight: .bold)
+        return (text as NSString).size(withAttributes: [.font: font]).width
+        #else
+        return CGFloat(text.count) * fallbackCharacterWidth * fontSize / 11
+        #endif
+    }
+
+    /// The two names a chart's gutter prints: the pair rule's labels when both
+    /// fit their runs whole, otherwise both sides' crest codes.
+    ///
+    /// #8820 / #8425 — photographed on the phone: San Diego Wave FC @ Racing
+    /// Louisville FC's Win Probability gutter read `SAN DIEGO WAVE…` /
+    /// `RACING LOUISVIL…` under a title reading `SDW vs RAC`, and Real Madrid v
+    /// Dubai Basketball's Score Differential gutter read `DUBAI BA…`. #2903 made
+    /// a name too long for its run truncate rather than clip, which keeps the
+    /// cut visible — but a name cut in half is still not the team's name.
+    /// `shortPair` hands back the whole name when it has nothing to shorten
+    /// (a club whose last word is `FC` names nothing alone), and no NWSL or
+    /// EuroLeague club here is served an abbreviation.
+    ///
+    /// The decision is by FIT, measured, not by the shape of the name: the Win
+    /// Probability gutter holds a whole `DUBAI BASKETBALL` that the shorter
+    /// Score Differential gutter cannot, and a label that fits is left alone.
+    /// When either side does not fit, BOTH move to the codes — the same pair the
+    /// page title's floor (`EventNavTitle.scorelessCompact`) and the crest badges
+    /// draw — so one axis never reads a code at one end and a name at the other.
+    static func sideLabels(
+        away: String,
+        home: String,
+        awayServed: String? = nil,
+        homeServed: String? = nil,
+        fontSize: CGFloat,
+        awayRun: CGFloat,
+        homeRun: CGFloat
+    ) -> (away: String, home: String) {
+        let labels = TeamShortName.shortPair(
+            away: away, home: home, awayServed: awayServed, homeServed: homeServed
+        )
+        guard nameWidth(labels.away, fontSize: fontSize) > awayRun
+                || nameWidth(labels.home, fontSize: fontSize) > homeRun else {
+            return labels
+        }
+        return TeamShortName.abbreviationPair(
+            away: away, home: home, awayServed: awayServed, homeServed: homeServed
+        )
     }
 }
