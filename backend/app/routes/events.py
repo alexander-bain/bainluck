@@ -2603,6 +2603,48 @@ def _team_card_keyed(team_rows, query: str) -> list:
     return rank_with_keys(query, [(_search_team_evidence(t), t) for t in cards])[:5]
 
 
+def _split_terms_order_key(team_rows, query: str, expanded: list):
+    """#9044: 0 for a game where every query word lands on ONE side, 1 otherwise.
+
+    `oregon state` on production 2026-09-26: the multi-word recall ANDs the
+    words but lets each land on either team (`_event_name_match` ORs home and
+    away — that is what makes `patriots seahawks` work). So `oregon` hit the
+    Ducks, `state` hit Ohio State, and Ohio State vs Oregon Ducks was the 2nd
+    game card; 4 of 8 were Ducks games. Neither side is the club the reader
+    named.
+
+    Armed only when the query IS a club: multi-word, and the TEAMS card's
+    leader (`_team_card_keyed`, the card the reader is shown) owns every query
+    word — MC0 or MC1, `oregon state` -> Oregon State Beavers. A matchup query
+    (`ohio state oregon`) has no club owning all its words, so it stays
+    disarmed and keeps today's order, and so does every one-word query.
+
+    ABOVE `status_order`, like #8697's key and unlike #8738's: a split row names
+    no club the reader typed, so its live game is not an answer that outranks
+    the named club's finals. Same substring test the recall uses
+    (`_build_expanded_ilike`), per side instead of across both. A key, never a
+    filter. None when disarmed.
+    """
+    if len(expanded) < 2:
+        return None
+    keyed = _team_card_keyed(team_rows, query)
+    if not keyed:
+        return None
+    from app.utils.search_match_class import MC1_ALL_TOKENS, match_class
+
+    lead_class = match_class(query, _search_team_evidence(keyed[0][1]))
+    if lead_class is None or lead_class > MC1_ALL_TOKENS:
+        return None
+
+    def _one_side(column):
+        return and_(*[_build_expanded_ilike(column, t, e) for t, e in expanded])
+
+    return case(
+        (or_(_one_side(Event.home_team_name), _one_side(Event.away_team_name)), 0),
+        else_=1,
+    )
+
+
 def _team_card_lead_sport_keys(team_rows, query: str) -> frozenset | None:
     """#8738: the sport keys of the club the TEAMS card leads with, or None.
 
@@ -7768,6 +7810,9 @@ async def search_events(
     _teamless_sport_key = _event_teamless_sport_order_key(
         _team_evidence_sport_categories(_early_team_rows, _SEARCH_TEAM_WINDOW)
     )
+    # #9044: a club typed in words (`oregon state`) sinks games its words only
+    # reach split across both sides (Ohio State vs Oregon Ducks).
+    _split_terms_key = _split_terms_order_key(_early_team_rows, _q_identity, expanded)
     # #8738: the games list follows the TEAMS card's leader (see the key).
     _team_card_lead_key = _team_card_lead_order_key(
         _team_card_lead_sport_keys(_early_team_rows, _q_identity)
@@ -7831,6 +7876,9 @@ async def search_events(
         # everything else — a namesake's LIVE game still sits under the resolved
         # team's games. Absent when disarmed, like `_day_boost`.
         *( (_teamless_sport_key,) if _teamless_sport_key is not None else () ),
+        # #9044: above the status tier, for #8697's reason — a game the query's
+        # words reach only split across its two sides names no club typed.
+        *( (_split_terms_key,) if _split_terms_key is not None else () ),
         status_order,
         # #8738: within a state, the club the TEAMS card leads with first.
         *( (_team_card_lead_key,) if _team_card_lead_key is not None else () ),
@@ -21649,20 +21697,8 @@ async def _build_game_markets(
                 )
             )
             linked_ids = {m.id for m in markets}
-            from app.utils.prediction_market_matching import (
-                extract_game_date_from_ticker,
-                is_other_doubleheader_game,
-                own_doubleheader_game_numbers,
-            )
+            from app.utils.prediction_market_matching import extract_game_date_from_ticker
             event_date = event.commence_time.date() if event.commence_time else None
-            # #8884 — a doubleheader shares its date, so the date check below
-            # passes both games' markets. The game number the event's own
-            # linked tickers carry (G1/G2) is what tells them apart.
-            own_game_numbers = (
-                own_doubleheader_game_numbers(markets, event_date)
-                if sport_key and sport_key.startswith("baseball_")
-                else set()
-            )
             for m in unlinked_result.scalars().all():
                 if m.id in linked_ids:
                     continue
@@ -21673,8 +21709,6 @@ async def _build_game_markets(
                     ticker_date = extract_game_date_from_ticker(m.external_id)
                     if ticker_date and ticker_date.date() != event_date:
                         continue
-                if is_other_doubleheader_game(m.external_id, own_game_numbers):
-                    continue
                 markets.append(m)
 
     if not markets:
