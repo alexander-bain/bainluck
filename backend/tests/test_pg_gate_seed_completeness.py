@@ -508,6 +508,11 @@ COVERED = (
     # real server. `sports.active` is the Python-side default this file exists
     # for, and the seed names it.
     "test_repair_6974_fold_nhl_apply_restore_pg.py",
+    # #6974 (LAFC residual). Seeds `sports`, `teams`, `events`, `entities` and
+    # `team_identity_mapping` by raw INSERT to drive the LAFC fold's mapping
+    # corrections, fold and `--restore` against a real server. `sports.active`
+    # is the Python-side default the seed names.
+    "test_repair_6974_fold_lafc_apply_restore_pg.py",
 )
 
 INTEGRATION_DIR = Path(__file__).parent / "integration"
