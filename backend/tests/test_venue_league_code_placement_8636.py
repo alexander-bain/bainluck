@@ -300,6 +300,15 @@ async def _drive(monkeypatch, metadata):
         "placeable_league_for_matchup",
         lambda session, a, b, sport_key: _value("soccer_germany_bundesliga"),
     )
+    # #5576's venue arm reads the same clubs through the split-out read before
+    # the placer runs; both answer "Bundesliga", as the one fake above did.
+    monkeypatch.setattr(
+        pmm,
+        "leagues_by_side_for_matchup",
+        lambda session, a, b, sport_key: _value(
+            [{"soccer_germany_bundesliga"}, {"soccer_germany_bundesliga"}]
+        ),
+    )
     monkeypatch.setattr(
         pmm, "auto_create_sport_key_from_category", lambda category: "soccer_other"
     )

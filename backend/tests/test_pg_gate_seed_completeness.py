@@ -513,6 +513,12 @@ COVERED = (
     # corrections, fold and `--restore` against a real server. `sports.active`
     # is the Python-side default the seed names.
     "test_repair_6974_fold_lafc_apply_restore_pg.py",
+    # #5576. Seeds `sports`, `teams`, `team_identity_mapping`, `events` and
+    # `futures_markets` by raw INSERT, in a private schema, to drive the
+    # venue-named-competition repair's apply, re-run and `--restore`.
+    # `sports.active` and `futures_markets.mutually_exclusive` are the
+    # Python-side defaults the seed names.
+    "test_repair_5576_venue_named_competition_pg.py",
 )
 
 INTEGRATION_DIR = Path(__file__).parent / "integration"
