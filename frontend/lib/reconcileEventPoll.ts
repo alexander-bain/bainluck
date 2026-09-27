@@ -67,19 +67,26 @@ export function reconcileEventPoll<T extends PolledEvent>(
  * and takes everything else — score, status, clock — from the response. A
  * newer, equal or incomparable response is the authoritative read and wins
  * whole; that is how a changed fold (a twin joined or left) is ever adopted.
- * A response with no revision claims nothing and wins as before, but never
- * erases the revision the page holds.
+ *
+ * A live-blend response with NO revision (a pre-contract cache entry, or a
+ * malformed vector) cannot be ordered against the held one, and a value is
+ * never tagged with a revision borrowed from another value (Codex on
+ * 64a14a3d8d: that pairing let the next history edge see equal vectors and
+ * leave a removed source's .6 standing). So the held blend, its rail and its
+ * vector stay together and the REST fields land around them; the next poll is
+ * the re-read (an immediate one would hit the same cache entry). A response
+ * that ends the game or leaves the live blend wins whole, and a page that holds
+ * no revision takes every response as before.
  */
 export function keepNewerHeldHeadline<T extends PolledEvent>(polled: T, held: T | undefined): T {
   if (!held || held.id !== polled.id) return polled;
   const heldRevision = parseFoldRevision(held.blend_fold_revision);
   if (!heldRevision) return polled;
-  const polledRevision = parseFoldRevision(polled.blend_fold_revision);
-  if (!polledRevision) return { ...polled, blend_fold_revision: heldRevision };
   const liveBlend = (e: T) => e.status === 'live' && e.hero_probability_source === 'blend'
     && typeof e.hero_probability === 'number' && Number.isFinite(e.hero_probability);
-  if (!liveBlend(polled) || !liveBlend(held)
-      || compareFoldRevision(polledRevision, heldRevision) !== 'older') return polled;
+  if (!liveBlend(polled) || !liveBlend(held)) return polled;
+  const polledRevision = parseFoldRevision(polled.blend_fold_revision);
+  if (polledRevision && compareFoldRevision(polledRevision, heldRevision) !== 'older') return polled;
   return {
     ...polled,
     hero_probability: held.hero_probability,

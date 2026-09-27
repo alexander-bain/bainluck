@@ -166,12 +166,10 @@ describe('Codex consumer cases on the history edge', () => {
     expect(headline(adoptNewerBlendEdge(cache, edge(0.5, 11, { [ROW]: 15 })))).toEqual({ p: 0.5, at: at(11), rev: { [ROW]: 15 } });
   });
 
-  test('an absent or malformed edge revision never ERASES the held one', () => {
+  test('an absent or malformed edge revision is refused by a versioned headline — it cannot borrow rev15', () => {
     const cache = held(0.4, 0, { [ROW]: 15 });
     for (const e of [edge(0.5, 10), { p: 0.5, observedAt: at(10), foldRevision: { [ROW]: -1 } }]) {
-      const result = adoptNewerBlendEdge(cache, e);
-      expect(result?.hero_probability).toBe(0.5); // no claim: the price rule, unchanged
-      expect(result?.blend_fold_revision).toEqual({ [ROW]: 15 });
+      expect(adoptNewerBlendEdge(cache, e)).toBe(cache);
     }
   });
 
@@ -224,12 +222,11 @@ describe('no revision on either side: every pre-contract rule applies unchanged'
     expect(applyLiveFrame(cache, pushed(kalshiFrame))).toBe(cache);
   });
 
-  test('a single-row held revision with a revisionless frame keeps the clock rule and the revision', () => {
+  test('a single-row held revision refuses a revisionless frame and asks for the paired read', () => {
     const cache = served({ blend_fold_revision: { [ROW]: 2 } });
-    const result = applyLiveFrame(cache, pushed(kalshiFrame))!;
-    expect(result.hero_probability).toBe(0.6);
-    expect(result.blend_fold_revision).toEqual({ [ROW]: 2 });
-    expect(applyLiveFrame(held(0.4, 20, { [ROW]: 2 }), pushed(kalshiFrame))?.hero_probability).toBe(0.4);
+    expect(applyLiveFrame(cache, pushed(kalshiFrame))).toBe(cache);
+    expect(reconcileEventPoll(cache, kalshiFrame)).toBe(cache);
+    expect(frameInvalidatesFoldedBlend(cache, pushed(kalshiFrame))).toBe(true);
   });
 
   test('settled and non-live caches are outside the rule', () => {
@@ -276,7 +273,8 @@ describe('the ordering primitives', () => {
 
   test('frameFoldOrder', () => {
     expect(frameFoldOrder(undefined, { a: 1 })).toBeNull();
-    expect(frameFoldOrder({ a: 1 }, undefined)).toBeNull();
+    expect(frameFoldOrder({ a: 1 }, undefined)).toBe('incomparable');
+    expect(frameFoldOrder({ a: 1 }, { a: -1 })).toBe('incomparable');
     expect(frameFoldOrder({ a: 1, b: 1 }, undefined)).toBe('incomparable');
     expect(frameFoldOrder({ a: 1 }, { a: 2 })).toBe('newer');
     expect(frameFoldOrder({ a: 1 }, { a: 1 })).toBe('same');
@@ -354,11 +352,12 @@ describe('Codex 95bcc174 (3): a later poll cannot forget an accepted revision', 
     expect(keepNewerHeldHeadline(refolded, accepted)).toBe(refolded);
   });
 
-  test('a poll with no revision claims nothing and wins, but keeps the held revision', () => {
-    const legacy = served({ hero_probability: 0.45 });
+  test('a live-blend poll with no revision keeps the held blend with its own revision, and takes its REST fields', () => {
+    const legacy = served({ hero_probability: 0.45, home_score: 28 });
     const result = keepNewerHeldHeadline(legacy, accepted);
-    expect(result.hero_probability).toBe(0.45);
-    expect(result.blend_fold_revision).toEqual({ [ROW]: 25 });
+    expect(headline(result)).toEqual({ p: 0.5, at: at(10), rev: { [ROW]: 25 } });
+    expect(result.win_probability_sources).toBe(accepted.win_probability_sources);
+    expect(result.home_score).toBe(28);
   });
 
   test('a poll that ends the game is never held back by an older revision', () => {
@@ -471,11 +470,13 @@ describe("the producer's wire shapes (PR #9078, backend/tests/test_fold_revision
     expect(reconcileEventPoll(cache, wire('{"15": 10}', at(30)))).toBe(cache);
   });
 
-  test('`rev: null` claims nothing: the clock rule decides and the held vector stays', () => {
+  test('`rev: null` cannot be ordered against a held vector: refused, and the page asks for the paired read', () => {
     const cache = single();
-    const result = applyLiveFrame(cache, pushed(wire('null')))!;
-    expect(headline(result)).toEqual({ p: 0.6, at: at(10), rev: { '15': 11 } });
-    expect(applyLiveFrame(held(0.4, 30, { '15': 11 }), pushed(wire('null')))?.hero_probability).toBe(0.4);
+    expect(applyLiveFrame(cache, pushed(wire('null')))).toBe(cache);
+    expect(frameInvalidatesFoldedBlend(cache, pushed(wire('null')))).toBe(true);
+    // With no held vector it claims nothing: the clock rule decides, no vector is minted.
+    const legacy = held(0.4, 0, undefined);
+    expect(headline(applyLiveFrame(legacy, pushed(wire('null'))))).toEqual({ p: 0.6, at: at(10), rev: undefined });
   });
 
   test("a folded detail vector with a twin at the migration's default 0 still invalidates on any frame", () => {
@@ -489,5 +490,69 @@ describe("the producer's wire shapes (PR #9078, backend/tests/test_fold_revision
     const history = { blend_edge_pinned: true, blend_edge_observed_at: at(10), blend_edge_fold_revision: null,
       aggregate_line: [{ timestamp: at(20), home_probability: 0.5 }] };
     expect(servedBlendEdgeObservation(history)).toEqual({ p: 0.5, observedAt: at(10) });
+  });
+});
+
+// Codex on 64a14a3d8d: held .5 @10 rev25; a legacy (or malformed-vector) REST
+// .6 @20 still folding the removed source; the current history .5 @10 rev25.
+// keepNewerHeldHeadline took the REST .6 and copied rev25 onto it, so the next
+// edge saw equal vectors and an older clock and could never repair it.
+// The invariant: a value and its revision stay paired, on every entry point.
+describe('Codex 64a14a3d8d: a value never borrows a revision from another value', () => {
+  const accepted = held(0.5, 10, { [ROW]: 25 });
+  const currentHistory = edge(0.5, 10, { [ROW]: 25 });
+  const restWithRemoved = (rev: unknown) => served({
+    hero_probability: 0.6, hero_probability_away: 0.4, hero_probability_observed_at: at(20), home_score: 21,
+    win_probability_sources: { polymarket: { value: 0.4, updated_at: at(0) }, kalshi: { value: 0.8, updated_at: at(20) } },
+    blend_fold_revision: rev as Record<string, number> | undefined,
+  });
+
+  test.each([
+    ['legacy (absent)', undefined],
+    ['malformed', { [ROW]: -1 }],
+  ])('%s REST vector: the fetch chain keeps .5/rev25, takes the score, and the next edge leaves it right', async (_, rev) => {
+    const polled = await fetchEventWithLiveFrame(async () => restWithRemoved(rev), () => null, () => currentHistory, () => accepted);
+    expect(headline(polled)).toEqual({ p: 0.5, at: at(10), rev: { [ROW]: 25 } });
+    expect(polled.win_probability_sources.kalshi).toBeUndefined();
+    expect(polled.home_score).toBe(21);
+    expect(headline(adoptNewerBlendEdge(polled, currentHistory))).toEqual({ p: 0.5, at: at(10), rev: { [ROW]: 25 } });
+  });
+
+  test('CONTROL — the 64a14a3d8d pairing (.6 tagged rev25) is the one the next edge cannot repair', () => {
+    const fabricated = { ...restWithRemoved(undefined), blend_fold_revision: { [ROW]: 25 } };
+    expect(adoptNewerBlendEdge(fabricated, currentHistory)).toBe(fabricated);
+  });
+
+  test('a versioned REST read is still the authoritative one: newer wins whole, with its own vector', async () => {
+    const newer = served({ hero_probability: 0.45, blend_fold_revision: { [ROW]: 30 } });
+    const polled = await fetchEventWithLiveFrame(async () => newer, () => null, () => currentHistory, () => accepted);
+    expect(headline(polled)).toEqual({ p: 0.45, at: at(0), rev: { [ROW]: 30 } });
+  });
+
+  test('terminal transitions are never held back by a revision, and carry none of the held one', () => {
+    const final = served({ status: 'completed', hero_probability_source: 'final', hero_probability: 1 });
+    expect(keepNewerHeldHeadline(final, accepted)).toBe(final);
+    const opening = served({ hero_probability_source: 'opening', hero_probability: 0.55 });
+    expect(keepNewerHeldHeadline(opening, accepted)).toBe(opening);
+  });
+
+  test('true revisionless bootstrap is unchanged: with nothing held, every response and frame lands as before', async () => {
+    const legacyHeld = held(0.4, 0, undefined);
+    expect(keepNewerHeldHeadline(restWithRemoved(undefined), legacyHeld)).toEqual(restWithRemoved(undefined));
+    expect(applyLiveFrame(legacyHeld, pushed(kalshiFrame))?.hero_probability).toBe(0.6);
+  });
+
+  test('push path: an applied frame carries its own vector or none, never the held one', () => {
+    // Outside a held live blend the frame lands (its old reach) — without the held rev9.
+    const opening = served({ hero_probability_source: 'opening', blend_fold_revision: { [ROW]: 9 } });
+    const bare = applyLiveFrame(opening, pushed(kalshiFrame))!;
+    expect(bare.hero_probability).toBe(0.6);
+    expect(bare.blend_fold_revision).toBeUndefined();
+    expect(applyLiveFrame(opening, pushed({ ...kalshiFrame, rev: { [ROW]: 1 } }))?.blend_fold_revision).toEqual({ [ROW]: 1 });
+  });
+
+  test('history path: a revisionless edge adopted by a revisionless headline mints no vector', () => {
+    const result = adoptNewerBlendEdge(held(0.4, 0, undefined), edge(0.5, 10));
+    expect(headline(result)).toEqual({ p: 0.5, at: at(10), rev: undefined });
   });
 });

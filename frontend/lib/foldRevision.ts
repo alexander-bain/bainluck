@@ -29,8 +29,11 @@
  *   directions: neither can be trusted over the other; keep what is held and
  *   let an authoritative detail read settle it.
  *
- * An absent or malformed vector makes no claim: every pre-contract rule applies,
- * and it never erases a vector the page already holds.
+ * An absent or malformed vector makes no claim: with no vector held either,
+ * every pre-contract rule applies. Against a held vector it is not a newer
+ * value in disguise — a value is never tagged with a revision borrowed from a
+ * different value, so the held blend and its vector stay together and an
+ * authoritative (versioned) read replaces them.
  */
 
 export type FoldRevision = Record<string, number>;
@@ -70,15 +73,17 @@ export function compareFoldRevision(incoming: FoldRevision, held: FoldRevision):
  * blend only when that blend was folded from that one row; a folded hero
  * (canonical + twins) is a value the frame's raw-row aggregate never computed.
  * That holds whether or not the frame carries a vector, so a held folded
- * vector makes every frame `incomparable`. Returns `null` (no claim) when the
- * held blend has no vector, or when it is single-row and the frame has none.
+ * vector makes every frame `incomparable`. So does a frame with no vector on
+ * a held one: a value and its revision stay paired, so an unversioned price
+ * can neither take the held revision nor be ordered against it (Codex on
+ * 64a14a3d8d). Returns `null` (no claim) only when the held blend has no vector.
  */
 export function frameFoldOrder(held: unknown, frame: unknown): FoldOrder | null {
   const heldRev = parseFoldRevision(held);
   if (!heldRev) return null;
   if (Object.keys(heldRev).length !== 1) return "incomparable";
   const frameRev = parseFoldRevision(frame);
-  if (!frameRev) return null;
+  if (!frameRev) return "incomparable";
   if (Object.keys(frameRev).length !== 1) return "incomparable";
   return compareFoldRevision(frameRev, heldRev);
 }

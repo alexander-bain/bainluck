@@ -370,8 +370,9 @@ function holdsLiveBlend(held: HeldHero): boolean {
 /**
  * #9051: true when the held live blend refuses `frame` because the two cannot
  * be ordered — above all a FOLDED hero (canonical + twins), which no raw-row
- * frame computed. The frame still says the blend moved, so the page refetches
- * the folded detail instead of waiting out a stream-connected poll.
+ * frame computed, and a frame with no vector on a versioned hero. The frame
+ * still says the blend moved, so the page refetches the paired detail instead
+ * of waiting out a stream-connected poll.
  */
 export function frameInvalidatesFoldedBlend(held: unknown, frame: LiveFrame): boolean {
   if (!held) return false;
@@ -392,19 +393,18 @@ export function applyLiveFrame<T>(prev: T | undefined, frame: LiveFrame): T | un
   // not a clock: a frame from before a source removal still folds the removed
   // source into its `p` (and would recreate its entry below), and a frame on a
   // FOLDED hero is a raw-row value that hero never was. Only a strictly newer
-  // write to the one row the hero reads lands. No claim: the clocks decide.
+  // write to the one row the hero reads lands; a frame with no vector cannot be
+  // ordered against a held one. No held vector: the clocks decide.
   const foldOrder = liveBlend ? frameFoldOrder(current.blend_fold_revision, frame.rev) : null;
   if (foldOrder !== null && foldOrder !== "newer") return prev;
   if (foldOrder === null && liveBlend && Number.isFinite(currentAt) && Number.isFinite(frameAt) &&
       frameAt < currentAt) {
     return prev;
   }
-  // The revision travels with the value it dates: a newer write's, or — when the
-  // held blend had none to compare — the first frame's, so later frames order.
-  const revision = foldOrder === "newer" ||
-      (foldOrder === null && liveBlend && !parseFoldRevision(current.blend_fold_revision))
-    ? parseFoldRevision(frame.rev)
-    : null;
+  // The revision travels with the value it dates: the applied frame's own, or
+  // none. Never the held one — that dated the value this frame replaces.
+  const revision = parseFoldRevision(frame.rev);
+  const heldRevision = parseFoldRevision(current.blend_fold_revision);
   // A source entry carries display metadata (`display_name`, `type`, `color`)
   // that a frame cannot know, so the merge is structural and the type is
   // asserted at this one boundary — the same escape the inline version made
@@ -423,7 +423,7 @@ export function applyLiveFrame<T>(prev: T | undefined, frame: LiveFrame): T | un
     // detail payload's clock belonged to the value this replaces.
     hero_probability_observed_at: frame.updated_at,
     // #9051: the held blend is now this write's; keep its revision with it.
-    ...(revision ? { blend_fold_revision: revision } : {}),
+    ...(revision || heldRevision ? { blend_fold_revision: revision ?? undefined } : {}),
     win_probability_sources: {
       ...sources,
       [frame.source]: {

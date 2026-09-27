@@ -90,8 +90,10 @@ export function servedBlendEdgeObservation(
  * NEWER one is adopted with its own price clock even when that clock is older
  * (a removal can leave only an older surviving quote) or its value unchanged;
  * the same snapshot falls to the price rule. An adopted edge's revision is kept
- * on the headline, so a delayed older edge cannot undo it; an edge with no
- * revision never erases the one the headline holds.
+ * on the headline, so a delayed older edge cannot undo it. An edge with no
+ * revision is refused by a headline that holds one (Codex on 64a14a3d8d: a
+ * value is never tagged with a revision borrowed from another value), and a
+ * headline with none takes the price rule and then the edge's revision.
  */
 export function adoptNewerBlendEdge<T extends AdoptingHero>(
   event: T | undefined, edge: BlendEdgeObservation | null | undefined,
@@ -102,6 +104,9 @@ export function adoptNewerBlendEdge<T extends AdoptingHero>(
       !Number.isFinite(event.hero_probability)) return event;
   const heldRevision = parseFoldRevision(event.blend_fold_revision);
   const edgeRevision = parseFoldRevision(edge.foldRevision);
+  // Value and revision stay paired: an unversioned edge on a versioned headline
+  // can neither take its revision nor be ordered against it.
+  if (heldRevision && !edgeRevision) return event;
   const order = heldRevision && edgeRevision ? compareFoldRevision(edgeRevision, heldRevision) : null;
   if (order === "older" || order === "incomparable") return event;
   if (order !== "newer") {
