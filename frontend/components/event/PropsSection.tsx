@@ -48,6 +48,7 @@ import {
 } from "@/lib/propFamily";
 import { propResultLabel, SETTLED_NO_GRADE_LABEL } from "@/lib/propGrade";
 import { gradedPairDecision } from "@/lib/gradedPropPair";
+import { propLabelDisplay } from "@/lib/playerPropsGrouping";
 import {
   renderedPercent,
   renderedOutcomeRowPercents,
@@ -716,14 +717,21 @@ function isBinaryBarMark(item: PropMark): boolean {
 }
 
 export default function PropsSection({
-  items,
+  items: servedItems,
   state,
   eventStatus,
   title = "Props",
   domain = null,
   matchup = null,
 }: PropsSectionProps) {
-  if (!items || items.length === 0) return null;
+  if (!servedItems || servedItems.length === 0) return null;
+
+  // #9148: "SEA Seahawks D/ST: 1+" reads "Seahawks D/ST: 1+", decided before
+  // any family, pair or card rule reads a label so they all see one string.
+  const items = servedItems.map((item) => {
+    const label = propLabelDisplay(item.label);
+    return label === item.label ? item : { ...item, label };
+  });
 
   const activeState = state ?? deriveState(eventStatus);
   const baseMeta = STATE_META[activeState];

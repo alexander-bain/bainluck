@@ -215,6 +215,20 @@ export function propSubjectDisplay(subject: string): string {
 }
 
 /**
+ * #9148, second surface: THE SCRIPT's prop list (`PropsSection`) prints the
+ * served `props_script[].label`, which is the same Kalshi outcome name
+ * ("SEA Seahawks D/ST: Over 9.2"). The subject before the first colon gets the
+ * same treatment as above; the rest of the label is untouched.
+ */
+export function propLabelDisplay(label: string): string {
+  const colon = label.indexOf(":");
+  if (colon <= 0) return label;
+  const subject = label.slice(0, colon);
+  const shown = propSubjectDisplay(subject.trim());
+  return shown === subject.trim() ? label : shown + label.slice(colon);
+}
+
+/**
  * The player, statistic and team a prop row is about.
  *
  * `identified` (UX-P044, #1642 P1b) is false when the parse never found a
