@@ -152,3 +152,71 @@ def venue_refuses_placement(
     if code in POLYMARKET_LEAGUE_CODES.get(placed_league, frozenset()):
         return None
     return code
+
+
+# ═══ The other direction: the venue NAMES the competition (#5576) ════════════
+#
+# Everything above reads the venue to REFUSE a placement the clubs proposed.
+# This reads it to MAKE one, for the rows the clubs could not place.
+#
+# THE DEFECT. On 2026-09-27 60 Nations League fixtures for 09-27..10-06 sat on
+# ``soccer_other`` and read "OTHER SOCCER" with letter tiles beside correctly
+# placed games from the same round (Portugal v Norway 10-04 under Other Soccer,
+# Denmark v Portugal 10-01 under UEFA Nations League). Every one carries a
+# Polymarket ``unl-`` slug or a Kalshi ``KXUEFANLGAME`` leg. Measured with the
+# placer's own reads, the clubs' answer failed three ways:
+#
+#   45  the clubs share only the Nations League, and #6392's season guard
+#       refused it: the rows are minted ~13 days out, before any schedule-born
+#       fixture sits within 3 days of the kickoff
+#    9  the clubs share two competitions (Portugal and Norway are also World
+#       Cup sides), so the "exactly one candidate" refusal fired
+#    6  one side has a name ``teams`` does not carry ("Republic of Ireland",
+#       "Bosnia and Herzegovina"), so the intersection was empty
+#
+# The venue answered all 60 the same way, from its own structure, for THIS
+# fixture — which is what notice 40 puts first.
+
+#: Kalshi GAME series whose ticker ``KALSHI_TICKER_TO_SPORT_KEY`` does not map,
+#: read from Kalshi's own ``GET /series/<ticker>`` (2026-09-27): KXUEFANLGAME is
+#: "UEFA Nations League Game", category Sports, tag Soccer.
+#:
+#: NOT added to the sport-key map, deliberately. That map also scopes which
+#: event rows a Kalshi market may link to (``_find_matching_event``), so spelling
+#: the league there changes linking for every open market of the series — a
+#: separate change with its own blast radius. This map is read only by the
+#: placement below, which can only ever relabel a catch-all row.
+KALSHI_SERIES_LEAGUES: dict[str, str] = {
+    "kxuefanlgame": "soccer_uefa_nations_league",
+}
+
+
+def _league_for_polymarket_code(code: str) -> Optional[str]:
+    """The ONE league whose venue codes include ``code``, else None.
+
+    ``ucl`` is listed under both the Champions League and its qualifying
+    rounds, so it names no single league and places nothing.
+    """
+    owners = [
+        league for league, codes in POLYMARKET_LEAGUE_CODES.items() if code in codes
+    ]
+    return owners[0] if len(owners) == 1 else None
+
+
+def venue_named_league(
+    source: object, external_id: object, market_metadata: object
+) -> Optional[str]:
+    """The soccer league the venue lists THIS market's fixture under, or None.
+
+    Polymarket: the league code of the Gamma game slug. Kalshi: the game
+    series of the ticker, when :data:`KALSHI_SERIES_LEAGUES` names it. None for
+    anything else — a futures slug, an unmapped code, a friendly (``clf``/
+    ``fif`` are deliberately no league), a row the slug stamp has not reached.
+    """
+    if source == "polymarket" and isinstance(market_metadata, dict):
+        code = polymarket_league_code(market_metadata.get(POLYMARKET_EVENT_SLUG_KEY))
+        return _league_for_polymarket_code(code) if code else None
+    if source == "kalshi" and isinstance(external_id, str):
+        series = external_id.split("-", 1)[0].strip().lower()
+        return KALSHI_SERIES_LEAGUES.get(series)
+    return None

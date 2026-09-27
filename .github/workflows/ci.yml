@@ -3876,6 +3876,21 @@ jobs:
             exit 1
           fi
 
+      - name: "#5576 venue-named competition — place, re-run and undo against real Postgres"
+        # The pinned Nations League rows read their venue's listing (a
+        # Polymarket slug, a Kalshi ticker) and their clubs through the
+        # matcher's own read, skip any row whose league already holds its game,
+        # move `sport_id` guarded on the value read, and undo only what they
+        # moved. Same skip detection as every gate here.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_repair_5576_venue_named_competition_pg.py \
+            -v -rs 2>&1 | tee /tmp/venue5576.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/venue5576.txt; then
+            echo "::error::#5576 venue placement apply/restore gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#4079 numeric movement acceptance — provision the disposable database"
         # The acceptance suite DROPS AND RECREATES THE WHOLE SCHEMA, so it refuses
         # to touch any database that does not carry a sentinel row holding a nonce

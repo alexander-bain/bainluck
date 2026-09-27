@@ -79,7 +79,7 @@ from app.utils.live_blend import (
     has_proven_home_orientation,
     select_primary_market as _select_primary_market,
 )
-from app.utils.venue_competition import venue_refuses_placement
+from app.utils.venue_competition import venue_named_league, venue_refuses_placement
 from app.utils import match_receipts as _receipts
 from app.utils import matcher_pass_runs as _pass_runs
 from app.utils.match_receipts import (
@@ -986,6 +986,80 @@ async def covered_league_for_matchup(
     return sorted(shared)[0] if shared else None
 
 
+async def leagues_by_side_for_matchup(
+    session, team_a, team_b, sport_key: str | None,
+) -> list[set[str]] | None:
+    """Every league inside ``sport_key``'s family that each side plays in.
+
+    The two reads :func:`placeable_league_for_matchup` answers from, split out
+    so the venue placement (:func:`venue_placed_league`) asks the SAME
+    question of the same tables rather than a second spelling of it. Returns
+    one set per side, in ``(team_a, team_b)`` order, or None when there is no
+    question to ask: no session, not two sides, or a key that is not a
+    family catch-all.
+    """
+    from app.models.models import Sport, Team, TeamIdentityMapping
+
+    sides = [s.strip() for s in (team_a, team_b) if s and s.strip()]
+    if (
+        session is None
+        or len(sides) != 2
+        or not sport_key
+        or not sport_key.endswith("_other")
+    ):
+        # Same no-signal reading as the covered guard above, and the same
+        # reason it may not raise: `session=None` drives the create path in
+        # #2020's call-site tests.
+        return None
+
+    family_prefix = sport_key[: -len("_other")]
+    if not family_prefix:
+        # `"_other"` itself names no family, and `startswith("_")` would match
+        # every key in `sports`.
+        return None
+
+    lowered = [s.lower() for s in sides]
+    family = f"{family_prefix}_"
+    leagues_by_side: list[set[str]] = [set(), set()]
+
+    def _record(name, alternates, league):
+        if not league or not league.startswith(family) or league.endswith("_other"):
+            return
+        known = {(name or "").lower()}
+        if isinstance(alternates, list):
+            known |= {str(a).lower() for a in alternates if a}
+        for index, side in enumerate(lowered):
+            if side in known:
+                leagues_by_side[index].add(league)
+
+    # Arm 1 — the club table, exactly as the covered guard reads it, bounded in
+    # SQL to this family. Two round trips rather than a UNION because the two
+    # arms do not have the same shape: only this one carries JSONB alternates,
+    # and casting a NULL into that column to make the shapes agree buys a
+    # Postgres type ambiguity in exchange for nothing.
+    teams_rows = await session.execute(
+        select(Team.name, Team.alternate_names, Sport.key)
+        .join(Sport, Sport.id == Team.sport_id)
+        .where(Sport.key.startswith(family))
+    )
+    for name, alternates, league in teams_rows:
+        _record(name, alternates, league)
+
+    # Arm 2 — the per-source alias channel, which is the one that knows
+    # `Hiroshima Carp`. `sport_key` on the mapping must agree with the club's
+    # own league; see the docstring for what the 724 disagreeing rows are.
+    alias_rows = await session.execute(
+        select(TeamIdentityMapping.source_name, Sport.key)
+        .join(Team, Team.id == TeamIdentityMapping.team_id)
+        .join(Sport, Sport.id == Team.sport_id)
+        .where(Sport.key.startswith(family))
+        .where(TeamIdentityMapping.sport_key == Sport.key)
+    )
+    for source_name, league in alias_rows:
+        _record(source_name, None, league)
+    return leagues_by_side
+
+
 async def placeable_league_for_matchup(
     session, team_a, team_b, sport_key: str | None,
 ) -> str | None:
@@ -1058,65 +1132,11 @@ async def placeable_league_for_matchup(
     CLOSED: a placement is a claim about what competition a game belongs to,
     and the catch-all is the honest answer when nothing can prove otherwise.
     """
-    from app.models.models import Sport, Team, TeamIdentityMapping
-
-    sides = [s.strip() for s in (team_a, team_b) if s and s.strip()]
-    if (
-        session is None
-        or len(sides) != 2
-        or not sport_key
-        or not sport_key.endswith("_other")
-    ):
-        # Same no-signal reading as the covered guard above, and the same
-        # reason it may not raise: `session=None` drives the create path in
-        # #2020's call-site tests.
-        return None
-
-    family_prefix = sport_key[: -len("_other")]
-    if not family_prefix:
-        # `"_other"` itself names no family, and `startswith("_")` would match
-        # every key in `sports`.
-        return None
-
-    lowered = [s.lower() for s in sides]
-    family = f"{family_prefix}_"
-    leagues_by_side: list[set[str]] = [set(), set()]
-
-    def _record(name, alternates, league):
-        if not league or not league.startswith(family) or league.endswith("_other"):
-            return
-        known = {(name or "").lower()}
-        if isinstance(alternates, list):
-            known |= {str(a).lower() for a in alternates if a}
-        for index, side in enumerate(lowered):
-            if side in known:
-                leagues_by_side[index].add(league)
-
-    # Arm 1 — the club table, exactly as the covered guard reads it, bounded in
-    # SQL to this family. Two round trips rather than a UNION because the two
-    # arms do not have the same shape: only this one carries JSONB alternates,
-    # and casting a NULL into that column to make the shapes agree buys a
-    # Postgres type ambiguity in exchange for nothing.
-    teams_rows = await session.execute(
-        select(Team.name, Team.alternate_names, Sport.key)
-        .join(Sport, Sport.id == Team.sport_id)
-        .where(Sport.key.startswith(family))
+    leagues_by_side = await leagues_by_side_for_matchup(
+        session, team_a, team_b, sport_key,
     )
-    for name, alternates, league in teams_rows:
-        _record(name, alternates, league)
-
-    # Arm 2 — the per-source alias channel, which is the one that knows
-    # `Hiroshima Carp`. `sport_key` on the mapping must agree with the club's
-    # own league; see the docstring for what the 724 disagreeing rows are.
-    alias_rows = await session.execute(
-        select(TeamIdentityMapping.source_name, Sport.key)
-        .join(Team, Team.id == TeamIdentityMapping.team_id)
-        .join(Sport, Sport.id == Team.sport_id)
-        .where(Sport.key.startswith(family))
-        .where(TeamIdentityMapping.sport_key == Sport.key)
-    )
-    for source_name, league in alias_rows:
-        _record(source_name, None, league)
+    if leagues_by_side is None:
+        return None
 
     shared = leagues_by_side[0] & leagues_by_side[1]
     if len(shared) != 1:
@@ -1130,6 +1150,64 @@ async def placeable_league_for_matchup(
     # function asks which league two clubs share, and that one asks whether the
     # league is running at a kickoff this function is never told about. See
     # #6392 for the two specimens the four refusals above let through.
+    return league
+
+
+async def venue_placed_league(
+    session, team_a, team_b, sport_key: str | None, market,
+) -> str | None:
+    """The league the VENUE lists this fixture under, when a side plays in it.
+
+    The positive half of #8636, for a row keyed to a catch-all. Where the
+    market's own venue structure names the competition of THIS fixture — a
+    Polymarket ``unl-`` game slug, a Kalshi ``KXUEFANLGAME`` ticker — that is
+    the placement, and it is asked BEFORE :func:`placeable_league_for_matchup`.
+    See :mod:`app.utils.venue_competition` for the 60 Nations League rows the
+    clubs' answer left on "Other Soccer" (45 season-guard refusals, 9
+    two-competition ambiguities, 6 unresolvable names).
+
+    WHY IT MAY SKIP #6392's SEASON GUARD. That guard exists because a club or
+    a national side belongs to a competition PERMANENTLY, so the clubs alone
+    placed a September friendly into a World Cup whose final was in July. The
+    venue listing the fixture under a competition is not a fact about the
+    clubs; it is the venue saying this game, on this date, IS that
+    competition. A friendly carries ``fif``/``clf``, which name no league here,
+    so both of #6392's specimens still reach the guard.
+
+    WHAT IT STILL REQUIRES, so a slug is never the only signal (notice 40):
+
+      * a catch-all key and a league in the same family — the family is the
+        one the row was already keyed to, so the sport cannot change;
+      * a league the Odds API does not cover (refusal 3, unchanged: the
+        schedule is about to carry those, and the covered guard owns them);
+      * at least ONE side plays in that league, read from the same two tables
+        the clubs' placer reads. One side and not both, because both is the
+        question that failed six rows on a name ``teams`` does not carry;
+        the venue has already said which competition, and one resolvable side
+        is the independent signal that the venue's code means our league.
+
+    Returns the league key, or None to fall through to the clubs' placer
+    exactly as before. Costs no round trip unless the venue names a league.
+    """
+    if not sport_key or not sport_key.endswith("_other"):
+        return None
+    league = venue_named_league(
+        getattr(market, "source", None),
+        getattr(market, "external_id", None),
+        getattr(market, "market_metadata", None),
+    )
+    family = sport_key[: -len("other")]
+    if not league or family == "_" or not league.startswith(family):
+        return None
+    if _sport_key_is_odds_api_covered(league):
+        return None
+    leagues_by_side = await leagues_by_side_for_matchup(
+        session, team_a, team_b, sport_key,
+    )
+    if leagues_by_side is None:
+        return None
+    if league not in leagues_by_side[0] | leagues_by_side[1]:
+        return None
     return league
 
 
@@ -8564,9 +8642,27 @@ async def _create_event_from_prediction_market(session, matchup, market, now):
     # never refuses a row, it only names it. The `_other` precondition lives
     # INSIDE the resolver, so a key the TICKER spelled costs no round trip and
     # cannot be second-guessed by a name lookup.
-    placed_league = await placeable_league_for_matchup(
-        session, team_a, team_b, sport_key,
+    #
+    # #5576, the venue arm: when the market's own venue structure names the
+    # competition (a `unl-` slug, a `KXUEFANLGAME` ticker), that IS the
+    # placement, and the clubs' refusals below are not asked — see
+    # `venue_placed_league` for why the season guard may be skipped and what
+    # is still required. 60 Nations League rows sat on "Other Soccer" for want
+    # of this on 2026-09-27.
+    venue_league = await venue_placed_league(
+        session, team_a, team_b, sport_key, market,
     )
+    if venue_league:
+        logger.info(
+            "Placing '%s' (#5576, venue) — the venue lists %s v %s under %s",
+            market.name, team_a, team_b, venue_league,
+        )
+        placed_league = None
+        sport_key = venue_league
+    else:
+        placed_league = await placeable_league_for_matchup(
+            session, team_a, team_b, sport_key,
+        )
     # #6392: the fifth refusal. A club or a national side belongs to a
     # competition permanently in `teams`, so the four refusals above are all
     # satisfied by a matchup whose competition finished months ago — they placed
