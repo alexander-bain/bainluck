@@ -98,7 +98,10 @@ async def pg_session():
 
 def _event(id_, sport, home, away, status, league):
     league_sql = "NULL" if league is None else f"'{league}'"
-    return f"({id_}, {sport}, '{home}', '{away}', '{status}', {league_sql})"
+    return (
+        f"({id_}, {sport}, '{home}', '{away}', '{status}', {league_sql}, "
+        "'2026-09-30 18:00:00+00')"
+    )
 
 
 def _market(id_, event_id, group, slug=None):
@@ -107,7 +110,7 @@ def _market(id_, event_id, group, slug=None):
         meta["polymarket_event_slug"] = slug
     return (
         f"({id_}, 'polymarket', 'poly-{id_}', 'polymarket:{group}', {event_id}, "
-        f"'{json.dumps(meta)}')"
+        f"'{json.dumps(meta)}', 'Market {id_}', 'game', false, 'open')"
     )
 
 
@@ -123,10 +126,13 @@ async def gate(pg_session, monkeypatch):
         "name varchar(100) NOT NULL, active boolean NOT NULL)",
         "CREATE TABLE events (id int PRIMARY KEY, sport_id int NOT NULL REFERENCES sports(id), "
         "home_team_name varchar(200) NOT NULL, away_team_name varchar(200) NOT NULL, "
-        "status varchar(20) NOT NULL, llm_league varchar(100))",
+        "status varchar(20) NOT NULL, llm_league varchar(100), "
+        "commence_time timestamptz NOT NULL)",
         "CREATE TABLE futures_markets (id int PRIMARY KEY, source varchar(20) NOT NULL, "
         "external_id varchar(200) NOT NULL, group_id varchar(100), "
-        "event_id int REFERENCES events(id), market_metadata jsonb)",
+        "event_id int REFERENCES events(id), market_metadata jsonb, "
+        "name varchar(500) NOT NULL, category varchar(50) NOT NULL, "
+        "mutually_exclusive boolean NOT NULL, status varchar(20) NOT NULL)",
     ):
         await s.execute(text(ddl))
     await s.execute(
@@ -142,7 +148,7 @@ async def gate(pg_session, monkeypatch):
     await s.execute(
         text(
             "INSERT INTO events (id, sport_id, home_team_name, away_team_name, status, "
-            "llm_league) VALUES "
+            "llm_league, commence_time) VALUES "
             + ", ".join(
                 [
                     _event(EV_VB_UNL, UNL, "Italy", "Slovenia", "suspended",
@@ -168,7 +174,7 @@ async def gate(pg_session, monkeypatch):
     await s.execute(
         text(
             "INSERT INTO futures_markets (id, source, external_id, group_id, event_id, "
-            "market_metadata) VALUES "
+            "market_metadata, name, category, mutually_exclusive, status) VALUES "
             + ", ".join(
                 [
                     _market(86360501, EV_VB_UNL, "1037992"),

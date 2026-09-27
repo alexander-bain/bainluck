@@ -3879,6 +3879,20 @@ jobs:
             exit 1
           fi
 
+      - name: "#8636 volleyball rows — retire, relabel, re-run and undo against real Postgres"
+        # The repair retires volleyball rows the venue contradicts and relabels
+        # soccer rows onto the right sport; its undo must put back ONLY rows
+        # still where the repair left them. Those guarded writes are SQL, so
+        # only a real server runs them. Same skip detection as every gate here.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_repair_8636_venue_contradicted_rows_pg.py \
+            -v -rs 2>&1 | tee /tmp/repair8636.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/repair8636.txt; then
+            echo "::error::#8636 venue-contradicted-rows apply/restore gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#6974 MLS duplicate clubs — strip, fold, re-run and undo against real Postgres"
         # Folds 21 duplicate club rows through team_merge._apply_merge and then
         # DELETEs them; the delete's own FK actions (CASCADE / SET NULL) would
