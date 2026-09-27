@@ -2533,14 +2533,18 @@ async def _page_withheld_outcome_ids(db: AsyncSession, market) -> set[int]:
 
     withheld = set(await _withheld_price_outcome_ids(db, market))
     outcomes = getattr(market, "outcomes", None) or []
+    # `getattr`, because a row that never loaded the stamp must read as "never
+    # observed", which both rules take as "withhold nothing", and must not raise
+    # and take the card down with it.
+    observations = [(o.id, getattr(o, "last_updated", None)) for o in outcomes]
     status = getattr(market, "status", None)
     if status == "open":
-        withheld |= stale_observation_keys((o.id, o.last_updated) for o in outcomes)
+        withheld |= stale_observation_keys(observations)
     # Named, not inverted, for the reason `get_futures_market` gives: a new
     # status should come back through this line deliberately.
     if status in ("open", "resolved"):
         withheld |= unobserved_board_keys(
-            ((o.id, o.last_updated) for o in outcomes),
+            observations,
             board_touched_at=getattr(market, "updated_at", None),
             fleet_newest_observation=await _fleet_newest_observation(db, market),
             board_has_a_verdict=_board_has_a_verdict(outcomes),

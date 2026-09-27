@@ -220,3 +220,16 @@ async def test_the_composition_uses_the_detail_routes_own_helpers():
     assert lf._fleet_newest_observation is futures_route._fleet_newest_observation
     assert lf._board_has_a_verdict is futures_route._board_has_a_verdict
     assert lf._withheld_price_outcome_ids is futures_route._withheld_price_outcome_ids
+
+
+async def test_a_leg_without_a_stamp_fails_open_and_does_not_raise(monkeypatch):
+    """A fake or `load_only` row with no `last_updated` column keeps its price
+    rather than raising, which would take the card or the section down with it.
+    CI caught exactly this on the first cut (21 route tests whose fakes carry no stamp).
+    """
+    _install(monkeypatch)
+    board = _board(
+        [SimpleNamespace(id=1, is_winner=None, resolution_source=None)],
+        updated_at=NOW - SPECIMEN_AGE,
+    )
+    assert await lf._page_withheld_outcome_ids(None, board) == set()
