@@ -3485,8 +3485,8 @@ def espn_aliases_to_store(team_name, existing, matched_espn, *, match_was_exact,
     it answer to them in search and — on the next pass, when the borrowed name
     exact-matches — in this very lookup (#8353: Akron Zips carried "Michigan
     Wolverines" and "Eastern Michigan Eagles"; twelve women's-basketball rows
-    carried "West Virginia Mountaineers"). The crest may still come from a fuzzy
-    hit on a row that has none (#4750's rule is about overwriting); a name never.
+    carried "West Virginia Mountaineers"). The crest has its own bar,
+    ``espn_media_may_be_written``; a name is never lent by a fuzzy hit.
     """
     if matched_espn is None or not (match_was_exact or repointed_from):
         return None
@@ -3502,6 +3502,43 @@ def espn_aliases_to_store(team_name, existing, matched_espn, *, match_was_exact,
     return list(alt_names) if alt_names else None
 
 
+def fuzzy_hit_is_identical(checked_name, team_name, best_score, best_ids):
+    """A token-overlap hit that is the row's own name in other spelling.
+
+    Score 1.0 (same words once "St"/"LA" expand), from exactly one ESPN club,
+    on the row's OWN name, and that name has at least two words. An alias is
+    not enough: "C Arkansas" drops its one-letter token and scores 1.0 against
+    ESPN's "Arkansas" (#9127, Central Arkansas re-wearing the Razorbacks crest).
+    """
+    if checked_name != team_name or best_score < 1.0 or len(best_ids) != 1:
+        return False
+    return len(_normalize_name_canonical(team_name).split()) >= 2
+
+
+def espn_media_may_be_written(*, had_media, match_was_exact, repointed_from, fuzzy_identical):
+    """Whether the logo backfill may write a crest and colours from this match.
+
+    An exact name, the stored id, or a repoint may. A token-overlap hit may
+    only fill a row that has no crest, and only when the two names are the
+    same words (score 1.0, "Texas St Bobcats" / "Texas State Bobcats") and no
+    other ESPN club scores the same. A partial score names a club that shares
+    words with ours, not ours: ``/teams?limit=100`` lists under a third of
+    Division I, so an unlisted school's best hit is a listed school with the
+    same mascot (#9127: Delaware St and Alabama St Hornets both wore
+    Sacramento State's crest at 0.67; Central Arkansas, cleared by #8353,
+    wore Arkansas's again within three days). An empty crest renders as the
+    team's initials; another school's crest renders as that school.
+
+    A row that already has a crest is only in this pass because its
+    abbreviation is missing, and a token score never overwrites it (#4750).
+    """
+    if match_was_exact or repointed_from:
+        return True
+    if had_media:
+        return False
+    return bool(fuzzy_identical)
+
+
 async def _backfill_team_logos():
     """Async implementation of backfill_team_logos."""
     from app.services.espn_api import ESPNAPIService, SPORT_LEAGUE_MAP
@@ -3515,6 +3552,7 @@ async def _backfill_team_logos():
         "espn_anchors_repointed": 0,
         "espn_name_collisions_resolved": 0,
         "espn_name_collisions_refused": 0,
+        "fuzzy_media_refused": 0,
         "errors": [],
     }
 
@@ -3593,6 +3631,7 @@ async def _backfill_team_logos():
                     for team in teams_by_sport.get(sport_key, []):
                         matched_espn = None
                         match_was_exact = False
+                        fuzzy_identical = False
                         repointed_from = None
                         had_media = bool(team.logo_url_small)
 
@@ -3622,22 +3661,33 @@ async def _backfill_team_logos():
                                 # Token-overlap scoring (replaces substring matching)
                                 best_score = 0.0
                                 best_et = None
+                                best_ids = set()
                                 for espn_name, et in espn_by_name.items():
                                     score = _team_name_match_score(name, espn_name)
                                     if score > best_score:
                                         best_score = score
                                         best_et = et
+                                        best_ids = {et.espn_id}
+                                    elif score and score == best_score:
+                                        best_ids.add(et.espn_id)
                                 if best_score > 0.5:
                                     matched_espn = best_et
                                     match_was_exact = False
+                                    fuzzy_identical = fuzzy_hit_is_identical(
+                                        name,
+                                        team.name,
+                                        best_score,
+                                        best_ids,
+                                    )
                                     break
 
-                        # A row that already carries a crest is only in this
-                        # pass because its abbreviation is missing. A token
-                        # score of 0.51 must never overwrite media that is
-                        # already right (#4750's class) — an exact name, the
-                        # stored id, or a repoint, or nothing at all.
-                        if had_media and not (match_was_exact or repointed_from):
+                        if matched_espn is not None and not espn_media_may_be_written(
+                            had_media=had_media,
+                            match_was_exact=match_was_exact,
+                            repointed_from=repointed_from,
+                            fuzzy_identical=fuzzy_identical,
+                        ):
+                            stats["fuzzy_media_refused"] += 1
                             continue
 
                         if matched_espn and matched_espn.logo_url:
