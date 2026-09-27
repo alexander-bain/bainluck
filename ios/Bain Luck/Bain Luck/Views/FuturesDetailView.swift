@@ -439,8 +439,13 @@ struct FuturesDetailView: View {
                         .foregroundStyle(DS.textSecondary)
                 }
 
-                // Commence time
-                if let commence = market.commenceTime, let date = commence.asDate {
+                // Commence time — only when it falls before the resolve instant
+                // (#9107: Kalshi's commence_time is a close stamp, and printed
+                // "Starts Oct 25, 2027" over "Resolves Oct 25, 2026").
+                if let date = FuturesStartDate.shown(
+                    commenceTime: market.commenceTime,
+                    resolutionDate: market.resolutionDate
+                ) {
                     HStack(spacing: 6) {
                         Image(systemName: "calendar")
                             .font(.system(size: 9))
