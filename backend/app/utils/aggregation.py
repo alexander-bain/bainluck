@@ -177,7 +177,12 @@ class TimestampedProb:
     """A probability reading at a point in time."""
 
     timestamp: datetime
-    home_probability: float
+    # ``None`` is a WITHDRAWAL (#9081): from this instant the source says
+    # nothing, and `compute_aggregated_probability` stops carrying its last
+    # reading forward. Before kickoff nothing decays (#4976), so without a way
+    # to say "stopped" a source the hero has refused keeps deciding the chart's
+    # right edge for as long as the series runs.
+    home_probability: Optional[float]
 
 
 @dataclass
@@ -1120,6 +1125,9 @@ def compute_aggregated_probability(
             cursors[source_key] = index
 
             if index == 0:
+                continue
+            # #9081: the newest thing this source said is that it stopped.
+            if ordered[index - 1].home_probability is None:
                 continue
             candidates.append((source_key, ordered[index - 1], epochs[index - 1]))
 
