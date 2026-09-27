@@ -289,6 +289,64 @@ describe("suggestionSubtitle", () => {
     }
   );
 
+  // #9226: once #9211 offered today's final, the row said the game was over but
+  // not who won. The payload now carries the pair on finished rows only.
+  describe("a finished game prints its result (#9226)", () => {
+    const final = (over: Partial<TypeaheadSuggestion>) =>
+      suggestionSubtitle(
+        suggestion({
+          type: "event",
+          text: "Kansas City Chiefs at Miami Dolphins",
+          status: "completed",
+          commence_time: "2026-09-27T17:00:00.000Z",
+          ...over,
+        }),
+        NOW
+      );
+
+    test("the production specimen: Chiefs 24 at Dolphins 10 reads AWAY first", () => {
+      // Home and away differ, so a swapped order cannot pass.
+      expect(final({ home_score: 10, away_score: 24 })).toEqual({
+        kind: "event-time",
+        text: "Final · 24 – 10",
+      });
+    });
+
+    test("a closed row prints its result too", () => {
+      expect(final({ status: "closed", home_score: 3, away_score: 2 })).toEqual({
+        kind: "event-time",
+        text: "Final · 2 – 3",
+      });
+    });
+
+    test("0–0 is a result, not an absence", () => {
+      expect(final({ home_score: 0, away_score: 0 })).toEqual({
+        kind: "event-time",
+        text: "Final · 0 – 0",
+      });
+    });
+
+    test("no scores keeps the bare Final", () => {
+      expect(final({})).toEqual({ kind: "event-time", text: "Final" });
+    });
+
+    test.each([
+      ["home only", { home_score: 7 }],
+      ["away only", { away_score: 7 }],
+      ["a null side", { home_score: 7, away_score: null as unknown as number }],
+      ["a non-finite side", { home_score: 7, away_score: NaN }],
+    ])("half a score (%s) is not a result: bare Final", (_label, over) => {
+      expect(final(over)).toEqual({ kind: "event-time", text: "Final" });
+    });
+
+    test("a live row never prints a score, even if one rides it", () => {
+      expect(final({ status: "live", home_score: 1, away_score: 0 })).toEqual({
+        kind: "event-time",
+        text: "Live now",
+      });
+    });
+  });
+
   test("a finished game does not fall through to the vague past-tense wording", () => {
     // `formatEventTime` collapses EVERY past instant to "Recently". Before
     // #4411 nothing finished could reach this branch, so that was harmless;

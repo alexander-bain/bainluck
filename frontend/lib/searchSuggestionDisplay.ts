@@ -210,6 +210,22 @@ export function teamSeasonAnswers(s: TypeaheadSuggestion): TeamSeasonAnswer[] {
     .slice(0, TEAM_SEASON_ANSWER_LIMIT);
 }
 
+/**
+ * #9226: the result a finished event row prints beside "Final", or `null`.
+ *
+ * AWAY first, because the row's text reads "{away} at {home}" and the numbers
+ * must line up under the names they belong to. The server sends the pair only
+ * on a finished row with both sides reported; a half score, or one that is not
+ * a number, is not a result, so the row keeps its bare "Final" rather than
+ * printing a number a reader cannot trust. `0` is a score.
+ */
+export function finalScoreText(s: TypeaheadSuggestion): string | null {
+  const { home_score: home, away_score: away } = s;
+  if (typeof home !== "number" || !Number.isFinite(home)) return null;
+  if (typeof away !== "number" || !Number.isFinite(away)) return null;
+  return `${away} – ${home}`;
+}
+
 export function suggestionSubtitle(
   s: TypeaheadSuggestion,
   now?: Date
@@ -225,7 +241,8 @@ export function suggestionSubtitle(
     // instant to the single word "Recently", so the composed line reads
     // "Final · Recently" — two vague words where one precise one will do.
     if (s.status === "completed" || s.status === "closed") {
-      return { kind: "event-time", text: "Final" };
+      const score = finalScoreText(s);
+      return { kind: "event-time", text: score ? `Final · ${score}` : "Final" };
     }
     return {
       kind: "event-time",
