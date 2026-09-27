@@ -2638,7 +2638,18 @@ async def sync_scheduled_events(session, sport_key, espn_events, stats):
 
 async def fetch_completed_box_scores(session, stats):
     """Third pass: fetch box scores for recently completed events
-    that have an ESPN ID but no box_score_data yet.
+    that have an ESPN ID but no box_score_data yet — or whose box is still
+    the last LIVE fetch (#8970).
+
+    The live pass (below) stamps ``live: True`` and stops reading a row the
+    moment it leaves ``status == 'live'``, and this pass only asked rows with
+    no box at all. So a game kept whatever the live pass last saw, and a
+    last-play score never reached ``scoring_plays``: Iowa's walk-off touchdown
+    at Michigan (15313791) was scored at 0:00, the box was fetched 105 s before
+    the final, and 29 minutes later the page's scoring plays still ended on
+    Michigan's touchdown. Thirteen football finals on 9/26 alone ended short of
+    their own score. One settled fetch replaces the live box; the rewrite
+    carries no ``live`` key, so the row is asked once.
     """
     from app.services.espn_api import ESPNAPIService
     from app.models.models import Event
@@ -2654,7 +2665,10 @@ async def fetch_completed_box_scores(session, stats):
         .where(
             Event.status.in_(["completed", "closed"]),
             Event.espn_id.isnot(None),
-            Event.box_score_data.is_(None),
+            or_(
+                Event.box_score_data.is_(None),
+                Event.box_score_data["live"].astext == "true",
+            ),
             Event.commence_time >= recent_cutoff,
         )
         .order_by(Event.commence_time.desc())
@@ -2684,7 +2698,9 @@ async def fetch_completed_box_scores(session, stats):
                     continue
                 box_score = context.get("box_score", {})
                 scoring_plays = context.get("scoring_plays", [])
+                scores = context.get("scores") or {}
                 now_str = datetime.now(timezone.utc).isoformat()
+                had_live_box = event.box_score_data is not None
 
                 if box_score or scoring_plays:
                     bsd = {
@@ -2693,12 +2709,34 @@ async def fetch_completed_box_scores(session, stats):
                         "players": box_score,
                         "scoring_plays": scoring_plays,
                     }
+                    # #8970: the live box being replaced carried the line
+                    # score (#5088); the settled one must not drop it.
+                    if scores.get("home_period_scores"):
+                        bsd["home_period_scores"] = scores["home_period_scores"]
+                        bsd["away_period_scores"] = scores.get(
+                            "away_period_scores", []
+                        )
                     await session.execute(
                         _raw_text("UPDATE events SET box_score_data = cast(:bsd AS jsonb) WHERE id = :eid"),
                         {"bsd": _json_mod.dumps(bsd), "eid": event.id},
                     )
                     event.box_score_data = bsd
                     stats["box_scores_fetched"] = stats.get("box_scores_fetched", 0) + 1
+                    if had_live_box:
+                        stats["box_scores_settled_over_live"] = (
+                            stats.get("box_scores_settled_over_live", 0) + 1
+                        )
+                elif had_live_box:
+                    # #8970: ESPN answered with nothing for a game we already
+                    # hold a live box for. That box is the best we have, so it
+                    # is kept — only the live stamp goes, or this row would be
+                    # re-asked every minute for 48 hours.
+                    bsd = {**event.box_score_data, "live": False}
+                    await session.execute(
+                        _raw_text("UPDATE events SET box_score_data = cast(:bsd AS jsonb) WHERE id = :eid"),
+                        {"bsd": _json_mod.dumps(bsd), "eid": event.id},
+                    )
+                    event.box_score_data = bsd
                 else:
                     err_bsd = {
                         "source": "espn",
