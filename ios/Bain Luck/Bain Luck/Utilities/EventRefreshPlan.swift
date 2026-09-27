@@ -55,6 +55,21 @@ nonisolated enum EventRefreshPlan: Equatable {
     /// which keeps most of #2687's saving, and finite, which is the fix.
     static let livePushPollInterval: TimeInterval = 120
 
+    /// #9056 — how far a pushed price has to move from the one the last load
+    /// served before the page stops trusting the slow lane for the score.
+    ///
+    /// A scoring play is what moves the price, so the push and the score arrive
+    /// together at the venue and two minutes apart on the page: rage shake #157
+    /// painted 10–7 under a hero that had already moved, 55 s after the server
+    /// row read 13–7. Four points is a touchdown, a run, a break of serve; the
+    /// drift of a quiet market stays under it and keeps #2687's saving.
+    static let scoreCatchUpMove: Double = 0.04
+
+    /// #9056 — how long a big move holds the page on `livePollInterval`. Three
+    /// polls, because the detail payload is cached for up to 30 s while live:
+    /// the first poll after the play can be served the score from before it.
+    static let scoreCatchUpWindow: TimeInterval = 90
+
     /// Kick-off is close (or overdue) and the status has not flipped yet. This
     /// is the window the reader is actually sitting in the page for.
     static let imminentPollInterval: TimeInterval = 60
@@ -77,6 +92,9 @@ nonisolated enum EventRefreshPlan: Equatable {
     ///     connected — see `EventDetailViewModel.streamDelivering`).
     ///   - commenceTime: parsed kick-off, `nil` when the row carries no date.
     ///   - now: injected so the pre-game branches are testable.
+    ///   - catchingUp: a pushed price moved `scoreCatchUpMove` or more inside the
+    ///     last `scoreCatchUpWindow` (#9056). Only the pushed cadence reads it —
+    ///     every other branch is already at least as attentive.
     ///
     /// An unrecognised status falls to the pre-game branch rather than to
     /// `.idle`. That direction is deliberate and it is the lesson `EventState`
@@ -87,7 +105,8 @@ nonisolated enum EventRefreshPlan: Equatable {
         status: String?,
         streamDelivering: Bool,
         commenceTime: Date?,
-        now: Date
+        now: Date,
+        catchingUp: Bool = false
     ) -> EventRefreshPlan {
         // Settled. Nothing below this line can change, so nothing asks again.
         if EventState.isFinished(status) { return .idle }
@@ -99,7 +118,8 @@ nonisolated enum EventRefreshPlan: Equatable {
         let inPlay = status == "live"
             || EventState.isSuspendedAndStarted(status, commenceTime: commenceTime, now: now)
         if inPlay {
-            return .poll(every: streamDelivering ? livePushPollInterval : livePollInterval)
+            let slowLane = streamDelivering && !catchingUp
+            return .poll(every: slowLane ? livePushPollInterval : livePollInterval)
         }
 
         // Pre-game. `hasStarted` returns true for a nil date by design, which

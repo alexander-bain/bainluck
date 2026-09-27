@@ -270,8 +270,12 @@ final class ALivePollDoesNotUndoANewerPush920Tests: XCTestCase {
 
     func testOldScheduledCacheKeepsLivePriceStatusAndStream() async throws {
         let start = "2026-09-25T17:00:00Z"
+        // The stream is still delivering (`expectedDelivering`), but the plan is the
+        // live cadence, not the pushed one: the rig's push moves 0.40 → 0.55, a
+        // scoring-play-sized move, and #9056 holds the page on 30 s for the catch-up
+        // window, which a frozen clock never leaves.
         try await checkRecovery(initial: event(commence: start), response: event(status: "scheduled", score: 3, commence: start),
-            expectedPrice: 0.55, expectedPlan: .poll(every: 120), expectedDelivering: true)
+            expectedPrice: 0.55, expectedPlan: .poll(every: EventRefreshPlan.livePollInterval), expectedDelivering: true)
     }
 
     func testScheduledCorrectionWithChangedMissingOrFutureStartIsAuthoritative() async throws {
