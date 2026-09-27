@@ -402,6 +402,7 @@ async def test_END_TO_END_the_served_payload_never_says_los_angeles_r():
     db.execute = AsyncMock(
         side_effect=[
             _mock_result(scalar=event),
+            _mock_result(),  # #3391 serve-fold sports read: nothing foldable, no candidate read
             _mock_result(rows=[]),  # folded_event_ids — positional contract
             _mock_result(rows=[market]),
             _mock_result(all_rows=[]),

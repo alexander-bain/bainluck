@@ -1022,6 +1022,12 @@ class TestTheFoldEndToEnd:
         alongside the case above, the fold has stopped reading the tag and is
         reaching markets by some other route (a name/time join, say), which is
         precisely the name-and-time absorption ruling 048 bans.
+
+        #3391 read path, so nobody misreads a future failure here: the page now
+        also reads a row the serve-time fold absorbed into it (`fold_twin_events`,
+        the same read the card makes, nothing written). It cannot fire here —
+        both rows are bare and tie, so the fold elects the LOWER id, the ghost,
+        and the canonical absorbs nothing.
         """
         response, _status, market_ids = _served_game_markets(
             _fold_e2e_engine(tagged=False), CANON_ID

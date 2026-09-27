@@ -185,6 +185,7 @@ def _db(markets, outcomes, observations, moved=None):
     db.execute = AsyncMock(
         side_effect=[
             _result(scalar=_event()),
+            _result(),  # #3391 serve-fold sports read: nothing foldable, no candidate read
             _result(rows=[]),  # #2693 folded_event_ids
             _result(rows=markets),
             _result(all_rows=[]),  # polymarket parent groups

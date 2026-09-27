@@ -618,7 +618,7 @@ class TestTheRealRoute:
         it replaced. The ship must vanish.
         """
 
-        async def _unfolded(_db, event):
+        async def _unfolded(_db, event, absorbed=()):
             return event.win_probability_sources or {}
 
         monkeypatch.setattr(

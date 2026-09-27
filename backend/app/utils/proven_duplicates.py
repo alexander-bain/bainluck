@@ -94,6 +94,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from typing import Sequence
 
 from sqlalchemy import Boolean, Integer, String, and_, func, literal, or_, select
 from sqlalchemy.ext.compiler import compiles
@@ -388,8 +389,15 @@ def ghost_names_canonical(ghost, canonical):
     return _GhostNamesCanonical(ghost, canonical)
 
 
-async def folded_event_ids(db, canonical_event_id: int) -> list[int]:
+async def folded_event_ids(
+    db, canonical_event_id: int, absorbed: Sequence = ()
+) -> list[int]:
     """``canonical_event_id`` plus every row tagged as a duplicate of it.
+
+    ``absorbed`` — rows a serve-time fold dropped into this one
+    (:func:`app.utils.serve_fold_absorbed.serve_fold_absorbed_rows`, #3391) —
+    are appended after the tagged rows. Both kinds are rows the page declined
+    to print; neither decides what is printed.
 
     The id set a surface should read CONTENT from when it renders one card for
     ``canonical_event_id``. The canonical is always first and always present, so
@@ -407,9 +415,18 @@ async def folded_event_ids(db, canonical_event_id: int) -> list[int]:
     rows = await db.execute(
         select(Event.id).where(tagged_duplicate_of(canonical_event_id))
     )
-    return [canonical_event_id] + [
+    ids = [canonical_event_id] + [
         eid for eid in rows.scalars().all() if eid != canonical_event_id
     ]
+    return _with_absorbed(ids, absorbed)
+
+
+def _with_absorbed(ids: list[int], absorbed: Sequence) -> list[int]:
+    """``ids`` then each absorbed row's id not already in it, in the order given."""
+    for row in absorbed:
+        if row.id not in ids:
+            ids.append(row.id)
+    return ids
 
 
 # ── Folding a TIME SERIES is not folding a market (#3810) ────────────────────
@@ -514,8 +531,15 @@ def orientation_agrees(
     return aligned and not crossed
 
 
-async def folded_series_event_ids(db, canonical_event_id: int) -> list[int]:
+async def folded_series_event_ids(
+    db, canonical_event_id: int, absorbed: Sequence = ()
+) -> list[int]:
     """Ids safe to read an ORIENTED time series from for ``canonical_event_id``.
+
+    ``absorbed`` rows (#3391) are appended WITHOUT :func:`orientation_agrees`:
+    the serve-time fold that absorbed them already carries orientation in its
+    own key, and a token-subset retest refuses ``LAFC`` / ``Los Angeles FC`` —
+    see :mod:`app.utils.serve_fold_absorbed`.
 
     :func:`folded_event_ids` restricted to the rows whose home/away slots agree
     with the canonical's — see :func:`orientation_agrees`. The canonical is
@@ -545,12 +569,13 @@ async def folded_series_event_ids(db, canonical_event_id: int) -> list[int]:
         # which is the truth, rather than folding ghosts onto a row that is gone.
         return [canonical_event_id]
 
-    return [canonical_event_id] + [
+    ids = [canonical_event_id] + [
         eid
         for eid, home, away in rows
         if eid != canonical_event_id
         and orientation_agrees(canonical[1], canonical[2], home, away)
     ]
+    return _with_absorbed(ids, absorbed)
 
 
 def series_row_for_each_source(
@@ -809,8 +834,12 @@ class FoldedBlendView:
         return getattr(self._event, name)
 
 
-async def folded_probability_sources(db, event) -> dict:
+async def folded_probability_sources(db, event, absorbed: Sequence = ()) -> dict:
     """``event``'s readings, plus any source only its suppressed twins hold.
+
+    ``absorbed`` rows (#3391) join the tagged twins after them, orientation
+    taken from the fold that absorbed them — the same readings, by the same
+    additive merge, that the card already carries as ``merged_sources``.
 
     One indexed lookup against ``ix_events_event_tags`` — the same shape and
     cost as :func:`folded_event_ids` (~0.06 ms / 5 blocks). The canonical is
@@ -843,6 +872,12 @@ async def folded_probability_sources(db, event) -> dict:
         for twin_id, home, away, sources in rows
         if twin_id != event.id
         and orientation_agrees(event.home_team_name, event.away_team_name, home, away)
+    ]
+    seen = {twin_id for twin_id, _ in oriented}
+    oriented += [
+        (row.id, row.win_probability_sources)
+        for row in absorbed
+        if row.id != event.id and row.id not in seen
     ]
     return merge_probability_sources(event.win_probability_sources, oriented)
 

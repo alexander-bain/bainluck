@@ -15921,7 +15921,7 @@ async def resolve_served_event(
 
 
 async def _settled_prematch_odds(
-    db: AsyncSession, event: Event, sport_key: Optional[str]
+    db: AsyncSession, event: Event, sport_key: Optional[str], absorbed=()
 ) -> Optional[dict]:
     """The settled page's pre-game reading, the one its Discover card prints (#8315).
 
@@ -15944,16 +15944,27 @@ async def _settled_prematch_odds(
     an error cannot poison the transaction the rest of the route is still using,
     and the ladder then answers from the books rung alone, as the card would with
     no venue snapshots.
+
+    ``absorbed`` (#3391): rows a serve-time fold dropped into this one are read
+    at THIS row's kick-off cutoff, and supply a source only where this row has
+    none — own reading first, then absorbed rows in ascending id, the gap-fill
+    rule `merge_probability_sources` applies to the live number.
     """
     by_source: dict[str, tuple] = {}
     binds = prematch_prior_binds([event])
+    if binds is not None and absorbed:
+        cutoff = binds["cutoffs"][0]
+        for row in absorbed:
+            binds["ids"].append(row.id)
+            binds["cutoffs"].append(cutoff)
     if binds is not None:
+        rank = {eid: i for i, eid in enumerate(binds["ids"])}
         try:
             nested = await db.begin_nested()
             try:
                 rows = (await db.execute(text(PREMATCH_PRIOR_SQL), binds)).all()
-                for row in rows:
-                    by_source[row.source] = prematch_row_to_reading(row)
+                for row in sorted(rows, key=lambda r: rank.get(r.event_id, len(rank))):
+                    by_source.setdefault(row.source, prematch_row_to_reading(row))
             except Exception:
                 with suppress(Exception):
                     await nested.rollback()
@@ -16203,11 +16214,20 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
     # AFTER the Q050 drain above, which repoints `event_id` — folding the id the
     # caller asked for rather than the row being rendered would fold the wrong
     # twins. One indexed lookup, read-side only.
+    #
+    # #3391 — plus the rows a serve-time fold absorbed into this one, read once
+    # here and handed to all three folds below (price table, blend, pre-game
+    # reading) so they cannot disagree about which twin the page is reading.
+    # The fold also carries the absorbed row's opening line onto `event`
+    # (serve-time, `_carry_opening_line`), exactly as it does on the card.
     from app.utils.proven_duplicates import (
         folded_series_event_ids,
         latest_snapshot_for_each_bookmaker,
     )
-    odds_event_ids = await folded_series_event_ids(db, event_id)
+    from app.utils.serve_fold_absorbed import serve_fold_absorbed_rows
+
+    absorbed = await serve_fold_absorbed_rows(db, event)
+    odds_event_ids = await folded_series_event_ids(db, event_id, absorbed)
     latest_snapshots = latest_snapshot_for_each_bookmaker(
         list(
             (await db.execute(latest_odds_per_bookmaker_query(odds_event_ids)))
@@ -16246,7 +16266,7 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
         FoldedBlendView,
         folded_probability_sources,
     )
-    folded_sources = await folded_probability_sources(db, event)
+    folded_sources = await folded_probability_sources(db, event, absorbed)
     blend_view = FoldedBlendView(event, folded_sources)
 
     response = _format_event(
@@ -16570,7 +16590,9 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
     # `_settled_prematch_odds`. Settled only: that is the only state whose hero
     # prints it, and `prematch_prior_binds` would skip the venue read otherwise.
     if event.status in SETTLED_STATUSES:
-        _prematch_odds = await _settled_prematch_odds(db, event, event_sport_key)
+        _prematch_odds = await _settled_prematch_odds(
+            db, event, event_sport_key, absorbed
+        )
         if _prematch_odds is not None:
             response["prematch_odds"] = _prematch_odds
 
@@ -21400,8 +21422,14 @@ def linked_market_sport_filter(event_sport_id, expected_category, market_event_i
     )
 
 
-async def folded_market_read_filters(db, event_id, event_sport_id, expected_category):
+async def folded_market_read_filters(
+    db, event_id, event_sport_id, expected_category, absorbed=()
+):
     """Every WHERE term `_build_game_markets` reads its linked markets under.
+
+    ``absorbed`` — the rows a serve-time fold dropped into this event (#3391,
+    `serve_fold_absorbed_rows`) — joins the tagged rows in the id set, and so
+    in the sport net's subquery too.
 
     Returns `(market_event_ids, filters)`. One function owns the whole decision
     — which rows to read from, and which of their markets the sport net admits —
@@ -21411,7 +21439,7 @@ async def folded_market_read_filters(db, event_id, event_sport_id, expected_cate
     """
     from app.utils.proven_duplicates import folded_event_ids
 
-    market_event_ids = await folded_event_ids(db, event_id)
+    market_event_ids = await folded_event_ids(db, event_id, absorbed)
     filters = [FuturesMarket.event_id.in_(market_event_ids)]
 
     # One `db.execute` for the whole decision — the folded rows' sports ride in
@@ -21518,8 +21546,17 @@ async def _build_game_markets(
     # "this fixture" is every row the fold has proven to BE it, not just this
     # one. See `linked_market_sport_filter` for why the second id became
     # load-bearing at #6221.
+    #
+    # #3391 — and the rows a serve-time fold absorbed into this one. The card for
+    # FC Dallas 1-0 LAFC (9/27) is the ESPN row 15318170, elected by
+    # `twin_identity_rank` over 15314003, which holds all 121 markets; the pair
+    # carries no tag, so without this the one card a reader can tap opens onto
+    # no markets. Empty when this row is not the fold's survivor.
+    from app.utils.serve_fold_absorbed import serve_fold_absorbed_rows
+
+    absorbed = await serve_fold_absorbed_rows(db, event)
     market_event_ids, linked_filters = await folded_market_read_filters(
-        db, event_id, event.sport_id, expected_category,
+        db, event_id, event.sport_id, expected_category, absorbed,
     )
     linked_query = select(FuturesMarket).where(*linked_filters)
     market_result = await db.execute(linked_query)
@@ -26682,7 +26719,14 @@ async def get_event_odds_history(
         series_row_for_each_source,
     )
 
-    series_event_ids = await folded_series_event_ids(db, event_id)
+    # #3391 — plus the rows a serve-time fold absorbed into this one: the
+    # chart of the card a reader tapped lives on its absorbed twin when the
+    # fold elected the anchored row (FC Dallas 1-0 LAFC: 15318170 over
+    # 15314003). Read once; the blend pin below reuses it.
+    from app.utils.serve_fold_absorbed import serve_fold_absorbed_rows
+
+    absorbed = await serve_fold_absorbed_rows(db, event)
+    series_event_ids = await folded_series_event_ids(db, event_id, absorbed)
 
     # Get snapshots within time range
     # For completed/closed events, return ALL snapshots (no time window)
@@ -27951,7 +27995,7 @@ async def get_event_odds_history(
             )
 
             pin_event = FoldedBlendView(
-                event, await folded_probability_sources(db, event)
+                event, await folded_probability_sources(db, event, absorbed)
             )
             from app.utils.aggregation import newest_source_reading_time
 
