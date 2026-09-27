@@ -4963,6 +4963,29 @@ def stamp_nba_statpal_fixtures(self, apply=True):
 
 
 @celery_app.task(bind=True, soft_time_limit=240, time_limit=270,
+                 name="app.tasks.mark_espn_start_placeholders")
+def mark_espn_start_placeholders(self, apply=True):
+    """Mark rows sitting on ESPN's date-only placeholder, so readers say TBD (#8981).
+
+    ESPN lists a college football game weeks before its kickoff is set, at
+    midnight Eastern with ``timeValid=false``. Rows stamped from ESPN before
+    #8841 sit on that instant and printed "Oct 2 9:00 PM" for a 10/3 TBD game.
+    Reads ESPN's board once per (sport, day) among the candidates (8 reads on
+    2026-09-27, capped at 40) and marks only where ESPN says ``timeValid:
+    false`` at the row's own minute. An explicit ``true`` clears the mark. See
+    ``tasks/espn_start_placeholders``.
+
+    `apply=False` plans and writes nothing."""
+    from app.tasks.espn_start_placeholders import (
+        _run_mark_espn_start_placeholders,
+    )
+    return _tracked_run(
+        "mark_espn_start_placeholders",
+        _run_mark_espn_start_placeholders(apply=apply),
+    )
+
+
+@celery_app.task(bind=True, soft_time_limit=240, time_limit=270,
                  name="app.tasks.stamp_nhl_statpal_fixtures")
 def stamp_nhl_statpal_fixtures(self, apply=True):
     """Stamp each NHL row with the StatPal contest it is (#2867, D50 step 3).
@@ -7836,6 +7859,16 @@ celery_app.conf.beat_schedule = {
         # vocabulary. NHL's preseason opens 2026-09-19 and is the next.
         "task": "app.tasks.stamp_mlb_statpal_fixtures",
         "schedule": crontab(minute=21),
+        "options": {"queue": "background"},
+    },
+    "mark-espn-start-placeholders-hourly": {
+        # #8981. :29 because it carried ZERO other crontab fires in the census
+        # RUN over the assembled schedule on 2026-09-27 (177 entries; the free
+        # minutes were :11 :29 :33 :37 :41 :43 :59), and it is outside the
+        # settlement sweep's :31–:47 window. The work is at most 40 ESPN board
+        # reads plus one bounded candidate query.
+        "task": "app.tasks.mark_espn_start_placeholders",
+        "schedule": crontab(minute=29),
         "options": {"queue": "background"},
     },
     "stamp-soccer-statpal-fixtures-hourly": {

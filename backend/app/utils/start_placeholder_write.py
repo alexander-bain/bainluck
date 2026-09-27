@@ -12,11 +12,22 @@ from typing import Iterable
 
 from sqlalchemy import text
 
-from app.utils.start_placeholder import START_PLACEHOLDER_TAG_PREFIX
+from app.utils.start_placeholder import (
+    ESPN_START_PLACEHOLDER_TAG_PREFIX,
+    START_PLACEHOLDER_TAG_PREFIX,
+)
 
 
-async def write_start_placeholder_tags(session, event_id: int, desired: Iterable[str]) -> None:
-    """Replace a row's start-placeholder tags with ``desired``.
+async def write_start_placeholder_tags(
+    session,
+    event_id: int,
+    desired: Iterable[str],
+    prefix: str = START_PLACEHOLDER_TAG_PREFIX,
+) -> None:
+    """Replace a row's start-placeholder tags carrying ``prefix`` with ``desired``.
+
+    ``prefix`` defaults to StatPal's; ESPN's writer passes its own (#8981), so
+    each provider rewrites only its own marks.
 
     Core SQL with a server-side rewrite, never an ORM assignment: `event_tags`
     is JSONB (gotcha #4) and the taxonomy task replaces it wholesale, so this
@@ -36,8 +47,8 @@ async def write_start_placeholder_tags(session, event_id: int, desired: Iterable
             "WHERE id = :eid"
         ),
         {
-            "plen": len(START_PLACEHOLDER_TAG_PREFIX),
-            "prefix": START_PLACEHOLDER_TAG_PREFIX,
+            "plen": len(prefix),
+            "prefix": prefix,
             "add": json.dumps(list(desired)),
             "eid": event_id,
         },
@@ -47,3 +58,12 @@ async def write_start_placeholder_tags(session, event_id: int, desired: Iterable
 async def retire_start_placeholder_tags(session, event_id: int) -> None:
     """Drop every start-placeholder tag from the row; every other tag stays."""
     await write_start_placeholder_tags(session, event_id, [])
+
+
+async def write_espn_start_placeholder_tags(
+    session, event_id: int, desired: Iterable[str]
+) -> None:
+    """Replace a row's ESPN start-placeholder tags with ``desired`` (#8981)."""
+    await write_start_placeholder_tags(
+        session, event_id, desired, prefix=ESPN_START_PLACEHOLDER_TAG_PREFIX
+    )

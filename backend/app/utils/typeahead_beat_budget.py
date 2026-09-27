@@ -1999,7 +1999,15 @@ def free_background_slots(
 #: live at 129; this composition adds `mlb-reschedule-ghost-sweep` (:52) and
 #: `odds-api-remint-sweep` (:13), both naming `background`. The census RUN over
 #: the composed `beat_schedule` printed `explicit 88 implicit 43 total 131`.
-BACKGROUND_BEAT_COUNT = 131
+#:
+#: 🔴 RE-DERIVED at authority/1284 (2026-09-27, #8981): 131 → 132, explicit
+#: 88 → 89, fall-through UNMOVED at 43. One beat added,
+#: `mark-espn-start-placeholders-hourly` (`crontab(minute=29)`, the only
+#: zero-fire minute outside the settlement sweep's :31–:47 window), naming
+#: `background` explicitly. Cost: one bounded candidate query plus at most 40
+#: ESPN board reads (8 on 2026-09-27, all NCAAF/NFL), no quota. The census RUN
+#: over the assembled `beat_schedule` printed `explicit 89 implicit 43 total 132`.
+BACKGROUND_BEAT_COUNT = 132
 #: 🔴 RE-DERIVED at lane1/282 (2026-09-13, #5896): 122 → **123**, explicit
 #: 79 → **80**, fall-through UNMOVED at 43. One beat added,
 #: `soccer-ghost-twin-sweep` (`crontab(minute="9,49")`) with an EXPLICIT
