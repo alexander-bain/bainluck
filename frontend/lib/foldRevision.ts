@@ -43,7 +43,8 @@ export function parseFoldRevision(value: unknown): FoldRevision | null {
   const entries = Object.entries(value as Record<string, unknown>);
   if (entries.length === 0) return null;
   for (const [, rev] of entries) {
-    if (typeof rev !== "number" || !Number.isInteger(rev) || rev < 0) return null;
+    // Safe integers only: a JSON number past 2^53 has already been rounded.
+    if (typeof rev !== "number" || !Number.isSafeInteger(rev) || rev < 0) return null;
   }
   return value as FoldRevision;
 }

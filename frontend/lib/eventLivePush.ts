@@ -28,7 +28,7 @@
  * honesty mechanism itself lying.
  */
 
-import { frameFoldOrder } from "./foldRevision";
+import { frameFoldOrder, parseFoldRevision } from "./foldRevision";
 
 /**
  * How often an open event page revalidates, given what the stream is doing.
@@ -399,6 +399,12 @@ export function applyLiveFrame<T>(prev: T | undefined, frame: LiveFrame): T | un
       frameAt < currentAt) {
     return prev;
   }
+  // The revision travels with the value it dates: a newer write's, or — when the
+  // held blend had none to compare — the first frame's, so later frames order.
+  const revision = foldOrder === "newer" ||
+      (foldOrder === null && liveBlend && !parseFoldRevision(current.blend_fold_revision))
+    ? parseFoldRevision(frame.fold_revision)
+    : null;
   // A source entry carries display metadata (`display_name`, `type`, `color`)
   // that a frame cannot know, so the merge is structural and the type is
   // asserted at this one boundary — the same escape the inline version made
@@ -417,7 +423,7 @@ export function applyLiveFrame<T>(prev: T | undefined, frame: LiveFrame): T | un
     // detail payload's clock belonged to the value this replaces.
     hero_probability_observed_at: frame.updated_at,
     // #9051: the held blend is now this write's; keep its revision with it.
-    ...(foldOrder === "newer" ? { blend_fold_revision: frame.fold_revision } : {}),
+    ...(revision ? { blend_fold_revision: revision } : {}),
     win_probability_sources: {
       ...sources,
       [frame.source]: {

@@ -1,11 +1,13 @@
 import { adoptNewerBlendEdge, type BlendEdgeObservation } from './blendObservationClock';
 import { applyLiveFrame } from './eventLivePush';
+import { compareFoldRevision, frameFoldOrder, parseFoldRevision } from './foldRevision';
 import type { LiveStreamFrame } from './liveStreamController';
 
 type PolledEvent = {
   id: number;
   status: string;
   hero_probability?: number | null;
+  hero_probability_away?: number | null;
   hero_probability_source?: string;
   hero_probability_observed_at?: string | null;
   win_probability_sources?: Record<string, { updated_at?: string }>;
@@ -18,9 +20,10 @@ type PolledEvent = {
  * the chart still contains the newer publication. Only comparable source write
  * times justify preservation; missing clocks, non-live outcomes and equally
  * new REST remain authoritative. Never invent a new observation timestamp.
- * #9051: when the response carries its fold revision, `applyLiveFrame` orders
- * the frame by commit order instead (`lib/foldRevision.ts`); this clock gate
- * runs first either way, so a frame it refuses never reaches that rule.
+ * #9051: when the response and the frame both carry fold revisions, commit
+ * order decides BEFORE any clock gate (`lib/foldRevision.ts`) — a hero whose
+ * observation clock is explicitly unknown still takes a strictly newer write.
+ * With no claim on either side the clock gates below apply unchanged.
  */
 export function reconcileEventPoll<T extends PolledEvent>(
   polled: T,
@@ -33,6 +36,8 @@ export function reconcileEventPoll<T extends PolledEvent>(
       || frame.p === null || !Number.isFinite(frame.p) || frame.p < 0 || frame.p > 1) {
     return polled;
   }
+  const foldOrder = frameFoldOrder(polled.blend_fold_revision, frame.fold_revision);
+  if (foldOrder !== null) return foldOrder === 'newer' ? applyLiveFrame(polled, { ...frame, p: frame.p })! : polled;
   const frameTime = Date.parse(frame.updated_at);
   // #8749: the contract's clock dates the hero itself and counts only the
   // sources it folded; any source's stamp is the fallback for a payload that
@@ -52,16 +57,52 @@ export function reconcileEventPoll<T extends PolledEvent>(
 }
 
 /**
+ * #9051: a completed poll against the headline the page ALREADY accepted.
+ *
+ * The page's frames and history edges move the cached headline between polls,
+ * and the refs the fetcher reads hold only the LATEST frame and edge — a
+ * refused old edge replaces an adopted newer one there. So the poll compares
+ * against the cache itself: a response whose fold revision is strictly OLDER
+ * (same rows, dominated) keeps the held headline, its sources and its revision,
+ * and takes everything else — score, status, clock — from the response. A
+ * newer, equal or incomparable response is the authoritative read and wins
+ * whole; that is how a changed fold (a twin joined or left) is ever adopted.
+ * A response with no revision claims nothing and wins as before, but never
+ * erases the revision the page holds.
+ */
+export function keepNewerHeldHeadline<T extends PolledEvent>(polled: T, held: T | undefined): T {
+  if (!held || held.id !== polled.id) return polled;
+  const heldRevision = parseFoldRevision(held.blend_fold_revision);
+  if (!heldRevision) return polled;
+  const polledRevision = parseFoldRevision(polled.blend_fold_revision);
+  if (!polledRevision) return { ...polled, blend_fold_revision: heldRevision };
+  const liveBlend = (e: T) => e.status === 'live' && e.hero_probability_source === 'blend'
+    && typeof e.hero_probability === 'number' && Number.isFinite(e.hero_probability);
+  if (!liveBlend(polled) || !liveBlend(held)
+      || compareFoldRevision(polledRevision, heldRevision) !== 'older') return polled;
+  return {
+    ...polled,
+    hero_probability: held.hero_probability,
+    hero_probability_away: polled.hero_probability_away == null ? polled.hero_probability_away : held.hero_probability_away,
+    hero_probability_observed_at: held.hero_probability_observed_at,
+    win_probability_sources: held.win_probability_sources,
+    blend_fold_revision: heldRevision,
+  };
+}
+
+/**
  * Read the latest frame AFTER the response, including pushes during its flight,
  * then the chart's pinned edge (#8749): a detail cache can serve a hero older
  * than the history the page already drew, and without this every such poll
  * rolled the headline back until the next history response moved it again.
+ * #9051: first against the headline the page holds when the response lands.
  */
 export async function fetchEventWithLiveFrame<T extends PolledEvent>(
   fetchEvent: () => Promise<T>,
   latestFrame: () => LiveStreamFrame | null,
   latestBlendEdge: () => BlendEdgeObservation | null = () => null,
+  heldEvent: () => T | undefined = () => undefined,
 ): Promise<T> {
-  const polled = await fetchEvent();
+  const polled = keepNewerHeldHeadline(await fetchEvent(), heldEvent());
   return adoptNewerBlendEdge(reconcileEventPoll(polled, latestFrame()), latestBlendEdge())!;
 }

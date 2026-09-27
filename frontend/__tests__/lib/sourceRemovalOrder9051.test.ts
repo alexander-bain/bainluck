@@ -1,6 +1,8 @@
-import { fetchEventWithLiveFrame, reconcileEventPoll } from '@/lib/reconcileEventPoll';
+import { readFileSync } from 'fs';
+import { fetchEventWithLiveFrame, keepNewerHeldHeadline, reconcileEventPoll } from '@/lib/reconcileEventPoll';
 import { applyLiveFrame, frameInvalidatesFoldedBlend, type LiveFrame } from '@/lib/eventLivePush';
-import { adoptNewerBlendEdge, servedBlendEdgeObservation } from '@/lib/blendObservationClock';
+import { adoptNewerBlendEdge, edgeInvalidatesHeldBlend, servedBlendEdgeObservation } from '@/lib/blendObservationClock';
+import { createFoldedRefetchScheduler } from '@/lib/foldedRefetchScheduler';
 import { compareFoldRevision, frameFoldOrder, parseFoldRevision } from '@/lib/foldRevision';
 import type { LiveStreamFrame } from '@/lib/liveStreamController';
 
@@ -267,7 +269,7 @@ describe('the ordering primitives', () => {
 
   test('parseFoldRevision accepts only non-empty maps of non-negative integers', () => {
     expect(parseFoldRevision({ a: 0 })).toEqual({ a: 0 });
-    for (const bad of [undefined, null, 3, 'x', [], {}, { a: NaN }, { a: 1.5 }, { a: -1 }, { a: '1' }]) {
+    for (const bad of [undefined, null, 3, 'x', [], {}, { a: NaN }, { a: 1.5 }, { a: -1 }, { a: '1' }, { a: 2 ** 53 }]) {
       expect(parseFoldRevision(bad)).toBeNull();
     }
   });
@@ -280,5 +282,165 @@ describe('the ordering primitives', () => {
     expect(frameFoldOrder({ a: 1 }, { a: 1 })).toBe('same');
     expect(frameFoldOrder({ a: 1 }, { b: 2 })).toBe('incomparable');
     expect(frameFoldOrder({ a: 1 }, { a: 2, b: 2 })).toBe('incomparable');
+  });
+});
+
+// Codex, revision-95bcc174/SOURCE-REVIEW.md: four delivery gaps on the actual
+// call paths — the helpers were right, the page's fetch/push/history flow was not.
+describe('Codex 95bcc174 (1): the poll path orders by revision BEFORE its clock gates', () => {
+  test('a hero with an explicitly unknown clock takes a strictly newer write through the fetch chain', async () => {
+    const polled = served({ hero_probability: 0.6, hero_probability_away: 0.4, hero_probability_observed_at: null, blend_fold_revision: { [ROW]: 2 } });
+    const frame = { ...kalshiFrame, p: 0.4, updated_at: at(40), fold_revision: { [ROW]: 3 } };
+    const result = await fetchEventWithLiveFrame(async () => polled, () => frame, () => null);
+    expect(headline(result)).toEqual({ p: 0.4, at: at(40), rev: { [ROW]: 3 } });
+  });
+
+  test('CONTROL — with no revision claim the unknown-clock protection still holds', async () => {
+    const polled = served({ hero_probability: 0.6, hero_probability_away: 0.4, hero_probability_observed_at: null });
+    const frame = { ...kalshiFrame, p: 0.4, updated_at: at(40) };
+    expect(await fetchEventWithLiveFrame(async () => polled, () => frame, () => null)).toBe(polled);
+  });
+
+  test('an older or same revision is refused by the poll path too', () => {
+    const polled = served({ blend_fold_revision: { [ROW]: 3 } });
+    for (const rev of [2, 3]) {
+      expect(reconcileEventPoll(polled, { ...kalshiFrame, updated_at: at(59), fold_revision: { [ROW]: rev } })).toBe(polled);
+    }
+  });
+});
+
+describe('Codex 95bcc174 (2): a first frame keeps its revision', () => {
+  test('accepted under the legacy rule with no held revision, its vector stays with its value', () => {
+    const result = applyLiveFrame(served(), pushed({ ...kalshiFrame, fold_revision: { [ROW]: 3 } }))!;
+    expect(headline(result)).toEqual({ p: 0.6, at: at(10), rev: { [ROW]: 3 } });
+    // …so a later stale frame is now orderable, and refused.
+    expect(applyLiveFrame(result, pushed({ ...kalshiFrame, p: 0.7, updated_at: at(20), fold_revision: { [ROW]: 2 } }))).toBe(result);
+  });
+
+  test('a malformed frame vector is not retained', () => {
+    expect(applyLiveFrame(served(), pushed({ ...kalshiFrame, fold_revision: { [ROW]: -3 } }))?.blend_fold_revision).toBeUndefined();
+  });
+});
+
+describe('Codex 95bcc174 (3): a later poll cannot forget an accepted revision', () => {
+  // The page adopted .5 @10 rev25 from history; a delayed history .6 @12 rev15
+  // was refused but is now the fetcher's latest edge; a stale detail at rev15 lands.
+  const accepted = adoptNewerBlendEdge(held(0.4, 0, { [ROW]: 15 }), edge(0.5, 10, { [ROW]: 25 }))!;
+  const oldEdge = edge(0.6, 12, { [ROW]: 15 });
+  const stalePoll = served({ hero_probability: 0.6, hero_probability_away: 0.4, hero_probability_observed_at: at(12), blend_fold_revision: { [ROW]: 15 }, home_score: 21 });
+
+  test('the stale poll keeps the accepted headline and revision, and takes its REST fields', async () => {
+    const result = await fetchEventWithLiveFrame(async () => stalePoll, () => null, () => oldEdge, () => accepted);
+    expect(headline(result)).toEqual({ p: 0.5, at: at(10), rev: { [ROW]: 25 } });
+    expect(result.home_score).toBe(21);
+  });
+
+  test('CONTROL — without the held headline (the old fetch chain) the stale poll wins: this is the defect', async () => {
+    const result = await fetchEventWithLiveFrame(async () => stalePoll, () => null, () => oldEdge);
+    expect(result.hero_probability).toBe(0.6);
+  });
+
+  test('a newer or incomparable poll is the authoritative read and wins whole', () => {
+    const newer = served({ hero_probability: 0.45, blend_fold_revision: { [ROW]: 30 } });
+    expect(keepNewerHeldHeadline(newer, accepted)).toBe(newer);
+    const refolded = served({ hero_probability: 0.45, blend_fold_revision: { [ROW]: 25, [TWIN]: 1 } });
+    expect(keepNewerHeldHeadline(refolded, accepted)).toBe(refolded);
+  });
+
+  test('a poll with no revision claims nothing and wins, but keeps the held revision', () => {
+    const legacy = served({ hero_probability: 0.45 });
+    const result = keepNewerHeldHeadline(legacy, accepted);
+    expect(result.hero_probability).toBe(0.45);
+    expect(result.blend_fold_revision).toEqual({ [ROW]: 25 });
+  });
+
+  test('a poll that ends the game is never held back by an older revision', () => {
+    const final = served({ status: 'completed', hero_probability_source: 'final', hero_probability: 1, blend_fold_revision: { [ROW]: 15 } });
+    expect(keepNewerHeldHeadline(final, accepted)).toBe(final);
+  });
+});
+
+describe('Codex 95bcc174 (4): an incomparable history edge asks for the authoritative read', () => {
+  const heldFold = held(0.4, 0, { [ROW]: 2, [TWIN]: 2 });
+
+  test.each([
+    ['a twin left the fold', { [ROW]: 3 }],
+    ['a row joined the fold', { [ROW]: 3, [TWIN]: 3, '789': 1 }],
+    ['the components disagree', { [ROW]: 3, [TWIN]: 1 }],
+  ])('%s: refused, and a refetch is requested', (_label, rev) => {
+    expect(adoptNewerBlendEdge(heldFold, edge(0.7, 50, rev))).toBe(heldFold);
+    expect(edgeInvalidatesHeldBlend(heldFold, edge(0.7, 50, rev))).toBe(true);
+  });
+
+  test('CONTROL — orderable, absent or non-live edges request nothing', () => {
+    expect(edgeInvalidatesHeldBlend(heldFold, edge(0.7, 50, { [ROW]: 3, [TWIN]: 2 }))).toBe(false);
+    expect(edgeInvalidatesHeldBlend(heldFold, edge(0.7, 50, { [ROW]: 1, [TWIN]: 2 }))).toBe(false);
+    expect(edgeInvalidatesHeldBlend(heldFold, edge(0.7, 50))).toBe(false);
+    expect(edgeInvalidatesHeldBlend(held(0.4, 0, undefined), edge(0.7, 50, { [ROW]: 3 }))).toBe(false);
+    expect(edgeInvalidatesHeldBlend({ ...heldFold, status: 'completed' }, edge(0.7, 50, { [ROW]: 3 }))).toBe(false);
+  });
+
+  test('the refetched detail is adopted over the old fold, so the refusal does not loop', () => {
+    const refetched = served({ hero_probability: 0.7, blend_fold_revision: { [ROW]: 3 } });
+    const result = keepNewerHeldHeadline(refetched, heldFold);
+    expect(result).toBe(refetched);
+    expect(edgeInvalidatesHeldBlend(result, edge(0.72, 55, { [ROW]: 4 }))).toBe(false);
+  });
+});
+
+describe('the refetch scheduler: rate-limited, and the last request of a burst is never lost', () => {
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => jest.useRealTimers());
+
+  test('a burst refetches once now and once at the window end, then stays quiet', () => {
+    const refetch = jest.fn();
+    const scheduler = createFoldedRefetchScheduler(refetch, 5000, () => Date.now());
+    scheduler.request();
+    expect(refetch).toHaveBeenCalledTimes(1);
+    for (let i = 0; i < 4; i += 1) { jest.advanceTimersByTime(1000); scheduler.request(); }
+    expect(refetch).toHaveBeenCalledTimes(1);
+    jest.advanceTimersByTime(1000);
+    expect(refetch).toHaveBeenCalledTimes(2); // the trailing one: the stream then went quiet
+    jest.advanceTimersByTime(60_000);
+    expect(refetch).toHaveBeenCalledTimes(2);
+  });
+
+  test('requests spaced beyond the window each refetch immediately', () => {
+    const refetch = jest.fn();
+    const scheduler = createFoldedRefetchScheduler(refetch, 5000, () => Date.now());
+    scheduler.request();
+    jest.advanceTimersByTime(6000);
+    scheduler.request();
+    expect(refetch).toHaveBeenCalledTimes(2);
+  });
+
+  test('cancel drops a pending trailing refetch (unmount)', () => {
+    const refetch = jest.fn();
+    const scheduler = createFoldedRefetchScheduler(refetch, 5000, () => Date.now());
+    scheduler.request();
+    scheduler.request();
+    scheduler.cancel();
+    jest.advanceTimersByTime(10_000);
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('the page: a refuse-and-refetch branch writes nothing in the same tick', () => {
+  // swr drops a fetch that any later mutation post-dates — even a no-op one —
+  // so a refetch followed by `refreshEvent(prev => prev)` cancels itself. jsdom
+  // is not installed here, so the page's two branches are pinned in source.
+  const page = readFileSync('app/events/[id]/page.tsx', 'utf8');
+
+  test('the push effect returns right after requesting the refetch', () => {
+    expect(page).toMatch(/if \(frameInvalidatesFoldedBlend\(heldEventRef\.current, frame\)\) \{\s*foldedRefetch\.request\(\);\s*return;\s*\}/);
+  });
+
+  test('the history effect returns right after requesting the refetch', () => {
+    expect(page).toMatch(/if \(edgeInvalidatesHeldBlend\(heldEventRef\.current, edge\)\) \{\s*foldedRefetch\.request\(\);\s*return;\s*\}/);
+  });
+
+  test('the poll fetcher reconciles against the held headline', () => {
+    expect(page).toMatch(/\(\) => latestBlendEdgeRef\.current,\s*\(\) => heldEventRef\.current,/);
+    expect(page).toMatch(/heldEventRef\.current = event;/);
   });
 });

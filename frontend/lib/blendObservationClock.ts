@@ -117,3 +117,19 @@ export function adoptNewerBlendEdge<T extends AdoptingHero>(
     ...(edgeRevision ? { blend_fold_revision: edgeRevision } : {}),
   };
 }
+
+/**
+ * #9051: true when the held live blend refuses `edge` because the two cannot be
+ * ordered — a twin joined or left the fold, or the components disagree. Only a
+ * fresh detail read can say which fold is current, so the page asks for one
+ * (and does NOT write the cache in the same tick; see the page's history effect).
+ */
+export function edgeInvalidatesHeldBlend(
+  event: AdoptingHero | undefined, edge: BlendEdgeObservation | null | undefined,
+): boolean {
+  if (!event || !edge || event.status !== "live" ||
+      event.hero_probability_source !== PINNABLE_HERO_SOURCE) return false;
+  const heldRevision = parseFoldRevision(event.blend_fold_revision);
+  const edgeRevision = parseFoldRevision(edge.foldRevision);
+  return !!heldRevision && !!edgeRevision && compareFoldRevision(edgeRevision, heldRevision) === "incomparable";
+}
