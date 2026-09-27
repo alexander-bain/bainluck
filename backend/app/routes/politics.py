@@ -132,25 +132,39 @@ _THEME_BY_TICKER_CLASSIFY_ONLY: list[tuple[str, str]] = [
 
 _THEME_BY_NAME: list[tuple[re.Pattern, str]] = [
     # International FIRST — prevents foreign presidential elections from matching "presidential"
+    # (#9193: `russia|russian|putin` were missing, so "Putin out as President of Russia"
+    # was a presidential Related Market and the Ukraine front-line questions sat in Other.)
     (re.compile(
         r"\b(?:uk\s*election|france|french|germany|german|canada|canadian|brazil|brazilian|"
         r"mexico|mexican|australia|australian|india|indian|japan|japanese|"
         r"colombia|colombian|chile|chilean|argentina|argentin|nigeria|nigerian|"
-        r"south\s*africa|turkey|turkish|poland|polish|ukraine|ukrainian|"
+        r"south\s*africa|turkey|turkish|poland|polish|ukraine|ukrainian|russia|russian|putin|"
         r"israel|israeli|iran|iranian|taiwan|taiwanese|philippines|filipino|"
         r"indonesia|indonesian|egypt|egyptian|south\s*korea|korean|"
         r"italy|italian|spain|spanish|netherlands|dutch|"
         r"eu\s*election|european|nato|un\s*general|g7|g20|foreign\s*policy)\b", re.I,
     ), "international"),
     (re.compile(r"\b(?:trump|biden|desantis|harris|newsom|haley|ramaswamy|kennedy|rfk)\b", re.I), "presidential"),
-    (re.compile(r"\b(?:president|presidential|2028\s*election|white\s*house|nominee|primary)\b", re.I), "presidential"),
-    (re.compile(r"\b(?:senate|senator|house\s*(?:of\s*rep|seat)|congress|midterm|2026\s*election)\b", re.I), "congressional"),
+    # #9193 — `primary` is not a presidential word on its own: here it filed
+    # "Texas Senate primary: which counties will Paxton win?" as the first
+    # Related Market under the 2028 nominee race, with 15 more Senate and five
+    # Governor primaries. It is the fallback line below the governor arm, so the
+    # chamber or office a primary names decides first; a bare "2028 South
+    # Carolina Democratic primary winner?" still falls through to presidential.
+    # `midterms?` because every venue writes the plural ("…win in the
+    # Midterms?"); the singular left 53 open midterm markets in Other. It sits
+    # below the governor arm, which now reads the plural too, so "Which party
+    # will hold more governorships after the midterms?" is a governor question.
+    (re.compile(r"\b(?:president|presidential|2028\s*election|white\s*house|nominee)\b", re.I), "presidential"),
+    (re.compile(r"\b(?:senate|senator|house\s*(?:of\s*rep|seat)|congress|2026\s*election)\b", re.I), "congressional"),
     # A Federal Reserve governor is not a state governor. Without this line
     # "Lisa Cook out as Fed Governor by October 31?" files under Gubernatorial
     # on the word "Governor" alone. Sits beside the federal-appointment line
     # below (`cabinet|secretary of|ambassador`), which is the same class.
     (re.compile(r"\bfed(?:eral\s*reserve)?\s*governor(?:s|ship)?\b", re.I), "policy"),
-    (re.compile(r"\b(?:governor|gubernatorial)\b", re.I), "gubernatorial"),
+    (re.compile(r"\b(?:governors?|governorships?|gubernatorial)\b", re.I), "gubernatorial"),
+    (re.compile(r"\bmidterms?\b", re.I), "congressional"),
+    (re.compile(r"\bprimar(?:y|ies)\b", re.I), "presidential"),
     (re.compile(r"\b(?:supreme\s*court|scotus|justice|roe|overturn)\b", re.I), "scotus"),
     (re.compile(r"\b(?:bill|legislation|executive\s*order|policy|tariff|immigration|gun|abortion|cannabis|marijuana|legalize|ban|mandate|regulation)\b", re.I), "policy"),
     (re.compile(r"\b(?:approval\s*rating|favorab|popular\s*vote|electoral\s*college)\b", re.I), "presidential"),
