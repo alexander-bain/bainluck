@@ -118,6 +118,15 @@ export function installMinimalDom(): { document: Node; body: Node } {
   doc.defaultView = window;
   (globalThis as Record<string, unknown>).window = window;
   (globalThis as Record<string, unknown>).document = document;
+  // react-dom reads the BARE global `navigator` at module load once `window`
+  // exists. Node 21+ defines one; CI runs Node 20, which does not.
+  if (typeof (globalThis as Record<string, unknown>).navigator === "undefined") {
+    Object.defineProperty(globalThis, "navigator", {
+      value: window.navigator,
+      configurable: true,
+      writable: true,
+    });
+  }
   (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
   return { document, body };
 }
