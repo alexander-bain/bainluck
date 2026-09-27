@@ -27,6 +27,7 @@ import { appendHeroObservation, mergeLiveChartHistory } from "@/lib/liveChartHis
 import FreshnessChip from "@/components/event/FreshnessChip";
 import {
   applyLiveFrame,
+  frameInvalidatesFoldedBlend,
   eventFeedIsStalled,
   makeEventRefreshInterval,
   pageLiveClaimIsUnbacked,
@@ -181,6 +182,8 @@ function heroCrestImage(
 }
 
 const LIVE_REFRESH_INTERVAL = 32000; // Match backend LIVE_POLL_INTERVAL (32s)
+/** #9051: floor between detail refetches a folded hero asks for on refused frames. */
+const FOLDED_FRAME_REFETCH_MS = 5000;
 const SCHEDULED_REFRESH_INTERVAL = 120000;
 
 export default function EventPage({ params }: EventPageProps) {
@@ -226,6 +229,8 @@ export default function EventPage({ params }: EventPageProps) {
   const latestLiveFrameRef = useRef<LiveFrame | null>(null);
   // #8749: the served history's pinned edge, for the poll reconcile below.
   const latestBlendEdgeRef = useRef<BlendEdgeObservation | null>(null);
+  // #9051: when a folded hero last refetched on a frame it had to refuse.
+  const foldedRefetchAtRef = useRef(0);
 
   // #7621 — ONE callback for the life of the mount, and that is the whole fix.
   //
@@ -290,6 +295,10 @@ export default function EventPage({ params }: EventPageProps) {
       onSuccess: () => setLastRefresh(Date.now()),
     }
   );
+  // #9051: the held hero, for the push effect's folded-refetch check (a ref, so
+  // the effect does not re-run — and re-apply its frame — on every cache write).
+  const heldEventRef = useRef(event);
+  heldEventRef.current = event;
 
   // ── Q050: this url named a duplicate, so correct the url ─────────────────
   //
@@ -359,6 +368,15 @@ export default function EventPage({ params }: EventPageProps) {
         || liveFrame.p === null || liveFrame.p === undefined) return;
     latestLiveFrameRef.current = liveFrame;
     const frame = { ...liveFrame, p: liveFrame.p };
+    // #9051: a FOLDED hero (canonical + twins) refuses a raw-row frame, which
+    // would otherwise hold it until the stream-connected 120s poll. The frame
+    // still says the blend moved: refetch the folded detail, at most once per
+    // FOLDED_FRAME_REFETCH_MS (the stream stamps an event at most every 5s).
+    if (frameInvalidatesFoldedBlend(heldEventRef.current, frame) &&
+        Date.now() - foldedRefetchAtRef.current >= FOLDED_FRAME_REFETCH_MS) {
+      foldedRefetchAtRef.current = Date.now();
+      void refreshEvent();
+    }
     refreshEvent(
       // `applyLiveFrame` spreads `prev` FIRST and then only the fields a frame
       // speaks for, so a frame arriving after the background poll carries the

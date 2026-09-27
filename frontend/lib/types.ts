@@ -469,13 +469,12 @@ export interface EventDetailResponse extends Event {
    */
   hero_probability_observed_at?: string | null;
   /**
-   * #9051: when a source was last REMOVED from the blend behind
-   * `hero_probability` (cached with it). Held frames and history edges observed
-   * at or before it predate the served membership and cannot override the hero.
-   * Additions and price writes never move it. Absent/null: no ordering claim.
-   * See `lib/sourceRemovalClock.ts`.
+   * #9051: `{ "<row id>": rev }` for every row the fold behind `hero_probability`
+   * read (cached with it); `rev` follows each row's commit order. Held frames and
+   * history edges are ordered against it by commit order, not by price clock.
+   * Absent/malformed: no claim. See `lib/foldRevision.ts`.
    */
-  blend_source_removed_at?: string | null;
+  blend_fold_revision?: Record<string, number> | null;
   bookmaker_odds?: BookmakerOddsDetail[];
   ei?: EIData;
   /** @deprecated Use `ei` instead */
@@ -648,12 +647,11 @@ export interface EventHistoryResponse {
    */
   blend_edge_observed_at?: string | null;
   /**
-   * #9051: the `blend_source_removed_at` of the membership the pinned edge's
-   * blend folds — the same database clock the detail hero carries. `null`: that
-   * membership had no removal. Absent: no membership claim (decides nothing).
-   * See `lib/sourceRemovalClock.ts` `edgePredatesServedSourceRemoval`.
+   * #9051: the `blend_fold_revision` of the fold snapshot the pinned edge comes
+   * from — the same vector the detail hero carries, so the two order by commit.
+   * Absent/malformed: no claim. See `lib/foldRevision.ts`.
    */
-  blend_edge_source_removed_at?: string | null;
+  blend_edge_fold_revision?: Record<string, number> | null;
   /**
    * #6948: true iff the backend ACTUALLY removed points before kick-off, i.e. iff a second request
    * without `range=since_start` would answer with more. `false` on every payload served without the
