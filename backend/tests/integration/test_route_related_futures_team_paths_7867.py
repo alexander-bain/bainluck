@@ -628,20 +628,21 @@ async def test_the_same_school_in_the_sibling_league_is_ours(monkeypatch):
     assert 78670101 not in _ids(body)
 
 
-async def test_an_event_whose_teams_do_not_resolve_keeps_todays_payload(monkeypatch):
+async def test_an_event_whose_teams_do_not_resolve_refuses_by_name_only(monkeypatch):
     """Unknown league metadata (`basketball_other`, no `teams` row for either
-    side): nothing is ours, so nothing can be foreign, and the payload is
-    exactly what it is today — foreign rows included. Asserted so the
-    limitation is deliberate. (The merge step's own roster read, gated on any
-    merge group, is pre-existing and may still run; it arms nothing here.)"""
+    side). Until #8950 nothing was armed here and the Timberwolves' title row
+    was served on the Lynx; since then each side gets #8920's name-only
+    identity, so `Minnesota` inside `Minnesota Timberwolves` — a longer name
+    whose extra word is none of the Lynx's — is refused. Still ONE family
+    read: the merge step's own roster call reuses it."""
     event = _event("Minnesota Lynx", "New York Liberty", sport_key="basketball_other", sport_id=BASKETBALL_OTHER)
     nba = _make_market(id=900400, name="NBA Championship Winner", source="odds_api")
     outcomes = [_outcome(78670110, nba, "Minnesota Timberwolves", 0.04)]
     session = _session(event, outcomes, roster=BASKETBALL, home_team_id=None, away_team_id=None,
                        sport_ids=[WNBA, NBA, BASKETBALL_OTHER])
     body = await _get(monkeypatch, session, event.id)
-    assert 78670110 in _ids(body)
-    assert session.roster_reads["n"] <= 1
+    assert 78670110 not in _ids(body)
+    assert session.roster_reads["n"] == 1
 
 
 # ═══ The roster read is still one read ══════════════════════════════════════
