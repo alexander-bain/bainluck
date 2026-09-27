@@ -11,6 +11,16 @@ nonisolated struct CategoryMarketRow: Decodable, Identifiable, Sendable {
     let marketId: Int?
     let topOutcomes: [CategoryOutcome]
     let outcomeCount: Int
+    /// `more_count` — #9109. The rungs the page behind this card shows and the
+    /// card does not. `outcomeCount - 3` counted every rung the ladder ever had,
+    /// including passed deadlines the page drops: "+9 more" over a page of two.
+    /// Optional so an older payload still decodes; see `overflowCount`.
+    let moreCount: Int?
+
+    /// The number the card's "+N more" prints. The server's page count when it
+    /// sent one; the ladder arithmetic only for a payload that predates it —
+    /// the same fallback the web card uses.
+    var overflowCount: Int { moreCount ?? outcomeCount - 3 }
 }
 
 /// Outcome probability embedded in a category market row.
