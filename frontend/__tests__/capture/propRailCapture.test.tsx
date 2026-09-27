@@ -41,6 +41,7 @@ import type { PlayerPropRow } from "@/lib/playerPropsGrouping";
 import phillies from "../fixtures/eventPlayerProps.15199886.json";
 import dodgers from "../fixtures/eventPlayerProps.15199902.settled.json";
 import reds from "../fixtures/eventPlayerProps.14788546.json";
+import padres from "../fixtures/eventPlayerProps.15318905.crossVenueRung.json";
 import { assertCompiledCss } from "../helpers/compiledCss";
 
 const FRONTEND_ROOT = path.resolve(__dirname, "../..");
@@ -94,6 +95,12 @@ const STATES: Array<{
     title: "THE SCRIPT — pregame · event 14788546 (Cardinals @ Reds; the Singer rung)",
     rows: reds as unknown as PlayerPropRow[],
     status: "scheduled",
+  },
+  {
+    slug: "settled-cross-venue",
+    title: "HOW THE PROPS LANDED — settled · event 15318905 (Padres; #9178's two-venue 1+)",
+    rows: padres as unknown as PlayerPropRow[],
+    status: "completed",
   },
   {
     slug: "singer-expanded",
