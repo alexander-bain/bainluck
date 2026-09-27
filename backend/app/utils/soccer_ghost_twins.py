@@ -1065,9 +1065,11 @@ class SoccerRow:
     ticker_event_key: str | None = None
     #: The canonical this row is ALREADY proven to duplicate —
     #: :func:`app.utils.proven_duplicates.canonical_id_from_tags` of its own
-    #: ``event_tags``, or ``None``. Read ONLY by :func:`proven_sibling_pass`,
-    #: which uses an existing proof as the evidence the other passes take from a
-    #: clock, a market count or a ticker. Defaults to ``None`` so every row built
+    #: ``event_tags``, or ``None``. Read by :func:`proven_sibling_pass`, which
+    #: uses an existing proof as the evidence the other passes take from a
+    #: clock, a market count or a ticker, and by :func:`strandable_family_heads`,
+    #: which uses it only to collapse a copy onto another copy it already names
+    #: (#9149) — never to pick a canonical. Defaults to ``None`` so every row built
     #: before that pass existed keeps its meaning: a row with no proof behind it
     #: can be neither the sibling that carries one nor a row this pass skips, and
     #: an unset value can only ever withhold a tag.
@@ -1537,6 +1539,36 @@ def row_could_strand_markets(row: SoccerRow) -> bool:
     )
 
 
+def strandable_family_heads(strandable: list[SoccerRow]) -> list[SoccerRow]:
+    """Drop every market-holding copy whose ``duplicate_of`` names ANOTHER
+    market-holding copy in the same block. Pure.
+
+    #8818. Türkiye 0-1 France (Nations League, 2026-09-25): ``15195323`` is the
+    played, ESPN-anchored row and serves zero markets; ``15310856`` is the
+    Polymarket game row, unanchored, holding **401**; ``15310897`` holds 61 more
+    and already carries ``provenance:duplicate-of:15310856``, written by the
+    Polymarket container rail off a shared provider event id. Counted as two
+    rival copies, the block was refused as ambiguous on every run, so the result
+    page kept a sportsbook-only chart and the 401 graded markets sat on a row
+    reading "No result reported".
+
+    The two are not rivals: an id-anchored proof already says they are one
+    Polymarket event, so the question "which copy holds the prices" has one
+    answer — the head. Only a proof pointing INSIDE the strandable set collapses
+    anything; a row naming a canonical elsewhere is still counted, and a pair
+    naming each other drops out entirely (no head, nothing decided).
+
+    What this does NOT do: the family member keeps its own tag, naming the head.
+    The event page folds one hop (:func:`app.utils.proven_duplicates.
+    canonical_id_from_tags`), so the member's markets stay on the head's page
+    rather than reaching the canonical's. The head's markets are the bulk (401
+    of 462 on the specimen); moving the remainder would mean re-pointing a proof
+    another rail wrote, which this sweep never does.
+    """
+    ids = {r.event_id for r in strandable}
+    return [r for r in strandable if r.duplicate_of not in ids]
+
+
 def classify_stranded_block(
     rows: list[SoccerRow],
     *,
@@ -1573,6 +1605,10 @@ def classify_stranded_block(
         if row_could_strand_markets(r)
         and not (now - GHOST_KICKOFF_GRACE < r.commence_time <= now)
     ]
+    # #8818: a copy another rail has ALREADY proven to duplicate a second copy in
+    # this block is that copy's family, not a rival claimant for the prices. See
+    # :func:`strandable_family_heads` for the specimen and what it leaves behind.
+    strandable = strandable_family_heads(strandable)
     if not played or not strandable:
         return NOT_A_TWIN, None, "no played row with a market-holding copy here"
 
