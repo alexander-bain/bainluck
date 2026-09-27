@@ -67,3 +67,22 @@ async def write_espn_start_placeholder_tags(
     await write_start_placeholder_tags(
         session, event_id, desired, prefix=ESPN_START_PLACEHOLDER_TAG_PREFIX
     )
+
+
+async def write_announced_start(session, event_id: int, placeholder, announced) -> bool:
+    """Replace a placeholder start with ESPN's announced one (#8841).
+
+    Compare-and-write: moves the row only while it is still scheduled and still
+    carries ``placeholder``, so a rail that moved it between the read and this
+    write keeps its answer. Returns whether the row moved.
+    """
+    result = await session.execute(
+        text(
+            "UPDATE events SET commence_time = :announced, "
+            "commence_time_source = 'espn' "
+            "WHERE id = :eid AND commence_time = :placeholder "
+            "AND status = 'scheduled'"
+        ),
+        {"announced": announced, "placeholder": placeholder, "eid": event_id},
+    )
+    return (getattr(result, "rowcount", 0) or 0) == 1

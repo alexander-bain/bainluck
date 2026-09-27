@@ -4986,6 +4986,11 @@ def mark_espn_start_placeholders(self, apply=True):
     false`` at the row's own minute. An explicit ``true`` clears the mark. See
     ``tasks/espn_start_placeholders``.
 
+    #8841: a row whose stored start carries a placeholder mark (ESPN's or
+    StatPal's) takes ESPN's announced start once the board says ``timeValid:
+    true`` on the same Eastern date — the Wild Card rows sat on StatPal's
+    20:00Z with the first pitch public.
+
     `apply=False` plans and writes nothing."""
     from app.tasks.espn_start_placeholders import (
         _run_mark_espn_start_placeholders,
