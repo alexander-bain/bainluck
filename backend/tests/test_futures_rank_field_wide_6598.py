@@ -331,10 +331,11 @@ def test_the_stale_row_a_poll_never_saw_keeps_its_age(session):
 #   futures.py                     1  the odds_api pass
 #   kalshi.py                      2  main poll · linked-series refresh (#3518/#4356)
 #   polymarket.py                  2  main poll · dark-linked-book pass (#3613)
-#   futures_price_refresh.py       4  polymarket write+retire · kalshi write ·
+#   futures_price_refresh.py       5  polymarket write+retire · kalshi write ·
 #                                     the pre-kick-off withdrawal · the delisted
 #                                     retirement (inside the helper, so both of
-#                                     ITS callers are covered by one)
+#                                     ITS callers are covered by one) · the
+#                                     condition-twin write (#4983)
 #   tournament_price_refresh.py    1  one PARTITION BY statement per pass
 #   kalshi_ws.py                   1  per flush
 #   polymarket_ws.py               1  per flush
@@ -349,7 +350,7 @@ WIRED_WRITERS = {
     "tasks/futures.py": 1,
     "tasks/kalshi.py": 2,
     "tasks/polymarket.py": 2,
-    "tasks/futures_price_refresh.py": 4,
+    "tasks/futures_price_refresh.py": 5,
     "tasks/tournament_price_refresh.py": 1,
     "tasks/kalshi_ws.py": 1,
     "tasks/polymarket_ws.py": 1,

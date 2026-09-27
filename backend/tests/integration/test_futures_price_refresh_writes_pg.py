@@ -1474,3 +1474,216 @@ class TestTheWindowWriteOnPostgres8871:
             )
         ).scalar()
         assert exp == backstop
+
+
+# ── #4983 — A CONDITION PRICED ON ONE ROW IS PRICED ON EVERY ROW THAT CARRIES IT ──
+#
+# Reader-visible 2026-09-27 03:30Z, `/search?q=dodgers`: one venue question
+# printed twice on the same page — the parent ladder's Dodgers leg (bare
+# condition `0x298b…`, written by this task's :50 beat) at 71%, the standalone
+# sub-market row for the SAME condition (`<cid>_yes` / `<cid>_no`) at 49.5% from
+# the day before. `_write_prices` is market-scoped, so the addressed row moved and
+# its twin did not. Seeded here exactly as `_process_event_batch` stores a Gamma
+# event: one parent keyed on the event id, one sub-market keyed on the condition.
+
+_TWIN_EVENT = "425048"
+_CID_DODGERS = "0x" + "298b" * 16
+_CID_YANKEES = "0x" + "a1a1" * 16
+
+
+async def _seed_gamma_event_twins(session, *, twin_status="open", twin_graded=False):
+    from app.models.models import FuturesMarket, FuturesOutcome
+
+    future = datetime.now(timezone.utc) + timedelta(days=30)
+    stale = datetime.now(timezone.utc) - timedelta(hours=18)
+    parent = FuturesMarket(
+        source="polymarket",
+        external_id=_TWIN_EVENT,
+        name="MLB: Team to win 100+ games",
+        category="futures",
+        status="open",
+        resolution_date=future,
+        group_id=f"polymarket:{_TWIN_EVENT}",
+        market_metadata={"polymarket_event_id": _TWIN_EVENT},
+    )
+    twin = FuturesMarket(
+        source="polymarket",
+        external_id=_CID_DODGERS,
+        name="Will the Los Angeles Dodgers win 100 or more games?",
+        category="futures",
+        status=twin_status,
+        resolution_date=future,
+        group_id=f"polymarket:{_TWIN_EVENT}",
+        market_metadata={"polymarket_event_id": _TWIN_EVENT},
+    )
+    unrelated = FuturesMarket(
+        source="polymarket",
+        external_id="0x" + "dead" * 16,
+        name="Will the Dodgers win the World Series?",
+        category="futures",
+        status="open",
+        resolution_date=future,
+    )
+    session.add_all([parent, twin, unrelated])
+    await session.flush()
+
+    def _leg(market, ext, name, p):
+        return FuturesOutcome(
+            market_id=market.id,
+            external_id=ext,
+            name=name,
+            is_winner=False,
+            current_probability=p,
+            last_updated=stale,
+        )
+
+    legs = {
+        "parent_dodgers": _leg(parent, _CID_DODGERS, "Los Angeles Dodgers", 0.52),
+        "parent_yankees": _leg(parent, _CID_YANKEES, "New York Yankees", 0.10),
+        "twin_yes": _leg(twin, f"{_CID_DODGERS}_yes", "Yes", 0.495),
+        "twin_no": _leg(twin, f"{_CID_DODGERS}_no", "No", 0.505),
+        "unrelated_yes": _leg(unrelated, "0x" + "dead" * 16 + "_yes", "Yes", 0.20),
+    }
+    if twin_graded:
+        legs["twin_yes"].resolution_source = "api_settlement"
+        legs["twin_no"].resolution_source = "api_settlement"
+    session.add_all(legs.values())
+    await session.flush()
+    return parent, twin, unrelated, legs
+
+
+def _event_priced():
+    """The two items `_fetch_polymarket_prices` builds for the Gamma event."""
+
+    def _item(cid, p, bid, ask):
+        return {
+            "external_id": cid,
+            "probability": p,
+            "yes_bid": bid,
+            "yes_ask": ask,
+            "last_price": p,
+            "no": {
+                "probability": 1.0 - p,
+                "yes_bid": 1.0 - ask,
+                "yes_ask": 1.0 - bid,
+                "last_price": 1.0 - p,
+            },
+        }
+
+    return [_item(_CID_DODGERS, 0.71, 0.69, 0.73), _item(_CID_YANKEES, 0.12, 0.11, 0.13)]
+
+
+async def _prob(session, outcome_id):
+    from sqlalchemy import text
+
+    return float(
+        (
+            await session.execute(
+                text("SELECT current_probability FROM futures_outcomes WHERE id = :i"),
+                {"i": outcome_id},
+            )
+        ).scalar()
+    )
+
+
+class TestAConditionTwinIsPricedWithItsSibling:
+    async def test_the_addressed_write_alone_leaves_the_twin_stale(self, db):
+        """THE STRAWMAN — the defect as production had it. Without this the
+        assertions below would also pass on a writer that already reached twins."""
+        from app.tasks.futures_price_refresh import _write_prices
+
+        parent, _twin, _u, legs = await _seed_gamma_event_twins(db)
+        stats = {"unknown_outcomes": 0}
+        await _write_prices(db, parent.id, "polymarket", _event_priced(), stats)
+        await db.commit()
+
+        assert await _prob(db, legs["parent_dodgers"].id) == pytest.approx(0.71)
+        assert await _prob(db, legs["twin_yes"].id) == pytest.approx(0.495)
+
+    async def test_the_twin_reads_the_same_number_as_its_sibling(self, db):
+        from app.tasks.futures_price_refresh import (
+            _write_condition_twins,
+            _write_prices,
+        )
+
+        parent, twin, _u, legs = await _seed_gamma_event_twins(db)
+        stats = {"unknown_outcomes": 0, "errors": []}
+        priced = _event_priced()
+        await _write_prices(db, parent.id, "polymarket", priced, stats)
+        await db.commit()
+        await _write_condition_twins(db, priced, [parent.id], stats)
+
+        assert stats["errors"] == []
+        assert await _prob(db, legs["twin_yes"].id) == pytest.approx(0.71)
+        assert await _prob(db, legs["twin_no"].id) == pytest.approx(0.29)
+        assert await _snapshot_count(db, legs["twin_yes"].id) == 1
+        assert await _snapshot_count(db, legs["twin_no"].id) == 1
+        assert stats["twin_markets_priced"] == 1
+        assert stats["twin_snapshots_written"] == 2
+        # Handed only its own condition: the Yankees item is not billed as an
+        # outcome the twin failed to place.
+        assert stats["unknown_outcomes"] == 0
+
+    async def test_the_addressed_row_is_not_written_twice(self, db):
+        from app.tasks.futures_price_refresh import (
+            _write_condition_twins,
+            _write_prices,
+        )
+
+        parent, _twin, _u, legs = await _seed_gamma_event_twins(db)
+        stats = {"unknown_outcomes": 0, "errors": []}
+        priced = _event_priced()
+        await _write_prices(db, parent.id, "polymarket", priced, stats)
+        await db.commit()
+        await _write_condition_twins(db, priced, [parent.id], stats)
+
+        assert await _snapshot_count(db, legs["parent_dodgers"].id) == 1
+        assert await _snapshot_count(db, legs["parent_yankees"].id) == 1
+
+    async def test_a_row_carrying_no_priced_condition_is_untouched(self, db):
+        from app.tasks.futures_price_refresh import _write_condition_twins
+
+        parent, _twin, _u, legs = await _seed_gamma_event_twins(db)
+        stats = {"unknown_outcomes": 0, "errors": []}
+        await _write_condition_twins(db, _event_priced(), [parent.id], stats)
+
+        assert await _prob(db, legs["unrelated_yes"].id) == pytest.approx(0.20)
+        assert await _snapshot_count(db, legs["unrelated_yes"].id) == 0
+
+    async def test_a_settled_twin_market_is_not_repriced(self, db):
+        from app.tasks.futures_price_refresh import _write_condition_twins
+
+        parent, _twin, _u, legs = await _seed_gamma_event_twins(db, twin_status="resolved")
+        stats = {"unknown_outcomes": 0, "errors": []}
+        await _write_condition_twins(db, _event_priced(), [parent.id], stats)
+
+        assert await _prob(db, legs["twin_yes"].id) == pytest.approx(0.495)
+        assert stats.get("twin_markets_priced", 0) == 0
+
+    async def test_a_graded_twin_leg_is_not_repriced(self, db):
+        from app.tasks.futures_price_refresh import _write_condition_twins
+
+        parent, _twin, _u, legs = await _seed_gamma_event_twins(db, twin_graded=True)
+        stats = {"unknown_outcomes": 0, "errors": []}
+        await _write_condition_twins(db, _event_priced(), [parent.id], stats)
+
+        assert await _prob(db, legs["twin_yes"].id) == pytest.approx(0.495)
+        assert await _snapshot_count(db, legs["twin_yes"].id) == 0
+
+    async def test_the_reach_is_symmetric_a_sub_market_write_reaches_the_ladder(self, db):
+        """The same lookup from the other side: when the addressed row is the
+        sub-market, the parent ladder's bare leg is the twin."""
+        from app.tasks.futures_price_refresh import (
+            _write_condition_twins,
+            _write_prices,
+        )
+
+        _parent, twin, _u, legs = await _seed_gamma_event_twins(db)
+        stats = {"unknown_outcomes": 0, "errors": []}
+        priced = _event_priced()
+        await _write_prices(db, twin.id, "polymarket", priced, stats)
+        await db.commit()
+        await _write_condition_twins(db, priced, [twin.id], stats)
+
+        assert await _prob(db, legs["parent_dodgers"].id) == pytest.approx(0.71)
+        assert await _prob(db, legs["parent_yankees"].id) == pytest.approx(0.12)
