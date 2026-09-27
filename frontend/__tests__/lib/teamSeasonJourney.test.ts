@@ -1,5 +1,6 @@
 // L2-162: season-journey line picker — tier priority + eligibility.
-import { pickJourneyFuture } from "../../lib/teamSeasonJourney";
+import { isPlayerDestinationMarket, pickJourneyFuture } from "../../lib/teamSeasonJourney";
+import { teamHeadline } from "../../lib/teamHeadline";
 import type { TeamFutureItem } from "../../lib/api";
 
 function item(overrides: Partial<TeamFutureItem>): TeamFutureItem {
@@ -52,5 +53,54 @@ describe("pickJourneyFuture", () => {
     expect(pickJourneyFuture([])).toBeNull();
     expect(pickJourneyFuture(null)).toBeNull();
     expect(pickJourneyFuture([item({ probability: null })])).toBeNull();
+  });
+});
+
+// #9113: LAFC's page read `CHAMPIONSHIP 1%` — the 1% was Kalshi's "Neymar: Next
+// Club" (market 11372050, tier 5, outcome "LAFC"), the only future LAFC carried.
+describe("player-destination markets never stand in for a team's season (#9113)", () => {
+  const neymar = item({
+    market_id: 11372050,
+    outcome_id: 64410243,
+    outcome_name: "LAFC",
+    market_name: "Neymar: Next Club",
+    market_tier: 5,
+    category: "soccer",
+    probability: 0.01,
+  });
+
+  test("the LAFC payload has no journey and no hero number", () => {
+    expect(pickJourneyFuture([neymar])).toBeNull();
+    expect(teamHeadline([], [neymar])).toBeNull();
+  });
+
+  test("a real season market still wins when a destination market sits beside it", () => {
+    const cup = item({ market_id: 7, outcome_id: 70, market_name: "MLS Cup Winner", market_tier: 5, probability: 0.004 });
+    const pick = pickJourneyFuture([{ ...neymar, probability: 0.3 }, cup]);
+    expect(pick?.marketId).toBe(7);
+    expect(teamHeadline([], [{ ...neymar, probability: 0.3 }, cup])?.probability).toBe(0.004);
+  });
+
+  test.each([
+    "Neymar: Next Club",
+    "David Alaba: Next Club (League)",
+    "Kevin Durant's Next Team",
+    "Baker Mayfield Next Team",
+    "Kenneth Walker III's next team?",
+    "NBA: Steph Curry Next Team",
+    "Where will Cristiano Ronaldo go next?",
+  ])("%s is a player-destination market", (name) => {
+    expect(isPlayerDestinationMarket(name)).toBe(true);
+  });
+
+  test.each([
+    "MLB World Series Winner",
+    "Pro Football Champion",
+    "MLS Cup Winner",
+    "Next Team to Score",
+    "Premier League Winner",
+    "Who will be the next Pope?",
+  ])("%s is not", (name) => {
+    expect(isPlayerDestinationMarket(name)).toBe(false);
   });
 });
