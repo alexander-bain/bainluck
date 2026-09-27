@@ -19,7 +19,7 @@ from types import SimpleNamespace
 from typing import Optional
 
 from sqlalchemy import select, or_, and_, func, delete, case, update, text, bindparam, String
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import defer, joinedload
 from sqlalchemy.orm.attributes import set_committed_value
 
 from app.tasks.base import get_task_session
@@ -9651,6 +9651,22 @@ async def _load_live_poll_population(session, now) -> _LivePollPopulation:
             .nullsfirst(),
             FuturesMarket.id.asc(),
         )
+        # #9047: THE EVENT'S BOX SCORE STAYS IN THE DATABASE. The join hands
+        # back the event once PER MARKET — 8,081 rows on 129 events at
+        # 2026-09-27 19:05Z — and the asyncpg dialect json-decodes every JSONB
+        # value on every row at fetch time, before the identity map collapses
+        # the duplicates. `box_score_data` was 35 MB of that text per read,
+        # ~114 MB of dicts held at once, in a child on a 1 GB dyno that ran
+        # over quota during the NFL slate with this task in flight at 17 of 18
+        # R14s. Nothing on the beat's path reads it. `raiseload` so a future
+        # reader fails loudly by name instead of lazy-loading inside the async
+        # session.
+        #
+        # `win_probability_sources` (7 MB) is NOT deferred, though the beat's
+        # own code only orders on it in SQL: `_check_and_fix_inversion` calls
+        # `session.get(Event, ...)`, which returns THIS identity-mapped row, and
+        # reads the attribute off it. A deferred column there would raise.
+        .options(defer(Event.box_score_data, raiseload=True))
     )
     rows = list(result.all())
 
