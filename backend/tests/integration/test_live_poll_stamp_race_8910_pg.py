@@ -111,17 +111,43 @@ async def pg():
 
 
 async def _ws_stamp(Session, event_id: int) -> None:
-    """The WS lane's write, from its own session: Kalshi, then Polymarket."""
+    """The WS lane's write, from its own session: Kalshi, then Polymarket.
+
+    #8910 other-writers repair: the stamp carries the WS lane's observation
+    basis, as the real lane's does. The socket re-observes the Kalshi rows
+    (its flush touches `last_updated`) and dates its stamp by exactly those
+    clocks — that is what makes it a LATER observation than the poll's reading,
+    which the poll now compares row by row instead of against `updated_at`.
+    """
     from app.models.models import Event
     from app.tasks.live_blend_refresh import atomic_stamp_expression
 
     async with Session() as ws:
-        for source, value in (("kalshi", WS_KALSHI), ("polymarket", WS_POLYMARKET)):
+        seen = (
+            await ws.execute(
+                text(
+                    "UPDATE futures_outcomes o SET last_updated = clock_timestamp() "
+                    "  FROM futures_markets m "
+                    " WHERE o.market_id = m.id AND m.source = 'kalshi' "
+                    "   AND m.event_id = :eid "
+                    "RETURNING o.id, extract(epoch FROM o.last_updated)"
+                ),
+                {"eid": event_id},
+            )
+        ).all()
+        assert seen, "control: the socket found no Kalshi rows to observe"
+        basis = {str(row_id): float(epoch) for row_id, epoch in seen}
+        for source, value, observed in (
+            ("kalshi", WS_KALSHI, basis),
+            ("polymarket", WS_POLYMARKET, None),
+        ):
             await ws.execute(
                 update(Event)
                 .where(Event.id == event_id)
                 .values(
-                    win_probability_sources=atomic_stamp_expression(source, value)
+                    win_probability_sources=atomic_stamp_expression(
+                        source, value, observed_basis=observed,
+                    )
                 )
             )
         await ws.commit()

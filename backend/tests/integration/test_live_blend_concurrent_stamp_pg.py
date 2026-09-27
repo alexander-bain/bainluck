@@ -617,8 +617,12 @@ async def _concurrent_refresh_frames(engine, monkeypatch, *, prelock_control):
         # otherwise unchanged. This must make the newer aggregate look older.
         real_expression = lbr.atomic_stamp_expression
 
-        def old_clock(source, value, stamped_at=None, eligibility=None):
-            return real_expression(source, value, before_lock[source], eligibility)
+        def old_clock(
+            source, value, stamped_at=None, eligibility=None, observed_basis=None,
+        ):
+            return real_expression(
+                source, value, before_lock[source], eligibility, observed_basis,
+            )
 
         monkeypatch.setattr(lbr, "atomic_stamp_expression", old_clock)
 

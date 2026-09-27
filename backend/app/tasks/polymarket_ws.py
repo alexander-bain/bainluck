@@ -382,7 +382,7 @@ def _log_stats_line(stats: dict, ws_stats: dict, blend: dict) -> None:
         "Polymarket WS: %d prices, %d trades, %d resolutions, %d errors, "
         "%d msgs | coverage shards=%d/%d served=%d/%d wire=%d by_shard=%s "
         "| blend stamped=%d no_reading=%d throttled=%d errors=%d lock_skipped=%d "
-        "unobserved=%d",
+        "unobserved=%d stale=%d",
         stats["price_updates"], stats["trade_updates"],
         stats["resolutions"], stats["errors"],
         ws_stats.get("messages", 0),
@@ -397,6 +397,8 @@ def _log_stats_line(stats: dict, ws_stats: dict, blend: dict) -> None:
         blend.get("lock_skipped", 0),
         # #5661: unchanged prices not re-dated because no writer re-read them.
         blend.get("unobserved_skipped", 0),
+        # #8910: readings refused as older than the stored observation.
+        blend.get("stale_readings_refused", 0),
     )
 
 
