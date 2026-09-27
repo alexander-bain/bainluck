@@ -108,10 +108,24 @@ _THEME_BY_TICKER: list[tuple[str, str]] = [
 # bills series carries `llm_sport_category = 'politics'`, so the category arm
 # fetches them and the prefix still labels them here — no politics row changes
 # theme, and the cold build loses three unindexable arms.
+#
+# #9171 — the same collision inside the category arm, so no query change can
+# reach it: `KXGOVT*` is Kalshi's federal-GOVERNMENT family, tagged `politics`,
+# and the bare `kxgov` label filed "How much government spending will Trump cut
+# before 2027?" as the second card under Gubernatorial. Each non-governor series
+# is NAMED, ahead of `kxgov` (first match wins). 🔴 Never widen these to a
+# `kxgovt` prefix: `KXGOVTXNOMD` is the Texas governor nominee, and a Tennessee
+# race would be `KXGOVTN`.
 _THEME_BY_TICKER_CLASSIFY_ONLY: list[tuple[str, str]] = [
     ("controlh-", "congressional"),
     ("controls-", "congressional"),
     ("kxpres", "presidential"),
+    ("kxgovtcuts", "policy"),        # How much government spending will Trump cut?
+    ("kxgovtshut", "policy"),        # KXGOVTSHUTDOWN, KXGOVTSHUTLENGTH
+    ("kxgovtfunds", "policy"),       # Senators voting for the next funding bill
+    ("kxgovtspend", "policy"),       # Government spending increase
+    ("kxgovaikillswitch", "policy"),  # a government AI kill switch
+    ("kxgovbal", "other"),           # a country's budget balance (FRA, China, …)
     ("kxgov", "gubernatorial"),
     ("kxbill", "policy"),
 ]
