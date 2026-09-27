@@ -870,6 +870,17 @@ HEAVY_TASKS = {
     "app.tasks.precompute_source_intelligence",
     "app.tasks.snapshot_coverage_metrics",
     "app.tasks.precompute_backfill_winners_status",
+    # #8905 — the sportsbook-curve writer, the one member of this family that was
+    # still on `background`. Every main-app release SIGTERMs `worker-background`,
+    # and a run now takes ~332 s: the three runs after #8905's durable survivor
+    # went live (22:55Z, 00:55Z, 02:55Z 9/26-27) were ALL torn down by releases
+    # (v5122, v5136, v5141, `SystemExit(-241)`), so the survivor row was never
+    # written and the 24h key had no second copy. `worker-heavy` lives in
+    # `bainluck-heavy`, which a main-app release does not cycle. Cost on heavy:
+    # ~332 s x 12 = ~66 min/day, ~4.6% of one of its two slots, at :55 on even
+    # hours — clear of the :15 rebuild (soft-capped at 1500 s, done by :40) and of
+    # compute-calibration-prices at :10.
+    "app.tasks.precompute_bookmaker_calibration",
     # Sentinels (Queue #233): moved off `background` because the morning beats
     # (flow 07:10 / grid 07:25 / horizon 07:40 / settled 07:45 UTC) were dying
     # as no_run_cached on the congested ~40-beat, 2-slot background queue
@@ -8395,9 +8406,16 @@ celery_app.conf.beat_schedule = {
         # root-ward one and is deliberately NOT taken here: it redelivers on any
         # worker loss, including losses redelivery cannot cure, which is a
         # poison-message shape on a task nobody watches at 01:00Z.
+        #
+        # 🔴 #8905: twelve chances stopped being enough once the run grew to
+        # ~332 s and releases landed every 20-40 min — all three fires after the
+        # durable survivor shipped died to a release. The writer is now in
+        # HEAVY_TASKS (reason and slot cost at that entry), so it runs on
+        # `worker-heavy` in `bainluck-heavy`, which main-app releases do not
+        # cycle. The cadence stays: the watchdog and its 6h-gap bound read it.
         "task": "app.tasks.precompute_bookmaker_calibration",
         "schedule": crontab(minute=55, hour="*/2"),
-        "options": {"queue": "background"},
+        "options": {"queue": "heavy"},
     },
     "sync-polymarket-resolved-status": {
         "task": "app.tasks.sync_polymarket_resolved",
