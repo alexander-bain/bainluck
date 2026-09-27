@@ -327,8 +327,9 @@ class TestTheEvidenceCannotSeparateTheTwoCauses:
 class TestTheChartsFurnitureIsUnaffected:
     def test_markers_span_and_final_result_match_the_stored_trace(self):
         """REAL. Removing the filter must move the score line and NOTHING else.
-        The drawn span runs the full stored extent, the four period markers keep
-        the positions #5140/#6718 give them, and the line still ends on the
+        The drawn span runs the full stored extent, the period markers keep
+        the positions #5140/#6718 give them (plus #9179's Q1, bracketed by the
+        clock leaving `15:00` between 00:25:35 and 00:26:35), and the line still ends on the
         stored final score. Marker timestamps are pinned as literals because
         `score_history` and the markers are both derived in this route — a
         change that let one disturb the other would otherwise pass unseen."""
@@ -338,6 +339,7 @@ class TestTheChartsFurnitureIsUnaffected:
                 payload["score_history"][-1]["timestamp"]) == (
             stored[0]["timestamp"], stored[-1]["timestamp"])
         assert [(m["period"], m["timestamp"][11:19]) for m in payload["period_markers"]] == [
+            ("1st Quarter", "00:26:35"),
             ("2nd Quarter", "00:58:35"),
             ("Halftime", "01:54:35"),
             ("3rd Quarter", "02:09:35"),
