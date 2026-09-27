@@ -183,8 +183,19 @@ final class CalibrationViewModel: ObservableObject {
     /// count". A field the server omitted is unknown, and printing `0` for it is
     /// a number the reader cannot tell from a measured one (L2-231 Item 1).
     var formattedTotalOutcomes: String { data?.totalOutcomes.map(Self.fmt) ?? "\u{2014}" }
-    var formattedMarkets: String { data?.totalMarkets.map(Self.fmt) ?? "\u{2014}" }
     var formattedCohortOutcomes: String { data == nil ? "\u{2014}" : Self.fmt(cohortN) }
+
+    /// #8985 — the stat row's third tile, web's Sources card (`cohortProviderGroups`):
+    /// one per provider holding outcomes in the active cohort. A provider the
+    /// cohort empties is web's `no-cohort-data` row and is not counted, so the
+    /// tile cannot count a source whose Source Comparison row says it has nothing.
+    ///
+    /// It replaced a MARKETS tile printing `total_markets`, which is
+    /// `count(*) WHERE status='resolved'` over the whole futures table — 1,183,348
+    /// against a 505,595-outcome curve on 2026-09-27, more markets than outcomes.
+    /// That number never described this curve; web stopped printing it in July.
+    var cohortSourceCount: Int { sourceRows.filter { $0.state != .noCohortData }.count }
+    var formattedCohortSources: String { data == nil ? "\u{2014}" : String(cohortSourceCount) }
 
     /// The population the hero claims to have analyzed, as the whole clause —
     /// the native equivalent of web's `describeCohort().heroClause`.

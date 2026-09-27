@@ -295,6 +295,6 @@ final class CalibrationParityTests: XCTestCase {
         XCTAssertEqual(CalibrationSurfaceView.outcomesHook, "calibration-stat-outcomes")
         XCTAssertEqual(CalibrationSurfaceView.eceHook, "calibration-stat-ece")
         XCTAssertEqual(CalibrationSurfaceView.brierHook, "calibration-stat-brier")
-        XCTAssertEqual(CalibrationSurfaceView.marketsHook, "calibration-stat-markets")
+        XCTAssertEqual(CalibrationSurfaceView.sourcesHook, "calibration-stat-sources")
     }
 }
