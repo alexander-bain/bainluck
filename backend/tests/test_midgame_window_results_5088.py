@@ -39,6 +39,8 @@ gate at all.
 
 from __future__ import annotations
 
+import contextlib
+
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -350,6 +352,10 @@ class _RecordingSession:
             return _FakeResult(self._events)
         self.writes.append((statement, params))
         return _FakeResult([])
+
+    def begin_nested(self):
+        # #8913: the live box-score write runs in a per-game SAVEPOINT.
+        return contextlib.nullcontext()
 
 
 def _live_event(event_id: int, sport_key: str = "baseball_mlb"):
