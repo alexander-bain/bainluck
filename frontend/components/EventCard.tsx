@@ -588,9 +588,12 @@ export default function EventCard({
   // Short team names for compact display. UX-1065 (#2936): the last word alone
   // renders "Town" for Ipswich Town and "FC" for both sides of an FC-vs-FC
   // fixture, so the pair is decided together in `lib/teamShortName.ts`.
+  // #5634 — with the sport, a football club keeps its name: the finished score
+  // strip reads "UNION BERLIN", not "BERLIN".
   const { home: homeShort, away: awayShort } = teamShortNames(
     { name: event.home_team, abbreviation: event.home_team_data?.abbreviation },
     { name: event.away_team, abbreviation: event.away_team_data?.abbreviation },
+    event.sport,
   );
 
   return (
@@ -1030,7 +1033,7 @@ export default function EventCard({
                 <span className="text-text-muted">
                   Opened{" "}
                   <span className="font-mono text-text-secondary">
-                    {teamShortNames({ name: event.home_team }, { name: event.away_team }).home} {openedHomePct}%
+                    {teamShortNames({ name: event.home_team }, { name: event.away_team }, event.sport).home} {openedHomePct}%
                   </span>
                 </span>
               ) : isLive && opening && openedHomePct !== null && openedAwayPct !== null ? (

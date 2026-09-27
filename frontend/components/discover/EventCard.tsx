@@ -417,6 +417,7 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
                   const pair = teamShortNames(
                     { name: data.home_team },
                     { name: data.away_team },
+                    data.sport,
                   );
                   return data.home_score > data.away_score ? pair.home : pair.away;
                 })()} won
