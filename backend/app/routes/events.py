@@ -3004,6 +3004,40 @@ def _typeahead_team_sport_category(team_pool: list[dict]) -> str | None:
     return next(iter(categories))
 
 
+def _typeahead_fold_twins(events: list, promoted_ids: set) -> list:
+    """#9102: the dropdown runs the twin fold `/search` already runs.
+
+    `collapse_duplicate_fixtures` is a dominance test scoped to individual
+    sports, so every twin shape `fold_twin_events` learned since — exact-minute
+    same league, season variants (#7915), an id-less claim minutes off (#8100),
+    a catch-all league (#5576) — reached the dropdown and nowhere else.
+    Production 2026-09-27 08:47Z, `/typeahead?q=illawarra`: tonight's live
+    "Illawarra Hawks at Sydney Kings" twice (`15319209` Odds API, `15316536`
+    Polymarket-born), while `/search?q=illawarra` drew it once.
+
+    Only the DROP matters here: the dropdown prints no price, so the fold's
+    `merged_sources` is not delivered. The survivor is the row `/search`
+    serves, so the suggestion opens the same page. A twin that earned a slot by
+    id (`promoted_ids`, the lead team's own fixtures) hands that promotion to
+    the row that absorbed it — otherwise folding could demote the lead team's
+    game below somebody else's.
+
+    Gotcha #42: a fold failure serves the collapsed rows, which is the dropdown
+    as it was before this helper existed.
+    """
+    if len(events) < 2:
+        return events
+    try:
+        fold = fold_twin_events(events)
+    except Exception:  # noqa: BLE001 — gotcha #42; the collapsed rows are today's
+        logger.exception("typeahead twin fold failed; serving the collapsed rows")
+        return events
+    for dropped_id, survivor_id in fold.survivor_of.items():
+        if dropped_id in promoted_ids:
+            promoted_ids.add(survivor_id)
+    return fold.events
+
+
 def _typeahead_stem_only_event(
     participants: tuple[str | None, str | None],
     expanded: list[tuple[str, str | None]],
@@ -11830,6 +11864,9 @@ async def typeahead_search(
     # same first-round match twice, "Alcaraz at Faria 5:00 PM" beside "Carlos
     # Alcaraz at Jaime Faria 5:10 PM". Same collapse, same helper.
     _ta_events, _ = collapse_duplicate_fixtures(_ta_rows)
+    # #9102: and the same twin fold /search runs, before the pool cut, so a
+    # twin cannot spend one of the four slots.
+    _ta_events = _typeahead_fold_twins(_ta_events, _ta_lead_team_row_ids)
     # #8488: a team query drops the fixtures only the stemmer admitted (`angels`
     # -> "Los Angeles Sparks"). Before the pool cut, so the slot goes to a row
     # that names the team; the helper says why substring and nickname rows stay.
