@@ -523,6 +523,43 @@ def espn_stopped_without_result(status_type: dict) -> bool:
     return state == "post" and status_type.get("completed") is not True
 
 
+def espn_not_started_state(status_type: dict) -> bool:
+    """``True`` when ESPN's own ``state`` says this competition has NOT begun.
+
+    **WHY THE NAME WAS NOT ENOUGH (#5324, delayed start).** `_parse_event`
+    translated exactly one not-started name, ``STATUS_SCHEDULED``, and every
+    other name fell through to its raw lowercase form. The whole not-started
+    machinery — the pre-game filler refusal, the filler withdrawal, the
+    authority demotion and the promoter's hold — keys on ``"scheduled"``, so a
+    game ESPN delayed BEFORE its first pitch reached none of it. Measured on
+    production 2026-09-27 17:28Z (notice 26 — ESPN's own board):
+
+        401817103 BAL @ NYY  STATUS_RAIN_DELAY  state=pre  id=17
+                             detail 'Rain Delay', displayClock '0:00', 0-0
+        ours 15319530        status 'live', period 'Rain Delay', clock '0:00', 0-0
+        MLB 823490           'Delayed Start' (Preview, reason Rain)
+
+    The clock promoted the row at its listed 17:05Z start, the live pass copied
+    the board's filler onto it, and search read ``● LIVE`` Yankees 0 Orioles 0
+    for a game nobody had started.
+
+    **``state`` IS THE CLOSED FIELD**, the reason `espn_terminal_state` and
+    `espn_stopped_without_result` read it: ``pre``/``in``/``post`` is ESPN's own
+    three-valued answer, so a pre-game name nobody has written down yet
+    (``STATUS_DELAYED`` published as ``pre``, a TBD) is covered without a list.
+
+    **What it deliberately does NOT catch: ``STATUS_DELAYED`` as ``state="in"``**
+    — ESPN publishes that both before a ball is bowled and mid-game, and it stays
+    the raw ``status_delayed`` that every not-started predicate is silent on.
+    Nothing ``pre`` carries a result, and a non-zero board score still lands
+    through `update_event_fields_from_espn`'s safety valve, so a board that says
+    ``pre`` with play on it is not blanked.
+    """
+    if not isinstance(status_type, dict):
+        return False
+    return str(status_type.get("state") or "").strip().lower() == "pre"
+
+
 class ESPNAPIService:
     """Client for ESPN's public API endpoints."""
 
@@ -1059,6 +1096,10 @@ class ESPNAPIService:
                 status = "in"
             elif status_name == "status_final":
                 status = "post"
+            elif espn_not_started_state(status_type):
+                # #5324 (delayed start): ESPN's own `pre` under a name other
+                # than STATUS_SCHEDULED — STATUS_RAIN_DELAY before first pitch.
+                status = "scheduled"
             else:
                 status = espn_terminal_state(status_type) or status_name
 
