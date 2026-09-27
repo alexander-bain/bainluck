@@ -1,0 +1,77 @@
+import SwiftUI
+import Charts
+import Combine
+
+/// Finger movement belongs to the small selection layers, not the plot's owner.
+/// OddsChartView stores this reference in @State (NOT @StateObject): only the
+/// crosshair and readout subscribe, so selecting never rebuilds the data marks.
+final class OddsChartSelection: ObservableObject {
+    @Published private(set) var date: Date?
+    private var scrub = ChartScrubState()
+
+    var holdsTheScrollStill: Bool { scrub.scrubs }
+
+    func change(date: Date?, translation: CGSize) {
+        scrub.change(width: translation.width, height: translation.height)
+        select(scrub.scrubs ? date : nil)
+    }
+
+    func hold(date: Date?) {
+        scrub.hold()
+        select(date)
+    }
+
+    func select(_ date: Date?) {
+        guard self.date != date else { return }
+        self.date = date
+    }
+
+    func end() {
+        scrub.end()
+        select(nil)
+    }
+}
+
+struct OddsChartSelectionReadout: View {
+    @ObservedObject var selection: OddsChartSelection
+    let readout: GamePlayCardView
+    let dataPoints: [ChartDataPoint]
+    let sportKey: String?
+
+    var body: some View {
+        let point = selection.date.flatMap { OddsChartView.nearestSnapshot(to: $0, in: dataPoints) }
+        readout
+            .resting(on: OddsChartView.restingPlayPoint(in: dataPoints, sportKey: sportKey))
+            .showing(point.map { OddsChartView.playPoint(for: $0, sportKey: sportKey) })
+    }
+}
+
+/// A line in plot coordinates, not a RuleMark in the data series. Its position
+/// can change without asking Swift Charts to lay out every observed point.
+struct OddsChartSelectionOverlay: View {
+    @ObservedObject var selection: OddsChartSelection
+    let proxy: ChartProxy
+    let plotFrame: CGRect
+    let dataPoints: [ChartDataPoint]
+    let homeShort: String
+    let awayShort: String
+    let moments: [ChartMoment]
+
+    var body: some View {
+        ZStack {
+            if let date = selection.date, let x = proxy.position(forX: date) {
+                Rectangle()
+                    .fill(.primary.opacity(0.4))
+                    .frame(width: 1, height: plotFrame.height)
+                    .position(x: plotFrame.minX + x, y: plotFrame.midY)
+            }
+            Color.clear
+        }
+        .allowsHitTesting(false)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Win probability over time")
+        .accessibilityValue(OddsChartView.accessibilityValue(
+            dataPoints: dataPoints, selectedDate: selection.date,
+            homeShort: homeShort, awayShort: awayShort, moments: moments))
+    }
+}

@@ -256,6 +256,9 @@ final class TheRestingReadoutPrintsWhereTheLineEnds8652Tests: XCTestCase {
             .appendingPathComponent("Bain Luck/Components/OddsChartView.swift")
         let chart = try String(contentsOf: url, encoding: .utf8)
         XCTAssertEqual(chart.components(
-            separatedBy: "readout.resting(on: Self.restingPlayPoint(in: dataPoints, sportKey: sportKey))").count - 1, 2)
+            separatedBy: "OddsChartSelectionReadout(selection: selection, readout: readout, dataPoints: dataPoints, sportKey: sportKey)").count - 1, 2)
+        let selectionURL = url.deletingLastPathComponent().appendingPathComponent("OddsChartSelection.swift")
+        let selection = try String(contentsOf: selectionURL, encoding: .utf8)
+        XCTAssertTrue(selection.contains(".resting(on: OddsChartView.restingPlayPoint(in: dataPoints, sportKey: sportKey))"))
     }
 }

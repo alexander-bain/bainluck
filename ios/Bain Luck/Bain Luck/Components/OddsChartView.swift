@@ -264,6 +264,23 @@ final class OddsChartViewModel: ObservableObject {
         pointsMemo = (historyGeneration, liveFrames, points)
         return points
     }
+    private var enrichedMemo: (generation: Int, liveFrames: [LiveBlendPoint], points: [ChartDataPoint])?
+    /// Nonpublishing seam for the actual render-path regression test. It is nil
+    /// in the app and never schedules rendering or runs on a recurring timer.
+    var onPlotBuild: (() -> Void)?
+    private(set) var enrichmentBuildCount = 0
+
+    func enrichedChartPoints(liveFrames: [LiveBlendPoint]) -> [ChartDataPoint] {
+        guard let history else { return [] }
+        if let memo = enrichedMemo, memo.generation == historyGeneration, memo.liveFrames == liveFrames {
+            return memo.points
+        }
+        let points = OddsChartView.enrichWithGameState(chartPoints(liveFrames: liveFrames), history: history)
+        enrichmentBuildCount += 1
+        enrichedMemo = (historyGeneration, liveFrames, points)
+        return points
+    }
+
     @Published var loading = true
     @Published var error: String?
 
@@ -372,18 +389,10 @@ struct OddsChartView: View {
     /// `@Published` on this chart's own view model, which is why All could widen
     /// the line here and nowhere else.
     @Binding var selectedRange: OddsTimeRange
-    /// The scrubbed moment the readout prints (#925).
-    ///
-    /// #8651 — the chart's own state, not a binding to the page's. As page
-    /// state every scrub step rebuilt the whole event page and then this chart
-    /// a second time; measured on 14781697, two page rebuilds and two extra
-    /// chart passes per scrub. The readout is drawn inside this chart, so
-    /// nothing above it needs the value.
-    @State private var selectedPlayPoint: GamePlayPoint?
+    /// Only the crosshair/readout observe selection. A reference held in State
+    /// does not subscribe this data-plot owner to finger movement (#8651).
+    @State private var selection: OddsChartSelection
     @StateObject private var vm: OddsChartViewModel
-    @State private var selectedDate: Date?
-    /// #925 — which touches on the plot are a scrub. See `ChartScrubState.scrubs`.
-    @State private var scrub = ChartScrubState()
     @State private var isFullscreen = false
     /// The drawn plot area's width, reported by each chart's own overlay. The
     /// x-axis needs it to know whether its labels clear each other (#3269); 0
@@ -487,7 +496,9 @@ struct OddsChartView: View {
          selectedRange: Binding<OddsTimeRange> = .constant(.sinceStart),
          preloadedHistory: EventHistoryResponse? = nil,
          liveFrames: [LiveBlendPoint] = [],
-         readout: GamePlayCardView? = nil) {
+         readout: GamePlayCardView? = nil,
+         model: OddsChartViewModel? = nil,
+         selection: OddsChartSelection? = nil) {
         self.eventId = eventId
         self.teamColors = teamColors
         self.commenceTime = commenceTime
@@ -507,7 +518,8 @@ struct OddsChartView: View {
         self.preloadedHistory = preloadedHistory
         self.readout = readout
         _selectedRange = selectedRange
-        _vm = StateObject(wrappedValue: OddsChartViewModel(eventId: eventId, preloaded: preloadedHistory))
+        _selection = State(initialValue: selection ?? OddsChartSelection())
+        _vm = StateObject(wrappedValue: model ?? OddsChartViewModel(eventId: eventId, preloaded: preloadedHistory))
     }
 
     /// #3410 — whether the payload holds a single reading, anywhere.
@@ -706,8 +718,7 @@ struct OddsChartView: View {
                     .foregroundStyle(.secondary)
                     .frame(height: chartHeight)
             } else if let history = vm.history {
-                let allPoints = buildDataPoints(history)
-                let enrichedPoints = Self.enrichWithGameState(allPoints, history: history)
+                let enrichedPoints = vm.enrichedChartPoints(liveFrames: liveFrames)
                 let dataPoints = filterPoints(enrichedPoints)
                 let periodMarkers = extractPeriodMarkers(history, filteredPoints: dataPoints)
                 let moments = Self.chartMoments(from: history.moments, points: dataPoints)
@@ -726,7 +737,7 @@ struct OddsChartView: View {
                         .frame(maxWidth: .infinity)
                         .frame(height: chartHeight)
                 } else {
-                    if let readout { readout.resting(on: Self.restingPlayPoint(in: dataPoints, sportKey: sportKey)).showing(selectedPlayPoint) }
+                    if let readout { OddsChartSelectionReadout(selection: selection, readout: readout, dataPoints: dataPoints, sportKey: sportKey) }
                     // Chart with vertical team labels alongside Y-axis
                     HStack(spacing: 0) {
                         // Vertical team labels on left (#2903 — the run is stated so
@@ -771,9 +782,6 @@ struct OddsChartView: View {
                         chartView(dataPoints: dataPoints, sources: history.winProbSources ?? [:],
                                   periodMarkers: periodMarkers, moments: moments,
                                   plotWidth: $inlinePlotWidth, sharesPageAxis: true)
-                            .onChange(of: selectedDate) { _, newDate in
-                                updateSelectedPoint(date: newDate, dataPoints: dataPoints, history: history)
-                            }
                     }
                     .frame(height: chartHeight)
 
@@ -815,8 +823,7 @@ struct OddsChartView: View {
         NavigationView {
             Group {
                 if let history = vm.history {
-                    let allPoints = buildDataPoints(history)
-                    let enrichedPoints = Self.enrichWithGameState(allPoints, history: history)
+                    let enrichedPoints = vm.enrichedChartPoints(liveFrames: liveFrames)
                     let dataPoints = filterPoints(enrichedPoints)
                     let periodMarkers = extractPeriodMarkers(history, filteredPoints: dataPoints)
                     let moments = Self.chartMoments(from: history.moments, points: dataPoints)
@@ -857,7 +864,7 @@ struct OddsChartView: View {
                             }
                             // #925 — fullscreen covers the page, and the page
                             // was the only place a scrub could be read.
-                            if let readout { readout.resting(on: Self.restingPlayPoint(in: dataPoints, sportKey: sportKey)).showing(selectedPlayPoint) }
+                            if let readout { OddsChartSelectionReadout(selection: selection, readout: readout, dataPoints: dataPoints, sportKey: sportKey) }
                             HStack(spacing: 0) {
                                 // #2903 — fullscreen has no fixed chart height, so the
                                 // run is measured rather than assumed.
@@ -1370,17 +1377,11 @@ struct OddsChartView: View {
         visibleMarkers: [PeriodMarker],
         moments: [ChartMoment]
     ) -> some ChartContent {
+        let _ = vm.onPlotBuild?()
         // 50% reference line (single 0–100 axis: even is 0.5)
         RuleMark(y: .value("Even", 0.5))
             .lineStyle(StrokeStyle(lineWidth: 0.5, dash: [4, 4]))
             .foregroundStyle(.gray.opacity(0.4))
-
-        // Selection indicator
-        if let selectedDate {
-            RuleMark(x: .value("Selected", selectedDate))
-                .lineStyle(StrokeStyle(lineWidth: 1.0))
-                .foregroundStyle(.primary.opacity(0.4))
-        }
 
         // Data lines. When the backend blend exists it is the ONLY default line
         // ("the blend is the product" — one number per question); source detail
@@ -1509,10 +1510,6 @@ struct OddsChartView: View {
                          visibleMarkers: visibleMarkers, moments: moments)
         }
         .chartYScale(domain: yMin...yMax)
-        .accessibilityLabel(Text("Win probability over time"))
-        .accessibilityValue(Text(Self.accessibilityValue(
-            dataPoints: dataPoints, selectedDate: selectedDate,
-            homeShort: homeShort, awayShort: awayShort, moments: moments)))
         .chartXScale(domain: domain)
         // Period marker labels positioned inside chart via overlay.
         //
@@ -1554,6 +1551,9 @@ struct OddsChartView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 4))
                         .position(x: plotFrame.minX + placement.centerX, y: 10)
                 }
+                OddsChartSelectionOverlay(selection: selection, proxy: proxy, plotFrame: plotFrame,
+                                          dataPoints: dataPoints, homeShort: homeShort,
+                                          awayShort: awayShort, moments: moments)
                 // #925 — the scrub. `chartXSelection` lost the touch to the
                 // page's scroll the moment a thumb drifted vertically (Alex's
                 // build-20 recording, 14781697). The futures chart solved the
@@ -1567,24 +1567,16 @@ struct OddsChartView: View {
                 ChartScrubSurface(
                     holdToScrub: ChartScrubSurface.gameChartHold,
                     onChange: { location, translation in
-                        scrub.change(width: translation.width, height: translation.height)
-                        guard scrub.scrubs else {
-                            // Undecided, or latched vertical: the reader may
-                            // be scrolling. Nothing is selected, so the
-                            // readout keeps its resting moment.
-                            selectedDate = nil
-                            return
-                        }
-                        selectedDate = Self.scrubbedDate(atX: location.x, plotFrame: plotFrame, proxy: proxy)
+                        selection.change(
+                            date: Self.scrubbedDate(atX: location.x, plotFrame: plotFrame, proxy: proxy),
+                            translation: translation)
                     },
                     onHold: { location in
-                        scrub.hold()
-                        selectedDate = Self.scrubbedDate(atX: location.x, plotFrame: plotFrame, proxy: proxy)
+                        selection.hold(date: Self.scrubbedDate(atX: location.x, plotFrame: plotFrame, proxy: proxy))
                     },
-                    holdsTheScrollStill: { scrub.scrubs },
+                    holdsTheScrollStill: { selection.holdsTheScrollStill },
                     onEnd: {
-                        scrub.end()
-                        selectedDate = nil
+                        selection.end()
                     }
                 )
                 .frame(width: geo.size.width, height: geo.size.height)
@@ -1617,7 +1609,7 @@ struct OddsChartView: View {
         #if os(macOS)
         // A trackpad scroll never contended for the touch (see
         // `ChartScrubSurface`), so the Mac keeps the built-in selection.
-        .chartXSelection(value: $selectedDate)
+        .chartXSelection(value: Binding(get: { selection.date }, set: { selection.select($0) }))
         #endif
     }
 
@@ -2546,16 +2538,6 @@ struct OddsChartView: View {
     static func carriedStateIsApproximate(pointDate: Date, observedAt: Date?) -> Bool {
         guard let observedAt else { return false }
         return pointDate.timeIntervalSince(observedAt) >= carriedStateApproximateAfterSeconds
-    }
-
-    /// Update the selected play point binding based on chart selection.
-    private func updateSelectedPoint(date: Date?, dataPoints: [ChartDataPoint], history: EventHistoryResponse) {
-        guard let date, let nearest = Self.nearestSnapshot(to: date, in: dataPoints) else {
-            selectedPlayPoint = nil
-            return
-        }
-
-        selectedPlayPoint = Self.playPoint(for: nearest, sportKey: sportKey)
     }
 
     /// One chart point as the readout prints it — the scrubbed moment and the

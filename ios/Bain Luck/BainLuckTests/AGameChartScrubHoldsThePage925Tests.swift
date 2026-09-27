@@ -132,12 +132,12 @@ final class AGameChartScrubHoldsThePage925Tests: XCTestCase {
         let chart = try code(at: "Bain Luck/Components/OddsChartView.swift")
         XCTAssertTrue(chart.contains("holdToScrub: ChartScrubSurface.gameChartHold"),
                       "the game chart's surface must install the hold recognizer")
-        XCTAssertTrue(chart.contains("holdsTheScrollStill: { scrub.scrubs }"),
+        XCTAssertTrue(chart.contains("holdsTheScrollStill: { selection.holdsTheScrollStill }"),
                       "the freeze must follow the game chart's scrub decision")
-        XCTAssertTrue(chart.contains("scrub.hold()"), "a matured hold must be recorded as one")
-        XCTAssertTrue(chart.contains("guard scrub.scrubs else"),
+        XCTAssertTrue(chart.contains("selection.hold(date:"), "a matured hold must be recorded as one")
+        XCTAssertTrue(chart.contains("selection.change("),
                       "the selection must be gated on the scrub decision, not written beside it")
-        XCTAssertTrue(chart.contains("scrub.end()"))
+        XCTAssertTrue(chart.contains("selection.end()"))
 
         // `chartXSelection` lost the touch to the scroll: it may survive only
         // on the Mac, inside its own `#if os(macOS)` block.
@@ -186,7 +186,7 @@ final class AGameChartScrubHoldsThePage925Tests: XCTestCase {
     /// copy below the chart.
     func testTheReadoutIsDrawnAboveThePlotNotBelowTheChart() throws {
         let chart = try code(at: "Bain Luck/Components/OddsChartView.swift")
-        guard let readout = chart.range(of: "if let readout { readout.resting(on: Self.restingPlayPoint(in: dataPoints, sportKey: sportKey)).showing(selectedPlayPoint) }"),
+        guard let readout = chart.range(of: "if let readout { OddsChartSelectionReadout(selection: selection, readout: readout, dataPoints: dataPoints, sportKey: sportKey) }"),
               let plotRow = chart.range(of: "ChartGutter.run(chartHeight: chartHeight, verticalPadding: 8)") else {
             return XCTFail("the chart no longer places its readout")
         }
