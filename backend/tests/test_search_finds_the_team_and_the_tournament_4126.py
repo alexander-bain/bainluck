@@ -199,7 +199,7 @@ class TestUsOpenReachesTheMatch:
         assert consumed == {"mlb"}, "`yankees` must stay a required term"
 
     def test_ufc_and_mma_reach_the_key_the_fights_are_stored_under(self):
-        """Production, 2026-09-27 00:3xZ, during the live Rosas Jr vs Barcelos
+        """Production, 2026-09-27 00:2xZ, during the live Rosas Jr vs Barcelos
         card: `q=ufc` and `q=mma` returned 0 games while `q=rosas` returned the
         fight. Every MMA event sits under `mma_mixed_martial_arts`; `sports` has
         no `mma_ufc` row, and that was the only key the map named."""
