@@ -263,6 +263,14 @@ function boxesMeet(a: LabelBox, b: LabelBox): boolean {
  * the plot, so #7434's invariant (never in the key's band above `plotTop`) holds for every moved
  * label. If no option is free the label keeps today's position. Nothing is dropped, and a chart
  * with no collision draws exactly what it drew before.
+ *
+ * #9016 — TODAY'S POSITION HAS TO BE INSIDE THE PLOT TOO, WHEN SOMETHING INSIDE IS FREE.
+ * The first option used to be exempt from the inside test. A single-series chart (`showAllN`)
+ * prefers BELOW, and its 0-10% bucket is the busiest — the biggest marker, ~4% up from the
+ * floor — so "below" landed in the x-axis number band. Production, 2026-09-27, By Source →
+ * Polymarket at 390px: `23,602` printed over the axis `0%`; DataGolf: `6,257`. So a label takes
+ * the first option that is inside AND free, and falls back to the old rule only when none is.
+ * A label whose first option was already inside draws exactly where it did.
  */
 export function dodgeNLabels(
   candidates: NLabelCandidate[],
@@ -280,7 +288,9 @@ export function dodgeNLabels(
       return box.top >= plotTop && box.bottom <= plotBottom;
     };
     const chosen =
-      c.options.find((p, i) => (i === 0 || inside(p)) && free(p)) ?? c.options[0];
+      c.options.find(p => inside(p) && free(p)) ??
+      c.options.find((p, i) => (i === 0 || inside(p)) && free(p)) ??
+      c.options[0];
     placed.push(nLabelBox(c.x, c.chars, chosen.y));
     return chosen;
   });
