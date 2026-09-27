@@ -36,7 +36,7 @@ export function reconcileEventPoll<T extends PolledEvent>(
       || frame.p === null || !Number.isFinite(frame.p) || frame.p < 0 || frame.p > 1) {
     return polled;
   }
-  const foldOrder = frameFoldOrder(polled.blend_fold_revision, frame.fold_revision);
+  const foldOrder = frameFoldOrder(polled.blend_fold_revision, frame.rev);
   if (foldOrder !== null) return foldOrder === 'newer' ? applyLiveFrame(polled, { ...frame, p: frame.p })! : polled;
   const frameTime = Date.parse(frame.updated_at);
   // #8749: the contract's clock dates the hero itself and counts only the

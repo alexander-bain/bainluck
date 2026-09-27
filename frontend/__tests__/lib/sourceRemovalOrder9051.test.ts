@@ -46,7 +46,7 @@ const headline = (e: ReturnType<typeof served> | undefined) =>
 describe('the reported failure: a pre-removal frame on the post-removal response', () => {
   // The removal was a write to the row: its revision moved 1 → 2. The frame is rev 1.
   const postRemoval = served({ blend_fold_revision: { [ROW]: 2 } });
-  const preRemovalFrame = { ...kalshiFrame, fold_revision: { [ROW]: 1 } };
+  const preRemovalFrame = { ...kalshiFrame, rev: { [ROW]: 1 } };
 
   test('the fetch path keeps the survivors blend and does not recreate the removed source', async () => {
     const result = await fetchEventWithLiveFrame(async () => postRemoval, () => preRemovalFrame, () => null);
@@ -66,14 +66,14 @@ describe('the reported failure: a pre-removal frame on the post-removal response
   });
 
   test('the frame of the removal write itself (same revision) is not re-applied', () => {
-    expect(applyLiveFrame(postRemoval, pushed({ ...preRemovalFrame, fold_revision: { [ROW]: 2 } }))).toBe(postRemoval);
+    expect(applyLiveFrame(postRemoval, pushed({ ...preRemovalFrame, rev: { [ROW]: 2 } }))).toBe(postRemoval);
   });
 });
 
 describe('frames that must still land', () => {
   test('#8779: a stale response from before a source first appeared takes its first frame', () => {
     const stale = served({ blend_fold_revision: { [ROW]: 1 } });
-    const firstFrame = { ...kalshiFrame, fold_revision: { [ROW]: 2 } };
+    const firstFrame = { ...kalshiFrame, rev: { [ROW]: 2 } };
     const result = applyLiveFrame(stale, pushed(firstFrame))!;
     expect(result.hero_probability).toBe(0.6);
     expect(result.win_probability_sources.kalshi).toEqual({ value: 0.8, updated_at: at(10) });
@@ -83,7 +83,7 @@ describe('frames that must still land', () => {
 
   test('a source re-admitted after its removal is delivered by its newer write', () => {
     const postRemoval = served({ blend_fold_revision: { [ROW]: 2 } });
-    const readmitted = { ...kalshiFrame, p: 0.62, source_value: 0.84, updated_at: at(20), fold_revision: { [ROW]: 3 } };
+    const readmitted = { ...kalshiFrame, p: 0.62, source_value: 0.84, updated_at: at(20), rev: { [ROW]: 3 } };
     expect(applyLiveFrame(postRemoval, pushed(readmitted))?.hero_probability).toBe(0.62);
     expect(reconcileEventPoll(postRemoval, readmitted).win_probability_sources.kalshi)
       .toEqual({ value: 0.84, updated_at: at(20) });
@@ -92,7 +92,7 @@ describe('frames that must still land', () => {
   test('a newer write lands even when its clock reads older than the held price clock', () => {
     // Commit order is the claim; the frame's own clock is kept as its provenance.
     const cache = held(0.4, 30, { [ROW]: 2 });
-    const result = applyLiveFrame(cache, pushed({ ...kalshiFrame, fold_revision: { [ROW]: 3 } }))!;
+    const result = applyLiveFrame(cache, pushed({ ...kalshiFrame, rev: { [ROW]: 3 } }))!;
     expect(result.hero_probability).toBe(0.6);
     expect(result.hero_probability_observed_at).toBe(at(10));
   });
@@ -106,22 +106,22 @@ describe('a FOLDED hero (canonical + twins) never takes a raw-row frame', () => 
     ['a newer write to the twin', { [TWIN]: 8 }],
     ['a frame with no revision', undefined],
   ])('%s is refused, and asks for a folded refetch', (_label, rev) => {
-    const frame = pushed({ ...kalshiFrame, fold_revision: rev });
+    const frame = pushed({ ...kalshiFrame, rev: rev });
     expect(applyLiveFrame(folded, frame)).toBe(folded);
     expect(frameInvalidatesFoldedBlend(folded, frame)).toBe(true);
   });
 
   test('CONTROL — a single-row hero does not ask for a refetch on a frame it can order', () => {
     const single = served({ blend_fold_revision: { [ROW]: 4 } });
-    expect(frameInvalidatesFoldedBlend(single, pushed({ ...kalshiFrame, fold_revision: { [ROW]: 5 } }))).toBe(false);
-    expect(frameInvalidatesFoldedBlend(single, pushed({ ...kalshiFrame, fold_revision: { [ROW]: 3 } }))).toBe(false);
+    expect(frameInvalidatesFoldedBlend(single, pushed({ ...kalshiFrame, rev: { [ROW]: 5 } }))).toBe(false);
+    expect(frameInvalidatesFoldedBlend(single, pushed({ ...kalshiFrame, rev: { [ROW]: 3 } }))).toBe(false);
     expect(frameInvalidatesFoldedBlend(served(), pushed(kalshiFrame))).toBe(false);
     expect(frameInvalidatesFoldedBlend({ ...folded, status: 'completed' }, pushed(kalshiFrame))).toBe(false);
   });
 
   test('a single-row hero refuses a frame for a row it did not read, and refetches', () => {
     const single = served({ blend_fold_revision: { [ROW]: 4 } });
-    const other = pushed({ ...kalshiFrame, fold_revision: { [TWIN]: 9 } });
+    const other = pushed({ ...kalshiFrame, rev: { [TWIN]: 9 } });
     expect(applyLiveFrame(single, other)).toBe(single);
     expect(frameInvalidatesFoldedBlend(single, other)).toBe(true);
   });
@@ -234,10 +234,10 @@ describe('no revision on either side: every pre-contract rule applies unchanged'
 
   test('settled and non-live caches are outside the rule', () => {
     const final = served({ status: 'completed', blend_fold_revision: { [ROW]: 9 } });
-    expect(reconcileEventPoll(final, { ...kalshiFrame, fold_revision: { [ROW]: 1 } })).toBe(final);
+    expect(reconcileEventPoll(final, { ...kalshiFrame, rev: { [ROW]: 1 } })).toBe(final);
     // The push path keeps its old reach outside a held live blend.
     const opening = served({ hero_probability_source: 'opening', blend_fold_revision: { [ROW]: 9 } });
-    expect(applyLiveFrame(opening, pushed({ ...kalshiFrame, fold_revision: { [ROW]: 1 } }))?.hero_probability).toBe(0.6);
+    expect(applyLiveFrame(opening, pushed({ ...kalshiFrame, rev: { [ROW]: 1 } }))?.hero_probability).toBe(0.6);
   });
 });
 
@@ -290,7 +290,7 @@ describe('the ordering primitives', () => {
 describe('Codex 95bcc174 (1): the poll path orders by revision BEFORE its clock gates', () => {
   test('a hero with an explicitly unknown clock takes a strictly newer write through the fetch chain', async () => {
     const polled = served({ hero_probability: 0.6, hero_probability_away: 0.4, hero_probability_observed_at: null, blend_fold_revision: { [ROW]: 2 } });
-    const frame = { ...kalshiFrame, p: 0.4, updated_at: at(40), fold_revision: { [ROW]: 3 } };
+    const frame = { ...kalshiFrame, p: 0.4, updated_at: at(40), rev: { [ROW]: 3 } };
     const result = await fetchEventWithLiveFrame(async () => polled, () => frame, () => null);
     expect(headline(result)).toEqual({ p: 0.4, at: at(40), rev: { [ROW]: 3 } });
   });
@@ -304,21 +304,21 @@ describe('Codex 95bcc174 (1): the poll path orders by revision BEFORE its clock 
   test('an older or same revision is refused by the poll path too', () => {
     const polled = served({ blend_fold_revision: { [ROW]: 3 } });
     for (const rev of [2, 3]) {
-      expect(reconcileEventPoll(polled, { ...kalshiFrame, updated_at: at(59), fold_revision: { [ROW]: rev } })).toBe(polled);
+      expect(reconcileEventPoll(polled, { ...kalshiFrame, updated_at: at(59), rev: { [ROW]: rev } })).toBe(polled);
     }
   });
 });
 
 describe('Codex 95bcc174 (2): a first frame keeps its revision', () => {
   test('accepted under the legacy rule with no held revision, its vector stays with its value', () => {
-    const result = applyLiveFrame(served(), pushed({ ...kalshiFrame, fold_revision: { [ROW]: 3 } }))!;
+    const result = applyLiveFrame(served(), pushed({ ...kalshiFrame, rev: { [ROW]: 3 } }))!;
     expect(headline(result)).toEqual({ p: 0.6, at: at(10), rev: { [ROW]: 3 } });
     // …so a later stale frame is now orderable, and refused.
-    expect(applyLiveFrame(result, pushed({ ...kalshiFrame, p: 0.7, updated_at: at(20), fold_revision: { [ROW]: 2 } }))).toBe(result);
+    expect(applyLiveFrame(result, pushed({ ...kalshiFrame, p: 0.7, updated_at: at(20), rev: { [ROW]: 2 } }))).toBe(result);
   });
 
   test('a malformed frame vector is not retained', () => {
-    expect(applyLiveFrame(served(), pushed({ ...kalshiFrame, fold_revision: { [ROW]: -3 } }))?.blend_fold_revision).toBeUndefined();
+    expect(applyLiveFrame(served(), pushed({ ...kalshiFrame, rev: { [ROW]: -3 } }))?.blend_fold_revision).toBeUndefined();
   });
 });
 
@@ -449,5 +449,45 @@ describe('the page: a refuse-and-refetch branch writes nothing in the same tick'
   test('the poll fetcher reconciles against the held headline', () => {
     expect(page).toMatch(/\(\) => latestBlendEdgeRef\.current,\s*\(\) => heldEventRef\.current,/);
     expect(page).toMatch(/heldEventRef\.current = event;/);
+  });
+});
+
+describe("the producer's wire shapes (PR #9078, backend/tests/test_fold_revision_9051.py)", () => {
+  // Verbatim `json.dumps(build_frame(...))`: the frame's revision key is `rev`,
+  // `{"<event_id>": rev}`, or null when the writer had none (no claim).
+  const wire = (rev: string, updatedAt = at(10)) => JSON.parse(
+    `{"event_id": 15, "p": 0.6, "source": "kalshi", "source_value": 0.8, "updated_at": "${updatedAt}", "status": "live", "rev": ${rev}}`,
+  ) as LiveStreamFrame;
+  const single = () => held(0.4, 0, { '15': 11 });
+
+  test('a newer `rev` lands and its vector travels with the value', () => {
+    const result = applyLiveFrame(single(), pushed(wire('{"15": 12}')))!;
+    expect(headline(result)).toEqual({ p: 0.6, at: at(10), rev: { '15': 12 } });
+  });
+
+  test('an older `rev` is refused even though its clock is newer — the key is read', () => {
+    const cache = single();
+    expect(applyLiveFrame(cache, pushed(wire('{"15": 10}', at(30))))).toBe(cache);
+    expect(reconcileEventPoll(cache, wire('{"15": 10}', at(30)))).toBe(cache);
+  });
+
+  test('`rev: null` claims nothing: the clock rule decides and the held vector stays', () => {
+    const cache = single();
+    const result = applyLiveFrame(cache, pushed(wire('null')))!;
+    expect(headline(result)).toEqual({ p: 0.6, at: at(10), rev: { '15': 11 } });
+    expect(applyLiveFrame(held(0.4, 30, { '15': 11 }), pushed(wire('null')))?.hero_probability).toBe(0.4);
+  });
+
+  test("a folded detail vector with a twin at the migration's default 0 still invalidates on any frame", () => {
+    const folded = served({ blend_fold_revision: { '15': 4, '16': 0 } });
+    expect(parseFoldRevision(folded.blend_fold_revision)).toEqual({ '15': 4, '16': 0 });
+    expect(frameInvalidatesFoldedBlend(folded, pushed(wire('{"15": 5}')))).toBe(true);
+    expect(applyLiveFrame(folded, pushed(wire('{"15": 5}')))).toBe(folded);
+  });
+
+  test('a history payload whose edge revision is null (no pin, or a pre-#9051 cache) makes no claim', () => {
+    const history = { blend_edge_pinned: true, blend_edge_observed_at: at(10), blend_edge_fold_revision: null,
+      aggregate_line: [{ timestamp: at(20), home_probability: 0.5 }] };
+    expect(servedBlendEdgeObservation(history)).toEqual({ p: 0.5, observedAt: at(10) });
   });
 });

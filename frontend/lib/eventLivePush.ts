@@ -342,7 +342,7 @@ export interface LiveFrame {
   source_value?: number | null;
   updated_at: string;
   /** #9051: the written row's revision — see `lib/foldRevision.ts`. */
-  fold_revision?: Record<string, number> | null;
+  rev?: Record<string, number> | null;
 }
 
 /**
@@ -376,7 +376,7 @@ function holdsLiveBlend(held: HeldHero): boolean {
 export function frameInvalidatesFoldedBlend(held: unknown, frame: LiveFrame): boolean {
   if (!held) return false;
   const hero = held as HeldHero;
-  return holdsLiveBlend(hero) && frameFoldOrder(hero.blend_fold_revision, frame.fold_revision) === "incomparable";
+  return holdsLiveBlend(hero) && frameFoldOrder(hero.blend_fold_revision, frame.rev) === "incomparable";
 }
 
 export function applyLiveFrame<T>(prev: T | undefined, frame: LiveFrame): T | undefined {
@@ -393,7 +393,7 @@ export function applyLiveFrame<T>(prev: T | undefined, frame: LiveFrame): T | un
   // source into its `p` (and would recreate its entry below), and a frame on a
   // FOLDED hero is a raw-row value that hero never was. Only a strictly newer
   // write to the one row the hero reads lands. No claim: the clocks decide.
-  const foldOrder = liveBlend ? frameFoldOrder(current.blend_fold_revision, frame.fold_revision) : null;
+  const foldOrder = liveBlend ? frameFoldOrder(current.blend_fold_revision, frame.rev) : null;
   if (foldOrder !== null && foldOrder !== "newer") return prev;
   if (foldOrder === null && liveBlend && Number.isFinite(currentAt) && Number.isFinite(frameAt) &&
       frameAt < currentAt) {
@@ -403,7 +403,7 @@ export function applyLiveFrame<T>(prev: T | undefined, frame: LiveFrame): T | un
   // held blend had none to compare — the first frame's, so later frames order.
   const revision = foldOrder === "newer" ||
       (foldOrder === null && liveBlend && !parseFoldRevision(current.blend_fold_revision))
-    ? parseFoldRevision(frame.fold_revision)
+    ? parseFoldRevision(frame.rev)
     : null;
   // A source entry carries display metadata (`display_name`, `type`, `color`)
   // that a frame cannot know, so the merge is structural and the type is
