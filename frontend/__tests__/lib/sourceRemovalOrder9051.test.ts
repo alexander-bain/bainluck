@@ -327,12 +327,19 @@ describe('Codex 95bcc174 (3): a later poll cannot forget an accepted revision', 
   // was refused but is now the fetcher's latest edge; a stale detail at rev15 lands.
   const accepted = adoptNewerBlendEdge(held(0.4, 0, { [ROW]: 15 }), edge(0.5, 10, { [ROW]: 25 }))!;
   const oldEdge = edge(0.6, 12, { [ROW]: 15 });
-  const stalePoll = served({ hero_probability: 0.6, hero_probability_away: 0.4, hero_probability_observed_at: at(12), blend_fold_revision: { [ROW]: 15 }, home_score: 21 });
+  const stalePoll = served({
+    hero_probability: 0.6, hero_probability_away: 0.4, hero_probability_observed_at: at(12), blend_fold_revision: { [ROW]: 15 }, home_score: 21,
+    // The pre-removal membership: the retired source is still in its rail.
+    win_probability_sources: { polymarket: { value: 0.4, updated_at: at(0) }, kalshi: { value: 0.8, updated_at: at(12) } },
+  });
 
   test('the stale poll keeps the accepted headline and revision, and takes its REST fields', async () => {
     const result = await fetchEventWithLiveFrame(async () => stalePoll, () => null, () => oldEdge, () => accepted);
     expect(headline(result)).toEqual({ p: 0.5, at: at(10), rev: { [ROW]: 25 } });
     expect(result.home_score).toBe(21);
+    // The rail stays with the number it explains: no retired source comes back.
+    expect(result.win_probability_sources).toBe(accepted.win_probability_sources);
+    expect(result.win_probability_sources.kalshi).toBeUndefined();
   });
 
   test('CONTROL — without the held headline (the old fetch chain) the stale poll wins: this is the defect', async () => {
