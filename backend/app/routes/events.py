@@ -1134,9 +1134,12 @@ _SPORT_SEARCH_ALIASES: dict[str, list[str]] = {
     "wnba": ["basketball_wnba"],
     "mls": ["soccer_usa_mls"],
     "epl": ["soccer_epl"],
-    "ufc": ["mma_ufc"],
+    # MMA fights live under `mma_mixed_martial_arts` on production; no `mma_ufc`
+    # row exists in `sports`, so a map naming only that key sent `ufc`/`mma` to
+    # zero games during a live UFC card. Both keys, as `event_combat` spans them.
+    "ufc": ["mma_ufc", "mma_mixed_martial_arts"],
     "pga": ["golf_pga"],
-    "mma": ["mma_ufc"],
+    "mma": ["mma_ufc", "mma_mixed_martial_arts"],
     "soccer": ["soccer_epl", "soccer_usa_mls", "soccer_uefa_champs_league"],
     "football": ["americanfootball_nfl", "americanfootball_ncaaf"],
     "basketball": ["basketball_nba", "basketball_ncaab", "basketball_wnba", "basketball_wncaab"],
