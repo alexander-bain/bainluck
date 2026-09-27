@@ -113,6 +113,27 @@ SELECT t.id, t.name, t.espn_id, t.current_record, s.key AS sport_key
  ORDER BY t.id
 """
 
+#: The measured population is 22 (production, 2026-09-27). A verdict that
+#: suddenly names many more is a misread directory or a changed ESPN payload,
+#: not a bigger defect: the writes refuse and the plan says why.
+MAX_FOREIGN_ROWS = 30
+
+#: The fields the repair clears; the undo restores exactly these.
+CLEARED_FIELDS = ("espn_id", *ESPN_SOURCED_IDENTITY_FIELDS)
+
+#: Clears a row only while it still holds the id AND name the plan judged
+#: (CERT-3604's follow-up). ESPN sync runs every few minutes on this app, so
+#: a row can be re-enriched between the read and the write; that row is left
+#: alone and reported, never cleared on a verdict about values it no longer has.
+_APPLY_SQL = (
+    "UPDATE teams AS t SET "
+    + ", ".join(f"{f} = NULL" for f in CLEARED_FIELDS)
+    + " FROM unnest(CAST(:ids AS integer[]), CAST(:espn_ids AS varchar[]),"
+    " CAST(:names AS varchar[])) AS p(id, espn_id, name)"
+    " WHERE t.id = p.id AND t.espn_id = p.espn_id AND t.name = p.name"
+    " RETURNING t.id"
+)
+
 _PUNCT = re.compile(r"[.,'’]")
 _SPACE = re.compile(r"\s+")
 
@@ -193,6 +214,26 @@ def plan(rows, directories) -> tuple[list, dict]:
     return foreign, skipped
 
 
+def ceiling_refusal(n: int) -> str | None:
+    """Refuse a write whose population is far past the measured one."""
+    if n <= MAX_FOREIGN_ROWS:
+        return None
+    return (
+        f"REFUSING to write: the verdict names {n} rows, the measured population "
+        f"is 22 and the ceiling is {MAX_FOREIGN_ROWS}. Read the plan above; a "
+        "directory that misread or changed shape makes right rows look foreign."
+    )
+
+
+def cas_params(foreign) -> dict:
+    """The planned (id, espn_id, name) triples, as ``_APPLY_SQL`` binds them."""
+    return {
+        "ids": [r.id for r, _, _ in foreign],
+        "espn_ids": [r.espn_id for r, _, _ in foreign],
+        "names": [r.name for r, _, _ in foreign],
+    }
+
+
 def wrong_app_refusal(args) -> str | None:
     """Refuse a write from anywhere but the producer app; the undo imports this."""
     if not (getattr(args, "apply", False) or getattr(args, "backup", False)):
@@ -247,14 +288,20 @@ async def run(args) -> int:
             )
 
         if not (args.backup or args.apply):
+            if ceiling_refusal(len(foreign)):
+                print(f"\n{ceiling_refusal(len(foreign))}")
             print("\nplan only. Re-run with --backup, then --backup --apply.")
             return 0
         if not foreign:
             print("\nnothing to write.")
             return 0
+        over = ceiling_refusal(len(foreign))
+        if over:
+            print(f"\n{over}")
+            return 2
 
         ids = [r.id for r, _, _ in foreign]
-        cols = "espn_id, " + ", ".join(ESPN_SOURCED_IDENTITY_FIELDS)
+        cols = ", ".join(CLEARED_FIELDS)
 
         if args.backup:
             # Types derived from `teams` (CERT-2880: a hand-typed backup schema
@@ -293,11 +340,13 @@ async def run(args) -> int:
                 return 2
 
         if args.apply:
-            sets = ", ".join(f"{f} = NULL" for f in ("espn_id", *ESPN_SOURCED_IDENTITY_FIELDS))
-            result = await s.execute(
-                text(f"UPDATE teams SET {sets} WHERE id = ANY(:ids)"), {"ids": ids}
+            written = sorted(
+                (await s.execute(text(_APPLY_SQL), cas_params(foreign))).scalars().all()
             )
             await s.commit()
+            moved = sorted(set(ids) - set(written))
+            if moved:
+                print(f"\nchanged since the plan, NOT written: {moved}")
             # Read back from disk, not rowcount (gotcha #53).
             still = (
                 await s.execute(
@@ -306,10 +355,10 @@ async def run(args) -> int:
                         "AND (espn_id IS NOT NULL OR current_record IS NOT NULL "
                         "OR logo_url_small IS NOT NULL)"
                     ),
-                    {"ids": ids},
+                    {"ids": written},
                 )
             ).scalar_one()
-            print(f"\napplied: {result.rowcount} rows; still carrying identity: {still}")
+            print(f"\napplied: {len(written)} rows; still carrying identity: {still}")
             return 0 if still == 0 else 1
 
     return 0

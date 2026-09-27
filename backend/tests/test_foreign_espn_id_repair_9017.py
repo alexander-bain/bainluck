@@ -247,5 +247,82 @@ class TestTheWriteGates:
         for field in RESTORED_FIELDS:
             assert f"{field} = COALESCE(t.{field}, b.{field})" in _RESTORE_SQL
         # The repair's UPDATE clears exactly that tuple.
-        src = inspect.getsource(repair.run)
-        assert '("espn_id", *ESPN_SOURCED_IDENTITY_FIELDS)' in src
+        assert repair.CLEARED_FIELDS == RESTORED_FIELDS
+        for field in RESTORED_FIELDS:
+            assert f"{field} = NULL" in repair._APPLY_SQL
+        assert "text(_APPLY_SQL)" in inspect.getsource(repair.run)
+
+
+class TestTheApplyGuards:
+    """CERT-3604's follow-up: a population ceiling and a stored-identity CAS.
+
+    The CAS itself is a claim about PostgreSQL and is proved against a real
+    server in `tests/integration/test_foreign_espn_id_apply_cas_9017_pg.py`.
+    """
+
+    def test_the_ceiling_sits_above_the_measured_population(self):
+        from scripts.repair_9017_foreign_espn_id import MAX_FOREIGN_ROWS, ceiling_refusal
+
+        assert ceiling_refusal(22) is None
+        assert ceiling_refusal(MAX_FOREIGN_ROWS) is None
+        assert "REFUSING" in ceiling_refusal(MAX_FOREIGN_ROWS + 1)
+
+    def test_the_cas_binds_each_rows_planned_id_and_name_in_order(self):
+        from scripts.repair_9017_foreign_espn_id import cas_params
+
+        foreign = [
+            (SimpleNamespace(id=14629, espn_id="176", name="Miami (OH)"), None, []),
+            (SimpleNamespace(id=12758, espn_id="251", name="Texas State"), None, []),
+        ]
+        assert cas_params(foreign) == {
+            "ids": [14629, 12758],
+            "espn_ids": ["176", "251"],
+            "names": ["Miami (OH)", "Texas State"],
+        }
+
+    @pytest.mark.parametrize("flags", [(True, False), (True, True)])
+    def test_an_oversized_verdict_writes_nothing(self, monkeypatch, capsys, flags):
+        """31 foreign rows: no backup table, no UPDATE — the refusal comes first."""
+        from contextlib import asynccontextmanager
+
+        import app.services.espn_api as espn_api
+        import app.tasks.base as base
+        from scripts import repair_9017_foreign_espn_id as repair
+
+        executed = []
+
+        class _Result:
+            def all(self):
+                return [SimpleNamespace(sport_key="baseball_ncaa")]
+
+        class _Session:
+            async def execute(self, stmt, params=None):
+                executed.append(str(stmt))
+                return _Result()
+
+            async def commit(self):
+                executed.append("COMMIT")
+
+        @asynccontextmanager
+        async def _session():
+            yield _Session()
+
+        async def _directory(svc, key):
+            return _baseball()
+
+        many = [
+            (SimpleNamespace(id=i, espn_id="176", name="Miami (OH)", sport_key="baseball_ncaa",
+                             current_record=None), _baseball()[0], [_baseball()[1]])
+            for i in range(repair.MAX_FOREIGN_ROWS + 1)
+        ]
+        monkeypatch.setenv("HEROKU_APP_NAME", "bainluck")
+        monkeypatch.setattr(base, "get_task_session", _session)
+        monkeypatch.setattr(espn_api, "ESPNAPIService", lambda: None)
+        monkeypatch.setattr(repair, "fetch_directory", _directory)
+        monkeypatch.setattr(repair, "plan", lambda rows, dirs: (many, {}))
+
+        backup, apply = flags
+        rc = asyncio.run(repair.run(argparse.Namespace(backup=backup, apply=apply)))
+        assert rc == 2
+        assert "ceiling is 30" in capsys.readouterr().out
+        assert executed == [repair._CANDIDATE_SQL]
