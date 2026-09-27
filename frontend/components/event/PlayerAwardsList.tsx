@@ -1,4 +1,5 @@
 import { teamTextColor } from "@/lib/teamColors";
+import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import type { PlayerAwardRow } from "@/lib/playerAwardRows";
 
 /**
@@ -9,7 +10,8 @@ import type { PlayerAwardRow } from "@/lib/playerAwardRows";
  * spans every row: the name column is as wide as the LONGEST name in the list
  * (capped at 55% of the card, so an outlier still truncates rather than
  * squeezing the numbers off the card), and the awards still line up across rows,
- * which is what the fixed width was for.
+ * which is what the fixed width was for. The number goes through the shared
+ * rule (#3867), so a near-certain finalist cannot print "100%".
  */
 export default function PlayerAwardsList({ rows, color }: { rows: PlayerAwardRow[]; color: string }) {
   return (
@@ -26,7 +28,7 @@ export default function PlayerAwardsList({ rows, color }: { rows: PlayerAwardRow
             <div className="flex items-center gap-3 flex-wrap min-w-0">
               {p.awards.map((a, i) => (
                 <span key={i} className="text-[10px] text-text-secondary">
-                  {a.label} <span className="font-bold font-mono" style={{ color: teamTextColor(color) || "var(--text-primary)" }}>{Math.round(a.prob * 100)}%</span>
+                  {a.label} <span className="font-bold font-mono" style={{ color: teamTextColor(color) || "var(--text-primary)" }}>{formatProbabilityPercent(a.prob)}</span>
                 </span>
               ))}
             </div>

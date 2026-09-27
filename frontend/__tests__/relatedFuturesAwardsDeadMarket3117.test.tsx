@@ -293,7 +293,10 @@ describe("#3117 — a price the venue can no longer move is not an award probabi
 
     expect(home).toContain("Will Sam Darn");
     expect(home).toContain("45%");
-    expect(home).toContain("14%");
+    // 0.145: the award row now prints through the shared rule (#9048 → #3867),
+    // which rounds half-up to 15%; the inline `Math.round(0.145 * 100)` read
+    // 14.4999… and printed 14%, a float artifact no other surface shares.
+    expect(home).toContain("15%");
   });
 
   it("CONTROL — the bound is a bound: one day the safe side of it renders, one day past it does not", () => {
