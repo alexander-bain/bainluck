@@ -350,9 +350,10 @@ class TestAPricedZeroIsDataAndIsUntouched:
     def test_the_nick_adams_specimen_still_headlines_a_real_zero(self):
         """The one served row that HEADLINES 0%, and it is correct to.
 
-        Three rungs: `Yes` priced at a real 0, and two dated rungs that #3758
-        demotes. A fix that keyed on the rendered `0.0` instead of on the column
-        would silently delete this — which is why it is a test and not a note.
+        Three rungs: `Yes` priced at a real 0, and two dated rungs that have
+        passed (#3758 demoted them; since #9109 the card drops them, as the page
+        does). A fix that keyed on the rendered `0.0` instead of on the column
+        would silently delete `Yes` — which is why it is a test and not a note.
         """
         m = _market(
             market_id=109434,
@@ -367,8 +368,7 @@ class TestAPricedZeroIsDataAndIsUntouched:
         )
         row = _row(_politics_row, m)
         rungs = {o["name"]: o["prob"] for o in row["top_outcomes"]}
-        assert rungs["Yes"] == 0.0
-        assert rungs["Before Jul 1, 2026"] == 0.0
+        assert rungs == {"Yes": 0.0}
         assert row["prob"] == 0.0
         assert row["outcome_count"] == 3
 
