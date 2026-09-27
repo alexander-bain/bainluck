@@ -641,7 +641,7 @@ class TestFormationIsParsedNotAssumed:
     def test_children_are_recycled_so_state_resets(self):
         """--max-memory-per-child is the restart model: a recycled child forks
         from the parent with an EMPTY throttle table."""
-        assert FORMATION["worker-realtime"]["max_memory_kb"] == 350_000
+        assert FORMATION["worker-realtime"]["max_memory_kb"] == 200_000
         assert FORMATION["worker-background"]["max_memory_kb"] == 200_000
 
 
