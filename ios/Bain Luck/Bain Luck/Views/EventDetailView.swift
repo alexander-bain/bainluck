@@ -236,7 +236,14 @@ struct EventDetailView: View {
             .toolbar {
                 #if os(iOS)
                 ToolbarItem(placement: .principal) {
-                    navTitleView
+                    VStack(spacing: 1) {
+                        navTitleView
+                        LiveUpdateStatusView(status: vm.liveUpdateStatus)
+                    }
+                }
+                #else
+                ToolbarItem(placement: .automatic) {
+                    LiveUpdateStatusView(status: vm.liveUpdateStatus)
                 }
                 #endif
                 // #8320 — the page's ONE freshness status, and the manual
@@ -244,8 +251,11 @@ struct EventDetailView: View {
                 if isLive {
                     ToolbarItem(placement: .cancellationAction) {
                         Button { Task { await vm.load() } } label: {
-                            refreshStatus
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 13, weight: .medium))
+                                .frame(width: 22, height: 22)
                         }
+                        .accessibilityLabel("Refresh now")
                     }
                 }
                 ToolbarItem(placement: .confirmationAction) {
@@ -2260,35 +2270,8 @@ struct EventDetailView: View {
             pushedPrice: vm.streamHasPushedPrice)
     }
 
-    /// #8320 — ONE freshness status for the page, in the toolbar.
-    ///
-    /// Alex, rage shake #150 on White Sox–Royals: "overcrowded and clowny". The
-    /// live page carried the same claim three times — this ring, a second ring
-    /// beside the chart title, and a green "Live" dot on the chart — plus the
-    /// hero's inning chip. A number counting to the next poll is the page's
-    /// plumbing, not something a fan reads, so the count is gone everywhere;
-    /// the poll itself (`EventRefreshPlan`) and pull-to-refresh are unchanged.
-    ///
-    /// The two live arms are drawn so they cannot be mistaken for each other:
-    /// the green dot only while the stream is DELIVERING (not merely connected
-    /// — see `EventDetailViewModel.streamDelivering`), and otherwise a plain
-    /// refresh glyph, which says what the button does and nothing about how
-    /// fresh the number is. Neither animates.
-    @ViewBuilder
-    private var refreshStatus: some View {
-        switch refreshIndicator {
-        case .hidden:
-            EmptyView()
-        case .streaming:
-            LivePushDot(diameter: 22)
-        case .polling:
-            Image(systemName: "arrow.clockwise")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.secondary)
-                .frame(width: 22, height: 22)
-                .accessibilityLabel("Refresh")
-        }
-    }
+    // Delivery status is plain text under the title; manual refresh is a
+    // separate control. The compatibility helper below still feeds older charts.
 
     /// A refresh status is honest ONLY when the page really refreshes — which
     /// the VM does for live events only. Scheduled/completed pages perform no

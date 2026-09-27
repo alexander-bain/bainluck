@@ -91,6 +91,7 @@ final class AnOpenedStreamIsNotAPushedPrice8320Tests: XCTestCase {
         defer { vm.stopRefresh() }
         handle.fire("open")
         XCTAssertTrue(vm.streamDelivering, "the controller's contract for the poll is unchanged")
+        XCTAssertEqual(vm.liveUpdateStatus, .awaitingUpdate)
         XCTAssertFalse(vm.streamHasPushedPrice)
         XCTAssertEqual(indicator(vm), .polling)
     }
@@ -124,6 +125,7 @@ final class AnOpenedStreamIsNotAPushedPrice8320Tests: XCTestCase {
         handle.fire("probability", price(0.55))
         XCTAssertEqual(vm.event?.currentOdds?.homeProbability, 0.55)
         XCTAssertEqual(indicator(vm), .streaming)
+        XCTAssertEqual(vm.liveUpdateStatus, .live)
     }
 
     /// An unchanged price is still a delivery: the dot stays, nothing flips.
