@@ -88,6 +88,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping, Optional
 
+from app.utils.nation_flags import nation_iso
 from app.utils.team_pattern_match import pattern_token_spans
 
 __all__ = [
@@ -215,6 +216,7 @@ def build_label_identity(
     event's two names. See the module docstring for how "ours" widens.
     """
     rows = list(rows)
+    own_team_names = list(own_team_names)
     own: set = {tid for tid in own_team_ids if tid is not None}
     own_names = {_norm(n) for n in own_team_names if n}
     own_names.discard("")
@@ -225,7 +227,9 @@ def build_label_identity(
         # #8920 — but "nothing is ours" left EVERY guard disarmed, so Brown
         # Bears (FCS, no `teams` row) claimed the Chicago Bears' Super Bowl
         # legs. The unresolved side gets the name-only mode instead.
-        return _name_only_identity(rows, own_names)
+        return _name_only_identity(
+            rows, own_names, {nation_iso(n) for n in own_team_names} - {None}
+        )
 
     # Pass 1 — the same club under the same name anywhere in the family.
     for row in rows:
@@ -275,7 +279,9 @@ def _claims(rows: list) -> dict:
     return {k: frozenset(v) for k, v in claims.items()}
 
 
-def _name_only_identity(rows: list, own_names: set) -> LabelIdentity:
+def _name_only_identity(
+    rows: list, own_names: set, own_nations: frozenset | set = frozenset()
+) -> LabelIdentity:
     """#8920 — the identity of a side the route resolved no id for.
 
     `own` is every family row whose normalized name equals the event's name or
@@ -284,6 +290,18 @@ def _name_only_identity(rows: list, own_names: set) -> LabelIdentity:
     the foreign name covering its own token. `name_words` is the event name's
     words plus its initials; `label_names_another_club` requires every extra
     word of a covering name to be none of them.
+
+    #8950 — two more ways a row may well be this very club, both measured on
+    the first replay over production events with NEITHER side resolved:
+
+    * its name ENDS with the event's whole name. `icehockey_other` stores NHL
+      preseason games under the bare mascot (``Blues`` v ``Stars``), and
+      ``St. Louis Blues`` / ``Dallas Stars`` are those clubs — refusing them
+      emptied both cards. Kept as unknown, never refused: ``Chile`` then keeps
+      ``Universidad de Chile`` exactly as it did before.
+    * it is the same NATION under another spelling (`nation_flags`' curated
+      map): ``Korea Republic`` is the ``South Korea`` row, whose extra word
+      ``South`` is none of the event name's.
     """
     if not own_names:
         return LabelIdentity(claims={}, own=frozenset(), resolved=False)
@@ -295,9 +313,12 @@ def _name_only_identity(rows: list, own_names: set) -> LabelIdentity:
         toks = _norm(row.get("name")).split()
         if not toks:
             continue
+        if own_nations and nation_iso(row.get("name")) in own_nations:
+            own.add(row["id"])
+            continue
         for mine in own_tokens:
             k = min(len(mine), len(toks))
-            if toks[:k] == mine[:k]:
+            if toks[:k] == mine[:k] or toks[-len(mine):] == mine:
                 own.add(row["id"])
                 break
     words: set = set()

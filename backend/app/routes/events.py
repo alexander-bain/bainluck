@@ -23875,6 +23875,44 @@ async def _both_clubs_are_womens_only(
     return True
 
 
+#: #8950 — words that mark a side as a women's team in its own name. Read
+#: only to VETO `_is_mens_fixture_by_event`: three of the 4,666 `_other`
+#: events of the last 30 days that the classifier calls `men` are women's
+#: fixtures that say so in a name (`Real Madrid CF Femenino`, `Manchester City
+#: WFC`), and a men's filter armed on those would hide their own futures.
+_WOMENS_SIDE_NAME_WORDS: frozenset[str] = frozenset({
+    "w", "women", "womens", "wfc", "ladies", "fem", "femenino", "feminino",
+    "feminin", "feminine", "feminines", "frauen", "damen",
+})
+
+
+def _is_mens_fixture_by_event(
+    event_sport_key: str | None,
+    llm_gender: str | None,
+    home_team_name: str | None,
+    away_team_name: str | None,
+) -> bool:
+    """#8950 — may a no-league event arm the men's filter from its own row? Pure.
+
+    `/events/15316107` (Croatia v England, World Cup qualifier) is
+    `soccer_other`, so `is_mens_specific` is False and England's Bigger Picture
+    printed "2027 FIFA Women's World Cup Champion 8%" — England's WOMEN's team
+    — for the men's side. The event row already says `llm_gender = 'men'`.
+
+    True only when the key names no league, the event's classifier says
+    exactly `men` (never `mixed`/`unknown`/absent), and neither side's own name
+    carries a women's word. It arms the EXISTING `exclude_women` post-filter,
+    which keeps every row when it would otherwise empty the pool.
+    """
+    if not _sport_key_names_no_league(event_sport_key) or llm_gender != "men":
+        return False
+    for name in (home_team_name, away_team_name):
+        words = re.findall(r"[a-z]+", (name or "").lower())
+        if any(w in _WOMENS_SIDE_NAME_WORDS for w in words):
+            return False
+    return True
+
+
 async def _related_futures_withheld_ids(db: AsyncSession, market_ids) -> set[int]:
     """The outcome ids each market's OWN page refuses to price (#9008).
 
@@ -24076,7 +24114,10 @@ async def _build_related_futures(
     gender_market_name_filter = None
     if is_womens or womens_by_team:
         gender_market_name_filter = "women"
-    elif is_mens_specific:
+    elif is_mens_specific or _is_mens_fixture_by_event(
+        event_sport_key, getattr(event, "llm_gender", None), event.home_team_name,
+        event.away_team_name,
+    ):
         # For men's leagues, exclude markets with "women" or "WNBA" in name
         gender_market_name_filter = "exclude_women"
 
@@ -24671,9 +24712,31 @@ async def _build_related_futures(
         Timberwolves) can never poison the #8052 ticker path. Only the
         two new per-side label identities see the whole family.
         """
-        nonlocal team_index, team_rows, home_label_identity, away_label_identity
+        nonlocal team_index, team_rows
         if team_index is None and event.sport_id:
-            family_rows = (
+            family_rows = await _read_family_rows()
+            team_rows = [t for t in family_rows if t.sport_id == event.sport_id]
+            team_index = build_team_alias_index(
+                [
+                    {
+                        "id": t.id,
+                        "name": t.name,
+                        "abbreviation": t.abbreviation,
+                        "location": t.location,
+                        "alternate_names": t.alternate_names,
+                    }
+                    for t in team_rows
+                ]
+            )
+            _build_label_identities(family_rows)
+        return team_index
+
+    family_rows_memo: Optional[list] = None
+
+    async def _read_family_rows() -> list:
+        nonlocal family_rows_memo
+        if family_rows_memo is None:
+            family_rows_memo = (
                 await db.execute(
                     select(
                         Team.id,
@@ -24694,44 +24757,34 @@ async def _build_related_futures(
                     )
                 )
             ).all()
-            team_rows = [t for t in family_rows if t.sport_id == event.sport_id]
-            team_index = build_team_alias_index(
-                [
-                    {
-                        "id": t.id,
-                        "name": t.name,
-                        "abbreviation": t.abbreviation,
-                        "location": t.location,
-                        "alternate_names": t.alternate_names,
-                    }
-                    for t in team_rows
-                ]
-            )
-            identity_rows = [
-                {
-                    "id": t.id,
-                    "sport_id": t.sport_id,
-                    "name": t.name,
-                    "abbreviation": t.abbreviation,
-                    "location": t.location,
-                    "alternate_names": t.alternate_names,
-                }
-                for t in family_rows
-            ]
-            # Identity is side-specific: when the Islanders play the Rangers,
-            # the Rangers' longer name is still foreign to the Islanders.
-            # Keep the shared league index above event-wide for #8052/merge.
-            home_label_identity = build_label_identity(
-                identity_rows,
-                own_team_ids=home_team_ids,
-                own_team_names=(event.home_team_name,),
-            )
-            away_label_identity = build_label_identity(
-                identity_rows,
-                own_team_ids=away_team_ids,
-                own_team_names=(event.away_team_name,),
-            )
-        return team_index
+        return family_rows_memo
+
+    def _build_label_identities(family_rows: list) -> None:
+        nonlocal home_label_identity, away_label_identity
+        identity_rows = [
+            {
+                "id": t.id,
+                "sport_id": t.sport_id,
+                "name": t.name,
+                "abbreviation": t.abbreviation,
+                "location": t.location,
+                "alternate_names": t.alternate_names,
+            }
+            for t in family_rows
+        ]
+        # Identity is side-specific: when the Islanders play the Rangers,
+        # the Rangers' longer name is still foreign to the Islanders.
+        # Keep the shared league index above event-wide for #8052/merge.
+        home_label_identity = build_label_identity(
+            identity_rows,
+            own_team_ids=home_team_ids,
+            own_team_names=(event.home_team_name,),
+        )
+        away_label_identity = build_label_identity(
+            identity_rows,
+            own_team_ids=away_team_ids,
+            own_team_names=(event.away_team_name,),
+        )
 
     # Gated on the only thing the veto needs: at least one of this event's teams
     # resolved to a `teams` row, so there is something to compare against. NOT
@@ -24743,6 +24796,19 @@ async def _build_related_futures(
     # merge below already pays whenever the payload has any merge group at all.
     if all_team_ids and outcomes:
         await _load_team_roster()
+    elif outcomes and event.sport_id:
+        # #8950 — NEITHER SIDE RESOLVED. `/events/15316107` (Croatia v England,
+        # `soccer_other`, both team ids NULL): England's Bigger Picture printed
+        # New England Revolution's "MLS Cup Winner 2026", "MLS Cup Champion" and
+        # "MLS Eastern Conference Champion", because `England` is a whole token
+        # of `New England`. #8920 gave an unresolved side a NAME-ONLY identity,
+        # but it was only ever built behind the gate above, so an event with no
+        # side resolved never got one. Build the two identities from the same
+        # family read — and ONLY them: `team_index` stays None, so the #8052
+        # ticker/alias veto, the merge and the logos take exactly today's path,
+        # and both identities stay unarmed for everything but
+        # `label_names_another_club`'s name-only clause.
+        _build_label_identities(await _read_family_rows())
 
     # #8620 — A MARKET WHOSE ANSWERS ARE OTHER CLUBS IS A FIELD, NOT OURS.
     #
@@ -24875,9 +24941,9 @@ async def _build_related_futures(
         # identity that cannot be established is never refused. Rule, twins and
         # the family width: `app/utils/team_label_identity.py`.
         #
-        # Armed only when the roster read ran, which is gated above on at least
-        # one of this event's teams resolving — the same arm that keeps #8052
-        # additive: no resolved team, nothing to be "ours", no refusal.
+        # Fully armed only when at least one of this event's teams resolved —
+        # the same arm that keeps #8052 additive. A side with nothing resolved
+        # gets #8920's name-only mode, since #8950 on both-unresolved events too.
         # Asked PER SIDE, so a leg naming this event's opponent beside a foreign
         # club (`New York I and Colorado` on a Rangers v Avalanche page) lands
         # on the opponent's side rather than reaching ours through the token
