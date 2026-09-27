@@ -9803,6 +9803,12 @@ async def _poll_live_prediction_market_prices():
     # (0, 1), a phantom midpoint). Their row still holds an older poll's price,
     # which the pin must not take as this poll's consensus.
     polymarket_unpriced_reads: set[int] = set()
+    # CERT-3652: the legs cleared from the set above since the last durable
+    # boundary. A clear is only as real as the price write it stands for; if
+    # the snapshot INSERT or the commit fails, `_recover` rolls the row back to
+    # the older price and puts these legs back, so the pin cannot take the
+    # restored number as this poll's.
+    polymarket_cleared_since_commit: set[int] = set()
 
     now = datetime.now(timezone.utc)
 
@@ -10060,6 +10066,7 @@ async def _poll_live_prediction_market_prices():
             await session.commit()
             stats["commits"] += 1
             committed_counts.update({k: stats[k] for k in _durable_counters})
+            polymarket_cleared_since_commit.clear()
 
         async def _recover(label: str, exc: Exception) -> None:
             """Record one item's failure and hand the pass back a usable session.
@@ -10076,6 +10083,10 @@ async def _poll_live_prediction_market_prices():
             # counted them go with it, back to the last durable boundary.
             for _counter in _durable_counters:
                 stats[_counter] = committed_counts[_counter]
+            # CERT-3652: the rollback restores each such leg's older price, so
+            # the leg is unpriced again.
+            polymarket_unpriced_reads.update(polymarket_cleared_since_commit)
+            polymarket_cleared_since_commit.clear()
             if "deadlock" in str(exc).lower():
                 stats["deadlocks"] += 1
             stats["errors"].append(f"{label}: {str(exc)[:100]}")
@@ -10486,7 +10497,9 @@ async def _poll_live_prediction_market_prices():
                                 None if _fresh_ask is None else float(_fresh_ask),
                             )
                             # Cleared below only where this read's price is
-                            # written; every `continue` between leaves it set.
+                            # written; every `continue` between leaves it set,
+                            # and `_recover` re-adds it if that write is rolled
+                            # back (CERT-3652).
                             polymarket_unpriced_reads.add(outcome.id)
 
                             # Determine the correct price for this outcome.
@@ -10639,6 +10652,7 @@ async def _poll_live_prediction_market_prices():
                             # Update outcome probability
                             outcome.current_probability = prob
                             polymarket_unpriced_reads.discard(outcome.id)
+                            polymarket_cleared_since_commit.add(outcome.id)
                             american = probability_to_american(prob) if 0 < prob < 1 else None
                             outcome.current_american_odds = american
 
