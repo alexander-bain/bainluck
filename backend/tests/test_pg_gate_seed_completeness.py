@@ -519,6 +519,11 @@ COVERED = (
     # `sports.active` and `futures_markets.mutually_exclusive` are the
     # Python-side defaults the seed names.
     "test_repair_5576_venue_named_competition_pg.py",
+    # #2841 (Chicago Fire v Vancouver). Seeds `sports`, `events` and
+    # `futures_markets` by raw INSERT, in a private schema, to drive the
+    # one-pair fold's ESPN move, market re-point, label and `--restore`.
+    # `sports.active` is the Python-side default the seed names.
+    "test_repair_2841_chifire_van_fold_apply_restore_pg.py",
 )
 
 INTEGRATION_DIR = Path(__file__).parent / "integration"
