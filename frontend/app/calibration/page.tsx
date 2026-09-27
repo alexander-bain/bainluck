@@ -3161,11 +3161,21 @@ export default function CalibrationPage() {
               sportsbook rows would have vanished on a payload that had them and
               appeared on one that did not. `partition.notApplicableN` IS the
               sportsbook-row count (`price_moved === null`), and it is what the
-              cohort banner already gates its own sportsbook clause on. */}
+              cohort banner already gates its own sportsbook clause on.
+
+              #8971 — "Kalshi and Polymarket are measured on their closing
+              line" was unqualified, and the price-basis bullet above says the
+              opposite for markets with no fixed start. The code sides with the
+              bullet above: `backfill_winners` Part B scores a resolved outcome
+              whose market has no event start on the first snapshot an hour
+              after opening. Only event-linked markets (Parts A/C) and markets
+              carrying their own start time (A2) read a pre-start close. */}
           {partition.notApplicableN > 0 && (
             <li data-testid="calibration-price-basis-note">
               <strong className="text-text-primary">Not every row is a closing price, and we say
-              which.</strong> Kalshi and Polymarket are measured on their closing line. Sportsbook
+              which.</strong> Kalshi and Polymarket game markets are measured on their closing
+              line; their markets with no fixed start time (elections, economics, entertainment)
+              use the price once opening trading settles, as described above. Sportsbook
               rows use the closing line <em>where one exists</em> and fall back to the opening price
               where it does not. A closing line is the stronger test.
             </li>

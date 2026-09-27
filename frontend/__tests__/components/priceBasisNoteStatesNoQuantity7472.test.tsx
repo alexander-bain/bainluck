@@ -257,9 +257,30 @@ describe("#7472 — the price-basis note states no quantity", () => {
     // say the basis is not uniform; that sentence is true and stays.
     const text = noteText(render());
     expect(text).toContain("Not every row is a closing price");
-    expect(text).toContain("Kalshi and Polymarket are measured on their closing line");
+    // #8971 narrowed this to GAME markets: the unqualified claim contradicted
+    // the price-basis bullet above it for markets with no fixed start.
+    expect(text).toContain("Kalshi and Polymarket game markets are measured on their closing line");
     expect(text).toMatch(/[Ss]portsbook\s+rows use the closing line/);
     expect(text).toContain("fall back to the opening price");
+  });
+
+  test("#8971 — the bullet does not claim a closing line for markets with no fixed start", () => {
+    // The price-basis bullet above says elections/economics/entertainment are
+    // scored on the price after opening trading settles (backfill_winners
+    // Part B), and those are Kalshi/Polymarket markets. An unqualified
+    // "Kalshi and Polymarket are measured on their closing line" contradicted
+    // it on the same card. The strawman is that exact sentence.
+    const text = noteText(render());
+    expect(text).not.toContain("Kalshi and Polymarket are measured on their closing line");
+    expect(text).toContain("no fixed start time");
+    expect(text).toContain("the price once opening trading settles");
+    // And it agrees with the bullet it points back to, on the same render.
+    const html = render();
+    const basisAt = html.indexOf('data-testid="calibration-price-basis-answer"');
+    expect(basisAt).toBeGreaterThan(-1);
+    const basis = html.slice(basisAt, html.indexOf("</li>", basisAt));
+    expect(basis).toContain("markets without a fixed event start time");
+    expect(basis).toContain("opening price after initial trading settles");
   });
 
   test("no digit survives in the bullet", () => {
