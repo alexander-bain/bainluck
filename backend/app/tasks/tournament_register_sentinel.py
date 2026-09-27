@@ -60,6 +60,12 @@ logger = logging.getLogger(__name__)
 #: page comes down — an unwatched live register is the whole failure class.
 WATCHED: tuple[tuple[str, str], ...] = (("us-open", "2026"),)
 
+# The dedup key, in the ONE form `sentinel_filing.declared_fingerprints` parses:
+# `<name>-fingerprint:<hex>` followed by `(dedupe key`. An HTML-comment marker
+# is invisible to that parser, so dedup and the GREEN close never matched and
+# every red night filed a fresh copy (#8195/#8374/#8570/#8806/#9092).
+MARKER_KEY = "tournament-register-sentinel-fingerprint"
+
 #: Inner deadline, comfortably under the task's soft limit so the run always
 #: reaches its own terminal rather than being SIGKILLed untracked (#966).
 DEADLINE_SECONDS = 180.0
@@ -174,10 +180,21 @@ async def build_candidates(session, register: dict[str, Any]) -> list[dict[str, 
     return candidates
 
 
+def drift_title_prefix(tournament: str, season: str) -> str:
+    """The title up to the classification, which can change between nights
+    (needs_ruling ↔ invalid) while the fingerprint does not. RED dedup falls back
+    to it, which is also what folds the pre-#9092 copies (bodies without a
+    parseable declaration) onto the oldest one — whose body the refresh then
+    re-points at the declaration, so GREEN can close it."""
+    return f"Tournament register drift: {tournament} {season} ("
+
+
 def build_drift_issue_body(result: dict[str, Any]) -> str:
     """The evidence a human needs to answer this in one tap."""
     lines = [
         f"**Tournament register drift — {result['tournament']} {result['season']}**",
+        "",
+        f"`{MARKER_KEY}:{result.get('fingerprint')}`  (dedupe key — do not remove)",
         "",
         f"- register version: `{result.get('version')}`",
         f"- register age: `{result.get('age_hours')}h`",
@@ -195,8 +212,6 @@ def build_drift_issue_body(result: dict[str, Any]) -> str:
         "This sentinel never republishes the register — it is a committed file, "
         "reviewed as code. The fix is a register regeneration pass reviewed by a "
         "human, not an automated version bump during a live tournament.",
-        "",
-        f"<!-- sentinel-fingerprint: tournament_register_sentinel:{result.get('fingerprint')} -->",
     ]
     return "\n".join(lines)
 
@@ -281,26 +296,29 @@ async def _run_tournament_register_sentinel(
     filed: list[dict[str, Any]] = []
     if file_issues and results:
         try:
-            from app.tasks.sentinel_filing import list_open_alert_issues, reconcile_issue
+            from app.tasks.sentinel_filing import fetch_open_alert_issues, reconcile_issue
 
             # ONE read of the open-issue set for the whole run. Re-reading per
             # tournament would let two calls disagree about what is already
-            # filed, which is how a "deduped" sentinel files twice.
-            open_issues = list_open_alert_issues()
+            # filed, which is how a "deduped" sentinel files twice. The TYPED
+            # read, so a failed or truncated list no-ops instead of reading as
+            # "nothing filed" and filing blind.
+            open_issues = fetch_open_alert_issues()
 
             red_results = needs_ruling + invalid
             for result in red_results:
                 filed.append(reconcile_issue(
                     red=True,
-                    marker_key="tournament_register_sentinel",
+                    marker_key=MARKER_KEY,
                     fingerprint=result.get("fingerprint", ""),
                     title=(
-                        f"Tournament register drift: {result['tournament']} "
-                        f"{result['season']} ({result.get('classification')})"
+                        f"{drift_title_prefix(result['tournament'], result['season'])}"
+                        f"{result.get('classification')})"
                     ),
                     body=build_drift_issue_body(result),
                     red_body=build_drift_issue_body(result),
                     labels=["needs-triage", "area:data-quality", "priority:p2"],
+                    title_prefix=drift_title_prefix(result["tournament"], result["season"]),
                     open_issues=open_issues,
                 ))
 
@@ -313,7 +331,7 @@ async def _run_tournament_register_sentinel(
                     continue
                 filed.append(reconcile_issue(
                     red=False,
-                    marker_key="tournament_register_sentinel",
+                    marker_key=MARKER_KEY,
                     fingerprint=drift_fingerprint(result["tournament"], result["season"]),
                     green_comment=(
                         f"Tournament register drift cleared: {result['tournament']} "

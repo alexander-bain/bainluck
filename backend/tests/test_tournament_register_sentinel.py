@@ -237,3 +237,142 @@ class TestTheObserverSeesEverythingTheComparatorChecks:
         assert pinned
         assert not pinned - session.wanted
 
+
+
+class TestFilingDedupsNightOverNight:
+    """#9092: the body marker was an HTML comment the shared dedup parser cannot
+    read, and no title_prefix was passed — so every red night filed a fresh copy
+    (five open by 9/27) and the GREEN close could never find one. These run the
+    sentinel's OWN filing call against the real `reconcile_issue`, GitHub faked."""
+
+    FP = drift_fingerprint("us-open", "2026")
+    LEGACY_TITLE = "Tournament register drift: us-open 2026 (needs_ruling)"
+    LEGACY_BODY = (
+        "**Tournament register drift — us-open 2026**\n\n- `SETTLEMENT_WITHOUT_RESULT`\n\n"
+        f"<!-- sentinel-fingerprint: tournament_register_sentinel:{drift_fingerprint('us-open', '2026')} -->"
+    )
+
+    def _red(self):
+        return {
+            "tournament": "us-open", "season": "2026", "status": "ok", "version": 12,
+            "age_hours": 751.4, "registered_count": 378, "candidate_count": 454,
+            "findings": ["SETTLEMENT_WITHOUT_RESULT"], "classification": "needs_ruling",
+            "action": "file_p2_needs_triage", "publish": False, "fingerprint": self.FP,
+        }
+
+    def _green(self):
+        return {
+            "tournament": "us-open", "season": "2026", "status": "ok", "version": 13,
+            "registered_count": 378, "candidate_count": 378, "findings": [],
+            "classification": "clean", "action": "none", "publish": False,
+        }
+
+    def _night(self, monkeypatch, result, open_issues):
+        """One sentinel run; returns every GitHub call it made."""
+        import asyncio
+
+        from app.services import database
+        from app.tasks import bug_report_github as gh
+        from app.tasks import sentinel_filing
+        from app.tasks import tournament_register_sentinel as sentinel
+
+        calls: list[tuple] = []
+
+        class _Session:
+            async def __aenter__(self):
+                return object()
+
+            async def __aexit__(self, *exc):
+                return False
+
+        async def fake_run(session, tournament, season, *, directory):
+            return dict(result)
+
+        monkeypatch.setattr(database, "async_session_maker", lambda: _Session())
+        monkeypatch.setattr(sentinel, "_run_tournament", fake_run)
+        monkeypatch.setattr(sentinel_filing, "fetch_open_alert_issues", lambda: open_issues)
+        monkeypatch.setattr(sentinel_filing, "_claim_fingerprint", lambda *a: "no_redis")
+        monkeypatch.setattr(gh, "GITHUB_TOKEN", "tok")
+        monkeypatch.setattr(gh, "create_github_issue", lambda t, b, labels: calls.append(("create", t, b)) or (9999, "N"))
+        monkeypatch.setattr(gh, "add_to_project_board", lambda nid: None)
+        monkeypatch.setattr(gh, "comment_on_issue", lambda n, b: calls.append(("comment", n)))
+        monkeypatch.setattr(gh, "update_issue_body", lambda n, b: calls.append(("body", n, b)))
+        monkeypatch.setattr(gh, "close_issue", lambda n, comment=None: calls.append(("close", n)))
+        stats = asyncio.run(sentinel._run_tournament_register_sentinel())
+        assert not stats["errors"], stats["errors"]
+        return calls
+
+    def test_the_body_declares_a_fingerprint_the_shared_parser_reads(self):
+        from app.tasks.sentinel_filing import declared_fingerprints
+        from app.tasks.tournament_register_sentinel import MARKER_KEY
+
+        body = build_drift_issue_body(self._red())
+        # The pair the sentinel dedups and closes on is exactly what the one
+        # shared parser recovers from its own body — not merely a substring.
+        assert declared_fingerprints(body) == {(MARKER_KEY, self.FP)}
+
+    def test_a_second_red_night_comments_instead_of_filing(self, monkeypatch):
+        from app.tasks.sentinel_filing import OpenIssuesResult
+
+        first = self._night(monkeypatch, self._red(), OpenIssuesResult(ok=True, issues=[]))
+        created = [c for c in first if c[0] == "create"]
+        assert len(created) == 1
+        _, title, body = created[0]
+
+        second = self._night(
+            monkeypatch, self._red(),
+            OpenIssuesResult(ok=True, issues=[{"number": 9999, "title": title, "body": body}]),
+        )
+        assert not [c for c in second if c[0] == "create"]
+        assert ("comment", 9999) in second
+
+    def test_green_closes_what_red_filed(self, monkeypatch):
+        from app.tasks.sentinel_filing import OpenIssuesResult
+
+        body = build_drift_issue_body(self._red())
+        calls = self._night(
+            monkeypatch, self._green(),
+            OpenIssuesResult(ok=True, issues=[{"number": 9999, "title": "renamed by a human", "body": body}]),
+        )
+        assert calls == [("close", 9999)]
+
+    def test_the_pre_fix_copies_fold_onto_the_oldest_and_it_becomes_closable(self, monkeypatch):
+        from app.tasks.sentinel_filing import OpenIssuesResult
+
+        legacy = [
+            {"number": n, "title": self.LEGACY_TITLE, "body": self.LEGACY_BODY}
+            for n in (9092, 8806, 8195, 8570, 8374)
+        ]
+        calls = self._night(monkeypatch, self._red(), OpenIssuesResult(ok=True, issues=legacy))
+        assert not [c for c in calls if c[0] == "create"]
+        assert ("comment", 8195) in calls
+        refreshed = [c for c in calls if c[0] == "body"]
+        assert [c[1] for c in refreshed] == [8195]
+
+        # The refreshed body now carries the declaration, so GREEN finds it.
+        green = self._night(
+            monkeypatch, self._green(),
+            OpenIssuesResult(ok=True, issues=[{"number": 8195, "title": self.LEGACY_TITLE, "body": refreshed[0][2]}]),
+        )
+        assert green == [("close", 8195)]
+
+    def test_another_tournaments_issue_is_not_a_match(self, monkeypatch):
+        from app.tasks.sentinel_filing import OpenIssuesResult
+
+        other = {
+            "number": 7000,
+            "title": "Tournament register drift: us-open 2027 (needs_ruling)",
+            "body": build_drift_issue_body({**self._red(), "season": "2027",
+                                            "fingerprint": drift_fingerprint("us-open", "2027")}),
+        }
+        calls = self._night(monkeypatch, self._red(), OpenIssuesResult(ok=True, issues=[other]))
+        assert [c[0] for c in calls] == ["create"]
+
+    def test_a_failed_open_issue_read_files_nothing(self, monkeypatch):
+        from app.tasks.sentinel_filing import OpenIssuesResult
+
+        calls = self._night(
+            monkeypatch, self._red(),
+            OpenIssuesResult(ok=False, issues=[], error="rate limited"),
+        )
+        assert calls == []
