@@ -28,7 +28,11 @@ from app.routes.events import (
     _normalize_futures_dedup_key,
     _team_for_event,
 )
-from app.routes.futures import _withheld_price_outcome_ids
+from app.routes.futures import (
+    _board_has_a_verdict,
+    _fleet_newest_observation,
+    _withheld_price_outcome_ids,
+)
 from app.services import get_db
 from app.services.anchor_channel import market_born_duplicates_on_page
 from app.services.same_instant_refutation import same_instant_refuted_on_page
@@ -2498,6 +2502,56 @@ def _live_first(
     return live + live_withheld + won + lost
 
 
+async def _page_withheld_outcome_ids(db: AsyncSession, market) -> set[int]:
+    """The refusal a reader meets on this market's own page, not a subset of it (#8972).
+
+    #7016 hung this module on `_withheld_price_outcome_ids`, and that helper is
+    FIVE arms. `get_futures_market` unions two more terms outside it, because its
+    formatter is sync and holds no session: `stale_observation_keys` on an open
+    board (#7537) and `unobserved_board_keys` on an open or resolved board (#8011).
+    #8102 found the same gap on `/entertainment`. This module still had it, and it
+    feeds every `/api/leagues/*` page and every `/hub/*` futures and matches section.
+
+    WHAT A READER SAW, 2026-09-26 23:35Z. `/hub/esports` printed "Will Team Secret
+    be a 2027 VCT Pacific partner team? No 71% · Yes 29%", and Paper Rex "Yes 93%".
+    Every leg had been written last on 2026-08-04, and `/api/futures/58112496`
+    served both legs `null` with `prices_withheld: 2`. VARREL printed a lone
+    "No 51%" beside "Yes –". That is the complement of an empty-book midpoint:
+    the five arms refuse the Yes leg, which has the quote, and the No leg has
+    nothing for them to test.
+
+    SAME CALLS, SAME GATES, SAME ORDER as the detail route. Nothing here is a
+    rule of its own. The helpers fail open themselves: with no fleet stamp,
+    `unobserved_board_keys` withholds nothing, and `_fleet_newest_observation`
+    skips its read for any board whose own stamp is recent (~92% of them), so the
+    per-market cost on this list route stays the same.
+    """
+    from app.utils.market_staleness import (
+        stale_observation_keys,
+        unobserved_board_keys,
+    )
+
+    withheld = set(await _withheld_price_outcome_ids(db, market))
+    outcomes = getattr(market, "outcomes", None) or []
+    # `getattr`, because a row that never loaded the stamp must read as "never
+    # observed", which both rules take as "withhold nothing", and must not raise
+    # and take the card down with it.
+    observations = [(o.id, getattr(o, "last_updated", None)) for o in outcomes]
+    status = getattr(market, "status", None)
+    if status == "open":
+        withheld |= stale_observation_keys(observations)
+    # Named, not inverted, for the reason `get_futures_market` gives: a new
+    # status should come back through this line deliberately.
+    if status in ("open", "resolved"):
+        withheld |= unobserved_board_keys(
+            observations,
+            board_touched_at=getattr(market, "updated_at", None),
+            fleet_newest_observation=await _fleet_newest_observation(db, market),
+            board_has_a_verdict=_board_has_a_verdict(outcomes),
+        )
+    return withheld
+
+
 def _serialize_outcomes(
     sorted_outcomes: list, market=None, withheld_ids: set[int] | None = None
 ) -> list[dict]:
@@ -2864,7 +2918,7 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
         # skip so a market this loop drops never pays even that. If the page ever
         # does feel it, the answer is to batch the two queries across the page —
         # never to drop an arm and re-open the split.
-        withheld_ids = await _withheld_price_outcome_ids(db, market)
+        withheld_ids = await _page_withheld_outcome_ids(db, market)
         outcomes_data = _serialize_outcomes(sorted_outcomes, market, withheld_ids)
 
         market_data = {
@@ -4162,7 +4216,7 @@ async def build_linked_matches(
             rows = [r for r in rows if r["id"] != prior["id"]]
         # #7016. Below the dedup `continue`s on purpose: a card this loop is
         # about to discard never pays for the two short-circuiting queries.
-        withheld_ids = await _withheld_price_outcome_ids(db, market)
+        withheld_ids = await _page_withheld_outcome_ids(db, market)
         row = {
             "id": market.id,
             # #7397: the venue's word for the league, renamed to ours, for
