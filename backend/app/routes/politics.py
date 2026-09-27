@@ -452,14 +452,22 @@ def _market_row(market: FuturesMarket, *, now: datetime) -> dict | None:
         # read the same defensive way. A cumulative "Before …" rung settles YES
         # early and is never touched again, so the stamp test alone would drop a
         # declared winner from this page's three-row summary.
+        # #9109 follow-up: over EVERY outcome, priced or not — the page's own
+        # population. The helper's twin arm reads the whole list, so which rungs
+        # go in is load-bearing, and the "+N more" count below needs the page's
+        # answer, not a priced-only one.
         [
             (
                 o.name,
-                float(o.current_probability),
+                (
+                    None
+                    if o.current_probability is None
+                    else float(o.current_probability)
+                ),
                 getattr(o, "last_updated", None),
                 getattr(o, "is_winner", None),
             )
-            for o in priced
+            for o in outcomes
         ],
         now,
     )
@@ -485,6 +493,20 @@ def _market_row(market: FuturesMarket, *, now: datetime) -> dict | None:
     # probabilities from independent contracts can sum well over 100%.
     _normalize_outcome_probs(top_outcomes)
 
+    # #9109 follow-up — "+N MORE" COUNTS WHAT THE PAGE SHOWS, NOT THE LADDER.
+    # The card's badge was `outcome_count - 3`: every rung the ladder ever had,
+    # less three rows. Since #7784 the page behind the card drops the passed
+    # rungs, and since #9109 the card can show fewer than three, so the badge
+    # promised rows the page does not have: measured 2026-09-27 12:25Z, 15 of
+    # the 25 badged cards on `/api/politics` over-counted — "When will the
+    # Senate vote on the SAVE America Act?" read "+9 more" over two rows, and
+    # `/api/futures/5466697` shows those same two; "Kash Patel out as FBI
+    # Director?" read "+5 more" over the three rows its page shows. The count
+    # is the page's membership — `expired` is read over every outcome, above —
+    # and never the whole board. `outcome_count` keeps its meaning; its other
+    # readers gate on arity, not on what is shown.
+    page_rungs = [o for o in outcomes if o.name not in expired] or outcomes
+
     return {
         "q": market.name,
         # #6255 — the `if top_outcomes else 0` sentinel is REMOVED, not kept as
@@ -501,6 +523,8 @@ def _market_row(market: FuturesMarket, *, now: datetime) -> dict | None:
         # Every rung, priced or not — the filter above drops rungs from the
         # SLICE, never from the ladder's arity.
         "outcome_count": len(outcomes),
+        # The rungs `/futures/{id}` shows that this card does not.
+        "more_count": max(0, len(page_rungs) - len(top_outcomes)),
     }
 
 

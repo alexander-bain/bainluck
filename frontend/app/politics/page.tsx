@@ -793,6 +793,10 @@ function MultiCard({
 }) {
   const leader = market.top_outcomes?.[0];
   if (!leader) return null;
+  // #9109: the server counts the rungs the page behind this card shows and the
+  // card does not. `outcome_count - 3` counted passed deadlines the page drops
+  // ("+9 more" over two rows); it is only the fallback for an older payload.
+  const moreCount = market.more_count ?? market.outcome_count - 3;
 
   return (
     <Link href={`/futures/${market.market_id}`}>
@@ -808,7 +812,7 @@ function MultiCard({
             }}
           >
             <SourceBadge source={market.src} />
-            {market.outcome_count > 3 && (
+            {moreCount > 0 && (
               <span
                 style={{
                   marginLeft: "auto",
@@ -816,7 +820,7 @@ function MultiCard({
                   fontSize: 10,
                 }}
               >
-                +{market.outcome_count - 3} more
+                +{moreCount} more
               </span>
             )}
           </div>
