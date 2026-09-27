@@ -4844,6 +4844,25 @@ jobs:
             exit 1
           }
 
+      - name: "#9049 the ESPN pass lets go of each game's row before its next ESPN call (real Postgres)"
+        # A savepoint releases a SAVEPOINT, not a row lock: the one-commit pass
+        # held every live game's row through later sports and box-score fetches
+        # (12-23 s on production), and the socket's price write queued behind
+        # it. Only Postgres holds the lock, so only Postgres can show it free.
+        # Same database and fixture as the #8796 step. Skip detection + count.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_espn_pass_releases_rows_pg_9049.py \
+            -v -rs 2>&1 | tee /tmp/espnrelease9049.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/espnrelease9049.txt; then
+            echo "::error::#9049 ESPN row-release gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]3 passed," /tmp/espnrelease9049.txt || {
+            echo "::error::#9049 ESPN row-release gate did not run all three cases"
+            exit 1
+          }
+
       - name: "#837 subscription slate — provision the disposable database"
         # Its own database for the reason the #7617 step above gives: this
         # contract creates and drops the six tables the slate predicate joins,

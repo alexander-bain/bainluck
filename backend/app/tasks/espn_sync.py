@@ -667,6 +667,25 @@ async def _step_savepoint(session):
         await session.execute(text("SELECT 1"))
 
 
+async def _release_rows(session):
+    """Commit what the pass has written so far and push its frames (#9049).
+
+    A savepoint does not release a row lock. Committing once at the end held
+    every live game's row from its score write until the last box-score fetch
+    returned — 12-23 s idle in transaction on production 9/27, with the
+    socket's price write and the live poll's locked read queued behind it for
+    up to 10.7 s. Called only OUTSIDE a `_step_savepoint`, so a failed step
+    has already been rolled back to its own savepoint and costs nothing here.
+    The frames are the score/probability pushes those writes queued; they
+    publish on commit, so they now reach readers a sport at a time instead of
+    after the whole pass.
+    """
+    from app.utils.nonvenue_live_push import publish_committed_nonvenue_frames
+
+    await session.commit()
+    await publish_committed_nonvenue_frames(session)
+
+
 async def _sync_espn_live_events():
     """Async implementation of sync_espn_live_events.
 
@@ -792,6 +811,8 @@ async def _sync_espn_live_events():
                 )
             finally:
                 await straggler_espn.close()
+            # #9049: before the scoreboard fetches below.
+            await _release_rows(session)
 
             if not live_sport_keys:
                 return {"status": "no_live_games", **stats}
@@ -904,6 +925,9 @@ async def _sync_espn_live_events():
                             )
                     except Exception as e:
                         stats["errors"].append(f"{sport_key}: {str(e)}")
+                    # #9049: this sport's rows are free before the next sport
+                    # (whose processing can ask ESPN for a dated board) runs.
+                    await _release_rows(session)
             finally:
                 await widen_espn.close()
 
@@ -925,6 +949,8 @@ async def _sync_espn_live_events():
                         )
                 except Exception as e:
                     stats["errors"].append(f"scheduled_{sport_key}: {str(e)}")
+            # #9049: nothing below may hold a score row across its ESPN calls.
+            await _release_rows(session)
 
             # ── Third pass: completed box scores ─────────────────
             try:
@@ -932,6 +958,7 @@ async def _sync_espn_live_events():
                     await fetch_completed_box_scores(session, stats)
             except Exception as e:
                 stats["errors"].append(f"box_score_pass: {str(e)}")
+            await _release_rows(session)  # #9049
 
             # ── Fourth pass: live box scores ─────────────────────
             try:
@@ -939,6 +966,7 @@ async def _sync_espn_live_events():
                     await fetch_live_box_scores(session, stats)
             except Exception as e:
                 stats["errors"].append(f"live_box_score_pass: {str(e)}")
+            await _release_rows(session)  # #9049
 
             # ── Fifth pass: score backfill ───────────────────────
             try:

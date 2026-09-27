@@ -2834,6 +2834,12 @@ async def fetch_live_box_scores(session, stats):
     if not live_to_fetch:
         return
 
+    # #9049: every ESPN call first, then every write. Written inside the loop,
+    # the first game's row stayed locked while the other nine were fetched —
+    # the socket's next price for that game queued behind it — and the pass
+    # commits only after this step. The writes are the same statements in the
+    # same order; only the network no longer sits between them.
+    to_write = []
     live_espn = ESPNAPIService()
     try:
         for ev in live_to_fetch:
@@ -2872,18 +2878,24 @@ async def fetch_live_box_scores(session, stats):
                         bsd["away_period_scores"] = scores.get(
                             "away_period_scores", []
                         )
-                    await session.execute(
-                        _raw_text("UPDATE events SET box_score_data = cast(:bsd AS jsonb) WHERE id = :eid"),
-                        {"bsd": _json_mod.dumps(bsd), "eid": ev.id},
-                    )
-                    ev.box_score_data = bsd
-                    stats["live_box_scores_fetched"] = (
-                        stats.get("live_box_scores_fetched", 0) + 1
-                    )
+                    to_write.append((ev, bsd))
             except Exception as e:
                 logger.error(f"Live box score error for event {ev.id}: {e}")
     finally:
         await live_espn.close()
+
+    for ev, bsd in to_write:
+        try:
+            await session.execute(
+                _raw_text("UPDATE events SET box_score_data = cast(:bsd AS jsonb) WHERE id = :eid"),
+                {"bsd": _json_mod.dumps(bsd), "eid": ev.id},
+            )
+            ev.box_score_data = bsd
+            stats["live_box_scores_fetched"] = (
+                stats.get("live_box_scores_fetched", 0) + 1
+            )
+        except Exception as e:
+            logger.error(f"Live box score error for event {ev.id}: {e}")
 
 
 # ---------------------------------------------------------------------------
