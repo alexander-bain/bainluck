@@ -71,11 +71,27 @@ async def _pm_group(Session, event_id):
                     last_updated=kickoff - timedelta(minutes=30),
                 )
             )
+        # Seed a real pregame source before the event's lifecycle catches up
+        # to kickoff. #9037 correctly refuses this pre-kickoff book once live;
+        # retirement must still clean up a source already held from pregame.
+        # Keep the book's observation and the stored observed_basis identical:
+        # changing outcome clocks after stamping would change the race premise.
+        await session.execute(
+            update(Event).where(Event.id == event_id).values(status="scheduled")
+        )
         await session.commit()
-    await _run_ws_refresh(Session, event_id, refresher=LiveBlendRefresher("polymarket"))
-    assert "polymarket" in await _stored(Session, event_id), (
-        "fixture must hold a retireable price"
+    _, stats = await _run_ws_refresh(
+        Session, event_id, refresher=LiveBlendRefresher("polymarket")
     )
+    assert stats["stamped"] == 1, stats
+    assert "polymarket" in await _stored(Session, event_id), (
+        "fixture must hold a retireable pregame price"
+    )
+    async with Session() as session:
+        await session.execute(
+            update(Event).where(Event.id == event_id).values(status="live")
+        )
+        await session.commit()
     return [
         pmm._LinkedMarketRef(
             market_id=market_id,
