@@ -5529,6 +5529,35 @@ def mlb_reschedule_ghost_sweep_task(self, apply: bool = True,
 
 
 @celery_app.task(bind=True, soft_time_limit=300, time_limit=360,
+                 name="app.tasks.nhl_adjacent_day_ghost_sweep")
+def nhl_adjacent_day_ghost_sweep_task(self, apply: bool = True,
+                                      lookback: int | None = None,
+                                      lookahead: int | None = None):
+    """#9187 — the MLB reschedule-ghost pass run for the NHL with its
+    adjacent-day arm on: a row with no ESPN id, one ET day off a game ESPN
+    lists once, on a day ESPN lists no game for the pair (the Odds API's
+    phantom Chicago @ Vegas), is labelled a duplicate of the real game.
+    Same label, fold guard, D51 backup and undo as the MLB pass.
+    """
+    from app.tasks.mlb_reschedule_ghost_sweep import (
+        DEFAULT_LOOKAHEAD_DAYS,
+        DEFAULT_LOOKBACK_DAYS,
+        NHL_SPORT_KEY,
+        run_mlb_reschedule_ghost_sweep,
+    )
+
+    return _tracked_run(
+        "nhl_adjacent_day_ghost_sweep",
+        run_mlb_reschedule_ghost_sweep(
+            apply=apply,
+            lookback=DEFAULT_LOOKBACK_DAYS if lookback is None else lookback,
+            lookahead=DEFAULT_LOOKAHEAD_DAYS if lookahead is None else lookahead,
+            sport_key=NHL_SPORT_KEY,
+        ),
+    )
+
+
+@celery_app.task(bind=True, soft_time_limit=300, time_limit=360,
                  name="app.tasks.polymarket_container_twin_sweep")
 def polymarket_container_twin_sweep_task(self, apply: bool = True,
                                          lookback: int | None = None,
@@ -6930,6 +6959,16 @@ celery_app.conf.beat_schedule = {
     "mlb-reschedule-ghost-sweep": {
         "task": "app.tasks.mlb_reschedule_ghost_sweep",
         "schedule": crontab(minute="52"),
+        "kwargs": {"apply": True},
+        "options": {"queue": "background"},
+    },
+    # #9187 — the same pass for the NHL, adjacent-day arm on (the Odds API's
+    # phantom second Chicago @ Vegas). HOURLY at :56, clear of the MLB pass at
+    # :52 so the two never read ESPN at once. APPLY under D51; same undo:
+    # `scripts/restore_8547_mlb_reschedule_ghost_tags.py --apply`.
+    "nhl-adjacent-day-ghost-sweep": {
+        "task": "app.tasks.nhl_adjacent_day_ghost_sweep",
+        "schedule": crontab(minute="56"),
         "kwargs": {"apply": True},
         "options": {"queue": "background"},
     },

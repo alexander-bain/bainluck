@@ -2014,7 +2014,15 @@ def free_background_slots(
 #: and killed all three ~332 s writer runs after the durable survivor shipped.
 #: Background sheds ~66 min/day. The census RUN over the tree rebased onto
 #: `d5749e5772` printed `explicit 88 implicit 43 total 131`.
-BACKGROUND_BEAT_COUNT = 131
+#:
+#: 🔴 RE-DERIVED at lane1 (2026-09-27, #9187): 131 → 132, explicit 88 → 89,
+#: fall-through UNMOVED at 43. `nhl-adjacent-day-ghost-sweep`
+#: (`crontab(minute="56")`) names `background` explicitly. Cost: HOURLY, one
+#: bounded window read of NHL rows (74 on 2026-09-27) plus one ESPN board read
+#: per ET day in the window (11, no quota), a label write only on a proven
+#: phantom. The census RUN over the assembled `beat_schedule` printed
+#: `explicit 89 implicit 43 total 132`.
+BACKGROUND_BEAT_COUNT = 132
 #: 🔴 RE-DERIVED at lane1/282 (2026-09-13, #5896): 122 → **123**, explicit
 #: 79 → **80**, fall-through UNMOVED at 43. One beat added,
 #: `soccer-ghost-twin-sweep` (`crontab(minute="9,49")`) with an EXPLICIT
