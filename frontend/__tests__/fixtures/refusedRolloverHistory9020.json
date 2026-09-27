@@ -1,0 +1,89 @@
+{
+  "_about": "#9020 / CERT-3657. SMU (15316003) board around the 3rd-4th quarter break. `after` is what one real live pass serves once the rollover reading is refused (backend/tests/test_refused_clock_stays_off_the_chart_9020.py pins it row for row); `before` is the first cut's output, CERT-3657's reproduction. `row` is the events row both arms leave behind.",
+  "row": {
+    "period": "End of 3rd Quarter",
+    "game_clock": "0:00",
+    "home_score": 21,
+    "away_score": 10
+  },
+  "before": {
+    "espn_history": [
+      {
+        "timestamp": "2026-09-27T03:28:32+00:00",
+        "home_probability": 0.8,
+        "away_probability": 0.2,
+        "home_score": 21,
+        "away_score": 10,
+        "game_clock": "0:42",
+        "period": "0:42 - 3rd Quarter"
+      },
+      {
+        "timestamp": "2026-09-27T03:29:32+00:00",
+        "home_probability": 0.8,
+        "away_probability": 0.2,
+        "home_score": 21,
+        "away_score": 10,
+        "game_clock": "0:00",
+        "period": "End of 3rd Quarter"
+      },
+      {
+        "timestamp": "2026-09-27T03:30:32+00:00",
+        "home_probability": 0.8,
+        "away_probability": 0.2,
+        "home_score": 21,
+        "away_score": 10,
+        "game_clock": "0:00",
+        "period": "End of 3rd Quarter"
+      },
+      {
+        "timestamp": "2026-09-27T03:31:32+00:00",
+        "home_probability": 0.83,
+        "away_probability": 0.17,
+        "home_score": 21,
+        "away_score": 10,
+        "game_clock": "4:38",
+        "period": "4:38 - 4th Quarter"
+      }
+    ]
+  },
+  "after": {
+    "espn_history": [
+      {
+        "timestamp": "2026-09-27T03:28:32+00:00",
+        "home_probability": 0.8,
+        "away_probability": 0.2,
+        "home_score": 21,
+        "away_score": 10,
+        "game_clock": "0:42",
+        "period": "0:42 - 3rd Quarter"
+      },
+      {
+        "timestamp": "2026-09-27T03:29:32+00:00",
+        "home_probability": 0.8,
+        "away_probability": 0.2,
+        "home_score": 21,
+        "away_score": 10,
+        "game_clock": "0:00",
+        "period": "End of 3rd Quarter"
+      },
+      {
+        "timestamp": "2026-09-27T03:30:32+00:00",
+        "home_probability": 0.8,
+        "away_probability": 0.2,
+        "home_score": 21,
+        "away_score": 10,
+        "game_clock": "0:00",
+        "period": "End of 3rd Quarter"
+      },
+      {
+        "timestamp": "2026-09-27T03:31:32+00:00",
+        "home_probability": 0.83,
+        "away_probability": 0.17,
+        "home_score": 21,
+        "away_score": 10,
+        "game_clock": null,
+        "period": null
+      }
+    ]
+  }
+}

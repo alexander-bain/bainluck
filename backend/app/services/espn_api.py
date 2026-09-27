@@ -371,6 +371,14 @@ class ESPNEvent:
     # moves) but is no announcement here, so it can never vouch that a start
     # already on the row is real. Read by `espn_start_time.espn_announced_start`.
     time_announced: bool = False
+    # #9020 / CERT-3657: set by `update_event_fields_from_espn` when this
+    # reading's clock and period outran the wall clock and were refused from the
+    # row. Not ESPN's — OUR verdict on it, carried on the reading so the same
+    # pass's history writers (`write_espn_win_probability`, the stat model)
+    # refuse the same position instead of charting it as the newest state.
+    # Re-assigned on every update call, so a reading processed twice is judged
+    # afresh each time.
+    position_outran_wall: bool = False
 
 
 def _espn_time_valid_flag(competition: dict, event_data: dict):

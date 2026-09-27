@@ -662,3 +662,142 @@ def live_write_would_revert(
             incoming_away_score,
         )
     return False
+
+
+#: The shortest regulation period any countdown sport we carry plays (WNBA and
+#: FIBA quarters are ten minutes; NFL/NCAAF quarters are fifteen, NBA twelve,
+#: hockey periods twenty). Used ONLY to bound game time elapsed across a period
+#: boundary from BELOW, so a sport with longer periods is never over-refused —
+#: its real elapsed time is at least this much.
+_MIN_REGULATION_PERIOD_SECONDS = 600
+#: How far a new reading may outrun the wall clock before it is refused. Covers
+#: ESPN's scoreboard serving a reading a little stale on one pass and fresh on
+#: the next, and the anchor being stamped at transaction start rather than at
+#: fetch time. A real rollover reading outruns by five minutes or more (below).
+WALL_CLOCK_SLACK_SECONDS = 90
+#: Where the sport IS known, its regulation period length tightens the bound.
+#: Prefix-keyed on `Sport.key`; anything unlisted falls back to the floor above.
+_REGULATION_PERIOD_SECONDS_BY_SPORT_PREFIX = (
+    ("americanfootball_", 900),
+    ("basketball_nba", 720),
+    ("icehockey_", 1200),
+)
+
+
+def regulation_period_seconds_at_least(sport_key: str | None) -> int:
+    """The shortest regulation period ``sport_key`` can be playing, in seconds."""
+    key = str(sport_key or "")
+    for prefix, seconds in _REGULATION_PERIOD_SECONDS_BY_SPORT_PREFIX:
+        if key.startswith(prefix):
+            return seconds
+    return _MIN_REGULATION_PERIOD_SECONDS
+
+
+def _countdown_regulation_position(
+    period: str | None, game_clock: str | None
+) -> tuple[int, float] | None:
+    """``(period_number, seconds_remaining)`` for a regulation countdown reading.
+
+    ``None`` for anything else — innings, overtime, halftime, a terminal label,
+    or a reading with no clock — which the caller treats as no evidence.
+    Overtime is excluded on purpose: its length varies by sport and competition
+    (NFL regular-season 10:00, college football no running clock at all), so no
+    lower bound on its elapsed time is safe to state.
+    """
+    if not period:
+        return None
+    text = str(period).strip()
+    if not text or _TERMINAL_LABEL_RE.search(text) or _OVERTIME_RE.search(text):
+        return None
+    end_of = _END_OF_PERIOD_RE.search(text)
+    if end_of:
+        return (int(end_of.group(1)), 0.0)
+    countdown = _COUNTDOWN_PERIOD_RE.search(text)
+    if not countdown:
+        return None
+    remaining = _clock_remaining_seconds(text, game_clock)
+    if remaining is None:
+        return None
+    return (int(countdown.group(1)), float(remaining))
+
+
+def game_seconds_elapsed_at_least(
+    stored_period: str | None,
+    stored_clock: str | None,
+    incoming_period: str | None,
+    incoming_clock: str | None,
+    *,
+    period_seconds: int = _MIN_REGULATION_PERIOD_SECONDS,
+) -> float | None:
+    """A LOWER bound on game time that passed between two countdown readings.
+
+    ``None`` unless both readings are regulation countdown positions and the
+    incoming one is strictly later. Within one period the answer is exact
+    (``stored_remaining - incoming_remaining``). Across a boundary the stored
+    period must run out, every period in between must be played, and the new
+    one must have run down to its clock — the last two are counted at
+    ``period_seconds``, which defaults to the shortest regulation length any
+    sport plays, so the bound holds for all of them without knowing which sport
+    this is (`regulation_period_seconds_at_least` tightens it when the sport is
+    known).
+    """
+    stored = _countdown_regulation_position(stored_period, stored_clock)
+    incoming = _countdown_regulation_position(incoming_period, incoming_clock)
+    if stored is None or incoming is None:
+        return None
+    (s_period, s_remaining), (i_period, i_remaining) = stored, incoming
+    if i_period == s_period:
+        elapsed = s_remaining - i_remaining
+        return elapsed if elapsed > 0 else None
+    if i_period < s_period:
+        return None
+    return (
+        s_remaining
+        + (i_period - s_period - 1) * period_seconds
+        + max(0.0, period_seconds - i_remaining)
+    )
+
+
+def clock_outruns_wall_time(
+    stored_period: str | None,
+    stored_clock: str | None,
+    incoming_period: str | None,
+    incoming_clock: str | None,
+    wall_seconds: float | None,
+    *,
+    period_seconds: int = _MIN_REGULATION_PERIOD_SECONDS,
+) -> bool:
+    """Would accepting this reading make the game clock run faster than time?
+
+    #9020. A game clock can stop; it cannot run faster than the wall clock. So
+    if the row has stood at its position since ``wall_seconds`` ago, an incoming
+    reading that places the game more than that much game time later (plus
+    `WALL_CLOCK_SLACK_SECONDS`) is not a real reading of this game. ESPN
+    publishes exactly that at quarter rollovers — the new quarter's label with
+    the old quarter's clock:
+
+        SMU 15316003, espn_snapshots:
+          03:29:32  End of 3rd Quarter
+          03:30:32  End of 3rd Quarter
+          03:31:32  4:38 - 4th Quarter   <- 10:22 of game clock in 2 wall minutes
+          03:32:32  4:38 - 4th Quarter
+          03:33:32  14:59 - 4th Quarter  <- the real one
+
+    Once the row takes such a reading, every correct reading after it sits
+    "earlier in the game" and the #6056 guard refuses it; the clock sticks until
+    a score or the real clock passes under the bad value. Oregon at USC showed a
+    reader Q4 1:27 on the hero and Q4 ~9:51 on the chart, one minute apart.
+
+    ``False`` whenever anything is unknown — an unplaceable reading, a backwards
+    reading (the #6056 guard's business, not this one's), or no anchor time.
+    This refuses only what is physically impossible; it is not a clamp.
+    """
+    if wall_seconds is None:
+        return False
+    elapsed = game_seconds_elapsed_at_least(
+        stored_period, stored_clock, incoming_period, incoming_clock,
+        period_seconds=period_seconds,
+    )
+    if elapsed is None:
+        return False
+    return elapsed > max(0.0, float(wall_seconds)) + WALL_CLOCK_SLACK_SECONDS
