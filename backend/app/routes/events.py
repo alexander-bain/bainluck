@@ -2737,6 +2737,55 @@ def _settled_day_order_key(lead_keys: frozenset | None):
     ).desc().nulls_last()
 
 
+def _todays_final_order_key(armed: bool, status_order, upcoming_order, now: datetime):
+    """#9211: a club's game that FINISHED TODAY sits right behind its next game.
+
+    `chiefs` on production 2026-09-27 21:15Z, two hours after the Chiefs won
+    24–10 at Miami: 13 upcoming games (Oct 4 through Jan 10) printed first and
+    the result was card 14. `steelers` put that afternoon's 30–27 win at 16.
+    `status_order` ranks EVERY upcoming game above every finished one, and
+    #8505/#9040 order only inside the finished tier, so neither could lift it.
+
+    D107 still decides the first slot: the entity, then its next game, "next
+    before last when one exists" (the T2 gate: a finished game displacing
+    live/next on a bare entity query, 0). So the live games and the row that
+    ALREADY leads the upcoming tier keep their places (0), today's finals come
+    next (1), and everything else keeps the old order below them (2).
+
+    "Leads the upcoming tier" is `row_number()` over that tier, ordered by the
+    keys the route orders it by below `status_order` (#8738's leader, rank,
+    soonest; a club query has no tag tier, #8942), so the lifted row is the one
+    the reader already saw first. On a day with no final every row reads as before: live, that row,
+    then the rest in their old order.
+
+    `completed`/`closed` only: a `suspended` row has no result to show. Today
+    is the Eastern day, from the route's own `now` (`_intent_day_order_key`).
+    Armed for a club query (the TEAMS card has a row, #8942's test); None
+    otherwise, and the SQL is then unchanged.
+    """
+    if not armed:
+        return None
+    eastern_day = cast(
+        func.timezone(_EASTERN_TZ_NAME, Event.commence_time), Date
+    )
+    today = now.astimezone(ZoneInfo(_EASTERN_TZ_NAME)).date()
+    upcoming_place = func.row_number().over(
+        partition_by=status_order, order_by=list(upcoming_order)
+    )
+    return case(
+        (status_order == 0, 0),
+        (and_(status_order == 1, upcoming_place == 1), 0),
+        (
+            and_(
+                Event.status.in_(["completed", "closed"]),
+                eastern_day == today,
+            ),
+            1,
+        ),
+        else_=2,
+    )
+
+
 # Award-narrowing scope tokens. A market whose NAME carries one of these but the
 # QUERY does not is a sub-award (e.g. "Eastern Conference Finals MVP" vs the bare
 # season "MVP Winner"). Word-boundary matched so "final" inside another word can't
@@ -7925,6 +7974,19 @@ async def search_events(
     # query ranks every row that does not contain "today" at 0 and flattens the
     # relevance ordering of the very pool the reader asked about.
     search_rank = _search_rank(_event_search_vector(), _q_identity)
+    # #9211: today's final right behind the next game (see the key). A club
+    # query is exactly the one #8942 strips the tag tier from, so an empty
+    # `tag_boost_keys` IS the TEAMS-card test, already paid for.
+    _todays_final_key = _todays_final_order_key(
+        not tag_boost_keys,
+        status_order,
+        (
+            *( (_team_card_lead_key,) if _team_card_lead_key is not None else () ),
+            search_rank.desc(),
+            Event.commence_time.asc(),
+        ),
+        now,
+    )
 
     # #5688, second half: a time qualifier LEADS, and it has to do it HERE.
     #
@@ -7963,6 +8025,8 @@ async def search_events(
         # #9044: above the status tier, for #8697's reason — a game the query's
         # words reach only split across its two sides names no club typed.
         *( (_split_terms_key,) if _split_terms_key is not None else () ),
+        # #9211: live and the next game, then today's finals, then the rest.
+        *( (_todays_final_key,) if _todays_final_key is not None else () ),
         status_order,
         # #9040: among finished games, the newest day first (armed with #8738).
         *( (_settled_day_key,) if _settled_day_key is not None else () ),
