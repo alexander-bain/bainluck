@@ -1552,7 +1552,9 @@ def _merge_anchored_claim_name_variants(groups: dict[tuple, list]) -> dict[tuple
     ONE SIDE TO BE SQUASH-IDENTICAL and lets the token rule adjudicate only the
     other. All 22 asymmetric pairs in that population were read by hand and all
     22 are one fixture; both NPB pairs are in it and the `West Georgia` pair is
-    structurally out of reach rather than merely absent.
+    structurally out of reach rather than merely absent. (#8672 admits the
+    both-sides case for professional basketball, hockey and baseball leagues
+    only — see :func:`_both_sides_may_differ`; college keys stay refused.)
 
     AND IT IS OFF IN SOCCER, WHICH IS A COLLISION RULE AND NOT A HAZARD RULE.
     `_merge_soccer_name_variants` is already a token-subset rule with its own
@@ -1615,7 +1617,9 @@ def _merge_anchored_claim_name_variants(groups: dict[tuple, list]) -> dict[tuple
             # closed: this pass cannot prove the bucket is not soccer. That
             # branch is unreachable from `fold_twin_events`, which eager-loads.
             continue
-        for cluster in _anchored_claim_name_clusters(bucket_keys, groups):
+        for cluster in _anchored_claim_name_clusters(
+            bucket_keys, groups, both_sides=_both_sides_may_differ(sport_key)
+        ):
             target = cluster[0]
             for other in cluster[1:]:
                 merged_into[other] = target
@@ -1633,8 +1637,64 @@ def _merge_anchored_claim_name_variants(groups: dict[tuple, list]) -> dict[tuple
     return out
 
 
+#: #8672 — the sport-key families whose leagues may fold a pair on which BOTH
+#: club names differ. Each one is a family the census below holds real pairs in,
+#: and nothing else is admitted on the strength of looking similar.
+_BOTH_SIDES_TEAM_FAMILIES: tuple[str, ...] = ("basketball_", "icehockey_", "baseball_")
+
+
+def _both_sides_may_differ(sport_key: str) -> bool:
+    """May this league fold a pair whose away AND home names both differ? #8672.
+
+    THE SHIP. `bainluck.com/sports/basketball_euroleague` at 390px, 2026-09-27
+    07:3xZ, two days before the season opens: `Žalgiris 44% / Olympiacos 56%`
+    directly above `Zalgiris Kaunas 44% / Olympiacos B.C. 56%`, and `Pallacanestro
+    Olimpia Milano / Virtus Segafredo Bologna` above `Olimpia Milano / Virtus
+    Bologna` — one Odds-API row (`external_id`) and one id-less Polymarket row per
+    game, the same minute, and a third pair on Oct 1 (`15318708`/`15317900`,
+    `15318799`/`15317901`, `15319319`/`15318705`). Every other opening-week pair
+    already folds, because one club is spelled the same by both providers; on
+    these three NEITHER is, so the one-side-exact licence refuses them.
+
+    WHY A COLLEGE LEAGUE STAYS REFUSED. The licence's one measured false fold is
+    `West Georgia v North Florida` beside `Georgia v Florida` (`baseball_ncaa`),
+    and it is a college shape: hundreds of schools, many named inside another's
+    name (`Georgia` / `West Georgia` / `Georgia Tech`, `Kansas` / `Kansas
+    State`). A professional league has a closed membership in which no club's
+    name is another club's name with words added, so "both sides are the other
+    row's names, shortened" cannot pick out a second fixture there.
+
+    MEASURED, production 2026-09-27 07:4xZ, whole `events` table, all time, every
+    non-soccer key: pairs inside one `(sport_id, minute)` with asymmetric
+    provenance and BOTH names token-subset related —
+
+        tennis_atp              42   refused here (individual sport)
+        baseball_ncaa           15   refused here (college), incl. West Georgia
+        lacrosse_ncaa            5   refused here (college, and not a family)
+        icehockey_liiga         15   `Tappara` / `Tappara Tampere`
+        icehockey_nhl            5   `Boston` / `Boston Bruins`
+        basketball_euroleague    4   the three above + one the exact side folds
+        basketball_nba           3   `Detroit` / `Detroit Pistons`
+        baseball_npb             1   `Hiroshima Carp` / `Hiroshima Toyo Carp`
+
+    Every admitted pair (28) is one game: each carries the same scoreline on both
+    rows or no score on either, and was read by hand. A `*_other` catch-all is
+    refused because it holds many leagues under one key, which is the college
+    shape again.
+
+    Everything else in the licence is unchanged and still has to hold: the
+    provenance asymmetry, the exact minute, both names token-subset related, the
+    clique test and :func:`_objectively_different_games`.
+    """
+    if "ncaa" in sport_key:
+        return False
+    if _catchall_sport_prefix(sport_key) is not None:
+        return False
+    return sport_key.startswith(_BOTH_SIDES_TEAM_FAMILIES)
+
+
 def _anchored_claim_name_clusters(
-    bucket_keys: list[tuple], groups: dict[tuple, list]
+    bucket_keys: list[tuple], groups: dict[tuple, list], both_sides: bool = False
 ) -> list[list]:
     """Cliques of same-minute keys that are one fixture under the name licence.
 
@@ -1653,7 +1713,9 @@ def _anchored_claim_name_clusters(
       same_home` is the whole clause: both False is the both-sides case and is
       where the one measured false fold lives, and both True is unreachable —
       two keys agreeing on league, minute and BOTH squashed names are one key,
-      so the strict key never made them two groups.
+      so the strict key never made them two groups. AMENDED #8672: with
+      ``both_sides`` (a league :func:`_both_sides_may_differ` admits) the
+      both-False case is asked the name question on each side instead.
     * :func:`_objectively_different_games`, whose scoreline half is what refuses
       a pair the names cannot tell apart.
 
@@ -1708,11 +1770,19 @@ def _anchored_claim_name_clusters(
         # already built, orientation kept. EXACTLY one of them must be equal.
         same_away = left[1] == right[1]
         same_home = left[2] == right[2]
-        if same_away == same_home:
+        if same_away and same_home:
             return False
-        disputed = 1 if same_away else 0
-        if not _one_club_named_twice(names[left][disputed], names[right][disputed]):
+        if same_away or same_home:
+            disputed = (1,) if same_away else (0,)
+        elif both_sides:
+            # #8672: both names differ, in a league :func:`_both_sides_may_differ`
+            # admits. Each side is then asked the name question on its own.
+            disputed = (0, 1)
+        else:
             return False
+        for side in disputed:
+            if not _one_club_named_twice(names[left][side], names[right][side]):
+                return False
         return not _objectively_different_games(groups[left], groups[right])
 
     # Every key in a bucket shares element 3, so there is no time order to walk
