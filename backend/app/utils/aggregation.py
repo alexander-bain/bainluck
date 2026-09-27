@@ -33,6 +33,7 @@ Source weights reflect depth and reliability:
   - Polymarket (0.8): Largest prediction market, good liquidity
 """
 
+import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -445,8 +446,7 @@ def _finite_number(raw: Any) -> bool:
     return (
         isinstance(raw, (int, float))
         and not isinstance(raw, bool)
-        and raw == raw
-        and raw not in (float("inf"), float("-inf"))
+        and math.isfinite(raw)
     )
 
 

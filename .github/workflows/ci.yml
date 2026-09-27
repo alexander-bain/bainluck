@@ -5053,12 +5053,13 @@ jobs:
 
       - name: "#8910 no live writer puts an older reading over a newer one (real Postgres)"
         # #8910 other-writers repair. The REAL 15-minute matcher, WS lane and
-        # poll, forced into each interleaving with two sessions. 14 = CE1 matcher
+        # poll, forced into each interleaving with two sessions. 18 = CE1 matcher
         # over the socket + CE2 sibling erased in the matcher's gap + C1 + CE3 WS
         # over the poll + CE5 WS UPDATE waits on the poll's lock (decided at the
         # commit) + C2 + C3 + CE4 re-observed unchanged re-stamp + C4 newer B
         # beats older A published later (the clock-domain control) + the SQL
-        # strip + 4 malformed stored bases. Matcher unlocked: CE2 red; matcher
+        # strip + 4 malformed stored bases + 3 non-numeric bindings not trusted
+        # (parity with the Python rule) + their numeric control. Matcher unlocked: CE2 red; matcher
         # guard removed: CE1 red; WS guard removed: CE3/CE4/CE5 red; WS guard
         # moved to a read before the UPDATE: CE5 red.
         run: |
@@ -5069,8 +5070,8 @@ jobs:
             echo "::error::#8910 other-writers gate SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]14 passed[,[:space:]]" /tmp/writers8910.txt || {
-            echo "::error::#8910 other-writers gate did not run all fourteen cases"
+          grep -qE "[^0-9]18 passed[,[:space:]]" /tmp/writers8910.txt || {
+            echo "::error::#8910 other-writers gate did not run all eighteen cases"
             exit 1
           }
 

@@ -106,7 +106,7 @@ def _post_goal_book() -> list[dict]:
 async def pg():
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-    import app.models.models  # noqa: F401
+    from app.models import models as _registers_every_table  # noqa: F401
     from app.services.database import Base
 
     engine = create_async_engine(DB_URL)
@@ -346,7 +346,7 @@ class TestMatcherReadsThenSocketCommitsThenMatcherResumes:
             seen["socket"] = (await _stored(Session, event_id))["kalshi"]
 
         seen: dict = {}
-        _spoke, stats = await _run_matcher_group(Session, event_id, at_orient=at_orient)
+        await _run_matcher_group(Session, event_id, at_orient=at_orient)
         stored = await _stored(Session, event_id)
         kalshi = stored["kalshi"]
 
@@ -671,6 +671,27 @@ class TestSocketControl:
         assert "updated_at" in stored["kalshi"]
 
 
+async def _bind_a_future_basis(Session, event_id: int, bound: str) -> None:
+    """Store Kalshi as {value: bound, observed_value: bound, observed_basis:
+    every Kalshi row seen far in the future} — a basis that refuses every
+    reading IF it is trusted."""
+    async with Session() as s:
+        await s.execute(
+            text(
+                "UPDATE events SET win_probability_sources = "
+                "  win_probability_sources || jsonb_build_object('kalshi', "
+                "    jsonb_build_object('value', CAST(:b AS jsonb), "
+                "      'observed_value', CAST(:b AS jsonb), "
+                "      'observed_basis', (SELECT jsonb_object_agg(o.id::text, 9999999999) "
+                "         FROM futures_outcomes o JOIN futures_markets m ON m.id = o.market_id "
+                "        WHERE m.source = 'kalshi' AND m.event_id = :id))) "
+                " WHERE id = :id"
+            ),
+            {"b": bound, "id": event_id},
+        )
+        await s.commit()
+
+
 class TestTheStampExpressionInSql:
     async def test_an_undated_stamp_removes_the_previous_basis(self, pg):
         """`atomic_stamp_expression`'s strip, on the server: a value written
@@ -720,3 +741,32 @@ class TestTheStampExpressionInSql:
         _r, stats = await _run_ws_refresh(Session, event_id)
         assert stats["errors"] == 0 and stats["stamped"] == 1, stats
         assert (await _stored(Session, event_id))["kalshi"]["value"] == SOCKET_MOVE
+
+    @pytest.mark.parametrize(
+        "bound", ['"0.6"', "true", "null"], ids=["string", "bool", "json-null"],
+    )
+    async def test_a_non_numeric_binding_is_not_trusted_as_in_python(
+        self, pg, bound
+    ):
+        """Parity with `stored_observation_basis` (Codex, on 30162c4dd6): a
+        binding is only believed on a NUMERIC value. JSON equality alone would
+        trust `"0.6" = "0.6"` and refuse the write that repairs the entry."""
+        from app.utils.aggregation import stored_observation_basis
+
+        Session, event_id = pg
+        await _bind_a_future_basis(Session, event_id, bound)
+        assert stored_observation_basis(await _stored(Session, event_id), "kalshi") is None
+        await _socket_flush(Session, SOCKET_MOVE)
+        _r, stats = await _run_ws_refresh(Session, event_id)
+        assert stats["stale_readings_refused"] == 0 and stats["stamped"] == 1, stats
+        assert (await _stored(Session, event_id))["kalshi"]["value"] == SOCKET_MOVE
+
+    async def test_control_a_numeric_binding_with_a_later_basis_refuses(self, pg):
+        """The same rig with a numeric binding: the basis IS trusted, so the
+        parity cases above pass for the binding's type and nothing else."""
+        Session, event_id = pg
+        await _bind_a_future_basis(Session, event_id, "0.6")
+        await _socket_flush(Session, SOCKET_MOVE)
+        _r, stats = await _run_ws_refresh(Session, event_id)
+        assert stats["stale_readings_refused"] == 1, stats
+        assert (await _stored(Session, event_id))["kalshi"]["value"] == 0.6

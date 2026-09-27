@@ -535,8 +535,12 @@ def observation_admits_clause(source: str, observed_basis):
     re-evaluates its WHERE against the row the poll committed, so the comparison
     holds at the commit with no lock of this lane's own and no extra round trip.
     It is `aggregation.reading_regresses_stored_observation` in SQL, and must
-    stay that: per contributor, the stored basis trusted only while bound to the
-    stored value, a non-number clock on either side ignored (never cast — a
+    stay that: per contributor, the stored basis trusted only while bound to a
+    NUMERIC stored value (Codex, on 30162c4dd6: JSON equality alone trusted
+    `"0.6" = "0.6"`, `true = true` and `null = null`, which the Python rule
+    abstains on — a malformed entry would then refuse the very write that
+    repairs it; a jsonb number is always finite, so `number` is the whole of
+    `_finite_number`), a non-number clock on either side ignored (never cast — a
     malformed stored string must not abort the batch), and no shared row means
     no opinion.
 
@@ -558,6 +562,7 @@ def observation_admits_clause(source: str, observed_basis):
     )
     stored_basis = (
         f"(CASE WHEN jsonb_typeof({entry} -> '{OBSERVED_BASIS_KEY}') = 'object' "
+        f"AND jsonb_typeof({entry} -> 'value') = 'number' "
         f"AND {entry} -> '{OBSERVED_VALUE_KEY}' = {entry} -> 'value' "
         f"THEN {entry} -> '{OBSERVED_BASIS_KEY}' ELSE '{{}}'::jsonb END)"
     )
