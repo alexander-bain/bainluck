@@ -1751,7 +1751,26 @@ def venue_game_start(market):
 
 
 def _parse_venue_game_start(meta):
-    """``venue_game_start`` out of one row's ``market_metadata``, or None."""
+    """``venue_game_start`` out of one row's ``market_metadata``, or None.
+
+    #9117: an MLB "time TBD" stamp comes back as its game day's stand-in
+    instant (:func:`_mlb_tbd_game_day`), never as a 3:33 AM first pitch.
+    """
+    parsed = _parse_raw_venue_game_start(meta)
+    if parsed is None:
+        return None
+    day = _mlb_tbd_game_day(meta, parsed)
+    if day is None:
+        return parsed
+    game_date, offset = day
+    return (
+        datetime.combine(game_date, _MLB_TBD_STAND_IN_LOCAL, tzinfo=timezone.utc)
+        - offset
+    )
+
+
+def _parse_raw_venue_game_start(meta):
+    """The stamp exactly as the venue gave it, tz-aware UTC, or None."""
     if not isinstance(meta, dict):
         return None
     raw = meta.get("venue_game_start")
@@ -1766,6 +1785,79 @@ def _parse_venue_game_start(meta):
     except (ValueError, TypeError):
         return None
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+#: #9117 — MLB's "time TBD" sentinel. A game whose first pitch is not yet set is
+#: published at 3:33:00 AM in the park's own zone: the MLB Stats API gives
+#: 2026-09-29T07:33Z for the Red Sox @ Yankees Wild Card opener and 10:33Z for
+#: Cubs @ Padres at Petco, both with ``status.startTimeTBD=true``, and Gamma
+#: copies the instant verbatim into ``startTime`` (``eventDate`` 2026-09-29).
+#: Read as a first pitch it sits 12.5h from our rows, so #4965's ±3h guard
+#: refused all three Wild Card markets for a day. Only ``mlb-`` slugs: that is
+#: the league the sentinel was measured on, and no real MLB game starts at
+#: 3:33 AM anywhere in these zones.
+_MLB_TBD_SLUG_PREFIX = "mlb-"
+_MLB_TBD_LOCAL_CLOCK = (3, 33, 0)
+_MLB_TBD_ZONE_NAMES = (
+    "America/New_York", "America/Chicago", "America/Denver",
+    "America/Phoenix", "America/Los_Angeles",
+)
+#: Where a TBD game is centred for anything that needs an instant (the scorer,
+#: the relink finders): 4 PM in the park's zone, mid-slate for an MLB day. The
+#: guard never judges by it; it compares the local DATE.
+_MLB_TBD_STAND_IN_LOCAL = datetime(1, 1, 1, 16).time()
+
+
+def _mlb_tbd_zones():
+    try:
+        from zoneinfo import ZoneInfo
+        return tuple(ZoneInfo(name) for name in _MLB_TBD_ZONE_NAMES)
+    except Exception:  # pragma: no cover - no tzdata: never read a date-only stamp
+        return ()
+
+
+_MLB_TBD_ZONES = _mlb_tbd_zones()
+
+
+def _mlb_tbd_game_day(meta, instant):
+    """``(local game date, UTC offset)`` when ``instant`` is MLB's TBD stamp.
+
+    None for everything else: a non-MLB slug, a real first pitch, no tzdata.
+    """
+    slug = meta.get("polymarket_event_slug") if isinstance(meta, dict) else None
+    if not isinstance(slug, str) or not slug.startswith(_MLB_TBD_SLUG_PREFIX):
+        return None
+    for zone in _MLB_TBD_ZONES:
+        local = instant.astimezone(zone)
+        if (local.hour, local.minute, local.second) == _MLB_TBD_LOCAL_CLOCK:
+            if local.microsecond == 0:
+                return local.date(), local.utcoffset()
+    return None
+
+
+def venue_game_day(market):
+    """``(date, offset)`` when the venue gave only a DATE for this game. #9117.
+
+    None when the venue gave a real instant (or nothing), so every caller that
+    gets None keeps the ±3h rule exactly as it was.
+    """
+    meta = getattr(market, "market_metadata", None)
+    parsed = _parse_raw_venue_game_start(meta)
+    return None if parsed is None else _mlb_tbd_game_day(meta, parsed)
+
+
+def _venue_game_day_disagrees(market, commence) -> bool:
+    """Is ``commence`` on another local day than the one the venue named? #9117.
+
+    False whenever the venue named no date-only day, or ``commence`` is absent,
+    so this can only ever refuse a row in the MLB TBD case.
+    """
+    day = venue_game_day(market)
+    if day is None or not isinstance(commence, datetime):
+        return False
+    game_date, offset = day
+    ec = commence if commence.tzinfo else commence.replace(tzinfo=timezone.utc)
+    return (ec.astimezone(timezone.utc) + offset).date() != game_date
 
 
 async def _check_polymarket_fixture_reason(session, event_id: int, market):
@@ -1797,6 +1889,18 @@ async def _check_polymarket_fixture_reason(session, event_id: int, market):
         event_commence if event_commence.tzinfo
         else event_commence.replace(tzinfo=timezone.utc)
     )
+    # #9117: the venue named a day, not a first pitch, so the question is the
+    # day. A TBD stamp read as an instant refused all three Wild Card markets.
+    if venue_game_day(market) is not None:
+        if _venue_game_day_disagrees(market, ec):
+            logger.warning(
+                "Venue-fixture linkage blocked (#9117): polymarket %s names "
+                "game day %s (time TBD) but event %d is on another day (%s)",
+                market.external_id, venue_game_day(market)[0], event_id,
+                ec.isoformat(),
+            )
+            return _REFUSAL_VENUE_FIXTURE
+        return None
     diff_hours = abs((fixture - ec).total_seconds()) / 3600
     if diff_hours > _PM_FIXTURE_MAX_DIFF_HOURS:
         logger.warning(
@@ -2329,7 +2433,9 @@ def auto_create_commence_time(market, fallback):
     # metadata key alone: `tasks.polymarket` is the only writer of that stamp,
     # and this mirrors condition 1 of `_venue_confirmed_covered_fixture`, which
     # takes the same instant for the same reason one guard over.
-    if getattr(market, "source", None) == "polymarket":
+    # #9117: a TBD stamp names a day, and its stand-in hour is ours, not the
+    # venue's — never mint a row at it.
+    if getattr(market, "source", None) == "polymarket" and venue_game_day(market) is None:
         venue_fixture = venue_game_start(market)
         if venue_fixture is not None:
             return venue_fixture, POLYMARKET_VENUE_COMMENCE_SOURCE
@@ -7882,6 +7988,14 @@ def _score_candidates(
     best_score = -1
 
     for event in candidates:
+        # #9117: when the venue named only a DAY, a row on another day is a
+        # different game however it scores. The guard refuses it after the
+        # fact, and the +8 for an Odds API id (32h of proximity) let Game 1's
+        # row outscore Game 2's own StatPal row, so Game 2 never linked.
+        if _venue_game_day_disagrees(market, event.commence_time):
+            _trace(event, _receipts.REJECT_OUTSIDE_TIME_WINDOW)
+            continue
+
         # When we have both team names, REQUIRE both to fuzzy-match the event.
         # Prevents false positives like "Thunder vs. Pistons" matching
         # "Bulls vs. Pistons" (Thunder ≠ Bulls), or "Pistons vs. Bulls"
