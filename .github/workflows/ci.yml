@@ -3862,6 +3862,19 @@ jobs:
             exit 1
           fi
 
+      - name: "#6974 LAFC duplicate club — repoint, bank-delete, fold, re-run and undo against real Postgres"
+        # The NHL gate's shape, plus mappings banked whole and deleted before the
+        # fold, and the ship read back through the search route: "lafc" answers
+        # with one club, and that club's row carries the game only the duplicate named.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_repair_6974_fold_lafc_apply_restore_pg.py \
+            -v -rs 2>&1 | tee /tmp/fold6974lafc.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/fold6974lafc.txt; then
+            echo "::error::#6974 LAFC fold apply/restore gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#4079 numeric movement acceptance — provision the disposable database"
         # The acceptance suite DROPS AND RECREATES THE WHOLE SCHEMA, so it refuses
         # to touch any database that does not carry a sentinel row holding a nonce
