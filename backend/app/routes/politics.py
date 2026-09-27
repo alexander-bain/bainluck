@@ -48,17 +48,14 @@ router = APIRouter()
 # ---------------------------------------------------------------------------
 
 _THEME_BY_TICKER: list[tuple[str, str]] = [
-    ("kxpres", "presidential"),
     ("kxelection", "presidential"),
     ("kxsenate", "congressional"),
     ("kxhouse", "congressional"),
     ("kxcongress", "congressional"),
-    ("kxgov", "gubernatorial"),
     ("kxscotus", "scotus"),
     ("kxsupremecourt", "scotus"),
     ("kxtariff", "policy"),
     ("kximpeach", "policy"),
-    ("kxbill", "policy"),
 ]
 
 # #8038 — the two national chamber-control markets, anchored by TICKER, and
@@ -96,9 +93,27 @@ _THEME_BY_TICKER: list[tuple[str, str]] = [
 #
 # Hyphenated on purpose: `CONTROLS` is an English word and would claim any
 # future `CONTROLSOMETHING-*` series; `controls-` can only match this family.
+#
+# #9165 — `kxpres`, `kxgov` and `kxbill` moved here from `_THEME_BY_TICKER`, and
+# for the opposite reason: their LIKE arms bought ONLY rows that are not
+# politics. A Kalshi series prefix is not a word (#7298 is the entertainment
+# twin): `KXPRES%` also matches the Presidents Cup (`KXPRESCUP*`, golf — "Presidents
+# Cup: Hole-in-One" was served in `themes.presidential.side_markets` and
+# rendered on the iPhone during the Cup), `KXBILL%` matches the Billboard charts
+# (`KXBILLBOARD*`, entertainment) and `KXGOV%` matches government budget-balance
+# and spending series (`KXGOVBAL`, `KXGOVTSPEND`, economics). Measured on
+# production 2026-09-27, every open row these three arms fetched that the
+# category arm did not was one of those: 22 golf, 4 Billboard, 7 economics and
+# one culture row (`KXPRESENDORSEMUSKD`). Every real presidential, governor and
+# bills series carries `llm_sport_category = 'politics'`, so the category arm
+# fetches them and the prefix still labels them here — no politics row changes
+# theme, and the cold build loses three unindexable arms.
 _THEME_BY_TICKER_CLASSIFY_ONLY: list[tuple[str, str]] = [
     ("controlh-", "congressional"),
     ("controls-", "congressional"),
+    ("kxpres", "presidential"),
+    ("kxgov", "gubernatorial"),
+    ("kxbill", "policy"),
 ]
 
 _THEME_BY_NAME: list[tuple[re.Pattern, str]] = [

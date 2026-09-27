@@ -24,9 +24,12 @@ from app.routes import politics as politics_route
 # Frozen expectation, NOT derived from _THEME_BY_TICKER. Deriving it would make
 # the test self-referential: deleting a prefix from the table would delete its
 # own check too. That mutation survived a derived version of this test.
+# #9165: `kxpres`, `kxgov` and `kxbill` left — their arms fetched only golf
+# (Presidents Cup), Billboard and budget-balance rows; they classify from
+# `_THEME_BY_TICKER_CLASSIFY_ONLY` now.
 _EXPECTED_TICKER_PREFIXES = frozenset({
-    "kxpres", "kxelection", "kxsenate", "kxhouse", "kxcongress", "kxgov",
-    "kxscotus", "kxsupremecourt", "kxtariff", "kximpeach", "kxbill",
+    "kxelection", "kxsenate", "kxhouse", "kxcongress",
+    "kxscotus", "kxsupremecourt", "kxtariff", "kximpeach",
 })
 
 
@@ -81,7 +84,7 @@ def test_ticker_prefixes_are_stored_lowercase_and_uppercase_cleanly():
 
 
 def test_every_ticker_prefix_still_reaches_the_query():
-    """All 11 arms must survive. Dropping them costs the whole SCOTUS section.
+    """All 8 arms must survive. Dropping them costs the whole SCOTUS section.
 
     The arms look like the obvious thing to prune — measured 2026-08-10 they add
     ~833ms of scan and contribute 48 unique rows out of ~7,041 (0.68%). But those

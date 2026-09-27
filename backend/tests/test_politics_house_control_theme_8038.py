@@ -202,7 +202,7 @@ class TestThePrefixIsHyphenAnchored:
     def test_the_registered_prefixes_carry_their_hyphen(self):
         """Read off the table itself, so deleting the hyphen in the source fails
         here rather than only in the lookalike test above."""
-        assert {p for p, _ in _THEME_BY_TICKER_CLASSIFY_ONLY} == {"controlh-", "controls-"}
+        assert {p for p, _ in _THEME_BY_TICKER_CLASSIFY_ONLY if p.startswith("control")} == {"controlh-", "controls-"}
 
     def test_the_family_is_kept_out_of_the_query_table(self):
         """🔴 THE COST RATCHET, ASSERTED IN THE DIRECTION IT CAN ACTUALLY FAIL.
