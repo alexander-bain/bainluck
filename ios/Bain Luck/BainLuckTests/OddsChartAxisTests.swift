@@ -173,9 +173,12 @@ final class OddsChartAxisTests: XCTestCase {
     }
 
     func testReadoutEdgesLeadChangeAndTerminal() {
-        let zero = OddsChartView.selectionReadout(for: pt(1, 0.0, "aggregate"), homeShort: "H", awayShort: "A")
+        // A finished game's settled end is the result (#9015's exemption).
+        let zero = OddsChartView.selectionReadout(for: pt(1, 0.0, "aggregate"), homeShort: "H", awayShort: "A",
+                                                  gameFinished: true)
         XCTAssertTrue(zero.contains("H 0%") && zero.contains("A 100%"), zero)
-        let terminal = OddsChartView.selectionReadout(for: pt(1, 1.0, "aggregate"), homeShort: "H", awayShort: "A")
+        let terminal = OddsChartView.selectionReadout(for: pt(1, 1.0, "aggregate"), homeShort: "H", awayShort: "A",
+                                                      gameFinished: true)
         XCTAssertTrue(terminal.contains("H 100%") && terminal.contains("A 0%"), terminal)
     }
 
@@ -195,7 +198,8 @@ final class OddsChartAxisTests: XCTestCase {
         """)
         let points = OddsChartView.chartPoints(from: h)
         let value = OddsChartView.accessibilityValue(dataPoints: points, selectedDate: nil,
-                                                     homeShort: "H", awayShort: "A")
+                                                     homeShort: "H", awayShort: "A",
+                                                     gameFinished: true)
         XCTAssertTrue(value.contains("H 100%"), value)
         XCTAssertTrue(value.contains("A 0%"), value)
         // Same basis as the axis: the latest blend is 1.0 → "100%".

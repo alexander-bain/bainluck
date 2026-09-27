@@ -71,6 +71,10 @@ struct OddsChartSelectionOverlay: View {
     /// #9185 — the readout card's `pageGaveCard`, so VoiceOver speaks the
     /// series the card prints (`readoutSource`).
     var pageGaveCard = true
+    /// The game is over: a settled end is spoken as the result, as the card prints it.
+    var gameFinished = false
+    /// #5271 — a draw-priced sport speaks no away number, as the card prints none.
+    var sportKey: String?
 
     var body: some View {
         ZStack {
@@ -88,7 +92,8 @@ struct OddsChartSelectionOverlay: View {
         .accessibilityValue(OddsChartView.accessibilityValue(
             dataPoints: dataPoints, selectedDate: selection.date,
             homeShort: homeShort, awayShort: awayShort, moments: moments,
-            pageGaveCard: pageGaveCard))
+            pageGaveCard: pageGaveCard, gameFinished: gameFinished,
+            sportKey: sportKey))
     }
 }
 
