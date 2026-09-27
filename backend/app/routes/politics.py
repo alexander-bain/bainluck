@@ -349,13 +349,17 @@ def _market_row(market: FuturesMarket, *, now: datetime) -> dict | None:
     carry no date at all — "When will Nick Adams be confirmed" is a perfectly
     current question. The date lives in the OUTCOME label, one level down.
 
-    DEMOTED, NEVER DROPPED, and that is the difference from the feed's use of
-    the same helper (`routes/feed.py` strips them). A "Before Apr 1" rung is
-    part of the shape of a cumulative ladder and its price is real history; what
-    it must not do is speak for the market. Sorting it below every live rung
-    lets the three-slot cap decide, exactly as it already does for a rung with a
-    lower price — `outcome_count` still counts it, and a ladder whose rungs have
-    ALL expired is unchanged rather than emptied.
+    🔴 #9109 — DROPPED, NO LONGER MERELY DEMOTED. This used to sort an expired
+    rung below every live one and let the three-slot cap decide, on the reason
+    that "its price is real history". #7784 later made `/futures/{id}` — the
+    page this card opens — DROP the same rungs through the same helper, so the
+    two surfaces answered "which rungs are real" differently: measured
+    2026-09-27, 11 of the 16 date ladders on `/api/politics` filled their spare
+    slots with dead rungs ("Nick Adams … Yes 0.8% · Before Apr 1, 2026 3%")
+    that the page behind them no longer shows. The card now shows what the page
+    shows. Two things are unchanged: `outcome_count` still counts every rung,
+    and a ladder whose rungs have ALL expired is left as it was rather than
+    emptied (the page's own "never the whole board" rule).
 
     `expired_ladder_rungs` is IMPORTED, not re-derived. It already carries the
     parsing this needs and the two judgements that make it safe: a year-less
@@ -426,12 +430,8 @@ def _market_row(market: FuturesMarket, *, now: datetime) -> dict | None:
     # still HEADLINES 0% — is the control that proves this reads the column
     # and not the rendered number.
     #
-    # 🔴 THIS IS NOT A REVERSAL OF #3758's "DEMOTED, NEVER DROPPED" (above).
-    # That ruling is about EXPIRED rungs and its stated reason is that such a
-    # rung's "price is real history". An unpriced rung has no price and no
-    # history, so the reason does not reach it. Expired-and-priced still sorts
-    # last and is still never dropped — the two rules compose, and the sort key
-    # below is unchanged for every rung that survives this filter.
+    # This rule is about UNPRICED rungs; EXPIRED rungs are the next one down
+    # (#3758, dropped since #9109 — see the docstring). The two compose.
     #
     # FILTERED BEFORE THE SLICE, NOT AFTER, and that is not cosmetic: the key
     # is `(expired, -prob)` with `or 0`, so an UNPRICED LIVE rung outranks an
@@ -444,16 +444,14 @@ def _market_row(market: FuturesMarket, *, now: datetime) -> dict | None:
         # docstring names — a past-dated rung at or above
         # `EXPIRED_RUNG_MAX_PROBABILITY` is the ladder's ANSWER — needs the price
         # to have been observed at or after the rung's own deadline, and on a
-        # board that stopped repricing it never was. Here that decides a SORT,
-        # not a drop ("DEMOTED, NEVER DROPPED", above), so the widened rule can
-        # only move such a rung below the live ones; a rung with no stamp keeps
+        # board that stopped repricing it never was. A rung with no stamp keeps
         # the place it has today — which is also why the read is a `getattr`
         # with a default: a carrier without the column degrades to NO EVIDENCE,
         # never to an exception that empties the row (gotcha #42).
         # CERT-3236: and the GRADE rides with the stamp, for the same reason and
         # read the same defensive way. A cumulative "Before …" rung settles YES
-        # early and is never touched again, so the stamp test alone demotes a
-        # declared winner below the live rungs on this page's three-row summary.
+        # early and is never touched again, so the stamp test alone would drop a
+        # declared winner from this page's three-row summary.
         [
             (
                 o.name,
@@ -465,8 +463,12 @@ def _market_row(market: FuturesMarket, *, now: datetime) -> dict | None:
         ],
         now,
     )
+    # #9109: drop, the way `futures.py` does for the page this card opens — by
+    # NAME, and never the whole board. The page's query is open markets only,
+    # so the page's `status == "open"` gate is already true here.
+    live = [o for o in priced if o.name not in expired]
     ranked = sorted(
-        priced,
+        live or priced,
         key=lambda o: (o.name in expired, -float(o.current_probability)),
     )
     top = ranked[:3]
