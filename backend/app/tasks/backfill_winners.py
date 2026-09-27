@@ -26,6 +26,7 @@ from app.utils.calibration_closing_line import (
     closing_line_lateral_sql,
 )
 from app.utils.kalshi_empty_book import lone_ask_on_empty_book_sql
+from app.utils.polymarket_empty_book import empty_polymarket_book_sql  # #9083
 from app.utils.prediction_market_matching import (
     COMBAT_FIGHT_WINNER_PREFIXES,
     TENNIS_MATCH_WINNER_PREFIXES,
@@ -796,6 +797,14 @@ async def _select_kalshi_status_sync_tickers(
 #: on an empty book and later traded still gets its opening from the first
 #: snapshot that WAS a real price.
 #:
+#: The `NOT empty_polymarket_book_sql(...)` clause is the same rule for the
+#: other venue (#9083). The Kalshi guard is Kalshi-scoped on purpose
+#: (CERT-2508), so a Polymarket book with no bid and the ask at $1.00, priced
+#: from one 1c trade, sailed through and printed "Turner's 1+ hits + runs +
+#: rbis was marked 1% — and it hit". Each venue's rule carries its own
+#: bookmaker term, so the two can sit side by side without either governing
+#: the other's rows.
+#:
 #: The `fos.captured_at <= fm.resolution_date` clause is #7648, and it is the
 #: write-side half of the same rule #7642 gave the Polymarket poll: "the
 #: earliest snapshot we hold" and "a price taken before the answer was known"
@@ -843,6 +852,7 @@ _PHASE_0C_REPAIR_TEMPLATE = f"""
             WHERE fos.outcome_id = fo2.id
               AND fos.probability > 0 AND fos.probability < 1
               AND NOT {lone_ask_on_empty_book_sql("fos")}
+              AND NOT {empty_polymarket_book_sql("fos")}
               AND (fm.resolution_date IS NULL
                    OR fos.captured_at <= fm.resolution_date)
             ORDER BY fos.captured_at ASC
