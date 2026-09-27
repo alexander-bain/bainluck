@@ -143,15 +143,30 @@ struct TeamDetailView: View {
             if !data.futures.isEmpty {
                 Section("Season Futures") {
                     ForEach(data.futures) { future in
+                        // #9091: the outcome is the headline ("Ceddanne Rafaela"),
+                        // the market its caption, and a graded winner a result.
+                        let row = TeamFutureRowPresentation.row(future)
                         NavigationLink(value: Route.futuresDetail(id: future.marketId)) {
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(future.marketName).font(.subheadline).lineLimit(1)
                                 HStack(spacing: 6) {
-                                    if let prob = future.probability {
-                                        Text(formatPct(prob)).font(.caption).bold().monospacedDigit()
+                                    Text(row.title).font(.subheadline).lineLimit(1)
+                                    if row.settledWon {
+                                        Text(TeamFutureRowPresentation.wonBadge)
+                                            .font(.caption2).fontWeight(.semibold)
+                                            .foregroundStyle(.green)
+                                            .padding(.horizontal, 6).padding(.vertical, 1)
+                                            .background(Color.green.opacity(0.12), in: Capsule())
+                                            .fixedSize()
                                     }
-                                    if let rank = future.rank, let total = future.totalOutcomes {
-                                        Text("#\(rank) of \(total)").font(.caption2).foregroundStyle(.secondary)
+                                }
+                                Text(row.caption).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                HStack(spacing: 6) {
+                                    if let percent = row.percent {
+                                        Text(percent).font(.caption).bold().monospacedDigit()
+                                            .foregroundStyle(row.settledWon ? Color.green : Color.primary)
+                                    }
+                                    if let rankLine = row.rankLine {
+                                        Text(rankLine).font(.caption2).foregroundStyle(.secondary)
                                     }
                                     // #4351: this one did not even shout — the team
                                     // page printed the key verbatim, `odds_api`.
