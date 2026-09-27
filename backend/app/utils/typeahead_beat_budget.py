@@ -2007,7 +2007,14 @@ def free_background_slots(
 #: `background` explicitly. Cost: one bounded candidate query plus at most 40
 #: ESPN board reads (8 on 2026-09-27, all NCAAF/NFL), no quota. The census RUN
 #: over the assembled `beat_schedule` printed `explicit 89 implicit 43 total 132`.
-BACKGROUND_BEAT_COUNT = 132
+#:
+#: 🔴 RE-DERIVED at calibration (2026-09-27, #8905): 132 → 131, explicit
+#: 89 → 88, fall-through UNMOVED at 43. `precompute-bookmaker-calibration` LEAVES
+#: this queue for `heavy`: every main-app release SIGTERMs `worker-background`
+#: and killed all three ~332 s writer runs after the durable survivor shipped.
+#: Background sheds ~66 min/day. The census RUN over the tree rebased onto
+#: `d5749e5772` printed `explicit 88 implicit 43 total 131`.
+BACKGROUND_BEAT_COUNT = 131
 #: 🔴 RE-DERIVED at lane1/282 (2026-09-13, #5896): 122 → **123**, explicit
 #: 79 → **80**, fall-through UNMOVED at 43. One beat added,
 #: `soccer-ghost-twin-sweep` (`crontab(minute="9,49")`) with an EXPLICIT
