@@ -145,6 +145,7 @@ from app.utils import period_markers as pm_source
 from app.utils.winprob_evidence import (
     SERVED_CONTRACT as WINPROB_EVIDENCE_CONTRACT,
     attach_served_evidence,
+    drop_candles_under_live_readings,
     drop_superseded_estimates,
 )
 from app.utils.game_window import (
@@ -27652,6 +27653,12 @@ async def get_event_odds_history(
         # and before the aggregate line, which is built from these lists.
         for _src in list(win_prob_history):
             win_prob_history[_src], _ = drop_superseded_estimates(
+                win_prob_history[_src]
+            )
+            # #9111 — and a venue candle between two of our own readings is a
+            # second recording of minutes we watched: 15315470 drew a 50% spike
+            # at its (postponed) kick-off and a two-hour block from them.
+            win_prob_history[_src], _ = drop_candles_under_live_readings(
                 win_prob_history[_src]
             )
 

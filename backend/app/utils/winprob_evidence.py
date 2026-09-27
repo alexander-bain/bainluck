@@ -118,6 +118,83 @@ def drop_superseded_estimates(points: list) -> tuple[list, int]:
     return kept, len(points) - len(kept)
 
 
+#: #9111 — the widest gap between two of our own readings inside which a venue
+#: candle is a second, coarser recording of a price we were already watching.
+#: The realtime poll writes every 2-4 min near and during a game; the hand-off
+#: between the WS fast lane and the live poll at kick-off left 12.7 min on the
+#: specimen (11:22:22 → 11:35:01Z, 15311850). The hourly pre-match poll sits far
+#: outside it, so the pre-match drift a backfill exists to recover is kept.
+CANDLE_UNDER_LIVE_MAX_GAP_S = 20 * 60
+
+
+def drop_candles_under_live_readings(
+    points: list, *, max_gap_s: int = CANDLE_UNDER_LIVE_MAX_GAP_S
+) -> tuple[list, int]:
+    """Remove candle points that sit between two of our own readings.
+
+    The chart backfill fills the stretches we never watched; its minute skip set
+    lets a candle at 11:30:00 land between live readings at 11:22 and 11:35.
+    Where both instruments recorded the same minutes the line saw-tooths between
+    them — on 15311850 (Crawley v Barnet, postponed) a 0.5/0.5 candle at the
+    scheduled kick-off and 0.255-0.31 candles every 10-30 min against live
+    readings of 0.225 at every poll, drawn as a 50% spike and a two-hour block.
+    Our readings are the observation; the candle adds nothing there but
+    disagreement.
+
+    A candle goes when the reading before it and the reading after it are no
+    more than ``max_gap_s`` apart, measured from the earlier one's proven end
+    (a retention keeper covers through its ``covered_through``). Only a plain or
+    ``observed`` point counts as a reading — never another candle, a price
+    history backfill, an ESPN re-read or a synthesised point. A candle before
+    our first reading or after our last is kept. Nothing is deleted from the
+    table. Returns (points, number removed).
+    """
+    kinds = [served_evidence(p) for p in points]
+    if not any(k and k.get("kind") == "candle" for k in kinds):
+        return points, 0
+    times = [_parse(p.get("timestamp")) for p in points]
+
+    def is_reading(index: int) -> bool:
+        kind = kinds[index]
+        return times[index] is not None and (
+            kind is None or kind.get("kind") == "observed"
+        )
+
+    # Proven end of the latest reading at or before each index, walking forward;
+    # next reading's time at or after each index, walking back.
+    prev_end: list[Optional[datetime]] = [None] * len(points)
+    running: Optional[datetime] = None
+    for index in range(len(points)):
+        if is_reading(index):
+            through = validated_covered_through(
+                points[index].get("game_state"), points[index].get("timestamp")
+            )
+            end = max(times[index], through) if through else times[index]
+            running = end if running is None else max(running, end)
+        prev_end[index] = running
+    next_start: list[Optional[datetime]] = [None] * len(points)
+    upcoming: Optional[datetime] = None
+    for index in range(len(points) - 1, -1, -1):
+        if is_reading(index):
+            upcoming = times[index]
+        next_start[index] = upcoming
+
+    kept = []
+    for index, point in enumerate(points):
+        kind = kinds[index]
+        before, after = prev_end[index], next_start[index]
+        if (
+            kind is not None
+            and kind.get("kind") == "candle"
+            and before is not None
+            and after is not None
+            and (after - before).total_seconds() <= max_gap_s
+        ):
+            continue
+        kept.append(point)
+    return kept, len(points) - len(kept)
+
+
 def _parse(ts: Any) -> Optional[datetime]:
     if not isinstance(ts, str):
         return None
