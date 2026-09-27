@@ -2871,6 +2871,22 @@ jobs:
             exit 1
           fi
 
+      - name: "#9083 Polymarket empty-book openings leave the page (real Postgres)"
+        # /events/15319167 led its props rail with "Turner's 1+ hits + runs +
+        # rbis was marked 1% — and it hit": Phase 0c promoted a Polymarket book
+        # of bid NULL / ask 1.00 / one 1c trade. This runs the SHIPPED Phase 0c
+        # statement (with a positive control) and the repair rail's apply and
+        # restore; the numeric and timestamp provenance clauses are database
+        # comparisons a mock cannot see.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_polymarket_empty_book_openings_9083_real_postgres.py \
+            -v -s -rs 2>&1 | tee /tmp/emptybook9083.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/emptybook9083.txt; then
+            echo "::error::#9083 Polymarket empty-book gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#938 golf round markets stop publishing a stamp as a price (real Postgres)"
         # `KXDPWORLDTOURR1LEAD-HEIO26` publishes twenty-three golfers at 0.990
         # while Kalshi's own last quote before that round reads 0.070 / 0.350 /

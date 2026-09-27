@@ -35,6 +35,8 @@ transactional session and RETURNS its own before/after census in the response bo
              | futures-person-seed-purge | golf-round-closing-line
              | kalshi-empty-book-openings
              | kalshi-empty-book-openings-restore
+             | polymarket-empty-book-openings
+             | polymarket-empty-book-openings-restore
              | pm-ungraded-loss | pm-ungraded-loss-restore
              | kalshi-series-tag-category
              | polymarket-club-noun-category | kalshi-club-noun-category
@@ -83,7 +85,10 @@ transactional session and RETURNS its own before/after census in the response bo
      focused D40 gates were green (the two registry guards live in files that
      change was nowhere near, exactly as in the lane1b/116b entry above), CI
      failed three of four shards on them, and that is the second time this
-     comment has earned its keep rather than decorated the file.)
+     comment has earned its keep rather than decorated the file. Re-synced
+     again 2026-09-27, calibration/#9083, adding the two
+     polymarket-empty-book-openings entries in the commit that registered
+     them.)
 
 Repairs whose signature declares ``limit`` / ``sport`` / ``newest_first`` /
 ``offset`` / ``after_id`` / ``after_date`` / ``plan_hash`` / ``expected_blank`` /
@@ -1172,6 +1177,25 @@ _REPAIRS = {
     ),
     "kalshi-empty-book-openings-restore": (
         "app.tasks.repair_kalshi_empty_book_openings",
+        "restore",
+    ),
+    # #9083: the Polymarket twin of the two entries above. /events/15319167 led
+    # its props rail with "Turner's 1+ hits + runs + rbis was marked 1% — and it
+    # hit" because Phase 0c promoted a book of bid NULL / ask 1.00 / one 1c trade.
+    # The Kalshi guard is Kalshi-scoped (CERT-2508), so `empty_polymarket_book_sql`
+    # now guards the promotion and this rail reaches the rows already promoted.
+    # PROVENANCE: in scope only when the opening equals a snapshot captured at
+    # the row's own `opening_captured_at` whose book is empty. Replacement is
+    # Phase 0c's own filter set, so the result is a fixed point of Phase 0c.
+    # Pages by MARKETS EXAMINED (`limit`, keyset `after_id` on fm.id). D51:
+    # backup into `bak_9083_pm_empty_book_openings` in the same transaction,
+    # undo is the `-restore` name. ATTENDED-OPTIONAL: never wire to a beat.
+    "polymarket-empty-book-openings": (
+        "app.tasks.repair_polymarket_empty_book_openings",
+        "repair",
+    ),
+    "polymarket-empty-book-openings-restore": (
+        "app.tasks.repair_polymarket_empty_book_openings",
         "restore",
     ),
     # CAL-P1088 (#4788): 574,832 legs across 277,519 resolved Polymarket markets
