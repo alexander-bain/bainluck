@@ -140,6 +140,41 @@ class TestWhatTheWriterStillPins:
         assert (probs, refused) == ({}, 1)
 
 
+class TestWhichBookDecides:
+    """CERT-3639: this poll's read wins over the stored columns."""
+
+    def test_a_fresh_empty_read_beats_a_stale_stored_bid(self):
+        leg = _leg(1, 0.01, 0.61, 1.0)
+        assert _pregame_pin_outcome_probs("polymarket", [leg]) == ({"1": 0.01}, 0)
+        assert _pregame_pin_outcome_probs(
+            "polymarket", [leg], {1: (None, 1.0)}
+        ) == ({}, 1)
+
+    def test_a_fresh_two_sided_read_beats_a_stored_empty_book(self):
+        leg = _leg(1, 0.62, None, 1.0)
+        assert _pregame_pin_outcome_probs(
+            "polymarket", [leg], {1: (0.61, 0.63)}
+        ) == ({"1": 0.62}, 0)
+
+    def test_a_leg_this_poll_did_not_read_falls_back_to_the_row(self):
+        read, unread = _leg(1, 0.62, 0.61, 0.63), _leg(2, 0.01, None, 1.0)
+        assert _pregame_pin_outcome_probs(
+            "polymarket", [read, unread], {1: (0.61, 0.63)}
+        ) == ({"1": 0.62}, 1)
+
+    def test_a_fresh_read_with_neither_side_is_not_refused(self):
+        leg = _leg(1, 0.4, 0.39, 0.41)
+        assert _pregame_pin_outcome_probs(
+            "polymarket", [leg], {1: (None, None)}
+        ) == ({"1": 0.4}, 0)
+
+    def test_kalshi_ignores_the_fresh_books(self):
+        leg = _leg(1, 0.01, None, 1.0)
+        assert _pregame_pin_outcome_probs(
+            "kalshi", [leg], {1: (None, 1.0)}
+        ) == ({"1": 0.01}, 0)
+
+
 # --------------------------------------------------------------------------
 # through the REAL poll: venue payload in, pin SQL out
 # --------------------------------------------------------------------------
@@ -210,6 +245,57 @@ class TestThroughTheLivePoll:
         assert [p["id"] for p in pins] == [2], f"pins written: {pins}"
         assert '"3002": 0.62' in pins[0]["mark"]
         assert stats["pregame_marks_written"] == 1
+        assert stats["pregame_mark_empty_book_legs_refused"] == 1
+
+    async def test_a_book_that_just_emptied_is_judged_on_the_fresh_read(
+        self, monkeypatch
+    ):
+        """CERT-3639: the row still holds the last poll's 0.61 bid.
+
+        The fresh Gamma read omits `bestBid`, so the poller leaves 0.61 on the
+        outcome and only replaces the ask. Judged on the row, the book reads
+        two-sided and the 1c trade is pinned. Judged on the read, it is empty.
+        """
+        journal = []
+        commence = _now() + timedelta(minutes=_PREGAME_MARK_LEAD_MINUTES / 2)
+        beat = _Population(
+            [(_Market(1, "polymarket", "poly-evt-1"), _Event(301, commence=commence))],
+            [_Outcome(3001, 1, "cond-1", "Los Angeles R")],
+        )
+        prior = beat.outcomes[0]
+        prior.current_probability = 0.62
+        prior.current_yes_bid = 0.61
+        prior.current_yes_ask = 0.63
+        session = _Session([beat, beat], journal=journal)
+        poly = _PolyService(
+            {
+                "poly-evt-1": _poly_payload(
+                    "cond-1", prices='["0.01", "0.99"]', last=0.01, bid=None, ask=1.0
+                ),
+            },
+            journal,
+        )
+
+        pins: list[dict] = []
+        real_execute = session.execute
+
+        async def _recording_execute(stmt, params=None):
+            if "pregame_mark" in str(stmt) and params:
+                pins.append(params)
+            return await real_execute(stmt, params)
+
+        session.execute = _recording_execute
+
+        stats = await _run(monkeypatch, session, poly=poly)
+
+        # Precondition, the reviewer's reproduction: the poll priced the leg at
+        # the 1c trade and the stale bid survived on the row.
+        assert prior.current_probability == pytest.approx(0.01, abs=1e-4)
+        assert float(prior.current_yes_bid) == 0.61
+        assert float(prior.current_yes_ask) == 1.0
+
+        assert pins == [], f"pins written: {pins}"
+        assert stats["pregame_marks_written"] == 0
         assert stats["pregame_mark_empty_book_legs_refused"] == 1
 
     def test_the_writer_calls_the_guard(self):
