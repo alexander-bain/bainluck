@@ -560,6 +560,33 @@ def espn_not_started_state(status_type: dict) -> bool:
     return str(status_type.get("state") or "").strip().lower() == "pre"
 
 
+def espn_golf_champion(event: dict) -> Optional[str]:
+    """Who won a finished ESPN golf event, or None (#9212).
+
+    Only ``STATUS_FINAL`` has a champion. A suspended, cancelled or unfinished
+    event has none, whatever its leaderboard order says.
+
+    ESPN marks ``winner: true`` on a team event's winning side (Presidents Cup:
+    USA) and marks no one on a stroke-play board, where the final ``order`` is
+    the finishing position (FedEx Open de France 2026-09-27: Matt Fitzpatrick
+    ``order`` 1 at -20). A playoff is settled by the time ESPN says final, so its
+    winner is ``order`` 1 too. Exactly one competitor must answer; two, or none,
+    is None rather than a pick.
+    """
+    status_type = (event.get("status") or {}).get("type") or {}
+    if status_type.get("name") != "STATUS_FINAL":
+        return None
+    competitions = event.get("competitions") or [{}]
+    competitors = [c for c in ((competitions[0] or {}).get("competitors") or []) if isinstance(c, dict)]
+    flagged = [c for c in competitors if c.get("winner") is True]
+    pick = flagged or [c for c in competitors if c.get("order") == 1]
+    if len(pick) != 1:
+        return None
+    who = pick[0].get("athlete") or pick[0].get("team") or {}
+    name = (who.get("displayName") or "").strip()
+    return name or None
+
+
 class ESPNAPIService:
     """Client for ESPN's public API endpoints."""
 
@@ -925,7 +952,9 @@ class ESPNAPIService:
 
         Golf has no teams or scores, so `get_scoreboard`'s ESPNEvent shape does not
         fit it. Each dict carries ``name``, ``start`` / ``end`` (ESPN's ISO stamps),
-        ``state`` (`pre` / `in` / `post`) and ``status`` (e.g. `STATUS_IN_PROGRESS`).
+        ``state`` (`pre` / `in` / `post`), ``status`` (e.g. `STATUS_IN_PROGRESS`) and
+        ``champion`` (#9212: who won a `STATUS_FINAL` event, else None — see
+        :func:`espn_golf_champion`).
 
         Returns ``[]`` for an empty board and ``None`` when ESPN did not answer: an
         absent tournament proves nothing (#7450).
@@ -946,6 +975,7 @@ class ESPNAPIService:
                 "end": e.get("endDate"),
                 "state": status_type.get("state"),
                 "status": status_type.get("name"),
+                "champion": espn_golf_champion(e),
             })
         return events
 
