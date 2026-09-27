@@ -70,14 +70,14 @@ final class CalibrationParityTests: XCTestCase {
 
     // The default cohort: `price_moved != false`, i.e. moved + not-applicable.
     private static let defaultCohortN = 389_385
-    private static let defaultECE = 1.542547
-    private static let defaultMCE = 1.450000
+    private static let defaultECE = 1.545487
+    private static let defaultMCE = 1.450604
     private static let defaultBrier = 0.164935
 
     // The toggle ON: every resolved outcome, including the never-moved ones.
     private static let allCohortN = 652_407
-    private static let allECE = 1.261460
-    private static let allMCE = 1.240000
+    private static let allECE = 1.256625
+    private static let allMCE = 1.239644
     private static let allBrier = 0.163755
 
     private func prodModel(includeThin: Bool = false) throws -> CalibrationViewModel {
@@ -222,8 +222,8 @@ final class CalibrationParityTests: XCTestCase {
         XCTAssertTrue(value.contains("unchanged_n=\(Self.publishedUnchangedN)"), value)
         XCTAssertTrue(value.contains("not_applicable_n=\(Self.publishedNotApplicableN)"), value)
         XCTAssertTrue(value.contains("markets=\(Self.publishedMarkets)"), value)
-        XCTAssertTrue(value.contains("ece=1.5425"), value)
-        XCTAssertTrue(value.contains("mce=1.4500"), value)
+        XCTAssertTrue(value.contains("ece=1.5455"), value)
+        XCTAssertTrue(value.contains("mce=1.4506"), value)
         XCTAssertTrue(value.contains("brier=0.1649"), value)
 
         // Raw, never display-formatted: no "pp" UNIT suffix on any value and no

@@ -57,7 +57,8 @@ final class CalibrationAvailabilityTests: XCTestCase {
 
     // Expected values, computed from the FULL production payload with an
     // independent implementation of the web page's aggregation (sum n / winners /
-    // sum_prob into bucket_idx bins; round to 0.1 before differencing) — not read
+    // sum_prob into bucket_idx bins; the UNROUNDED gap per bin since #9000 — the
+    // table was built rounding to 0.1 first, and re-measured 2026-09-27) — not read
     // back from `CalibrationMath`. A shared bug would otherwise agree with itself.
     //
     // Written at full double precision on purpose, and compared at 1e-12. The
@@ -70,25 +71,25 @@ final class CalibrationAvailabilityTests: XCTestCase {
         static let unchangedN = 263_022
         static let notApplicableN = 40_075
         static let cohortN = 389_385          // moved + not-applicable
-        static let cohortECE = 1.5425470934935861
-        static let cohortMCE = 1.45
+        static let cohortECE = 1.5454871399771413
+        static let cohortMCE = 1.4506038615633314
         static let cohortBrier = 0.16493497335541943
-        static let allECE = 1.2614602541051827
-        static let allMCE = 1.24
+        static let allECE = 1.256625189490609
+        static let allMCE = 1.239644346411826
         static let allBrier = 0.16375538337264928
-        static let movedECE = 1.716231141393032
-        static let unchangedECE = 1.0341499950574478
-        static let notApplicableECE = 0.28600873362445417
+        static let movedECE = 1.7074833815235742
+        static let unchangedECE = 1.0267420215799439
+        static let notApplicableECE = 0.3000626325639418
         /// source -> (n, ece, mce, brier) within the default (price-moved) cohort.
         static let sourceRows: [String: (n: Int, ece: Double, mce: Double, brier: Double)] = [
-            "kalshi": (267_121, 1.0553928743902576, 1.1400000000000001, 0.16024782177365315),
-            "polymarket": (82_189, 4.8175351932740389, 4.29, 0.14606055554879607),
+            "kalshi": (267_121, 1.0565959246933048, 1.1449382105982893, 0.16024782177365315),
+            "polymarket": (82_189, 4.8135451216099465, 4.294563467415791, 0.14606055554879607),
             // #8485: one row per PROVIDER, as web draws it. The three Odds API
             // keys pool into this row (14,960 + 12,410 + 12,705), computed by the
             // same independent script — which reproduces the kalshi row above to
             // the digit. Its n and ECE equal `notApplicableN` / `notApplicableECE`,
             // because in this payload the not-applicable cohort IS the family.
-            "odds_api_family": (40_075, 0.28600873362445417, 0.64, 0.23488646787273865),
+            "odds_api_family": (40_075, 0.3000626325639418, 0.6585296190340404, 0.23488646787273865),
         ]
     }
 

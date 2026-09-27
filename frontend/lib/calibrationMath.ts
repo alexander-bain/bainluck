@@ -9,6 +9,21 @@ export interface CalibrationErrorBucket {
   n: number;
   /** actual - predicted, in percentage points. */
   error: number;
+  /**
+   * #9000. The same gap, UNROUNDED. `aggregateBuckets` rounds `error` to 0.1pp
+   * for display, and `ece()`/`mce()` averaging those rounded errors drifted up
+   * to ~0.05pp from the server's figure: production 2026-09-27 printed
+   * Polymarket 1.9pp in Source Comparison (1.950 off rounded errors) beside its
+   * own panel's 2.0pp ECE (server 1.963, the same 419,094 outcomes). The metric
+   * reads this when a bucket carries it; a hand-built bucket without it falls
+   * back to `error`.
+   */
+  errorExact?: number;
+}
+
+/** The gap a metric averages: unrounded when the bucket carries it (#9000). */
+function metricErrorPp(b: CalibrationErrorBucket): number {
+  return b.errorExact ?? b.error;
 }
 
 /**
@@ -31,14 +46,14 @@ export interface PanelBucket extends CalibrationErrorBucket {
 /** Equal-weighted mean |error| (pp). Worst-bucket sensitive. */
 export function mce(cal: CalibrationErrorBucket[]): number {
   if (!cal.length) return 0;
-  return cal.reduce((s, b) => s + Math.abs(b.error), 0) / cal.length;
+  return cal.reduce((s, b) => s + Math.abs(metricErrorPp(b)), 0) / cal.length;
 }
 
 /** n-weighted mean |error| (pp). The headline calibration metric. */
 export function ece(cal: CalibrationErrorBucket[]): number {
   const totalN = cal.reduce((s, b) => s + b.n, 0);
   if (!totalN) return 0;
-  return cal.reduce((s, b) => s + (b.n / totalN) * Math.abs(b.error), 0);
+  return cal.reduce((s, b) => s + (b.n / totalN) * Math.abs(metricErrorPp(b)), 0);
 }
 
 // ---------------------------------------------------------------------------

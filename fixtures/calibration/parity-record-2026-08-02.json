@@ -17,16 +17,16 @@
       "key": "default",
       "include_never_moved": false,
       "n": 389385,
-      "ece": 1.542547,
-      "mce": 1.45,
+      "ece": 1.545487,
+      "mce": 1.450604,
       "brier": 0.164935
     },
     {
       "key": "include_never_moved",
       "include_never_moved": true,
       "n": 652407,
-      "ece": 1.26146,
-      "mce": 1.24,
+      "ece": 1.256625,
+      "mce": 1.239644,
       "brier": 0.163755
     }
   ]

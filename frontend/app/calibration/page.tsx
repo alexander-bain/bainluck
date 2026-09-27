@@ -61,6 +61,7 @@ import {
 import {
   buildProviderPanels,
   eceInputsForPanel,
+  servedEceForRow,
   panelSpreadNote,
   providerKpiDetail,
   shapeBreakdownNote,
@@ -600,6 +601,13 @@ export default function CalibrationPage() {
   // pooling buckets does not do that.
   const providerMetrics = useMemo(() => {
     if (!normalized) return [];
+    // #9000. The server's per-key figure, for the one case it measured THIS
+    // row's population (single key, no cohort filter). That is the case the By
+    // Source panel already prints it in (ruling 003 / #7422), so the row reads
+    // it through the SAME rule. Recomputing it here printed Polymarket 1.9pp
+    // beside its panel's 2.0pp; even off unrounded gaps, the server's 2dp
+    // figure can still round to a different digit than the browser's.
+    const servedEce = new Map((data?.by_source ?? []).map(m => [m.source, m.ece]));
     return groupSourcesByProvider(sources).map(group => {
       const inGroup = (b: { source: string }) => group.sources.includes(b.source);
       const match = (b: { source: string }) =>
@@ -614,7 +622,12 @@ export default function CalibrationPage() {
         sources: group.sources,
         n: groupN,
         mce: mce(groupBuckets),
-        ece: ece(groupBuckets),
+        ece: servedEceForRow(
+          group.sources.length,
+          Boolean(cohortFilter),
+          servedEce.get(group.sources[0]),
+          ece(groupBuckets),
+        ),
         brier: brierScore(normalized, match),
         // #6211. The SAME pooled buckets the three metrics above are computed
         // from, so the censoring verdict cannot disagree with the numbers it
@@ -623,7 +636,7 @@ export default function CalibrationPage() {
         buckets: groupBuckets,
       };
     });
-  }, [normalized, sources, cohortFilter]);
+  }, [normalized, sources, cohortFilter, data]);
 
   // UX-P128: which of those rows are measurements, and in what order. The
   // Combined row below is n-weighted off pooled buckets, so a 0-outcome
