@@ -169,6 +169,24 @@ def _empty_result(futures=(), events=()):
     return result
 
 
+def _outer_order_by(upper: str) -> int:
+    """Offset of the statement's own ORDER BY: the last one outside parentheses.
+
+    `rindex` found the LAST one anywhere, which was the outer clause only while
+    no key carried a clause of its own. #9211's key is a `row_number() OVER
+    (... ORDER BY ...)`, so `rindex` landed inside that window and every
+    position read below it was measured from the middle of one key.
+    """
+    depth, last = 0, -1
+    for i, ch in enumerate(upper):
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        elif depth == 0 and upper.startswith("ORDER BY", i):
+            last = i
+    return last if last >= 0 else upper.rindex("ORDER BY")
+
 class _Recorder:
     """Every statement the route executed, with its bound values."""
 
@@ -248,7 +266,7 @@ class _Recorder:
                 and "futures_markets" not in sql
                 and "ORDER BY" in upper
             ):
-                out.append(sql[upper.rindex("ORDER BY"):])
+                out.append(sql[_outer_order_by(upper):])
         return out
 
     def futures_order_bys(self) -> list[str]:
@@ -600,6 +618,11 @@ class TestTheNamedDayLeads:
         A key that was a constant for generic queries would still be a key, and
         every plan in the system would need re-reading to prove it changed
         nothing. This asserts the common path is untouched.
+
+        By the NAMED-day key. #9211's today's-final key is armed on a bare club
+        name on purpose (a club's result from today sits behind its next game)
+        and spells today as two UTC instants, so it carries no `timezone`; its
+        own contract is `test_search_todays_final_behind_next*_9211.py`.
         """
         await client.get(f"{SEARCH}?q=lazio")
         clauses = recorder.event_order_bys()

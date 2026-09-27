@@ -37,9 +37,23 @@ class TestTheKey:
         assert _todays_final_order_key(False, STATUS, (Event.id,), NOW) is None
 
     def test_today_is_the_eastern_day_not_the_utc_one(self):
+        # Sunday 9/27 in the East is [04:00Z Sun, 04:00Z Mon) under EDT. The UTC
+        # day (9/28) would drop every game of the evening slate.
         sql = _sql(_todays_final_order_key(True, STATUS, (Event.id,), NOW))
-        assert "'2026-09-27'" in sql, sql
-        assert "timezone('America/New_York', events.commence_time)" in sql, sql
+        assert "events.commence_time >= '2026-09-27 04:00:00+00:00'" in sql, sql
+        assert "events.commence_time < '2026-09-28 04:00:00+00:00'" in sql, sql
+
+    def test_the_eastern_day_follows_standard_time_in_winter(self):
+        winter = datetime(2026, 12, 7, 3, 0, tzinfo=timezone.utc)  # Sun 12/6 ET
+        sql = _sql(_todays_final_order_key(True, STATUS, (Event.id,), winter))
+        assert "events.commence_time >= '2026-12-06 05:00:00+00:00'" in sql, sql
+        assert "events.commence_time < '2026-12-07 05:00:00+00:00'" in sql, sql
+
+    def test_no_per_row_timezone_cast(self):
+        # A range on the raw column, which its index can serve; and no
+        # `timezone` token for #5688's named-day guard to read as its key.
+        sql = _sql(_todays_final_order_key(True, STATUS, (Event.id,), NOW))
+        assert "timezone" not in sql, sql
 
     def test_only_a_result_is_lifted_not_a_suspension(self):
         sql = _sql(_todays_final_order_key(True, STATUS, (Event.id,), NOW))

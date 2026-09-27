@@ -165,6 +165,16 @@ def test_all_three_sites_share_one_definition():
 #: went 0/69 live events to 55/69 because of it. #2286.
 EXPECTED_REMAINING_ODDS_WINDOWS = 0
 
+#: Windows in this file that are NOT over snapshot history, by the function that
+#: owns them. The census above counts odds windows; these are subtracted by name,
+#: and each is asserted below to read no odds table, so one cannot be an odds
+#: window wearing an exemption.
+#:
+#: * `_todays_final_order_key` (#9211) — `row_number()` over the search result's
+#:   upcoming tier, to find the row that already leads it. It ranks the rows the
+#:   route has already matched; it never touches `odds_snapshots`.
+NON_ODDS_WINDOW_SITES = {"_todays_final_order_key": 1}
+
 
 def test_the_remaining_window_count_is_pinned_in_both_directions():
     """Still two-directional, and at zero only one direction is reachable.
@@ -181,7 +191,9 @@ def test_the_remaining_window_count_is_pinned_in_both_directions():
     is a budget rather than a fact. If a window is ever legitimately re-added, this
     goes back to 1 WITH the reason, exactly as it came down to 0 with one.
     """
-    windows = len(re.findall(r"func\.row_number\(\)", MODULE_CODE))
+    windows = len(re.findall(r"func\.row_number\(\)", MODULE_CODE)) - sum(
+        NON_ODDS_WINDOW_SITES.values()
+    )
     assert windows == EXPECTED_REMAINING_ODDS_WINDOWS, (
         f"routes/events.py has {windows} `row_number()` windows, expected "
         f"{EXPECTED_REMAINING_ODDS_WINDOWS} — the surveyed /search-suggestions one "
@@ -190,3 +202,23 @@ def test_the_remaining_window_count_is_pinned_in_both_directions():
         f"use `latest_odds_per_bookmaker_query`. If you re-added a window on "
         f"purpose, update the constant here and say why."
     )
+
+
+def test_every_exempt_window_is_where_it_says_and_reads_no_odds_table():
+    """The exemption is a count per named function, so it is checked per function.
+
+    The site must hold exactly the windows it is exempted for (a second window
+    added beside it is not covered), and must not name an odds table, which is
+    what would make it the scan this file forbids.
+    """
+    for name, count in NON_ODDS_WINDOW_SITES.items():
+        code = _code(getattr(events_route, name))
+        assert len(re.findall(r"func\.row_number\(\)", code)) == count, (
+            f"{name} no longer holds exactly {count} window(s) — update "
+            "NON_ODDS_WINDOW_SITES with the reason"
+        )
+        for odds_name in ("OddsSnapshot", "odds_snapshots", "captured_at"):
+            assert odds_name not in code, (
+                f"{name} is exempt as a non-odds window but names {odds_name}"
+            )
+

@@ -2765,10 +2765,15 @@ def _todays_final_order_key(armed: bool, status_order, upcoming_order, now: date
     """
     if not armed:
         return None
-    eastern_day = cast(
-        func.timezone(_EASTERN_TZ_NAME, Event.commence_time), Date
+    # Today's Eastern day as two UTC instants, not a per-row `timezone()` cast:
+    # the same rows, a range the `commence_time` index can serve, and no
+    # `timezone` token for #5688's named-day guard to mistake for its own key.
+    eastern = ZoneInfo(_EASTERN_TZ_NAME)
+    today = now.astimezone(eastern).date()
+    day_start = datetime.combine(today, datetime.min.time(), tzinfo=eastern)
+    day_end = datetime.combine(
+        today + timedelta(days=1), datetime.min.time(), tzinfo=eastern
     )
-    today = now.astimezone(ZoneInfo(_EASTERN_TZ_NAME)).date()
     upcoming_place = func.row_number().over(
         partition_by=status_order, order_by=list(upcoming_order)
     )
@@ -2778,7 +2783,8 @@ def _todays_final_order_key(armed: bool, status_order, upcoming_order, now: date
         (
             and_(
                 Event.status.in_(["completed", "closed"]),
-                eastern_day == today,
+                Event.commence_time >= day_start.astimezone(timezone.utc),
+                Event.commence_time < day_end.astimezone(timezone.utc),
             ),
             1,
         ),
