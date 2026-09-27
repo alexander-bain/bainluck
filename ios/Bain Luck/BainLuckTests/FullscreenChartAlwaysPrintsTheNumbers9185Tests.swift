@@ -136,6 +136,64 @@ final class FullscreenChartAlwaysPrintsTheNumbers9185Tests: XCTestCase {
         XCTAssertEqual(OddsChartView.fullscreenRestingPoint(in: points, sportKey: nil, pageGaveCard: false)?.homeProb, 0.60)
     }
 
+    // MARK: - Scrubbing reads the line the card rests on
+
+    private var lonePolymarket: [ChartDataPoint] {
+        [
+            pt("2026-09-27T16:00:00Z", 0.30, "polymarket"),
+            pt("2026-09-27T17:00:00Z", 0.25, "polymarket"),
+            pt("2026-09-27T18:50:00Z", 0.02, "polymarket"),
+        ]
+    }
+
+    /// 15318006 again: the card rested on the lone line, but a scrub looked up
+    /// only the primary one, so the crosshair moved and the number stayed 2%.
+    func testScrubbingALoneLineSelectsItsOldPointAndReleaseReturnsToTheLatest() {
+        let selection = OddsChartSelection()
+        selection.select("2026-09-27T16:05:00Z".asDate)
+        XCTAssertEqual(OddsChartSelectionReadout.selectedPoint(
+            at: selection.date, in: lonePolymarket, sportKey: nil, pageGaveCard: false)?.homeProb, 0.30)
+        selection.end()
+        XCTAssertNil(OddsChartSelectionReadout.selectedPoint(
+            at: selection.date, in: lonePolymarket, sportKey: nil, pageGaveCard: false))
+        XCTAssertEqual(OddsChartView.fullscreenRestingPoint(
+            in: lonePolymarket, sportKey: nil, pageGaveCard: false)?.homeProb, 0.02)
+    }
+
+    /// The page's card (and the inline chart) keep #8652: no primary line, no
+    /// lone-line pick — for the scrub exactly as for the rest.
+    func testWithThePagesCardALoneLineIsNeitherRestedOnNorScrubbed() {
+        let date = "2026-09-27T16:05:00Z".asDate
+        XCTAssertNil(OddsChartView.readoutSource(in: lonePolymarket, pageGaveCard: true))
+        XCTAssertNil(OddsChartSelectionReadout.selectedPoint(
+            at: date, in: lonePolymarket, sportKey: nil, pageGaveCard: true))
+    }
+
+    func testTwoUnblendedVenuesAreNotScrubbedEither() {
+        let points = [
+            pt("2026-09-27T16:00:00Z", 0.30, "polymarket"),
+            pt("2026-09-27T16:00:00Z", 0.35, "kalshi"),
+        ]
+        XCTAssertNil(OddsChartView.readoutSource(in: points, pageGaveCard: false))
+        XCTAssertNil(OddsChartSelectionReadout.selectedPoint(
+            at: "2026-09-27T16:00:00Z".asDate, in: points, sportKey: nil, pageGaveCard: false))
+    }
+
+    /// With a blend drawn, a scrub reads the blend, never the venue printed
+    /// nearer the finger — for either card.
+    func testWithABlendTheScrubReadsTheBlend() {
+        let points = [
+            pt("2026-09-27T16:00:00Z", 0.60, "aggregate"),
+            pt("2026-09-27T16:05:00Z", 0.90, "polymarket"),
+        ]
+        for pageGaveCard in [true, false] {
+            XCTAssertEqual(OddsChartView.readoutSource(in: points, pageGaveCard: pageGaveCard), "aggregate")
+            XCTAssertEqual(OddsChartSelectionReadout.selectedPoint(
+                at: "2026-09-27T16:05:00Z".asDate, in: points, sportKey: nil,
+                pageGaveCard: pageGaveCard)?.homeProb, 0.60)
+        }
+    }
+
     // MARK: - The rig can open it
 
     func testTheFullscreenLaunchFlagIsOffUnlessAsked() {
