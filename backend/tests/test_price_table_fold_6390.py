@@ -359,7 +359,7 @@ class TestMutants:
 
     def test_mutant_unfolded_query_loses_every_price(self, serve, monkeypatch):
         """The ship itself: back to `[event_id]` and the page is empty again."""
-        async def _unfolded(_db, canonical_event_id):
+        async def _unfolded(_db, canonical_event_id, absorbed=()):
             return [canonical_event_id]
 
         # The string form, so this module never imports `proven_duplicates` both
@@ -375,7 +375,7 @@ class TestMutants:
     ):
         """Swap in the MARKET fold and a crossed pair's prices are served
         inverted. Nothing else in the system would catch this."""
-        async def _market_fold(_db, canonical_event_id):
+        async def _market_fold(_db, canonical_event_id, absorbed=()):
             return [canonical_event_id, GHOST_ID]
 
         monkeypatch.setattr(

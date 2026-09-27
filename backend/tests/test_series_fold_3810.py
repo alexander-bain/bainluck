@@ -820,7 +820,7 @@ class TestTheRealRoute:
         read it replaced. That is the cert's mutant, expressed where the route
         actually consumes it. The ship must vanish.
         """
-        async def _unfolded(db, canonical_event_id):
+        async def _unfolded(db, canonical_event_id, absorbed=()):
             return [canonical_event_id]
 
         monkeypatch.setattr(

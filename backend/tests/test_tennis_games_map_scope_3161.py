@@ -120,6 +120,7 @@ def _db_for(event, markets, outcomes):
     db.execute = AsyncMock(
         side_effect=[
             _make_result(scalar=event),
+            _make_result(),  # #3391 serve-fold sports read: nothing foldable, no candidate read
             # #2693 — `folded_event_ids`: the canonical's suppressed twins, so
             # the surviving card carries the prices the ghost was holding. The
             # list is a POSITIONAL contract with the query sequence.

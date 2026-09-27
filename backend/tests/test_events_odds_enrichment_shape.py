@@ -99,7 +99,7 @@ def test_event_detail_delegates_to_the_shared_enrichment_query():
     # currently hold, so nothing behavioural on today's population would catch
     # the substitution.
     assert (
-        "folded_series_event_ids(db, event_id)" in DETAIL_CODE
+        "folded_series_event_ids(db, event_id, absorbed)" in DETAIL_CODE
     ), "get_event's odds ids no longer come from the orientation-checked fold"
 
 
