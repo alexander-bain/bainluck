@@ -1,4 +1,5 @@
 import { PINNABLE_HERO_SOURCE } from "./chartEdgePin";
+import { predatesServedSourceRemoval } from "./sourceRemovalClock";
 
 /**
  * #8749 / #837 — the headline and the chart agree on the NEWEST observed blend,
@@ -35,6 +36,7 @@ type AdoptingHero = {
   hero_probability_away?: number | null;
   hero_probability_source?: string | null;
   hero_probability_observed_at?: string | null;
+  blend_source_removed_at?: string | null;
 };
 
 /**
@@ -64,7 +66,8 @@ export function servedBlendEdgeObservation(
  *
  * Live blend headlines only: a settled winner, an opening fallback and
  * `final_unresolved` are different claims (terminal handling is untouched).
- * An unknown headline clock adopts nothing. A withheld away side (#6238,
+ * An unknown headline clock adopts nothing, and neither does an edge from
+ * before the headline's served source removal (#9051). A withheld away side (#6238,
  * draw-priced sports) stays withheld. Returns the SAME object when nothing
  * changes, so an SWR mutate through it is a no-op.
  */
@@ -77,6 +80,9 @@ export function adoptNewerBlendEdge<T extends AdoptingHero>(
       !Number.isFinite(event.hero_probability)) return event;
   const heroAt = Date.parse(event.hero_probability_observed_at ?? "");
   if (!Number.isFinite(heroAt) || Date.parse(edge.observedAt) <= heroAt) return event;
+  // #9051: an edge observed at or before the headline's source removal is the
+  // pre-removal blend, however much newer than the survivors' last quote.
+  if (predatesServedSourceRemoval(event, edge.observedAt)) return event;
   return {
     ...event,
     hero_probability: edge.p,

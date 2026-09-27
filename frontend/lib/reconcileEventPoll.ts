@@ -9,6 +9,7 @@ type PolledEvent = {
   hero_probability_source?: string;
   hero_probability_observed_at?: string | null;
   win_probability_sources?: Record<string, { updated_at?: string }>;
+  blend_source_removed_at?: string | null;
 };
 
 /**
@@ -17,6 +18,8 @@ type PolledEvent = {
  * the chart still contains the newer publication. Only comparable source write
  * times justify preservation; missing clocks, non-live outcomes and equally
  * new REST remain authoritative. Never invent a new observation timestamp.
+ * #9051: a frame from before the response's served source removal is refused
+ * inside `applyLiveFrame`, so the removed source is not recreated here.
  */
 export function reconcileEventPoll<T extends PolledEvent>(
   polled: T,

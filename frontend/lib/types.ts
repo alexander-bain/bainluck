@@ -468,6 +468,14 @@ export interface EventDetailResponse extends Event {
    * payload from before the contract. See `lib/blendObservationClock.ts`.
    */
   hero_probability_observed_at?: string | null;
+  /**
+   * #9051: when a source was last REMOVED from the blend behind
+   * `hero_probability` (cached with it). Held frames and history edges observed
+   * at or before it predate the served membership and cannot override the hero.
+   * Additions and price writes never move it. Absent/null: no ordering claim.
+   * See `lib/sourceRemovalClock.ts`.
+   */
+  blend_source_removed_at?: string | null;
   bookmaker_odds?: BookmakerOddsDetail[];
   ei?: EIData;
   /** @deprecated Use `ei` instead */

@@ -28,6 +28,8 @@
  * honesty mechanism itself lying.
  */
 
+import { predatesServedSourceRemoval } from "./sourceRemovalClock";
+
 /**
  * How often an open event page revalidates, given what the stream is doing.
  *
@@ -363,9 +365,17 @@ export function applyLiveFrame<T>(prev: T | undefined, frame: LiveFrame): T | un
   };
   const currentAt = Date.parse(current.hero_probability_observed_at ?? "");
   const frameAt = Date.parse(frame.updated_at);
-  if (current.status === "live" && current.hero_probability_source === "blend" &&
-      typeof current.hero_probability === "number" && Number.isFinite(current.hero_probability) &&
-      Number.isFinite(currentAt) && Number.isFinite(frameAt) && frameAt < currentAt) {
+  const holdsLiveBlend = current.status === "live" && current.hero_probability_source === "blend" &&
+      typeof current.hero_probability === "number" && Number.isFinite(current.hero_probability);
+  if (holdsLiveBlend && Number.isFinite(currentAt) && Number.isFinite(frameAt) && frameAt < currentAt) {
+    return prev;
+  }
+  // #9051: a frame from before the cached response's source removal folded the
+  // removed source into its `p` — and would recreate that source's entry below.
+  // The removal is newer than any price clock can say; see the helper.
+  if (holdsLiveBlend && predatesServedSourceRemoval(
+    prev as { blend_source_removed_at?: string | null }, frame.updated_at,
+  )) {
     return prev;
   }
   // A source entry carries display metadata (`display_name`, `type`, `color`)
