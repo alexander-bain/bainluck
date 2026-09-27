@@ -26604,12 +26604,14 @@ def _sportsbook_withdrawal(
     was read — which is the poll whose count the hero is standing on. Earlier
     buckets keep the history they had.
 
-    Settled and finished rows are left alone: their right edge belongs to the
-    terminal-point injection and the settled hero, not to today's bag.
+    Settled, suspended and finished rows are left alone: their right edge
+    belongs to the terminal-point injection and the settled hero, not to
+    today's bag. A ``suspended`` row is where #8951's venue-graded result point
+    lands; ungraded, it keeps the line it had.
     """
     if hero_sources is None or "betting" in hero_sources:
         return None
-    if is_finished or status in SETTLED_STATUSES:
+    if is_finished or status in SETTLED_STATUSES or status == EVENT_SUSPENDED:
         return None
     if not history:
         return None

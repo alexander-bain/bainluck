@@ -281,6 +281,7 @@ def test_withdrawal_never_lands_before_the_last_history_point():
         (None, False, "scheduled"),  # folded: the hero could not be asked
         (["polymarket"], True, "scheduled"),  # the terminal point owns the edge
         (["polymarket"], False, "completed"),  # settled: not today's bag
+        (["polymarket"], False, "suspended"),  # #8951's result point owns the edge
     ],
 )
 def test_no_withdrawal_where_the_line_is_not_ours_to_move(
