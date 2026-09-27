@@ -104,7 +104,7 @@ _PREGAME_MARK_LEAD_MINUTES = 15
 
 
 def _pregame_pin_outcome_probs(
-    market_source, outcomes, fresh_books=None
+    market_source, outcomes, fresh_books=None, unpriced_reads=None
 ) -> tuple[dict, int]:
     """The per-outcome numbers a pregame pin may hold, and how many legs it refused.
 
@@ -129,17 +129,31 @@ def _pregame_pin_outcome_probs(
     leg this poll did not read is judged on its stored columns, the only
     evidence there is.
 
+    READ BUT NOT PRICED (after-check RED, 2026-09-27 14:04Z). ``unpriced_reads``
+    holds the legs this poll read and then declined to price: no trade and no
+    bid, a price outside (0, 1), or a phantom midpoint. Such a leg's
+    ``current_probability`` is whatever an older poll wrote, so it is left out
+    whatever its book says. The specimen: market 61230222 ("CF Sant Rafel
+    (-2.5)") was pinned at 0.495 at 13:51Z from a row last priced 2026-09-17,
+    with 0.01/0.99 stored. The poll's read had no bid and no trade, so the
+    poller declined it, and its fresh book was not empty by the tick rule, so
+    the check above let the ten-day-old number through.
+
     Scope follows the rule's own: Polymarket only (CERT-2508's reason, the
     predicate is venue policy), and a leg with no recorded book is not refused.
     """
     refuse_empty = market_source == POLYMARKET_BOOKMAKER
     fresh_books = fresh_books or {}
+    unpriced_reads = unpriced_reads or set()
     probs: dict = {}
     refused = 0
     for o in outcomes:
         if o.current_probability is None:
             continue
         if refuse_empty:
+            if o.id in unpriced_reads:
+                refused += 1
+                continue
             if o.id in fresh_books:
                 bid, ask = fresh_books[o.id]
             else:
@@ -9784,6 +9798,17 @@ async def _poll_live_prediction_market_prices():
     # the row. The pregame pin judges emptiness from this dict when the leg was
     # read this poll, and from the stored columns only when it was not.
     polymarket_fresh_books: dict[int, tuple[Optional[float], Optional[float]]] = {}
+    # #9083 (after-check RED 2026-09-27 14:04Z): the Polymarket legs this poll
+    # read and then declined to price (no trade and no bid, a price outside
+    # (0, 1), a phantom midpoint). Their row still holds an older poll's price,
+    # which the pin must not take as this poll's consensus.
+    polymarket_unpriced_reads: set[int] = set()
+    # CERT-3652: the legs cleared from the set above since the last durable
+    # boundary. A clear is only as real as the price write it stands for; if
+    # the snapshot INSERT or the commit fails, `_recover` rolls the row back to
+    # the older price and puts these legs back, so the pin cannot take the
+    # restored number as this poll's.
+    polymarket_cleared_since_commit: set[int] = set()
 
     now = datetime.now(timezone.utc)
 
@@ -10041,6 +10066,7 @@ async def _poll_live_prediction_market_prices():
             await session.commit()
             stats["commits"] += 1
             committed_counts.update({k: stats[k] for k in _durable_counters})
+            polymarket_cleared_since_commit.clear()
 
         async def _recover(label: str, exc: Exception) -> None:
             """Record one item's failure and hand the pass back a usable session.
@@ -10057,6 +10083,10 @@ async def _poll_live_prediction_market_prices():
             # counted them go with it, back to the last durable boundary.
             for _counter in _durable_counters:
                 stats[_counter] = committed_counts[_counter]
+            # CERT-3652: the rollback restores each such leg's older price, so
+            # the leg is unpriced again.
+            polymarket_unpriced_reads.update(polymarket_cleared_since_commit)
+            polymarket_cleared_since_commit.clear()
             if "deadlock" in str(exc).lower():
                 stats["deadlocks"] += 1
             stats["errors"].append(f"{label}: {str(exc)[:100]}")
@@ -10466,6 +10496,11 @@ async def _poll_live_prediction_market_prices():
                                 None if _fresh_bid is None else float(_fresh_bid),
                                 None if _fresh_ask is None else float(_fresh_ask),
                             )
+                            # Cleared below only where this read's price is
+                            # written; every `continue` between leaves it set,
+                            # and `_recover` re-adds it if that write is rolled
+                            # back (CERT-3652).
+                            polymarket_unpriced_reads.add(outcome.id)
 
                             # Determine the correct price for this outcome.
                             #
@@ -10616,6 +10651,8 @@ async def _poll_live_prediction_market_prices():
 
                             # Update outcome probability
                             outcome.current_probability = prob
+                            polymarket_unpriced_reads.discard(outcome.id)
+                            polymarket_cleared_since_commit.add(outcome.id)
                             american = probability_to_american(prob) if 0 < prob < 1 else None
                             outcome.current_american_odds = american
 
@@ -10973,6 +11010,7 @@ async def _poll_live_prediction_market_prices():
                 market.source,
                 pop.outcomes_by_market.get(market_id, []),
                 polymarket_fresh_books,
+                polymarket_unpriced_reads,
             )
             stats["pregame_mark_empty_book_legs_refused"] += _empty_legs
             if not outcome_probs:
