@@ -856,6 +856,44 @@ async def folded_probability_sources(db, event, absorbed: Sequence = ()) -> dict
 
     Errors are not swallowed, for the reason given in :func:`folded_event_ids`.
     """
+    sources, _revision = await folded_probability_sources_with_revision(
+        db, event, absorbed
+    )
+    return sources
+
+
+def _row_revision(row) -> object:
+    """The fold row's fifth column, the twin's ``win_probability_sources_rev``.
+
+    A production ``Row`` always has it. A four-wide row (the route rigs that
+    answer this lookup by hand predate #9051) has no revision to report, which
+    :func:`~app.utils.wps_revision.fold_revision_vector` turns into "no claim"
+    for the whole vector, never into a zero.
+    """
+    return row[4] if len(row) > 4 else None
+
+
+async def folded_probability_sources_with_revision(
+    db, event, absorbed: Sequence = ()
+) -> tuple[dict, dict[str, int] | None]:
+    """:func:`folded_probability_sources`, plus the fold's revision vector (#9051).
+
+    The vector is ``{"<row_id>": win_probability_sources_rev}`` for the
+    canonical, every orientation-agreeing twin and every absorbed row: every row
+    whose bag this fold READ, whether or not it contributed a source. A twin
+    whose only source was just removed contributes nothing to the new fold, and
+    its bumped revision is what tells a client the old fold is stale.
+
+    Each revision is read in the same row read as the bag it describes: the
+    twins' in this one SELECT, the canonical's and each absorbed row's off the
+    same loaded row as its ``win_probability_sources``. So the vector identifies
+    exactly the inputs the served number was computed from, and a later fold's
+    vector is at least as large in every component (``app/utils/wps_revision.py``).
+
+    ``None`` when any revision is unreadable: the contract's "no claim".
+    """
+    from app.utils.wps_revision import fold_revision_vector
+
     rows = (
         await db.execute(
             select(
@@ -863,23 +901,39 @@ async def folded_probability_sources(db, event, absorbed: Sequence = ()) -> dict
                 Event.home_team_name,
                 Event.away_team_name,
                 Event.win_probability_sources,
+                Event.win_probability_sources_rev,
             ).where(tagged_duplicate_of(event.id))
         )
     ).all()
 
     oriented = [
-        (twin_id, sources)
-        for twin_id, home, away, sources in rows
-        if twin_id != event.id
-        and orientation_agrees(event.home_team_name, event.away_team_name, home, away)
+        (row[0], row[3], _row_revision(row))
+        for row in rows
+        if row[0] != event.id
+        and orientation_agrees(
+            event.home_team_name, event.away_team_name, row[1], row[2]
+        )
     ]
-    seen = {twin_id for twin_id, _ in oriented}
+    seen = {twin_id for twin_id, _, _ in oriented}
     oriented += [
-        (row.id, row.win_probability_sources)
+        (
+            row.id,
+            row.win_probability_sources,
+            getattr(row, "win_probability_sources_rev", None),
+        )
         for row in absorbed
         if row.id != event.id and row.id not in seen
     ]
-    return merge_probability_sources(event.win_probability_sources, oriented)
+    merged = merge_probability_sources(
+        event.win_probability_sources,
+        [(twin_id, sources) for twin_id, sources, _ in oriented],
+    )
+    revision = fold_revision_vector(
+        event.id,
+        getattr(event, "win_probability_sources_rev", None),
+        [(twin_id, rev) for twin_id, _, rev in oriented],
+    )
+    return merged, revision
 
 
 def _tag_elements(tags: object) -> list[str]:

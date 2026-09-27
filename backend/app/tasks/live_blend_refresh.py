@@ -1054,7 +1054,9 @@ class LiveBlendRefresher:
                         )
                         if admits is not None:
                             stamp = stamp.where(admits)
-                        new_sources = (
+                        # #9051: the row's revision rides the same RETURNING,
+                        # so the frame names exactly the write it reports.
+                        stamped_row = (
                             await session.execute(
                                 stamp.values(
                                     win_probability_sources=atomic_stamp_expression(
@@ -1064,9 +1066,15 @@ class LiveBlendRefresher:
                                         observed_basis=basis,
                                     )
                                 )
-                                .returning(Event.win_probability_sources)
+                                .returning(
+                                    Event.win_probability_sources,
+                                    Event.win_probability_sources_rev,
+                                )
                             )
-                        ).scalar_one_or_none()
+                        ).first()
+                        new_sources, new_rev = (
+                            (None, None) if stamped_row is None else stamped_row
+                        )
                         if new_sources is None and admits is not None:
                             # Refused: the poll or the matcher stored a later
                             # observation of these rows since this batch read
@@ -1158,6 +1166,7 @@ class LiveBlendRefresher:
                             source_value=value,
                             updated_at=stamped_at,
                             status=event.status,
+                            rev=new_rev,
                         )
                     )
                 except Exception as exc:

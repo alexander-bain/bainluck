@@ -44,6 +44,7 @@ def build_frame(
     source_value: float,
     updated_at: str,
     status: Optional[str] = None,
+    rev: Optional[int] = None,
 ) -> dict[str, Any]:
     """One live update, in the shape the web + iOS clients parse.
 
@@ -55,6 +56,13 @@ def build_frame(
     can show which feed moved and what it said, and ``updated_at`` is the
     STAMPED write time so the client's "live · Ns ago" counts from when the data
     was true rather than from when the packet arrived.
+
+    ``rev`` (#9051) is the row's ``win_probability_sources_rev`` as the SAME
+    UPDATE that wrote the bag returned it, served as ``{"<event_id>": rev}``.
+    ``p`` is this ROW's aggregate, not a folded one: a client adopts it only
+    when its held detail vector has exactly this one key; on a folded event the
+    frame is an invalidation that makes it refetch detail. ``None`` when the
+    writer had no revision to report, which the client reads as no claim.
     """
     # Coerce through float BEFORE the frame is built, not at json.dumps time.
     # `compute_aggregate_probability` can fall back to `opening_home_probability`,
@@ -70,6 +78,11 @@ def build_frame(
         "source_value": None if source_value is None else float(source_value),
         "updated_at": updated_at,
         "status": status,
+        "rev": (
+            None
+            if rev is None or isinstance(rev, bool) or not isinstance(rev, int)
+            else {str(int(event_id)): rev}
+        ),
     }
 
 

@@ -16365,9 +16365,11 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
     # (acceptance 4 — ruling 048 permits the read and forbids the write).
     from app.utils.proven_duplicates import (
         FoldedBlendView,
-        folded_probability_sources,
+        folded_probability_sources_with_revision,
     )
-    folded_sources = await folded_probability_sources(db, event, absorbed)
+    folded_sources, blend_fold_revision = (
+        await folded_probability_sources_with_revision(db, event, absorbed)
+    )
     blend_view = FoldedBlendView(event, folded_sources)
 
     response = _format_event(
@@ -16737,6 +16739,10 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
     # serve this cached probability while reading a newer event row; borrowing
     # that row's clock would falsely promote an older cached price to new truth.
     response["hero_probability_observed_at"] = None
+    # #9051: which read of each row the hero was computed from, cached in the
+    # same entry as the hero and its clock, so a client can order two folds
+    # without trusting any quote clock. `None` = no claim.
+    response["blend_fold_revision"] = blend_fold_revision
     if _hero is not None:
         response["hero_probability"] = _hero.home_probability
         if _hero.source == "blend":
@@ -28185,6 +28191,9 @@ async def get_event_odds_history(
     pin_event = event
     served_blend = None
     blend_edge_observed_at = None
+    # #9051: the revision vector of the fold the pinned edge's VALUE came from,
+    # set beside that value in both arms below and never from a different read.
+    blend_edge_fold_revision = None
     if aggregate_line:
         # THE NUMBER THE HERO IS ACTUALLY SHOWING, when one is being served.
         # `_cached_detail_payload` applies the identical TTL ladder `get_event`
@@ -28202,6 +28211,8 @@ async def get_event_odds_history(
             # The clock belongs to this cached value, not the fresh row below.
             # An older cache entry without provenance remains honestly unknown.
             blend_edge_observed_at = _served.get("hero_probability_observed_at")
+            # A cache entry written before #9051 has no vector: no claim.
+            blend_edge_fold_revision = _served.get("blend_fold_revision")
 
         if served_blend is None:
             # Nothing is being served, so the chart computes it — from the same
@@ -28210,12 +28221,13 @@ async def get_event_odds_history(
             # boundary rather than only inside it.
             from app.utils.proven_duplicates import (
                 FoldedBlendView,
-                folded_probability_sources,
+                folded_probability_sources_with_revision,
             )
 
-            pin_event = FoldedBlendView(
-                event, await folded_probability_sources(db, event, absorbed)
+            _pin_sources, blend_edge_fold_revision = (
+                await folded_probability_sources_with_revision(db, event, absorbed)
             )
+            pin_event = FoldedBlendView(event, _pin_sources)
             from app.utils.aggregation import newest_source_reading_time
 
             observed_at = newest_source_reading_time(
@@ -28662,6 +28674,12 @@ async def get_event_odds_history(
         # a new price. Null means no pin or incomplete observation provenance.
         "blend_edge_observed_at": (
             blend_edge_observed_at if blend_edge_pinned else None
+        ),
+        # #9051: `{row_id: rev}` of the fold the pinned value was read from,
+        # the chart's twin of detail's `blend_fold_revision`. Null means no pin
+        # or no claim, never "revision zero".
+        "blend_edge_fold_revision": (
+            blend_edge_fold_revision if blend_edge_pinned else None
         ),
         # #6925: true iff `range=since_start` actually removed points, i.e. iff
         # a second request without it would tell this caller more. False on
