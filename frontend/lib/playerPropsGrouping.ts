@@ -197,6 +197,24 @@ export const STAT_TO_BOX_SCORE: Record<string, string> = {
 };
 
 /**
+ * #9148: Kalshi names a team defense `<ABBR> <Nickname> D/ST` ("SEA Seahawks
+ * D/ST", "WAS Commanders D/ST"). Printed verbatim, the team is named twice, once
+ * as a ticker the rest of the page does not use (the margin maps say WSH). The
+ * nickname alone names the unit and stays unique where a city is shared
+ * (NY Jets / NY Giants, LA Rams / LA Chargers).
+ *
+ * Only that exact shape is touched: a leading run of 2–3 capitals, at least one
+ * more word, and a trailing `D/ST`. A player, a "Team" row, and any subject
+ * with no ticker come back unchanged.
+ */
+const TICKER_DEFENSE = /^[A-Z]{2,3}\s+(\S.*\sD\/ST)$/;
+
+export function propSubjectDisplay(subject: string): string {
+  const m = subject.match(TICKER_DEFENSE);
+  return m ? m[1] : subject;
+}
+
+/**
  * The player, statistic and team a prop row is about.
  *
  * `identified` (UX-P044, #1642 P1b) is false when the parse never found a
@@ -283,7 +301,7 @@ export function parsePlayerName(
   // `parsePropLabel` fall-through below.
   const outcomeColon = (outcomeName || "").indexOf(":");
   const subjectFromOutcome =
-    outcomeColon > 0 ? outcomeName.slice(0, outcomeColon).trim() : "";
+    outcomeColon > 0 ? propSubjectDisplay(outcomeName.slice(0, outcomeColon).trim()) : "";
 
   if (subjectFromOutcome && afterColon && (exactStatMatch || colonIdx >= 0)) {
     player = subjectFromOutcome;
@@ -606,7 +624,7 @@ export function groupPlayerProps(input: GroupPlayerPropsInput): GroupPlayerProps
     const outcomeColon = (p.outcome_name || "").indexOf(":");
     const subjectSide =
       outcomeColon > 0 &&
-      parsed.player === (p.outcome_name || "").slice(0, outcomeColon).trim()
+      parsed.player === propSubjectDisplay((p.outcome_name || "").slice(0, outcomeColon).trim())
         ? detectTeam(parsed.player)
         : "unknown";
     const team: TeamSide =

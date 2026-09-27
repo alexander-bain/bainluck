@@ -54,7 +54,8 @@ describe("#6210 the subject is read from the outcome, never derived from the mar
     [
       "Denver vs Kansas City: Fantasy Points",
       "KC Chiefs D/ST: Over 8.5 fantasy points",
-      "KC Chiefs D/ST",
+      // #9148: the venue's ticker prefix is dropped; the unit is still named.
+      "Chiefs D/ST",
       "Fantasy",
     ],
   ])("%s | %s names %s", (market, outcome, subject, invented) => {
@@ -265,8 +266,8 @@ describe("#6210 the card list a reader sees", () => {
     });
     const names = result.players.map((p) => p.name).sort();
     expect(names).toEqual([
+      "Chiefs D/ST",
       "Denver",
-      "KC Chiefs D/ST",
       "Kansas City",
       "Patrick Mahomes",
     ]);
