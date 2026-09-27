@@ -23855,6 +23855,55 @@ async def _both_clubs_are_womens_only(
     return True
 
 
+async def _related_futures_withheld_ids(db: AsyncSession, market_ids) -> set[int]:
+    """The outcome ids each market's OWN page refuses to price (#9008).
+
+    WHAT A READER SAW, 2026-09-27 01:4xZ. `/events/15315689`'s Bigger Picture
+    printed the Art Ross as "Kucherov 50%" and Tkachuk, Barkov, Reinhart, Point
+    and Hagel at 10%, while `/api/futures/60473133` (Kalshi KXNHLROSS-27) served
+    all six `null`, `prices_withheld: 35` of 40: bid 0 on every leg, none traded.
+    This build read `current_probability` straight off the row and asked no
+    refusal at all. #8972 closed the same gap on `/api/leagues/*` and `/hub/*`.
+
+    Called, never re-spelled: `_page_withheld_outcome_ids` is #8972's
+    composition of the three calls the detail route makes. Imported here rather
+    than at the top because `league_futures` imports this module.
+
+    The rail's outcome rows come from a query that loads `FuturesOutcome.market`
+    and not the market's other legs, and every arm reads the whole board (the
+    fold, the empty-book pairing, the fleet stamp). So the boards are loaded
+    here, with their outcomes, in one query.
+
+    Fails open for each market, loudly (gotcha #42, and the direction search's
+    `_search_withheld_price_outcome_ids` gives): a board that raises keeps its
+    prices, and the other boards are still refused.
+    """
+    from app.routes.league_futures import _page_withheld_outcome_ids
+
+    ids = sorted({int(m) for m in market_ids if m is not None})
+    if not ids:
+        return set()
+    boards = (
+        await db.execute(
+            select(FuturesMarket)
+            .options(selectinload(FuturesMarket.outcomes))
+            .where(FuturesMarket.id.in_(ids))
+        )
+    ).scalars().all()
+    withheld: set[int] = set()
+    for board in boards:
+        try:
+            withheld |= await _page_withheld_outcome_ids(db, board)
+        except Exception:  # noqa: BLE001 - one board never un-refuses the rest
+            logger.warning(
+                "related futures: could not evaluate the price refusal for market %s; "
+                "serving its prices unrefused",
+                getattr(board, "id", None),
+                exc_info=True,
+            )
+    return withheld
+
+
 async def _build_related_futures(
     event_id: int,
     db: AsyncSession,
@@ -24953,6 +25002,17 @@ async def _build_related_futures(
         else:
             away_futures.append(entry)
 
+    # #9008 — a leg its own page refuses to price leaves the rail. Each entry here
+    # is ONE outcome, so a refused entry is a card with nothing to print, which the
+    # league route drops the same way (`no_outcomes`). Dropped BEFORE the fold and
+    # the cross-source merge: the merge keeps the entry with the most bookmakers,
+    # so a refused Kalshi leg could otherwise beat a priced Polymarket copy of the
+    # same answer, and `relevance_score` above was scored off the refused number.
+    rail_withheld = await _related_futures_withheld_ids(db, row_markets.keys())
+    if rail_withheld:
+        home_futures = [f for f in home_futures if f["outcome_id"] not in rail_withheld]
+        away_futures = [f for f in away_futures if f["outcome_id"] not in rail_withheld]
+
     # #4646 — the fixture's own result belongs to `/game-markets`, which draws it
     # as one labelled card. Drawn again here it becomes unlabelled chips split
     # across two columns. Folded BEFORE the merges, while every leg still carries
@@ -25202,6 +25262,9 @@ async def _build_related_futures(
             .order_by(FuturesOutcome.market_id, FuturesOutcome.current_probability.desc())
         )
         series_outcomes = series_outcomes_result.scalars().all()
+        # #9008 — the series card is a whole board, so a refused leg stays on it,
+        # named, with its price keys present and null (the clients test `!== null`).
+        series_withheld = await _related_futures_withheld_ids(db, series_market_ids)
 
         # Group outcomes by market, then format each market as one entry
         from collections import defaultdict
@@ -25217,11 +25280,14 @@ async def _build_related_futures(
                 continue
             top_outcomes = []
             for so in outcomes_list[:10]:  # cap outcomes per market
+                refused = so.id in series_withheld
                 top_outcomes.append({
                     "outcome_id": so.id,
                     "name": so.name,
-                    "probability": float(so.current_probability) if so.current_probability else None,
-                    "probability_change_24h": float(so.probability_change_24h) if so.probability_change_24h else None,
+                    "probability": None if refused or not so.current_probability else float(so.current_probability),
+                    "probability_change_24h": (
+                        None if refused or not so.probability_change_24h else float(so.probability_change_24h)
+                    ),
                 })
             formatted_series.append({
                 "market_id": mkt.id,
