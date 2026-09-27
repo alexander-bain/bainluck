@@ -497,3 +497,105 @@ class TestTheLegsOfOneEventGetDistinctNames:
             "a leg is still carrying the parsed SERIES ticker, which every leg "
             "shares — `_parse_kalshi_ticker_name` walks past numeric segments"
         )
+
+
+MIFE_EVENT = "Will mail-order mifepristone access be restricted nationwide?"
+MIFE_TICKER = "KXMIFEPRISTONEMAIL-26"
+
+
+def _mife_leg(suffix, status, *, subtitle, price):
+    """One leg of the #9173 specimen, from the venue's own event read (2026-09-27 16:25Z)."""
+    return KalshiMarket(
+        ticker=f"{MIFE_TICKER}-{suffix}",
+        event_ticker=MIFE_TICKER,
+        title=(
+            "Will it be reported by any of the Source Agencies that nationwide "
+            "restrictions on mail-order mifepristone take effect before Jan 1, 2027?"
+        ),
+        subtitle=subtitle,
+        yes_sub_title="Before 2027",
+        status=status,
+        close_time=CLOSE,
+        yes_bid=None if price is None else price - 0.01,
+        yes_ask=None if price is None else price + 0.01,
+        last_price=price,
+        volume=0 if price is None else 1500,
+    )
+
+
+def _mife_event(withdrawn_price=None):
+    return KalshiEvent(
+        event_ticker=MIFE_TICKER,
+        title=MIFE_EVENT,
+        category="Politics",
+        mutually_exclusive=False,
+        markets=[
+            _mife_leg("27", "inactive", subtitle="Before 2027", price=withdrawn_price),
+            _mife_leg("27JAN", "active", subtitle=None, price=0.12),
+        ],
+    )
+
+
+class TestAWithdrawnLegIsNotAnOutcome:
+    """#9173 — #4356's rule on the main poll, where it had never been applied.
+
+    `status="open"` filters EVENTS; the nested legs arrive whatever their own
+    status, so the withdrawn `-27` reached the first pass beside its re-listing.
+    It was born as a placeholder named `27`, and its presence made #4316's
+    namer rename the live leg `27JAN` — the string the hero printed.
+    """
+
+    async def test_the_live_leg_is_stored_under_the_venues_label(self, pg_session):
+        await _run_poll(pg_session, [_mife_event()])
+
+        got = await _outcomes(pg_session, MIFE_TICKER)
+        live = got[f"{MIFE_TICKER}-27JAN"]
+        assert live["name"] == "Before 2027", (
+            f"the live leg stored {live['name']!r}; a withdrawn duplicate must not "
+            "push it onto #4316's ticker rung"
+        )
+        assert live["prob"] is not None and 0.11 < float(live["prob"]) < 0.13
+
+    async def test_the_withdrawn_leg_is_not_created(self, pg_session):
+        stats = await _run_poll(pg_session, [_mife_event()])
+
+        got = await _outcomes(pg_session, MIFE_TICKER)
+        assert set(got) == {f"{MIFE_TICKER}-27JAN"}, (
+            f"the venue withdrew -27; it must not be born as an outcome row: {got}"
+        )
+        assert stats["withdrawn_legs_skipped"] == 1
+        assert stats["unpriced_outcomes_recorded"] == 0, (
+            "a withdrawal is not an unreadable book — the #3518 counter must not "
+            "count it"
+        )
+
+    async def test_a_withdrawn_leg_with_a_last_trade_is_never_priced(self, pg_session):
+        """#4356's 39% "No Touchdown": a withdrawn leg can carry a readable last book."""
+        await _run_poll(pg_session, [_mife_event(withdrawn_price=0.39)])
+
+        got = await _outcomes(pg_session, MIFE_TICKER)
+        assert f"{MIFE_TICKER}-27" not in got, got
+
+    async def test_a_price_we_already_hold_for_it_is_cleared(self, pg_session):
+        """Held before the withdrawal: the null-out block owns it, and clears it."""
+        before = KalshiEvent(
+            event_ticker=MIFE_TICKER,
+            title=MIFE_EVENT,
+            category="Politics",
+            mutually_exclusive=False,
+            markets=[
+                _mife_leg("27", "active", subtitle="Before 2027", price=0.15),
+                _mife_leg("27JAN", "active", subtitle=None, price=0.12),
+            ],
+        )
+        await _run_poll(pg_session, [before])
+        assert (await _outcomes(pg_session, MIFE_TICKER))[f"{MIFE_TICKER}-27"]["prob"]
+
+        await _run_poll(pg_session, [_mife_event(withdrawn_price=0.15)])
+        got = await _outcomes(pg_session, MIFE_TICKER)
+        assert got[f"{MIFE_TICKER}-27"]["prob"] is None, (
+            f"the withdrawn leg kept its stale price: {got[f'{MIFE_TICKER}-27']}"
+        )
+        assert got[f"{MIFE_TICKER}-27JAN"]["name"] == "Before 2027", (
+            "and the live leg is renamed by the poll's own upsert on the next pass"
+        )
