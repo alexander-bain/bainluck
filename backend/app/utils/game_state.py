@@ -162,12 +162,22 @@ def normalize_live_game_state(
 # above is how narrowly it is scoped. Three fences, and the first is the one
 # that matters:
 #
-#   * IT APPLIES ONLY WHERE THE LABEL NAMES A SPAN, never where it names an
-#     instant — see `_position_names_a_span`. A clocked tie (`5:21 - 4th
-#     Quarter` against itself) is two feeds agreeing on the second and
-#     disagreeing on the score, which IS a correction and still lands at once; a
-#     lagging clocked feed lags in its clock, so the rule above has it already.
-#     An inning tie agrees on nothing finer than "somewhere in this half-inning".
+#   * IT NEVER APPLIES TO THE AUTHORITY — see `_authority_is_correcting_itself`.
+#     A feed cannot lag behind itself, so ESPN taking a point back at a tie is a
+#     correction and lands at once.
+#   * (#6056, 2026-09-27: this fence USED to read "only where the label names a
+#     SPAN", on the premise that a lagging clocked feed lags in its clock too.
+#     Football refutes it. The clock STOPS at every score, so the lagging feed's
+#     clock catches up to the scoring instant while its scoreboard is still one
+#     play behind: `10:43 - 3rd Quarter` against itself, 24–10 stored, 17–10
+#     offered. MEASURED on the 2026-09-27 NFL slate: 26 served score reversions
+#     across 10 games, 25 of them written between ESPN passes — StatPal — each
+#     restoring the PREVIOUS score at a stopped clock or at `Halftime`; the 26th
+#     was ESPN's own payload. So a clocked tie now takes the tie-break too, from
+#     a secondary feed, and a correction from one waits for the clock to move.)
+#     The two ladders must still agree on KIND — both spans or both instants — so
+#     a rank COLLISION (`'Top 1st'` and `'End of 5th Period'` both place at
+#     `(5.0, 0.0)`) is never read as a tie.
 #   * It refuses only while the position is UNCHANGED. The instant the game
 #     moves to the next inning-state the incoming position is strictly later,
 #     the first rule accepts it, and the lower score lands. So a genuine
@@ -178,10 +188,12 @@ def normalize_live_game_state(
 #     on either side is no evidence and leaves today's behaviour untouched. A
 #     tie whose score RISES, or holds, still lands.
 #
-# What it buys: within one half-inning a run cannot un-score itself. What it
-# costs: a downward correction taken mid-inning waits for the inning-state to
-# turn. On a feed that publishes a corrected score every 30 seconds, that is a
-# bounded wait for a right answer against an unbounded flicker of wrong ones.
+# What it buys: within one half-inning a run cannot un-score itself, and at a
+# stopped football clock a touchdown cannot leave the page. What it costs: a
+# downward correction from a SECONDARY feed waits for the inning-state to turn
+# or the clock to run. On a feed that publishes a corrected score every 30
+# seconds, that is a bounded wait for a right answer against an unbounded
+# flicker of wrong ones.
 #
 # ── IT ONLY REFUSES WHAT IT CAN PROVE, AND IT CANNOT DEADLOCK ──
 #
@@ -225,6 +237,8 @@ _COUNTDOWN_PERIOD_RE = re.compile(
 _END_OF_PERIOD_RE = re.compile(
     r"\bend\s+of\s+(\d{1,2})(?:st|nd|rd|th)\s+(?:quarter|period)\b", re.IGNORECASE
 )
+
+_HALFTIME_RE = re.compile(r"^half[- ]?time$", re.IGNORECASE)
 
 #: `'OT'`, `'2OT'`, `'Overtime'` — measured on NFL rows as `'10:00 - OT'`. Ranked
 #: after regulation for every sport that uses the label (4 quarters, 3 hockey
@@ -388,6 +402,15 @@ def live_progress_position(
     if end_of:
         return (float(end_of.group(1)), 0.0)
 
+    # #6056: the break after the second period, i.e. `End of 2nd Quarter`.
+    # Unplaceable before 2026-09-27, which left the guard blind for the whole
+    # break — 6 of that day's 26 NFL reversions landed there. Only the whole
+    # label: it is the one both writers store (ESPN's `status_detail`,
+    # StatPal's `status` with an empty timer), and a sport played in halves has
+    # no other placeable label for it to be ordered against.
+    if _HALFTIME_RE.match(text):
+        return (2.0, 0.0)
+
     inning_state = _INNING_STATE_RE.search(text)
     if inning_state:
         inning = int(inning_state.group(2))
@@ -434,27 +457,14 @@ def _as_score(value: object) -> int | None:
 def _position_names_a_span(period: str | None) -> bool:
     """Does this label name a STRETCH of game time rather than an instant?
 
-    This is the whole reason the #6251 tie-break is not a general rule, and the
-    distinction is the one the existing behaviour already turns on:
-
-    * `'5:21 - 4th Quarter'` locates an observation to the SECOND. Two feeds
-      that tie there genuinely agree about the moment and disagree about the
-      score, which is what a correction looks like — and a feed that were merely
-      lagging would be lagging in its clock too, so the position rule has
-      already caught it. Those ties must keep landing immediately
-      (`test_schedule_sync_accepts_a_same_position_correction`).
-    * `'Top 8th'` locates it to a half-inning, which is minutes wide. A tie
-      there is not evidence of simultaneity; it is the absence of any evidence
-      at all, and it is the window the lagging feed lives in.
-
-    So only the inning ladder qualifies. `'End of 3rd Quarter'` is deliberately
-    excluded even though it also carries a `0.0` elapsed: that is a real instant
-    the game passes through once, not a span.
-
-    Requiring BOTH sides to satisfy this also keeps the tie-break off a rank
-    COLLISION rather than a real tie — `'Top 1st'` and `'End of 5th Period'`
-    both place at `(5.0, 0.0)`, because the inning ladder and the period ladder
-    share a number line they never share a row on.
+    `'Top 8th'` locates an observation to a half-inning, minutes wide;
+    `'5:21 - 4th Quarter'` and `'End of 3rd Quarter'` locate it to an instant.
+    Both kinds of tie now take the #6251 tie-break (#6056, 2026-09-27 — the
+    module note says why the instant exemption fell), so this no longer decides
+    WHETHER a tie is broken. It decides whether two positions are on the same
+    ladder at all: `'Top 1st'` and `'End of 5th Period'` both place at
+    `(5.0, 0.0)`, because the inning ladder and the period ladder share a number
+    line they never share a row on, and that COLLISION is not a tie.
     """
     if not period:
         return False
@@ -584,11 +594,11 @@ def _authority_is_correcting_itself(incoming_is_authority: bool) -> bool:
 
     ── SCOPE ──
 
-    Baseball-only in effect, without a sport check anywhere: the caller reaches
-    this line only at a tie on a position that `_position_names_a_span` accepts,
-    and the inning ladder is the only such position. A clocked tie never gets
-    here. The strictly-earlier rule is above this and is not exempted — an
-    authority observation from a genuinely earlier inning is still refused,
+    Since #6056 (2026-09-27) the caller reaches this line at ANY tie — a
+    clocked instant as well as an inning — so this is also what lets ESPN take
+    back a point at a stopped football clock. The same argument holds there: a
+    feed cannot lag behind itself. The strictly-earlier rule is above this and
+    is not exempted — an authority observation from a genuinely earlier inning is still refused,
     which is the one case where accepting it is provably wrong.
 
     THE SAMPLE IS THIN AND SAYING SO IS PART OF THE CLAIM. `espn_snapshots` is a
@@ -616,11 +626,10 @@ def live_write_would_revert(
 
     ``True`` when both sides are locatable AND the incoming one is strictly
     earlier — the one case where accepting the write is guaranteed to move the
-    served state backwards in front of a reader — or, at a tie on a position
-    that names a SPAN of game time rather than an instant, when the four scores
-    are all readable and the incoming one takes a run off a side (#6251; the
-    module note says why a clockless label needs a second discriminator, and why
-    scoping it this narrowly is not the monotonic clamp that was rejected).
+    served state backwards in front of a reader — or, at a position tie, when
+    the four scores are all readable and the incoming one takes a run or a
+    point off a side (#6251 for innings, #6056 for a stopped clock; the module
+    note says why that is not the monotonic clamp that was rejected).
 
     Every other case is ``False``: this function's job is to refuse proven
     reversions, not to gatekeep live updates. The four score arguments are
@@ -648,11 +657,9 @@ def live_write_would_revert(
             incoming_home_score,
             incoming_away_score,
         )
-    if (
-        incoming == stored
-        and _position_names_a_span(stored_period)
-        and _position_names_a_span(incoming_period)
-    ):
+    if incoming == stored and _position_names_a_span(
+        stored_period
+    ) == _position_names_a_span(incoming_period):
         if _authority_is_correcting_itself(incoming_is_authority):
             return False
         return _score_would_regress(

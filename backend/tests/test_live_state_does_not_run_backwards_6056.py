@@ -205,7 +205,10 @@ class TestWhatItRefusesToPlace:
     @pytest.mark.parametrize(
         "period",
         [
-            "Halftime",  # measured, 168 NFL rows
+            # `'Halftime'` USED TO BE HERE. #6056 (2026-09-27) placed it as
+            # `End of 2nd Quarter`: 6 of that day's 26 NFL score reversions
+            # landed inside the break while the guard was blind to it. Asserted
+            # by `test_halftime_is_the_end_of_the_second_period_6056` below.
             "Delayed",  # measured, 3 NCAAF rows
             "FT",  # soccer terminal
             "Final",
@@ -226,6 +229,18 @@ class TestWhatItRefusesToPlace:
     )
     def test_unplaceable_labels_are_none(self, period):
         assert live_progress_position(period, "5:00") is None
+
+    def test_halftime_is_the_end_of_the_second_period_6056(self):
+        """After every second-quarter clock, tied with its last instant, before
+        the first clock of the third. Only the whole label is read — a clock in
+        the `game_clock` column beside it changes nothing."""
+        halftime = live_progress_position("Halftime", "5:00")
+        assert halftime == live_progress_position("End of 2nd Quarter", None)
+        assert halftime == live_progress_position("0:00 - 2nd Quarter", "0:00")
+        assert live_progress_position("0:01 - 2nd Quarter", "0:01") < halftime
+        assert halftime < live_progress_position("15:00 - 3rd Quarter", "15:00")
+        assert live_progress_position("halftime", None) == halftime
+        assert live_progress_position("Halftime Show", None) is None
 
     @pytest.mark.parametrize(
         "period",
@@ -351,8 +366,8 @@ class TestTheGuardRefusesOnlyProvenReversions:
     @pytest.mark.parametrize(
         "stored_period,incoming_period",
         [
-            ("Halftime", "5:26 - 4th Quarter"),  # stored unplaceable
-            ("5:21 - 4th Quarter", "Halftime"),  # incoming unplaceable
+            ("Delayed", "5:26 - 4th Quarter"),  # stored unplaceable
+            ("5:21 - 4th Quarter", "Delayed"),  # incoming unplaceable
             (None, "5:26 - 4th Quarter"),  # a row with nothing in it yet
             ("5:21 - 4th Quarter", None),
             (None, None),
@@ -544,33 +559,63 @@ class TestTheInningTieIsBrokenByTheScore6251:
             incoming_away_score="1",
         )
 
-    def test_a_clocked_tie_is_deliberately_NOT_covered(self):
-        """THE FENCE, and the test that stops this becoming the monotonic clamp.
+    def test_a_clocked_tie_is_covered_because_the_clock_stops_at_a_score_6056(self):
+        """THIS WAS THE FENCE, and production knocked it down.
 
-        `5:21 - 4th Quarter` against itself is two feeds agreeing on the SECOND
-        and disagreeing on the score, which is what a correction looks like; a
-        lagging clocked feed lags in its clock, so the positional rule has
-        already caught it. Only a label that names a SPAN — an inning — earns
-        the tie-break. Found by
-        `test_schedule_sync_accepts_a_same_position_correction`, which this
-        change reddened on its first draft and which was right.
+        It asserted the opposite, on the premise that a lagging clocked feed
+        lags in its clock too. Football's clock STOPS at every score, so the
+        lagging feed catches up to the scoring instant one play behind on the
+        scoreboard. Specimen: Seahawks at Commanders (14781702), 2026-09-27 —
+        ESPN stored 24–10 at `10:43 - 3rd Quarter` at 19:12:38Z, and at
+        19:13:43Z a StatPal pass wrote 17–10 over it at the same stopped clock;
+        the touchdown left the page for 45 seconds. 25 of that slate's 26
+        served reversions were this shape.
+
+        Still not the clamp: the authority is exempt (below), and the same lower
+        score one second of game clock later lands
+        (`test_the_same_instant_refusal_lifts_when_the_clock_runs_6056`).
         """
-        assert not live_write_would_revert(
-            "5:21 - 4th Quarter",
-            "5:21",
-            "5:21 - 4th Quarter",
-            "5:21",
-            stored_home_score=28,
-            stored_away_score=20,
-            incoming_home_score=28,
-            incoming_away_score=14,
+        assert live_write_would_revert(
+            "10:43 - 3rd Quarter",
+            "10:43",
+            "10:43 - 3rd Quarter",
+            "10:43",
+            stored_home_score=24,
+            stored_away_score=10,
+            incoming_home_score=17,
+            incoming_away_score=10,
         )
 
-    def test_an_end_of_period_tie_is_an_instant_and_is_not_covered_either(self):
-        """`End of 3rd Quarter` carries the same `0.0` elapsed as an inning, so
-        it is the near-miss this fence has to exclude on purpose: it is a moment
-        the game passes through once, not a stretch it sits in."""
+    def test_the_same_instant_refusal_lifts_when_the_clock_runs_6056(self):
+        """The heal, and the answer to the objection that killed the clamp."""
         assert not live_write_would_revert(
+            "10:43 - 3rd Quarter",
+            "10:43",
+            "10:42 - 3rd Quarter",
+            "10:42",
+            stored_home_score=24,
+            stored_away_score=10,
+            incoming_home_score=17,
+            incoming_away_score=10,
+        )
+
+    def test_a_point_scored_at_a_stopped_clock_still_lands_6056(self):
+        """Downwards only. The extra point arrives at the touchdown's clock."""
+        assert not live_write_would_revert(
+            "12:54 - 1st Quarter",
+            "12:54",
+            "12:54 - 1st Quarter",
+            "12:54",
+            stored_home_score=0,
+            stored_away_score=6,
+            incoming_home_score=0,
+            incoming_away_score=7,
+        )
+
+    def test_an_end_of_period_tie_is_covered_too_6056(self):
+        """`End of 3rd Quarter` against itself is the same stopped-clock
+        instant, and a secondary feed a play behind at it is refused."""
+        assert live_write_would_revert(
             "End of 3rd Quarter",
             None,
             "End of 3rd Quarter",
@@ -603,11 +648,12 @@ class TestTheInningTieIsBrokenByTheScore6251:
     def test_it_stays_silent_where_it_cannot_place_the_observation(self):
         """The score never promotes an unplaceable pair into a refusal — no
         position, no tie, no tie-break. Otherwise the clamp would be back in
-        through the door marked `Halftime`."""
+        through the door marked `Delayed`. (`Halftime` stood here until #6056
+        placed it — `test_a_halftime_tie_is_broken_by_the_score_6056`.)"""
         assert not live_write_would_revert(
-            "Halftime",
+            "Delayed",
             None,
-            "Halftime",
+            "Delayed",
             None,
             stored_home_score=4,
             stored_away_score=3,
@@ -623,6 +669,27 @@ class TestTheInningTieIsBrokenByTheScore6251:
             stored_away_score=3,
             incoming_home_score=0,
             incoming_away_score=0,
+        )
+
+
+    def test_a_halftime_tie_is_broken_by_the_score_6056(self):
+        """Specimen 14781703, 2026-09-27: the row read 17–6 at `Halftime` and a
+        StatPal pass at 21:39:02Z wrote 14–6 over it — the field goal before the
+        break left the page. And a StatPal `Halftime` reading arriving after
+        the third quarter has begun is simply earlier, and refused by the first
+        rule."""
+        assert live_write_would_revert(
+            "Halftime",
+            None,
+            "Halftime",
+            None,
+            stored_home_score=17,
+            stored_away_score=6,
+            incoming_home_score=14,
+            incoming_away_score=6,
+        )
+        assert live_write_would_revert(
+            "14:10 - 3rd Quarter", "14:10", "Halftime", None
         )
 
 
@@ -728,16 +795,20 @@ class TestTheAuthorityMayCorrectItselfAtATie6251:
                 incoming_is_authority=flag, **self.SPECIMEN,
             )
 
-    def test_a_clocked_tie_is_unaffected_in_both_directions(self):
-        """The exemption lives strictly inside the span-tie branch, so on a
-        clocked sport — where a tie is two feeds agreeing to the second and a
-        lower score is a correction that already landed — nothing moves."""
-        for flag in (True, False):
-            assert not live_write_would_revert(
-                "5:21 - 4th Quarter", "5:21",
-                "5:21 - 4th Quarter", "5:21",
-                incoming_is_authority=flag, **self.SPECIMEN,
-            )
+    def test_at_a_clocked_tie_only_the_authority_may_take_a_point_back_6056(self):
+        """Since #6056 a clocked tie takes the tie-break, and the exemption
+        comes with it: ESPN correcting itself at a stopped clock lands, a
+        secondary feed offering the same lower number is refused."""
+        assert not live_write_would_revert(
+            "5:21 - 4th Quarter", "5:21",
+            "5:21 - 4th Quarter", "5:21",
+            incoming_is_authority=True, **self.SPECIMEN,
+        )
+        assert live_write_would_revert(
+            "5:21 - 4th Quarter", "5:21",
+            "5:21 - 4th Quarter", "5:21",
+            incoming_is_authority=False, **self.SPECIMEN,
+        )
 
     def test_only_the_authority_producer_claims_the_exemption(self):
         """THE CALL-SITE GUARD, the sibling of the unadopted-call-site scan.
@@ -1514,8 +1585,10 @@ async def test_an_mlb_run_scoring_inside_one_half_inning_still_lands(monkeypatch
 
 @pytest.mark.asyncio
 async def test_statpal_halftime_is_untouched_by_the_guard(monkeypatch):
-    """`Halftime` is unplaceable on purpose, so #5017's behaviour — the period
-    advances and the venue's cleared clock is honoured — must be unchanged."""
+    """#5017's behaviour — the period advances and the venue's cleared clock is
+    honoured — must be unchanged. `Halftime` was unplaceable when this was
+    written; since #6056 it ties `0:00 - 2nd Quarter`, and a tie whose score
+    rises still lands."""
     now = datetime.now(timezone.utc)
     fixture = _Fixture(
         now - timedelta(hours=3),
@@ -1543,6 +1616,108 @@ async def test_statpal_halftime_is_untouched_by_the_guard(monkeypatch):
     assert rows[0].game_clock is None
     assert rows[0].away_score == 10
     assert result["reverting_live_skipped"] == 0
+
+
+@pytest.mark.asyncio
+async def test_a_touchdown_does_not_leave_the_page_at_a_stopped_clock_6056(monkeypatch):
+    """END TO END on the writer production caught, with its own numbers.
+
+    Seahawks at Commanders (14781702), 2026-09-27: ESPN stored 24–10 at
+    `10:43 - 3rd Quarter` (19:12:38Z); at 19:13:43Z the 30-second StatPal pass,
+    still a play behind but with its clock caught up to the stopped one,
+    offered 17–10 at the same instant and it landed. The row, `/api/events`
+    and the Score Differential chart all took the touchdown back for 45 s.
+    """
+    now = datetime.now(timezone.utc)
+    rows, snaps, result = await _run_livescores(
+        monkeypatch,
+        fixtures=[
+            _Fixture(
+                now - timedelta(hours=2),
+                "Washington Commanders",
+                "Seattle Seahawks",
+                raw_status="3rd Quarter",
+                game_clock="10:43",
+                scores=(17, 10),
+            )
+        ],
+        events=[
+            (
+                "Washington Commanders",
+                "Seattle Seahawks",
+                "10:43",
+                "10:43 - 3rd Quarter",
+                (24, 10),
+            )
+        ],
+    )
+
+    assert (rows[0].home_score, rows[0].away_score) == (24, 10), (
+        "the touchdown must not leave the page"
+    )
+    assert result["reverting_live_skipped"] == 1
+    assert snaps == [], "and must not dip the Score Differential chart"
+
+
+@pytest.mark.asyncio
+async def test_the_extra_point_still_lands_at_the_touchdowns_clock_6056(monkeypatch):
+    """THE TWIN: the tie-break refuses downwards only. StatPal a play AHEAD at
+    a stopped clock is news and must reach the page on this pass."""
+    now = datetime.now(timezone.utc)
+    rows, snaps, result = await _run_livescores(
+        monkeypatch,
+        fixtures=[
+            _Fixture(
+                now - timedelta(hours=2),
+                "Washington Commanders",
+                "Seattle Seahawks",
+                raw_status="3rd Quarter",
+                game_clock="6:05",
+                scores=(24, 17),
+            )
+        ],
+        events=[
+            (
+                "Washington Commanders",
+                "Seattle Seahawks",
+                "6:05",
+                "6:05 - 3rd Quarter",
+                (24, 16),
+            )
+        ],
+    )
+
+    assert (rows[0].home_score, rows[0].away_score) == (24, 17)
+    assert result["reverting_live_skipped"] == 0
+    assert len(snaps) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_field_goal_does_not_leave_the_page_at_halftime_6056(monkeypatch):
+    """Specimen 14781703, 2026-09-27 21:39:02Z: 17–6 at `Halftime`, StatPal
+    offered 14–6 at `Halftime`, and it landed twice — `Halftime` was
+    unplaceable, so the guard stood down for the whole break."""
+    now = datetime.now(timezone.utc)
+    rows, snaps, result = await _run_livescores(
+        monkeypatch,
+        fixtures=[
+            _Fixture(
+                now - timedelta(hours=2),
+                "New York Giants",
+                "Dallas Cowboys",
+                raw_status="Halftime",
+                game_clock=None,
+                scores=(14, 6),
+            )
+        ],
+        events=[
+            ("New York Giants", "Dallas Cowboys", None, "Halftime", (17, 6)),
+        ],
+    )
+
+    assert (rows[0].home_score, rows[0].away_score) == (17, 6)
+    assert result["reverting_live_skipped"] == 1
+    assert snaps == []
 
 
 # ---------------------------------------------------------------------------
@@ -1958,9 +2133,11 @@ async def test_schedule_sync_still_writes_a_later_observation(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_schedule_sync_accepts_a_same_position_correction(monkeypatch):
-    """An exact tie is accepted — the guard refuses proven reversions, it does
-    not gatekeep live updates. Same moment, corrected number."""
+async def test_schedule_sync_refuses_a_lower_score_at_the_same_instant_6056(monkeypatch):
+    """This asserted the opposite until #6056 (2026-09-27): "same moment,
+    corrected number". On the hourly StatPal fixture that is the lagging feed a
+    play behind at a stopped clock, not a correction — the correction arrives
+    from a later moment and lands (the test above)."""
     now = datetime.now(timezone.utc)
     rows, result = await _run_schedules(
         monkeypatch,
@@ -1994,8 +2171,8 @@ async def test_schedule_sync_accepts_a_same_position_correction(monkeypatch):
         ],
     )
 
-    assert rows[0].away_score == 19
-    assert result["schedule_reverting_live_skipped"] == 0
+    assert rows[0].away_score == 20
+    assert result["schedule_reverting_live_skipped"] == 1
 
 
 @pytest.mark.asyncio
