@@ -1830,6 +1830,16 @@ _QUERY_PHRASE_ALIASES: dict[tuple[str, ...], tuple[tuple[str, ...], ...]] = {
     # `_apply_search_synonyms`, so the three-term canonical also reaches
     # "…Champion"/"…Winner" phrasings without a second entry.
     ("nba", "finals"): (("pro", "basketball", "champion"),),
+    # #9340: the spelled-out MLB postseason rounds. The venues name them only by
+    # abbreviation — "MLB Playoffs: Team to advance to ALDS", "Pro Baseball NLCS
+    # Matchup" — so `division series` served nothing at all on production
+    # 2026-09-28 with eight open ALDS/NLDS markets. Kalshi's per-round series
+    # code (#9333's `WC`) for these rounds is not listed yet and was absent from
+    # every 2025 ticker (`KXMLBSERIES-25DETSEA`), so there is no ticker arm to
+    # add; the NAME is the owned signal. The abbreviations compile whole-word
+    # (`_build_round_word_ilike`), so no alternative reaches Byron Don(alds).
+    ("division", "series"): (("alds",), ("nlds",)),
+    ("championship", "series"): (("alcs",), ("nlcs",)),
 }
 
 
@@ -4773,13 +4783,17 @@ def _alias_futures_arms(terms: list[str]) -> list:
     search. Returns [] for any query with no alias, so the common path is
     unchanged SQL. A postseason round name (#9333) adds its TICKER arm here too —
     see `_postseason_round_futures_arms`.
+
+    Compiled through `_build_round_word_ilike` (#9340): an alternative can be a
+    round abbreviation (`division series` -> `alds`), and `%alds%` is inside
+    Byron Don(alds). Every other term compiles exactly as before.
     """
 
     arms = []
     for alternative in _phrase_alias_alternatives(terms):
         expanded = _apply_search_synonyms(expand_search_terms(alternative))
         arms.append(
-            and_(*[_build_expanded_ilike(FuturesMarket.name, t, e) for t, e in expanded])
+            and_(*[_build_round_word_ilike(FuturesMarket.name, t, e) for t, e in expanded])
         )
     return arms + _postseason_round_futures_arms(terms)
 

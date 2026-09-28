@@ -138,8 +138,11 @@ _PLAYOFFS_RE = re.compile(
     r"\b(?:(?:to\s+)?(?:make|makes|reach|reaches|qualify\s+for)\s+(?:the\s+)?)?playoffs?\b",
     re.I,
 )
+# `division series` is a postseason ROUND, not a division question (#9340): read
+# as one, the dropdown hunted "series"'s division market and served nothing.
 _DIVISION_RE = re.compile(
-    r"\b(?:(?:to\s+)?(?:win|wins|take|takes)\s+(?:the\s+)?)?division\b", re.I
+    r"\b(?:(?:to\s+)?(?:win|wins|take|takes)\s+(?:the\s+)?)?division\b(?!\s+series\b)",
+    re.I,
 )
 _TODAY_RE = re.compile(r"\b(?:today|tonight)\b", re.I)
 _MAKE_CUT_RE = re.compile(r"\b(?:to\s+)?(?:make|makes)\s+(?:the\s+)?cut\b", re.I)
