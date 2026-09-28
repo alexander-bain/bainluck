@@ -217,11 +217,17 @@ class TestAnAnsweredEventIsSettled:
         assert sev["last_price_dollars"] == "0.9900"
 
     def test_a_mixed_event_prices_the_live_leg_and_skips_the_answered_one(self):
+        """Skipped as a PRICE. Since #9220 the answered leg rides the list flagged
+        ``venue_answered`` with no probability, so the writer can grade it — the
+        price list a reader's number comes from is still the live leg alone."""
         priced = _fetch(_mixed())
         assert priced is not fpr.VENUE_SETTLED
-        assert [p["external_id"] for p in priced] == [
-            "KXNCAAFGAME-26SEP12LTLSU-LT"
-        ]
+        assert [
+            p["external_id"] for p in priced if not p.get("venue_answered")
+        ] == ["KXNCAAFGAME-26SEP12LTLSU-LT"]
+        (answered,) = [p for p in priced if p.get("venue_answered")]
+        assert answered["external_id"] == "KXLALIGAGAME-26SEP13SEVVCF-SEV"
+        assert answered["probability"] is None, "the 0.99 artifact is never a price"
 
     def test_the_whole_event_verdict_is_taken_over_the_RAW_markets(self):
         """A market our parser DROPS must not turn a live event into a settlement.

@@ -638,7 +638,14 @@ PRICE_CHANGE_STAMPERS = {
     # to it. Here the reverse is true — the move forty lines up stamps — so an
     # unstamped clear would be the single unstamped write in the file. Both
     # choices follow one principle: within a file, the column means one thing.
-    "app/tasks/futures_price_refresh.py": 2,
+    # 2 -> 3 (#9220): the GRADE of a leg the venue settled on a still-open board
+    # (a finalized series leg beside live siblings). A resolution write that
+    # carries the terminal 1.0/0.0 beside the verdict, like #5246's two in
+    # `kalshi.py` above — a settled price is still a price MOVE, so it stamps
+    # through the shared helper. Its `last_updated` stamp sits in a block that
+    # spells `resolution_source`, so `POLL_STAMP_COUNTS` is unchanged and none of
+    # the audited `last_updated` readers sees a new poll touch-stamp.
+    "app/tasks/futures_price_refresh.py": 3,
     # Q460: the WebSocket consumers, now routed through the shared helper like
     # every other price writer. They are the FASTEST-moving writers of this
     # column — sub-second, versus the polls' 120s — so they are also the ones
