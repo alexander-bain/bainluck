@@ -133,7 +133,7 @@ final class RevisionRereadBypassesLocalCache837Tests: XCTestCase {
         XCTAssertEqual(latestHistory.aggregateLine?.last?.homeProbability, 0.55)
         XCTAssertEqual(Origin.requests(ending: "/4242").count, 2)
         XCTAssertEqual(Origin.requests(ending: "/history").count, 2)
-        XCTAssertEqual(EventDetailViewModel.revisionRefetchWindow, 5)
+        XCTAssertEqual(EventDetailViewModel.revisionRefetchWindow, 1)
     }
 
     func testFreshRequestStillRefusesCachedOrOldBackendRevision() async throws {
