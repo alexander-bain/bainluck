@@ -109,6 +109,9 @@ def test_search_and_game_card_expansions_are_byte_identical_to_before():
         "sixers": ("76ers", "basketball"),
         # #9080: three franchise nicknames added after this pin; none is this alias.
         "halos": ("Angels", "baseball"),
+        # #9263 — neither is spelled inside its token, so both get a futures arm.
+        "fins": ("Dolphins", "football"),
+        "dubs": ("Warriors", "basketball"),
         # #8685: eleven franchise nicknames added after this pin; none is this alias.
         "habs": ("Canadiens", "hockey"),
         "pens": ("Penguins", "hockey"),
@@ -134,6 +137,9 @@ def test_search_and_game_card_expansions_are_byte_identical_to_before():
         "phins": ("Dolphins", "americanfootball_nfl"),
         "stros": ("Astros", "baseball_mlb"),
         "halos": ("Angels", "baseball_mlb"),
+        # #9263
+        "fins": ("Dolphins", "americanfootball_nfl"),
+        "dubs": ("Warriors", "basketball_nba"),
         # #8685 (the game arm also carries the inside-token `nucks`/`dbacks`, like `9ers`).
         "habs": ("Canadiens", "icehockey_nhl"),
         "pens": ("Penguins", "icehockey_nhl"),

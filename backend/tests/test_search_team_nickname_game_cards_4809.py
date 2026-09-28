@@ -78,6 +78,9 @@ def test_the_derived_event_expansions_are_exactly_these() -> None:
         "phins": ("Dolphins", "americanfootball_nfl"),
         "stros": ("Astros", "baseball_mlb"),
         "halos": ("Angels", "baseball_mlb"),
+        # #9263
+        "fins": ("Dolphins", "americanfootball_nfl"),
+        "dubs": ("Warriors", "basketball_nba"),
         "habs": ("Canadiens", "icehockey_nhl"),
         "pens": ("Penguins", "icehockey_nhl"),
         "sens": ("Senators", "icehockey_nhl"),

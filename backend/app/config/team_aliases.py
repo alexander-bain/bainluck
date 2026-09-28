@@ -33,9 +33,22 @@ CURATED_TEAM_ALIASES: dict[tuple[str, str], list[str]] = {
     # Dolphins, Tonbridge Angels FC, an Anaheim Angels naming bill (politics) and
     # a basketball Astros. Refused: `friars` — production already sends it to the
     # Providence Friars, whose actual name it is.
-    ("americanfootball_nfl", "Miami Dolphins"): ["phins"],
+    # #9263 — `fins`, measured 2026-09-28 02:1xZ. Before: `fins` served Finland,
+    # Finnentrop/Bamenohl and five Finland soccer games — no Dolphins at all,
+    # because `fins` is not spelled inside `Dolphins` the way `phins` is.
+    ("americanfootball_nfl", "Miami Dolphins"): ["phins", "fins"],
     ("baseball_mlb", "Houston Astros"): ["stros"],
     ("baseball_mlb", "Los Angeles Angels"): ["halos"],
+    # #9263 — `dubs`, measured on production 2026-09-28 02:1xZ. Before: `dubs`
+    # served Dubai Basketball and Shelbourne Dublin, 0 Warriors games. `Warriors`
+    # names exactly ONE basketball_nba club over 120 days of events. Open markets
+    # in the futures arm's category (`basketball`): 4/6 are Golden State's, the
+    # other two Shinshu Brave Warriors (Japan's B.League). Kept: today `dubs`
+    # reaches 0 Warriors rows and the literal `warriors` leads its markets with a
+    # South African rugby side and Honor of Kings esports, so 4/6 is the best
+    # answer the query has had. Refused in the same pass: `avs` (#8685 — AVS
+    # Futebol), `celts` (Celtic FC are "the Celts" too), `bolts`.
+    ("basketball_nba", "Golden State Warriors"): ["dubs"],
     # #8685 — eleven more nicknames fans type, each measured on production
     # 2026-09-25 before it was added. Every open market in the franchise's sport
     # whose name holds the canonical token was read, and every one of them is the
