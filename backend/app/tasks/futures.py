@@ -152,7 +152,9 @@ async def _poll_futures_odds():
     from app.models import FuturesMarket, FuturesOutcome, FuturesOddsSnapshot, Sport
     from app.utils.odds_math import american_to_probability, probability_to_american
     from sqlalchemy.dialects.postgresql import insert as pg_insert
-    from sqlalchemy import select
+    from sqlalchemy import select, cast
+    from sqlalchemy.dialects.postgresql import JSONB
+    from app.utils.futures_quote_identity import current_quote_identity
     from datetime import timedelta
 
     service = OddsAPIService()
@@ -233,6 +235,13 @@ async def _poll_futures_odds():
                         market_name, sport_category, league, inferred_category,
                     )
 
+                    # Identity is captured alongside this batch, never inferred
+                    # from the rolling key or applied to pre-existing history.
+                    quote_polled_at = datetime.now(timezone.utc)
+                    identity_metadata = {"odds_api_current_event": current_quote_identity(
+                        markets_data, sport_key, quote_polled_at,
+                    )}
+
                     # Upsert the market
                     market_stmt = pg_insert(FuturesMarket).values(
                         source="odds_api",
@@ -247,6 +256,7 @@ async def _poll_futures_odds():
                         category_tags=tags,
                         mutually_exclusive=True,
                         status="open",
+                        market_metadata=identity_metadata,
                     ).on_conflict_do_update(
                         index_elements=["source", "external_id"],
                         set_={
@@ -258,6 +268,9 @@ async def _poll_futures_odds():
                             "canonical_market_key": canonical_key,
                             "category_tags": tags,
                             "updated_at": func.now(),
+                            "market_metadata": func.coalesce(
+                                FuturesMarket.market_metadata, cast({}, JSONB),
+                            ).op("||")(cast(identity_metadata, JSONB)),
                         }
                     ).returning(FuturesMarket.id)
 
@@ -282,7 +295,10 @@ async def _poll_futures_odds():
                         reverse=True
                     )
 
-                    now = datetime.now(timezone.utc)
+                    # Match the anchor clock on every outcome-write path.
+                    # PostgreSQL now() is transaction-start time and can predate
+                    # this poll, incorrectly excluding a just-inserted quote.
+                    now = quote_polled_at
                     yesterday = now - timedelta(hours=24)
                     responded_ids: set[str] = set()
 
@@ -328,6 +344,7 @@ async def _poll_futures_odds():
                                 opening_probability=prob,
                                 opening_american_odds=american,
                                 opening_captured_at=now,
+                                last_updated=now,
                                 rank=rank,
                                 # Explicit, and load-bearing: the column is
                                 # `boolean NULL DEFAULT false`, so an INSERT
@@ -344,7 +361,7 @@ async def _poll_futures_odds():
                                     "current_probability": prob,
                                     "current_american_odds": american,
                                     "rank": rank,
-                                    "last_updated": func.now(),
+                                    "last_updated": now,
                                     "price_changed_at": price_changed_at_value(  # #2024
                                         FuturesOutcome.current_probability,
                                         FuturesOutcome.price_changed_at,
