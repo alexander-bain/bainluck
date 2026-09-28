@@ -1240,7 +1240,15 @@ struct EventDetailView: View {
                             // that says nothing false.
                             EmptyView()
                         }
-                    } else if let odds = event.currentOdds,
+                    } else if let currentOdds = event.currentOdds,
+                              // #9470 — an `opening` hero prints the server's
+                              // pair and is named as an opening line.
+                              case let odds = OpeningLineHero.resolve(
+                                currentOdds: currentOdds,
+                                heroSource: event.heroProbabilitySource,
+                                heroHome: event.heroProbability,
+                                heroAway: event.heroProbabilityAway,
+                                status: event.status),
                               let pair = DrawPricedWinner.printablePair(
                                 away: odds.awayProbability,
                                 home: odds.homeProbability,
@@ -1370,7 +1378,9 @@ struct EventDetailView: View {
                                 away: event.awayTeam, home: event.homeTeam,
                                 sportKey: event.sport
                             )
-                        ) {
+                        ),
+                           // #9470 — an opening line has no "since open".
+                           !odds.isOpeningLine {
                             Text(caption.text)
                                 .font(.system(size: 10, weight: .medium))
                                 .foregroundStyle(caption.isHome ? colors.home : colors.away)
@@ -1383,7 +1393,17 @@ struct EventDetailView: View {
                             hasMovement: event.openingOdds?.homeProbability
                                 .map { abs(home - $0) > 0.001 } ?? false
                         )?.rawValue
-                        probabilityDetails(confidenceTier: confidenceTier)
+                        if odds.isOpeningLine {
+                            // #9470 — where the line opened, not a forecast:
+                            // no confidence bars, no delivery status (the page
+                            // is pre-game, so there is no stream to report).
+                            Text(OpeningLineHero.caption)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .frame(minHeight: 44)
+                        } else {
+                            probabilityDetails(confidenceTier: confidenceTier)
+                        }
                         if isLive {
                             LivePriceMovementCaption(sequence: vm.priceActivity?.sequence ?? 0,
                                                      text: movementCaption(event),
