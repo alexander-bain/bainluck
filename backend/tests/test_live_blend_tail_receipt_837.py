@@ -93,7 +93,9 @@ def _refresher(outcomes=None):
     (default), "unchanged", "lock", "commit_fail" (stamps, then the commit
     raises), "batch_fail" (raises before stamping).
     """
-    r = LiveBlendRefresher("polymarket")
+    # These cases are about receipts across a HOLD, and their clocks are
+    # written for a 5s one; pinned so they keep testing that, not the default.
+    r = LiveBlendRefresher("polymarket", min_refresh_interval_s=5.0)
     r.receipts = TailReceipts("polymarket")
     outcomes = outcomes or {}
     calls = []

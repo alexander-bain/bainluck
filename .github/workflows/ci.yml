@@ -5536,6 +5536,25 @@ jobs:
             exit 1
           }
 
+      - name: "#837 every benchmark price reaches the number at the default floor (real Postgres)"
+        # Alex's 2026-09-28 live benchmark (Kalshi 77 -> 80 -> 85 -> 84, 2s apart,
+        # then 73) through the REAL WS refresher at its DEFAULT floor on #8910's
+        # fixture: every price stamped and framed at its flush. 2 = that case +
+        # the old 5s floor on the same rows, which must drop the 85 (the control
+        # that tells the floors apart). Floor back at 5s: the first case red.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_live_blend_rapid_benchmark_837_pg.py \
+            -v -rs 2>&1 | tee /tmp/benchmark837.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/benchmark837.txt; then
+            echo "::error::#837 benchmark gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]2 passed[,[:space:]]" /tmp/benchmark837.txt || {
+            echo "::error::#837 benchmark gate did not run both cases"
+            exit 1
+          }
+
       - name: "#9050 source retirement preserves concurrent live prices (real Postgres)"
         # Uses #8910's disposable full-schema fixture. Two writer races,
         # three healthy controls, fresh membership/lifecycle and two no-op locks.
