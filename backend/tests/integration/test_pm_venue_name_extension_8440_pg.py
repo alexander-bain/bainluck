@@ -41,7 +41,7 @@ GAME = datetime(2026, 9, 24, 15, 30, tzinfo=UTC)  # Lukko v Tappara, venue stamp
 LISTED = datetime(2026, 9, 23, 14, 48, tzinfo=UTC)  # Gamma listing stamp
 NOW = datetime(2026, 9, 23, 15, 15, tzinfo=UTC)  # the pass that minted 15317914
 
-LIIGA, LALIGA = 22, 1310
+LIIGA, LALIGA, SEGUNDA = 22, 1310, 1318
 
 
 @pytest.fixture
@@ -65,7 +65,10 @@ async def pg():
         )
     maker = async_sessionmaker(engine, expire_on_commit=False)
     async with maker() as s:
-        for sid, key in ((LIIGA, "icehockey_liiga"), (LALIGA, "soccer_spain_la_liga")):
+        for sid, key in (
+            (LIIGA, "icehockey_liiga"), (LALIGA, "soccer_spain_la_liga"),
+            (SEGUNDA, "soccer_spain_segunda_division"),
+        ):
             await s.execute(
                 text("INSERT INTO sports (id, key, name, active) VALUES (:i, :k, :k, true)"),
                 {"i": sid, "k": key},
@@ -196,3 +199,74 @@ class TestTheRetrievalStaysNarrow:
         await _event(pg, 7, "Lukko", "Tappara", sport=LALIGA)
         assert await _extension_ids(pg, _market("Lukko Rauma vs. Tappara Tampere")) == [7]
         assert await _find(pg, _market("Lukko Rauma vs. Tappara Tampere")) is None
+
+
+# ─── #6720: a Kalshi market's ASCII names reach an accented sportsbook row ───
+#
+# Same rail, same real `_find_matching_event`, the other venue. Kalshi writes
+# every club in ASCII; the windowed ILIKE was accent-sensitive, so "%Leganes%"
+# never reached our "Leganés" and the market minted a second row for the game
+# (production 2026-09-25 22:50Z: KXLALIGA2GAME-26SEP28LEGCAS recorded
+# `windowed_candidates: 0` beside 15316746 "Leganés v CD Castellón", 18:30Z).
+
+KALSHI_TICKER = "KXLALIGA2GAME-26SEP28LEGCAS"
+KICKOFF_6720 = datetime(2026, 9, 28, 18, 30, tzinfo=UTC)
+MINTED_AT_6720 = datetime(2026, 9, 25, 22, 50, tzinfo=UTC)
+
+
+def _kalshi_market(name="Leganes vs Castellon", ticker=KALSHI_TICKER):
+    return SimpleNamespace(
+        id=62399189, source="kalshi", external_id=ticker, name=name,
+        # Kalshi's close time, the stamp the minted row carried (gotcha #14).
+        commence_time=KICKOFF_6720 + timedelta(hours=3),
+        llm_sport_category="soccer", market_metadata={},
+    )
+
+
+async def _find_kalshi(s, market):
+    from app.tasks.prediction_market_matching import _find_matching_event
+    from app.utils.prediction_market_matching import (
+        extract_game_date_from_ticker, extract_matchup_with_ticker_fallback,
+    )
+
+    matchup = extract_matchup_with_ticker_fallback(market.name, external_id=market.external_id)
+    assert matchup is not None and matchup.team_b, "specimen must parse as a matchup"
+    return await _find_matching_event(
+        s, matchup, market, MINTED_AT_6720,
+        game_date_override=extract_game_date_from_ticker(market.external_id),
+    )
+
+
+class TestKalshiAsciiReachesTheAccentedRow6720:
+    async def test_leganes_castellon_links_instead_of_minting(self, pg):
+        await _event(pg, 15316746, "Leganés", "CD Castellón", sport=SEGUNDA, at=KICKOFF_6720)
+        picked = await _find_kalshi(pg, _kalshi_market())
+        assert picked is not None, (
+            "the Kalshi market found no row, so it mints a second copy of the "
+            "game and the real page shows no Kalshi — #6720"
+        )
+        assert picked["event_id"] == 15316746
+        assert picked["yes_is_home"] is True
+
+    async def test_the_folded_arm_is_what_links_it(self, pg, monkeypatch):
+        # Control: with the folded arms silenced the same market finds nothing,
+        # so the link above is the fold and not the old ILIKE.
+        import app.tasks.prediction_market_matching as pmm
+
+        await _event(pg, 15316746, "Leganés", "CD Castellón", sport=SEGUNDA, at=KICKOFF_6720)
+        monkeypatch.setattr(pmm, "_folded_name_contains_conditions", lambda term: [])
+        assert await _find_kalshi(pg, _kalshi_market()) is None
+
+    async def test_an_accented_market_name_reaches_an_ascii_row(self, pg):
+        await _event(pg, 15316747, "Leganes", "Castellon", sport=SEGUNDA, at=KICKOFF_6720)
+        picked = await _find_kalshi(pg, _kalshi_market(name="Leganés vs Castellón"))
+        assert picked is not None and picked["event_id"] == 15316747
+
+    async def test_the_fold_stays_inside_the_tickers_window(self, pg):
+        # Retrieval widened on names only: the same accented row a week later
+        # is not this ticker's game.
+        await _event(
+            pg, 15316748, "Leganés", "CD Castellón", sport=SEGUNDA,
+            at=KICKOFF_6720 + timedelta(days=7),
+        )
+        assert await _find_kalshi(pg, _kalshi_market()) is None

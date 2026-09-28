@@ -19,7 +19,9 @@ from types import SimpleNamespace
 from typing import Optional
 
 from sqlalchemy import select, or_, and_, func, delete, case, update, text, bindparam, String
+from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import defer, joinedload
+from sqlalchemy.sql.functions import FunctionElement
 from sqlalchemy.orm.attributes import set_committed_value
 
 from app.tasks.base import get_task_session
@@ -2156,6 +2158,120 @@ def _is_polymarket_venue_mint(event) -> bool:
         and getattr(event, "espn_id", None) is None
         and getattr(event, "statpal_fixture_id", None) is None
     )
+
+
+#: The registry's provenance tag for a row Kalshi's own market minted (#2020).
+_KALSHI_MINT_TAG = "provenance:source:kalshi"
+
+
+def _is_kalshi_self_mint(event) -> bool:
+    """Is this row one a Kalshi market minted for itself, carrying no schedule id? #6720.
+
+    THE SHIP: a soccer match's page carries Kalshi's price. When a Kalshi game
+    market finds no row, ruling 048 mints one from the market's own label and
+    Kalshi's close time (+3h in soccer). Every later Kalshi market of that game
+    then sits on the mint, and the real fixture — scheduled by the sportsbooks,
+    ESPN or StatPal — shows no Kalshi at all (Leganés v Castellón 2026-09-28:
+    4 Kalshi markets on 15318965, 0 on 15316746).
+
+    This is the Kalshi twin of :func:`_is_polymarket_venue_mint`, and it exists
+    because the arm that used to revalidate market-born rows reads
+    ``external_id LIKE 'pm_%'`` — a shape the registry has not written since
+    2026-08-17 (production: 0 such rows created in 120 days), so it is dead.
+
+    Every clause is the row's own provenance, never a name: the registry's
+    Kalshi source tag, and no provider id of any kind (``external_id``,
+    ``espn_id``, ``statpal_fixture_id``). A row somebody scheduled never
+    qualifies, whoever minted it.
+    """
+    tags = getattr(event, "event_tags", None) or []
+    return (
+        _KALSHI_MINT_TAG in tags
+        and getattr(event, "external_id", None) is None
+        and getattr(event, "espn_id", None) is None
+        and getattr(event, "statpal_fixture_id", None) is None
+    )
+
+
+async def _kalshi_self_mint_real_fixture(session, matchup, market, linked_event):
+    """The ONE scheduled row a Kalshi market on its own mint belongs to, or None. #6720.
+
+    The #5544 finder cannot answer this: it needs the ticker's HHMM, and soccer
+    and MMA tickers carry a date only (``KXLALIGA2GAME-26SEP28LEGCAS``). The
+    scorer cannot either — it prefers the mint, whose names ARE the market's.
+    So this asks the narrow question directly, failing closed at every step:
+
+      1. a Kalshi market with a ticker date and two named sides;
+      2. candidates in the mint's OWN sport, inside the window the forward path
+         searches for that ticker (±3h of an HHMM, else −6h/+30h of the date);
+      3. each candidate carries a schedule id (``external_id``, ``espn_id`` or
+         ``statpal_fixture_id``) and is not retired — never another mint;
+      4. both sides pass :func:`_fuzzy_team_match` (accent-folded), in either
+         orientation, and EXACTLY ONE row qualifies. Zero: the schedule has not
+         carried the game yet, and the next pass asks again. Two: a twin pair or
+         a doubleheader, which is #1946's to tell apart, not this pass's.
+
+    Ruling 048 is untouched: no event absorbs another and the mint is left
+    standing. Only the market's pointer moves, onto the row the forward path
+    would have chosen had it existed first, and the caller routes it through the
+    same duplicate-linkage guard the forward path uses.
+    """
+    from app.models.models import Event
+
+    if getattr(market, "source", None) != "kalshi" or not matchup.team_b:
+        return None
+    game_date = extract_game_date_from_ticker(getattr(market, "external_id", None))
+    if game_date is None or not getattr(linked_event, "sport_id", None):
+        return None
+    start = ticker_start_utc(game_date)
+    if start is not None:
+        lo, hi = start - timedelta(hours=3), start + timedelta(hours=3)
+    else:
+        lo, hi = game_date - timedelta(hours=6), game_date + timedelta(hours=30)
+
+    candidates = (await session.execute(
+        select(
+            Event.id, Event.sport_id, Event.home_team_name, Event.away_team_name,
+        )
+        .where(
+            Event.sport_id == linked_event.sport_id,
+            Event.id != linked_event.id,
+            Event.commence_time >= lo,
+            Event.commence_time <= hi,
+            Event.status.notin_(sorted(RETIRED_STATUSES)),
+            or_(
+                Event.external_id.isnot(None),
+                Event.espn_id.isnot(None),
+                Event.statpal_fixture_id.isnot(None),
+            ),
+        )
+    )).all()
+    confirmed = [
+        row for row in candidates
+        if (
+            _fuzzy_team_match(matchup.team_a, row.home_team_name)
+            or _fuzzy_team_match(matchup.team_a, row.away_team_name)
+        ) and (
+            _fuzzy_team_match(matchup.team_b, row.home_team_name)
+            or _fuzzy_team_match(matchup.team_b, row.away_team_name)
+        )
+    ]
+    if len(confirmed) != 1:
+        if confirmed:
+            logger.info(
+                "Kalshi self-mint relink declined for %s: %d scheduled rows %s "
+                "name the game — ambiguous, leaving it on event %d",
+                market.external_id, len(confirmed),
+                [row.id for row in confirmed], linked_event.id,
+            )
+        return None
+    row = confirmed[0]
+    logger.info(
+        "Kalshi self-mint relink (#6720): %s is scheduled event %d — moving it "
+        "off its own mint %d",
+        market.external_id, row.id, linked_event.id,
+    )
+    return {"event_id": row.id, "sport_id": row.sport_id}
 
 
 async def _venue_confirmed_covered_fixture(
@@ -5989,6 +6105,7 @@ async def _phase15_revalidate(
             # rows excluded; zero or two candidates leave the link alone.
             venue_named_row = None
             catchall_shadow_named = False
+            kalshi_self_mint_named = False
             if (
                 teams_match and not is_finished and not is_auto_created
                 and not sport_mismatch and not is_retired
@@ -6019,6 +6136,22 @@ async def _phase15_revalidate(
                         catchall_shadow_named = True
                         stats["funnel"].setdefault("phase15_catchall_shadow_named", 0)
                         stats["funnel"]["phase15_catchall_shadow_named"] += 1
+                elif market.source == "kalshi" and _is_kalshi_self_mint(linked_event):
+                    # #6720: the market sits on the row it minted for itself,
+                    # and a scheduled row for the game may have arrived since.
+                    # Tennis is out: its Kalshi halves are paired by
+                    # `tennis_twin_pairs` and the #2774 contest path, on
+                    # surnames this finder's name test was never measured on.
+                    if event_sport_key is None:
+                        event_sport_key = await _event_sport_key(session, linked_event)
+                    if not (event_sport_key or "").startswith("tennis"):
+                        venue_named_row = await _kalshi_self_mint_real_fixture(
+                            session, matchup, market, linked_event,
+                        )
+                        if venue_named_row is not None:
+                            kalshi_self_mint_named = True
+                            stats["funnel"].setdefault("phase15_kalshi_self_mint_named", 0)
+                            stats["funnel"]["phase15_kalshi_self_mint_named"] += 1
                 if venue_named_row is None:
                     if not _venue_instant_disowns_link(market, linked_event):
                         continue
@@ -6034,6 +6167,7 @@ async def _phase15_revalidate(
 
             reason = (
                 "catchall_shadow" if catchall_shadow_named
+                else "kalshi_self_mint" if kalshi_self_mint_named
                 else "venue_instant" if venue_named_row is not None
                 else "auto_created" if is_auto_created
                 else "cross_sport" if sport_mismatch
@@ -6222,8 +6356,12 @@ async def _phase15_revalidate(
                     stats["funnel"].setdefault("auto_created_relinked", 0)
                     stats["funnel"]["auto_created_relinked"] += 1
                 elif venue_named_row is not None:
-                    stats["funnel"].setdefault("phase15_venue_instant_relinked", 0)
-                    stats["funnel"]["phase15_venue_instant_relinked"] += 1
+                    relinked_key = (
+                        "phase15_kalshi_self_mint_relinked" if kalshi_self_mint_named
+                        else "phase15_venue_instant_relinked"
+                    )
+                    stats["funnel"].setdefault(relinked_key, 0)
+                    stats["funnel"][relinked_key] += 1
                     # #8547: the row the market LEFT must stop blending it. A
                     # same-teams move keeps the row's curve (no snapshot delete),
                     # but its `kalshi`/`polymarket` key named this market; with no
@@ -7767,6 +7905,20 @@ async def _find_matching_event(
             pattern = f"%{_escape_like(search_term)}%"
             ilike_conditions.append(Event.home_team_name.ilike(pattern))
             ilike_conditions.append(Event.away_team_name.ilike(pattern))
+    # #6720: the ILIKE above is accent-SENSITIVE and Kalshi writes every club in
+    # ASCII, so "%Leganes%" never reached our "Leganés" and the market minted a
+    # second row for the game (production 2026-09-25: KXLALIGA2GAME-26SEP28LEGCAS
+    # searched a window holding 15316746 "Leganés v CD Castellón" and recorded
+    # `windowed_candidates: 0`). Only the WINDOWED pass gets the folded arms: the
+    # commence_time bound keeps the scan on the time index (production EXPLAIN
+    # ANALYZE 4.7 ms). Retrieval only — `_score_candidates` already folds
+    # accents, so what is ACCEPTED is unchanged.
+    windowed_conditions = ilike_conditions + [
+        condition
+        for team in teams_to_search
+        for search_term in _expand_team_search_terms(team)
+        for condition in _folded_name_contains_conditions(search_term)
+    ]
 
     # Also restrict: don't match events that started more than 6 hours ago
     # (unless they're still live)
@@ -7838,7 +7990,7 @@ async def _find_matching_event(
         select(Event)
         .options(joinedload(Event.sport))
         .where(
-            or_(*ilike_conditions),
+            or_(*windowed_conditions),
             Event.commence_time.between(time_start, time_end),
             or_(
                 Event.status.in_(["scheduled", "live"]),
@@ -7958,6 +8110,56 @@ def fold_team_name(value: str | None) -> str:
 # never invent one.
 _FOLD_FROM = "àáâãäåāçćčèéêëēěìíîïīñńòóôõöōùúûüūýÿšž"
 _FOLD_TO = "".join(fold_team_name(ch) for ch in _FOLD_FROM)
+
+
+def _folded_name_contains_conditions(search_term: str) -> list:
+    """``home``/``away`` contain ``search_term`` with accents folded on BOTH sides. #6720.
+
+    The same fold as #8440's prefix test, as a containment test: the stored
+    column through ``translate`` and the term through :func:`fold_team_name`, so
+    "Leganes" reaches "Leganés" and "Atlético" reaches "Atletico". Empty for a
+    term that folds to nothing.
+    """
+    from app.models.models import Event
+
+    folded = fold_team_name(search_term)
+    if not folded:
+        return []
+    pattern = f"%{_escape_like(folded)}%"
+    return [
+        _FoldedName(column).like(pattern)
+        for column in (Event.home_team_name, Event.away_team_name)
+    ]
+
+
+class _FoldedName(FunctionElement):
+    """``translate(lower(col), _FOLD_FROM, _FOLD_TO)`` on Postgres. #6720.
+
+    Postgres gets exactly the #8440 expression. SQLite has no ``translate``, yet
+    the windowed search is replayed on SQLite by the golden-set gate and by every
+    rail that drives the real ``_find_matching_event``, so there it renders as a
+    bare ``lower(col)``: the arm matches what the ILIKE beside it already does,
+    and those replays see the pre-#6720 retrieval unchanged. (The same map as
+    chained ``replace`` calls overflows SQLite's parser stack past ~30 levels.)
+    The fold itself is proven only by the real-Postgres gate,
+    ``tests/integration/test_pm_venue_name_extension_8440_pg.py``.
+    """
+
+    type = String()
+    name = "folded_name"
+    inherit_cache = True
+
+
+@compiles(_FoldedName)
+def _folded_name_default(element, compiler, **kw):
+    (column,) = element.clauses
+    return compiler.process(func.translate(func.lower(column), _FOLD_FROM, _FOLD_TO), **kw)
+
+
+@compiles(_FoldedName, "sqlite")
+def _folded_name_sqlite(element, compiler, **kw):
+    (column,) = element.clauses
+    return compiler.process(func.lower(column), **kw)
 
 
 def _stored_name_is_word_prefix_of(venue_name: str, column):
