@@ -65,16 +65,24 @@ def test_same_instant_across_books_and_new_edition_are_provider_derived():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("stable_existing", [False, True])
 @pytest.mark.parametrize("response,expected_id", [(payload(), "270f600435a20d2046a59fc89fe8e9b8"), (payload(None), None)])
-async def test_real_poll_upsert_carries_or_clears_current_anchor(response, expected_id):
+async def test_real_poll_upsert_carries_or_clears_current_anchor(response, expected_id, stable_existing):
     """Drive the real task to its SQL boundary, no database or network involved."""
-    from app.tasks.futures import _poll_futures_odds
+    from app.tasks.futures import _aggregate_futures_outcomes, _poll_futures_odds
 
+    stable_probability = _aggregate_futures_outcomes(parsed(response))["Buffalo Bills"]["probability"]
+    existing = SimpleNamespace(
+        id=9387, external_id="Buffalo Bills", current_probability=stable_probability,
+        current_american_odds=800, opening_probability=stable_probability,
+        rank=1, last_updated=datetime(2026, 9, 27, tzinfo=timezone.utc),
+    )
     statements = []
 
     async def execute(stmt):
         statements.append(stmt)
-        return SimpleNamespace(all=lambda: [], scalars=lambda: SimpleNamespace(all=lambda: []), scalar_one=lambda: 9387)
+        rows = [existing] if stable_existing and "FROM futures_outcomes" in str(stmt) else []
+        return SimpleNamespace(all=lambda: [], scalars=lambda: SimpleNamespace(all=lambda: rows), scalar_one=lambda: 9387)
 
     session = SimpleNamespace(execute=execute, commit=AsyncMock())
 
@@ -107,6 +115,10 @@ async def test_real_poll_upsert_carries_or_clears_current_anchor(response, expec
     else:
         assert identity["event_id"] == expected_id
         assert identity["scope"] == "current_quotes_only"
+        if stable_existing:
+            assert existing.current_probability == stable_probability
+            assert existing.last_updated.isoformat() == identity["polled_at"]
+            assert existing.last_updated > datetime(2026, 9, 27, tzinfo=timezone.utc)
         for stmt in statements:
             if getattr(stmt, "is_insert", False) and stmt.table.name == "futures_outcomes":
                 outcome = stmt.compile(dialect=postgresql.dialect())
