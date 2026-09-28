@@ -1904,10 +1904,18 @@ _RECORD_RE = re.compile(r"^\d{1,3}-\d{1,3}(?:-\d{1,3})?$")
 
 
 def _record_clause(label: Optional[str], record: Optional[str]) -> Optional[str]:
-    """`TOR 77-80`, or None when either half is missing or unreadable."""
+    """`TOR 77-80`, or None when either half is missing or unreadable.
+
+    A record of all zeros (`0-0`, `0-0-0`) is None too (#9351): it is a season
+    nobody has played yet, so it says nothing about either team — and in the
+    card's blue pill `FLA 0-0 · CAR 0-0` reads as a live, tied score. Every
+    NHL/NBA/NFL team carries one between seasons; the card keeps its bucket label.
+    """
     short = (label or "").strip()
     rec = (record or "").strip()
     if not short or not _RECORD_RE.match(rec):
+        return None
+    if not any(int(n) for n in rec.split("-")):
         return None
     return f"{short} {rec}"
 
