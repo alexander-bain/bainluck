@@ -13,6 +13,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import time
 from typing import Optional
 from datetime import datetime, timezone
 
@@ -459,6 +460,9 @@ async def _run_polymarket_ws_consumer():
     from app.tasks.polymarket_token_topup import (
         topup_clob_tokens, topup_outcome_clob_tokens,
     )
+    from app.tasks.ws_admission import (  # #9418
+        run_until_admission, watch_for_unadmitted_live_events,
+    )
     from app.tasks.ws_liveness import report as _report_liveness
     from app.utils.futures_rank import rerank_market_fields_stmt  # #6598
     from app.utils.price_change_stamp import price_changed_at_value
@@ -468,6 +472,8 @@ async def _run_polymarket_ws_consumer():
     # silence indistinguishable from health.
     _report_liveness("polymarket", "loading_slate")
 
+    # #9418: the admission floor is measured from here, the previous recycle.
+    run_started_at = time.monotonic()
     ws = PolymarketWebSocket()
 
     # Load linked Polymarket market asset IDs
@@ -1060,15 +1066,53 @@ async def _run_polymarket_ws_consumer():
 
     _report_liveness("polymarket", "subscribing", legs=len(asset_ids))
 
+    # #9418: the slate's live arm, re-read while the socket runs — the slate
+    # query above with `_slate_event_window()` narrowed to its live arm, so it
+    # can only name an event that turned live after the slate was read.
+    async def load_live_event_ids():
+        async with get_task_session() as session:
+            result = await session.execute(
+                select(FuturesMarket.event_id)
+                .select_from(FuturesOutcome)
+                .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
+                .join(Event, FuturesMarket.event_id == Event.id)
+                .where(
+                    FuturesMarket.source == "polymarket",
+                    FuturesMarket.event_id.isnot(None),
+                    Event.status == "live",
+                    _slate_market_filter(),
+                )
+                .distinct()
+            )
+            return {row[0] for row in result.all()}
+
     exit_reason = "consumer_exit"
     try:
         # Q460: recycle on a timer so the slate is re-read — same reasoning as
         # `kalshi_ws.SUBSCRIPTION_REFRESH_SECONDS`, and the same constant, so the
         # two sockets on this dyno cannot drift to different coverage windows.
-        await asyncio.wait_for(
-            ws.run(asset_ids=asset_ids),
+        # #9418: the timer is the ceiling, not the only door. A live event the
+        # slate missed ends the run early through the same cancellation.
+        admitted = await asyncio.wait_for(
+            run_until_admission(
+                ws.run(asset_ids=asset_ids),
+                watch_for_unadmitted_live_events(
+                    load_live_event_ids,
+                    event_id_by_market.values(),
+                    arm="Polymarket",
+                    started_at=run_started_at,
+                ),
+            ),
             timeout=SUBSCRIPTION_REFRESH_SECONDS,
         )
+        if admitted:
+            stats["status"] = "resubscribe"
+            stats["recycle_reason"] = "admission"
+            stats["admitted_event_ids"] = sorted(admitted)[:20]
+            logger.info(
+                "Polymarket WS: %d live event(s) not subscribed, recycling early: %s",
+                len(admitted), sorted(admitted)[:20],
+            )
     except asyncio.TimeoutError:
         stats["status"] = "resubscribe"
     except asyncio.CancelledError:
