@@ -49,6 +49,7 @@ from typing import Iterable, Mapping, MutableMapping, Optional
 
 from app.utils.game_market_club_names import repair_field_outcome_name
 from app.utils.kalshi_display_names import apply_name_repairs
+from app.utils.kalshi_threshold_label import market_threshold_label
 
 #: ``KXMLBSERIESGAMES-26BOSNYYWC-3`` → rung 3. Anchored on the series family so a
 #: ``Yes`` from any other market (a Series Winner phrased as a question, a prop)
@@ -76,7 +77,9 @@ def series_games_rung_label(
 
 
 def reader_outcome_name(
-    outcome_external_id: Optional[str], shipped_name: Optional[str]
+    outcome_external_id: Optional[str],
+    shipped_name: Optional[str],
+    threshold_label: Optional[str] = None,
 ) -> Optional[str]:
     """The printed name for one stored outcome, or ``None`` to print it as shipped.
 
@@ -95,7 +98,16 @@ def reader_outcome_name(
     engine never completes), then the club spelling. Every served-name site
     that used to call :func:`repair_field_outcome_name` directly calls this, so
     no door can learn one repair and miss the other again.
+
+    #9383 adds the third answer, FIRST: ``threshold_label`` is the venue's own
+    leg label for a single-leg Kalshi threshold market ("Over 2.5 maps",
+    "7,845 or above"), stored at ingest in ``market_metadata`` because the
+    outcome row keeps its name ``Yes`` for the consumers that key on it. The
+    caller reads it off the market (:func:`market_threshold_label`); it only
+    replaces a bare ``Yes``, so a label on any other row changes nothing.
     """
+    if threshold_label and (shipped_name or "").strip().lower() == "yes":
+        return threshold_label
     return series_games_rung_label(
         outcome_external_id, shipped_name
     ) or repair_field_outcome_name(outcome_external_id, shipped_name)
@@ -155,4 +167,9 @@ def relabel_series_card(
     return changed
 
 
-__all__ = ["reader_outcome_name", "relabel_series_card", "series_games_rung_label"]
+__all__ = [
+    "market_threshold_label",
+    "reader_outcome_name",
+    "relabel_series_card",
+    "series_games_rung_label",
+]

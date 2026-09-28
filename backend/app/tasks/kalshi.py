@@ -65,7 +65,10 @@ from app.utils.futures_liveness import (  # noqa: E402  # #2222, then #5896
 from app.utils.kalshi_series_selection import (  # noqa: E402
     discovery_dead_series,
 )
-from app.utils.kalshi_threshold_label import single_leg_threshold_label  # noqa: E402  # #9383
+from app.utils.kalshi_threshold_label import (  # noqa: E402  # #9383
+    THRESHOLD_LABEL_KEY,
+    single_leg_threshold_label,
+)
 
 
 def _is_kalshi_game_ticker(event_ticker: str) -> Optional[str]:
@@ -1802,7 +1805,7 @@ async def _poll_kalshi_markets():
                     # here and the served-name sites print it instead.
                     _threshold = single_leg_threshold_label(event.markets)
                     if _threshold:
-                        kalshi_metadata["threshold_label"] = _threshold
+                        kalshi_metadata[THRESHOLD_LABEL_KEY] = _threshold
 
                     # Aggregate volume across all markets in this event
                     total_volume = sum(m.volume or 0 for m in event.markets) or None
@@ -7025,7 +7028,7 @@ async def _create_settled_market(
     # "Over 2.5 maps — won", not "Yes — won".
     _threshold = single_leg_threshold_label(event.markets)
     if _threshold:
-        metadata["threshold_label"] = _threshold
+        metadata[THRESHOLD_LABEL_KEY] = _threshold
 
     market_stmt = (
         pg_insert(FuturesMarket)

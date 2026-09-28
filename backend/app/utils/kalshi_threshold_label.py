@@ -35,6 +35,9 @@ THRESHOLD_STRIKE_TYPES = frozenset(
 
 _PLAIN_ANSWERS = frozenset({"yes", "no"})
 
+#: The ``market_metadata`` key both Kalshi writers store the label under.
+THRESHOLD_LABEL_KEY = "threshold_label"
+
 
 def single_leg_threshold_label(markets: Sequence) -> Optional[str]:
     """The venue's leg label when ``markets`` is one threshold market, else ``None``.
@@ -59,4 +62,24 @@ def single_leg_threshold_label(markets: Sequence) -> Optional[str]:
     return label
 
 
-__all__ = ["THRESHOLD_STRIKE_TYPES", "single_leg_threshold_label"]
+def market_threshold_label(market) -> Optional[str]:
+    """The stored threshold label on a market row, or ``None``.
+
+    Tolerates a missing/NULL/non-dict ``market_metadata`` and a non-string
+    value: a card that cannot read the label prints the stored name, as before.
+    """
+    meta = getattr(market, "market_metadata", None)
+    if not isinstance(meta, dict):
+        return None
+    label = meta.get(THRESHOLD_LABEL_KEY)
+    if not isinstance(label, str):
+        return None
+    return label.strip() or None
+
+
+__all__ = [
+    "THRESHOLD_LABEL_KEY",
+    "THRESHOLD_STRIKE_TYPES",
+    "market_threshold_label",
+    "single_leg_threshold_label",
+]

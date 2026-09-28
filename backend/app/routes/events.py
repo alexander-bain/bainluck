@@ -66,7 +66,11 @@ from app.utils.game_market_club_names import (
 )
 from app.utils.market_staleness import unobserved_board_keys
 from app.utils.nation_flags import flag_nation
-from app.utils.series_card_labels import reader_outcome_name, relabel_series_card
+from app.utils.series_card_labels import (
+    market_threshold_label,
+    reader_outcome_name,
+    relabel_series_card,
+)
 from app.utils.sport_keys import NON_SPORT_LLM_CATEGORIES, SPORT_PREFIX_TO_LLM_CATEGORY
 
 # #6923. The search card's age pip and the futures card's age mark must agree on
@@ -33647,8 +33651,10 @@ def _build_search_top_outcomes(
     # the #993 pair went wrong, and this serializer exists so that cannot
     # recur. Completed from each rung's own ticker; see
     # `game_market_club_names.repair_field_outcome_name`.
+    threshold_label = market_threshold_label(market)  # #9383
     named = [
-        (o, reader_outcome_name(o.external_id, o.name) or o.name) for o in top
+        (o, reader_outcome_name(o.external_id, o.name, threshold_label) or o.name)
+        for o in top
     ]
     # #6195: A `0.0` IS A PRICE, AND THIS IS THE LINE THAT PRINTED IT AS A DASH.
     #

@@ -19,6 +19,7 @@ import pytest
 
 from app.services.kalshi_api import KalshiAPIService
 from app.utils.kalshi_threshold_label import (
+    THRESHOLD_LABEL_KEY,
     THRESHOLD_STRIKE_TYPES,
     single_leg_threshold_label,
 )
@@ -102,6 +103,10 @@ def test_CONTROL_a_multi_market_event_is_left_to_the_ladder():
     assert single_leg_threshold_label([]) is None
 
 
+def test_the_metadata_key_is_the_one_the_issue_names():
+    assert THRESHOLD_LABEL_KEY == "threshold_label"
+
+
 def test_the_strike_type_set_is_the_venues_threshold_vocabulary():
     assert THRESHOLD_STRIKE_TYPES == {
         "greater",
@@ -175,11 +180,12 @@ def _writer_functions():
             if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
         }
         keys = {
-            n.slice.value
+            n.slice.id
             for n in ast.walk(node)
             if isinstance(n, ast.Subscript)
-            and isinstance(n.slice, ast.Constant)
-            and n.slice.value == "threshold_label"
+            and isinstance(n.ctx, ast.Store)
+            and isinstance(n.slice, ast.Name)
+            and n.slice.id == "THRESHOLD_LABEL_KEY"
         }
         if "single_leg_threshold_label" in calls:
             hits[node.name] = bool(keys)
@@ -192,3 +198,163 @@ def test_the_poller_and_the_gap_create_writer_both_store_the_label():
     assert any(
         name != "_poll_kalshi_markets" and stored for name, stored in hits.items()
     ), hits
+
+
+# ── serve half: the served-name sites print the label in place of "Yes" ──────
+
+
+def _outcome(oid, ticker, name, prob):
+    return SimpleNamespace(
+        id=oid,
+        name=name,
+        external_id=ticker,
+        current_probability=prob,
+        current_american_odds=110,
+        rank=1,
+        current_yes_bid=None,
+        current_yes_ask=None,
+        rank_change_24h=None,
+        probability_change_24h=None,
+        opening_probability=None,
+        opening_american_odds=None,
+        is_winner=None,
+        resolution_source=None,
+        last_updated=None,
+    )
+
+
+def _market(market_id, ticker, name, rungs, metadata):
+    return SimpleNamespace(
+        id=market_id,
+        external_id=ticker,
+        name=name,
+        description=None,
+        sport=None,
+        sport_name=None,
+        category=None,
+        llm_sport_category="esports",
+        status="open",
+        source="kalshi",
+        market_type="unshaped",
+        mutually_exclusive=False,
+        commence_time=None,
+        resolution_date=None,
+        created_at=None,
+        updated_at=None,
+        group_id=None,
+        canonical_market_key=None,
+        hook_description=None,
+        category_tags=None,
+        image_url=None,
+        market_metadata=metadata,
+        outcomes=[_outcome(*r) for r in rungs],
+    )
+
+
+#: 62481272 as stored, plus the key the ingest half now writes.
+TOTAL_MAPS = (
+    62481272,
+    "KXVALORANTMAP-26SEP28YBTL",
+    "Yakult's Brothers vs. Team Liquid: Total Maps",
+    [(1, "KXVALORANTMAP-26SEP28YBTL-2", "Yes", 0.52)],
+    {"kalshi_event_ticker": "KXVALORANTMAP-26SEP28YBTL", "threshold_label": "Over 2.5 maps"},
+)
+#: CONTROL: the same row BEFORE the next poll stamps the key — unchanged.
+TOTAL_MAPS_UNSTAMPED = TOTAL_MAPS[:4] + ({"kalshi_event_ticker": "KXVALORANTMAP-26SEP28YBTL"},)
+#: CONTROL: a plain binary carries no key and keeps "Yes".
+PLAIN_BINARY = (
+    60600192,
+    "KXINDUS-27JAN01",
+    "Will India resume the Indus Waters Treaty?",
+    [(3, "KXINDUS-27JAN01-YES", "Yes", 0.12)],
+    {"kalshi_event_ticker": "KXINDUS-27JAN01"},
+)
+
+
+def _search_names(spec, *, lean):
+    from app.routes.events import _build_search_top_outcomes
+
+    return [o["name"] for o in _build_search_top_outcomes(_market(*spec), lean=lean)]
+
+
+def _detail_names(spec):
+    from app.routes.futures import _format_market_detail
+
+    return [o["name"] for o in _format_market_detail(_market(*spec))["outcomes"]]
+
+
+@pytest.mark.parametrize("lean", [True, False], ids=["typeahead", "search_card"])
+def test_search_prints_the_threshold_not_yes(lean):
+    assert _search_names(TOTAL_MAPS, lean=lean) == ["Over 2.5 maps"]
+
+
+def test_the_page_the_dropdown_opens_prints_the_threshold():
+    assert _detail_names(TOTAL_MAPS) == ["Over 2.5 maps"]
+
+
+@pytest.mark.parametrize("lean", [True, False], ids=["typeahead", "search_card"])
+@pytest.mark.parametrize(
+    "spec", [TOTAL_MAPS_UNSTAMPED, PLAIN_BINARY], ids=["unstamped", "plain_binary"]
+)
+def test_CONTROL_no_label_keeps_printing_yes(spec, lean):
+    assert _search_names(spec, lean=lean) == ["Yes"]
+    assert _detail_names(spec) == ["Yes"]
+
+
+def test_reader_outcome_name_replaces_only_a_bare_yes():
+    from app.utils.series_card_labels import reader_outcome_name
+
+    assert reader_outcome_name("KX-2", "Yes", "Over 2.5 maps") == "Over 2.5 maps"
+    assert reader_outcome_name("KX-2", " yes ", "Over 2.5 maps") == "Over 2.5 maps"
+    # A label never renames a real leg, and "No" is not "Yes".
+    assert reader_outcome_name("KX-2", "Team Liquid", "Over 2.5 maps") is None
+    assert reader_outcome_name("KX-2", "No", "Over 2.5 maps") is None
+    # Absent label: the #9377 order is unchanged.
+    assert reader_outcome_name("KXMLBSERIESGAMES-26BOSNYYWC-3", "Yes", None) == (
+        "Over 2.5 total games"
+    )
+    assert reader_outcome_name("KXINDUS-27JAN01-YES", "Yes", None) is None
+
+
+@pytest.mark.parametrize(
+    "metadata,expected",
+    [
+        ({"threshold_label": "Over 2.5 maps"}, "Over 2.5 maps"),
+        ({"threshold_label": "  Above 7743.51 "}, "Above 7743.51"),
+        ({"threshold_label": "   "}, None),
+        ({"threshold_label": 2.5}, None),
+        ({}, None),
+        (None, None),
+        ("not-a-dict", None),
+    ],
+)
+def test_market_threshold_label_tolerates_every_stored_shape(metadata, expected):
+    from app.utils.kalshi_threshold_label import market_threshold_label
+
+    assert market_threshold_label(SimpleNamespace(market_metadata=metadata)) == expected
+    assert market_threshold_label(SimpleNamespace()) is None
+
+
+def test_every_served_name_site_passes_the_markets_label():
+    """Each ``reader_outcome_name`` call outside feed.py carries a third argument.
+
+    feed.py's card helper is deliberately left on two: the feed renders a lone
+    ``Yes`` as a binary card headed by the market's own question, not as a
+    ``Yes`` row, and its printed names double as lookup keys (#6552).
+    """
+    backend = Path(__file__).resolve().parents[1]
+    missing = []
+    seen = set()
+    for rel in ("app/routes/events.py", "app/routes/futures.py", "app/routes/user.py"):
+        tree = ast.parse((backend / rel).read_text())
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "reader_outcome_name"
+            ):
+                seen.add(rel)
+                if len(node.args) < 3:
+                    missing.append(f"{rel}:{node.lineno}")
+    assert missing == [], missing
+    assert seen == {"app/routes/events.py", "app/routes/futures.py", "app/routes/user.py"}
