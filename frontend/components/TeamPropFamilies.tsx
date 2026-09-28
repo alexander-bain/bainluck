@@ -9,8 +9,8 @@ import type { PropFamily, PropFamilyRow } from "@/lib/api";
 // Prop-family cohort card (L2-167 Item 1) — the cohort-compare kernel's first
 // instance. Consumes GET /api/teams/{team}/prop-families: one card per family
 // ("Next Team" races, award races, threshold ladders), one entity row each with
-// an image-or-initials avatar and a RELATIVE probability bar (bar fills against
-// the family's leader, so "who's most likely" reads instantly), sorted desc.
+// an image-or-initials avatar and a probability bar drawn against 100% (#9456;
+// it used to fill against the family's leader), sorted desc.
 //
 // The backend already: only emits families with >=2 distinct entities, collapses
 // cross-source duplicate entities into one row, pre-sorts rows (settled sink below
@@ -84,19 +84,27 @@ function WhatHitBadge({ result }: { result: "won" | "lost" | null }) {
 
 function PropFamilyRowLine({
   row,
-  maxProb,
   teamColor,
 }: {
   row: PropFamilyRow;
-  maxProb: number;
   teamColor: string | null;
 }) {
-  // Bar fills RELATIVE to the family leader — the leader is full-width so the
-  // ranking reads instantly; the literal % lives in the trailing number so the
-  // absolute value is never lost.
+  // #9456 — the bar is the row's OWN probability, against 100%.
+  //
+  // It used to fill relative to the family leader, so the leader was always
+  // full-width however unlikely it was. A team page only shows that team's
+  // slice of an award field, so its "leader" is rarely the real favourite:
+  // measured on production 2026-09-28, Caleb Williams' 2% Offensive Player Of
+  // The Year chance on the Bears page and the Eagles' 3.5% MVP / 3.2% DPOY /
+  // 9.5% Next Team leaders all drew a full bar. The threshold ladders (Season
+  // Receiving Yards: each player's own yes/no, at different lines) are not
+  // mutually exclusive at all, so a leader-relative bar compared nothing. The
+  // eye reads the bar before the number; every other outcome bar on the site
+  // is drawn against 100%. Rows arrive sorted desc, so the ranking still reads
+  // from bar length. The 2% floor keeps a priced row visible.
   const barPct =
-    row.probability !== null && maxProb > 0
-      ? Math.max(2, Math.round((row.probability / maxProb) * 100))
+    row.probability !== null
+      ? Math.min(100, Math.max(2, Math.round(row.probability * 100)))
       : 0;
   const barColor = row.settled ? "#9CA3AF" : teamColor || "#3B82F6";
 
@@ -160,11 +168,6 @@ function PropFamilyCard({
   family: PropFamily;
   teamColor: string | null;
 }) {
-  const maxProb = family.rows.reduce(
-    (m, r) => (r.probability !== null && r.probability > m ? r.probability : m),
-    0,
-  );
-
   return (
     <div className="bg-surface-card border border-surface-border rounded-card overflow-hidden">
       <div className="flex items-center justify-between px-4 py-2.5 border-b border-surface-border">
@@ -178,7 +181,6 @@ function PropFamilyCard({
           <PropFamilyRowLine
             key={`${row.market_id ?? "m"}-${row.outcome_id ?? row.entity}`}
             row={row}
-            maxProb={maxProb}
             teamColor={teamColor}
           />
         ))}
