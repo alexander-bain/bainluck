@@ -340,6 +340,88 @@ def block_key(home: object, away: object) -> Optional[tuple[str, ...]]:
     return tuple(sorted((a, b)))
 
 
+def block_keys(home: object, away: object) -> frozenset[tuple[str, ...]]:
+    """Every block a row belongs to — one per surname reading of each side. #9338.
+
+    :func:`block_key` reads a singles side's surname as its LAST token. The
+    confirm step does not: :func:`players_agree` accepts any reading
+    :func:`our_tennis_keys` allows, surname-first included, because our column
+    does not record which order it stored. So a surname-first name was confirmable
+    and never confirmed — ESPN's ``Wu Yibing`` blocked under ``yibing`` while the
+    Polymarket-minted ghost ``Wu`` blocked under ``wu``, the pair was never
+    examined, and search printed a "No result reported" copy of a finished US Open
+    match (``15301231`` beside ``15301243``) three weeks later.
+
+    The blocks are therefore built from the confirm step's own readings: each
+    singles side contributes every surname its :func:`our_tennis_keys` carries,
+    and the row belongs to every combination. Two rows that
+    :func:`classify_pair` could call one fixture share a surname on each side
+    (``keys_agree`` requires the surname equal and whole), so they now always
+    share a block. Doubles sides keep :func:`block_key`'s reading, which already
+    matches ``doubles_key`` equality.
+
+    🔴 **A pair that meets ONLY in a widened block must also clear
+    :func:`surname_alone_pair_agrees`.** :func:`players_agree` is looser than the
+    last-token block ever let it be: ``Arthur Fery`` and ``Arthur Fils`` agree on
+    the surname-first reading ``('arthur', 'f')``. On production (Cincinnati,
+    2026-08-17) that fused Fery–de Minaur with Fils–de Minaur the moment the
+    blocks widened. The rival guard caught it there, but with a single wrong
+    canonical in reach nothing would have. The narrow reading is the ghost's own
+    shape — one side names the player by surname alone — and it cannot fuse two
+    full names.
+    """
+    if not looks_like_a_player(home) or not looks_like_a_player(away):
+        return frozenset()
+
+    def surnames(name: object) -> frozenset[str]:
+        if is_doubles_name(name):
+            pair = doubles_key(name)
+            return (
+                frozenset({"/".join(sorted(p.split()[-1] for p in pair))})
+                if pair
+                else frozenset()
+            )
+        return frozenset(k[0] for k in our_tennis_keys(name))
+
+    a, b = surnames(home), surnames(away)
+    return frozenset(tuple(sorted((x, y))) for x in a for y in b)
+
+
+def _surname_alone_agrees(ours: object, theirs: object) -> bool:
+    """One side's WHOLE name is a surname reading of the other. ``Wu`` ~ ``Wu Yibing``.
+
+    The initial-less key is the whole value read as a surname (#4617), so it can
+    only agree with a side that carries that exact string as a surname run:
+    ``Wu`` reaches ``Wu Yibing``, while ``Arthur Fery`` cannot reach
+    ``Arthur Fils``, because neither whole name is a run of the other.
+    """
+    if is_doubles_name(ours) or is_doubles_name(theirs):
+        return players_agree(ours, theirs)
+    if _generational_suffix(ours) != _generational_suffix(theirs):
+        return False
+    return any(
+        keys_agree(k, j)
+        for k in our_tennis_keys(ours)
+        for j in our_tennis_keys(theirs)
+        if k[1] is None or j[1] is None
+    )
+
+
+def surname_alone_pair_agrees(a: "TwinRow", b: "TwinRow") -> bool:
+    """The stricter participant test for a pair that shares no :func:`block_key`.
+
+    Either orientation, both sides — the same shape :func:`classify_pair` checks,
+    with :func:`_surname_alone_agrees` in place of :func:`players_agree`.
+    """
+    straight = _surname_alone_agrees(
+        a.home_team_name, b.home_team_name
+    ) and _surname_alone_agrees(a.away_team_name, b.away_team_name)
+    swapped = _surname_alone_agrees(
+        a.home_team_name, b.away_team_name
+    ) and _surname_alone_agrees(a.away_team_name, b.home_team_name)
+    return straight or swapped
+
+
 @dataclass(frozen=True)
 class TwinRow:
     """The fields a twin decision reads. A plain snapshot, never a live ORM row.
@@ -576,16 +658,29 @@ def plan_twin_tags(
     rows = list(rows)
     buckets: dict[tuple[str, ...], list[TwinRow]] = defaultdict(list)
     for row in rows:
-        key = block_key(row.home_team_name, row.away_team_name)
-        if key is not None:
+        for key in block_keys(row.home_team_name, row.away_team_name):
             buckets[key].append(row)
 
     found: list[TwinTag] = []
     refusals: list[str] = []
+    # A row sits in one block per surname reading (#9338), so one pair can meet
+    # in several blocks; it is judged once.
+    examined: set[tuple[int, int]] = set()
     for bucket in buckets.values():
         for i in range(len(bucket)):
             for j in range(i + 1, len(bucket)):
                 a, b = bucket[i], bucket[j]
+                pair = (min(a.event_id, b.event_id), max(a.event_id, b.event_id))
+                if pair in examined:
+                    continue
+                examined.add(pair)
+                legacy = block_key(a.home_team_name, a.away_team_name)
+                if legacy is None or legacy != block_key(
+                    b.home_team_name, b.away_team_name
+                ):
+                    # Met only in a widened block: the ghost shape or nothing.
+                    if not surname_alone_pair_agrees(a, b):
+                        continue
                 verdict = classify_pair(a, b)
                 if verdict.outcome == REFUSE_AMBIGUOUS:
                     refusals.append(
