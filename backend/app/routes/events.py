@@ -421,7 +421,7 @@ _PLACEHOLDER_TEAM_RE = re.compile(
 # 2% — only kills the obviously-useless deep rungs (measured: collapses a
 # 38-item ladder to the 3 meaningful lines on event 14961907).
 _SPREAD_DEEP_OTM_FLOOR = 0.02
-from app.utils.event_twin_fold import fold_twin_events
+from app.utils.event_twin_fold import fold_twin_events, team_name_fold_key
 from app.utils.kalshi_expiration_start import (
     KALSHI_EXPIRATION_RECOVERY_STAMP,
     recover_kalshi_expiration_starts,
@@ -1513,29 +1513,68 @@ def _pick_team_row_per_name(rows: list) -> list:
     This is the rule `_build_team_lookup` already applies to the same two rows
     one surface over — *"Same league, two rows: keep the PARENT league's"* — and
     it reasons about no names or kickoff times that the collapse it rides was
-    not already keyed on, so ruling 048 is not in play. Nothing here writes."""
+    not already keyed on, so ruling 048 is not in play. Nothing here writes.
+
+    #9229 — ONE CLUB, TWO SPELLINGS. `blues` on production 2026-09-27 printed
+    `St Louis Blues 36-33-12 · NHL` above `St. Louis Blues 1-2-0 · NHL`, and
+    `canadiens` printed `Montréal Canadiens` above `Montreal Canadiens`: the
+    group key was the exact name, so a period or an accent made two groups.
+    A group is now also joined by `team_name_fold_key` within ONE league
+    identity — the key the team page already reads these rows as one club by
+    (#7929), which folds diacritics and punctuation and nothing else, so
+    `Portland Timbers 2` stays its own side and `Djurgårdens IF` (hockey) never
+    meets `Djurgardens IF` (soccer). Exact-name grouping is untouched: a join
+    only ever ADDS a row to a group, never splits one. Inside a group that holds
+    more than one spelling, the row whose standings board was written most
+    recently wins before arrival order (#7132's rule, `_standings_vintage`):
+    571's `1-2-0` was last written in May, 3705's this morning. Single-spelling
+    groups compare exactly as before."""
     parents = _seasons_with_a_parent_row(rows)
+    group_by_name: dict = {}
+    group_by_fold: dict = {}
+    grouped: list = []
+    for row in rows:
+        name = getattr(row, "name", None)
+        fold = team_name_fold_key(name)
+        fold_key = (fold, league_identity(getattr(row, "sport_key", None)))
+        group = group_by_name.get(name)
+        if group is None and fold:
+            group = group_by_fold.get(fold_key)
+        if group is None:
+            group = name
+        group_by_name.setdefault(name, group)
+        if fold:
+            group_by_fold.setdefault(fold_key, group)
+        grouped.append((group, row))
+    spellings: dict = {}
+    for group, row in grouped:
+        spellings.setdefault(group, set()).add(getattr(row, "name", None))
     order: list = []
     best: dict = {}
-    for index, row in enumerate(rows):
+    for index, (group, row) in enumerate(grouped):
         name = getattr(row, "name", None)
         sport_key = getattr(row, "sport_key", None)
         spring_row = (
             is_season_variant(sport_key)
             and (name, league_identity(sport_key)) in parents
         )
+        stamp_rank, stamp = (
+            _standings_vintage(row) if len(spellings[group]) > 1 else (0, 0.0)
+        )
         candidate = (
             int(spring_row),
             _team_competition_rank(sport_key),
             _college_sport_audience_rank(sport_key),
+            -stamp_rank,
+            -stamp,
             index,
         )
-        if name not in best:
-            order.append(name)
-            best[name] = (candidate, row)
-        elif candidate < best[name][0]:
-            best[name] = (candidate, row)
-    return [best[name][1] for name in order]
+        if group not in best:
+            order.append(group)
+            best[group] = (candidate, row)
+        elif candidate < best[group][0]:
+            best[group] = (candidate, row)
+    return [best[group][1] for group in order]
 
 
 # #993 Slice C: multi-word search AND-matches every term against the market NAME,
@@ -7899,6 +7938,8 @@ async def search_events(
             # a team would win on turns the floor into a ceiling.
             select(Team.id, Team.name, Team.slug, Team.abbreviation,
                    Team.logo_url_small, Team.current_record, Sport.key.label("sport_key"),
+                   # #9229: the spelling fold's tie-break reads the board's age.
+                   Team.standings_updated_at,
                    Team.alternate_names, team_rank)
             .join(Sport, Team.sport_id == Sport.id, isouter=True)
             .where(
@@ -11611,7 +11652,7 @@ async def typeahead_search(
         else_=2,
     )
     team_query = (
-        select(Team.id, Team.name, Team.slug, Team.abbreviation, Team.sport_id, Team.logo_url_small, Team.alternate_names, Sport.key.label("sport_key"))
+        select(Team.id, Team.name, Team.slug, Team.abbreviation, Team.sport_id, Team.logo_url_small, Team.alternate_names, Sport.key.label("sport_key"), Team.standings_updated_at)
         .join(Sport, Team.sport_id == Sport.id, isouter=True)
         .where(team_filter)
         .order_by(team_prominence_order, team_name_order, Team.name)
