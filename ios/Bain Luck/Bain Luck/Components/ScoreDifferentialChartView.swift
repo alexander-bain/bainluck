@@ -406,16 +406,19 @@ struct ScoreDifferentialChartView: View {
     static func winProbStateScoreDiffs(history: EventHistoryResponse,
                                        since startDate: Date?) -> [Int: (date: Date, diff: Double)] {
         var byMinute: [Int: (date: Date, diff: Double)] = [:]
-        for (_, points) in history.winProbHistory ?? [:] {
-            for pt in points where pt.liveEdge != true {
+        // #8509 — the earliest reading in each minute across all sources (ties to
+        // the alphabetically first source), so two opens of the same bytes draw
+        // the same line; "first row" used to mean first in Dictionary order.
+        let series = history.winProbHistory ?? [:]
+        for source in series.keys.sorted() {
+            for pt in series[source] ?? [] where pt.liveEdge != true {
                 guard let gs = pt.gameState,
                       let hs = gs.homeScore, let as_ = gs.awayScore,
                       let date = pt.timestamp.asDate else { continue }
                 if let start = startDate, date < start { continue }
                 let bucket = Int(date.timeIntervalSince1970 / 60)
-                if byMinute[bucket] == nil {
-                    byMinute[bucket] = (date, Double(hs - as_))
-                }
+                if let held = byMinute[bucket], held.date <= date { continue }
+                byMinute[bucket] = (date, Double(hs - as_))
             }
         }
         return byMinute
@@ -679,20 +682,14 @@ struct ScoreDifferentialChartView: View {
             markers.append(ScoreDiffPeriodMarker(date: date, label: label))
         }
 
-        // Supplement from win_prob_history game_state
-        for (_, points) in (history.winProbHistory ?? [:]) {
-            for pt in points {
-                guard let gs = pt.gameState, let date = pt.timestamp.asDate,
-                      date >= minDate, date <= maxDate else { continue }
-                let periodStr: String
-                if let p = gs.period, !p.isEmpty { periodStr = p }
-                else if let inning = gs.inning, inning > 0 { periodStr = "Top \(inning)" }
-                else { continue }
-                let label = normalizePeriodLabel(periodStr)
-                guard !label.isEmpty, !seenLabels.contains(label) else { continue }
-                seenLabels.insert(label)
-                markers.append(ScoreDiffPeriodMarker(date: date, label: label))
-            }
+        // Supplement from win_prob_history game_state: the earliest sighting per
+        // label across every source, never the first source a Dictionary yields
+        // (#8509 — the same rule as the probability chart above this one).
+        for sighting in WinProbPeriodSightings.earliest(
+            in: history.winProbHistory, sportKey: sportKey, admits: { $0 >= minDate && $0 <= maxDate }
+        ) where !seenLabels.contains(sighting.label) {
+            seenLabels.insert(sighting.label)
+            markers.append(ScoreDiffPeriodMarker(date: sighting.date, label: sighting.label))
         }
 
         let sorted = markers.sorted { $0.date < $1.date }
