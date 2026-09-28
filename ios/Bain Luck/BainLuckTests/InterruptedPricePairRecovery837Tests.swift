@@ -38,6 +38,7 @@ final class InterruptedPricePairRecovery837Tests: XCTestCase {
             if request.url?.path == "/api/events/4242" {
                 body = """
                 {"id":4242,"home_team":"Home","away_team":"Away","sport":"baseball_mlb","status":"live",
+                 "espn":{"game_clock":"\(revision):00","period":"3"},
                  "current_odds":{"home_probability":\(p),"away_probability":\(1-p)},
                  "hero_probability":\(p),"hero_probability_source":"blend",
                  "hero_probability_observed_at":"\(date)","blend_fold_revision":\(vector),
@@ -119,7 +120,7 @@ final class InterruptedPricePairRecovery837Tests: XCTestCase {
             for continuation in parked { continuation.resume() }
         }
     }
-    private func exerciseFailure(_ suffix: String, recoverByPoll: Bool = false) async throws {
+    private func exerciseFailure(_ suffix: String, recoverByPoll: Bool = false, holdFailureOnePoll: Bool = false) async throws {
         let api = client(), handle = Handle(), ticker = Ticker()
         let vm = recoverByPoll
             ? EventDetailViewModel(eventId: 4242, client: api, makeStreamHandle: { _ in handle },
@@ -142,10 +143,22 @@ final class InterruptedPricePairRecovery837Tests: XCTestCase {
                        "Keep the last accepted complete pair during outage")
         XCTAssertEqual(vm.history?.aggregateLine?.last?.homeProbability, 0.55)
         XCTAssertEqual(vm.currentRefreshPlan, .poll(every: 30), "Failed price delivery keeps the attentive fallback")
+        var recoveredCount = 4
+        if holdFailureOnePoll {
+            clock += 6
+            ticker.openGate()
+            try await awaitRequests(4)
+            XCTAssertEqual(vm.event?.espn?.gameClock, "12:00", "Game-state reader still advances during price failure")
+            XCTAssertEqual(vm.event?.currentOdds?.homeProbability, 0.55)
+            XCTAssertEqual(vm.history?.aggregateLine?.last?.homeProbability, 0.55)
+            XCTAssertEqual(vm.priceActivity?.sequence, previous.sequence)
+            XCTAssertEqual(vm.liveUpdateStatus, .interrupted, "Clock-only success cannot mask failed pair")
+            recoveredCount = 5
+        }
         Origin.fail(nil); clock += 6
-        if recoverByPoll { ticker.openGate() }
+        if recoverByPoll && !holdFailureOnePoll { ticker.openGate() }
         else { handle.pushNewRevision(12) }
-        try await awaitRequests(4)
+        try await awaitRequests(recoveredCount)
         XCTAssertEqual(vm.event?.currentOdds?.homeProbability, 0.52)
         XCTAssertEqual(vm.history?.aggregateLine?.last?.homeProbability, 0.52)
         XCTAssertEqual(vm.liveUpdateStatus, .live)
@@ -158,6 +171,9 @@ final class InterruptedPricePairRecovery837Tests: XCTestCase {
     }
     func testRestoredQuietConnectionRecoversOnExistingPollWithoutAnotherFrame() async throws {
         try await exerciseFailure("/history", recoverByPoll: true)
+    }
+    func testGameStateContinuesDuringFailedPairWithoutPublishingHalfPriceOrReceipt() async throws {
+        try await exerciseFailure("/history", recoverByPoll: true, holdFailureOnePoll: true)
     }
     func testFailedHistoryCannotEarnReceiptAndRecoversWithoutRelaunch() async throws {
         try await exerciseFailure("/history")
