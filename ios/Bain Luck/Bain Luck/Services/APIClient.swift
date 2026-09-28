@@ -330,6 +330,7 @@ actor APIClient {
         query: [String: String] = [:],
         cacheTTL: TimeInterval? = nil,
         requiresNetwork: Bool = false,
+        revalidationQuery: [String: String] = [:],
         trace: (@Sendable (RequestTrace) -> Void)? = nil
     ) async throws -> sending T {
         // Check cache
@@ -358,8 +359,11 @@ actor APIClient {
         }
 
         var components = URLComponents(string: baseURL + path)
-        if !query.isEmpty {
-            components?.queryItems = query.map { URLQueryItem(name: $0.key, value: $0.value) }
+        // Revalidation changes freshness, not resource identity. Refill the
+        // canonical cache entry so an ordinary read retains the new response.
+        let requestQuery = query.merging(revalidationQuery) { _, fresh in fresh }
+        if !requestQuery.isEmpty {
+            components?.queryItems = requestQuery.map { URLQueryItem(name: $0.key, value: $0.value) }
         }
         guard let url = components?.url else { throw APIError.invalidURL }
 
@@ -868,7 +872,8 @@ actor APIClient {
     /// Revision-triggered rereads leave the device and refresh its normal cache.
     /// The caller still validates server revisions before adopting the response.
     func fetchFreshEvent(id: Int) async throws -> EventDetail {
-        try await fetch("/api/events/\(id)", cacheTTL: 15, requiresNetwork: true)
+        try await fetch("/api/events/\(id)", cacheTTL: 15, requiresNetwork: true,
+                        revalidationQuery: ["fresh": "true"])
     }
 
     /// Fetches cached line movement analysis and explanation for an event.
@@ -885,7 +890,7 @@ actor APIClient {
 
     func fetchFreshEventHistory(id: Int, hours: Int) async throws -> EventHistoryResponse {
         try await fetch("/api/events/\(id)/history", query: ["hours": "\(hours)"],
-                        cacheTTL: 60, requiresNetwork: true)
+                        cacheTTL: 60, requiresNetwork: true, revalidationQuery: ["fresh": "true"])
     }
 
     // MARK: - Related Futures
