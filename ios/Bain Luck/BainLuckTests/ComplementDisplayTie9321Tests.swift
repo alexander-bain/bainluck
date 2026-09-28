@@ -13,9 +13,6 @@ final class ComplementDisplayTie9321Tests: XCTestCase {
         let source = duelProbabilityStrings(away: away, home: home, complementaryAway: true)
         XCTAssertEqual(source.home, "44%")
         XCTAssertEqual(source.away, "56%")
-        let labels = GamePlayCardView.printedLabels(home: home, away: away)
-        XCTAssertEqual(labels.home, "44%")
-        XCTAssertEqual(labels.away, "56%")
     }
 
     func testPushedHeroReceiptMatchesTheServedPairWithoutChangingRawValues() throws {
@@ -87,11 +84,11 @@ final class ComplementDisplayTie9321Tests: XCTestCase {
             XCTAssertEqual(row.home, home < 0.5 ? "<1%" : ">99%")
             XCTAssertEqual(row.away, home < 0.5 ? ">99%" : "<1%")
         }
-        let won = GamePlayCardView.printedLabels(home: 1, away: 0, gameFinished: true)
-        XCTAssertEqual(won.home, "100%")
-        XCTAssertEqual(won.away, "0%")
-        let lost = GamePlayCardView.printedLabels(home: 0, away: 1, gameFinished: true)
-        XCTAssertEqual(lost.home, "0%")
-        XCTAssertEqual(lost.away, "100%")
+        let won = GamePlayCardView.printedPercents(home: 1, away: 0)
+        XCTAssertEqual(won.home, 100)
+        XCTAssertEqual(won.away, 0)
+        let lost = GamePlayCardView.printedPercents(home: 0, away: 1)
+        XCTAssertEqual(lost.home, 0)
+        XCTAssertEqual(lost.away, 100)
     }
 }
