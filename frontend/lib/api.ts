@@ -2370,6 +2370,8 @@ export interface EntMarketRow {
   resolution_date: string | null;
   image_url: string | null;
   hook: string | null;
+  /** #9468: the legs are one cumulative ladder ("Before Dec 4", "Before Dec 5"…), served in rung order — not a race. */
+  ladder?: boolean;
 }
 
 export interface EntThresholdGroup {

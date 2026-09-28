@@ -722,24 +722,33 @@ function SpotifyRace({ markets }: { markets: EntMarketRow[] }) {
 
   const contenders = best.top_outcomes;
   if (contenders.length < 2) return <MarketFallback markets={markets} />;
+  // #9468: a cumulative ladder ("Before Dec 4" contains "Before Dec 3") has no
+  // leader and no ranks — the route serves its legs in calendar order, so draw
+  // them as a list: no rank number, no cover tile, no lit #1.
+  const ladder = best.ladder === true;
 
   return (
     <Link href={`/futures/${best.market_id}`}>
       <div className={s.card} style={{ padding: 18 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 14 }}>
           <div>
-            <div className={s.eyebrow}>🎧 Spotify Chart Race</div>
+            <div className={s.eyebrow}>{ladder ? "🎧 Spotify" : "🎧 Spotify Chart Race"}</div>
             <div style={{ fontSize: 14, fontWeight: 600, marginTop: 2 }}>{best.q}</div>
           </div>
           <EntSourceChip source={best.src} />
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {contenders.map((c, i) => {
-            const isLeader = i === 0;
+            const isLeader = !ladder && i === 0;
             return (
-              <div key={i} className={s.raceRow}>
-                <span className={isLeader ? s.raceRankLead : s.raceRank}>{i + 1}</span>
-                <CoverTile title={c.name} size={36} />
+              <div
+                key={i}
+                className={s.raceRow}
+                data-ladder-rung={ladder ? i : undefined}
+                style={ladder ? { gridTemplateColumns: "1fr 56px 42px" } : undefined}
+              >
+                {!ladder && <span className={isLeader ? s.raceRankLead : s.raceRank}>{i + 1}</span>}
+                {!ladder && <CoverTile title={c.name} size={36} />}
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                     {c.name}
