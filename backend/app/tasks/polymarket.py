@@ -5539,8 +5539,9 @@ def _resolve_market_probability_with_source(market) -> tuple[float | None, str |
       - bestBid = 0 or None
       - bestAsk = 1 (max spread, no real market-making)
       - lastTradePrice = 0 or None
-    Without this filter, the ask-only fallback or the raw 1.0 price would
-    set prob = 1.0 (100%), making placeholders look like favorites.
+    Without this filter, the raw 1.0 price would set prob = 1.0 (100%), making
+    placeholders look like favorites. (The ask-only fallback this also guarded
+    against is gone since #9157 — see the end of this function.)
     """
     # Reject known placeholder markets before examining prices
     if _is_placeholder_outcome(market):
@@ -5689,13 +5690,21 @@ def _resolve_market_probability_with_source(market) -> tuple[float | None, str |
             return None, None
         return market.last_trade_price, "last_trade_price"
 
-    # Ask-only fallback: reject if ask >= 0.99 (placeholder/no real market)
-    if (market.best_ask is not None
-            and market.best_ask > 0
-            and market.best_ask < 0.99):
-        return market.best_ask, "best_ask"
-
-    # No reliable price — skip this market
+    # #9157: NO ASK-ONLY FALLBACK. Reaching here means no usable outcomePrice, no
+    # bid and no trade — gotcha #19's "no trade and no bid → skip", which the
+    # 2-minute live poll already obeys. This branch used to publish the lone ask
+    # instead, and an ask with nobody bidding is an upper bound, not a price:
+    #
+    #   * /futures/62289535 (Presidents Cup 2026: Points Leader) printed 20 of 21
+    #     golfers at 19% — a field summing to ~380% — from legs Gamma read as
+    #     `outcomePrices ["0","1"]`, `bestBid null`, `bestAsk 0.19`, no trade.
+    #     All twenty resolved NO; the venue's own displayed price was 0.
+    #   * /events/15313655 printed a Correct Score card at 47% on every score line
+    #     from the same shape on 30 legs, at most one of which can win.
+    #
+    # Same judgement the Kalshi side reached on the same book shape
+    # (`kalshi_empty_book.is_lone_ask_in_exclusive_field`: stored mean 0.369 vs
+    # realized 6.2%). A refusal is a SKIP like every other one in this resolver.
     return None, None
 
 
