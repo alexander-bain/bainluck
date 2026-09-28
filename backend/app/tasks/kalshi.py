@@ -1167,6 +1167,43 @@ def _venue_topic(
     return None
 
 
+#: #9460 — how many per-event failures one beat logs at WARNING. The first names
+#: the statement that failed; past a handful, a log line per event is just noise.
+_LOGGED_EVENT_ERRORS = 5
+
+
+async def _recover_event_savepoint(session, event_sp, *, sql_failed: bool) -> None:
+    """Leave the session usable after one event's caught failure (#9460).
+
+    ``event_sp`` is the SAVEPOINT the event opened at its first write, or
+    ``None`` if it failed before writing anything.
+
+    * A SQL failure rolls back to the savepoint. On Postgres the failed
+      statement has aborted the transaction, and without this every later event
+      in the beat raises at once (measured 9/28: 6,253 of them).
+    * A non-SQL failure (HTTP, ``ValueError``, ``KeyError``) leaves the
+      transaction healthy, so the savepoint is RELEASED and the event keeps what
+      it had already written, which is what it did before this savepoint existed.
+    * A SQL failure with no savepoint can only be cleared by rolling back the
+      whole transaction. That costs the uncommitted batch, but the rest of the
+      beat still runs. So does a savepoint that cannot be resolved.
+    """
+    try:
+        if event_sp is not None and event_sp.is_active:
+            if sql_failed:
+                await event_sp.rollback()
+            else:
+                await event_sp.commit()
+            return
+    except SQLAlchemyError:
+        logger.warning("poll_kalshi: event savepoint could not be resolved; "
+                       "rolling back the batch", exc_info=True)
+        await session.rollback()
+        return
+    if sql_failed:
+        await session.rollback()
+
+
 def _partition_new_events_first(events, existing_tickers):
     """#995: split fetched Kalshi events so ones whose ``event_ticker`` is NOT
     already in the DB (``existing_tickers``) come first.
@@ -1618,6 +1655,8 @@ async def _poll_kalshi_markets():
                         time.monotonic() - _task_started,
                     )
                     break
+                # #9460: this event's SAVEPOINT, opened at its first write.
+                _event_sp = None
                 try:
                     # Each Kalshi event can have multiple markets
                     # For multivariate events, we create one FuturesMarket per event
@@ -1959,6 +1998,15 @@ async def _poll_kalshi_markets():
                         .returning(FuturesMarket.id)
                     )
 
+                    # #9460: every write this event makes runs inside its own
+                    # SAVEPOINT. The per-event `except` below swallows a failure,
+                    # and on Postgres a failed statement aborts the transaction:
+                    # measured 9/28 20:51Z, one failed event made the other 6,253
+                    # events of the beat raise at once. Nothing more was committed
+                    # after that, and every existing market (processed after the
+                    # new ones) went unrefreshed. Rolled back to here, a failed
+                    # event costs only itself.
+                    _event_sp = await session.begin_nested()
                     result = await session.execute(market_stmt)
                     futures_market_id = result.scalar_one()
                     stats["events_processed"] += 1
@@ -2337,6 +2385,7 @@ async def _poll_kalshi_markets():
                         stats["ranks_rederived"] = (
                             stats.get("ranks_rederived", 0) + _reranked
                         )
+                    await _event_sp.commit()
 
                 except SoftTimeLimitExceeded:
                     # #150: the soft limit fired DURING this event's processing.
@@ -2357,7 +2406,19 @@ async def _poll_kalshi_markets():
                     )
                     break
                 except (httpx.HTTPError, ValueError, KeyError, SQLAlchemyError) as e:
-                    stats["errors"].append(f"{event.event_ticker}: {str(e)}")
+                    await _recover_event_savepoint(
+                        session, _event_sp, sql_failed=isinstance(e, SQLAlchemyError)
+                    )
+                    # #9460: the list rides the task result; a SQLAlchemy message
+                    # carries the whole statement and its params, so bound it.
+                    stats["errors"].append(f"{event.event_ticker}: {str(e)[:300]}")
+                    if len(stats["errors"]) <= _LOGGED_EVENT_ERRORS:
+                        # These were never logged, so a beat could lose 6,253
+                        # events without saying one word about why (#9460).
+                        logger.warning(
+                            "poll_kalshi: event %s failed (%s): %s",
+                            event.event_ticker, type(e).__name__, str(e)[:300],
+                        )
                     continue
 
                 # Persist progress incrementally so a SIGKILL/timeout never wipes
