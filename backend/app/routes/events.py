@@ -22436,6 +22436,11 @@ def _build_props_script(player_props):
         if hit is not None:
             graded_result = "hit" if hit else "miss"
             actual = pp.get("actual")
+            # #9428: the box-score grader sums stats as floats, so an integral
+            # count printed "2.0 — miss" on every NFL row (559 of 559 on
+            # 14780548). A whole number drops its `.0`; a real fraction keeps it.
+            if isinstance(actual, float) and actual.is_integer():
+                actual = int(actual)
             if actual is not None:
                 graded_label = f"{actual} — {graded_result}"
         # #4390: `_inverted` is set by the endpoint's own over/under
