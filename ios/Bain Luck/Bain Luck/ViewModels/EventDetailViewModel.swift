@@ -14,10 +14,21 @@ private let logger = Logger(subsystem: "com.bainluck", category: "eventDetail")
 protocol EventDetailProviding: Sendable {
     func fetchEvent(id: Int) async throws -> EventDetail
     func fetchEventHistory(id: Int, hours: Int) async throws -> EventHistoryResponse
+    func fetchFreshEvent(id: Int) async throws -> EventDetail
+    func fetchFreshEventHistory(id: Int, hours: Int) async throws -> EventHistoryResponse
     func fetchRelatedFutures(eventId: Int) async throws -> RelatedFuturesResponse
     func fetchTeamProgression(eventId: Int) async throws -> TeamProgressionResponse
     func fetchGameMarkets(eventId: Int) async throws -> GameMarketsResponse
     func fetchLineMovement(eventId: Int) async throws -> LineMovementResponse
+}
+
+// Existing in-memory providers have no response cache. APIClient implements
+// these explicitly so the production revision path cannot reuse warm TTL data.
+extension EventDetailProviding {
+    func fetchFreshEvent(id: Int) async throws -> EventDetail { try await fetchEvent(id: id) }
+    func fetchFreshEventHistory(id: Int, hours: Int) async throws -> EventHistoryResponse {
+        try await fetchEventHistory(id: id, hours: hours)
+    }
 }
 
 final class EventDetailViewModel: ObservableObject {
@@ -357,10 +368,10 @@ final class EventDetailViewModel: ObservableObject {
         let client = self.client
         let id = eventId
         let historyTask = Task { () -> EventHistoryResponse? in
-            try? await client.fetchEventHistory(id: id, hours: 168)
+            try? await client.fetchFreshEventHistory(id: id, hours: 168)
         }
         let requestedGeneration = streamRefetchGeneration
-        if let fetched = try? await client.fetchEvent(id: id) {
+        if let fetched = try? await client.fetchFreshEvent(id: id) {
             // Read the baseline at adoption, not request start: an unrelated
             // poll may have advanced the held price while this read awaited.
             let priorRevision = event.flatMap { LiveEventPriceReconciliation.pairedFoldRevision(in: $0) }

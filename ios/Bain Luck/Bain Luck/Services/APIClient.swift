@@ -312,11 +312,12 @@ actor APIClient {
         KeychainHelper.load(key: sessionTokenKeychainKey) != nil
     }
 
-    private init() {
+    /// Session injection keeps transport/cache behavior testable without real network calls.
+    init(session suppliedSession: URLSession? = nil) {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 30
         config.timeoutIntervalForResource = 60
-        session = URLSession(configuration: config)
+        session = suppliedSession ?? URLSession(configuration: config)
 
         decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
@@ -328,6 +329,7 @@ actor APIClient {
         _ path: String,
         query: [String: String] = [:],
         cacheTTL: TimeInterval? = nil,
+        requiresNetwork: Bool = false,
         trace: (@Sendable (RequestTrace) -> Void)? = nil
     ) async throws -> sending T {
         // Check cache
@@ -339,7 +341,7 @@ actor APIClient {
             let key = Self.responseCacheKey(
                 principal: currentFeedIdentity(), path: path, query: query)
             cacheKey = key
-            if let entry = responseCache[key],
+            if !requiresNetwork, let entry = responseCache[key],
                Date().timeIntervalSince(entry.timestamp) < ttl {
                 let decodeStart = Date()
                 let value = try decoder.decode(T.self, from: entry.data)
@@ -362,6 +364,13 @@ actor APIClient {
         guard let url = components?.url else { throw APIError.invalidURL }
 
         var request = URLRequest(url: url)
+        if requiresNetwork {
+            // A newer stream revision makes the on-device TTL/URLCache entry
+            // unsuitable. Standard HTTP revalidation is requested too; this is
+            // NOT a promise to bypass an application cache inside the server.
+            request.cachePolicy = .reloadIgnoringLocalCacheData
+            request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+        }
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue(sessionId, forHTTPHeaderField: "x-session-id")
 
@@ -856,6 +865,12 @@ actor APIClient {
         return try await fetch("/api/events/\(id)", cacheTTL: 15)
     }
 
+    /// Revision-triggered rereads leave the device and refresh its normal cache.
+    /// The caller still validates server revisions before adopting the response.
+    func fetchFreshEvent(id: Int) async throws -> EventDetail {
+        try await fetch("/api/events/\(id)", cacheTTL: 15, requiresNetwork: true)
+    }
+
     /// Fetches cached line movement analysis and explanation for an event.
     func fetchLineMovement(eventId: Int) async throws -> LineMovementResponse {
         return try await fetch("/api/events/\(eventId)/line-movement", cacheTTL: 900)
@@ -866,6 +881,11 @@ actor APIClient {
     /// Fetches win-probability history for an event over the requested trailing window.
     func fetchEventHistory(id: Int, hours: Int = 24) async throws -> EventHistoryResponse {
         return try await fetch("/api/events/\(id)/history", query: ["hours": "\(hours)"], cacheTTL: 60)
+    }
+
+    func fetchFreshEventHistory(id: Int, hours: Int) async throws -> EventHistoryResponse {
+        try await fetch("/api/events/\(id)/history", query: ["hours": "\(hours)"],
+                        cacheTTL: 60, requiresNetwork: true)
     }
 
     // MARK: - Related Futures
