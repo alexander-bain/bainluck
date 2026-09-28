@@ -1191,6 +1191,26 @@ _GOLF_SCHEDULE_TTL = 3600  # 1 hour
 _SCHEDULE_TOURS = ("pga", "euro", "liv")
 
 
+def _display_venue(course: str | None) -> str:
+    """#9341: DataGolf lists a multi-course venue joined by a bare ';'
+    ("Old Course St. Andrews;Carnoustie;Kingsbarns Golf Links"), and every card
+    printed it verbatim. Split, drop repeats (compared without a trailing
+    "(Par NN)": "Royal Johannesburg East Course (Par 70)" is the same course, while
+    Torrey Pines' "(South Course)" and "(North Course)" are two), and join with ', '."""
+    seen: set[str] = set()
+    parts: list[str] = []
+    for raw in (course or "").split(";"):
+        part = raw.strip()
+        if not part:
+            continue
+        key = re.sub(r"\s*\(par\s*\d+\)\s*$", "", part, flags=re.I).casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        parts.append(part)
+    return ", ".join(parts)
+
+
 def _schedule_key(event_name: str) -> str:
     """The schedule's stable key for a tournament name.
 
@@ -1418,7 +1438,7 @@ async def _get_datagolf_schedule() -> list[dict]:
                     "key": key,
                     "start_date": f"{t.start_date}T00:00:00+00:00" if t.start_date else None,
                     "end_date": f"{t.end_date}T00:00:00+00:00" if t.end_date else None,
-                    "venue": t.course or "",
+                    "venue": _display_venue(t.course),
                     "location": t.location or "",
                     "status": t.status or "",
                     "round": str(t.current_round) if t.current_round else "",
