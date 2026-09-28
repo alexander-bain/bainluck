@@ -49,6 +49,23 @@ CURATED_TEAM_ALIASES: dict[tuple[str, str], list[str]] = {
     # answer the query has had. Refused in the same pass: `avs` (#8685 — AVS
     # Futebol), `celts` (Celtic FC are "the Celts" too), `bolts`.
     ("basketball_nba", "Golden State Warriors"): ["dubs"],
+    # #9272 — four MLB nicknames, measured on production 2026-09-28 02:5xZ.
+    # Before: `o's` served O Elvas CAD, O'Higgins and a boxing bout, `a's` and
+    # `rox` served nothing at all, and `m's` served four "A&M" schools and Texas
+    # A&M football. Each last-word token names exactly ONE baseball_mlb club over
+    # 120 days of events (Orioles 115, Athletics 113, Mariners 107, Rockies 110);
+    # Central Coast Mariners (A-League) and the NCAA/other-league "Athletics" rows
+    # sit outside the scope. Open baseball markets: Orioles 9/9 Baltimore's, the
+    # other three have none open. Both apostrophes, because a phone keyboard types
+    # the curly one. The apostrophe forms are why the TEAMS card needed
+    # `team_nickname_team_rows` too: under the English text config `a's` reduces
+    # to no lexeme at all and `m's` to `m`, so no row can match them by FTS — the
+    # Athletics row already held `A's` and still carded nothing.
+    # Refused: `chisox` (token `Sox` is the Red Sox too), `os` (Os Marialvas).
+    ("baseball_mlb", "Baltimore Orioles"): ["o's", "o\u2019s"],
+    ("baseball_mlb", "Athletics"): ["a's", "a\u2019s"],
+    ("baseball_mlb", "Seattle Mariners"): ["m's", "m\u2019s"],
+    ("baseball_mlb", "Colorado Rockies"): ["rox"],
     # #8685 — eleven more nicknames fans type, each measured on production
     # 2026-09-25 before it was added. Every open market in the franchise's sport
     # whose name holds the canonical token was read, and every one of them is the
@@ -306,3 +323,41 @@ def team_nickname_event_expansions() -> dict[str, tuple[str, str]]:
                 continue  # see `_alias_claim_counts` — refused, not guessed
             expansions[alias.lower()] = (token, sport_key)
     return expansions
+
+
+def team_nickname_team_rows() -> dict[str, tuple[str, str]]:
+    """`alias -> (sport_key, canonical team name)` for the TEAMS card (#9272).
+
+    The fourth consumer of the map, and the one that lets a nickname reach the
+    team row without waiting on `alternate_names`. The Teams card's recall is
+    full-text over the row's name, abbreviation and aliases, so it can only find
+    a nickname some row stores — which is why every earlier ship here carried a
+    pinned repair script — and for an apostrophe nickname not even that works:
+    `a's` reduces to no lexeme under the English config, so the Athletics row
+    holding `A's` was carded for nothing (production 2026-09-28). The route
+    recalls the named row by its (sport, name) key instead, the same key the map
+    is written in.
+
+    Contested aliases are refused exactly as in the siblings (`_alias_claim_counts`):
+    naming one row for them would be a guess.
+    """
+    contested = _alias_claim_counts()
+    rows: dict[str, tuple[str, str]] = {}
+    for (sport_key, team_name), aliases in CURATED_TEAM_ALIASES.items():
+        for alias in aliases:
+            if contested.get(alias.lower(), 0) > 1:
+                continue
+            rows[alias.lower()] = (sport_key, team_name)
+    return rows
+
+
+def curated_team_aliases(sport_key: str | None, team_name: str | None) -> tuple[str, ...]:
+    """The curated aliases of one team row, for the Teams card's ranking evidence.
+
+    What `backfill_curated_team_aliases.py --apply` would have written into the
+    row's `alternate_names`, read straight from the map, so a row recalled by
+    `team_nickname_team_rows` is scored on the word the reader typed (#9272).
+    Contested aliases are included on purpose: a row owning an alias is true per
+    row, which is why the backfill writes them too.
+    """
+    return tuple(CURATED_TEAM_ALIASES.get((sport_key or "", team_name or ""), ()))

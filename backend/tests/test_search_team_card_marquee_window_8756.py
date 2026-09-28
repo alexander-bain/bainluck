@@ -53,7 +53,12 @@ def test_the_sql_marquee_order_is_the_python_one():
 
 def test_the_window_breaks_rank_ties_on_marquee_before_name():
     src = _code_lines(ev.search_events)
-    assert ".order_by(team_rank.desc(), _team_marquee_order(), Team.name)" in src
+    # #9272 prefixes a curated-nickname key (empty for every other query), so
+    # the pin reads the three keys this test owns, in order, after it.
+    assert (
+        "*_team_nickname_team_order(_team_nickname_rows),\n"
+        "                team_rank.desc(), _team_marquee_order(), Team.name,"
+    ) in src
     assert ".order_by(team_rank.desc(), Team.name)" not in src
 
 

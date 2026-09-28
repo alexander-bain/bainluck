@@ -112,6 +112,14 @@ def test_search_and_game_card_expansions_are_byte_identical_to_before():
         # #9263 — neither is spelled inside its token, so both get a futures arm.
         "fins": ("Dolphins", "football"),
         "dubs": ("Warriors", "basketball"),
+        # #9272 — none is spelled inside its token, so all get a futures arm.
+        "o's": ("Orioles", "baseball"),
+        "o\u2019s": ("Orioles", "baseball"),
+        "a's": ("Athletics", "baseball"),
+        "a\u2019s": ("Athletics", "baseball"),
+        "m's": ("Mariners", "baseball"),
+        "m\u2019s": ("Mariners", "baseball"),
+        "rox": ("Rockies", "baseball"),
         # #8685: eleven franchise nicknames added after this pin; none is this alias.
         "habs": ("Canadiens", "hockey"),
         "pens": ("Penguins", "hockey"),
@@ -140,6 +148,14 @@ def test_search_and_game_card_expansions_are_byte_identical_to_before():
         # #9263
         "fins": ("Dolphins", "americanfootball_nfl"),
         "dubs": ("Warriors", "basketball_nba"),
+        # #9272
+        "o's": ("Orioles", "baseball_mlb"),
+        "o\u2019s": ("Orioles", "baseball_mlb"),
+        "a's": ("Athletics", "baseball_mlb"),
+        "a\u2019s": ("Athletics", "baseball_mlb"),
+        "m's": ("Mariners", "baseball_mlb"),
+        "m\u2019s": ("Mariners", "baseball_mlb"),
+        "rox": ("Rockies", "baseball_mlb"),
         # #8685 (the game arm also carries the inside-token `nucks`/`dbacks`, like `9ers`).
         "habs": ("Canadiens", "icehockey_nhl"),
         "pens": ("Penguins", "icehockey_nhl"),

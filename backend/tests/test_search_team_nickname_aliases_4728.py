@@ -81,6 +81,14 @@ def test_the_derived_expansions_are_exactly_these() -> None:
         # #9263 — neither is spelled inside its token, so both get a futures arm.
         "fins": ("Dolphins", "football"),
         "dubs": ("Warriors", "basketball"),
+        # #9272 — none is spelled inside its token, so all get a futures arm.
+        "o's": ("Orioles", "baseball"),
+        "o\u2019s": ("Orioles", "baseball"),
+        "a's": ("Athletics", "baseball"),
+        "a\u2019s": ("Athletics", "baseball"),
+        "m's": ("Mariners", "baseball"),
+        "m\u2019s": ("Mariners", "baseball"),
+        "rox": ("Rockies", "baseball"),
         # #8685 — `dbacks` and `nucks` are absent here and only here: each is
         # spelled inside its token (`Diamon*dbacks*`, `Ca*nucks*`), so the plain
         # ILIKE arm already reaches their markets. Same rule as `9ers`.
