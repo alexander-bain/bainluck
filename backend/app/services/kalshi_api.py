@@ -98,6 +98,13 @@ class KalshiMarket(BaseModel):
     # Result (if settled)
     result: Optional[str] = None  # 'yes', 'no', None
 
+    # #9383 — the venue's threshold shape. A single-leg market with a
+    # `strike_type` and a numeric strike is asking "over/under N", and its
+    # `yes_sub_title` is that sentence; see app/utils/kalshi_threshold_label.py.
+    strike_type: Optional[str] = None
+    floor_strike: Optional[float] = None
+    cap_strike: Optional[float] = None
+
 
 class KalshiEvent(BaseModel):
     """Represents a Kalshi event containing one or more markets."""
@@ -117,6 +124,20 @@ class KalshiEvent(BaseModel):
 
     # Nested markets
     markets: list[KalshiMarket] = []
+
+
+def _strike_number(value) -> Optional[float]:
+    """A strike as a float, or ``None`` for absent/non-numeric (#9383).
+
+    Never raises: this runs inside ``_parse_market``'s try, and one odd strike
+    must not drop the whole market on the floor.
+    """
+    if value is None or value == "" or isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def event_series_ticker(event_ticker: str) -> str:
@@ -2915,6 +2936,9 @@ class KalshiAPIService(BaseAPIClient):
                 volume_24h=volume_24h,
                 open_interest=open_interest,
                 result=market_data.get("result"),
+                strike_type=market_data.get("strike_type"),
+                floor_strike=_strike_number(market_data.get("floor_strike")),
+                cap_strike=_strike_number(market_data.get("cap_strike")),
             )
         except Exception as e:
             logger.warning("Error parsing Kalshi market: %s", e)
