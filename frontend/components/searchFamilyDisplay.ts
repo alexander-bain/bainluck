@@ -112,16 +112,28 @@ function commonPrefixLength(a: string, b: string): number {
  *  Below this we step back another word so the tail carries its own sense. */
 const MIN_RESERVED_TAIL = 4;
 
+/** #8705: a bare number is an index into the word before it — `Map 2`, `Game 1`,
+ *  `Over 210.5`, `Chiefs -3.5` — never a name on its own. Siblings numbered that
+ *  way diverge exactly AT the number, so the shared run ends on the noun and a
+ *  tail cut there reads `2 Winner` under a hoisted `… - Map` (production,
+ *  `/search?q=lgd` at 390px: `Dota 2: LGD Gaming vs Xtreme Gaming - Game` over
+ *  rows `1 Winner` / `2 Winner`). Ordinals (`9th`) carry their own sense and are
+ *  not matched. */
+const BARE_NUMBER = /^[-+]?\d+(?:\.\d+)?(?:\s|$)/;
+
 /** Split point at or before `at`, snapped back to a word boundary so a reserved
  *  tail never starts mid-word (`s Winner` instead of `9th Inning Winner`), and
- *  then back another word if what survives is too short to read. */
+ *  then back another word if what survives is too short to read or opens on a
+ *  bare number that belongs to the word before it. */
 function snapToBoundary(s: string, at: number): number {
   let from = at - 1;
   for (let guard = 0; guard < 8; guard++) {
     const sp = s.lastIndexOf(" ", from);
     if (sp <= 0) return 0;
     const cut = sp + 1;
-    if (s.length - cut >= MIN_RESERVED_TAIL) return cut;
+    if (s.length - cut >= MIN_RESERVED_TAIL && !BARE_NUMBER.test(s.slice(cut))) {
+      return cut;
+    }
     from = sp - 1; // strictly before this space, or the search never advances
   }
   return 0;
