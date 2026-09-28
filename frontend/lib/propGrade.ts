@@ -251,6 +251,46 @@ export function readPropGrade(
   return withhold("no_typed_grade");
 }
 
+/** Where a split ladder landed, stated only from its typed rung verdicts. */
+export interface SettledLadderRead {
+  /** The count, only when every row that carries one agrees AND sits between the two rungs. */
+  actual: number | null;
+  /** Highest threshold the backend graded HIT. */
+  cleared: number;
+  /** Lowest threshold the backend graded MISS. */
+  missed: number;
+}
+
+/**
+ * #9454 — the summary a ladder CAN carry when `readPropGrade` refuses it one
+ * badge. Stafford threw 2: HIT at 2+, MISS at 2.5+. No single verdict describes
+ * that, but "cleared 2+, missed 2.5+" does, and both halves are the backend's
+ * own typed `hit`s. The card used to say "grading unavailable" instead, on 60 of
+ * 102 cards of one finished NFL game.
+ *
+ * Refuses (null) unless the ladder is a genuine split: some rung HIT, some MISS,
+ * and every HIT below every MISS. Non-monotone verdicts contradict each other,
+ * so the group keeps withholding. The count is dropped rather than shown when
+ * rows disagree on it or it falls outside the two rungs — a number that
+ * contradicts the verdicts beside it is worse than none.
+ */
+export function readSettledLadder(
+  rungs: readonly { threshold: number; hit?: boolean | null }[],
+  rows: readonly PropGradeFields[],
+): SettledLadderRead | null {
+  const hits = rungs.filter((r) => r.hit === true).map((r) => r.threshold);
+  const misses = rungs.filter((r) => r.hit === false).map((r) => r.threshold);
+  if (hits.length === 0 || misses.length === 0) return null;
+  const cleared = Math.max(...hits);
+  const missed = Math.min(...misses);
+  if (!(cleared < missed)) return null;
+
+  const actuals = new Set(rows.filter((r) => r.actual != null).map((r) => r.actual as number));
+  const only = actuals.size === 1 ? [...actuals][0] : null;
+  const actual = only != null && only >= cleared && only < missed ? only : null;
+  return { actual, cleared, missed };
+}
+
 /** Did the backend publish anything renderable for this group? */
 export function isGraded(grade: PropGrade): boolean {
   return grade.state !== "WITHHOLD";
