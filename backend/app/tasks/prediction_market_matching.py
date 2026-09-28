@@ -40,6 +40,7 @@ from app.utils.kalshi_occurrence_start import (
     KALSHI_OCCURRENCE_TIMED_SOURCES,
     kalshi_game_scale_commence,
 )
+from app.utils.event_twin_fold import _catchall_sport_prefix  # #7904, the catch-all shadow arm
 from app.utils.futures_liveness import KALSHI_BOOK_SILENT_SQL
 from app.utils.polymarket_empty_book import (  # #9083, the pregame pin's book guard
     POLYMARKET_BOOKMAKER,
@@ -912,6 +913,7 @@ def _sport_key_is_odds_api_covered(sport_key: str | None) -> bool:
 
 async def covered_league_for_matchup(
     session, team_a, team_b, *, unambiguous_only: bool = False,
+    within_sport: Optional[str] = None,
 ) -> str | None:
     """The covered league BOTH sides of this matchup play in, or None. #5544.
 
@@ -1050,6 +1052,14 @@ async def covered_league_for_matchup(
         k for k in shared
         if is_season_variant(k) and league_identity(k) not in parent_leagues
     }
+    if within_sport:
+        # #7904: the caller already knows the SPORT — the row it is leaving is
+        # the venue's own `<sport>_other` mint — so only that sport's leagues
+        # can be the answer. "Bruins" and "Utah" both field an NHL club and
+        # three college programs; inside `icehockey` they field one league.
+        # This narrows `shared` and never widens it: a pair outside the sport
+        # still resolves to nothing.
+        shared = {k for k in shared if k.startswith(f"{within_sport}_")}
     if unambiguous_only and len(shared) != 1:
         return None
     return sorted(shared)[0] if shared else None
@@ -2077,13 +2087,58 @@ async def _check_polymarket_fixture_reason(session, event_id: int, market):
     return None
 
 
+def _is_polymarket_catchall_shadow(event) -> bool:
+    """Is this row one Polymarket minted for itself, carrying no schedule id? #7904.
+
+    THE SHIP: NHL opening week shows each game once, as its NHL card. Polymarket
+    names NHL clubs by nickname, so its venue ingest filed a row per game in
+    ``icehockey_other`` weeks before StatPal or ESPN scheduled it (29 upcoming on
+    2026-09-28, Oct 5 → Oct 25). When the league row arrives the serve-time fold
+    joins the two only in the SAME orientation, because it copies home/away
+    numbers; the minter reads "Sharks vs. Blues" home-first, and 4 of the 10
+    Oct 8 shadows sit reversed against ESPN (`Blues @ Sharks` beside ESPN's
+    SJ @ STL row 15169788). Those stay two cards, each holding one venue.
+
+    The shadow's own link never reaches the finder: the venue instant agrees
+    with the row (the re-date made it so), so ``_venue_instant_disowns_link``
+    says no. This names that row so the caller can ask the #5544 finder the
+    question directly — which ONE real covered-league row sits at the venue's
+    minute. Moving the market there orients it by outcome name (measured on
+    2026-09-28: reversed shadow 15304618 → 15168042 served Polymarket 0.625
+    beside Kalshi 0.64). The shadow is left standing for #1946's drain; with no
+    markets and no blend key it folds either way round.
+
+    Every clause is the row's own provenance, never a name:
+
+    * minted on the venue's clock (``commence_time_source`` is Polymarket's);
+    * no provider id of any kind — no ``external_id``, ``espn_id`` or
+      ``statpal_fixture_id``. A row somebody scheduled is never a shadow;
+    * ``scheduled``. A live row's score question outranks a card count, and a
+      finished or retired row belongs to other arms.
+
+    The ``*_other`` sport key is the caller's check (it needs a query).
+    """
+    return (
+        getattr(event, "commence_time_source", None) == POLYMARKET_VENUE_COMMENCE_SOURCE
+        and getattr(event, "external_id", None) is None
+        and getattr(event, "espn_id", None) is None
+        and getattr(event, "statpal_fixture_id", None) is None
+        and getattr(event, "status", None) == "scheduled"
+    )
+
+
 async def _venue_confirmed_covered_fixture(
     session, matchup, market, linked_event, *,
     window: Optional[timedelta] = None,
     exclude_retired: bool = False,
     allow_kalshi_ticker: bool = False,
+    within_sport: Optional[str] = None,
 ):
     """The real covered-league fixture this market's OWN venue instant names. #5544.
+
+    ``within_sport`` (#7904): the catch-all shadow arm passes the sport of the
+    `<sport>_other` row the market sits on, and the resolver keeps only that
+    sport's leagues. Every other caller leaves it None.
 
     ``allow_kalshi_ticker`` (#8547): the venue-instant relink alone also asks
     this of a Kalshi game ticker. The instant is the ticker's HHMM
@@ -2176,6 +2231,7 @@ async def _venue_confirmed_covered_fixture(
         # See the resolver's docstring for the measured AFL/AFLW pair.
         league = await covered_league_for_matchup(
             session, matchup.team_a, matchup.team_b, unambiguous_only=True,
+            within_sport=within_sport,
         )
     if league is None:
         return None
@@ -5849,6 +5905,7 @@ async def _phase15_revalidate(
             # treat it as a mislink even if team names match. This catches
             # cases like baseball "Royals" linked to cricket "Rajasthan Royals".
             sport_mismatch = False
+            event_sport_key = None
             market_sport = _market_sport_prefix(market)
             if market_sport and linked_event.sport_id:
                 from app.models.models import Sport as _Sport
@@ -5884,24 +5941,56 @@ async def _phase15_revalidate(
             # Destination via the #5544 finder only (never the scorer), retired
             # rows excluded; zero or two candidates leave the link alone.
             venue_named_row = None
+            catchall_shadow_named = False
             if (
                 teams_match and not is_finished and not is_auto_created
                 and not sport_mismatch and not is_retired
             ):
-                if not _venue_instant_disowns_link(market, linked_event):
-                    continue
-                venue_named_row = await _venue_confirmed_covered_fixture(
-                    session, matchup, market, linked_event,
-                    window=_PM_VENUE_SAME_GAME, exclude_retired=True,
-                    allow_kalshi_ticker=True,
-                )
+                if market.source == "polymarket" and _is_polymarket_catchall_shadow(
+                    linked_event
+                ):
+                    # #7904: the market sits on the row Polymarket minted for it
+                    # in the catch-all bucket, and the venue instant agrees with
+                    # that row, so the arm below would leave it. Ask the #5544
+                    # finder instead: exactly one real covered-league row at the
+                    # venue's minute is the game. See the helper's docstring.
+                    if event_sport_key is None and linked_event.sport_id:
+                        from app.models.models import Sport as _Sport
+                        event_sport_key = (await session.execute(
+                            select(_Sport.key).where(_Sport.id == linked_event.sport_id)
+                        )).scalar_one_or_none()
+                    shadow_sport = _catchall_sport_prefix(event_sport_key)
+                    if shadow_sport:
+                        venue_named_row = await _venue_confirmed_covered_fixture(
+                            session, matchup, market, linked_event,
+                            window=_PM_VENUE_SAME_GAME, exclude_retired=True,
+                            within_sport=shadow_sport,
+                        )
+                        if venue_named_row is None:
+                            stats["funnel"].setdefault(
+                                "phase15_catchall_shadow_left_alone", 0
+                            )
+                            stats["funnel"]["phase15_catchall_shadow_left_alone"] += 1
+                            continue
+                        catchall_shadow_named = True
+                        stats["funnel"].setdefault("phase15_catchall_shadow_named", 0)
+                        stats["funnel"]["phase15_catchall_shadow_named"] += 1
                 if venue_named_row is None:
-                    stats["funnel"].setdefault("phase15_venue_instant_left_alone", 0)
-                    stats["funnel"]["phase15_venue_instant_left_alone"] += 1
-                    continue
+                    if not _venue_instant_disowns_link(market, linked_event):
+                        continue
+                    venue_named_row = await _venue_confirmed_covered_fixture(
+                        session, matchup, market, linked_event,
+                        window=_PM_VENUE_SAME_GAME, exclude_retired=True,
+                        allow_kalshi_ticker=True,
+                    )
+                    if venue_named_row is None:
+                        stats["funnel"].setdefault("phase15_venue_instant_left_alone", 0)
+                        stats["funnel"]["phase15_venue_instant_left_alone"] += 1
+                        continue
 
             reason = (
-                "venue_instant" if venue_named_row is not None
+                "catchall_shadow" if catchall_shadow_named
+                else "venue_instant" if venue_named_row is not None
                 else "auto_created" if is_auto_created
                 else "cross_sport" if sport_mismatch
                 else "mislinked" if not teams_match

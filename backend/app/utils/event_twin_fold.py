@@ -2059,6 +2059,16 @@ def _catchall_claim_names_league_row(
     the fold unions the catch-all's venue prices onto the survivor, and those
     are home/away numbers. Every other clause here still holds, and the league
     side's id may be StatPal's (:func:`_group_carries_schedule_id`).
+
+    #7904, THE REVERSED SHADOW. Polymarket's minter reads "Sharks vs. Blues" as
+    home-first, so 4 of the 10 Oct 8 NHL shadows sit the wrong way round against
+    ESPN (`Blues @ Sharks` beside `San Jose Sharks @ St Louis Blues`). A reversed
+    catch-all folds only when its group carries NO oriented reading
+    (:func:`_group_carries_oriented_readings`, #9304): no venue key, no opening
+    line. The matcher's catch-all shadow arm moves the shadow's markets onto the
+    league row first, where they are oriented by outcome name, so an unpriced
+    shadow is exactly the state it leaves behind. A priced reversed shadow still
+    stays two cards.
     """
     if not (
         _variant_group_is_collapsible(catchall)
@@ -2084,12 +2094,26 @@ def _catchall_claim_names_league_row(
         # side of the league row: the orientation is never swapped, because the
         # fold unions the catch-all's venue prices onto the survivor by home and
         # away, and a reversed pairing would hand a reader the other club's %.
-        return _one_club_named_twice(
+        if _one_club_named_twice(
             getattr(member, "away_team_name", None),
             getattr(league_row, "away_team_name", None),
         ) and _one_club_named_twice(
             getattr(member, "home_team_name", None),
             getattr(league_row, "home_team_name", None),
+        ):
+            return True
+        # ...unless the catch-all carries nothing to union. Once its markets
+        # have moved to the league row (the matcher's catch-all shadow arm), a
+        # reversed shadow holds no home/away number, so nothing lands on the
+        # wrong club — #9304's rule for reversed bouts, applied here.
+        if _group_carries_oriented_readings(catchall):
+            return False
+        return _one_club_named_twice(
+            getattr(member, "away_team_name", None),
+            getattr(league_row, "home_team_name", None),
+        ) and _one_club_named_twice(
+            getattr(member, "home_team_name", None),
+            getattr(league_row, "away_team_name", None),
         )
     disputed = "home_team_name" if same_away else "away_team_name"
     return _one_club_named_twice(
