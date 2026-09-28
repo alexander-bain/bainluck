@@ -2885,6 +2885,27 @@ jobs:
             exit 1
           fi
 
+      - name: "#9460 one Kalshi event's failed write does not sink the rest of the beat (real Postgres)"
+        # The discovery poll upserts every event inside the beat's one
+        # transaction and swallows a per-event failure. On Postgres the failed
+        # statement aborted the transaction, and every later event raised with
+        # it: 6,253 in the 9/28 20:45Z beat, including every existing market.
+        # Each event now writes inside its own savepoint. Only Postgres aborts a
+        # transaction, so only Postgres can show the savepoint contains it. Same
+        # rig and database as the #3518 step. Skip detection plus a count.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_kalshi_poll_survives_one_failed_event_real_postgres_9460.py \
+            -v -rs 2>&1 | tee /tmp/kalshisavepoint9460.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/kalshisavepoint9460.txt; then
+            echo "::error::#9460 Kalshi per-event savepoint gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]3 passed" /tmp/kalshisavepoint9460.txt || {
+            echo "::error::#9460 Kalshi per-event savepoint gate did not run all three cases"
+            exit 1
+          }
+
       - name: "#3569 The live poll speaks the venue's current price dialect (real Postgres)"
         # `get_markets` returns the venue's RAW JSON and the 2-minute poll read
         # `yes_bid`/`yes_ask`/`last_price` off it. The venue emits none of those
