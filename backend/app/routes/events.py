@@ -2928,6 +2928,72 @@ def _decided_boards_last(markets: list) -> list:
     ]
 
 
+def _name_words(text: str | None) -> list[str]:
+    """Lower-cased words of ``text``, an apostrophe folded away ("d'Or" -> "dor")."""
+    folded = (text or "").lower().replace("'", "").replace("’", "")
+    return _SEARCH_WORD.findall(folded)
+
+
+def _name_holds_terms_tightly(name: str | None, choices: list[list[list[str]]]) -> bool:
+    """The name holds the query as a phrase (word starts, in order, side by side)
+    or holds every term as a whole word. ``choices`` is one list of word
+    sequences per term: the term's own words, then its expansion's.
+    """
+    words = _name_words(name)
+
+    def _phrase_from(i: int, k: int) -> bool:
+        if k == len(choices):
+            return True
+        for seq in choices[k]:
+            end = i + len(seq)
+            if end <= len(words) and all(
+                w.startswith(s) for w, s in zip(words[i:end], seq)
+            ) and _phrase_from(end, k + 1):
+                return True
+        return False
+
+    if any(_phrase_from(i, 0) for i in range(len(words))):
+        return True
+
+    def _whole(seq: list[str]) -> bool:
+        n = len(seq)
+        return any(words[i:i + n] == seq for i in range(len(words) - n + 1))
+
+    return all(any(_whole(seq) for seq in alts) for alts in choices)
+
+
+def _scattered_terms_last(markets: list, low: list[tuple[str, str]]) -> list:
+    """#8689 r2: among name matches, a row that holds a multi-word query only as
+    scattered pieces of longer words yields to one that holds it tightly.
+
+    `?q=us open` (production 2026-09-28 00:1xZ, after r1) served `US job openings
+    in August` second, above `2027 US Open Women's Singles Winner` and `US Open
+    Winner`. The name-match test is a substring test, so "US ... open(ings)"
+    passes it, and the volume sort put the 714-volume jobs question ahead. A
+    tight row either has the terms side by side as word starts ("US Open", and
+    "us ope" while typing) or has every term as a whole word ("NBA: 2027
+    Champion", "Fed funds rate"). Only a row with neither sinks.
+
+    A stable partition like its siblings: nothing is dropped, each group keeps
+    its volume order, and a single-word query or a list with no loose row comes
+    back untouched. Over the top 57 real multi-word queries (30 days, read
+    2026-09-28) it moved two pages: `us open` and `finish top 3`.
+    """
+    choices = []
+    for t, e in low:
+        alts = [seq for seq in (_name_words(t), _name_words(e)) if seq]
+        if alts:
+            choices.append(alts)
+    if len(choices) < 2 or len(markets) < 2:
+        return markets
+    tight = [_name_holds_terms_tightly(m.name, choices) for m in markets]
+    if all(tight) or not any(tight):
+        return markets
+    return [m for m, ok in zip(markets, tight) if ok] + [
+        m for m, ok in zip(markets, tight) if not ok
+    ]
+
+
 def _rerank_search_futures(
     markets: list,
     expanded: list[tuple[str, str | None]],
@@ -2976,6 +3042,9 @@ def _rerank_search_futures(
     name_matches = [m for m in markets if _name_match(m)]
     outcome_only = [m for m in markets if not _name_match(m)]
     name_matches.sort(key=_market_volume, reverse=True)  # real-interest signal
+    # #8689 r2: "US job openings" is not a name match for `us open` in any sense
+    # a reader means, so it yields to the rows that hold the query tightly.
+    name_matches = _scattered_terms_last(name_matches, low)
     # #8726: a board with no open question left yields to one that has one,
     # inside each partition so a name match still leads every outcome-only row.
     ordered = _decided_boards_last(name_matches) + _decided_boards_last(outcome_only)
