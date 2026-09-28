@@ -697,6 +697,32 @@ jobs:
             exit 1
           fi
 
+      - name: "wild card finds this week's MLB Wild Card games (real Postgres)"
+        # PILLAR: DISCOVER. SHIP: typing `wild card` in search or the dropdown
+        # shows the Wild Card games and series markets. Production 2026-09-28
+        # served no games and led with NCAAB/NCAAF futures (#9333).
+        #
+        # The round is read from Kalshi tickers by a correlated EXISTS with
+        # substr/concat inside two route bodies, so only a real database can
+        # observe it. A strawman (round map emptied -> old answer) and two
+        # controls. Three refusals: a skip, a zero count, and a short count.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_search_postseason_round_pg.py \
+            -v -rs 2>&1 | tee /tmp/round.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/round.txt; then
+            echo "::error::postseason-round search gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          if grep -qiE "no tests ran|collected 0 items" /tmp/round.txt; then
+            echo "::error::postseason-round search gate collected NOTHING"
+            exit 1
+          fi
+          if ! grep -qE "^=+ 11 passed" /tmp/round.txt; then
+            echo "::error::postseason-round search gate did not pass all 11"
+            exit 1
+          fi
+
       - name: "#5030 a game being played stays in the search dropdown (real Postgres)"
         # PILLAR: DISCOVER. SHIP: typing a player or team while their game is on
         # offers that game, not last week's finals.

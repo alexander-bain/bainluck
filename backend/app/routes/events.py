@@ -4689,7 +4689,8 @@ def _alias_futures_arms(terms: list[str]) -> list:
     misses are missed by NAME ("Men's 2027 College Basketball Champion" is a name
     match). An alias is a cheap recall additive; it does not buy a second full
     search. Returns [] for any query with no alias, so the common path is
-    unchanged SQL.
+    unchanged SQL. A postseason round name (#9333) adds its TICKER arm here too —
+    see `_postseason_round_futures_arms`.
     """
 
     arms = []
@@ -4698,7 +4699,133 @@ def _alias_futures_arms(terms: list[str]) -> list:
         arms.append(
             and_(*[_build_expanded_ilike(FuturesMarket.name, t, e) for t, e in expanded])
         )
-    return arms
+    return arms + _postseason_round_futures_arms(terms)
+
+
+#: #9333 — a postseason ROUND, named by the reader and by no stored text.
+#: `/search?q=wild card` on Monday 2026-09-28 served ZERO games with four MLB
+#: Wild Card series opening the next day, and led its futures with the NCAAB and
+#: NCAAF championship markets (`wild` inside Wild·cats, `card` inside
+#: Card·inals, two outcome names). No event row, and no linked market name
+#: ("Game 1: Boston vs New York Y"), says "wild card".
+#:
+#: The round lives in Kalshi's TICKERS: every series market of the round ends in
+#: its code (`KXMLBSERIES-26BOSNYYWC`, `KXMLBSERIESGAMES-…WC`, `…SCORE-…WC`),
+#: and each game's own Kalshi market carries the same team pair
+#: (`KXMLBGAME-26SEP292000BOSNYY`). So a game belongs to the round when its
+#: linked game ticker ends in the pair of an open series market of that round,
+#: and was played after that series was listed — which keeps out the two clubs'
+#: regular-season meetings (`KXMLBGAME-26AUG281915BOSNYY`), whose tickers end in
+#: the same pair.
+#:
+#: phrase -> (sport key, series-family stem, winner-market prefix, game-market
+#: prefix, round code). NFL wild card weekend has no such owned signal yet, so
+#: it is not claimed here.
+_POSTSEASON_ROUND_ALIASES: dict[tuple[str, ...], tuple[str, str, str, str, str]] = {
+    ("wild", "card"): ("baseball_mlb", "KXMLBSERIES", "KXMLBSERIES-", "KXMLBGAME-", "WC"),
+    ("wildcard",): ("baseball_mlb", "KXMLBSERIES", "KXMLBSERIES-", "KXMLBGAME-", "WC"),
+}
+
+_POSTSEASON_ROUND_MAX_PHRASE_LEN = max(len(p) for p in _POSTSEASON_ROUND_ALIASES)
+
+
+def _resolve_postseason_round(terms):
+    """``(round | None, consumed_terms)`` — the first round name in the query.
+
+    Longest phrase first, like `_resolve_sport_aliases`. Pure, so the guard
+    tests can pin it without a database.
+    """
+    lowered = [term.lower() for term in terms]
+    for length in range(min(_POSTSEASON_ROUND_MAX_PHRASE_LEN, len(lowered)), 0, -1):
+        for i in range(len(lowered) - length + 1):
+            rnd = _POSTSEASON_ROUND_ALIASES.get(tuple(lowered[i:i + length]))
+            if rnd:
+                return rnd, set(lowered[i:i + length])
+    return None, set()
+
+
+def _ticker_range(column, prefix: str):
+    """``column LIKE 'prefix%'`` in a form `uq_futures_source_external` can serve.
+
+    A bare `LIKE 'KXMLBSERIES%'` seq-scans `futures_markets` on production (cost
+    179,038); a range on the same prefix is an index scan (cost 4). But the
+    range is bounded on the prefix's ALPHANUMERIC stem: production's collation
+    ignores punctuation, so `'KXMLBSERIES-' <= x < 'KXMLBSERIES.'` matched ZERO
+    rows there while passing on a C-collated test database. The LIKE then
+    restores the exact prefix.
+    """
+    stem = prefix.rstrip("-_.")
+    return and_(
+        column >= stem,
+        column < stem[:-1] + chr(ord(stem[-1]) + 1),
+        column.like(f"{prefix}%"),
+    )
+
+
+def _postseason_round_series_match(rnd, market=FuturesMarket):
+    """The round's own Kalshi series markets (winner, total games, exact score)."""
+    _sport_key, stem, _winner, _game, code = rnd
+    return and_(
+        market.source == "kalshi",
+        _ticker_range(market.external_id, stem),
+        market.external_id.like(f"%{code}"),
+    )
+
+
+def _postseason_round_futures_arms(terms: list[str]) -> list:
+    """The round's series markets as one UNION arm; `[]` without a round name.
+
+    Rides `_alias_futures_arms` so it gets that arm's three wirings on both
+    surfaces — recall, the tier-1 window, and relevance tier 1 — rather than
+    landing in tier 2 beside the Wild·cats/Card·inals outcome collisions.
+    """
+    rnd, _consumed = _resolve_postseason_round(terms)
+    return [] if rnd is None else [_postseason_round_series_match(rnd)]
+
+
+def _postseason_round_event_scope(rnd):
+    """The round's games: see `_POSTSEASON_ROUND_ALIASES` for the rule.
+
+    An uncorrelated `IN`, not a per-event EXISTS: correlated, the planner walked
+    every `KXMLBGAME` ticker once per MLB event in the window (1,166 ms on
+    production 2026-09-28); as one set it is 72-85 ms, and only a query naming
+    a round pays it.
+    """
+    sport_key, _stem, winner, game_prefix, code = rnd
+    game = aliased(FuturesMarket, name="round_game")
+    series = aliased(FuturesMarket, name="round_series")
+    game_event = aliased(Event, name="round_game_event")
+    # `KXMLBSERIES-26BOSNYYWC`: the two-digit year follows the prefix, the pair
+    # sits between the year and the round code.
+    year = func.substr(series.external_id, len(winner) + 1, 2)
+    pair = func.substr(
+        series.external_id,
+        len(winner) + 3,
+        func.length(series.external_id) - (len(winner) + 2 + len(code)),
+    )
+    round_games = (
+        select(game.event_id)
+        .select_from(game)
+        .join(
+            series,
+            and_(
+                series.source == "kalshi",
+                _ticker_range(series.external_id, winner),
+                series.external_id.like(f"%{code}"),
+                series.status == "open",
+                game.external_id.like(func.concat(game_prefix, year, "%", pair)),
+            ),
+        )
+        .join(
+            game_event,
+            and_(
+                game_event.id == game.event_id,
+                game_event.commence_time >= series.created_at,
+            ),
+        )
+        .where(game.source == "kalshi", _ticker_range(game.external_id, game_prefix))
+    )
+    return and_(Sport.key == sport_key, Event.id.in_(round_games))
 
 
 # Built once at import: a dict rebuild per keystroke on the typeahead path would be
@@ -8094,6 +8221,23 @@ async def search_events(
     #   "nba"          -> the bare league arm is kept, since a league-only query IS
     #                     asking for the league (corpus case `league_only_explicit`).
     _event_recall_arms = [team_filter]
+
+    # #9333: `wild card` names the round's games, which no event text does —
+    # see `_POSTSEASON_ROUND_ALIASES`. A separate UNION arm, so it only ADDS
+    # cards; the words left beside it (`yankees wild card`) narrow it, and league
+    # words (`mlb wild card`) are already consumed.
+    _postseason_round, _round_consumed_terms = _resolve_postseason_round(terms)
+    if _postseason_round:
+        _event_recall_arms.append(
+            and_(
+                _postseason_round_event_scope(_postseason_round),
+                *[
+                    _event_name_match(t, e)
+                    for t, e in non_league_expanded
+                    if t.lower() not in _round_consumed_terms
+                ],
+            )
+        )
 
     # #4809 — the nickname's game-card arm. #4728 gave `pats` the team row and the
     # markets; this gives it the games. A separate UNION arm for the same reason
@@ -11917,6 +12061,30 @@ async def typeahead_search(
     if _ta_nickname_arms:
         event_team_filter = or_(event_team_filter, *_ta_nickname_arms)
         event_name_filter = or_(event_name_filter, *_ta_nickname_arms)
+
+    # #9333: the round's games, from the same builder `/search` uses. Upcoming
+    # pool only: a round names no participant, so the or-last arm's admission
+    # test would discard them anyway.
+    _ta_round, _ta_round_consumed = _resolve_postseason_round(terms)
+    if _ta_round:
+        _ta_round_rest = [
+            (t, e) for t, e in ta_expanded if t.lower() not in _ta_round_consumed
+        ]
+        _, _ta_round_league_words = _resolve_sport_aliases(_ta_round_rest)
+        event_team_filter = or_(
+            event_team_filter,
+            and_(
+                _postseason_round_event_scope(_ta_round),
+                *[
+                    or_(
+                        _build_expanded_ilike(Event.home_team_name, t, e),
+                        _build_expanded_ilike(Event.away_team_name, t, e),
+                    )
+                    for t, e in _ta_round_rest
+                    if t.lower() not in _ta_round_league_words
+                ],
+            ),
+        )
 
     # LAT-P140: the two halves go in as SEPARATE arms of the UNION built below,
     # not as one OR'd arm. `_futures_name_arms` carries the measurement; the short
