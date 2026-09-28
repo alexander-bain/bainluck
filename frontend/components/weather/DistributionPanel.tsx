@@ -7,7 +7,7 @@ import {
   tempColorC,
   toC,
   SOURCES,
-  tomorrowDateStr,
+  isoDayLabel,
   weatherProbability,
 } from "./data";
 import { SourceBadge, CrossSourceBadge } from "./SourceBadge";
@@ -52,6 +52,7 @@ export default function DistributionPanel({ city }: DistributionPanelProps) {
   const isCrossSource = city.srcs.length > 1 && !!city.kalshiHigh;
 
   const unit = city.high.unit === "C" ? "C" : "F";
+  const dayLabel = isoDayLabel(city.iso);
   const modeDisplay = Math.round(city.high.mode);
 
   const kalshiDist = city.kalshiHigh?.dist;
@@ -84,7 +85,7 @@ export default function DistributionPanel({ city }: DistributionPanelProps) {
       </div>
 
       <div className="font-mono" style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 8 }}>
-        Tomorrow&apos;s high temperature &middot; {tomorrowDateStr()}
+        High temperature{dayLabel ? <> &middot; {dayLabel}</> : null}
       </div>
 
       {/* Peak display */}

@@ -15,7 +15,7 @@ function TemperatureMapSkeleton() {
       <div className="max-w-[1280px] mx-auto">
         <SectionHeader
           kicker="Global temperature map"
-          title="Tomorrow's high, as a probability distribution."
+          title="Daily high, as a probability distribution."
         />
         <div className="grid grid-cols-1 lg:grid-cols-[1.55fr_1fr] gap-3.5 items-stretch">
           {/* Map skeleton */}
@@ -75,7 +75,7 @@ export default function TemperatureMap() {
         <div className="max-w-[1280px] mx-auto">
           <SectionHeader
             kicker="Global temperature map"
-            title="Tomorrow's high, as a probability distribution."
+            title="Daily high, as a probability distribution."
           />
           <div className="bg-surface-card border border-surface-border rounded-2xl py-16 text-center">
             <p className="text-text-secondary text-sm">Failed to load temperature data</p>
@@ -95,7 +95,7 @@ export default function TemperatureMap() {
         <div className="max-w-[1280px] mx-auto">
           <SectionHeader
             kicker="Global temperature map"
-            title="Tomorrow's high, as a probability distribution."
+            title="Daily high, as a probability distribution."
           />
           <div className="bg-surface-card border border-surface-border rounded-2xl py-16 text-center">
             <p className="text-text-secondary text-sm">No live temperature markets right now</p>

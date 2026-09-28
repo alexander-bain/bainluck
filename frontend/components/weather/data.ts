@@ -72,6 +72,10 @@ export type CityData = {
   region: "Americas" | "Europe" | "Asia" | "Africa" | "Oceania";
   srcs: Source[];
   marketId?: number;
+  /** The day this city's ladder is about, `YYYY-MM-DD`, from the market
+   *  itself (#8046). Cities on one map can be on different days; a city
+   *  without one is never labelled with a date. */
+  iso?: string | null;
   high: {
     unit: "C" | "F";
     mode: number;
@@ -173,15 +177,23 @@ export const CLIMATE: ClimateMarket[] = [];
 
 export const WILDCARDS: WildCard[] = [];
 
-export function tomorrowDateStr(): string {
-  const d = new Date();
-  d.setDate(d.getDate() + 1);
-  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  return `${months[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** `2026-09-29` → `Sep 29, 2026`; anything else → null. Read as a calendar
+ *  day, never through `new Date()`, which would shift it by the reader's zone. */
+export function isoDayLabel(iso: string | null | undefined): string | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso ?? "");
+  if (!m) return null;
+  const month = MONTHS[Number(m[2]) - 1];
+  return month ? `${month} ${Number(m[3])}, ${m[1]}` : null;
 }
 
-export function tomorrowDateStrUpper(): string {
-  return tomorrowDateStr().toUpperCase();
+/** The one day every city on the map is about, or null when they differ
+ *  or any city cannot say (#8046 Half B). */
+export function sharedDayLabel(cities: CityData[]): string | null {
+  const days = new Set(cities.map(c => c.iso ?? ""));
+  if (days.size !== 1) return null;
+  return isoDayLabel([...days][0]);
 }
 
 export function probColor(p: number): string {
