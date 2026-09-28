@@ -107,6 +107,14 @@ async def test_real_poll_upsert_carries_or_clears_current_anchor(response, expec
     else:
         assert identity["event_id"] == expected_id
         assert identity["scope"] == "current_quotes_only"
+        for stmt in statements:
+            if getattr(stmt, "is_insert", False) and stmt.table.name == "futures_outcomes":
+                outcome = stmt.compile(dialect=postgresql.dialect())
+                assert outcome.params["last_updated"].isoformat() == identity["polled_at"]
+                # Both insert and ON CONFLICT use the quote clock, not DB now().
+                assert "last_updated = now()" not in str(outcome)
+                clock_params = [v for k, v in outcome.params.items() if isinstance(v, datetime)]
+                assert all(v.isoformat() == identity["polled_at"] for v in clock_params)
     assert "coalesce(futures_markets.market_metadata" in str(compiled)
     assert "||" in str(compiled)  # other metadata survives the scoped key replacement
     assert "canonical_market_key" not in (identity or {})
