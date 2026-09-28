@@ -3852,6 +3852,16 @@ def _compose_futures_families(
 
     query_label = " ".join(t for t, _ in expanded).strip()
     entity_key = f"entity:{query_label.lower()}" if query_label else None
+    # #9340: a bare round (`championship series`, `wild card`) builds its card
+    # from the round's own rows — the one rule the flat list and the dropdown
+    # already lead with. Production `91183e5b`, 2026-09-28 14:4xZ: the list led
+    # with ALCS/NLCS, and the ANSWERS card above it was "Championship Series"
+    # holding four `NFL: … Season Series Winner` boards (`championship` carries
+    # the `winner` synonym, so they match by NAME); `wild card`'s card was a
+    # tennis match, `Set 1 Winner: Thiago Seyboth Wild vs Pedro Boscardin Dias`.
+    # The round's rows name the round only by abbreviation or ticker, so they
+    # never joined. A name-only row stays in the flat list at its own rank.
+    in_round = _postseason_round_lead_predicate([t for t, _ in expanded])
 
     def _family_key(m):
         # #7355 r3: the demotion sank these rows in the flat list, and the card
@@ -3867,6 +3877,8 @@ def _compose_futures_families(
         sk = _story_key(m.name or "", m.llm_sport_category or "")
         if sk:
             return sk
+        if in_round is not None:
+            return entity_key if entity_key and in_round(m) else None
         if entity_key and _query_name_match(m, expanded):
             return entity_key
         return None
@@ -3909,7 +3921,10 @@ def _compose_futures_families(
         # it's an outcome-only cluster (e.g. "lebron james" matched the 2028
         # election markets only because he's a listed candidate → not a LeBron
         # family). Spec: "family relevance = best member's name-match score".
-        if not any(_query_name_match(m, expanded) for m in members):
+        # #9340: a round card's members passed the round predicate, which IS
+        # the relevance evidence; its rows name the round only by abbreviation.
+        round_card = in_round is not None and key == entity_key
+        if not round_card and not any(_query_name_match(m, expanded) for m in members):
             continue
         if key.startswith("story:"):
             # #6941. The house vocabulary, never string surgery on the key. A
