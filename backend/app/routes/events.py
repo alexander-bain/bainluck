@@ -18237,7 +18237,17 @@ def _btts_reader_facing_name(market_name: str) -> str:
 #: `\bbases\b` is scoped to the totals branch and cannot reach "Total Runs". The
 #: player-prop form ("Brandon Marsh: Total Bases O/U 2.5") is already `player_prop`
 #: by the check above this one, so ORDER is load-bearing: this must stay below it.
-_NON_SCORING_TOTAL_RE = re.compile(r"\bbases\b")
+#:
+#: `corners` is the soccer half of the same class (#9308). Polymarket lists a corners
+#: ladder beside the goals one on nearly every fixture ("O/U 9.5 Total Corners",
+#: "1st Half O/U 4.5 Total Corners", "<Club> O/U 5.5 Corners"); Kalshi lists
+#: "<A> vs <B>: Total Corners". Measured 2026-09-28 over 60 days of linked totals
+#: markets: 26,405 name corners, and 0 name cards, bookings, shots, fouls or offsides.
+#: So those words stay OUT until a venue lists them ("Cards" is also a Cardinals
+#: nickname). On a 400-market sample, 303 classified `game_total` and 86 `half_total`.
+#: Japan–Venezuela (15312535) served "O/U 8.5 Total Corners" as its 8.5-GOALS rung,
+#: and León–Juárez's 1st-half goals map read "Four lines quoted" 0.5/3.5/4.5/5.5.
+_NON_SCORING_TOTAL_RE = re.compile(r"\b(?:bases|corners?)\b")
 
 
 #: The shapes that only ever exist as the *output* of decomposing a container

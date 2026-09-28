@@ -716,6 +716,18 @@ class TestAContainerParentNeverEvictsItsOwnMember:
     the preference costs 21 member rows (265 → 244), and on three of those
     events the container's row wins the threshold, is deleted as redundant, and
     the reader is left with neither.
+
+    🔴 **#9308 (2026-09-28) MOVED THIS FAMILY OFF THE TOTALS RAIL.** "Corners" is
+    now a non-scoring stat total (`stat_total`, served in `other`), and it was
+    the ONLY family that reached Step 7 as a container parent: over 30 days of
+    production, all 669 totals-shaped `field` parents in a `polymarket:` group
+    were "… - Total Corners", one shape, and 0 were anything else. So the
+    eviction this class was written for has no production specimen left. The
+    arms below pin the new truth: the rows leave the totals rail, the members
+    are still served, and suppressing the container still costs the page nothing
+    that isn't its own. If a totals-shaped container family ever appears on
+    the goals rail again, re-arm the eviction assertions with a specimen of it,
+    not with an invented one.
     """
 
     def _group(self):
@@ -765,9 +777,9 @@ class TestAContainerParentNeverEvictsItsOwnMember:
 
         markets, _ = self._group()
         assert _decomposed_container_parent_candidates(markets) == {CORNERS_PARENT}
-        assert _classify_game_market(markets[0].name) == "game_total", (
-            "the container no longer reaches the totals section, so this test "
-            "is guarding a branch it can never enter"
+        assert _classify_game_market(markets[0].name) == "stat_total", (
+            "a corners container is back in the totals section (#9308 reverted?): "
+            "re-arm the eviction assertions this class carried before 2026-09-28"
         )
 
     @pytest.mark.asyncio
@@ -782,11 +794,16 @@ class TestAContainerParentNeverEvictsItsOwnMember:
         documents). 9.5 is the rung the eviction actually decides.
         """
         payload = await self._payload()
-        served = payload.get("totals") or []
-        assert 9.5 in {t["threshold"] for t in served}, (
-            "the 9.5 rung left the page entirely: the container's row won the "
-            f"per-threshold dedup and was then deleted as redundant. Got {served}"
-        )
+        totals = [t.get("market_name") for t in payload.get("totals") or []]
+        assert totals == [], f"corners rows are on the goals rail: {totals}"
+
+        other = {r.get("market_name") for r in payload.get("other") or []}
+        markets, _ = self._group()
+        for member in markets[1:]:
+            assert member.name in other, (
+                f"member {member.name!r} left the page entirely. Reclassifying "
+                "moves a market, it never deletes one"
+            )
 
     @pytest.mark.asyncio
     async def test_the_container_costs_the_page_nothing_it_would_otherwise_show(self):
@@ -835,9 +852,10 @@ class TestAContainerParentNeverEvictsItsOwnMember:
         assert stray == set(), (
             f"suppression put rows on the page from outside the group: {stray}"
         )
-        assert after - before, (
-            "the container never occupied a member's threshold, so this fixture "
-            "no longer reaches the eviction this class exists for"
+        # Since #9308 nothing shares a totals threshold with the container, so
+        # suppressing it frees no rung for a member: the page GAINS nothing.
+        assert after - before == set(), (
+            f"suppressing the container changed rows it does not own: {after - before}"
         )
 
     @pytest.mark.asyncio
@@ -849,10 +867,11 @@ class TestAContainerParentNeverEvictsItsOwnMember:
         which is #4189's original symptom in the totals section.
         """
         payload = await self._payload()
-        for t in payload.get("totals") or []:
-            assert "- Total Corners" not in (t.get("market_name") or ""), (
-                f"the container's own row is being served as a total: {t}"
-            )
+        for section in ("totals", "player_props", "spreads", "period_markets", "other"):
+            for t in payload.get(section) or []:
+                assert "- Total Corners" not in (t.get("market_name") or ""), (
+                    f"the container's own row is served in {section}: {t}"
+                )
 
 
 class TestShapesThisRuleMustNotTouch:
