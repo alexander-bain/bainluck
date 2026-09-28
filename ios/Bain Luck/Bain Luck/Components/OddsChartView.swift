@@ -915,19 +915,22 @@ struct OddsChartView: View {
                     }
                 }
             }
+            // #9274 — status is text, not a navigation action. A toolbar slot
+            // compresses its words into a glass circle on iOS. Reserve readable
+            // content space below navigation without covering the chart/readout.
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if status == "live" && liveUpdateStatus != .hidden {
+                    LiveUpdateStatusView(status: liveUpdateStatus)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal)
+                        .padding(.vertical, 8)
+                }
+            }
             .navigationTitle("Win Probability")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar {
-                // #8320 — fullscreen covers the page toolbar, so the page's one
-                // status travels with it: the stream dot when pushed, nothing
-                // otherwise. There is no refresh button here to draw.
-                if status == "live" && liveUpdateStatus != .hidden {
-                    ToolbarItem(placement: .cancellationAction) {
-                        LiveUpdateStatusView(status: liveUpdateStatus)
-                    }
-                }
                 // #9185 — a word, not a grey `xmark` in a glass circle: Alex
                 // read that circle as a control that did nothing.
                 ToolbarItem(placement: .confirmationAction) {
