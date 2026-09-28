@@ -20,6 +20,7 @@ from sqlalchemy.orm import selectinload
 from app.models import FuturesMarket, FuturesOddsSnapshot, FuturesOutcome
 from app.services import get_db
 from app.utils.cross_source_matching import group_markets_by_group_id
+from app.utils.ladder_monotonicity import DEC, cumulative_outcome_ladder
 from app.utils.market_staleness import should_exclude_from_featured, is_title_implied_stale
 
 logger = logging.getLogger(__name__)
@@ -530,11 +531,65 @@ def _card_outcome(market: FuturesMarket):
         if nyc is not None and nyc.current_probability is not None:
             return nyc
 
+    rung = _ladder_median_rung(market)
+    if rung is not None:
+        return rung
+
     leader = _leader_outcome(market)
     if leader is None or not _prices_the_negation(leader):
         return leader
 
     return _best_non_negated_outcome(market) or leader
+
+
+def _ladder_median_rung(market: FuturesMarket):
+    """The tightest rung a cumulative ladder still calls likely, or None.
+
+    A cumulative ladder's dearest leg is its LOOSEST rung by arithmetic — every
+    storm that reaches Category 5 also reached Category 1 — so the leader scan
+    quotes the least informative answer the market holds. Production,
+    2026-09-28, `/weather` "Hurricane markets" (#9283):
+
+        Hurricane Polo category?   100%  Category 1 or above
+        How strong will Hurricane Polo be?  98%  Category 5
+
+    Kalshi prices Polo's "Category 5 or above" rung at 99.5% too; the card
+    picked Category 1 because it came first in a five-way tie. Nolo read "100%
+    Category 1 or above" over a 83.5% "Category 4 or above" rung, and the ski
+    resorts read "opens before Jan 10: 94%" where the market says "before
+    Dec 13: 66%".
+
+    So on a ladder the card is about the median: walk the priced rungs from the
+    loosest, keep going while each is still >= 50%, and quote the last one. The
+    walk stops at the first rung under 50% rather than jumping to any later rung
+    over it, so an incoherent ladder (1+ 90%, 2+ 30%, 3+ 60%) can never be read
+    as "3+ is likely" over a rung that says it is not. Unpriced rungs take no
+    part. When even the loosest priced rung is under 50% there is no median to
+    quote and this returns None — the ordinary leader stands, unchanged.
+    """
+    outcomes = list(market.outcomes or [])
+    ladder = cumulative_outcome_ladder(
+        [{"name": o.name, "outcome": o} for o in outcomes],
+        dates=True,
+        question=market.name,
+    )
+    if ladder is None:
+        return None
+    rungs, direction = ladder
+    priced = [
+        (value, row["outcome"])
+        for value, row in rungs
+        if row["outcome"].current_probability is not None
+    ]
+    # Loosest first: the lowest threshold of an "above" ladder, the latest
+    # date of a "by" ladder.
+    priced.sort(key=lambda pair: pair[0], reverse=(direction != DEC))
+    median = None
+    for _value, outcome in priced:
+        if float(outcome.current_probability) < 0.5:
+            break
+        median = outcome
+    return median
 
 
 def _card_probability(market: FuturesMarket) -> float:
