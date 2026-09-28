@@ -46,7 +46,7 @@ import path from "path";
 import useSWR, { SWRConfig } from "swr";
 import { applyLiveFrame, frameInvalidatesFoldedBlend, makeEventRefreshInterval } from "../../lib/eventLivePush";
 import { fetchEventWithLiveFrame } from "../../lib/reconcileEventPoll";
-import { createFoldedRefetchScheduler } from "../../lib/foldedRefetchScheduler";
+import { createFoldedRefetchScheduler, takeFreshRead } from "../../lib/foldedRefetchScheduler";
 import {
   adoptNewerBlendEdge,
   edgeInvalidatesHeldBlend,
@@ -122,11 +122,12 @@ function frame(args: { rev: number; row?: string; p: number; at: string }): Live
 }
 
 // ── the harness: the page's held-event wiring ───────────────────────────────
-type Net = { requests: Deferred[]; landed: Held[]; discarded: number };
+type Net = { requests: Deferred[]; landed: Held[]; discarded: number; freshReads: boolean[] };
 
 function HeldEvent(props: { net: Net; liveFrame: LiveFrame | null; servedHistory: unknown }) {
   const { net, liveFrame, servedHistory } = props;
   const eventId = EVENT_ID;
+  const freshNextEventReadRef = useRef(false);
   const streamConnectedRef = useRef(true); // the stream is delivering: the 120 s poll stands down
   const latestLiveFrameRef = useRef<LiveFrame | null>(null);
   const latestBlendEdgeRef = useRef<BlendEdgeObservation | null>(null);
@@ -141,7 +142,7 @@ function HeldEvent(props: { net: Net; liveFrame: LiveFrame | null; servedHistory
   const { data: event, mutate: refreshEvent } = useSWR(
     ["event", eventId],
     () => fetchEventWithLiveFrame(
-      () => { const d = new Deferred(); net.requests.push(d); return d.promise; },
+      () => { net.freshReads.push(takeFreshRead(freshNextEventReadRef)); const d = new Deferred(); net.requests.push(d); return d.promise; },
       () => latestLiveFrameRef.current,
       () => latestBlendEdgeRef.current,
       () => heldEventRef.current,
@@ -156,7 +157,7 @@ function HeldEvent(props: { net: Net; liveFrame: LiveFrame | null; servedHistory
   const refreshEventRef = useRef(refreshEvent);
   refreshEventRef.current = refreshEvent;
   const [foldedRefetch] = useState(() => createFoldedRefetchScheduler(
-    () => refreshEventRef.current(), FOLDED_FRAME_REFETCH_MS,
+    () => { freshNextEventReadRef.current = true; return refreshEventRef.current(); }, FOLDED_FRAME_REFETCH_MS,
   ));
   useEffect(() => () => foldedRefetch.cancel(), [foldedRefetch]);
 
@@ -210,7 +211,7 @@ async function settle() {
 const doc = document as unknown as { createElement: (t: string) => Element; body: { appendChild: (c: unknown) => void } };
 
 async function mountHeldEvent() {
-  const net: Net = { requests: [], landed: [], discarded: 0 };
+  const net: Net = { requests: [], landed: [], discarded: 0, freshReads: [] };
   const container = doc.createElement("div");
   doc.body.appendChild(container);
   const root: Root = createRoot(container);
@@ -261,10 +262,10 @@ afterEach(() => {
 describe("structural pin: the harness carries the page's own wiring", () => {
   it("app/events/[id]/page.tsx still reads as the lines HeldEvent mounts", () => {
     // The fetcher, with the held-event getter the poll reconciles against.
-    expect(PAGE).toMatch(/fetchEventWithLiveFrame\(\s*\(\) => fetchEvent\(eventId, heldEventRef\.current\?\.status === "live"\),\s*\(\) => latestLiveFrameRef\.current,\s*\(\) => latestBlendEdgeRef\.current,\s*\(\) => heldEventRef\.current,/);
+    expect(PAGE).toMatch(/fetchEventWithLiveFrame\(\s*\(\) => fetchEvent\(eventId, takeFreshRead\(freshNextEventReadRef\)\),\s*\(\) => latestLiveFrameRef\.current,\s*\(\) => latestBlendEdgeRef\.current,\s*\(\) => heldEventRef\.current,/);
     expect(PAGE).toMatch(/refreshInterval: eventPollInterval/);
     // The scheduler, built once, torn down with the page.
-    expect(PAGE).toMatch(/createFoldedRefetchScheduler\(\s*\(\) => refreshEventRef\.current\(\), FOLDED_FRAME_REFETCH_MS,/);
+    expect(PAGE).toMatch(/createFoldedRefetchScheduler\(\s*\(\) => \{ freshNextEventReadRef\.current = true; return refreshEventRef\.current\(\); \}, FOLDED_FRAME_REFETCH_MS,/);
     expect(PAGE).toMatch(/useEffect\(\(\) => \(\) => foldedRefetch\.cancel\(\), \[foldedRefetch\]\)/);
     // The push effect: a refused frame requests a refetch and writes NOTHING.
     expect(PAGE).toMatch(/if \(frameInvalidatesFoldedBlend\(heldEventRef\.current, liveFrame\)\) \{\s*foldedRefetch\.request\(\);\s*return;\s*\}/);
@@ -488,4 +489,28 @@ describe("#9294: contributor invalidations have no adoptable price", () => {
     expect(page.net.discarded).toBe(0);
     await page.unmount();
   });
+});
+
+
+it("#9296 ordinary interval polls do not inherit fresh mode from a live event", async () => {
+  const page = await mountHeldEvent();
+  await page.resolve(0, folded({ p: 0.6, observedAt: T(12), revision: { "100": 5, "101": 3 } }));
+  await page.deliver(frame({ rev: 6, p: 0.55, at: T(16) }));
+  await page.resolve(1, folded({ p: 0.4, observedAt: T(16), revision: { "100": 6, "101": 3 } }));
+  expect(page.net.freshReads).toEqual([false, true]);
+  await page.advance(SCHEDULED_REFRESH_INTERVAL);
+  expect(page.net.freshReads).toEqual([false, true, false]);
+  await page.unmount();
+});
+
+it("keeps independent detail/history fresh intents until each fetch actually starts", () => {
+  const detail = { current: false };
+  const history = { current: false };
+  const deduped = createFoldedRefetchScheduler(() => { detail.current = true; history.current = true; }, 5000);
+  deduped.request(); // A deduped SWR mutation has not invoked either fetcher.
+  expect(takeFreshRead(detail)).toBe(true);
+  expect(takeFreshRead(detail)).toBe(false);
+  expect(takeFreshRead(history)).toBe(true);
+  expect(takeFreshRead(history)).toBe(false);
+  deduped.cancel();
 });

@@ -158,7 +158,7 @@ describe('#9051 current blend after source removal', () => {
   test('the page requests history through the bounded scheduler without mutating chart points', () => {
     const page = fs.readFileSync(path.join(__dirname, '../../app/events/[id]/page.tsx'), 'utf8');
     expect(page).toContain('chartRevisionRefreshKey(event, servedHistory, historyData)');
-    expect(page).toMatch(/createFoldedRefetchScheduler\(\s*\(\) => refreshHistoryRef\.current\(\), FOLDED_FRAME_REFETCH_MS,/);
+    expect(page).toMatch(/createFoldedRefetchScheduler\(\s*\(\) => \{ freshNextHistoryReadRef\.current = true; return refreshHistoryRef\.current\(\); \}, FOLDED_FRAME_REFETCH_MS,/);
     expect(page).toMatch(/if \(requestedChartRevisionRef\.current === key\) return;\s*requestedChartRevisionRef\.current = key;\s*foldedHistoryRefetch\.request\(\);/);
     expect(page).toContain('() => foldedHistoryRefetch.cancel()');
   });
