@@ -48,13 +48,69 @@ GOVERNOR = "Florida Governor winner?"
 PERSON_OF_YEAR = "Time's Person of the Year for 2026"
 LEBRON_MARKET = "Most points in a single game this season?"
 
+# CERT-3696 FOLLOW-UP `9306-ACCEPTANCE-CONTROL-MATRIX`: the other three round
+# words, each with (a) a market NAMED for the round, reached by the unchanged
+# name arm, (b) an outcome carrying the round as a whole word, and (c) an
+# outcome carrying it INSIDE a word. On 2026-09-28 production had no (c) row for
+# `alcs`/`nlcs`/`nlds` (only `alds` collided, with Donalds), so the (c) names are
+# invented — each is the token inside a surname, the shape Don(alds) had. The
+# surname sits only in an OUTCOME, as Donalds does, never in the market name.
+ROUND_NAMED = {
+    "alcs": "MLB Playoffs: Team to advance to ALCS",
+    "nlcs": "MLB Playoffs: Team to advance to NLCS",
+    "nlds": "MLB Playoffs: Team to advance to NLDS",
+}
+ROUND_WHOLE_WORD = "Round the Red Sox are eliminated in?"
+ROUND_INSIDE_WORD = {
+    "alcs": "Ohio Senate winner?",
+    "nlcs": "Boston Mayor winner?",
+    "nlds": "Iowa Governor winner?",
+}
+ROUND_SEEDS = [
+    ("KXMLBALCS-26", ROUND_NAMED["alcs"], ["New York Yankees", "Boston Red Sox"]),
+    ("KXMLBNLCS-26", ROUND_NAMED["nlcs"], ["Los Angeles Dodgers", "Chicago Cubs"]),
+    ("KXMLBNLDS-26", ROUND_NAMED["nlds"], ["San Diego Padres", "Milwaukee Brewers"]),
+    ("KXMLBELIMBOS-26", ROUND_WHOLE_WORD, ["ALCS", "NLCS", "NLDS", "World Series"]),
+    ("KXSENBALC-26", ROUND_INSIDE_WORD["alcs"], ["Tomas Balcsar", "Ana Ortiz"]),
+    ("KXMAYVANL-26", ROUND_INSIDE_WORD["nlcs"], ["Pieter Vanlcsen", "Rosa Diaz"]),
+    ("KXGOVBRUN-26", ROUND_INSIDE_WORD["nlds"], ["Karl Brunlds", "Mia Chen"]),
+]
+
+# #9306's controls: `yank`, `nugs`, `cards`, `mamdani`, `vance` "return the same
+# markets as today". The market names hold none of those strings, so every hit
+# below is the OUTCOME arm the fix touched.
+WORLD_SERIES = "World Series champion?"
+NYC_MAYOR = "New York City Mayor winner?"
+NOMINEE = "Republican Presidential Nominee 2028"
+BOOKINGS = "Total bookings: Arsenal vs Chelsea?"
+WEST = "Western Conference champion?"
+CONTROL_SEEDS = [
+    ("KXMLBWS-26", WORLD_SERIES, ["New York Yankees", "Los Angeles Dodgers"]),
+    ("KXMAYORNYC-26", NYC_MAYOR, ["Zohran Mamdani", "Andrew Cuomo"]),
+    ("KXGOPNOM-28", NOMINEE, ["JD Vance", "Byron Donalds"]),
+    ("KXEPLBOOK-26", BOOKINGS, ["Over 4.5 cards", "Under 4.5 cards"]),
+    ("KXNBAWEST-26", WEST, ["Denver Nuggets", "Oklahoma City Thunder"]),
+]
+# The market each control reaches by outcome SUBSTRING. `nugs` has none — no
+# outcome holds the string, and `nugs` reaches the Nuggets only through the team
+# stem (#9277), not this arm — so its control is parity alone.
+CONTROL_REACH = {
+    "yank": WORLD_SERIES,
+    "cards": BOOKINGS,
+    "mamdani": NYC_MAYOR,
+    "vance": NOMINEE,
+}
+CONTROLS = ["yank", "nugs", "cards", "mamdani", "vance"]
+
 # (external_id, market name, outcome names). The outcomes are the production
-# rows' own spellings.
+# rows' own spellings, except the invented (c) names above.
 SEEDS = [
     ("KXMLBALDS-26", ALDS_MARKET, ["Boston Red Sox", "Houston Astros"]),
     ("KXGOVFL-26", GOVERNOR, ["Byron Donalds", "David Jolly"]),
     ("KXPERSONYEAR-26", PERSON_OF_YEAR, ["Jimmy Donaldson", "Pope Leo XIV"]),
     ("KXNBAPTS-26", LEBRON_MARKET, ["LeBron James", "Luka Doncic"]),
+    *ROUND_SEEDS,
+    *CONTROL_SEEDS,
 ]
 
 
@@ -196,3 +252,55 @@ async def test_progressive_typing_still_reaches_an_outcome(get, path, read):
     start of "LeBron", not a whole word, and must keep reaching the market."""
     names = read(await get(path, "lebro"))
     assert LEBRON_MARKET in names, names
+
+
+@pytest.mark.parametrize("token", sorted(ROUND_NAMED))
+@pytest.mark.parametrize("path, read", SCREENS)
+async def test_each_round_word_keeps_its_markets_and_sheds_the_inside_word(
+    get, path, read, token
+):
+    """alcs/nlcs/nlds: name arm and whole-word outcome kept, inside-word shed."""
+    names = read(await get(path, token))
+    assert ROUND_NAMED[token] in names, (
+        f"the {token.upper()} market itself must still be served: {names}"
+    )
+    assert ROUND_WHOLE_WORD in names, (
+        f"an outcome that IS the round ({token.upper()}) must still reach its "
+        f"market: {names}"
+    )
+    assert ROUND_INSIDE_WORD[token] not in names, (
+        f"`{token}` reaches a market through a surname it is inside of: {names}"
+    )
+
+
+@pytest.mark.parametrize("token", sorted(ROUND_NAMED))
+@pytest.mark.parametrize("path, read", SCREENS)
+async def test_without_the_round_word_set_the_inside_word_comes_back(
+    get, path, read, token, monkeypatch
+):
+    """Strawman per round word: the invented collision is a real one."""
+    _disarm(monkeypatch)
+    names = read(await get(path, token))
+    assert ROUND_INSIDE_WORD[token] in names, names
+
+
+@pytest.mark.parametrize("q", CONTROLS)
+@pytest.mark.parametrize("path, read", SCREENS)
+async def test_a_control_serves_the_same_markets_with_and_without_the_rule(
+    get, path, read, q, monkeypatch
+):
+    """#9306's controls return the same markets as before the fix.
+
+    Emptying `_TEAM_PREFIX_REFUSED_TOKENS` IS the pre-fix outcome arm on both
+    screens (the typeahead probe then takes `ilike(pattern)`, as it did), so
+    the rule on and the rule off must serve one list, in one order.
+    """
+    with_rule = read(await get(path, q))
+    _disarm(monkeypatch)
+    without_rule = read(await get(path, q))
+    assert with_rule == without_rule, (with_rule, without_rule)
+    if q in CONTROL_REACH:
+        assert CONTROL_REACH[q] in with_rule, (
+            f"`{q}` must reach its market through an outcome, or the parity "
+            f"above compared two empty lists: {with_rule}"
+        )
