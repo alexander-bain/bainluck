@@ -180,6 +180,26 @@ async def test_the_dropdown_leads_with_them_too(get):
     assert served and texts[: len(served)] == served, f"dropdown led with {texts[:4]}"
 
 
+async def test_the_answers_card_is_the_rounds_markets(get):
+    """#9340 r2: the card above the list. Production `91183e5b` 14:4xZ 9/28:
+    the list led with ALCS/NLCS and the "Championship Series" ANSWERS card held
+    the Matchup and four NFL boards. The card is now the round's own rows."""
+    payload = await get("search", "championship series")
+    cards = [
+        f for f in payload.get("futures_families") or []
+        if f["family_key"] == "entity:championship series"
+    ]
+    assert cards, f"no round card; families {[f['family_key'] for f in payload.get('futures_families') or []]}"
+    shown = [cards[0]["headline"]["name"]] + [m["name"] for m in cards[0]["members"]]
+    assert set(shown) <= LCS and len(shown) >= 2, shown
+    everywhere = {
+        n
+        for f in payload.get("futures_families") or []
+        for n in [f["headline"]["name"], *(m["name"] for m in f["members"])]
+    }
+    assert not everywhere & NFL, sorted(everywhere & NFL)[:4]
+
+
 async def test_division_series_still_leads_with_its_round(get):
     futures = _search_futures(await get("search", "division series"))
     assert _leads_with(futures, DIVISION), futures[:6]

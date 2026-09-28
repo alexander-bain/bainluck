@@ -824,8 +824,8 @@ jobs:
             echo "::error::championship-series lead gate collected NOTHING"
             exit 1
           fi
-          if ! grep -qE "^=+ 7 passed" /tmp/lcslead.txt; then
-            echo "::error::championship-series lead gate did not pass all 7"
+          if ! grep -qE "^=+ 8 passed" /tmp/lcslead.txt; then
+            echo "::error::championship-series lead gate did not pass all 8"
             exit 1
           fi
 
