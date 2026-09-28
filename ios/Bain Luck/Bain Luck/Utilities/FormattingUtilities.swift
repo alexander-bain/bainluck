@@ -163,9 +163,12 @@ func formatProbabilityOrDash(_ value: Double?, renderedPercent: Int? = nil) -> S
 /// a draw-priced sport both render exactly as they do today.
 func duelProbabilityStrings(
     away: Double?,
-    home: Double
+    home: Double,
+    complementaryAway: Bool = false
 ) -> (away: String, home: String) {
-    let pair = renderedDuelPercents(away: away, home: home)
+    let pair = complementaryAway
+        ? complementDisplayPercents(away: away, home: home)
+        : renderedDuelPercents(away: away, home: home)
     return (
         formatProbabilityOrDash(away, renderedPercent: pair[0]),
         formatProbability(home, renderedPercent: pair[1])

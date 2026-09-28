@@ -51,7 +51,7 @@ d("the iOS event detail hero prints a decided pair", () => {
   });
 
   it("the hero pair goes through renderedDuelPercents", () => {
-    expect(view).toContain("renderedDuelPercents(away: away, home: home)");
+    expect(view).toContain("complementDisplayPercents(away: away, home: home)");
   });
 
   it("the hero takes BOTH served percents or neither", () => {
@@ -157,7 +157,7 @@ d("the iOS event detail hero prints a decided pair", () => {
     // #8622: the settled caption's pair is now `pregame.percents`, decided in
     // `PrematchReading.resolve` through the same two shared helpers — so one
     // opening-duel call stays in this file and the other moved there.
-    const duelCalls = view.match(/renderedDuelPercents\(/g) ?? [];
+    const duelCalls = view.match(/(?:renderedDuelPercents|complementDisplayPercents)\(/g) ?? [];
     expect(duelCalls.length).toBeGreaterThanOrEqual(2);
     const resolver = readFileSync(
       join(IOS_ROOT, "Utilities/PrematchReading.swift"), "utf8");

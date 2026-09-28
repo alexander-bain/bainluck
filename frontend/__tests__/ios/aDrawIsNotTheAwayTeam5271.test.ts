@@ -287,7 +287,7 @@ d("a draw is not the away team on iOS", () => {
     // OPTIONAL one, so a withheld away still prints a dash rather than a number
     // invented from `1 - home`.
     expect(code).toMatch(
-      /let printed = duelProbabilityStrings\(\s*away: probabilities\.away, home: probabilities\.home\)/
+      /let printed = duelProbabilityStrings\(\s*away: probabilities\.away, home: probabilities\.home,\s*complementaryAway: complementaryAway\)/
     );
     expect(code).toMatch(/Text\(printed\.away\)/);
     // ...and the shared helper is what keeps the dash. Asserted on the helper's
@@ -386,7 +386,7 @@ d("a draw is not the away team on iOS", () => {
     expect(rounding).toMatch(
       /guard let away else \{\s*return \(renderedPercent\(home\) \?\? 0, nil\)\s*\}/
     );
-    expect(rounding).toMatch(/renderedDuelPercents\(away: away, home: home\)/);
+    expect(rounding).toMatch(/complementDisplayPercents\(away: away, home: home\)/);
     expect(rounding).toMatch(/return \(pair\[1\] \?\? 0, pair\[0\]\)/);
 
     for (const source of [detail(), chart()]) {
