@@ -2,7 +2,7 @@
 
 import { format, isSameDay, parseISO } from "date-fns";
 import { trustedLiveClock } from "@/lib/gameTimeLabel";
-import { renderedDuelPercents } from "@/lib/renderedPercent";
+import { renderedComplementPercents, renderedDuelPercents } from "@/lib/renderedPercent";
 import { teamShortNames } from "@/lib/teamShortName";
 import { teamTextColor } from "@/lib/teamColors";
 import type { ActiveChartPoint } from "@/lib/types";
@@ -138,7 +138,9 @@ export default function GamePlayCard({
      NOT complementary alone rather than normalising it into a fiction. This
      card was simply the surface still calling a bare per-side `Math.round`,
      which is why it was the one disagreeing with the hero. */
-  const [awayPct, homePct] = renderedDuelPercents(point.awayProb, point.homeProb);
+  const [awayPct, homePct] = point.awayProb === 1 - point.homeProb
+    ? renderedComplementPercents(point.homeProb)
+    : renderedDuelPercents(point.awayProb, point.homeProb);
   const homeProb = homePct ?? Math.round(point.homeProb * 100);
   const awayProb = awayPct ?? Math.round(point.awayProb * 100);
 
