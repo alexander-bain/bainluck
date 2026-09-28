@@ -75,9 +75,9 @@ struct EventDetailView: View {
     /// both edges at once and the team names collapse to `Cle m…`.
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
-    init(eventId: Int) {
+    init(eventId: Int, viewModel: EventDetailViewModel? = nil) {
         self.eventId = eventId
-        _vm = StateObject(wrappedValue: EventDetailViewModel(eventId: eventId))
+        _vm = StateObject(wrappedValue: viewModel ?? EventDetailViewModel(eventId: eventId))
     }
 
     private var isLive: Bool { vm.event?.status == "live" }
@@ -237,18 +237,11 @@ struct EventDetailView: View {
             .toolbar {
                 #if os(iOS)
                 ToolbarItem(placement: .principal) {
-                    VStack(spacing: 1) {
-                        navTitleView
-                        LiveUpdateStatusView(status: vm.liveUpdateStatus)
-                    }
-                }
-                #else
-                ToolbarItem(placement: .automatic) {
-                    LiveUpdateStatusView(status: vm.liveUpdateStatus)
+                    navTitleView
                 }
                 #endif
-                // #8320 — the page's ONE freshness status, and the manual
-                // refresh it has always been. Live only: no other page polls.
+                // Delivery status sits beside Win Probability, where the fan is
+                // reading prices. Keep the manual refresh independently reachable.
                 if isLive {
                     ToolbarItem(placement: .cancellationAction) {
                         Button { Task { await vm.load() } } label: {
@@ -678,6 +671,39 @@ struct EventDetailView: View {
         let names = TeamShortName.shortPair(away: event.awayTeam, home: event.homeTeam,
                                             sportKey: event.sport)
         return "\(names.home) \(delta > 0 ? "↑" : "↓")\(abs(delta)) \(abs(delta) == 1 ? "pt" : "pts")"
+    }
+
+    /// One visible delivery status directly beside the probabilities, including
+    /// accepted receipts whose rounded percentage does not move. Detail age stays disclosed.
+    private func probabilityDetails(confidenceTier: String?) -> some View {
+        Button { showProbabilityDetails.toggle() } label: {
+            VStack(spacing: 4) {
+                HStack(spacing: 6) {
+                    Text("Win Probability")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    SignalBarsView(tier: confidenceTier)
+                }
+                VisibleLivePriceStatusView(status: vm.liveUpdateStatus,
+                    sequence: vm.priceActivity?.sequence ?? 0,
+                    receivedAt: vm.priceActivity?.receivedAt)
+            }
+            .frame(maxWidth: dynamicTypeSize.isAccessibilitySize ? nil : Self.verdictSlotWidth, minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Probability confidence and update details. " +
+            (isLive ? LivePriceReceiptCue.accessibilityText(status: vm.liveUpdateStatus,
+                receivedAt: vm.priceActivity?.receivedAt) : ""))
+        .accessibilityHint("Shows connection status and when the last price update reached this phone")
+        .popover(isPresented: $showProbabilityDetails) {
+            FreshnessRevealView(status: vm.liveUpdateStatus,
+                lastReceivedAt: vm.priceActivity?.receivedAt, confidenceTier: confidenceTier)
+                .frame(maxWidth: 300)
+                #if os(iOS)
+                .presentationCompactAdaptation(.popover)
+                #endif
+        }
     }
 
     // MARK: - Chart Header Bar (v2: title + freshness)
@@ -1332,28 +1358,7 @@ struct EventDetailView: View {
                             hasMovement: event.openingOdds?.homeProbability
                                 .map { abs(home - $0) > 0.001 } ?? false
                         )?.rawValue
-                        Button { showProbabilityDetails.toggle() } label: {
-                            HStack(spacing: 6) {
-                                Text("Win Probability")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                                SignalBarsView(tier: confidenceTier)
-                            }
-                            .frame(minHeight: 44)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Probability confidence and update details")
-                        .accessibilityHint("Shows connection status and when the last price update reached this phone")
-                        .popover(isPresented: $showProbabilityDetails) {
-                            FreshnessRevealView(status: vm.liveUpdateStatus,
-                                                lastReceivedAt: vm.priceActivity?.receivedAt,
-                                                confidenceTier: confidenceTier)
-                                .frame(maxWidth: 300)
-                                #if os(iOS)
-                                .presentationCompactAdaptation(.popover)
-                                #endif
-                        }
+                        probabilityDetails(confidenceTier: confidenceTier)
                         if isLive {
                             LivePriceMovementCaption(sequence: vm.priceActivity?.sequence ?? 0,
                                                      text: movementCaption(event),
@@ -1368,6 +1373,7 @@ struct EventDetailView: View {
                             .font(.title2)
                             .fontWeight(.medium)
                             .foregroundStyle(.secondary)
+                        if isLive { probabilityDetails(confidenceTier: nil) }
                     }
                     // Projected final score.
                     //

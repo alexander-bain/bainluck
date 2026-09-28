@@ -19,10 +19,10 @@ import XCTest
 /// hero's chip. A countdown to the next poll is plumbing, not something a fan
 /// reads (Codex brief: "No countdown in default reader UI").
 ///
-/// After: the toolbar carries the page's ONE status — the push dot while the
-/// stream delivers, a plain refresh glyph while polled — and the chart title
-/// carries none. Fullscreen covers the toolbar, so it repeats the push dot and
-/// nothing else.
+/// The page carries one delivery status beside the hero probability. Manual
+/// refresh remains in the toolbar; fullscreen carries its own status because
+/// it covers the hero. Mounted page tests in VisibleLivePriceStatusTests prove
+/// the status is readable without opening the disclosure.
 ///
 /// These are source scans because the routing lives in `View` bodies no test
 /// can instantiate headlessly; comments are stripped first so this fix's own
@@ -80,11 +80,12 @@ final class ALiveEventPageSaysItsFreshnessOnce8320Tests: XCTestCase {
         XCTAssertFalse(try code("Views", "EventDetailView.swift").contains("Timer.scheduledTimer(withTimeInterval:0.5"))
     }
 
-    // MARK: - One status, in the toolbar
+    // MARK: - One status, beside probability
 
     func testReadableStatusAndManualRefreshAreSeparate() throws {
         let page = try code("Views", "EventDetailView.swift")
-        XCTAssertEqual(occurrences(of: "LiveUpdateStatusView(status:vm.liveUpdateStatus)", in: page), 2)
+        XCTAssertEqual(occurrences(of: "VisibleLivePriceStatusView(status:vm.liveUpdateStatus", in: page), 1)
+        XCTAssertEqual(occurrences(of: "LiveUpdateStatusView(status:vm.liveUpdateStatus)", in: page), 0)
         XCTAssertTrue(page.contains(".accessibilityLabel(\"Refreshnow\")"))
         XCTAssertTrue(page.contains("Button{Task{awaitvm.load()}}label:{Image(systemName:\"arrow.clockwise\")"))
         XCTAssertEqual(occurrences(of: "LivePushDot(", in: page), 0)
