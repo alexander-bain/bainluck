@@ -110,7 +110,7 @@ function bundleShareMember(member: FeedItem): BundleShareMember {
     return { name: member.headline || "Market", leaderLabel: null, percent: null };
   }
   const data = member.data as FeedFuturesData;
-  const leader = heroOutcome(data.top_outcomes);
+  const leader = heroOutcome(data.top_outcomes, data.name);
   const prob = leader?.probability;
   // `> 0` and not just non-null: the row itself renders an em dash for a zero
   // (FuturesCard.tsx, `FuturesCompactRow`), and an em dash is not a share sentence.
