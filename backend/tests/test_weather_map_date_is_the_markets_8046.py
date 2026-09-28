@@ -178,3 +178,63 @@ def test_each_city_serves_its_own_markets_day():
     # New York's is the name's month/day, in the year nearest its settlement.
     nyc = cities["nyc"]["iso"]
     assert nyc is not None and nyc.endswith("-09-29")
+
+
+def test_the_card_names_the_venue_whose_ladder_it_draws_9260():
+    """#9260: New York is quoted by both venues; the 11-bucket Polymarket
+    ladder wins, and the badge must say Polymarket, not `sorted(srcs)[0]`."""
+    eng = create_engine("sqlite://")
+    Base.metadata.create_all(
+        eng,
+        tables=[
+            FuturesMarket.__table__,
+            FuturesOutcome.__table__,
+            FuturesOddsSnapshot.__table__,
+        ],
+    )
+    session = Session(eng)
+    ladders = {
+        62721466: (
+            "polymarket",
+            "1090393",
+            "Highest temperature in NYC on September 29?",
+            11,
+        ),
+        62734099: (
+            "kalshi",
+            "KXHIGHNY-26SEP27",
+            "Highest temperature in New York on Sep 27, 2026?",
+            6,
+        ),
+    }
+    for mid, (source, ext, name, n) in ladders.items():
+        session.add(
+            FuturesMarket(
+                id=mid,
+                source=source,
+                external_id=ext,
+                name=name,
+                status="open",
+                llm_sport_category="weather",
+                resolution_date=NOW + timedelta(days=1),
+                updated_at=FRESH,
+            )
+        )
+        for i in range(n):
+            session.add(
+                FuturesOutcome(
+                    id=mid * 100 + i,
+                    market_id=mid,
+                    external_id=f"o-{mid}-{i}",
+                    name=f"{60 + 2 * i}-{61 + 2 * i}°F",
+                    current_probability=1.0 / n,
+                    last_updated=FRESH,
+                )
+            )
+    session.commit()
+
+    nyc = next(c for c in asyncio.run(get_cities(AsyncDB(session))) if c["id"] == "nyc")
+
+    assert nyc["marketId"] == 62721466
+    assert nyc["srcs"] == ["kalshi", "polymarket"]
+    assert nyc["src"] == "polymarket"

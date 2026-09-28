@@ -53,6 +53,9 @@ export default function DistributionPanel({ city }: DistributionPanelProps) {
 
   const unit = city.high.unit === "C" ? "C" : "F";
   const dayLabel = isoDayLabel(city.iso);
+  // Badge the venue whose ladder this is (#9260); a payload that cannot say,
+  // over a city two venues quote, gets no badge rather than a guess.
+  const badgeSrc = city.src ?? (city.srcs.length === 1 ? city.srcs[0] : undefined);
   const modeDisplay = Math.round(city.high.mode);
 
   const kalshiDist = city.kalshiHigh?.dist;
@@ -81,7 +84,7 @@ export default function DistributionPanel({ city }: DistributionPanelProps) {
             {city.name}
           </div>
         </div>
-        {isCrossSource ? <CrossSourceBadge /> : <SourceBadge src={city.srcs[0]} />}
+        {isCrossSource ? <CrossSourceBadge /> : badgeSrc ? <SourceBadge src={badgeSrc} /> : null}
       </div>
 
       <div className="font-mono" style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 8 }}>
@@ -148,7 +151,7 @@ export default function DistributionPanel({ city }: DistributionPanelProps) {
         ) : (
           <>
             Click any pin on the map &middot; {dist.length} outcome buckets
-            {city.srcs.length > 1 ? " (Polymarket)" : ` (${SOURCES[city.srcs[0]].label})`}
+            {badgeSrc ? ` (${SOURCES[badgeSrc].label})` : null}
           </>
         )}
       </div>

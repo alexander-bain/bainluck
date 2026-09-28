@@ -71,6 +71,9 @@ export type CityData = {
   y: number;
   region: "Americas" | "Europe" | "Asia" | "Africa" | "Oceania";
   srcs: Source[];
+  /** The venue whose ladder `high` is (#9260). `srcs` is sorted, so its
+   *  first entry is not this. Optional for payloads cached before it. */
+  src?: Source;
   marketId?: number;
   /** The day this city's ladder is about, `YYYY-MM-DD`, from the market
    *  itself (#8046). Cities on one map can be on different days; a city

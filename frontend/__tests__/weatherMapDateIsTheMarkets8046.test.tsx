@@ -106,3 +106,24 @@ describe("the day is read as a calendar day, not through the reader's zone", () 
     expect(sharedDayLabel([city("a", "A", "2026-09-29"), city("b", "B", "2026-09-29")])).toBe("Sep 29, 2026");
   });
 });
+
+describe("#9260 — the badge names the venue whose ladder the card draws", () => {
+  const nyc = (extra: Partial<CityData>): CityData => ({
+    ...city("nyc", "New York", "2026-09-29"),
+    srcs: ["kalshi", "polymarket"],
+    ...extra,
+  });
+  const badge = (c: CityData) => /(Kalshi|Polymarket)/.exec(panel(c))?.[1] ?? null;
+
+  test("a Polymarket ladder in a city Kalshi also quotes reads Polymarket", () => {
+    expect(badge(nyc({ src: "polymarket" }))).toBe("Polymarket");
+  });
+
+  test("a payload that cannot say which venue, over two, badges neither", () => {
+    expect(badge(nyc({}))).toBeNull();
+  });
+
+  test("a single-venue city is badged with that venue", () => {
+    expect(badge({ ...city("tokyo", "Tokyo", "2026-09-29"), srcs: ["polymarket"] })).toBe("Polymarket");
+  });
+});

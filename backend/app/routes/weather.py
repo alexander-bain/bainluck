@@ -1141,6 +1141,9 @@ async def get_cities(db: AsyncSession):
             "x": info["x"],
             "y": info["y"],
             "srcs": sorted(sources),
+            # The venue whose ladder this card draws (#9260). `srcs` is every
+            # venue quoting the city, sorted, so its first entry is not it.
+            "src": _market_source(chosen),
             "marketId": chosen.id,
             # The day this city's ladder is about, `YYYY-MM-DD`, or None.
             # The map labels its date from this and nothing else (#8046).
