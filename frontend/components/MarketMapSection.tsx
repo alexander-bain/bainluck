@@ -34,6 +34,7 @@ import {
   ladderQuotesALine,
   settledLadderQuotesALine,
   probabilitiesQuoteALine,
+  probabilitiesQuoteASettledLine,
   TOTAL_MAP_HALVES,
 } from "@/lib/marketMapUtils";
 import { formatProbability } from "@/lib/api";
@@ -1390,10 +1391,19 @@ export default function MarketMapSection({
       // `closest50` whatever its price: a dense ladder always has a rung near 50%.
       const halfRungIsAProjection =
         vocab.sportsbookSpreadIsAMargin || (!playHasStarted && closest50.probability >= 0.5);
-      if (
-        halfRungIsAProjection &&
-        (!playHasStarted || probabilitiesQuoteALine(parsed.map((p) => p.probability)))
-      ) {
+      // #9315: and once the GAME is over, #5502's count — the half totals
+      // card's rule, reached through the same call. Settlement leaves one
+      // mid-priced leftover behind: settled `/events/15316429` (León 2-1
+      // Juárez, 1H 0-0) served Kalshi "Leon wins the 1H by more than 1.5" at
+      // 0.16 beside Juárez's 0.02, the only rung in the band, and the card
+      // printed `PRE-GAME LEO by 1.5+` over `FINAL Tied`. The live arm keeps
+      // one rung (#7639): a half finished inside a game still in play is
+      // #5502's quoting-ladder case, not its settled one.
+      const halfProbabilities = parsed.map((p) => p.probability);
+      const halfLadderQuotesALine = isDone
+        ? probabilitiesQuoteASettledLine(halfProbabilities)
+        : probabilitiesQuoteALine(halfProbabilities);
+      if (halfRungIsAProjection && (!playHasStarted || halfLadderQuotesALine)) {
         halfMarkers.push({
           key: "proj",
           // #5206: the half maps already made this exact distinction for a
