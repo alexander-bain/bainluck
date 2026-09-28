@@ -186,7 +186,7 @@ function heroCrestImage(
 
 const LIVE_REFRESH_INTERVAL = 32000; // Match backend LIVE_POLL_INTERVAL (32s)
 /** #9051: floor between detail refetches a folded hero asks for on refused frames. */
-const FOLDED_FRAME_REFETCH_MS = 5000;
+const FOLDED_FRAME_REFETCH_MS = 1000;
 const SCHEDULED_REFRESH_INTERVAL = 120000;
 
 export default function EventPage({ params }: EventPageProps) {
@@ -310,7 +310,7 @@ export default function EventPage({ params }: EventPageProps) {
   const refreshEventRef = useRef(refreshEvent);
   refreshEventRef.current = refreshEvent;
   const [foldedRefetch] = useState(() => createFoldedRefetchScheduler(
-    () => { void refreshEventRef.current(); }, FOLDED_FRAME_REFETCH_MS,
+    () => refreshEventRef.current(), FOLDED_FRAME_REFETCH_MS,
   ));
   useEffect(() => () => foldedRefetch.cancel(), [foldedRefetch]);
 
@@ -762,7 +762,7 @@ export default function EventPage({ params }: EventPageProps) {
   const refreshHistoryRef = useRef(refreshHistory);
   refreshHistoryRef.current = refreshHistory;
   const [foldedHistoryRefetch] = useState(() => createFoldedRefetchScheduler(
-    () => { void refreshHistoryRef.current(); }, FOLDED_FRAME_REFETCH_MS,
+    () => refreshHistoryRef.current(), FOLDED_FRAME_REFETCH_MS,
   ));
   useEffect(() => () => foldedHistoryRefetch.cancel(), [foldedHistoryRefetch]);
   const requestedChartRevisionRef = useRef<string | null>(null);

@@ -20,37 +20,56 @@ export interface FoldedRefetchScheduler {
 }
 
 export function createFoldedRefetchScheduler(
-  refetch: () => void,
+  refetch: () => void | Promise<unknown>,
   windowMs: number,
   now: () => number = Date.now,
 ): FoldedRefetchScheduler {
   let lastAt = Number.NEGATIVE_INFINITY;
   let trailing: ReturnType<typeof setTimeout> | null = null;
+  let inFlight = false;
+  let pending = false;
+  let generation = 0;
 
+  const finish = (startedGeneration: number) => {
+    if (generation !== startedGeneration) return;
+    inFlight = false;
+    if (pending) schedule();
+  };
   const fire = () => {
+    trailing = null;
+    pending = false;
     lastAt = now();
-    refetch();
+    const startedGeneration = generation;
+    inFlight = true;
+    const request = refetch();
+    // The consumer owns error presentation. Rejection still releases this
+    // slot so one retained invalidation can recover on the next read.
+    if (request) {
+      void Promise.resolve(request).then(
+        () => finish(startedGeneration), () => finish(startedGeneration),
+      );
+    } else {
+      finish(startedGeneration);
+    }
+  };
+  const schedule = () => {
+    if (inFlight || trailing) return;
+    const wait = lastAt + windowMs - now();
+    if (wait <= 0) fire();
+    else trailing = setTimeout(fire, wait);
   };
 
   return {
     request() {
-      const wait = lastAt + windowMs - now();
-      if (wait <= 0) {
-        // A late-running trailing timer would repeat this refetch.
-        if (trailing) clearTimeout(trailing);
-        trailing = null;
-        fire();
-        return;
-      }
-      if (trailing) return;
-      trailing = setTimeout(() => {
-        trailing = null;
-        fire();
-      }, wait);
+      pending = true;
+      schedule();
     },
     cancel() {
       if (trailing) clearTimeout(trailing);
       trailing = null;
+      pending = false;
+      inFlight = false;
+      generation += 1;
     },
   };
 }
