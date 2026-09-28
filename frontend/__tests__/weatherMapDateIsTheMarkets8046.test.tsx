@@ -41,7 +41,9 @@ function city(id: string, name: string, iso?: string | null): CityData {
   };
 }
 
-const text = (html: string) => html.replace(/<[^>]+>/g, "").replace(/&#x27;/g, "'");
+// Static markup puts adjacent text nodes side by side with no separators, so
+// every assertion below reads the served markup directly.
+const text = (html: string) => html.replace(/&#x27;/g, "'");
 
 function panel(c: CityData): string {
   return text(renderToStaticMarkup(<DistributionPanel city={c} />));
