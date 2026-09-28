@@ -80,8 +80,14 @@ final class EventDetailViewModel: ObservableObject {
     private var deliveryGeneration = 0
     private var streamRefetchGeneration: Int?
 
+    /// A failed authoritative pair is a delivery failure even if SSE stays open.
+    /// Separate from the full-load error: a successful game-state read cannot
+    /// certify that both price payloads recovered.
+    @Published private(set) var pricePairRefreshFailed = false
+
     var liveUpdateStatus: LiveUpdateStatus {
-        LiveUpdateStatus.decide(status: event?.status, delivering: streamDelivering,
+        if pricePairRefreshFailed && event?.status == "live" { return .interrupted }
+        return LiveUpdateStatus.decide(status: event?.status, delivering: streamDelivering,
                                 acceptedUpdate: streamHasPushedPrice,
                                 refreshFailed: error != nil)
     }
@@ -389,23 +395,22 @@ final class EventDetailViewModel: ObservableObject {
     private func rereadPricePair() async {
         let client = self.client
         let id = eventId
-        let historyTask = Task { () -> EventHistoryResponse? in
-            try? await client.fetchFreshEventHistory(id: id, hours: 168)
-        }
         let requestedGeneration = streamRefetchGeneration
-        if let fetched = try? await client.fetchFreshEvent(id: id) {
-            // Read the baseline at adoption, not request start: an unrelated
-            // poll may have advanced the held price while this read awaited.
+        async let detailRead = client.fetchFreshEvent(id: id)
+        async let historyRead = client.fetchFreshEventHistory(id: id, hours: 168)
+        do {
+            // A failed half cannot publish its sibling alone or earn a receipt.
+            // Keep the held pair until both reads finish, then use the existing
+            // revision/removal reconciliation against the baseline at adoption.
+            let (fetched, h) = try await (detailRead, historyRead)
+            guard !Task.isCancelled else { return }
             let priorRevision = event.flatMap { LiveEventPriceReconciliation.pairedFoldRevision(in: $0) }
-            // An old connection's in-flight read may still supply data, but
-            // cannot claim a fresh receipt for a connection that replaced it.
             let recordsActivity = requestedGeneration == nil || (
                 requestedGeneration == deliveryGeneration && streamRefetchGeneration == requestedGeneration
             )
             adopt(fetched, recordsPriceActivity: recordsActivity)
-            // The reread must actually advance the price the page adopted, and
-            // belong to this connection generation. A read finishing after an
-            // outage cannot relight the status using the old connection's work.
+            history = h
+            if recordsActivity { pricePairRefreshFailed = false }
             if requestedGeneration == deliveryGeneration,
                streamRefetchGeneration == requestedGeneration,
                let priorRevision, let current = event,
@@ -415,9 +420,15 @@ final class EventDetailViewModel: ObservableObject {
                 streamRefetchGeneration = nil
             }
             configureAutoRefresh()
-        }
-        if let h = await historyTask.value {
-            history = h
+        } catch {
+            guard !Task.isCancelled else { return }
+            // A retired connection's failure cannot darken its successor.
+            if requestedGeneration == nil || requestedGeneration == deliveryGeneration {
+                pricePairRefreshFailed = true
+                streamHasPushedPrice = false
+                configureAutoRefresh()
+            }
+            logger.error("Price-pair read failed for \(self.eventId): \(error)")
         }
         requestChartRevisionRefreshIfNeeded()
     }
@@ -450,7 +461,7 @@ final class EventDetailViewModel: ObservableObject {
             ? .poll(every: EventRefreshPlan.livePollInterval)
             : EventRefreshPlan.decide(
                 status: event?.status,
-                streamDelivering: streamDelivering,
+                streamDelivering: streamDelivering && !pricePairRefreshFailed,
                 commenceTime: event?.commenceTime?.asDate,
                 now: Date(timeIntervalSince1970: now()),
                 catchingUp: scoreCatchUpUntil != nil
@@ -493,7 +504,12 @@ final class EventDetailViewModel: ObservableObject {
                 await wait(gap)
                 guard !Task.isCancelled, let self else { return }
                 slot += 1
-                if slot < slots {
+                if self.pricePairRefreshFailed {
+                    // Keep the game clock moving while the existing reader
+                    // retries the incomplete authoritative price pair.
+                    await self.rereadGameState()
+                    self.requestRevisionRefetch()
+                } else if slot < slots {
                     await self.rereadGameState()
                 } else {
                     slot = 0
@@ -660,6 +676,7 @@ final class EventDetailViewModel: ObservableObject {
             // The hero now shows a pushed price — the only thing the page's
             // stream dot may claim (#8320).
             streamHasPushedPrice = true
+            if acceptedNewPrice { pricePairRefreshFailed = false }
             // #9056 — measured against the last LOAD, not the last frame, so a
             // play priced in over several small frames still counts as one move.
             if let base = probabilityAtLastLoad, abs(p - base) >= EventRefreshPlan.scoreCatchUpMove {
