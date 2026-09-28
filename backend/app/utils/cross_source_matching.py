@@ -708,6 +708,48 @@ def find_cross_source_markets(
 # ---------------------------------------------------------------------------
 
 
+def _own_outcomes_by_member(
+    group_id: str, members: Sequence[FuturesMarket]
+) -> dict[int, list]:
+    """Each member's outcomes, minus legs that belong to the group's parent row.
+
+    A Polymarket group's parent row is the one whose ``external_id`` is the
+    venue event id in ``polymarket:{event.id}``; its legs are keyed by the
+    sub-markets' condition ids. A sub-market's own legs are
+    ``{condition_id}_yes`` / ``_no``. Before #8609 the merge below reparented
+    borrowed legs for real, so some sub-market rows still carry copies of the
+    parent's rungs (#9458). Group ``polymarket:959154``: sub-market 60131787,
+    "…Kyiv Boryspil Airport by October 31?", holds its Yes/No plus the parent's
+    September 30 / October 31 / December 31 legs. With five outcomes to the
+    parent's three it won the pick, and /politics titled the card "by October
+    31?" over a "December 31 — 11%" leader.
+
+    A leg the parent also carries (same ``external_id``) is the parent's, so it
+    is left off every other member here. Read-only: nothing is reassigned.
+    Keyed by ``id()`` because stand-in rows need not be hashable.
+    """
+    _, _, event_id = group_id.partition("polymarket:")
+    parent = next(
+        (m for m in members if event_id and getattr(m, "external_id", None) == event_id),
+        None,
+    )
+    parent_legs: set[str] = set()
+    if parent is not None:
+        parent_legs = {
+            o.external_id
+            for o in getattr(parent, "outcomes", None) or []
+            if getattr(o, "external_id", None)
+        }
+    return {
+        id(m): [
+            o
+            for o in getattr(m, "outcomes", None) or []
+            if m is parent or getattr(o, "external_id", None) not in parent_legs
+        ]
+        for m in members
+    }
+
+
 def group_markets_by_group_id(
     markets: Sequence[FuturesMarket],
 ) -> list[FuturesMarket]:
@@ -721,7 +763,8 @@ def group_markets_by_group_id(
     This helper groups by ``group_id``, picks the representative market
     (most outcomes, then highest volume), and **merges** the unique outcomes
     from all sibling markets onto the representative so it carries the full
-    outcome set.
+    outcome set. A sibling's copy of a parent-row leg is not counted or merged
+    (:func:`_own_outcomes_by_member`).
 
     Markets with ``group_id IS NULL`` pass through unchanged.
 
@@ -744,17 +787,19 @@ def group_markets_by_group_id(
             result.append(members[0])
             continue
 
+        own = _own_outcomes_by_member(_gid, members)
+
         # Pick representative: most outcomes first, then highest volume_24h
         members.sort(
             key=lambda m: (
-                len(getattr(m, "outcomes", None) or []),
+                len(own[id(m)]),
                 getattr(m, "volume_24h", 0) or 0,
             ),
             reverse=True,
         )
         representative = members[0]
 
-        rep_outcomes = getattr(representative, "outcomes", None) or []
+        rep_outcomes = own[id(representative)]
         # Collect outcome names already on the representative
         existing_names: set[str] = {
             (o.name or "").lower().strip() for o in rep_outcomes
@@ -763,7 +808,7 @@ def group_markets_by_group_id(
         # Merge unique outcomes from sibling markets
         merged_outcomes = list(rep_outcomes)
         for sibling in members[1:]:
-            for o in getattr(sibling, "outcomes", None) or []:
+            for o in own[id(sibling)]:
                 name_key = (o.name or "").lower().strip()
                 if name_key and name_key not in existing_names:
                     merged_outcomes.append(o)
