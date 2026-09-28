@@ -204,10 +204,12 @@ class TestGenuinePricesSurvive:
             0.99, "outcome_prices"
         )
 
-    def test_a_real_lone_ask_is_still_kept(self):
-        """A one-sided book carries information; `is_empty_book_midpoint` requires
-        BOTH sides and so cannot reach it."""
-        assert _select(_gamma("lone ask", None, None, 0.36)) == (0.36, "best_ask")
+    def test_a_lone_ask_is_declined_since_9157(self):
+        """🪤 FLIPPED by #9157. This asserted the lone ask KEPT (`(0.36, "best_ask")`).
+        `is_empty_book_midpoint` still cannot reach it (it needs BOTH sides) — the
+        resolver's ask-only fallback is what published it, and #9157 removed that
+        branch under gotcha #19 (no trade and no bid → skip)."""
+        assert _select(_gamma("lone ask", None, None, 0.36)) == (None, None)
 
 
 class TestWhatThisFixDidNotReachUntil5333:
