@@ -2648,6 +2648,60 @@ def _market_has_priced_outcome(market: dict) -> bool:
     return False
 
 
+async def _grouped_feed_container_parent_ids(db: AsyncSession, markets: list) -> set[int]:
+    """Pool rows that are Polymarket game containers, which the strip withholds (#9466).
+
+    Production, 2026-09-28 21:20Z, ``/sports`` at 390px: five Jingshan doubles
+    cards led with **"Completed Match 98%"**, ranked above the team. Each was the
+    match's Polymarket event row (``62786044``, ``polymarket:1091311``): its
+    "outcomes" are its sub-markets' lead legs keyed by ``condition_id``, and every
+    sub-market is already its own row on the group. Search (#8375),
+    ``/game-markets`` and ``/related-futures`` (#8848) withhold that parent; this
+    is the same verdict, asked with search's own helpers so the surfaces cannot
+    drift apart.
+
+    Only EVENT-LINKED, non-exclusive rows are candidates, #8375's linked arm. The
+    unlinked leg-copy boards are legitimate questions ("What will the announcers
+    say…"), and search tells them apart by sibling names, a second read the strip
+    does not need for the population measured (all 6 of 6 were linked).
+
+    One indexed read (``uq_futures_source_external``), issued only when a candidate
+    exists, under a SAVEPOINT because the caller still holds the pool's ORM rows.
+    FAILS OPEN: an error serves the strip as it was before this pass.
+    """
+    from app.routes.events import (
+        _search_container_parent_candidates,
+        _search_container_parents_among,
+    )
+
+    # The helper applies both arms (non-exclusive, event-linked); this pre-filter
+    # only keeps it from reading a column the thin fixtures do not carry.
+    candidates = _search_container_parent_candidates(
+        [m for m in markets if getattr(m, "mutually_exclusive", None) is False]
+    )
+    if not candidates:
+        return set()
+    leg_ids = set().union(*(legs for _, legs in candidates.values()))
+    savepoint = await db.begin_nested()
+    try:
+        rows = (
+            await db.execute(
+                select(
+                    FuturesMarket.id, FuturesMarket.group_id, FuturesMarket.external_id
+                ).where(
+                    FuturesMarket.source == "polymarket",
+                    FuturesMarket.external_id.in_(leg_ids),
+                )
+            )
+        ).all()
+    except Exception:  # noqa: BLE001
+        await savepoint.rollback()
+        logger.warning("grouped-feed container read failed; serving unfiltered", exc_info=True)
+        return set()
+    await savepoint.commit()
+    return _search_container_parents_among(candidates, rows)
+
+
 #: A container group is only worth a round trip once it is actually flooding the
 #: strip. One member in the pool is one card, which is the shape it should have
 #: anyway — the fold exists to collapse walls, not to reshape singletons.
@@ -2958,10 +3012,14 @@ async def grouped_feed(
     )
     result = await db.execute(stmt)
     markets = result.scalars().unique().all()
+    # #9466: a game container's legs are copies of its own sub-markets.
+    container_parent_ids = await _grouped_feed_container_parent_ids(db, markets)
 
     market_dicts = []
     outcome_dicts = []
     for m in markets:
+        if m.id in container_parent_ids:
+            continue
         m_dict = {
             "id": m.id,
             "name": m.name,
