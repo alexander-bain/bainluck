@@ -220,3 +220,44 @@ def venue_named_league(
         series = external_id.split("-", 1)[0].strip().lower()
         return KALSHI_SERIES_LEAGUES.get(series)
     return None
+
+
+# ═══ The venue names the SPORT (#9434) ═══════════════════════════════════════
+#
+# The matcher's wrong-sport gate reads a market's sport from its Kalshi ticker,
+# then from ``llm_sport_category``. A Polymarket market has no ticker, so the
+# LLM's guess decides — and it guesses from the title. "Cardinals vs. Giants" is
+# two MLB clubs as well as two NFL clubs, so every Arizona Cardinals game is
+# tagged ``baseball`` and the gate refuses the NFL row it names with both sides
+# matched (receipt 7021681: Cardinals @ Giants, Oct 4, 70 markets unlinked).
+# The slug said ``nfl-ari-nyg-2026-10-04`` all along. Measured 2026-09-28 over
+# every open Polymarket game market with one of these codes: 74 NFL markets
+# tagged baseball, 46 college-football markets tagged soccer/basketball/
+# politics, and 0 linked markets whose event's sport contradicts the code.
+#
+#: Polymarket game-slug league code -> the sport family (the
+#: ``LLM_CATEGORY_TO_SPORT_PREFIX`` value) its games belong to. Exact tokens
+#: only, and only codes read on production game slugs: a family, never a league
+#: key, so a market it covers faces exactly the gate a correctly tagged one does.
+POLYMARKET_SPORT_FAMILY_CODES: dict[str, str] = {
+    "nfl": "americanfootball",
+    "cfb": "americanfootball",
+    "mlb": "baseball",
+    "nba": "basketball",
+    "wnba": "basketball",
+    "nhl": "icehockey",
+    "mls": "soccer",
+}
+
+
+def venue_named_sport_family(market_metadata: object) -> Optional[str]:
+    """The sport family a Polymarket GAME slug's league code names, or None.
+
+    None for no metadata, no slug, a futures/question slug, or a code outside
+    :data:`POLYMARKET_SPORT_FAMILY_CODES` — every such market keeps today's
+    ticker-then-LLM answer.
+    """
+    if not isinstance(market_metadata, dict):
+        return None
+    code = polymarket_league_code(market_metadata.get(POLYMARKET_EVENT_SLUG_KEY))
+    return POLYMARKET_SPORT_FAMILY_CODES.get(code) if code else None

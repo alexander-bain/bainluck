@@ -233,8 +233,11 @@ class TestTheScorerOffersTheRowOnTheVenuesDay:
     async def test_a_real_instant_scores_exactly_as_before(self):
         # Control for the narrow scope: with a real first pitch the pre-filter
         # does not fire, so the Odds API row still wins the score and #4965's
-        # guard is what refuses it, unchanged.
-        m = _market(("1085449", "nba-bos-nyk-2026-09-30", "2026-09-30T07:33:00+00:00"))
+        # guard is what refuses it, unchanged. The instant is one minute off
+        # the TBD sentinel on the market's own mlb- slug: since #9434 a slug's
+        # league code names the sport, so a borrowed nba- slug would make the
+        # scorer refuse every MLB row as the wrong sport.
+        m = _market(("1085449", "mlb-bos-nyy-2026-09-30", "2026-09-30T07:34:00+00:00"))
         picked = await _pick(m)
         assert picked is not None and picked["event_id"] == GAME_1[0]
 
