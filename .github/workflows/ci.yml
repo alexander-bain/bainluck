@@ -663,6 +663,32 @@ jobs:
             exit 1
           fi
 
+      - name: "mnf / monday night football finds Monday night's NFL game (real Postgres)"
+        # PILLAR: DISCOVER. SHIP: typing mnf, snf or tnf (or the spelled phrase)
+        # in search or the dropdown shows that night's NFL game. Production
+        # 2026-09-28 served nothing for `mnf` with Eagles @ Bears on the schedule.
+        #
+        # The slot is `timezone('America/New_York', ...)` + `extract(isodow)`
+        # inside two route bodies, so only a real database can observe it. Both
+        # screens, a strawman (slot map emptied -> nothing) and two controls.
+        # Three refusals: a skip, a zero count, and a short count.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_search_broadcast_slot_pg.py \
+            -v -rs 2>&1 | tee /tmp/slot.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/slot.txt; then
+            echo "::error::broadcast-slot search gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          if grep -qiE "no tests ran|collected 0 items" /tmp/slot.txt; then
+            echo "::error::broadcast-slot search gate collected NOTHING"
+            exit 1
+          fi
+          if ! grep -qE "^=+ 15 passed" /tmp/slot.txt; then
+            echo "::error::broadcast-slot search gate did not pass all 15"
+            exit 1
+          fi
+
       - name: Proven-duplicate search BRIDGE contract (real Postgres)
         # #5821 / CERT-3073. The step above proves the tagged twin stops being a
         # second search result. This proves the reader still reaches the game:
