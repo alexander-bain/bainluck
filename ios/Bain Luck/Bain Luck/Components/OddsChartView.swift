@@ -1623,6 +1623,19 @@ struct OddsChartView: View {
                         lineStyle: strokeStyleForSource(liveSplit.source, sources: sources),
                         activity: priceActivity, pulseColor: teamColors?.home ?? .accentColor)
                         .accessibilityHidden(true)
+                } else if let latest = Self.latestPrimaryPoint(in: dataPoints),
+                          let x = proxy.position(forX: latest.date),
+                          let y = proxy.position(forY: latest.probability),
+                          x >= 0, x <= plotFrame.width, y >= 0, y <= plotFrame.height {
+                    // No line proven to carry the hero's number: the unlabelled
+                    // one-shot ring the chart had before #9436, unchanged.
+                    LiveChartEndpointFeedback(selection: selection, activity: priceActivity,
+                                              probability: latest.probability,
+                                              isLive: status == "live" && liveUpdateStatus != .interrupted,
+                                              color: teamColors?.home ?? .accentColor)
+                        .position(x: plotFrame.minX + x, y: plotFrame.minY + y)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
                 }
                 OddsChartSelectionOverlay(selection: selection, proxy: proxy, plotFrame: plotFrame,
                                           dataPoints: dataPoints, homeShort: homeShort,
@@ -1704,18 +1717,20 @@ struct OddsChartView: View {
 
     /// #9436 — the live edge the overlay draws, or nil to draw the plot whole.
     ///
-    /// Only while the stream is live and uninterrupted, and only when the
-    /// line's newest vertex IS the hero's accepted value (`isCurrent`): a dot
-    /// labelled with the hero's number must sit on the point that number is.
-    /// Both ends inside the x-domain, as the old endpoint ring required, so
-    /// the overlay never draws where the plot would not.
+    /// Only while the stream is live and uninterrupted, and only on the drawn
+    /// series PROVEN to carry the hero's accepted value (`edgeVertex`: the
+    /// blend line, or on a single-venue page the venue line the adopted frame
+    /// extended): a dot labelled with the hero's number must sit on the point
+    /// that number is, on the line that number belongs to. Both ends inside
+    /// the x-domain, as the old endpoint ring required, so the overlay never
+    /// draws where the plot would not.
     private func liveEdgeSplit(dataPoints: [ChartDataPoint], domain: ClosedRange<Date>) -> LiveEdgeSplit? {
         guard let liveEdge, status == "live", liveUpdateStatus != .interrupted,
-              let newest = Self.latestPrimaryPoint(in: dataPoints),
-              LiveChartEdgeMarkerPlan.isCurrent(tipProbability: newest.probability, reading: liveEdge)
+              let newest = LiveChartEdgeMarkerPlan.edgeVertex(
+                in: dataPoints, visible: Self.defaultVisibleSources(in: dataPoints),
+                reading: liveEdge, latestFrame: liveFrames.last)
         else { return nil }
-        let source = Self.primarySource(in: dataPoints)
-        guard Self.defaultVisibleSources(in: dataPoints).contains(source) else { return nil }
+        let source = newest.source
         let points = dataPoints.filter { $0.source == source }
         guard let split = LiveChartEdgeMarkerPlan.split(
             segments: Self.observationSegments(points, gameStart: gameStartDate),

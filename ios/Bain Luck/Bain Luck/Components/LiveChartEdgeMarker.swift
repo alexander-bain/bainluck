@@ -10,15 +10,22 @@ import Charts
 /// with the hero on rounding, the served-or-neither pair (#2085) or the .445
 /// complement. `nil` whenever the page is not live: a finished or upcoming
 /// chart has no "now" to mark.
+///
+/// `source` is the hero's own provenance (`hero_probability_source`). Only a
+/// `"blend"` hero is the number the blend line ends on — the backend pins the
+/// aggregate edge to nothing else (`_PINNABLE_HERO_SOURCE`) — so an `opening`
+/// or absent source never labels a line, whatever value it happens to share.
 nonisolated struct LiveEdgeReading: Equatable {
     let homeProbability: Double
     let homeLabel: String
+    var source: String? = "blend"
 
     static func current(in event: EventDetail) -> LiveEdgeReading? {
         guard event.status == "live",
               let probability = event.currentOdds?.homeProbability,
               let label = LivePriceActivity.displayedLabels(in: event).home else { return nil }
-        return LiveEdgeReading(homeProbability: probability, homeLabel: label)
+        return LiveEdgeReading(homeProbability: probability, homeLabel: label,
+                               source: event.heroProbabilitySource)
     }
 }
 
@@ -61,6 +68,39 @@ enum LiveChartEdgeMarkerPlan {
         abs(tipProbability - reading.homeProbability) < 0.000001
     }
 
+    /// The drawn vertex that carries the hero's number, or nil. Equality alone
+    /// never picks a series — each arm names why THIS line is the hero's:
+    ///
+    /// 1. **A blend line on the chart:** it is the only candidate. The backend
+    ///    pins its edge to a `"blend"` hero and pushed frames extend it with
+    ///    the same `p` the hero adopts.
+    /// 2. **No blend line (a single-venue page):** the venue whose series the
+    ///    newest ADOPTED frame extended, and only when that frame's own venue
+    ///    reading and its blend are both the hero's value — the frame ties the
+    ///    line to the number. A REST-only hero, a frame from another venue or
+    ///    a blend that is not the venue's reading draws no number.
+    ///
+    /// The sportsbook consensus is never labelled: nothing on the payload says
+    /// the hero is its value.
+    static func edgeVertex(in points: [ChartDataPoint], visible: [String],
+                           reading: LiveEdgeReading, latestFrame: LiveBlendPoint?) -> ChartDataPoint? {
+        guard reading.source == "blend" else { return nil }
+        let newest: ChartDataPoint?
+        if points.contains(where: { $0.source == "aggregate" }) {
+            newest = OddsChartView.latestPoint(in: points, source: "aggregate")
+        } else {
+            guard let frame = latestFrame, let venue = frame.source, let venueValue = frame.sourceProbability,
+                  isCurrent(tipProbability: frame.homeProbability, reading: reading),
+                  isCurrent(tipProbability: venueValue, reading: reading),
+                  let tip = OddsChartView.latestPoint(in: points, source: venue),
+                  tip.date >= frame.date else { return nil }
+            newest = tip
+        }
+        guard let newest, visible.contains(newest.source),
+              isCurrent(tipProbability: newest.probability, reading: reading) else { return nil }
+        return newest
+    }
+
     /// Move the newest primary vertex out of the plot. Nil when that vertex is
     /// not the last one drawn (the split would leave a gap) — the caller then
     /// draws the full line and no marker.
@@ -77,21 +117,41 @@ enum LiveChartEdgeMarkerPlan {
             tail: LiveEdgeTail(from: from, to: LiveEdgeVertex(date: tip.date, probability: tip.probability)))
     }
 
-    /// A glide traces the straight segment the chart draws between two
-    /// accepted vertices, so it only runs when the new segment begins exactly
-    /// where the old tip was: one genuine append. A segment break, a REST
-    /// replacement, an unchanged tip, a background scene or Reduce Motion snaps.
+    /// A glide moves the tip between two accepted vertices while the overlay
+    /// keeps drawing the segment from `new.from` to it, so the dot is the
+    /// line's end in every frame. Two shapes qualify:
+    ///
+    /// - **an append** — the new segment begins exactly where the old tip was;
+    /// - **a pin replacement** (`replacesPin`) — a detail+history reread
+    ///   (`rereadPricePair`) replaces the response-time pin the backend puts on
+    ///   the end of the blend (`_pin_blend_edge`), on the SAME predecessor.
+    ///
+    /// A segment break, any other replacement, an unchanged tip, a background
+    /// scene or Reduce Motion snaps.
     static func glides(from old: LiveEdgeTail, to new: LiveEdgeTail,
                        reduceMotion: Bool, sceneActive: Bool) -> Bool {
-        !reduceMotion && sceneActive && new.to != old.to && new.from == old.to
+        guard !reduceMotion, sceneActive, new.to != old.to else { return false }
+        return new.from == old.to || replacesPin(old: old, new: new)
     }
 
-    /// The tip actually drawn this frame: the held one while it lies on the
-    /// new segment (the one frame before a glide starts, or the settled end),
-    /// otherwise the target — never a point off the line.
-    static func drawnTip(shown: LiveEdgeVertex?, tail: LiveEdgeTail) -> LiveEdgeVertex {
-        guard let shown, shown == tail.to || shown == tail.from else { return tail.to }
-        return shown
+    /// The old pin was not persisted, so the new history ends on the same
+    /// last observation with a fresh pin after it. Same predecessor (never a
+    /// gap: a nil `from` has no segment) and not earlier than the old pin.
+    static func replacesPin(old: LiveEdgeTail, new: LiveEdgeTail) -> Bool {
+        guard let from = new.from, from == old.from else { return false }
+        return new.to.date >= old.to.date
+    }
+
+    /// The tip actually drawn this frame: the held one while it belongs to the
+    /// new segment — one of its ends, or the replaced pin hanging off the same
+    /// predecessor (`shownFrom`) — otherwise the target. The overlay always
+    /// draws from `tail.from` to this tip, so it is never detached.
+    static func drawnTip(shown: LiveEdgeVertex?, shownFrom: LiveEdgeVertex? = nil,
+                         tail: LiveEdgeTail) -> LiveEdgeVertex {
+        guard let shown else { return tail.to }
+        if shown == tail.to || shown == tail.from { return shown }
+        if let from = tail.from, shownFrom == from, shown.date >= from.date { return shown }
+        return tail.to
     }
 
     /// Which way a changed printed value slides: up (−1) for a rise or an
@@ -153,6 +213,10 @@ enum LiveChartEdgeMarkerPlan {
 /// removal transition: SwiftUI plays a removed view's transition as it was
 /// captured BEFORE the change, so the leaving string would slide the way the
 /// previous update went while the arriving one slid this way.
+///
+/// Slides only in an active scene with motion allowed and `animates` true. If
+/// any of those turns off mid-slide the slide is CANCELLED, not left to run:
+/// the leaving string goes and the arriving one is drawn settled.
 extension View {
     func acceptedValueChange(_ value: String, rising: Bool? = nil, animates: Bool = true) -> some View {
         modifier(AcceptedValueChange(value: value, rising: rising, animates: animates))
@@ -164,6 +228,7 @@ private struct AcceptedValueChange: ViewModifier {
     let rising: Bool?
     let animates: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
     @State private var outgoing: String?
     @State private var progress: CGFloat = 1
     /// −1 moves up (a rise), +1 moves down (a fall).
@@ -171,6 +236,11 @@ private struct AcceptedValueChange: ViewModifier {
     /// Which change a finishing slide belongs to, so the first of two quick
     /// updates cannot clear the second's leaving string.
     @State private var generation = 0
+    /// Bumped to cancel: a new identity drops the in-flight interpolation,
+    /// which re-setting `progress` to the 1 it is already heading for cannot.
+    @State private var epoch = 0
+
+    private var slides: Bool { animates && !reduceMotion && scenePhase == .active }
 
     func body(content: Content) -> some View {
         ZStack {
@@ -183,13 +253,17 @@ private struct AcceptedValueChange: ViewModifier {
                 .modifier(VerticalShift(fraction: -direction * (1 - progress)))
         }
         .clipped()
+        .id(epoch)
+        .onChange(of: slides) { _, allowed in
+            if !allowed { cancel() }
+        }
         .onChange(of: value) { old, _ in
-            var still = Transaction()
-            still.disablesAnimations = true
-            guard animates, !reduceMotion else {
-                withTransaction(still) { outgoing = nil; progress = 1 }
+            guard slides else {
+                cancel()
                 return
             }
+            var still = Transaction()
+            still.disablesAnimations = true
             generation += 1
             let mine = generation
             withTransaction(still) {
@@ -206,6 +280,17 @@ private struct AcceptedValueChange: ViewModifier {
                     if generation == mine { outgoing = nil }
                 }
             }
+        }
+    }
+
+    private func cancel() {
+        var still = Transaction()
+        still.disablesAnimations = true
+        generation += 1
+        withTransaction(still) {
+            outgoing = nil
+            progress = 1
+            epoch += 1
         }
     }
 }
@@ -245,6 +330,9 @@ private struct LiveEdgeLabelSizeKey: PreferenceKey {
 ///
 /// Observes only the selection, so a scrub hides the dot and number without
 /// rebuilding the plot; the segment stays, because it is part of the line.
+/// A scene that is not active hides them the same way, and it or Reduce
+/// Motion turning on mid-glide cancels the glide: the segment is drawn to the
+/// settled tip at once.
 struct LiveChartEdgeMarker: View {
     @ObservedObject var selection: OddsChartSelection
     let proxy: ChartProxy
@@ -259,35 +347,56 @@ struct LiveChartEdgeMarker: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
     @State private var shownTip: LiveEdgeVertex?
+    /// The `from` of the tail `shownTip` was set on — lets a replaced pin keep
+    /// being drawn off the same predecessor until its glide starts.
+    @State private var shownFrom: LiveEdgeVertex?
     @State private var labelSize = CGSize(width: 64, height: 20)
+    /// Bumped to cancel an in-flight glide (see `AcceptedValueChange.epoch`).
+    @State private var epoch = 0
 
     var body: some View {
-        let tip = LiveChartEdgeMarkerPlan.drawnTip(shown: shownTip, tail: tail)
+        let tip = LiveChartEdgeMarkerPlan.drawnTip(shown: shownTip, shownFrom: shownFrom, tail: tail)
         LiveEdgeTipLayer(
             tipTime: tip.date.timeIntervalSinceReferenceDate,
             tipProbability: tip.probability,
             from: tail.from, proxy: proxy, plotFrame: plotFrame,
             label: label, rising: rising, labelSize: labelSize,
-            showsMarker: selection.date == nil,
+            showsMarker: selection.date == nil && scenePhase == .active,
             lineColor: lineColor, lineStyle: lineStyle,
             selection: selection, activity: activity, target: tail.to, pulseColor: pulseColor)
+        .id(epoch)
         .onPreferenceChange(LiveEdgeLabelSizeKey.self) { size in
             if size != .zero { labelSize = size }
         }
-        .onAppear { shownTip = tail.to }
+        .onAppear { shownTip = tail.to; shownFrom = tail.from }
         .onChange(of: tail) { old, new in
             if LiveChartEdgeMarkerPlan.glides(from: old, to: new, reduceMotion: reduceMotion,
                                               sceneActive: scenePhase == .active) {
+                shownFrom = new.from
                 withAnimation(.easeOut(duration: LiveChartEdgeMarkerPlan.glideDuration)) {
                     shownTip = new.to
                 }
             } else {
-                var snap = Transaction()
-                snap.disablesAnimations = true
-                withTransaction(snap) { shownTip = new.to }
+                settle(cancelling: false)
             }
         }
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active { settle(cancelling: true) }
+        }
+        .onChange(of: reduceMotion) { _, on in
+            if on { settle(cancelling: true) }
+        }
         .allowsHitTesting(false)
+    }
+
+    private func settle(cancelling: Bool) {
+        var snap = Transaction()
+        snap.disablesAnimations = true
+        withTransaction(snap) {
+            shownTip = tail.to
+            shownFrom = tail.from
+            if cancelling { epoch += 1 }
+        }
     }
 }
 
