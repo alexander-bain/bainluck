@@ -78,6 +78,7 @@ from app.utils.prediction_market_matching import (
 )
 from app.utils.live_blend import (
     MarketOutcomes as _LiveBlendGroup,
+    admissible_as_blend_speaker,
     admissible_speakers_are_all_settled,
     admissible_speakers_are_settled_without_result,
     admissible_speakers_are_unobserved_since_kickoff,
@@ -11694,6 +11695,17 @@ async def _backfill_polymarket_win_prob_history(
             return stats
         if market.source != "polymarket":
             stats["errors"].append("not a polymarket market")
+            return stats
+        # #9417. This runs for EVERY newly linked Polymarket market, and it
+        # used to ask no admission rule: `SC Braga vs. Sporting CP - Halftime
+        # Result` resolved its "SC Braga" outcome and wrote the halftime-lead
+        # history as the match line (0.225 between match prices of 0.27 on
+        # 15317139); 59k such rows in September. It asks the rule the live poll
+        # and the matcher ask, so the chart hears only what the blend may hear.
+        # No outcomes, kickoff or result are passed: those clauses judge a LIVE
+        # reading and abstain here, exactly as for `event_chart_backfill`.
+        if not admissible_as_blend_speaker(market, is_primary=False):
+            stats["errors"].append("not admissible as a blend speaker")
             return stats
 
         # Extract matchup and find moneyline outcome
