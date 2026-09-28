@@ -25,6 +25,16 @@ final class LivePriceActivityTests: XCTestCase {
         """.utf8))
     }
 
+    private func pairedHistory(p: Double = 0.52, revision: String = #"{"4242":21,"999":5}"#) throws -> EventHistoryResponse {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode(EventHistoryResponse.self, from: Data("""
+        {"event_id":4242,"home_team":"Red Sox","away_team":"Cubs","history":[],
+         "aggregate_line":[{"timestamp":"2026-09-25T17:10:00Z","home_probability":\(p)}],
+         "blend_edge_fold_revision":\(revision),"blend_edge_observed_at":"2026-09-25T17:10:00Z"}
+        """.utf8))
+    }
+
     private final class Handle: LiveStreamHandle, @unchecked Sendable {
         var isClosed = false
         var handlers: [String: [@MainActor (String) -> Void]] = [:]
@@ -46,14 +56,20 @@ final class LivePriceActivityTests: XCTestCase {
         var beforeEventResponse: (() async -> Void)?
         var failEvent = false
         private(set) var eventFetches = 0
+        private(set) var activeEventReads = 0
+        private(set) var peakEventReads = 0
         private(set) var eventResponses = 0
+        private(set) var eventFailures = 0
         private(set) var historyFetches = 0
         init(_ response: EventDetail) { self.response = response }
         func fetchEvent(id: Int) async throws -> EventDetail {
             eventFetches += 1
+            activeEventReads += 1
+            peakEventReads = max(peakEventReads, activeEventReads)
+            defer { activeEventReads -= 1 }
             let result = response
             if let beforeEventResponse { await beforeEventResponse() }
-            if failEvent { throw Missing() }
+            if failEvent { eventFailures += 1; throw Missing() }
             eventResponses += 1
             return result
         }
@@ -107,6 +123,7 @@ final class LivePriceActivityTests: XCTestCase {
 
     func testFoldAdoptionRecordsThePrintedBlendNotRawIncomingRow() async throws {
         let client = Client(try event(p: 0.6, revision: #"{"4242":20,"999":5}"#))
+        client.historyResponse = try pairedHistory()
         let handle = Handle(), vm = model(client, handle)
         defer { vm.stopRefresh() }
         await vm.load(); handle.fire("open")
@@ -121,6 +138,7 @@ final class LivePriceActivityTests: XCTestCase {
 
     func testStaleInFlightFoldReadCannotDuplicateAnIndependentPollReceipt() async throws {
         let client = Client(try event(p: 0.6, revision: #"{"4242":20,"999":5}"#))
+        client.historyResponse = try pairedHistory()
         let handle = Handle(), vm = model(client, handle)
         defer { vm.stopRefresh() }
         await vm.load(); handle.fire("open")
@@ -143,6 +161,7 @@ final class LivePriceActivityTests: XCTestCase {
 
     func testOutdatedConnectionReadCannotEarnAFreshReceipt() async throws {
         let client = Client(try event(p: 0.6, revision: #"{"4242":20,"999":5}"#))
+        client.historyResponse = try pairedHistory()
         let handle = Handle(), vm = model(client, handle)
         defer { vm.stopRefresh() }
         await vm.load(); handle.fire("open")
@@ -157,6 +176,90 @@ final class LivePriceActivityTests: XCTestCase {
         XCTAssertEqual(vm.event?.currentOdds?.homeProbability, 0.52)
         XCTAssertNil(vm.priceActivity)
         XCTAssertFalse(vm.streamHasPushedPrice)
+    }
+
+    private actor RefetchSleeper {
+        var shortWait: TimeInterval?
+        var pending: CheckedContinuation<Void, Never>?
+        func sleep(_ seconds: TimeInterval) async {
+            guard seconds < 2 else {
+                try? await Task.sleep(for: .seconds(60))
+                return
+            }
+            shortWait = seconds
+            await withCheckedContinuation { pending = $0 }
+        }
+        func release() { pending?.resume(); pending = nil }
+    }
+
+    func testBurstAndSlowPairKeepOneReaderAndDeliverLatestWithinOneSecondWindow() async throws {
+        let client = Client(try event(p: 0.6, revision: #"{"4242":20,"999":5}"#))
+        client.historyResponse = try pairedHistory(p: 0.6, revision: #"{"4242":20,"999":5}"#)
+        let handle = Handle(), sleeper = RefetchSleeper()
+        var clock: TimeInterval = 1_790_355_605
+        let vm = EventDetailViewModel(eventId: 4242, client: client, makeStreamHandle: { _ in handle },
+            now: { clock }, sleep: { await sleeper.sleep($0) })
+        defer { vm.stopRefresh() }
+        await vm.load(); handle.fire("open")
+        var pending: CheckedContinuation<Void, Never>?
+        client.beforeEventResponse = { await withCheckedContinuation { pending = $0 } }
+        client.response = try event(p: 0.52, revision: #"{"4242":21,"999":5}"#)
+        client.historyResponse = try pairedHistory()
+        handle.push(p: 0.9, at: "2026-09-25T17:10:00Z", rev: #"{"4242":21}"#)
+        await settle { pending != nil }
+        XCTAssertEqual(client.eventFetches, 2, "First invalidation starts immediately")
+        for _ in 0..<30 {
+            handle.push(p: 0.8, at: "2026-09-25T17:11:00Z", rev: #"{"4242":22}"#)
+        }
+        XCTAssertEqual(client.eventFetches, 2, "A slow request absorbs the burst without overlap")
+        clock += 0.25
+        client.beforeEventResponse = nil
+        pending?.resume()
+        for _ in 0..<200 {
+            if await sleeper.shortWait != nil { break }
+            await Task.yield()
+        }
+        let wait = await sleeper.shortWait
+        XCTAssertEqual(wait, 0.75, "Trailing request waits only the rest of one second")
+        XCTAssertEqual(vm.event?.currentOdds?.homeProbability, 0.52)
+        client.response = try event(p: 0.48, revision: #"{"4242":22,"999":5}"#)
+        client.historyResponse = try pairedHistory(p: 0.48, revision: #"{"4242":22,"999":5}"#)
+        for _ in 0..<30 {
+            handle.push(p: 0.8, at: "2026-09-25T17:11:00Z", rev: #"{"4242":22}"#)
+        }
+        XCTAssertEqual(client.eventFetches, 2, "More invalidations share the already scheduled trailing read")
+        clock += 0.75
+        await sleeper.release()
+        await settle { vm.event?.currentOdds?.homeProbability == 0.48 }
+        XCTAssertEqual(client.eventFetches, 3, "Sixty invalidations need one active and one trailing pair")
+        XCTAssertEqual(client.peakEventReads, 1)
+        XCTAssertEqual(vm.history?.aggregateLine?.last?.homeProbability, 0.48)
+        XCTAssertEqual(vm.priceActivity?.sequence, 2)
+    }
+
+    func testRetiredConnectionFailureCannotDarkenItsSuccessor() async throws {
+        let client = Client(try event(p: 0.6, revision: #"{"4242":20,"999":5}"#))
+        client.historyResponse = try pairedHistory()
+        let handle = Handle(), vm = model(client, handle)
+        defer { vm.stopRefresh() }
+        await vm.load(); handle.fire("open")
+        var pending: CheckedContinuation<Void, Never>?
+        client.beforeEventResponse = { await withCheckedContinuation { pending = $0 } }
+        client.failEvent = true
+        handle.push(p: 0.9, at: "2026-09-25T17:10:00Z", rev: #"{"4242":21}"#)
+        await settle { pending != nil }
+        XCTAssertNotNil(pending)
+        handle.fire("error"); handle.fire("open")
+        handle.push(p: 0.9, at: "2026-09-25T17:11:00Z", rev: #"{"4242":22}"#)
+        XCTAssertTrue(vm.streamDelivering)
+        pending?.resume()
+        await settle { client.eventFailures == 1 }
+        // Let the failed async child return to the pair's catch handler.
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertFalse(vm.pricePairRefreshFailed, "A retired read cannot mark the new connection broken")
+        XCTAssertEqual(vm.liveUpdateStatus, .awaitingUpdate)
+        XCTAssertNil(vm.priceActivity, "Neither the failed read nor the unaccepted raw frame earns a receipt")
+        XCTAssertEqual(vm.event?.currentOdds?.homeProbability, 0.6)
     }
 
     func testUnchangedFailedAndClocklessReadsDoNotClaimNewPrices() async throws {
