@@ -33,8 +33,12 @@ function footer(html: string): string {
   return html.slice(i);
 }
 
+/** The footer's label span, as a reader reads it: React separates adjacent text
+ *  nodes with a literal `<!-- -->`, which is not text. No tag stripping. */
 function text(fragment: string): string {
-  return fragment.replace(/<[^>]+>/g, "").replace(/&#x27;/g, "'");
+  const m = fragment.match(/<span class="min-w-0">([^<]*(?:<!-- -->[^<]*)*)<\/span>/);
+  expect(m).not.toBeNull();
+  return m![1].split("<!-- -->").join("");
 }
 
 describe("#9371 EvolutionView footer", () => {
