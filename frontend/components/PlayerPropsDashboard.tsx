@@ -84,27 +84,34 @@ function StatBox({
             <div className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">{stat.type}</div>
             <SourceDot count={stat.sources} />
           </div>
-          <div className="flex items-baseline gap-2 mb-1">
-            <div className="font-mono tabular-nums text-2xl font-bold" style={{ color: accentColor }}>
-              {/*
-                UX-P106. This slot was `didHit ? "✓" : "—"` — a GLYPH pair
-                stating the verdict a second time, two lines above the badge
-                that states it in words. That is a settled vocabulary too, and
-                the worse half of it is the miss branch: an em dash means "no
-                number" everywhere else on this page, and here it meant MISSED.
-                Reading a placeholder as a verdict is #1638's exact class.
+          {/*
+            UX-P106. This slot was `didHit ? "✓" : "—"` — a GLYPH pair
+            stating the verdict a second time, two lines above the badge
+            that states it in words. That is a settled vocabulary too, and
+            the worse half of it is the miss branch: an em dash means "no
+            number" everywhere else on this page, and here it meant MISSED.
+            Reading a placeholder as a verdict is #1638's exact class.
 
-                This slot's job is the ACTUAL number. When there isn't one it
-                says so, in both directions; the verdict is stated once, below,
-                in the site's one settled vocabulary. Nothing is lost — the tile
-                still colours by `accentColor` and still carries the badge.
-              */}
-              {gradeActual != null ? gradeActual : "—"}
+            This slot's job is the ACTUAL number. The verdict is stated once,
+            below, in the site's one settled vocabulary.
+
+            #9461: with no number, the row is not drawn at all. It used to
+            print "—" here — at text-2xl, in `accentColor` — plus "of 1",
+            so a venue-graded anytime-TD tile (51 of 51 on /events/14780548
+            carry `actual: null`) read as a big red dash "of 1": the
+            placeholder painted in the verdict's colour, which is the exact
+            misreading this note forbids, and a count the tile never gives.
+          */}
+          {gradeActual != null && (
+            <div data-testid="prop-tile-actual" className="flex items-baseline gap-2 mb-1">
+              <div className="font-mono tabular-nums text-2xl font-bold" style={{ color: accentColor }}>
+                {gradeActual}
+              </div>
+              {firstLine != null && (
+                <div className="font-mono tabular-nums text-xs text-text-muted">of {firstLine}</div>
+              )}
             </div>
-            {firstLine != null && (
-              <div className="font-mono tabular-nums text-xs text-text-muted">of {firstLine}</div>
-            )}
-          </div>
+          )}
           <div className="flex items-center gap-2">
             {/* UX-P040: a verdict only when the backend stated one. A grade that
                 carries an `actual` but no hit/miss shows the number and stops —
@@ -136,9 +143,12 @@ function StatBox({
             <div className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">{stat.type}</div>
             <SourceDot count={stat.sources} />
           </div>
-          <div className="font-mono tabular-nums text-2xl font-bold text-text-primary mb-1">
-            {split.actual != null ? split.actual : "—"}
-          </div>
+          {/* #9461: no count, no number row — the two verdicts below carry it. */}
+          {split.actual != null && (
+            <div data-testid="prop-tile-actual" className="font-mono tabular-nums text-2xl font-bold text-text-primary mb-1">
+              {split.actual}
+            </div>
+          )}
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
             <span className="flex items-center gap-1.5">
               <span
