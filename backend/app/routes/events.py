@@ -3843,6 +3843,53 @@ def _typeahead_stem_only_event(
     return True
 
 
+def _typeahead_infix_only_event(
+    participants: tuple[str | None, str | None],
+    expanded: list[tuple[str, str | None]],
+    names_participant: bool,
+) -> bool:
+    """#5082: the event arm's substring rows that only an INFIX admitted.
+
+    Production 2026-09-28 21:4xZ, `/typeahead?q=pats`: the Patriots card, their
+    game and four of their markets, then `Tamara Korpatsch at Taylah Preston`,
+    a China Open match. `pats` is inside Kor·pats·ch. The event name arm is
+    `_build_expanded_ilike` (`%pats%`, anywhere), and `_typeahead_stem_only_event`
+    keeps every substring row on purpose, so nothing removed it.
+
+    The team arm already refuses this shape (#7381, `_build_word_start_ilike`,
+    which measured it over the 250 most-searched queries: `pats` kept New England
+    and shed Tamara Korpatsch). This is that rule for the event rows, applied
+    only where the caller already gates it — a query that resolved a team — so
+    a query naming no team keeps every row the arm finds.
+
+    True only when ALL of these hold:
+      1. the route did not already judge that the row names a participant
+         (`names_participant`: the curated nicknames, OR fetched by the lead
+         team's own id — `9ers` inside "49ers" is kept by that half);
+      2. every term (or its expansion) is a substring of some participant — the
+         row is a substring row, not one only the stemmer admitted;
+      3. some term (and its expansion) starts no word in any participant.
+    """
+    if names_participant:
+        return False
+    names = [(n or "").lower() for n in participants if n]
+    low = [(t.lower(), (e or "").lower()) for t, e in expanded]
+    if not names or not low:
+        return False
+
+    def _in(name: str, s: str) -> bool:
+        return bool(s) and s in name
+
+    def _word_start(name: str, s: str) -> bool:
+        return bool(s) and re.search(r"(?:^|[\W_])" + re.escape(s), name) is not None
+
+    if not all(any(_in(n, t) or _in(n, e) for n in names) for t, e in low):
+        return False
+    return not all(
+        any(_word_start(n, t) or _word_start(n, e) for n in names) for t, e in low
+    )
+
+
 def _futures_board_is_not_a_partition(market: "FuturesMarket") -> bool:
     """The served legs do not divide one question, so their max answers nothing.
 
@@ -13114,6 +13161,8 @@ async def typeahead_search(
     # #8488: a team query drops the fixtures only the stemmer admitted (`angels`
     # -> "Los Angeles Sparks"). Before the pool cut, so the slot goes to a row
     # that names the team; the helper says why substring and nickname rows stay.
+    # #5082: and the substring rows only an infix admitted (`pats` -> "Tamara
+    # Korpatsch"), the event twin of #7381's word-start team arm.
     if _ta_lead_team is not None:
         _ta_events = [
             ev for ev in _ta_events
@@ -13121,6 +13170,11 @@ async def typeahead_search(
                 (ev.home_team_name, ev.away_team_name),
                 ta_expanded,
                 _ta_lead_team["text"],
+                _ta_names_participant(ev) or ev.id in _ta_lead_team_row_ids,
+            )
+            and not _typeahead_infix_only_event(
+                (ev.home_team_name, ev.away_team_name),
+                ta_expanded,
                 _ta_names_participant(ev) or ev.id in _ta_lead_team_row_ids,
             )
         ]
@@ -13198,11 +13252,33 @@ async def typeahead_search(
             # list him as an outcome (MC4) — production 2026-09-25 05:5xZ. With
             # the alias it is MC0, directly under the club. Lead-team fixtures
             # only: that is the team the name resolved to.
-            "_aliases": (
-                [_ta_roster_alias]
-                if _ta_roster_alias and _ta_is_lead_team_fixture(event)
-                else []
-            ),
+            #
+            # #5082: and the club's own aliases, for the same reason. `niners`
+            # is an alias of San Francisco, not a word of "Denver Broncos at San
+            # Francisco 49ers", so the 49ers' game ranked under "Niners Chemnitz
+            # at Tofas SK Bursa", whose NAME carries the word (production
+            # 2026-09-28 21:4xZ). Rows the route marked as the resolved team's
+            # (`_ta_lead_team_row_ids`) only, so `angel`/`new` keep ruling 041;
+            # and only an alias the query IS, whole (`query_is_entity_name`, the
+            # test that makes the club the entity). A partly typed alias stays
+            # off the game: `dodg` against "Dodgers" would tie the game with the
+            # club on class and lift it above the club (#4615).
+            "_aliases": [
+                *(
+                    [_ta_roster_alias]
+                    if _ta_roster_alias and _ta_is_lead_team_fixture(event)
+                    else []
+                ),
+                *(
+                    a
+                    for a in (
+                        (_ta_lead_team or {}).get("_aliases") or []
+                        if event.id in _ta_lead_team_row_ids
+                        else []
+                    )
+                    if query_is_entity_name(_q_identity, (a,))
+                ),
+            ],
         })
 
     # 3. Futures (sports + non-sports, deduplicated)

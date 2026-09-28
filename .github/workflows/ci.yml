@@ -1948,6 +1948,20 @@ jobs:
             exit 1
           fi
 
+      - name: typeahead team nickname keeps other-sport games below its own (real Postgres, #5082)
+        # `pats` served "Tamara Korpatsch at Taylah Preston" (an infix, Kor-pats-ch)
+        # and `niners` ranked "Niners Chemnitz" above the 49ers' own game, whose
+        # names never carry the nickname. Real Postgres because the infix row
+        # comes from the ILIKE event arm and the lead-team marks from the route.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_typeahead_team_query_other_sport_events_5082_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/typeahead_other_sport_events_5082.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/typeahead_other_sport_events_5082.txt; then
+            echo "::error::#5082 typeahead other-sport events control SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: typeahead shows one question once, the search page's repeat rule (real Postgres, #9404)
         # `world series` in the dropdown printed the World Series twice — Dodgers
         # 30% (Polymarket, tier 1) and 28% (odds_api, tier 5) — because the loop
