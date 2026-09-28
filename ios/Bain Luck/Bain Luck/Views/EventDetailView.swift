@@ -689,6 +689,7 @@ struct EventDetailView: View {
                     receivedAt: vm.priceActivity?.receivedAt)
             }
             .frame(maxWidth: dynamicTypeSize.isAccessibilitySize ? nil : Self.verdictSlotWidth, minHeight: 44)
+            .fixedSize(horizontal: false, vertical: true)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

@@ -187,7 +187,9 @@ extension VisibleLivePriceStatusTests {
             let recognized = try text(shot(host, name))
             XCTAssertTrue(recognized.contains("Win Probability"), recognized)
             XCTAssertTrue(recognized.contains("Waiting for update"), recognized)
-            XCTAssertTrue(recognized.contains("No price received yet"), recognized)
+            XCTAssertNotNil(recognized.range(of: "No price.*received yet", options: .regularExpression), recognized)
+            XCTAssertTrue(recognized.contains("55%"), recognized)
+            XCTAssertTrue(recognized.contains("45%"), recognized)
         }
     }
 }
