@@ -778,8 +778,8 @@ export type HalfRungGrade = "cleared" | "missed";
  * owns: the retraction, a SERVED null source (#4788's never-graded cohort) and
  * a null `is_winner` all abstain.
  *
- * Orientation is read off the outcome's first word; a row that is neither
- * `Over…` nor `Under…` abstains rather than being guessed at. Rows that abstain
+ * A row that is neither `Over…` nor `Under…` abstains rather than being
+ * guessed at; both kinds vote on the over axis the route already put them on. Rows that abstain
  * do not vote, and rows that vote must agree — a threshold whose graded rows
  * disagree is a contradiction upstream and gets no verdict (#6138's rule for a
  * merged grade).
@@ -796,8 +796,13 @@ export function halfRungRowGrade(
     if (verdict == null) continue;
     const side = /^\s*(over|under)\b/i.exec(row.outcome_name || "")?.[1]?.toLowerCase();
     if (side == null) continue;
-    const overWon = side === "over" ? verdict === "won" : verdict === "lost";
-    votes.add(overWon ? "cleared" : "missed");
+    // The route serves a totals row's grade on the OVER axis whichever leg the
+    // row came from (#6239, `_settled_over_verdict`), exactly as it does its
+    // `over_probability`, so an `Under` row's `won` already says the over won.
+    // Flipping it again inverted every Polymarket Under leg: on settled
+    // `/events/15316429` (1H 0-0) "1st Half O/U 3.5 · Under" read "cleared",
+    // no split of the final survived, and both half margin cards lost FINAL.
+    votes.add(verdict === "won" ? "cleared" : "missed");
   }
   return votes.size === 1 ? [...votes][0] : undefined;
 }
