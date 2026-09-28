@@ -474,6 +474,28 @@ export function blendCaptionIsStale(
  * and My Stuff read `FeedEventData`, which carries neither key, so they pass
  * nothing and are byte-for-byte unaffected; when that envelope gains them, the
  * call sites are the second half of that change, exactly as for `#3211`'s time.
+ *
+ * ── #9265: A CALLED-OFF GAME WAS NEVER STARTED, SO IT IS NOT "PAUSED" ──
+ *
+ * The opening premise — a suspended row "started, it has not finished" — is
+ * false for the row whose authority told us it was called off. Production
+ * 2026-09-28 02:2xZ, `/sports/baseball_mlb` at 390px: the page opened on
+ * `Live & Paused 1`, and the one card under it (Orioles @ Yankees, 15319530,
+ * `espn.period: "Postponed"`, no score) read `Postponed · Sep 27`. Nothing on
+ * the page was live or paused.
+ *
+ * `settlement.stoppage` is `authorityStoppageLabel`'s answer (the #8810
+ * allowlist in `lib/gameTimeLabel`, the one home for reading `espn.period`),
+ * resolved by the caller and passed as the LABEL — the same contract
+ * `suspendedSummary` takes, and the reason this module still imports nothing.
+ * A labelled suspended row files under "finished": the question is settled
+ * for today, and the card above the heading already says why in the
+ * authority's own word, so the bucket claims no result the card does not.
+ *
+ * Keyed on `isSuspendedStatus` so the label can only re-file a row the ladder
+ * already put in the live bucket for want of an answer: a stray word on a
+ * `live` row cannot move it. Passed by the same two league-page callers as
+ * #7112's settlement; the feed and My Stuff pass nothing and are unaffected.
  */
 export function eventSectionKey(
   status: string | null | undefined,
@@ -482,8 +504,10 @@ export function eventSectionKey(
   settlement?: {
     venue_settled?: boolean | null;
     venue_settled_result?: string | null;
+    stoppage?: string | null;
   } | null,
 ): "live" | "finished" | "upcoming" {
+  if (settlement?.stoppage && isSuspendedStatus(status)) return "finished";
   if (
     settlement &&
     hasNoReportedResult(status, commenceTime, now) &&

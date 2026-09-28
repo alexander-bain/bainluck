@@ -70,6 +70,7 @@
 
 import type { Event } from "@/lib/types";
 import { eventSectionKey, hasNoReportedResult, liveSectionTitle } from "@/lib/eventState";
+import { authorityStoppageLabel } from "@/lib/gameTimeLabel";
 
 /** The three buckets, in the order they are rendered. */
 export type LeagueSectionKey = "live" | "upcoming" | "finished";
@@ -131,6 +132,27 @@ function compareNullsLast(
 }
 
 /**
+ * The shared ladder, fed everything a league page's row can tell it.
+ *
+ * One function so `buildLeagueSections` and `needsWiderHorizon` cannot drift:
+ * the horizon's docblock requires its partition to be the one the page renders.
+ *
+ * #9265 — the stoppage LABEL rides along with the row: a game ESPN called off
+ * (`espn.period` "Postponed"/"Canceled") is not "Live & Paused". It is resolved
+ * here through `authorityStoppageLabel`, the one home for reading
+ * `espn.period`, and handed to the ladder as a label, never as a raw period.
+ */
+export function leagueSectionKey(
+  event: Event,
+  now: number = Date.now(),
+): "live" | "finished" | "upcoming" {
+  return eventSectionKey(event.status, event.commence_time, now, {
+    ...event,
+    stoppage: authorityStoppageLabel(event.espn?.period),
+  });
+}
+
+/**
  * Split a league's events into the sections the page renders.
  *
  * Live keeps payload order — there is no "sooner" among games already being
@@ -161,12 +183,7 @@ export function buildLeagueSections(
     // already printing `Settled · Blanch wins`. The row is handed over whole so
     // the ladder reads the two raw keys itself; a boolean computed here would
     // be the second predicate whose drift from the card's is this issue.
-    const section = eventSectionKey(
-      event.status,
-      event.commence_time,
-      now,
-      event,
-    );
+    const section = leagueSectionKey(event, now);
     if (section === "live") live.push(event);
     else if (section === "finished") finished.push(event);
     else upcoming.push(event);
