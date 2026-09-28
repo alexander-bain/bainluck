@@ -596,6 +596,16 @@ export default function EventCard({
     event.sport,
   );
 
+  // #9398 — the footer's divider and padding are drawn only when something sits
+  // under them. An upcoming card with no sportsbook projection and no broadcast
+  // (Leafs–Canadiens on /sports/icehockey_nhl, 9/28) otherwise ended in a rule
+  // and an empty ~40px strip, which reads as something that failed to load.
+  // These are the footer's own three branches plus its broadcast, restated.
+  const footerHasLead =
+    (!isLive && !!projectedScore) ||
+    (isLive && !!opening && openedHomePct !== null && (openedAwayWithheld || openedAwayPct !== null));
+  const showFooter = !isFinished && !isSuspended && (footerHasLead || !!event.espn?.broadcast);
+
   return (
     // UX-P083 (#1860) / UX-P154: the stable hook the browser rail counts and the
     // link-and-card treatment both live in `EventCardShell` now. Ruling 047's
@@ -1008,8 +1018,9 @@ export default function EventCard({
 
           {/* Footer — contextual info (hide for finished games, and for
               suspended ones: "Proj 6-4" is a pregame promise and the match is
-              stopped, not upcoming — CERT-792). */}
-          {!isFinished && !isSuspended && (
+              stopped, not upcoming — CERT-792). Absent entirely when it would
+              hold nothing (#9398). */}
+          {showFooter && (
             <div className="mt-2.5 pt-2 border-t border-surface-border/50 flex justify-between items-center text-micro">
               {/* UX-P074: `!= null`, not `!== null`. An ABSENT key answered the
                   strict test with `undefined !== null` → true, and the card then
