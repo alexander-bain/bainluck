@@ -240,6 +240,89 @@ class TestTheLookupOnRealPostgres:
         )
 
 
+@pytest.mark.skipif(
+    not DB_URL,
+    reason=(
+        "set SEARCH_TEST_DATABASE_URL to run the real-Postgres #9450 group "
+        "prop join gate (CI job `search-recall` provides one)"
+    ),
+)
+@pytest.mark.asyncio
+class TestANotGameLevelChildJoinsItsGroupsRowOnRealPostgres:
+    """#9450, the whole attempt: the real classifier, resolver, commit and
+    receipt, read back from the table. Harris v Galarneau's match market sat
+    unlinked beside the O/U line that created its row (production, 2026-09-28)."""
+
+    async def _child(self, session, group_id):
+        from sqlalchemy import text
+
+        return (
+            await session.execute(
+                text(
+                    "INSERT INTO futures_markets (source, external_id, name, "
+                    "category, mutually_exclusive, group_id, group_type, "
+                    "event_id, status, market_metadata) VALUES "
+                    "('polymarket', :x, :nm, 'game_prop', TRUE, :g, "
+                    "'polymarket_sub_market', NULL, 'open', CAST(:md AS jsonb)) "
+                    "RETURNING id"
+                ),
+                {
+                    "x": f"0x9450{group_id[-4:]}",
+                    "nm": f"{SEEDED_NAME_PREFIX} Jingshan: Lloyd Harris vs "
+                    "Alexis Galarneau",
+                    "g": group_id,
+                    "md": '{"venue_game_start": "%s"}' % VENUE_START.isoformat(),
+                },
+            )
+        ).scalar()
+
+    async def _attempt(self, session, market_id):
+        from sqlalchemy import text
+
+        from app.utils import match_receipts as _receipts
+
+        await session.commit()
+        market = await pmm._load_market_row(session, market_id)
+        stats = {
+            "markets_scanned": 0, "newly_linked": 0,
+            "funnel": {"not_game_level": 0, "sample_not_game_level": [], "linked": 0},
+        }
+        queue, receipts = [], []
+        await pmm._attempt_market(
+            session, market, stats, VENUE_START, queue, lambda: 600.0,
+            receipts, _receipts.PHASE_PASS2_GENERAL,
+        )
+        await session.rollback()  # only a committed link survives this
+        stored = (
+            await session.execute(
+                text("SELECT event_id FROM futures_markets WHERE id = :i"),
+                {"i": market_id},
+            )
+        ).scalar()
+        return stored, receipts[0], queue
+
+    async def test_the_match_market_is_stored_on_its_groups_row(self, seeded):
+        session, ids = seeded
+        child = await self._child(session, GROUP)
+
+        stored, receipt, queue = await self._attempt(session, child)
+
+        assert stored == ids["event"], "the match market stayed unlinked"
+        assert receipt.linked_event_id == ids["event"]
+        assert receipt.detail.get("how") == "group_sibling_link"
+        assert queue == [(child, ids["event"])]
+
+    async def test_a_group_holding_no_row_leaves_it_unlinked(self, seeded):
+        session, ids = seeded
+        child = await self._child(session, "polymarket:9450002")
+
+        stored, receipt, queue = await self._attempt(session, child)
+
+        assert stored is None
+        assert receipt.reject_reason == "not_game_level"
+        assert queue == []
+
+
 @pytest.fixture
 async def seeded():
     """Real Postgres, torn down by this file's own name prefix and sport key."""
