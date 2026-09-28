@@ -144,7 +144,6 @@ EXPECTED_GAME_STATE_INDICATORS: dict[str, int | None] = {
     "soccer_uefa_champs_league": 2,
     "soccer_uefa_nations_league": 2,
     "soccer_england_league2": 2,
-    "soccer_mexico_ligamx": 2,
     "soccer_spain_la_liga": 2,
     "soccer_germany_bundesliga": 2,
     "soccer_italy_serie_a": 2,
