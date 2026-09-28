@@ -1592,10 +1592,20 @@ class TestEventsBucketRequiresWordAboutness:
         the reason the truncation loss (`yank` -> Yankees) is acceptable here. If
         typeahead ever adopts this rule too, that argument is void."""
         ta = _strip_comments(_source_of(events_route.typeahead_search))
-        assert "_build_expanded_ilike(Event.home_team_name" in ta, (
+        # #9306: the arm goes through `_build_round_word_ilike`, which is
+        # `_build_expanded_ilike` for every term but the four finished round
+        # words. Both halves are pinned, so substring recall cannot leak away
+        # through the helper either.
+        assert "_build_round_word_ilike(Event.home_team_name" in ta, (
             "typeahead lost its substring recall; the events-bucket word rule is "
             "no longer safe, because nothing serves partial typing"
         )
+        helper = _strip_comments(_source_of(events_route._build_round_word_ilike))
+        assert "if term.lower() not in _TEAM_PREFIX_REFUSED_TOKENS:" in helper
+        assert "return _build_expanded_ilike(column, term, expansion)" in helper
+        assert events_route._TEAM_PREFIX_REFUSED_TOKENS == frozenset(
+            {"alcs", "alds", "nlcs", "nlds"}
+        ), "the whole-word carve-out must stay a closed list of round words"
         assert "_event_name_match" not in ta
 
 

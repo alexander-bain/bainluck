@@ -15,6 +15,16 @@ markets), and the controls here pin that.
 
 THE STRAWMAN removes the round-word set: the fixture then serves the Donalds
 market on both screens, as production did.
+
+THE NAME ARMS (after-check on prod `e5966389`, 2026-09-28 09:20Z). With the
+outcome arm fixed, `/typeahead?q=alds` still served "Florida Governor election:
+Byron Donalds vote percent" and "Miami-Dade County, Florida: Byron Donalds vote
+percent" — Donalds in the market's own NAME — plus two Wealdstone markets and two
+Wealdstone games. The dropdown's futures-name and game-name arms were a bare
+`ILIKE '%alds%'`; `/search`'s name arm is a whole-word FTS test and was clean.
+The first fixture had no market whose own name held `alds`, so it could not see
+this. Now a round word is a whole word on those arms too, and `weald` (a name
+still being typed) keeps reaching Wealdstone.
 THE CONTROLS: `donalds` still finds the governor market through its outcome
 (the whole word), and `lebro` still reaches the LeBron market through an
 outcome it is only the start of.
@@ -47,6 +57,10 @@ ALDS_MARKET = "MLB Playoffs: Team to advance to ALDS"
 GOVERNOR = "Florida Governor winner?"
 PERSON_OF_YEAR = "Time's Person of the Year for 2026"
 LEBRON_MARKET = "Most points in a single game this season?"
+# Production's own row names, `alds` inside a word of the market NAME.
+VOTE_PERCENT = "Florida Governor election: Byron Donalds vote percent"
+WEALDSTONE_MARKET = "Forest Green Rovers FC vs. Wealdstone FC"
+WEALDSTONE_HOME, WEALDSTONE_AWAY = "Forest Green Rovers FC", "Wealdstone FC"
 
 # (external_id, market name, outcome names). The outcomes are the production
 # rows' own spellings.
@@ -55,6 +69,8 @@ SEEDS = [
     ("KXGOVFL-26", GOVERNOR, ["Byron Donalds", "David Jolly"]),
     ("KXPERSONYEAR-26", PERSON_OF_YEAR, ["Jimmy Donaldson", "Pope Leo XIV"]),
     ("KXNBAPTS-26", LEBRON_MARKET, ["LeBron James", "Luka Doncic"]),
+    ("KXGOVFLVOTE-26", VOTE_PERCENT, ["At least 50%", "At least 55%"]),
+    ("PM-FGR-WEALD", WEALDSTONE_MARKET, ["Forest Green Rovers FC", "Draw"]),
 ]
 
 
@@ -65,7 +81,7 @@ async def maker():
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
     import app.models.models  # noqa: F401 — registers every table on Base
-    from app.models.models import FuturesMarket, FuturesOutcome
+    from app.models.models import Event, FuturesMarket, FuturesOutcome, Sport
     from app.services.database import Base
 
     engine = create_async_engine(DB_URL)
@@ -96,6 +112,19 @@ async def maker():
                         current_probability=0.5,
                     )
                 )
+        # A game inside the dropdown's upcoming window, `alds` inside a team.
+        sport = Sport(key="soccer_other", name="soccer_other")
+        session.add(sport)
+        await session.flush()
+        session.add(
+            Event(
+                sport_id=sport.id,
+                home_team_name=WEALDSTONE_HOME,
+                away_team_name=WEALDSTONE_AWAY,
+                commence_time=datetime.now(timezone.utc) + timedelta(days=1),
+                status="scheduled",
+            )
+        )
         await session.commit()
 
     yield session_maker
@@ -153,6 +182,11 @@ def _typeahead_texts(payload: dict) -> list[str]:
     return [s.get("text") for s in payload["suggestions"] if s.get("type") == "futures"]
 
 
+def _typeahead_games(payload: dict) -> list[str]:
+    assert "suggestions" in payload, f"no `suggestions` key; got {sorted(payload)}"
+    return [s.get("text") for s in payload["suggestions"] if s.get("type") == "event"]
+
+
 def _disarm(monkeypatch) -> None:
     from app.routes import events as events_module
 
@@ -196,3 +230,42 @@ async def test_progressive_typing_still_reaches_an_outcome(get, path, read):
     start of "LeBron", not a whole word, and must keep reaching the market."""
     names = read(await get(path, "lebro"))
     assert LEBRON_MARKET in names, names
+
+
+@pytest.mark.parametrize("path, read", SCREENS)
+async def test_alds_serves_no_market_whose_own_name_holds_alds_inside_a_word(
+    get, path, read
+):
+    names = read(await get(path, "alds"))
+    assert ALDS_MARKET in names, (
+        f"the ALDS market itself must still be served, or this tests nothing: {names}"
+    )
+    assert VOTE_PERCENT not in names and WEALDSTONE_MARKET not in names, (
+        f"`alds` still reaches a market through its NAME, Don(alds) / Wea(lds)tone: {names}"
+    )
+
+
+async def test_alds_dropdown_serves_no_game_with_alds_inside_a_team(get):
+    games = _typeahead_games(await get("typeahead", "alds"))
+    assert not any("Wealdstone" in g for g in games), (
+        f"`alds` still reaches a game through Wea(lds)tone: {games}"
+    )
+
+
+async def test_without_the_round_word_set_the_dropdown_name_arms_leak(get, monkeypatch):
+    """Strawman for the name arms: production's 09:20Z dropdown, reproduced.
+    (`/search`'s name arm is a whole-word FTS test and never served these, so
+    there is no search strawman to take.)"""
+    _disarm(monkeypatch)
+    payload = await get("typeahead", "alds")
+    names, games = _typeahead_texts(payload), _typeahead_games(payload)
+    assert VOTE_PERCENT in names and WEALDSTONE_MARKET in names, names
+    assert any("Wealdstone" in g for g in games), games
+
+
+async def test_a_name_still_being_typed_keeps_reaching_the_dropdown(get):
+    """Control: only the four round words changed. `weald` is the start of
+    "Wealdstone", not a whole word, and must keep reaching the market and game."""
+    payload = await get("typeahead", "weald")
+    assert WEALDSTONE_MARKET in _typeahead_texts(payload), payload
+    assert any("Wealdstone" in g for g in _typeahead_games(payload)), payload

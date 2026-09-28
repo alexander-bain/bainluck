@@ -4326,6 +4326,36 @@ def _build_word_start_ilike(column, term: str, expansion: str | None):
     return _one(term)
 
 
+def _build_round_word_ilike(column, term: str, expansion: str | None):
+    """`_build_expanded_ilike`, except a ROUND word must be a whole word (#9306).
+
+    For the closed list in `_TEAM_PREFIX_REFUSED_TOKENS` only. Those words are
+    finished — nobody types `alds` on the way to anything — and the substring is
+    somebody's surname or a club: `%alds%` is inside Byron Don(alds) and
+    Wea(lds)tone. PR #9317 narrowed the futures OUTCOME arm and production then
+    showed the dropdown's NAME arm doing the same thing: `/typeahead?q=alds`
+    (prod `e5966389`, 2026-09-28 09:20Z) slotted "Florida Governor election:
+    Byron Donalds vote percent" and "Miami-Dade County, Florida: Byron Donalds
+    vote percent" above the ALDS "advance" markets, then two Wealdstone markets
+    and two Wealdstone games. `/search` was clean because its name arm is already
+    a whole-word FTS test.
+
+    Every other term compiles exactly as `_build_expanded_ilike` — #7381's
+    word-start rule and #5773's refusal of a general word test are about
+    progressive typing, which a round word is not. Same ILIKE-then-`~*` shape as
+    `_outcome_whole_word`, so the trigram index still drives the scan.
+    """
+    if term.lower() not in _TEAM_PREFIX_REFUSED_TOKENS:
+        return _build_expanded_ilike(column, term, expansion)
+    whole = and_(
+        column.ilike(f"%{term}%"),
+        column.op("~*")(f"(^|[^[:alnum:]]){_regex_escape(term)}([^[:alnum:]]|$)"),
+    )
+    if expansion:
+        return or_(whole, column.ilike(f"%{expansion}%"))
+    return whole
+
+
 def _build_futures_name_filter(ilike_futures_filter, fts_q: str):
     """The futures NAME arm: stemmed FTS **OR** substring ILIKE. ONE definition.
 
@@ -12035,9 +12065,11 @@ async def typeahead_search(
         team_term_conditions = []
         futures_term_conditions = []
         for term, exp in ta_expanded:
+            # #9306: `_build_round_word_ilike` is `_build_expanded_ilike` for
+            # every term but the four round words, which must be whole words.
             event_term_conditions.append(or_(
-                _build_expanded_ilike(Event.home_team_name, term, exp),
-                _build_expanded_ilike(Event.away_team_name, term, exp),
+                _build_round_word_ilike(Event.home_team_name, term, exp),
+                _build_round_word_ilike(Event.away_team_name, term, exp),
             ))
             # #7381: word-START, not anywhere. See `_build_word_start_ilike` for
             # the measurement and for why the dropdown takes a weaker rule than
@@ -12049,7 +12081,7 @@ async def typeahead_search(
                 _build_word_start_ilike(cast(Team.alternate_names, String), term, exp),
             ))
             futures_term_conditions.append(
-                _build_expanded_ilike(FuturesMarket.name, term, exp)
+                _build_round_word_ilike(FuturesMarket.name, term, exp)
             )
         ilike_event_names = and_(*event_term_conditions)
         ilike_event_filter = ilike_event_names
@@ -12058,8 +12090,8 @@ async def typeahead_search(
     else:
         term, exp = ta_expanded[0]
         ilike_event_names = or_(
-            _build_expanded_ilike(Event.home_team_name, term, exp),
-            _build_expanded_ilike(Event.away_team_name, term, exp),
+            _build_round_word_ilike(Event.home_team_name, term, exp),
+            _build_round_word_ilike(Event.away_team_name, term, exp),
         )
         ilike_event_filter = ilike_event_names
         if sport_alias_keys:
@@ -12072,7 +12104,7 @@ async def typeahead_search(
             _build_word_start_ilike(Team.abbreviation, term, exp),
             _build_word_start_ilike(cast(Team.alternate_names, String), term, exp),
         )
-        ilike_futures_filter = _build_expanded_ilike(FuturesMarket.name, term, exp)
+        ilike_futures_filter = _build_round_word_ilike(FuturesMarket.name, term, exp)
 
     # Combine FTS + ILIKE for events and futures
     fts_event_names = or_(
