@@ -25,7 +25,7 @@ import {
 } from "@/lib/probabilityEvidence";
 import type { WinProbabilitySources } from "@/lib/probabilityEvidence";
 import { PROBABILITY_SOURCE_KEYS } from "@/lib/confidence";
-import { renderedDuelPercents, renderedPercent } from "@/lib/renderedPercent";
+import { renderedComplementPercents, renderedDuelPercents, renderedPercent } from "@/lib/renderedPercent";
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 
 // ---------------------------------------------------------------------------
@@ -810,7 +810,7 @@ export function chartAxisPercents(axisValue: number): {
   // treating the other as its complement. Making that reconstruction explicit is
   // what lets the hero's rule decide the anchor; a non-finite axis value falls
   // out as a non-complement pair and yields the nulls documented above.
-  const [away, home] = renderedDuelPercents(1 - homeProb, homeProb);
+  const [away, home] = renderedComplementPercents(homeProb);
   if (home === null || away === null) {
     return { home: null, away: null, homeLabel: null, awayLabel: null };
   }
@@ -1077,17 +1077,19 @@ export function resolveProbability(
       // the BLEND (`hero_probability` / `hero_probability_away`), which the
       // backend derives as `round(1 - agg, 6)` and serves with no rendered
       // percents of its own. `current_odds` is a different, lagging pair.
-      return withRenderedPercents(
-        {
-          homeProb,
-          awayProb,
-          probSourceLabel,
-          openingHomeProb,
-          openingAwayProb,
-        },
+      const resolved = withRenderedPercents(
+        { homeProb, awayProb, probSourceLabel, openingHomeProb, openingAwayProb },
         odds,
         false,
       );
+      // The live blend and chart carry one value. Decide only its DISPLAY pair
+      // together; SSE/history raw complements must not change the printed tie.
+      // Preserve independently served pairs and an explicitly withheld side.
+      if (awayProb === 1 - homeProb || awayProb === Number((1 - homeProb).toFixed(6))) {
+        const [awayPct, homePct] = renderedComplementPercents(homeProb);
+        return { ...resolved, homePct, awayPct };
+      }
+      return resolved;
     }
 
     // No blend yet — show current odds, cross-checked against history
