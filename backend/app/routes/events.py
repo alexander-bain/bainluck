@@ -2057,6 +2057,58 @@ def _postseason_now_first(markets: list, terms: list[str]) -> list:
     ]
 
 
+def _postseason_round_series_first(markets: list, terms: list[str]) -> list:
+    """#9333: a round name (`wild card`) keeps the round's own series markets first.
+
+    Production, Monday 2026-09-28, prod `7cb0bae4`: the dropdown for `wild card`
+    led with "Curitiba: Thiago Seyboth Wild vs Pedro Bos·card·in Dias", its Game
+    Spread, "Wildcard Gaming vs. M80" and its Rainbow Six board — both typed
+    words sit inside those NAMES, so the name-match split put them above "Series
+    Winner: Boston vs New York Y", whose name says neither. The round lives in
+    the ticker (`_POSTSEASON_ROUND_ALIASES`), so the ticker decides: the same
+    rule as `_postseason_round_series_match`, in Python. A stable partition; a
+    no-op unless the query IS the round name (`_bare_postseason_round`).
+    """
+    rnd = _bare_postseason_round(terms)
+    if rnd is None:
+        return markets
+    _sport_key, stem, _winner, _game, code = rnd
+
+    def _in_round(m) -> bool:
+        ext = m.external_id or ""
+        return m.source == "kalshi" and ext.startswith(stem) and ext.endswith(code)
+
+    return [m for m in markets if _in_round(m)] + [m for m in markets if not _in_round(m)]
+
+
+def _futures_postseason_round_order_key(terms: list[str]):
+    """`_postseason_round_series_first` as a SQL sort key, or ``None`` without a round.
+
+    The dropdown's futures window is `_TYPEAHEAD_FUTURES_POOL` rows ordered by
+    name keys that the series markets can never win, so the partition above can
+    only reorder what this key makes sure is fetched.
+    """
+    rnd = _bare_postseason_round(terms)
+    if rnd is None:
+        return None
+    return case((_postseason_round_series_match(rnd), 0), else_=1)
+
+
+def _bare_postseason_round(terms: list[str]):
+    """The round, when the query names it and nothing else but a league word.
+
+    `wild card` and `mlb wild card` are asking for the round; `wildcard gaming`
+    is asking for Wildcard Gaming and `yankees wild card` for one club's series,
+    so neither gets the round's markets hoisted over what they named.
+    """
+    rnd, consumed = _resolve_postseason_round(terms)
+    if rnd is None:
+        return None
+    rest = [(t, None) for t in terms if t.lower() not in consumed]
+    _keys, league_words = _resolve_sport_aliases(rest)
+    return rnd if all(t.lower() in league_words for t, _e in rest) else None
+
+
 def _strip_search_scaffolding(terms: list[str]) -> list[str]:
     """Drop generic scaffolding words from a >=3-term query; never strip to empty.
     Pure — safe to unit test. Leaves 1-2 word queries untouched (name collisions
@@ -3341,6 +3393,9 @@ def _rerank_search_futures(
     # key fetched those rows, and the name-match split above would otherwise
     # hand "Boston: First Playoff Opponent" (no `playoffs` in it) to the bottom.
     ordered = _postseason_now_first(ordered, [t for t, _e in low])
+    # #9333: likewise a round name keeps the round's ticker-matched series first,
+    # above the rows whose names merely contain its words (`Wild`·Bos`card`in).
+    ordered = _postseason_round_series_first(ordered, [t for t, _e in low])
     # Last, and inside one question only (#8417): a frozen row — last season's
     # settled market still stored open — yields its place to the same question's
     # live row, so the volume sort above cannot hand dedup the dead one.
@@ -13122,6 +13177,11 @@ async def typeahead_search(
     _ta_futures_postseason_order = (
         [] if _ta_futures_postseason_key is None else [_ta_futures_postseason_key.asc()]
     )
+    # #9333: a round name fetches the round's series markets before the name
+    # collisions that would otherwise fill the window.
+    _ta_futures_round_key = _futures_postseason_round_order_key(terms)
+    if _ta_futures_round_key is not None:
+        _ta_futures_postseason_order.append(_ta_futures_round_key.asc())
 
     futures_query = (
         select(FuturesMarket)
