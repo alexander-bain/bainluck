@@ -16049,8 +16049,8 @@ def _cached_detail_payload(event_id: int, now: float) -> dict | None:
 #: cost ≤ 2 builds per worker, not N.
 #:
 #: Entry: the build's start clock (`time.time()`, the scale `_event_detail_cache`
-#: stamps with) and the future its waiters share.
-_DETAIL_FRESH_BUILDS: dict[int, tuple[float, "asyncio.Future"]] = {}
+#: stamps with) and the `asyncio.Future` its waiters share.
+_DETAIL_FRESH_BUILDS: dict[int, tuple[float, object]] = {}
 #: True only inside the one build the barrier is running, so that `get_event`'s
 #: re-entry skips the barrier and the cache read. A contextvar and not a
 #: parameter: a parameter on the route would be a query string anyone can send.
