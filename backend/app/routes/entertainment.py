@@ -20,6 +20,7 @@ from sqlalchemy.orm import selectinload
 from app.models import FuturesMarket
 from app.services import get_db
 from app.utils.hook_staleness import is_hook_stale
+from app.utils.ladder_monotonicity import cumulative_outcome_ladder
 from app.utils.cross_source_matching import (
     # #2427 — the deduping pair, not bare `clean_outcomes`: every row this file
     # builds must also lose a Polymarket `_yes`/`_no` leg that duplicates a rung
@@ -639,6 +640,36 @@ def _distinct_served_market_ids(*sections) -> set:
     return found
 
 
+def _mark_ladder(row: dict) -> None:
+    """#9468 — a row whose legs are ONE cumulative ladder is not a race.
+
+    `spotify_race` membership is the `kxspotify` ticker prefix, and
+    `SpotifyRace` draws the row with the most legs as a numbered race — rank,
+    cover tile, the #1 slot lit as the leader. Kalshi's "When will Spotify
+    release 2026 Wrapped?" is that row, and its legs are nested dates:
+    "Before Dec 5" CONTAINS "Before Dec 4", so ranking them by price printed
+    `1 Before Dec 4 · 2 Before Dec 5 · 3 Before Dec 3` — no date was ahead of
+    another, and the calendar came out scrambled.
+
+    The discriminator is the one the feed and the outcome display already use
+    (`cumulative_outcome_ladder`, dates on): every leg a threshold, one
+    direction, one affix, no repeated rung. A row it recognises is served with
+    `ladder: True` and its legs in RUNG order, so the card can draw the dates
+    as a calendar. A race of named contenders fails the check on its first leg
+    and is served exactly as before, price order and all.
+
+    Only the ORDER of the served slice changes. `prob` stays the priced leader
+    `_market_row` chose, and the slice is the same legs.
+    """
+    ladder = cumulative_outcome_ladder(
+        row["top_outcomes"], dates=True, question=row.get("q")
+    )
+    row["ladder"] = ladder is not None
+    if ladder is not None:
+        legs, _direction = ladder
+        row["top_outcomes"] = [leg for _rung, leg in legs]
+
+
 def _build_music(
     themed: dict, withheld_ids: frozenset[int] | set[int] = frozenset()
 ) -> dict:
@@ -664,6 +695,7 @@ def _build_music(
             continue
         all_rows.append(row)
         if kind == "spotify":
+            _mark_ladder(row)
             spotify_race.append(row)
         elif kind == "billboard":
             billboard_watch.append(row)
