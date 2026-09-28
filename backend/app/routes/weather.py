@@ -1059,6 +1059,8 @@ async def get_cities(db: AsyncSession):
         for d in dist:
             del d["_sort"]
 
+        await _squeeze_like_the_market_page(db, chosen, dist)
+
         # Extract numeric mode value from label (e.g., "50-55°F" -> 52.5)
         mode_val = _extract_mode_value(mode_label)
         expected_unit = "F" if city_id in _FAHRENHEIT_CITIES else "C"
@@ -1147,6 +1149,54 @@ async def get_cities(db: AsyncSession):
         })
 
     return cities
+
+
+async def _squeeze_like_the_market_page(
+    db: AsyncSession, market: FuturesMarket, dist: list[dict]
+) -> None:
+    """Print each city ladder on the scale its own market page prints (#8046).
+
+    WHAT A READER SAW, 2026-09-28 00:3xZ. The Houston panel read "90-91°F 46%";
+    its "View probability timeline →" link — the only link on the card — opened
+    `/futures/62721461`, which answered the same bucket 39%. The ladder summed to
+    116.9%; the page summed to 100.0%. Six of 48 cities disagreed that way
+    (Houston, Miami, Toronto, Seattle, Phoenix, Taipei), every one on a page
+    summing to exactly 1.000.
+
+    The page runs `normalize_display_probs` (the #23 squeeze) and this card never
+    did. Same helper, same arguments, same gate — so the squeeze fires on the card
+    exactly when it fires on the page, and a coherent 1.02 ladder the page prints
+    raw stays raw here too. Not a fork of its thresholds.
+
+    ``field_complete`` is asked of `_page_withheld_outcome_ids`, the refusal a
+    reader meets on the market's own page (#7103: a withheld leg turns the squeeze
+    OFF there). This card still draws every bucket's bar, so it only borrows the
+    GATE — it does not null the legs. If the refusal read raises, the ladder keeps
+    its raw prices: one board's error never takes the map down (gotcha #42), and
+    raw is what this card served before.
+
+    `mode` is untouched on purpose: it is an argmax over the raw prices, and one
+    divisor never moves an argmax.
+    """
+    from app.routes.league_futures import _page_withheld_outcome_ids
+    from app.utils.outcome_display import normalize_display_probs
+
+    try:
+        withheld = await _page_withheld_outcome_ids(db, market)
+    except Exception:
+        logger.warning(
+            "weather cities: withheld read failed for market %s — ladder stays raw",
+            getattr(market, "id", None),
+            exc_info=True,
+        )
+        return
+    if normalize_display_probs(
+        dist,
+        mutually_exclusive=getattr(market, "mutually_exclusive", True),
+        field_complete=not withheld,
+    ):
+        for d in dist:
+            d["prob"] = round(float(d["probability"] or 0) * 100)
 
 
 # A bucket's temperatures, with the degree marker that says which scale they
