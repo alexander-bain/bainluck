@@ -8742,6 +8742,16 @@ async def _polymarket_container_sibling_event_id(session, market) -> Optional[in
 #: game container. Only these share a fixture by construction; see below.
 _POLYMARKET_SUB_MARKET_GROUP_TYPE = "polymarket_sub_market"
 
+#: #9338 — how many distinct sibling rows the lookup reads. Production's worst
+#: group held 5 (Polymarket 1092862, Van de Zandschulp v Royer, 2026-09-28); a
+#: group AT the cap may hold more than we saw, so it is refused, never guessed.
+_GROUP_SIBLING_HELD_CAP = 16
+
+#: #9338 — the only states a clock-refused sibling row may be joined in. A
+#: withdrawn (`suspended`) or finished row is where #8430's own specimen sat
+#: (15317735, the pre-postponement Boyer row); a child is never parked there.
+_GROUP_SIBLING_OPEN_STATUSES = ("scheduled", "live")
+
 
 async def _polymarket_group_sibling_event_id(session, market) -> Optional[int]:
     """The event another child of this market's OWN Polymarket event already holds.
@@ -8772,6 +8782,28 @@ async def _polymarket_group_sibling_event_id(session, market) -> Optional[int]:
     Returns ``None`` — today's CREATE — when the group holds no linked child, or
     holds more than one distinct event (the venue's structure disagrees with ours
     and picking one would be a guess), or the fixture guard refuses.
+
+    #9338 narrows the last two, because each of them MINTED — and a mint is the
+    one outcome that can never be right for a child whose own event is already
+    on a row. Read on production 2026-09-28: when Polymarket listed four new O/U
+    lines for Van de Zandschulp v Royer (group 1092862), its six siblings sat on
+    Kalshi's row 15319968, stamped with Kalshi's ESTIMATED start 05:00Z against
+    the venue's 08:30Z. The guard refused it (3.5h), the first child minted, the
+    group then spanned two rows, ``len(held) != 1`` refused the rest, and every
+    later child minted too: five rows in twelve seconds. Tennis only, over 7
+    days: 18 of 1,132 groups split, 48 extra rows; every other sport 0.
+
+    (a) Several sibling rows: the ONE the fixture guard accepts is the answer.
+        Two or more accepted is still a guess and still refused.
+    (b) Exactly one sibling row, refused ONLY on the clock: join it when it
+        carries no provider id (``espn_id``, ``external_id``,
+        ``statpal_fixture_id`` all NULL) and is ``scheduled``/``live``. An
+        unanchored row's start is itself another venue's guess — Kalshi's
+        estimate (Sonego row 03:30Z vs venue 07:15Z), or the day before a move
+        (Echargui v Dzumhur, 09-28 vs 09-29) — while the venue's own event id
+        says this child and its siblings are one match. An anchored row's clock
+        was reported by a schedule provider, so its refusal stands; and a
+        withdrawn or finished row is not joined whatever it carries.
     """
     if market.source != "polymarket":
         return None
@@ -8795,18 +8827,53 @@ async def _polymarket_group_sibling_event_id(session, market) -> Optional[int]:
                     FuturesMarket.id != market.id,
                 )
                 .distinct()
-                .limit(2)
+                .limit(_GROUP_SIBLING_HELD_CAP)
             )
         )
         .scalars()
         .all()
     )
-    if len(held) != 1:
+    if not held or len(held) >= _GROUP_SIBLING_HELD_CAP:
         return None
 
-    sibling_event_id = held[0]
-    if await _check_polymarket_fixture_reason(session, sibling_event_id, market):
+    # (a) #9338: the guard picks among several rows; it no longer vetoes them all.
+    accepted = [
+        event_id
+        for event_id in held
+        if not await _check_polymarket_fixture_reason(session, event_id, market)
+    ]
+    if len(accepted) == 1:
+        return accepted[0]
+    if accepted or len(held) != 1:
         return None
+
+    # (b) #9338: one row, refused on the clock alone.
+    sibling_event_id = held[0]
+    from app.models.models import Event
+
+    row = (
+        await session.execute(
+            select(
+                Event.espn_id,
+                Event.external_id,
+                Event.statpal_fixture_id,
+                Event.status,
+            ).where(Event.id == sibling_event_id)
+        )
+    ).first()
+    if row is None:
+        return None
+    espn_id, external_id, statpal_fixture_id, status = row
+    if espn_id is not None or external_id is not None or statpal_fixture_id is not None:
+        return None
+    if status not in _GROUP_SIBLING_OPEN_STATUSES:
+        return None
+    logger.info(
+        "Joining Polymarket child %s to unanchored event %d (#9338) — its "
+        "siblings in group %s sit there; the fixture guard refused only the "
+        "row's clock, which no schedule provider reported",
+        market.external_id, sibling_event_id, group_id,
+    )
     return sibling_event_id
 
 
