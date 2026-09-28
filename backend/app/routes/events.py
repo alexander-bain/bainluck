@@ -3618,6 +3618,46 @@ def _typeahead_fold_twins(events: list, promoted_ids: set) -> list:
     return fold.events
 
 
+def _typeahead_seven_without_served_game_winners(
+    keyed: list, headline_ids, *, limit: int = 7
+) -> list:
+    """#9415: the dropdown prints each game once — the #8734 rule, on the seven.
+
+    Production 2026-09-28 16:3xZ, `/typeahead?q=chiefs`: "Kansas City Chiefs at
+    Las Vegas Raiders" (event 14781710) and, three rows down, "KC Chiefs vs LV
+    Raiders — Kansas City 65.5%", Kalshi `KXNFLGAME-26OCT04KCLV`, attached to
+    that same game. `/search` has withheld that row since #8734; the dropdown
+    never asked.
+
+    `keyed` is the scorer's `(key, payload)` list. The reservation, the entity
+    floor and the slice run exactly as the route ran them, over the rows that
+    are left. A futures row leaves only when the game it answers
+    (`_answers_game`, stamped in the futures loop) is among the rows the reader
+    sees. A game cut from the seven keeps its market, because there the market is
+    the only way to reach it. Dropping a market only moves rows up, and game rows
+    are never dropped, so the loop ends: at worst one pass per futures row.
+    """
+    from app.utils.search_match_class import entity_prefix_len
+
+    dropped: set[int] = set()
+    while True:
+        kept = [(k, p) for k, p in keyed if id(p) not in dropped]
+        seven = reserve_headline_slot(
+            [p for _k, p in kept], headline_ids, floor=entity_prefix_len(kept)
+        )[:limit]
+        served = {
+            p.get("event_id") for p in seven if p.get("type") == "event"
+        } - {None}
+        leaving = {
+            id(p)
+            for _k, p in kept
+            if p.get("type") == "futures" and p.get("_answers_game") in served
+        }
+        if not leaving:
+            return seven
+        dropped |= leaving
+
+
 def _typeahead_stem_only_event(
     participants: tuple[str | None, str | None],
     expanded: list[tuple[str, str | None]],
@@ -13644,6 +13684,17 @@ async def typeahead_search(
                 if _ta_round_lead is not None and _ta_round_lead(market)
                 else []
             ),
+            # #9415: the game this row is the WINNER market of, or None. Asked
+            # here, while the ORM row is live, with the search page's own rule
+            # (#8734) against the row's own game; whether that game is in the
+            # dropdown is only known after the slice. Private, stripped below.
+            "_answers_game": (
+                getattr(market, "event_id", None)
+                if _answers_a_served_game_card(
+                    market, {getattr(market, "event_id", None)}
+                )
+                else None
+            ),
         })
 
     # L2-65 Item 1c: EVENT CONCEPT suggestions (tournament pages) from the same
@@ -14032,11 +14083,10 @@ async def typeahead_search(
     # key carries the plural-namesake penalty, which is a property of the whole
     # candidate set, so a second per-row derivation would be a second rule.
     _ta_keyed = _s_rank_with_keys(_q_identity, _ta_candidates)
-    suggestions = reserve_headline_slot(
-        [_payload for _key, _payload in _ta_keyed],
-        _ta_headline_ids,
-        floor=_s_entity_prefix_len(_ta_keyed),
-    )[:7]
+    # #9415: a game's own winner market leaves when its game is in the seven.
+    suggestions = _typeahead_seven_without_served_game_winners(
+        _ta_keyed, _ta_headline_ids
+    )
     _ta_mark("rank")
 
     # T2-3: the requested answer LEADS (design decision B — "`Patriots playoffs`
@@ -14072,6 +14122,7 @@ async def typeahead_search(
         # Ranking evidence, never a payload: a 40-outcome market would other-
         # wise ship 40 strings on every keystroke.
         _s.pop("_outcome_names", None)
+        _s.pop("_answers_game", None)  # #9415
         # #4411: same rule — the participants are what the row was PROMOTED on,
         # and both names are already inside `text`.
         _s.pop("_participants", None)
