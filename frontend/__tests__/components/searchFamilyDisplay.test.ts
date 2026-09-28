@@ -145,6 +145,50 @@ describe("familyRowTitles (#4136)", () => {
     }
   });
 
+  // #8705: production `/search?q=lgd`, 2026-09-28 01:3xZ, verbatim.
+  const LGD = [
+    "Dota 2: LGD Gaming vs Xtreme Gaming - Game 1 Winner",
+    "Dota 2: LGD Gaming vs Xtreme Gaming - Game 2 Winner",
+  ];
+
+  test("#8705: a numbered sibling's tail keeps the noun its number indexes", () => {
+    const t = familyRowTitles(LGD);
+    expect(t[0].tail).toBe("Game 1 Winner");
+    expect(t[1].tail).toBe("Game 2 Winner");
+    expect(t[0].head).toBe("Dota 2: LGD Gaming vs Xtreme Gaming - ");
+  });
+
+  test("#8705: no reserved tail opens on a bare number — integers, decimals, signed lines", () => {
+    const cards = [
+      LGD,
+      [
+        "Counter-Strike: Infinite vs SAW - Map 2 Winner",
+        "Counter-Strike: Infinite vs SAW - Map 1 Winner",
+      ],
+      [
+        "Lakers vs. Celtics: Total Points Over 210.5",
+        "Lakers vs. Celtics: Total Points Over 215.5",
+      ],
+      ["Spread: Kansas City Chiefs -3.5", "Spread: Kansas City Chiefs -7.5"],
+    ];
+    for (const names of cards) {
+      const t = familyRowTitles(names);
+      t.forEach((row, i) => {
+        expect(row.tail).not.toBe("");
+        expect(row.tail).not.toMatch(/^[-+]?\d/);
+        expect(row.head + row.tail).toBe(cleanName(names[i]));
+      });
+    }
+  });
+
+  test("#8705: an ordinal is not a bare number — `9th Inning Winner` is unchanged", () => {
+    const t = familyRowTitles([
+      "Colorado Rockies vs. New York Yankees - 8th Inning Winner",
+      "Colorado Rockies vs. New York Yankees - 9th Inning Winner",
+    ]);
+    expect(t[1].tail).toBe("9th Inning Winner");
+  });
+
   test("identical names produce no split (nothing distinguishes them)", () => {
     const same = ["Colorado Rockies vs. New York Yankees", "Colorado Rockies vs. New York Yankees"];
     for (const t of familyRowTitles(same)) expect(t.tail).toBe("");
@@ -182,6 +226,18 @@ describe("familySharedHead (#4583)", () => {
     "Colorado Rockies vs. New York Yankees - 6th Inning Winner",
     "Colorado Rockies vs. New York Yankees - 3rd Inning Winner",
   ];
+
+  test("#8705: a numbered card hoists the matchup, not the matchup plus a dangling noun", () => {
+    // Production `/search?q=lgd` at 390px printed `… - Game` as the card header
+    // over rows `1 Winner` / `2 Winner`.
+    const names = [
+      "Dota 2: LGD Gaming vs Xtreme Gaming - Game 1 Winner",
+      "Dota 2: LGD Gaming vs Xtreme Gaming - Game 2 Winner",
+    ];
+    const titles = familyRowTitles(names);
+    expect(familySharedHead(titles)).toBe("Dota 2: LGD Gaming vs Xtreme Gaming");
+    expect(titles.map((t) => t.tail)).toEqual(["Game 1 Winner", "Game 2 Winner"]);
+  });
 
   test("the filed defect: the matchup is lifted out of the five rows that repeat it", () => {
     expect(familySharedHead(familyRowTitles(YANK_CARD))).toBe(
