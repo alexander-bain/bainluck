@@ -445,7 +445,14 @@ class TestTheEligibilityRecordCarriesIt:
 
 
 class TestNothingAboutAdmissionChanges:
-    """The boundary: this clause records, it does not decide."""
+    """The boundary: this clause records, it does not decide.
+
+    #9348 BUILT THE CONSUMER these tests were waiting for, on a measured
+    population: `admissible_as_blend_speaker` now refuses a market whose venue
+    label is PRESENT and is not a full-contest winner. A row with no label — every
+    `_Market` below that carries no metadata — is admitted exactly as before, and
+    that half of the boundary is what these tests still pin.
+    """
 
     def test_a_contradicted_market_is_still_admitted_and_still_speaks(self):
         """Quarantine is a later consumer built on a measured population. If
@@ -472,35 +479,39 @@ class TestNothingAboutAdmissionChanges:
             _Market(1, MAP_WINNER), is_primary=True
         ) is False
 
-    def test_a_contradicted_market_that_speaks_records_the_disagreement(self):
-        """The other half: admitting it is not the same as trusting it silently.
+    def test_a_contradicted_market_is_refused_once_its_label_is_on_the_row(self):
+        """#9348: the venue's disagreement now decides, where the venue spoke.
 
-        The specimen is a map-winner child wearing a BARE MATCHUP title, which
-        is both a real Polymarket shape and the one that resolves — the
-        `Counter-Strike: … - Map 1 Winner` string above never reaches a reading
-        at all, because `extract_matchup_with_ticker_fallback` returns None for
-        it. That is a pre-existing title-parse limit, not this gate, and a test
-        that read its `None` as a refusal would be reporting the wrong fact.
+        The specimen is a map-winner child wearing a BARE MATCHUP title — a real
+        Polymarket shape, and the one that resolves (the `Counter-Strike: … -
+        Map 1 Winner` string above never reaches a reading at all, because
+        `extract_matchup_with_ticker_fallback` returns None for it). Gamma calls
+        it `child_moneyline`; before #9348 its 0.62 was published as the match
+        winner with a `moneyline:disputed` record. The same row with no label
+        still speaks — absence is not refutation (the 21%).
         """
         understanding = build_content_understanding(
             name=f"{CS_HOME} vs {CS_AWAY}", sports_market_type="child_moneyline"
         )
         assert understanding["agreement"] == CONTRADICTED
-        group = [
+        labelled = [
             _entry(
                 1, f"{CS_HOME} vs {CS_AWAY}",
                 [(1, CS_HOME, 0.62), (2, CS_AWAY, 0.38)],
                 market_metadata={CONTENT_UNDERSTANDING_KEY: understanding},
             )
         ]
-        reading = compute_source_home_probability(group, CS_HOME, CS_AWAY)
+        assert compute_source_home_probability(labelled, CS_HOME, CS_AWAY) is None
 
-        assert reading is not None, "the market is admitted, so it still speaks"
-        assert reading.eligibility.semantic_type == "moneyline:disputed", (
-            "the record must carry the venue's disagreement, or a reader "
-            "auditing the number sees a clean 'moneyline' on exactly the rows "
-            "where the two signals disagree"
-        )
+        unlabelled = [
+            _entry(
+                1, f"{CS_HOME} vs {CS_AWAY}",
+                [(1, CS_HOME, 0.62), (2, CS_AWAY, 0.38)],
+            )
+        ]
+        reading = compute_source_home_probability(unlabelled, CS_HOME, CS_AWAY)
+        assert reading is not None
+        assert reading.home_probability == 0.62
 
     def test_the_clause_never_writes_futures_markets_market_type(self):
         """🔴 `market_type` is Queue #194's presentation shape, read by

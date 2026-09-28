@@ -13,7 +13,7 @@ Runs after Kalshi (:45) and Polymarket (:15) polling to pick up fresh data.
 import logging
 import re
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
 from types import SimpleNamespace
 from typing import Optional
@@ -457,6 +457,13 @@ class _LinkedMarketRef:
     # why `_phase2b_completed_catchup`'s site says True explicitly rather than
     # leaving it to a default.
     event_has_result: bool | None = None
+    # #9348. `admissible_as_blend_speaker` now reads the venue's own label out
+    # of `market_metadata['content_understanding_v1']`; without it this copy
+    # abstains and the matcher would re-admit, every 15 minutes, the Completed
+    # Match novelty the live poll refuses. A plain JSON dict, not ORM state, so
+    # it survives the per-group rollbacks this class exists for. Excluded from
+    # hash/eq: a dict is unhashable, and identity is the scalars above.
+    market_metadata: dict | None = field(default=None, hash=False, compare=False)
 
     @property
     def id(self) -> int:
@@ -6339,6 +6346,7 @@ async def _lock_current_retirement_group(session, event_id, source, *, settled_o
             home_team_name=current.home_team_name,
             away_team_name=current.away_team_name, status=market.status,
             event_has_result=current.completed_at is not None,
+            market_metadata=getattr(market, "market_metadata", None),  # #9348
         ) for market in markets
     ]
     return current, _blend_group_for_refs(refs, outcomes_by_market)
@@ -6835,6 +6843,7 @@ async def _phase2b_completed_catchup(session, now, stats, time_remaining_fn) -> 
                     home_team_name=home_name,
                     away_team_name=away_name,
                     status=market_row.status,
+                    market_metadata=getattr(market_row, "market_metadata", None),  # #9348
                     # #5820 ABSTAINS HERE, ON PURPOSE. This scan's candidate
                     # predicate is `e.status IN ('completed','closed')` — every
                     # event it touches is a finished game whose blend key is
@@ -7119,6 +7128,7 @@ async def _phase2c_decide_page(
                 home_team_name=home_name,
                 away_team_name=away_name,
                 status=market_row.status,
+                market_metadata=getattr(market_row, "market_metadata", None),  # #9348
                 # The screen's own predicate, restated as evidence: every row
                 # on this page came back because `completed_at IS NULL`.
                 event_has_result=False,
@@ -7308,6 +7318,7 @@ async def _match_prediction_markets(limit: int = 500):
                 home_team_name=event.home_team_name,
                 away_team_name=event.away_team_name,
                 status=market.status,
+                market_metadata=getattr(market, "market_metadata", None),  # #9348
                 # #5820. Measured from the row that is already joined here, so
                 # the clause costs no query. False is the armed state and it is
                 # the honest reading of this join: a scheduled or live event
