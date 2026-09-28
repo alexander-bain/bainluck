@@ -622,7 +622,9 @@ class TestNothingElseChanged:
         assert item["q"] == _RAIN_TITLE
         assert item["prob"] == 78
         assert item["src"] == "kalshi"
-        assert item["tag"] == "Daily rain"
+        # /wildcards stamps its own framing (#3134): its admission is a
+        # substring match the title classifier cannot see.
+        assert item["tag"] == ("Wild card" if endpoint == "wildcards" else "Daily rain")
         assert item["closes"] == (now + timedelta(days=2)).strftime(
             "%a, %b %d"
         ).replace(" 0", " ")
