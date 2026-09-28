@@ -132,7 +132,7 @@ final class EventDetailViewModel: ObservableObject {
     /// `revisionRefetchWindow`, and never dropping the LAST request of a burst:
     /// one arriving inside the window or during a read schedules exactly one
     /// more (web's `createFoldedRefetchScheduler`, FOLDED_FRAME_REFETCH_MS).
-    static let revisionRefetchWindow: TimeInterval = 5
+    static let revisionRefetchWindow: TimeInterval = 1
     private var revisionRefetchTask: Task<Void, Never>?
     private var revisionRefetchPending = false
     private var lastRevisionRefetchAt: TimeInterval?
