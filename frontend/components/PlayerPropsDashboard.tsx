@@ -126,6 +126,43 @@ function StatBox({
       );
     }
 
+    // #9454: a split ladder (HIT at 2+, MISS at 2.5+) gets no single badge, but
+    // it is not ungraded. Both rungs are the backend's typed verdicts.
+    const split = grade.reason === "conflicting_rung_verdicts" ? stat.settledLadder ?? null : null;
+    if (split) {
+      return (
+        <div className="border border-surface-border rounded-lg p-2.5 bg-surface-card" data-settled-ladder="split">
+          <div className="flex items-center justify-between mb-1">
+            <div className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">{stat.type}</div>
+            <SourceDot count={stat.sources} />
+          </div>
+          <div className="font-mono tabular-nums text-2xl font-bold text-text-primary mb-1">
+            {split.actual != null ? split.actual : "—"}
+          </div>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span className="flex items-center gap-1.5">
+              <span
+                className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded"
+                style={{ background: `${accent}22`, color: accent }}
+              >
+                {propVerdictLabel(true)}
+              </span>
+              <span className="text-xs text-text-muted font-mono tabular-nums">{split.cleared}+</span>
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span
+                className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded"
+                style={{ background: "rgba(239,68,68,0.15)", color: "#EF4444" }}
+              >
+                {propVerdictLabel(false)}
+              </span>
+              <span className="text-xs text-text-muted font-mono tabular-nums">{split.missed}+</span>
+            </span>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="border border-surface-border rounded-lg p-2.5 bg-surface-card">
         <div className="flex items-center justify-between mb-1">
@@ -461,8 +498,9 @@ export default function PlayerPropsDashboard({
   // blanket "grading unavailable" subtitle.
   // UX-P040 (#1638): this asked `serverIsWinner != null` too, so a game with zero
   // published grades advertised "Final · graded results" over a grid of red MISSes.
+  // #9454: a split card (HIT 2+, MISS 2.5+) is graded too, by typed rung verdicts.
   const anyGraded = players.some((p) =>
-    p.stats.some((s) => s.grade != null && isGraded(s.grade)),
+    p.stats.some((s) => (s.grade != null && isGraded(s.grade)) || s.settledLadder != null),
   );
   // L2-52: source-name attribution removed (blend-only).
 

@@ -207,11 +207,15 @@ describe("a ladder whose rungs disagree states no group verdict (#1642 P2)", () 
     },
   ];
 
-  it("withholds rather than picking a rung", () => {
+  // #9454: this used to assert "grading unavailable". The card still refuses ONE
+  // badge for the group; it now states BOTH typed rungs — the player's 1 hit
+  // cleared 0.5+ and missed 1.5+ — instead of calling a graded prop ungraded.
+  it("states both typed rungs rather than picking one", () => {
     const html = renderSettled(CONFLICT);
-    expect(html).not.toContain("HIT");
-    expect(html).not.toContain("MISS");
-    expect(html).toContain("grading unavailable");
+    expect(html).toContain('data-settled-ladder="split"');
+    expect(html).toMatch(/HIT<\/span><span[^>]*>0\.5\+/);
+    expect(html).toMatch(/MISS<\/span><span[^>]*>1\.5\+/);
+    expect(html).not.toContain("grading unavailable");
   });
 
   it("does not depend on input order", () => {

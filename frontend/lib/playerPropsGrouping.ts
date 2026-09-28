@@ -47,7 +47,13 @@
  * PURE: no I/O, no clock, no React.
  */
 
-import { readPropGrade, type PropGrade, type PropGradeFields } from "./propGrade";
+import {
+  readPropGrade,
+  readSettledLadder,
+  type PropGrade,
+  type PropGradeFields,
+  type SettledLadderRead,
+} from "./propGrade";
 import { parsePropLabel } from "./otherMarketGroups";
 
 export interface StatRung {
@@ -73,6 +79,8 @@ export interface PlayerStat {
   serverIsWinner?: boolean | null;
   /** UX-P040 (#1638): the backend's typed grade, or `{graded:false}`. */
   grade?: PropGrade;
+  /** #9454: the rungs' split, when `grade` withholds for conflicting rungs. */
+  settledLadder?: SettledLadderRead;
 }
 
 export interface PlayerData {
@@ -94,6 +102,8 @@ export interface PlayerPropRow extends PropGradeFields {
   source?: string | null;
   player_team?: "home" | "away" | "unknown" | null;
   player_headshot?: string | null;
+  /** Set by the route on the UNDER leg of an O/U market; its `hit` is the Under's. */
+  _inverted?: boolean | null;
 }
 
 /** An `other[]` row — the bucket #1722 came out of. */
@@ -421,6 +431,16 @@ interface StatAccumulator {
   identified: boolean;
 }
 
+/**
+ * #9454: the split, attached only when there is one, so a stat without a split
+ * is byte-identical to what this module produced before it.
+ */
+function splitOf(statData: StatAccumulator, rungs: readonly StatRung[]): { settledLadder?: SettledLadderRead } {
+  if (!statData.identified) return {};
+  const split = readSettledLadder(rungs, statData.gradeRows);
+  return split ? { settledLadder: split } : {};
+}
+
 interface PlayerAccumulator {
   name: string;
   team: "home" | "away" | "unknown";
@@ -710,6 +730,16 @@ export function groupPlayerProps(input: GroupPlayerPropsInput): GroupPlayerProps
     const rawMovement = p.movement ?? null;
     const movement = rawMovement == null ? null : Number(rawMovement);
     const movementAbs = movement == null ? null : Math.abs(movement);
+    // #9454: a card is an OVER ladder, and the Under leg's typed `hit` is the
+    // Under's verdict. Pooled, every O/U line served with both legs carried one
+    // hit and one miss, so `readPropGrade` withheld it (60 of 102 cards on
+    // /events/14780548), and `rung.hit` was whichever leg arrived first
+    // (Ferguson, 1 catch: `1.5+` read HIT). The Over leg of the same market
+    // already states the verdict, so the Under leg keeps its `actual` and
+    // contributes no verdict. Not flipped: complementing a verdict is the
+    // client adjudicating, and a push has no complement.
+    const underLeg = p._inverted === true;
+    const verdict = underLeg ? null : (p.hit ?? null);
     const candidate: RowCandidate = {
       playerName: parsed.player,
       team,
@@ -720,15 +750,15 @@ export function groupPlayerProps(input: GroupPlayerPropsInput): GroupPlayerProps
       threshold: p.threshold,
       overProb: p.over_probability as number,
       movement,
-      hit: p.hit ?? null,
+      hit: verdict,
       actual: p.actual ?? null,
-      isWinner: p.is_winner ?? null,
+      isWinner: underLeg ? null : (p.is_winner ?? null),
       // Constructed HERE, in the read phase, so a throwing grade field cannot
       // leave a half-built player behind.
       gradeRow: {
         actual: p.actual ?? null,
-        hit: p.hit ?? null,
-        is_winner: p.is_winner ?? null,
+        hit: verdict,
+        is_winner: underLeg ? null : (p.is_winner ?? null),
         resolution_source: p.resolution_source ?? null,
       },
       source: p.source as string,
@@ -992,6 +1022,7 @@ export function groupPlayerProps(input: GroupPlayerPropsInput): GroupPlayerProps
             serverHit: sortedRungs[0]?.hit ?? null,
             serverIsWinner: statData.serverIsWinner ?? null,
             grade: readPropGrade(statData.gradeRows, { samePlayerStat: statData.identified }),
+            ...splitOf(statData, sortedRungs),
           });
         } else {
           const best = sortedRungs[0];
@@ -1007,6 +1038,8 @@ export function groupPlayerProps(input: GroupPlayerPropsInput): GroupPlayerProps
             serverHit: best.hit ?? null,
             serverIsWinner: statData.serverIsWinner ?? null,
             grade: readPropGrade(statData.gradeRows, { samePlayerStat: statData.identified }),
+            // A two-rung "line" (Nix TDs: HIT 1+, MISS 2+) splits the same way.
+            ...splitOf(statData, sortedRungs),
           });
         }
       }
