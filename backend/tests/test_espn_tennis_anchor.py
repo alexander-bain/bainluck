@@ -362,6 +362,58 @@ class TestNameComparators:
         assert names_agree("Bu Yunchaokete", "Yunchaokete Bu") is True
         assert names_agree("Francisco Cerundolo", "Juan Manuel Cerundolo") is False
 
+    @pytest.mark.parametrize("lone,full", [
+        ("Wu", "Ru Xi Wu"),
+        ("Ma", "Ma Yexin"),
+        ("Li", "Li Tu"),
+        ("Bu", "Bu Yunchaokete"),
+        ("Ye", "Ye Qiuyu"),
+    ])
+    def test_a_two_letter_surname_given_alone_agrees_with_its_full_name(self, lone, full):
+        """#2774: Kalshi writes a surname only, and these are whole surnames
+        that can never reach `SUBSTANTIAL_TOKEN_CHARS`. Before, each refused
+        `no-candidate` and the Asia swing kept a suspended second card."""
+        assert names_agree(lone, full) is True
+        assert names_agree(full, lone) is True
+
+    @pytest.mark.parametrize("a,b", [
+        # The prefix rule covers `martin` with `ma`; the lone-surname anchor is
+        # exact equality, so it must not.
+        ("Ma", "Martin Landaluce"),
+        # A two-letter token shared INSIDE two longer names is not a surname —
+        # coverage passes here (`ma` prefixes `mark`), so only the whole-name
+        # condition refuses it.
+        ("Wu Ma", "Wu Mark"),
+        ("De Schepper", "De Minaur"),
+        # One letter stays a wildcard and stays refused.
+        ("O", "Christopher O'Connell"),
+        # The sweep's one false pair still disagrees.
+        ("Christopher O'Connell", "Oleksandra Oliynykova"),
+        # A different two-letter surname.
+        ("Wu", "Xu Yifan"),
+    ])
+    def test_the_lone_surname_anchor_is_exact_and_whole(self, a, b):
+        assert names_agree(a, b) is False
+        assert names_agree(b, a) is False
+
+    def test_okamura_v_wu_anchors_through_the_two_letter_surname(self):
+        """The production specimen, 2026-09-28: Kalshi row 15320029
+        `Okamura` v `Wu` refused `no-candidate` (absent `Wu`) against ESPN
+        184182 `Ru Xi Wu` v `Kyoka Okamura`, so its Polymarket twin took the id
+        alone and the Kalshi row stayed on the page as a suspended ghost."""
+        board = scoreboard_competitions([_payload([
+            _competition("184182", ["Ru Xi Wu", "Kyoka Okamura"],
+                         date="2026-09-29T04:30Z"),
+            _competition("184100", ["Wu Yibing", "Rinky Hijikata"],
+                         date="2026-09-29T04:30Z"),
+        ], event_name="Jingshan Tennis Open")])
+        receipt = anchor_receipt(
+            ["Okamura", "Wu"], board,
+            our_commence_time=datetime(2026, 9, 28, 5, 0, tzinfo=timezone.utc),
+        )
+        assert receipt["espn_competition_id"] == "184182"
+        assert receipt["method"] == MATCH_NAMES_AGREE
+
     def test_pairing_matches_demands_two_real_names_on_both_sides(self):
         assert pairing_matches(["A One", "B Two"], ["B Two", "A One"]) is True
         assert pairing_matches(["A One", ""], ["B Two", "A One"]) is False
