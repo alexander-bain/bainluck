@@ -88,7 +88,11 @@ from app.utils.live_blend import (
     has_proven_home_orientation,
     select_primary_market as _select_primary_market,
 )
-from app.utils.venue_competition import venue_named_league, venue_refuses_placement
+from app.utils.venue_competition import (
+    venue_named_league,
+    venue_named_sport_family,
+    venue_refuses_placement,
+)
 from app.utils import match_receipts as _receipts
 from app.utils import matcher_pass_runs as _pass_runs
 from app.utils.match_receipts import (
@@ -4805,16 +4809,22 @@ def _phase15_eligible_where():
 
 
 def _market_sport_prefix(market) -> Optional[str]:
-    """The sport family a market claims, ticker first then stored LLM tag.
+    """The sport family a market claims: ticker, then Polymarket slug, then LLM tag.
 
     Ticker beats the stored tag on purpose: the tag is what the LLM guessed at
     ingest and it is wrong on exactly the rows this matters for (#3478 measured
-    419 of 1,066 cup rows tagged something other than soccer).
+    419 of 1,066 cup rows tagged something other than soccer). A Polymarket
+    market has no ticker, so its game slug's league code stands in (#9434:
+    every Arizona Cardinals NFL game is tagged ``baseball``).
     """
     market_sport = (
         get_sport_prefix_from_ticker(market.external_id)
         if market.external_id else None
     )
+    if not market_sport:
+        market_sport = venue_named_sport_family(
+            getattr(market, "market_metadata", None)
+        )
     if not market_sport and market.llm_sport_category:
         market_sport = _SPORT_CATEGORY_TO_KEY_PREFIX.get(market.llm_sport_category)
     return market_sport
