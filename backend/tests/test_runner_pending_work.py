@@ -136,3 +136,11 @@ def test_new_heading_presentation_does_not_inherit_predecessor_verdict(tmp_path,
     heading = '# CERT-9397 -- C-LIVE-034-SSE-WEB-PUSH-2\n'
     queue = heading + queue if position == "before" else queue + heading
     assert pending(tmp_path, queue, BANKED)[0] == "C-LIVE-034-SSE-WEB-PUSH-2"
+
+
+@pytest.mark.parametrize("position", ["before", "after"])
+def test_adjacent_same_slug_repair_cannot_inherit_banked_heading(tmp_path, position):
+    repair = "queue_id: C-LIVE-034-SSE-WEB-PUSH-2\nstatus: staged\nrepairs: CERT-742\n"
+    heading = "# CERT-9397 -- C-LIVE-034-SSE-WEB-PUSH-2\n"
+    repair = heading + repair if position == "before" else repair + heading
+    assert pending(tmp_path, STALE + repair, BANKED)[0] == "C-LIVE-034-SSE-WEB-PUSH-2"

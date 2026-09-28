@@ -172,8 +172,10 @@ for line in Path(queue).read_text().splitlines():
     title = re.match(r"^#+\s+(CERT-\d+)\s+(?:--|—|–)\s+([A-Za-z0-9][A-Za-z0-9_-]*)\s*$", line)
     if title:
         heading = (title[1], title[2])
-        if block.get("queue_id") == heading[1]:
+        if (block.get("queue_id") == heading[1]
+                and block.get("cert_id", heading[0]) == heading[0]):
             block.setdefault("cert_id", heading[0])
+            heading = None  # consumed by this block, never inherited by a repair
         elif block:
             if actionable(block):
                 break
