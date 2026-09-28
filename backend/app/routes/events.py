@@ -817,39 +817,59 @@ def _search_same_question_folded_ids(
     must never wipe the pass (gotcha 42) — a row whose facts cannot be built is
     left out of the comparison and kept.
     """
-    from app.utils.discover_bundles import fold_same_question_cards
-
     folded: set[int] = set()
     kept: list[tuple] = []  # (listed names, card item), rank order
     for m in markets:
-        try:
-            item = {
-                "type": "futures",
-                "data": {
-                    "name": m.name,
-                    "source": m.source,
-                    "resolution_date": m.resolution_date,
-                    "top_outcomes": _build_search_top_outcomes(
-                        m, withheld=withheld_by_market.get(m.id)
-                    ),
-                },
-            }
-            names = _search_listed_names(m)
-        except Exception:
-            logger.warning(
-                "search: same-question fold skipped market %s",
-                getattr(m, "id", None), exc_info=True,
-            )
-            continue
-        if any(
-            _search_boards_list_the_same_field(names, kept_names)
-            and len(fold_same_question_cards([kept_item, item])) == 1
-            for kept_names, kept_item in kept
+        if _search_same_question_as_a_kept_card(
+            m, withheld_by_market.get(m.id), kept
         ):
             folded.add(m.id)
-            continue
-        kept.append((names, item))
     return folded
+
+
+def _search_same_question_as_a_kept_card(market, withheld, kept: list) -> bool:
+    """#8851's per-row decision: True if a better-ranked row from another venue,
+    already in `kept`, asks this row's question. Otherwise the row is appended to
+    `kept` and False is returned.
+
+    `_search_same_question_folded_ids` walks the search page with it; the
+    dropdown asks it row by row as it admits (#9444). Production 2026-09-28,
+    `oscars` at 390px: the dropdown printed Polymarket `Oscars 2027: Best Picture
+    Winner` (The Odyssey 49%) and, on the next row, Kalshi `Oscar Winner: Best
+    Picture` (49%), while the page showed Best Picture once. #9404 gave the
+    dropdown the page's per-row rule, `_admit_search_future`; this fold ran as a
+    post-pass over the page and so never reached it. One helper, two consumers.
+
+    A row whose facts cannot be built is left out of the comparison and kept
+    (gotcha 42) — it is not appended, so it cannot fold a later row either.
+    """
+    from app.utils.discover_bundles import fold_same_question_cards
+
+    try:
+        item = {
+            "type": "futures",
+            "data": {
+                "name": market.name,
+                "source": market.source,
+                "resolution_date": market.resolution_date,
+                "top_outcomes": _build_search_top_outcomes(market, withheld=withheld),
+            },
+        }
+        names = _search_listed_names(market)
+    except Exception:
+        logger.warning(
+            "search: same-question fold skipped market %s",
+            getattr(market, "id", None), exc_info=True,
+        )
+        return False
+    if any(
+        _search_boards_list_the_same_field(names, kept_names)
+        and len(fold_same_question_cards([kept_item, item])) == 1
+        for kept_names, kept_item in kept
+    ):
+        return True
+    kept.append((names, item))
+    return False
 
 
 #: #8628 — the line of an over/under rung: the number right after `O/U`.
@@ -13611,6 +13631,8 @@ async def typeahead_search(
     # See the call in the loop below.
     _ta_kept_sources_by_question: dict[str, set] = {}
     _ta_kept_boards: list = []
+    # #9444: #8851's same-question fold, asked row by row. See the call below.
+    _ta_kept_cards: list = []
     # #9340: the match-class scorer below reads the typed words, and the round's
     # own markets hold none of them ("MLB Playoffs: Team to advance to ALCS" for
     # `championship series`) while "NFL: … Season Series Winner" holds `series`
@@ -13669,6 +13691,13 @@ async def typeahead_search(
             market, seen_futures_keys, _ta_kept_sources_by_question, _ta_kept_boards
         ):
             continue
+        # #9444: the search page's #8851 fold, which runs there as a post-pass
+        # and so never reached this loop. `oscars` (production 2026-09-28)
+        # printed Polymarket's `Oscars 2027: Best Picture Winner` and Kalshi's
+        # `Oscar Winner: Best Picture` on consecutive rows, both at 49%.
+        _ta_withheld = await _search_withheld_price_ids(db, market)
+        if _search_same_question_as_a_kept_card(market, _ta_withheld, _ta_kept_cards):
+            continue
         # #6447 residual: the two scalars the club-name repair needs, read HERE
         # while the row is certainly live and kept as plain data. The repair
         # itself runs 400 lines below, past an `attach_season_answers` and the
@@ -13711,7 +13740,7 @@ async def typeahead_search(
                 market,
                 limit=3,
                 lean=True,
-                withheld=await _search_withheld_price_ids(db, market),
+                withheld=_ta_withheld,
                 query_terms=ta_expanded,  # #8842
             ),
             # RANKING evidence, private and stripped before the response. The

@@ -930,6 +930,21 @@ jobs:
             exit 1
           fi
 
+      - name: typeahead folds one question asked by two venues, the search page's #8851 fold (real Postgres, #9444)
+        # `oscars` in the dropdown printed Best Picture twice — Polymarket
+        # `Oscars 2027: Best Picture Winner` and Kalshi `Oscar Winner: Best
+        # Picture`, both 49% — while /search folded the pair as a post-pass the
+        # dropdown never reached. Real Postgres because the claim is that the
+        # ROUTE asks the fold; the fold itself is pinned by the #8851 unit file.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_typeahead_same_question_fold_9444_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/typeahead_same_question_9444.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/typeahead_same_question_9444.txt; then
+            echo "::error::#9444 typeahead same-question fold control SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#6354 the Browse list serves no answer-less row (real Postgres)"
         # PILLAR: TRUTH. SHIP: the iPhone Browse tab stops opening on rows that
         # show a name, a category chip and no number.
