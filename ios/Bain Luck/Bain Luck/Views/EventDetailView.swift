@@ -81,6 +81,18 @@ struct EventDetailView: View {
     }
 
     private var isLive: Bool { vm.event?.status == "live" }
+    /// #9436 — what the hero's whole-string change reads: the pair the chart's
+    /// live-edge label also prints (`LivePriceActivity.displayedLabels`), which
+    /// is exactly the pair the hero draws; moving only while live.
+    private func heroValue(away: Bool) -> String {
+        guard let event = vm.event else { return "" }
+        let labels = LivePriceActivity.displayedLabels(in: event)
+        return (away ? labels.away : labels.home) ?? ""
+    }
+    private func heroRising(away: Bool) -> Bool? {
+        (away ? vm.priceActivity?.awayDelta : vm.priceActivity?.homeDelta).map { $0 > 0 }
+    }
+    private var heroMoves: Bool { isLive && vm.liveUpdateStatus != .interrupted }
     /// #4002 — this page kept a PRIVATE COPY of a vocabulary `EventState`
     /// already owns, and `suspended` (live/048) matched none of its arms. So
     /// the hero drew no badge, no score, a grey `Proj. 3-2` where the score
@@ -323,6 +335,9 @@ struct EventDetailView: View {
                                      refreshStreaming: refreshIndicator == .streaming,
                                      liveUpdateStatus: vm.liveUpdateStatus,
                                      priceActivity: vm.priceActivity,
+                                     // #9436 — the hero's own number, for the
+                                     // dot on the end of the line.
+                                     liveEdge: LiveEdgeReading.current(in: event),
                                      forcedDomain: sharedChartDomain,
                                      pageAxisPlotWidth: pageAxisPlotWidth,
                                      selectedRange: $chartRange,
@@ -1250,6 +1265,7 @@ struct EventDetailView: View {
                             let homePct = bothServed ? odds.homeRenderedPercent : duelFallback[1]
                             HStack(spacing: 8) {
                                 Text(formatProbability(away, renderedPercent: awayPct))
+                                    .acceptedValueChange(heroValue(away: true), rising: heroRising(away: true), animates: heroMoves)
                                     .font(.system(size: oddsFontSize, weight: .black, design: .rounded).monospacedDigit())
                                     .foregroundStyle(colors.away)
                                     .livePriceChangeFeedback(sequence: vm.priceActivity?.sequence ?? 0,
@@ -1259,6 +1275,7 @@ struct EventDetailView: View {
                                     .font(.title3)
                                     .foregroundStyle(.secondary.opacity(0.4))
                                 Text(formatProbability(home, renderedPercent: homePct))
+                                    .acceptedValueChange(heroValue(away: false), rising: heroRising(away: false), animates: heroMoves)
                                     .font(.system(size: oddsFontSize, weight: .black, design: .rounded).monospacedDigit())
                                     .foregroundStyle(colors.home)
                                     .livePriceChangeFeedback(sequence: vm.priceActivity?.sequence ?? 0,
@@ -1296,6 +1313,7 @@ struct EventDetailView: View {
                                     .foregroundStyle(colors.home)
                                     .lineLimit(1)
                                 Text(formatProbability(home))
+                                    .acceptedValueChange(heroValue(away: false), rising: heroRising(away: false), animates: heroMoves)
                                     .font(.system(size: oddsFontSize, weight: .black, design: .rounded).monospacedDigit())
                                     .foregroundStyle(colors.home)
                                     .livePriceChangeFeedback(sequence: vm.priceActivity?.sequence ?? 0,

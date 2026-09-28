@@ -367,6 +367,9 @@ struct OddsChartView: View {
     var refreshStreaming: Bool = false
     var liveUpdateStatus: LiveUpdateStatus = .hidden
     var priceActivity: LivePriceActivity?
+    /// #9436 — the hero's current home number, for the dot at the live edge.
+    /// Nil off a live page.
+    var liveEdge: LiveEdgeReading?
     /// Shared domain from parent — ensures OddsChart and ScoreDiffChart have identical x-axes
     var forcedDomain: ClosedRange<Date>?
     /// Blends pushed to the page since it opened (#920), drawn as the live end
@@ -495,6 +498,7 @@ struct OddsChartView: View {
          refreshStreaming: Bool = false,
          liveUpdateStatus: LiveUpdateStatus = .hidden,
          priceActivity: LivePriceActivity? = nil,
+         liveEdge: LiveEdgeReading? = nil,
          forcedDomain: ClosedRange<Date>? = nil,
          pageAxisPlotWidth: CGFloat = 0,
          selectedRange: Binding<OddsTimeRange> = .constant(.sinceStart),
@@ -518,6 +522,7 @@ struct OddsChartView: View {
         self.refreshStreaming = refreshStreaming
         self.liveUpdateStatus = liveUpdateStatus
         self.priceActivity = priceActivity
+        self.liveEdge = liveEdge
         self.forcedDomain = forcedDomain
         self.pageAxisPlotWidth = pageAxisPlotWidth
         self.liveFrames = liveFrames
@@ -1425,7 +1430,8 @@ struct OddsChartView: View {
         dataPoints: [ChartDataPoint],
         sources: [String: WinProbSourceInfo],
         visibleMarkers: [PeriodMarker],
-        moments: [ChartMoment]
+        moments: [ChartMoment],
+        liveSplit: LiveEdgeSplit? = nil
     ) -> some ChartContent {
         let _ = vm.onPlotBuild?()
         // 50% reference line (single 0–100 axis: even is 0.5)
@@ -1448,7 +1454,11 @@ struct OddsChartView: View {
             // the identifier leaves the hole empty, which is what we actually
             // know. This is the same no-invention rule as `.interpolationMethod`
             // below, applied at the scale where it was still being broken.
-            let segments = Self.observationSegments(points, gameStart: gameStartDate)
+            // #9436 — on a live edge the newest vertex is drawn by the
+            // overlay (`LiveChartEdgeMarker`), so its dot can glide without
+            // animating this plot.
+            let split = liveSplit?.source == source ? liveSplit : nil
+            let segments = split?.segments ?? Self.observationSegments(points, gameStart: gameStartDate)
             ForEach(Array(segments.enumerated()), id: \.offset) { index, segment in
                 ForEach(segment) { point in
                     LineMark(
@@ -1467,7 +1477,7 @@ struct OddsChartView: View {
                 // A run of one is a real observation that no `LineMark` can
                 // draw (it needs two points to join), so it would silently
                 // vanish — losing data to a fix meant to stop losing data.
-                if segment.count == 1, let only = segment.first {
+                if segment.count == 1, index != split?.continuedRun, let only = segment.first {
                     PointMark(
                         x: .value("Time", only.date),
                         y: .value("Win probability", only.probability)
@@ -1555,10 +1565,12 @@ struct OddsChartView: View {
                 own: plotWidth.wrappedValue,
                 pageNarrowest: sharesPageAxis ? pageAxisPlotWidth : 0))
         let ticks = Self.xAxisTicks(for: domain, plan: plan)
+        let liveSplit = liveEdgeSplit(dataPoints: dataPoints, domain: domain)
 
         return Chart {
             chartContent(dataPoints: dataPoints, sources: sources,
-                         visibleMarkers: visibleMarkers, moments: moments)
+                         visibleMarkers: visibleMarkers, moments: moments,
+                         liveSplit: liveSplit)
         }
         .chartYScale(domain: yMin...yMax)
         .chartXScale(domain: domain)
@@ -1602,10 +1614,21 @@ struct OddsChartView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 4))
                         .position(x: plotFrame.minX + placement.centerX, y: 10)
                 }
-                if let latest = Self.latestPrimaryPoint(in: dataPoints),
-                   let x = proxy.position(forX: latest.date),
-                   let y = proxy.position(forY: latest.probability),
-                   x >= 0, x <= plotFrame.width, y >= 0, y <= plotFrame.height {
+                if let liveSplit, let liveEdge {
+                    LiveChartEdgeMarker(
+                        selection: selection, proxy: proxy, plotFrame: plotFrame,
+                        tail: liveSplit.tail, label: "\(homeShort) \(liveEdge.homeLabel)",
+                        rising: priceActivity?.homeDelta.map { $0 > 0 },
+                        lineColor: colorForSource(liveSplit.source, sources: sources),
+                        lineStyle: strokeStyleForSource(liveSplit.source, sources: sources),
+                        activity: priceActivity, pulseColor: teamColors?.home ?? .accentColor)
+                        .accessibilityHidden(true)
+                } else if let latest = Self.latestPrimaryPoint(in: dataPoints),
+                          let x = proxy.position(forX: latest.date),
+                          let y = proxy.position(forY: latest.probability),
+                          x >= 0, x <= plotFrame.width, y >= 0, y <= plotFrame.height {
+                    // No line proven to carry the hero's number: the unlabelled
+                    // one-shot ring the chart had before #9436, unchanged.
                     LiveChartEndpointFeedback(selection: selection, activity: priceActivity,
                                               probability: latest.probability,
                                               isLive: status == "live" && liveUpdateStatus != .interrupted,
@@ -1690,6 +1713,31 @@ struct OddsChartView: View {
     /// Chart-space `x` → plot-space `x`, inside `0...plotFrame.width`.
     static func clampedPlotX(_ x: CGFloat, plotFrame: CGRect) -> CGFloat {
         min(max(x - plotFrame.minX, 0), max(plotFrame.width, 0))
+    }
+
+    /// #9436 — the live edge the overlay draws, or nil to draw the plot whole.
+    ///
+    /// Only while the stream is live and uninterrupted, and only on the drawn
+    /// series PROVEN to carry the hero's accepted value (`edgeVertex`: the
+    /// blend line, or on a single-venue page the venue line the adopted frame
+    /// extended): a dot labelled with the hero's number must sit on the point
+    /// that number is, on the line that number belongs to. Both ends inside
+    /// the x-domain, as the old endpoint ring required, so the overlay never
+    /// draws where the plot would not.
+    private func liveEdgeSplit(dataPoints: [ChartDataPoint], domain: ClosedRange<Date>) -> LiveEdgeSplit? {
+        guard let liveEdge, status == "live", liveUpdateStatus != .interrupted,
+              let newest = LiveChartEdgeMarkerPlan.edgeVertex(
+                in: dataPoints, visible: Self.defaultVisibleSources(in: dataPoints),
+                reading: liveEdge, latestFrame: liveFrames.last)
+        else { return nil }
+        let edgeSource = newest.source
+        let points = dataPoints.filter { $0.source == edgeSource }
+        guard let split = LiveChartEdgeMarkerPlan.split(
+            segments: Self.observationSegments(points, gameStart: gameStartDate),
+            newest: newest, source: edgeSource),
+              domain.contains(split.tail.to.date),
+              split.tail.from.map({ domain.contains($0.date) }) ?? true else { return nil }
+        return split
     }
 
     // MARK: - Moment Caption
