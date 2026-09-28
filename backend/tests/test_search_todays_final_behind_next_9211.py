@@ -86,11 +86,17 @@ class TestTheHandlerWiring:
 
     def test_the_window_orders_by_the_upcoming_tiers_keys(self):
         start = self.SRC.index("_todays_final_key = _todays_final_order_key(")
-        call = self.SRC[start:start + 500]
+        call = self.SRC[start:start + 900]
+        # The keys ABOVE the status tier first, in the page's own order: a row
+        # those keys sink must not hold the "leads the upcoming tier" slot
+        # (production `chiefs` 2026-09-27 23:20Z, a teamless namesake).
+        day = call.index("_intent_day_order_key(_intent, now)")
+        teamless = call.index("_teamless_sport_key,")
+        split = call.index("_split_terms_key,")
         lead = call.index("_team_card_lead_key")
         rank = call.index("search_rank.desc()")
         soon = call.index("Event.commence_time.asc()")
-        assert lead < rank < soon
+        assert day < teamless < split < lead < rank < soon
 
     def test_the_key_sits_directly_above_status_order(self):
         start = self.SRC.index("query = query.order_by(")

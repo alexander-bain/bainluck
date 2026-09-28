@@ -222,3 +222,19 @@ async def test_the_lifted_next_game_is_the_clubs_not_the_soonest_namesake(
     labels = _labels(payload, ids)
     assert labels[:2] == ["next", "todays_final"], labels
     assert sorted(labels) == sorted(ids.values()), labels
+
+
+async def test_a_teamless_namesake_does_not_take_the_next_games_slot(maker, search):
+    """Production 2026-09-27 23:20Z, after #9213 went live: `chiefs` printed
+    today's 24–10 final at card 1, ABOVE the Raiders game. *Exeter Chiefs at
+    Bath* has no Team row, so #8738's key is off (every card club's sport is a
+    lead sport) and #8697/#7355's teamless key sinks the rugby row to the
+    bottom of the page, above `status_order`. The "leads the upcoming tier"
+    window did not see that key, so the namesake held its slot while printed
+    last, and the club's next game fell to "the rest", below today's final."""
+    ids = await _seed(maker, [TODAYS_FINAL, *SCHEDULE, NAMESAKE_TOMORROW])
+    payload = await search(QUERY)
+    _card_leads_with_the_club(payload)
+    labels = _labels(payload, ids)
+    assert labels[:2] == ["next", "todays_final"], labels
+    assert labels[-1] == "namesake_tomorrow", labels
