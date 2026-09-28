@@ -1314,6 +1314,66 @@ def _dedupe_prefix_duplicate_team_rows(rows: list) -> list:
     ]
 
 
+def _drop_stem_only_team_rows(rows: list, query: str) -> list:
+    """#9281: drop the rows a one-word query reached only through its STEM.
+
+    The Teams prefix arm (#4126) stems before the ``:*``, so ``pats:*`` is
+    ``pat:*``. On production 2026-09-28 `pats` carded Paterno and Patro Eisden
+    above two Patriots teams, `bucs` carded Milwaukee Bucks, Bucknell and Ohio
+    State Buckeyes, and `cats` carded Catamounts and Catania.
+
+    Armed only when some row matches the whole word (match class MC0 or MC1: the
+    name, an alias or a curated nickname), i.e. the reader has already named a
+    club. Then a row survives only if one of its words starts with what was
+    typed (`bull` keeps Bulldogs beside the Bulls), or it carries the named
+    club's own nickname word (`pats` -> New England Patriots, so George Mason
+    Patriots stays; `bucs` -> Tampa Bay Buccaneers, so Charleston Southern
+    Buccaneers stays).
+
+    With no whole-word row nothing moves. `nugs`, `cards`, `pels` and `caps`
+    reach their clubs ONLY through the stem, which is why #9277 refused the
+    unconditional form of this rule, and they arm nothing here. One word only:
+    a multi-word query's recall already ANDs its words.
+    """
+    from app.utils.search_match_class import MC1_ALL_TOKENS, _name_tokens, match_class
+
+    typed = _name_tokens(query)
+    if len(typed) != 1 or not rows:
+        return rows
+    word = typed[0]
+
+    def _owned(row) -> list[str]:
+        # The card's own evidence (`_team_row_aliases`: stored aliases plus the
+        # curated map's, #9272), so a club reached only by its map nickname
+        # (`rox` -> Colorado Rockies) reads as a whole-word hit here too.
+        abbreviation = getattr(row, "abbreviation", None)
+        return [row.name or "", *_team_row_aliases(row), *([abbreviation] if abbreviation else [])]
+
+    def _whole_word(row) -> bool:
+        owned = _owned(row)
+        cls = match_class(query, _SearchEvidence(name=owned[0], aliases=tuple(owned[1:]), kind="team"))
+        return cls is not None and cls <= MC1_ALL_TOKENS
+
+    whole = [row for row in rows if _whole_word(row)]
+    if not whole:
+        return rows
+    whole_ids = {id(row) for row in whole}
+    # The named club's nickname word: a word of its NAME sharing the stem's
+    # first three letters (`patriots` for `pats`, `buccaneers` for `bucs`).
+    nickname_words = {
+        token for row in whole for token in _name_tokens(getattr(row, "name", "") or "")
+        if token[:3] == word[:3]
+    }
+    return [
+        row for row in rows
+        if id(row) in whole_ids
+        or any(
+            token.startswith(word) or token in nickname_words
+            for owned in _owned(row) for token in _name_tokens(owned)
+        )
+    ]
+
+
 def _sort_matched_team_rows(rows: list) -> list:
     """Order team-search rows by FTS rank desc, then marquee league, then name.
 
@@ -2621,7 +2681,7 @@ def _team_card_keyed(team_rows, query: str) -> list:
 
     ONE definition, read by the card itself and by the games list's leader key
     (#8765), so the two cannot disagree about who "the" Eagles are. Individual
-    sports dropped, prefix duplicates dropped, the card's sort, the same-name
+    sports dropped, stem-only rows dropped (#9281), prefix duplicates dropped, the card's sort, the same-name
     collapse (#4489), then the match-class scorer over the WHOLE window — its
     `[:5]` is the card's cap (#8756). `rank()` is `rank_with_keys()` without the
     keys, so the card's order is byte-for-byte what it was.
@@ -2642,10 +2702,10 @@ def _team_card_keyed(team_rows, query: str) -> list:
 
     rows = sorted(
         _pick_team_row_per_name(_sort_matched_team_rows(
-            _dedupe_prefix_duplicate_team_rows([
+            _dedupe_prefix_duplicate_team_rows(_drop_stem_only_team_rows([
                 row for row in (team_rows or ())
                 if not _is_individual_sport(row.sport_key)
-            ])
+            ], query))
         )),
         key=lambda row: _college_sport_audience_rank(row.sport_key),
     )
