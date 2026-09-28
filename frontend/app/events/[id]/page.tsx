@@ -2730,6 +2730,13 @@ export default function EventPage({ params }: EventPageProps) {
                  the other three rules about painting ESPN's clock and holds
                  this one too. See the prop's own note. */
               sportKey={event.sport || undefined}
+              /* #9441 — a finished soccer page rested on `—`: its history has
+                 no period, so only the final score can say the game is over. */
+              restingFinalScore={
+                isFinished && event.home_score != null && event.away_score != null
+                  ? { home: event.home_score, away: event.away_score }
+                  : null
+              }
             />
           ) : null}
         </div>
