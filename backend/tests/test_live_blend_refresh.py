@@ -56,6 +56,54 @@ class TestThrottle:
         r._last_refresh_at[42] = 1000.0
         assert r._due(43, now=1001.0) is True
 
+    def test_the_default_floor_lets_every_flush_stamp_a_moving_event(self):
+        """#837 — Alex's live benchmark moves a price every 2s. A floor above
+        the WS flush coalesces real prices that were stored and never shown."""
+        from app.tasks import kalshi_ws
+        from app.tasks.live_blend_refresh import DEFAULT_MIN_REFRESH_INTERVAL_S
+
+        assert DEFAULT_MIN_REFRESH_INTERVAL_S <= kalshi_ws.PRICE_FLUSH_SECONDS
+        r = LiveBlendRefresher("kalshi")
+        r._last_refresh_at[42] = 1000.0
+        assert r._due(42, now=1000.0 + kalshi_ws.PRICE_FLUSH_SECONDS) is True
+
+
+class TestFailedRetryHold:
+    """At a 2s floor the throttle no longer spaces out retries of a FAILED
+    batch, so the hold does: a database in trouble is not asked again for the
+    same owed stamp on every flush."""
+
+    def test_a_failed_event_is_held_past_the_floor(self):
+        r = LiveBlendRefresher("kalshi")
+        r._last_refresh_at[42] = 1000.0
+        r._failed_hold_until[42] = 1000.0 + r.failed_retry_interval_s
+        assert r._due(42, now=1002.0) is False
+        assert r._due(42, now=1000.0 + r.failed_retry_interval_s) is True
+        assert 42 not in r._failed_hold_until
+
+    def test_the_hold_is_per_event(self):
+        r = LiveBlendRefresher("kalshi")
+        r._failed_hold_until[42] = 1005.0
+        assert r._due(43, now=1001.0) is True
+
+    @pytest.mark.asyncio
+    async def test_a_failed_batch_sets_the_hold_and_a_lock_retry_does_not(
+        self, monkeypatch,
+    ):
+        import app.tasks.live_blend_refresh as lbr
+
+        monkeypatch.setattr(lbr, "_mono", lambda: 1000.0)
+        r = LiveBlendRefresher("kalshi")
+        r._lock_retry = {7}
+
+        async def _fails(event_ids, now):
+            raise RuntimeError("database gone")
+
+        r._refresh_batch = _fails
+        await r.refresh([42])
+        assert r._failed_hold_until == {42: 1000.0 + r.failed_retry_interval_s}
+        assert r._lock_retry == {7}
+
 
 class TestShouldWrite:
     def test_first_value_for_an_event_is_written(self):

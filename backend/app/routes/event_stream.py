@@ -5,15 +5,16 @@ and iOS subscribe; non-live keeps polling.
 
 WHY THIS IS SMALL. The hard part shipped already. `worker-ws` streams Kalshi and
 Polymarket prices, flushes every 2 s, and `LiveBlendRefresher` stamps the blend
-into `Event.win_probability_sources` at most once per event per 5 s. The number
+into `Event.win_probability_sources` at most once per event per flush. The number
 in the database is already live. What was NOT live was the number on the screen:
 the client polled every 32 s, so a value 3 s old in Postgres could be 32 s old in
 front of a user. This endpoint closes that gap and nothing else — it makes no
 data fresher, it makes the fresh data *arrive*.
 
-That is also why the ruling's "≤1 update/5 s" needs no throttle here. It is
-already the refresher's per-event cadence, upstream. A second timer in this file
-could only drift away from the first one.
+That is also why this file has no throttle of its own. The per-event cadence
+is the refresher's, upstream (`DEFAULT_MIN_REFRESH_INTERVAL_S`: the 2026-08-30
+ruling's "≤1 update/5 s", moved to one per 2 s flush for Alex's 2026-09-28 live
+benchmark). A second timer in this file could only drift away from the first.
 
 WHAT THIS FILE MUST NOT DO. It shares the web dyno's two uvicorn event loops
 with `/api/feed`. Every connection here is long-lived, so any per-tick database

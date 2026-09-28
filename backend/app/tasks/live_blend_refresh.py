@@ -26,7 +26,7 @@ THE CHART POINT (Q501). This module originally declined to write
 `win_prob_snapshots` on the grounds that a snapshot per tick would grow that
 table ~60x for resolution nobody can see. That reasoning was about *per-tick*
 writes, and it is still right — so the write is throttled on its own clock
-(`DEFAULT_SNAPSHOT_INTERVAL_S`, 25s) rather than the blend's 5s one, and it goes
+(`DEFAULT_SNAPSHOT_INTERVAL_S`, 25s) rather than the blend's 2s one, and it goes
 through the same `_create_or_update_win_prob_snapshot` helper the 120s poll uses,
 which appends a row only when the value actually CHANGES and otherwise just
 bumps `reading_count`/`valid_until` on the existing point. Upper bound is
@@ -68,10 +68,22 @@ from typing import Iterable, Optional
 logger = logging.getLogger(__name__)
 
 
-#: Per-event floor between fast-lane recomputes. The WS flushes every 2s; an
-#: event whose price ticks continuously does not need a JSONB write every tick
-#: to feel live, and 5s keeps the write rate bounded on a busy slate.
-DEFAULT_MIN_REFRESH_INTERVAL_S = 5.0
+#: Per-event floor between fast-lane recomputes, equal to the WS's 2s flush:
+#: every flush that carries a new price for an event may stamp it. It was 5s
+#: (the 2026-08-30 "<=1 change/~5s" live look), which on a liquid market kept
+#: real prices off the page — Alex's required benchmark (Angelini v Johns,
+#: 2026-09-28) moves Kalshi 77 -> 80 -> 85 -> 84 two seconds apart, and at 5s
+#: the 85 was stored and never stamped. The write rate stays bounded by the
+#: flush itself, by the unchanged-value arm (45s, below) and by the chart's own
+#: 25s clock; what 2s adds is up to one blend UPDATE per moving event per flush.
+DEFAULT_MIN_REFRESH_INTERVAL_S = 2.0
+
+#: How long an event whose batch FAILED waits before it is attempted again —
+#: the 5s the success floor used to give it for free. A failed transaction is
+#: usually a database in trouble, and at the 2s floor every flush would open a
+#: fresh session against it for the same owed stamp. Row-lock retries are not
+#: failures and stay due at once.
+DEFAULT_FAILED_RETRY_INTERVAL_S = 5.0
 
 #: How long a cached inversion verdict stays good. One poll interval plus slack:
 #: the 120s poll re-derives it authoritatively, so this never has to be the
@@ -81,14 +93,14 @@ DEFAULT_INVERSION_TTL_S = 150.0
 #: When the recomputed value rounds to what is already stored, the write is
 #: still worth making occasionally — `updated_at` is what drives the hero's
 #: recency decay (#1829), so a source that goes quiet must still look ALIVE
-#: rather than progressively losing weight. Just not every five seconds.
+#: rather than progressively losing weight. Just not on every flush.
 #:
 #: #5661 — and only when the venue WAS re-read. "Quiet" and "dead" recompute
 #: the same number from the same rows; see `restamp_records_no_observation`.
 UNCHANGED_RESTAMP_INTERVAL_S = 45.0
 
 #: Per-event floor between fast-lane CHART points. Deliberately slower than the
-#: blend's 5s throttle: the number wants to be as live as the socket, the line
+#: blend's 2s throttle: the number wants to be as live as the socket, the line
 #: only has to gain a point often enough that a watching user sees it grow.
 #: 25s clears Alex's "within a minute" bar with margin while keeping
 #: `win_prob_snapshots` growth to a small multiple of the 120s poll's.
@@ -660,6 +672,7 @@ class LiveBlendRefresher:
         source: str,
         *,
         min_refresh_interval_s: float = DEFAULT_MIN_REFRESH_INTERVAL_S,
+        failed_retry_interval_s: float = DEFAULT_FAILED_RETRY_INTERVAL_S,
         inversion_ttl_s: float = DEFAULT_INVERSION_TTL_S,
         unchanged_restamp_interval_s: float = UNCHANGED_RESTAMP_INTERVAL_S,
         snapshot_interval_s: float = DEFAULT_SNAPSHOT_INTERVAL_S,
@@ -668,6 +681,7 @@ class LiveBlendRefresher:
     ) -> None:
         self.source = source
         self.min_refresh_interval_s = min_refresh_interval_s
+        self.failed_retry_interval_s = failed_retry_interval_s
         self.inversion_ttl_s = inversion_ttl_s
         self.unchanged_restamp_interval_s = unchanged_restamp_interval_s
         self.snapshot_interval_s = snapshot_interval_s
@@ -691,6 +705,9 @@ class LiveBlendRefresher:
         #: 120s poll.
         self._throttle_deferred: set[int] = set()
         self._last_refresh_at: dict[int, float] = {}
+        #: Events whose last batch failed -> the monotonic time before which
+        #: they are not due, whatever the throttle says.
+        self._failed_hold_until: dict[int, float] = {}
         self._last_write_at: dict[int, float] = {}
         self._last_written_value: dict[int, float] = {}
         self._last_snapshot_at: dict[int, float] = {}
@@ -733,6 +750,11 @@ class LiveBlendRefresher:
     # ── throttling ───────────────────────────────────────────────────────────
 
     def _due(self, event_id: int, now: float) -> bool:
+        hold = self._failed_hold_until.get(event_id)
+        if hold is not None:
+            if now < hold:
+                return False
+            del self._failed_hold_until[event_id]
         last = self._last_refresh_at.get(event_id)
         return last is None or (now - last) >= self.min_refresh_interval_s
 
@@ -811,9 +833,14 @@ class LiveBlendRefresher:
             )
             # The outcome prices already committed before this refresh. Keep
             # every owed stamp if its transaction fails, even when no further
-            # venue input arrives. Ordinary retries retain the attempt's 5s
-            # throttle; only existing row-lock retries remain due at once.
+            # venue input arrives. Ordinary retries wait out the failed-retry
+            # hold; only existing row-lock retries remain due at once.
+            failed = set(due).difference(self._lock_retry, retry)
             self._throttle_deferred.update(set(due).difference(self._lock_retry))
+            for event_id in failed:
+                self._failed_hold_until[event_id] = (
+                    now + self.failed_retry_interval_s
+                )
             for event_id in retry.intersection(due):
                 self._lock_retry.add(event_id)
                 self._last_refresh_at.pop(event_id, None)
@@ -1272,7 +1299,7 @@ class LiveBlendRefresher:
 
         Called only after a blend stamp actually happened, which on a FLAT
         market is the `unchanged_restamp_interval_s` beat (45s) rather than the
-        5s blend beat. `_create_or_update_win_prob_snapshot` is the same helper
+        2s blend beat. `_create_or_update_win_prob_snapshot` is the same helper
         the 120s poll uses — it appends a row on a value CHANGE and, since
         live/035, also once `max_gap_seconds` of silence have passed, so a
         motionless market still draws a breathing line instead of one straight
