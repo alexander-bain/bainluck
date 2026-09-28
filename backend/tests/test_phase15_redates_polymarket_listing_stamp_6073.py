@@ -1707,3 +1707,125 @@ async def test_a_play_signal_already_committed_is_caught_by_the_premise_not_the_
         "refused by the premise, not discovered by the write"
     )
     assert "phase15_pm_venue_redate_lost_race" not in stats["funnel"]
+
+
+# ── A stale CHILD stamp yields to the parent's (#9338 follow-up) ─────────────
+#
+# Production 2026-09-28 10:4xZ, group `polymarket:1088321` (Cretu v Rocha):
+# the parent's `venue_game_start` read 09-29 09:00Z (Gamma had moved the match),
+# the linked child 62805358 still read 09-28 09:00Z — the ingest skips a child
+# whose price does not resolve, so an untraded leg keeps its birth stamp — and
+# event 15320016 sat on 09-28 09:00Z `polymarket_venue`, badged LIVE, no score.
+# Own-row-first handed the redate the stale instant, equal to the event's, so
+# nothing moved. Ten tennis rows read that way.
+
+STALE_CHILD_STAMP = datetime(2026, 9, 14, 5, 0, 0, tzinfo=timezone.utc)
+
+
+@pytest.mark.asyncio
+async def test_a_stale_child_stamp_yields_to_the_parents_moved_instant_9338():
+    """The ship: the LIVE row the venue moved later is re-dated and un-started.
+
+    Fails on the own-row-first read (the child's stale instant equals the
+    event's start, so the redate finds no drift and the row stays LIVE).
+    """
+    session, tennis = _new_rail()
+    event = _event(
+        session, tennis, commence=STALE_CHILD_STAMP,
+        source=POLYMARKET_VENUE_COMMENCE_SOURCE, status="live",
+    )
+    _market(session, event, venue_start=STALE_CHILD_STAMP)
+    _parent(session, event, venue_start=VENUE_KICKOFF)
+
+    stats = await _run_phase15(session)
+
+    session.refresh(event)
+    assert event.commence_time.replace(tzinfo=timezone.utc) == VENUE_KICKOFF
+    assert event.commence_time_source == POLYMARKET_VENUE_COMMENCE_SOURCE
+    assert event.status == "scheduled"
+    assert stats["funnel"]["phase15_pm_venue_corrected_and_unstarted"] == 1
+
+
+@pytest.mark.asyncio
+async def test_the_group_read_prefers_the_parent_and_falls_back_to_the_child_9338():
+    """Both directions of the order, read through the helper itself."""
+    from app.tasks.prediction_market_matching import polymarket_group_venue_start
+
+    # parent and child disagree -> the parent's instant
+    session, tennis = _new_rail()
+    event = _event(session, tennis)
+    child = _market(session, event, venue_start=STALE_CHILD_STAMP)
+    _parent(session, event, venue_start=VENUE_KICKOFF)
+    assert await polymarket_group_venue_start(
+        _AsyncShim(session), child, {},
+    ) == VENUE_KICKOFF
+
+    # parent carries no stamp -> the child's own, not None
+    session, tennis = _new_rail()
+    event = _event(session, tennis)
+    child = _market(session, event, venue_start=STALE_CHILD_STAMP)
+    _parent(session, event, venue_start=None)
+    cache: dict = {}
+    shim = _AsyncShim(session)
+    assert await polymarket_group_venue_start(shim, child, cache) == STALE_CHILD_STAMP
+    # ...and the cached "parent has none" answer still falls back per row
+    assert await polymarket_group_venue_start(shim, child, cache) == STALE_CHILD_STAMP
+
+    # no parent row at all (a single-market event) -> the child's own
+    session, tennis = _new_rail()
+    event = _event(session, tennis)
+    child = _market(session, event, venue_start=STALE_CHILD_STAMP)
+    assert await polymarket_group_venue_start(
+        _AsyncShim(session), child, {},
+    ) == STALE_CHILD_STAMP
+
+
+@pytest.mark.asyncio
+async def test_a_child_that_agrees_with_its_parent_is_not_rewritten_9338():
+    """Control: parent-first changes WHICH stamp is read, never the no-churn floor."""
+    session, tennis = _new_rail()
+    event = _event(
+        session, tennis, commence=VENUE_KICKOFF,
+        source=POLYMARKET_VENUE_COMMENCE_SOURCE, status="scheduled",
+    )
+    _market(session, event, venue_start=VENUE_KICKOFF)
+    _parent(session, event, venue_start=VENUE_KICKOFF)
+
+    stats = await _run_phase15(session)
+
+    session.refresh(event)
+    assert event.commence_time.replace(tzinfo=timezone.utc) == VENUE_KICKOFF
+    assert not any(k.startswith("phase15_pm_venue_corrected") for k in stats["funnel"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stale_first", [True, False], ids=["stale-child-first", "fresh-child-first"])
+async def test_a_fresh_and_a_stale_sibling_converge_on_the_parent_in_either_order_9338(stale_first):
+    """The flip-flop: two children of one Gamma event, two different stamps.
+
+    Production 2026-09-28, e.g. Pieri v Martin (15319924): some children carried
+    Gamma's moved instant (09-29 08:00Z), the untraded ones their birth stamp
+    (09-28 08:00Z). Own-row-first re-dated the row forward on a fresh child and
+    straight back on the next stale one, in the same pass, so whichever child
+    the pass met LAST decided the date — and Pieri v Martin sat LIVE on the old
+    day. Driven over production, the old rule also dragged six correctly dated
+    rows (Cadenasso v Martinez, Echargui v Dzumhur, Samuel v McDonald …) back a
+    day. Read parent-first, every child gives one answer, in any order.
+    """
+    session, tennis = _new_rail()
+    event = _event(
+        session, tennis, commence=STALE_CHILD_STAMP,
+        source=POLYMARKET_VENUE_COMMENCE_SOURCE, status="live",
+    )
+    stamps = [STALE_CHILD_STAMP, VENUE_KICKOFF]
+    if not stale_first:
+        stamps.reverse()
+    for i, stamp in enumerate(stamps):
+        _market(session, event, venue_start=stamp, external_id=f"6280535{i}")
+    _parent(session, event, venue_start=VENUE_KICKOFF)
+
+    await _run_phase15(session)
+
+    session.refresh(event)
+    assert event.commence_time.replace(tzinfo=timezone.utc) == VENUE_KICKOFF
+    assert event.status == "scheduled"

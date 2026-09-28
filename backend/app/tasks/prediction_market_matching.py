@@ -5052,8 +5052,25 @@ async def polymarket_group_venue_start(session, market, cache=None):
 
     The instant is a property of the Gamma EVENT, identical on every row of the
     group, so reading it group-wide is not a widening — it is reading the value
-    where the venue actually put it. Own row first (cheapest, and the forward
-    path stamps children now), parent second.
+    where the venue actually put it.
+
+    PARENT FIRST, own row second (#9338 follow-up, production 2026-09-28). The
+    ingest rewrites the parent's stamp on EVERY pass over the Gamma event, but
+    it skips a child whose price does not resolve (``prob is None or prob <= 0``
+    in ``tasks.polymarket``), so an untraded leg keeps the stamp it was born
+    with. When Gamma re-dates the match, the parent moves and those children do
+    not — and an own-row-first read handed the redate the STALE instant, which
+    equals the event's stale start, so nothing moved:
+
+        polymarket:1088321  Cretu v Rocha  parent 09-29 09:00Z  child 62805358 09-28 09:00Z
+                            event 15320016 09-28 09:00Z polymarket_venue, LIVE, no score
+
+    Ten tennis rows read that way on 2026-09-28 10:4xZ, LIVE or about to be, for
+    matches the venue had moved later. The parent can never be the staler of the
+    two (it is written before the children, in the same pass, unconditionally),
+    so it wins whenever it carries a stamp; the child's own stamp is the answer
+    only for a group whose parent has none (a single-market event, or a parent
+    ingested before #4965).
 
     ``cache`` is a caller-owned dict keyed by ``group_id``, so a six-child group
     costs one query per pass rather than six. A ``None`` answer is cached too:
@@ -5061,13 +5078,12 @@ async def polymarket_group_venue_start(session, market, cache=None):
     sibling is the same query with the same answer.
     """
     own = venue_game_start(market)
-    if own is not None:
-        return own
     group_id = getattr(market, "group_id", None)
     if not group_id or getattr(market, "source", None) != "polymarket":
-        return None
+        return own
     if cache is not None and group_id in cache:
-        return cache[group_id]
+        parent = cache[group_id]
+        return parent if parent is not None else own
 
     from app.models.models import FuturesMarket as _FuturesMarket
 
@@ -5087,7 +5103,7 @@ async def polymarket_group_venue_start(session, market, cache=None):
             break
     if cache is not None:
         cache[group_id] = parent_start
-    return parent_start
+    return parent_start if parent_start is not None else own
 
 
 def polymarket_venue_redate(market, event, fixture=None) -> Optional[datetime]:
