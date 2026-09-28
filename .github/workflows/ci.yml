@@ -793,8 +793,8 @@ jobs:
             echo "::error::#9306 round-word outcome gate collected NOTHING"
             exit 1
           fi
-          if ! grep -qE "^=+ 8 passed" /tmp/rw9306.txt; then
-            echo "::error::#9306 round-word outcome gate did not report exactly 8 passed"
+          if ! grep -qE "^=+ 13 passed" /tmp/rw9306.txt; then
+            echo "::error::#9306 round-word outcome gate did not report exactly 13 passed"
             exit 1
           fi
 
