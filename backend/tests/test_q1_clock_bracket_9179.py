@@ -194,7 +194,8 @@ class TestWinProbTierKeysOnThePeriod:
         return [(m["period"], m["timestamp"]) for m in body["period_markers"]], t0
 
     async def test_clock_readings_of_one_quarter_are_one_marker(self):
-        # opens running, so the transition tier has nothing and tier 3 is served
+        # opens running: the transition tier's kickoff arm (the listed start, t0)
+        # and tier 3 both answer the first running reading, so either way it is one
         got, t0 = await self._served("americanfootball_nfl", [
             "Sun, September 27th at 1:00 PM EDT", "14:51 - 1st Quarter",
             "14:30 - 1st Quarter", "13:02 - 1st Quarter"])
