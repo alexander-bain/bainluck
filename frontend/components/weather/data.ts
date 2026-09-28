@@ -143,6 +143,8 @@ export type ClimateMarket = ServedPercent & {
   q: string;
   src: Source;
   scale: "2026" | "2030" | "2050";
+  /** See {@link FeaturedMarket.leader} — same field, same contract (#9289). */
+  leader?: string | null;
 };
 
 export type WildCard = ServedPercent & {

@@ -1904,6 +1904,13 @@ async def get_climate(db: AsyncSession):
             "prob": _card_prob(m),
             # The raw twin of `prob` (#6616).
             "probability": _card_probability(m),
+            # Which outcome `prob` prices (#9289). The climate card was the one
+            # /weather card still printing a bare number: "EV market share in
+            # 2030? — 84%" is 84% of "Above 10%", and "How low will Lake Powell
+            # drop? — 70%" names no level at all. Same field, same rule as the
+            # events, wildcards and hero cards; None when the question answers
+            # itself.
+            "leader": _leader_outcome_name(m),
             "src": _market_source(m),
             "closes": _format_closes(m.resolution_date),
             "scale": scale,
