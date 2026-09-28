@@ -1264,6 +1264,70 @@ function sideMatchesTeam(side: string, team: string): boolean {
 }
 
 /**
+ * #5528 — which of the two teams a winner-row names: "home", "away" or null.
+ *
+ * A label that is one spelling of exactly ONE team — every word of the shorter
+ * name inside the longer, either way round (`Boston` / `Boston Red Sox`,
+ * `Lloyd Harris` / `Harris`) — is that team. Anything else (`Draw`, `A's`,
+ * `New York` on a Yankees–Mets card) is null and keeps the venue's words.
+ */
+export function eventSideForLabel(
+  label: string | null | undefined,
+  homeTeam: string | null | undefined,
+  awayTeam: string | null | undefined,
+): "home" | "away" | null {
+  const side = (label ?? "").trim();
+  const home = (homeTeam ?? "").trim();
+  const away = (awayTeam ?? "").trim();
+  if (!side || !home || !away) return null;
+  const same = (team: string) => sideMatchesTeam(side, team) || sideMatchesTeam(team, side);
+  const isHome = same(home);
+  const isAway = same(away);
+  if (isHome === isAway) return null;
+  return isHome ? "home" : "away";
+}
+
+/**
+ * #5528 — one team, one name, on the game's own winner card.
+ *
+ * Kalshi titles the side `Boston`, Polymarket `Boston Red Sox`, and
+ * `mergeOutcomes` keys on the label, so one club printed as two rows
+ * (`Chicago Cubs Won · Boston Lost · Boston Red Sox Lost`, settled
+ * `/events/15319741`, 2026-09-28). Every row that asks the game's own question
+ * and names one team takes the FULLEST spelling of that team on offer — the
+ * rows' own and our event name — so the rows merge, and a surname-only event
+ * (`Harris`) never shortens the venue's `Lloyd Harris`. Rows on any other
+ * question, and labels that name no single team, pass through untouched.
+ */
+export function unifyTeamSpellings(
+  rows: LabeledRow[],
+  homeTeam: string | null | undefined,
+  awayTeam: string | null | undefined,
+): LabeledRow[] {
+  const sides = rows.map((r) =>
+    r.gamesOwnQuestion ? eventSideForLabel(r.label, homeTeam, awayTeam) : null,
+  );
+  if (sides.every((s) => s === null)) return rows;
+  const fuller = (a: string, b: string) => {
+    const ta = nameTokens(a).length;
+    const tb = nameTokens(b).length;
+    return tb > ta || (tb === ta && b.length > a.length) ? b : a;
+  };
+  const best: Record<"home" | "away", string> = {
+    home: (homeTeam ?? "").trim(),
+    away: (awayTeam ?? "").trim(),
+  };
+  rows.forEach((r, i) => {
+    const side = sides[i];
+    if (side) best[side] = fuller(best[side], r.label.trim());
+  });
+  return rows.map((r, i) => {
+    const side = sides[i];
+    return side ? { ...r, label: best[side] } : r;
+  });
+}
+
+/**
  * `Noskova won Set 1`, or null when this view may not say that.
  *
  * **It fails closed at three separate doors**, because a settled row naming the
@@ -1517,7 +1581,13 @@ export function buildMarketSection(
     let categoryWithheld = 0;
 
     const cards: MarketCard[] = draft.cardOrder.map((name) => {
-      const merged = mergeOutcomes(draft.cards.get(name) as LabeledRow[]);
+      const merged = mergeOutcomes(
+        unifyTeamSpellings(
+          draft.cards.get(name) as LabeledRow[],
+          options.homeTeam,
+          options.awayTeam,
+        ),
+      );
       // Is this card an ENUMERATION — set 1/2/3, the four quarters, three maps
       // — rather than a field of rival candidates? Every row must name its own
       // position for the answer to be yes, so a card that mixes `Set 1 Winner`
