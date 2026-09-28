@@ -3294,6 +3294,31 @@ async def get_golf(
             if renorm_factor is None:
                 continue
 
+            # #9357: the full-field sum above is the GATE (it refuses non-exclusive
+            # and participation fields) and stays exactly as it was. The SCALE is not:
+            # a field that passed as one-winner is rescaled by the sum of the legs this
+            # loop will actually aggregate. Kalshi's Dunhill Links Winner carried 21
+            # bid legs (sum 0.636) under 133 withheld ask-only offers (full sum 6.861),
+            # so 1/6.861 printed Fleetwood's traded 12.5% as 1.8%. Bounded both ways:
+            # the result is never below the old factor and never above 1.0, so no leg
+            # is ever lifted past its own quote (CERT-450's concern is inflation, and
+            # survivors at or under 1.5 are used as-is, as every other field is).
+            if renorm_factor < 1.0:
+                aggregated_prob_sum = sum(
+                    float(o.current_probability)
+                    for o in market.outcomes
+                    if o.current_probability is not None
+                    and not _is_placeholder_price(o, source)
+                )
+                traded_factor = _golf_winner_renorm_factor(
+                    market.name,
+                    len(market.outcomes),
+                    aggregated_prob_sum,
+                    mutually_exclusive=getattr(market, "mutually_exclusive", None),
+                )
+                if traded_factor is not None:
+                    renorm_factor = min(1.0, max(renorm_factor, traded_factor))
+
             # Non-winner markets go to props
             if _NON_WINNER_MARKET_RE.search(market.name):
                 prop = _extract_prop_market(market, source_label)
@@ -3308,13 +3333,12 @@ async def get_golf(
                     continue
                 # Skip placeholder prices before any renormalization — an untraded
                 # Kalshi mid, any source's empty book (UX-P070), or a price that is
-                # merely this outcome's own unaccepted ask (CERT-450). Note that
-                # `renorm_factor` was computed over the FULL priced field above, so a
-                # thinned field's survivors are scaled by the whole field's sum and
-                # can only come out understated. That is deliberate: renormalizing to
-                # the survivors instead would turn four identical 10% offers into
-                # four identical 25% "forecasts" — the same non-information wearing a
-                # more confident number.
+                # merely this outcome's own unaccepted ask (CERT-450). The scale
+                # applied here comes from the survivors' own sum (#9357, above), but
+                # only ever downward: survivors summing <= 1.5 are used as-is, so
+                # four 10% quotes stay four 10% quotes and never become four 25%
+                # "forecasts". Scaling by the FULL field's sum, as this used to, let
+                # withheld offers deflate every real quote beside them.
                 if _is_placeholder_price(outcome, source):
                     withheld += 1
                     continue
