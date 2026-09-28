@@ -205,7 +205,11 @@ class _Espn:
 
     async def get_scoreboard(self, sport_key, date=None, groups=None):
         self.calls.append((sport_key, date, groups))
-        return DATED_TODAY if date == "20260927" else UNDATED
+        # Any DATED ask is the task asking for its own today, whatever the wall
+        # clock says. Pinning "20260927" here made this a calendar bomb: from
+        # 04:00Z on 9/28 (midnight Eastern) the task asked for 20260928, got
+        # UNDATED back, and shard 1 went red on every PR and on master.
+        return DATED_TODAY if date is not None else UNDATED
 
     async def close(self):
         pass
