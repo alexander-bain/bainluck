@@ -7807,14 +7807,22 @@ async def _find_matching_event(
     # (rightly) refused, so it never linked: Saturday's Cubs @ Red Sox (Gamma
     # 1053345, venue 09-26T23:15Z) was offered 15316415 (09-25T17:05Z, 30.2h
     # apart) over its own 15316408. Score from the venue's own game instant —
-    # the same stamp the guard judges the link by. Scoring only; the windows
-    # below are unchanged, and a market with no stamp scores exactly as before.
+    # the same stamp the guard judges the link by. A market with no stamp
+    # scores exactly as before.
     if (
         scoring_ref is None
         and getattr(market, "source", None) == "polymarket"
     ):
         scoring_ref = venue_game_start(market)
-    reference_time = ticker_start or game_date_override or market.commence_time or now
+    # #9427: and the WINDOW is centred there too. `commence_time` is the listing
+    # stamp, so ±48h of it can end before the game starts: Wild Card Game 2
+    # (Gamma 1097831, listed 09-28T13:00Z, venue 09-30T18:00Z) searched up to
+    # 09-30T13:00Z, found only Game 1, and #4965 refused that — 8 passes, never
+    # linked, while its own row 15320701 sat 5h past the window. The guard
+    # judges by this stamp, so nothing outside ±48h of it could link anyway.
+    # For every other market `scoring_ref` is the ticker/override instant
+    # above, or None — the old reference, unchanged.
+    reference_time = scoring_ref or market.commence_time or now
     if game_date_override:
         if ticker_start is not None:
             time_start = reference_time - timedelta(hours=3)
