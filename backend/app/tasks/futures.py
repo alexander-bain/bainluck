@@ -152,7 +152,9 @@ async def _poll_futures_odds():
     from app.models import FuturesMarket, FuturesOutcome, FuturesOddsSnapshot, Sport
     from app.utils.odds_math import american_to_probability, probability_to_american
     from sqlalchemy.dialects.postgresql import insert as pg_insert
-    from sqlalchemy import select
+    from sqlalchemy import select, cast
+    from sqlalchemy.dialects.postgresql import JSONB
+    from app.utils.futures_quote_identity import current_quote_identity
     from datetime import timedelta
 
     service = OddsAPIService()
@@ -233,6 +235,12 @@ async def _poll_futures_odds():
                         market_name, sport_category, league, inferred_category,
                     )
 
+                    # Identity is captured alongside this batch, never inferred
+                    # from the rolling key or applied to pre-existing history.
+                    identity_metadata = {"odds_api_current_event": current_quote_identity(
+                        markets_data, sport_key, datetime.now(timezone.utc),
+                    )}
+
                     # Upsert the market
                     market_stmt = pg_insert(FuturesMarket).values(
                         source="odds_api",
@@ -247,6 +255,7 @@ async def _poll_futures_odds():
                         category_tags=tags,
                         mutually_exclusive=True,
                         status="open",
+                        market_metadata=identity_metadata,
                     ).on_conflict_do_update(
                         index_elements=["source", "external_id"],
                         set_={
@@ -258,6 +267,9 @@ async def _poll_futures_odds():
                             "canonical_market_key": canonical_key,
                             "category_tags": tags,
                             "updated_at": func.now(),
+                            "market_metadata": func.coalesce(
+                                FuturesMarket.market_metadata, cast({}, JSONB),
+                            ).op("||")(cast(identity_metadata, JSONB)),
                         }
                     ).returning(FuturesMarket.id)
 
