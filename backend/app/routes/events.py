@@ -1973,6 +1973,80 @@ def _futures_season_order_key(intent):
     return case((names_year, 0), else_=1)
 
 
+#: #9340: a query that is ONLY a postseason word. `playoffs` names no league and
+#: no year, so the reader means the postseason that is happening now.
+_BARE_POSTSEASON_TERMS: frozenset[str] = frozenset({"playoff", "playoffs", "postseason"})
+#: Long enough to hold a whole league postseason from its first round (MLB's
+#: World Series boards resolve ~34 days after its Wild Card round opens).
+_POSTSEASON_NOW_WINDOW = timedelta(days=45)
+#: Team-sport leagues. Esports series names carry "Playoffs" too and resolve
+#: within days; they are the rows this key must not promote.
+_POSTSEASON_NOW_SPORT_CATEGORIES: frozenset[str] = frozenset({
+    "baseball", "basketball", "football", "hockey", "soccer",
+})
+
+
+def _futures_postseason_now_order_key(terms: list[str], now: datetime):
+    """#9340: the postseason in progress, as a FUTURES window sort key — or ``None``.
+
+    Production, Monday 2026-09-28, the day before MLB's Wild Card round:
+    `playoffs` matched ~615 open market names and every one tied on the name
+    tier and on `ts_rank_cd` (0.1). `market_tier` then decided the twenty-row
+    window, and every MLB postseason board ("MLB Playoffs: Team to advance to
+    ALDS", "Boston: First Playoff Opponent") is tier 5, so none was fetched: the
+    page led with a VALORANT novelty and 2027 Stanley Cup and College Football
+    Playoff boards — seasons that have not started.
+
+    Rows of a team-sport league that resolve within `_POSTSEASON_NOW_WINDOW`
+    sort first, inside their name tier and above the rank. It orders; it removes
+    nothing. ``None`` unless every term is a postseason word, so `mlb playoffs`,
+    `patriots playoffs` and every other query compile byte-identical SQL.
+    """
+    if not _is_bare_postseason_query(terms):
+        return None
+    in_progress = and_(
+        FuturesMarket.resolution_date >= now,
+        FuturesMarket.resolution_date < now + _POSTSEASON_NOW_WINDOW,
+        FuturesMarket.llm_sport_category.in_(sorted(_POSTSEASON_NOW_SPORT_CATEGORIES)),
+    )
+    return case((in_progress, 0), else_=1)
+
+
+def _is_bare_postseason_query(terms: list[str]) -> bool:
+    """Every term is a postseason word (`playoffs`, `playoff`, `postseason`)."""
+    return bool(terms) and all(t.lower() in _BARE_POSTSEASON_TERMS for t in terms)
+
+
+def _postseason_now_first(markets: list, terms: list[str]) -> list:
+    """`_futures_postseason_now_order_key`'s rule in Python, as a stable partition.
+
+    The SQL key decides which rows the window FETCHES; the reranker then
+    re-sorts them by name match and volume, which would put a VALORANT novelty
+    (536 volume, `playoffs` in its name) above "Boston: First Playoff Opponent".
+    One rule, both places. A no-op for every query that is not a bare
+    postseason word.
+    """
+    if not _is_bare_postseason_query(terms):
+        return markets
+    now = datetime.now(timezone.utc)
+    horizon = now + _POSTSEASON_NOW_WINDOW
+
+    def _in_progress(m) -> bool:
+        res = m.resolution_date
+        if res is None:
+            return False
+        if res.tzinfo is None:
+            res = res.replace(tzinfo=timezone.utc)
+        return (
+            now <= res < horizon
+            and (m.llm_sport_category or "") in _POSTSEASON_NOW_SPORT_CATEGORIES
+        )
+
+    return [m for m in markets if _in_progress(m)] + [
+        m for m in markets if not _in_progress(m)
+    ]
+
+
 def _strip_search_scaffolding(terms: list[str]) -> list[str]:
     """Drop generic scaffolding words from a >=3-term query; never strip to empty.
     Pure — safe to unit test. Leaves 1-2 word queries untouched (name collisions
@@ -3253,6 +3327,10 @@ def _rerank_search_futures(
     # signal here that the query text cannot supply. `astros` must not lead with
     # an LNBP basketball fixture. No-op when the caller resolved no single sport.
     ordered = _demote_wrong_sport(ordered, resolved_sport_category)
+    # #9340: a bare `playoffs` keeps the postseason in progress first — the SQL
+    # key fetched those rows, and the name-match split above would otherwise
+    # hand "Boston: First Playoff Opponent" (no `playoffs` in it) to the bottom.
+    ordered = _postseason_now_first(ordered, [t for t, _e in low])
     # Last, and inside one question only (#8417): a frozen row — last season's
     # settled market still stored open — yields its place to the same question's
     # live row, so the volume sort above cannot hand dedup the dead one.
@@ -10254,6 +10332,12 @@ async def search_events(
     _futures_season_order = (
         [] if _futures_season_key is None else [_futures_season_key.asc()]
     )
+    # #9340: a bare `playoffs` puts the postseason in progress first. `[]` otherwise.
+    _futures_postseason_key = _futures_postseason_now_order_key(
+        terms, datetime.now(timezone.utc)
+    )
+    if _futures_postseason_key is not None:
+        _futures_season_order.append(_futures_postseason_key.asc())
 
     def _futures_window_query(candidate_filter):
         """The futures window statement over a given candidate filter.
@@ -13018,6 +13102,13 @@ async def typeahead_search(
         ]
     )
 
+    _ta_futures_postseason_key = _futures_postseason_now_order_key(
+        terms, datetime.now(timezone.utc)
+    )
+    _ta_futures_postseason_order = (
+        [] if _ta_futures_postseason_key is None else [_ta_futures_postseason_key.asc()]
+    )
+
     futures_query = (
         select(FuturesMarket)
         .options(selectinload(FuturesMarket.outcomes))
@@ -13026,6 +13117,8 @@ async def typeahead_search(
             *_ta_open_now,
         )
         .order_by(
+            # #9340: the same postseason-in-progress key /search orders by.
+            *_ta_futures_postseason_order,
             *_ta_futures_relevance_order_keys,
             FuturesMarket.market_tier.asc().nulls_last(),
             FuturesMarket.volume.desc().nulls_last(),
