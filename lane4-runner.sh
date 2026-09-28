@@ -124,31 +124,77 @@ PY
 }
 pending () {
   reset_stale
-  awk -v terminal="$TERMINAL" '
-    BEGIN { n=split(terminal,t," "); for(i=1;i<=n;i++) TERM[t[i]]=1; TERM["running"]=1 }
+  python3 - "$Q" "$CERTLOG" "$TERMINAL" <<'PY'
+import re
+import sys
+from pathlib import Path
 
-    # v4: one place decides a block, called from all three ways a block can end.
-    function flush() {
-      if (id != "") {
-        if (st == "")           { print "MALFORMED " id > "/dev/stderr" }
-        else if (!(st in TERM)) { print id; found=1 }
-      }
-      id=""; st=""
-    }
+queue, ledger, terminal = sys.argv[1:]
+terminal = set(terminal.split()) | {"running"}
+# Only a merits verdict's identity cell banks a presentation. DRAINED summaries
+# and evidence/prose references to other certs are not verdict identities.
+banked = set()
+if Path(ledger).exists():
+    for line in Path(ledger).read_text().splitlines():
+        cells = line.split("|")
+        if len(cells) < 6 or not re.match(r"\s*\|", line):
+            continue
+        verdict = cells[4].strip().strip("*")
+        if not re.match(r"(?:GREEN|BLOCK)\b", verdict):
+            continue
+        # First column is `CERT-N -- queue-slug` (not every slug starts C-).
+        for identity in re.split(r"\s+(?:--|—|–)\s+", cells[1].strip()):
+            identity = identity.strip("*` ")
+            if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", identity):
+                banked.add(identity)
 
-    # v4: the next queue_id ENDS the previous block instead of erasing it.
-    /^queue_id:/ { flush(); if (found) exit; id=$2; st=""; next }
 
-    # v4: only bind a status to an OPEN block, so stray prose "status:" lines
-    # outside a block cannot be mistaken for one.
-    /^status:/   { if (id != "") st=$2; next }
+def actionable(block):
+    identity = block.get("queue_id")
+    if not identity:
+        return False
+    status = block.get("status")
+    if not status:
+        print("MALFORMED " + identity, file=sys.stderr)
+        return False
+    # A fresh cert_id is a new presentation even if it reuses a queue slug.
+    # Never use `repairs:` (the predecessor) as this presentation's identity.
+    presentation = block.get("cert_id") or identity
+    if status not in terminal and presentation not in banked:
+        print(identity)
+        return True
+    return False
 
-    /^---$/      { flush(); if (found) exit; next }
 
-    # v4: the final block is decided too, and can now be reported MALFORMED
-    # (v3 required st!="" here, so an unterminated tail block was invisible).
-    END          { if (!found) flush() }
-  ' "$Q"
+block = {}
+heading = None
+for line in Path(queue).read_text().splitlines():
+    title = re.match(r"^#+\s+(CERT-\d+)\s+(?:--|—|–)\s+([A-Za-z0-9][A-Za-z0-9_-]*)\s*$", line)
+    if title:
+        heading = (title[1], title[2])
+        if block.get("queue_id") == heading[1]:
+            block.setdefault("cert_id", heading[0])
+        elif block:
+            if actionable(block):
+                break
+            block = {}
+    if line.startswith("queue_id:") or line == "---":
+        if actionable(block):
+            break
+        block = {}
+    match = re.match(r"^(queue_id|cert_id|status):\s*([^#]*?)\s*(?:#.*)?$", line)
+    if match and (match[1] == "queue_id" or block.get("queue_id")):
+        value = match[2].strip().strip("\"'")
+        block[match[1]] = value.split()[0] if value else ""
+        if match[1] == "queue_id" and heading and block["queue_id"] == heading[1]:
+            block["cert_id"] = heading[0]
+        if match[1] == "queue_id":
+            heading = None
+    if line == "---":
+        heading = None
+else:
+    actionable(block)
+PY
 }
 
 verdicts () { grep -c '^| CERT-' "$CERTLOG" 2>/dev/null || echo 0; }
