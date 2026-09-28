@@ -1556,6 +1556,37 @@ def bucketless_competitions(
     ]
 
 
+def with_held_competitions(
+    bucketless: list[dict[str, Any]],
+    competitions: Iterable[dict[str, Any]],
+    held_ids: Iterable[Any],
+) -> list[dict[str, Any]]:
+    """The generic pass's competitions: the bucketless ones, plus every board
+    competition whose id a generic row ALREADY holds. Pure. #9465.
+
+    :func:`bucketless_competitions` assumes a tournament stays bucketless for
+    the week. It does not: the Odds API opened ``tennis_atp_china_open`` at
+    18:07Z on 2026-09-28, the day after the tour-week pass had put ESPN's id for
+    Borges v Djokovic (183455) on Kalshi's ``tennis_atp`` row. From then on the
+    competition was no longer bucketless, so the holder fell out of the generic
+    pass (no more ESPN writes), the new tournament row's stamp was refused
+    because the id was held, and the reader got two cards with two numbers.
+
+    Keeping a held competition in the generic set lets the holder keep its
+    authority writes and puts the late tournament row into the same contest,
+    where :func:`pick_contest_canonical`'s rule 1 keeps the holder.
+    """
+    out = list(bucketless)
+    seen = {c.get("espn_competition_id") for c in out}
+    held = {str(h) for h in held_ids if h is not None}
+    for c in competitions:
+        comp_id = c.get("espn_competition_id")
+        if comp_id is not None and str(comp_id) in held and comp_id not in seen:
+            out.append(c)
+            seen.add(comp_id)
+    return out
+
+
 def generic_sport_keys(sport_keys: Iterable[str]) -> list[str]:
     """``tennis_atp``, ``tennis_wta``, ``tennis_other`` — the buckets naming no event."""
     return [
@@ -1570,7 +1601,9 @@ def pick_contest_canonical(
     """One ESPN competition, several of our rows: which keeps the card? Pure.
 
     ``claimants`` carry ``event_id``, ``sport_key``, ``espn_id`` and
-    ``has_result``. Returns ``(canonical_id, ghost_ids, refusal)`` —
+    ``has_result``, and optionally ``tournament_keyed`` for a row whose key the
+    caller did not read (the tournament pass selects rows, not keys). Returns
+    ``(canonical_id, ghost_ids, refusal)`` —
     ``refusal`` is set, and the other two empty, when the contest is not ours
     to decide.
 
@@ -1589,16 +1622,31 @@ def pick_contest_canonical(
     Refused, never guessed:
 
     * a tournament-keyed claimant — that pair belongs to the tournament pass
-      and the twin sweep, which already have a rule for it;
+      and the twin sweep, which already have a rule for it — UNLESS exactly one
+      claimant holds this competition's id and that holder is generic (#9465).
+      That is a tournament bucket that opened after the tour-week pass had
+      already chosen the holder. Rule 1 still decides it: the holder keeps the
+      card and the late tournament row is labelled. Neither older rule can:
+      the stamp is refused because the id is held, and the twin sweep refuses
+      because the bare row now carries a provider id;
     * a claimant holding a DIFFERENT ESPN id — our rows disagree with ESPN
       about identity, and a label would bury the disagreement;
     * a non-canonical claimant carrying a final score — the twin sweep's
       finding that a ghost never carries one (0/172) is what makes the label
       safe; a scored ghost means the premise does not hold for this pair.
     """
-    if any(tournament_token(c.get("sport_key")) for c in claimants):
-        return None, [], CONTEST_TOURNAMENT_CLAIMANT
+    def _tournament(c: dict[str, Any]) -> bool:
+        return bool(c.get("tournament_keyed") or tournament_token(c.get("sport_key")))
+
     held = [c for c in claimants if c.get("espn_id")]
+    if any(_tournament(c) for c in claimants):
+        late_bucket = (
+            len(held) == 1
+            and str(held[0]["espn_id"]) == str(comp_id)
+            and not _tournament(held[0])
+        )
+        if not late_bucket:
+            return None, [], CONTEST_TOURNAMENT_CLAIMANT
     if any(str(c["espn_id"]) != str(comp_id) for c in held):
         return None, [], CONTEST_FOREIGN_ESPN_ID
     ranked = sorted(

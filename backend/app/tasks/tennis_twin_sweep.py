@@ -255,6 +255,22 @@ def already_tagged_ids(rows) -> set[int]:
     return {r.id for r in rows if DUPLICATE_TAG_PREFIX in (r.tags_text or "")}
 
 
+def tags_to_write(plan, tagged: set[int]) -> list:
+    """The planned tags still to write. Pure. #9465.
+
+    A ghost already labelled is left alone (see :func:`already_tagged_ids`),
+    and so is a tag whose CANONICAL is itself labelled a duplicate. The second
+    rule is new: since #9465 the ESPN tennis pass may label a tournament row a
+    duplicate of the tour row holding ESPN's id, and if that tour row later ends
+    up the ghost of a settled pair here, writing it would point the two rows at
+    each other. A label must point at a row that is printed.
+    """
+    return [
+        t for t in plan.tags
+        if t.ghost_id not in tagged and t.canonical_id not in tagged
+    ]
+
+
 def plan_refusal_reason(plan, *, untagged: int) -> str | None:
     """Why this plan must NOT be applied, or ``None`` if it is safe. Pure.
 
@@ -541,7 +557,7 @@ async def run_tennis_twin_sweep(
 
         plan = build_plan(rows)
         tagged = already_tagged_ids(rows)
-        todo = [t for t in plan.tags if t.ghost_id not in tagged]
+        todo = tags_to_write(plan, tagged)
 
         # 🔴 The deploy-order guard. Only the UNPLAYED arm depends on the fold,
         # so a missing fold drops those tags and keeps the settled ones — the
@@ -558,7 +574,11 @@ async def run_tennis_twin_sweep(
                 "rows_read": len(rows),
                 "blocks_examined": plan.blocks_examined,
                 "pairs_found": len(plan.tags),
-                "already_tagged": len(plan.tags) - len(todo) - len(withheld),
+                "canonical_is_a_duplicate": sorted(
+                    t.ghost_id for t in plan.tags
+                    if t.canonical_id in tagged and t.ghost_id not in tagged
+                )[:20],
+                "already_tagged": sum(1 for t in plan.tags if t.ghost_id in tagged),
                 "tags_to_write": len(todo),
                 "refusals": len(plan.refusals),
                 "refusal_sample": list(plan.refusals[:20]),

@@ -132,6 +132,7 @@ from app.tasks.tennis_twin_sweep import (  # noqa: E402
     MAX_EXPECTED_TAGS,
     MIN_EXPECTED_TAGS,
     already_tagged_ids,
+    tags_to_write,
     build_plan,
     ensure_backup,
     load_rows,
@@ -161,7 +162,7 @@ async def run(*, backup: bool, apply: bool, lookback: int, lookahead: int) -> No
         rows = await load_rows(session, lookback=lookback, lookahead=lookahead)
         plan = build_plan(rows)
         tagged = already_tagged_ids(rows)
-        todo = [t for t in plan.tags if t.ghost_id not in tagged]
+        todo = tags_to_write(plan, tagged)
 
         print(f"\n=== #2878 twin sweep — {lookback}d back, {lookahead}d ahead ===")
         print(
