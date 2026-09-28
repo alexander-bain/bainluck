@@ -18601,8 +18601,30 @@ _MATCHUP_SUBJECT_RE = re.compile(r"\b(?:vs\.?|at)\b", re.IGNORECASE)
 # `\bouts\b` cannot match "strikeouts" — the preceding "e" is a word character, so the
 # opening `\b` fails — which is why the word is safe to add here even though
 # `_PLAYER_PROP_RE` already carries "strikeouts" for the looser question.
+#
+# The football words joined for #6909. Polymarket's NFL card quotes
+# "<Player>: Receptions O/U 3.5", "Passing Completions O/U 21.5", "Passing
+# Attempts O/U 35.5" and "Longest Reception O/U 19.5", and none of those stat
+# words is in either vocabulary, so all four classified `game_total` — the
+# game's combined POINTS. Measured on production 2026-09-28 (NFL, 21 days):
+# 446 + 37 + 34 + 25 markets across 30 events, and the only sport any of the
+# four words appears in. Two ways that went wrong, both on the same page:
+#   * lines inside football's 15–120 band stayed on the points ladder —
+#     `Bo Nix: Passing Attempts O/U 35.5` served as a 35.5-point total rung on
+#     Broncos–Rams (`/api/events/14780548/game-markets`), and five such rungs on
+#     Cowboys–Ravens;
+#   * lines below it (every receptions line) were deleted by the range guard
+#     before kick-off — Monday night's 18 receptions lines reached no section —
+#     and after the final were rescued to `other[]` as a Won/Lost pair with no
+#     stat line, though the grader already maps "receptions", "passing
+#     completions" and "longest reception" to box-score keys.
+# NCAAF's "Utah State Total Receptions: O/U 19.5" is NOT this shape — the stat
+# sits in the subject and the part after the colon is empty — so it does not
+# move here.
 _PLAYER_PROP_OU_STAT_RE = re.compile(
-    r"\b(?:bases|rbis?|walks|doubles|triples|singles|outs)\b", re.IGNORECASE
+    r"\b(?:bases|rbis?|walks|doubles|triples|singles|outs|"
+    r"receptions|completions|attempts|longest\s+(?:reception|rush))\b",
+    re.IGNORECASE,
 )
 
 
