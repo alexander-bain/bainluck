@@ -2022,7 +2022,15 @@ def free_background_slots(
 #: per ET day in the window (11, no quota), a label write only on a proven
 #: phantom. The census RUN over the assembled `beat_schedule` printed
 #: `explicit 89 implicit 43 total 132`.
-BACKGROUND_BEAT_COUNT = 132
+#:
+#: 🔴 RE-DERIVED at lane1 (2026-09-28, #9216): 132 → 133, explicit 89 → 90,
+#: fall-through UNMOVED at 43. `create-certain-postseason-games-hourly`
+#: (`crontab(minute=11)`) names `background` explicitly. Cost: HOURLY, at most
+#: 12 ESPN board reads (next 3 dated boards × MLB/NBA/WNBA/NHL playoffs, no
+#: quota), a write only for a series-certain game. The census RUN over the
+#: assembled `beat_schedule` rebased onto `35e6fda727` printed
+#: `explicit 90 implicit 43 total 133`.
+BACKGROUND_BEAT_COUNT = 133
 #: 🔴 RE-DERIVED at lane1/282 (2026-09-13, #5896): 122 → **123**, explicit
 #: 79 → **80**, fall-through UNMOVED at 43. One beat added,
 #: `soccer-ghost-twin-sweep` (`crontab(minute="9,49")`) with an EXPLICIT
