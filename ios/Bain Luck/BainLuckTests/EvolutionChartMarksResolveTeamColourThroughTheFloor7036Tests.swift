@@ -250,10 +250,13 @@ final class EvolutionChartMarksResolveTeamColourThroughTheFloor7036Tests: XCTest
     /// blue-led `SERIES_COLORS`, so the two platforms already differ. That is a
     /// real divergence and a separate question from this floor; pinning it here
     /// stops the native list drifting further while it is open.
+    ///
+    /// #9380 reordered it (same ten hexes) so the default three lines are three
+    /// hue families; `EvolutionPaletteLeadingHuesAreDistinct9380Tests` says why.
     func testThePaletteIsPinned() {
         XCTAssertEqual(E.paletteHexes, [
-            "#c41e3a", "#005eb8", "#1d4ed8", "#0e7490", "#b91c1c",
-            "#0369a1", "#92400e", "#4338ca", "#be185d", "#065f46",
+            "#c41e3a", "#005eb8", "#065f46", "#92400e", "#4338ca",
+            "#be185d", "#0e7490", "#b91c1c", "#1d4ed8", "#0369a1",
         ])
     }
 
