@@ -62,6 +62,17 @@ interface GamePlayCardProps {
    * to prevent.
    */
   sportKey?: string | null;
+  /**
+   * #9441 — the event's final score, passed only when the event is finished.
+   *
+   * Soccer history carries no period at all (0 rows on six settled 9/26–9/28
+   * events), so a finished soccer page's readout rested on the bare `—` below,
+   * where MLB and NFL print `Final`. At rest, on a point whose score IS this
+   * score and which names no period or clock, the badge says `Final`. Scrubbing
+   * keeps the dash: a mid-game point with no period is still unknown. Absent
+   * (a live or upcoming game) and nothing changes.
+   */
+  restingFinalScore?: { home: number; away: number } | null;
 }
 
 /** Format period number into display string */
@@ -95,6 +106,7 @@ export default function GamePlayCard({
   lastPoint,
   awayWithheld = false,
   sportKey,
+  restingFinalScore,
 }: GamePlayCardProps) {
   const point = activePoint || lastPoint;
   if (!point) return null;
@@ -210,8 +222,15 @@ export default function GamePlayCard({
   const periodText = trusted.period
     ? `${periodIsCarried && !clockIsCarried ? "~" : ""}${trusted.period}`
     : "";
+  // Only the fallback slot reads this — a point that names a period keeps it.
+  const restsOnFinal =
+    !activePoint &&
+    restingFinalScore != null &&
+    point.homeScore === restingFinalScore.home &&
+    point.awayScore === restingFinalScore.away;
   const gameState =
-    [periodText, clockText].filter(Boolean).join(" ") || (hasScore ? "—" : "");
+    [periodText, clockText].filter(Boolean).join(" ") ||
+    (restsOnFinal ? "Final" : hasScore ? "—" : "");
   let timeOfDay = "";
   try {
     timeOfDay = format(parseISO(point.timestamp), "h:mm a");
@@ -231,7 +250,8 @@ export default function GamePlayCard({
   if (clockIsCarried && point.clockObservedAt) {
     carriedObservations.push(point.clockObservedAt);
   }
-  if (!trusted.period && !trusted.gameClock && hasScore && point.scoreApprox && point.scoreObservedAt) {
+  // #9441: a `Final` badge is not dated — the final score is not an old reading.
+  if (!restsOnFinal && !trusted.period && !trusted.gameClock && hasScore && point.scoreApprox && point.scoreObservedAt) {
     carriedObservations.push(point.scoreObservedAt);
   }
   let stateAsOf = "";
