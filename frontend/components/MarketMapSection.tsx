@@ -1656,7 +1656,14 @@ export default function MarketMapSection({
       // The band this card actually paints is `effectiveDensity`, not the
       // `density` computed above off the un-widened range — ask the one that
       // renders.
-      const bandDrawsShape = densityDrawsShape(effectiveDensity, TOTAL_ACCENT);
+      // #9325: and on a finished game it answers to the Pre-game tile's settled
+      // count, as the half margin band does since #9318. Settled
+      // `/events/15316429` (2H 3 goals) served only graded 1.0/0.0 rows — game,
+      // team and corners totals disagreeing — which shaded 3 darkest under
+      // "2nd half goals distribution" with no Pre-game tile beside it and the
+      // graded ladder behind a tap. Live keeps `quotesALine`, already true here.
+      const bandDrawsShape =
+        quotesAPreGameLine && densityDrawsShape(effectiveDensity, TOTAL_ACCENT);
       const effectiveMid = String(Math.round((effectiveMin + effectiveMax) / 2));
 
       const headlineVal = isDone ? "" : `O/U ${Math.round(ouLine.threshold)}`;
