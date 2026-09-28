@@ -8862,7 +8862,16 @@ async def _polymarket_group_sibling_event_id(session, market) -> Optional[int]:
     days: 18 of 1,132 groups split, 48 extra rows; every other sport 0.
 
     (a) Several sibling rows: the ONE the fixture guard accepts is the answer.
-        Two or more accepted is still a guess and still refused.
+        When two or more are accepted, the group was already split before the
+        child arrived, and refusing mints yet another row beside them — Cretu v
+        Rocha (group 1088321) went from three rows to five at 12:36Z on
+        2026-09-28, the release after (a) shipped, because its siblings sat on
+        two accepted twins. Every accepted row is the venue's one match, so
+        the child joins the preferred of them: an open row (``scheduled``/
+        ``live``) before a closed one, an anchored row (a provider id) before
+        an id-less one, the row holding more siblings, then the oldest id. The
+        pick is deterministic, so every later line lands on the same row and
+        the group stops growing.
     (b) Exactly one sibling row, refused ONLY on the clock: join it when it
         carries no provider id (``espn_id``, ``external_id``,
         ``statpal_fixture_id`` all NULL) and is ``scheduled``/``live``. An
@@ -8883,10 +8892,11 @@ async def _polymarket_group_sibling_event_id(session, market) -> Optional[int]:
 
     from app.models.models import FuturesMarket
 
-    held = (
-        (
+    siblings_on = {
+        event_id: siblings
+        for event_id, siblings in (
             await session.execute(
-                select(FuturesMarket.event_id)
+                select(FuturesMarket.event_id, func.count(FuturesMarket.id))
                 .where(
                     FuturesMarket.source == "polymarket",
                     FuturesMarket.group_id == group_id,
@@ -8894,15 +8904,16 @@ async def _polymarket_group_sibling_event_id(session, market) -> Optional[int]:
                     FuturesMarket.event_id.isnot(None),
                     FuturesMarket.id != market.id,
                 )
-                .distinct()
+                .group_by(FuturesMarket.event_id)
                 .limit(_GROUP_SIBLING_HELD_CAP)
             )
-        )
-        .scalars()
-        .all()
-    )
+        ).all()
+    }
+    held = list(siblings_on)
     if not held or len(held) >= _GROUP_SIBLING_HELD_CAP:
         return None
+
+    from app.models.models import Event
 
     # (a) #9338: the guard picks among several rows; it no longer vetoes them all.
     accepted = [
@@ -8912,12 +8923,43 @@ async def _polymarket_group_sibling_event_id(session, market) -> Optional[int]:
     ]
     if len(accepted) == 1:
         return accepted[0]
-    if accepted or len(held) != 1:
+    if accepted:
+        rows = (
+            await session.execute(
+                select(
+                    Event.id,
+                    Event.espn_id,
+                    Event.external_id,
+                    Event.statpal_fixture_id,
+                    Event.status,
+                ).where(Event.id.in_(accepted))
+            )
+        ).all()
+        if not rows:
+            return None
+        preferred = min(
+            rows,
+            key=lambda r: (
+                r.status not in _GROUP_SIBLING_OPEN_STATUSES,
+                r.espn_id is None
+                and r.external_id is None
+                and r.statpal_fixture_id is None,
+                -siblings_on[r.id],
+                r.id,
+            ),
+        )
+        logger.info(
+            "Joining Polymarket child %s to event %d (#9338) — its group %s is "
+            "already split over %d rows the fixture guard accepts; not minting "
+            "another",
+            market.external_id, preferred.id, group_id, len(accepted),
+        )
+        return preferred.id
+    if len(held) != 1:
         return None
 
     # (b) #9338: one row, refused on the clock alone.
     sibling_event_id = held[0]
-    from app.models.models import Event
 
     row = (
         await session.execute(
