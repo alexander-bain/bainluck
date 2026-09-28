@@ -697,10 +697,16 @@ struct EventDetailView: View {
             (isLive ? LivePriceReceiptCue.accessibilityText(status: vm.liveUpdateStatus,
                 receivedAt: vm.priceActivity?.receivedAt) : ""))
         .accessibilityHint("Shows connection status and when the last price update reached this phone")
-        .popover(isPresented: $showProbabilityDetails) {
+        // #9408 — open BELOW the button (on iOS, `.top` measured below; the
+        // default nil picked above, under the nav bar with 144pt to spare, and at
+        // Alex's XXXL text the content overflowed both edges). The reveal
+        // scrolls if even the lower space runs out.
+        .popover(isPresented: $showProbabilityDetails, arrowEdge: .top) {
             FreshnessRevealView(status: vm.liveUpdateStatus,
                 lastReceivedAt: vm.priceActivity?.receivedAt, confidenceTier: confidenceTier)
-                .frame(maxWidth: 300)
+                // idealWidth: the popover sizes from the IDEAL size; with only a
+                // max it measured the text unwrapped and came out 144pt tall.
+                .frame(idealWidth: 300, maxWidth: 300)
                 #if os(iOS)
                 .presentationCompactAdaptation(.popover)
                 #endif

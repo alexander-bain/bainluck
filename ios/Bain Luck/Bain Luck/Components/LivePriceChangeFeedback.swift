@@ -184,6 +184,16 @@ struct FreshnessRevealView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
+        // #9408 — a popover is capped at the space beside its anchor; pinned to
+        // full height without a scroll view, overflow was cut off unreachably.
+        // Size to the whole text; scroll only when the popover can't fit it.
+        ViewThatFits(in: .vertical) {
+            content
+            ScrollView { content }
+        }
+    }
+
+    private var content: some View {
         VStack(alignment: .leading, spacing: 10) {
             if status != .hidden {
                 Text(status.title).font(.headline)
