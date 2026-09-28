@@ -668,7 +668,7 @@ class _Event:
     def __init__(self, id, home, away, status, commence_time, completed_at=None,
                  espn_id=None, home_score=None, away_score=None,
                  box_score_data=None, win_probability_sources=None,
-                 commence_time_source=None):
+                 commence_time_source=None, event_tags=None):
         self.id = id
         self.home_team_name = home
         self.away_team_name = away
@@ -701,6 +701,9 @@ class _Event:
         # column it is. That is exactly how it presented: seven tests in this
         # file went red with "fixture drifted", none of them naming the field.
         self.commence_time_source = commence_time_source
+        # lane1 #2774: the generic-bucket read skips a row already labelled a
+        # duplicate, so it reads this before any per-row `try` begins.
+        self.event_tags = event_tags
 
 
 class _Result:
@@ -1159,7 +1162,14 @@ class TestTennisSyncTask:
         assert event.completed_at is not None
         assert event.espn_id is None
 
-    async def test_a_board_with_no_matching_bucket_writes_nothing(self, monkeypatch):
+    async def test_a_board_with_no_matching_bucket_reads_the_generic_buckets(
+        self, monkeypatch
+    ):
+        """#2774 changed this contract ON PURPOSE. A board tournament no bucket
+        names used to end the pass (`no_matching_bucket`) — which is how the
+        whole tour outside the Odds API's list went unanchored. It now reads
+        the generic buckets for it; with none of ours in the window, it writes
+        nothing and says so."""
         from app.tasks.espn_sync import _sync_tennis_from_espn
 
         _install(
@@ -1171,7 +1181,11 @@ class TestTennisSyncTask:
             events=[],
         )
         stats = await _sync_tennis_from_espn()
-        assert stats["status"] == "no_matching_bucket"
+        assert stats["status"] == "ok"
+        assert stats["generic_competitions"] == 1
+        assert stats["generic_events_considered"] == 0
+        assert stats["anchored"] == 0
+        assert stats["ghost_tags_planned"] == 0
 
     async def test_one_bad_row_never_costs_the_pass_its_siblings(self, monkeypatch):
         """gotcha #42."""

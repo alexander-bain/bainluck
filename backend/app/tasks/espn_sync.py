@@ -6428,6 +6428,11 @@ TENNIS_ANCHOR_WINDOW_DAYS = 21
 #: `tennis_other`, and the per-tournament keys below them.
 TENNIS_SPORT_KEY_PREFIX = "tennis"
 
+#: Row cap for the generic-bucket read (#2774). The ±7-day window held 2,077
+#: tennis rows of every bucket on 2026-09-28; the cap sits above that so a
+#: normal week is read whole, and ordering by kickoff drops the oldest first.
+GENERIC_ANCHOR_LIMIT = 3000
+
 
 async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) -> dict:
     """Anchor tennis events to ESPN competitions, then let ESPN write their state.
@@ -6455,9 +6460,14 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
     """
     from app.services import espn_tennis
     from app.utils.espn_tennis_anchor import (
+        GENERIC_ANCHOR_WINDOW_DAYS,
         anchor_receipt,
         anchorable_sport_keys,
         authority_score_write,
+        bucketless_competitions,
+        carried_start,
+        generic_sport_keys,
+        pick_contest_canonical,
         authority_write,
         games_line_write,
         result_refuted_by_format,
@@ -6466,6 +6476,14 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
     )
     from app.utils.espn_id_stamp import STAMPED, stamp_espn_id_if_unheld
     from app.utils.live_state_write import write_row_if_unmoved
+    from app.services.anchor_channel import DUPLICATE_TAG_PREFIX
+    from app.tasks.tennis_twin_sweep import (
+        ensure_backup as ensure_twin_backup,
+        fold_is_live,
+        tagged_now as twin_tagged_now,
+        write_tags as write_twin_tags,
+    )
+    from app.utils.tennis_twin_pairs import TwinTag
     import asyncio as _asyncio
 
     stats: dict = {
@@ -6561,11 +6579,24 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
         key_rows = await session.execute(
             select(Sport.key).where(Sport.key.like(f"{TENNIS_SPORT_KEY_PREFIX}%"))
         )
-        wanted_keys = anchorable_sport_keys(
-            [k for (k,) in key_rows.all()], competitions
-        )
+        all_keys = [k for (k,) in key_rows.all()]
+        wanted_keys = anchorable_sport_keys(all_keys, competitions)
         stats["sport_keys"] = wanted_keys
-        if not wanted_keys:
+        # THE TOUR WEEK (#2774): the board's tournaments that no bucket names
+        # are anchored through the generic buckets instead — see
+        # `bucketless_competitions`. Its competitions are disjoint from every
+        # tournament bucket's, so the two populations cannot contest.
+        generic_competitions = bucketless_competitions(all_keys, competitions)
+        stats["generic_competitions"] = len(generic_competitions)
+        stats["generic_events_considered"] = 0
+        stats["generic_contests_resolved"] = 0
+        stats["generic_contests_refused"] = {}
+        stats["ghost_tags_planned"] = 0
+        stats["ghost_tags_written"] = 0
+        stats["ghost_tags_confirmed"] = 0
+        stats["ghost_tags_failed"] = []
+        stats["ghost_tags_withheld_fold_dark"] = 0
+        if not wanted_keys and not generic_competitions:
             # The board carries a tournament we hold no bucket for. Not an
             # error, and not something to widen our way out of.
             logger.info(
@@ -6574,21 +6605,58 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
             )
             return {"status": "no_matching_bucket", **stats}
 
-        result = await session.execute(
-            select(Event)
-            .join(Sport, Sport.id == Event.sport_id)
-            .where(
-                Sport.key.in_(wanted_keys),
-                Event.commence_time.isnot(None),
-                Event.commence_time >= window_start,
-                Event.commence_time <= window_end,
-                Event.home_team_name.isnot(None),
-                Event.away_team_name.isnot(None),
+        events: list = []
+        if wanted_keys:
+            result = await session.execute(
+                select(Event)
+                .join(Sport, Sport.id == Event.sport_id)
+                .where(
+                    Sport.key.in_(wanted_keys),
+                    Event.commence_time.isnot(None),
+                    Event.commence_time >= window_start,
+                    Event.commence_time <= window_end,
+                    Event.home_team_name.isnot(None),
+                    Event.away_team_name.isnot(None),
+                )
+                .order_by(Event.commence_time.desc())
+                .limit(limit)
             )
-            .order_by(Event.commence_time.desc())
-            .limit(limit)
-        )
-        events = result.scalars().all()
+            events = list(result.scalars().all())
+        stats["events_considered"] = len(events)
+
+        # The generic population. A row already labelled somebody's duplicate
+        # is left out entirely: it has a canonical, and re-deciding it here
+        # would be this pass arbitrating against the sweep that labelled it.
+        generic_ids: set[int] = set()
+        generic_keys: dict[int, str] = {}
+        if generic_competitions:
+            generic_start = now - timedelta(days=GENERIC_ANCHOR_WINDOW_DAYS)
+            generic_end = now + timedelta(days=GENERIC_ANCHOR_WINDOW_DAYS)
+            generic_result = await session.execute(
+                select(Event, Sport.key)
+                .join(Sport, Sport.id == Event.sport_id)
+                .where(
+                    Sport.key.in_(generic_sport_keys(all_keys)),
+                    Event.commence_time.isnot(None),
+                    Event.commence_time >= generic_start,
+                    Event.commence_time <= generic_end,
+                    Event.home_team_name.isnot(None),
+                    Event.away_team_name.isnot(None),
+                    Event.status.notin_(("voided", "merged")),
+                )
+                .order_by(Event.commence_time.desc())
+                .limit(GENERIC_ANCHOR_LIMIT)
+            )
+            for event, sport_key in generic_result.all():
+                if any(
+                    isinstance(t, str) and t.startswith(DUPLICATE_TAG_PREFIX)
+                    for t in (event.event_tags or [])
+                ):
+                    continue
+                generic_ids.add(event.id)
+                generic_keys[event.id] = sport_key
+                events.append(event)
+            stats["generic_events_considered"] = len(generic_ids)
         stats["events_considered"] = len(events)
 
         # ═══ PHASE 1: RECEIPTS FOR EVERY ROW, WRITES FOR NONE ═══
@@ -6609,7 +6677,7 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
                 # copying the US Open's state onto a Cincinnati row.
                 receipt = anchor_receipt(
                     [event.home_team_name, event.away_team_name],
-                    competitions,
+                    generic_competitions if event.id in generic_ids else competitions,
                     our_commence_time=event.commence_time,
                 )
             except Exception as exc:  # noqa: BLE001
@@ -6646,11 +6714,62 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
         stats["contested_competitions"] = len(contested)
         stats["contested_events"] = sum(len(ids) for ids in contested.values())
         stats["contested_detail"] = {c: ids for c, ids in list(contested.items())[:50]}
+
+        # ═══ THE TOUR-WEEK CONTEST IS RESOLVED (#2774) ═══
+        #
+        # A competition claimed only by generic rows is one match written
+        # twice: one row keeps the card and takes the id, the rest are labelled
+        # its duplicates after the writes below — see `pick_contest_canonical`.
+        # Anything else contested keeps the rule above and anchors nobody.
+        by_event = {e.id: e for e in events}
+        resolved: dict[str, tuple[int, list[int]]] = {}
+        # canonical id -> (start, source) its ghost's venue gave, applied only
+        # once the canonical holds the id — see `carried_start`.
+        carried: dict[int, tuple] = {}
+        stats["start_carried_from_ghost"] = 0
+
+        def _start_view(row):
+            return {
+                "commence_time": row.commence_time,
+                "commence_time_source": row.commence_time_source,
+            }
         for comp, ids in contested.items():
-            logger.warning(
-                "Tennis anchor CONTESTED: ESPN %s claimed by events %s — none anchored",
-                comp, ids,
+            if not all(i in generic_ids for i in ids):
+                logger.warning(
+                    "Tennis anchor CONTESTED: ESPN %s claimed by events %s — none anchored",
+                    comp, ids,
+                )
+                continue
+            canonical_id, ghost_ids, refusal = pick_contest_canonical(
+                comp,
+                [
+                    {
+                        "event_id": i,
+                        "sport_key": generic_keys.get(i),
+                        "espn_id": by_event[i].espn_id,
+                        "has_result": by_event[i].home_score is not None
+                        and by_event[i].away_score is not None,
+                    }
+                    for i in ids
+                ],
             )
+            if refusal:
+                stats["generic_contests_refused"][refusal] = (
+                    stats["generic_contests_refused"].get(refusal, 0) + 1
+                )
+                logger.warning(
+                    "Tennis anchor CONTEST REFUSED: ESPN %s events %s — %s",
+                    comp, ids, refusal,
+                )
+                continue
+            resolved[comp] = (canonical_id, ghost_ids)
+            start = carried_start(
+                _start_view(by_event[canonical_id]),
+                [_start_view(by_event[g]) for g in ghost_ids],
+            )
+            if start is not None:
+                carried[canonical_id] = start
+        stats["generic_contests_resolved"] = len(resolved)
 
         # ═══ PHASE 2: THE WRITES ═══
         #
@@ -6659,6 +6778,9 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
         # population THIS pass selected, and the twin of a US Open row lives in
         # `tennis_atp`, which this pass deliberately does not query.
         claimed_ids: set = set()
+        # Rows that hold their competition's id at the end of this pass — the
+        # only canonicals whose ghosts may be labelled below.
+        anchored_ids: set[int] = set()
         for event in events:
             try:
                 receipt = receipts.get(event.id)
@@ -6670,8 +6792,10 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
                 if comp_id is not None and len(claimants.get(comp_id, [])) > 1:
                     # Contested — see the block above. Not counted as a refusal:
                     # the matcher did its job, and the defect is that two of our
-                    # rows are one match.
-                    continue
+                    # rows are one match. A resolved tour-week contest lets its
+                    # canonical through; its ghosts are labelled after the pass.
+                    if resolved.get(comp_id, (None,))[0] != event.id:
+                        continue
 
                 if comp_id is None:
                     reason = receipt["reason"]
@@ -6718,6 +6842,12 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
                         event.id, ours[0], ours[1], comp_id, method,
                     )
 
+                anchored_ids.add(event.id)
+                if event.id in carried:
+                    # Before the authority write, so a precise ESPN start
+                    # still gets its say over the venue's.
+                    event.commence_time, event.commence_time_source = carried[event.id]
+                    stats["start_carried_from_ghost"] += 1
                 competition = by_id[comp_id]
 
                 # REPORTED BEFORE IT IS REPAIRED. The contradiction is counted
@@ -6951,6 +7081,54 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
                 logger.warning("Tennis ESPN sync: event %s failed: %s", event.id, exc)
 
         await session.commit()
+
+    # ═══ THE LABELS (#2774) — only after the canonical's id is ON DISK ═══
+    #
+    # A ghost is labelled only when its canonical left the pass holding the
+    # competition's id (`anchored_ids`, set after the stamp or the
+    # already-anchored read, and committed just above). A refused stamp leaves
+    # both cards up — the status quo — rather than hiding a row behind a
+    # canonical ESPN never reached.
+    ghost_tags = [
+        TwinTag(ghost_id, canonical_id, f"tour-week contest, ESPN {comp}")
+        for comp, (canonical_id, ghost_ids) in resolved.items()
+        if canonical_id in anchored_ids
+        for ghost_id in ghost_ids
+    ]
+    stats["ghost_tags_planned"] = len(ghost_tags)
+    if ghost_tags and not fold_is_live():
+        # The twin sweep's deploy-order guard: an unplayed ghost is often the
+        # row holding the prices, so a label with no fold behind it removes the
+        # only priced card instead of the duplicate one.
+        stats["ghost_tags_withheld_fold_dark"] = len(ghost_tags)
+        ghost_tags = []
+    if ghost_tags:
+        from sqlalchemy import text as _text
+
+        async with get_task_session() as tag_session:
+            current = {
+                row.id: row.tags_text
+                for row in (
+                    await tag_session.execute(
+                        _text(
+                            "SELECT id, CAST(COALESCE(event_tags, '[]'::jsonb) AS text) "
+                            "AS tags_text FROM events WHERE id = ANY(:ids)"
+                        ),
+                        {"ids": [t.ghost_id for t in ghost_tags]},
+                    )
+                ).all()
+            }
+            todo = [
+                t for t in ghost_tags
+                if DUPLICATE_TAG_PREFIX not in current.get(t.ghost_id, "")
+            ]
+            await ensure_twin_backup(tag_session, todo, current)
+            written, failed = await write_twin_tags(tag_session, todo, progress_every=0)
+            stats["ghost_tags_written"] = written
+            stats["ghost_tags_failed"] = failed
+            stats["ghost_tags_confirmed"] = len(
+                await twin_tagged_now(tag_session, [t.ghost_id for t in ghost_tags])
+            )
 
     logger.info(
         "Tennis ESPN sync: %d events, %d anchored (%d already), %d refused, "
