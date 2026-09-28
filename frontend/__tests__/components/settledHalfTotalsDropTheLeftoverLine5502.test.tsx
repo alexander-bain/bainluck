@@ -195,16 +195,18 @@ describe("#5502 a settled half totals card drops the rung settlement left behind
     const html = renderMap("2H", RENNES_2H);
     const text = visibleText(html);
 
-    // The card is still here: its title, the subtitle it earns by drawing a
-    // real shape, and all three rungs. This is what makes the assertion below
-    // an assertion rather than a description of a card that vanished.
+    // The card is still here: its title, its subtitle and all three rungs.
+    // This is what makes the assertion below an assertion rather than a
+    // description of a card that vanished.
     //
-    // The rungs are in the markup rather than on the face of the card — a band
-    // that draws a shape moves its ladder into the tap popover (`MarketMap`,
-    // #3210), which is what the production shot shows. Presence is still the
+    // #9325: the subtitle no longer claims a distribution. These rungs are
+    // what settlement left (0.99 / 0.20 / 0.01), and the band now answers to
+    // the same count as the tile, so the rail is plain and the ladder prints
+    // on the card's face instead of in the tap popover. Presence is still the
     // point: the card and its data survive, only the tile goes.
     expect(text).toContain(cardTitle("2H"));
-    expect(text).toContain("2nd half goals distribution");
+    expect(text).toContain("lines quoted");
+    expect(text).not.toContain("goals distribution");
     expect(text).toContain("Over 0.5");
     expect(text).toContain("Over 1.5");
     expect(text).toContain("Over 2.5");
