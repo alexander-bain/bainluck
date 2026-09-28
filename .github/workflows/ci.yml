@@ -5215,8 +5215,12 @@ jobs:
         # event, not itself) plus #4965's fixture guard against `events`. A
         # session double answers whatever it is handed, so this is the gate.
         #
-        # 7 = found + another group + split group + parent-only group + itself
-        # + the fixture guard refusing + its control (same row, venue agrees).
+        # 13 = found + another group + split group + parent-only group + itself
+        # + the fixture guard refusing x4 (ESPN / external / StatPal anchored,
+        # and #8430's suspended row) + its control (same row, venue agrees)
+        # + #9338's three: an open unanchored row is joined despite its clock,
+        # of several rows the one the guard accepts is joined, two refused rows
+        # leave nothing to pick.
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_polymarket_group_sibling_8430_pg.py \
@@ -5225,8 +5229,8 @@ jobs:
             echo "::error::#8430 group-sibling gate SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]7 passed[,[:space:]]" /tmp/groupsibling8430.txt || {
-            echo "::error::#8430 group-sibling gate did not run all seven cases"
+          grep -qE "[^0-9]13 passed[,[:space:]]" /tmp/groupsibling8430.txt || {
+            echo "::error::#8430 group-sibling gate did not run all thirteen cases"
             exit 1
           }
 
