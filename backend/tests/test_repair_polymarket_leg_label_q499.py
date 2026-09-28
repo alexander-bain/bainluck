@@ -1223,6 +1223,58 @@ def test_the_completeness_count_is_bounded_by_the_wall_not_by_a_constant():
     )
 
 
+def test_the_completeness_budget_subtracts_the_spent_time_and_the_reserve():
+    """CERT-3694: the guard above reads the CALL SITE, so it passes when the
+    variable it names is simply assigned the old constant —
+    `completeness_budget = TARGET_SELECT_BUDGET_SECONDS` leaves every string it
+    checks in place and restores the 32.85s worst case. Read the ASSIGNMENT: it
+    must be the wall minus what the loop spent, minus the post-loop reserve,
+    minus the pool slack, and nothing but subtraction.
+    """
+    tree = ast.parse(inspect.getsource(rail.repair))
+    assigns = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(t, ast.Name) and t.id == "completeness_budget"
+            for t in node.targets
+        )
+    ]
+    assert len(assigns) == 1, (
+        f"expected ONE assignment to completeness_budget in repair(), found "
+        f"{len(assigns)}; a second one can overwrite the derived bound"
+    )
+
+    terms = []
+    node = assigns[0].value
+    while isinstance(node, ast.BinOp):
+        assert isinstance(node.op, ast.Sub), (
+            "the completeness budget is no longer a pure subtraction from the wall"
+        )
+        terms.append(node.right)
+        node = node.left
+    terms.append(node)
+
+    names = {t.id for t in terms if isinstance(t, ast.Name)}
+    calls = {
+        t.func.id
+        for t in terms
+        if isinstance(t, ast.Call) and isinstance(t.func, ast.Name)
+    }
+    assert isinstance(node, ast.Name) and node.id == "ROUTER_WALL_SECONDS", (
+        "the completeness budget no longer starts from the router wall"
+    )
+    assert {"spent_before_completeness", "POST_LOOP_RESERVE_SECONDS"} <= names, (
+        "the completeness budget no longer subtracts the time the loop spent "
+        "and the post-loop reserve — it is additive to the wall again"
+    )
+    assert "client_db_budget_seconds" in calls, (
+        "the completeness budget no longer subtracts the pool slack the client "
+        "bound adds on top of the server timeout"
+    )
+
+
 def test_the_page_select_bound_cannot_exceed_the_loop_deadline():
     """`started` is captured BEFORE the page SELECT, so a slow SELECT does not
     add to the total — it just leaves the loop less room. That argument holds
