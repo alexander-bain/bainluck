@@ -279,8 +279,12 @@ export default function TeamPage() {
         )}
         <div className="min-w-[180px]">
           <h1 className="text-title-1 text-text-primary">{team.name}</h1>
-          <div className="flex items-center gap-3 mt-1 text-sm text-text-secondary">
-            {team.record && <span className="font-medium">{team.record}</span>}
+          {/* #9430: this row did not wrap, so at phone width flex shrank all
+              three spans and each broke INSIDE itself — "2-" over "1" beside a
+              two-line "American Football Conference". Items now wrap whole;
+              the record and the rank are never split. */}
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-1 text-sm text-text-secondary">
+            {team.record && <span className="font-medium whitespace-nowrap">{team.record}</span>}
             {team.standings && (
               <>
                 {(team.standings as Record<string, unknown>).conference && (
@@ -295,11 +299,11 @@ export default function TeamPage() {
                     "#1 in conference" simultaneously. `conf_rank` stays first
                     for any source that genuinely scopes to a conference. */}
                 {(team.standings as Record<string, unknown>).conf_rank ? (
-                  <span>
+                  <span className="whitespace-nowrap">
                     #{String((team.standings as Record<string, unknown>).conf_rank)} in conference
                   </span>
                 ) : (team.standings as Record<string, unknown>).div_rank ? (
-                  <span>
+                  <span className="whitespace-nowrap">
                     #{String((team.standings as Record<string, unknown>).div_rank)}
                     {(team.standings as Record<string, unknown>).division
                       ? ` in ${String((team.standings as Record<string, unknown>).division)}`
