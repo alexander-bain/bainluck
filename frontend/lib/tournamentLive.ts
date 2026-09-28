@@ -116,3 +116,24 @@ export function championRowIndex(
   if (!want) return -1;
   return golfers.findIndex((g) => foldName(g.name ?? "") === want);
 }
+
+/**
+ * #9378 — has this tournament's first day not begun yet? True only when
+ * `start_date` parses and `now` is before it; absent or unparseable is "not
+ * known to be before the start", so callers decide exactly as before.
+ *
+ * `start_date` is the first CALENDAR DAY stamped at midnight UTC (see
+ * `isTournamentLive` above), so this flips at the same instant the live window
+ * opens — the two never both say no to a tournament in progress.
+ *
+ * The card reads it to caption its hero: before a shot is hit, the rank-1 row is
+ * the PRICE favourite, and "Leader" in golf means the top of the leaderboard.
+ * /sports on 2026-09-28 read "11.8% Ludvig Aberg · Leader" three days before
+ * the Alfred Dunhill Links began.
+ */
+export function isTournamentBeforeStart(tournament: { start_date?: string | null }): boolean {
+  if (!tournament.start_date) return false;
+  const start = new Date(tournament.start_date).getTime();
+  if (Number.isNaN(start)) return false;
+  return Date.now() < start;
+}

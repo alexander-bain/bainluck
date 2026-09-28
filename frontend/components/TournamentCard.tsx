@@ -4,7 +4,7 @@ import Link from "next/link";
 import { tournamentEventKey, eventPath } from "@/lib/eventKey";
 import { formatProbability } from "@/lib/api";
 import { formatMovementPoints, isRenderedMove } from "@/lib/probabilityDisplay";
-import { championRowIndex, isTournamentLive } from "@/lib/tournamentLive";
+import { championRowIndex, isTournamentBeforeStart, isTournamentLive } from "@/lib/tournamentLive";
 import { normalizeCupSideName, resolveCupSideColors } from "@/lib/cupTeamSides";
 import type { GolfTournament, GolfLeaderboardPlayer } from "@/lib/types";
 
@@ -70,6 +70,9 @@ export default function TournamentCard({ tournament, leaderboard, href: hrefOver
   // France read "● LIVE · 100.0% Matthew Fitzpatrick · Leader" hours after he won.
   const decided = whatHit || !!tournament.champion;
   const isLive = !decided && _isLive(tournament);
+  // #9378 — before the first day the rank-1 row is the price favourite, not the
+  // top of a leaderboard that does not exist yet.
+  const heroCaption = decided ? "Champion" : !isLive && isTournamentBeforeStart(tournament) ? "Favorite" : "Leader";
   const tourLabel = tournament.tour_label || tournament.tour?.toUpperCase() || "Golf";
   const eyebrowDate = _eyebrowDate(tournament);
 
@@ -135,7 +138,7 @@ export default function TournamentCard({ tournament, leaderboard, href: hrefOver
                   )}
                 </div>
                 <div className="text-xs text-text-secondary">
-                  {decided ? "Champion" : "Leader"}
+                  {heroCaption}
                   {leader.score && <> · {leader.score}</>}
                   {/* No live "% today" movement once settled — the result is fixed. */}
                   {!decided && leader.hole && <> · {leader.hole}</>}
