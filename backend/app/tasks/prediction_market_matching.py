@@ -2094,6 +2094,16 @@ async def _check_polymarket_fixture_reason(session, event_id: int, market):
     return None
 
 
+async def _event_sport_key(session, event) -> Optional[str]:
+    """``sports.key`` of ``event``'s sport, or ``None`` when it has none."""
+    if not getattr(event, "sport_id", None):
+        return None
+    from app.models.models import Sport as _Sport
+    return (await session.execute(
+        select(_Sport.key).where(_Sport.id == event.sport_id)
+    )).scalar_one_or_none()
+
+
 def _is_polymarket_catchall_shadow(event) -> bool:
     """Is this row one Polymarket minted for itself, carrying no schedule id? #7904.
 
@@ -2126,11 +2136,25 @@ def _is_polymarket_catchall_shadow(event) -> bool:
     The ``*_other`` sport key is the caller's check (it needs a query).
     """
     return (
+        _is_polymarket_venue_mint(event)
+        and getattr(event, "status", None) == "scheduled"
+    )
+
+
+def _is_polymarket_venue_mint(event) -> bool:
+    """The provenance half of :func:`_is_polymarket_catchall_shadow`, any status. #7904.
+
+    Venue clock, no provider id of any kind. The RETIRED arm needs this without
+    the ``scheduled`` clause: #5532's arm voided the NHL preseason shadows while
+    their Gamma listing stamp looked past, and their markets stayed on the voided
+    row. Such a row still says which SPORT the game is, which is all the retired
+    arm borrows from it (see its call site).
+    """
+    return (
         getattr(event, "commence_time_source", None) == POLYMARKET_VENUE_COMMENCE_SOURCE
         and getattr(event, "external_id", None) is None
         and getattr(event, "espn_id", None) is None
         and getattr(event, "statpal_fixture_id", None) is None
-        and getattr(event, "status", None) == "scheduled"
     )
 
 
@@ -5977,11 +6001,8 @@ async def _phase15_revalidate(
                     # that row, so the arm below would leave it. Ask the #5544
                     # finder instead: exactly one real covered-league row at the
                     # venue's minute is the game. See the helper's docstring.
-                    if event_sport_key is None and linked_event.sport_id:
-                        from app.models.models import Sport as _Sport
-                        event_sport_key = (await session.execute(
-                            select(_Sport.key).where(_Sport.id == linked_event.sport_id)
-                        )).scalar_one_or_none()
+                    if event_sport_key is None:
+                        event_sport_key = await _event_sport_key(session, linked_event)
                     shadow_sport = _catchall_sport_prefix(event_sport_key)
                     if shadow_sport:
                         venue_named_row = await _venue_confirmed_covered_fixture(
@@ -6038,9 +6059,29 @@ async def _phase15_revalidate(
                 # two — unless the venue's home/away marker picks one of the
                 # two (#8396). No answer leaves the link where it is: nothing below
                 # unlinks a retired link whose teams match.
+                # #7904: a VOIDED Polymarket shadow in `<sport>_other` still
+                # names the sport, and without it the resolver refuses every
+                # pair whose nicknames also field a college or NFL side —
+                # "Panthers", "Hurricanes", "Flyers", "Ducks", "Sharks". Measured
+                # 2026-09-28 11:50Z: 14 markets on four voided `icehockey_other`
+                # rows left alone, so Hurricanes–Panthers (Sep 29), Sharks–
+                # Panthers, Flyers–Hurricanes and Ducks–Panthers served no
+                # Polymarket on their NHL pages. Narrowing never widens: a pair
+                # the sport does not field still resolves to nothing.
+                retired_sport = None
+                if market.source == "polymarket" and _is_polymarket_venue_mint(
+                    linked_event
+                ):
+                    if event_sport_key is None:
+                        event_sport_key = await _event_sport_key(session, linked_event)
+                    retired_sport = _catchall_sport_prefix(event_sport_key)
                 better_match = await _venue_confirmed_covered_fixture(
                     session, matchup, market, linked_event,
+                    within_sport=retired_sport,
                 )
+                if better_match and retired_sport:
+                    stats["funnel"].setdefault("phase15_retired_shadow_relinked", 0)
+                    stats["funnel"]["phase15_retired_shadow_relinked"] += 1
                 if better_match:
                     stats["funnel"].setdefault("phase15_retired_venue_relinked", 0)
                     stats["funnel"]["phase15_retired_venue_relinked"] += 1

@@ -370,6 +370,147 @@ def test_the_shadow_predicate_reads_provenance_only():
 
 
 # --------------------------------------------------------------------------
+# Half 1b — a VOIDED shadow's market still reaches the NHL row (the retired arm)
+# --------------------------------------------------------------------------
+#
+# Production 2026-09-28 11:50Z (heavy v111, #9326 live): #5532's arm had voided
+# four `icehockey_other` shadows while their markets stayed on them, and the
+# retired arm asked the resolver WITHOUT the shadow's sport. "Panthers" and
+# "Hurricanes" also name college and NFL sides, so it refused
+# (`phase15_retired_left_alone = 14`) and Hurricanes–Panthers (Sep 29,
+# 15168031) served no Polymarket. Specimen: voided 15303513 "Panthers v
+# Hurricanes", 7 markets; NHL 15168031 Carolina Hurricanes v Florida Panthers.
+
+PANTHERS = "Florida Panthers"
+HURRICANES = "Carolina Hurricanes"
+PH_NAME = "Panthers vs. Hurricanes"
+
+
+def _panthers_rail():
+    from app.models.models import Sport, Team
+
+    session, nhl, other = _new_rail()
+    nfl = Sport(key="americanfootball_nfl", name="NFL")
+    session.add(nfl)
+    session.flush()
+    ncaaf = session.query(Sport).filter_by(key="americanfootball_ncaaf").one()
+    session.add_all([
+        Team(name=PANTHERS, sport_id=nhl.id, alternate_names=["Panthers"]),
+        Team(name=HURRICANES, sport_id=nhl.id, alternate_names=["Hurricanes"]),
+        # Production teams read 2026-09-28: both nicknames field college sides,
+        # and "Panthers" an NFL club — the bare resolver shares 2+ leagues.
+        Team(name="Pittsburgh Panthers", sport_id=ncaaf.id, alternate_names=["Panthers"]),
+        Team(name="Miami Hurricanes", sport_id=ncaaf.id, alternate_names=["Hurricanes"]),
+        Team(name="Carolina Panthers", sport_id=nfl.id, alternate_names=["Panthers"]),
+    ])
+    session.flush()
+    return session, nhl, other
+
+
+def _voided_shadow_and_nhl(session, nhl, other, **shadow_kwargs):
+    shadow = _shadow(session, other, away="Hurricanes", home="Panthers",
+                     status="voided", **shadow_kwargs)
+    real = _nhl_row(session, nhl, away=PANTHERS, home=HURRICANES,
+                    espn_id="401878099")
+    return shadow, real
+
+
+@pytest.mark.asyncio
+async def test_a_voided_shadows_market_reaches_the_nhl_row():
+    """🔴 THE SHIP. Hurricanes–Panthers' NHL page gets Polymarket's market."""
+    session, nhl, other = _panthers_rail()
+    shadow, real = _voided_shadow_and_nhl(session, nhl, other)
+    market = _market(session, shadow, name=PH_NAME, external_id="1004871")
+
+    stats, link_changes = await _run_phase15(session)
+
+    session.refresh(market)
+    assert market.event_id == real.id, (
+        f"the market stayed on voided shadow {shadow.id} — the NHL page "
+        f"{real.id} serves no Polymarket (funnel: {stats['funnel']})"
+    )
+    assert stats["funnel"]["phase15_retired_shadow_relinked"] == 1
+    assert link_changes, "the move published no receipt (LINKLOSS-02)"
+
+
+@pytest.mark.asyncio
+async def test_the_resolver_control_refuses_the_pair_without_the_sport():
+    """The control: the specimen's pair IS ambiguous bare, unambiguous in hockey."""
+    from app.tasks.prediction_market_matching import covered_league_for_matchup
+
+    session, _nhl, _other = _panthers_rail()
+    shim = _AsyncShim(session)
+    assert await covered_league_for_matchup(
+        shim, "Panthers", "Hurricanes", unambiguous_only=True,
+    ) is None
+    assert await covered_league_for_matchup(
+        shim, "Panthers", "Hurricanes", unambiguous_only=True,
+        within_sport="icehockey",
+    ) == "icehockey_nhl"
+
+
+@pytest.mark.parametrize(
+    "shadow_kwargs",
+    [
+        {"external_id": "4b675b1d1c46d02ad5a8887c956e93cf"},
+        {"espn_id": "401878098"},
+        {"source": "odds_api"},
+    ],
+    ids=["external_id", "espn_id", "not_venue_clock"],
+)
+@pytest.mark.asyncio
+async def test_a_voided_row_that_is_not_a_venue_mint_is_not_narrowed(shadow_kwargs):
+    """🔴 The sport is borrowed only from Polymarket's own id-less mint."""
+    session, nhl, other = _panthers_rail()
+    shadow, _real = _voided_shadow_and_nhl(session, nhl, other, **shadow_kwargs)
+    market = _market(session, shadow, name=PH_NAME, external_id="1004871")
+
+    stats, _ = await _run_phase15(session)
+
+    session.refresh(market)
+    assert market.event_id == shadow.id
+    assert "phase15_retired_shadow_relinked" not in stats["funnel"]
+    assert stats["funnel"]["phase15_retired_left_alone"] == 1
+
+
+@pytest.mark.asyncio
+async def test_a_voided_shadow_with_no_nhl_row_keeps_its_market():
+    """🔴 Narrowing names a league; it never invents the row to move onto."""
+    session, nhl, other = _panthers_rail()
+    shadow = _shadow(session, other, away="Hurricanes", home="Panthers",
+                     status="voided")
+    market = _market(session, shadow, name=PH_NAME, external_id="1004871")
+
+    stats, _ = await _run_phase15(session)
+
+    session.refresh(market)
+    assert market.event_id == shadow.id
+    assert stats["funnel"]["phase15_retired_left_alone"] == 1
+
+
+def test_the_venue_mint_predicate_ignores_status_and_the_shadow_one_does_not():
+    from types import SimpleNamespace
+
+    from app.tasks.prediction_market_matching import (
+        _is_polymarket_catchall_shadow, _is_polymarket_venue_mint,
+    )
+
+    base = dict(
+        commence_time_source=VENUE, external_id=None, espn_id=None,
+        statpal_fixture_id=None,
+    )
+    for status in ("scheduled", "voided", "merged", "live"):
+        assert _is_polymarket_venue_mint(SimpleNamespace(**base, status=status))
+    assert not _is_polymarket_catchall_shadow(SimpleNamespace(**base, status="voided"))
+    for field, value in (
+        ("commence_time_source", "espn"), ("external_id", "x"), ("espn_id", "1"),
+        ("statpal_fixture_id", "1"),
+    ):
+        row = SimpleNamespace(**{**base, "status": "voided", field: value})
+        assert not _is_polymarket_venue_mint(row), field
+
+
+# --------------------------------------------------------------------------
 # Half 2 — the fold joins a reversed shadow once it carries nothing to union
 # --------------------------------------------------------------------------
 
