@@ -19,9 +19,9 @@ them. Each venue's own slate function is read, not a copy.
 
 THE CASES (one Kalshi and one Polymarket market each):
 
-    the_suspended_match_still_trading ... THE SHIP. Suspended 6 h after its
-                                          start, market open. Fails without
-                                          the arm.
+    the_suspended_match_still_trading ... THE SHIP. Started 7 h ago (past
+                                          every 6 h horizon), suspended,
+                                          market open. Fails without the arm.
     the_suspended_match_with_no_status .. FAIL-OPEN. Market status NULL, as
                                           production's nullable column allows.
                                           A plain ``!= 'resolved'`` drops it.
@@ -62,9 +62,12 @@ needs_postgres = pytest.mark.skipif(
 
 #: case -> (event status, hours from now to commence, market status or None)
 CASES = {
-    "the_suspended_match_still_trading": ("suspended", -6, "open"),
-    "the_suspended_match_with_no_status": ("suspended", -6, None),
-    "the_suspended_match_settled": ("suspended", -6, "resolved"),
+    # -7 h: past every 6 h horizon (the scheduled arm's, #9425's recovery
+    # window), as the specimen was at 6 h 22 m. Kalshi-only in production — no
+    # Polymarket link — and the arm needs none.
+    "the_suspended_match_still_trading": ("suspended", -7, "open"),
+    "the_suspended_match_with_no_status": ("suspended", -7, None),
+    "the_suspended_match_settled": ("suspended", -7, "resolved"),
     "the_suspension_from_yesterday": ("suspended", -30, "open"),
     "the_game_tomorrow": ("scheduled", 30, "open"),
     "the_game_in_progress": ("live", -1, "open"),
