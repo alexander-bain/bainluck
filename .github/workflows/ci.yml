@@ -1934,6 +1934,21 @@ jobs:
             exit 1
           fi
 
+      - name: typeahead keeps the resolved team's own game in the four (real Postgres, #9435)
+        # `giants` served the New York Giants card over four Yomiuri/Lotte Giants
+        # games: the Giants' game was row 8 of the soonest-first fetch, so the
+        # #5201 rescue arm stayed off and the four-slot cut dropped it. Real
+        # Postgres because the defect is the fetch's ORDER BY + LIMIT meeting the
+        # cut. Same skip-detection as the gates around it.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_typeahead_lead_fixture_survives_the_cut_pg_9435.py \
+            -v -s -rs 2>&1 | tee /tmp/typeahead_lead_fixture_9435.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/typeahead_lead_fixture_9435.txt; then
+            echo "::error::#9435 typeahead lead-fixture gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: futures_outcomes grade schema parity (real Postgres)
         # CERT-521. `is_winner` was widened to nullable so a metadata-built test
         # database could finally express "nobody graded this" — and the widening

@@ -3658,6 +3658,29 @@ def _typeahead_seven_without_served_game_winners(
         dropped |= leaving
 
 
+def _typeahead_lead_fixtures_first(events: list, lead_ids: set) -> list:
+    """#9435: the resolved team's own fixtures take the first of the four slots.
+
+    Production 2026-09-28 18:2xZ, `/typeahead?q=giants`: the New York Giants
+    card, then four Yomiuri/Lotte Giants games and no New York Giants game.
+    The 8-row fetch is ordered by start time, and the Giants' Oct 4 game
+    (`14780551`) was row 8, behind five NPB rows, a KBO row and an AFLW row.
+    Being IN the fetch is what hid it: #5201's rescue arm fires only when the
+    pool holds none of the team's fixtures, #4615 marked the row as the team's
+    own, and then the four-slot cut dropped it before anything was scored.
+
+    A stable partition, the order #5201's arm already gives the rows it
+    prepends: the lead team's rows keep their order, then everybody else's.
+    The scorer ties namesake games on kind, so a lead row that is merely kept
+    would still print under the other club's games.
+    """
+    if not lead_ids:
+        return events
+    return [ev for ev in events if ev.id in lead_ids] + [
+        ev for ev in events if ev.id not in lead_ids
+    ]
+
+
 def _typeahead_stem_only_event(
     participants: tuple[str | None, str | None],
     expanded: list[tuple[str, str | None]],
@@ -12979,6 +13002,9 @@ async def typeahead_search(
                 _ta_names_participant(ev) or ev.id in _ta_lead_team_row_ids,
             )
         ]
+    # #9435: and the lead team's own fixtures go first, so the cut below
+    # cannot drop a game that was fetched and marked as the team's.
+    _ta_events = _typeahead_lead_fixtures_first(_ta_events, _ta_lead_team_row_ids)
     for event in _ta_events[:_EVENT_POOL_SIZE]:
         home = event.home_team
         away = event.away_team
