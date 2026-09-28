@@ -904,6 +904,21 @@ jobs:
             exit 1
           fi
 
+      - name: search shows one award race once, dropdown and /search (real Postgres, #9439)
+        # `mvp` printed Kalshi `MVP Winner?` (Josh Allen 25%) and Polymarket
+        # `Pro Football: 2026 MVP Winner` (22%) as two rows on both surfaces. The
+        # rule is pinned on production rows by the #9439 unit file; this drives
+        # both routes, with NBA MVP beside NFL MVP as the control. Same skip
+        # detection as the gates around it.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_search_one_award_race_one_row_9439_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/search_one_award_race_9439.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/search_one_award_race_9439.txt; then
+            echo "::error::#9439 one-award-race control SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#9306 typing alds shows the ALDS markets, not Byron Donalds (real Postgres)"
         # PILLAR: DISCOVER. SHIP: typing a round word (alds/alcs/nlcs/nlds) in
         # search or the dropdown serves that round's markets, not politics
@@ -1931,21 +1946,6 @@ jobs:
             -v -s -rs 2>&1 | tee /tmp/typeahead_one_question_9404.txt
           if grep -qiE "[0-9]+ skipped" /tmp/typeahead_one_question_9404.txt; then
             echo "::error::#9404 typeahead one-question control SKIPPED — the gate did not run"
-            exit 1
-          fi
-
-      - name: search shows one award race once, dropdown and /search (real Postgres, #9439)
-        # `mvp` printed Kalshi `MVP Winner?` (Josh Allen 25%) and Polymarket
-        # `Pro Football: 2026 MVP Winner` (22%) as two rows on both surfaces. The
-        # rule is pinned on production rows by the #9439 unit file; this drives
-        # both routes, with NBA MVP beside NFL MVP as the control. Same skip
-        # detection as the gates around it.
-        run: |
-          set -o pipefail
-          python -m pytest tests/integration/test_search_one_award_race_one_row_9439_pg.py \
-            -v -s -rs 2>&1 | tee /tmp/search_one_award_race_9439.txt
-          if grep -qiE "[0-9]+ skipped" /tmp/search_one_award_race_9439.txt; then
-            echo "::error::#9439 one-award-race control SKIPPED — the gate did not run"
             exit 1
           fi
 
