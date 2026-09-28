@@ -284,20 +284,31 @@ class SmallPlanVerdict(NamedTuple):
     message: str
 
 
-def explain_small_plan(plan_count: int, manifest_rows: int) -> SmallPlanVerdict:
-    """Below the floor: a drained backlog (manifest covers it) or a broken filter."""
-    if plan_count >= SANITY_FLOOR:
+def explain_small_plan(
+    plan_count: int, manifest_rows: int, refused_rows: int = 0
+) -> SmallPlanVerdict:
+    """Below the floor: a drained backlog (manifest covers it) or a broken filter.
+
+    The floor judges what the FILTER found, so rows the group-cost test refused
+    count toward it: they were found, then declined per event. Measured
+    2026-09-28 19:20Z, the filter found 62,530 rows and the refusal kept 48,352
+    of them (203 events with no other chart row and no odds) — a plan-only
+    count read that as a broken filter and refused every --apply (#9348).
+    """
+    found = plan_count + refused_rows
+    if found >= SANITY_FLOOR:
         return SmallPlanVerdict(False, "")
-    if manifest_rows + plan_count >= SANITY_FLOOR:
+    if manifest_rows + found >= SANITY_FLOOR:
         return SmallPlanVerdict(
             False,
             f"ALREADY APPLIED — {manifest_rows} rows are in {MANIFEST_TABLE} and "
-            f"{plan_count} remain; together they clear {SANITY_FLOOR}.",
+            f"{found} remain found; together they clear {SANITY_FLOOR}.",
         )
     return SmallPlanVerdict(
         True,
-        f"FILTER BROKE — {plan_count} planned + {manifest_rows} applied of an "
-        f"expected {SANITY_FLOOR}+. Do NOT lower the floor; find the rows.",
+        f"FILTER BROKE — {plan_count} planned + {refused_rows} refused + "
+        f"{manifest_rows} applied of an expected {SANITY_FLOOR}+. Do NOT lower "
+        f"the floor; find the rows.",
     )
 
 
@@ -436,9 +447,11 @@ async def run(args) -> int:
                 continue
             plan_ids.extend(ids)
             plan_events.extend([event_id] * len(ids))
-        # The floor judges the FILTER, so it reads the whole plan; `--limit`
-        # only sizes the batch written after it.
-        small = explain_small_plan(len(plan_ids), await manifest_count(s))
+        # The floor judges the FILTER, so it reads everything the filter found
+        # (planned + refused); `--limit` only sizes the batch written after it.
+        small = explain_small_plan(
+            len(plan_ids), await manifest_count(s), refused_rows=refused_rows
+        )
         if args.limit:
             plan_ids, plan_events = plan_ids[: args.limit], plan_events[: args.limit]
 

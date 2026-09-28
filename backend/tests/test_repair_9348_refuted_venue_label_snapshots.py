@@ -187,6 +187,64 @@ def test_small_plan_discriminates_drained_from_broken_9348(repair):
     assert repair.explain_small_plan(10, 0).blocks_apply
 
 
+def test_refused_rows_count_toward_the_floor_9348(repair):
+    """Production 2026-09-28 19:20Z: the filter found 62,530 rows and the
+    group-cost test refused 48,352 of them. Planned-only read FILTER BROKE and
+    refused every --apply; found rows clear the floor."""
+    assert not repair.explain_small_plan(14_178, 0, refused_rows=48_352).blocks_apply
+    assert repair.explain_small_plan(14_178, 0).blocks_apply
+    # A filter that really broke still blocks when some of its few rows refuse.
+    assert repair.explain_small_plan(10, 0, refused_rows=10).blocks_apply
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("floor, broke", [(40, False), (60, True)])
+async def test_the_plan_path_hands_refused_rows_to_the_floor_9348(
+    repair, monkeypatch, capsys, floor, broke
+):
+    """The call site, not just the function: event 1's 30 rows are its whole
+    chart (refused), event 2's 20 rows are planned. 50 found clears 40 and
+    misses 60; a call that passes only the 20 planned rows fails at 40."""
+    import contextlib
+
+    import app.tasks.base as base
+
+    by_event = {1: list(range(100, 130)), 2: list(range(200, 220))}
+    totals = [
+        {"event_id": 1, "wp_total": 30, "odds_total": 0},
+        {"event_id": 2, "wp_total": 25, "odds_total": 4},
+    ]
+
+    class _Result:
+        def fetchall(self):
+            return totals
+
+    class _Session:
+        async def execute(self, *a, **k):
+            return _Result()
+
+    @contextlib.asynccontextmanager
+    async def fake_session():
+        yield _Session()
+
+    async def fake_plan(session, today):
+        return ["m1"], by_event
+
+    async def fake_manifest(session):
+        return 0
+
+    monkeypatch.setattr(base, "get_task_session", fake_session)
+    monkeypatch.setattr(repair, "plan", fake_plan)
+    monkeypatch.setattr(repair, "manifest_count", fake_manifest)
+    monkeypatch.setattr(repair, "SANITY_FLOOR", floor)
+    args = type("A", (), {"backup": False, "apply": False, "restore": False,
+                          "limit": 0})()
+    assert await repair.run(args) == 0
+    out = capsys.readouterr().out
+    assert "REFUSE            : 30 rows / 1 events" in out
+    assert ("FILTER BROKE" in out) is broke
+
+
 def test_months_cover_every_day_once_9348(repair):
     from datetime import date
 
