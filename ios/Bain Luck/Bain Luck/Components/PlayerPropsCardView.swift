@@ -20,6 +20,8 @@ struct PlayerPropsCardView: View {
     /// opening its unpriced ones are two different asks, and a reader who wants
     /// the second should not be handed the first.
     @State private var unpricedExpandedCards: Set<String> = []
+    /// #5176 — the fields opened past their first ``PlayerPropsField/visibleCount`` legs.
+    @State private var expandedFields: Set<String> = []
     /// #5137 — the LOOK rig cannot tap (`LaunchRig.expandsCollapsedSections`),
     /// so without this the one section this ship adds is the one section it
     /// could never photograph. Off unless the rig asks: the chevron a reader
@@ -201,7 +203,9 @@ struct PlayerPropsCardView: View {
 
     var body: some View {
         let cards = filteredCards
-        if allPlayerCards.isEmpty { EmptyView() }
+        // #5176 — a page whose only props are fields still draws the card.
+        let fields = PlayerPropsField.fields(from: playerProps)
+        if allPlayerCards.isEmpty && fields.isEmpty { EmptyView() }
         else {
             VStack(alignment: .leading, spacing: 10) {
                 // Header: title + source badge + controls
@@ -224,23 +228,37 @@ struct PlayerPropsCardView: View {
                     Spacer()
                 }
 
-                // Team filter — full width
-                HStack(spacing: 0) {
-                    filterButton("All", value: "all")
-                        .frame(maxWidth: .infinity)
-                    filterButton(homeAbbr, value: "home")
-                        .frame(maxWidth: .infinity)
-                    filterButton(awayAbbr, value: "away")
-                        .frame(maxWidth: .infinity)
+                // #5176 — the game's fields sit above the team filter because
+                // the filter does not narrow them: "most in the game" is about
+                // both sides.
+                if !fields.isEmpty {
+                    let columns = [GridItem(.adaptive(minimum: 280), spacing: 10)]
+                    LazyVGrid(columns: columns, spacing: 10) {
+                        ForEach(fields) { field in
+                            fieldView(field)
+                        }
+                    }
                 }
-                .background(Color.secondary.opacity(0.08))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
 
-                // Player grid — responsive columns
-                let columns = [GridItem(.adaptive(minimum: 280), spacing: 10)]
-                LazyVGrid(columns: columns, spacing: 10) {
-                    ForEach(cards) { card in
-                        playerCardView(card)
+                if !allPlayerCards.isEmpty {
+                    // Team filter — full width
+                    HStack(spacing: 0) {
+                        filterButton("All", value: "all")
+                            .frame(maxWidth: .infinity)
+                        filterButton(homeAbbr, value: "home")
+                            .frame(maxWidth: .infinity)
+                        filterButton(awayAbbr, value: "away")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .background(Color.secondary.opacity(0.08))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                    // Player grid — responsive columns
+                    let columns = [GridItem(.adaptive(minimum: 280), spacing: 10)]
+                    LazyVGrid(columns: columns, spacing: 10) {
+                        ForEach(cards) { card in
+                            playerCardView(card)
+                        }
                     }
                 }
             }
@@ -436,6 +454,128 @@ struct PlayerPropsCardView: View {
             ForEach(Array(group.rungs.enumerated()), id: \.offset) { _, rung in
                 rungRow(rung, card: card, statType: group.type)
             }
+        }
+    }
+
+    // MARK: - Fields (#5176)
+
+    /// One "Most …" market: its phrase, then a row per player, likeliest first
+    /// (the leader first once graded). Past ``PlayerPropsField/visibleCount``
+    /// legs the rest sit behind "+N more".
+    private func fieldView(_ field: PlayerPropsField.Field) -> some View {
+        let isOpen = expandedFields.contains(field.id)
+        let shown = isOpen
+            ? field.candidates
+            : Array(field.candidates.prefix(PlayerPropsField.visibleCount))
+        let hiddenCount = field.candidates.count - PlayerPropsField.visibleCount
+
+        return VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 4) {
+                Text(field.title.uppercased())
+                    .font(.system(size: 8, weight: .bold))
+                    .tracking(0.5)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                Text(PlayerPropsField.caption(
+                    eventStatus: eventStatus,
+                    commenceTime: commenceTime,
+                    isGraded: field.isGraded
+                ))
+                    .font(.system(size: 8))
+                    .foregroundStyle(.quaternary)
+                    .lineLimit(1)
+            }
+            ForEach(shown, id: \.name) { candidate in
+                fieldRow(candidate)
+            }
+            if hiddenCount > 0 {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        if isOpen {
+                            expandedFields.remove(field.id)
+                        } else {
+                            expandedFields.insert(field.id)
+                        }
+                    }
+                } label: {
+                    Text(isOpen ? "Show less" : "+\(hiddenCount) more")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.blue)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.secondary.opacity(0.04))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(Color.secondary.opacity(0.08), lineWidth: 1)
+        )
+    }
+
+    /// One player in a field, drawn in the rung's vocabulary — track, pregame
+    /// tick, ✓/– once graded, percentage — with the name where the threshold
+    /// goes. No team colour: the served legs name no side.
+    private func fieldRow(_ candidate: PlayerPropsField.Candidate) -> some View {
+        let graded = isDone && candidate.hit != nil
+        let led = candidate.hit == true
+
+        return HStack(spacing: 4) {
+            Text(candidate.name)
+                .font(.system(size: 10))
+                .foregroundStyle(graded && led ? .primary : .secondary)
+                .fontWeight(graded && led ? .bold : .regular)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            GeometryReader { geo in
+                Capsule()
+                    .fill(Color.secondary.opacity(0.08))
+                    .overlay(alignment: .leading) {
+                        Capsule()
+                            .fill(isDone
+                                ? (led ? Color.blue.opacity(0.5) : Color.secondary.opacity(0.15))
+                                : Color.blue.opacity(0.3))
+                            .frame(width: max(4, geo.size.width * candidate.probability))
+                    }
+                    .overlay(alignment: .leading) {
+                        if let fraction = PlayerPropsScript.tickFraction(
+                            pregameMark: candidate.pregameMark,
+                            isFinished: isDone
+                        ) {
+                            Capsule()
+                                .fill(Color.primary.opacity(0.45))
+                                .frame(width: Self.pregameTickWidth)
+                                .offset(x: PlayerPropsScript.tickOffset(
+                                    fraction: fraction,
+                                    trackWidth: geo.size.width,
+                                    tickWidth: Self.pregameTickWidth
+                                ))
+                        }
+                    }
+            }
+            .frame(width: 96, height: 8)
+
+            if graded {
+                Image(systemName: led ? "checkmark" : "minus")
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundStyle(led ? .green : .secondary)
+                    .frame(width: 10)
+            }
+
+            Text("\(PlayerPropsPricing.displayPercent(candidate.probability))%")
+                .font(.system(size: 10, weight: .semibold))
+                .monospacedDigit()
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .frame(width: 28, alignment: .trailing)
+                .fixedSize(horizontal: true, vertical: false)
         }
     }
 
