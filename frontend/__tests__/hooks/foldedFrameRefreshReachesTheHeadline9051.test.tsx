@@ -162,14 +162,16 @@ function HeldEvent(props: { net: Net; liveFrame: LiveFrame | null; servedHistory
 
   // ── app/events/[id]/page.tsx — the push effect, as the page writes it ──────
   useEffect(() => {
-    if (!liveFrame || liveFrame.event_id !== eventId
-        || liveFrame.p === null || liveFrame.p === undefined) return;
-    latestLiveFrameRef.current = liveFrame;
-    const frame = { ...liveFrame, p: liveFrame.p };
-    if (frameInvalidatesFoldedBlend(heldEventRef.current, frame)) {
+    if (!liveFrame || liveFrame.event_id !== eventId) return;
+    if (frameInvalidatesFoldedBlend(heldEventRef.current, liveFrame)) {
       foldedRefetch.request();
       return;
     }
+    // #9294: contributor notifications invalidate the fold without carrying
+    // an adoptable price. Never install one as a price or replay it on a poll.
+    if (liveFrame.p === null || liveFrame.p === undefined) return;
+    latestLiveFrameRef.current = liveFrame;
+    const frame = { ...liveFrame, p: liveFrame.p };
     refreshEvent(
       (prev) => applyLiveFrame(prev, frame),
       { revalidate: false },
@@ -259,15 +261,17 @@ afterEach(() => {
 describe("structural pin: the harness carries the page's own wiring", () => {
   it("app/events/[id]/page.tsx still reads as the lines HeldEvent mounts", () => {
     // The fetcher, with the held-event getter the poll reconciles against.
-    expect(PAGE).toMatch(/fetchEventWithLiveFrame\(\s*\(\) => fetchEvent\(eventId\),\s*\(\) => latestLiveFrameRef\.current,\s*\(\) => latestBlendEdgeRef\.current,\s*\(\) => heldEventRef\.current,/);
+    expect(PAGE).toMatch(/fetchEventWithLiveFrame\(\s*\(\) => fetchEvent\(eventId, heldEventRef\.current\?\.status === "live"\),\s*\(\) => latestLiveFrameRef\.current,\s*\(\) => latestBlendEdgeRef\.current,\s*\(\) => heldEventRef\.current,/);
     expect(PAGE).toMatch(/refreshInterval: eventPollInterval/);
     // The scheduler, built once, torn down with the page.
     expect(PAGE).toMatch(/createFoldedRefetchScheduler\(\s*\(\) => \{ void refreshEventRef\.current\(\); \}, FOLDED_FRAME_REFETCH_MS,/);
     expect(PAGE).toMatch(/useEffect\(\(\) => \(\) => foldedRefetch\.cancel\(\), \[foldedRefetch\]\)/);
     // The push effect: a refused frame requests a refetch and writes NOTHING.
-    expect(PAGE).toMatch(/if \(frameInvalidatesFoldedBlend\(heldEventRef\.current, frame\)\) \{\s*foldedRefetch\.request\(\);\s*return;\s*\}/);
+    expect(PAGE).toMatch(/if \(frameInvalidatesFoldedBlend\(heldEventRef\.current, liveFrame\)\) \{\s*foldedRefetch\.request\(\);\s*return;\s*\}/);
     expect(PAGE).toMatch(/\(prev\) => applyLiveFrame\(prev, frame\),/);
     expect(PAGE).toMatch(/\}, \[liveFrame, refreshEvent, eventId, foldedRefetch\]\);/);
+    expect(PAGE.indexOf("frameInvalidatesFoldedBlend(heldEventRef.current, liveFrame)"))
+      .toBeLessThan(PAGE.indexOf("if (liveFrame.p === null"));
     // The history effect: an incomparable edge requests a refetch and writes NOTHING.
     expect(PAGE).toMatch(/if \(edgeInvalidatesHeldBlend\(heldEventRef\.current, edge\)\) \{\s*foldedRefetch\.request\(\);\s*return;\s*\}/);
     expect(PAGE).toMatch(/refreshEvent\(\(prev\) => adoptNewerBlendEdge\(prev, edge\), \{ revalidate: false \}\);/);
@@ -466,6 +470,26 @@ describe("healthy controls", () => {
     expect(page.text()).toBe('0.60|{"100":5,"101":3}|3-1|live');
     await page.resolve(1, folded({ p: 0.5, observedAt: T(14), revision: { "100": 6 } }));
     expect(page.text()).toBe('0.50|{"100":6}|3-1|live'); // the changed fold is adopted whole
+    await page.unmount();
+  });
+});
+
+
+describe("#9294: contributor invalidations have no adoptable price", () => {
+  it("a price-less sibling hint refreshes the held fold without inventing a price", async () => {
+    const page = await mountHeldEvent();
+    await page.resolve(0, folded({ p: 0.06, observedAt: T(12), revision: { "100": 5, "101": 3 } }));
+    const hint: LiveFrame = JSON.parse(JSON.stringify({
+      event_id: EVENT_ID, origin_event_id: 101, invalidation: true,
+      p: null, source: null, source_value: null, updated_at: T(16),
+      status: "live", rev: { "101": 4 },
+    }));
+    await page.deliver(hint);
+    expect(page.net.requests).toHaveLength(2);
+    expect(page.text()).toBe('0.06|{"100":5,"101":3}|3-1|live');
+    await page.resolve(1, folded({ p: 0.045, observedAt: T(16), revision: { "100": 5, "101": 4 } }));
+    expect(page.text()).toBe('0.04|{"100":5,"101":4}|3-1|live');
+    expect(page.net.discarded).toBe(0);
     await page.unmount();
   });
 });

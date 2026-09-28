@@ -442,7 +442,8 @@ async function claimEventBooted<T>(endpoint: string): Promise<T | null> {
  * flight, issued at HTML parse time. `fetchEventsByIds` calls this in a loop and is unaffected — the
  * claim is keyed on the exact URL, so at most the one booted id can match, and only once.
  */
-export async function fetchEvent(id: number): Promise<EventDetailResponse> {
+export async function fetchEvent(id: number, fresh = false): Promise<EventDetailResponse> {
+  if (fresh) return apiFetch<EventDetailResponse>(`/api/events/${id}?fresh=true`, { cache: "no-store" });
   const endpoint = `/api/events/${id}`;
   const booted = await claimEventBooted<EventDetailResponse>(endpoint);
   if (booted) return booted;
@@ -475,9 +476,11 @@ export async function fetchEventHistory(
    * parameter whose job is to drop data fails open. Callers that need the pre-kickoff half (the
    * chart's "All" range) pass nothing.
    */
-  range?: "since_start"
+  range?: "since_start",
+  fresh = false
 ): Promise<EventHistoryResponse> {
   const endpoint = `/api/events/${id}/history?hours=${hours}${range ? `&range=${range}` : ""}`;
+  if (fresh) return apiFetch<EventHistoryResponse>(`${endpoint}&fresh=true`, { cache: "no-store" });
   // LAT-P219: only the event page's own window (`EVENT_BOOT_HISTORY_HOURS`) is ever parked, so a
   // caller asking for a different `hours` simply finds no matching entry and falls through.
   const booted = await claimEventBooted<EventHistoryResponse>(endpoint);

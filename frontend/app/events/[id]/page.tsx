@@ -267,7 +267,7 @@ export default function EventPage({ params }: EventPageProps) {
   } = useSWR(
     ["event", eventId],
     () => fetchEventWithLiveFrame(
-      () => fetchEvent(eventId),
+      () => fetchEvent(eventId, heldEventRef.current?.status === "live"),
       () => latestLiveFrameRef.current,
       () => latestBlendEdgeRef.current,
       () => heldEventRef.current,
@@ -378,19 +378,21 @@ export default function EventPage({ params }: EventPageProps) {
   // writes, so the hero, the sources rail and every other consumer stay
   // consistent and nothing downstream needs to know push exists.
   useEffect(() => {
-    if (!liveFrame || liveFrame.event_id !== eventId
-        || liveFrame.p === null || liveFrame.p === undefined) return;
-    latestLiveFrameRef.current = liveFrame;
-    const frame = { ...liveFrame, p: liveFrame.p };
+    if (!liveFrame || liveFrame.event_id !== eventId) return;
     // #9051: a FOLDED hero (canonical + twins) refuses a raw-row frame, which
     // would otherwise hold it until the stream-connected 120s poll. The frame
     // still says the blend moved: refetch the folded detail — and write nothing
     // this tick, because swr drops a fetch that a later mutation (even a no-op
     // `applyLiveFrame` returning `prev`) post-dates. See the scheduler.
-    if (frameInvalidatesFoldedBlend(heldEventRef.current, frame)) {
+    if (frameInvalidatesFoldedBlend(heldEventRef.current, liveFrame)) {
       foldedRefetch.request();
       return;
     }
+    // #9294: contributor notifications invalidate the fold without carrying
+    // an adoptable price. Never install one as a price or replay it on a poll.
+    if (liveFrame.p === null || liveFrame.p === undefined) return;
+    latestLiveFrameRef.current = liveFrame;
+    const frame = { ...liveFrame, p: liveFrame.p };
     refreshEvent(
       // `applyLiveFrame` spreads `prev` FIRST and then only the fields a frame
       // speaks for, so a frame arriving after the background poll carries the
@@ -721,7 +723,8 @@ export default function EventPage({ params }: EventPageProps) {
       fetchEventHistory(
         eventId,
         EVENT_BOOT_HISTORY_HOURS,
-        historyRangeParam(fullHistoryRequested)
+        historyRangeParam(fullHistoryRequested),
+        isLive
       ),
     {
       refreshInterval: isLive ? LIVE_REFRESH_INTERVAL : SCHEDULED_REFRESH_INTERVAL,
