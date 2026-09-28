@@ -4,7 +4,7 @@ import {
   isSuspendedStatus,
   liveSectionTitle,
 } from "@/lib/eventState";
-import { isTournamentLive } from "@/lib/tournamentLive";
+import { isTournamentDecided, isTournamentLive } from "@/lib/tournamentLive";
 
 export interface FeedSection {
   key: string;
@@ -133,7 +133,13 @@ export function groupFeedIntoSections(items: FeedItem[]): FeedSection[] {
       // Same function now, so the two cannot disagree. `schedule_status` is
       // still consulted, inside it, in the arm where it is the only evidence.
       const td = item.data as unknown as FeedTournamentData;
-      if (isTournamentLive(td)) {
+      // #9212 — a decided tournament is a result. Asked FIRST: the calendar
+      // window alone filed the FedEx Open de France under Live Now hours after
+      // Fitzpatrick won, and once the window closed its `else` would have filed
+      // the champion under Upcoming.
+      if (isTournamentDecided(td)) {
+        justHappened.push(item);
+      } else if (isTournamentLive(td)) {
         liveNow.push(item);
       } else {
         upcoming.push(item);

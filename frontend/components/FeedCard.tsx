@@ -90,6 +90,7 @@ export default function FeedCard({ item, onThumbsUp, onThumbsDown, category }: F
       location: td.location,
       schedule_status: td.schedule_status,
       market_ids: td.market_ids,
+      champion: td.champion ?? null,
       golfers: td.golfers.map((g) => ({
         name: g.name,
         probability: g.probability,

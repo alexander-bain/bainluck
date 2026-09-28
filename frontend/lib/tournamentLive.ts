@@ -41,9 +41,17 @@ export interface TournamentLiveInput {
   end_date?: string | null;
   schedule_status?: string | null;
   golfers?: readonly { movement_24h?: number | null }[];
+  champion?: string | null;
 }
 
 export function isTournamentLive(tournament: TournamentLiveInput): boolean {
+  // #9212 — a tournament with a champion is over, and every arm below can still
+  // say yes to one: the calendar window runs to the end of the last day's UTC
+  // date (so "LIVE" hours after the final putt in Europe), and a winner's 24h
+  // movement outlives the tournament. The server's `_tournament_is_live` asks
+  // this first too. Absent or null is "not known to be decided", and the arms
+  // below decide exactly as before.
+  if (tournament.champion) return false;
   const now = new Date();
 
   // ⚠️ `start_date` / `end_date` are CALENDAR DATES stamped at midnight UTC —
@@ -71,4 +79,40 @@ export function isTournamentLive(tournament: TournamentLiveInput): boolean {
   return (tournament.golfers ?? []).some(
     (g) => g.movement_24h !== null && g.movement_24h !== undefined && Math.abs(g.movement_24h) >= 0.01,
   );
+}
+
+/**
+ * #9212 — has this tournament been DECIDED? Either the server named its champion
+ * (ESPN called it final) or it is a calendar marquee in its post-settlement
+ * WHAT-HIT window. A decided tournament is filed with the finished items and its
+ * card leads with the result — never "LIVE" over a 100% "Leader", and never
+ * "Upcoming". The web does not infer "decided" from a price.
+ */
+export function isTournamentDecided(tournament: {
+  champion?: string | null;
+  marquee_whathit?: boolean;
+}): boolean {
+  return !!tournament.champion || tournament.marquee_whathit === true;
+}
+
+/** A player's name folded for matching: accents, case and spacing dropped. */
+function foldName(name: string): string {
+  return name.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+/**
+ * #9212 — the index of the champion's own row, or -1. The server spells the
+ * champion as the payload's golfer row does, so this is a name match; folding
+ * only absorbs accents and case. -1 means "no row is the champion" (a team side,
+ * or a champion outside the rows served), and a caller must then name the
+ * champion WITHOUT borrowing the price leader's number.
+ */
+export function championRowIndex(
+  golfers: readonly { name: string }[] | null | undefined,
+  champion: string | null | undefined,
+): number {
+  if (!champion || !golfers) return -1;
+  const want = foldName(champion);
+  if (!want) return -1;
+  return golfers.findIndex((g) => foldName(g.name ?? "") === want);
 }
