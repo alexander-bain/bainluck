@@ -34,6 +34,7 @@ from app.utils.cross_source_matching import (
 )
 from app.utils.feed_market_quality import hard_excluded_family
 from app.utils.futures_liveness import market_reads_settled
+from app.utils.kalshi_retention import PROVABLY_PURGED_AGE_DAYS
 from app.utils.market_staleness import (
     expired_ladder_rungs,
     should_exclude_from_featured,
@@ -681,6 +682,44 @@ def _never_really_traded(market: FuturesMarket) -> bool:
     if volume is None:
         return False
     return volume < _THINLY_TRADED_VOLUME
+
+
+def _last_priced_before_the_venue_forgets(
+    market: FuturesMarket, now: datetime
+) -> bool:
+    """Is this market's FRESHEST price older than Kalshi keeps a closed book?
+
+    #9330. The specimen is "Texas Senate primary: which counties will Paxton
+    win?" (`KXPAXTONPRIMARYCOUNTIES-26`), a March 2026 primary that /politics
+    still printed on 2026-09-28 as a live card — "LEADER Harris 6%" — off eight
+    legs last written 2026-03-20, 191 days earlier. Nothing else on the page
+    could see it: `status` is `'open'` (gotcha #33), `resolution_date` is the
+    one-year backstop (2027-03-03), no leg is graded, and no venue-settled stamp
+    was ever written, because by the time anything looked Kalshi had purged the
+    markets — the event still answers, with `markets: []`.
+
+    A price that old is not a quote whatever the venue now holds, and past
+    :data:`PROVABLY_PURGED_AGE_DAYS` it cannot even be checked against the
+    venue's history. So the page stops printing it. Measured on the served bank
+    (`updated_at` 2026-09-28 07:25Z): this removes 1 of 68 cards, the specimen;
+    the next oldest was priced 2 days ago.
+
+    The FRESHEST leg decides, not the stalest — one leg written this week means
+    the market is being priced. A market with no stamp on any leg is NO
+    EVIDENCE and stays, the same way `_never_really_traded` reads a NULL.
+    """
+    stamps = [
+        o.last_updated
+        for o in (getattr(market, "outcomes", None) or [])
+        if getattr(o, "last_updated", None) is not None
+    ]
+    if not stamps:
+        return False
+    freshest = max(
+        s if s.tzinfo is not None else s.replace(tzinfo=timezone.utc)
+        for s in stamps
+    )
+    return freshest < now - timedelta(days=PROVABLY_PURGED_AGE_DAYS)
 
 
 def _by_uncertainty(row: dict, market: FuturesMarket) -> tuple[int, float]:
@@ -1558,6 +1597,10 @@ async def get_politics(db: AsyncSession, stage_ms: dict | None = None):
         # 2026-08-30 it removes 280 of the 305 settled politics markets that
         # render today and keeps the 25 genuine independent bundles.
         if market_reads_settled(m, now=now):
+            continue
+        # #9330: a months-old price is not a live card, and the settled test
+        # above cannot see a market the venue purged before anyone graded it.
+        if _last_priced_before_the_venue_forgets(m, now):
             continue
         if m.resolution_date and m.resolution_date < stale_cutoff:
             continue
