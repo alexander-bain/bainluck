@@ -65,6 +65,7 @@ from app.utils.futures_liveness import (  # noqa: E402  # #2222, then #5896
 from app.utils.kalshi_series_selection import (  # noqa: E402
     discovery_dead_series,
 )
+from app.utils.kalshi_threshold_label import single_leg_threshold_label  # noqa: E402  # #9383
 
 
 def _is_kalshi_game_ticker(event_ticker: str) -> Optional[str]:
@@ -1796,6 +1797,12 @@ async def _poll_kalshi_markets():
                         kalshi_metadata["competition"] = event.competition
                     if len(event.markets) > 1:
                         kalshi_metadata["market_count"] = len(event.markets)
+                    # #9383: a lone threshold leg keeps its stored name `Yes`
+                    # (29 consumers key on it); the question's number rides
+                    # here and the served-name sites print it instead.
+                    _threshold = single_leg_threshold_label(event.markets)
+                    if _threshold:
+                        kalshi_metadata["threshold_label"] = _threshold
 
                     # Aggregate volume across all markets in this event
                     total_volume = sum(m.volume or 0 for m in event.markets) or None
@@ -7014,6 +7021,11 @@ async def _create_settled_market(
     metadata = {"kalshi_event_ticker": event.event_ticker, "gap_created": True}
     if event.title:
         metadata["event_title"] = event.title
+    # #9383: same label as the poller, so a settled threshold row reads
+    # "Over 2.5 maps — won", not "Yes — won".
+    _threshold = single_leg_threshold_label(event.markets)
+    if _threshold:
+        metadata["threshold_label"] = _threshold
 
     market_stmt = (
         pg_insert(FuturesMarket)
