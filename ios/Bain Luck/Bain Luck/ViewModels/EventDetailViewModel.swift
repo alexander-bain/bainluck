@@ -378,7 +378,19 @@ final class EventDetailViewModel: ObservableObject {
     @MainActor
     private func rereadGameState() async {
         do {
-            adopt(try await client.fetchEvent(id: eventId))
+            var fetched = try await client.fetchEvent(id: eventId)
+            if pricePairRefreshFailed, fetched.status == "live", let held = event {
+                // A clock-only success cannot publish the successful half of
+                // a failed pair. Keep its complete price/source identity until
+                // detail AND history recover, but take the new game state.
+                fetched.currentOdds = held.currentOdds
+                fetched.heroProbability = held.heroProbability
+                fetched.heroProbabilitySource = held.heroProbabilitySource
+                fetched.heroProbabilityObservedAt = held.heroProbabilityObservedAt
+                fetched.winProbabilitySources = held.winProbabilitySources
+                fetched.blendFoldRevision = held.blendFoldRevision
+            }
+            adopt(fetched, recordsPriceActivity: !pricePairRefreshFailed)
             error = nil
         } catch {
             self.error = error.localizedDescription
@@ -508,6 +520,7 @@ final class EventDetailViewModel: ObservableObject {
                     // Keep the game clock moving while the existing reader
                     // retries the incomplete authoritative price pair.
                     await self.rereadGameState()
+                    guard !Task.isCancelled else { return }
                     self.requestRevisionRefetch()
                 } else if slot < slots {
                     await self.rereadGameState()

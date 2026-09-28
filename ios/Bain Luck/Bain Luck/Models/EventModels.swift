@@ -31,11 +31,11 @@ nonisolated struct EventDetail: Decodable, Identifiable, Sendable {
     /// (`"blend"` on a live multi-source page), the observation clock that dates
     /// it and the fold revision it was computed from. The revision dates THIS
     /// value, so it is read only while `currentOdds` prints the same number
-    /// (`LiveEventPriceReconciliation.pairedFoldRevision`). `var` on the three a
+    /// (`LiveEventPriceReconciliation.pairedFoldRevision`). `var` on the fields a
     /// pushed frame or a kept headline replaces, so value, clock and revision
     /// always move together. All optional: an older server or cache omits them.
     var heroProbability: Double?
-    let heroProbabilitySource: String?
+    var heroProbabilitySource: String?
     var heroProbabilityObservedAt: String?
     var blendFoldRevision: ServedFoldRevision?
     let ei: EIData?
