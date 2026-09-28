@@ -7,7 +7,7 @@ import { fetchClimate } from "@/lib/weatherApi";
 import { SourceBadge } from "./SourceBadge";
 
 const COLUMNS: { scale: ClimateMarket["scale"]; label: string; kicker: string }[] = [
-  { scale: "2026", label: "2026", kicker: "This year" },
+  { scale: "2026", label: "2026", kicker: "Next 12 months" },
   { scale: "2030", label: "2030", kicker: "End of decade" },
   { scale: "2050", label: "2050", kicker: "Mid-century" },
 ];
