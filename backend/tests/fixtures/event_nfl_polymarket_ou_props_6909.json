@@ -1,0 +1,3416 @@
+{
+ "_provenance": "#6909 Polymarket O/U arm. /api/events/14782707/game-markets (Saints 27 - Raiders 35, completed 2026-09-27T23:43Z) read 2026-09-28 ~11:30Z on master c716245e89-era production: every source=polymarket player_props row verbatim (the BEFORE: 0 of 154 carry hit/actual), joined to its stored futures_markets.external_id/name and futures_outcomes current_probability/is_winner/resolution_source via admin db-query, plus events.box_score_data->'players' verbatim. Do NOT refresh from a fixed tree (notice 50).",
+ "box_score_players": {
+  "AJ Cole": {
+   "punt yards": 147.0,
+   "punts": 3.0,
+   "punts inside 20": 1.0
+  },
+  "Adam Butler": {
+   "defensive touchdowns": 0.0,
+   "fumbles": 0.0,
+   "fumbles lost": 0.0,
+   "fumbles recovered": 1.0,
+   "passes defended": 0.0,
+   "qb hits": 0.0,
+   "sacks": 0.0,
+   "solo tackles": 0.0,
+   "tackles": 3.0,
+   "tackles for loss": 0.0
+  },
+  "Alvin Kamara": {
+   "carries": 9.0,
+   "long reception": 5.0,
+   "long rush": 11.0,
+   "receiving touchdowns": 0.0,
+   "receiving yards": 5.0,
+   "receptions": 1.0,
+   "rushing touchdowns": 0.0,
+   "rushing yards": 36.0,
+   "targets": 1.0
+  },
+  "Anfernee Jennings": {
+   "defensive touchdowns": 0.0,
+   "passes defended": 1.0,
+   "qb hits": 0.0,
+   "sacks": 0.0,
+   "solo tackles": 2.0,
+   "tackles": 3.0,
+   "tackles for loss": 0.0
+  },
+  "Ashton Jeanty": {
+   "carries": 19.0,
+   "long reception": 22.0,
+   "long rush": 12.0,
+   "receiving touchdowns": 0.0,
+   "receiving yards": 37.0,
+   "receptions": 3.0,
+   "rushing touchdowns": 0.0,
+   "rushing yards": 56.0,
+   "targets": 3.0
+  },
+  "Brock Bowers": {
+   "long reception": 20.0,
+   "receiving touchdowns": 1.0,
+   "receiving yards": 116.0,
+   "receptions": 10.0,
+   "targets": 13.0
+  },
+  "Bryce Lance": {
+   "long reception": 0.0,
+   "receiving touchdowns": 0.0,
+   "receiving yards": 0.0,
+   "receptions": 0.0,
+   "targets": 3.0
+  },
+  "CJ Donaldson": {
+   "carries": 1.0,
+   "long rush": 5.0,
+   "rushing touchdowns": 0.0,
+   "rushing yards": 5.0
+  },
+  "Carl Granderson": {
+   "defensive touchdowns": 0.0,
+   "passes defended": 0.0,
+   "qb hits": 0.0,
+   "sacks": 0.0,
+   "solo tackles": 1.0,
+   "tackles": 4.0,
+   "tackles for loss": 0.0
+  },
+  "Chase Young": {
+   "defensive touchdowns": 0.0,
+   "passes defended": 0.0,
+   "qb hits": 2.0,
+   "sacks": 2.0,
+   "solo tackles": 2.0,
+   "tackles": 2.0,
+   "tackles for loss": 2.0
+  },
+  "Chris Olave": {
+   "long reception": 19.0,
+   "receiving touchdowns": 0.0,
+   "receiving yards": 107.0,
+   "receptions": 9.0,
+   "targets": 13.0
+  },
+  "Cody Lindenberg": {
+   "defensive touchdowns": 0.0,
+   "passes defended": 0.0,
+   "qb hits": 0.0,
+   "sacks": 0.0,
+   "solo tackles": 0.0,
+   "tackles": 1.0,
+   "tackles for loss": 0.0
+  },
+  "Cody White": {
+   "defensive touchdowns": 0.0,
+   "long reception": 4.0,
+   "passes defended": 0.0,
+   "qb hits": 0.0,
+   "receiving touchdowns": 1.0,
+   "receiving yards": 4.0,
+   "receptions": 1.0,
+   "sacks": 0.0,
+   "solo tackles": 1.0,
+   "tackles": 1.0,
+   "tackles for loss": 0.0,
+   "targets": 3.0
+  },
+  "Colby Wooden": {
+   "defensive touchdowns": 0.0,
+   "passes defended": 0.0,
+   "qb hits": 1.0,
+   "sacks": 0.0,
+   "solo tackles": 1.0,
+   "tackles": 2.0,
+   "tackles for loss": 0.0
+  },
+  "Connor Heyward": {
+   "fumbles": 0.0,
+   "fumbles lost": 0.0,
+   "fumbles recovered": 1.0
+  },
+  "Daniel Carlson": {
+   "extra points": 3.0,
+   "field goals": 0.0,
+   "kicking points": 3.0
+  },
+  "Danny Stutsman": {
+   "defensive touchdowns": 0.0,
+   "passes defended": 0.0,
+   "qb hits": 0.0,
+   "sacks": 0.0,
+   "solo tackles": 4.0,
+   "tackles": 7.0,
+   "tackles for loss": 0.0
+  },
+  "Dareke Young": {
+   "defensive touchdowns": 0.0,
+   "kick return touchdowns": 0.0,
+   "kick return yards": 55.0,
+   "kick returns": 2.0,
+   "passes defended": 0.0,
+   "qb hits": 0.0,
+   "sacks": 0.0,
+   "solo tackles": 2.0,
+   "tackles": 2.0,
+   "tackles for loss": 0.0
+  },
+  "Darien Porter": {
+   "defensive touchdowns": 0.0,
+   "passes defended": 0.0,
+   "qb hits": 0.0,
+   "sacks": 0.0,
+   "solo tackles": 1.0,
+   "tackles": 1.0,
+   "tackles for loss": 0.0
+  },
+  "Davon Godchaux": {
+   "defensive touchdowns": 0.0,
+   "passes defended": 0.0,
+   "qb hits": 0.0,
+   "sacks": 0.0,
+   "solo tackles": 2.0,
+   "tackles": 5.0,
+   "tackles for loss": 0.0
+  },
+  "Devaughn Vele": {
+   "long reception": 17.0,
+   "receiving touchdowns": 0.0,
+   "receiving yards": 39.0,
+   "receptions": 3.0,
+   "targets": 6.0
+  },
+  "Dylan Laube": {
+   "defensive touchdowns": 0.0,
+   "fumbles": 1.0,
+   "fumbles lost": 1.0,
+   "fumbles recovered": 0.0,
+   "kick return touchdowns": 0.0,
+   "kick return yards": 28.0,
+   "kick returns": 1.0,
+   "passes defended": 0.0,
+   "qb hits": 0.0,
+   "sacks": 0.0,
+   "solo tackles": 0.0,
+   "tackles": 1.0,
+   "tackles for loss": 0.0
+  },
+  "Eric Stokes": {
+   "defensive touchdowns": 0.0,
+   "fumbles": 0.0,
+   "fumbles lost": 0.0,
+   "fumbles recovered": 1.0,
+   "passes defended": 0.0,
+   "qb hits": 0.0,
+   "sacks": 0.0,
+   "solo tackles": 1.0,
+   "tackles": 2.0,
+   "tackles for loss": 0.0
+  },
+  "Folorunso Fatukasi": {
+   "defensive touchdowns": 0.0,
+   "passes defended": 0.0,
+   "qb hits": 1.0,
+   "sacks": 0.0,
+   "solo tackles": 0.0,
+   "tackles": 0.0,
+   "tackles for loss": 0.0
+  },
+  "Hezekiah Masses": {
+   "defensive touchdowns": 0.0,
+   "fumbles": 1.0,
+   "fumbles lost": 0.0,
+   "fumbles recovered": 0.0,
+   "interception touchdowns": 0.0,
+   "interception yards": 35.0,
+   "interceptions caught": 1.0,
+   "passes defended": 1.0,
+   "qb hits": 0.0,
+   "sacks": 0.0,
+   "solo tackles": 4.0,
+   "tackles": 6.0,
+   "tackles for loss": 0.0
+  },
+  "Isaiah Pola-Mao": {
+   "defensive touchdowns": 0.0,
+   "passes defended": 0.0,
+   "qb hits": 0.0,
+   "sacks": 0.0,
+   "solo tackles": 5.0,
+   "tackles": 6.0,
+   "tackles for loss": 0.0
+  },
+  "Isaiah Stalbird": {
+   "defensive touchdowns": 0.0,
+   "passes defended": 0.0,
+   "qb hits": 0.0,
+   "sacks": 0.0,
+   "solo tackles": 1.0,
+   "tackles": 2.0,
+   "tackles for loss": 0.0
+  },
+  "Jalen Moreno-Cropper": {
+   "kick return touchdowns": 0.0,
+   "kick return yards": 22.0,
+   "kick returns": 1.0
+  },
+  "Jalen Nailor": {
+   "long reception": 16.0,
+   "receiving touchdowns": 0.0,
+   "receiving yards": 16.0,
+   "receptions": 1.0,
+   "targets": 3.0
+  },
+  "Jayden Price": {
+   "defensive touchdowns": 0.0,
+   "kick return touchdowns": 0.0,
+   "kick return yards": 83.0,
+   "kick returns": 4.0,
+   "passes defended": 0.0,
+   "punt return touchdowns": 0.0,
+   "punt return yards": 11.0,
+   "punt returns": 1.0,
+   "qb hits": 0.0,
+   "sacks": 0.0,
+   "solo tackles": 1.0,
+   "tackles": 1.0,
+   "tackles for loss": 0.0
+  },
+  "Jeremy Chinn": {
+   "defensive touchdowns": 0.0,
+   "passes defended": 0.0,
+   "qb hits": 1.0,
+   "sacks": 1.0,
+   "solo tackles": 7.0,
+   "tackles": 8.0,
+   "tackles for loss": 1.0
+  },
+  "Jonas Sanker": {
+   "defensive touchdowns": 0.0,
+   "passes defended": 0.0,
+   "qb hits": 0.0,
+   "sacks": 0.0,
+   "solo tackles": 3.0,
+   "tackles": 7.0,
+   "tackles for loss": 0.0
+  },
+  "Jordan Howden": {
+   "fumbles": 0.0,
+   "fumbles lost": 0.0,
+   "fumbles recovered": 1.0
+  },
+  "Julian Blackmon": {
+   "defensive touchdowns": 0.0,
+   "passes defended": 0.0,
+   "qb hits": 0.0,
+   "sacks": 0.0,
+   "solo tackles": 2.0,
+   "tackles": 3.0,
+   "tackles for loss": 0.0
+  },
+  "Justin Reid": {
+   "defensive touchdowns": 0.0,
+   "passes defended": 0.0,
+   "qb hits": 0.0,
+   "sacks": 0.0,
+   "solo tackles": 3.0,
+   "tackles": 4.0,
+   "tackles for loss": 0.0
+  },
+  "Juwan Johnson": {
+   "defensive touchdowns": 0.0,
+   "fumbles": 1.0,
+   "fumbles lost": 1.0,
+   "fumbles recovered": 0.0,
+   "long reception": 22.0,
+   "passes defended": 0.0,
+   "qb hits": 0.0,
+   "receiving touchdowns": 2.0,
+   "receiving yards": 48.0,
+   "receptions": 8.0,
+   "sacks": 0.0,
+   "solo tackles": 1.0,
+   "tackles": 1.0,
+   "tackles for loss": 0.0,
+   "targets": 8.0
+  },
+  "Kaden Elliss": {
+   "defensive touchdowns": 0.0,
+   "passes defended": 0.0,
+   "qb hits": 0.0,
+   "sacks": 0.0,
+   "solo tackles": 4.0,
+   "tackles": 9.0,
+   "tackles for loss": 1.0
+  },
+  "Kendre Miller": {
+   "carries": 4.0,
+   "fumbles": 1.0,
+   "fumbles lost": 0.0,
+   "fumbles recovered": 0.0,
+   "kick return touchdowns": 0.0,
+   "kick return yards": 18.0,
+   "kick returns": 1.0,
+   "long reception": 4.0,
+   "long rush": 5.0,
+   "receiving touchdowns": 0.0,
+   "receiving yards": 5.0,
+   "receptions": 2.0,
+   "rushing touchdowns": 0.0,
+   "rushing yards": 14.0,
+   "targets": 3.0
+  },
+  "Khristian Boyd": {
+   "defensive touchdowns": 0.0,
+   "passes defended": 0.0,
+   "qb hits": 1.0,
+   "sacks": 1.0,
+   "solo tackles": 2.0,
+   "tackles": 3.0,
+   "tackles for loss": 2.0
+  },
+  "Kirk Cousins": {
+   "carries": 3.0,
+   "completions": 22.0,
+   "fumbles": 1.0,
+   "fumbles lost": 0.0,
+   "fumbles recovered": 0.0,
+   "interceptions thrown": 0.0,
+   "long rush": 5.0,
+   "passing touchdowns": 3.0,
+   "passing yards": 248.0,
+   "rushing touchdowns": 0.0,
+   "rushing yards": 3.0,
+   "sacks taken": 3.0
+  },
+  "Kool-Aid McKinstry": {
+   "defensive touchdowns": 0.0,
+   "passes defended": 2.0,
+   "qb hits": 0.0,
+   "sacks": 0.0,
+   "solo tackles": 3.0,
+   "tackles": 5.0,
+   "tackles for loss": 0.0
+  },
+  "Kwity Paye": {
+   "defensive touchdowns": 0.0,
+   "passes defended": 0.0,
+   "qb hits": 0.0,
+   "sacks": 0.0,
+   "solo tackles": 0.0,
+   "tackles": 3.0,
+   "tackles for loss": 0.0
+  },
+  "Malcolm Koonce": {
+   "defensive touchdowns": 0.0,
+   "passes defended": 0.0,
+   "qb hits": 3.0,
+   "sacks": 1.0,
+   "solo tackles": 3.0,
+   "tackles": 3.0,
+   "tackles for loss": 1.0
+  },
+  "Malik Benson": {
+   "long reception": 0.0,
+   "punt return touchdowns": 0.0,
+   "punt return yards": 13.0,
+   "punt returns": 1.0,
+   "receiving touchdowns": 0.0,
+   "receiving yards": 0.0,
+   "receptions": 0.0,
+   "targets": 1.0
+  },
+  "Matt Gay": {
+   "extra points": 2.0,
+   "field goals": 3.0,
+   "kicking points": 11.0
+  },
+  "Maxx Crosby": {
+   "defensive touchdowns": 0.0,
+   "fumbles": 0.0,
+   "fumbles lost": 0.0,
+   "fumbles recovered": 1.0,
+   "passes defended": 1.0,
+   "qb hits": 2.0,
+   "sacks": 0.0,
+   "solo tackles": 1.0,
+   "tackles": 2.0,
+   "tackles for loss": 0.0
+  },
+  "Michael Mayer": {
+   "long reception": 18.0,
+   "receiving touchdowns": 1.0,
+   "receiving yards": 32.0,
+   "receptions": 3.0,
+   "targets": 3.0
+  },
+  "Mike Reid": {
+   "defensive touchdowns": 0.0,
+   "passes defended": 0.0,
+   "qb hits": 0.0,
+   "sacks": 0.0,
+   "solo tackles": 0.0,
+   "tackles": 1.0,
+   "tackles for loss": 0.0
+  },
+  "Mike Washington Jr.": {
+   "carries": 5.0,
+   "long rush": 36.0,
+   "rushing touchdowns": 1.0,
+   "rushing yards": 54.0
+  },
+  "Nakobe Dean": {
+   "defensive touchdowns": 0.0,
+   "passes defended": 1.0,
+   "qb hits": 0.0,
+   "sacks": 0.0,
+   "solo tackles": 11.0,
+   "tackles": 12.0,
+   "tackles for loss": 1.0
+  },
+  "Nathan Shepherd": {
+   "defensive touchdowns": 0.0,
+   "passes defended": 0.0,
+   "qb hits": 1.0,
+   "sacks": 0.0,
+   "solo tackles": 0.0,
+   "tackles": 3.0,
+   "tackles for loss": 0.0
+  },
+  "Noah Fant": {
+   "long reception": 16.0,
+   "receiving touchdowns": 2.0,
+   "receiving yards": 33.0,
+   "receptions": 4.0,
+   "targets": 4.0
+  },
+  "Patrick Johnson": {
+   "defensive touchdowns": 0.0,
+   "passes defended": 0.0,
+   "qb hits": 1.0,
+   "sacks": 0.0,
+   "solo tackles": 1.0,
+   "tackles": 1.0,
+   "tackles for loss": 0.0
+  },
+  "Pete Werner": {
+   "defensive touchdowns": 0.0,
+   "passes defended": 0.0,
+   "qb hits": 1.0,
+   "sacks": 0.0,
+   "solo tackles": 2.0,
+   "tackles": 3.0,
+   "tackles for loss": 0.0
+  },
+  "Quay Walker": {
+   "defensive touchdowns": 0.0,
+   "passes defended": 0.0,
+   "qb hits": 0.0,
+   "sacks": 0.0,
+   "solo tackles": 2.0,
+   "tackles": 8.0,
+   "tackles for loss": 1.0
+  },
+  "Quincy Riley": {
+   "defensive touchdowns": 0.0,
+   "passes defended": 0.0,
+   "qb hits": 0.0,
+   "sacks": 0.0,
+   "solo tackles": 1.0,
+   "tackles": 2.0,
+   "tackles for loss": 0.0
+  },
+  "Ryan Wright": {
+   "punt yards": 132.0,
+   "punts": 3.0,
+   "punts inside 20": 1.0
+  },
+  "Segun Olubi": {
+   "defensive touchdowns": 0.0,
+   "passes defended": 0.0,
+   "qb hits": 0.0,
+   "sacks": 0.0,
+   "solo tackles": 0.0,
+   "tackles": 1.0,
+   "tackles for loss": 0.0
+  },
+  "Taron Johnson": {
+   "defensive touchdowns": 0.0,
+   "fumbles": 0.0,
+   "fumbles lost": 0.0,
+   "fumbles recovered": 1.0,
+   "passes defended": 1.0,
+   "qb hits": 0.0,
+   "sacks": 0.0,
+   "solo tackles": 7.0,
+   "tackles": 8.0,
+   "tackles for loss": 0.0
+  },
+  "Tommy Eichenberg": {
+   "defensive touchdowns": 0.0,
+   "passes defended": 0.0,
+   "qb hits": 0.0,
+   "sacks": 0.0,
+   "solo tackles": 0.0,
+   "tackles": 1.0,
+   "tackles for loss": 0.0
+  },
+  "Tonka Hemingway": {
+   "defensive touchdowns": 0.0,
+   "passes defended": 0.0,
+   "qb hits": 0.0,
+   "sacks": 0.0,
+   "solo tackles": 1.0,
+   "tackles": 3.0,
+   "tackles for loss": 1.0
+  },
+  "Travis Etienne Jr.": {
+   "carries": 13.0,
+   "long reception": 7.0,
+   "long rush": 16.0,
+   "receiving touchdowns": 0.0,
+   "receiving yards": 13.0,
+   "receptions": 2.0,
+   "rushing touchdowns": 0.0,
+   "rushing yards": 57.0,
+   "targets": 2.0
+  },
+  "Tre Tucker": {
+   "long reception": 15.0,
+   "receiving touchdowns": 0.0,
+   "receiving yards": 43.0,
+   "receptions": 4.0,
+   "targets": 4.0
+  },
+  "Tyler Shough": {
+   "carries": 1.0,
+   "completions": 29.0,
+   "fumbles": 2.0,
+   "fumbles lost": 2.0,
+   "fumbles recovered": 0.0,
+   "interceptions thrown": 1.0,
+   "long rush": 36.0,
+   "passing touchdowns": 4.0,
+   "passing yards": 250.0,
+   "rushing touchdowns": 0.0,
+   "rushing yards": 36.0,
+   "sacks taken": 2.0
+  },
+  "Vernon Broughton": {
+   "defensive touchdowns": 0.0,
+   "passes defended": 0.0,
+   "qb hits": 0.0,
+   "sacks": 0.0,
+   "solo tackles": 0.0,
+   "tackles": 1.0,
+   "tackles for loss": 0.0
+  }
+ },
+ "event_id": 14782707,
+ "markets": {
+  "62465880": {
+   "external_id": "0x4525763a214d92be7e0fd371068ed6b05b8631354f6db5aacf2ba0bdd162d2ba",
+   "name": "Kirk Cousins: Passing Touchdowns O/U 2.5"
+  },
+  "62465882": {
+   "external_id": "0x04771be7243569af6b81355bf658dfd3573c7cfd8350402cccf0ffcadc76a66c",
+   "name": "Tyler Shough: Passing Touchdowns O/U 2.5"
+  },
+  "62465883": {
+   "external_id": "0x8dcca79a8e49fac718453ffc2e4952228da8cbee4c497c7c5a0fa6471ce18b48",
+   "name": "Tyler Shough: Passing Touchdowns O/U 3.5"
+  },
+  "62465902": {
+   "external_id": "0xf093297dcd7b7ef13de3485b4bfc22fc48dc7362d771487095ded153d63a4763",
+   "name": "Juwan Johnson: 2+ Touchdowns"
+  },
+  "62465929": {
+   "external_id": "0xd919e761f481ff02ce0da263bf369e974428c4a0002eacd3a82a0fe5508bc0c3",
+   "name": "Tyler Shough: Passing Yards O/U 324.5"
+  },
+  "62465931": {
+   "external_id": "0xef7d98c9f4b82c802bbed7289c33b73b94a3c6e55245f103aa7849d46ec46229",
+   "name": "Tre Tucker: Receiving Yards O/U 39.5"
+  },
+  "62553098": {
+   "external_id": "0xe56bedb562dcfa737aef3e730869e4341b59a53efebb0a457238f60baffe1f89",
+   "name": "Tyler Shough: Passing Yards O/U 199.5"
+  },
+  "62553149": {
+   "external_id": "0xf31e4fb731d1635f46874ecbecbd81e96b8f5f16222978075770412b5150e8dc",
+   "name": "Chris Olave: Receiving Yards O/U 119.5"
+  },
+  "62860723": {
+   "external_id": "0xf44f9f9fe5fe54031cea9260bee091bf77d2f45c7d48f756c3f1604ffe1ca738",
+   "name": "Tyler Shough: Passing Touchdowns O/U 1.5"
+  },
+  "62860726": {
+   "external_id": "0xe8dd83b5161f28559ef0ffec44471a7a517d566b99e6eb18538ab04a5f117125",
+   "name": "Chris Olave: Receiving Yards O/U 69.5"
+  },
+  "62860745": {
+   "external_id": "0xaf9f3b18f13a111b682480527379037c72e517a2125a63252fc4d4072c9bef9d",
+   "name": "Tre Tucker: Receiving Yards O/U 29.5"
+  },
+  "62918025": {
+   "external_id": "0x9fbe5e5bea4faa58782e2d8745e43b4aeb486dffa5b41dd015f663251f23b992",
+   "name": "Kirk Cousins: Passing Yards O/U 24.5"
+  },
+  "62918026": {
+   "external_id": "0xe739b34f02228d20a639fa202a4646fbb2d6e00de3957cc3fcd57983587ef9f4",
+   "name": "Kirk Cousins: Passing Yards O/U 49.5"
+  },
+  "62918027": {
+   "external_id": "0xce3757de1180f19b982a4648078d91639e3674aaae50d7c63c50e61c7480b01c",
+   "name": "Kirk Cousins: Passing Yards O/U 74.5"
+  },
+  "62918028": {
+   "external_id": "0x8f7ba251f7c2d10f04d1d8c687c750a140cabe0c8e4923474d8e919559f09f88",
+   "name": "Kirk Cousins: Passing Yards O/U 99.5"
+  },
+  "62918029": {
+   "external_id": "0x1ba7da185a08bacd32ac628b1c1e7fd1a3f2847023c84005baf8dd8a8a0e8c44",
+   "name": "Kirk Cousins: Passing Yards O/U 124.5"
+  },
+  "62918030": {
+   "external_id": "0x67d878e97917ab15c63ca918d298f89984990bc4c8ce881c1856c9e4b4cb5dd0",
+   "name": "Tyler Shough: Passing Yards O/U 174.5"
+  },
+  "62918032": {
+   "external_id": "0x28a8aa752a2016ae14806aa5d1c6da38cd10fb0cb1710823e581865fdbc6a90e",
+   "name": "Tyler Shough: Passing Yards O/U 224.5"
+  },
+  "62918033": {
+   "external_id": "0x00eae4a166e348984990faa8ac98f56c26c6252ef88b93d950140f8f4e80578e",
+   "name": "Tyler Shough: Passing Yards O/U 249.5"
+  },
+  "62918035": {
+   "external_id": "0xd08b5d31f4bdf4d1899e8fed90692ae559fab3242ee2b7c26b53add3a7b56af3",
+   "name": "Kirk Cousins: Passing Touchdowns O/U 0.5"
+  },
+  "62918036": {
+   "external_id": "0x0ee43f8c6de306644069e43db9d9ca418ab0e67d931e0fdedcb844330e4a6903",
+   "name": "Kirk Cousins: Passing Touchdowns O/U 1.5"
+  },
+  "62918039": {
+   "external_id": "0x59c373e146b5604cc462e77d12a2b791cc0ff24bfd3099d13faf84eaa51fa94c",
+   "name": "Tyler Shough: Passing Touchdowns O/U 0.5"
+  },
+  "62918043": {
+   "external_id": "0x7f1e7c64d1f299cbeab59dba44e8cd65b2d9aecd268b393f48858bf024c2a627",
+   "name": "Alvin Kamara: Rushing Yards O/U 29.5"
+  },
+  "62918044": {
+   "external_id": "0x153d1000564ecd4117b8ac49a8a054fa07a486d947fa95c5e04ef9938f7de4b2",
+   "name": "Ashton Jeanty: Rushing Yards O/U 39.5"
+  },
+  "62918045": {
+   "external_id": "0xc44701d1ac2181dd9aa38b67848e5a3f0226387385c4ddc7ef2c69078bdf8edd",
+   "name": "Ashton Jeanty: Rushing Yards O/U 49.5"
+  },
+  "62918049": {
+   "external_id": "0x8406cdbdd9b87d749fee7f9ccf3bc92f0c652903eacf7b15cd223699a93d9fad",
+   "name": "Travis Etienne Jr.: Rushing Yards O/U 39.5"
+  },
+  "62918050": {
+   "external_id": "0x00ce007d8f7fdfe0568e7d6d0b5e99c046dcfffb149a43f0337dad19e150673c",
+   "name": "Travis Etienne Jr.: Rushing Yards O/U 49.5"
+  },
+  "62918054": {
+   "external_id": "0xcf110c89282d5fbf9d03fd0ac1458266ac17a7d10e11675c841dd5b30092d63b",
+   "name": "Ashton Jeanty: Receiving Yards O/U 9.5"
+  },
+  "62918055": {
+   "external_id": "0xcb276f68d2746374f5247c8701f67b326fdd65aa34819e82476224b379bad4a5",
+   "name": "Ashton Jeanty: Receiving Yards O/U 19.5"
+  },
+  "62918056": {
+   "external_id": "0xeb415224c98d398a0ccf71fe08a4fa5ba4e7cddb51f24a9bd2d1b709d94cdef8",
+   "name": "Ashton Jeanty: Receiving Yards O/U 29.5"
+  },
+  "62918057": {
+   "external_id": "0x0fb16450e329cb266190ae9e004bb3ffa19531e4325a68c7123878813c108c4f",
+   "name": "Chris Olave: Receiving Yards O/U 49.5"
+  },
+  "62918058": {
+   "external_id": "0x0d4e7ca256665356da23b6433ce860138f3f2ae1bcea65823f25482272c80659",
+   "name": "Chris Olave: Receiving Yards O/U 59.5"
+  },
+  "62918060": {
+   "external_id": "0x820e54921211c074040adc1f21e0b3ec204f0d40af79b8fa7eff3085466c22b8",
+   "name": "Chris Olave: Receiving Yards O/U 79.5"
+  },
+  "62918061": {
+   "external_id": "0x43982e3138d685f9496dc253f53e172e811ea34c7c7154eda9ebd8d573396f95",
+   "name": "Chris Olave: Receiving Yards O/U 89.5"
+  },
+  "62918062": {
+   "external_id": "0x9cb9c0e53cda4374abd61695a800ba909c9c47bb32ec9d3e68282640d128e76b",
+   "name": "Devaughn Vele: Receiving Yards O/U 9.5"
+  },
+  "62918063": {
+   "external_id": "0xa0d11510286b5f5edd513cfafd6fdc2ecf6fd9c7c37af3070caf43c6003e460d",
+   "name": "Jalen Nailor: Receiving Yards O/U 9.5"
+  },
+  "62918064": {
+   "external_id": "0x6017928b380775a2d007362f4fb8994703bd817e4dc7b8f3cd44e006f83e03e7",
+   "name": "Juwan Johnson: Receiving Yards O/U 19.5"
+  },
+  "62918065": {
+   "external_id": "0x535108513acf3acf8d756fdf2e79641adc5c17ca8b5a133d2463a71fbb81be7b",
+   "name": "Juwan Johnson: Receiving Yards O/U 29.5"
+  },
+  "62918066": {
+   "external_id": "0x56ba415556cde92ae9aa7523e578798bd2aecd2ac2a8c31235f96b56003ea441",
+   "name": "Juwan Johnson: Receiving Yards O/U 39.5"
+  },
+  "62918067": {
+   "external_id": "0x381c1c13b7a0eacaefb79cd88da05da9aa5832e85c3173f4bc47fc7756fc6027",
+   "name": "Juwan Johnson: Receiving Yards O/U 49.5"
+  },
+  "62918069": {
+   "external_id": "0xbd11830a88849665e48031b5f19625d16cbbf5e0b56f3efe440d52c98860e4bb",
+   "name": "Michael Mayer: Receiving Yards O/U 9.5"
+  },
+  "62918070": {
+   "external_id": "0x550f5d60ce48beb22d589f00eb65e1fd3e86ee89b3eb85705cf5b9367fb2f396",
+   "name": "Noah Fant: Receiving Yards O/U 9.5"
+  },
+  "62918071": {
+   "external_id": "0x4b4094e03e84395fa3db2016717be43c485ee22216545b52e46a6a46a0deb47a",
+   "name": "Travis Etienne Jr.: Receiving Yards O/U 9.5"
+  },
+  "62918073": {
+   "external_id": "0x289881a09658bd478564952022c4aaadf171acafa2a9c5bb7332cc6705f19fbb",
+   "name": "Travis Etienne Jr.: Receiving Yards O/U 29.5"
+  },
+  "62918074": {
+   "external_id": "0x1e230a63dde9d361a6ee5107105fbe46e239e8c68150c09b4a7fa6343b93f65f",
+   "name": "Tre Tucker: Receiving Yards O/U 9.5"
+  },
+  "62918141": {
+   "external_id": "0x20faf38f263361990f5bcf5afc160bf3a71fa81124d5a81fef12bb0217938255",
+   "name": "Mike Washington Jr.: Rushing Yards O/U 29.5"
+  },
+  "62918142": {
+   "external_id": "0x9b23d0ea04f19f8f5a629fd5c4e10a7529f2095a1b8aad5f4526b2e2ecdb301c",
+   "name": "Jack Bech: Receiving Yards O/U 9.5"
+  },
+  "62918158": {
+   "external_id": "0xe732d79c98337c80d117b030ae2fa11440a8de905af403ca1eea5a5e7563897c",
+   "name": "Alvin Kamara: Team First TD (New Orleans Saints)"
+  },
+  "62918185": {
+   "external_id": "0x8bf6ea9069de18979d904d4582ba9e99fea9058126bfce7af75ed64bb7933e3e",
+   "name": "Bryce Lance: Receiving Yards O/U 9.5"
+  },
+  "62918189": {
+   "external_id": "0x272d68848080c67be38f46b95327d98c491491b4a8e491a13b6c8b205b0e170f",
+   "name": "Kirk Cousins: Passing Yards O/U 149.5"
+  },
+  "62918190": {
+   "external_id": "0xf788f52a09bf4aaf3f754da8c79525a4ca7fa1122647ca1209274243593d41fb",
+   "name": "Kirk Cousins: Passing Yards O/U 174.5"
+  },
+  "62918191": {
+   "external_id": "0x95e970ba1a74c21b0116322368e8aae3f69a068d588433ac9c755b728fbd1e52",
+   "name": "Kirk Cousins: Passing Yards O/U 199.5"
+  },
+  "62918192": {
+   "external_id": "0x02a6560a2a5cf977a69be583a796626042a17911f0f4ef748d6cce048ba94fbe",
+   "name": "Kirk Cousins: Passing Yards O/U 224.5"
+  },
+  "62918193": {
+   "external_id": "0x385d024e97b8f78c5b5b7ca8f80f82200a225610ecd9fe83ab0f5efc11a1047d",
+   "name": "Tyler Shough: Passing Yards O/U 149.5"
+  },
+  "62918197": {
+   "external_id": "0xed04bcc83d4d810e7eb340516b0424a6444a4f57183aaf4fa8ba9cef47415bee",
+   "name": "Ashton Jeanty: Rushing Yards O/U 89.5"
+  },
+  "62918199": {
+   "external_id": "0x35ed57ac68c552038a1911e53fc63bbd3fa2c1144f55c04642b7e7d515a78c5a",
+   "name": "Chris Olave: Receiving Yards O/U 39.5"
+  },
+  "62918200": {
+   "external_id": "0xd109400879c1b2185d60a06b02a18ebf4092c1730d6baf6d79a983474ee0f931",
+   "name": "Chris Olave: Receiving Yards O/U 99.5"
+  },
+  "62918201": {
+   "external_id": "0xc938970949fe8638fa0a4aa4960422c55e9d216acf68921c1ab77eb8a59cb725",
+   "name": "Chris Olave: Receiving Yards O/U 109.5"
+  },
+  "62918203": {
+   "external_id": "0x6b63b12fbf1aa0470fcde773af3963d8d9808e74145660e3c05bf857bcf96a8f",
+   "name": "Devaughn Vele: Receiving Yards O/U 29.5"
+  },
+  "62918204": {
+   "external_id": "0xa5cee4e53e13dd3ed95e0a46f410a8762c2d61bdd2c3cc060e4f1a64f71e419a",
+   "name": "Devaughn Vele: Receiving Yards O/U 39.5"
+  },
+  "62918206": {
+   "external_id": "0x3aa2e26bc4d5ae57b11843bd69ad858dd7af5c16802000716eab0cb686463b4b",
+   "name": "Devaughn Vele: Receiving Yards O/U 59.5"
+  },
+  "62918207": {
+   "external_id": "0xd9a4351dc4258419e9ca0e553fdb319bc280fe127f4b696e587ec95678251839",
+   "name": "Tre Tucker: Receiving Yards O/U 19.5"
+  },
+  "62918216": {
+   "external_id": "0xcdb0f9a527b0ed242f5220c84077d5f21a7b1be186d0201fd9be58e25d610767",
+   "name": "Tyler Shough: Rushing Yards O/U 9.5"
+  },
+  "62918217": {
+   "external_id": "0x6003ab18204cf42cc5a68000a9dc223349dbd4db413ea134365f0d9eaf41d0bf",
+   "name": "Tyler Shough: Rushing Yards O/U 14.5"
+  },
+  "62918218": {
+   "external_id": "0x423c6135f689409ab4b440d20e5071870853ffb276bee14b780f9d60f3cc00ea",
+   "name": "Tyler Shough: Rushing Yards O/U 19.5"
+  },
+  "62918219": {
+   "external_id": "0x5ec471a4ffa5bfe46587a1f55410ff16506796bf72e9dc883e9273d364ff8324",
+   "name": "Tyler Shough: Rushing Yards O/U 24.5"
+  },
+  "62918220": {
+   "external_id": "0xf39d87f3d4064bc013be7d322ee64e037f8e6019c1bd01c300606d589ed8ba4e",
+   "name": "Tyler Shough: Rushing Yards O/U 29.5"
+  },
+  "62918221": {
+   "external_id": "0xcd7982b43c94d55220563225974bf033b195825585abb3f1260d2dc49420687e",
+   "name": "Alvin Kamara: Rushing Yards O/U 9.5"
+  },
+  "62918222": {
+   "external_id": "0x859c77085f88621192d03676c2e075ad0adcca977611b0f0eefd4c61b54edb5d",
+   "name": "Alvin Kamara: Rushing Yards O/U 19.5"
+  },
+  "62918223": {
+   "external_id": "0xe2489d2118aff62d58d47e7d74a2ff32794d27d1af926d605d94366b79381cd1",
+   "name": "Alvin Kamara: Rushing Yards O/U 39.5"
+  },
+  "62918224": {
+   "external_id": "0x1382c8a4d4e9363ffe04a31e4e2be4e54f4b477ce6fd238b4bafd123ec455c62",
+   "name": "Alvin Kamara: Rushing Yards O/U 49.5"
+  },
+  "62918225": {
+   "external_id": "0x9f022b9d4cf97dbcec09192e3ab94ab29b533e96887f0c6b88b3c55000676f7c",
+   "name": "Bryce Lance: Receiving Yards O/U 19.5"
+  },
+  "62918227": {
+   "external_id": "0x18229ffe0a7a0c197c2af675ea5e49d683c66a10f26cc1c77ca2c0d0acc8d51e",
+   "name": "Jack Bech: Receiving Yards O/U 19.5"
+  },
+  "62918233": {
+   "external_id": "0x33deb4270cffe5de6c9d8bdacdda3da5a81160b81e399cac5fce1208ac576250",
+   "name": "Michael Mayer: Receiving Yards O/U 19.5"
+  },
+  "62918234": {
+   "external_id": "0xa58d1cddd10f76dfac8f39952d54c9968d1a1c550769e3521190af910944e872",
+   "name": "Michael Mayer: Receiving Yards O/U 29.5"
+  },
+  "62918243": {
+   "external_id": "0x685e74d938e22acd3a0a702dd228c0410be79e259bb1831f1e8262c200ab133d",
+   "name": "Noah Fant: Receiving Yards O/U 19.5"
+  },
+  "62918244": {
+   "external_id": "0xca7770e76f428e4a3984ecfe894ee13cee7752d5fd0853aec3391a0834d57916",
+   "name": "Noah Fant: Receiving Yards O/U 29.5"
+  },
+  "62918247": {
+   "external_id": "0xf65914b3cfc75d6f9246ae64d526d2993e145a3e68e9d1be46703a091561b558",
+   "name": "Mike Washington Jr.: Rushing Yards O/U 9.5"
+  },
+  "62918248": {
+   "external_id": "0x6ee632e8226ac6e975094e1925b71555defbdc901eb9f7bf4f3546d4b34dd4fb",
+   "name": "Mike Washington Jr.: Rushing Yards O/U 19.5"
+  },
+  "62918249": {
+   "external_id": "0x4c382f93297c5807331d75c9081c521ed57c9d9fd74adb6e6d366315789abba1",
+   "name": "Brock Bowers: Receiving Yards O/U 29.5"
+  },
+  "62918250": {
+   "external_id": "0x463c19f40a9b844c0b50a389992d93be6d486afdf0f636f229f8bf3963427714",
+   "name": "Brock Bowers: Receiving Yards O/U 39.5"
+  },
+  "62918251": {
+   "external_id": "0x0339b4f86a58b08364830f3ca2957d31f0f3474dac696e92784dc5e6dbac9bc7",
+   "name": "Brock Bowers: Receiving Yards O/U 49.5"
+  },
+  "62918252": {
+   "external_id": "0xb2791f50e3b3158b779cad461df8709730efc0b117f76f085cb21e3691162a1a",
+   "name": "Brock Bowers: Receiving Yards O/U 59.5"
+  },
+  "62918253": {
+   "external_id": "0xd4d67cd99fd979ea56a3bdf23864e7866cba1506390e41a4d5567df14ab24e77",
+   "name": "Brock Bowers: Receiving Yards O/U 69.5"
+  }
+ },
+ "player_props": [
+  {
+   "_inverted": true,
+   "_market_id": 62918193,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Tyler Shough: Passing Yards O/U 149.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 149.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918030,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Tyler Shough: Passing Yards O/U 174.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 174.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62553098,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Tyler Shough: Passing Yards O/U 199.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 199.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918032,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Tyler Shough: Passing Yards O/U 224.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 224.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918033,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Tyler Shough: Passing Yards O/U 249.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 249.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918193,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Tyler Shough: Passing Yards O/U 149.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 149.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918030,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Tyler Shough: Passing Yards O/U 174.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 174.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62553098,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Tyler Shough: Passing Yards O/U 199.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 199.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918032,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Tyler Shough: Passing Yards O/U 224.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 224.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918033,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Tyler Shough: Passing Yards O/U 249.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 249.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62465929,
+   "_stored": {
+    "current_probability": 0.001,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Tyler Shough: Passing Yards O/U 324.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 324.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918025,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Kirk Cousins: Passing Yards O/U 24.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 24.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918026,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Kirk Cousins: Passing Yards O/U 49.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 49.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918027,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Kirk Cousins: Passing Yards O/U 74.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 74.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918028,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Kirk Cousins: Passing Yards O/U 99.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 99.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918029,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Kirk Cousins: Passing Yards O/U 124.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 124.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918189,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Kirk Cousins: Passing Yards O/U 149.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 149.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918190,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Kirk Cousins: Passing Yards O/U 174.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 174.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918191,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Kirk Cousins: Passing Yards O/U 199.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 199.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918192,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Kirk Cousins: Passing Yards O/U 224.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 224.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918221,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Alvin Kamara: Rushing Yards O/U 9.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 9.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918222,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Alvin Kamara: Rushing Yards O/U 19.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 19.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918043,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Alvin Kamara: Rushing Yards O/U 29.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 29.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918223,
+   "_stored": {
+    "current_probability": 0.001,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Alvin Kamara: Rushing Yards O/U 39.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 39.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918224,
+   "_stored": {
+    "current_probability": 0.001,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Alvin Kamara: Rushing Yards O/U 49.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 49.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918247,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Mike Washington Jr.: Rushing Yards O/U 9.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 9.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918248,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Mike Washington Jr.: Rushing Yards O/U 19.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 19.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918141,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Mike Washington Jr.: Rushing Yards O/U 29.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 29.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918216,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Tyler Shough: Rushing Yards O/U 9.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 9.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918217,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Tyler Shough: Rushing Yards O/U 14.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 14.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918218,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Tyler Shough: Rushing Yards O/U 19.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 19.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918219,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Tyler Shough: Rushing Yards O/U 24.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 24.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918220,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Tyler Shough: Rushing Yards O/U 29.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 29.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918049,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Travis Etienne Jr.: Rushing Yards O/U 39.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 39.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918050,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Travis Etienne Jr.: Rushing Yards O/U 49.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 49.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918044,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Ashton Jeanty: Rushing Yards O/U 39.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 39.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918045,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Ashton Jeanty: Rushing Yards O/U 49.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 49.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918197,
+   "_stored": {
+    "current_probability": 0.001,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Ashton Jeanty: Rushing Yards O/U 89.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 89.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918054,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Ashton Jeanty: Receiving Yards O/U 9.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 9.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918055,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Ashton Jeanty: Receiving Yards O/U 19.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 19.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918056,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Ashton Jeanty: Receiving Yards O/U 29.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 29.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918199,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Chris Olave: Receiving Yards O/U 39.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 39.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918057,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Chris Olave: Receiving Yards O/U 49.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 49.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918058,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Chris Olave: Receiving Yards O/U 59.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 59.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62860726,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Chris Olave: Receiving Yards O/U 69.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 69.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918060,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Chris Olave: Receiving Yards O/U 79.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 79.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918061,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Chris Olave: Receiving Yards O/U 89.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 89.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918200,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Chris Olave: Receiving Yards O/U 99.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 99.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918201,
+   "_stored": {
+    "current_probability": 0.01,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Chris Olave: Receiving Yards O/U 109.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 109.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62553149,
+   "_stored": {
+    "current_probability": 0.01,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Chris Olave: Receiving Yards O/U 119.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 119.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918064,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Juwan Johnson: Receiving Yards O/U 19.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 19.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918065,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Juwan Johnson: Receiving Yards O/U 29.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 29.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918066,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Juwan Johnson: Receiving Yards O/U 39.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 39.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918067,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Juwan Johnson: Receiving Yards O/U 49.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 49.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918071,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Travis Etienne Jr.: Receiving Yards O/U 9.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 9.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918073,
+   "_stored": {
+    "current_probability": 0.01,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Travis Etienne Jr.: Receiving Yards O/U 29.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 29.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918063,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Jalen Nailor: Receiving Yards O/U 9.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 9.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918070,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Noah Fant: Receiving Yards O/U 9.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 9.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918243,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Noah Fant: Receiving Yards O/U 19.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 19.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918244,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Noah Fant: Receiving Yards O/U 29.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 29.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918062,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Devaughn Vele: Receiving Yards O/U 9.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 9.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918203,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Devaughn Vele: Receiving Yards O/U 29.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 29.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918204,
+   "_stored": {
+    "current_probability": 0.01,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Devaughn Vele: Receiving Yards O/U 39.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 39.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918206,
+   "_stored": {
+    "current_probability": 0.01,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Devaughn Vele: Receiving Yards O/U 59.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 59.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918069,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Michael Mayer: Receiving Yards O/U 9.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 9.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918233,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Michael Mayer: Receiving Yards O/U 19.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 19.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918234,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Michael Mayer: Receiving Yards O/U 29.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 29.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918074,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Tre Tucker: Receiving Yards O/U 9.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 9.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918207,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Tre Tucker: Receiving Yards O/U 19.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 19.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62860745,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Tre Tucker: Receiving Yards O/U 29.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 29.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62465931,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Tre Tucker: Receiving Yards O/U 39.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 39.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918142,
+   "_stored": {
+    "current_probability": 0.01,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Jack Bech: Receiving Yards O/U 9.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 9.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918227,
+   "_stored": {
+    "current_probability": 0.01,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Jack Bech: Receiving Yards O/U 19.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 19.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918185,
+   "_stored": {
+    "current_probability": 0.01,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Bryce Lance: Receiving Yards O/U 9.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 9.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918225,
+   "_stored": {
+    "current_probability": 0.01,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Bryce Lance: Receiving Yards O/U 19.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 19.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918025,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Kirk Cousins: Passing Yards O/U 24.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 24.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918026,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Kirk Cousins: Passing Yards O/U 49.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 49.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918027,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Kirk Cousins: Passing Yards O/U 74.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 74.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918028,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Kirk Cousins: Passing Yards O/U 99.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 99.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918029,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Kirk Cousins: Passing Yards O/U 124.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 124.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918189,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Kirk Cousins: Passing Yards O/U 149.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 149.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918190,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Kirk Cousins: Passing Yards O/U 174.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 174.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918191,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Kirk Cousins: Passing Yards O/U 199.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 199.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918192,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Kirk Cousins: Passing Yards O/U 224.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 224.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918035,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Kirk Cousins: Passing Touchdowns O/U 0.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 0.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918036,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Kirk Cousins: Passing Touchdowns O/U 1.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 1.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62465880,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Kirk Cousins: Passing Touchdowns O/U 2.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 2.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918035,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Kirk Cousins: Passing Touchdowns O/U 0.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 0.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918036,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Kirk Cousins: Passing Touchdowns O/U 1.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 1.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62465880,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Kirk Cousins: Passing Touchdowns O/U 2.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 2.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918039,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Tyler Shough: Passing Touchdowns O/U 0.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 0.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62860723,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Tyler Shough: Passing Touchdowns O/U 1.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 1.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62465882,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Tyler Shough: Passing Touchdowns O/U 2.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 2.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62465883,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Tyler Shough: Passing Touchdowns O/U 3.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 3.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918039,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Tyler Shough: Passing Touchdowns O/U 0.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 0.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62860723,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Tyler Shough: Passing Touchdowns O/U 1.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 1.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62465882,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Tyler Shough: Passing Touchdowns O/U 2.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 2.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62465883,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Tyler Shough: Passing Touchdowns O/U 3.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 3.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918221,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Alvin Kamara: Rushing Yards O/U 9.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 9.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918222,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Alvin Kamara: Rushing Yards O/U 19.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 19.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918043,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Alvin Kamara: Rushing Yards O/U 29.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 29.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918044,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Ashton Jeanty: Rushing Yards O/U 39.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 39.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918045,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Ashton Jeanty: Rushing Yards O/U 49.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 49.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918049,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Travis Etienne Jr.: Rushing Yards O/U 39.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 39.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918050,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Travis Etienne Jr.: Rushing Yards O/U 49.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 49.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918054,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Ashton Jeanty: Receiving Yards O/U 9.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 9.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918055,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Ashton Jeanty: Receiving Yards O/U 19.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 19.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918056,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Ashton Jeanty: Receiving Yards O/U 29.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 29.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918199,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Chris Olave: Receiving Yards O/U 39.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 39.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918057,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Chris Olave: Receiving Yards O/U 49.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 49.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918058,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Chris Olave: Receiving Yards O/U 59.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 59.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62860726,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Chris Olave: Receiving Yards O/U 69.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 69.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918060,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Chris Olave: Receiving Yards O/U 79.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 79.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918061,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Chris Olave: Receiving Yards O/U 89.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 89.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918200,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Chris Olave: Receiving Yards O/U 99.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 99.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918062,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Devaughn Vele: Receiving Yards O/U 9.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 9.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918203,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Devaughn Vele: Receiving Yards O/U 29.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 29.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918063,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Jalen Nailor: Receiving Yards O/U 9.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 9.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918064,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Juwan Johnson: Receiving Yards O/U 19.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 19.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918065,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Juwan Johnson: Receiving Yards O/U 29.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 29.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918066,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Juwan Johnson: Receiving Yards O/U 39.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 39.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918067,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Juwan Johnson: Receiving Yards O/U 49.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 49.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918069,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Michael Mayer: Receiving Yards O/U 9.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 9.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918233,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Michael Mayer: Receiving Yards O/U 19.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 19.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918234,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Michael Mayer: Receiving Yards O/U 29.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 29.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918070,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Noah Fant: Receiving Yards O/U 9.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 9.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918243,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Noah Fant: Receiving Yards O/U 19.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 19.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918244,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Noah Fant: Receiving Yards O/U 29.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 29.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918071,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Travis Etienne Jr.: Receiving Yards O/U 9.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 9.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918074,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Tre Tucker: Receiving Yards O/U 9.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 9.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918207,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Tre Tucker: Receiving Yards O/U 19.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 19.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62860745,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Tre Tucker: Receiving Yards O/U 29.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 29.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62465931,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Tre Tucker: Receiving Yards O/U 39.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 39.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62465902,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Juwan Johnson: 2+ Touchdowns",
+   "outcome_name": "Yes",
+   "resolution_source": "clean_resolution",
+   "threshold": 2.0
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62465902,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Juwan Johnson: 2+ Touchdowns",
+   "outcome_name": "No",
+   "resolution_source": "clean_resolution",
+   "threshold": 2.0
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918247,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Mike Washington Jr.: Rushing Yards O/U 9.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 9.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918248,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Mike Washington Jr.: Rushing Yards O/U 19.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 19.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918141,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Mike Washington Jr.: Rushing Yards O/U 29.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 29.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918158,
+   "_stored": {
+    "current_probability": 0.01,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Alvin Kamara: Team First TD (New Orleans Saints)",
+   "outcome_name": "Yes",
+   "resolution_source": "clean_resolution",
+   "threshold": null
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918216,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Tyler Shough: Rushing Yards O/U 9.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 9.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918217,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Tyler Shough: Rushing Yards O/U 14.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 14.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918218,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Tyler Shough: Rushing Yards O/U 19.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 19.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918219,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Tyler Shough: Rushing Yards O/U 24.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 24.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918220,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Tyler Shough: Rushing Yards O/U 29.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 29.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918249,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Brock Bowers: Receiving Yards O/U 29.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 29.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918250,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Brock Bowers: Receiving Yards O/U 39.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 39.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918251,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Brock Bowers: Receiving Yards O/U 49.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 49.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918252,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Brock Bowers: Receiving Yards O/U 59.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 59.5
+  },
+  {
+   "_inverted": false,
+   "_market_id": 62918253,
+   "_stored": {
+    "current_probability": 1.0,
+    "is_winner": true,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": true,
+   "market_name": "Brock Bowers: Receiving Yards O/U 69.5",
+   "outcome_name": "Over",
+   "resolution_source": "clean_resolution",
+   "threshold": 69.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918249,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Brock Bowers: Receiving Yards O/U 29.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 29.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918250,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Brock Bowers: Receiving Yards O/U 39.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 39.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918251,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Brock Bowers: Receiving Yards O/U 49.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 49.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918252,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Brock Bowers: Receiving Yards O/U 59.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 59.5
+  },
+  {
+   "_inverted": true,
+   "_market_id": 62918253,
+   "_stored": {
+    "current_probability": 0.0,
+    "is_winner": false,
+    "resolution_source": "clean_resolution"
+   },
+   "actual": null,
+   "hit": null,
+   "is_winner": false,
+   "market_name": "Brock Bowers: Receiving Yards O/U 69.5",
+   "outcome_name": "Under",
+   "resolution_source": "clean_resolution",
+   "threshold": 69.5
+  }
+ ]
+}

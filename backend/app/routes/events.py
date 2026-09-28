@@ -20324,6 +20324,36 @@ _PROP_NAME_STAT_PITCHING = sorted(
     key=lambda pair: len(pair[0]),
     reverse=True,
 )
+# #6909 — FOOTBALL ON THE NAME PATH. A Polymarket prop has a numeric id, so the
+# ticker table can never answer for it, and until this list the name path had
+# no football word at all: on the Saints–Raiders final (event 14782707, read
+# 2026-09-28) Kalshi graded 402 of 402 player props and Polymarket 0 of 154 —
+# `Tyler Shough: Passing Yards O/U 149.5` sat ungraded directly above Kalshi's
+# `Tyler Shough: 150+ → 250.0 hit`.
+#
+# Phrase → the key the BOX SCORE writes, which is the same key the ticker
+# table uses (`backfill_winners._PROP_TICKER_TO_STAT`), so a Polymarket and a
+# Kalshi row about one player and one stat read one number. Longest phrase
+# wins, as for pitching. DELIBERATELY ABSENT, as in the ticker table:
+# "passing attempts" (no attempts key), a bare "touchdowns" (does not say
+# which), "interceptions" (thrown or caught). The composite is the name twin
+# of `kxnflrryds`; longest-first is what keeps it ahead of the "receiving
+# yards" it contains, which would otherwise grade it off one leg.
+_PROP_NAME_STAT_FOOTBALL = sorted(
+    [
+        ("rushing + receiving yards", ["rushing yards", "receiving yards"]),
+        ("passing yards", ["passing yards"]),
+        ("rushing yards", ["rushing yards"]),
+        ("receiving yards", ["receiving yards"]),
+        ("passing touchdowns", ["passing touchdowns"]),
+        ("passing completions", ["completions"]),
+        ("longest reception", ["long reception"]),
+        ("receptions", ["receptions"]),
+    ],
+    key=lambda pair: len(pair[0]),
+    reverse=True,
+)
+_SUPERLATIVE_NAME_RE = re.compile(r"\bmost\b")
 # #5097 — stats whose name is TRUE OF BOTH SIDES of a baseball box score, with
 # no "allowed" in the market name to tell them apart.
 #
@@ -20401,9 +20431,36 @@ def _prop_stat_keys(market, ctx: dict, player_stats: Optional[dict] = None) -> O
     for phrase, stat in _PROP_NAME_STAT_PITCHING:
         if phrase in name_lower:
             return [stat]
+    football = _football_name_stat_keys(market, ctx)
+    if football:
+        return football
     for stat in _PROP_NAME_STAT_SINGLES:
         if stat in name_lower:
             return _disambiguate_twin_stat(stat, player_stats)
+    return None
+
+
+def _football_name_stat_keys(market, ctx: dict) -> Optional[list]:
+    """#6909: the stat key(s) a football prop reads by NAME, or None.
+
+    None whenever the ticker table answers (the ticker is authoritative), so a
+    non-None answer here also says "this row was identified by its name alone" —
+    `_grade_settled_prop` leans on that to withhold a name-path verdict the
+    row's own settlement contradicts.
+
+    "Most Receiving Yards" (Kalshi KXNFLMOST*) names the same stat but asks who
+    led, not whether one player cleared a line — it needs its own grader, so
+    the football phrases never answer for it.
+    """
+    ticker_lower = (getattr(market, "external_id", None) or "").lower()
+    if ctx["stats_for_ticker"](ticker_lower):
+        return None
+    name_lower = (getattr(market, "name", None) or "").lower()
+    if _SUPERLATIVE_NAME_RE.search(name_lower):
+        return None
+    for phrase, stats in _PROP_NAME_STAT_FOOTBALL:
+        if phrase in name_lower:
+            return list(stats)
     return None
 
 
@@ -21143,6 +21200,25 @@ def _grade_settled_prop(event_finished, ctx, market, outcome, threshold, is_unde
     result["actual"] = total
     if threshold is not None:
         result["hit"] = (total < threshold) if is_under else (total >= threshold)
+        # #6909: a football verdict found by NAME withholds when the row's own
+        # settlement says the opposite. Measured on the specimen game
+        # (14782707): Juwan Johnson's stored box line reads 48 receiving yards
+        # while Kalshi's `api_settlement` of his 50+ rung AND Polymarket's
+        # settled O/U 49.5 both say he cleared 50. Which is right is not
+        # knowable here, so the number stays (`actual` is what ESPN wrote) and
+        # the verdict does not; the venue fallback cannot type it either
+        # (`clean_resolution` is tier 1). Withhold-only: it never types a hit.
+        # The source must be a classified settlement (tier >= 1): an ungraded
+        # row stores False with no source, and that False is not a verdict.
+        won = getattr(outcome, "is_winner", None)
+        if (
+            (won is True or won is False)
+            and authority_tier(getattr(outcome, "resolution_source", None)) >= 1
+            and won is not result["hit"]
+            and _football_name_stat_keys(market, ctx) == stat_keys
+        ):
+            result["hit"] = None
+            return result
     return _finish(result)
 
 
