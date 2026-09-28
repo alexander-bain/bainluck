@@ -5383,8 +5383,32 @@ def _team_prefix_tsquery(q: str):
 
     Returns ``None`` when there is nothing safe to build; callers must treat that
     as "no prefix arm", never as a match-nothing predicate.
+
+    #9277: a last token in `_TEAM_PREFIX_REFUSED_TOKENS` also gets no prefix arm.
+    The stemmer runs BEFORE the ``:*``, so ``alcs:*`` is really ``alc:*`` and
+    recalled Alcorn State, and ``alds:*`` recalled Aldosivi. Those tokens are
+    finished words naming a postseason round, not a team half-typed.
     """
+    tokens = re.findall(r"[^\W_]+", q or "", re.UNICODE)
+    if tokens and tokens[-1].lower() in _TEAM_PREFIX_REFUSED_TOKENS:
+        return None
     return _last_token_prefix_tsquery(q)
+
+
+#: #9277: complete words that name a competition ROUND and never a team, so the
+#: Teams prefix arm must not treat them as a name still being typed. Measured on
+#: production 2026-09-28: `alcs` carded Alcorn State / Alcochetense and rescued
+#: four Alcorn games above the ALCS markets; `alds` carded Aldosivi, rescued six
+#: of its games, and the soccer category it resolved demoted every ALDS market
+#: below Byron Donalds politics. No team row holds any of the four as a whole word
+#: (name, abbreviation or aliases: 0 rows), so the whole-lexeme arms are unchanged
+#: and still decide.
+#:
+#: A CLOSED LIST, NOT A RULE, on purpose. The general rule ("the typed token must
+#: start a word") was measured and refused. It sheds `mets`->Metz and
+#: `rams`->boxers, but also loses `nugs`, `cards`, `pels` and `caps`, which
+#: reach their clubs only through this same stem. Those need aliases first.
+_TEAM_PREFIX_REFUSED_TOKENS: frozenset[str] = frozenset({"alcs", "alds", "nlcs", "nlds"})
 
 
 def _last_token_prefix_tsquery(q: str):
