@@ -12,6 +12,10 @@ Rate limits:
   - Trusted addr:  600 requests / minute  (opt-in via ``RATE_LIMIT_TRUSTED_IPS``,
                    matched against the address our ROUTER saw, not the one the
                    caller claimed) — also a ceiling, never an exemption. D70.
+  - Fresh reads:   180 requests / minute  per caller, for ``GET /api/events/{id}``
+                   and ``GET /api/events/{id}/history`` with ``fresh=true`` only —
+                   its own bucket, shared across every event id. See
+                   ``FRESH_READ_RATE_LIMIT``.
   - Docs/health:   exempt
 
 Redis is shared with Celery (same REDIS_URL env var on Heroku).
@@ -26,6 +30,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import ssl
 import time
 from typing import Optional
@@ -63,6 +68,22 @@ ADMIN_RATE_LIMIT = "300/minute"
 # a ceiling bounds what forging it can buy. See `_router_peer_ip` for why a
 # forged header cannot claim it in the first place.
 TRUSTED_RATE_LIMIT = "600/minute"
+# Fresh live reads (TRUTH ship: a held game keeps refreshing). A held game's page
+# re-reads its detail AND its history with `fresh=true` once a second each, so one
+# open page asks 120 times a minute — every request an anonymous reader's 60/min
+# bucket holds, and all of a signed-in reader's 120. Replayed against this
+# middleware (2026-09-28): anonymous 120 paired/min → 60 served + 60 refused, the
+# first refusal at second 30; signed in, the page's 7 opening requests were the
+# whole overflow. The page was built to a cadence the limiter could not serve.
+#
+# So those two reads — and nothing else — spend a SEPARATE per-caller bucket:
+# 120/min of paired reads plus headroom for a second tab or a reconnect burst.
+# ONE bucket per caller, shared across EVERY event id — never one per event, which
+# would let a caller multiply its budget by walking ids — and still a ceiling,
+# never an exemption. Every other request, including this caller's non-fresh
+# reads, stays on the 60/120 bucket exactly as before. Admin and trusted-address
+# callers keep their own (larger) buckets and never enter this one.
+FRESH_READ_RATE_LIMIT = "180/minute"
 
 # #1197 (r259): hard wall-clock bound on the async rate-limit Redis check. Because
 # the check is awaited (not a sync blocking call), wait_for genuinely cancels the
@@ -76,6 +97,17 @@ _ANON_MAX = 60
 _AUTH_MAX = 120
 _ADMIN_MAX = 300
 _TRUSTED_MAX = 600
+_FRESH_READ_MAX = 180
+
+# The fresh-read boundary. Exactly the two routes the page polls, GET only, digits
+# only (the routes take `event_id: int`), no trailing slash, and one `fresh`
+# value FastAPI parses as True (pydantic's accepted truthy spellings). Anything
+# else — another event sub-route, `fresh=false`, a repeated `fresh`, a POST —
+# is an ordinary request in the ordinary bucket. A pattern STRING and a tuple,
+# not a compiled regex or a frozenset: every global here must be restorable by
+# rebinding (tests/conftest.py, #4090).
+_FRESH_READ_PATH_PATTERN = r"/api/events/[0-9]+(?:/history)?"
+_FRESH_READ_TRUE_VALUES = ("1", "on", "t", "true", "y", "yes")
 
 # Admin paths get a ceiling instead of the old blanket exemption (Queue 315).
 _ADMIN_PATH_PREFIX = "/api/admin"
@@ -235,11 +267,12 @@ _auth_limit = None
 
 _admin_limit = None
 _trusted_limit = None
+_fresh_read_limit = None
 
 
 def _get_limits():
     """Parse limit strings once and cache."""
-    global _anon_limit, _auth_limit, _admin_limit, _trusted_limit
+    global _anon_limit, _auth_limit, _admin_limit, _trusted_limit, _fresh_read_limit
     if _anon_limit is not None:
         return _anon_limit, _auth_limit
 
@@ -249,6 +282,7 @@ def _get_limits():
     _auth_limit = parse_limit(AUTH_RATE_LIMIT)
     _admin_limit = parse_limit(ADMIN_RATE_LIMIT)
     _trusted_limit = parse_limit(TRUSTED_RATE_LIMIT)
+    _fresh_read_limit = parse_limit(FRESH_READ_RATE_LIMIT)
     return _anon_limit, _auth_limit
 
 
@@ -264,6 +298,13 @@ def _get_trusted_limit():
     if _trusted_limit is None:
         _get_limits()
     return _trusted_limit
+
+
+def _get_fresh_read_limit():
+    """Parsed fresh-read limit for the dev/CI in-memory fallback path."""
+    if _fresh_read_limit is None:
+        _get_limits()
+    return _fresh_read_limit
 
 
 # ---------------------------------------------------------------------------
@@ -563,6 +604,21 @@ def _admin_bucket_key(token: str) -> Optional[str]:
     return f"admin:{digest}"
 
 
+def _is_fresh_event_read(request: Request) -> bool:
+    """True only for a fresh detail/history read of one event — the one request
+    shape that spends the fresh-read bucket. See ``FRESH_READ_RATE_LIMIT``.
+
+    No I/O and no event lookup: an id that does not exist still answers 404 from
+    the route, and it cost the caller one request from their OWN fresh budget.
+    """
+    if request.method != "GET":
+        return False
+    if re.fullmatch(_FRESH_READ_PATH_PATTERN, request.url.path) is None:
+        return False
+    values = request.query_params.getlist("fresh")
+    return len(values) == 1 and values[0].lower() in _FRESH_READ_TRUE_VALUES
+
+
 def _is_exempt(path: str) -> bool:
     """Return True if the path should skip rate limiting."""
     if os.getenv("BYPASS_RATE_LIMITS") == "1":
@@ -586,9 +642,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     - Authenticated requests (Bearer JWT): 120/minute keyed by user UID
     - Admin paths with the admin token: 300/minute keyed by a hash of that token
     - Addresses in ``RATE_LIMIT_TRUSTED_IPS``: 600/minute, keyed separately (D70)
+    - Fresh event detail/history reads: 180/minute per caller, keyed separately
     - Docs / health paths: exempt
 
-    Precedence is admin > trusted address > user > anonymous IP.
+    Precedence is admin > trusted address > fresh read > user > anonymous IP.
 
     Returns 429 with Retry-After header when limit is exceeded.
     """
@@ -665,6 +722,17 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             key = _get_client_ip(request)
             max_requests = _ANON_MAX
 
+        # Fresh live reads get their own bucket, keyed on the SAME caller identity
+        # chosen above (verified uid, else IP) so one caller has exactly one fresh
+        # budget across every event. Admin and trusted callers are already on
+        # larger ceilings and stay there. See `FRESH_READ_RATE_LIMIT`.
+        fresh_read = (
+            not admin_key and not trusted_peer and _is_fresh_event_read(request)
+        )
+        if fresh_read:
+            key = f"fresh:{key}"
+            max_requests = _FRESH_READ_MAX
+
         # Check rate limit.
         #
         # #1197 (r259 ROOT CAUSE): the sync `limits` FixedWindowRateLimiter.hit() is
@@ -708,6 +776,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             limit = _get_admin_limit()
         elif trusted_peer:
             limit = _get_trusted_limit()
+        elif fresh_read:
+            limit = _get_fresh_read_limit()
         elif uid:
             limit = auth_limit
         else:
