@@ -47,7 +47,7 @@ from app.utils.futures_unsupported_price import (
     snapshot_price_is_unsupported,
     unsupported_legs_above_the_supported_head,
 )
-from app.utils.game_market_club_names import repair_field_outcome_name
+from app.utils.series_card_labels import reader_outcome_name
 from app.utils.hook_staleness import hook_names_unpriced_outcome, is_hook_stale
 from app.utils.leader_order import leader_first_outcomes
 from app.utils.market_display_name import clean_market_display_name
@@ -7647,7 +7647,7 @@ async def get_futures_history(
         o.id: (
             _leg_side_label(leg_sides[o.external_id], o.name)
             if o.external_id in leg_sides
-            else repair_field_outcome_name(o.external_id, o.name) or o.name
+            else reader_outcome_name(o.external_id, o.name) or o.name
         )
         for o in charted_outcomes
     }
@@ -8398,7 +8398,7 @@ def _format_market_detail(
             "name": (
                 _leg_side_label(leg_sides[o.external_id], o.name)
                 if leg_sides and o.external_id in leg_sides
-                else repair_field_outcome_name(o.external_id, o.name) or o.name
+                else reader_outcome_name(o.external_id, o.name) or o.name
             ),
             "probability": float(o.current_probability) if o.current_probability is not None else None,
             "american_odds": o.current_american_odds,

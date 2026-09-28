@@ -75,6 +75,32 @@ def series_games_rung_label(
     return f"Over {games - 0.5:g} total games"
 
 
+def reader_outcome_name(
+    outcome_external_id: Optional[str], shipped_name: Optional[str]
+) -> Optional[str]:
+    """The printed name for one stored outcome, or ``None`` to print it as shipped.
+
+    #9377. The event page's series card (#9139, above) was the only surface
+    that knew a bare ``Yes`` on a ``…SERIESGAMES-…-N`` rung means "Over N-0.5
+    total games". Every other door printed it bare — the search card, the
+    typeahead dropdown (``/api/events/typeahead?q=wild card`` suggestion 4 read
+    ``Series Total Games: Boston vs New York Y — Yes 47%``), and the
+    ``/futures/62455756`` page that dropdown row opens — because those doors ask
+    only the club-name engine. Measured on production 2026-09-28 13:3xZ: all 8
+    open best-of-3 series-length markets (4 MLB Wild Card, 4 WNBA First Round)
+    served ``[("Yes", p)]`` on both search and the detail route.
+
+    So the two reader-side repairs are one answer here, in the card's own
+    order: the rung first (it only fires on a bare ``Yes``, which the club
+    engine never completes), then the club spelling. Every served-name site
+    that used to call :func:`repair_field_outcome_name` directly calls this, so
+    no door can learn one repair and miss the other again.
+    """
+    return series_games_rung_label(
+        outcome_external_id, shipped_name
+    ) or repair_field_outcome_name(outcome_external_id, shipped_name)
+
+
 def relabel_series_card(
     markets: Iterable[MutableMapping],
     ticker_by_outcome_id: Mapping[int, Optional[str]],
@@ -129,4 +155,4 @@ def relabel_series_card(
     return changed
 
 
-__all__ = ["relabel_series_card", "series_games_rung_label"]
+__all__ = ["reader_outcome_name", "relabel_series_card", "series_games_rung_label"]

@@ -114,7 +114,7 @@ from app.utils.feed_event_candidates import (
     event_candidate_ids,
 )
 from app.utils.discover_card_archetypes import classify_discover_card_archetype
-from app.utils.game_market_club_names import repair_field_outcome_name
+from app.utils.series_card_labels import reader_outcome_name
 from app.utils.graded_card import (
     card_sum_reason,
     duel_percents_by_side,
@@ -7290,7 +7290,7 @@ def _card_outcome_name(outcome) -> Optional[str]:
     whose ticker says `CWS` is left truncated rather than renamed to the wrong
     club.
     """
-    return repair_field_outcome_name(outcome.external_id, outcome.name) or outcome.name
+    return reader_outcome_name(outcome.external_id, outcome.name) or outcome.name
 
 
 def _card_display_names(outcomes) -> dict[str, str]:
