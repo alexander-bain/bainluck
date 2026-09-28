@@ -1812,6 +1812,9 @@ async def get_events(db: AsyncSession):
             "leader": _leader_outcome_name(m),
             "src": _market_source(m),
             "closes": _format_closes(m.resolution_date),
+            # The row's own market (#9478), the same id /featured serves, so a
+            # tap opens /futures/{market_id} instead of going nowhere.
+            "market_id": m.id,
             "_res_date": m.resolution_date,
         }
         name = m.name
@@ -1913,6 +1916,8 @@ async def get_climate(db: AsyncSession):
             "leader": _leader_outcome_name(m),
             "src": _market_source(m),
             "closes": _format_closes(m.resolution_date),
+            # See get_events (#9478).
+            "market_id": m.id,
             "scale": scale,
             "_res_date": (
                 m.resolution_date.replace(tzinfo=timezone.utc)
@@ -2025,6 +2030,8 @@ async def get_wildcards(db: AsyncSession):
             # "Weather" beside its siblings (#3134). This row's framing is
             # the route's, not a title guess.
             "tag": "Wild card",
+            # See get_events (#9478).
+            "market_id": m.id,
         })
 
     items.sort(key=lambda x: x["prob"], reverse=True)
