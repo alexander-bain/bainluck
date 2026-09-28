@@ -152,7 +152,7 @@ export function suppressBareZeroFuturesCard(
   // and this check would wave through the sub-1% print it was written to catch.
   // (Deliberately not quoting the boundary string: `probabilityDisplay.ts` is
   // its one home and an anti-drift guard scans for a second quoted copy.)
-  const leaderProb = heroOutcome(data.top_outcomes)?.probability ?? null;
+  const leaderProb = heroOutcome(data.top_outcomes, data.name)?.probability ?? null;
   // Only the sub-1% ("0%" when rounded) leader is the problem; a null leader
   // already renders name-only (no bare hero), so it's fine.
   if (leaderProb == null || leaderProb >= 0.01) return false;

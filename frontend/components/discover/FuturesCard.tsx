@@ -131,7 +131,7 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
   // under the title, so `Will "Onslaught" score at least 80?` headlined 88%
   // when the answer was 12%. `heroOutcome` returns the served headline
   // unchanged for every card that is not an explicit negation pair.
-  const leader = heroOutcome(data.top_outcomes);
+  const leader = heroOutcome(data.top_outcomes, data.name);
   const prob = leader?.probability ?? null;
   const resolveText = resolvesLabel(data.resolution_date);
   // #7872 — the caption is told what this card's eyebrow already says, so it
@@ -1111,7 +1111,7 @@ export function FuturesCompactRow({ item, data }: { item: FeedItem; data: FeedFu
   // UX-P238 — same headline decision as the full card. This row prints the
   // percent beside `data.name` with no outcome label at all, so an inverted
   // hero is even less recoverable here than on the card it expands into.
-  const leader = heroOutcome(data.top_outcomes);
+  const leader = heroOutcome(data.top_outcomes, data.name);
   // UX-P162 — the same market's headline, so a group row and the full card it
   // expands into cannot print two different numbers for one question. `GroupCard`
   // and `ThemeBundleCard` render this row for markets that ALSO appear as their

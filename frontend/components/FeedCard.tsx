@@ -1053,7 +1053,7 @@ function FuturesFeedCard({
   // `lib/discover/heroOutcome.ts`; the measured near-miss recorded there is the
   // note 13 lines below, which audited `Will Neuralink's valuation hit (HIGH)
   // $47.5B` for its SUM and left the headline on the No side at 73%.
-  const leader = heroOutcome(data.top_outcomes);
+  const leader = heroOutcome(data.top_outcomes, data.name);
   const leaderProb = leader?.probability;
 
   // ── #2088 criterion 3: the card rule, on the surface a reader actually reads ──
