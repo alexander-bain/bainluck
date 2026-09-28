@@ -2056,7 +2056,7 @@ export default function OddsChart({
   }: {
     active?: boolean;
     payload?: Array<{
-      value: number | null;
+      value?: number | null;
       name: string;
       color: string;
       dataKey: string;
@@ -2098,9 +2098,17 @@ export default function OddsChart({
             })
           : null;
 
+      // #9481: filterNull=false preserves gap disclosures, but also gives us
+      // entries with undefined values before that source's first reading.
+      // Only finite numbers may reach the shared probability formatter.
+      const pricedPayload = payload.filter(
+        (entry): entry is typeof entry & { value: number } =>
+          typeof entry.value === "number" && Number.isFinite(entry.value)
+      );
+
       // Bain Luck aggregated line (multi-source mode)
       const bainLuckEntry = showBlendLine
-        ? (payload.find((e) => e.dataKey === "bainLuckDelta" && e.value !== null) as
+        ? (pricedPayload.find((e) => e.dataKey === "bainLuckDelta") as
             | { value: number; dataKey: string }
             | undefined) ?? null
         : null;
@@ -2108,8 +2116,8 @@ export default function OddsChart({
       // Find entries for each resolved source
       const sourceEntries = resolvedSources
         .map((source) => {
-          const entry = payload.find(
-            (e) => e.dataKey === source.dataKey && e.value !== null
+          const entry = pricedPayload.find(
+            (e) => e.dataKey === source.dataKey
           );
           return entry ? { ...source, value: entry.value } : null;
         })
@@ -2117,7 +2125,7 @@ export default function OddsChart({
 
       // Bookmaker entries (only shown in sportsbooks-only mode)
       const bookmakerEntries = !isMultiSource
-        ? payload.filter(
+        ? pricedPayload.filter(
             (e) =>
               e.dataKey !== "homeDelta" &&
               e.dataKey !== "bainLuckDelta" &&
@@ -2125,8 +2133,7 @@ export default function OddsChart({
               e.dataKey !== "espnDelta" &&
               // #7878: belt to `tooltipType="none"`'s braces — an interpolated
               // connector value is not a sportsbook's number.
-              !isGapConnectorKey(e.dataKey) &&
-              e.value !== null
+              !isGapConnectorKey(e.dataKey)
           )
         : [];
 
