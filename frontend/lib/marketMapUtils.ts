@@ -419,6 +419,23 @@ export function monotoneSpreadRungs(rungs: ParsedSpread[]): ParsedSpread[] {
  */
 const NAMES_A_MARGIN_BAND = /\bby\s+\d+(?:\.\d+)?\s*(?:to|-|–|—)\s*\d/i;
 
+/**
+ * #9286: a team name compared across providers, accents folded.
+ *
+ * The event row and the venue spell one club two ways — the event stores
+ * `León`, Kalshi writes `"Leon wins the 1H by more than 1.5 goals"` — and a
+ * bare `toLowerCase()` makes `"león"` no substring of `"leon …"`. The side
+ * check then matched neither team, the rung returned `null`, and on settled
+ * `/events/15316429` (León 2–1 FC Juárez) every León half-margin rung was
+ * dropped: the 1H band leaned Juárez off one Juárez rung and the 2H ladder
+ * listed only "JUA by 1.5+". Both sides of every team comparison below go
+ * through this, so the fold is symmetric (Polymarket's `FC Juárez` against a
+ * stored `FC Juarez` is the same defect the other way round).
+ */
+function foldName(text: string): string {
+  return text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+}
+
 export function parseSpreadOutcome(
   outcomeName: string,
   probability: number,
@@ -427,9 +444,9 @@ export function parseSpreadOutcome(
   awayTeam: string,
   marketName = ""
 ): ParsedSpread | null {
-  const lower = outcomeName.toLowerCase();
-  const homeWords = homeTeam.toLowerCase().split(" ");
-  const awayWords = awayTeam.toLowerCase().split(" ");
+  const lower = foldName(outcomeName);
+  const homeWords = foldName(homeTeam).split(" ");
+  const awayWords = foldName(awayTeam).split(" ");
   const isHome = homeWords.some((w) => w.length >= 3 && lower.includes(w));
   const isAway = awayWords.some((w) => w.length >= 3 && lower.includes(w));
   if (!isHome && !isAway) return null;
@@ -503,17 +520,16 @@ function polymarketLegRole(
   marketName: string | null | undefined,
   outcomeName: string | null | undefined
 ): "cover" | "other" | null {
-  const outcome = (outcomeName ?? "").trim().toLowerCase();
+  const outcome = foldName((outcomeName ?? "").trim());
   if (!outcome || /\d/.test(outcome)) return null;
   const m = (marketName ?? "").match(POLYMARKET_SPREAD_MARKET);
   if (!m) return null;
-  return m[1].trim().toLowerCase() === outcome ? "cover" : "other";
+  return foldName(m[1].trim()) === outcome ? "cover" : "other";
 }
 
 function namesTeam(text: string, team: string): boolean {
-  const lower = text.toLowerCase();
-  return team
-    .toLowerCase()
+  const lower = foldName(text);
+  return foldName(team)
     .split(" ")
     .some((w) => w.length >= 3 && lower.includes(w));
 }
@@ -528,9 +544,9 @@ function parseLineFromMarketName(
 ): ParsedSpread | null {
   const m = marketName.match(POLYMARKET_SPREAD_MARKET);
   if (!m) return null;
-  const coverTeam = m[1].trim().toLowerCase();
+  const coverTeam = foldName(m[1].trim());
   const threshold = parseFloat(m[2]);
-  const outcome = outcomeName.trim().toLowerCase();
+  const outcome = foldName(outcomeName.trim());
   if (!outcome || !Number.isFinite(threshold)) return null;
 
   const outcomeIsHome = namesTeam(outcome, homeTeam);
