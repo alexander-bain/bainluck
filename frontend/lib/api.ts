@@ -2277,6 +2277,10 @@ export interface PoliticsMarketRow {
   // Rungs `/futures/{id}` shows beyond `top_outcomes` (#9109). Absent on a
   // payload built before it shipped.
   more_count?: number;
+  // #9474: `false` = the legs can all be true (a deadline or threshold ladder,
+  // a pick-several list), so no leg is "the leader". Absent/null on an older
+  // payload or an unstamped row.
+  mutually_exclusive?: boolean | null;
 }
 
 export interface PoliticsCandidate {

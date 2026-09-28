@@ -569,7 +569,18 @@ def _market_row(market: FuturesMarket, *, now: datetime) -> dict | None:
     # Normalize independent binary market probabilities (BR36 fix)
     # When markets like "Will X win?" are displayed as a ranked list,
     # probabilities from independent contracts can sum well over 100%.
-    _normalize_outcome_probs(top_outcomes)
+    #
+    # #9474 — ONLY A FIELD WITH ONE WINNER IS SHRUNK TO 100. The helper's own
+    # docstring says so and this call ignored it: a pick-several market's legs
+    # can ALL be true, so their sum carries no over-round to remove. Measured
+    # 2026-09-28 22:10Z, `What cases will the Supreme Court agree to hear`
+    # (56775624, `mutually_exclusive = false`) printed Bird v. Iowa 35 / DOGE 32
+    # / Norfolk 32 over stored 39 / 36 / 36 — the page behind the card prints
+    # the stored three. `None` keeps today's behaviour (the column defaults
+    # True; the chamber-control reader below makes the same call).
+    mutually_exclusive = getattr(market, "mutually_exclusive", None)
+    if mutually_exclusive is not False:
+        _normalize_outcome_probs(top_outcomes)
 
     # #9109 follow-up — "+N MORE" COUNTS WHAT THE PAGE SHOWS, NOT THE LADDER.
     # The card's badge was `outcome_count - 3`: every rung the ladder ever had,
@@ -603,6 +614,9 @@ def _market_row(market: FuturesMarket, *, now: datetime) -> dict | None:
         "outcome_count": len(outcomes),
         # The rungs `/futures/{id}` shows that this card does not.
         "more_count": max(0, len(page_rungs) - len(top_outcomes)),
+        # #9474: `false` = the legs can all be true (a deadline or threshold
+        # ladder, a pick-several list), so the card names no "Leader".
+        "mutually_exclusive": mutually_exclusive,
     }
 
 

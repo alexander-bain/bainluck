@@ -797,6 +797,12 @@ function MultiCard({
   // card does not. `outcome_count - 3` counted passed deadlines the page drops
   // ("+9 more" over two rows); it is only the fallback for an older payload.
   const moreCount = market.more_count ?? market.outcome_count - 3;
+  // #9474: "Leader" is a claim that the rows compete for one win. On a ladder
+  // ("Before Jan 3, 2027" ⊃ "Before Dec 12, 2026"; "At least 1" ⊃ "At least 2")
+  // the top row is the loosest rung by construction, and on a pick-several
+  // list every row can come true — 57 of 68 cards on 2026-09-28 were one of
+  // those and all 57 said "Leader". The word goes; the row stays.
+  const namesALeader = market.mutually_exclusive !== false;
 
   return (
     <Link href={`/futures/${market.market_id}`}>
@@ -845,23 +851,25 @@ function MultiCard({
             }}
           >
             <div style={{ display: "flex", flexDirection: "column" }}>
-              <span
-                style={{
-                  fontSize: 11,
-                  color: "var(--text-muted)",
-                  fontWeight: 600,
-                  letterSpacing: "0.04em",
-                  textTransform: "uppercase",
-                }}
-              >
-                Leader
-              </span>
+              {namesALeader && (
+                <span
+                  style={{
+                    fontSize: 11,
+                    color: "var(--text-muted)",
+                    fontWeight: 600,
+                    letterSpacing: "0.04em",
+                    textTransform: "uppercase",
+                  }}
+                >
+                  Leader
+                </span>
+              )}
               <span
                 style={{
                   fontSize: 14,
                   fontWeight: 600,
                   color: "var(--text-primary)",
-                  marginTop: 2,
+                  marginTop: namesALeader ? 2 : 0,
                 }}
               >
                 {leader.name}
