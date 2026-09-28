@@ -324,6 +324,9 @@ COVERED = (
     # `futures_outcomes` by raw INSERT; drops and recreates the schema like the
     # final-seven gate above.
     "test_typeahead_team_query_cross_sport_5082_pg.py",
+    # #9404. Seeds `futures_markets` and `futures_outcomes` by raw INSERT; drops
+    # and recreates the schema like the #5082 gate above.
+    "test_typeahead_one_question_one_row_9404_pg.py",
     # #5779. Seeds `sports` and `events` by raw INSERT, including rows whose
     # `statpal_fixture_id` is deliberately NULL — the NOT-NULL arm is what keeps
     # a future column with a client-side default from making that seed illegal

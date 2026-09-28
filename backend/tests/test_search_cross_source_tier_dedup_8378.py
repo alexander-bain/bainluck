@@ -132,3 +132,14 @@ def test_the_window_and_the_refill_both_call_the_admit_rule():
     )
     assert code.count("_admit_search_future(") == 2
     assert "dkey in seen_search_keys" not in code
+
+
+def test_the_dropdown_calls_the_admit_rule_too():
+    """#9404 — `world series` in the dropdown printed this file's WS pair as two
+    rows (Dodgers 30% / 28%): the typeahead loop kept the tiered key alone."""
+    src = inspect.getsource(events_route.typeahead_search)
+    code = "\n".join(
+        line for line in src.splitlines() if not line.lstrip().startswith("#")
+    )
+    assert code.count("_admit_search_future(") == 1
+    assert "dedup_key in seen_futures_keys" not in code

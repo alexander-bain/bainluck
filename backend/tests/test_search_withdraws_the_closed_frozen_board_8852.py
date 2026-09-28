@@ -123,6 +123,6 @@ def test_every_search_surface_asks_the_predicate():
     assert "or _search_market_is_past_and_frozen(market)" in union
     assert "and not _search_market_is_past_and_frozen(m)\n" in src
     typeahead = src[src.index("for market in ta_futures_ranked:"):]
-    head = typeahead[: typeahead.index("dedup_key = _normalize_futures_dedup_key(market)")]
+    head = typeahead[: typeahead.index("if not _admit_search_future(")]  # #9404
     assert "if _search_market_is_past_and_frozen(market):\n            continue" in head
     assert src.count("_search_market_is_past_and_frozen(") == 4  # def + 3 call sites

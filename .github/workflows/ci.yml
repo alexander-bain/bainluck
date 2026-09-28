@@ -1918,6 +1918,22 @@ jobs:
             exit 1
           fi
 
+      - name: typeahead shows one question once, the search page's repeat rule (real Postgres, #9404)
+        # `world series` in the dropdown printed the World Series twice — Dodgers
+        # 30% (Polymarket, tier 1) and 28% (odds_api, tier 5) — because the loop
+        # deduped on the tiered key while /search asks `_admit_search_future`.
+        # Real Postgres because the claim is that the ROUTE asks the helper over a
+        # recalled pool; the helper itself is pinned by the #8378 unit file. Same
+        # skip-detection as the gates around it.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_typeahead_one_question_one_row_9404_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/typeahead_one_question_9404.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/typeahead_one_question_9404.txt; then
+            echo "::error::#9404 typeahead one-question control SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: futures_outcomes grade schema parity (real Postgres)
         # CERT-521. `is_winner` was widened to nullable so a metadata-built test
         # database could finally express "nobody graded this" — and the widening
