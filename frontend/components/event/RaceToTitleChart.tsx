@@ -74,13 +74,53 @@ export function raceRankTabs(size: number): { label: string; n: number }[] {
 /** A legend stays legible up to ~12 lines; beyond that it's clutter. */
 const MAX_LEGEND_LINES = 12;
 
-/** Current probability = the last non-null point of an outcome's series. */
+/** The last non-null point of an outcome's series. */
 function lastProb(o: FuturesOutcomeHistory): number {
   for (let i = o.history.length - 1; i >= 0; i--) {
     const p = o.history[i]?.probability;
     if (p != null) return p;
   }
   return -1;
+}
+
+/** #9391: the served current price, or null when the competitor has none. */
+function currentPrice(c: EventConceptCompetitor): number | null {
+  const p = c.probability;
+  return typeof p === "number" && Number.isFinite(p) && p > 0 ? p : null;
+}
+
+/** #9391: which lines a Top-N view draws. The Top N are the N competitors with
+ *  the highest served CURRENT price, the same ranking as the Winner table below
+ *  the chart. It used to rank by each golfer's last point of HISTORY in the range,
+ *  and that went wrong on the Dunhill Links: Aberg (11.8%), Gerard and Hovland
+ *  carried no history, so they dropped out, while Ko (current price 0, one stale
+ *  4.9% point) and Schott (0.7%) were promoted into "Top 5". Now a top contender
+ *  with no history simply draws no line, and nobody from further down the field
+ *  takes the slot. A competitor with no current price is never auto-picked.
+ *  topN=0 ("Full field") draws every series. If the envelope carries no current
+ *  prices at all, it falls back to the history ranking so the chart still draws.
+ *  The chart only mounts before a tournament is settled (the page shows
+ *  SettledPathChart after), so settled losers' 0% prices never reach this. */
+export function raceTopSelection(
+  competitors: EventConceptCompetitor[],
+  outcomes: FuturesOutcomeHistory[],
+  topN: number,
+): Set<number> {
+  if (topN === 0) return new Set(outcomes.map((o) => o.outcome_id));
+  const drawable = new Set(outcomes.map((o) => o.outcome_id));
+  const priced = competitors
+    .map((c) => ({ id: c.outcome_id, p: currentPrice(c) }))
+    .filter((r): r is { id: number | undefined; p: number } => r.p != null);
+  if (priced.length === 0) {
+    const ranked = [...outcomes].sort((a, b) => lastProb(b) - lastProb(a));
+    return new Set(ranked.slice(0, topN).map((o) => o.outcome_id));
+  }
+  const top = priced.sort((a, b) => b.p - a.p).slice(0, topN);
+  return new Set(
+    top
+      .map((r) => r.id)
+      .filter((id): id is number => typeof id === "number" && drawable.has(id)),
+  );
 }
 
 export default function RaceToTitleChart({
@@ -112,14 +152,13 @@ export default function RaceToTitleChart({
     [competitors, hours],
   );
 
-  // Pick the current top-N contenders (by latest probability) and hand their ids
-  // to FuturesChart as the selected set so it plots exactly those lines. topN=0
-  // ("Full field") selects every competitor — the togglable full view.
-  const selected = useMemo(() => {
-    const ranked = [...outcomes].sort((a, b) => lastProb(b) - lastProb(a));
-    const chosen = topN === 0 ? ranked : ranked.slice(0, topN);
-    return new Set(chosen.map((o) => o.outcome_id));
-  }, [outcomes, topN]);
+  // Pick the current top-N contenders (by served current price, #9391) and hand
+  // their ids to FuturesChart as the selected set so it plots exactly those lines.
+  // topN=0 ("Full field") selects every competitor — the togglable full view.
+  const selected = useMemo(
+    () => raceTopSelection(competitors, outcomes, topN),
+    [competitors, outcomes, topN],
+  );
 
   // Name the lines with a legend in the default (contender) views; suppress it
   // in full-field mode where a 100-name key would be its own clutter.
