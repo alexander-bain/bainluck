@@ -3000,9 +3000,44 @@ def _bout_identities(event: Any) -> Optional[tuple]:
 
 def _same_bout(left: tuple, right: tuple) -> bool:
     """Both fighters, in either corner. Providers disagree on who is "home"."""
-    return (_same_fighter(left[0], right[0]) and _same_fighter(left[1], right[1])) or (
+    return _same_corners(left, right) or (
         _same_fighter(left[0], right[1]) and _same_fighter(left[1], right[0])
     )
+
+
+def _same_corners(left: tuple, right: tuple) -> bool:
+    """Both fighters, each in the SAME corner on both rows (#9304)."""
+    return _same_fighter(left[0], right[0]) and _same_fighter(left[1], right[1])
+
+
+def _anchor_is_elected(claim_members: list, anchor_members: list) -> bool:
+    """Will :func:`_elect` keep an ANCHOR row, so the claim's rows are the losers?
+
+    On a reversed pair only the losers' numbers are copied, so a claim with no
+    number is harmless only while it loses (#9304). A claim that would win —
+    rung 1, a visible score — would take the anchor's prices the other way
+    round instead, so that pair is refused too.
+    """
+    return max(twin_identity_rank(m) for m in anchor_members) > max(
+        twin_identity_rank(m) for m in claim_members
+    )
+
+
+def _group_carries_oriented_readings(members: list) -> bool:
+    """Does any row carry a number that reads as the HOME fighter's chance? (#9304)
+
+    Every venue value in `win_probability_sources` and the opening line are
+    home-oriented, and the union copies them verbatim (:func:`_elect`). On a pair
+    cornered the other way round, a copied number lands on the other fighter.
+    """
+    for member in members:
+        if getattr(member, "win_probability_sources", None):
+            return True
+        if getattr(member, "opening_home_probability", None) is not None:
+            return True
+        if getattr(member, "opening_away_probability", None) is not None:
+            return True
+    return False
 
 
 def _combat_sport(members: list) -> Optional[str]:
@@ -3046,13 +3081,20 @@ def _merge_combat_claim_bouts(clusters: list[list]) -> list[list]:
     * the 1-on-1 clock of `search_fixture_dedup` (:data:`COMBAT_CLAIM_BOUT_WINDOW`):
       the same two fighters inside 36 h are one bout.
 
-    THREE REFUSALS, each leaving two cards, which is today's page:
+    FOUR REFUSALS, each leaving two cards, which is today's page:
 
     * more than ONE anchored bout matches the claim. Nothing here picks between
       two anchors (the Odds API re-mint of #7993's first half is exactly two);
     * :func:`_objectively_different_games`: two `espn_id`s or two scorelines;
     * a live or suspended row, unless the claim holds no score
-      (:func:`_live_anchored_claim_pair_is_licensed`), and any unknown status.
+      (:func:`_live_anchored_claim_pair_is_licensed`), and any unknown status;
+    * #9304: the corners are reversed AND the claim carries a price or an opening
+      line. The union copies those home-oriented numbers verbatim, so after this
+      pass went live Kalshi's 0.335 for Roman Kopylov (claim 15315711, Gautier @
+      Kopylov) read as Ateba Gautier's chance on 15318681, beside the
+      sportsbooks' 0.6425 for Gautier. Pinas–Pulyaev was the same. A reversed
+      claim with no number (Rodriguez–Coria) still folds while the anchor is
+      the row kept (:func:`_anchor_is_elected`): nothing is copied the wrong way.
 
     Nothing is written. Both rows stay in `events`, and when the event graph
     joins them this pass stops finding pairs.
@@ -3102,6 +3144,13 @@ def _merge_combat_claim_bouts(clusters: list[list]) -> list[list]:
         anchor = matches[0]
         claim_members, anchor_members = clusters[claim], clusters[anchor]
         if _objectively_different_games(claim_members, anchor_members):
+            continue
+        if not all(
+            _same_corners(c, a) for c in bouts[claim] for a in bouts[anchor]
+        ) and (
+            _group_carries_oriented_readings(claim_members)
+            or not _anchor_is_elected(claim_members, anchor_members)
+        ):
             continue
         if not (
             _variant_group_is_collapsible(claim_members)
