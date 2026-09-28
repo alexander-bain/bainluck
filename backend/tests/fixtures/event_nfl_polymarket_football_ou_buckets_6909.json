@@ -1,0 +1,753 @@
+{
+ "_provenance": "GET https://api.bainluck.com/api/events/14782707/game-markets read 2026-09-28 15:48Z (web f6c18b22-line, v5251 de368e4f). Every Polymarket row whose market name is '<Player>: <Receptions|Passing Completions|Passing Attempts|Longest Reception> O/U <line>', verbatim, with the bucket the unfixed tree served it in. Box score: reuse fixtures/event_nfl_polymarket_ou_props_6909.json (same event). THE BEFORE \u2014 never refreshed from a fixed tree.",
+ "event_id": 14782707,
+ "rows": [
+  {
+   "served_in": "other",
+   "market_name": "Ashton Jeanty: Receptions O/U 1.5",
+   "outcome_name": "Over",
+   "threshold_served": null,
+   "is_winner": true,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918075
+  },
+  {
+   "served_in": "other",
+   "market_name": "Ashton Jeanty: Receptions O/U 1.5",
+   "outcome_name": "Under",
+   "threshold_served": null,
+   "is_winner": false,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918075
+  },
+  {
+   "served_in": "other",
+   "market_name": "Ashton Jeanty: Receptions O/U 2.5",
+   "outcome_name": "Over",
+   "threshold_served": null,
+   "is_winner": true,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918076
+  },
+  {
+   "served_in": "other",
+   "market_name": "Ashton Jeanty: Receptions O/U 2.5",
+   "outcome_name": "Under",
+   "threshold_served": null,
+   "is_winner": false,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918076
+  },
+  {
+   "served_in": "other",
+   "market_name": "Ashton Jeanty: Receptions O/U 3.5",
+   "outcome_name": "Under",
+   "threshold_served": null,
+   "is_winner": true,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918077
+  },
+  {
+   "served_in": "other",
+   "market_name": "Ashton Jeanty: Receptions O/U 3.5",
+   "outcome_name": "Over",
+   "threshold_served": null,
+   "is_winner": false,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918077
+  },
+  {
+   "served_in": "other",
+   "market_name": "Chris Olave: Receptions O/U 3.5",
+   "outcome_name": "Over",
+   "threshold_served": null,
+   "is_winner": true,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918078
+  },
+  {
+   "served_in": "other",
+   "market_name": "Chris Olave: Receptions O/U 3.5",
+   "outcome_name": "Under",
+   "threshold_served": null,
+   "is_winner": false,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918078
+  },
+  {
+   "served_in": "other",
+   "market_name": "Chris Olave: Receptions O/U 4.5",
+   "outcome_name": "Over",
+   "threshold_served": null,
+   "is_winner": true,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918079
+  },
+  {
+   "served_in": "other",
+   "market_name": "Chris Olave: Receptions O/U 4.5",
+   "outcome_name": "Under",
+   "threshold_served": null,
+   "is_winner": false,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918079
+  },
+  {
+   "served_in": "other",
+   "market_name": "Chris Olave: Receptions O/U 5.5",
+   "outcome_name": "Over",
+   "threshold_served": null,
+   "is_winner": true,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918080
+  },
+  {
+   "served_in": "other",
+   "market_name": "Chris Olave: Receptions O/U 5.5",
+   "outcome_name": "Under",
+   "threshold_served": null,
+   "is_winner": false,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918080
+  },
+  {
+   "served_in": "other",
+   "market_name": "Devaughn Vele: Receptions O/U 1.5",
+   "outcome_name": "Over",
+   "threshold_served": null,
+   "is_winner": true,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918081
+  },
+  {
+   "served_in": "other",
+   "market_name": "Devaughn Vele: Receptions O/U 1.5",
+   "outcome_name": "Under",
+   "threshold_served": null,
+   "is_winner": false,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918081
+  },
+  {
+   "served_in": "other",
+   "market_name": "Jalen Nailor: Receptions O/U 1.5",
+   "outcome_name": "Under",
+   "threshold_served": null,
+   "is_winner": true,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918082
+  },
+  {
+   "served_in": "other",
+   "market_name": "Jalen Nailor: Receptions O/U 1.5",
+   "outcome_name": "Over",
+   "threshold_served": null,
+   "is_winner": false,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918082
+  },
+  {
+   "served_in": "other",
+   "market_name": "Juwan Johnson: Receptions O/U 2.5",
+   "outcome_name": "Over",
+   "threshold_served": null,
+   "is_winner": true,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918083
+  },
+  {
+   "served_in": "other",
+   "market_name": "Juwan Johnson: Receptions O/U 2.5",
+   "outcome_name": "Under",
+   "threshold_served": null,
+   "is_winner": false,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918083
+  },
+  {
+   "served_in": "other",
+   "market_name": "Juwan Johnson: Receptions O/U 3.5",
+   "outcome_name": "Over",
+   "threshold_served": null,
+   "is_winner": true,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918084
+  },
+  {
+   "served_in": "other",
+   "market_name": "Juwan Johnson: Receptions O/U 3.5",
+   "outcome_name": "Under",
+   "threshold_served": null,
+   "is_winner": false,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918084
+  },
+  {
+   "served_in": "other",
+   "market_name": "Juwan Johnson: Receptions O/U 4.5",
+   "outcome_name": "Over",
+   "threshold_served": null,
+   "is_winner": true,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918085
+  },
+  {
+   "served_in": "other",
+   "market_name": "Juwan Johnson: Receptions O/U 4.5",
+   "outcome_name": "Under",
+   "threshold_served": null,
+   "is_winner": false,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918085
+  },
+  {
+   "served_in": "other",
+   "market_name": "Michael Mayer: Receptions O/U 1.5",
+   "outcome_name": "Over",
+   "threshold_served": null,
+   "is_winner": true,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918086
+  },
+  {
+   "served_in": "other",
+   "market_name": "Michael Mayer: Receptions O/U 1.5",
+   "outcome_name": "Under",
+   "threshold_served": null,
+   "is_winner": false,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918086
+  },
+  {
+   "served_in": "other",
+   "market_name": "Noah Fant: Receptions O/U 1.5",
+   "outcome_name": "Over",
+   "threshold_served": null,
+   "is_winner": true,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918087
+  },
+  {
+   "served_in": "other",
+   "market_name": "Noah Fant: Receptions O/U 1.5",
+   "outcome_name": "Under",
+   "threshold_served": null,
+   "is_winner": false,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918087
+  },
+  {
+   "served_in": "other",
+   "market_name": "Tre Tucker: Receptions O/U 1.5",
+   "outcome_name": "Over",
+   "threshold_served": null,
+   "is_winner": true,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918091
+  },
+  {
+   "served_in": "other",
+   "market_name": "Tre Tucker: Receptions O/U 1.5",
+   "outcome_name": "Under",
+   "threshold_served": null,
+   "is_winner": false,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918091
+  },
+  {
+   "served_in": "other",
+   "market_name": "Kirk Cousins: Passing Attempts O/U 3.5",
+   "outcome_name": "Over",
+   "threshold_served": null,
+   "is_winner": true,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918129
+  },
+  {
+   "served_in": "other",
+   "market_name": "Kirk Cousins: Passing Attempts O/U 3.5",
+   "outcome_name": "Under",
+   "threshold_served": null,
+   "is_winner": false,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918129
+  },
+  {
+   "served_in": "other",
+   "market_name": "Kirk Cousins: Passing Attempts O/U 7.5",
+   "outcome_name": "Over",
+   "threshold_served": null,
+   "is_winner": true,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918130
+  },
+  {
+   "served_in": "other",
+   "market_name": "Kirk Cousins: Passing Attempts O/U 7.5",
+   "outcome_name": "Under",
+   "threshold_served": null,
+   "is_winner": false,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918130
+  },
+  {
+   "served_in": "other",
+   "market_name": "Kirk Cousins: Passing Attempts O/U 11.5",
+   "outcome_name": "Over",
+   "threshold_served": null,
+   "is_winner": true,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918131
+  },
+  {
+   "served_in": "other",
+   "market_name": "Kirk Cousins: Passing Attempts O/U 11.5",
+   "outcome_name": "Under",
+   "threshold_served": null,
+   "is_winner": false,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918131
+  },
+  {
+   "served_in": "other",
+   "market_name": "Kirk Cousins: Passing Completions O/U 3.5",
+   "outcome_name": "Over",
+   "threshold_served": null,
+   "is_winner": true,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918135
+  },
+  {
+   "served_in": "other",
+   "market_name": "Kirk Cousins: Passing Completions O/U 3.5",
+   "outcome_name": "Under",
+   "threshold_served": null,
+   "is_winner": false,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918135
+  },
+  {
+   "served_in": "other",
+   "market_name": "Kirk Cousins: Passing Completions O/U 5.5",
+   "outcome_name": "Over",
+   "threshold_served": null,
+   "is_winner": true,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918136
+  },
+  {
+   "served_in": "other",
+   "market_name": "Kirk Cousins: Passing Completions O/U 5.5",
+   "outcome_name": "Under",
+   "threshold_served": null,
+   "is_winner": false,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918136
+  },
+  {
+   "served_in": "other",
+   "market_name": "Kirk Cousins: Passing Completions O/U 7.5",
+   "outcome_name": "Over",
+   "threshold_served": null,
+   "is_winner": true,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918137
+  },
+  {
+   "served_in": "other",
+   "market_name": "Kirk Cousins: Passing Completions O/U 7.5",
+   "outcome_name": "Under",
+   "threshold_served": null,
+   "is_winner": false,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918137
+  },
+  {
+   "served_in": "other",
+   "market_name": "Jack Bech: Receptions O/U 1.5",
+   "outcome_name": "Under",
+   "threshold_served": null,
+   "is_winner": true,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918144
+  },
+  {
+   "served_in": "other",
+   "market_name": "Jack Bech: Receptions O/U 1.5",
+   "outcome_name": "Over",
+   "threshold_served": null,
+   "is_winner": false,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918144
+  },
+  {
+   "served_in": "other",
+   "market_name": "Chris Olave: Receptions O/U 6.5",
+   "outcome_name": "Over",
+   "threshold_served": null,
+   "is_winner": true,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918210
+  },
+  {
+   "served_in": "other",
+   "market_name": "Chris Olave: Receptions O/U 6.5",
+   "outcome_name": "Under",
+   "threshold_served": null,
+   "is_winner": false,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918210
+  },
+  {
+   "served_in": "other",
+   "market_name": "Chris Olave: Receptions O/U 7.5",
+   "outcome_name": "Over",
+   "threshold_served": null,
+   "is_winner": true,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918211
+  },
+  {
+   "served_in": "other",
+   "market_name": "Chris Olave: Receptions O/U 7.5",
+   "outcome_name": "Under",
+   "threshold_served": null,
+   "is_winner": false,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918211
+  },
+  {
+   "served_in": "other",
+   "market_name": "Devaughn Vele: Receptions O/U 3.5",
+   "outcome_name": "Under",
+   "threshold_served": null,
+   "is_winner": true,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918212
+  },
+  {
+   "served_in": "other",
+   "market_name": "Devaughn Vele: Receptions O/U 3.5",
+   "outcome_name": "Over",
+   "threshold_served": null,
+   "is_winner": false,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918212
+  },
+  {
+   "served_in": "other",
+   "market_name": "Devaughn Vele: Receptions O/U 4.5",
+   "outcome_name": "Under",
+   "threshold_served": null,
+   "is_winner": true,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918213
+  },
+  {
+   "served_in": "other",
+   "market_name": "Devaughn Vele: Receptions O/U 4.5",
+   "outcome_name": "Over",
+   "threshold_served": null,
+   "is_winner": false,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918213
+  },
+  {
+   "served_in": "other",
+   "market_name": "Tre Tucker: Receptions O/U 2.5",
+   "outcome_name": "Over",
+   "threshold_served": null,
+   "is_winner": true,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918214
+  },
+  {
+   "served_in": "other",
+   "market_name": "Tre Tucker: Receptions O/U 2.5",
+   "outcome_name": "Under",
+   "threshold_served": null,
+   "is_winner": false,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918214
+  },
+  {
+   "served_in": "other",
+   "market_name": "Tre Tucker: Receptions O/U 3.5",
+   "outcome_name": "Over",
+   "threshold_served": null,
+   "is_winner": true,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918215
+  },
+  {
+   "served_in": "other",
+   "market_name": "Tre Tucker: Receptions O/U 3.5",
+   "outcome_name": "Under",
+   "threshold_served": null,
+   "is_winner": false,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918215
+  },
+  {
+   "served_in": "other",
+   "market_name": "Bryce Lance: Receptions O/U 0.5",
+   "outcome_name": "Under",
+   "threshold_served": null,
+   "is_winner": true,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918235
+  },
+  {
+   "served_in": "other",
+   "market_name": "Bryce Lance: Receptions O/U 0.5",
+   "outcome_name": "Over",
+   "threshold_served": null,
+   "is_winner": false,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918235
+  },
+  {
+   "served_in": "other",
+   "market_name": "Bryce Lance: Receptions O/U 2.5",
+   "outcome_name": "Under",
+   "threshold_served": null,
+   "is_winner": true,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918236
+  },
+  {
+   "served_in": "other",
+   "market_name": "Bryce Lance: Receptions O/U 2.5",
+   "outcome_name": "Over",
+   "threshold_served": null,
+   "is_winner": false,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918236
+  },
+  {
+   "served_in": "other",
+   "market_name": "Jack Bech: Receptions O/U 2.5",
+   "outcome_name": "Under",
+   "threshold_served": null,
+   "is_winner": true,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918238
+  },
+  {
+   "served_in": "other",
+   "market_name": "Jack Bech: Receptions O/U 2.5",
+   "outcome_name": "Over",
+   "threshold_served": null,
+   "is_winner": false,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918238
+  },
+  {
+   "served_in": "other",
+   "market_name": "Jalen Nailor: Receptions O/U 0.5",
+   "outcome_name": "Over",
+   "threshold_served": null,
+   "is_winner": true,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918239
+  },
+  {
+   "served_in": "other",
+   "market_name": "Jalen Nailor: Receptions O/U 0.5",
+   "outcome_name": "Under",
+   "threshold_served": null,
+   "is_winner": false,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918239
+  },
+  {
+   "served_in": "other",
+   "market_name": "Jalen Nailor: Receptions O/U 2.5",
+   "outcome_name": "Under",
+   "threshold_served": null,
+   "is_winner": true,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918240
+  },
+  {
+   "served_in": "other",
+   "market_name": "Jalen Nailor: Receptions O/U 2.5",
+   "outcome_name": "Over",
+   "threshold_served": null,
+   "is_winner": false,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918240
+  },
+  {
+   "served_in": "other",
+   "market_name": "Michael Mayer: Receptions O/U 0.5",
+   "outcome_name": "Over",
+   "threshold_served": null,
+   "is_winner": true,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918241
+  },
+  {
+   "served_in": "other",
+   "market_name": "Michael Mayer: Receptions O/U 0.5",
+   "outcome_name": "Under",
+   "threshold_served": null,
+   "is_winner": false,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918241
+  },
+  {
+   "served_in": "other",
+   "market_name": "Michael Mayer: Receptions O/U 2.5",
+   "outcome_name": "Over",
+   "threshold_served": null,
+   "is_winner": true,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918242
+  },
+  {
+   "served_in": "other",
+   "market_name": "Michael Mayer: Receptions O/U 2.5",
+   "outcome_name": "Under",
+   "threshold_served": null,
+   "is_winner": false,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918242
+  },
+  {
+   "served_in": "other",
+   "market_name": "Noah Fant: Receptions O/U 0.5",
+   "outcome_name": "Over",
+   "threshold_served": null,
+   "is_winner": true,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918245
+  },
+  {
+   "served_in": "other",
+   "market_name": "Noah Fant: Receptions O/U 0.5",
+   "outcome_name": "Under",
+   "threshold_served": null,
+   "is_winner": false,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918245
+  },
+  {
+   "served_in": "other",
+   "market_name": "Noah Fant: Receptions O/U 2.5",
+   "outcome_name": "Over",
+   "threshold_served": null,
+   "is_winner": true,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918246
+  },
+  {
+   "served_in": "other",
+   "market_name": "Noah Fant: Receptions O/U 2.5",
+   "outcome_name": "Under",
+   "threshold_served": null,
+   "is_winner": false,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918246
+  },
+  {
+   "served_in": "other",
+   "market_name": "Brock Bowers: Receptions O/U 3.5",
+   "outcome_name": "Over",
+   "threshold_served": null,
+   "is_winner": true,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918254
+  },
+  {
+   "served_in": "other",
+   "market_name": "Brock Bowers: Receptions O/U 3.5",
+   "outcome_name": "Under",
+   "threshold_served": null,
+   "is_winner": false,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918254
+  },
+  {
+   "served_in": "other",
+   "market_name": "Brock Bowers: Receptions O/U 4.5",
+   "outcome_name": "Over",
+   "threshold_served": null,
+   "is_winner": true,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918255
+  },
+  {
+   "served_in": "other",
+   "market_name": "Brock Bowers: Receptions O/U 4.5",
+   "outcome_name": "Under",
+   "threshold_served": null,
+   "is_winner": false,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918255
+  },
+  {
+   "served_in": "other",
+   "market_name": "Brock Bowers: Receptions O/U 5.5",
+   "outcome_name": "Over",
+   "threshold_served": null,
+   "is_winner": true,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918256
+  },
+  {
+   "served_in": "other",
+   "market_name": "Brock Bowers: Receptions O/U 5.5",
+   "outcome_name": "Under",
+   "threshold_served": null,
+   "is_winner": false,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918256
+  },
+  {
+   "served_in": "other",
+   "market_name": "Travis Etienne Jr.: Receptions O/U 1.5",
+   "outcome_name": "Over",
+   "threshold_served": null,
+   "is_winner": true,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62465885
+  },
+  {
+   "served_in": "other",
+   "market_name": "Travis Etienne Jr.: Receptions O/U 1.5",
+   "outcome_name": "Under",
+   "threshold_served": null,
+   "is_winner": false,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62465885
+  },
+  {
+   "served_in": "totals",
+   "market_name": "Tyler Shough: Passing Completions O/U 17.5",
+   "outcome_name": "Over",
+   "threshold_served": 17.5,
+   "is_winner": true,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62698167
+  },
+  {
+   "served_in": "totals",
+   "market_name": "Juwan Johnson: Longest Reception O/U 19.5",
+   "outcome_name": "Over",
+   "threshold_served": 19.5,
+   "is_winner": true,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918128
+  },
+  {
+   "served_in": "totals",
+   "market_name": "Tyler Shough: Passing Completions O/U 21.5",
+   "outcome_name": "Over",
+   "threshold_served": 21.5,
+   "is_winner": true,
+   "resolution_source": "clean_resolution",
+   "_market_id": 62918140
+  }
+ ]
+}
