@@ -12,6 +12,7 @@ import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { buildLeagueSections, leagueSubtitle } from "@/lib/sports/leagueSections";
 import {
   LEAGUE_WINDOW_DAYS,
+  leagueResultsDays,
   LEAGUE_OFFSEASON_HORIZON_DAYS,
   needsWiderHorizon,
 } from "@/lib/sports/leagueHorizon";
@@ -47,7 +48,7 @@ export default function SportPage({ params }: SportPageProps) {
     mutate: refreshEvents,
   } = useSWR(
     ["events", sportKey],
-    () => fetchEvents({ sport: sportKey, days: LEAGUE_WINDOW_DAYS }),
+    () => fetchEvents({ sport: sportKey, days: LEAGUE_WINDOW_DAYS, past_days: leagueResultsDays(sportKey) }),
     { refreshInterval: 30000, keepPreviousData: true, revalidateOnFocus: false }
   );
 
@@ -77,7 +78,7 @@ export default function SportPage({ params }: SportPageProps) {
     isLoading: widerLoading,
   } = useSWR(
     wantsWiderHorizon ? ["events", sportKey, LEAGUE_OFFSEASON_HORIZON_DAYS] : null,
-    () => fetchEvents({ sport: sportKey, days: LEAGUE_OFFSEASON_HORIZON_DAYS }),
+    () => fetchEvents({ sport: sportKey, days: LEAGUE_OFFSEASON_HORIZON_DAYS, past_days: leagueResultsDays(sportKey) }),
     {
       // A schedule three months out does not move every 30 seconds, and this
       // request only exists on pages whose league is dormant — polling it at
