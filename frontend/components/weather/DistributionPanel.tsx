@@ -157,6 +157,18 @@ export default function DistributionPanel({ city }: DistributionPanelProps) {
 
 /* ── Single-source histogram ─────────────────────────────────────────── */
 
+/**
+ * #9249 — room for the peak's "38%" label, taken off EVERY column's scale.
+ *
+ * Each column is a fixed-height `flex-col justify-end`, and the peak column
+ * also holds its label (11px type + 4px margin). A peak bar at `height: 100%`
+ * was flex-shrunk by the label's height, so on New York (70-71°F 36%, 72-73°F
+ * 38%) the 36% bar drew TALLER than the bar the panel calls most likely. Every
+ * bar now measures against the same `100% - reserve`, the peak's label fits in
+ * the reserve, and `flexShrink: 0` means a bar is never squeezed to fit.
+ */
+export const PEAK_LABEL_RESERVE_PX = 22;
+
 function SingleSourceHistogram({
   dist,
   maxProb,
@@ -199,8 +211,9 @@ function SingleSourceHistogram({
               <div
                 style={{
                   width: "100%",
-                  height: `${barHeight}%`,
+                  height: `calc(${barHeight / 100} * (100% - ${PEAK_LABEL_RESERVE_PX}px))`,
                   minHeight: priced ? 3 : 0,
+                  flexShrink: 0,
                   backgroundColor: color,
                   opacity: isPeak ? 1 : 0.35 + (bucket.prob / maxProb) * 0.45,
                   borderRadius: "3px 3px 0 0",
