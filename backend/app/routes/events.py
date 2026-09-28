@@ -5282,6 +5282,20 @@ def _resolved_club_words(term: str, resolved: list[tuple[str, str]]) -> list[str
     return words
 
 
+def _outcome_whole_word(term: str):
+    """An outcome NAME carrying `term` as a whole word, never inside one.
+
+    The trigram-servable ILIKE drives the scan and the regex rechecks it, for the
+    seq-scan reason `_build_word_start_ilike` records.
+    """
+    return and_(
+        FuturesOutcome.name.ilike(f"%{term}%"),
+        FuturesOutcome.name.op("~*")(
+            f"(^|[^[:alnum:]]){_regex_escape(term)}([^[:alnum:]]|$)"
+        ),
+    )
+
+
 def _resolved_club_outcome_match(term: str, exp: str | None, club_words: list[str]):
     """#5773: the futures OUTCOME arm when the teams registry has named a club.
 
@@ -5295,14 +5309,7 @@ def _resolved_club_outcome_match(term: str, exp: str | None, club_words: list[st
     """
 
     arms = [FuturesOutcome.name.ilike(f"%{word}%") for word in club_words]
-    arms.append(
-        and_(
-            FuturesOutcome.name.ilike(f"%{term}%"),
-            FuturesOutcome.name.op("~*")(
-                f"(^|[^[:alnum:]]){_regex_escape(term)}([^[:alnum:]]|$)"
-            ),
-        )
-    )
+    arms.append(_outcome_whole_word(term))
     if exp:
         arms.append(FuturesOutcome.name.ilike(f"%{exp}%"))
     return FuturesMarket.id.in_(
@@ -5526,6 +5533,10 @@ def _team_prefix_tsquery(q: str):
 #: start a word") was measured and refused. It sheds `mets`->Metz and
 #: `rams`->boxers, but also loses `nugs`, `cards`, `pels` and `caps`, which
 #: reach their clubs only through this same stem. Those need aliases first.
+#:
+#: #9306: the futures OUTCOME arm on /search and /typeahead is the second
+#: consumer — for these tokens an outcome must carry the word whole, because
+#: `alds` is also the tail of Byron Donalds.
 _TEAM_PREFIX_REFUSED_TOKENS: frozenset[str] = frozenset({"alcs", "alds", "nlcs", "nlds"})
 
 
@@ -7236,8 +7247,14 @@ async def _resolve_typeahead_outcome_arm(
     open_now: tuple,
     deadline: float | None,
     pattern: str | None = None,
+    outcome_cond=None,
 ) -> list[int] | None:
     """The outcome-name arm's market ids, ordered and bounded. ``None`` = shed it.
+
+    #9306: ``outcome_cond`` is the arm's own outcome predicate, and the probe
+    uses it when given. Built from ``pattern`` alone, the probe was a second copy
+    of the predicate that could not see a narrowing — `alds`'s whole-word rule
+    held in the arm and the probe served Byron Don(alds) anyway.
 
     LAT-P143/#1866. Full measurement, the plan flip this buys, and the two
     disproved alternatives are at :data:`_TYPEAHEAD_OUTCOME_ARM_TIMEOUT_MS`.
@@ -7340,7 +7357,11 @@ async def _resolve_typeahead_outcome_arm(
         if pattern is not None:
             probe = await db.execute(
                 select(FuturesOutcome.market_id)
-                .where(FuturesOutcome.name.ilike(pattern))
+                .where(
+                    outcome_cond
+                    if outcome_cond is not None
+                    else FuturesOutcome.name.ilike(pattern)
+                )
                 .limit(_TYPEAHEAD_OUTCOME_PROBE_CAP + 1)
             )
             probe_rows = probe.all()
@@ -9700,11 +9721,21 @@ async def search_events(
         # them until the word is finished (`phillips` resolves no club). None of
         # them was on `phil`'s served ten that minute: its one outcome-only row,
         # "Colorado Governor winner?", is reached by `Phil Weiser`, a whole word.
+        #
+        # #9306: a ROUND word (`_TEAM_PREFIX_REFUSED_TOKENS`) is finished, so the
+        # progressive-typing case above does not apply to it, and its substring
+        # is somebody's surname: `alds` reached eight politics markets through
+        # Byron Don(alds) and Jimmy Don(alds)on. Whole word + expansion only —
+        # the same arm with no club words. Measured on production 2026-09-28:
+        # `alds` served 2 ALDS markets then 8 of those; `alcs`/`nlds`/`nlcs`
+        # collide with nothing today and are unchanged.
         _club_words = _resolved_club_words(term, _resolved_teams)
         if not _has_extractable_trigram(term):
             futures_outcome_match = (
                 _outcome_id_match(exp, None) if exp else None
             )
+        elif term.lower() in _TEAM_PREFIX_REFUSED_TOKENS:
+            futures_outcome_match = _resolved_club_outcome_match(term, exp, [])
         elif _club_words:
             futures_outcome_match = _resolved_club_outcome_match(
                 term, exp, _club_words
@@ -12492,10 +12523,20 @@ async def typeahead_search(
     # filtering on the subject would shed the arm on exactly the queries the
     # subject was computed to rescue.
     _ta_q_compact = _q_identity.strip()
+
+    # #9306: a round word matches an outcome only as a whole word, as on
+    # /search — `alds` put "Florida Governor winner?" (Byron Donalds) in the
+    # dropdown. The condition is also the probe's, so the two cannot disagree.
     _ta_outcome_arm = None
+    _ta_outcome_cond = None
     if _has_extractable_trigram(_ta_q_compact):
+        _ta_outcome_cond = (
+            _outcome_whole_word(_ta_q_compact)
+            if _ta_q_compact.lower() in _TEAM_PREFIX_REFUSED_TOKENS
+            else FuturesOutcome.name.ilike(pattern)
+        )
         _ta_outcome_arm = FuturesMarket.id.in_(
-            select(FuturesOutcome.market_id).where(FuturesOutcome.name.ilike(pattern))
+            select(FuturesOutcome.market_id).where(_ta_outcome_cond)
         )
 
     ta_league_ticker_match = _build_league_ticker_match(ta_expanded)
@@ -12548,7 +12589,8 @@ async def typeahead_search(
     _ta_mark("events_assemble")
     if _ta_outcome_arm is not None:
         _ta_outcome_ids = await _resolve_typeahead_outcome_arm(
-            db, _ta_outcome_arm, _ta_open_now, _ta_deadline, pattern=pattern
+            db, _ta_outcome_arm, _ta_open_now, _ta_deadline, pattern=pattern,
+            outcome_cond=_ta_outcome_cond,
         )
         # ONE mark, labelled by outcome — the same grammar as
         # `futures_query` / `futures_query_TIMED_OUT` below, and for the same

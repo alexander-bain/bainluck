@@ -177,8 +177,11 @@ MUTANTS: list[tuple[str, str, str, str]] = [
     (
         "M9-TRIGRAM-GATE-DROPPED",
         "LAT-P010/P013's sub-trigram skip lost in the move — `%re%` seq-scans 3 GB again",
-        "    if _has_extractable_trigram(_ta_q_compact):\n        _ta_outcome_arm = FuturesMarket.id.in_(",
-        "    if True:\n        _ta_outcome_arm = FuturesMarket.id.in_(",
+        # #9306 re-target: the gate now opens on the arm's outcome CONDITION
+        # (whole-word for round words), built before the arm itself. Same
+        # mutation — the trigram gate goes — one line earlier.
+        "    if _has_extractable_trigram(_ta_q_compact):\n        _ta_outcome_cond = (",
+        "    if True:\n        _ta_outcome_cond = (",
     ),
     (
         "M10-OPEN-FILTER-DROPPED-FROM-THE-ARM",
