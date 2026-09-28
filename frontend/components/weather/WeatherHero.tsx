@@ -8,6 +8,7 @@ import { fetchWeatherFeatured } from "@/lib/weatherApi";
 import Sparkline from "@/components/Sparkline";
 import { SourceBadge } from "./SourceBadge";
 import ProbabilityNumber from "./ProbabilityNumber";
+import MarketLink from "./MarketLink";
 
 const fadeUpKeyframes = `
 @keyframes fadeUp {
@@ -148,9 +149,12 @@ export default function WeatherHero() {
         ) : loading || !current || !src ? (
           <HeroCardSkeleton />
         ) : (
-          <div
+          // The card opens its market (#9478). It looked tappable and was not:
+          // a tap only moved the carousel, though every row carries `market_id`.
+          <MarketLink
             key={idx}
-            className="relative bg-surface-card rounded-[18px] border border-surface-border overflow-hidden"
+            marketId={current.market_id}
+            className="block relative bg-surface-card rounded-[18px] border border-surface-border overflow-hidden"
             style={{
               padding: 28,
               minHeight: 260,
@@ -239,7 +243,7 @@ export default function WeatherHero() {
                 Resolves {current.closes}
               </span>
             </div>
-          </div>
+          </MarketLink>
         )}
       </div>
     </section>
