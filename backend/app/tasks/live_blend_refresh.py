@@ -884,6 +884,18 @@ class LiveBlendRefresher:
             return self.stats
         return await self.refresh(())
 
+    def pending_event_ids(self) -> frozenset:
+        """Every event this refresher still owes a stamp (#9462 review)."""
+        return frozenset(self._lock_retry | self._throttle_deferred)
+
+    def adopt_pending(self, event_ids: Iterable[int]) -> None:
+        """Take over stamps a previous run of this source still owed.
+
+        Queued as throttle-deferred: this refresher has never stamped them, so
+        the first flush (`refresh` or `refresh_pending`) finds them due.
+        """
+        self._throttle_deferred.update(event_ids)
+
     async def _refresh_batch(self, event_ids: list[int], now: float) -> None:
         from types import SimpleNamespace
 
@@ -1386,3 +1398,65 @@ def event_ids_for_outcomes(
         if event_id is not None:
             seen.add(event_id)
     return seen
+
+
+# ── #9462 review: owed stamps survive a recycle ──────────────────────────────
+#
+# Each consumer run builds a NEW refresher, and the final drain stops as soon as
+# the price buffer is empty. A price committed inside the 2 s throttle (or behind
+# a row lock) is held in `_throttle_deferred` / `_lock_retry` and stamped by a
+# LATER flush — but at a recycle there is no later flush in this run, and the
+# next run's refresher started empty. The outcome price stayed in the database;
+# the number on the card waited for another venue tick or the 120 s poll. #9418's
+# admission recycle made that end-of-run far more frequent.
+#
+# So the ending run hands its owed events to the next run of the same source,
+# which adopts them before its first flush. Process-local on purpose: the two
+# consumers of a dyno run in one process, and a restart takes the owed stamps
+# with it exactly as it takes the socket. A hand-off older than
+# `PENDING_HANDOFF_TTL_S` is dropped — by then the poll has restamped the event.
+
+#: The oldest hand-off a new run adopts. The 120 s poll restamps every live
+#: event on its own; carrying a stamp past that would only re-date its work.
+PENDING_HANDOFF_TTL_S = 120.0
+
+_pending_handoff: dict[str, tuple[float, frozenset]] = {}
+
+
+def hand_off_pending(refresher) -> int:
+    """Leave `refresher`'s owed stamps for the next run of its source.
+
+    Returns how many events were handed off. Never raises: a refresher that
+    cannot say what it owes (a test double) hands off nothing.
+    """
+    try:
+        pending = frozenset(refresher.pending_event_ids())
+    except Exception:
+        return 0
+    if pending:
+        _pending_handoff[refresher.source] = (_mono(), pending)
+    else:
+        _pending_handoff.pop(refresher.source, None)
+    return len(pending)
+
+
+def adopt_handed_off(refresher) -> int:
+    """Give `refresher` the stamps the previous run of its source still owed.
+
+    Returns how many events were adopted (0 when none, too old, or the
+    refresher cannot adopt). The hand-off is consumed either way.
+    """
+    try:
+        handed = _pending_handoff.pop(refresher.source, None)
+    except Exception:
+        return 0
+    if handed is None:
+        return 0
+    at, pending = handed
+    if _mono() - at > PENDING_HANDOFF_TTL_S:
+        return 0
+    try:
+        refresher.adopt_pending(pending)
+    except Exception:
+        return 0
+    return len(pending)
