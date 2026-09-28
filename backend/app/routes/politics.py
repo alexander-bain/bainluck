@@ -121,6 +121,9 @@ _THEME_BY_TICKER: list[tuple[str, str]] = [
 _THEME_BY_TICKER_CLASSIFY_ONLY: list[tuple[str, str]] = [
     ("controlh-", "congressional"),
     ("controls-", "congressional"),
+    # #9477 — `KXPRESSSEC*` is the White House Press Secretary, not a
+    # presidential race: the same prefix collision as `KXPRESCUP*` above.
+    ("kxpresssec", "policy"),
     ("kxpres", "presidential"),
     ("kxgovtcuts", "policy"),        # How much government spending will Trump cut?
     ("kxgovtshut", "policy"),        # KXGOVTSHUTDOWN, KXGOVTSHUTLENGTH
@@ -148,9 +151,33 @@ _THEME_BY_NAME: list[tuple[re.Pattern, str]] = [
         # `eu`, `kyiv` and `zelensk…` (#9193 residual): "What countries will hold
         # referenda on leaving the EU?" and "Will any aircraft land or take off
         # at Kyiv Boryspil Airport…?" sat in Other — no country word above.
-        r"eu|kyiv|zelensk\w*)\b", re.I,
+        r"eu|kyiv|zelensk\w*|"
+        # `venezuela` (#9477): "Will Trump endorse María Corina Machado for
+        # Venezuela president in 2026?" was a 2028 Related Market on "president".
+        r"venezuela|venezuelan)\b", re.I,
     ), "international"),
-    (re.compile(r"\b(?:trump|biden|desantis|harris|newsom|haley|ramaswamy|kennedy|rfk)\b", re.I), "presidential"),
+    # #9477 — there is no candidate-NAME line here any more. It read
+    # `trump|biden|desantis|harris|newsom|haley|ramaswamy|kennedy|rfk` as
+    # presidential, and on 2026-09-28 it claimed 578 open rows (296 question
+    # groups). Every one that is about the race also carries a word the line
+    # below reads ("presidential run", "President", "2028 … nominee"), so the
+    # names added only the wrong ones: the sitting administration ("Will Trump
+    # try to fire Powell…", "Who will join Trump's sovereign wealth fund…"),
+    # a building ("Kennedy Center demolition…"), a county ("Harris County
+    # Judge winner?"), a governor's race ("Ohio Governor election: Vivek
+    # Ramaswamy…") and a cabinet post ("RFK Jr. Out…") — the 2028 board's
+    # Related Markets were six of them. The administration now lands in
+    # Policy through the `trump` line at the BOTTOM of this list, after every
+    # topic line has had its say. 🔴 Do not restore a name line to catch a
+    # future "Will <name> run?": `run\s+for\s+president` is below, and a
+    # name alone cannot tell a candidacy from a news story.
+    #
+    # White House STAFF and PRESS are the office, not the race, and they must
+    # decide before `white\s*house` below claims them: "When will Trump
+    # announce a new White House Press Secretary?", "Will Trump attend any
+    # White House Correspondents Dinner?", "Trump bans more news outlets from
+    # White House…", "How many presidential actions will Trump take this week?"
+    (re.compile(r"\b(?:press\s+secretary|correspondents|news\s+outlets?|presidential\s+actions?)\b", re.I), "policy"),
     # #9193 — `primary` is not a presidential word on its own: here it filed
     # "Texas Senate primary: which counties will Paxton win?" as the first
     # Related Market under the 2028 nominee race, with 15 more Senate and five
@@ -161,7 +188,9 @@ _THEME_BY_NAME: list[tuple[re.Pattern, str]] = [
     # Midterms?"); the singular left 53 open midterm markets in Other. It sits
     # below the governor arm, which now reads the plural too, so "Which party
     # will hold more governorships after the midterms?" is a governor question.
-    (re.compile(r"\b(?:president|presidential|2028\s*election|white\s*house|nominee)\b", re.I), "presidential"),
+    # `third term` (#9477): "Will Trump run for a third term?" is the one
+    # 2028 question the removed name line caught that no word here did.
+    (re.compile(r"\b(?:president|presidential|2028\s*election|white\s*house|nominee|run\s+for\s+president|(?:third|3rd)\s*term)\b", re.I), "presidential"),
     # `senators?` and `the\s+house` for the same reason as `midterms?`: venues
     # write "How many Senators will vote for the Clarity Act?" and "Will the
     # House pass a cap on federal student loan interest rates?", and both sat
@@ -180,7 +209,9 @@ _THEME_BY_NAME: list[tuple[re.Pattern, str]] = [
     # "Lisa Cook out as Fed Governor by October 31?" files under Gubernatorial
     # on the word "Governor" alone. Sits beside the federal-appointment line
     # below (`cabinet|secretary of|ambassador`), which is the same class.
-    (re.compile(r"\bfed(?:eral\s*reserve)?\s*governor(?:s|ship)?\b", re.I), "policy"),
+    # `chair or` (#9477): "Will Trump try to fire Powell as Fed Chair or
+    # Governor?" reached this list once the name line stopped claiming it.
+    (re.compile(r"\bfed(?:eral\s*reserve)?\s*(?:chair\s*(?:or|and|/)\s*)?governor(?:s|ship)?\b", re.I), "policy"),
     (re.compile(r"\b(?:governors?|governorships?|gubernatorial)\b", re.I), "gubernatorial"),
     (re.compile(r"\bmidterms?\b", re.I), "congressional"),
     (re.compile(r"\bprimar(?:y|ies)\b", re.I), "presidential"),
@@ -192,6 +223,14 @@ _THEME_BY_NAME: list[tuple[re.Pattern, str]] = [
     # reforms will become law in 2026?" sat in Other beside the ambassador
     # confirmations and farm-bill questions this line already files as Policy.
     (re.compile(r"\b(?:cabinet|secretary\s*of|attorney\s*general|cia|fbi\s*director|ambassador|be\s+confirmed\s+as|u\.s\.\s*attorney|become\s+law|signed\s+into\s+law)\b", re.I), "policy"),
+    # #9477 — LAST, on purpose: a question about the sitting administration
+    # ("Will Trump abolish the Department of Education?", "Who will Trump
+    # pardon?", "RFK Jr. Out by December 31?") is Policy, the section that
+    # already holds "How much government spending will Trump cut?" (#9171).
+    # Every topic line above decides first, so "Will Congress override
+    # Trump's veto?" stays Congressional and "Will the Supreme Court rule in
+    # favor of Trump's tariffs?" stays SCOTUS.
+    (re.compile(r"\b(?:trump|rfk)\b", re.I), "policy"),
 ]
 
 
