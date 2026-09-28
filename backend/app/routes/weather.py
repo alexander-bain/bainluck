@@ -354,10 +354,10 @@ _CLIMATE_RE = re.compile(
     r"\b(?:hottest|climate|CO2|EV|2030|2050)\b", re.I,
 )
 
-# Wildcard keywords
-_WILDCARD_RE = re.compile(
-    r"\b(?:volcano|supervolcano|arctic|solar)\b", re.I,
-)
+# Wildcard keywords. ONE list: get_wildcards selects on it and get_climate
+# declines it, so a volcano question renders once, on Wild Cards (#6983).
+_WILDCARD_TERMS = ("volcano", "arctic", "solar")
+_WILDCARD_RE = re.compile("|".join(_WILDCARD_TERMS), re.I)
 
 # Health/pandemic keywords — these are NOT weather/climate markets even if
 # the LLM tagged them as llm_sport_category="weather"
@@ -1833,11 +1833,17 @@ async def get_climate(db: AsyncSession):
             continue
         if _EXCLUDE_RE.search(m.name):
             continue
+        # Owned by another card on the same page (#6983): the California
+        # 8.0 quake printed 14% under Seismic activity AND under climate's
+        # "This year"; "Will a supervolcano erupt before 2050?" under 2050
+        # AND on Wild Cards. Earthquakes aren't climate; each renders once.
+        if _EARTHQUAKE_RE.search(m.name) or _WILDCARD_RE.search(m.name):
+            continue
         dedup_key = m.name.lower().strip()
         if dedup_key in seen_names:
             continue
         seen_names.add(dedup_key)
-        scale = _classify_scale(m)
+        scale = _classify_scale(m, now)
         items.append({
             "q": m.name,
             "prob": _card_prob(m),
@@ -1846,17 +1852,43 @@ async def get_climate(db: AsyncSession):
             "src": _market_source(m),
             "closes": _format_closes(m.resolution_date),
             "scale": scale,
+            "_res_date": (
+                m.resolution_date.replace(tzinfo=timezone.utc)
+                if m.resolution_date and m.resolution_date.tzinfo is None
+                else m.resolution_date
+            ),
         })
 
-    # Sort: current year first, then by date
+    # Horizon first, then soonest-resolving first. The key was `closes`, the
+    # "Fri, Apr 16" display string, so every column sorted by weekday name
+    # (Fri, Mon, Thu, Tue, Wed) and a 2028 market sat above eight that settle
+    # before it (#6983). Undated rows go last.
     scale_order = {"2026": 0, "2030": 1, "2050": 2}
-    items.sort(key=lambda x: (scale_order.get(x["scale"], 99), x["closes"] or ""))
+    items.sort(key=lambda x: (
+        scale_order.get(x["scale"], 99),
+        x["_res_date"] is None,
+        x["_res_date"] or now,
+    ))
+    for item in items:
+        item.pop("_res_date", None)
 
     return items
 
 
-def _classify_scale(market: FuturesMarket) -> str:
-    """Classify a climate market into a time scale bucket."""
+# The first column reads "2026 · Next 12 months"; a market settling later
+# than this has not earned it (#6983).
+_CLIMATE_NEAR_HORIZON_DAYS = 365
+
+
+def _classify_scale(market: FuturesMarket, now: datetime) -> str:
+    """Classify a climate market into a time scale bucket.
+
+    "2026" is a HORIZON, not a fallthrough: it holds only markets settling
+    within a year of ``now``. It used to take everything that was neither
+    2030 nor 2050, so "...earthquake in California before 2028?" (resolves
+    2028-12-31) was printed under "This year" (#6983). A market due later
+    than a year out but before 2030 settles by the end of the decade.
+    """
     name = market.name
     if re.search(r"\b2050\b", name):
         return "2050"
@@ -1868,6 +1900,11 @@ def _classify_scale(market: FuturesMarket) -> str:
         if year >= 2050:
             return "2050"
         if year >= 2030:
+            return "2030"
+        res = market.resolution_date
+        if res.tzinfo is None:
+            res = res.replace(tzinfo=timezone.utc)
+        if res > now + timedelta(days=_CLIMATE_NEAR_HORIZON_DAYS):
             return "2030"
     return "2026"
 
@@ -1889,10 +1926,7 @@ async def get_wildcards(db: AsyncSession):
     """Build wildcards response from database."""
     query = _open_weather_query().where(
         or_(
-            FuturesMarket.name.ilike("%volcano%"),
-            FuturesMarket.name.ilike("%supervolcano%"),
-            FuturesMarket.name.ilike("%arctic%"),
-            FuturesMarket.name.ilike("%solar%"),
+            *(FuturesMarket.name.ilike(f"%{term}%") for term in _WILDCARD_TERMS)
         )
     )
     result = await db.execute(query)
