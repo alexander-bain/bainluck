@@ -12,14 +12,14 @@ nonisolated struct LivePriceReceiptCue: Equatable {
     }
 
     static func receiptText(_ receivedAt: Date?) -> String {
-        guard let receivedAt else { return "No price received yet" }
+        guard let receivedAt else { return "No live update yet" }
         return "Received \(receivedAt.formatted(date: .omitted, time: .standard))"
     }
 
     static func accessibilityText(status: LiveUpdateStatus, receivedAt: Date?) -> String {
         let receipt = receivedAt.map {
             "Last price update received on this device at \($0.formatted(date: .abbreviated, time: .standard))."
-        } ?? "No price update received on this page yet."
+        } ?? "No live update received on this page yet."
         return "\(status.accessibilityText) \(receipt)"
     }
 }
