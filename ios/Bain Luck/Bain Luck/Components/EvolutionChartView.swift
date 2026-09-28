@@ -135,17 +135,27 @@ enum EvolutionOutcomeColour {
     /// Pinned by test, because this list is now load-bearing in a second way: it
     /// is what a FLOORED outcome falls onto, so editing it silently repaints
     /// clubs that do have a stored colour, not just the ones that do not.
+    ///
+    /// **The ORDER is the reader-visible part (#9380).** The chart selects the
+    /// top three by default, so slots 0–2 are the three lines nearly every
+    /// uncoloured board (politics, economics, culture) opens on. This list used
+    /// to run red, blue, indigo — `#005eb8` and `#1d4ed8` are ~15° of hue apart,
+    /// so Brazil's Lula (#2) and Cury (#3) drew as one blue twice. The same ten
+    /// hexes, reordered so the first five are distinct hue families: nothing is
+    /// repainted into a colour this palette did not already have, the leader
+    /// stays red, and the AA floor below is untouched. The near-twins (dark red,
+    /// indigo, sky) now sit in slots 7–9, which only a ten-line selection reaches.
     static let paletteHexes: [String] = [
         "#c41e3a", // red (leader)
         "#005eb8", // blue
-        "#1d4ed8", // indigo
-        "#0e7490", // teal
-        "#b91c1c", // dark red
-        "#0369a1", // sky
+        "#065f46", // emerald
         "#92400e", // amber
         "#4338ca", // violet
         "#be185d", // pink
-        "#065f46", // emerald
+        "#0e7490", // teal
+        "#b91c1c", // dark red
+        "#1d4ed8", // indigo
+        "#0369a1", // sky
     ]
 
     /// The palette slot for a display position, wrapping past the tenth.
