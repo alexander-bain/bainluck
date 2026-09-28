@@ -381,32 +381,38 @@ final class TeamDivisionRaceWebParity9368Tests: XCTestCase {
     // MARK: - Season Futures (the #9368 specimen)
 
     /// The served 30 rows: with a Championship Path drawn, every per-source copy
-    /// of a path or race question leaves the list, and every prop and award stays.
+    /// of a represented title leaves the list; distinct seed/advance/award rows stay.
     func testTheEaglesListLosesItsPerSourceDuplicates() throws {
         let all = try eaglesList()
-        let shown = TeamDivisionRace.seasonFutures(all, championshipPathDrawn: true)
+        let shown = filtered(all, path: conferencePath, race: try race())
         let names = Set(shown.map(\.marketName))
         for dup in ["NFC East Division Winner", "Pro Football: NFC East Champion",
                     "NFL Super Bowl Winner", "2027 Pro Football Champion", "Pro Football: 2027 Champion",
                     "Pro Football: 2027 NFC Champion ", "NFC Championship Winner"] {
             XCTAssertFalse(names.contains(dup), dup)
         }
-        XCTAssertEqual(shown.count, 14)
-        XCTAssertEqual(all.count - shown.count, 16)
+        XCTAssertEqual(shown.count, 22)
+        XCTAssertEqual(all.count - shown.count, 8)
         XCTAssertTrue(names.contains("Pro Football: 2026-27 AP Defensive Player of the Year Winner"))
         XCTAssertTrue(names.contains("Pro Football: 2026 Regular Season Win Totals"))
+        for unique in ["Pro Football Playoffs: NFC #2 Seed", "Pro Football: NFC #1 Seed",
+                       "Pro Football: NFC Team to advance to Divisional Round",
+                       "Pro Football: Team to advance to NFC Championship Game",
+                       "Protector of the Year Winner?"] {
+            XCTAssertTrue(names.contains(unique), "Distinct question must remain: \(unique)")
+        }
     }
 
     /// Without a path nothing else on the page answers those questions.
     func testWithoutAChampionshipPathTheListStaysWhole() throws {
         let all = try eaglesList()
-        XCTAssertEqual(TeamDivisionRace.seasonFutures(all, championshipPathDrawn: false).count, 30)
+        XCTAssertEqual(filtered(all).count, 30)
     }
 
     /// Web's `f.market_tier ?? -1`: an untiered row is never a path question.
     func testAnUntieredRowStays() throws {
         let row = try futureItem(id: 1, tier: nil, market: "Something new")
-        XCTAssertEqual(TeamDivisionRace.seasonFutures([row], championshipPathDrawn: true).count, 1)
+        XCTAssertEqual(filtered([row], path: conferencePath, race: try race()).count, 1)
     }
 
     // MARK: - The view draws what these rules decide
@@ -441,11 +447,102 @@ final class TeamDivisionRaceWebParity9368Tests: XCTestCase {
 
     // MARK: - Web parity (reads ux's files, never edits them)
 
-    func testWebSkipsTheSameTiers() throws {
-        let page = try source("frontend/app/sport/[sport]/[league]/team/[team]/page.tsx")
-        XCTAssertTrue(page.contains("championship_path.length > 0"))
-        XCTAssertTrue(page.contains("![1, 2, 4].includes(f.market_tier ?? -1)"))
-        XCTAssertEqual(TeamDivisionRace.pathTiers, [1, 2, 4])
+    // #9396 intentionally stops mirroring web's blanket tier filter: the
+    // original source fixture proves that tiers also contain unique questions.
+    private var conferencePath: [ChampionshipPathEntry] {
+        [ChampionshipPathEntry(tier: 2, label: "Conference",
+            marketName: "NFC Championship Winner", marketId: 900,
+            probability: 0.1, rank: nil, movement: nil)]
+    }
+
+    private func race() throws -> TeamDivisionRace.Race? {
+        TeamDivisionRace.build(grid: try grid(), teamId: eaglesId, teamName: "Philadelphia Eagles")
+    }
+
+    private func filtered(
+        _ futures: [TeamFutureItem], path: [ChampionshipPathEntry] = [],
+        race: TeamDivisionRace.Race? = nil, sport: String? = "americanfootball_nfl"
+    ) -> [TeamFutureItem] {
+        TeamDivisionRace.seasonFutures(futures, championshipPath: path, race: race, sportKey: sport)
+    }
+
+    func testMissingRaceKeepsUnansweredTitleDivisionAndQualification() throws {
+        let all = try eaglesList()
+        let names = Set(filtered(all, path: conferencePath).map(\.marketName))
+        for name in ["NFC East Division Winner", "Pro Football: Team to Make Postseason",
+                     "NFL Super Bowl Winner", "2027 Pro Football Champion",
+                     "Pro Football: Team to advance to NFC Championship Game"] {
+            XCTAssertTrue(names.contains(name), name)
+        }
+        XCTAssertFalse(names.contains("NFC Championship Winner"))
+        // A dated question is retained when the path supplies no season and no
+        // current grid can resolve that ambiguity.
+        XCTAssertTrue(names.contains("Pro Football: 2027 NFC Champion "))
+    }
+
+    func testPartialRaceCoverageUsesThisTeamNotAnyPeer() throws {
+        let changed = try gridEditing("Philadelphia Eagles") { team in
+            var cells = team["cells"] as! [String: Any]
+            cells["division"] = ["merged_probability": NSNull(), "state": "missing"]
+            cells["make_playoffs"] = ["merged_probability": NSNull(), "state": "unavailable"]
+            team["cells"] = cells
+        }
+        let partial = TeamDivisionRace.build(grid: changed, teamId: eaglesId, teamName: "Philadelphia Eagles")
+        let names = Set(filtered(try eaglesList(), race: partial).map(\.marketName))
+        XCTAssertTrue(names.contains("NFC East Division Winner"))
+        XCTAssertTrue(names.contains("Pro Football: Team to Make Postseason"))
+        XCTAssertFalse(names.contains("NFL Super Bowl Winner"))
+    }
+
+    func testUnknownAndDifferentSeasonQuestionsRemain() throws {
+        let rows = try [
+            futureItem(id: 101, tier: 1, market: "2028 Pro Football Champion"),
+            futureItem(id: 102, tier: 1, market: "2025 Pro Football Champion"),
+            futureItem(id: 103, tier: 1, market: "Pro Football: First Team to Score"),
+            futureItem(id: 104, tier: 4, market: "AFC East Division Winner"),
+            futureItem(id: 105, tier: 1, market: "Protector of the Year Winner?"),
+        ]
+        XCTAssertEqual(filtered(rows, path: conferencePath, race: try race()).count, rows.count)
+    }
+
+    func testUnpricedPathDoesNotRemoveAnAvailableSourceRow() throws {
+        let path = [ChampionshipPathEntry(tier: 1, label: "Championship",
+            marketName: "NFL Super Bowl Winner", marketId: 1,
+            probability: nil, rank: nil, movement: nil)]
+        let row = try futureItem(id: 1, tier: 1, market: "NFL Super Bowl Winner")
+        XCTAssertEqual(filtered([row], path: path).count, 1)
+    }
+
+    func testRaceCanAnswerWithoutAChampionshipPath() throws {
+        let rows = try [futureItem(id: 101, tier: 1, market: "2027 Pro Football Champion"),
+                        futureItem(id: 102, tier: 4, market: "NFC East Division Winner")]
+        XCTAssertTrue(filtered(rows, race: try race()).isEmpty)
+    }
+
+    func testDistinctQuestionSurvivesEvenAMistieredPathIdentity() throws {
+        let row = try futureItem(id: 1, tier: 2, market: "Pro Football Playoffs: NFC #2 Seed")
+        let path = [ChampionshipPathEntry(tier: 2, label: "Conference",
+            marketName: row.marketName, marketId: 1, probability: 0.2, rank: nil, movement: nil)]
+        XCTAssertEqual(filtered([row], path: path, race: try race()).count, 1)
+    }
+
+    func testSettledRaceResultStillAnswersItsQuestion() throws {
+        let changed = try gridWith("Philadelphia Eagles", cells:
+            #"{"division":{"merged_probability":null,"state":"won"},"championship":{"merged_probability":null,"state":"eliminated"}}"#)
+        let settled = TeamDivisionRace.build(grid: changed, teamId: eaglesId, teamName: "Philadelphia Eagles")
+        let rows = try [futureItem(id: 101, tier: 1, market: "2027 Pro Football Champion"),
+                        futureItem(id: 102, tier: 4, market: "NFC East Division Winner")]
+        XCTAssertTrue(filtered(rows, race: settled).isEmpty)
+    }
+
+    func testOtherSportsOnlyHideAnExactlyRepresentedQuestion() throws {
+        let path = [ChampionshipPathEntry(tier: 1, label: "Championship",
+            marketName: "MLB World Series Winner", marketId: 1,
+            probability: 0.2, rank: nil, movement: nil)]
+        let rows = try [futureItem(id: 1, tier: 1, market: "MLB World Series Winner"),
+                        futureItem(id: 2, tier: 1, market: "League award winner"),
+                        futureItem(id: 3, tier: 2, market: "National League #2 Seed")]
+        XCTAssertEqual(filtered(rows, path: path, sport: "baseball_mlb").map(\.marketId), [2, 3])
     }
 
     func testWebReadsTheSameGridKeysAndPeerRule() throws {

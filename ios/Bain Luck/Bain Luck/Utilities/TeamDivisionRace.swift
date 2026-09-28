@@ -15,14 +15,15 @@ import Foundation
 ///  1. It draws a **Division Race** from the league championship grid
 ///     (`lib/teamDivisionRace.ts`) — every club in the division, one blended
 ///     number per stage (division, playoffs, champion).
-///  2. When a Championship Path is drawn, Season Futures skips market tiers
-///     1/2/4 — the questions the path and the race already answer.
+///  2. Its original tier filter skipped 1/2/4 when a path was drawn.
+///     #9396 narrows that rule here: those tiers also contain distinct seeds,
+///     advancement and awards, and a failed grid leaves no race to answer them.
 ///
-/// This is the Swift half of both. Doing only (2) would have deleted the
+/// The first Swift version mirrored both. Doing only (2) would have deleted the
 /// playoff and division numbers from the phone, because the phone had nowhere
 /// else to show them; doing only (1) would have left every duplicate standing.
-/// `TeamDivisionRaceWebParity9368Tests` reads the web files so the two cannot
-/// drift apart silently.
+/// `TeamDivisionRaceWebParity9368Tests` retains grid parity while protecting
+/// the questions the original blanket tier filter removed.
 enum TeamDivisionRace {
 
     /// One stage cell. The number exists only while the cell is live; a settled
@@ -191,15 +192,111 @@ enum TeamDivisionRace {
 
     // MARK: - Season Futures
 
-    /// The tiers the Championship Path (tier 1 and 2 stages) and the Division
-    /// Race (tier 4: division, postseason) answer — web's `[1, 2, 4]`.
-    static let pathTiers: Set<Int> = [1, 2, 4]
+    /// A tier is not a question: seed, advancement and awards rows can carry
+    /// the same tier as a title. Only remove a question actually answered above.
+    static func seasonFutures(
+        _ futures: [TeamFutureItem], championshipPath: [ChampionshipPathEntry],
+        race: Race?, sportKey: String?
+    ) -> [TeamFutureItem] {
+        let path = championshipPath.filter {
+            guard let p = $0.probability else { return false }
+            return p.isFinite && (0...1).contains(p)
+        }
+        let nfl = gridSlug(sportKey: sportKey) == "nfl"
+        let season = seasonEnd(race?.season)
+        let me = race?.rows.first(where: \.isTeam)
+        return futures.filter { future in
+            // Exact represented source identities remain usable on other sports.
+            // Seeds/advancement/awards never become titles because of their tier.
+            guard !isDistinctQuestion(future.marketName) else { return true }
+            if path.contains(where: { $0.marketId == future.marketId }) { return false }
+            guard nfl, let candidate = nflQuestion(future.marketName, tier: future.marketTier) else {
+                return !path.contains { $0.marketName == future.marketName }
+            }
+            let representedByPath = path.contains { entry in
+                guard let answer = nflQuestion(entry.marketName, tier: entry.tier) else { return false }
+                return candidate.kind == answer.kind
+                    && sameSeason(candidate.year, answer.year ?? season)
+            }
+            if representedByPath { return false }
+            guard let me, sameSeason(candidate.year, season) else { return true }
+            switch candidate.kind {
+            case "championship": return !me.championship.hasContent
+            case "playoffs": return !me.playoffs.hasContent
+            default:
+                let division = "division:" + words(race?.divisionLabel ?? "")
+                return candidate.kind != division || !me.division.hasContent
+            }
+        }
+    }
 
-    /// Web's `propsAndAwards`: with a Championship Path drawn, the list is props,
-    /// awards and other markets. Without one, nothing answers those questions
-    /// elsewhere on the page, so the list stays whole.
-    static func seasonFutures(_ futures: [TeamFutureItem], championshipPathDrawn: Bool) -> [TeamFutureItem] {
-        guard championshipPathDrawn else { return futures }
-        return futures.filter { !pathTiers.contains($0.marketTier ?? -1) }
+    private struct Question {
+        let kind: String
+        let year: Int?
+    }
+
+    /// Deliberately narrow known title spellings. Unknown questions stay in the
+    /// list; no generic canonical key, tier or substring implies equivalence.
+    private static func nflQuestion(_ name: String, tier: Int?) -> Question? {
+        let year = seasonEnd(name)
+        let title = words(name.replacingOccurrences(
+            of: #"\b(?:19|20)\d{2}(?:[-–](?:\d{2}|\d{4}))?\b"#,
+            with: "", options: .regularExpression))
+        if tier == 1, ["nfl super bowl winner", "super bowl winner", "super bowl champion",
+                       "pro football champion", "nfl champion"].contains(title) {
+            return Question(kind: "championship", year: year)
+        }
+        if tier == 2 {
+            for conference in ["nfc", "afc"] {
+                if ["\(conference) championship winner", "\(conference) champion",
+                    "pro football \(conference) champion"].contains(title) {
+                    return Question(kind: "conference:" + conference, year: year)
+                }
+            }
+        }
+        if tier == 4 {
+            if ["pro football team to make postseason", "pro football team to make playoffs",
+                "pro football playoff qualifiers", "nfl team to make playoffs"].contains(title) {
+                return Question(kind: "playoffs", year: year)
+            }
+            for conference in ["nfc", "afc"] {
+                for direction in ["east", "west", "north", "south"] {
+                    let division = "\(conference) \(direction)"
+                    if ["\(division) division winner", "\(division) champion",
+                        "pro football \(division) champion"].contains(title) {
+                        return Question(kind: "division:" + division, year: year)
+                    }
+                }
+            }
+        }
+        return nil
+    }
+
+    private static func isDistinctQuestion(_ name: String) -> Bool {
+        let name = words(name)
+        return ["seed", "advance", "of the year", "of year", "halftime", "head coach"]
+            .contains { name.contains($0) }
+    }
+
+    private static func words(_ text: String) -> String {
+        text.lowercased().components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }.joined(separator: " ")
+    }
+
+    /// Explicit differing seasons never collapse. An undated source may be the
+    /// current question, but a dated candidate needs a known represented year.
+    private static func sameSeason(_ candidate: Int?, _ represented: Int?) -> Bool {
+        candidate == nil || (represented != nil && candidate == represented)
+    }
+
+    private static func seasonEnd(_ text: String?) -> Int? {
+        guard let text,
+              let range = text.range(of: #"\b(?:19|20)\d{2}(?:[-–](?:\d{4}|\d{2}))?\b"#,
+                                     options: .regularExpression) else { return nil }
+        let years = text[range].components(separatedBy: CharacterSet.decimalDigits.inverted)
+            .compactMap(Int.init)
+        guard let first = years.first else { return nil }
+        guard years.count > 1, let last = years.last else { return first }
+        return last < 100 ? first / 100 * 100 + last : last
     }
 }
