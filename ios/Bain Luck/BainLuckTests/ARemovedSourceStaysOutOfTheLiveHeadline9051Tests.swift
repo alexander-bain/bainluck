@@ -301,6 +301,7 @@ final class ARemovedSourceStaysOutOfTheLiveHeadline9051Tests: XCTestCase {
         await vm.load(); handle.fire("open")
         let before = client.eventFetches
         client.response = try event(p: 0.52, revision: #"{"4242":21,"999":5}"#)
+        client.historyResponse = try history(revision: #"{"4242":21,"999":5}"#, edge: 0.52)
         handle.push(p: 0.9, at: "2026-09-25T17:10:00Z", rev: #"{"4242":21}"#)
         XCTAssertEqual(vm.event?.currentOdds?.homeProbability, 0.6, "a raw-row p is not the folded hero")
         XCTAssertTrue(vm.liveBlend.isEmpty)
@@ -314,13 +315,14 @@ final class ARemovedSourceStaysOutOfTheLiveHeadline9051Tests: XCTestCase {
     func testUnchangedOrFailedFoldRereadsDoNotClaimLiveDelivery() async throws {
         for fails in [false, true] {
             let client = Client(try event(p: 0.6, revision: #"{"4242":20,"999":5}"#))
+            client.historyResponse = try history(revision: #"{"4242":20,"999":5}"#)
             let handle = Handle(), vm = model(client, handle)
             await vm.load(); handle.fire("open")
             client.failEvent = fails
             let before = client.eventFetches
             handle.push(p: 0.9, at: "2026-09-25T17:10:00Z", rev: #"{"4242":21}"#)
-            await settle { client.eventFetches > before }
-            XCTAssertEqual(vm.liveUpdateStatus, .awaitingUpdate)
+            await settle { client.eventFetches > before && (!fails || vm.pricePairRefreshFailed) }
+            XCTAssertEqual(vm.liveUpdateStatus, fails ? .interrupted : .awaitingUpdate)
             XCTAssertFalse(vm.streamHasPushedPrice)
             vm.stopRefresh()
         }
