@@ -10,8 +10,14 @@ import Vision
 ///
 /// Root's corrections are each one arm here: the dot is the DRAWN end of the
 /// line (the plot stops one vertex short, the overlay draws the rest), the
-/// label is the hero's own string, a glide happens only on a genuine append,
-/// and the label stays inside the plot at both edges and at 0/100.
+/// label is the hero's own string, a glide happens only on a genuine append
+/// or a same-predecessor pin replacement, and the label stays inside the plot
+/// at both edges and at 0/100.
+///
+/// Review delta on b4df59b81a: (1) a reread's pin replacement glides, (2) the
+/// number goes only on the series proven to carry it — venue-only pages
+/// included — and (3) a background scene hides the dot and number and
+/// cancels any glide or slide in flight.
 @MainActor
 final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
 
@@ -30,13 +36,15 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
     }
 
     private func event(p: Double, status: String = "live", away: Double? = nil,
-                       served: (Int, Int)? = nil, sport: String = "baseball_mlb") throws -> EventDetail {
+                       served: (Int, Int)? = nil, sport: String = "baseball_mlb",
+                       heroSource: String? = "blend") throws -> EventDetail {
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         let rendered = served.map { #","home_rendered_percent":\#($0.0),"away_rendered_percent":\#($0.1)"# } ?? ""
+        let hero = heroSource.map { #""hero_probability_source":"\#($0)","# } ?? ""
         return try decoder.decode(EventDetail.self, from: Data("""
         {"id":4242,"home_team":"Red Sox","away_team":"Cubs","sport":"\(sport)","status":"\(status)",
-         "home_score":2,"away_score":1,
+         "home_score":2,"away_score":1,\(hero)
          "current_odds":{"home_probability":\(p),"away_probability":\(away ?? 1 - p)\(rendered)}}
         """.utf8))
     }
@@ -50,7 +58,25 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
             let reading = try XCTUnwrap(LiveEdgeReading.current(in: event), "p=\(p)")
             XCTAssertEqual(reading.homeLabel, LivePriceActivity.displayedLabels(in: event).home, "p=\(p)")
             XCTAssertEqual(reading.homeProbability, p)
+            XCTAssertEqual(reading.source, "blend")
         }
+    }
+
+    /// The reading carries the hero's provenance, and only a `"blend"` hero
+    /// may label a line — an `opening` hero equal to the blend tip, or an
+    /// older payload with no source at all, draws no number.
+    func testOnlyABlendHeroLabelsALine() throws {
+        let points = [point(0, 0.5), point(1, 0.6)]
+        for source in ["opening", nil] as [String?] {
+            let reading = try XCTUnwrap(LiveEdgeReading.current(in: try event(p: 0.6, heroSource: source)))
+            XCTAssertEqual(reading.source, source)
+            XCTAssertNil(LiveChartEdgeMarkerPlan.edgeVertex(in: points, visible: ["aggregate"],
+                                                            reading: reading, latestFrame: nil),
+                         "source \(source ?? "nil")")
+        }
+        let blend = try XCTUnwrap(LiveEdgeReading.current(in: try event(p: 0.6)))
+        XCTAssertEqual(LiveChartEdgeMarkerPlan.edgeVertex(in: points, visible: ["aggregate"],
+                                                          reading: blend, latestFrame: nil)?.id, points[1].id)
     }
 
     /// The .445 complement (#2085): 0.445 must not print 45 beside a hero
@@ -75,6 +101,79 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
         // even where it would round to the same printed number.
         XCTAssertFalse(LiveChartEdgeMarkerPlan.isCurrent(tipProbability: 0.588, reading: reading))
         XCTAssertFalse(LiveChartEdgeMarkerPlan.isCurrent(tipProbability: 0.60, reading: reading))
+    }
+
+    // MARK: - Finding 2: which series carries the number
+
+    private let hero62 = LiveEdgeReading(homeProbability: 0.62, homeLabel: "62%")
+
+    /// A blend line on the chart is the only candidate: a venue tip that
+    /// happens to equal the hero is not promoted to the blend.
+    func testWithABlendLineOnlyTheBlendEndCanBeLabelled() {
+        let points = [point(0, 0.55), point(1, 0.60), point(0, 0.58, "kalshi"), point(1, 0.62, "kalshi")]
+        XCTAssertNil(LiveChartEdgeMarkerPlan.edgeVertex(in: points, visible: ["aggregate"],
+                                                        reading: hero62, latestFrame: nil))
+        let matching = points + [point(2, 0.62)]
+        XCTAssertEqual(LiveChartEdgeMarkerPlan.edgeVertex(in: matching, visible: ["aggregate"],
+                                                          reading: hero62, latestFrame: nil)?.id, matching.last?.id)
+    }
+
+    /// The real venue-only construction: no `aggregate_line`, one venue series,
+    /// and the pushed frame `extendingServedSourceSeries` carries onto it.
+    private func venueOnlyHistory() throws -> EventHistoryResponse {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode(EventHistoryResponse.self, from: Data("""
+        {"event_id":15302923,"home_team":"Red Sox","away_team":"Yankees","status":"live","history":[],
+         "win_prob_history":{"kalshi":[{"timestamp":"2026-09-21T12:00:00Z","home_probability":0.42},
+                                       {"timestamp":"2026-09-21T12:05:00Z","home_probability":0.50},
+                                       {"timestamp":"2026-09-21T12:10:00Z","home_probability":0.55}]}}
+        """.utf8))
+    }
+
+    private func kalshiFrame(_ blend: Double, venue: Double, source: String = "kalshi") throws -> LiveBlendPoint {
+        LiveBlendPoint(date: try XCTUnwrap("2026-09-21T12:12:00Z".asDate), homeProbability: blend,
+                       source: source, sourceProbability: venue)
+    }
+
+    func testAVenueOnlyChartLabelsTheVenueLineTheAdoptedFrameExtended() throws {
+        let frame = try kalshiFrame(0.62, venue: 0.62)
+        let points = OddsChartView.chartPoints(from: try venueOnlyHistory(), liveFrames: [frame])
+        XCTAssertFalse(points.contains { $0.source == "aggregate" }, "no blend is minted")
+        let tip = try XCTUnwrap(LiveChartEdgeMarkerPlan.edgeVertex(
+            in: points, visible: OddsChartView.defaultVisibleSources(in: points),
+            reading: hero62, latestFrame: frame))
+        XCTAssertEqual(tip.source, "kalshi")
+        XCTAssertEqual(tip.date, frame.date)
+        XCTAssertEqual(tip.probability, 0.62)
+        // The old rule's blind spot, pinned: it looked only at aggregate/consensus.
+        XCTAssertNil(OddsChartView.latestPrimaryPoint(in: points))
+    }
+
+    func testAVenueOnlyChartFailsClosedWithoutProvenance() throws {
+        let history = try venueOnlyHistory()
+        func vertex(frame: LiveBlendPoint?, reading: LiveEdgeReading) -> ChartDataPoint? {
+            let points = OddsChartView.chartPoints(from: history, liveFrames: frame.map { [$0] } ?? [])
+            return LiveChartEdgeMarkerPlan.edgeVertex(
+                in: points, visible: OddsChartView.defaultVisibleSources(in: points),
+                reading: reading, latestFrame: frame)
+        }
+        XCTAssertNil(vertex(frame: nil, reading: LiveEdgeReading(homeProbability: 0.55, homeLabel: "55%")),
+                     "a REST-only hero equal to the venue tip: nothing ties the two")
+        XCTAssertNil(vertex(frame: try kalshiFrame(0.62, venue: 0.60), reading: hero62),
+                     "the frame's blend is not its venue reading")
+        XCTAssertNil(vertex(frame: try kalshiFrame(0.62, venue: 0.62, source: "polymarket"), reading: hero62),
+                     "a venue with no drawn series is never minted, so it has no tip")
+        XCTAssertNil(vertex(frame: try kalshiFrame(0.62, venue: 0.62),
+                            reading: LiveEdgeReading(homeProbability: 0.64, homeLabel: "64%")),
+                     "the hero has moved past the frame")
+    }
+
+    /// Sportsbooks-only: nothing on the payload says the hero is the consensus.
+    func testTheConsensusIsNeverLabelled() {
+        let points = [point(0, 0.55, "consensus"), point(1, 0.62, "consensus")]
+        XCTAssertNil(LiveChartEdgeMarkerPlan.edgeVertex(in: points, visible: ["consensus"],
+                                                        reading: hero62, latestFrame: nil))
     }
 
     // MARK: - The split: the plot stops one vertex short, nothing is lost
@@ -135,9 +234,56 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
                        "a segment break has no line to glide along")
         XCTAssertFalse(LiveChartEdgeMarkerPlan.glides(
             from: old, to: LiveEdgeTail(from: vertex(1, 0.64), to: vertex(3, 0.66)), reduceMotion: false, sceneActive: true),
-                       "a REST replacement did not start at the old tip")
+                       "a replacement on a different predecessor is neither an append nor a pin replacement")
         XCTAssertFalse(LiveChartEdgeMarkerPlan.glides(from: old, to: old, reduceMotion: false, sceneActive: true),
                        "an unchanged receipt moves nothing")
+    }
+
+    /// Finding 1 — the normal folded path. `rereadPricePair` adopts a history
+    /// whose last observation is unchanged and whose response-time pin is new
+    /// (`_pin_blend_edge`); the old pin was never persisted, so the new tail
+    /// does NOT start at the old tip. It shares the old predecessor, and that
+    /// is the replacement that glides.
+    func testAPinReplacementOnTheSamePredecessorGlides() {
+        let bucket = vertex(10, 0.60)
+        let old = LiveEdgeTail(from: bucket, to: vertex(12, 0.61))
+        let new = LiveEdgeTail(from: bucket, to: vertex(14, 0.59))
+        XCTAssertTrue(LiveChartEdgeMarkerPlan.replacesPin(old: old, new: new))
+        XCTAssertTrue(LiveChartEdgeMarkerPlan.glides(from: old, to: new, reduceMotion: false, sceneActive: true))
+        // Same pin re-stamped at a new response time: the edge moves right.
+        XCTAssertTrue(LiveChartEdgeMarkerPlan.glides(
+            from: old, to: LiveEdgeTail(from: bucket, to: vertex(14, 0.61)), reduceMotion: false, sceneActive: true))
+    }
+
+    func testAPinReplacementStillSnapsWhereItMust() {
+        let bucket = vertex(10, 0.60)
+        let old = LiveEdgeTail(from: bucket, to: vertex(12, 0.61))
+        XCTAssertFalse(LiveChartEdgeMarkerPlan.glides(
+            from: old, to: LiveEdgeTail(from: bucket, to: vertex(11, 0.59)), reduceMotion: false, sceneActive: true),
+                       "a pin earlier than the one on screen is not a newer reading of the edge")
+        XCTAssertFalse(LiveChartEdgeMarkerPlan.glides(
+            from: old, to: LiveEdgeTail(from: vertex(13, 0.62), to: vertex(14, 0.59)), reduceMotion: false, sceneActive: true),
+                       "a new last observation: the plot itself changed shape, the overlay snaps with it")
+        XCTAssertFalse(LiveChartEdgeMarkerPlan.glides(
+            from: LiveEdgeTail(from: nil, to: vertex(12, 0.61)), to: LiveEdgeTail(from: nil, to: vertex(14, 0.59)),
+            reduceMotion: false, sceneActive: true),
+                       "a lone vertex has no segment; nothing is bridged")
+        let new = LiveEdgeTail(from: bucket, to: vertex(14, 0.59))
+        XCTAssertFalse(LiveChartEdgeMarkerPlan.glides(from: old, to: new, reduceMotion: true, sceneActive: true))
+        XCTAssertFalse(LiveChartEdgeMarkerPlan.glides(from: old, to: new, reduceMotion: false, sceneActive: false))
+    }
+
+    /// The replaced pin is held (drawn off the same predecessor) until the
+    /// glide starts; held under any other predecessor it is off the line.
+    func testTheReplacedPinIsHeldOnlyOffTheSamePredecessor() {
+        let bucket = vertex(10, 0.60)
+        let tail = LiveEdgeTail(from: bucket, to: vertex(14, 0.59))
+        XCTAssertEqual(LiveChartEdgeMarkerPlan.drawnTip(shown: vertex(12, 0.61), shownFrom: bucket, tail: tail),
+                       vertex(12, 0.61))
+        XCTAssertEqual(LiveChartEdgeMarkerPlan.drawnTip(shown: vertex(12, 0.61), shownFrom: vertex(9, 0.5), tail: tail),
+                       vertex(14, 0.59))
+        XCTAssertEqual(LiveChartEdgeMarkerPlan.drawnTip(shown: vertex(12, 0.61), shownFrom: nil, tail: tail),
+                       vertex(14, 0.59))
     }
 
     /// The tip drawn in any frame lies on the line: the held tip while it is
@@ -233,15 +379,17 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
     }
 
     private func render(_ name: String, frames: [LiveBlendPoint], liveEdge: LiveEdgeReading?,
-                        selection: OddsChartSelection? = nil) throws -> (UIImage, String) {
+                        selection: OddsChartSelection? = nil, history: EventHistoryResponse? = nil,
+                        scenePhase: ScenePhase = .active) throws -> (UIImage, String) {
         let view = OddsChartView(
             eventId: 15302923, commenceTime: Self.commence, status: "live",
             homeTeamName: "Red Sox", awayTeamName: "Yankees",
             homeTeamAbbrev: "BOS", awayTeamAbbrev: "NYY",
             refreshStreaming: true, liveUpdateStatus: .live, liveEdge: liveEdge,
-            preloadedHistory: try history(), liveFrames: frames, selection: selection)
+            preloadedHistory: try history ?? self.history(), liveFrames: frames, selection: selection)
             .frame(width: 390)
             .environment(\.colorScheme, .light)
+            .environment(\.scenePhase, scenePhase)
         let renderer = rendererForMeasurement(view)
         renderer.scale = 3
         let image = try XCTUnwrap(renderer.uiImage, name)
@@ -283,12 +431,32 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
         XCTAssertFalse(text.contains("BOS 78%"), text)
     }
 
+    func testAVenueOnlyChartDrawsTheHeroNumberOnTheVenueLine() throws {
+        let (_, text) = try render("venue-only", frames: [try kalshiFrame(0.62, venue: 0.62)],
+                                   liveEdge: hero62, history: try venueOnlyHistory())
+        XCTAssertTrue(text.contains("BOS 62%"), text)
+    }
+
+    /// Finding 3 — a scene that is not active keeps the line and hides the
+    /// dot and number.
+    func testABackgroundSceneHidesTheNumber() throws {
+        let (image, text) = try render("background", frames: frames([0.49, 0.55, 0.78]),
+                                       liveEdge: LiveEdgeReading(homeProbability: 0.78, homeLabel: "78%"),
+                                       scenePhase: .background)
+        XCTAssertFalse(text.contains("78%"), text)
+        XCTAssertNotNil(tipColumn(image), "the line itself is still drawn")
+    }
+
     // MARK: - Hosted: the dot glides along the drawn segment and settles
 
     private final class Feed: ObservableObject {
         @Published var frames: [LiveBlendPoint]
         @Published var edge: LiveEdgeReading
-        init(frames: [LiveBlendPoint], edge: LiveEdgeReading) { self.frames = frames; self.edge = edge }
+        @Published var history: EventHistoryResponse?
+        @Published var phase: ScenePhase = .active
+        init(frames: [LiveBlendPoint], edge: LiveEdgeReading, history: EventHistoryResponse? = nil) {
+            self.frames = frames; self.edge = edge; self.history = history
+        }
     }
 
     private struct FedChart: View {
@@ -300,14 +468,63 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
                 homeTeamName: "Red Sox", awayTeamName: "Yankees",
                 homeTeamAbbrev: "BOS", awayTeamAbbrev: "NYY",
                 refreshStreaming: true, liveUpdateStatus: .live, liveEdge: feed.edge,
-                preloadedHistory: history, liveFrames: feed.frames)
+                preloadedHistory: feed.history ?? history, liveFrames: feed.frames)
             .frame(width: 390)
             .environment(\.chartScrubSurfaces, false)
             .environment(\.colorScheme, .light)
             // A bare hosting controller is not an active scene, and the glide
             // correctly refuses to animate a background one.
-            .environment(\.scenePhase, .active)
+            .environment(\.scenePhase, feed.phase)
         }
+    }
+
+    @MainActor
+    private final class Hosted {
+        let host: UIViewController
+        let window: UIWindow
+        init<V: View>(_ view: V) {
+            host = hostForMeasurement(view)
+            host.view.frame = CGRect(x: 0, y: 0, width: 390, height: 360)
+            window = UIWindow(frame: host.view.frame)
+            window.rootViewController = host
+            window.isHidden = false
+        }
+        func close() { window.isHidden = true }
+        func shot() -> UIImage {
+            host.view.setNeedsLayout(); host.view.layoutIfNeeded()
+            return UIGraphicsImageRenderer(bounds: host.view.bounds).image { _ in
+                host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+            }
+        }
+    }
+
+    /// Sample the tip column for `seconds` after a change.
+    private func sampleTip(_ hosted: Hosted, seconds: Double) async throws -> (columns: [Int], stamps: [Double]) {
+        var columns: [Int] = [], stamps: [Double] = []
+        let start = CACurrentMediaTime()
+        while CACurrentMediaTime() - start < seconds {
+            try await Task.sleep(for: .milliseconds(30))
+            if let x = tipColumn(hosted.shot()) { columns.append(x); stamps.append(CACurrentMediaTime() - start) }
+        }
+        return (columns, stamps)
+    }
+
+    /// A history ending on the same last observation (12:10, 46%) with a
+    /// response-time pin after it — the shape `_pin_blend_edge` serves.
+    private func pinnedHistory(pinAt minute: Int, _ p: Double) throws -> EventHistoryResponse {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode(EventHistoryResponse.self, from: Data("""
+        {"event_id":15302923,"home_team":"Red Sox","away_team":"Yankees","status":"live","history":[],
+         "win_prob_history":{"kalshi":[{"timestamp":"2026-09-21T12:00:00Z","home_probability":0.42},
+                                       {"timestamp":"2026-09-21T12:10:00Z","home_probability":0.47}],
+                             "polymarket":[{"timestamp":"2026-09-21T12:00:00Z","home_probability":0.40},
+                                           {"timestamp":"2026-09-21T12:10:00Z","home_probability":0.45}]},
+         "aggregate_line":[{"timestamp":"2026-09-21T12:00:00Z","home_probability":0.41},
+                           {"timestamp":"2026-09-21T12:05:00Z","home_probability":0.43},
+                           {"timestamp":"2026-09-21T12:10:00Z","home_probability":0.46},
+                           {"timestamp":"2026-09-21T12:\(minute):00Z","home_probability":\(p)}]}
+        """.utf8))
     }
 
     /// Rightmost column holding the line colour (#059669): the drawn end of the
@@ -334,31 +551,16 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
     func testAnAcceptedAppendGlidesTheDotAlongTheLineAndSettles() async throws {
         let feed = Feed(frames: frames([0.49, 0.55, 0.78]),
                         edge: LiveEdgeReading(homeProbability: 0.78, homeLabel: "78%"))
-        let host = hostForMeasurement(FedChart(feed: feed, history: try history()))
-        host.view.frame = CGRect(x: 0, y: 0, width: 390, height: 360)
-        let window = UIWindow(frame: host.view.frame)
-        window.rootViewController = host
-        window.isHidden = false
-        defer { window.isHidden = true }
-        func shot() -> UIImage {
-            host.view.setNeedsLayout(); host.view.layoutIfNeeded()
-            return UIGraphicsImageRenderer(bounds: host.view.bounds).image { _ in
-                host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
-            }
-        }
+        let hosted = Hosted(FedChart(feed: feed, history: try history()))
+        defer { hosted.close() }
         try await Task.sleep(for: .milliseconds(600))
-        let before = try XCTUnwrap(tipColumn(shot()))
+        let before = try XCTUnwrap(tipColumn(hosted.shot()))
 
         // One accepted frame a minute later, at 60% — hero and chart together.
         let next = try XCTUnwrap("2026-09-21T12:14:00Z".asDate)
         feed.frames.append(LiveBlendPoint(date: next, homeProbability: 0.60))
         feed.edge = LiveEdgeReading(homeProbability: 0.60, homeLabel: "60%")
-        var columns: [Int] = [], stamps: [Double] = []
-        let start = CACurrentMediaTime()
-        while CACurrentMediaTime() - start < 0.8 {
-            try await Task.sleep(for: .milliseconds(30))
-            if let x = tipColumn(shot()) { columns.append(x); stamps.append(CACurrentMediaTime() - start) }
-        }
+        let (columns, stamps) = try await sampleTip(hosted, seconds: 0.8)
         let settled = try XCTUnwrap(columns.last)
         print("#9436 glide tip columns: before=\(before) frames=\(columns)")
 
@@ -373,5 +575,97 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
         // Bounded: settled within the glide window plus a frame of slack.
         let settleIndex = try XCTUnwrap(columns.firstIndex(of: settled))
         XCTAssertLessThan(stamps[settleIndex], LiveChartEdgeMarkerPlan.glideDuration + 0.25, "\(stamps)")
+    }
+
+    /// Finding 1, rendered: the folded reread path. The history is REPLACED
+    /// (same last observation, new pin) with no pushed frame at all, and the
+    /// dot glides to the new pin instead of snapping.
+    func testAPinReplacementGlidesTheDotAndSettles() async throws {
+        let feed = Feed(frames: [], edge: LiveEdgeReading(homeProbability: 0.50, homeLabel: "50%"),
+                        history: try pinnedHistory(pinAt: 12, 0.50))
+        let hosted = Hosted(FedChart(feed: feed, history: try history()))
+        defer { hosted.close() }
+        try await Task.sleep(for: .milliseconds(600))
+        let before = try XCTUnwrap(tipColumn(hosted.shot()))
+
+        feed.history = try pinnedHistory(pinAt: 16, 0.58)
+        feed.edge = LiveEdgeReading(homeProbability: 0.58, homeLabel: "58%")
+        let (columns, stamps) = try await sampleTip(hosted, seconds: 0.8)
+        let settled = try XCTUnwrap(columns.last)
+        print("#9436 pin-replacement tip columns: before=\(before) frames=\(columns)")
+
+        // A later pin widens the x-domain in the same update, so `before`
+        // (old axis) and these columns (new axis) are not comparable; the
+        // glide starts at the old pin's data position under the new axis.
+        let inBetween = Set(columns.filter { $0 < settled })
+        XCTAssertGreaterThanOrEqual(inBetween.count, 2, "no visible glide on a pin replacement: \(columns)")
+        XCTAssertLessThan(columns.first!, settled, "the first frame after the replacement was already settled")
+        XCTAssertEqual(columns, columns.sorted(), "the tip reversed: \(columns)")
+        let settleIndex = try XCTUnwrap(columns.firstIndex(of: settled))
+        XCTAssertLessThan(stamps[settleIndex], LiveChartEdgeMarkerPlan.glideDuration + 0.25, "\(stamps)")
+    }
+
+    /// Finding 3, rendered: the scene leaving `.active` mid-glide cancels the
+    /// glide — the line is drawn to its settled end at once, not over the
+    /// rest of the 350 ms.
+    func testLeavingTheActiveSceneMidGlideCancelsIt() async throws {
+        let feed = Feed(frames: frames([0.49, 0.55, 0.78]),
+                        edge: LiveEdgeReading(homeProbability: 0.78, homeLabel: "78%"))
+        let hosted = Hosted(FedChart(feed: feed, history: try history()))
+        defer { hosted.close() }
+        try await Task.sleep(for: .milliseconds(600))
+
+        feed.frames.append(LiveBlendPoint(date: try XCTUnwrap("2026-09-21T12:14:00Z".asDate), homeProbability: 0.60))
+        feed.edge = LiveEdgeReading(homeProbability: 0.60, homeLabel: "60%")
+        try await Task.sleep(for: .milliseconds(60))
+        let midGlide = try XCTUnwrap(tipColumn(hosted.shot()))
+        feed.phase = .background
+        try await Task.sleep(for: .milliseconds(40))
+        let afterCancel = try XCTUnwrap(tipColumn(hosted.shot()))
+        try await Task.sleep(for: .milliseconds(600))
+        let settled = try XCTUnwrap(tipColumn(hosted.shot()))
+        print("#9436 cancel: mid=\(midGlide) afterCancel=\(afterCancel) settled=\(settled)")
+
+        XCTAssertLessThan(midGlide, settled, "precondition: the glide was in flight when the scene left")
+        XCTAssertEqual(afterCancel, settled, "the glide kept running in a background scene")
+    }
+
+    /// Finding 3 for the hero's whole-string change: a slide in flight when
+    /// the scene leaves `.active` is cancelled — the next frame is the settled
+    /// new string, pixel for pixel, not the rest of the slide.
+    func testLeavingTheActiveSceneMidSlideCancelsTheHeroChange() async throws {
+        final class Value: ObservableObject {
+            @Published var text = "60%"
+            @Published var phase: ScenePhase = .active
+        }
+        struct Hero: View {
+            @ObservedObject var value: Value
+            var body: some View {
+                Text(value.text)
+                    .acceptedValueChange(value.text, rising: false)
+                    .font(.system(size: 44, weight: .black, design: .rounded).monospacedDigit())
+                    .foregroundStyle(.black)
+                    .frame(width: 390, height: 360)
+                    .background(Color.white)
+                    .environment(\.scenePhase, value.phase)
+            }
+        }
+        func bytes(_ image: UIImage) -> Data? { image.pngData() }
+        let value = Value()
+        let hosted = Hosted(Hero(value: value))
+        defer { hosted.close() }
+        try await Task.sleep(for: .milliseconds(400))
+
+        value.text = "59%"
+        try await Task.sleep(for: .milliseconds(80))
+        let midSlide = bytes(hosted.shot())
+        value.phase = .background
+        try await Task.sleep(for: .milliseconds(40))
+        let afterCancel = bytes(hosted.shot())
+        try await Task.sleep(for: .milliseconds(600))
+        let settled = bytes(hosted.shot())
+
+        XCTAssertNotEqual(midSlide, settled, "precondition: the slide was in flight when the scene left")
+        XCTAssertEqual(afterCancel, settled, "the slide kept running in a background scene")
     }
 }
