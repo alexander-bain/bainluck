@@ -104,7 +104,7 @@ final class InterruptedPricePairRecovery837Tests: XCTestCase {
         private var open = false
         func sleep(_ seconds: TimeInterval) async {
             if lock.withLock({ open }) {
-                try? await Task.sleep(for: .milliseconds(50))
+                try? await Task.sleep(for: .seconds(60))
                 return
             }
             await withCheckedContinuation { continuation in
@@ -150,6 +150,8 @@ final class InterruptedPricePairRecovery837Tests: XCTestCase {
         XCTAssertEqual(vm.history?.aggregateLine?.last?.homeProbability, 0.52)
         XCTAssertEqual(vm.liveUpdateStatus, .live)
         XCTAssertEqual(vm.priceActivity?.sequence, previous.sequence + 1)
+        XCTAssertFalse(vm.pricePairRefreshFailed)
+        XCTAssertEqual(vm.currentRefreshPlan, .poll(every: 120), "Recovery restores the ordinary poll plan")
     }
     func testFailedDetailIsHonestAndRecoversOnNextFrameWithoutRelaunch() async throws {
         try await exerciseFailure("/4242")

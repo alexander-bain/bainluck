@@ -25,6 +25,16 @@ final class LivePriceActivityTests: XCTestCase {
         """.utf8))
     }
 
+    private func pairedHistory(p: Double = 0.52, revision: String = #"{"4242":21,"999":5}"#) throws -> EventHistoryResponse {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode(EventHistoryResponse.self, from: Data("""
+        {"event_id":4242,"home_team":"Red Sox","away_team":"Cubs","history":[],
+         "aggregate_line":[{"timestamp":"2026-09-25T17:10:00Z","home_probability":\(p)}],
+         "blend_edge_fold_revision":\(revision),"blend_edge_observed_at":"2026-09-25T17:10:00Z"}
+        """.utf8))
+    }
+
     private final class Handle: LiveStreamHandle, @unchecked Sendable {
         var isClosed = false
         var handlers: [String: [@MainActor (String) -> Void]] = [:]
@@ -47,13 +57,14 @@ final class LivePriceActivityTests: XCTestCase {
         var failEvent = false
         private(set) var eventFetches = 0
         private(set) var eventResponses = 0
+        private(set) var eventFailures = 0
         private(set) var historyFetches = 0
         init(_ response: EventDetail) { self.response = response }
         func fetchEvent(id: Int) async throws -> EventDetail {
             eventFetches += 1
             let result = response
             if let beforeEventResponse { await beforeEventResponse() }
-            if failEvent { throw Missing() }
+            if failEvent { eventFailures += 1; throw Missing() }
             eventResponses += 1
             return result
         }
@@ -107,6 +118,7 @@ final class LivePriceActivityTests: XCTestCase {
 
     func testFoldAdoptionRecordsThePrintedBlendNotRawIncomingRow() async throws {
         let client = Client(try event(p: 0.6, revision: #"{"4242":20,"999":5}"#))
+        client.historyResponse = try pairedHistory()
         let handle = Handle(), vm = model(client, handle)
         defer { vm.stopRefresh() }
         await vm.load(); handle.fire("open")
@@ -121,6 +133,7 @@ final class LivePriceActivityTests: XCTestCase {
 
     func testStaleInFlightFoldReadCannotDuplicateAnIndependentPollReceipt() async throws {
         let client = Client(try event(p: 0.6, revision: #"{"4242":20,"999":5}"#))
+        client.historyResponse = try pairedHistory()
         let handle = Handle(), vm = model(client, handle)
         defer { vm.stopRefresh() }
         await vm.load(); handle.fire("open")
@@ -143,6 +156,7 @@ final class LivePriceActivityTests: XCTestCase {
 
     func testOutdatedConnectionReadCannotEarnAFreshReceipt() async throws {
         let client = Client(try event(p: 0.6, revision: #"{"4242":20,"999":5}"#))
+        client.historyResponse = try pairedHistory()
         let handle = Handle(), vm = model(client, handle)
         defer { vm.stopRefresh() }
         await vm.load(); handle.fire("open")
@@ -157,6 +171,31 @@ final class LivePriceActivityTests: XCTestCase {
         XCTAssertEqual(vm.event?.currentOdds?.homeProbability, 0.52)
         XCTAssertNil(vm.priceActivity)
         XCTAssertFalse(vm.streamHasPushedPrice)
+    }
+
+    func testRetiredConnectionFailureCannotDarkenItsSuccessor() async throws {
+        let client = Client(try event(p: 0.6, revision: #"{"4242":20,"999":5}"#))
+        client.historyResponse = try pairedHistory()
+        let handle = Handle(), vm = model(client, handle)
+        defer { vm.stopRefresh() }
+        await vm.load(); handle.fire("open")
+        var pending: CheckedContinuation<Void, Never>?
+        client.beforeEventResponse = { await withCheckedContinuation { pending = $0 } }
+        client.failEvent = true
+        handle.push(p: 0.9, at: "2026-09-25T17:10:00Z", rev: #"{"4242":21}"#)
+        await settle { pending != nil }
+        XCTAssertNotNil(pending)
+        handle.fire("error"); handle.fire("open")
+        handle.push(p: 0.9, at: "2026-09-25T17:11:00Z", rev: #"{"4242":22}"#)
+        XCTAssertTrue(vm.streamDelivering)
+        pending?.resume()
+        await settle { client.eventFailures == 1 }
+        // Let the failed async child return to the pair's catch handler.
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertFalse(vm.pricePairRefreshFailed, "A retired read cannot mark the new connection broken")
+        XCTAssertEqual(vm.liveUpdateStatus, .awaitingUpdate)
+        XCTAssertNil(vm.priceActivity, "Neither the failed read nor the unaccepted raw frame earns a receipt")
+        XCTAssertEqual(vm.event?.currentOdds?.homeProbability, 0.6)
     }
 
     func testUnchangedFailedAndClocklessReadsDoNotClaimNewPrices() async throws {
