@@ -1251,6 +1251,58 @@ def _resolve_sport_aliases(expanded) -> tuple[list[str] | None, set[str]]:
     deduped = list(dict.fromkeys(keys))
     return (deduped or None), consumed
 
+
+#: A broadcast SLOT name: `mnf` and `monday night football` asked on Monday
+#: 2026-09-28 returned ZERO rows of every kind from production, with that
+#: night's Eagles @ Bears (event 14780549, 00:15Z) on the schedule. Same shape
+#: as #4126's `us open`: the slot is nowhere on the event row. Worse, the spelled
+#: phrase resolved `football` to NFL+NCAAF and then AND-ed `monday` and `night`
+#: against team names, which no team has.
+#:
+#: A slot is not a text match; it is the league plus WHEN the game is played:
+#: ISO weekday and earliest kickoff hour, both on the Eastern clock the slots
+#: are named for. 18:00 ET clears every Sunday 4:25 window, Thanksgiving's two
+#: afternoon games and the London mornings, and still admits a 7:00 PM Monday
+#: doubleheader.
+_BROADCAST_SLOT_ALIASES: dict[tuple[str, ...], tuple[tuple[str, ...], int, int]] = {
+    ("mnf",): (("americanfootball_nfl",), 1, 18),
+    ("monday", "night", "football"): (("americanfootball_nfl",), 1, 18),
+    ("tnf",): (("americanfootball_nfl",), 4, 18),
+    ("thursday", "night", "football"): (("americanfootball_nfl",), 4, 18),
+    ("snf",): (("americanfootball_nfl",), 7, 18),
+    ("sunday", "night", "football"): (("americanfootball_nfl",), 7, 18),
+}
+
+_BROADCAST_SLOT_MAX_PHRASE_LEN = max(len(p) for p in _BROADCAST_SLOT_ALIASES)
+
+
+def _resolve_broadcast_slot(expanded):
+    """``(slot | None, consumed_terms)`` — the first slot name in the query.
+
+    Consumed terms leave the query BEFORE `_resolve_sport_aliases` sees it, so
+    `football` inside `monday night football` cannot resolve to a bare
+    NFL+NCAAF league arm (every game of both) and `nfl` beside `mnf` is still
+    consumed as a league word rather than matched against team names.
+    """
+    terms = [term.lower() for term, _ in expanded]
+    for length in range(min(_BROADCAST_SLOT_MAX_PHRASE_LEN, len(terms)), 0, -1):
+        for i in range(len(terms) - length + 1):
+            slot = _BROADCAST_SLOT_ALIASES.get(tuple(terms[i:i + length]))
+            if slot:
+                return slot, set(terms[i:i + length])
+    return None, set()
+
+
+def _broadcast_slot_scope(slot):
+    """The slot as a WHERE: its league, its Eastern weekday, its evening."""
+    sport_keys, iso_weekday, min_hour = slot
+    eastern = func.timezone(_EASTERN_TZ_NAME, Event.commence_time)
+    return and_(
+        Sport.key.in_(sport_keys),
+        func.extract("isodow", eastern) == iso_weekday,
+        func.extract("hour", eastern) >= min_hour,
+    )
+
 # Marquee pro leagues — used only to break FTS-rank TIES in the team search
 # surface. A nickname shared by a college and a pro franchise ("patriots",
 # "bruins", "cardinals") produces identical single-token ranks, and the old
@@ -8041,9 +8093,16 @@ async def search_events(
     # membership — a phrase is invisible to a per-token test, and leaving `us`
     # and `open` in the remaining terms would AND them against team names and
     # return the same zero rows the bug already returns.
-    sport_alias_keys, _alias_consumed_terms = _resolve_sport_aliases(expanded)
+    _broadcast_slot, _slot_consumed_terms = _resolve_broadcast_slot(expanded)
+    _unslotted_expanded = [
+        (t, e) for t, e in expanded if t.lower() not in _slot_consumed_terms
+    ]
+    sport_alias_keys, _alias_consumed_terms = _resolve_sport_aliases(
+        _unslotted_expanded
+    )
     non_league_expanded = [
-        (t, e) for t, e in expanded if t.lower() not in _alias_consumed_terms
+        (t, e) for t, e in _unslotted_expanded
+        if t.lower() not in _alias_consumed_terms
     ]
 
     # LAT-P033/#1732: the `fts_q = " ".join(exp if exp else term …)` string that
@@ -8104,7 +8163,22 @@ async def search_events(
     _event_nickname_arms = _team_nickname_event_arms(terms)
     _event_recall_arms.extend(_event_nickname_arms)
 
-    if sport_alias_keys:
+    if _broadcast_slot:
+        # `mnf` is the league narrowed to Monday nights, so it takes the league
+        # arm's place: `mnf nfl` must not also add every NFL game, and a team
+        # word beside the slot (`eagles mnf`) is carried exactly as it is there.
+        slot_scope = _broadcast_slot_scope(_broadcast_slot)
+        if non_league_expanded:
+            remaining = [_event_name_match(t, e) for t, e in non_league_expanded]
+            slot_scope = and_(slot_scope, *remaining)
+        _event_recall_arms.append(slot_scope)
+        # The slot NAMES a league, so every "no rows" rescue below gated on
+        # `not sport_alias_keys` stands down for it as for `nfl`: a quiet week
+        # must not answer `mnf` with a fuzzy team correction.
+        sport_alias_keys = list(
+            dict.fromkeys([*(sport_alias_keys or ()), *_broadcast_slot[0]])
+        )
+    elif sport_alias_keys:
         league_scope = Sport.key.in_(sport_alias_keys)
         if non_league_expanded:
             remaining = [_event_name_match(t, e) for t, e in non_league_expanded]
@@ -11865,6 +11939,28 @@ async def typeahead_search(
     if sport_alias_keys:
         fts_event_f = or_(fts_event_names, Sport.key.in_(sport_alias_keys))
     event_team_filter = or_(fts_event_f, ilike_event_filter)
+
+    # The broadcast slot, as on /search (`_BROADCAST_SLOT_ALIASES`). It REPLACES
+    # the arm above rather than widening it: `monday night football` reached the
+    # dropdown only through `football`'s bare league arm, which offered Thursday's
+    # NFL game and two college games under tonight's, and `mnf` offered nothing.
+    _ta_slot, _ta_slot_consumed = _resolve_broadcast_slot(ta_expanded)
+    if _ta_slot:
+        _ta_slot_rest = [
+            (t, e) for t, e in ta_expanded if t.lower() not in _ta_slot_consumed
+        ]
+        _, _ta_slot_league_words = _resolve_sport_aliases(_ta_slot_rest)
+        event_team_filter = and_(
+            _broadcast_slot_scope(_ta_slot),
+            *[
+                or_(
+                    _build_expanded_ilike(Event.home_team_name, t, e),
+                    _build_expanded_ilike(Event.away_team_name, t, e),
+                )
+                for t, e in _ta_slot_rest
+                if t.lower() not in _ta_slot_league_words
+            ],
+        )
     # #4411's or-last arm recalls on PARTICIPANT NAMES ONLY — the sport-alias
     # arm is deliberately left out. With it in, `us open` (an alias, naming no
     # participant) would drag every finished match of the tournament into a
