@@ -106,6 +106,8 @@ final class RevisionRereadBypassesLocalCache837Tests: XCTestCase {
         XCTAssertEqual(cachedHistory.aggregateLine?.last?.homeProbability, 0.60)
         XCTAssertEqual(Origin.requests(ending: "/4242").count, 1)
         XCTAssertEqual(Origin.requests(ending: "/history").count, 1)
+        XCTAssertNil(Origin.requests(ending: "/4242").first?.url?.query)
+        XCTAssertFalse(Origin.requests(ending: "/history").first?.url?.query?.contains("fresh") ?? false)
 
         handle.pushNewRevision()
         try await awaitReread()
@@ -118,6 +120,11 @@ final class RevisionRereadBypassesLocalCache837Tests: XCTestCase {
         for request in Origin.requests(ending: "/4242").dropFirst() + Origin.requests(ending: "/history").dropFirst() {
             XCTAssertEqual(request.cachePolicy, .reloadIgnoringLocalCacheData)
             XCTAssertEqual(request.value(forHTTPHeaderField: "Cache-Control"), "no-cache")
+            let query = URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false)?.queryItems ?? []
+            XCTAssertEqual(query.first { $0.name == "fresh" }?.value, "true")
+            if request.url?.path.hasSuffix("/history") == true {
+                XCTAssertEqual(query.first { $0.name == "hours" }?.value, "168")
+            }
         }
         // Fresh responses replace cached bytes, without disabling subsequent normal caching.
         let latest = try await api.fetchEvent(id: 4242)
