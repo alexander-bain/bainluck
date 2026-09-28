@@ -4967,6 +4967,39 @@ def _is_cross_sport_link(
     return True
 
 
+def _tennis_link_players_agree(
+    event_sport_key: Optional[str],
+    team_a: Optional[str],
+    team_b: Optional[str],
+    home: Optional[str],
+    away: Optional[str],
+) -> bool:
+    """Do a market's two players name a tennis row's two players? Pure. #9472.
+
+    Phase 1.5's name test is ``_fuzzy_team_match``, whose containment floor is 4
+    characters and whose acronym arm refuses a bare 3-letter surname on purpose
+    ("Gea" must not reach "Arthur Gea" in a TEAM-shaped comparison). A tennis
+    row stored by surname alone (`Van de Zandschulp v Cui`, Kalshi's shape, or
+    Polymarket's own `Kakenova vs. Pan` lines against `Albina Kakenova v Jiayue
+    Pan`) therefore read as "mislinked" whenever one player's surname was <=3
+    letters: 50+ correct links broken in the 4 days to 2026-09-28, each re-joined
+    by the group path and broken again, or moved with the whole group onto a new
+    row (Lys v Sun, Gao v Udvardy, Cerundolo v Bu).
+
+    ``tennis_twin_pairs.players_agree`` is the tennis comparator: surname equal
+    and whole, initials compatible, doubles only against doubles. BOTH players
+    must agree, straight or swapped. This only ever KEEPS a link; the forward
+    path and every other sport are untouched.
+    """
+    if not (event_sport_key or "").startswith("tennis"):
+        return False
+    from app.utils.tennis_twin_pairs import players_agree  # refuses an empty name
+
+    straight = players_agree(team_a, home) and players_agree(team_b, away)
+    swapped = players_agree(team_a, away) and players_agree(team_b, home)
+    return straight or swapped
+
+
 # --- Resolved-row cross-sport sweep (#3478 / CERT-2102) ---------------------
 # Phase 1.5 revalidates linked markets, but only `status='open'` ones — see
 # `_phase15_eligible_where`. That is right for the common case and it leaves a
@@ -6120,6 +6153,21 @@ async def _phase15_revalidate(
                 or _fuzzy_team_match(matchup.team_b, linked_event.away_team_name)
             )
             teams_match = a_matches and b_matches
+            if not teams_match:
+                # #9472: `_fuzzy_team_match` cannot read a surname of <=3
+                # letters stored alone (`Cui` v `Jie Cui`), so a correct tennis
+                # link was broken here every cycle. On a tennis row, ask the
+                # tennis name comparator before calling the link wrong.
+                # (A local key: `event_sport_key` is assigned further down and
+                # would still hold the PREVIOUS market's value here.)
+                _names_sport_key = await _event_sport_key(session, linked_event)
+                teams_match = _tennis_link_players_agree(
+                    _names_sport_key, matchup.team_a, matchup.team_b,
+                    linked_event.home_team_name, linked_event.away_team_name,
+                )
+                if teams_match:
+                    stats["funnel"].setdefault("phase15_tennis_names_kept", 0)
+                    stats["funnel"]["phase15_tennis_names_kept"] += 1
             is_finished = linked_event.status in ("completed", "closed")
             is_auto_created = (
                 linked_event.external_id
