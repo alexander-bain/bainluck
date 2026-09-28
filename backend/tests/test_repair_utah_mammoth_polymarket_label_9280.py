@@ -83,10 +83,11 @@ class TestApplyPlan:
         rows = {MAMMOTH: ("icehockey_nhl", "Utah Mammoth", None)}
         assert m.plan(rows, restore=False)["write"] == [(MAMMOTH, [], ["Utah"])]
 
-    def test_a_missing_row_is_skipped(self):
-        assert m.plan({}, restore=False) == {
-            "write": [], "skip": [(MAMMOTH, "row missing")],
-        }
+    @pytest.mark.parametrize("restore", [False, True])
+    def test_a_missing_row_refuses_the_run_in_both_modes(self, restore):
+        # CERT-3684 follow-up: a skip here exited 0 and read as a clean plan.
+        with pytest.raises(m.Refused, match="not found"):
+            m.plan({}, restore=restore)
 
     @pytest.mark.parametrize(
         "sport_key,name",

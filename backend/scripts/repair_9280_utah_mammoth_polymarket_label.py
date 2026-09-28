@@ -4,8 +4,8 @@ THE SHIP: Utah Mammoth games stop appearing as "OTHER HOCKEY · Utah" cards besi
 (or instead of) the NHL game, and Thursday's Blackhawks @ Utah Mammoth (15168042)
 gets its Polymarket price.
 
-WHAT A READER SAW (production, 2026-09-28 ~03:30Z, ``/api/events/search?q=utah``)
----------------------------------------------------------------------------------
+WHAT A READER SAW (production, 2026-09-28 ~03:30Z, events search for "utah")
+----------------------------------------------------------------------------
 
 Nine Utah games listed as ``icehockey_other`` "Utah" cards with no crest, one
 more created every day Polymarket lists a game (latest 15320100, Utah @
@@ -71,7 +71,7 @@ REFUSALS (the whole run stops, nothing is written)
 
 * not on a production app (``HEROKU_APP_NAME`` must be ``bainluck`` or
   ``bainluck-heavy``);
-* the pinned id's row is not (icehockey_nhl, Utah Mammoth);
+* the pinned id's row is missing, or is not (icehockey_nhl, Utah Mammoth);
 * a write that changes anything other than exactly one row.
 
     python3 scripts/repair_9280_utah_mammoth_polymarket_label.py            # dry run
@@ -124,13 +124,14 @@ def plan(rows: dict[int, tuple[str, str, list | None]], *, restore: bool) -> dic
 
     ``rows`` maps each pinned id that EXISTS to ``(sport_key, name, alternate_names)``.
     Returns the ``(id, current, new)`` writes and the ``(id, reason)`` skips; raises
-    ``Refused`` when a pinned id's row is not the pinned team.
+    ``Refused`` when a pinned id's row is missing or is not the pinned team.
     """
     write, skip = [], []
     for team_id, (sport_key, name, label, _before) in PINNED.items():
         if team_id not in rows:
-            skip.append((team_id, "row missing"))
-            continue
+            # A missing pinned row is not "nothing to do": the ship needs this one row,
+            # and a dry run that exits 0 without it reads as a clean plan (CERT-3684).
+            raise Refused(f"team {team_id} ({name!r}) not found; the pinned row is gone")
         got_sport, got_name, names = rows[team_id]
         if (got_sport, got_name) != (sport_key, name):
             raise Refused(
