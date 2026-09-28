@@ -1382,6 +1382,8 @@ async def _write_prices(
     from app.utils.market_staleness import OBSERVATION_LAG_DAYS  # #7582
     from app.utils.odds_math import probability_to_american
     from app.utils.price_change_stamp import price_changed_at_value
+    from app.utils.resolution_authority import OVERWRITABLE_WINNER_SOURCES  # #9220
+    from app.utils.settled_price import SETTLED_SOURCE, settled_price_values  # #9220
     from sqlalchemy import case, func, or_, update as sa_update
 
     if not priced:
@@ -1454,7 +1456,13 @@ async def _write_prices(
     # them under the same three id conventions as a priced item — a Polymarket
     # decomposed pair would otherwise clear its yes leg and leave the no leg.
     unpriced: list[dict] = []
+    #: #9220. A mixed Kalshi event's legs the venue has SETTLED, each carrying
+    #: its verdict. Graded below, never priced.
+    answered: list[dict] = []
     for item in priced:
+        if item.get("venue_answered"):
+            answered.append(item)
+            continue
         if item.get("venue_quotes_no_price"):
             unpriced.append(item)
             continue
@@ -1762,6 +1770,64 @@ async def _write_prices(
                     "legs_cleared_venue_unpriced", 0
                 ) + (cleared.rowcount or 0)
 
+    # ── #9220: grade the legs the venue settled on a board that is still open ─
+    #
+    # The venue's `result` is a positive statement — the opposite case to the
+    # clear above, which waits a week because silence is not evidence — so this
+    # is NOT gated on `written` and has no lag. It is a GRADE, written the way
+    # every Kalshi grader writes one: `api_settlement` plus the terminal price in
+    # the same statement (`settled_price`, #5246: "a settlement writer is a
+    # population, not a place"), so the grade and the number a reader sees
+    # cannot disagree.
+    #
+    # Overwrites only an ungraded row or a guess-rung source — the graders' own
+    # guard, imported rather than re-listed. `existing` already excludes a
+    # crowned or `api_settlement` leg; the WHERE restates the grade half because
+    # a settlement feed may land between that SELECT and this UPDATE.
+    #
+    # NO SNAPSHOT ROW: a settlement is not an observed price, and the graders
+    # write none. `calibration_probability` and `opening_probability` are not in
+    # the SET, so the curve's inputs are untouched — measured 2026-09-28, none of
+    # the 71 legs this reaches carried a `calibration_probability`.
+    #
+    # `venue_won` None — a scalar or unreadable settlement — is left exactly as
+    # it was and counted (#1852: an absence is never recorded as a loss).
+    for item in answered:
+        won = item.get("venue_won")
+        if won is None:
+            stats["answered_legs_ungradeable"] = stats.get(
+                "answered_legs_ungradeable", 0
+            ) + 1
+            continue
+        for outcome_id, _side in _legs(item):
+            settled = settled_price_values(won)
+            graded = await session.execute(
+                sa_update(FuturesOutcome)
+                .where(
+                    FuturesOutcome.id == outcome_id,
+                    or_(
+                        FuturesOutcome.resolution_source.is_(None),
+                        FuturesOutcome.resolution_source.in_(
+                            OVERWRITABLE_WINNER_SOURCES
+                        ),
+                    ),
+                )
+                .values(
+                    is_winner=won,
+                    resolution_source=SETTLED_SOURCE,
+                    last_updated=func.now(),
+                    price_changed_at=price_changed_at_value(
+                        FuturesOutcome.current_probability,
+                        FuturesOutcome.price_changed_at,
+                        settled["current_probability"],
+                    ),
+                    **settled,
+                )
+            )
+            stats["answered_legs_graded"] = stats.get(
+                "answered_legs_graded", 0
+            ) + (graded.rowcount or 0)
+
     return written
 
 
@@ -1964,6 +2030,10 @@ async def _fetch_kalshi_prices(
     but a series event can hold both, so the answered markets are skipped
     individually and the rest are priced — the per-leg care CERT-751 already
     forced on the Polymarket resolved-status sweep, for the same reason.
+    Skipped as PRICES, not dropped: since #9220 each answered leg rides the list
+    flagged ``venue_answered`` with the venue's verdict in ``venue_won``, and
+    `_write_prices` grades it, because no grader reaches a leg whose event is
+    still open.
 
     Two deliberate reuses rather than reimplementations:
 
@@ -1979,6 +2049,7 @@ async def _fetch_kalshi_prices(
       from its input rather than the helper taught a new refusal.
     """
     from app.tasks.kalshi import _kalshi_yes_probability
+    from app.utils.kalshi_market_status import gradeable_winner  # #9220
 
     raw = await service.get_event(external_id, with_nested_markets=True)
     if not raw:
@@ -2022,12 +2093,43 @@ async def _fetch_kalshi_prices(
     #: prices first, and the clear is defined as a thing that happens after a
     #: pass has priced what it could.
     unpriced: list[dict] = []
+    #: #9220. The mixed event's answered legs, carried to the writer with the
+    #: venue's verdict — see the note at the append.
+    answered: list[dict] = []
     for market in event.markets:
         if not market.ticker:
             continue
         if venue_answered(market.result):
             # A mixed event's answered leg. Its quote is a settlement artifact,
-            # not a price — see the docstring.
+            # not a price — see the docstring — so it is never priced.
+            #
+            # #9220 — BUT DROPPING IT LEFT THE PRE-SETTLEMENT PRICE STANDING. The
+            # note below says an answered leg's price "is a RESULT, which settled
+            # means settled keeps on the page". That holds only once something
+            # has GRADED it, and nothing does while the event is open: every
+            # Kalshi grader reads `status="settled"` EVENTS, or markets we already
+            # hold `resolved`, and a series with one leg finalized is neither.
+            # Measured 2026-09-28 00:1xZ: New York won Game 1 of a best-of-3 and
+            # Kalshi finalized `KXWNBASERIESSCORE-26NYMINR1-MIN20` NO, while
+            # /events/15318132 led its Series card with "MIN wins 2-0 43.5%", the
+            # 09-26 05:02Z price, because this `continue` never let the writer
+            # see the leg. Across the 166 open Kalshi boards this task priced in
+            # the last two hours, 71 legs on 13 boards were in that state —
+            # eliminated Chengdu players at 29-48%, settled NFL/NCAAF win-count
+            # rungs, both WNBA sweep legs. The venue's verdict is on this
+            # payload; carrying it costs nothing.
+            #
+            # `gradeable_winner` is three-state and its None (a scalar or
+            # unreadable settlement) is carried as None: the writer grades
+            # nothing it cannot read (#1852).
+            answered.append(
+                {
+                    "external_id": market.ticker,
+                    "probability": None,
+                    "venue_answered": True,
+                    "venue_won": gradeable_winner(market.status, market.result),
+                }
+            )
             continue
         prob = _kalshi_yes_probability(
             market.yes_bid, market.yes_ask, market.last_price
@@ -2086,7 +2188,7 @@ async def _fetch_kalshi_prices(
                 "volume_24h": volume_by_ticker.get(market.ticker),
             }
         )
-    return priced + unpriced
+    return priced + unpriced + answered
 
 
 #: Which outcomes of a market may be re-priced by a poll — the settled refusal,
