@@ -2614,6 +2614,45 @@ private struct SegmentBreakdown {
 
         guard let espnHistory = history?.espnHistory else { return nil }
 
+        // #4961 — baseball reads each row's half-inning, so a run scored after an
+        // inning's last polled row is not credited to the next inning.
+        let isBaseball = (sportKey?.lowercased() ?? "").hasPrefix("baseball_")
+        if isBaseball {
+            let polled = espnHistory
+                .compactMap { point -> (Date, HalfInningLineScore.Snapshot)? in
+                    guard let period = point.period,
+                          let homeScore = point.homeScore,
+                          let awayScore = point.awayScore,
+                          let date = point.timestamp.asDate else { return nil }
+                    return (date, .init(period: period, homeScore: homeScore, awayScore: awayScore))
+                }
+                .sorted { $0.0 < $1.0 }
+                .map(\.1)
+            if let rows = HalfInningLineScore.rows(
+                polled, isFinished: isFinished,
+                homeFinal: finalHomeScore, awayFinal: finalAwayScore
+            ) {
+                guard let squared = StoredLineScore.squared(
+                    home: rows.home, away: rows.away,
+                    homeTotal: finalHomeScore, awayTotal: finalAwayScore,
+                    lastObserved: rows.lastObserved
+                ) else { return nil }
+                let segments = squared.home.indices.map {
+                    GameSegment(label: String($0 + 1), home: squared.home[$0], away: squared.away[$0])
+                }
+                let resolvedHome = finalHomeScore ?? polled.last?.homeScore ?? 0
+                let resolvedAway = finalAwayScore ?? polled.last?.awayScore ?? 0
+                guard segments.contains(where: { $0.home.points != nil || $0.away.points != nil }),
+                      resolvedHome + resolvedAway > 0
+                else { return nil }
+                self.segments = segments
+                self.homeTotal = resolvedHome
+                self.awayTotal = resolvedAway
+                self.hasUnknownSegments = segments.contains { $0.home == .unknown || $0.away == .unknown }
+                return
+            }
+        }
+
         let cumulativeByPeriod = espnHistory
             .compactMap { point -> CumulativeSegment? in
                 guard let rawPeriod = point.period,
@@ -2650,7 +2689,6 @@ private struct SegmentBreakdown {
         // rather than "whatever the poller saw". Every other sport keeps the
         // observed-labels behaviour unchanged — this change is scoped to the
         // sport whose card was wrong.
-        let isBaseball = (sportKey?.lowercased() ?? "").hasPrefix("baseball_")
         let renderedLabels: [String]
         if isBaseball {
             let observed = orderedLabels.compactMap(Int.init)
