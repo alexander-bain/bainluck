@@ -7,6 +7,8 @@ to enforce per-IP and per-user rate limits as ASGI middleware.
 Rate limits:
   - Anonymous:      60 requests / minute  (keyed by client IP)
   - Authenticated: 120 requests / minute  (keyed by user UID from JWT)
+  - Fresh event detail/history GETs: 180/minute shared per caller, separate
+                   from ordinary traffic (anonymous or verified user).
   - Admin:         300 requests / minute  (keyed by a HASH of the admin bearer
                    token) — a CEILING, never an exemption. See Queue 315 Item 1.
   - Trusted addr:  600 requests / minute  (opt-in via ``RATE_LIMIT_TRUSTED_IPS``,
@@ -26,6 +28,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import ssl
 import time
 from typing import Optional
@@ -42,6 +45,12 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 ANON_RATE_LIMIT = "60/minute"
 AUTH_RATE_LIMIT = "120/minute"
+# #9349: a held live page can request a fresh detail/history pair each second.
+# Share ONE bounded budget across all event IDs, distinct from ordinary API
+# traffic. 120 paired reads/minute plus 60 headroom; never an exemption.
+FRESH_EVENT_RATE_LIMIT = "180/minute"
+_FRESH_EVENT_MAX = 180
+_FRESH_EVENT_PATH = r"/api/events/[1-9][0-9]*(?:/history)?"
 # Queue 315 Item 1: /api/admin is rate limited, not exempt. This is ONE SHARED
 # BUCKET per token value (P3) — Alex's browser, every agent lane, `/health`, the
 # browser-audit rail and flow_sentinel's nightly self-calls all present the same
@@ -235,6 +244,35 @@ _auth_limit = None
 
 _admin_limit = None
 _trusted_limit = None
+_fresh_event_limit = None
+
+
+def _is_fresh_event_read(request: Request) -> bool:
+    """Only the exact GET routes consuming a true FastAPI bool `fresh` qualify.
+
+    QueryParams.get uses the last duplicate, just like FastAPI scalar params.
+    No DB lookup here: nonexistent IDs still spend this same finite bucket.
+    """
+    if request.method != "GET" or not re.fullmatch(_FRESH_EVENT_PATH, request.url.path):
+        return False
+    if request.query_params.get("fresh", "").lower() not in {"1", "true", "t", "on", "yes", "y"}:
+        return False
+    if request.url.path.endswith("/history") and "hours" in request.query_params:
+        # A malformed hours value is rejected by this route, not a fresh read.
+        from pydantic import TypeAdapter, ValidationError
+        try:
+            TypeAdapter(int).validate_python(request.query_params["hours"])
+        except ValidationError:
+            return False
+    return True
+
+
+def _get_fresh_event_limit():
+    global _fresh_event_limit
+    if _fresh_event_limit is None:
+        from limits import parse as parse_limit
+        _fresh_event_limit = parse_limit(FRESH_EVENT_RATE_LIMIT)
+    return _fresh_event_limit
 
 
 def _get_limits():
@@ -584,6 +622,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
     - Anonymous requests: 60/minute keyed by client IP
     - Authenticated requests (Bearer JWT): 120/minute keyed by user UID
+    - Fresh event detail/history GETs: separate shared 180/minute caller bucket
     - Admin paths with the admin token: 300/minute keyed by a hash of that token
     - Addresses in ``RATE_LIMIT_TRUSTED_IPS``: 600/minute, keyed separately (D70)
     - Docs / health paths: exempt
@@ -665,6 +704,13 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             key = _get_client_ip(request)
             max_requests = _ANON_MAX
 
+        fresh_event_read = not admin_key and not trusted_peer and _is_fresh_event_read(request)
+        if fresh_event_read:
+            # Preserve verified-user/IP provenance. Never include the event ID,
+            # query, or presented (unverified) token in the bucket identity.
+            key = f"fresh-event:{key}"
+            max_requests = _FRESH_EVENT_MAX
+
         # Check rate limit.
         #
         # #1197 (r259 ROOT CAUSE): the sync `limits` FixedWindowRateLimiter.hit() is
@@ -708,6 +754,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             limit = _get_admin_limit()
         elif trusted_peer:
             limit = _get_trusted_limit()
+        elif fresh_event_read:
+            limit = _get_fresh_event_limit()
         elif uid:
             limit = auth_limit
         else:
