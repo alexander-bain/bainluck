@@ -2623,15 +2623,30 @@ def _team_card_keyed(team_rows, query: str) -> list:
     collapse (#4489), then the match-class scorer over the WHOLE window — its
     `[:5]` is the card's cap (#8756). `rank()` is `rank_with_keys()` without the
     keys, so the card's order is byte-for-byte what it was.
+
+    #9261: the scorer breaks its own ties by arrival order, and arrival order is
+    `ts_rank_cd`, which counts how often the word appears across name + aliases.
+    A row that restates its name as an alias (`Princeton Tigers` lacrosse,
+    `Grambling Tigers` on the FCS row) scores 3 where `LSU Tigers` scores 2, so
+    on production 2026-09-28 `tigers` carded Princeton lacrosse and Tennessee St
+    basketball over LSU and Clemson, and `bulldogs` put Georgia 4th behind two
+    baseball rows. So the collapsed groups are stably re-sorted by the same
+    college-audience rank #8993 uses INSIDE a group — football, men's
+    basketball, other college — before the scorer sees them. Every non-college
+    row reads 0, so no pro or soccer ordering moves, and the scorer's class,
+    kind and prominence still lead: this only reorders rows it already tied.
     """
     from app.utils.search_match_class import rank_with_keys
 
-    rows = _pick_team_row_per_name(_sort_matched_team_rows(
-        _dedupe_prefix_duplicate_team_rows([
-            row for row in (team_rows or ())
-            if not _is_individual_sport(row.sport_key)
-        ])
-    ))
+    rows = sorted(
+        _pick_team_row_per_name(_sort_matched_team_rows(
+            _dedupe_prefix_duplicate_team_rows([
+                row for row in (team_rows or ())
+                if not _is_individual_sport(row.sport_key)
+            ])
+        )),
+        key=lambda row: _college_sport_audience_rank(row.sport_key),
+    )
     cards = [
         {
             "id": row.id,
