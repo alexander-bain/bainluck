@@ -30,6 +30,7 @@ from app.utils.cross_source_matching import (
     find_cross_source_markets,
     group_markets_by_group_id,
     is_resolved as _is_resolved,
+    is_same_question,
     source as _source,
 )
 from app.utils.feed_market_quality import hard_excluded_family
@@ -789,6 +790,63 @@ def _by_uncertainty(row: dict, market: FuturesMarket) -> tuple[int, float]:
     distribution rather than a number tuned to promote anything.
     """
     return (1 if _never_really_traded(market) else 0, _decidedness(row))
+
+
+# #9448 — ONE RACE, ONE CARD. Kalshi and Polymarket both list Georgia's
+# down-ballot races, and `build_section` sliced the sorted pool with nothing
+# folding a venue's market into its twin, so the governor section served each
+# race twice (19:25Z 2026-09-28: six of its ten cards were three races, and the
+# Secretary of State pair led with opposite candidates — Tim Fleming (R) 50% on
+# one card, Penny Brown Reynolds 51% on the other).
+#
+# 🔴 THE TITLE ALONE IS NOT ENOUGH. `is_same_question` pairs all three twins,
+# and it ALSO pairs "Georgia Governor winner?" with "Georgia Lieutenant
+# Governor winner?" (near-match containment passes), which are two races. A
+# deduper that over-pairs deletes a card the reader wanted, so a twin must also
+# price the same candidates. Polymarket tags its candidates with a party
+# (`Greg Dolezal (R)`) and Kalshi does not, so the tag is stripped. The governor
+# and lieutenant-governor races share no candidate and are refused.
+#
+# The pair keeps the card that sorts first. The venues' volumes are in
+# different units (Kalshi contracts, Polymarket dollars), so "the more traded
+# one" is not a comparison this page can make; the section's own selector is.
+_PARTY_TAG_RE = re.compile(r"\s*\((?:R|D|I)\)\s*$", re.I)
+
+
+def _candidate_key(market: FuturesMarket) -> frozenset[str]:
+    return frozenset(
+        _PARTY_TAG_RE.sub("", o.name or "").strip().casefold()
+        for o in _clean_outcomes(market.outcomes)
+    )
+
+
+def _is_venue_twin(a: FuturesMarket, b: FuturesMarket) -> bool:
+    if _source(a) == _source(b):
+        return False
+    candidates = _candidate_key(a)
+    if not candidates or candidates != _candidate_key(b):
+        return False
+    return is_same_question(a.name, b.name)
+
+
+def _take_without_venue_twins(
+    pairs: list[tuple[dict, FuturesMarket]], limit: int
+) -> list[dict]:
+    """The first `limit` rows of an already-sorted section, one card per race.
+
+    Compares each candidate only with the rows already kept (at most `limit`),
+    never pool-wide: the Other pool is ~4,000 rows, and a pairwise pass over it
+    would cost seconds of title comparisons. A folded twin's slot backfills from
+    the same sorted pool.
+    """
+    kept: list[tuple[dict, FuturesMarket]] = []
+    for row, market in pairs:
+        if len(kept) >= limit:
+            break
+        if any(_is_venue_twin(market, other) for _, other in kept):
+            continue
+        kept.append((row, market))
+    return [row for row, _ in kept]
 
 
 def _is_headline_market(name_lower: str) -> bool:
@@ -1682,7 +1740,7 @@ async def get_politics(db: AsyncSession, stage_ms: dict | None = None):
                 continue
             pairs.append((row, m))
         pairs.sort(key=lambda rm: _by_uncertainty(*rm))
-        return [row for row, _ in pairs][:limit]
+        return _take_without_venue_twins(pairs, limit)
 
     # Presidential — dual-source merge
     presidential, outcome_id_map = _build_presidential(
