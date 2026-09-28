@@ -1699,11 +1699,11 @@ struct OddsChartView: View {
                 in: dataPoints, visible: Self.defaultVisibleSources(in: dataPoints),
                 reading: liveEdge, latestFrame: liveFrames.last)
         else { return nil }
-        let source = newest.source
-        let points = dataPoints.filter { $0.source == source }
+        let edgeSource = newest.source
+        let points = dataPoints.filter { $0.source == edgeSource }
         guard let split = LiveChartEdgeMarkerPlan.split(
             segments: Self.observationSegments(points, gameStart: gameStartDate),
-            newest: newest, source: source),
+            newest: newest, source: edgeSource),
               domain.contains(split.tail.to.date),
               split.tail.from.map({ domain.contains($0.date) }) ?? true else { return nil }
         return split
