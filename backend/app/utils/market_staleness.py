@@ -8,6 +8,8 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from app.utils.kalshi_retention import PROVABLY_PURGED_AGE_DAYS
+
 _MONTH_NAME_TO_NUMBER = {
     "jan": 1, "january": 1, "feb": 2, "february": 2,
     "mar": 3, "march": 3, "apr": 4, "april": 4,
@@ -1416,3 +1418,44 @@ def should_exclude_from_featured(
     if is_probability_extreme(leader_probability):
         return "probability_extreme"
     return is_title_implied_stale(market_name, sport_category, now)
+
+
+def last_priced_before_the_venue_forgets(market: Any, now: datetime) -> bool:
+    """Is this market's FRESHEST price older than Kalshi keeps a closed book?
+
+    #9343 (and #9330 on /politics, which carries its own copy until both land).
+    ``FuturesOutcome.last_updated`` is the pollers' unconditional TOUCH stamp:
+    it advances on every price-writing pass whether or not the number moved,
+    and it stops the moment the venue stops listing the market. ``status``
+    cannot see that — a market the venue has dropped keeps ``'open'`` in our
+    DB (gotcha #33) — so a months-untouched leg is still served as a quote.
+
+    Specimens on /economics, 2026-09-28 08:25Z:
+
+    * "Will a court order a tariff refund?" (``KXTARIFFREFUND-25``) served
+      "99% · Before July 2026" off legs last written 2026-03-05, 207 days
+      earlier; Kalshi's event now answers ``markets: []``.
+    * "Will Nasdaq 100 (NDX) close over $24,000 on the final trading day of
+      December 2026?" (Polymarket 148025) served 49.5% off legs last written
+      2026-04-29; the venue lists it ``active=false`` with no bid, so 0.495 is
+      a placeholder, not a trade.
+
+    Past :data:`PROVABLY_PURGED_AGE_DAYS` a price cannot even be checked
+    against the venue's own history, so it is not a quote whatever it says.
+
+    The FRESHEST leg decides, not the stalest — one leg written this week
+    means the market is being priced. A market with no stamp on any leg is NO
+    EVIDENCE and stays: absence of a stamp is not proof of a dead book.
+    """
+    stamps = [
+        o.last_updated
+        for o in (getattr(market, "outcomes", None) or [])
+        if getattr(o, "last_updated", None) is not None
+    ]
+    if not stamps:
+        return False
+    freshest = max(
+        s if s.tzinfo is not None else s.replace(tzinfo=timezone.utc)
+        for s in stamps
+    )
+    return freshest < now - timedelta(days=PROVABLY_PURGED_AGE_DAYS)

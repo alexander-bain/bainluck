@@ -11,7 +11,7 @@ import json
 import logging
 import re
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends
 from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -43,6 +43,7 @@ from app.utils.economics_headline import (
 from app.utils.market_staleness import (
     CUMULATIVE_THRESHOLD_PREFIXES,
     featured_leader_probability,
+    last_priced_before_the_venue_forgets,
     outcome_names_are_cumulative_ladder,
     should_exclude_from_featured,
 )
@@ -443,6 +444,32 @@ def _index_symbol(market: FuturesMarket, cut: str) -> str:
     head = re.split(rf"\b{re.escape(cut)}\b", market.name or "", maxsplit=1, flags=re.I)[0]
     head = re.sub(r"\b(?:closes?|finishes|ends?|settles?)\s*$", "", head.strip(), flags=re.I)
     return head.strip(" ,-—")[:20]
+
+
+#: How far ahead a TODAY'S CLOSE market may resolve. Friday after the bell,
+#: the next session's markets resolve Monday 20:00Z — three days out — and a
+#: Monday holiday pushes that to Tuesday. Four days admits every next-session
+#: market and nothing that resolves a week or a year away.
+_TODAYS_CLOSE_HORIZON = timedelta(days=4)
+
+
+def _resolves_by_the_next_close(market: FuturesMarket, now: datetime) -> bool:
+    """Is this a question about the NEXT close, the only one the card answers?
+
+    #9343. The card is headed TODAY'S CLOSE and prints ``{prob}% up``. The
+    branch that feeds it admitted any market whose name holds an index word and
+    ``close``, so ``Will Nasdaq 100 (NDX) close over $24,000 on the final
+    trading day of December 2026?`` (Polymarket 148025) reached it, read as
+    "Will Nasdaq 100 (NDX — 49.5% up": a year-end threshold printed as today's
+    direction. Every daily market carries its session's close as
+    ``resolution_date``; a market without one cannot claim to be today's.
+    """
+    resolves = getattr(market, "resolution_date", None)
+    if resolves is None:
+        return False
+    if resolves.tzinfo is None:
+        resolves = resolves.replace(tzinfo=timezone.utc)
+    return resolves <= now + _TODAYS_CLOSE_HORIZON
 
 
 def _index_row(market: FuturesMarket) -> dict | None:
@@ -1186,6 +1213,10 @@ async def get_economics(db: AsyncSession):
             m.name, m.llm_sport_category, m.status, _leader_prob(m), now,
         ):
             continue
+        # #9343: a months-old price is not a quote. `status` cannot see a
+        # market the venue stopped listing (gotcha #33); the touch stamp can.
+        if last_priced_before_the_venue_forgets(m, now):
+            continue
         spotlight_eligible.append(m)
         theme = _classify_theme(m)
         themed[theme].append(m)
@@ -1537,6 +1568,13 @@ async def get_economics(db: AsyncSession):
     for m in markets_markets:
         name_lower = (m.name or "").lower()
         if any(idx in name_lower for idx in ("nasdaq", "s&p", "dow", "vix")) and ("up or down" in name_lower or "close" in name_lower):
+            # #9343: the name test also admits "…close over $24,000 on the
+            # final trading day of December 2026?", which the card printed as
+            # "49.5% up". Such a market is dropped, not re-routed to the side
+            # list: this card is the only place the page reads the name as a
+            # daily question.
+            if not _resolves_by_the_next_close(m, now):
+                continue
             _row = _index_row(m)
             if _row:
                 today_indices.append(_row)
