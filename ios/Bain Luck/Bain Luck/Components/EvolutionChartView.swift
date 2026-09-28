@@ -492,6 +492,14 @@ struct EvolutionChartView: View {
         EvolutionCombinedLinePolicy.fieldIsOneQuestion(servedOutcomes: data?.outcomes ?? [])
     }
 
+    /// How many lines this chart can draw at all: the served field without `Field`,
+    /// BEFORE the reader's `Top N` chip truncates it (#9140). Deciding the controls
+    /// off `displayedOutcomes` instead would let a chip hide itself — pick Top 5 on a
+    /// twelve-row board and the group would see five rows and vanish with it.
+    private var drawableOutcomeCount: Int {
+        (data?.outcomes ?? []).filter { $0.name != "Field" }.count
+    }
+
     private var displayedNames: [String] { displayedOutcomes.map(\.name) }
 
     private var effectiveSelected: Set<String> {
@@ -919,7 +927,9 @@ struct EvolutionChartView: View {
             availableRanges: availableRanges,
             selectedRange: $selectedRange,
             showCombinedProbability: $showCombinedProbability,
-            sumAvailable: fieldSupportsCombinedLine,
+            sumAvailable: fieldSupportsCombinedLine
+                && EvolutionControlBar.sumHasSomethingToAdd(drawableOutcomes: drawableOutcomeCount),
+            topAvailable: EvolutionControlBar.topHasSomethingToCut(drawableOutcomes: drawableOutcomeCount),
             topFilter: $topFilter,
             seasonWord: EvolutionRangeVocabulary.seasonWord(
                 sportCategory: data?.sportCategory,
@@ -1580,6 +1590,10 @@ struct EvolutionControlBar: View {
     /// measure the widest vocabulary — keeps measuring the bar WITH the `Sum` chip,
     /// which is the wide case and therefore the one worth pinning.
     var sumAvailable: Bool = true
+    /// Whether the `Top N` group can change anything on this market (#9140).
+    /// Defaulted `true` for the same reason as `sumAvailable`: the layout tests
+    /// measure the widest bar, and that is the bar with every group in it.
+    var topAvailable: Bool = true
     @Binding var topFilter: Int
     /// What the widest chip is called for THIS market (#7077). Defaulted so the
     /// bar still composes on its own — every caller that shows a real market
@@ -1671,10 +1685,36 @@ struct EvolutionControlBar: View {
         }
     }
 
+    /// The `Top N` choices, smallest first.
+    static let topChoices = [5, 10, 20]
+
+    /// #9140 — a control that changes nothing is absent, like `sumToggle`.
+    ///
+    /// On a one-outcome Yes/No market (Discover's most common futures shape,
+    /// /futures/112894) the bar offered `Sum` and `Top 5/10/20` and all four did
+    /// nothing: `EvolutionCombinedLinePolicy.combinedProbability` refuses a
+    /// selection of one, and no chip can cut a board already smaller than it.
+    /// Both are counts of DRAWABLE rows (served, minus `Field`), never of the rows
+    /// the current chip left on screen.
+    static func sumHasSomethingToAdd(drawableOutcomes: Int) -> Bool {
+        drawableOutcomes >= 2
+    }
+
+    static func topHasSomethingToCut(drawableOutcomes: Int) -> Bool {
+        drawableOutcomes > topChoices[0]
+    }
+
     @ViewBuilder
     func topGroup(chipPadding: CGFloat, wraps: Bool = false) -> some View {
+        if topAvailable {
+            topChips(chipPadding: chipPadding, wraps: wraps)
+        }
+    }
+
+    @ViewBuilder
+    private func topChips(chipPadding: CGFloat, wraps: Bool) -> some View {
         ChipStrip(wraps: wraps) {
-            ForEach([5, 10, 20], id: \.self) { n in
+            ForEach(Self.topChoices, id: \.self) { n in
                 Button {
                     topFilter = n
                 } label: {
