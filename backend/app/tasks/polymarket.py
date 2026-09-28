@@ -985,6 +985,7 @@ async def _poll_polymarket_markets():
         "outcomes_updated": 0,
         "snapshots_created": 0,
         "legs_retired": 0,  # #4000: prices withdrawn because the venue quotes none
+        "legs_withdrawn_book_refuted": 0,  # #9399: stored prices the current book prices out
         # #2027: seeded at zero so a quiet poll and a poll that never asked
         # read differently. The refusal is the ship; the count is how anyone
         # tells that it happened without opening the database.
@@ -3606,6 +3607,22 @@ async def _process_event_batch(
                         event.id, (event.title or "")[:80], retired,
                     )
 
+                # #9399: and which legs it REFUSED to price while the venue was
+                # quoting them. The skip keeps the old number; withdraw it when
+                # this pass's book prices it out — see `_refused_leg_books`.
+                withdrawn = await _withdraw_book_refuted_legs(
+                    session, futures_market_id, _refused_leg_books(event)
+                )
+                if withdrawn:
+                    stats["legs_withdrawn_book_refuted"] = (
+                        stats.get("legs_withdrawn_book_refuted", 0) + withdrawn
+                    )
+                    logger.info(
+                        "Polymarket event %s (%s): withdrew %d stored price(s) the "
+                        "venue's current book prices out (#9399)",
+                        event.id, (event.title or "")[:80], withdrawn,
+                    )
+
                 # #6598: the ranks written above were derived against THIS
                 # BATCH. The batch is not the field — `_retire_unpriced_legs`
                 # has just nulled prices without renumbering anyone, and a leg
@@ -5244,6 +5261,111 @@ async def _retire_unpriced_legs(session, futures_market_id: int, external_ids) -
     return int(result.rowcount or 0)
 
 
+def _refused_leg_books(event) -> dict[str, tuple]:
+    """``{condition_id: (bid, ask)}`` for negRisk legs the resolver REFUSED this pass (#9399).
+
+    The third thing a pass learns about a leg it does not write. A leg with a price
+    is written; a leg with no price and no book is retired (#4000); a leg the venue
+    IS quoting whose every price we refuse — a fabricated midpoint AND a last trade
+    its own book prices out (#7548) — used to be a plain skip, and the skip kept a
+    number the current book contradicts. Hurricane Nolo (62233677) served
+    "Category 5 92%" for five hours while Gamma quoted that leg 0.09/0.32 and put
+    Category 4 at 0.785; our row still held its 10:50Z 0.92 beside its 10:50Z book,
+    so no serve-time gate could see the refutation.
+
+    This returns the fresh book for those legs so the writer can ask the one
+    question the skip never asked: does what we already store survive it? Same
+    scope as :func:`_unpriced_leg_external_ids` (negRisk multi-market only), and the
+    same skip condition as :func:`_parent_outcome_data`, so a leg is here exactly
+    when that function dropped it. A leg with no book at all is not here — it has
+    nothing to refute with, and it is ``_unpriced_leg_external_ids``' subject.
+    """
+    if not (event.neg_risk and len(event.markets) > 1):
+        return {}
+    books: dict[str, tuple] = {}
+    for market in event.markets:
+        if not market.condition_id:
+            continue
+        priced = _resolve_market_probability(market) or 0
+        if priced > 0:
+            continue  # priced this pass; the upsert already rewrote the row
+        if market.best_bid is None and market.best_ask is None:
+            continue
+        books[market.condition_id] = (market.best_bid, market.best_ask)
+    return books
+
+
+async def _withdraw_book_refuted_legs(session, futures_market_id: int, books) -> int:
+    """Withdraw a stored price the leg's CURRENT book prices out (#9399). Returns the count.
+
+    ``books`` is :func:`_refused_leg_books`' output. For each leg, the stored
+    ``current_probability`` is tested against this pass's bid/ask with
+    ``book_refutes_price`` — #5121's shipped predicate, with its half-cent tolerance
+    and its empty-book carve-out (an ask of 1.0 cannot be exceeded), the same rule
+    the resolver just used to refuse the trade. A stored number the book does not
+    refute is left alone: a skip is still a skip, and a price inside the current
+    book is still a supported one.
+
+    Field set and exemptions are :func:`_retire_unpriced_legs`' — the two rendered
+    columns only; never ``opening_probability``, never ``last_updated`` (no price is
+    fresher than the one we withdrew), never a crowned leg — plus ungraded only
+    (``resolution_source IS NULL``), because a graded row's number is a settlement,
+    not a quote. Each UPDATE re-asserts the value it read, so a price another writer
+    stored in between is never withdrawn on a stale read.
+    """
+    if not books:
+        return 0
+    from sqlalchemy import select, update
+    from app.models import FuturesOutcome
+    from app.utils.price_change_stamp import price_changed_at_value
+
+    rows = (
+        await session.execute(
+            select(
+                FuturesOutcome.id,
+                FuturesOutcome.external_id,
+                FuturesOutcome.current_probability,
+            ).where(
+                FuturesOutcome.market_id == futures_market_id,
+                FuturesOutcome.external_id.in_(list(books)),
+                FuturesOutcome.current_probability.isnot(None),
+                FuturesOutcome.is_winner.isnot(True),
+                FuturesOutcome.resolution_source.is_(None),
+            )
+        )
+    ).fetchall()
+    withdrawn = 0
+    for outcome_id, external_id, stored in rows:
+        bid, ask = books[external_id]
+        if not book_refutes_price(
+            None if bid is None else float(bid),
+            None if ask is None else float(ask),
+            float(stored),
+        ):
+            continue
+        result = await session.execute(
+            update(FuturesOutcome)
+            .where(
+                FuturesOutcome.id == outcome_id,
+                FuturesOutcome.current_probability == stored,
+                FuturesOutcome.is_winner.isnot(True),
+                FuturesOutcome.resolution_source.is_(None),
+            )
+            .values(
+                current_probability=None,
+                current_american_odds=None,
+                # A price going away IS a move (the helper's own docstring).
+                price_changed_at=price_changed_at_value(
+                    FuturesOutcome.current_probability,
+                    FuturesOutcome.price_changed_at,
+                    None,
+                ),
+            )
+        )
+        withdrawn += int(result.rowcount or 0)
+    return withdrawn
+
+
 def _last_trade_survives_own_book(market) -> float | None:
     """The leg's last trade, or ``None`` when its OWN live book prices it out (#7548).
 
@@ -5289,7 +5411,9 @@ def _last_trade_survives_own_book(market) -> float | None:
     caller writes nothing for the leg on this pass, the row keeps its last
     supported number, and the chart shows an honest gap at that stamp. It does NOT
     fall through to the ask-only fallback — that would print one side of the same
-    wide book this file already refuses to average.
+    wide book this file already refuses to average. (#9399: unless that last
+    supported number is itself priced out by the current book — then the writer
+    withdraws it, see :func:`_withdraw_book_refuted_legs`.)
     """
     last = market.last_trade_price
     if last is None or not (0 < float(last) < 1):

@@ -396,13 +396,21 @@ def test_W1_named_replay_the_poll_writer_does_not_store_the_print(which):
         f"the writer stored the {PRINT} trade print over a {bid}/{ask} book"
     )
     # A refusal is a SKIP: no row for the leg on that pass, and the number the
-    # table prints is still the last supported one.
+    # table prints is still the last supported one — UNLESS the capture book
+    # prices that number out too. Then #9399 withdraws it rather than leave a
+    # price the venue's own book contradicts (the tightest book, 0.28/0.483,
+    # sits above 0.2505; the other two contain it). Either way no snapshot is
+    # written for the leg, so the chart keeps its honest gap.
+    from app.utils.kalshi_empty_book import book_refutes_price
+
     assert [r[0] for r in after] == [0.2505]
     current = _arun(_rows(
         "SELECT current_probability::float FROM futures_outcomes WHERE external_id = :c",
         c=LARSON_CONDITION,
     ))
-    assert current == [(0.2505,)]
+    refuted = book_refutes_price(bid, ask, 0.2505)
+    assert refuted == (which == "tightest")  # the replay exercises both arms
+    assert current == ([(None,)] if refuted else [(0.2505,)])
 
     # HEALTHY FIELD CONTROL: every other leg was written on BOTH passes, so the
     # refusal cost one cell and not a stamp.

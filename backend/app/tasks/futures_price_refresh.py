@@ -2938,7 +2938,10 @@ def _venue_quotes_this_leg(market) -> bool:
 
 
 async def _fetch_polymarket_prices(
-    service, event_ids: list[str], stats: dict | None = None
+    service,
+    event_ids: list[str],
+    stats: dict | None = None,
+    refuted_out: dict | None = None,
 ) -> tuple[dict, dict]:
     """Prices for a batch of Polymarket event ids, keyed by event id.
 
@@ -2946,6 +2949,12 @@ async def _fetch_polymarket_prices(
     is either a list of priced items or :data:`VENUE_SETTLED`; a value in the
     second is the condition ids this pass was SERVED and the venue quotes no
     price for (#4000) — see :func:`_retire_unpriced_legs` below.
+
+    ``refuted_out``, when given, is filled per priced event with
+    ``polymarket._refused_leg_books`` — the fresh book of every leg this pass
+    REFUSED to price while the venue quoted it (#9399), so the writer can
+    withdraw a stored price that book prices out. An out-parameter rather than a
+    third return value so every existing caller keeps its two-tuple.
 
     THE SECOND DICT EXISTS BECAUSE ``continue`` THROWS AWAY A FACT WE WERE TOLD.
     The per-leg refusal below drops an unpriced leg from the write set, which is
@@ -2987,6 +2996,7 @@ async def _fetch_polymarket_prices(
     # my own change by blunting a guard that is still doing its job — the pin is
     # brittle about formatting, but it is right about the rule.
     from app.tasks.polymarket import _unpriced_leg_external_ids
+    from app.tasks.polymarket import _refused_leg_books  # #9399
     from app.utils.winner_field_coherence import field_is_incoherent
 
     raw_events = await service.get_events_by_ids(event_ids)
@@ -3089,6 +3099,8 @@ async def _fetch_polymarket_prices(
         # retires nothing, which is stricter than the discovery poll's placement
         # and deliberately so.
         unpriced_out[str(event.id)] = _unpriced_leg_external_ids(event)
+        if refuted_out is not None:
+            refuted_out[str(event.id)] = _refused_leg_books(event)
     return out, unpriced_out
 
 
@@ -3138,6 +3150,10 @@ async def _refresh_stale_futures_prices(
         # a clean success on every pass while retiring nothing, and a stat that
         # only appears when it fires cannot tell that apart from a quiet cohort.
         "legs_retired": 0,
+        # #9399. Stored prices withdrawn because the leg's CURRENT book prices
+        # them out while every price the venue offered this pass was refused.
+        # Unconditional for the reason `legs_retired` is.
+        "legs_withdrawn_book_refuted": 0,
         # #6598 / CERT-3182. Rows whose `rank` this pass corrected. Reported
         # unconditionally for the reason `legs_retired` is: the wiring is a
         # no-op on a field the poll already had right, so "zero" and "the call
@@ -3498,6 +3514,7 @@ async def _refresh_stale_futures_prices(
         if poly_markets:
             from app.services.polymarket_api import PolymarketAPIService
             from app.tasks.polymarket import _retire_unpriced_legs
+            from app.tasks.polymarket import _withdraw_book_refuted_legs  # #9399
 
             poly_service = PolymarketAPIService()
             try:
@@ -3531,9 +3548,15 @@ async def _refresh_stale_futures_prices(
                         stats["polymarket_wall_hit"] = True
                         break
                     chunk = ids[i : i + POLYMARKET_ID_BATCH]
+                    refuted_by_event: dict = {}
                     try:
                         priced_by_event, unpriced_by_event = (
-                            await _fetch_polymarket_prices(poly_service, chunk, stats)
+                            await _fetch_polymarket_prices(
+                                poly_service,
+                                chunk,
+                                stats,
+                                refuted_out=refuted_by_event,
+                            )
                         )
                     except Exception as exc:  # one bad batch must not wipe the run
                         stats["errors"].append(f"polymarket batch {i}: {exc}")
@@ -3570,6 +3593,15 @@ async def _refresh_stale_futures_prices(
                                     market["id"],
                                     unpriced_by_event.get(event_id) or [],
                                 )
+                                # #9399: a leg this pass refused to price keeps
+                                # its old number; withdraw it when this pass's
+                                # book prices it out. After the write, like the
+                                # retirement, and before the re-rank.
+                                withdrawn = await _withdraw_book_refuted_legs(
+                                    session,
+                                    market["id"],
+                                    refuted_by_event.get(event_id) or {},
+                                )
                                 # #6598 / CERT-3182, and LAST for the reason
                                 # `_retire_unpriced_legs` runs after the write:
                                 # the field is only knowable once both have
@@ -3591,6 +3623,17 @@ async def _refresh_stale_futures_prices(
                             if _reranked:
                                 stats["ranks_rederived"] = (
                                     stats.get("ranks_rederived", 0) + _reranked
+                                )
+                            if withdrawn:
+                                stats["legs_withdrawn_book_refuted"] = (
+                                    stats.get("legs_withdrawn_book_refuted", 0)
+                                    + withdrawn
+                                )
+                                logger.info(
+                                    "futures_price_refresh: market %s — withdrew "
+                                    "%d stored price(s) the venue's current book "
+                                    "prices out (#9399)",
+                                    market["id"], withdrawn,
                                 )
                             if retired:
                                 stats["legs_retired"] = (
