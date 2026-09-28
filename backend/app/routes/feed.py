@@ -14379,12 +14379,17 @@ async def _score_golf_tournaments(
         # Build the reason text
         leader = golfers[0]
         leader_pct = round(leader["probability"] * 100, 1)
+        champion = t.get("champion")
         # `or`, not a .get() default: UX-P185 lets `tour_label` be present-and-None
         # for a tournament whose tour we cannot evidence, and a .get() default only
         # fires on an ABSENT key — this line would otherwise read "None: X leads…".
-        reason = (
-            f"{t.get('tour_label') or 'Golf'}: {leader['name']} leads at {leader_pct}%"
-        )
+        if champion:
+            # #9212: a decided tournament has a winner, not a leader at a price.
+            reason = f"{t.get('tour_label') or 'Golf'}: {champion} won"
+        else:
+            reason = (
+                f"{t.get('tour_label') or 'Golf'}: {leader['name']} leads at {leader_pct}%"
+            )
         # #7179 — the DATED move, or no movement clause. This is the fourth
         # claim-producing path #4079's A8 did not reach: the other three share
         # `_dated_movement_change`, which keys a banked basis on `outcome_id`,
@@ -14413,7 +14418,8 @@ async def _score_golf_tournaments(
         # so the same tournaments appear in the same order. This narrows what a
         # card may SAY, never what a reader is SHOWN — the rule A8 shipped under.
         if (
-            leader.get("movement_is_dated")
+            not champion
+            and leader.get("movement_is_dated")
             and leader.get("movement_24h")
             and abs(leader["movement_24h"]) >= 0.01
         ):
@@ -14434,7 +14440,9 @@ async def _score_golf_tournaments(
         # Build headline
         headline = None
         is_live = _tournament_is_live(t, now)
-        if is_live:
+        if champion:
+            headline = "Final"
+        elif is_live:
             headline = "Live"
         elif t.get("start_date"):
             start = datetime.fromisoformat(t["start_date"])
@@ -14461,6 +14469,10 @@ async def _score_golf_tournaments(
             "schedule_status": t.get("schedule_status"),
             "commence_time": t.get("commence_time"),
             "resolution_date": t.get("resolution_date"),
+            # #9212: who won, once ESPN calls the tournament final; None until
+            # then. Spelled as this card's own field row spells the golfer, so a
+            # client can find the row by name (a team side may stay ESPN's word).
+            "champion": champion,
             "golfers": [
                 {
                     "name": g["name"],
@@ -14591,6 +14603,11 @@ def _drop_futures_blended_into_tournaments(items: list[dict]) -> list[dict]:
 
 def _tournament_is_live(t: dict, now: datetime) -> bool:
     """Check if a tournament is currently live."""
+    # #9212: ESPN called it final. Checked first, because every arm below can
+    # still say yes to a tournament that has ended: the date window runs 12h past
+    # the last day, and a winner's 24h movement outlives the final putt.
+    if t.get("champion"):
+        return False
     if t.get("schedule_status") == "in-progress":
         return True
     if t.get("start_date") and t.get("end_date"):

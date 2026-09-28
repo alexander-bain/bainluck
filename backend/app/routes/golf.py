@@ -1221,7 +1221,9 @@ async def _get_golf_schedule() -> list[dict]:
     except Exception as e:  # noqa: BLE001 — the overlay must never cost the schedule
         logger.warning("ESPN golf scoreboard overlay failed: %s", e)
         return schedule
-    return _overlay_espn_in_progress(schedule, espn_by_tour)
+    return _overlay_espn_champion(
+        _overlay_espn_in_progress(schedule, espn_by_tour), espn_by_tour,
+    )
 
 
 # ESPN league slug -> the schedule's `tour`. ESPN's DP World board is `eur`.
@@ -1313,6 +1315,64 @@ def _overlay_espn_in_progress(
                     break
         out.append(entry)
     return out
+
+
+def _overlay_espn_champion(
+    schedule: list[dict], espn_by_tour: dict[str, list[dict]],
+) -> list[dict]:
+    """Carry ESPN's champion onto the schedule entry of a tournament it calls final.
+
+    #9212: a finished tournament had no finished state anywhere in the golf
+    payload. DataGolf's schedule still read `upcoming` for the FedEx Open de
+    France at 23:4xZ on its final day (#7450: that status never moves), and the
+    only other evidence of an ending was a price — Polymarket's winner at 1.0,
+    which the /sports card printed as "100.0% · Leader" under a pulsing LIVE.
+    The venues' own grades came too late or too early to use: Kalshi's winner
+    rows went `resolved` at 14:15Z with no winner (#2644's close-time class),
+    Polymarket graded Fitzpatrick at 23:38Z, two hours after ESPN's final, and
+    our DataGolf winner market was graded off the round-3 leaderboard at 02:15Z,
+    before the final round was played. ESPN's `STATUS_FINAL` is the authority.
+
+    Matched exactly as `_overlay_espn_in_progress` matches (tour, schedule key,
+    ESPN's start inside the entry's dates), and it writes ``champion`` ONLY. It
+    deliberately leaves ``status`` alone: `completed` is what
+    `_filter_stale_tournaments` drops, and dropping the card is the opposite of
+    what a reader needs the evening a tournament ends — its result.
+
+    Returns a new list and never mutates an entry (the hour-long schedule cache).
+    """
+    out: list[dict] = []
+    for entry in schedule:
+        for event in espn_by_tour.get(entry.get("tour")) or []:
+            champion = event.get("champion")
+            if (
+                champion
+                and event.get("status") == "STATUS_FINAL"
+                and _schedule_key(event.get("name") or "") == entry.get("key")
+                and _espn_event_inside_schedule_dates(event, entry)
+            ):
+                entry = {**entry, "champion": champion}
+                break
+        out.append(entry)
+    return out
+
+
+def _name_champion_as_the_card_does(t: dict) -> None:
+    """Spell ``champion`` the way this card spells that golfer (#9212).
+
+    ESPN says "Matt Fitzpatrick"; the card's field row says "Matthew Fitzpatrick"
+    (`_match_key` folds the alias). A client matching the champion to a row by
+    name needs the card's spelling. No row matches (a team side ESPN abbreviates,
+    a golfer the card does not list) ⇒ ESPN's own name stands.
+    """
+    champion = t.get("champion")
+    if not champion:
+        return
+    key = _match_key(champion)
+    for g in t.get("_all_golfers") or t.get("golfers") or []:
+        if g.get("name") and _match_key(g["name"]) == key:
+            t["champion"] = g["name"]
+            return
 
 
 async def _get_datagolf_schedule() -> list[dict]:
@@ -2686,6 +2746,9 @@ def _enrich_with_schedule(
             t["venue"] = sched.get("venue") or t.get("venue") or None
             t["location"] = sched.get("location") or None
             t["schedule_status"] = sched.get("status") or None
+            # #9212: ESPN's champion for a tournament it calls final.
+            t["champion"] = sched.get("champion") or None
+            _name_champion_as_the_card_does(t)
             if sched.get("start_date"):
                 t["start_date"] = sched["start_date"]
             if sched.get("end_date"):

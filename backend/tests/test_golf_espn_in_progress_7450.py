@@ -228,6 +228,7 @@ async def test_golf_scoreboard_parses_espns_shape(espn_state):
         "end": "2026-09-27T04:00Z",
         "state": "in",
         "status": "STATUS_IN_PROGRESS",
+        "champion": None,  # #9212: only a STATUS_FINAL names one
     }]
 
 
