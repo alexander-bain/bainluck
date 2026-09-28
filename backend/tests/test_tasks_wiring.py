@@ -265,6 +265,9 @@ class TestBeatScheduleCompleteness:
         # #8981 — ESPN's date-only placeholder marked so readers print TBD
         # (background, hourly, :29 by the 2026-09-27 minute census).
         "mark-espn-start-placeholders-hourly",
+        # #9216 — a postseason game that must be played gets its row when ESPN
+        # schedules it (background, hourly, :11 by the same census).
+        "create-certain-postseason-games-hourly",
         "sync-statpal-standings-daily",
         "mark-resolved-futures",
         "backfill-winners",

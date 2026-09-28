@@ -61,6 +61,7 @@ from app.utils.event_completion import (
     POLYMARKET_VENUE_COMMENCE_SOURCE,
     settlement_is_a_staleness_artifact,
 )
+from app.utils.game_pairing import Pairing, pair_verdict
 from app.utils.kalshi_occurrence_start import KALSHI_OCCURRENCE_TIMED_SOURCES
 from app.utils.name_normalization import names_match
 from app.utils.provider_anchor_keys import SCALAR_DERIVED_ID_COLUMNS
@@ -463,6 +464,15 @@ class EventIdentity:
     # — midnight Eastern), good for matching and for minting a row, never for
     # overwriting the clock of a row that already has one.
     commence_time_is_placeholder: bool = False
+    # #9216: Step 3 may bind this claim ONLY to a row that could be this very
+    # game — within ``SAME_GAME_MAX_SEPARATION`` of its start (the doubleheader
+    # bound, 12h) and holding no DIFFERENT id for the claim's own provider.
+    # Without it, the ±28h window hands a Game 2 claim the Game 1 row a day
+    # earlier whenever Game 2 has no row yet — the case a pass that creates
+    # games days ahead exists for — and ESPN's rank would move Game 1's start
+    # onto Game 2's. No match then means CREATE. Default False: every existing
+    # caller keeps the matcher it has.
+    same_game_only: bool = False
 
 
 async def find_or_create_event(
@@ -669,6 +679,7 @@ async def _find_existing(
         identity.home_team_name, identity.away_team_name,
         identity.commence_time,
         claim=identity.claim,
+        same_game_only=identity.same_game_only,
     )
     if matches:
         return matches[0], list(matches[1:])
@@ -932,6 +943,7 @@ async def _structured_matches(
     commence_time: datetime,
     *,
     claim: EventClaim,
+    same_game_only: bool = False,
 ) -> list[Event]:
     """Step 3: Find events by sport + date + team names — ID-ANCHORED CLAIMS ONLY.
 
@@ -1014,12 +1026,38 @@ async def _structured_matches(
                 names_match(away_team, candidate.home_team_name)):
             matched = True
 
+        if matched and same_game_only and not _could_be_this_game(
+            candidate, commence_time, claim
+        ):
+            matched = False
+
         if matched:
             time_diff = abs((commence_time - candidate.commence_time).total_seconds())
             matches.append((time_diff, candidate))
 
     matches.sort(key=lambda x: x[0])
     return [candidate for _, candidate in matches]
+
+
+def _could_be_this_game(
+    candidate: Event, commence_time: datetime, claim: EventClaim
+) -> bool:
+    """``EventIdentity.same_game_only``'s test for one name-matched row (#9216).
+
+    Two refusals, each a fact the provider or the calendar already states:
+
+    * **Another game of this provider's.** The row holds a different id for the
+      claim's source. The provider distinguishes the two, which is
+      ``_proven_duplicates`` clause 3 and the argument in
+      ``ODDS_LISTING_IS_NOT_A_DEREFERENCE``.
+    * **Another day.** ``pair_verdict`` is not SAME — farther than the
+      doubleheader bound. Consecutive games of a series sit ~24h apart, inside
+      the matcher's 28h window. UNKNOWN (no time on the row) refuses too.
+    """
+    held = _claim_id_value(candidate, claim.source)
+    if held is not None and held != claim.source_id:
+        return False
+    return pair_verdict(candidate.commence_time, commence_time) is Pairing.SAME
 
 
 #: How far apart two rows may sit and still be the SAME fixture written twice.

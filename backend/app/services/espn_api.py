@@ -79,6 +79,10 @@ from app.utils.sport_keys import (  # noqa: E402
     ESPN_GROUP_SCOPED_BOARDS,
     SPORT_LEAGUE_MAP,
 )
+from app.utils.postseason_series import (  # noqa: E402
+    PlayoffSeries,
+    parse_playoff_series,
+)
 
 #: Which identity served a request. Recorded and logged on change so an
 #: operator can see, without a repro, whether we are on the primary path.
@@ -379,6 +383,10 @@ class ESPNEvent:
     # Re-assigned on every update call, so a reading processed twice is judged
     # afresh each time.
     position_outran_wall: bool = False
+    # #9216: which game of its series this is and how the series stands, read
+    # off `competitions[0].notes` + `.series`. None for anything that is not a
+    # playoff series. Read by `app.utils.postseason_series.certain_to_be_played`.
+    playoff_series: Optional[PlayoffSeries] = None
 
 
 def _espn_time_valid_flag(competition: dict, event_data: dict):
@@ -1190,6 +1198,13 @@ class ESPNAPIService:
             if isinstance(season_type_raw, int):
                 season_type_val = season_type_raw
 
+            # #9216: its own guard — a series object ESPN reshapes must cost the
+            # series reading, never the event (gotcha #42).
+            try:
+                playoff_series = parse_playoff_series(competition)
+            except Exception:  # noqa: BLE001
+                playoff_series = None
+
             return ESPNEvent(
                 espn_id=str(event_data.get("id")),
                 name=event_data.get("name"),
@@ -1210,6 +1225,7 @@ class ESPNAPIService:
                 stopped_without_result=espn_stopped_without_result(status_type),
                 time_valid=espn_time_valid(competition, event_data),
                 time_announced=espn_time_announced(competition, event_data),
+                playoff_series=playoff_series,
             )
         except Exception as e:
             logger.error(f"Error parsing ESPN event: {e}")
