@@ -157,7 +157,20 @@ _THEME_BY_NAME: list[tuple[re.Pattern, str]] = [
     # below the governor arm, which now reads the plural too, so "Which party
     # will hold more governorships after the midterms?" is a governor question.
     (re.compile(r"\b(?:president|presidential|2028\s*election|white\s*house|nominee)\b", re.I), "presidential"),
-    (re.compile(r"\b(?:senate|senator|house\s*(?:of\s*rep|seat)|congress|2026\s*election)\b", re.I), "congressional"),
+    # `senators?` and `the\s+house` for the same reason as `midterms?`: venues
+    # write "How many Senators will vote for the Clarity Act?" and "Will the
+    # House pass a cap on federal student loan interest rates?", and both sat
+    # in Other while "Senate passes Clarity Act by...?" sat here. Measured over
+    # all 7,971 open pool rows 2026-09-28: 23 move, every one a Congress
+    # question (20 from Other, 3 "…the House pass a reconciliation bill" from
+    # Policy). "White House" is claimed by the presidential line above, and a
+    # foreign parliament by the international line first. "the House of …"
+    # is refused: every live "House of Representatives" market is a foreign or
+    # state chamber (#8038 pins that), and none of the 23 needs the phrase.
+    # One mover is Polymarket's "Which party will win the House in 2026?",
+    # which now meets Kalshi's CONTROLH-2026 in `_best_control` exactly as the
+    # Senate twins already meet there.
+    (re.compile(r"\b(?:senate|senators?|house\s*(?:of\s*rep|seat)|the\s+house(?!\s+of\b)|congress|2026\s*election)\b", re.I), "congressional"),
     # A Federal Reserve governor is not a state governor. Without this line
     # "Lisa Cook out as Fed Governor by October 31?" files under Gubernatorial
     # on the word "Governor" alone. Sits beside the federal-appointment line
