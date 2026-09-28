@@ -119,8 +119,9 @@ final class ALiveEventPageSaysItsFreshnessOnce8320Tests: XCTestCase {
     func testFullscreenKeepsTheSameReadableStatusAsThePage() throws {
         let chart = try chartCode()
         XCTAssertEqual(occurrences(of: "LivePushDot(", in: chart), 0)
-        XCTAssertTrue(chart.contains("ifstatus==\"live\"&&liveUpdateStatus != .hidden{".replacingOccurrences(of: " ", with: "")
-                                     + "ToolbarItem(placement:.cancellationAction){LiveUpdateStatusView(status:liveUpdateStatus)}}"))
+        XCTAssertTrue(chart.contains(".safeAreaInset(edge:.top,spacing:0){ifstatus==\"live\"&&liveUpdateStatus != .hidden{LiveUpdateStatusView(status:liveUpdateStatus)".replacingOccurrences(of: " ", with: "")))
+        XCTAssertFalse(chart.contains("ToolbarItem(placement:.cancellationAction)"),
+                       "Readonly fullscreen status must not be squeezed into a navigation action")
         XCTAssertTrue(try code("Views", "EventDetailView.swift").contains("liveUpdateStatus:vm.liveUpdateStatus"))
     }
 
