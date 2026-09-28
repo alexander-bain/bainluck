@@ -1459,8 +1459,9 @@ class _RunHarness:
         # #5869: mirrors the real signature. The run passes `stats` so the
         # decline counters land in the summary; a fake that refuses the argument
         # makes the whole polymarket batch raise, and the run reports `no_work`
-        # rather than the price it was set up to write.
-        async def _priced(service, event_ids, stats=None):
+        # rather than the price it was set up to write. #9399 added
+        # `refuted_out` for the same reason.
+        async def _priced(service, event_ids, stats=None, refuted_out=None):
             return (
                 {
                     eid: [

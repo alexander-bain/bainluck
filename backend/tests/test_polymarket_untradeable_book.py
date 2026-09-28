@@ -274,6 +274,11 @@ class TestForwardOnlyByConstruction:
         # unexamined. `test_the_retirement_probe_is_not_a_write_path` below pins
         # what this exclusion assumes, so the two cannot drift.
         RETIREMENT_PROBE = "if _resolve_market_probability(market) is not None:"
+        # #9399: `_refused_leg_books` is the same kind of question — "which legs
+        # did the resolver refuse, and what book were they quoting?" — and is
+        # excluded by its exact text on the same terms, pinned write-free by
+        # `test_the_refusal_probe_is_not_a_write_path` below.
+        REFUSAL_PROBE = "priced = _resolve_market_probability(market) or 0"
         call_sites = [
             i for i, line in enumerate(src.splitlines())
             if ("_resolve_market_probability(market)" in line
@@ -281,6 +286,7 @@ class TestForwardOnlyByConstruction:
             and not line.lstrip().startswith("def ")
             and line.strip() != DELEGATION
             and line.strip() != RETIREMENT_PROBE
+            and line.strip() != REFUSAL_PROBE
         ]
         assert len(call_sites) == 3, (
             f"expected 3 resolver call sites, found {len(call_sites)} — a new "
@@ -320,6 +326,32 @@ class TestForwardOnlyByConstruction:
         assert "is_winner" not in values
         assert "opening_probability" not in values
         assert "is_winner.isnot(True)" in writer_src
+
+    def test_the_refusal_probe_is_not_a_write_path(self):
+        """What the #9399 exclusion above assumes, asserted rather than trusted.
+
+        `_refused_leg_books` must stay a pure question, and the write it feeds
+        (`_withdraw_book_refuted_legs`) nulls a stored price ONLY when the leg's
+        current book refutes it — never a grade, never an opening, never a
+        graded row.
+        """
+        from app.tasks import polymarket
+
+        block = inspect.getsource(polymarket._refused_leg_books)
+        for writer in ("pg_insert", "session.execute", "update(", ".values(", "set_="):
+            assert writer not in block, (
+                f"`_refused_leg_books` now contains {writer!r} — it is a write "
+                "path and must be audited against #1578, not excluded"
+            )
+        assert "async def" not in block, "a pure probe needs no session"
+
+        writer_src = inspect.getsource(polymarket._withdraw_book_refuted_legs)
+        values = writer_src[writer_src.index(".values(") :]
+        assert "is_winner" not in values
+        assert "opening_probability" not in values
+        assert "is_winner.isnot(True)" in writer_src
+        assert "resolution_source.is_(None)" in writer_src
+        assert "book_refutes_price(" in writer_src
 
     def test_parent_market_path_no_longer_bypasses_the_guard(self):
         """Path 4 — the least-guarded write, per the #1578 audit.
