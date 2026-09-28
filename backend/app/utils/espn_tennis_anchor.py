@@ -1490,3 +1490,166 @@ def anchorable_sport_keys(
         key for key in sport_keys
         if (token := tournament_token(key)) is not None and token in on_board
     ]
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# THE TOUR WEEK (#2774): tournaments on the board that no bucket of ours names
+# ════════════════════════════════════════════════════════════════════════════
+#
+# WHAT A READER SAW, 2026-09-28 13:20Z. The Tokyo and Beijing week — Alcaraz v
+# Michelsen, Borges v Djokovic, Badosa v Kasatkina and ~40 more — each printed
+# as TWO cards: Kalshi's row on the tour rail (`tennis_wta`, "Today 10:00 PM",
+# 64/36) and Polymarket's in search (`tennis_other`, "Tomorrow 8:00 PM", 66/34).
+# ESPN lists every one of them (Japan Open `5-2026`, China Open `959-2026`).
+#
+# WHY NOTHING REACHED THEM. `anchorable_sport_keys` scopes the anchor to the
+# buckets that name a tournament, and we hold no `tennis_*_japan_open` or
+# `tennis_*_china_open` bucket — so the whole tour outside the Odds API's list
+# was never anchored, and the twin sweep refuses every pair as "neither
+# tournament-keyed". Its docstring deferred the generic buckets to a twin
+# cleanup that reads `espn_id` collisions, and these rows have no `espn_id`.
+#
+# WHAT THE TOURNAMENT SCOPE WAS PROTECTING, AND WHY IT STILL HOLDS. Anchored
+# wide, a `tennis_atp` row contests its `tennis_atp_us_open` twin and the
+# at-most-one rule anchors neither. That contest cannot happen here: this pass
+# reads ONLY the competitions of tournaments no bucket names, so a tournament
+# row never has a competition to contest. A competition a tournament-keyed row
+# still claims is refused outright, the old way.
+#
+# AND THE CONTEST THAT REMAINS IS RESOLVED, NOT REFUSED. Two generic rows
+# claiming one ESPN competition are one match written twice (measured over the
+# ±7-day window on the specimen day: 214 competitions claimed, 91 by more than
+# one row, 0 by a tournament row). Refusing leaves the reader two cards
+# forever. So ONE row takes the id and the others take the reversible
+# `provenance:duplicate-of:` label that every surface already folds — markets
+# (`folded_event_ids`), chart and probability sources
+# (`folded_probability_sources`). The id goes on one row only, so
+# `merge-duplicate-events` (which deletes the loser of a pair SHARING a provider
+# id) is never armed. Ruling 048's direction is kept: the kept row is the
+# id-anchored one, and nothing is absorbed, deleted or re-pointed.
+
+#: The generic buckets' read window. Narrower than the tournament pass's 21
+#: days because the generic buckets are ~15x larger and the board only carries
+#: the current week's tournaments; ±7 days covers a draw's first round to its
+#: final with a day either side.
+GENERIC_ANCHOR_WINDOW_DAYS = 7
+
+#: Why a contested competition was left alone. Each is a sentence to act on.
+CONTEST_TOURNAMENT_CLAIMANT = "tournament-bucket-claimant"
+CONTEST_FOREIGN_ESPN_ID = "claimant-holds-another-espn-id"
+CONTEST_SETTLED_GHOST = "non-canonical-claimant-carries-a-result"
+
+
+def bucketless_competitions(
+    sport_keys: Iterable[str], competitions: Iterable[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """The competitions of every board tournament NO bucket of ours names.
+
+    The complement of :func:`anchorable_sport_keys`: a tournament is either
+    anchored through its own bucket or through the generic buckets, never both,
+    so the two passes cannot claim one competition from two sides.
+    """
+    named = {t for t in (tournament_token(k) for k in sport_keys) if t}
+    return [
+        c for c in competitions
+        if (token := _fold_token(c.get("event_name"))) and token not in named
+    ]
+
+
+def generic_sport_keys(sport_keys: Iterable[str]) -> list[str]:
+    """``tennis_atp``, ``tennis_wta``, ``tennis_other`` — the buckets naming no event."""
+    return [
+        k for k in sport_keys
+        if isinstance(k, str) and k.startswith("tennis") and tournament_token(k) is None
+    ]
+
+
+def pick_contest_canonical(
+    comp_id: str, claimants: list[dict[str, Any]]
+) -> tuple[Optional[int], list[int], Optional[str]]:
+    """One ESPN competition, several of our rows: which keeps the card? Pure.
+
+    ``claimants`` carry ``event_id``, ``sport_key``, ``espn_id`` and
+    ``has_result``. Returns ``(canonical_id, ghost_ids, refusal)`` —
+    ``refusal`` is set, and the other two empty, when the contest is not ours
+    to decide.
+
+    The order, and why each rule is there:
+
+    1. A row that already holds THIS competition's id is the canonical. The
+       choice is made once and every later pass re-reads it from the id, so the
+       card never flips between rows from one beat to the next.
+    2. A tour-keyed row (``tennis_atp``/``tennis_wta``) beats ``tennis_other``:
+       the tour rail lists only its own key, so keeping the ``tennis_other``
+       copy would take the match off the WTA page it is on today.
+    3. The lowest id, the row minted first — stable, and it is not a guess
+       about quality: the fold carries every ghost's markets and sources onto
+       whichever row wins, so nothing a reader sees depends on this tiebreak.
+
+    Refused, never guessed:
+
+    * a tournament-keyed claimant — that pair belongs to the tournament pass
+      and the twin sweep, which already have a rule for it;
+    * a claimant holding a DIFFERENT ESPN id — our rows disagree with ESPN
+      about identity, and a label would bury the disagreement;
+    * a non-canonical claimant carrying a final score — the twin sweep's
+      finding that a ghost never carries one (0/172) is what makes the label
+      safe; a scored ghost means the premise does not hold for this pair.
+    """
+    if any(tournament_token(c.get("sport_key")) for c in claimants):
+        return None, [], CONTEST_TOURNAMENT_CLAIMANT
+    held = [c for c in claimants if c.get("espn_id")]
+    if any(str(c["espn_id"]) != str(comp_id) for c in held):
+        return None, [], CONTEST_FOREIGN_ESPN_ID
+    ranked = sorted(
+        claimants,
+        key=lambda c: (
+            not c.get("espn_id"),
+            c.get("sport_key") == "tennis_other",
+            c["event_id"],
+        ),
+    )
+    canonical, ghosts = ranked[0], ranked[1:]
+    if any(g.get("has_result") for g in ghosts):
+        return None, [], CONTEST_SETTLED_GHOST
+    return canonical["event_id"], [g["event_id"] for g in ghosts], None
+
+
+def carried_start(
+    canonical: dict[str, Any],
+    ghosts: Iterable[dict[str, Any]],
+    *,
+    may_set: Any = provider_may_set_start,
+) -> Optional[tuple[Any, str]]:
+    """The ghost's start the canonical should wear, or ``None``. Pure.
+
+    WHY. The tour-keyed row the contest keeps is almost always Kalshi's, and a
+    Kalshi tennis start is a DATE — ``05:00:00Z`` on the day, 694 of 694 in the
+    specimen window. Its Polymarket ghost carries the venue's real start
+    (Alcaraz v Michelsen: ``2026-09-30T01:00Z``, 10am in Tokyo, against Kalshi's
+    ``2026-09-29T05:00Z``), and ESPN's own date is its midnight-ET placeholder
+    until the order of play is out, so the authority write cannot fix it.
+    Keeping the row without the start would print one card at the wrong time.
+
+    The judgement is the registry's, not this function's: a ghost's start is
+    carried only when ``commence_time_write_authorized`` lets that ghost's
+    source overwrite the canonical's — ``polymarket_venue`` over ``kalshi`` is
+    ``polymarket_venue_corrects_a_kalshi_expiration`` — and never between two
+    rows of the SAME source, where the registry's same-record-revision licence
+    would let one listing's copy overrule another's. Ghosts that disagree
+    among themselves carry nothing; that is a choice, and this declines it.
+    """
+    offers = {
+        (g.get("commence_time"), g.get("commence_time_source"))
+        for g in ghosts
+        if g.get("commence_time") is not None
+        and g.get("commence_time_source")
+        and g.get("commence_time_source") != canonical.get("commence_time_source")
+        and may_set(canonical.get("commence_time_source"), g["commence_time_source"])
+    }
+    if len(offers) != 1:
+        return None
+    (start, source), = offers
+    if start == canonical.get("commence_time"):
+        return None
+    return start, source
