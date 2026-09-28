@@ -16149,6 +16149,92 @@ def _cached_detail_payload(event_id: int, now: float) -> dict | None:
     return cached_resp
 
 
+#: #9294/#9296 — `fresh=true` detail reads, coalesced per event per process.
+#:
+#: `fresh` exists for one caller: a page that has just been told its held blend
+#: moved (a folded contributor's invalidation, #9295) and must not be answered
+#: from an entry built before the move. But that hint is BROADCAST — every open
+#: page of the game receives it in the same second — so an uncoalesced bypass
+#: turns one venue frame into one full detail build per viewer, where the cache
+#: made it one per `_EVENT_DETAIL_LIVE_TTL` per worker. On a marquee game that
+#: is the stampede this cache exists to prevent.
+#:
+#: The rule that keeps `fresh` exact AND bounded: a fresh read is served by a
+#: build that STARTED after it arrived — never one that started before, which
+#: may predate the write the caller was told about. At most one such build is
+#: in flight per event; every fresh read that arrives while it runs waits for
+#: the NEXT one, which then answers all of them. N simultaneous fresh readers
+#: cost ≤ 2 builds per worker, not N.
+#:
+#: Entry: the build's start clock (`time.time()`, the scale `_event_detail_cache`
+#: stamps with) and the `asyncio.Future` its waiters share.
+_DETAIL_FRESH_BUILDS: dict[int, tuple[float, object]] = {}
+#: True only inside the one build the barrier is running, so that `get_event`'s
+#: re-entry skips the barrier and the cache read. A contextvar and not a
+#: parameter: a parameter on the route would be a query string anyone can send.
+_detail_fresh_leader: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "_detail_fresh_leader", default=False
+)
+
+
+class _FreshBuildAbandoned(Exception):
+    """The shared build's own request went away before it finished; the
+    waiters elect a new one rather than inherit a cancellation."""
+
+
+async def _coalesced_fresh_detail(event_id: int, asked_at: float, build) -> dict:
+    """Serve a fresh detail read from a build that started after ``asked_at``.
+
+    Strictly after: two clocks that read equal cannot say which came first,
+    and the safe reading of a tie is "before". A build that started before the
+    caller asked is awaited only as a queue position — its answer, or its
+    error, belongs to the readers who were already waiting for it.
+    """
+    import asyncio
+
+    while True:
+        entry = _event_detail_cache.get(event_id)
+        if entry is not None and entry[0] > asked_at:
+            # Any build that started after we asked — fresh or an ordinary
+            # miss — read state at least as new as the write we were told of.
+            return entry[2]
+        inflight = _DETAIL_FRESH_BUILDS.get(event_id)
+        if inflight is None:
+            break
+        started_at, shared = inflight
+        try:
+            result = await asyncio.shield(shared)
+        except _FreshBuildAbandoned:
+            continue
+        except Exception:
+            if started_at > asked_at:
+                raise  # our build's answer: a 404 or a 410 is everyone's
+            continue
+        if started_at > asked_at:
+            return result
+
+    started_at = time.time()
+    shared = asyncio.get_running_loop().create_future()
+    # Nobody may be waiting; an unread exception must not log as a leak.
+    shared.add_done_callback(lambda f: f.cancelled() or f.exception())
+    _DETAIL_FRESH_BUILDS[event_id] = (started_at, shared)
+    token = _detail_fresh_leader.set(True)
+    try:
+        result = await build()
+    except Exception as exc:
+        shared.set_exception(exc)
+        raise
+    except BaseException:
+        shared.set_exception(_FreshBuildAbandoned())
+        raise
+    finally:
+        _detail_fresh_leader.reset(token)
+        if _DETAIL_FRESH_BUILDS.get(event_id, (None, None))[1] is shared:
+            del _DETAIL_FRESH_BUILDS[event_id]
+    shared.set_result(result)
+    return result
+
+
 #: The only `hero_probability_source` whose number IS the point-in-time blend.
 #: A settled hero, an `opening` fallback and `final-unresolved` are different
 #: claims, and pinning a curve's live edge to one of them would put a number on
@@ -16660,6 +16746,12 @@ async def get_event(
     # #9051: a coalesced stream-reconciliation read already knows the held
     # price may be behind. Bypass only this cache READ; publish the resulting
     # canonical/folded payload under the ordinary keys below, as on any miss.
+    # #9296: and coalesced — a broadcast invalidation must not become one
+    # build per open page. See `_coalesced_fresh_detail`.
+    if fresh and not _detail_fresh_leader.get():
+        return await _coalesced_fresh_detail(
+            event_id, _now, lambda: get_event(event_id, db=db, fresh=True)
+        )
     _cached_resp = None if fresh else _cached_detail_payload(event_id, _now)
     if _cached_resp is not None:
         return _cached_resp
