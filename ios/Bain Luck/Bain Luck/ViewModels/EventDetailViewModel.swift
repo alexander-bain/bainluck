@@ -141,6 +141,7 @@ final class EventDetailViewModel: ObservableObject {
     private var requestedChartRevisionKey: String?
 
     private var stream: LiveStreamController?
+    private var lastStreamAttemptAt: TimeInterval?
     private var streamTickTask: Task<Void, Never>?
     /// Injected so tests can drive the lifecycle without a socket. `nil` means
     /// the real `URLSession` transport.
@@ -210,7 +211,18 @@ final class EventDetailViewModel: ObservableObject {
 
         // Await primary fetch (controls loading state)
         do {
-            adopt(try await client.fetchEvent(id: eventId))
+            let fetched = try await client.fetchEvent(id: eventId)
+            adopt(fetched)
+            // A refusal retires the controller, not this page's eligibility for
+            // push forever. Only a successful live detail may authorize another
+            // attempt, at most once per fallback poll interval. Delivery callbacks
+            // never retry, and an active/reconnecting transport remains its owner.
+            if fetched.status == "live", event?.status == "live",
+               stream?.state.stopped == true,
+               let attemptedAt = lastStreamAttemptAt,
+               now() - attemptedAt >= EventRefreshPlan.livePollInterval {
+                stopStream()
+            }
             error = nil
         } catch {
             self.error = error.localizedDescription
@@ -585,6 +597,7 @@ final class EventDetailViewModel: ObservableObject {
             }
         )
         stream = controller
+        lastStreamAttemptAt = now()
         controller.start()
         // The controller's clock is driven, not ambient — see its own note. The
         // owner is what advances it.
