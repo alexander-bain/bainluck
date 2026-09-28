@@ -2577,10 +2577,54 @@ def _pair_matches_after_nation_spelling(left: tuple, right: tuple) -> bool:
     """
     spelled_left = tuple(nation_spelling(name) or name for name in left)
     spelled_right = tuple(nation_spelling(name) or name for name in right)
-    if spelled_left == tuple(left) and spelled_right == tuple(right):
-        # No country in either pair is one the feeds spell two ways. Most pairs.
+    if (spelled_left != tuple(left) or spelled_right != tuple(right)) and (
+        soccer_pair_matches(spelled_left, spelled_right)
+    ):
+        return True
+    return _pair_matches_after_city_exonym(left, right)
+
+
+#: A city the feeds write in English on one side and in its own language on the
+#: other, English -> native, matched as a whole word. #9233: the Odds API and
+#: ESPN write `Bayern Munich` (119 name slots in production 2026-09-28),
+#: Polymarket writes `FC Bayern München` (80), and the Bundesliga page served
+#: Augsburg v Bayern Munich (15313587) and FC Augsburg v FC Bayern München
+#: (15319675), 10-10 13:30Z, as two cards at 11% and 10%.
+#:
+#: The same word splits the city's other club — `Munich 1860` / `1860 Munich`
+#: against `TSV 1860 München` — and joins no two clubs: after the rewrite
+#: `bayern` and `tsv 1860` are still not a subset of each other, and
+#: `Red Bull Munich` keeps its `red bull`.
+#:
+#: Fold-local for the reason the two retries above are: `soccer_pair_matches`
+#: also decides the StatPal anchors `stamp_v1_statpal_fixtures` WRITES, and
+#: there the new join would turn a single-row stamp into a two-row refusal
+#: whenever a Polymarket row sits in the same league.
+_CITY_EXONYMS: dict[str, str] = {"munich": "Munchen"}
+_CITY_EXONYM_WORD = re.compile(
+    r"\b(" + "|".join(map(re.escape, _CITY_EXONYMS)) + r")\b", re.IGNORECASE
+)
+
+
+def _native_city_spelling(name: Optional[str]) -> Optional[str]:
+    """`Bayern Munich` -> `Bayern Munchen`. Anything else comes back unchanged."""
+    if not name:
+        return name
+    return _CITY_EXONYM_WORD.sub(lambda m: _CITY_EXONYMS[m.group(1).lower()], name)
+
+
+def _pair_matches_after_city_exonym(left: tuple, right: tuple) -> bool:
+    """:func:`soccer_pair_matches`, retried once with each city in its own language.
+
+    Asked last, only after every stricter question said no, so nothing that
+    folds today can stop folding.
+    """
+    native_left = tuple(_native_city_spelling(name) for name in left)
+    native_right = tuple(_native_city_spelling(name) for name in right)
+    if native_left == tuple(left) and native_right == tuple(right):
+        # No name in either pair carries one of the cities. Most pairs.
         return False
-    return soccer_pair_matches(spelled_left, spelled_right)
+    return soccer_pair_matches(native_left, native_right)
 
 
 @lru_cache(maxsize=4096)
