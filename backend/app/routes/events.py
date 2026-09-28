@@ -157,8 +157,10 @@ from app.utils.game_window import (
 )
 from app.utils.name_normalization import diacritic_fold_query, expand_search_terms
 from app.config.team_aliases import (
+    curated_team_aliases,
     team_nickname_event_expansions,
     team_nickname_search_expansions,
+    team_nickname_team_rows,
 )
 from app.utils.search_headline_contender import (
     HEADLINE_MARKET_TIER,
@@ -2659,7 +2661,7 @@ def _team_card_keyed(team_rows, query: str) -> list:
             # Ranking evidence, never a payload — popped before the response,
             # same as typeahead. Guarded on `isinstance(str)` because the column
             # is JSON and has been observed holding non-string members.
-            "_aliases": [a for a in (row.alternate_names or []) if isinstance(a, str)],
+            "_aliases": _team_row_aliases(row),
         }
         for row in rows
     ]
@@ -4590,6 +4592,48 @@ _TEAM_NICKNAME_EXPANSIONS: dict[str, tuple[str, str]] = team_nickname_search_exp
 _TEAM_NICKNAME_EVENT_EXPANSIONS: dict[str, tuple[str, str]] = (
     team_nickname_event_expansions()
 )
+
+#: #9272 — the same map keyed for the TEAMS card: `alias -> (sport_key, team name)`.
+_TEAM_NICKNAME_TEAM_ROWS: dict[str, tuple[str, str]] = team_nickname_team_rows()
+
+
+def _team_nickname_team_arms(terms: list[str]) -> list:
+    """TEAMS-card recall arms for curated nicknames: the named row, by (sport, name).
+
+    The Teams card on `/search` matches by full text and `/typeahead`'s by
+    word-start ILIKE, both over `alternate_names`, so a nickname only reached the
+    card once a repair script had written it onto the row — and an apostrophe
+    nickname not even then: `a's` has no lexeme under the English config, so
+    `/search?q=a's` carded nothing while the Athletics row held `A's`
+    (production 2026-09-28). This arm needs no stored alias; the map already
+    names the row. OR'd onto the card's filter by both routes, it only ADDS
+    rows, and is `[]` — no SQL change — for every query without a nickname.
+    """
+    pairs: list[tuple[str, str]] = []
+    for term in terms:
+        entry = _TEAM_NICKNAME_TEAM_ROWS.get(term.lower())
+        if entry is not None and entry not in pairs:
+            pairs.append(entry)
+    return [and_(Sport.key == sport_key, Team.name == name) for sport_key, name in pairs]
+
+
+def _team_nickname_team_order(arms: list) -> list:
+    """ORDER BY prefix putting the rows `_team_nickname_team_arms` named first.
+
+    Recall is not enough on its own: those rows match no FTS lexeme, so they
+    rank 0 and `m's` — whose `m` matches every "A&M" row — could push the
+    Mariners past the fetch window. Empty when there are no arms, so the ORDER
+    BY of every other query is unchanged.
+    """
+    return [case((or_(*arms), 0), else_=1)] if arms else []
+
+
+def _team_row_aliases(row) -> list[str]:
+    """A team row's ranking evidence: its stored `alternate_names` plus the map's
+    curated aliases for it (#9272), so a row found by nickname scores on it."""
+    return [
+        a for a in (row.alternate_names or []) if isinstance(a, str)
+    ] + list(curated_team_aliases(row.sport_key, row.name))
 
 
 def _team_nickname_futures_arms(terms: list[str]) -> list:
@@ -8041,8 +8085,14 @@ async def search_events(
     # unless the resolved-team rescue hands it roster ids, which change its
     # statement. A SAVEPOINT for the stage's reason; a shed read disarms the
     # evidence (no rows) and marks `teams` degraded exactly once.
+    # #9272: a curated nickname recalls its own row — see the helper.
+    _team_nickname_rows = _team_nickname_team_arms(terms)
+
     def _search_team_rows_q(roster_team_ids: list[int]):
         team_rank = _team_search_rank(_q_identity).label("team_rank")
+        team_filter = _build_team_search_filter(_q_identity)
+        if _team_nickname_rows:
+            team_filter = or_(team_filter, *_team_nickname_rows)
         stmt = (
             # `alternate_names` is SELECTed for the scorer, not for the payload — the
             # same correction typeahead needed (spec §3). The recall arms had always
@@ -8063,12 +8113,9 @@ async def search_events(
                 # Non-empty only when that filter resolved nothing (the rescue's own
                 # gate), and absent otherwise: the SQL every other query compiles is
                 # unchanged.
-                or_(
-                    _build_team_search_filter(_q_identity),
-                    Team.id.in_(roster_team_ids),
-                )
+                or_(team_filter, Team.id.in_(roster_team_ids))
                 if roster_team_ids
-                else _build_team_search_filter(_q_identity)
+                else team_filter
             )
             # #8756: the marquee tiebreak BEFORE the name one. `ts_rank_cd` counts
             # how often the word appears across name + aliases, so `eagles` put
@@ -8076,7 +8123,10 @@ async def search_events(
             # other ties — and `Team.name` sorted "Philadelphia" to row 26 of a
             # 25-row window. It was never fetched, so nothing below could rank
             # it. Rank still leads; only equal-rank rows reorder.
-            .order_by(team_rank.desc(), _team_marquee_order(), Team.name)
+            .order_by(
+                *_team_nickname_team_order(_team_nickname_rows),
+                team_rank.desc(), _team_marquee_order(), Team.name,
+            )
             .limit(_SEARCH_TEAM_WINDOW)
         )
         if sport:
@@ -11765,11 +11815,18 @@ async def typeahead_search(
         (Team.name.ilike(f"{_escape_like(_q_norm)}%", escape="\\"), 1),
         else_=2,
     )
+    # #9272: a curated nickname recalls its own row — see the helper.
+    _ta_team_nickname_rows = _team_nickname_team_arms(terms)
+    if _ta_team_nickname_rows:
+        team_filter = or_(team_filter, *_ta_team_nickname_rows)
     team_query = (
         select(Team.id, Team.name, Team.slug, Team.abbreviation, Team.sport_id, Team.logo_url_small, Team.alternate_names, Sport.key.label("sport_key"), Team.standings_updated_at)
         .join(Sport, Team.sport_id == Sport.id, isouter=True)
         .where(team_filter)
-        .order_by(team_prominence_order, team_name_order, Team.name)
+        .order_by(
+            *_team_nickname_team_order(_ta_team_nickname_rows),
+            team_prominence_order, team_name_order, Team.name,
+        )
         .limit(_TEAM_POOL_FETCH_LIMIT)
     )
     _ta_mark("setup")
@@ -11839,7 +11896,7 @@ async def typeahead_search(
             "team_slug": row.slug,
             "sport_key": _normalize_team_sport_key(row.sport_key),
             # Private: scorer evidence only, popped before the response.
-            "_aliases": [a for a in (row.alternate_names or []) if isinstance(a, str)]
+            "_aliases": _team_row_aliases(row)
             + ([_ta_roster_alias] if _ta_roster_alias else []),
         })
 
