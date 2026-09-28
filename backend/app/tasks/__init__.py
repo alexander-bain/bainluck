@@ -5002,6 +5002,29 @@ def mark_espn_start_placeholders(self, apply=True):
 
 
 @celery_app.task(bind=True, soft_time_limit=240, time_limit=270,
+                 name="app.tasks.create_certain_postseason_games")
+def create_certain_postseason_games(self, apply=True):
+    """A postseason game that must be played gets its row when ESPN schedules it (#9216).
+
+    Braves–Phillies and Astros–White Sox Wild Card Game 2 had Kalshi prices and
+    no row: our ESPN passes read only today's board and the Odds API lists a
+    Game 2 only after Game 1. Reads ESPN's next 3 dated boards for the MLB, NBA,
+    WNBA and NHL playoffs (at most 12 reads) and claims, as ESPN, only the games
+    the series arithmetic says must be played — never an "If Necessary" game
+    until it is certain. Attaches to a same-game row we hold, else creates. See
+    ``tasks/espn_certain_postseason``.
+
+    `apply=False` plans and writes nothing."""
+    from app.tasks.espn_certain_postseason import (
+        _run_create_certain_postseason_games,
+    )
+    return _tracked_run(
+        "create_certain_postseason_games",
+        _run_create_certain_postseason_games(apply=apply),
+    )
+
+
+@celery_app.task(bind=True, soft_time_limit=240, time_limit=270,
                  name="app.tasks.stamp_nhl_statpal_fixtures")
 def stamp_nhl_statpal_fixtures(self, apply=True):
     """Stamp each NHL row with the StatPal contest it is (#2867, D50 step 3).
@@ -7924,6 +7947,15 @@ celery_app.conf.beat_schedule = {
         # reads plus one bounded candidate query.
         "task": "app.tasks.mark_espn_start_placeholders",
         "schedule": crontab(minute=29),
+        "options": {"queue": "background"},
+    },
+    "create-certain-postseason-games-hourly": {
+        # #9216. :11 was free in the 2026-09-27 census (:29 went to #8981 the
+        # same day) and sits nine minutes before the :20 prediction-market
+        # matcher, so a Kalshi game market attaches within the half hour after
+        # its row is made. At most 12 ESPN board reads.
+        "task": "app.tasks.create_certain_postseason_games",
+        "schedule": crontab(minute=11),
         "options": {"queue": "background"},
     },
     "stamp-soccer-statpal-fixtures-hourly": {
