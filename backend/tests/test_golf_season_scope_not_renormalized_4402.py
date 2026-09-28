@@ -235,7 +235,9 @@ REAL_FIELD = _market(
     "KXDPWORLDTOUR-HBM26",
     [
         _outcome(11, "Marco Penge", 0.55),
-        _outcome(12, "Daniel Hillier", 0.50),
+        # 0.51, not 0.50: an exact 0.50 is the untraded-Kalshi-mid placeholder, which
+        # is withheld and (since #9357) no longer counts toward the scaling sum.
+        _outcome(12, "Daniel Hillier", 0.51),
         _outcome(13, "Tom McKibbin", 0.45),
         _outcome(14, "Shaun Norris", 0.40),
     ],
@@ -300,9 +302,9 @@ class TestTheFlagReachesTheRule:
         )
 
         golfers = {g["name"]: g["probability"] for g in real["golfers"]}
-        # 0.55 / 1.90, i.e. still renormalized: this rule drops fields, it does not
+        # 0.55 / 1.91, i.e. still renormalized: this rule drops fields, it does not
         # stop scaling the ones that earn it.
-        assert golfers["Marco Penge"] == pytest.approx(0.55 / 1.90, abs=0.002)
+        assert golfers["Marco Penge"] == pytest.approx(0.55 / 1.91, abs=0.002)
 
     async def test_no_golfer_from_the_season_market_leaks_into_the_page(self, golf_db):
         body = await get_golf(golf_db)
