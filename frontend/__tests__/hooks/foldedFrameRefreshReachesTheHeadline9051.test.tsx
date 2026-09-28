@@ -157,7 +157,7 @@ function HeldEvent(props: { net: Net; liveFrame: LiveFrame | null; servedHistory
   const refreshEventRef = useRef(refreshEvent);
   refreshEventRef.current = refreshEvent;
   const [foldedRefetch] = useState(() => createFoldedRefetchScheduler(
-    () => { freshNextEventReadRef.current = true; void refreshEventRef.current(); }, FOLDED_FRAME_REFETCH_MS,
+    () => { freshNextEventReadRef.current = true; return refreshEventRef.current(); }, FOLDED_FRAME_REFETCH_MS,
   ));
   useEffect(() => () => foldedRefetch.cancel(), [foldedRefetch]);
 
@@ -265,7 +265,7 @@ describe("structural pin: the harness carries the page's own wiring", () => {
     expect(PAGE).toMatch(/fetchEventWithLiveFrame\(\s*\(\) => fetchEvent\(eventId, takeFreshRead\(freshNextEventReadRef\)\),\s*\(\) => latestLiveFrameRef\.current,\s*\(\) => latestBlendEdgeRef\.current,\s*\(\) => heldEventRef\.current,/);
     expect(PAGE).toMatch(/refreshInterval: eventPollInterval/);
     // The scheduler, built once, torn down with the page.
-    expect(PAGE).toMatch(/createFoldedRefetchScheduler\(\s*\(\) => \{ freshNextEventReadRef\.current = true; void refreshEventRef\.current\(\); \}, FOLDED_FRAME_REFETCH_MS,/);
+    expect(PAGE).toMatch(/createFoldedRefetchScheduler\(\s*\(\) => \{ freshNextEventReadRef\.current = true; return refreshEventRef\.current\(\); \}, FOLDED_FRAME_REFETCH_MS,/);
     expect(PAGE).toMatch(/useEffect\(\(\) => \(\) => foldedRefetch\.cancel\(\), \[foldedRefetch\]\)/);
     // The push effect: a refused frame requests a refetch and writes NOTHING.
     expect(PAGE).toMatch(/if \(frameInvalidatesFoldedBlend\(heldEventRef\.current, liveFrame\)\) \{\s*foldedRefetch\.request\(\);\s*return;\s*\}/);
@@ -358,8 +358,8 @@ describe("#9051 case 2: the last invalidation of a burst, then silence, still re
     await page.deliver(frame({ rev: 6, p: 0.55, at: T(20) }));
     expect(page.net.requests).toHaveLength(2);
 
-    // t=2s: frame B, inside FOLDED_FRAME_REFETCH_MS. No immediate request …
-    await page.advance(2000);
+    // A second frame inside the burst window must retain a trailing read.
+    await page.advance(FOLDED_FRAME_REFETCH_MS / 2);
     await page.deliver(frame({ rev: 7, p: 0.5, at: T(22) }));
     expect(page.net.requests).toHaveLength(2);
 
@@ -370,7 +370,7 @@ describe("#9051 case 2: the last invalidation of a burst, then silence, still re
 
     // Nothing else arrives. By the end of the floor the page must have asked
     // again on its own — no frame, no 120 s poll.
-    await page.advance(FOLDED_FRAME_REFETCH_MS - 2000);
+    await page.advance(FOLDED_FRAME_REFETCH_MS / 2);
     expect(page.net.requests).toHaveLength(3);
     await page.resolve(2, folded({ p: 0.4, observedAt: T(12), revision: { "100": 7, "101": 3 } }));
     expect(page.text()).toBe('0.40|{"100":7,"101":3}|3-1|live');
@@ -382,20 +382,16 @@ describe("#9051 case 2: the last invalidation of a burst, then silence, still re
     await page.unmount();
   });
 
-  it("discriminating order: the coalesced refresh answers first, the earlier snapshot cannot roll it back", async () => {
+  it("a slow read is not overlapped and the burst's last revision lands next", async () => {
     const page = await mountHeldEvent();
     await page.resolve(0, folded({ p: 0.6, observedAt: T(12), revision: { "100": 5, "101": 3 } }));
     await page.deliver(frame({ rev: 6, p: 0.55, at: T(20) }));
-    await page.advance(1000);
+    await page.advance(FOLDED_FRAME_REFETCH_MS * 2);
     await page.deliver(frame({ rev: 7, p: 0.5, at: T(21) }));
-    await page.advance(FOLDED_FRAME_REFETCH_MS - 1000);
-    expect(page.net.requests).toHaveLength(3);
-
-    // The later request answers first, with the newer fold.
-    await page.resolve(2, folded({ p: 0.4, observedAt: T(12), revision: { "100": 7, "101": 3 } }));
-    expect(page.text()).toBe('0.40|{"100":7,"101":3}|3-1|live');
-    // The earlier request answers late, with the older fold: refused.
+    expect(page.net.requests).toHaveLength(2);
     await page.resolve(1, folded({ p: 0.45, observedAt: T(12), revision: { "100": 6, "101": 3 } }));
+    expect(page.net.requests).toHaveLength(3);
+    await page.resolve(2, folded({ p: 0.4, observedAt: T(12), revision: { "100": 7, "101": 3 } }));
     expect(page.text()).toBe('0.40|{"100":7,"101":3}|3-1|live');
     await page.unmount();
   });
