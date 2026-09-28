@@ -13526,6 +13526,10 @@ async def typeahead_search(
 
     futures_pool = []
     seen_futures_keys: set[str] = set()
+    # #9404: the search page's per-row repeat decision, bookkeeping included.
+    # See the call in the loop below.
+    _ta_kept_sources_by_question: dict[str, set] = {}
+    _ta_kept_boards: list = []
     # #9340: the match-class scorer below reads the typed words, and the round's
     # own markets hold none of them ("MLB Playoffs: Team to advance to ALCS" for
     # `championship series`) while "NFL: … Season Series Winner" holds `series`
@@ -13570,10 +13574,20 @@ async def typeahead_search(
         # dedup key so a live row sharing the key can take it.
         if _search_market_is_past_and_frozen(market):
             continue
-        dedup_key = _normalize_futures_dedup_key(market)
-        if dedup_key in seen_futures_keys:
+        # #9404: the SAME per-row decision the search page makes, not the tiered
+        # key alone. Production 2026-09-28 16:05Z, `world series` at 390px: the
+        # dropdown printed `MLB World Series Champion  Dodgers 30%` and, two rows
+        # down, `MLB World Series Winner  Dodgers 28%` — Polymarket 114584 (tier
+        # 1) and odds_api 1 (tier 5), one question whose venues disagree on its
+        # tier. /search dropped the second copy since #8378; this loop kept the
+        # pre-#8378 rule, so every later fold (#8410 one race, #8628 one ladder,
+        # #8843 paraphrase) stopped at the page too. One helper, two consumers:
+        # the dropdown cannot drift into its own idea of what a repeat is. The
+        # first row admitted is the reranked leader, as on /search.
+        if not _admit_search_future(
+            market, seen_futures_keys, _ta_kept_sources_by_question, _ta_kept_boards
+        ):
             continue
-        seen_futures_keys.add(dedup_key)
         # #6447 residual: the two scalars the club-name repair needs, read HERE
         # while the row is certainly live and kept as plain data. The repair
         # itself runs 400 lines below, past an `attach_season_answers` and the
