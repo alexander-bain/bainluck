@@ -20,7 +20,7 @@ from app.models.models import (
     FuturesMarket, FuturesOutcome, TeamIdentityMapping,
 )
 from app.services.database import get_db, get_db_rw
-from app.utils.game_market_club_names import repair_field_outcome_name
+from app.utils.series_card_labels import reader_outcome_name
 from app.utils.market_team_sport import (
     link_crosses_sport as _link_crosses_sport,
     sport_key_llm_category as _sport_key_llm_category,
@@ -1805,7 +1805,7 @@ async def _query_team_futures(
             # (`James Cook III`, `Pat Surtain II`), whose trailing capitals look
             # identical but whose ticker leg is a player code, not a team code.
             # A short name is visibly short; a wrong one is not.
-            "outcome_name": repair_field_outcome_name(outcome.external_id, outcome.name)
+            "outcome_name": reader_outcome_name(outcome.external_id, outcome.name)
             or outcome.name,
             "market_id": market.id,
             "market_name": market.name,
