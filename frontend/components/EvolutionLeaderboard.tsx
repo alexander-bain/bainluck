@@ -40,6 +40,7 @@ interface SidebarRow {
   outcomeId: number;
   name: string;
   currentProbability: number;
+  currentPriceAvailable?: boolean;
   color: string;
   eliminated?: boolean;
 }
@@ -67,6 +68,7 @@ export function EvolutionLeaderboard({
     return sorted.map((o, i): SidebarRow => ({
       outcomeId: o.outcome_id,
       name: shortName(o.name),
+      currentPriceAvailable: o.current_price_available,
       currentProbability: o.history[o.history.length - 1]?.probability ?? 0,
       // L2-149: prefer the shared map so a dot matches its line exactly; else
       // fall back to the local eliminated-grey / index palette.
@@ -132,7 +134,7 @@ export function EvolutionLeaderboard({
 
               {/* Probability */}
               <span className="text-[11px] text-text-secondary tabular-nums flex-shrink-0">
-                {(row.currentProbability * 100).toFixed(1)}%
+                {row.currentPriceAvailable === false ? "Unavailable now" : `${(row.currentProbability * 100).toFixed(1)}%`}
               </span>
 
               {/* Remove button */}
@@ -208,7 +210,7 @@ function PlayerSearch({
             >
               <span className="truncate">{shortName(o.name)}</span>
               <span className="text-text-muted tabular-nums ml-1 flex-shrink-0">
-                {((o.history[o.history.length - 1]?.probability ?? 0) * 100).toFixed(1)}%
+                {o.current_price_available === false ? "Unavailable now" : `${((o.history[o.history.length - 1]?.probability ?? 0) * 100).toFixed(1)}%`}
               </span>
             </button>
           ))}
