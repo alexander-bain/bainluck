@@ -2257,7 +2257,9 @@ struct EventDetailView: View {
         let lastEspn = espn?.last
 
         // Get probability from the best available source
-        let wpHistory = history.winProbHistory?.values.flatMap { $0 }
+        // Sorted by source so a tie on the latest time resolves the same way on
+        // every open, not by Dictionary order (#8509).
+        let wpHistory = history.winProbHistory?.sorted { $0.key < $1.key }.flatMap(\.value)
         let lastWp = wpHistory?.max(by: {
             ($0.timestamp.asDate ?? .distantPast) < ($1.timestamp.asDate ?? .distantPast)
         })

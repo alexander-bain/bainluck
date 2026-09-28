@@ -1207,38 +1207,18 @@ struct OddsChartView: View {
             }
         }
 
-        // Supplement with win_prob_history game_state (stat_model, espn sources have period/inning)
-        if let wpHistory = history.winProbHistory {
-            for (_, points) in wpHistory {
-                let sorted = points
-                    .compactMap { point -> (period: String, date: Date)? in
-                        guard let gs = point.gameState,
-                              let date = point.timestamp.asDate else { return nil }
-                        if let period = gs.period, !period.isEmpty {
-                            return (period, date)
-                        }
-                        if let inning = gs.inning, inning > 0 {
-                            return ("Top \(inning)", date)
-                        }
-                        return nil
-                    }
-                    .sorted { $0.date < $1.date }
-
-                var previous: Date?
-                for point in sorted {
-                    let label = normalizePeriodLabel(point.period)
-                    guard !label.isEmpty else { continue }
-                    if !seenLabels.contains(label) {
-                        seenLabels.insert(label)
-                        firstSeen.append((label, point.date))
-                        provenance[label] = PeriodProvenance(
-                            source: PeriodProvenance.clientSourceWinProbHistory,
-                            precision: PeriodProvenance.clientPrecisionFirstSeen,
-                            notBefore: previous)
-                    }
-                    previous = point.date
-                }
-            }
+        // Supplement with win_prob_history game_state (stat_model, espn sources
+        // have period/inning): each label ESPN did not already place goes at the
+        // earliest time any source saw it — never whichever source a Dictionary
+        // yields first, which moved chips between two opens of one game (#8509).
+        for sighting in WinProbPeriodSightings.earliest(in: history.winProbHistory, sportKey: sportKey)
+        where !seenLabels.contains(sighting.label) {
+            seenLabels.insert(sighting.label)
+            firstSeen.append((sighting.label, sighting.date))
+            provenance[sighting.label] = PeriodProvenance(
+                source: PeriodProvenance.clientSourceWinProbHistory,
+                precision: PeriodProvenance.clientPrecisionFirstSeen,
+                notBefore: sighting.notBefore)
         }
 
         // #3348 — the served `period_markers`, read for the first time.
