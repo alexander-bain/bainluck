@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-from sqlalchemy import select, text
+from sqlalchemy import and_, select, text
 
 from app.tasks.base import get_task_session
 from app.utils.polymarket_fixture_start import (
@@ -27,6 +27,11 @@ from app.utils.polymarket_fixture_start import (
 from app.utils.polymarket_settlement_scan import GAMMA_MAX_IDS_PER_REQUEST
 
 logger = logging.getLogger(__name__)
+
+
+def _open_polymarket_leg(futures_market):
+    """The leg filter both reads share: a Polymarket market still trading."""
+    return and_(futures_market.source == "polymarket", futures_market.status == "open")
 
 
 def candidates_query(now: datetime):
@@ -49,8 +54,7 @@ def candidates_query(now: datetime):
             Event.commence_time_source.in_(list(POLYMARKET_OWNED_SOURCES)),
             Event.commence_time >= now - LOOKBACK,
             Event.commence_time <= now + LOOKAHEAD,
-            FuturesMarket.source == "polymarket",
-            FuturesMarket.status == "open",
+            _open_polymarket_leg(FuturesMarket),
             FuturesMarket.group_id.startswith(GROUP_ID_PREFIX, autoescape=True),
         )
         .distinct()
@@ -187,8 +191,7 @@ async def _refresh_polymarket_fixture_starts(service=None, now=None) -> dict:
                 .where(
                     FuturesMarket.event_id.in_(sorted(target_by_event)),
                     FuturesMarket.group_id.in_(stamped_groups),
-                    FuturesMarket.source == "polymarket",
-                    FuturesMarket.status == "open",
+                    _open_polymarket_leg(FuturesMarket),
                 )
                 .order_by(Event.id, FuturesMarket.id)
             )

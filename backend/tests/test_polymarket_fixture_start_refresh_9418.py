@@ -374,6 +374,22 @@ async def test_a_finished_row_is_never_read(monkeypatch, status):
 
 
 @pytest.mark.asyncio
+async def test_a_row_whose_legs_are_closed_is_never_read(monkeypatch):
+    """A closed leg is not a venue still dating the match; the row keeps its start."""
+    session, sport = _rail()
+    event = _event(session, sport)
+    _market(session, event, status="closed")
+    service = _Service([SPECIMEN])
+
+    stats = await _run(monkeypatch, session, service, datetime(2026, 9, 28, 14, 5, tzinfo=timezone.utc))
+
+    from app.models.models import Event
+
+    assert service.calls == [] and stats["candidates"] == 0
+    assert session.get(Event, event.id).commence_time.replace(tzinfo=timezone.utc) == LISTING_START
+
+
+@pytest.mark.asyncio
 async def test_a_row_outside_the_window_is_never_read(monkeypatch):
     session, sport = _rail()
     _specimen_rows(session, sport, commence=LISTING_START + timedelta(days=3))
