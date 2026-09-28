@@ -72,7 +72,7 @@ line" — a chart with no line cannot place a boundary on it.
 from __future__ import annotations
 
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Optional
 
 # Which instrument put a period boundary on the chart.
@@ -430,7 +430,8 @@ def _opening_clock_bracket(
     reading no second of it had run, and by the first reading below that it had.
     That is a lower and an upper bound from two observations, which is what #6718
     demands — NOT a start clock standing in for the bracket. A lone `15:00` with
-    nothing after it, or a stream that opens already running, still gets nothing.
+    nothing after it, or a stream that opens already running, gets nothing HERE;
+    the second case is :func:`_kickoff_bracket`'s, when the caller has a kickoff.
 
     It is only ever `first_seen`: the clock can sit at 15:00 through a touchback
     kickoff, so "the clock had not run" is a slightly later instant than "the
@@ -459,9 +460,64 @@ def _opening_clock_bracket(
     return None
 
 
+def _clock_seconds(clock: Optional[str]) -> Optional[int]:
+    """`'14:55'` → 895, or ``None``."""
+    if not clock:
+        return None
+    minutes, _, seconds = clock.partition(":")
+    try:
+        return int(minutes) * 60 + int(seconds)
+    except ValueError:
+        return None
+
+
+def _kickoff_bracket(
+    rows: list, i: int, can_bound: list[bool], kickoff: Optional[datetime]
+) -> bool:
+    """True when the listed kickoff bounds a 1st quarter whose stream opened running.
+
+    #9179, the arm `_opening_clock_bracket` leaves out. SNF LAR@DEN 14780548
+    (2026-09-28): `espn_history[0]` was `00:23:51Z 14:55 - 1st Quarter`, no `15:00`
+    row, so Q1 got nothing and the chain fell to the first-SCORE tier — the Rams
+    touchdown at 00:49:52Z, 26 minutes into the quarter, and the line moved on a
+    held page (ux notice-42 frames 17:33 vs 17:53 PT).
+
+    The listed kickoff is a schedule fact, not an observation, so it is only ever
+    the LOWER end (`not_before`); the marker still stands on the first running
+    reading, `first_seen`. A scheduled time is not an actual start (Alex 9/14), and
+    this never claims one. Two conditions make it a bound rather than a guess:
+
+    * the bracket fits `MAX_FIRST_SEEN_BRACKET`, like every other `first_seen`;
+    * the quarter's clock has run no more game time than wall time has passed
+      since kickoff. A clock cannot outrun the wall (#9020), so a reading that is
+      further along than that proves the game began BEFORE the listed kickoff —
+      the listing is then no lower bound at all, and there is no marker.
+
+    1st quarter only: every later quarter follows a state the transition tier
+    already brackets it from.
+    """
+    if kickoff is None or not can_bound[i]:
+        return False
+    when, rank, clock = rows[i][0], rows[i][1], rows[i][5]
+    if rank != _QUARTER_RANK or clock is None or clock == _QUARTER_OPENING_CLOCK:
+        return False
+    run = _clock_seconds(clock)
+    opening = _clock_seconds(_QUARTER_OPENING_CLOCK)
+    if run is None or run > opening:
+        return False
+    wall = when - kickoff
+    if wall > MAX_FIRST_SEEN_BRACKET:
+        return False
+    # Also refuses a reading taken AT or BEFORE the listing: a running clock has
+    # spent more than zero game time, and zero or negative wall time cannot hold it.
+    return timedelta(seconds=opening - run) <= wall
+
+
 def observed_transition_markers(
     sport_key: Optional[str],
     observations: Iterable[dict],
+    *,
+    kickoff_not_before: Any = None,
 ) -> list[dict]:
     """Period markers from the game-state stream; ``[]`` when it cannot say.
 
@@ -473,9 +529,16 @@ def observed_transition_markers(
 
     Every marker returned carries a real ``not_before``. See the module note
     above for the three shapes this refuses and why each one cost a wrong screen.
+
+    ``kickoff_not_before`` is the row's LISTED kickoff, passed only when it is a
+    kickoff and not a venue's expected resolution (#7878). It bounds nothing but
+    a 1st quarter whose stream opened already running (:func:`_kickoff_bracket`).
     """
     if not sport_key or not sport_key.startswith(TRANSITION_SPORT_PREFIXES):
         return []
+    kickoff = _parse(kickoff_not_before) if kickoff_not_before is not None else None
+    if kickoff is not None and kickoff.tzinfo is None:
+        kickoff = kickoff.replace(tzinfo=timezone.utc)
 
     rows: list[tuple[datetime, int, Optional[str], Any, Any, Optional[str]]] = []
     seen: set[tuple[datetime, int]] = set()
@@ -567,6 +630,14 @@ def observed_transition_markers(
             clock_bracket = _opening_clock_bracket(rows, i, can_bound)
             if clock_bracket is None:
                 placed.add(label)
+                if _kickoff_bracket(rows, i, can_bound, kickoff):
+                    markers.append({
+                        "timestamp": raw_ts,
+                        "period": label,
+                        "source": source or SOURCE_WIN_PROB,
+                        "precision": PRECISION_FIRST_SEEN,
+                        "not_before": kickoff.isoformat(),
+                    })
                 continue
             last_open, first_run = clock_bracket
             placed.add(label)

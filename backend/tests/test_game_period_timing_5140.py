@@ -188,12 +188,20 @@ class TestServedMarkers:
         assert abs(q[3] - _dt("2026-09-10T01:53:41+00:00")) < timedelta(seconds=1), q
         assert abs(q[4] - _dt("2026-09-10T02:36:55+00:00")) < timedelta(seconds=1), q
 
-    async def test_q1_is_not_backfilled_when_nobody_saw_it_start(self):
+    async def test_q1_is_not_backfilled_to_kickoff_when_the_stream_opens_running(self):
         """14780138's first state row is `14:55 - 1st Quarter` with nothing before
-        it. That is a first sighting with no bracket: Q1 stays absent. It is NOT
-        placed at kickoff and NOT placed at the first row."""
+        it. It is NOT placed at kickoff. Until #9179's second arm it had no bracket
+        at all and stayed absent — but only once Q2 was seen; during Q1 the chain
+        fell to the first-SCORE tier and drew it there (SNF 14780548, 2026-09-28).
+        The listed kickoff (00:20:00Z) now lower-bounds it, the clock having run 5s
+        in 4m28s of wall time, so Q1 stands on that first reading as `first_seen`."""
         _, body = await _replay("nfl_14780138_history_replay.json")
-        assert 1 not in _by_quarter(body)
+        q1 = [m for m in body["period_markers"] if m["period"] == "1st Quarter"]
+        assert len(q1) == 1, body["period_markers"]
+        assert _dt(q1[0]["timestamp"]) == _dt("2026-09-10T00:24:28.214933+00:00")
+        assert _dt(q1[0]["timestamp"]) != _dt("2026-09-10T00:20:00+00:00")
+        assert _dt(q1[0]["not_before"]) == _dt("2026-09-10T00:20:00+00:00")
+        assert q1[0]["precision"] == pm.PRECISION_FIRST_SEEN
 
     async def test_a_silent_state_stream_leaves_the_carried_play_out_of_the_markers(self):
         """The one football path the observed transitions never reach: a game whose

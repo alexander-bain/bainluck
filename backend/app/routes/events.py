@@ -28220,6 +28220,13 @@ async def get_event_odds_history(
                 for pt in pts
                 if isinstance(pt.get("game_state"), dict)
             ],
+            # #9179: the listed kickoff lower-bounds a Q1 whose stream opened
+            # already running — never when it is a venue's expected END (#7878).
+            kickoff_not_before=(
+                event.commence_time
+                if event.commence_time and not _commence_time_is_venue_expiration(event)
+                else None
+            ),
         )
         if _observed:
             period_markers = _observed
