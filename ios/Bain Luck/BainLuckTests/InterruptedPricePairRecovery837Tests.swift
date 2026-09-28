@@ -2,7 +2,7 @@ import XCTest
 import Foundation
 @testable import Bain_Luck
 
-/// A stream revision asks for a newer pair, not the same 15s/60s device cache.
+/// A failed authoritative read must not publish half a pair or a fresh receipt.
 /// Real APIClient + real URLSession dispatch; only the HTTP server is stubbed.
 @MainActor
 final class InterruptedPricePairRecovery837Tests: XCTestCase {
@@ -98,8 +98,34 @@ final class InterruptedPricePairRecovery837Tests: XCTestCase {
         XCTAssertEqual(Origin.requests(ending: "/4242").count, count)
         XCTAssertEqual(Origin.requests(ending: "/history").count, count)
     }
-    private func exerciseFailure(_ suffix: String) async throws {
-        let api = client(), handle = Handle(), vm = model(api, handle: handle)
+    private nonisolated final class Ticker: @unchecked Sendable {
+        private let lock = NSLock()
+        private var waiters: [CheckedContinuation<Void, Never>] = []
+        private var open = false
+        func sleep(_ seconds: TimeInterval) async {
+            if lock.withLock({ open }) {
+                try? await Task.sleep(for: .milliseconds(50))
+                return
+            }
+            await withCheckedContinuation { continuation in
+                lock.lock()
+                if open { lock.unlock(); continuation.resume() }
+                else { waiters.append(continuation); lock.unlock() }
+            }
+        }
+        func openGate() {
+            lock.lock(); open = true
+            let parked = waiters; waiters.removeAll(); lock.unlock()
+            for continuation in parked { continuation.resume() }
+        }
+    }
+    private func exerciseFailure(_ suffix: String, recoverByPoll: Bool = false) async throws {
+        let api = client(), handle = Handle(), ticker = Ticker()
+        let vm = recoverByPoll
+            ? EventDetailViewModel(eventId: 4242, client: api, makeStreamHandle: { _ in handle },
+                  now: { [weak self] in self?.clock ?? 0 }, sleep: { await ticker.sleep($0) })
+            : model(api, handle: handle)
+        defer { ticker.openGate() }
         defer { vm.stopRefresh() }
         await vm.load(); handle.fire("open")
         Origin.advance(); handle.pushNewRevision(); try await awaitRequests(2)
@@ -115,8 +141,11 @@ final class InterruptedPricePairRecovery837Tests: XCTestCase {
         XCTAssertEqual(vm.event?.currentOdds?.homeProbability, 0.55,
                        "Keep the last accepted complete pair during outage")
         XCTAssertEqual(vm.history?.aggregateLine?.last?.homeProbability, 0.55)
+        XCTAssertEqual(vm.currentRefreshPlan, .poll(every: 30), "Failed price delivery keeps the attentive fallback")
         Origin.fail(nil); clock += 6
-        handle.pushNewRevision(12); try await awaitRequests(4)
+        if recoverByPoll { ticker.openGate() }
+        else { handle.pushNewRevision(12) }
+        try await awaitRequests(4)
         XCTAssertEqual(vm.event?.currentOdds?.homeProbability, 0.52)
         XCTAssertEqual(vm.history?.aggregateLine?.last?.homeProbability, 0.52)
         XCTAssertEqual(vm.liveUpdateStatus, .live)
@@ -124,6 +153,9 @@ final class InterruptedPricePairRecovery837Tests: XCTestCase {
     }
     func testFailedDetailIsHonestAndRecoversOnNextFrameWithoutRelaunch() async throws {
         try await exerciseFailure("/4242")
+    }
+    func testRestoredQuietConnectionRecoversOnExistingPollWithoutAnotherFrame() async throws {
+        try await exerciseFailure("/history", recoverByPoll: true)
     }
     func testFailedHistoryCannotEarnReceiptAndRecoversWithoutRelaunch() async throws {
         try await exerciseFailure("/history")
