@@ -18,7 +18,7 @@ could only drift away from the first one.
 WHAT THIS FILE MUST NOT DO. It shares the web dyno's two uvicorn event loops
 with `/api/feed`. Every connection here is long-lived, so any per-tick database
 work or blocking call would put feed latency behind stream fanout for every
-other request on the same loop. After the one live-gate lookup at connect there
+other request on the same loop. After the bounded live-gate and fold lookup at connect there
 is no database access on this path at all: frames carry their own values, and
 the client's initial state comes from the REST payload the page already fetched.
 
@@ -45,6 +45,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models import Event
 from app.services.database import async_session_maker
@@ -125,18 +126,89 @@ async def _event_status(db: AsyncSession, event_id: int) -> Optional[str]:
     ).scalar_one_or_none()
 
 
-async def _stream(event_id: int, request: Request) -> AsyncIterator[str]:
+async def _fold_stream_ids(db: AsyncSession, event_id: int) -> list[int]:
+    """Resolve detail's orientation-safe fold once, before releasing the DB.
+
+    Include rows with removed sources: their next revision still invalidates
+    the fold. Membership changes are picked up on stream reconnect.
+    """
+    from app.utils.proven_duplicates import folded_series_event_ids
+    from app.utils.serve_fold_absorbed import serve_fold_absorbed_rows
+
+    event = (await db.execute(
+        select(Event).options(selectinload(Event.sport)).where(Event.id == event_id)
+    )).scalar_one_or_none()
+    if event is None:
+        return [event_id]
+    absorbed = await serve_fold_absorbed_rows(db, event)
+    return await folded_series_event_ids(db, event_id, absorbed)
+
+
+class _FoldSubscription:
+    """Read contributor mailboxes concurrently through the existing shared hub."""
+
+    def __init__(self, hub):
+        self.hub = hub
+        self.subscriptions = {}
+        self.pending = {}
+
+    async def subscribe(self, event_ids):
+        for event_id in dict.fromkeys(event_ids):
+            self.subscriptions[event_id] = await self.hub.subscribe(event_channel(event_id))
+
+    async def next(self, timeout):
+        if len(self.subscriptions) == 1:
+            event_id, subscription = next(iter(self.subscriptions.items()))
+            return event_id, await subscription.next(timeout=timeout)
+        for event_id, subscription in self.subscriptions.items():
+            if event_id not in self.pending:
+                self.pending[event_id] = asyncio.create_task(subscription.next(timeout=timeout))
+        done, _ = await asyncio.wait(
+            self.pending.values(), timeout=timeout, return_when=asyncio.FIRST_COMPLETED,
+        )
+        if not done:
+            return None, None
+        for event_id, task in list(self.pending.items()):
+            if task in done:
+                del self.pending[event_id]
+                return event_id, task.result()
+        return None, None  # pragma: no cover
+
+    def release(self):
+        # No await: cancellation must not strand any contributor subscription.
+        for task in self.pending.values():
+            task.cancel()
+        for subscription in self.subscriptions.values():
+            self.hub.release(subscription)
+
+
+def _fold_invalidation(frame: dict, event_id: int, origin_id: int) -> Optional[dict]:
+    """A sibling moved; reread the fold without relabeling its price or source."""
+    rev = frame.get("rev")
+    if (not isinstance(rev, dict) or set(rev) != {str(origin_id)}
+            or type(rev[str(origin_id)]) is not int or rev[str(origin_id)] < 0):
+        return None
+    return {
+        "event_id": event_id, "origin_event_id": origin_id, "invalidation": True,
+        "p": None, "source": None, "source_value": None,
+        "updated_at": frame.get("updated_at"), "rev": rev, "status": "live",
+    }
+
+
+async def _stream(
+    event_id: int, request: Request, contributor_ids: Optional[list[int]] = None,
+) -> AsyncIterator[str]:
     """Yield SSE frames for one event until the client leaves or time is up."""
     global _open_connections
 
     from app.utils.live_fanout import CLOSED, fanout
 
     hub = fanout()
-    subscription = None
+    subscription = _FoldSubscription(hub)
     started = asyncio.get_event_loop().time()
     _open_connections += 1
     try:
-        subscription = await hub.subscribe(event_channel(event_id))
+        await subscription.subscribe([event_id, *(contributor_ids or [])])
         yield f"retry: {RETRY_MS}\n\n"
         yield sse_encode(json.dumps({"event_id": event_id}), event="open")
 
@@ -157,7 +229,7 @@ async def _stream(event_id: int, request: Request) -> AsyncIterator[str]:
             # when the market is completely silent, and what keeps this
             # coroutine yielding control back to the loop that is also serving
             # `/api/feed`.
-            payload = await subscription.next(timeout=FRAME_WAIT_S)
+            origin_id, payload = await subscription.next(timeout=FRAME_WAIT_S)
             if payload is CLOSED:
                 # The shared reader stopped, so no frame will ever arrive on
                 # this subscription again. Saying so is not optional: the
@@ -172,9 +244,14 @@ async def _stream(event_id: int, request: Request) -> AsyncIterator[str]:
                 return
             if payload is not None:
                 frame = parse_frame(payload)
-                if frame is not None and _frame_is_fresh(
-                    frame, datetime.now(timezone.utc)
-                ):
+                if (frame is not None and type(frame.get("event_id")) is int
+                        and frame["event_id"] == origin_id and _frame_is_fresh(
+                            frame, datetime.now(timezone.utc)
+                        )):
+                    if origin_id != event_id:
+                        frame = _fold_invalidation(frame, event_id, origin_id)
+                        if frame is None:
+                            continue
                     yield sse_encode(json.dumps(frame), event="probability")
                     # A frame is as good as a heartbeat for keeping the router
                     # from reaping us; a busy market should not also pay for
@@ -228,8 +305,7 @@ async def _stream(event_id: int, request: Request) -> AsyncIterator[str]:
         # delivered to nobody. `release()` is synchronous, so it cannot be
         # interrupted and cannot raise out of the generator; the hub's reader
         # sends the `UNSUBSCRIBE` on its next pass.
-        if subscription is not None:
-            hub.release(subscription)
+        subscription.release()
 
 
 @router.get("/{event_id}/stream")
@@ -242,7 +318,7 @@ async def stream_event(event_id: int, request: Request):
     client to poll, which is the ruling's stated behaviour for non-live.
 
     THE SESSION IS OPENED BY HAND, AND THAT IS THE WHOLE POINT — do not put this
-    lookup back on `Depends(get_db)`. FastAPI finalises a yield-dependency only
+    connect lookup back on `Depends(get_db)`. FastAPI finalises a yield-dependency only
     after the response has been *fully sent*, and this response is a stream that
     lives up to `MAX_CONNECTION_S`. A `Depends(get_db)` here therefore does not
     hold a session for the microsecond of the status lookup; it pins one, and its
@@ -255,6 +331,9 @@ async def stream_event(event_id: int, request: Request):
     """
     async with async_session_maker() as session:
         status = await _event_status(session, event_id)
+        contributor_ids = (
+            await _fold_stream_ids(session, event_id) if status in LIVE_STATUSES else [event_id]
+        )
     if status is None:
         raise HTTPException(status_code=404, detail="Event not found")
     if status not in LIVE_STATUSES:
@@ -269,7 +348,7 @@ async def stream_event(event_id: int, request: Request):
         )
 
     return StreamingResponse(
-        _stream(event_id, request),
+        _stream(event_id, request, contributor_ids=contributor_ids),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache, no-transform",

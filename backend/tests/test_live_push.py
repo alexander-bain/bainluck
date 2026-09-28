@@ -491,6 +491,7 @@ class TestStreamOutput:
     async def test_a_stale_frame_is_not_forwarded(self, monkeypatch):
         """It would animate the number BACKWARDS to a price the market left."""
         stale = _frame(
+            event_id=1,
             updated_at=(
                 datetime.now(timezone.utc)
                 - timedelta(seconds=MAX_FRAME_AGE_S + 60)
@@ -517,6 +518,7 @@ class TestStreamOutput:
     ):
         """A stream held open on a decided event never settles on screen."""
         final = _frame(
+            event_id=1,
             status="completed",
             updated_at=datetime.now(timezone.utc).isoformat(),
         )
@@ -626,6 +628,11 @@ class TestConnectLookupDoesNotPinAConnection:
             return "live"
 
         monkeypatch.setattr(mod, "_event_status", _live)
+
+        async def _ids(_session, event_id):
+            return [event_id]
+
+        monkeypatch.setattr(mod, "_fold_stream_ids", _ids)
         monkeypatch.setattr(
             "app.tasks.redis_state.get_async_redis_client",
             lambda: FakeRedisConn(FakePubSub()),
