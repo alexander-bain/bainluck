@@ -283,3 +283,70 @@ async def test_without_the_round_map_wild_card_is_the_old_answer(get, monkeypatc
     futures = _search_futures(payload)
     assert not {n for n in futures if n.startswith("Series ")}, futures
     assert set(futures) == set(COLLEGE_MARKETS), futures
+
+
+# #9333 dropdown half, production 2026-09-28 on `7cb0bae4`: both typed words sit
+# inside these NAMES (Seyboth `Wild` · Bos`card`in, `Wildcard` Gaming), so the
+# dropdown led with them and the round's series came fifth.
+NAME_COLLISIONS = (
+    ("polymarket", "Curitiba: Thiago Seyboth Wild vs Pedro Boscardin Dias", 90_000),
+    ("polymarket", "Wildcard Gaming vs. M80", 40_000),
+)
+
+
+async def _add_name_collisions(maker) -> set[str]:
+    from app.models.models import FuturesMarket, FuturesOutcome
+
+    now = datetime.now(timezone.utc)
+    async with maker() as session:
+        for i, (source, name, volume) in enumerate(NAME_COLLISIONS):
+            market = FuturesMarket(
+                source=source, external_id=f"collision-{i}", name=name,
+                status="open", resolution_date=now + timedelta(days=2),
+                market_tier=1, volume=volume,
+            )
+            session.add(market)
+            await session.flush()
+            session.add(FuturesOutcome(
+                market_id=market.id, external_id=f"collision-{i}:yes",
+                name="Yes", current_probability=0.6,
+            ))
+        await session.commit()
+    return {name for _source, name, _volume in NAME_COLLISIONS}
+
+
+@pytest.mark.parametrize("q", ["wild card", "wildcard"])
+async def test_the_dropdown_leads_with_the_series_not_name_collisions(get, maker, q):
+    collisions = await _add_name_collisions(maker)
+    futures = _typeahead_futures(await get("typeahead", q))
+    assert futures and futures[0].startswith("Series "), (
+        f"typeahead {q!r} futures do not lead with the round's series: {futures}"
+    )
+    seen_collision = False
+    for name in futures:
+        seen_collision = seen_collision or name in collisions
+        assert not (seen_collision and name.startswith("Series ")), (
+            f"typeahead {q!r} put a name collision above a series market: {futures}"
+        )
+
+
+async def test_the_collisions_still_answer_their_own_names(get, maker):
+    """Control: the partition orders; it hides nothing from a query about them."""
+    await _add_name_collisions(maker)
+    futures = _typeahead_futures(await get("typeahead", "wildcard gaming"))
+    assert "Wildcard Gaming vs. M80" in futures, futures
+
+
+async def test_without_the_round_partition_the_collisions_lead(get, maker, monkeypatch):
+    """Strawman: the fixture reproduces production's dropdown order."""
+    from app.routes import events as events_module
+
+    monkeypatch.setattr(
+        events_module, "_postseason_round_series_first", lambda markets, _terms: markets
+    )
+    monkeypatch.setattr(
+        events_module, "_futures_postseason_round_order_key", lambda _terms: None
+    )
+    collisions = await _add_name_collisions(maker)
+    futures = _typeahead_futures(await get("typeahead", "wild card"))
+    assert futures and futures[0] in collisions, futures
