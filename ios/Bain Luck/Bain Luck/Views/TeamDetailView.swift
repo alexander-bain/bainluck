@@ -36,6 +36,9 @@ struct TeamDetailView: View {
     @State private var data: TeamPageResponse?
     @State private var loading = true
     @State private var error: String?
+    /// #9368 — best-effort, like the web page: a failed or absent grid hides the
+    /// Division Race and changes nothing else.
+    @State private var race: TeamDivisionRace.Race?
 
     var body: some View {
         Group {
@@ -54,8 +57,13 @@ struct TeamDetailView: View {
     @MainActor
     private func loadTeam() async {
         do {
-            data = try await APIClient.shared.fetchTeamPage(slug: slug)
+            let page = try await APIClient.shared.fetchTeamPage(slug: slug)
+            data = page
             loading = false
+            if let gridSlug = TeamDivisionRace.gridSlug(sportKey: page.team.sportKey) {
+                let grid = try? await APIClient.shared.fetchChampionshipGrid(slug: gridSlug)
+                race = TeamDivisionRace.build(grid: grid, teamId: page.team.id, teamName: page.team.name)
+            }
         } catch {
             self.error = "Could not load team"
             loading = false
@@ -139,10 +147,18 @@ struct TeamDetailView: View {
                 }
             }
 
-            // Futures
-            if !data.futures.isEmpty {
+            // #9368 — web's order: the race, then the list it makes honest.
+            if let race {
+                divisionRaceSection(race)
+            }
+
+            // Futures — with a Championship Path drawn, only the questions
+            // nothing above answers (web's tier rule; one number per question).
+            let futures = TeamDivisionRace.seasonFutures(
+                data.futures, championshipPathDrawn: !data.championshipPath.isEmpty)
+            if !futures.isEmpty {
                 Section("Season Futures") {
-                    ForEach(data.futures) { future in
+                    ForEach(futures) { future in
                         // #9091: the outcome is the headline ("Ceddanne Rafaela"),
                         // the market its caption, and a graded winner a result.
                         let row = TeamFutureRowPresentation.row(future)
@@ -184,6 +200,50 @@ struct TeamDetailView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
+    }
+
+    /// #9368 — the Division Race: every club in the division, one blended number
+    /// per stage, the team's own row in bold. A column appears only when some
+    /// club has a number or a result in it.
+    private func divisionRaceSection(_ race: TeamDivisionRace.Race) -> some View {
+        let columns: [(label: String, cell: (TeamDivisionRace.Row) -> TeamDivisionRace.Cell)] =
+            [("Division", { $0.division }), ("Playoffs", { $0.playoffs }),
+             ("Champion", { $0.championship })]
+            .enumerated()
+            .filter { [race.hasDivision, race.hasPlayoffs, race.hasChampionship][$0.offset] }
+            .map(\.element)
+        let width: CGFloat = 64
+        return Section {
+            HStack {
+                Text("Team")
+                Spacer()
+                ForEach(columns, id: \.label) { column in
+                    Text(column.label).frame(width: width, alignment: .trailing)
+                }
+            }
+            .font(.caption2).foregroundStyle(.secondary)
+            ForEach(race.rows) { row in
+                HStack {
+                    Text(row.name)
+                        .font(.subheadline)
+                        .fontWeight(row.isTeam ? .bold : .regular)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                    Spacer()
+                    ForEach(columns, id: \.label) { column in
+                        let cell = column.cell(row)
+                        Text(cell.text)
+                            .font(.subheadline).monospacedDigit()
+                            .fontWeight(row.isTeam ? .bold : .regular)
+                            .foregroundStyle(cell.state == .eliminated ? Color.secondary : Color.primary)
+                            .frame(width: width, alignment: .trailing)
+                    }
+                }
+                .accessibilityElement(children: .combine)
+            }
+        } header: {
+            Text("Division Race · \(race.divisionLabel)")
+        }
     }
 
     /// One row of the Upcoming or Recent rail.
