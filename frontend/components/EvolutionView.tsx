@@ -350,9 +350,11 @@ export function EvolutionView({
     [effectiveSelectedIds]
   );
 
-  // Current position label for footer
+  // Current position label for footer. #9371: only a chart with a position
+  // picker has a position to name — without one, the old "Win" fallback was
+  // appended to names that already say it ("… — Win Probability — Win").
   const activePositionLabel =
-    positionOptions?.find((p) => p.key === selectedPosition)?.label || "Win";
+    positionOptions?.find((p) => p.key === selectedPosition)?.label ?? null;
 
   const cardClasses = isFullscreen
     ? "fixed inset-0 z-[9999] bg-surface-card flex flex-col"
@@ -547,9 +549,12 @@ export function EvolutionView({
         </div>
 
         {/* ── Footer ── */}
-        <div className="px-3 sm:px-4 py-1.5 border-t border-surface-border bg-surface-secondary/80 flex justify-between text-[11px] text-text-muted">
-          <span>{marketName || "Win Probability"} — {activePositionLabel}</span>
-          <span>
+        <div className="px-3 sm:px-4 py-1.5 border-t border-surface-border bg-surface-secondary/80 flex justify-between gap-3 text-[11px] text-text-muted">
+          <span className="min-w-0">
+            {marketName || "Win Probability"}
+            {activePositionLabel ? ` — ${activePositionLabel}` : null}
+          </span>
+          <span className="shrink-0 whitespace-nowrap">
             {effectiveSelectedIds.size} of {data?.outcomes.length ?? 0}
             {selectedOutcomeIds !== null && (
               <button
