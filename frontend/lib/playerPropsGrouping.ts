@@ -168,6 +168,16 @@ export const STAT_TYPES = [
   "Receptions", "Interceptions", "Sacks",
   "Double Doubles", "Triple Doubles",
   "Points Leader", "Assists Leader",
+  // #6909 follow-up: Polymarket's football O/U stats outside the list above.
+  // Without them "Tyler Shough: Passing Touchdowns O/U 3.5" parsed its
+  // stat-and-line as the PLAYER, and the settled rail printed "Passing
+  // Touchdowns O/U 3.5's 4+ was marked 5%" beside Kalshi's "Shough's 4+ passing
+  // touchdowns" — the same question twice, one of them unnamed. APPENDED, not
+  // interleaved: the suffix strip below takes the first entry a name ends
+  // with, so an entry here can never outrank "Touchdowns" for a shape that
+  // parses today.
+  "Passing Touchdowns", "Passing Completions", "Passing Attempts",
+  "Longest Reception", "Rushing + Receiving Yards",
 ];
 
 export const STAT_TO_BOX_SCORE: Record<string, string> = {
@@ -296,6 +306,19 @@ export function parsePlayerName(
       // would be a confident wrong answer. The row's own `player_team` (which
       // the caller prefers anyway) is the honest source.
       return { player: beforeColon.trim(), stat: known, team: "", identified: true };
+    }
+    // #6909 follow-up, the same person-first shape without a line: Polymarket's
+    // "Juwan Johnson: 2+ Touchdowns" (Yes/No). The suffix strip below made the
+    // rung the PLAYER, and the settled rail printed "2+: 2+ touchdowns". Same
+    // guard as above — a colon, a leading "<n>+" and a KNOWN stat — and Kalshi
+    // never writes a rung after its matchup colon, so no shape that parses
+    // today changes (fixture census: 2 of 1,840 pairs, both this market).
+    const rung = afterColon.match(/^\d+\+\s+(.+)$/);
+    const rungStat = rung
+      ? STAT_TYPES.find((st) => st.toLowerCase() === rung[1].trim().toLowerCase())
+      : undefined;
+    if (rungStat) {
+      return { player: beforeColon.trim(), stat: rungStat, team: "", identified: true };
     }
   }
 
