@@ -3071,6 +3071,61 @@ def _scattered_terms_last(markets: list, low: list[tuple[str, str]]) -> list:
     ]
 
 
+def _holds_every_term_at_a_word_start(text: str, low: list[tuple[str, str]]) -> bool:
+    """Every term (or its expansion) starts a word of ``text`` (lower-cased)."""
+    return all(
+        any(
+            alt and re.search(r"(?<![^\W_])" + re.escape(alt), text)
+            for alt in (t, e)
+        )
+        for t, e in low
+    )
+
+
+def _interior_outcome_hits_last(markets: list, low: list[tuple[str, str]]) -> list:
+    """#9292: a row that holds the query only mid-word in an option yields to
+    the rows that answer it by a word.
+
+    `?q=hawks` (production 2026-09-28 04:4xZ) served `NFL: 2027 Champion` as
+    futures row 2, above `NBA: 2027 Champion`, on "Seattle Sea(hawks)"; `nets`
+    put `NCAAB Championship Winner` ("Alabama St Hor(nets)") above the Brooklyn
+    Nets' own boards; `rays` found four Grayson markets; `mets` found an
+    animated-film award through "Ki(mets)u". The outcome arm is a substring
+    match on purpose (LAT-P035 keeps its recall), and the volume sort then let
+    a big board with a mid-word hit beat a board that names the club.
+
+    A row sinks when its NAME does not hold the terms, some option holds every
+    term, and no option holds every term at a word start (#7381's rule, so
+    `yank` -> "Yankees" counts as a word). It sinks only below a page that has
+    an answer: a name match or a word-start option. A row that reached the page
+    by another arm (league ticker, alias, nickname) holds no such option and is
+    never flagged. Runs after `_demote_narrower_scope`, because a board about
+    the Nets' conference semifinal is still about the Nets and a Hornets board
+    is not. A stable partition like its siblings: nothing is dropped, and a
+    page where every option hit is mid-word (`9ers` -> "49ers") is untouched.
+    """
+    if len(markets) < 2 or not low:
+        return markets
+    interior, answered = [], False
+    for m in markets:
+        if _text_names_every_term(m.name, low):
+            interior.append(False)
+            answered = True
+            continue
+        names = (
+            (o.name or "").lower() for o in (getattr(m, "outcomes", None) or [])
+        )
+        hits = [n for n in names if all((t in n) or (e and e in n) for t, e in low)]
+        word = any(_holds_every_term_at_a_word_start(n, low) for n in hits)
+        answered = answered or word
+        interior.append(bool(hits) and not word)
+    if not answered or not any(interior):
+        return markets
+    return [m for m, i in zip(markets, interior) if not i] + [
+        m for m, i in zip(markets, interior) if i
+    ]
+
+
 def _rerank_search_futures(
     markets: list,
     expanded: list[tuple[str, str | None]],
@@ -3133,6 +3188,9 @@ def _rerank_search_futures(
     # correct-league sub-award still outranks a wrong-league market (WNBA stays
     # last). Both are stable partitions; composition preserves within-group order.
     ordered = _demote_narrower_scope(ordered, low)
+    # #9292: a mid-word option hit ("Sea(hawks)") yields to the rows that answer
+    # the query by a word. After the scope demotion, before the league/sport ones.
+    ordered = _interior_outcome_hits_last(ordered, low)
     # Then push substring-cousin wrong-league markets to the bottom
     # ("nba mvp" must not lead with "WNBA: 2026 MVP").
     ordered = _demote_wrong_league(ordered, expanded)
