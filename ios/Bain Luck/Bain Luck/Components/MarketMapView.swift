@@ -1343,7 +1343,8 @@ struct MarketMapView: View {
                             Text(MarketMapRail.totalLadderResultLabel(result))
                                 .foregroundStyle(Self.ladderResultColor(result))
                         } else {
-                            Text("\(Int((entry.prob * 100).rounded()))%")
+                            // #9392 — `>99%` like the hero, not `100%`.
+                            Text(MarketMapRail.rungPercentText(entry.prob))
                         }
                     }
                     .font(.system(size: 10, weight: .black, design: .monospaced))

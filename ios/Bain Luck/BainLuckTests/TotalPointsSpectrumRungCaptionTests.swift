@@ -168,12 +168,13 @@ final class TotalPointsSpectrumRungCaptionTests: XCTestCase {
 
     /// The bar is the data and the caption is its tense, so the widening has to
     /// come out of something — this is the judgement, stated as a number. The
-    /// row is `threshold(50) + caption + bar + value(32)` inside a ~338 pt card
+    /// row is `threshold(50) + caption + bar + value(percentColumnWidth)` inside a ~338 pt card
     /// with 10 pt spacing, and the bar must stay the biggest thing in it.
     func testWideningTheCaptionDidNotCostTheBarItsDominance() {
         let card: CGFloat = 338
         let spacing: CGFloat = 10 * 3
-        let bar = card - 50 - TotalPointsSpectrumView.captionColumnWidth - 32 - spacing
+        let bar = card - 50 - TotalPointsSpectrumView.captionColumnWidth
+            - TotalPointsSpectrumView.percentColumnWidth - spacing  // #9392: was a literal 32
 
         XCTAssertGreaterThan(bar, TotalPointsSpectrumView.captionColumnWidth * 2,
                              "the measurement must stay far wider than its caption")
