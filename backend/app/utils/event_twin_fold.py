@@ -165,6 +165,7 @@ from app.utils.kalshi_occurrence_start import (
 )
 from app.utils.name_normalization import nation_spelling, strip_diacritics
 from app.utils.proven_duplicates import merge_opening_line
+from app.utils.search_fixture_dedup import FIXTURE_TIME_WINDOW_HOURS
 from app.utils.soccer_team_matching import club_alias_tokens, soccer_pair_matches
 from app.utils.sport_keys import is_season_variant, league_identity
 
@@ -755,6 +756,14 @@ def fold_twin_events(events: Iterable[Any]) -> FoldResult:
         grouped = _merge_catchall_leagues(grouped, row_identities)
     except Exception:  # noqa: BLE001 — gotcha #42; the league-keyed groups stand
         logger.exception("twin fold: catch-all league merge failed; serving groups")
+
+    # #7993 — last, on whole clusters, for the same reason the catch-all pass is:
+    # it only ever UNIONS what the passes above built, so an `mma_other` claim the
+    # catch-all pass could not reach is still a cluster this one can place.
+    try:
+        grouped = _merge_combat_claim_bouts(grouped)
+    except Exception:  # noqa: BLE001 — gotcha #42; the clusters above stand
+        logger.exception("twin fold: combat claim merge failed; serving groups")
 
     # Keyed on the PYTHON object, not on `.id`: the fold must survive a caller
     # that hands it two hydrated rows carrying the same primary key, and must
@@ -2915,6 +2924,200 @@ def _name_clusters(bucket_keys: list[tuple], groups: dict[tuple, list]) -> list[
                 [pairs[key] for key in members],
             )
     return out
+
+
+#: #7993 — the sports whose events are one fighter against one fighter, and the
+#: only keys :func:`_merge_combat_claim_bouts` reads. Tennis and golf share the
+#: 1-on-1 shape but not the population: tennis has its own twin machinery
+#: (`tennis_twin_pairs`, #8587) and doubles rows, and golf rows are fields.
+_COMBAT_SPORT_PREFIXES: tuple[str, ...] = ("mma_", "boxing_")
+
+COMBAT_CLAIM_BOUT_WINDOW = timedelta(hours=FIXTURE_TIME_WINDOW_HOURS)
+"""How far an id-less bout claim may sit from the anchored bout it names. #7993.
+
+It is `search_fixture_dedup.FIXTURE_TIME_WINDOW_HOURS` and imported rather than
+retyped, because it is that module's licence restated: in a 1-on-1 sport "the
+same two participants within 36h" IS one fixture. Two fighters do not meet
+twice inside a day and a half, so this bound is not a clock fitted to a gap. It
+is the distance inside which a second meeting cannot exist.
+
+The population it is for, production 2026-09-28 02:1xZ, the Oct 3 UFC card.
+Polymarket minted every bout at the card's 21:00Z, and the Odds API lists each
+bout at its own slot: 3.0 h (Pulyaev–Pinas, Green–Ribovics, Walker–Parkin,
+McGhee–Sopaj, dos Anjos–Hernandez) and 4.0 h (Kopylov–Gautier). The window
+leaves room for a claim whose date is a day off, the shape #6710 records for a
+Polymarket row.
+"""
+
+#: Generational suffixes a provider may append to one fighter's name and not
+#: another. They are dropped so the surname is the family name ("Jacoby", not "jr").
+_FIGHTER_NAME_SUFFIXES = frozenset({"jr", "sr", "ii", "iii", "iv"})
+
+
+def _fighter_identity(name: Optional[str]) -> Optional[tuple[str, str]]:
+    """`(surname, first initial)` for one fighter, or ``None`` if unreadable.
+
+    The initial is ``""`` for a surname-only name (Kalshi's `Vettori v Naurdiev`).
+    Diacritic-free and lowercased, like :func:`_squash`, but kept as words: the
+    surname is the LAST word, which is the word the surname-only rows carry
+    (`Rafael dos Anjos` → `anjos`, and Kalshi writes `Anjos`).
+    """
+    if not name:
+        return None
+    words = [
+        word
+        for word in _NON_ALNUM.split(strip_diacritics(str(name)).lower())
+        if word
+    ]
+    while len(words) > 1 and words[-1] in _FIGHTER_NAME_SUFFIXES:
+        words.pop()
+    if not words:
+        return None
+    initial = words[0][0] if len(words) > 1 else ""
+    return (words[-1], initial)
+
+
+def _same_fighter(left: tuple[str, str], right: tuple[str, str]) -> bool:
+    """One surname, and one initial whenever both names have one.
+
+    `Mick Parkin` / `Michael Parkin` and `Alexander Hernandez` / `Alex Hernandez`
+    agree. `Anjos` agrees with `Rafael Dos Anjos` because it has no initial to
+    disagree with. `Wang Cong` never agrees with `Cong Wang`: two surnames, and
+    two cards is the safe direction.
+    """
+    if left[0] != right[0]:
+        return False
+    return not left[1] or not right[1] or left[1] == right[1]
+
+
+def _bout_identities(event: Any) -> Optional[tuple]:
+    home = _fighter_identity(getattr(event, "home_team_name", None))
+    away = _fighter_identity(getattr(event, "away_team_name", None))
+    if home is None or away is None:
+        return None
+    return (home, away)
+
+
+def _same_bout(left: tuple, right: tuple) -> bool:
+    """Both fighters, in either corner. Providers disagree on who is "home"."""
+    return (_same_fighter(left[0], right[0]) and _same_fighter(left[1], right[1])) or (
+        _same_fighter(left[0], right[1]) and _same_fighter(left[1], right[0])
+    )
+
+
+def _combat_sport(members: list) -> Optional[str]:
+    """`mma` or `boxing` when every row of the cluster is on that sport's keys."""
+    sports = set()
+    for member in members:
+        key = loaded_sport_key(member) or ""
+        if not key.startswith(_COMBAT_SPORT_PREFIXES):
+            return None
+        sports.add(key.split("_", 1)[0])
+    return sports.pop() if len(sports) == 1 else None
+
+
+def _merge_combat_claim_bouts(clusters: list[list]) -> list[list]:
+    """Fold an id-less bout claim onto the one anchored bout it names. #7993.
+
+    THE SHAPE, ON PRODUCTION 2026-09-28 02:1xZ. Six bouts of the Oct 3 UFC card
+    were two cards each on `/api/events/search`. One card was the Polymarket-born
+    row: no provider id, every bout at the card's 21:00Z, and on three of them the
+    Kalshi price. The other was the Odds API row with its `external_id`, the
+    bout's own slot and the sportsbook price. `Kopylov` served `15315711` (Roman
+    Kopylov v Ateba Gautier, 21:00Z, Kalshi) above `15318681` (Ateba Gautier v
+    Roman Kopylov, 01:00Z, sportsbooks).
+
+    WHY NOTHING ELSE REACHES IT. The within-league passes above cap the clock at
+    minutes (:data:`ANCHORED_CLAIM_KICKOFF_DRIFT`) and keep orientation, and these
+    pairs are hours apart and, in half of them, cornered the other way round.
+    `search_fixture_dedup` has the right clock for a 1-on-1 sport, but it can only
+    DROP a row that another row dominates. Two equally named priced rows dominate
+    neither way, and an empty claim that spells a first name differently (`Mick`
+    / `Michael` Parkin, `Alexander` / `Alex` Hernandez, `Bernardo` / `Benardo`
+    Sopaj) fails its whole-name suffix test. When it does drop a row it drops
+    that row's venue with it. This pass unions venues through :func:`_elect`.
+
+    THE LICENCE IS TWO THINGS THIS MODULE AND ITS SIBLING ALREADY STATE:
+
+    * the PROVENANCE asymmetry of #8100 (:func:`_merge_anchored_claim_kickoffs`,
+      ruling 048 read forward). The claim cluster holds no provider id and no
+      StatPal fixture id. The target holds a provider id. Two anchored bouts, or
+      two claims, are never joined here.
+    * the 1-on-1 clock of `search_fixture_dedup` (:data:`COMBAT_CLAIM_BOUT_WINDOW`):
+      the same two fighters inside 36 h are one bout.
+
+    THREE REFUSALS, each leaving two cards, which is today's page:
+
+    * more than ONE anchored bout matches the claim. Nothing here picks between
+      two anchors (the Odds API re-mint of #7993's first half is exactly two);
+    * :func:`_objectively_different_games`: two `espn_id`s or two scorelines;
+    * a live or suspended row, unless the claim holds no score
+      (:func:`_live_anchored_claim_pair_is_licensed`), and any unknown status.
+
+    Nothing is written. Both rows stay in `events`, and when the event graph
+    joins them this pass stops finding pairs.
+    """
+    anchors: list[int] = []
+    claims: list[int] = []
+    sports: dict[int, str] = {}
+    bouts: dict[int, list] = {}
+    for index, members in enumerate(clusters):
+        sport = _combat_sport(members)
+        if sport is None or not _anchored_claim_group_status_is_known(members):
+            continue
+        identities = [_bout_identities(member) for member in members]
+        if any(identity is None for identity in identities):
+            continue
+        sports[index] = sport
+        bouts[index] = identities
+        if _group_is_id_anchored(members):
+            anchors.append(index)
+        elif not _group_carries_schedule_id(members):
+            claims.append(index)
+
+    if not anchors or not claims:
+        return clusters
+
+    def within_window(left: list, right: list) -> bool:
+        return all(
+            abs(a.commence_time - b.commence_time) <= COMBAT_CLAIM_BOUT_WINDOW
+            for a in left
+            for b in right
+        )
+
+    def same_bout(claim: int, anchor: int) -> bool:
+        if sports[claim] != sports[anchor]:
+            return False
+        if not all(
+            _same_bout(c, a) for c in bouts[claim] for a in bouts[anchor]
+        ):
+            return False
+        return within_window(clusters[claim], clusters[anchor])
+
+    merged_into: dict[int, int] = {}
+    for claim in claims:
+        matches = [anchor for anchor in anchors if same_bout(claim, anchor)]
+        if len(matches) != 1:
+            continue
+        anchor = matches[0]
+        claim_members, anchor_members = clusters[claim], clusters[anchor]
+        if _objectively_different_games(claim_members, anchor_members):
+            continue
+        if not (
+            _variant_group_is_collapsible(claim_members)
+            and _variant_group_is_collapsible(anchor_members)
+        ) and not _live_anchored_claim_pair_is_licensed(claim_members):
+            continue
+        merged_into[claim] = anchor
+
+    if not merged_into:
+        return clusters
+
+    out: dict[int, list] = {}
+    for index, members in enumerate(clusters):
+        target = merged_into.get(index, index)
+        out.setdefault(target, []).extend(members)
+    return list(out.values())
 
 
 def _set_served_value(event: Any, column: str, value: Any) -> None:
