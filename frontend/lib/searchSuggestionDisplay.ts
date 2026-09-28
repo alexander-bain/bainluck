@@ -14,7 +14,7 @@
  * tests never seed relative to `Date.now()` (gotcha #44).
  */
 import type { TypeaheadSuggestion, TypeaheadOutcome, TeamSeasonAnswer } from "@/lib/api";
-import { getEmojiForLeague } from "@/lib/sportCategories";
+import { getEmojiForLeague, getLeagueDisplay } from "@/lib/sportCategories";
 
 /**
  * How many season facts a team row shows (T2-1 / #5058). Two, because two is
@@ -183,7 +183,8 @@ export type SuggestionSubtitle =
   | { kind: "futures-label"; text: string }
   | { kind: "concept"; text: string }
   | { kind: "hub"; text: string }
-  | { kind: "team-season"; answers: TeamSeasonAnswer[] };
+  | { kind: "team-season"; answers: TeamSeasonAnswer[] }
+  | { kind: "team-league"; text: string };
 
 /**
  * The season answers a team row should print (T2-1 / #5058), or `[]`.
@@ -268,9 +269,14 @@ export function suggestionSubtitle(
 
   if (s.type === "team") {
     const answers = teamSeasonAnswers(s);
-    // A team with no season answers keeps the row it always had — no second
-    // line, not an empty one.
-    return answers.length > 0 ? { kind: "team-season", answers } : null;
+    if (answers.length > 0) return { kind: "team-season", answers };
+    // #9245: a team with no season answers names its league. Without it,
+    // 'cowboys' listed "McNeese" and "McNeese Cowboys" under one crest with
+    // no second line: baseball and basketball read as one school twice.
+    // No sport_key, no line — never an empty one.
+    return s.sport_key
+      ? { kind: "team-league", text: getLeagueDisplay(s.sport_key) }
+      : null;
   }
 
   return null;

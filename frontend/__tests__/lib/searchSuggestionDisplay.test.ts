@@ -513,6 +513,19 @@ describe("a team row's season answers (#5058)", () => {
     expect(teamSeasonAnswers(bare)).toEqual([]);
   });
 
+  // #9245: 'cowboys' on production 2026-09-28 00:36Z — two sports, one crest.
+  test("a team with no answers names its league, so a same-name pair from two sports can be told apart", () => {
+    const baseball = suggestion({ type: "team", text: "McNeese", team_id: 14698, sport_key: "baseball_ncaa" });
+    const hoops = suggestion({ type: "team", text: "McNeese Cowboys", team_id: 1076, sport_key: "basketball_ncaab" });
+    expect(suggestionSubtitle(baseball, NOW)).toEqual({ kind: "team-league", text: "NCAA Baseball" });
+    expect(suggestionSubtitle(hoops, NOW)).toEqual({ kind: "team-league", text: "NCAAB" });
+  });
+
+  test("a team WITH answers keeps its answers, not the league", () => {
+    const sub = suggestionSubtitle({ ...PATRIOTS, sport_key: "americanfootball_nfl" }, NOW);
+    expect(sub?.kind).toBe("team-season");
+  });
+
   test("an empty list is a row with no second line, never an empty one", () => {
     const empty = suggestion({ type: "team", text: "Somewhere United", season_answers: [] });
     expect(suggestionSubtitle(empty, NOW)).toBeNull();
