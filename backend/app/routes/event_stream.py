@@ -30,6 +30,17 @@ pools and N sockets held for up to `MAX_CONNECTION_S`, against a plan limit of
 feed cache, the rate limiter and the Celery workers down with it — long before
 its own 503 gate could refuse anything. Subscriptions now come from the
 process-wide `utils/live_fanout` hub: one connection, every stream.
+
+A FOLDED EVENT IS SEVERAL ROWS, SO ITS STREAM IS SEVERAL CHANNELS (#837). The
+page's hero is the fold of the canonical row and its proven twins (#3810 Fold
+A), and the venues often live on the twin: Necaxa v América 15316464 carried
+only the sportsbooks while Kalshi and Polymarket were written to 15312629. The
+publisher writes each row's frames to that row's channel, so a stream that
+joined only the canonical's channel carried one frame in 45 s while the twin's
+carried six — and the REST fold moved with every one of them. The phone waited
+for its poll. So the connect-time lookup also reads the fold's members, and a
+twin frame that can move the folded hero is forwarded as an invalidation on
+the canonical's stream; see `_as_canonical_frame` for what that frame says.
 """
 
 from __future__ import annotations
@@ -38,6 +49,7 @@ import asyncio
 import json
 import logging
 import os
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import AsyncIterator, Optional
 
@@ -125,7 +137,102 @@ async def _event_status(db: AsyncSession, event_id: int) -> Optional[str]:
     ).scalar_one_or_none()
 
 
-async def _stream(event_id: int, request: Request) -> AsyncIterator[str]:
+@dataclass(frozen=True)
+class StreamFold:
+    """What a live stream needs to know about its event's fold, read at connect.
+
+    ``twins`` are the rows the event page folds into this one — the same set
+    detail's ``blend_fold_revision`` names. ``movable`` are the source keys a
+    twin's frame can change the folded hero on: the fold is gap-fill, so a
+    source the canonical already holds is the canonical's reading whatever the
+    twin says (`merge_probability_sources`).
+
+    Read once per connection, deliberately: a stream lives at most
+    ``MAX_CONNECTION_S``, and the page's own poll re-reads the fold on its
+    schedule. A twin tagged mid-connection joins at the next reconnect.
+    """
+
+    twins: frozenset = frozenset()
+    movable: frozenset = frozenset()
+
+
+async def _stream_fold(db: AsyncSession, event_id: int) -> StreamFold:
+    """The fold members of ``event_id``, exactly as the detail route folds them.
+
+    Same two reads the detail route makes before its blend fold: the serve-time
+    absorbed rows (#3391) and the orientation-checked tagged twins. A row the
+    page does not fold is not subscribed — its frames describe a number the
+    hero never read.
+    """
+    from sqlalchemy.orm import selectinload
+
+    from app.utils.aggregation import SOURCE_WEIGHTS, parse_source_entry
+    from app.utils.proven_duplicates import folded_series_event_ids
+    from app.utils.serve_fold_absorbed import serve_fold_absorbed_rows
+
+    event = (
+        await db.execute(
+            select(Event)
+            .options(selectinload(Event.sport))
+            .where(Event.id == event_id)
+        )
+    ).scalar_one_or_none()
+    if event is None:
+        return StreamFold()
+    absorbed = await serve_fold_absorbed_rows(db, event)
+    members = await folded_series_event_ids(db, event_id, absorbed)
+    twins = frozenset(int(m) for m in members if int(m) != int(event_id))
+    if not twins:
+        return StreamFold()
+    held = {
+        key
+        for key, entry in (event.win_probability_sources or {}).items()
+        if parse_source_entry(entry)[0] is not None
+    }
+    return StreamFold(twins=twins, movable=frozenset(SOURCE_WEIGHTS) - held)
+
+
+def _as_canonical_frame(
+    frame: dict, event_id: int, fold: StreamFold
+) -> Optional[dict]:
+    """The frame this stream forwards for ``frame``, or None to forward nothing.
+
+    The canonical's own frame is forwarded untouched. A twin's frame is
+    forwarded only when its source can move the folded hero, and rewritten so
+    it can never be mistaken for a reading of the canonical row:
+
+    * ``event_id`` becomes this stream's event. Both clients drop a frame for
+      any other id (iOS `EventDetailViewModel.apply`, the web page's effect),
+      so an unrewritten twin frame would reach the phone and change nothing.
+    * ``rev`` is untouched and still names the TWIN row. Against the folded
+      hero's multi-row vector it orders as incomparable, which is exactly the
+      clients' "the blend moved, re-read detail" path (#9051) — the twin's
+      ``p`` is that row's aggregate, not the fold, and is never adopted there.
+    * ``status`` is cleared. It is the twin row's status, and iOS writes a
+      frame's status onto the page; a twin that is not itself ``live`` must not
+      be able to move the canonical's page off live. It also keeps the web
+      chart from plotting the twin's raw ``p`` (it plots live-status frames).
+    * ``folded_from`` names the twin, so a transcript can tell the two apart.
+    """
+    try:
+        frame_event = int(frame.get("event_id"))
+    except (TypeError, ValueError):
+        return None
+    if frame_event == int(event_id):
+        return frame
+    if frame_event not in fold.twins or frame.get("source") not in fold.movable:
+        return None
+    return {
+        **frame,
+        "event_id": int(event_id),
+        "status": None,
+        "folded_from": frame_event,
+    }
+
+
+async def _stream(
+    event_id: int, request: Request, fold: StreamFold = StreamFold()
+) -> AsyncIterator[str]:
     """Yield SSE frames for one event until the client leaves or time is up."""
     global _open_connections
 
@@ -133,10 +240,18 @@ async def _stream(event_id: int, request: Request) -> AsyncIterator[str]:
 
     hub = fanout()
     subscription = None
+    subscriptions = []
     started = asyncio.get_event_loop().time()
     _open_connections += 1
     try:
         subscription = await hub.subscribe(event_channel(event_id))
+        subscriptions.append(subscription)
+        # #837: the twins deliver into the SAME mailbox, so the loop below
+        # reads one queue in arrival order and each frame names its own row.
+        for twin in sorted(fold.twins):
+            subscriptions.append(
+                await hub.subscribe(event_channel(twin), share=subscription)
+            )
         yield f"retry: {RETRY_MS}\n\n"
         yield sse_encode(json.dumps({"event_id": event_id}), event="open")
 
@@ -172,6 +287,8 @@ async def _stream(event_id: int, request: Request) -> AsyncIterator[str]:
                 return
             if payload is not None:
                 frame = parse_frame(payload)
+                if frame is not None:
+                    frame = _as_canonical_frame(frame, event_id, fold)
                 if frame is not None and _frame_is_fresh(
                     frame, datetime.now(timezone.utc)
                 ):
@@ -180,7 +297,12 @@ async def _stream(event_id: int, request: Request) -> AsyncIterator[str]:
                     # from reaping us; a busy market should not also pay for
                     # pings it does not need.
                     last_beat = loop_now
-                    if frame.get("status") not in LIVE_STATUSES:
+                    # Only the canonical's own frame can end the stream: a
+                    # forwarded twin frame carries no status (above).
+                    if (
+                        "folded_from" not in frame
+                        and frame.get("status") not in LIVE_STATUSES
+                    ):
                         # The match ended under us. Say so and close, so the
                         # client refetches once and settles rather than holding
                         # a stream open on a decided event forever.
@@ -228,8 +350,8 @@ async def _stream(event_id: int, request: Request) -> AsyncIterator[str]:
         # delivered to nobody. `release()` is synchronous, so it cannot be
         # interrupted and cannot raise out of the generator; the hub's reader
         # sends the `UNSUBSCRIBE` on its next pass.
-        if subscription is not None:
-            hub.release(subscription)
+        for held in subscriptions:
+            hub.release(held)
 
 
 @router.get("/{event_id}/stream")
@@ -253,8 +375,23 @@ async def stream_event(event_id: int, request: Request):
     Opening the session explicitly bounds it to the lookup and returns the
     connection to the pool before the first byte of the stream is written.
     """
+    fold = StreamFold()
     async with async_session_maker() as session:
         status = await _event_status(session, event_id)
+        if status in LIVE_STATUSES:
+            # #837: still inside the one connect-time session, so the fold
+            # costs no extra pooled connection and none is held afterwards.
+            # A failure degrades to the canonical's own channel — the stream
+            # this route served before the fold existed — and says so.
+            try:
+                fold = await _stream_fold(session, event_id)
+            except Exception:
+                logger.warning(
+                    "event_stream: fold lookup failed for event %d; "
+                    "streaming its own channel only",
+                    int(event_id),
+                    exc_info=True,
+                )
     if status is None:
         raise HTTPException(status_code=404, detail="Event not found")
     if status not in LIVE_STATUSES:
@@ -269,7 +406,7 @@ async def stream_event(event_id: int, request: Request):
         )
 
     return StreamingResponse(
-        _stream(event_id, request),
+        _stream(event_id, request, fold),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache, no-transform",

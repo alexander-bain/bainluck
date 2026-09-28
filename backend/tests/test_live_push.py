@@ -516,7 +516,12 @@ class TestStreamOutput:
         self, monkeypatch
     ):
         """A stream held open on a decided event never settles on screen."""
+        # #837: the frame is the stream's OWN event, as `publish_frame` always
+        # makes it (channel = the frame's event_id). A folded stream reads its
+        # twins' channels too, so a frame naming some other row is no longer
+        # taken for this one's — it is a twin's (re-addressed) or dropped.
         final = _frame(
+            event_id=1,
             status="completed",
             updated_at=datetime.now(timezone.utc).isoformat(),
         )

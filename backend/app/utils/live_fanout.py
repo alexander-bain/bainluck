@@ -110,9 +110,16 @@ class Subscription:
 
     __slots__ = ("channel", "_queue", "_dropped")
 
-    def __init__(self, channel: str) -> None:
+    def __init__(
+        self, channel: str, queue: Optional[asyncio.Queue] = None
+    ) -> None:
         self.channel = channel
-        self._queue: asyncio.Queue = asyncio.Queue(maxsize=QUEUE_MAX)
+        # #837: a stream that reads several channels (a folded event and its
+        # twins) hands each subscription the SAME mailbox, so one `next()` sees
+        # every channel's frames in arrival order. The frame names its own row.
+        self._queue: asyncio.Queue = (
+            queue if queue is not None else asyncio.Queue(maxsize=QUEUE_MAX)
+        )
         self._dropped = 0
 
     @property
@@ -183,9 +190,16 @@ class LiveFanout:
 
     # -- the stream's side --------------------------------------------------
 
-    async def subscribe(self, channel: str) -> Subscription:
-        """Join ``channel``, connecting the shared pub/sub if it is the first."""
-        sub = Subscription(channel)
+    async def subscribe(
+        self, channel: str, *, share: Optional[Subscription] = None
+    ) -> Subscription:
+        """Join ``channel``, connecting the shared pub/sub if it is the first.
+
+        ``share`` (#837): deliver into that subscription's mailbox instead of a
+        new one. Each channel is still its own subscription — released on its
+        own, unsubscribed on its own — only the reading end is shared.
+        """
+        sub = Subscription(channel, share._queue if share is not None else None)
         async with self._lock:
             # A channel released moments ago may still be subscribed at Redis
             # and merely pending. Claiming it back is cheaper — and cannot
