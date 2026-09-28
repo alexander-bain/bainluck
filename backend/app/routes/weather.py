@@ -2020,7 +2020,11 @@ async def get_wildcards(db: AsyncSession):
             "leader": _leader_outcome_name(m),
             "src": _market_source(m),
             "closes": _format_closes(m.resolution_date),
-            "tag": _derive_tag(m.name),
+            # Membership above is a substring match; `_derive_tag` is
+            # word-bounded, so "supervolcano" got in and was labelled
+            # "Weather" beside its siblings (#3134). This row's framing is
+            # the route's, not a title guess.
+            "tag": "Wild card",
         })
 
     items.sort(key=lambda x: x["prob"], reverse=True)
