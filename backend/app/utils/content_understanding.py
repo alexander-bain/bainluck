@@ -27,10 +27,11 @@ the same row, and writing it there would silently retype the calibration input.
 ── WHAT THIS DOES NOT DO ────────────────────────────────────────────────────
 
 It does not gate. Nothing here refuses a market, changes an admission, or moves
-a published number; `admissible_as_blend_speaker` behaves exactly as it did.
-This clause writes down an understanding so that a quarantine consumer can be
-built on a measured population rather than on a guess, and so a reader auditing
-a blend number can see what kind of question produced it.
+a published number. This clause writes down an understanding so that a
+quarantine consumer can be built on a measured population rather than on a
+guess, and so a reader auditing a blend number can see what kind of question
+produced it. The first such consumer is `admissible_as_blend_speaker` (#9348),
+through `venue_label_refutes_full_contest_winner` below.
 """
 
 from typing import Any, Optional
@@ -197,6 +198,42 @@ def is_disputed(semantic_type: Optional[str]) -> bool:
     suffix test by hand and drifts from the writer.
     """
     return bool(semantic_type) and semantic_type.endswith(DISPUTED_SUFFIX)
+
+
+def venue_label_refutes_full_contest_winner(market: Any) -> bool:
+    """Does the venue's OWN label say this market is not who-wins-the-contest?
+
+    #9348, and the first consumer that gates on this record. Polymarket titles
+    its tennis novelty `China Open, Qualification: Completed Match: Ruien Zhang
+    vs Storm Hunter` ("will the match be completed?", outcomes Yes/No). Our
+    title recognizer splits at the last colon, reads `Completed Match` as a
+    competition prefix and finds a bare matchup behind it, so it answers
+    `moneyline`; `find_moneyline_outcome` then orients the generic "Yes" onto
+    the first-named player. Gamma says `tennis_completed_match`. On event
+    15320043 (Sep 28 06:10–06:16Z) that "Yes" at 0.98 was published as Zhang's
+    win probability between 0.085 readings, and the blended chart jumped to 54%.
+
+    Reads ``venue_type`` directly, NOT ``agreement``. `agreement` was computed
+    against whatever our title classifier said at stamp time, and that
+    classifier has widened since (#5660); the venue's label cannot go stale that
+    way. Measured 2026-09-28 over every Polymarket market linked to an event
+    within ±7 days: the two rules have the same live delta — 3 speaking legs,
+    all `tennis_completed_match`, and none of the 651 speaking `moneyline` legs.
+
+    🔴 ABSENCE IS NOT A REFUTATION. The label is missing on ~21% of markets
+    (see `build_content_understanding`), and a row stamped before this record
+    existed carries no understanding at all. Both return False — today's
+    behaviour — never a refusal.
+    """
+    understanding = understanding_from_metadata(
+        getattr(market, "market_metadata", None)
+    )
+    if not understanding:
+        return False
+    venue_type = understanding.get("venue_type")
+    if not isinstance(venue_type, str) or not venue_type:
+        return False
+    return not is_full_contest_winner_type(venue_type)
 
 
 def semantic_type_for_market(market: Any) -> Optional[str]:

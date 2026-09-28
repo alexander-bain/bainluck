@@ -37,7 +37,10 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional, Sequence
 
-from app.utils.content_understanding import semantic_type_for_market
+from app.utils.content_understanding import (
+    semantic_type_for_market,
+    venue_label_refutes_full_contest_winner,
+)
 from app.utils.game_market_class import (
     classify_game_market_class,
     competition_prefix_tail,
@@ -722,6 +725,12 @@ def admissible_as_blend_speaker(
     if getattr(market, "source", None) == "kalshi" and is_primary:
         return True
     if not _class_says_game_winner(market):
+        return False
+    # #9348: the title recognizer admits `…: Completed Match: A vs B` (it reads
+    # the novelty as a competition prefix), and its generic "Yes" then orients
+    # onto the first-named player. The venue's own label says otherwise. Only a
+    # PRESENT label refutes; Kalshi rows carry none, so the Kalshi delta is zero.
+    if venue_label_refutes_full_contest_winner(market):
         return False
     if outcomes_refute_game_winner(
         [getattr(o, "name", None) for o in outcomes] if outcomes else None
