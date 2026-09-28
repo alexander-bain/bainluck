@@ -2111,6 +2111,8 @@ export interface GolfCurrentEvent {
   leader_probability: number | null;
   top_golfers?: GolfGolfer[];
   market_ids?: number[];
+  /** Aligned with `market_ids` (served by `_build_current_event`). */
+  market_names?: string[];
 }
 
 export interface GolfResponse {

@@ -179,8 +179,27 @@ _GOLF_STRONG_SIGNAL_RE = re.compile(
 # `KXPGAAWARDS` (the Producers Guild film awards) shares the `KXPGA` prefix and is
 # NOT excluded here: `_NON_GOLF_RE` already refuses it on "pga award"/"motion
 # picture" several lines earlier, so it never reaches corroboration.
+#
+# #6243: `dpwt` is the same tour abbreviated. Kalshi writes the DP World Tour
+# placement series as `KXDPWTTOP5-…`/`KXDPWTTOP10-…` ("Fedex Open De France: Top 5
+# Finishers"), and without it those failed this gate on the bare word "Open".
 _KALSHI_GOLF_TICKER_RE = re.compile(
-    r"^kx(?:pga|lpga|dpworldtour|kornferry|kftour|liv|champtour|golf|prescup|rydercup)",
+    r"^kx(?:pga|lpga|dpworldtour|dpwt|kornferry|kftour|liv|champtour|golf|prescup|rydercup)",
+    re.I,
+)
+
+# #6243 — a TOURNAMENT QUESTION. The venue's golf ticker above is only read by the
+# generic-word gate, which runs for a name `_GOLF_SIGNAL_RE` already accepted. A
+# regular tour event is named "<Sponsor> Championship", which carries no golf word
+# at all, so "Alfred Dunhill Links Championship Winner" (`KXDPWORLDTOUR-ALDLC26`, the
+# traded field for the week's tournament) was refused before its ticker was ever
+# read, and the golf hub's Win Probability chart had only DataGolf's one-snapshot
+# model to draw. A no-signal name is admitted when the ticker declares golf AND the
+# name asks one of the questions a golf tournament is asked. Both are required:
+# Kalshi's Presidents Cup series (`KXPRESCUPMATCH`) writes "Singles: A vs B", which
+# is golf but no tournament of its own, and must stay out of the tournament list.
+_GOLF_TOURNAMENT_QUESTION_RE = re.compile(
+    r"\bwinner\s*$|\bround\s+\d+\s+leader\b|\btop\s+\d+\s+finishers?\b",
     re.I,
 )
 
@@ -257,6 +276,10 @@ def _is_golf_market(market) -> bool:
     # (e.g., movie/show names) which don't trigger the blocklist but also
     # have no golf-related terms.
     if not _GOLF_SIGNAL_RE.search(name):
+        # #6243: the venue declared golf in the ticker and the name is a
+        # tournament question — see `_GOLF_TOURNAMENT_QUESTION_RE`.
+        if _KALSHI_GOLF_TICKER_RE.search(external_id) and _GOLF_TOURNAMENT_QUESTION_RE.search(name):
+            return True
         logger.debug("Golf filter: rejected '%s' (source=%s) — no golf signal", name, source)
         return False
 
