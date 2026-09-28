@@ -52,6 +52,29 @@ PRICE_FLUSH_SECONDS = float(os.getenv("WS_PRICE_FLUSH_SECONDS", "2"))
 FINAL_FLUSH_ATTEMPTS = int(os.getenv("WS_FINAL_FLUSH_ATTEMPTS", "3"))
 
 
+def _kalshi_slate_event_window():
+    """The events whose Kalshi markets the socket subscribes to.
+
+    Live, scheduled within 6 h, and (#9484) an open market on a recently
+    suspended event — see `app.tasks.ws_slate`. A function rather than inline
+    so the real-Postgres contract reads the shipped expression.
+    """
+    from sqlalchemy import and_, or_, text
+
+    from app.models.models import Event
+    from app.tasks.ws_slate import suspended_open_market_arm
+
+    return or_(
+        Event.status == "live",
+        and_(
+            Event.status == "scheduled",
+            Event.commence_time.isnot(None),
+            Event.commence_time <= text("NOW() + INTERVAL '6 hours'"),
+        ),
+        suspended_open_market_arm(),
+    )
+
+
 async def _run_kalshi_ws_consumer():
     """Main WebSocket consumer loop.
 
@@ -109,14 +132,7 @@ async def _run_kalshi_ws_consumer():
             .where(
                 FuturesMarket.source == "kalshi",
                 FuturesMarket.event_id.isnot(None),
-                or_(
-                    Event.status == "live",
-                    and_(
-                        Event.status == "scheduled",
-                        Event.commence_time.isnot(None),
-                        Event.commence_time <= text("NOW() + INTERVAL '6 hours'"),
-                    ),
-                ),
+                _kalshi_slate_event_window(),
             )
         )
         rows = result.all()

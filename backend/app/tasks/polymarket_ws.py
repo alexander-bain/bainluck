@@ -235,6 +235,7 @@ def _slate_event_window():
     from sqlalchemy import text, or_, and_
 
     from app.models.models import Event
+    from app.tasks.ws_slate import suspended_open_market_arm
 
     return or_(
         # Clock-free and fail-open, on purpose. Unchanged from before the floor
@@ -251,6 +252,10 @@ def _slate_event_window():
             ),
             Event.commence_time <= text("NOW() + INTERVAL '6 hours'"),
         ),
+        # #9484: an open market on a recently suspended event. Floored like the
+        # scheduled arm, because nothing advances a suspended row out; this arm
+        # also reads `futures_markets`, which every caller already joins.
+        suspended_open_market_arm(),
     )
 
 
