@@ -142,7 +142,7 @@ import {
   servedBlendEdgeObservation,
   type BlendEdgeObservation,
 } from "@/lib/blendObservationClock";
-import { createFoldedRefetchScheduler } from "@/lib/foldedRefetchScheduler";
+import { createFoldedRefetchScheduler, takeFreshRead } from "@/lib/foldedRefetchScheduler";
 import { chartRevisionRefreshKey } from "@/lib/chartRevisionRefresh";
 import {
   SPORT_KEY_TO_LEAGUE_PATH,
@@ -229,6 +229,10 @@ export default function EventPage({ params }: EventPageProps) {
   // live/034 S2 — see the `refreshInterval` note below. Declared here because
   // the SWR config closes over it and the hook that sets it needs `event`.
   const streamConnectedRef = useRef(false);
+  // Consume refresh intent in the fetcher, so deduped SWR requests retain it.
+  // Ordinary interval reads continue using the shared server cache.
+  const freshNextEventReadRef = useRef(false);
+  const freshNextHistoryReadRef = useRef(false);
   const latestLiveFrameRef = useRef<LiveFrame | null>(null);
   // #8749: the served history's pinned edge, for the poll reconcile below.
   const latestBlendEdgeRef = useRef<BlendEdgeObservation | null>(null);
@@ -267,7 +271,7 @@ export default function EventPage({ params }: EventPageProps) {
   } = useSWR(
     ["event", eventId],
     () => fetchEventWithLiveFrame(
-      () => fetchEvent(eventId, heldEventRef.current?.status === "live"),
+      () => fetchEvent(eventId, takeFreshRead(freshNextEventReadRef)),
       () => latestLiveFrameRef.current,
       () => latestBlendEdgeRef.current,
       () => heldEventRef.current,
@@ -310,7 +314,7 @@ export default function EventPage({ params }: EventPageProps) {
   const refreshEventRef = useRef(refreshEvent);
   refreshEventRef.current = refreshEvent;
   const [foldedRefetch] = useState(() => createFoldedRefetchScheduler(
-    () => { void refreshEventRef.current(); }, FOLDED_FRAME_REFETCH_MS,
+    () => { freshNextEventReadRef.current = true; void refreshEventRef.current(); }, FOLDED_FRAME_REFETCH_MS,
   ));
   useEffect(() => () => foldedRefetch.cancel(), [foldedRefetch]);
 
@@ -724,7 +728,7 @@ export default function EventPage({ params }: EventPageProps) {
         eventId,
         EVENT_BOOT_HISTORY_HOURS,
         historyRangeParam(fullHistoryRequested),
-        isLive
+        takeFreshRead(freshNextHistoryReadRef)
       ),
     {
       refreshInterval: isLive ? LIVE_REFRESH_INTERVAL : SCHEDULED_REFRESH_INTERVAL,
@@ -762,7 +766,7 @@ export default function EventPage({ params }: EventPageProps) {
   const refreshHistoryRef = useRef(refreshHistory);
   refreshHistoryRef.current = refreshHistory;
   const [foldedHistoryRefetch] = useState(() => createFoldedRefetchScheduler(
-    () => { void refreshHistoryRef.current(); }, FOLDED_FRAME_REFETCH_MS,
+    () => { freshNextHistoryReadRef.current = true; void refreshHistoryRef.current(); }, FOLDED_FRAME_REFETCH_MS,
   ));
   useEffect(() => () => foldedHistoryRefetch.cancel(), [foldedHistoryRefetch]);
   const requestedChartRevisionRef = useRef<string | null>(null);

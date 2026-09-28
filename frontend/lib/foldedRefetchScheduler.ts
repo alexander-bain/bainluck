@@ -54,3 +54,10 @@ export function createFoldedRefetchScheduler(
     },
   };
 }
+
+/** Consume only when a fetch starts; a deduped refresh must retain its intent. */
+export function takeFreshRead(intent: { current: boolean }): boolean {
+  const fresh = intent.current;
+  intent.current = false;
+  return fresh;
+}
