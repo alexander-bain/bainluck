@@ -6468,6 +6468,7 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
         carried_start,
         generic_sport_keys,
         pick_contest_canonical,
+        with_held_competitions,
         authority_write,
         games_line_write,
         result_refuted_by_format,
@@ -6585,9 +6586,13 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
         # THE TOUR WEEK (#2774): the board's tournaments that no bucket names
         # are anchored through the generic buckets instead — see
         # `bucketless_competitions`. Its competitions are disjoint from every
-        # tournament bucket's, so the two populations cannot contest.
+        # tournament bucket's, so the two populations cannot contest — except
+        # a competition a generic row already HOLDS, which stays generic after
+        # its tournament gets a bucket (#9465, `with_held_competitions`).
         generic_competitions = bucketless_competitions(all_keys, competitions)
         stats["generic_competitions"] = len(generic_competitions)
+        stats["generic_held_competitions"] = 0
+        stats["labelled_rows_skipped"] = 0
         stats["generic_events_considered"] = 0
         stats["generic_contests_resolved"] = 0
         stats["generic_contests_refused"] = {}
@@ -6629,7 +6634,13 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
         # would be this pass arbitrating against the sweep that labelled it.
         generic_ids: set[int] = set()
         generic_keys: dict[int, str] = {}
-        if generic_competitions:
+        # With no bucketless tournament on the board, only the rows that already
+        # HOLD an id are read (#9465): they are the only generic rows that can
+        # still be one of this board's matches, and the read stays small.
+        generic_filters = (
+            [] if generic_competitions else [Event.espn_id.isnot(None)]
+        )
+        if generic_competitions or wanted_keys:
             generic_start = now - timedelta(days=GENERIC_ANCHOR_WINDOW_DAYS)
             generic_end = now + timedelta(days=GENERIC_ANCHOR_WINDOW_DAYS)
             generic_result = await session.execute(
@@ -6643,19 +6654,33 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
                     Event.home_team_name.isnot(None),
                     Event.away_team_name.isnot(None),
                     Event.status.notin_(("voided", "merged")),
+                    *generic_filters,
                 )
                 .order_by(Event.commence_time.desc())
                 .limit(GENERIC_ANCHOR_LIMIT)
             )
+            generic_rows = []
             for event, sport_key in generic_result.all():
                 if any(
                     isinstance(t, str) and t.startswith(DUPLICATE_TAG_PREFIX)
                     for t in (event.event_tags or [])
                 ):
                     continue
-                generic_ids.add(event.id)
-                generic_keys[event.id] = sport_key
-                events.append(event)
+                generic_rows.append((event, sport_key))
+            bucketless_count = len(generic_competitions)
+            generic_competitions = with_held_competitions(
+                generic_competitions,
+                competitions,
+                [event.espn_id for event, _ in generic_rows],
+            )
+            stats["generic_held_competitions"] = (
+                len(generic_competitions) - bucketless_count
+            )
+            if generic_competitions:
+                for event, sport_key in generic_rows:
+                    generic_ids.add(event.id)
+                    generic_keys[event.id] = sport_key
+                    events.append(event)
             stats["generic_events_considered"] = len(generic_ids)
         stats["events_considered"] = len(events)
 
@@ -6667,6 +6692,16 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
         receipts: dict[int, dict] = {}
         claimants: dict[str, list[int]] = {}
         for event in events:
+            if event.id not in generic_ids and any(
+                isinstance(t, str) and t.startswith(DUPLICATE_TAG_PREFIX)
+                for t in (event.event_tags or [])
+            ):
+                # A tournament row already labelled somebody's duplicate
+                # (#9465) never claims again: it has its canonical, and
+                # re-claiming would re-open the contest the label settled —
+                # and a contest that refuses anchors NOBODY, holder included.
+                stats["labelled_rows_skipped"] += 1
+                continue
             try:
                 # `our_commence_time` is the TOURNAMENT discriminator, and it is
                 # load-bearing: the unordered pair is a key within a draw and
@@ -6734,18 +6769,22 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
                 "commence_time_source": row.commence_time_source,
             }
         for comp, ids in contested.items():
-            if not all(i in generic_ids for i in ids):
+            if not any(i in generic_ids for i in ids):
                 logger.warning(
                     "Tennis anchor CONTESTED: ESPN %s claimed by events %s — none anchored",
                     comp, ids,
                 )
                 continue
+            # A tournament row contesting a generic one is refused by
+            # `pick_contest_canonical` unless the generic row already holds this
+            # competition's id (#9465) — the old refusal is its default.
             canonical_id, ghost_ids, refusal = pick_contest_canonical(
                 comp,
                 [
                     {
                         "event_id": i,
                         "sport_key": generic_keys.get(i),
+                        "tournament_keyed": i not in generic_ids,
                         "espn_id": by_event[i].espn_id,
                         "has_result": by_event[i].home_score is not None
                         and by_event[i].away_score is not None,
