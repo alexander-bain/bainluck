@@ -143,7 +143,11 @@ _THEME_BY_NAME: list[tuple[re.Pattern, str]] = [
         r"israel|israeli|iran|iranian|taiwan|taiwanese|philippines|filipino|"
         r"indonesia|indonesian|egypt|egyptian|south\s*korea|korean|"
         r"italy|italian|spain|spanish|netherlands|dutch|"
-        r"eu\s*election|european|nato|un\s*general|g7|g20|foreign\s*policy)\b", re.I,
+        r"eu\s*election|european|nato|un\s*general|g7|g20|foreign\s*policy|"
+        # `eu`, `kyiv` and `zelensk…` (#9193 residual): "What countries will hold
+        # referenda on leaving the EU?" and "Will any aircraft land or take off
+        # at Kyiv Boryspil Airport…?" sat in Other — no country word above.
+        r"eu|kyiv|zelensk\w*)\b", re.I,
     ), "international"),
     (re.compile(r"\b(?:trump|biden|desantis|harris|newsom|haley|ramaswamy|kennedy|rfk)\b", re.I), "presidential"),
     # #9193 — `primary` is not a presidential word on its own: here it filed
@@ -182,7 +186,11 @@ _THEME_BY_NAME: list[tuple[re.Pattern, str]] = [
     (re.compile(r"\b(?:supreme\s*court|scotus|justice|roe|overturn)\b", re.I), "scotus"),
     (re.compile(r"\b(?:bill|legislation|executive\s*order|policy|tariff|immigration|gun|abortion|cannabis|marijuana|legalize|ban|mandate|regulation)\b", re.I), "policy"),
     (re.compile(r"\b(?:approval\s*rating|favorab|popular\s*vote|electoral\s*college)\b", re.I), "presidential"),
-    (re.compile(r"\b(?:cabinet|secretary\s*of|attorney\s*general|cia|fbi\s*director|ambassador)\b", re.I), "policy"),
+    # `be confirmed as`, `u.s. attorney`, `become law` (#9193 residual): "When will
+    # James McDonald be confirmed as SDNY U.S. attorney?" and "Which ICE
+    # reforms will become law in 2026?" sat in Other beside the ambassador
+    # confirmations and farm-bill questions this line already files as Policy.
+    (re.compile(r"\b(?:cabinet|secretary\s*of|attorney\s*general|cia|fbi\s*director|ambassador|be\s+confirmed\s+as|u\.s\.\s*attorney|become\s+law|signed\s+into\s+law)\b", re.I), "policy"),
 ]
 
 
@@ -241,9 +249,21 @@ _US_GOVERNORSHIPS = frozenset(
 # before the optional `lieutenant` group is ever tried, so "Alabama Lieutenant
 # Governor winner?" parses its place as "Alabama Lieutenant" and the guard
 # above fails open on the exact ten races it was written for.
+#
+# #9193 residual — the other statewide executive offices ride the same shape:
+# "Georgia Secretary of State Election Winner", "Georgia Attorney General
+# winner?", "Iowa Secretary of Agriculture winner?". Without them the policy
+# line's `secretary of|attorney general` arm (written for federal
+# appointments) filed 73 open state-election races under Policy, three of them
+# on the served page, and the international line filed New Mexico's two under
+# International on the word "Mexico". They are first-level-subdivision
+# executive races, the definition this section already uses for lieutenant
+# governor. Measured over all 7,987 open pool rows 2026-09-28: 111 move, each
+# one by these three #9193-residual edits and each one to the right section.
 _PLACE_LED_GOV_RACE_RE = re.compile(
     r"^(?P<place>[^\s]+(?:\s+[^\s]+){0,3}?)\s+"
-    r"(?:lieutenant\s+)?(?:governor|gubernatorial)\s+"
+    r"(?:(?:lieutenant\s+)?(?:governor|gubernatorial)"
+    r"|attorney\s+general|secretary\s+of\s+(?:state|agriculture))\s+"
     r"(?:election\s+)?winner\s*\??$",
     re.I,
 )
