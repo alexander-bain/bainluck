@@ -26,6 +26,10 @@ struct GamePlayCardView: View {
     /// #9015 — the game is over. A line's settled end (exactly 0 or 1) is then
     /// the result and prints 100% / 0%, not the live `>99%` / `<1%`.
     var gameFinished = false
+    /// #8651 — the card floats over the plot as the inline chart's scrub
+    /// tooltip. Nothing sits beneath a floating card, so no row holds a fixed
+    /// height for a plot that must not move (see the two-line box in `body`).
+    var floats = false
 
     private var point: GamePlayPoint? {
         selectedPoint ?? lastPoint
@@ -46,6 +50,13 @@ struct GamePlayCardView: View {
     func pinningProbabilities() -> GamePlayCardView {
         var card = self
         card.pinsProbabilities = true
+        return card
+    }
+
+    /// #8651 — this card floating over the plot (see `floats`).
+    func floating() -> GamePlayCardView {
+        var card = self
+        card.floats = true
         return card
     }
 
@@ -105,7 +116,10 @@ struct GamePlayCardView: View {
                 // 375pt, scrubbing onto a field goal (type line + description)
                 // pushed the plot down 14pt from a one-line probability row.
                 let rows = Self.rows(for: point, pinsProbabilities: pinsProbabilities)
-                if pinsProbabilities {
+                if floats {
+                    if rows.probabilities { probabilities(point) }
+                    if rows.play, let play = point.scoringPlay { playRow(play) }
+                } else if pinsProbabilities {
                     // #9185 — the numbers on a line of their own, then the play
                     // (or nothing) in the same fixed two-line box, so the plot
                     // still does not move under a scrubbing finger.
@@ -224,8 +238,11 @@ struct GamePlayCardView: View {
                 .background(Color.gray.opacity(0.15))
                 .clipShape(RoundedRectangle(cornerRadius: 4))
         }
-        if !point.wallClockDisplay.isEmpty {
-            Text(point.wallClockDisplay)
+        // #8651 — a floating card rides pre-game charts that span days, where a
+        // bare "3:50 AM" names no day; the axis beneath it prints "Mon 1 AM".
+        let wallClock = floats ? point.datedWallClockDisplay : point.wallClockDisplay
+        if !wallClock.isEmpty {
+            Text(wallClock)
                 .font(.caption2)
                 .monospacedDigit()
                 .foregroundStyle(.tertiary)
@@ -432,6 +449,12 @@ struct GamePlayPoint {
     /// the same kind of time.
     static func clockText(_ date: Date) -> String {
         date.formatted(date: .omitted, time: .shortened)
+    }
+
+    /// `wallClockDisplay` with its weekday ("Sun 6:06 PM"), for the floating card.
+    var datedWallClockDisplay: String {
+        guard let date = timestamp.asDate else { return "" }
+        return date.formatted(.dateTime.weekday(.abbreviated).hour().minute())
     }
 
     /// The `as of` time, carrying a day only when it needs one.

@@ -790,7 +790,11 @@ struct OddsChartView: View {
                         chartView(dataPoints: dataPoints, sources: history.winProbSources ?? [:],
                                   periodMarkers: periodMarkers, moments: moments,
                                   plotWidth: $inlinePlotWidth, sharesPageAxis: true,
-                                  pageGaveCard: true)
+                                  pageGaveCard: readout != nil,
+                                  floatingCard: Self.inlineScrubCard(
+                                    page: readout, homeTeam: homeTeamName, awayTeam: awayTeamName,
+                                    colors: teamColors, homeLogo: homeTeamLogo, awayLogo: awayTeamLogo,
+                                    finished: EventState.isFinished(status)))
                     }
                     .frame(height: chartHeight)
 
@@ -990,6 +994,23 @@ struct OddsChartView: View {
             awayTeamLogo: awayLogo,
             lastPoint: nil
         ).pinningProbabilities()
+    }
+
+    /// #8651 — the inline chart's scrub tooltip: the fullscreen chart's own
+    /// card, floating, wherever the page gave no readout of its own. Nil when
+    /// the page gave one (#925's card above the plot already rewrites).
+    static func inlineScrubCard(
+        page: GamePlayCardView?,
+        homeTeam: String?,
+        awayTeam: String?,
+        colors: (away: Color, home: Color)?,
+        homeLogo: String?,
+        awayLogo: String?,
+        finished: Bool
+    ) -> GamePlayCardView? {
+        guard page == nil else { return nil }
+        return fullscreenReadout(page: nil, homeTeam: homeTeam, awayTeam: awayTeam, colors: colors,
+                                 homeLogo: homeLogo, awayLogo: awayLogo)?.finished(finished).floating()
     }
 
     // MARK: - Time Range Picker
@@ -1508,7 +1529,7 @@ struct OddsChartView: View {
     private func chartView(dataPoints: [ChartDataPoint], sources: [String: WinProbSourceInfo],
                            periodMarkers: [PeriodMarker], moments: [ChartMoment],
                            plotWidth: Binding<CGFloat>, sharesPageAxis: Bool,
-                           pageGaveCard: Bool) -> some View {
+                           pageGaveCard: Bool, floatingCard: GamePlayCardView? = nil) -> some View {
         // Filter period markers to visible data range
         let visibleMarkers: [PeriodMarker]
         if let minDate = dataPoints.map(\.date).min(),
@@ -1598,7 +1619,7 @@ struct OddsChartView: View {
                                           awayShort: awayShort, moments: moments,
                                           pageGaveCard: pageGaveCard,
                                           gameFinished: EventState.isFinished(status),
-                                          sportKey: sportKey)
+                                          sportKey: sportKey, floatingCard: floatingCard)
                 // #925 — the scrub. `chartXSelection` lost the touch to the
                 // page's scroll the moment a thumb drifted vertically (Alex's
                 // build-20 recording, 14781697). The futures chart solved the

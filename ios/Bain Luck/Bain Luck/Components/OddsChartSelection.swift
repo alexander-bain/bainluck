@@ -75,6 +75,10 @@ struct OddsChartSelectionOverlay: View {
     var gameFinished = false
     /// #5271 — a draw-priced sport speaks no away number, as the card prints none.
     var sportKey: String?
+    /// #8651 — the inline chart's scrub tooltip, only where the page gave no
+    /// readout card (before a game, or before its first scoring play). Build 30
+    /// drew a bare crosshair there: "scrubbing is smooth but no tooltip appears".
+    var floatingCard: GamePlayCardView? = nil
 
     var body: some View {
         ZStack {
@@ -83,6 +87,20 @@ struct OddsChartSelectionOverlay: View {
                     .fill(.primary.opacity(0.4))
                     .frame(width: 1, height: plotFrame.height)
                     .position(x: plotFrame.minX + x, y: plotFrame.midY)
+                if let floatingCard, let point = OddsChartSelectionReadout.selectedPoint(
+                    at: date, in: dataPoints, sportKey: sportKey, pageGaveCard: pageGaveCard) {
+                    // Floats, so the plot never moves under the finger (#925), on
+                    // the side away from the crosshair so it never covers it.
+                    floatingCard.showing(point)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 2)
+                        .frame(width: min(plotFrame.width * 0.62, 240))
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .padding(6)
+                        .frame(width: plotFrame.width, height: plotFrame.height,
+                               alignment: Self.floatingCardAlignment(crosshairX: x, plotWidth: plotFrame.width))
+                        .position(x: plotFrame.midX, y: plotFrame.midY)
+                }
             }
             Color.clear
         }
@@ -94,6 +112,11 @@ struct OddsChartSelectionOverlay: View {
             homeShort: homeShort, awayShort: awayShort, moments: moments,
             pageGaveCard: pageGaveCard, gameFinished: gameFinished,
             sportKey: sportKey))
+    }
+
+    /// The top corner opposite the crosshair.
+    static func floatingCardAlignment(crosshairX: CGFloat, plotWidth: CGFloat) -> Alignment {
+        crosshairX < plotWidth / 2 ? .topTrailing : .topLeading
     }
 }
 
