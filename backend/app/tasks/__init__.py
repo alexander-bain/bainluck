@@ -1399,6 +1399,31 @@ def suspend_venue_ended_events():
 
 
 @celery_app.task(
+    name="app.tasks.refresh_polymarket_fixture_starts",
+    soft_time_limit=120,
+    time_limit=150,
+)
+def refresh_polymarket_fixture_starts():
+    """#9418: keep a near-kickoff Polymarket match on the venue's current start.
+
+    The Polymarket twin of `refresh_dated_fixture_starts`. The hourly poll pages
+    Gamma newest-listing-first to the offset-2000 cap, so a match listed the day
+    before stops being re-read hours before it is played, and a later start the
+    venue publishes that morning never reaches the #6073 re-date. Angelini v
+    Johns kept its 12:35Z listing start against the venue's 13:50Z, and the
+    unobserved-tennis clock suspended it mid-third-set. One Gamma call per 100
+    ids. Mechanism: `app/utils/polymarket_fixture_start.py`.
+    """
+    from app.tasks.polymarket_fixture_start_refresh import (
+        _refresh_polymarket_fixture_starts,
+    )
+
+    return _tracked_run(
+        "refresh_polymarket_fixture_starts", _refresh_polymarket_fixture_starts()
+    )
+
+
+@celery_app.task(
     name="app.tasks.refresh_dated_fixture_starts",
     soft_time_limit=240,
     time_limit=300,
@@ -6740,6 +6765,16 @@ celery_app.conf.beat_schedule = {
     "suspend-venue-ended-events": {
         "task": "app.tasks.suspend_venue_ended_events",
         "schedule": crontab(minute="*/5"),
+        "options": {"queue": "heavy"},
+    },
+    # #9418. Every 5 minutes, offset from the sibling above: a start the venue
+    # moves on the morning has to reach the row before the row goes live on the
+    # old one, and before the unobserved-tennis clock (start + 3.5h) suspends a
+    # match that began late. Cheap for the same reason — one indexed read and one
+    # Gamma call per 100 ids over the Polymarket-dated rows inside a day.
+    "refresh-polymarket-fixture-starts": {
+        "task": "app.tasks.refresh_polymarket_fixture_starts",
+        "schedule": crontab(minute="2-59/5"),
         "options": {"queue": "heavy"},
     },
     # UX-P139. Every 10 minutes, and it is cheap because the register bounds

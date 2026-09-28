@@ -212,6 +212,9 @@ class TestBeatScheduleCompleteness:
         # #3017: Polymarket's event record says an anchor-less match ended
         # (or was cancelled) — off the live board within one pass, not 3h.
         "suspend-venue-ended-events",
+        # #9418: a near-kickoff Polymarket match re-read by id for the venue's
+        # current start — the poll's listing-ordered window no longer reaches it.
+        "refresh-polymarket-fixture-starts",
         "enrich-events-hourly",
         "sync-espn-live",
         "sync-tennis-from-espn",
