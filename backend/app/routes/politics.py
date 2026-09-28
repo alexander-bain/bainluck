@@ -807,10 +807,19 @@ def _by_uncertainty(row: dict, market: FuturesMarket) -> tuple[int, float]:
 # (`Greg Dolezal (R)`) and Kalshi does not, so the tag is stripped. The governor
 # and lieutenant-governor races share no candidate and are refused.
 #
+# 🔴 AND THE CANDIDATES MUST BE EVIDENCE. A binary question's outcomes are
+# "Yes" (or "Yes"/"No") on both venues, so equal sets prove nothing and the
+# fold would rest on the title alone — the over-pairing guard above, gone.
+# A twin therefore names at least two candidates that are not Yes/No. That is
+# every race this fold exists for; a binary pair stays two rows, as it was, and
+# the cross-source spotlight keeps featuring what the sections render
+# (tests/integration/test_route_category_spotlight_featured_gate_uxp194.py).
+#
 # The pair keeps the card that sorts first. The venues' volumes are in
 # different units (Kalshi contracts, Polymarket dollars), so "the more traded
 # one" is not a comparison this page can make; the section's own selector is.
 _PARTY_TAG_RE = re.compile(r"\s*\((?:R|D|I)\)\s*$", re.I)
+_NOT_CANDIDATES = frozenset({"yes", "no"})
 
 
 def _candidate_key(market: FuturesMarket) -> frozenset[str]:
@@ -823,8 +832,8 @@ def _candidate_key(market: FuturesMarket) -> frozenset[str]:
 def _is_venue_twin(a: FuturesMarket, b: FuturesMarket) -> bool:
     if _source(a) == _source(b):
         return False
-    candidates = _candidate_key(a)
-    if not candidates or candidates != _candidate_key(b):
+    candidates = _candidate_key(a) - _NOT_CANDIDATES
+    if len(candidates) < 2 or candidates != _candidate_key(b) - _NOT_CANDIDATES:
         return False
     return is_same_question(a.name, b.name)
 

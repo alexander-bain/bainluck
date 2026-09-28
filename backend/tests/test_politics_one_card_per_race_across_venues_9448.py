@@ -166,6 +166,30 @@ def test_a_market_with_no_outcomes_is_never_a_twin():
     assert not _is_venue_twin(SOS_KALSHI, empty)
 
 
+def test_a_binary_question_on_both_venues_is_not_folded_on_its_title_alone():
+    # CONSTRUCTED: "Yes" on both sides is equal and says nothing about the race,
+    # so the title would be the only evidence. The uxp194 spotlight pin plants
+    # exactly this pair and asserts both sides render.
+    kalshi = _market(5, "kalshi", "Will the coalition hold through the winter?", "Yes")
+    poly = _market(6, "polymarket", "Will the coalition hold through the winter?", "Yes")
+    assert is_same_question(kalshi.name, poly.name)  # the premise: titles pair
+    assert _ids(_section([kalshi, poly])) == [5, 6]
+
+
+def test_a_yes_no_pair_is_not_a_candidate_set_either():
+    kalshi = _market(7, "kalshi", "Will the envoy be confirmed?", "Yes", "No")
+    poly = _market(8, "polymarket", "Will the envoy be confirmed?", "Yes", "No")
+    assert not _is_venue_twin(kalshi, poly)
+
+
+def test_one_named_candidate_is_not_enough_evidence():
+    # CONSTRUCTED: two different offices, one shared nominee listed alone.
+    kalshi = _market(9, "kalshi", "Georgia Governor winner?", "Rick Jackson")
+    poly = _market(10, "polymarket", "Georgia Lieutenant Governor winner?", "Rick Jackson (R)")
+    assert is_same_question(kalshi.name, poly.name)  # the premise: titles pair
+    assert not _is_venue_twin(kalshi, poly)
+
+
 # --------------------------------------------------------------------------
 # Wiring: every section goes through the fold
 # --------------------------------------------------------------------------
