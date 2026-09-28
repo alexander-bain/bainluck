@@ -228,6 +228,11 @@ export function propLabelDisplay(label: string): string {
   return shown === subject.trim() ? label : shown + label.slice(colon);
 }
 
+/** #9384 — "A vs. B", "A @ B", "A v B": a matchup, not a person. */
+function isMatchupSubject(text: string): boolean {
+  return /\bvs?\.?\s|\s@\s/i.test(text);
+}
+
 /**
  * The player, statistic and team a prop row is about.
  *
@@ -264,10 +269,26 @@ export function parsePlayerName(
   //
   // Strictly additive (gotcha #43): requires a colon, a trailing "O/U <line>",
   // and a KNOWN stat in between, so no shape that parses today changes.
+  //
+  // #9384: THE PLAYER IS BEFORE THE COLON WHATEVER THE STAT IS CALLED. Requiring
+  // the stat to be in STAT_TYPES threw the name away for every stat the list
+  // lacks — "Sam Darnold: Passing Touchdowns O/U 3.5" parsed as a player called
+  // "Passing Touchdowns O/U 3.5", so #9178's cross-venue collapse could not pair
+  // it with Kalshi's "Sam Darnold: 4+" and the settled rail printed the question
+  // twice, once with no player. Measured over 14 days of linked Polymarket
+  // markets: Outs Recorded, Hits Allowed, Earned Runs Allowed, Walks Allowed,
+  // Passing Touchdowns, Total Touchdowns, Passing Completions/Attempts, Longest
+  // Reception — 1,935 markets. An unknown phrase is kept whole, the way the
+  // Kalshi branch below keeps "Passing Touchdowns", so both venues key alike.
+  // The one shape where the text before the colon is NOT a person is the
+  // matchup ("Norway vs. Denmark: 1st Half O/U 1.5", "Army vs. Temple: 1Q") —
+  // every non-player O/U in the captured payloads — and it keeps today's parse.
   if (colonIdx > 0) {
     const ou = afterColon.match(/^(.*?)\s*O\/U\s*\d+(?:\.\d+)?$/i);
-    const known = ou
-      ? STAT_TYPES.find((st) => st.toLowerCase() === ou[1].trim().toLowerCase())
+    const phrase = ou ? ou[1].trim().replace(/\s+/g, " ") : "";
+    const known = phrase
+      ? STAT_TYPES.find((st) => st.toLowerCase() === phrase.toLowerCase()) ??
+        (/[a-z]/i.test(phrase) && !isMatchupSubject(beforeColon) ? phrase : undefined)
       : undefined;
     if (known) {
       // `team` is left blank deliberately: for this shape the text before the
