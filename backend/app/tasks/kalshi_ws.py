@@ -72,6 +72,9 @@ async def _run_kalshi_ws_consumer():
     from app.tasks.live_blend_refresh import (
         LiveBlendRefresher, event_ids_for_outcomes,
     )
+    from app.tasks.ws_admission import (  # #9418
+        run_until_admission, watch_for_unadmitted_live_events,
+    )
     from app.tasks.ws_liveness import report as _report_liveness
     from app.utils.futures_rank import rerank_market_fields_stmt  # #6598
     from app.utils.price_change_stamp import price_changed_at_value
@@ -90,6 +93,8 @@ async def _run_kalshi_ws_consumer():
     # cannot describe a state it is stuck inside.
     _report_liveness("kalshi", "loading_slate")
 
+    # #9418: the admission floor is measured from here, the previous recycle.
+    run_started_at = time.monotonic()
     ws = KalshiWebSocket()
 
     # -- Load market tickers to subscribe to --
@@ -578,6 +583,23 @@ async def _run_kalshi_ws_consumer():
 
     _report_liveness("kalshi", "subscribing", legs=len(market_tickers))
 
+    # #9418: the slate's live arm, re-read while the socket runs. Same source,
+    # same join and same status test as the slate above, so it can only name an
+    # event that turned live after the slate was read.
+    async def load_live_event_ids():
+        async with get_task_session() as session:
+            result = await session.execute(
+                select(FuturesMarket.event_id)
+                .join(Event, FuturesMarket.event_id == Event.id)
+                .where(
+                    FuturesMarket.source == "kalshi",
+                    FuturesMarket.event_id.isnot(None),
+                    Event.status == "live",
+                )
+                .distinct()
+            )
+            return {row[0] for row in result.all()}
+
     try:
         # Q460: RECYCLE, don't run forever. The subscription list above is built
         # ONCE, from events that are live or start within 6 hours, and `ws.run`
@@ -587,10 +609,29 @@ async def _run_kalshi_ws_consumer():
         # starts after 5:17pm, and every evening game silently misses the fast
         # lane. Returning on a timer hands control back to `run_kalshi_ws.py`,
         # which re-invokes this function and re-reads the slate.
-        await asyncio.wait_for(
-            ws.run(market_tickers=market_tickers),
+        #
+        # #9418: the timer is the ceiling, not the only door. A live event the
+        # slate missed ends the run early through the same cancellation.
+        admitted = await asyncio.wait_for(
+            run_until_admission(
+                ws.run(market_tickers=market_tickers),
+                watch_for_unadmitted_live_events(
+                    load_live_event_ids,
+                    event_id_by_market.values(),
+                    arm="Kalshi",
+                    started_at=run_started_at,
+                ),
+            ),
             timeout=SUBSCRIPTION_REFRESH_SECONDS,
         )
+        if admitted:
+            stats["status"] = "resubscribe"
+            stats["recycle_reason"] = "admission"
+            stats["admitted_event_ids"] = sorted(admitted)[:20]
+            logger.info(
+                "Kalshi WS: %d live event(s) not subscribed, recycling early: %s",
+                len(admitted), sorted(admitted)[:20],
+            )
     except asyncio.TimeoutError:
         stats["status"] = "resubscribe"
     except asyncio.CancelledError:
