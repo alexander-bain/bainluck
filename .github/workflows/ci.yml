@@ -5056,6 +5056,26 @@ jobs:
             exit 1
           }
 
+      - name: "#8913 one game's failed write does not discard the live box-score pass (real Postgres)"
+        # Each live game's box score is written inside the pass's one
+        # transaction. A lost row lock on one game aborted it, the later games
+        # failed, and the step's savepoint rolled back the earlier ones too.
+        # Only Postgres aborts a transaction, so only Postgres can show the
+        # per-game savepoint contains it. Same database and fixture as the
+        # #8796 step. Skip detection plus a count.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_live_box_pass_survives_one_failed_write_pg_8913.py \
+            -v -rs 2>&1 | tee /tmp/livebox8913.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/livebox8913.txt; then
+            echo "::error::#8913 live box-score gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]2 passed," /tmp/livebox8913.txt || {
+            echo "::error::#8913 live box-score gate did not run both cases"
+            exit 1
+          }
+
       - name: "#837 subscription slate — provision the disposable database"
         # Its own database for the reason the #7617 step above gives: this
         # contract creates and drops the six tables the slate predicate joins,

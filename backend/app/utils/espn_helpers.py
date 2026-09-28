@@ -3039,12 +3039,21 @@ async def fetch_live_box_scores(session, stats):
     finally:
         await live_espn.close()
 
+    # #8913: each game's write in its own SAVEPOINT. The except below swallows
+    # a failure, and on Postgres a failed statement aborts the transaction:
+    # measured 9/26, a lost row lock (after a 40P01 elsewhere) made every later
+    # game raise InFailedSQLTransactionError, and the step's own savepoint
+    # (#8796) then rolled back the box scores already written this pass. Rolled
+    # back to here, a failed write costs its own game. The ORM copy is set only
+    # after the write survived, so a rolled-back game keeps its old in-memory
+    # box score as well as its old stored one.
     for ev, bsd in to_write:
         try:
-            await session.execute(
-                _raw_text("UPDATE events SET box_score_data = cast(:bsd AS jsonb) WHERE id = :eid"),
-                {"bsd": _json_mod.dumps(bsd), "eid": ev.id},
-            )
+            async with session.begin_nested():
+                await session.execute(
+                    _raw_text("UPDATE events SET box_score_data = cast(:bsd AS jsonb) WHERE id = :eid"),
+                    {"bsd": _json_mod.dumps(bsd), "eid": ev.id},
+                )
             ev.box_score_data = bsd
             stats["live_box_scores_fetched"] = (
                 stats.get("live_box_scores_fetched", 0) + 1
