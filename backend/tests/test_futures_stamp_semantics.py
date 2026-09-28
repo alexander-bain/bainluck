@@ -611,7 +611,11 @@ PRICE_CHANGE_STAMPERS = {
     # answered, the price IS the answer, so that arm re-stamps against the
     # terminal 1.0/0.0 — through the shared helper, for the reason above.
     "app/tasks/kalshi.py": 6,
-    "app/tasks/polymarket.py": 3,
+    # 3 -> 4 (#9399): `_withdraw_book_refuted_legs`' CLEAR of a stored price the
+    # leg's current book prices out. Stamped with `None` as the new price through
+    # the shared helper, exactly as #4356's withdrawn-leg clear in `kalshi.py` —
+    # a price going away IS a change.
+    "app/tasks/polymarket.py": 4,
     "app/tasks/futures.py": 1,
     # #5246 / CERT-2637: `_backfill_kalshi_winners`' Core update. It is one of
     # the LIVE Kalshi settlement graders — the first version of #5246 patched

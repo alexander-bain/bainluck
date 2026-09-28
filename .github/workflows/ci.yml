@@ -2830,6 +2830,23 @@ jobs:
             exit 1
           fi
 
+      - name: "#9399 A Polymarket leg we refuse to price stops keeping a number its own book prices out (real Postgres)"
+        # The poll writer's withdrawal of a stored `current_probability` that the
+        # leg's CURRENT bid/ask refutes (Hurricane Nolo "Category 5 92%" beside a
+        # 0.09/0.32 book). Why the server: the withdrawal is a compare-and-set
+        # re-asserting the value it read and it stamps `price_changed_at` through
+        # the shared helper's SQL CASE, and both only mean something on real
+        # Postgres. Its fixture drops and recreates the schema, like the steps
+        # around it. Same skip-detection as every gate here.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_polymarket_refused_leg_withdrawn_9399_real_postgres.py \
+            -v -s -rs 2>&1 | tee /tmp/refusedlegwithdrawn9399.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/refusedlegwithdrawn9399.txt; then
+            echo "::error::#9399 refused-leg withdrawal gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#3518+#3569 A low-value future game ends up showing a price (real Postgres)"
         # CERT-2082's required composition. Creating a row is not showing a
         # price: the hero reads the event's blended probability, not outcome
