@@ -152,10 +152,11 @@ struct TeamDetailView: View {
                 divisionRaceSection(race)
             }
 
-            // Futures — with a Championship Path drawn, only the questions
-            // nothing above answers (web's tier rule; one number per question).
+            // #9396: only omit questions actually answered above; a tier
+            // alone cannot distinguish titles from seeds, advancement or awards.
             let futures = TeamDivisionRace.seasonFutures(
-                data.futures, championshipPathDrawn: !data.championshipPath.isEmpty)
+                data.futures, championshipPath: data.championshipPath, race: race,
+                sportKey: data.team.sportKey)
             if !futures.isEmpty {
                 Section("Season Futures") {
                     ForEach(futures) { future in
