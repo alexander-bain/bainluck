@@ -1720,6 +1720,13 @@ export interface FeedTournamentData {
   // result-first ("what happened") framing instead of the live/upcoming one.
   is_marquee?: boolean;
   marquee_whathit?: boolean;
+  /**
+   * #9212 — who won, once ESPN calls the tournament final; null until then
+   * (live's serve half, PR #9235). Spelled as this payload's own golfer row
+   * spells the player, so a card finds the row by name; a cup side may be ESPN's
+   * word ("USA"). Optional: a payload built before that half carries no key.
+   */
+  champion?: string | null;
 }
 
 // Event-concept feed card (#999 B3 / L2-84) — a tournament/card (UFC 329, …)
@@ -2046,6 +2053,8 @@ export interface GolfTournament {
   market_sources?: string[];
   golfers: GolfGolfer[];
   prop_markets?: GolfPropMarket[];
+  /** #9212 — see `FeedTournamentData.champion`. */
+  champion?: string | null;
   /**
    * Content address of the win probabilities THIS payload publishes for this
    * tournament (UX-P271). Opaque to the client: it is handed back to

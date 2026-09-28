@@ -36,7 +36,7 @@ import {
 } from "@/lib/myStuffProgression";
 import { groupAwardRows, type AwardNominee } from "@/lib/myStuffAwards";
 import { MY_STUFF_FEED_PARAMS, followedSportFutures } from "@/lib/myStuffSections";
-import { isTournamentLive } from "@/lib/tournamentLive";
+import { isTournamentDecided, isTournamentLive } from "@/lib/tournamentLive";
 import { feedItemHasRenderableContent } from "@/components/discover/utils";
 import EntityImage from "@/components/EntityImage";
 import { eventSectionKey, hasNoReportedResult, liveSectionTitle } from "@/lib/eventState";
@@ -346,7 +346,10 @@ function MyTeamsFeed({ principal }: { principal: string }) {
         // over: every copy of a decision ends in an `else` that means
         // "upcoming", and the copies drift.
         const td = item.data as FeedTournamentData;
-        if (isTournamentLive(td)) {
+        // #9212 — a decided tournament is a result, asked before the window.
+        if (isTournamentDecided(td)) {
+          recentlyCompleted.push(item);
+        } else if (isTournamentLive(td)) {
           liveNow.push(item);
         } else {
           upcoming.push(item);
