@@ -18,7 +18,10 @@ jest.mock("@/lib/api", () => ({
   fetchFuturesHistory: (...args: unknown[]) => mockFetch(...args),
 }));
 jest.mock("@/components/EvolutionView", () => ({
-  EvolutionView: ({ marketId }: { marketId: number }) => <span>chart:{marketId}</span>,
+  EvolutionView: ({ marketId, requireCurrentPrices }: { marketId: number; requireCurrentPrices?: boolean }) => {
+    expect(requireCurrentPrices).toBe(true);
+    return <span>chart:{marketId}</span>;
+  },
 }));
 
 import { EvolutionViewWithFallback } from "@/components/golf/GolfWinnerEvolutionChart";

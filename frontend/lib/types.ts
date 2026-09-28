@@ -1186,6 +1186,8 @@ export interface FuturesHistoryPoint {
 }
 
 export interface FuturesOutcomeHistory {
+  /** Presentation metadata from canonical detail; never a verdict on historical points. */
+  current_price_available?: boolean;
   outcome_id: number;
   name: string;
   history: FuturesHistoryPoint[];

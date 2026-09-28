@@ -43,6 +43,7 @@ export function EvolutionViewWithFallback({
   if (currentIndex >= candidates.length) {
     return (
       <EvolutionView
+        requireCurrentPrices
         marketId={candidates[0]}
         marketName={marketName}
         defaultTopN={defaultTopN}
@@ -116,6 +117,7 @@ function EvolutionViewWithCallback({
 
   return (
     <EvolutionView
+      requireCurrentPrices
       marketId={marketId}
       marketName={marketName}
       defaultTopN={defaultTopN}
