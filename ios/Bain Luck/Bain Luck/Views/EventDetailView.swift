@@ -1171,7 +1171,7 @@ struct EventDetailView: View {
                             // derived home re-opens the same 101 from the other side,
                             // and an older deploy can carry one field and not the
                             // other, so the pair falls back whole.
-                            let duelFallback = renderedDuelPercents(away: away, home: home)
+                            let duelFallback = complementDisplayPercents(away: away, home: home)
                             let bothServed = odds.awayRenderedPercent != nil && odds.homeRenderedPercent != nil
                             let awayPct = bothServed ? odds.awayRenderedPercent : duelFallback[0]
                             let homePct = bothServed ? odds.homeRenderedPercent : duelFallback[1]
@@ -1733,7 +1733,8 @@ struct EventDetailView: View {
         probabilities: (away: Double?, home: Double),
         colors: (away: Color, home: Color),
         columns: EventSourceLabelColumn.Columns,
-        ageMark: PriceAgeMarkView? = nil
+        ageMark: PriceAgeMarkView? = nil,
+        complementaryAway: Bool = false
     ) -> some View {
         let labelText = VStack(alignment: .leading, spacing: 1) {
             Text(label)
@@ -1749,7 +1750,7 @@ struct EventDetailView: View {
             case .inline:
                 HStack(spacing: EventSourceLabelColumn.interColumnSpacing) {
                     labelText
-                    probabilityBarAndNumbers(probabilities, colors: colors, columns: columns)
+                    probabilityBarAndNumbers(probabilities, colors: colors, columns: columns, complementaryAway: complementaryAway)
                 }
             case .stacked:
                 VStack(
@@ -1759,7 +1760,8 @@ struct EventDetailView: View {
                     labelText
                     HStack(spacing: EventSourceLabelColumn.interColumnSpacing) {
                         probabilityBarAndNumbers(
-                            probabilities, colors: colors, columns: columns)
+                            probabilities, colors: colors, columns: columns,
+                            complementaryAway: complementaryAway)
                     }
                 }
             }
@@ -1777,7 +1779,8 @@ struct EventDetailView: View {
     private func probabilityBarAndNumbers(
         _ probabilities: (away: Double?, home: Double),
         colors: (away: Color, home: Color),
-        columns: EventSourceLabelColumn.Columns
+        columns: EventSourceLabelColumn.Columns,
+        complementaryAway: Bool
     ) -> some View {
         // #5271 — a withheld away side still has a BAR, because the bar's two
         // segments are a partition and the remainder is a true quantity: it is
@@ -1801,7 +1804,8 @@ struct EventDetailView: View {
         // Sportsbooks row reading `3% 97%`. The bar above is unaffected — it
         // partitions the true doubles, not the printed integers.
         let printed = duelProbabilityStrings(
-            away: probabilities.away, home: probabilities.home)
+            away: probabilities.away, home: probabilities.home,
+            complementaryAway: complementaryAway)
         Text(printed.away)
             .font(.caption2.monospacedDigit())
             .frame(width: columns.numeric, alignment: .trailing)
@@ -1846,7 +1850,8 @@ struct EventDetailView: View {
             labels: entries.map(\.label),
             values: entries.flatMap { entry -> [String] in
                 let printed = duelProbabilityStrings(
-                    away: printable(entry)?.away, home: entry.homeProbability)
+                    away: printable(entry)?.away, home: entry.homeProbability,
+                    complementaryAway: true)
                 return [printed.away, printed.home]
             },
             availableWidth: sourceRowWidth,
@@ -1861,7 +1866,7 @@ struct EventDetailView: View {
                         home: entry.homeProbability
                     ),
                     colors: colors,
-                    columns: columns)
+                    columns: columns, complementaryAway: true)
             }
         }
         .padding(.vertical, 8)

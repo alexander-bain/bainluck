@@ -36,7 +36,7 @@ nonisolated struct LivePriceActivity: Equatable {
                 away: odds.awayProbability, home: odds.homeProbability, sport: event.sport
               ) else { return (nil, nil) }
         guard let away = pair.away else { return (Int((pair.home * 100).rounded()), nil) }
-        let percents = duelPercents(away: away, home: pair.home,
+        let percents = complementDisplayPercents(away: away, home: pair.home,
                                    servedAway: odds.awayRenderedPercent,
                                    servedHome: odds.homeRenderedPercent)
         return (percents[1], percents[0])

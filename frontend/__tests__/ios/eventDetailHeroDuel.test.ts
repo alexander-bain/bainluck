@@ -51,7 +51,7 @@ d("the iOS event detail hero prints a decided pair", () => {
   });
 
   it("the hero pair goes through renderedDuelPercents", () => {
-    expect(view).toContain("renderedDuelPercents(away: away, home: home)");
+    expect(view).toContain("complementDisplayPercents(away: away, home: home)");
   });
 
   it("the hero takes BOTH served percents or neither", () => {
@@ -151,7 +151,7 @@ d("the iOS event detail hero prints a decided pair", () => {
     // "Opened away – home". Fixing one and not the other is the shape this
     // counts against: two distinct `renderedDuelPercents(away:` call sites for
     // opening probabilities, plus the hero's own.
-    const duelCalls = view.match(/renderedDuelPercents\(/g) ?? [];
+    const duelCalls = view.match(/(?:renderedDuelPercents|complementDisplayPercents)\(/g) ?? [];
     expect(duelCalls.length).toBeGreaterThanOrEqual(3);
     // Whitespace-tolerant: SwiftFormat wraps a long argument list, and a guard
     // that a reformat can turn red is a guard nobody keeps.

@@ -302,7 +302,7 @@ struct GamePlayCardView: View {
         guard let away else {
             return (renderedPercent(home) ?? 0, nil)
         }
-        let pair = renderedDuelPercents(away: away, home: home)
+        let pair = complementDisplayPercents(away: away, home: home)
         return (pair[1] ?? 0, pair[0])
     }
 
