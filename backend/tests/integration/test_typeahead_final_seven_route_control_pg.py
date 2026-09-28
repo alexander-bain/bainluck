@@ -383,3 +383,65 @@ class TestTheSevenRowsAReaderSees:
                 assert rows.index(prop) > game_at, (
                     f"{prop!r} still outranks the game it is derived from: {rows}"
                 )
+
+
+#: #9415 — the game's own WINNER market, Kalshi-shaped, as `q=chiefs` served it
+#: (`KXNFLGAME-26OCT04KCLV`, attached to the game it decides).
+_WINNER = "SF 49ers vs LA Rams"
+_WINNER_TICKER = "KXNFLGAME-26OCT04SFLAR"
+
+
+async def _seed_winner(session, event_id):
+    """The winner market, attached to `event_id` (None = unattached)."""
+    from sqlalchemy import text
+
+    await session.execute(
+        text(
+            """
+            INSERT INTO futures_markets
+                (name, source, category, mutually_exclusive, status,
+                 resolution_date, external_id, llm_sport_category, event_id)
+            VALUES (:n, 'kalshi', 'prop', TRUE, 'open', :rd, :xid,
+                    'football', :eid)
+            """
+        ),
+        {
+            "n": _WINNER,
+            "rd": datetime.now(timezone.utc) + timedelta(days=3),
+            "xid": _WINNER_TICKER,
+            "eid": event_id,
+        },
+    )
+    await session.commit()
+
+
+class TestTheGameIsPrintedOnce9415:
+    """#9415 through the real route: `/search`'s #8734 rule, on the seven.
+
+    Strawman: with the route's slice reverted to the bare
+    `reserve_headline_slot(...)[:7]`, the first test fails with the winner
+    printed beside its game.
+    """
+
+    async def test_the_winner_market_leaves_when_its_game_is_in_the_seven(
+        self, pg_session, _no_redis
+    ):
+        ids = await _seed(pg_session)
+        await _seed_winner(pg_session, ids["upcoming_event"])
+        rows = _texts(await _seven(pg_session))
+        assert any(_GAME in (t or "") for t in rows), rows
+        assert _WINNER not in rows, (
+            f"the game's own winner market is printed beside the game: {rows}"
+        )
+        # the same game's other questions are still offered
+        assert any(p in rows for p in _PROPS), rows
+
+    async def test_an_unattached_copy_of_the_same_market_is_offered(
+        self, pg_session, _no_redis
+    ):
+        """🔴 Anti-vacuity: the same row, attached to nothing, reaches the seven —
+        so the test above fails for the attachment and not for recall."""
+        await _seed(pg_session)
+        await _seed_winner(pg_session, None)
+        rows = _texts(await _seven(pg_session))
+        assert _WINNER in rows, f"the pool never offers the winner row: {rows}"
