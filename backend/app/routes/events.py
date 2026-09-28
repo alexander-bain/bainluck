@@ -68,7 +68,7 @@ from app.utils.game_market_club_names import (
 from app.utils.market_staleness import unobserved_board_keys
 from app.utils.nation_flags import flag_nation
 from app.utils.series_card_labels import relabel_series_card
-from app.utils.sport_keys import SPORT_PREFIX_TO_LLM_CATEGORY
+from app.utils.sport_keys import NON_SPORT_LLM_CATEGORIES, SPORT_PREFIX_TO_LLM_CATEGORY
 
 # #6923. The search card's age pip and the futures card's age mark must agree on
 # what "prints a price" means, so both call the one predicate; `routes/feed.py`
@@ -2508,6 +2508,12 @@ _SEARCH_SPORT_LLM_CATEGORIES = frozenset(
 )
 
 
+# #7355 r4: the categories that can never be a club's own market, so a row from
+# one is a namesake on a club's ANSWERS card (`Kings County` on `kings`). The
+# house set, minus `other`: that is the classifier's shrug and holds sports rows.
+_SEARCH_NAMESAKE_NON_SPORT_CATEGORIES = NON_SPORT_LLM_CATEGORIES - {"other"}
+
+
 def _team_evidence_sport_categories(team_rows, window: int) -> frozenset | None:
     """#7355: the sport categories the query's matched TEAMS belong to, or None.
 
@@ -3397,6 +3403,30 @@ def _compose_futures_families(
         k = _family_key(m)
         if k:
             groups.setdefault(k, []).append(m)
+
+    # #7355 r4: `?q=kings` on production 2026-09-28 00:4xZ — the "Kings" card
+    # was `NHL: LA Kings Total Points` then `Kings County, New York: Kathy
+    # Hochul vote percentage`. When the card's top-ranked row is from a sport
+    # one of the matched clubs plays, the ranking has already said the card is
+    # the clubs', and a politics row that merely contains the word is a
+    # namesake. It leaves the card and keeps its own rank in the flat list.
+    # Only the entity card, only when armed, only when the LEADER is a club
+    # row: `hurricanes` ranks the Atlantic-season rows first, and one Carolina
+    # row further down must not turn that card into the hockey club's — this
+    # removes rows that contradict the card, it never decides what the query
+    # means. `other` (the classifier's shrug, which holds sports too) is
+    # never judged.
+    if team_sport_categories and entity_key in groups:
+        entity_members = groups[entity_key]
+        if (entity_members[0].llm_sport_category or "").strip().lower() in (
+            team_sport_categories
+        ):
+            groups[entity_key] = [
+                m
+                for m in entity_members
+                if (m.llm_sport_category or "").strip().lower()
+                not in _SEARCH_NAMESAKE_NON_SPORT_CATEGORIES
+            ]
 
     families: list[dict] = []
     for key, members in groups.items():
