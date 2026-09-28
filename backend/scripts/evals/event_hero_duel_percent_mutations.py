@@ -111,25 +111,13 @@ RESOLVER_MUTATIONS: list[dict] = [
     },
     {
         "id": "M3-attribute-served-pair-to-the-blend",
-        "needle": """      return withRenderedPercents(
-        {
-          homeProb,
-          awayProb,
-          probSourceLabel,
-          openingHomeProb,
-          openingAwayProb,
-        },
+        "needle": """      const resolved = withRenderedPercents(
+        { homeProb, awayProb, probSourceLabel, openingHomeProb, openingAwayProb },
         odds,
         false,
       );""",
-        "replacement": """      return withRenderedPercents(
-        {
-          homeProb,
-          awayProb,
-          probSourceLabel,
-          openingHomeProb,
-          openingAwayProb,
-        },
+        "replacement": """      const resolved = withRenderedPercents(
+        { homeProb, awayProb, probSourceLabel, openingHomeProb, openingAwayProb },
         odds,
         true,
       );""",
