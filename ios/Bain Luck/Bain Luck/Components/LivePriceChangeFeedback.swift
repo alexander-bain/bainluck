@@ -48,8 +48,9 @@ private struct LivePriceChangeFeedbackModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            // Replace digits immediately. Crossfading old/new glyphs can briefly
-            // look like a third value; motion belongs to the highlight only.
+            // No digit motion here. Crossfading old/new glyphs in place can
+            // briefly look like a third value; the hero moves its number as a
+            // whole string instead (`acceptedValueChange`, #9436).
             .background {
                 LivePriceFeedbackFlash(sequence: sequence, valueChanged: valueChanged,
                     color: color, isEnabled: isEnabled, isEndpoint: false)
