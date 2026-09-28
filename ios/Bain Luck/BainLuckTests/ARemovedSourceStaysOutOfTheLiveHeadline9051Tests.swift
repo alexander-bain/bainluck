@@ -330,6 +330,7 @@ final class ARemovedSourceStaysOutOfTheLiveHeadline9051Tests: XCTestCase {
 
     func testStaleFoldRereadCannotTakeCreditForAnIndependentPollAdvance() async throws {
         let client = Client(try event(p: 0.6, revision: #"{"4242":20,"999":5}"#))
+        client.historyResponse = try history(revision: #"{"4242":21,"999":5}"#, edge: 0.52)
         let handle = Handle(), vm = model(client, handle)
         defer { vm.stopRefresh() }
         await vm.load(); handle.fire("open")
@@ -355,6 +356,7 @@ final class ARemovedSourceStaysOutOfTheLiveHeadline9051Tests: XCTestCase {
 
     func testFoldRereadFinishingAfterAnOutageCannotRelightLiveStatus() async throws {
         let client = Client(try event(p: 0.6, revision: #"{"4242":20,"999":5}"#))
+        client.historyResponse = try history(revision: #"{"4242":21,"999":5}"#, edge: 0.52)
         let handle = Handle(), vm = model(client, handle)
         defer { vm.stopRefresh() }
         await vm.load(); handle.fire("open")
