@@ -758,12 +758,106 @@ def _is_paraphrase_of_a_kept_board(market, kept_boards: list) -> bool:
         return False
     from app.utils.cross_source_matching import is_same_question
 
-    for kept_source, kept_name, kept_names in kept_boards:
+    for kept_source, kept_name, kept_names, *_ in kept_boards:
         if kept_source == source:
             continue
         if not _search_boards_list_the_same_field(names, kept_names):
             continue
         if is_same_question(market.name, kept_name):
+            return True
+    return False
+
+
+#: #9439 — how far apart two venues' resolution dates may sit and still be one
+#: season's award. Production 2026-09-28: Kalshi's MLB awards resolve 2026-12-08
+#: and Polymarket's 2027-01-01 (24 days, across a calendar year); NHL Art Ross
+#: 2027-06-30 vs 2027-04-20 (71 days). The next season's race is ~365 days away.
+_SEARCH_AWARD_SEASON_MAX_DAYS = 120
+_SEARCH_TITLE_YEAR = re.compile(r"\b(?:19|20)\d{2}\b")
+
+
+def _search_award_race(market) -> Optional[str]:
+    """The award race a row IS (#4414's merge group), or None.
+
+    Only a merge rule that names the whole label counts
+    (`get_whole_label_merge_group`); a label that merely contains `NFC Champion`
+    is not the NFC title race. Fail-closed: a name that cannot be read has no race.
+    """
+    name = getattr(market, "name", None)
+    if not isinstance(name, str) or not name.strip():
+        return None
+    from app.utils.market_label_normalization import (
+        get_whole_label_merge_group,
+        normalize_market_label,
+    )
+
+    try:
+        return get_whole_label_merge_group(normalize_market_label(name))
+    except Exception:
+        logger.warning(
+            "search: award race unreadable for market %s",
+            getattr(market, "id", None), exc_info=True,
+        )
+        return None
+
+
+def _search_same_season(market, kept_name: str, kept_resolution) -> bool:
+    """Do two venues' boards for one award race cover the same season?
+
+    Both resolution dates are required and must sit within
+    `_SEARCH_AWARD_SEASON_MAX_DAYS`; and if both titles name a year, it is the
+    same year. An undated title (Kalshi's `AL Cy Young Winner?`) is judged by its
+    resolution date alone.
+    """
+    resolution = getattr(market, "resolution_date", None)
+    if resolution is None or kept_resolution is None:
+        return False
+    try:
+        if abs(resolution - kept_resolution) > timedelta(days=_SEARCH_AWARD_SEASON_MAX_DAYS):
+            return False
+    except TypeError:
+        return False
+    years = set(_SEARCH_TITLE_YEAR.findall(getattr(market, "name", None) or ""))
+    kept_years = set(_SEARCH_TITLE_YEAR.findall(kept_name or ""))
+    return not (years and kept_years and years != kept_years)
+
+
+def _is_same_award_race_as_a_kept_board(market, kept_boards: list) -> bool:
+    """True if another venue's row already on the page is the same award race,
+    for the same season, listing the same field.
+
+    #9439 — `mvp` at 390px (production 2026-09-28) printed Kalshi `MVP Winner?`
+    (KXNFLMVP-27, Josh Allen 25%) and, two rows down, Polymarket `Pro Football:
+    2026 MVP Winner` (Josh Allen 22%); `cy young` printed Kalshi `AL Cy Young
+    Winner?` and Polymarket `MLB: 2026 AL Cy Young Winner`. #8843's title gate
+    refuses both: `is_same_question` will not pair a title carrying `2026` with
+    one carrying no number, and that guard is what keeps `Fed hike in 2026?`
+    apart from `2027`, so it is not loosened here.
+
+    #4414 already knows these are one race — the Related Futures rail merges
+    them under `get_merge_group` (`mvp`, `al_cy_young`). That key is built for a
+    page scoped to one league, so on search three more gates are required:
+
+    * the rule names the whole label (`_search_award_race`);
+    * the same field (`_search_boards_list_the_same_field`) — the bare `mvp`
+      group holds the NFL and NBA races, whose boards share no names;
+    * the same season (`_search_same_season`).
+
+    Cross-venue only, like #8378. The first row kept is the ranking's choice.
+    """
+    source = getattr(market, "source", None)
+    if not kept_boards or not source:
+        return False
+    race = _search_award_race(market)
+    if race is None:
+        return False
+    names = _search_listed_names(market)
+    for kept_source, kept_name, kept_names, kept_race, kept_resolution in kept_boards:
+        if kept_source == source or kept_race != race:
+            continue
+        if not _search_boards_list_the_same_field(names, kept_names):
+            continue
+        if _search_same_season(market, kept_name, kept_resolution):
             return True
     return False
 
@@ -890,7 +984,8 @@ def _admit_search_future(
     #993/#1769), or it is another venue's copy of a question already kept
     (#8378), or another series of one race (#8410), or another rung of an O/U
     ladder already kept (#8628), or another venue's paraphrase of a kept board
-    with the same field (#8843). True = keep it, and record the keys so later rows are judged
+    with the same field (#8843), or another venue's board for the same award race
+    and season (#9439). True = keep it, and record the keys so later rows are judged
     against it. Both route loops — the window and its refill — call this, so
     the refill cannot re-admit a copy the window dropped. `kept_boards` is
     required, not defaulted, for the same reason.
@@ -902,6 +997,7 @@ def _admit_search_future(
         or (lkey is not None and lkey in seen_keys)
         or _is_repeat_of_a_kept_question(market, kept_sources_by_question)
         or _is_paraphrase_of_a_kept_board(market, kept_boards)
+        or _is_same_award_race_as_a_kept_board(market, kept_boards)
     ):
         return False
     seen_keys.add(dkey)
@@ -912,7 +1008,13 @@ def _admit_search_future(
         (getattr(market, "source", None), person)
     )
     kept_boards.append(
-        (getattr(market, "source", None), market.name, _search_listed_names(market))
+        (
+            getattr(market, "source", None),
+            market.name,
+            _search_listed_names(market),
+            _search_award_race(market),
+            getattr(market, "resolution_date", None),
+        )
     )
     return True
 
