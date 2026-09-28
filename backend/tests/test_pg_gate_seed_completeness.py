@@ -156,6 +156,9 @@ COVERED = (
     #     that let either default would make the foreign-market control
     #     indistinguishable from the subject.
     "test_venue_void_retirement_pg.py",
+    # #9444. Seeds `futures_markets` and `futures_outcomes` by raw INSERT; drops
+    # and recreates the schema like the #9404 gate.
+    "test_typeahead_same_question_fold_9444_pg.py",
     "test_link_tennis_already_linked_pg.py",
     "test_link_tennis_statpal_real_postgres.py",
     # #5024. Seeds `sports`, `events`, `futures_markets` and `futures_outcomes`

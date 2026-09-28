@@ -314,3 +314,34 @@ async def test_the_route_keeps_a_lone_polymarket_row():
     """Control: with no Kalshi twin on the page the Polymarket row is the answer."""
     payload = await _payload([p_picture(), k_actor()])
     assert sorted(_flat_ids(payload)) == sorted([P_PICTURE, K_ACTOR])
+
+
+# ── #9444: the per-row form the dropdown asks ────────────────────────────────
+
+
+def test_the_per_row_form_keeps_the_first_and_folds_the_second():
+    """#9444 — the dropdown asks `_search_same_question_as_a_kept_card` as it
+    admits. The first board is kept (and recorded); the other venue's copy folds
+    and is NOT recorded, so it cannot fold a later row."""
+    from app.routes.events import _search_same_question_as_a_kept_card
+
+    kept: list = []
+    assert _search_same_question_as_a_kept_card(p_picture(), None, kept) is False
+    assert len(kept) == 1
+    assert _search_same_question_as_a_kept_card(k_picture(), None, kept) is True
+    assert len(kept) == 1
+    assert _search_same_question_as_a_kept_card(k_actor(), None, kept) is False
+    assert len(kept) == 2
+
+
+def test_the_per_row_form_keeps_a_row_whose_facts_raise_without_recording_it():
+    """Gotcha 42, per row: a broken row is admitted (False) and left out of
+    `kept`, so its would-be twin still reaches the page."""
+    from app.routes.events import _search_same_question_as_a_kept_card
+
+    broken = k_picture()
+    broken.outcomes = None
+    kept: list = []
+    assert _search_same_question_as_a_kept_card(broken, None, kept) is False
+    assert kept == []
+    assert _search_same_question_as_a_kept_card(p_picture(), None, kept) is False
