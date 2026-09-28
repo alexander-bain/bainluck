@@ -16280,12 +16280,17 @@ async def _settled_prematch_odds(
 
 
 @router.get("/{event_id}")
-async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
+async def get_event(
+    event_id: int, db: AsyncSession = Depends(get_db), fresh: bool = False,
+):
     """Get event details with aggregated odds from all bookmakers."""
     import time as _time
     _now = _time.time()
     requested_event_id = event_id
-    _cached_resp = _cached_detail_payload(event_id, _now)
+    # #9051: a coalesced stream-reconciliation read already knows the held
+    # price may be behind. Bypass only this cache READ; publish the resulting
+    # canonical/folded payload under the ordinary keys below, as on any miss.
+    _cached_resp = None if fresh else _cached_detail_payload(event_id, _now)
     if _cached_resp is not None:
         return _cached_resp
 
@@ -27193,6 +27198,7 @@ async def get_event_odds_history(
     ),
     response: Response = None,
     db: AsyncSession = Depends(get_db),
+    fresh: bool = False,
 ):
     """
     Get odds history for trending chart.
@@ -28624,7 +28630,10 @@ async def get_event_odds_history(
         # reproduction that made this necessary.
         import time as _time
 
-        _served = _cached_detail_payload(event_id, _time.time())
+        # The paired authoritative read must not pin a newly read history to
+        # an older process-local hero. Recompute value AND revision together;
+        # ordinary history requests retain their existing cached-hero parity.
+        _served = None if fresh else _cached_detail_payload(event_id, _time.time())
         if (
             _served is not None
             and _served.get("hero_probability_source") == _PINNABLE_HERO_SOURCE
