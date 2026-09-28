@@ -361,6 +361,28 @@ final class EventDetailViewModel: ObservableObject {
         }
     }
 
+    /// #9268 — the detail alone, between the slow lane's full loads: the score,
+    /// clock, period and status the stream does not carry.
+    ///
+    /// Through `adopt`, exactly as `load()` takes the same response, so a newer
+    /// pushed price or a pushed final is kept over whatever the (cached) detail
+    /// says and only the game state moves. Not a load: it does not stamp
+    /// `lastLoadedAt`, which drives the refresh countdown, and it leaves the
+    /// chart and markets to the full load that owns them.
+    @MainActor
+    private func rereadGameState() async {
+        do {
+            adopt(try await client.fetchEvent(id: eventId))
+            error = nil
+        } catch {
+            self.error = error.localizedDescription
+            logger.error("Game-state read failed for \(self.eventId): \(error)")
+        }
+        // A read that brings the final (or a suspension) has to re-plan the page
+        // just as a load would; unchanged, this leaves the running loop alone.
+        configureAutoRefresh()
+    }
+
     /// Detail and history only — the two payloads that carry the blend and its
     /// revision. Not a `load()`: that is six requests and owns `lastLoadedAt`.
     @MainActor
@@ -457,12 +479,26 @@ final class EventDetailViewModel: ObservableObject {
         // The gap is measured BETWEEN loads rather than on the wall clock, so a
         // six-endpoint refresh that takes longer than the interval on a slow
         // network never stacks a second one on top of itself.
+        //
+        // #9268 — ONE loop, cut into slots, rather than a second loop for the
+        // detail: two loops would each sleep, each re-plan, and could each run
+        // a read on top of the other's. On the pushed slow lane every slot but
+        // the last re-reads the game state alone; every other plan is one slot.
         let wait = sleep
+        let slots = EventRefreshPlan.slots(for: plan)
+        let gap = interval / Double(slots)
         refreshTask = Task { @MainActor [weak self] in
+            var slot = 0
             while !Task.isCancelled {
-                await wait(interval)
+                await wait(gap)
                 guard !Task.isCancelled, let self else { return }
-                await self.load()
+                slot += 1
+                if slot < slots {
+                    await self.rereadGameState()
+                } else {
+                    slot = 0
+                    await self.load()
+                }
             }
         }
         installedPlan = plan
