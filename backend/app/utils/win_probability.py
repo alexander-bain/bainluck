@@ -119,44 +119,51 @@ def parse_baseball_state(period_str: str | None) -> dict | None:
 
     total_outs = 54  # 9 innings × 6 outs/inning
     regulation_innings = 9
+    # #9400: in extra innings the CURRENT inning is the last one scheduled — the
+    # home side still bats in its bottom half. Counting against a fixed 9 gave
+    # home 0 half-innings in "Top 10th"/"Mid 10th", so variance collapsed and
+    # any away lead printed 0.1% (15319731, Top 10th 1-2: 0.0049 while Kalshi
+    # traded 0.36). Tied after a complete extra inning, another one follows;
+    # the End-N tie rule in compute_baseball_win_prob already covers that.
+    last_inning = max(regulation_innings, inning)
 
     # Calculate remaining half-innings for each team
     # In regulation: away bats top 1-9 (9 HI), home bats bottom 1-9 (9 HI)
     if is_end:
         # End of inning N: both halves complete
         completed_full_innings = inning
-        away_hi = max(regulation_innings - completed_full_innings, 0)
-        home_hi = max(regulation_innings - completed_full_innings, 0)
+        away_hi = max(last_inning - completed_full_innings, 0)
+        home_hi = max(last_inning - completed_full_innings, 0)
         outs_in_half = 0.0
         outs_done = inning * 6
     elif is_mid:
         # Mid inning N: top complete, bottom about to start
-        away_hi = max(regulation_innings - inning, 0)  # away done with top N
-        home_hi = max(regulation_innings - inning + 1, 0)  # home still has bottom N
+        away_hi = max(last_inning - inning, 0)  # away done with top N
+        home_hi = max(last_inning - inning + 1, 0)  # home still has bottom N
         outs_in_half = 0.0
         outs_done = (inning - 1) * 6 + 3
     elif is_top is True:
         # Top of inning N: away batting (~1.5 outs into half)
         outs_in_half = 1.5
         # Away: remaining in this HI + future tops
-        away_hi_after = max(regulation_innings - inning, 0)
+        away_hi_after = max(last_inning - inning, 0)
         away_hi = (3 - outs_in_half) / 3 + away_hi_after  # fractional current + full future
         # Home: all bottoms from N onward
-        home_hi = max(regulation_innings - inning + 1, 0)
+        home_hi = max(last_inning - inning + 1, 0)
         outs_done = (inning - 1) * 6 + outs_in_half
     elif is_top is False:
         # Bottom of inning N: home batting (~1.5 outs into half)
         outs_in_half = 1.5
         # Away: future tops only (current inning top already done)
-        away_hi = max(regulation_innings - inning, 0)
+        away_hi = max(last_inning - inning, 0)
         # Home: remaining in this HI + future bottoms
-        home_hi_after = max(regulation_innings - inning, 0)
+        home_hi_after = max(last_inning - inning, 0)
         home_hi = (3 - outs_in_half) / 3 + home_hi_after
         outs_done = (inning - 1) * 6 + 3 + outs_in_half
     else:
         # Unknown half — assume mid-inning
-        away_hi = max(regulation_innings - inning, 0)
-        home_hi = max(regulation_innings - inning + 1, 0)
+        away_hi = max(last_inning - inning, 0)
+        home_hi = max(last_inning - inning + 1, 0)
         outs_in_half = 0.0
         outs_done = (inning - 1) * 6 + 3
 

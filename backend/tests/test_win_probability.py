@@ -840,17 +840,20 @@ class TestMLBStatModel:
         assert 0.62 <= favored < 0.66  # "Top 1st" = 1.5 scoreless outs in
 
     def test_extra_innings_tight(self):
-        """Extra innings tied game: home has slight disadvantage in top 10th
-        because away is batting (could score), but home bats last (walk-off).
-        Model gives ~0.3-0.5 range depending on remaining HI asymmetry."""
-        result = compute_statistical_win_prob(
-            home_score=3, away_score=3,
-            clock=None, period="Top 10th",
-            sport_key="baseball_mlb",
-            pregame_spread=0,
-        )
+        """Extra innings tied game: top 10th prices like top 9th — away bats
+        now, home still bats last (#9400). The old 0.2-0.6 band held the
+        defect's value: home was given no bottom 10th, so a tie read ~0.31."""
+        def tied(period):
+            return compute_statistical_win_prob(
+                home_score=3, away_score=3,
+                clock=None, period=period,
+                sport_key="baseball_mlb",
+                pregame_spread=0,
+            )
+        result = tied("Top 10th")
         assert result is not None
-        assert 0.2 < result < 0.6
+        assert result == pytest.approx(tied("Top 9th"), abs=1e-12)
+        assert 0.5 < result < 0.7
 
     def test_wall_clock_fallback(self):
         """MLB should work with wall-clock fallback too."""
