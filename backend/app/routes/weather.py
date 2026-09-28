@@ -1141,6 +1141,7 @@ async def get_cities(db: AsyncSession):
         for m in mkts:
             sources.add(_market_source(m))
 
+        day = _temperature_day(chosen)
         cities.append({
             "id": city_id,
             "name": info["name"],
@@ -1150,7 +1151,13 @@ async def get_cities(db: AsyncSession):
             "x": info["x"],
             "y": info["y"],
             "srcs": sorted(sources),
+            # The venue whose ladder this card draws (#9260). `srcs` is every
+            # venue quoting the city, sorted, so its first entry is not it.
+            "src": _market_source(chosen),
             "marketId": chosen.id,
+            # The day this city's ladder is about, `YYYY-MM-DD`, or None.
+            # The map labels its date from this and nothing else (#8046).
+            "iso": day.isoformat() if day else None,
             "high": {
                 "unit": unit,
                 "mode": mode_val,
@@ -1561,6 +1568,42 @@ def _rain_day(market: FuturesMarket) -> Optional[date]:
                 pass
 
     return None
+
+
+#: Polymarket names its temperature day without a year:
+#: "Highest temperature in Tokyo on September 29?".
+_NAME_DAY_NO_YEAR_RE = re.compile(r"\bon\s+([A-Za-z]{3})[a-z]*\s+(\d{1,2})\b(?!,\s*\d{4})")
+
+
+def _temperature_day(market: FuturesMarket) -> Optional[date]:
+    """The day a city's high-temperature market is ABOUT, or None (#8046 Half B).
+
+    Same readings as `_rain_day` (ticker first, then a dated name), plus the
+    year-less Polymarket name, whose year is taken from the market's own
+    `resolution_date` — the one within half a year of it, so a December
+    question settling in January keeps its year. Never the reader's clock:
+    the map used to print `new Date() + 1` over 48 pins spread across three
+    different days.
+    """
+    day = _rain_day(market)
+    if day is not None:
+        return day
+    m = _NAME_DAY_NO_YEAR_RE.search(market.name or "")
+    if not m or market.resolution_date is None:
+        return None
+    month = _MONTH_ABBR.get(m.group(1).upper())
+    if not month:
+        return None
+    anchor = market.resolution_date.date()
+    candidates = []
+    for year in (anchor.year - 1, anchor.year, anchor.year + 1):
+        try:
+            candidates.append(date(year, month, int(m.group(2))))
+        except ValueError:
+            continue
+    if not candidates:
+        return None
+    return min(candidates, key=lambda d: abs((d - anchor).days))
 
 
 #: The venue's own key for the New York City leg of a daily KXRAIN event

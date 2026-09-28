@@ -5,7 +5,7 @@
  * ═══ WHAT A READER SAW, production 2026-09-20 at 1280 ═══
  *
  *   GLOBAL TEMPERATURE MAP
- *   42 cities. Tomorrow's high, as a probability distribution.
+ *   42 cities. Daily high, as a probability distribution.
  *   Polymarket & Kalshi · 336 markets
  *
  * Neither half of that mark was a reading of anything.
@@ -126,7 +126,7 @@ export function temperatureMapHeader(
 
   return {
     cities,
-    title: `${pluralize(cities.length, "city", "cities")}. Tomorrow's high, as a probability distribution.`,
+    title: `${pluralize(cities.length, "city", "cities")}. Daily high, as a probability distribution.`,
     meta: venues ? `${venues} · ${markets}` : markets,
     scope: query.trim()
       ? `${cities.length} of ${allCities.length} cities`
