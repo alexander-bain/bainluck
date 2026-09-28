@@ -749,6 +749,32 @@ jobs:
             exit 1
           fi
 
+      - name: "division series finds the ALDS/NLDS markets, never Byron Donalds (real Postgres)"
+        # PILLAR: DISCOVER. SHIP: typing `division series` in search or the
+        # dropdown shows the ALDS/NLDS markets. Production 2026-09-28 served
+        # nothing at all with eight open markets about the round (#9340).
+        #
+        # The alias arm is a whole-word `~*` regex beside a trigram ILIKE, wired
+        # as a UNION arm inside two route bodies, so only a real database can
+        # observe it. Two strawmen (aliases removed -> nothing; substring compile
+        # -> Byron Donalds) and one control. Three refusals.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_search_division_series_pg.py \
+            -v -rs 2>&1 | tee /tmp/divseries.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/divseries.txt; then
+            echo "::error::division-series search gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          if grep -qiE "no tests ran|collected 0 items" /tmp/divseries.txt; then
+            echo "::error::division-series search gate collected NOTHING"
+            exit 1
+          fi
+          if ! grep -qE "^=+ 8 passed" /tmp/divseries.txt; then
+            echo "::error::division-series search gate did not pass all 8"
+            exit 1
+          fi
+
       - name: "#5030 a game being played stays in the search dropdown (real Postgres)"
         # PILLAR: DISCOVER. SHIP: typing a player or team while their game is on
         # offers that game, not last week's finals.
