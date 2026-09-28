@@ -733,6 +733,30 @@ def get_merge_group(clean_label: str) -> Optional[str]:
     return None
 
 
+def get_whole_label_merge_group(clean_label: str) -> Optional[str]:
+    """`get_merge_group`, but only when the rule that decides it names the WHOLE label.
+
+    #9439 — for surfaces that are not scoped to one league (search). The Related
+    Futures rail reads `get_merge_group` on a page that already says which team
+    and league it is, so a rule that matches anywhere in the label is safe there.
+    On search it is not: `NFC Champion` also matches Polymarket's `Team to advance
+    to NFC Championship Game` (a different question), `AFC Champion` matches
+    `AFC Champions League Elite` (soccer), and `NBA Champion` matches Kalshi's
+    `Women's Pro Basketball Champion`. A rule anchored at both ends (`^AL Cy
+    Young$`, `^(?:NBA |NFL )?MVP$`) only fires when the label IS the award.
+
+    The first matching rule decides, exactly as in `get_merge_group`, so this can
+    only ever return that function's answer or None — never a different group.
+    """
+    for pat, repl in _MERGE_RULES:
+        m = pat.search(clean_label)
+        if m:
+            if not (pat.pattern.startswith("^") and pat.pattern.endswith("$")):
+                return None
+            return m.expand(repl).lower().replace(" ", "_")
+    return None
+
+
 def is_wrong_sport_leak(
     raw_name: str,
     outcome_name: str,
