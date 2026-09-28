@@ -447,3 +447,27 @@ describe("LAT-P219 · the claim is raced against a deadline", () => {
     });
   });
 });
+
+
+describe("#9294 live reconciliation bypasses cached server and browser responses", () => {
+  it("uses fresh detail/history while ordinary callers keep their original URLs", async () => {
+    const originalFetch = global.fetch;
+    const calls: Array<{ url: string; cache?: RequestCache }> = [];
+    global.fetch = jest.fn(async (url, options) => {
+      calls.push({ url: String(url), cache: options?.cache });
+      return fakeResponse({});
+    });
+    try {
+      await fetchEvent(EVENT_ID, true);
+      await fetchEventHistory(EVENT_ID, 168, "since_start", true);
+      await fetchEvent(EVENT_ID);
+      await fetchEventHistory(EVENT_ID, 168, "since_start");
+      expect(calls).toEqual([
+        { url: `${API_URL}/api/events/${EVENT_ID}?fresh=true`, cache: "no-store" },
+        { url: `${API_URL}/api/events/${EVENT_ID}/history?hours=168&range=since_start&fresh=true`, cache: "no-store" },
+        { url: `${API_URL}/api/events/${EVENT_ID}`, cache: undefined },
+        { url: `${API_URL}/api/events/${EVENT_ID}/history?hours=168&range=since_start`, cache: undefined },
+      ]);
+    } finally { global.fetch = originalFetch; }
+  });
+});

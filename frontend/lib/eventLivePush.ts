@@ -374,7 +374,7 @@ function holdsLiveBlend(held: HeldHero): boolean {
  * still says the blend moved, so the page refetches the paired detail instead
  * of waiting out a stream-connected poll.
  */
-export function frameInvalidatesFoldedBlend(held: unknown, frame: LiveFrame): boolean {
+export function frameInvalidatesFoldedBlend(held: unknown, frame: Pick<LiveFrame, "rev">): boolean {
   if (!held) return false;
   const hero = held as HeldHero;
   return holdsLiveBlend(hero) && frameFoldOrder(hero.blend_fold_revision, frame.rev) === "incomparable";
