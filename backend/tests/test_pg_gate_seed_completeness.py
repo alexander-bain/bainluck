@@ -188,6 +188,9 @@ COVERED = (
     # named, as in #6215's seed.
     "test_foreign_espn_id_apply_cas_9017_pg.py",
     "test_polymarket_resolved_candidate_sql_pg.py",
+    # #9394. Seeds `futures_markets` and `futures_outcomes` by raw INSERT into a
+    # private schema and drives the real Gamma winner rail over them.
+    "test_price_crowned_pm_winner_venue_regrade_9394_pg.py",
     # #7021. Seeds ten `events` rows by raw INSERT into a PRIVATE schema to run
     # the twin drain's own candidate SELECT. The gate builds a narrow `events`
     # rather than `Base.metadata.create_all`, because the question it asks is

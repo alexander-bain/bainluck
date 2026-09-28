@@ -8312,6 +8312,20 @@ async def _backfill_polymarket_winners_from_api(
                 OR ((fm.mutually_exclusive OR fm.name ~* '\yby\y' OR fm.name ~* '\ywhen\y')
                     AND SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) > 1
                     AND fm.resolution_date > NOW() - INTERVAL '90 days')
+                -- #9394: a WINNER crowned only by `clean_resolution` has not been
+                -- checked against the venue. That pass crowns any stored leg at
+                -- >= 0.95, and `clean_resolution` is OVERWRITABLE for exactly
+                -- that reason — but the first arm above excludes it, so once
+                -- Pass 1 stamped a field this rail never looked at it again and
+                -- the price crown was final in practice. Specimen 59433935 (TOUR
+                -- Championship): 1 of the venue's 51 legs stored, Chris Gotterup,
+                -- priced 0.99 off a 0.01/0.99 book on Aug 22 and never re-read;
+                -- Pass 1 crowned him and Gamma, which says Gotterup Yes=0, was
+                -- never asked. Bring such a market back here so the venue's
+                -- result replaces the price. It leaves once graded: the matched
+                -- winner row becomes `api_settlement`. Same 90d bound as above.
+                OR (BOOL_OR(fo.is_winner AND fo.resolution_source = 'clean_resolution')
+                    AND fm.resolution_date > NOW() - INTERVAL '90 days')
                 ORDER BY fm.id ASC
                 LIMIT :limit
             """),
