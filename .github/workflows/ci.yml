@@ -801,6 +801,34 @@ jobs:
             exit 1
           fi
 
+      - name: "championship series leads with the ALCS/NLCS markets, not NFL season-series boards (real Postgres)"
+        # PILLAR: DISCOVER. SHIP: typing `championship series` in search or the
+        # dropdown leads with the ALCS/NLCS markets. Production `fa40adc3`
+        # 2026-09-28 served nine "NFL: … Season Series Winner" boards under a
+        # CHAMPIONSHIP SERIES heading instead (#9340): `championship` carries the
+        # `winner` synonym, so those names out-tier the round's alias arm.
+        #
+        # The lead is a tier in the /search window's ORDER BY, the dropdown
+        # pool's first key and the scorer's private alias, so only a real
+        # database behind the real route can observe it. One strawman (rule
+        # disarmed -> NFL leads) and one control. Three refusals.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_search_championship_series_lead_pg.py \
+            -v -rs 2>&1 | tee /tmp/lcslead.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/lcslead.txt; then
+            echo "::error::championship-series lead gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          if grep -qiE "no tests ran|collected 0 items" /tmp/lcslead.txt; then
+            echo "::error::championship-series lead gate collected NOTHING"
+            exit 1
+          fi
+          if ! grep -qE "^=+ 7 passed" /tmp/lcslead.txt; then
+            echo "::error::championship-series lead gate did not pass all 7"
+            exit 1
+          fi
+
       - name: "#5030 a game being played stays in the search dropdown (real Postgres)"
         # PILLAR: DISCOVER. SHIP: typing a player or team while their game is on
         # offers that game, not last week's finals.

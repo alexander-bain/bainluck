@@ -2069,16 +2069,38 @@ def _postseason_round_series_first(markets: list, terms: list[str]) -> list:
     rule as `_postseason_round_series_match`, in Python. A stable partition; a
     no-op unless the query IS the round name (`_bare_postseason_round`).
     """
-    rnd = _bare_postseason_round(terms)
-    if rnd is None:
+    in_round = _postseason_round_lead_predicate(terms)
+    if in_round is None:
         return markets
-    _sport_key, stem, _winner, _game, code = rnd
+    return [m for m in markets if in_round(m)] + [m for m in markets if not in_round(m)]
 
-    def _in_round(m) -> bool:
-        ext = m.external_id or ""
-        return m.source == "kalshi" and ext.startswith(stem) and ext.endswith(code)
 
-    return [m for m in markets if _in_round(m)] + [m for m in markets if not _in_round(m)]
+def _postseason_round_lead_predicate(terms: list[str]):
+    """`_postseason_round_lead_match` in Python — a market test, or ``None``.
+
+    One rule for the reranker's partition and the dropdown's private alias: a
+    ticker round (`wild card`) is its Kalshi series markets; a spelled-out
+    round (`championship series`, #9340) is the markets naming its
+    abbreviation as a whole word, the same word test `_build_round_word_ilike`
+    compiles.
+    """
+    rnd = _bare_postseason_round(terms)
+    if rnd is not None:
+        _sport_key, stem, _winner, _game, code = rnd
+
+        def _in_series(m) -> bool:
+            ext = m.external_id or ""
+            return m.source == "kalshi" and ext.startswith(stem) and ext.endswith(code)
+
+        return _in_series
+    named = _bare_postseason_named_round(terms)
+    if named is None:
+        return None
+    named_re = re.compile(
+        r"(?:^|[^0-9a-z])(?:" + "|".join(map(re.escape, named)) + r")(?:[^0-9a-z]|$)",
+        re.IGNORECASE,
+    )
+    return lambda m: bool(named_re.search(m.name or ""))
 
 
 def _futures_postseason_round_order_key(terms: list[str]):
@@ -2088,10 +2110,24 @@ def _futures_postseason_round_order_key(terms: list[str]):
     name keys that the series markets can never win, so the partition above can
     only reorder what this key makes sure is fetched.
     """
+    match = _postseason_round_lead_match(terms)
+    return None if match is None else case((match, 0), else_=1)
+
+
+def _postseason_round_lead_match(terms: list[str]):
+    """The rows a bare round query leads with, as SQL; ``None`` without one.
+
+    A ticker round (`wild card`) is its series markets; a spelled-out round
+    (`championship series`, #9340) is the markets naming its abbreviation as a
+    whole word. Both are rows `_alias_futures_arms` already recalls.
+    """
     rnd = _bare_postseason_round(terms)
-    if rnd is None:
+    if rnd is not None:
+        return _postseason_round_series_match(rnd)
+    named = _bare_postseason_named_round(terms)
+    if named is None:
         return None
-    return case((_postseason_round_series_match(rnd), 0), else_=1)
+    return or_(*[_build_round_word_ilike(FuturesMarket.name, a, None) for a in named])
 
 
 def _bare_postseason_round(terms: list[str]):
@@ -2104,9 +2140,48 @@ def _bare_postseason_round(terms: list[str]):
     rnd, consumed = _resolve_postseason_round(terms)
     if rnd is None:
         return None
+    return rnd if _only_the_rounds_league(terms, consumed, rnd[0]) else None
+
+
+#: #9340: the spelled-out MLB rounds the venues name only by abbreviation.
+#: `_QUERY_PHRASE_ALIASES` RECALLS their markets (the whole-word abbreviation
+#: arm); this table makes those markets LEAD when the query is the round itself.
+#: On production `fa40adc3` `championship series` recalled them and then served
+#: nine "NFL: … Season Series Winner" boards instead: `championship` carries the
+#: `winner` synonym, so those names match every typed word and fill the window.
+_POSTSEASON_NAMED_ROUNDS: dict[tuple[str, ...], str] = {
+    ("division", "series"): "baseball_mlb",
+    ("championship", "series"): "baseball_mlb",
+}
+
+
+def _bare_postseason_named_round(terms: list[str]) -> tuple[str, ...] | None:
+    """The round's abbreviations (`alcs`, `nlcs`) when the query IS a named round."""
+    lowered = [t.lower() for t in terms]
+    for phrase, sport_key in _POSTSEASON_NAMED_ROUNDS.items():
+        width = len(phrase)
+        for i in range(len(lowered) - width + 1):
+            if tuple(lowered[i:i + width]) != phrase:
+                continue
+            abbreviations = tuple(alt[0] for alt in _QUERY_PHRASE_ALIASES.get(phrase, ()))
+            if not abbreviations or not _only_the_rounds_league(terms, set(phrase), sport_key):
+                return None
+            return abbreviations
+    return None
+
+
+def _only_the_rounds_league(terms: list[str], consumed: set[str], sport_key: str) -> bool:
+    """Every term outside the round is a league word, and names the round's league.
+
+    `mlb wild card` asks for the round; `nfl championship series` is another
+    league's question and `yankees wild card` one club's, so neither gets the
+    MLB round hoisted over what it named.
+    """
     rest = [(t, None) for t in terms if t.lower() not in consumed]
-    _keys, league_words = _resolve_sport_aliases(rest)
-    return rnd if all(t.lower() in league_words for t, _e in rest) else None
+    if not rest:
+        return True
+    keys, league_words = _resolve_sport_aliases(rest)
+    return all(t.lower() in league_words for t, _e in rest) and sport_key in (keys or [])
 
 
 def _strip_search_scaffolding(terms: list[str]) -> list[str]:
@@ -10383,6 +10458,14 @@ async def search_events(
     # so this appends nothing and the compiled SQL is byte-identical on the
     # no-alias path — the same no-cost property the recall arms already have.
     _futures_tier_whens = [(futures_name_match, 0)]
+    # #9340: a bare round query's own markets sit ABOVE the name matches (tier
+    # -1) — "Season Series Winner" matches `championship series` by name through
+    # the `winner` synonym and would fill the window. Every such row is recalled
+    # by `_alias_futures_arms`, i.e. is tier<=1 anyway, so the LAT-P111 split's
+    # proof (every tier-2 row sorts below every tier<=1 row) is untouched.
+    _futures_round_lead = _postseason_round_lead_match(terms)
+    if _futures_round_lead is not None:
+        _futures_tier_whens.insert(0, (_futures_round_lead, -1))
     if league_ticker_match is not None:
         _futures_tier_whens.append((league_ticker_match, 1))
     if _futures_alias_arms:
@@ -13440,6 +13523,14 @@ async def typeahead_search(
 
     futures_pool = []
     seen_futures_keys: set[str] = set()
+    # #9340: the match-class scorer below reads the typed words, and the round's
+    # own markets hold none of them ("MLB Playoffs: Team to advance to ALCS" for
+    # `championship series`) while "NFL: … Season Series Winner" holds `series`
+    # — so the NFL boards out-classed the round the partition put first. The
+    # round's markets carry the round as a private alias, as #8523's lead-team
+    # fixture carries the player's name. `None` for every other query.
+    _ta_round_lead = _postseason_round_lead_predicate(terms)
+    _ta_round_alias = " ".join(t.lower() for t in terms)
     #: `(market id, kalshi ticker, event id)` for every row that reaches the
     #: dropdown — plain scalars, read while the ORM row is live. #6447 residual.
     _ta_market_facts: list[tuple[int, Optional[str], Optional[int]]] = []
@@ -13530,6 +13621,11 @@ async def typeahead_search(
             # owned-outcome evidence made display truncation silently truncate
             # ranking evidence. See `_search_owned_outcome_names`.
             "_outcome_names": _search_owned_outcome_names(market),
+            "_aliases": (
+                [_ta_round_alias]
+                if _ta_round_lead is not None and _ta_round_lead(market)
+                else []
+            ),
         })
 
     # L2-65 Item 1c: EVENT CONCEPT suggestions (tournament pages) from the same

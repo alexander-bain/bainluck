@@ -341,12 +341,11 @@ async def test_without_the_round_partition_the_collisions_lead(get, maker, monke
     """Strawman: the fixture reproduces production's dropdown order."""
     from app.routes import events as events_module
 
-    monkeypatch.setattr(
-        events_module, "_postseason_round_series_first", lambda markets, _terms: markets
-    )
-    monkeypatch.setattr(
-        events_module, "_futures_postseason_round_order_key", lambda _terms: None
-    )
+    # The lead rule has three wirings since #9340's `championship series` repair
+    # (the pool key, the reranker partition, the dropdown's private alias); all
+    # read `_bare_postseason_round`, and recall does not, so this disarms the
+    # rule alone.
+    monkeypatch.setattr(events_module, "_bare_postseason_round", lambda _terms: None)
     collisions = await _add_name_collisions(maker)
     futures = _typeahead_futures(await get("typeahead", "wild card"))
     assert futures and futures[0] in collisions, futures
