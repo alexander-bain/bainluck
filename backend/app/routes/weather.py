@@ -294,12 +294,22 @@ _TEMP_MARKET_RE = re.compile(
 )
 
 
+#: Every alias as a whole word, longest first (#9255). A bare substring test
+#: filed "Manila", "Dallas", "Atlanta", "Milan", "Kuala Lumpur", "Las Vegas",
+#: "Oklahoma City" and "Philadelphia" under the 2-letter alias "la", so the Los
+#: Angeles pin served Manila's ladder and those eight cities never reached the
+#: map. Longest first so "washington dc" wins over "washington".
+_CITY_ALIAS_RES: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"(?<![a-z])" + re.escape(alias) + r"(?![a-z])"), city_id)
+    for alias, city_id in sorted(_CITY_ALIASES.items(), key=lambda kv: -len(kv[0]))
+]
+
+
 def _resolve_city(name: str) -> str | None:
     """Try to extract and resolve a city name from a market name to a canonical city id."""
     name_lower = name.lower()
-    # Direct alias match
-    for alias, city_id in _CITY_ALIASES.items():
-        if alias in name_lower:
+    for pattern, city_id in _CITY_ALIAS_RES:
+        if pattern.search(name_lower):
             return city_id
     return None
 
