@@ -1491,6 +1491,22 @@ jobs:
             exit 1
           fi
 
+      - name: Polymarket price-crown venue re-grade (real Postgres)
+        # #9394. The Gamma winner rail selected only markets holding a row that
+        # was neither `api_settlement` nor `clean_resolution`, so a field Pass 1
+        # price-crowned was never asked about again — the settled TOUR
+        # Championship crowned Gotterup off a 0.99 captured before the event.
+        # The fix is one HAVING arm; only a real database can say which markets
+        # that statement selects, so this runs the real rail against real rows.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_price_crowned_pm_winner_venue_regrade_9394_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/price_crown_9394.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/price_crown_9394.txt; then
+            echo "::error::#9394 price-crown venue re-grade gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: Polymarket settlement sweep SQL (real Postgres)
         # #2637. The rewritten resolved-status sweep selects its population with
         # `SELECT DISTINCT <expr> AS eid ... ORDER BY eid::bigint`, and under
