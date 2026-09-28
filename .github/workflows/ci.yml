@@ -5396,7 +5396,7 @@ jobs:
         # event, not itself) plus #4965's fixture guard against `events`. A
         # session double answers whatever it is handed, so this is the gate.
         #
-        # 16 = found + another group + split group + parent-only group + itself
+        # 18 = found + another group + split group + parent-only group + itself
         # + the fixture guard refusing x4 (ESPN / external / StatPal anchored,
         # and #8430's suspended row) + its control (same row, venue agrees)
         # + #9338's three: an open unanchored row is joined despite its clock,
@@ -5404,7 +5404,10 @@ jobs:
         # leave nothing to pick + #9338's follow-up three: a group already
         # split over accepted twins joins the busier twin (Cretu v Rocha), an
         # anchored twin beats a busier id-less one, an open twin beats a
-        # closed anchored one (the split-group case now joins the oldest).
+        # closed anchored one (the split-group case now joins the oldest)
+        # + #9450's two, the whole matcher attempt: a not-game-level child
+        # (Harris v Galarneau's match market) is stored on its group's row,
+        # and a group holding no row leaves it unlinked.
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_polymarket_group_sibling_8430_pg.py \
@@ -5413,8 +5416,8 @@ jobs:
             echo "::error::#8430 group-sibling gate SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]16 passed[,[:space:]]" /tmp/groupsibling8430.txt || {
-            echo "::error::#8430 group-sibling gate did not run all sixteen cases"
+          grep -qE "[^0-9]18 passed[,[:space:]]" /tmp/groupsibling8430.txt || {
+            echo "::error::#8430 group-sibling gate did not run all eighteen cases"
             exit 1
           }
 

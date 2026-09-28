@@ -3931,6 +3931,54 @@ async def _attempt_market(
         )
 
 
+async def _join_polymarket_group_row(
+    session, market, receipt: MatchReceipt, stats: dict,
+    polymarket_backfill_queue: list,
+) -> bool:
+    """Attach a not-game-level Polymarket child to the row its group already holds.
+
+    #9450. Polymarket sends one game as a group of children
+    (``polymarket_sub_market``): the match market ("Jingshan: Lloyd Harris vs
+    Alexis Galarneau"), set winners, spreads and handicaps are all classified
+    ``game_prop``, so this pass refuses every one of them as not game level.
+    They were only ever attached by the MATCHED branch of `_try_link_market`,
+    which sweeps the whole group onto the event it matched. The auto-create
+    branch — a new row, #5821's container link, #8430's group-sibling link —
+    moves only the child that arrived. So when a match's first game-level
+    child was an O/U line that created the row, its match market stayed
+    unlinked for good and the page served no probability. Production,
+    2026-09-28: 28 upcoming tennis matches, Harris v Galarneau among them.
+
+    The answer is `_polymarket_group_sibling_event_id`, the resolver the create
+    path already trusts: the venue's own event id says these children are one
+    game, the #4965 fixture guard vets the row, and a group split over several
+    rows goes to its preferred one. It runs on every attempt, so a match market
+    listed after its row was created joins on the next cycle rather than never.
+
+    Returns False — the caller's refusal, unchanged — when there is no row.
+    """
+    event_id = await _polymarket_group_sibling_event_id(session, market)
+    if event_id is None:
+        return False
+    market_id = int(market.id)
+    market.event_id = event_id
+    _set_market_sport_fields(market, {"event_id": event_id})
+    stats["newly_linked"] += 1
+    stats["funnel"]["linked"] += 1
+    stats["funnel"].setdefault("group_prop_joins", 0)
+    stats["funnel"]["group_prop_joins"] += 1
+    logger.info(
+        "Linking Polymarket child '%s' to event %d (#9450) — not game level on "
+        "its own, but its group %s already sits there",
+        market.name, event_id, market.group_id,
+    )
+    # Durable before claimed (CERT-771 / CERT-774), as in `_try_link_market`.
+    await session.commit()
+    polymarket_backfill_queue.append((market_id, event_id))
+    receipt.link(event_id, how="group_sibling_link")
+    return True
+
+
 async def _run_one_attempt(
     session, market, receipt: MatchReceipt, stats: dict, now: datetime,
     polymarket_backfill_queue: list, _time_remaining,
@@ -3940,6 +3988,10 @@ async def _run_one_attempt(
         market.name, market.category,
         external_id=market.external_id,
     ):
+        if await _join_polymarket_group_row(
+            session, market, receipt, stats, polymarket_backfill_queue,
+        ):
+            return
         stats["funnel"]["not_game_level"] += 1
         if len(stats["funnel"]["sample_not_game_level"]) < 10:
             stats["funnel"]["sample_not_game_level"].append(
