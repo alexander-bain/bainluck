@@ -13,6 +13,9 @@ from app.utils import rate_limit as limits
 def make_client(monkeypatch):
     def make(redis, principal="anonymous"):
         monkeypatch.setattr(limits, "_fresh_market_limit", None)
+        monkeypatch.setattr(limits, "_fresh_game_market_limit", None)
+        monkeypatch.setattr(limits, "FRESH_GAME_MARKET_RATE_LIMIT", "2/minute")
+        monkeypatch.setattr(limits, "_FRESH_GAME_MARKET_MAX", 2)
         monkeypatch.setattr(limits, "FRESH_MARKET_RATE_LIMIT", "2/minute")
         monkeypatch.setattr(limits, "_FRESH_MARKET_MAX", 2)
         monkeypatch.setattr(limits, "_trusted_ips", lambda: set())
@@ -37,7 +40,7 @@ def make_client(monkeypatch):
         app.add_middleware(limits.RateLimitMiddleware)
         async def okay():
             return {"ok": True}
-        for path in ["/api/futures/{market_id}", "/api/futures/{market_id}/probability-timeline", "/api/feed", "/api/events/search", "/api/events/1"]:
+        for path in ["/api/futures/{market_id}", "/api/futures/{market_id}/probability-timeline", "/api/feed", "/api/events/search", "/api/events/1", "/api/events/{event_id}/game-markets"]:
             app.add_api_route(path, okay, methods=["GET", "POST"])
         headers = {"Authorization": "Bearer valid"} if principal == "authenticated" else {}
         return TestClient(app, headers=headers), calls
@@ -104,3 +107,57 @@ def test_exact_production_routes_exist_and_budget_is_finite():
     assert {"/api/futures/{market_id}", "/api/futures/{market_id}/probability-timeline"} <= paths
     assert limits.FRESH_MARKET_RATE_LIMIT == "120/minute"
     assert limits._FRESH_MARKET_MAX == 120
+
+
+@pytest.mark.parametrize("redis", [False, True])
+@pytest.mark.parametrize("principal", ["anonymous", "authenticated", "trusted"])
+def test_event_market_budget_is_finite_and_independent(make_client, redis, principal):
+    client, keys = make_client(redis, principal)
+    assert client.get("/api/events/1/game-markets?fresh=true").status_code == 200
+    assert client.get("/api/events/2/game-markets?fresh=true").status_code == 200
+    blocked = client.get("/api/events/3/game-markets?fresh=true")
+    assert blocked.status_code == 429
+    assert int(blocked.headers["Retry-After"]) == blocked.json()["retry_after"] > 0
+    for path in ["/api/feed", "/api/events/search?q=x", "/api/events/1?fresh=true",
+                 "/api/events/3/game-markets", "/api/futures/1?fresh=true"]:
+        assert client.get(path).status_code == 200
+    if redis:
+        bucket_keys = [key for key in keys if key.startswith("fresh-game-market:")]
+        expected = {"anonymous": "testclient", "authenticated": "user:verified-user", "trusted": "trusted:192.0.2.1"}[principal]
+        assert bucket_keys == [f"fresh-game-market:{expected}"]
+        assert keys[bucket_keys[0]] == 3
+
+
+@pytest.mark.parametrize("redis", [False, True])
+def test_event_ids_and_forged_auth_do_not_mint_refresh_budgets(make_client, redis):
+    client, _ = make_client(redis)
+    for market_id in [1, 2]:
+        assert client.get(f"/api/events/{market_id}/game-markets?fresh=true",
+                          headers={"Authorization": f"Bearer forged-{market_id}"}).status_code == 200
+    assert client.get("/api/events/3/game-markets?fresh=true",
+                      headers={"Authorization": "Bearer forged-3"}).status_code == 429
+
+
+@pytest.mark.parametrize("method,path,query,expected", [
+    ("GET", "/api/events/1/game-markets", "fresh=true", True),
+    ("GET", "/api/events/1/game-markets", "fresh=TRUE", True),
+    ("GET", "/api/events/1/game-markets", "fresh=false&fresh=true", True),
+    ("GET", "/api/events/1/game-markets", "fresh=true&fresh=false", False),
+    ("GET", "/api/events/1/game-markets", "", False),
+    ("GET", "/api/events/0/game-markets", "fresh=true", False),
+    ("GET", "/api/events/1/game-markets/", "fresh=true", False),
+    ("GET", "/api/events/1/history", "fresh=true", False),
+    ("POST", "/api/events/1/game-markets", "fresh=true", False),
+])
+def test_event_market_budget_requires_exact_opt_in_get(method, path, query, expected):
+    from starlette.requests import Request
+    request = Request({"type": "http", "method": method, "path": path, "headers": [], "query_string": query.encode()})
+    assert limits._is_fresh_game_market_read(request) is expected
+
+
+def test_game_market_route_and_finite_ceiling():
+    from app.main import app
+    paths = {route.path for route in app.routes if isinstance(route, APIRoute) and "GET" in route.methods}
+    assert "/api/events/{event_id}/game-markets" in paths
+    assert limits.FRESH_GAME_MARKET_RATE_LIMIT == "60/minute"
+    assert limits._FRESH_GAME_MARKET_MAX == 60
