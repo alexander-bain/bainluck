@@ -171,3 +171,18 @@ describe("#9574 — tied rungs keep the ladder's order", () => {
     expect(page).toMatch(/tieBadgeRanks\.has\(outcome\)\s*\? \{ \.\.\.outcome, rank_change_24h: null \}/);
   });
 });
+
+describe("#9574 × #6325 — the tie remap never numbers an unranked row", () => {
+  test("a NULL-ranked row inside a tie keeps no badge from the remap", () => {
+    const rows = [
+      { id: 1, name: "Category 1 or above", probability: 0.995, rank: null },
+      { id: 2, name: "Category 5 or above", probability: 0.995, rank: 1 },
+      { id: 3, name: "Category 3 or above", probability: 0.995, rank: 2 },
+    ];
+    const moved = tieGroupRanks(rows, ladderInclusionRanks(rows));
+    expect(moved.has(rows[0])).toBe(false);
+    // The two ranked rows swap their own numbers: Cat 3 is more inclusive.
+    expect(moved.get(rows[2])).toBe(1);
+    expect(moved.get(rows[1])).toBe(2);
+  });
+});
