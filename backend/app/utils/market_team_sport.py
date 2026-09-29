@@ -107,6 +107,25 @@ _SERIES_LEAGUE_SUPPLEMENT: dict[str, str] = {
 }
 
 
+# Kalshi series the ticker maps DO answer, but with another league's key (#9663).
+# The futures map is a prefix map, so ``KXNCAAFFCS`` — the FCS national title —
+# resolves through ``kxncaaf`` to FBS; the league check then sees no crossing and
+# the board's legs sat on FBS schools by name: "San Diego" on San Diego State,
+# "South Carolina St." on the Gamecocks, "Eastern Washington" on the Huskies (68
+# linked on 2026-09-29, every one on an FBS row). Read-side only, like the
+# supplement: reclassifying the market at ingest is a different change. Matched
+# on the exact series, so KXNCAAFFINALIST and KXNCAAFFIRSTTDTEAM stay FBS.
+_SERIES_LEAGUE_OVERRIDE: dict[str, str] = {
+    "kxncaaffcs": "americanfootball_ncaaf_fcs",
+}
+
+
+def _series_league_override(external_id: str | None) -> str | None:
+    """A sport key :data:`_SERIES_LEAGUE_OVERRIDE` declares over the ticker maps' answer."""
+    series = (external_id or "").split("-", 1)[0].lower()
+    return _SERIES_LEAGUE_OVERRIDE.get(series)
+
+
 def _series_league_supplement(external_id: str | None) -> str | None:
     """A sport key for a series only :data:`_SERIES_LEAGUE_SUPPLEMENT` declares.
 
@@ -138,8 +157,10 @@ def _market_league_sport_key(source: str | None, external_id: str | None) -> str
     """The sport key of the league a market's own venue id names; None when it names none."""
     venue = (source or "").lower()
     if venue == "kalshi":
-        return get_sport_key_from_ticker(external_id or "") or _series_league_supplement(
-            external_id
+        return (
+            _series_league_override(external_id)
+            or get_sport_key_from_ticker(external_id or "")
+            or _series_league_supplement(external_id)
         )
     if venue == "odds_api":
         return _odds_api_outright_league(external_id)
