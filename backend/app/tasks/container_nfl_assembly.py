@@ -45,6 +45,7 @@ from app.utils.container_nfl import (
     WeekSelection,
     resolve_week_members,
     select_week_contests,
+    week_incompleteness,
 )
 
 logger = logging.getLogger(__name__)
@@ -115,6 +116,12 @@ class NflWeekHarvest:
     def candidates(self) -> list:
         return self.members.candidates
 
+    @property
+    def incomplete(self) -> list[str]:
+        return week_incompleteness(
+            self.selection, self.members, markets_truncated=self.markets_truncated
+        )
+
     def summary(self) -> dict:
         by_type: dict = {}
         for candidate in self.members.candidates:
@@ -129,6 +136,7 @@ class NflWeekHarvest:
             "excluded": {k: len(v) for k, v in sorted(excluded.items())},
             "unidentified_in_span": len(self.unidentified_in_span),
             "markets_truncated": self.markets_truncated,
+            "incomplete": self.incomplete,
         }
 
 
@@ -219,7 +227,13 @@ async def gather_nfl_week_candidates(
 
 
 async def run_nfl_week_assembly(
-    session, container, fixtures: Iterable, target: NflWeek, *, apply: bool = False
+    session,
+    container,
+    fixtures: Iterable,
+    target: NflWeek,
+    *,
+    apply: bool = False,
+    limit: int = VENUE_FETCH_LIMIT,
 ) -> dict:
     """One NFL week, gathered and — with ``apply=True`` — assembled.
 
@@ -242,7 +256,7 @@ async def run_nfl_week_assembly(
         )
         return report
 
-    harvest = await gather_nfl_week_candidates(session, fixtures, target)
+    harvest = await gather_nfl_week_candidates(session, fixtures, target, limit=limit)
     report["harvest"] = harvest.summary()
     report["games"] = harvest.members.games
     report["contests_without_event_row"] = harvest.members.unavailable
@@ -253,15 +267,25 @@ async def run_nfl_week_assembly(
         report.update(terminal="unavailable", reason=harvest.selection.unavailable)
         return report
 
+    # Members admitted around a gap are still right, so they are kept; what a
+    # gap changes is the claim, below — the same shape as the tennis pass, which
+    # assembles what it has and says `partial` when that is not everything.
     if apply and harvest.candidates:
         result = await assemble_container(session, container, harvest.candidates)
         report["assembly"] = result.as_dict()
 
-    # gotcha #53: a week that found no member of ours is partial, never complete.
-    if harvest.candidates:
-        report.update(terminal="complete", reason=None)
-    else:
+    # gotcha #53: `complete` means every game the authority files under this
+    # week is a member and its questions were read in full. Zero members, a
+    # game with no row, two rows for one game, a game also filed under another
+    # week, or a capped market read are each `partial`.
+    incomplete = harvest.incomplete
+    report["incomplete"] = incomplete
+    if not harvest.candidates:
         report.update(terminal="partial", reason="no_member_found")
+    elif incomplete:
+        report.update(terminal="partial", reason=incomplete[0])
+    else:
+        report.update(terminal="complete", reason=None)
     return report
 
 

@@ -41,6 +41,10 @@ from app.utils.container_nfl import (
     EXCLUDED_OTHER_WEEK,
     EXCLUDED_PLACEHOLDER,
     EXCLUDED_WRONG_SEASON,
+    INCOMPLETE_CONFLICTING_IDENTITY,
+    INCOMPLETE_DUPLICATE_ROWS,
+    INCOMPLETE_MARKETS_TRUNCATED,
+    INCOMPLETE_NO_EVENT_ROW,
     STAGE_PRESEASON,
     UNAVAILABLE_NO_EVENT_ROW,
     UNAVAILABLE_SEASON_MISMATCH,
@@ -468,7 +472,11 @@ async def test_the_adapter_feeds_assemble_container_the_week_and_nothing_else(re
     session, rows = _session_for(real)
     report = await run_nfl_week_assembly(session, _Container(), real, WEEK_1, apply=True)
 
-    assert report["terminal"] == "complete"
+    # A missing game and two rows for another: the 14 supported games are kept,
+    # but the week is not claimed whole.
+    assert report["terminal"] == "partial"
+    assert report["reason"] == INCOMPLETE_NO_EVENT_ROW
+    assert report["incomplete"] == [INCOMPLETE_NO_EVENT_ROW, INCOMPLETE_DUPLICATE_ROWS]
     edges = _edge_rows(session)
     event_edges = [e for e in edges if e["child_type"] == "event"]
     market_edges = [e for e in edges if e["child_type"] == "market"]
@@ -571,8 +579,9 @@ async def test_the_dispatch_entry_reads_the_schedule_and_runs_the_week(real):
 
     session, _ = _session_for(real)
     report = await assemble_nfl_week(session, _Container(), WEEK_1, apply=False, service=_Up())
-    assert report["terminal"] == "complete"
+    assert report["terminal"] == "partial"
     assert report["harvest"]["contests"] == 16
+    assert report["harvest"]["incomplete"] == [INCOMPLETE_NO_EVENT_ROW, INCOMPLETE_DUPLICATE_ROWS]
 
 
 @pytest.mark.asyncio
@@ -584,3 +593,111 @@ async def test_gather_reads_only_by_id_for_membership(real):
     # The membership reads carry no name and no time.
     for sql in (EVENTS_FOR_CONTESTS_SQL, MARKETS_FOR_EVENTS_SQL):
         assert "team_name =" not in sql and "commence_time >=" not in sql
+
+
+# --- complete means the whole week, not "found something" -----------------------
+
+
+def _whole_week_rows(real):
+    """Exactly one of our rows per real Week-1 contest — the only shape that is
+    a whole week."""
+    return [
+        EventRow(
+            id=5000 + n,
+            statpal_fixture_id=f.fixture_id,
+            status="scheduled",
+            commence_time=f.start_time,
+            home=f.home_team,
+            away=f.away_team,
+        )
+        for n, f in enumerate(sorted(real, key=lambda f: f.fixture_id))
+        if f.fixture_id in WEEK_1_CONTESTS
+    ]
+
+
+def _whole_week_markets(rows):
+    return [
+        MarketRow(10 + i, r.id, f"{r.away} at {r.home}", f"KX-{r.statpal_fixture_id}", "kalshi", "binary", "open")
+        for i, r in enumerate(rows)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_genuinely_whole_week_is_complete(real):
+    # CONTROL: every clause below must be able to flip this to partial.
+    rows = _whole_week_rows(real)
+    session = _Session(rows, _whole_week_markets(rows), [])
+    report = await run_nfl_week_assembly(session, _Container(), real, WEEK_1, apply=True)
+    assert report["terminal"] == "complete"
+    assert report["reason"] is None
+    assert report["incomplete"] == []
+    assert report["assembly"]["edges_written"] == 32
+    assert report["contests_without_event_row"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_week_missing_one_game_is_partial_and_keeps_the_rest(real):
+    rows = [r for r in _whole_week_rows(real) if r.statpal_fixture_id != CHIEFS_BRONCOS]
+    session = _Session(rows, _whole_week_markets(rows), [])
+    report = await run_nfl_week_assembly(session, _Container(), real, WEEK_1, apply=True)
+    assert report["terminal"] == "partial"
+    assert report["reason"] == INCOMPLETE_NO_EVENT_ROW
+    assert report["incomplete"] == [INCOMPLETE_NO_EVENT_ROW]
+    assert [g["statpal_id"] for g in report["contests_without_event_row"]] == [CHIEFS_BRONCOS]
+    # The 15 supported games and their questions are still assembled.
+    assert {e["child_id"] for e in _edge_rows(session) if e["child_type"] == "event"} == {r.id for r in rows}
+
+
+@pytest.mark.asyncio
+async def test_two_rows_for_one_game_make_the_week_partial(real):
+    # Every contest has a row; one also has a second row, so that game is
+    # refused and the week is short it.
+    rows = _whole_week_rows(real)
+    twin = replace(next(r for r in rows if r.statpal_fixture_id == CHARGERS_CARDINALS), id=9000)
+    rows = rows + [twin]
+    session = _Session(rows, _whole_week_markets(rows), [])
+    report = await run_nfl_week_assembly(session, _Container(), real, WEEK_1, apply=True)
+    assert report["terminal"] == "partial"
+    assert report["reason"] == INCOMPLETE_DUPLICATE_ROWS
+    assert report["incomplete"] == [INCOMPLETE_DUPLICATE_ROWS]
+    event_ids = {e["child_id"] for e in _edge_rows(session) if e["child_type"] == "event"}
+    assert len(event_ids) == 15 and 9000 not in event_ids
+
+
+@pytest.mark.asyncio
+async def test_a_capped_market_read_is_partial_even_with_every_game(real):
+    rows = _whole_week_rows(real)
+    session = _Session(rows, _whole_week_markets(rows), [])
+    report = await run_nfl_week_assembly(session, _Container(), real, WEEK_1, apply=True, limit=5)
+    assert report["harvest"]["markets_truncated"] is True
+    assert report["terminal"] == "partial"
+    assert report["reason"] == INCOMPLETE_MARKETS_TRUNCATED
+    assert report["incomplete"] == [INCOMPLETE_MARKETS_TRUNCATED]
+    # At the cap exactly, nothing was cut: whole.
+    session = _Session(rows, _whole_week_markets(rows), [])
+    report = await run_nfl_week_assembly(session, _Container(), real, WEEK_1, apply=False, limit=16)
+    assert report["terminal"] == "complete"
+
+
+@pytest.mark.asyncio
+async def test_a_week_game_also_filed_under_another_week_makes_it_partial(real):
+    # DERIVED: a real Week-1 contest served again under Week 2.
+    twice = replace(_by_id(real, "280449"), round_info="Regular Season / Week 2")
+    rows = _whole_week_rows(real)
+    session = _Session(rows, _whole_week_markets(rows), [])
+    report = await run_nfl_week_assembly(session, _Container(), real + [twice], WEEK_1, apply=False)
+    assert report["terminal"] == "partial"
+    assert report["incomplete"] == [INCOMPLETE_CONFLICTING_IDENTITY]
+
+
+@pytest.mark.asyncio
+async def test_a_conflict_between_two_other_weeks_does_not_touch_this_one(real):
+    # DERIVED: a new contest id served under Week 2 and Week 3 — not Week 1's.
+    base = _by_id(real, "280449")
+    w2 = replace(base, fixture_id="880449", round_info="Regular Season / Week 2")
+    w3 = replace(base, fixture_id="880449", round_info="Regular Season / Week 3")
+    rows = _whole_week_rows(real)
+    session = _Session(rows, _whole_week_markets(rows), [])
+    report = await run_nfl_week_assembly(session, _Container(), real + [w2, w3], WEEK_1, apply=False)
+    assert report["excluded"][EXCLUDED_CONFLICTING_IDENTITY][0]["statpal_id"] == "880449"
+    assert report["terminal"] == "complete"

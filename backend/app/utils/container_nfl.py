@@ -103,6 +103,16 @@ UNAVAILABLE_SEASON_MISMATCH = "schedule_is_another_season"
 UNAVAILABLE_WEEK_NOT_SCHEDULED = "week_not_in_schedule"
 UNAVAILABLE_NO_EVENT_ROW = "no_event_row"
 
+# --- why a week that found members is still not complete (closed) -------------
+#: A pass that admitted some games is `complete` only when every game the
+#: authority files under the week is a member. Each reason below is a game (or a
+#: slice of the week's questions) the pass could not vouch for.
+
+INCOMPLETE_NO_EVENT_ROW = "contest_without_event_row"
+INCOMPLETE_DUPLICATE_ROWS = "contest_with_duplicate_event_rows"
+INCOMPLETE_CONFLICTING_IDENTITY = "week_contest_with_conflicting_identity"
+INCOMPLETE_MARKETS_TRUNCATED = "market_read_truncated"
+
 #: Names StatPal uses for a participant it does not know yet — the same test
 #: `stamp_nfl_statpal_fixtures.is_placeholder_fixture` applies (D106 R3),
 #: repeated here only because importing a task module into a pure util would
@@ -238,6 +248,9 @@ class WeekSelection:
     contests: list = field(default_factory=list)
     excluded: dict = field(default_factory=dict)
     unavailable: Optional[str] = None
+    #: Contest ids the authority files under THIS week that were refused anyway
+    #: (also filed under another week). The week is short a game it may own.
+    withheld: list = field(default_factory=list)
 
     def exclude(self, reason: str, receipt: dict) -> None:
         self.excluded.setdefault(reason, []).append(receipt)
@@ -274,6 +287,8 @@ def select_week_contests(fixtures: Iterable, target: NflWeek) -> WeekSelection:
             continue
         seen = identities[contest_id]
         if len(seen) > 1:
+            if (target.stage, target.week) in seen:
+                selection.withheld.append(contest_id)
             selection.exclude(
                 EXCLUDED_CONFLICTING_IDENTITY,
                 _fixture_receipt(fixture, rounds=sorted(str(s) for s in seen)),
@@ -433,3 +448,25 @@ def resolve_week_members(
             )
 
     return members
+
+
+def week_incompleteness(
+    selection: WeekSelection, members: WeekMembers, *, markets_truncated: bool
+) -> list[str]:
+    """Every reason this pass cannot say it holds the whole week; [] = whole.
+
+    Members admitted around a gap are still right, so a caller may keep them —
+    but a week missing a game, holding a game we could not tell apart from its
+    twin row, or whose question read hit the cap is `partial`, never `complete`
+    (gotcha #53). The order is fixed so the first reason is a stable headline.
+    """
+    reasons: list[str] = []
+    if members.unavailable:
+        reasons.append(INCOMPLETE_NO_EVENT_ROW)
+    if members.excluded.get(EXCLUDED_DUPLICATE_EVENT_ROWS):
+        reasons.append(INCOMPLETE_DUPLICATE_ROWS)
+    if selection.withheld:
+        reasons.append(INCOMPLETE_CONFLICTING_IDENTITY)
+    if markets_truncated:
+        reasons.append(INCOMPLETE_MARKETS_TRUNCATED)
+    return reasons
