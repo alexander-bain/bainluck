@@ -296,8 +296,10 @@ class TestTheRouteWiring:
             and isinstance(c.args[2], ast.Name)
             and c.args[2].id == "_resolved_sport_category"
         ]
-        assert len(passing) == 2, (
-            "expected the window AND the refill to pass the resolved category, "
+        # #9597: the sunk-slot outcome rows are the third site.
+        assert len(passing) == 3, (
+            "expected the window, the refill AND the sunk-slot rows to pass the "
+            "resolved category, "
             f"found {len(passing)}"
         )
 

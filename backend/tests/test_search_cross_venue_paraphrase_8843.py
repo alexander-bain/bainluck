@@ -226,5 +226,6 @@ def test_both_route_loops_share_the_kept_boards():
     code = "\n".join(
         line for line in src.splitlines() if not line.lstrip().startswith("#")
     )
-    assert code.count("kept_sources_by_question, kept_boards") == 2
+    # #9597: the sunk-slot outcome loop is the third, and shares them too.
+    assert code.count("kept_sources_by_question, kept_boards") == 3
     assert code.count("kept_boards: list = []") == 1
