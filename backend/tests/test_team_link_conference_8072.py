@@ -182,6 +182,15 @@ def test_two_rows_for_one_club_still_resolve_to_the_first():
     assert match_outcome_to_roster("Franz Wagner", rosters) is None
 
 
+def test_the_same_club_bar_needs_two_shared_players_and_a_majority():
+    # One shared player is never a club, however short the rosters.
+    assert match_outcome_to_roster("Max Muncy", {1: ["Max Muncy"], 2: ["Max Muncy"]}) is None
+    # Two clubs that share a traded pair out of ten are still two clubs.
+    a = ["Max Muncy", "Traded Pitcher"] + [f"A Player {i}" for i in range(8)]
+    b = ["Max Muncy", "Traded Pitcher"] + [f"B Player {i}" for i in range(8)]
+    assert match_outcome_to_roster("Max Muncy", {1: a, 2: b}) is None
+
+
 def test_stored_links_in_the_other_conference_move_or_clear_and_rosters_stop_guessing():
     with Session(_make_engine()) as session:
         _seed(session)
@@ -225,3 +234,24 @@ def test_the_conference_relink_budget_is_the_runs_limit():
     # Lowest id first: outcome 1 clears, 2 and 3 wait for the next run.
     assert links[1] is None
     assert links[2] == ATHLETICS[0] and links[3] == METS[0]
+
+
+def test_a_closed_markets_stored_link_is_left_alone():
+    # Settled history is not re-decided: last season's NL MVP board, closed, keeps
+    # the link it settled with, and Phase 3b does not count it.
+    with Session(_make_engine()) as session:
+        _seed(session)
+        session.add(FuturesMarket(
+            id=217, source="kalshi", external_id="KXMLBNLMVP-25", name="NL MVP Winner?",
+            category="award", llm_sport_category="baseball", status="closed", market_tier=3,
+        ))
+        session.flush()
+        session.add(FuturesOutcome(
+            id=10, market_id=217, external_id="o10", name="Max Muncy", team_id=ATHLETICS[0],
+        ))
+        session.commit()
+        stats = _drain(session)
+        links = _links(session)
+
+    assert links[10] == ATHLETICS[0]
+    assert stats["links_outside_market_conference"] == 3
