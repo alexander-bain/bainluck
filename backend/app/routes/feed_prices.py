@@ -24,7 +24,7 @@ from app.utils.proven_duplicates import (
     FoldedBlendView,
     folded_probability_sources_with_revision,
 )
-from app.utils.settledness import market_assigned_settled
+from app.utils.settled_feed_price_card import settled_feed_price_card
 
 router = APIRouter()
 MAX_IDENTITIES = 50
@@ -133,11 +133,20 @@ async def _market_cards(db, ids, now):
     dispositions = {f"futures-{mid}": "missing" for mid in ids}
     for market in rows:
         dispositions[f"futures-{market.id}"] = "unresolved"
-    # The current feed serializer does not represent every assigned-settlement
-    # shape. Keep that debt explicit, rather than describing a final as open.
-    eligible = [market for market in rows if not market_assigned_settled(market)]
+    # A stream's terminal invalidation must replace an already visible forecast
+    # with its assigned result, even when the ordinary scorer omits that market.
+    terminal_items = []
+    for market in rows:
+        item = settled_feed_price_card(market, {
+            str(outcome.id): _outcome_clock(outcome) for outcome in market.outcomes
+        })
+        if item is not None:
+            terminal_items.append(item)
+            dispositions[f"futures-{market.id}"] = "updated"
+    terminal_ids = {item["data"]["id"] for item in terminal_items}
+    eligible = [market for market in rows if market.id not in terminal_ids]
     if not eligible:
-        return [], dispositions
+        return terminal_items, dispositions
     clocks_by_id = {
         market.id: {str(outcome.id): _outcome_clock(outcome) for outcome in market.outcomes}
         for market in eligible
@@ -167,7 +176,7 @@ async def _market_cards(db, ids, now):
             outcome["price_revision_at"] = clocks.get(str(outcome["id"]))
             outcome["price_observed_at"] = outcome["price_revision_at"]  # Legacy ordering only.
         dispositions[f"futures-{market.id}"] = "updated"
-    return items, dispositions
+    return terminal_items + items, dispositions
 
 
 @router.get("/price-cards")
