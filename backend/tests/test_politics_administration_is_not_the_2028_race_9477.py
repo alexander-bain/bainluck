@@ -91,8 +91,10 @@ _STILL_PRESIDENTIAL = [
     ("KXDESANTISRUN-28", "Will Ron DeSantis announce a presidential run in 2026?"),
     ("KXTRUMPENDORSE28-28MAR01", "Who will Donald Trump endorse in the 2028 presidential election?"),
     ("117525", "Will Trump endorse JD Vance for president before 2027?"),
-    ("73969", "Trump out as President before 2027?"),
-    ("KXTRUMPAPPROVALYEAR-26DEC", "How high will Trump's approval rating get before 2027?"),
+    # "Trump out as President before 2027?" and "How high will Trump's approval
+    # rating get before 2027?" left this list with the race-only presidential
+    # line: they are the sitting presidency, pinned as Policy in
+    # test_politics_presidential_is_the_us_race_9477.py.
     ("30829", "Democratic Presidential Nominee 2028"),
 ]
 
