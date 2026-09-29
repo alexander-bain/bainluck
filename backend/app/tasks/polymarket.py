@@ -4382,6 +4382,42 @@ _SUNK_POLY_ROTATE_SQL = text(
     """
 )
 
+#: #9605: the STARVED arm — imminent rows no pass has read for a day, oldest
+#: stamp first.
+#:
+#: The rotate arm above hands a row to the imminent arm the moment it enters
+#: the horizon, and the imminent arm reads 300 a pass soonest-resolving first
+#: from a pool that sits at its limit. A row it reads leaves for six hours and
+#: comes back to the same head, so the pass cycles the soonest ~1,800 rows and
+#: never reaches the rest of the window: a partition whose one side is capped
+#: leaves the rows past the cap in NO arm. Measured on production 2026-09-29
+#: 11:30Z: 4,745 stale imminent rows, 2,140 of them untouched for 48h, and every
+#: one of those resolves more than three days out. The specimen: Polymarket
+#: "Team to advance to NLDS" / "…ALDS" (Gamma 956263 / 956262, rows 60087232 /
+#: 60087233, resolving 10-05) were last stamped 09-21 16:30Z, seven hours
+#: before 10-05 minus 14 days moved them out of the rotate arm, with 1,970
+#: imminent rows ahead. Search answered "Braves 71% to reach the NLDS" on game
+#: day against a venue quoting 56.5.
+#:
+#: Oldest stamp first inside the imminent window (gotcha #41: an order AND a
+#: floor — the floor is `_SUNK_POLY_WHERE`'s resolution bound). The 24h
+#: staleness is four missed imminent cycles, so a row the imminent arm still
+#: reaches never qualifies; the two arms overlap only by dedupe. 3,455 rows
+#: matched at 11:35Z with the specimens at 504/505, so 200 a pass (10 Gamma
+#: calls) reaches them on the third pass and drains the backlog in ~17.
+SUNK_POLY_STARVED_STALE_HOURS = 24
+_SUNK_POLY_STARVED_MAX = 200
+
+_SUNK_POLY_STARVED_SQL = text(
+    "SELECT fm.id, fm.external_id"
+    + _sunk_poly_where("starved_stale_hours")
+    + """
+       AND fm.resolution_date <= NOW() + make_interval(days => :horizon_days)
+     ORDER BY fm.volume_updated_at NULLS FIRST, fm.id
+     LIMIT :max_rows
+    """
+)
+
 
 def sunk_event_is_open(event) -> bool:
     """Whether a re-read event may go to the poll's writer. Pure.
@@ -4536,6 +4572,8 @@ async def _recover_sunk_polymarket_events(deadline_s: float | None = None) -> di
         "imminent_selected": 0,
         "rotate_selected": 0,
         "imminent_pool_at_limit": False,
+        "starved_selected": 0,  # #9605
+        "starved_pool_at_limit": False,
         "batches_read": 0,
         "batches_unreadable": 0,
         "events_reached": 0,
@@ -4651,12 +4689,25 @@ async def _recover_sunk_polymarket_events(deadline_s: float | None = None) -> di
                 {**head_params, "max_rows": _SUNK_POLY_CHILDLESS_GAME_MAX},
             )
         ).fetchall()
+        # #9605: executed last so every arm above keeps its order; its ids go
+        # after the imminent arm's and before the rotate arm's below.
+        starved = (
+            await session.execute(
+                _SUNK_POLY_STARVED_SQL,
+                {
+                    **base,
+                    "starved_stale_hours": SUNK_POLY_STARVED_STALE_HOURS,
+                    "max_rows": _SUNK_POLY_STARVED_MAX,
+                },
+            )
+        ).fetchall()
         # Plain scalars before any commit (gotcha #6).
         head_ids = [str(r.external_id) for r in head]
         childless_game_ids = [str(r.external_id) for r in childless_game]
         unlinked_game_ids = [str(r.external_id) for r in unlinked_game]
         post_start_ids = [str(r.external_id) for r in post_start]
         imminent_ids = [str(r.external_id) for r in imminent]
+        starved_ids = [str(r.external_id) for r in starved]
         rotate_pairs = [(int(r.id), str(r.external_id)) for r in rotate]
 
     stats["head_selected"] = len(head_ids)
@@ -4674,12 +4725,14 @@ async def _recover_sunk_polymarket_events(deadline_s: float | None = None) -> di
     stats["imminent_selected"] = len(imminent_ids)
     stats["rotate_selected"] = len(rotate_pairs)
     stats["imminent_pool_at_limit"] = len(imminent_ids) >= _SUNK_POLY_IMMINENT_MAX
+    stats["starved_selected"] = len(starved_ids)
+    stats["starved_pool_at_limit"] = len(starved_ids) >= _SUNK_POLY_STARVED_MAX
     stats["cursor_wrapped"] = wrapped
 
     if (
         not head_ids and not childless_game_ids and not unlinked_game_ids
         and not post_start_ids
-        and not imminent_ids and not rotate_pairs
+        and not imminent_ids and not starved_ids and not rotate_pairs
     ):
         # Gotcha #53: say which question returned nothing.
         stats["terminal"] = "no_sunk_open_events"
@@ -4700,7 +4753,7 @@ async def _recover_sunk_polymarket_events(deadline_s: float | None = None) -> di
     work: list[str] = []
     for ext in (
         head_ids + childless_game_ids + unlinked_game_ids + post_start_ids
-        + imminent_ids
+        + imminent_ids + starved_ids
         + [ext for _mid, ext in rotate_pairs]
     ):
         if ext not in seen:  # one Gamma id, one write — never twice in a pass
