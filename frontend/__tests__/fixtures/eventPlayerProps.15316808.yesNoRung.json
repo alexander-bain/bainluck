@@ -1,0 +1,330 @@
+[
+ {
+  "market_name": "Balázs Tóth: 1+ saves",
+  "outcome_name": "Yes",
+  "observed_at": "2026-09-28T23:18:20.670132+00:00",
+  "contributor_outcome_ids": [
+   237951402,
+   238011666
+  ],
+  "threshold": 1.0,
+  "over_probability": 0.9525,
+  "opening_over_probability": null,
+  "pregame_mark": null,
+  "_inverted": false,
+  "source": "polymarket",
+  "movement": null,
+  "_market_id": 63118989,
+  "actual": null,
+  "hit": null,
+  "is_winner": null,
+  "resolution_source": null,
+  "all_sources": [
+   "polymarket"
+  ],
+  "source_count": 2,
+  "observed_at_by_source": {
+   "polymarket": "2026-09-28T23:18:20.670132+00:00"
+  },
+  "_market_ids": [
+   63098839,
+   63118989
+  ]
+ },
+ {
+  "market_name": "Balázs Tóth: 1+ saves",
+  "outcome_name": "No",
+  "observed_at": "2026-09-28T23:18:20.670132+00:00",
+  "contributor_outcome_ids": [
+   237951403,
+   238011667
+  ],
+  "threshold": 1.0,
+  "over_probability": 0.9525,
+  "opening_over_probability": null,
+  "pregame_mark": null,
+  "_inverted": true,
+  "source": "polymarket",
+  "movement": null,
+  "_market_id": 63118989,
+  "actual": null,
+  "hit": null,
+  "is_winner": null,
+  "resolution_source": null,
+  "all_sources": [
+   "polymarket"
+  ],
+  "source_count": 2,
+  "observed_at_by_source": {
+   "polymarket": "2026-09-28T23:18:20.670132+00:00"
+  },
+  "_market_ids": [
+   63098839,
+   63118989
+  ]
+ },
+ {
+  "market_name": "Balázs Tóth: 2+ saves",
+  "outcome_name": "Yes",
+  "observed_at": "2026-09-28T23:18:20.670132+00:00",
+  "contributor_outcome_ids": [
+   238011668
+  ],
+  "threshold": 2.0,
+  "over_probability": 0.905,
+  "opening_over_probability": null,
+  "pregame_mark": null,
+  "_inverted": false,
+  "source": "polymarket",
+  "movement": null,
+  "_market_id": 63118990,
+  "actual": null,
+  "hit": null,
+  "is_winner": null,
+  "resolution_source": null
+ },
+ {
+  "market_name": "Balázs Tóth: 2+ saves",
+  "outcome_name": "No",
+  "observed_at": "2026-09-28T23:18:20.670132+00:00",
+  "contributor_outcome_ids": [
+   238011669
+  ],
+  "threshold": 2.0,
+  "over_probability": 0.905,
+  "opening_over_probability": null,
+  "pregame_mark": null,
+  "_inverted": true,
+  "source": "polymarket",
+  "movement": null,
+  "_market_id": 63118990,
+  "actual": null,
+  "hit": null,
+  "is_winner": null,
+  "resolution_source": null
+ },
+ {
+  "market_name": "Balázs Tóth: 3+ saves",
+  "outcome_name": "Yes",
+  "observed_at": "2026-09-28T23:18:20.670132+00:00",
+  "contributor_outcome_ids": [
+   238011670
+  ],
+  "threshold": 3.0,
+  "over_probability": 0.905,
+  "opening_over_probability": null,
+  "pregame_mark": null,
+  "_inverted": false,
+  "source": "polymarket",
+  "movement": null,
+  "_market_id": 63118991,
+  "actual": null,
+  "hit": null,
+  "is_winner": null,
+  "resolution_source": null
+ },
+ {
+  "market_name": "Balázs Tóth: 3+ saves",
+  "outcome_name": "No",
+  "observed_at": "2026-09-28T23:18:20.670132+00:00",
+  "contributor_outcome_ids": [
+   238011671
+  ],
+  "threshold": 3.0,
+  "over_probability": 0.905,
+  "opening_over_probability": null,
+  "pregame_mark": null,
+  "_inverted": true,
+  "source": "polymarket",
+  "movement": null,
+  "_market_id": 63118991,
+  "actual": null,
+  "hit": null,
+  "is_winner": null,
+  "resolution_source": null
+ },
+ {
+  "market_name": "Balázs Tóth: 4+ saves",
+  "outcome_name": "No",
+  "observed_at": "2026-09-28T23:18:20.670132+00:00",
+  "contributor_outcome_ids": [
+   238011673
+  ],
+  "threshold": 4.0,
+  "over_probability": 0.095,
+  "opening_over_probability": null,
+  "pregame_mark": null,
+  "_inverted": true,
+  "source": "polymarket",
+  "movement": null,
+  "_market_id": 63118992,
+  "actual": null,
+  "hit": null,
+  "is_winner": null,
+  "resolution_source": null
+ },
+ {
+  "market_name": "Balázs Tóth: 4+ saves",
+  "outcome_name": "Yes",
+  "observed_at": "2026-09-28T23:18:20.670132+00:00",
+  "contributor_outcome_ids": [
+   238011672
+  ],
+  "threshold": 4.0,
+  "over_probability": 0.095,
+  "opening_over_probability": null,
+  "pregame_mark": null,
+  "_inverted": false,
+  "source": "polymarket",
+  "movement": null,
+  "_market_id": 63118992,
+  "actual": null,
+  "hit": null,
+  "is_winner": null,
+  "resolution_source": null
+ },
+ {
+  "market_name": "Balázs Tóth: 5+ saves",
+  "outcome_name": "No",
+  "observed_at": "2026-09-28T23:18:20.670132+00:00",
+  "contributor_outcome_ids": [
+   238011675
+  ],
+  "threshold": 5.0,
+  "over_probability": 0.095,
+  "opening_over_probability": null,
+  "pregame_mark": null,
+  "_inverted": true,
+  "source": "polymarket",
+  "movement": null,
+  "_market_id": 63118993,
+  "actual": null,
+  "hit": null,
+  "is_winner": null,
+  "resolution_source": null
+ },
+ {
+  "market_name": "Balázs Tóth: 5+ saves",
+  "outcome_name": "Yes",
+  "observed_at": "2026-09-28T23:18:20.670132+00:00",
+  "contributor_outcome_ids": [
+   238011674
+  ],
+  "threshold": 5.0,
+  "over_probability": 0.095,
+  "opening_over_probability": null,
+  "pregame_mark": null,
+  "_inverted": false,
+  "source": "polymarket",
+  "movement": null,
+  "_market_id": 63118993,
+  "actual": null,
+  "hit": null,
+  "is_winner": null,
+  "resolution_source": null
+ },
+ {
+  "market_name": "Balázs Tóth: 6+ saves",
+  "outcome_name": "No",
+  "observed_at": "2026-09-28T23:18:20.670132+00:00",
+  "contributor_outcome_ids": [
+   238011677
+  ],
+  "threshold": 6.0,
+  "over_probability": 0.095,
+  "opening_over_probability": null,
+  "pregame_mark": null,
+  "_inverted": true,
+  "source": "polymarket",
+  "movement": null,
+  "_market_id": 63118994,
+  "actual": null,
+  "hit": null,
+  "is_winner": null,
+  "resolution_source": null
+ },
+ {
+  "market_name": "Balázs Tóth: 6+ saves",
+  "outcome_name": "Yes",
+  "observed_at": "2026-09-28T23:18:20.670132+00:00",
+  "contributor_outcome_ids": [
+   238011676
+  ],
+  "threshold": 6.0,
+  "over_probability": 0.095,
+  "opening_over_probability": null,
+  "pregame_mark": null,
+  "_inverted": false,
+  "source": "polymarket",
+  "movement": null,
+  "_market_id": 63118994,
+  "actual": null,
+  "hit": null,
+  "is_winner": null,
+  "resolution_source": null
+ },
+ {
+  "market_name": "Shea Charles: 1+ goals + assists",
+  "outcome_name": "No",
+  "observed_at": "2026-09-28T18:15:30.201595+00:00",
+  "contributor_outcome_ids": [
+   237864985,
+   237864987
+  ],
+  "threshold": 1.0,
+  "over_probability": 0.0,
+  "opening_over_probability": 0.11,
+  "pregame_mark": 0.11,
+  "_inverted": true,
+  "source": "polymarket",
+  "movement": 0.11,
+  "_market_id": 63068072,
+  "actual": null,
+  "hit": true,
+  "is_winner": true,
+  "resolution_source": "api_settlement",
+  "all_sources": [
+   "polymarket"
+  ],
+  "source_count": 2,
+  "observed_at_by_source": {
+   "polymarket": "2026-09-28T18:15:30.201595+00:00"
+  },
+  "_market_ids": [
+   63068072,
+   63068073
+  ]
+ },
+ {
+  "market_name": "Shea Charles: 1+ goals + assists",
+  "outcome_name": "Yes",
+  "observed_at": "2026-09-28T18:15:30.201595+00:00",
+  "contributor_outcome_ids": [
+   237864984,
+   237864986
+  ],
+  "threshold": 1.0,
+  "over_probability": 0.0,
+  "opening_over_probability": 0.11,
+  "pregame_mark": 0.11,
+  "_inverted": false,
+  "source": "polymarket",
+  "movement": -0.11,
+  "_market_id": 63068072,
+  "actual": null,
+  "hit": false,
+  "is_winner": false,
+  "resolution_source": "api_settlement",
+  "all_sources": [
+   "polymarket"
+  ],
+  "source_count": 2,
+  "observed_at_by_source": {
+   "polymarket": "2026-09-28T18:15:30.201595+00:00"
+  },
+  "_market_ids": [
+   63068072,
+   63068073
+  ]
+ }
+]

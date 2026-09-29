@@ -94,9 +94,13 @@ describe("#6909 follow-up — the parse", () => {
       team: "",
       identified: true,
     });
-    // An unknown stat after the rung keeps today's parse.
-    expect(parsePlayerName("Juwan Johnson: 2+ Fantasy Hats", "Yes")?.player).not.toBe(
+    // #9608: an unknown stat after the rung no longer throws the name away (it
+    // printed "1+ goals +: 1+ assists"); only a MATCHUP subject keeps today's parse.
+    expect(parsePlayerName("Juwan Johnson: 2+ Fantasy Hats", "Yes")?.player).toBe(
       "Juwan Johnson",
+    );
+    expect(parsePlayerName("Raiders vs Saints: 2+ Fantasy Hats", "Yes")?.player).not.toBe(
+      "Raiders vs Saints",
     );
   });
 
