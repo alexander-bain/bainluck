@@ -64,6 +64,8 @@ import {
   type FirstRunStorage,
 } from "@/lib/discoverFirstRun";
 import { CHALLENGE_SURFACES_ENABLED } from "@/lib/launchSurfaces";
+import { useDiscoverPriceStream } from "@/hooks/useDiscoverPriceStream";
+import { groupedLeaves, priceKey } from "@/lib/discover/priceRefresh";
 
 const DISMISSED_KEY = "discover_dismissed";
 const PAGE_SIZE = 20;
@@ -271,6 +273,8 @@ function FeedItemShell({
   positionIndex,
   personalizationTrace,
   onSeen,
+  priceOwner,
+  onPriceVisibility,
   children,
 }: {
   groupedItem: DiscoverGroupedItem;
@@ -285,11 +289,26 @@ function FeedItemShell({
    * scrolling at all, and a scroll-distance threshold would never fire.
    */
   onSeen?: (positionIndex: number) => void;
+  priceOwner?: string;
+  onPriceVisibility?: (owner: string, keys: string[], visible: boolean) => void;
   children: ReactNode;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const tracked = useRef(false);
   const analytics = useMemo(() => getGroupedAnalytics(groupedItem), [groupedItem]);
+  const priceKeys = groupedLeaves([groupedItem]).map(priceKey).join(',');
+
+  useEffect(() => {
+    const node = ref.current;
+    if (!node || !priceOwner || !onPriceVisibility || !priceKeys) return;
+    const keys = priceKeys.split(',');
+    if (typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver(([entry]) => {
+      onPriceVisibility(priceOwner, keys, entry.isIntersecting);
+    }, { threshold: 0 });
+    observer.observe(node);
+    return () => { observer.disconnect(); onPriceVisibility(priceOwner, keys, false); };
+  }, [priceKeys, priceOwner, onPriceVisibility]);
 
   useEffect(() => {
     if (tracked.current) return;
@@ -1099,7 +1118,8 @@ export default function DiscoverPage() {
     }
   }, [suppressedEnvelopes]);
 
-  const visibleItems = processedItems.slice(0, visibleCount);
+  const streamedPrices = useDiscoverPriceStream(processedItems, user?.uid ?? 'anonymous');
+  const visibleItems = streamedPrices.items.slice(0, visibleCount);
 
   // Queue 309 — the whole first-run decision, in two lines. Both delegate to
   // pure functions that take no time input, so neither can expire on a timer
@@ -1539,7 +1559,8 @@ export default function DiscoverPage() {
                 data-testid="discover-card"
                 className={isFirstCard ? "animate-peek-right" : ""}
               >
-                <FeedItemShell groupedItem={gi} positionIndex={idx} personalizationTrace={personalizationTrace} onSeen={handleCardSeen}>
+                <FeedItemShell groupedItem={gi} positionIndex={idx} personalizationTrace={personalizationTrace} onSeen={handleCardSeen}
+                  priceOwner={key} onPriceVisibility={streamedPrices.setPriceVisibility}>
                   {isGuessSlot ? (
                     <GuessCard item={gi.item!} onGuessCompleted={incrementDailyGuesses} />
                   ) : (
@@ -1593,4 +1614,3 @@ export default function DiscoverPage() {
     </ErrorBoundary>
   );
 }
-
