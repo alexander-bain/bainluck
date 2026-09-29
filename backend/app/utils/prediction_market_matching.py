@@ -1764,6 +1764,73 @@ def _outcome_names_team(outcome_name: str, event_team: str) -> bool:
     )
 
 
+def _names_player_by_surname(outcome_name: str, event_team: str) -> bool:
+    """``Eva Lys`` names ``Lys``: the stored side is the outcome's whole surname.
+
+    Strict on purpose. The stored side, normalized, must equal the LAST whole
+    word(s) of the outcome, and what precedes it must be one or two given names
+    of letters only — ``Xinran Sun`` names ``Sun``; ``San Diego wins 6th inning``
+    names nothing. Not :func:`tennis_twin_pairs.players_agree`: that comparator
+    reads every name surname-first AND surname-last, so ``san`` from ``San Diego
+    wins 6th inning`` agrees with ``San Diego Padres``, and its own docstring
+    says that permissiveness is safe only behind ``classify_pair``'s guard.
+    Measured over the 6,792 Kalshi/Polymarket markets linked to events in
+    (-6h, +72h) on 2026-09-29, it paired 14 inning/half-winner derivative
+    outcomes to a team; this rule pairs none.
+    """
+    # A doubles pair never passes: its "/" is not a letter. That is
+    # `_doubles_pair_match`'s question, not this one.
+    outcome_words = _normalize_for_matching(outcome_name).split()
+    side_words = _normalize_for_matching(event_team).split()
+    if not side_words or len(outcome_words) <= len(side_words):
+        return False
+    given = outcome_words[: -len(side_words)]
+    if outcome_words[-len(side_words):] != side_words or len(given) > 2:
+        return False
+    return all(word.isalpha() for word in given)
+
+
+def _surname_side_outcomes(
+    candidates: list, event_home_team: str, event_away_team: str
+) -> Optional[tuple]:
+    """``(home outcome, away outcome)`` paired by surname, or ``None``. #9472.
+
+    WHY. Kalshi stores a tennis row by surname — ``Lys v Sun`` — and prices it
+    with full-name outcomes, ``Eva Lys`` / ``Xinran Sun``. :func:`_fuzzy_team_match`
+    refuses a bare token of three letters or fewer on purpose (its containment
+    floor, and its acronym arm's "Gea must not reach Arthur Gea"), so when BOTH
+    surnames are that short neither outcome names a side and the source says
+    nothing. Measured 2026-09-29 03:00Z: ``/events/15320683`` (Lys v Sun, China
+    Open) carried no Kalshi leg while its linked market quoted 0.685, $11,495
+    traded. ``Gao v Udvardy`` beside it spoke only because ``Udvardy`` is long.
+
+    THE RULE. Only asked when the side test named no outcome at all.
+    :func:`_names_player_by_surname` must pair the outcomes one-to-one: exactly
+    one outcome names the home player and not the away one, exactly one other
+    names the away player and not the home one. An outcome naming both sides, or
+    a side named twice, refuses the whole reading. Refusing costs one reading;
+    accepting a wrong pairing would price the wrong player.
+
+    DELIBERATELY NOT INSIDE ``_fuzzy_team_match``, for #8722's reason: the linker
+    uses that function, and this rule is only for the resolvers, which already
+    hold a market the linker attached to this event and only have to pick a side.
+    """
+    home_hits = []
+    away_hits = []
+    for outcome in candidates:
+        names_home = _names_player_by_surname(outcome.name, event_home_team)
+        names_away = _names_player_by_surname(outcome.name, event_away_team)
+        if names_home and names_away:
+            return None
+        if names_home:
+            home_hits.append(outcome)
+        elif names_away:
+            away_hits.append(outcome)
+    if len(home_hits) != 1 or len(away_hits) != 1:
+        return None
+    return home_hits[0], away_hits[0]
+
+
 def find_moneyline_outcome(
     outcomes: list,
     matchup: MatchupInfo,
@@ -1787,6 +1854,7 @@ def find_moneyline_outcome(
     # Build list of outcomes that match a team name
     home_outcomes = []
     away_outcomes = []
+    side_candidates = []
 
     for outcome in outcomes:
         if not outcome.name or outcome.current_probability is None:
@@ -1798,6 +1866,7 @@ def find_moneyline_outcome(
         # Skip prop/spread/total outcomes before fuzzy matching
         if _is_prop_or_spread_outcome(outcome.name):
             continue
+        side_candidates.append(outcome)
 
         # AN OUTCOME THAT MATCHES BOTH TEAMS NAMES NEITHER SIDE (#4629).
         #
@@ -1838,6 +1907,16 @@ def find_moneyline_outcome(
             home_outcomes.append(outcome)
         elif matches_away:
             away_outcomes.append(outcome)
+
+    # #9472: both surnames too short for the side test (`Lys v Sun` against
+    # `Eva Lys` / `Xinran Sun`). Only when it named nothing, and only on a
+    # one-to-one pairing — see `_surname_side_outcomes`.
+    if not home_outcomes and not away_outcomes:
+        paired = _surname_side_outcomes(
+            side_candidates, event_home_team, event_away_team
+        )
+        if paired is not None:
+            home_outcomes, away_outcomes = [paired[0]], [paired[1]]
 
     # Determine yes_is_home from matchup
     team_mapping = match_teams_to_event(matchup, event_home_team, event_away_team)
