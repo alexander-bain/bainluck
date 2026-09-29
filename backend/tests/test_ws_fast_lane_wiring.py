@@ -36,6 +36,38 @@ def _flush_function(module, consumer_name: str) -> ast.AsyncFunctionDef:
     raise AssertionError(f"{consumer_name} has no nested flush_prices")
 
 
+def _write_helpers(module, consumer_name: str, flush) -> list[ast.AsyncFunctionDef]:
+    """Sibling coroutines of `flush_prices` that it awaits by name.
+
+    #9484: the Polymarket flush writes in bounded chunks, each through its own
+    `write_chunk` transaction, so the price write and its error path live one
+    call down. The guards below follow that call instead of losing the write.
+    """
+    called = {
+        sub.value.func.id
+        for sub in ast.walk(flush)
+        if isinstance(sub, ast.Await)
+        and isinstance(sub.value, ast.Call)
+        and isinstance(sub.value.func, ast.Name)
+    }
+    tree = ast.parse(inspect.getsource(module))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == consumer_name:
+            return [
+                inner
+                for inner in node.body
+                if isinstance(inner, ast.AsyncFunctionDef)
+                and inner.name in called
+                and inner.name != "flush_prices"
+            ]
+    return []
+
+
+def _write_path(module, consumer_name: str) -> list[ast.AsyncFunctionDef]:
+    flush = _flush_function(module, consumer_name)
+    return [flush, *_write_helpers(module, consumer_name, flush)]
+
+
 def _calls_named(node, name: str) -> list[ast.Call]:
     found = []
     for sub in ast.walk(node):
@@ -74,13 +106,15 @@ class TestFlushStampsBothPriceColumns:
 
     def test_every_ws_flush_touches_last_updated(self):
         for module, consumer in CONSUMERS:
-            flush = _flush_function(module, consumer)
-            assert "last_updated" in _keyword_names(flush), consumer
+            path = _write_path(module, consumer)
+            assert any("last_updated" in _keyword_names(f) for f in path), consumer
 
     def test_every_ws_flush_maintains_price_changed_at(self):
         for module, consumer in CONSUMERS:
-            flush = _flush_function(module, consumer)
-            assert _calls_named(flush, "price_changed_at_value"), consumer
+            path = _write_path(module, consumer)
+            assert any(
+                _calls_named(f, "price_changed_at_value") for f in path
+            ), consumer
 
     def test_price_changed_at_uses_the_shared_helper_not_a_copy(self):
         """A drifted change-detection predicate does not throw, it just stops
@@ -106,9 +140,18 @@ class TestFlushReachesTheBlend:
         """Order matters: the refresh reads the rows the flush just wrote."""
         for module, consumer in CONSUMERS:
             flush = _flush_function(module, consumer)
+            helpers = _write_helpers(module, consumer, flush)
             try_nodes = [n for n in flush.body if isinstance(n, ast.Try)]
-            assert try_nodes, f"{consumer}: expected the DB write in a try block"
-            write_line = max(n.lineno for n in try_nodes)
+            # #9484: a chunked write is the awaited helper call, not a try here.
+            write_calls = [c for h in helpers for c in _calls_named(flush, h.name)]
+            assert try_nodes or write_calls, (
+                f"{consumer}: expected the DB write in a try block"
+            )
+            if helpers:
+                assert any(
+                    isinstance(n, ast.Try) for h in helpers for n in h.body
+                ), f"{consumer}: expected the chunk write in a try block"
+            write_line = max(n.lineno for n in [*try_nodes, *write_calls])
             refresh_calls = _calls_named(flush, "refresh")
             assert refresh_calls, consumer
             assert min(c.lineno for c in refresh_calls) > write_line, (
@@ -120,9 +163,11 @@ class TestFlushReachesTheBlend:
         stamping a blend off them would publish a number the venue never sent."""
         for module, consumer in CONSUMERS:
             flush = _flush_function(module, consumer)
+            helpers = _write_helpers(module, consumer, flush)
             handlers = [
                 h
-                for n in flush.body
+                for f in [flush, *helpers]
+                for n in f.body
                 if isinstance(n, ast.Try)
                 for h in n.handlers
             ]
@@ -132,6 +177,18 @@ class TestFlushReachesTheBlend:
                 for h in handlers
                 for stmt in ast.walk(h)
             ), f"{consumer}: flush error path must not fall through to the refresh"
+            if helpers:
+                # #9484: the chunk write reports failure by returning; the
+                # flush must then return before the refresh when nothing landed.
+                write_line = max(
+                    c.lineno for h in helpers for c in _calls_named(flush, h.name)
+                )
+                refresh_line = min(c.lineno for c in _calls_named(flush, "refresh"))
+                assert any(
+                    isinstance(n, ast.Return)
+                    and write_line < n.lineno < refresh_line
+                    for n in ast.walk(flush)
+                ), f"{consumer}: a flush with no chunk written must not refresh"
 
     def test_each_consumer_owns_a_refresher_for_its_own_source(self):
         for module, consumer, source in (

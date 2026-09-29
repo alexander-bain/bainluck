@@ -64,6 +64,20 @@ class _Result:
         return list(self._rows)
 
 
+def _is_poly_open_contract_read(stmt) -> bool:
+    """#9484: the Polymarket open-contract admission read. It runs beside the
+    watcher, so it is routed by statement rather than by position, and
+    answered as "no open contracts" so this file's slate and reread keep
+    their own sequence."""
+    from app.tasks.polymarket_open_contracts import (
+        open_contract_markets_stmt, open_contract_outcomes_stmt,
+    )
+
+    return str(stmt) in {
+        str(open_contract_markets_stmt()), str(open_contract_outcomes_stmt()),
+    }
+
+
 def _install_session(monkeypatch, slate_batches, reread):
     """Slate queries answered in order; every later query is the reread, whose
     rows are `(event_id, market_id, source_entry)`. `reread(n)` gets the
@@ -74,6 +88,8 @@ def _install_session(monkeypatch, slate_batches, reread):
 
     class _Session:
         async def execute(self, _stmt):
+            if _is_poly_open_contract_read(_stmt):
+                return _Result([])
             if state["slate"]:
                 return _Result(state["slate"].pop(0))
             state["reread_calls"] += 1

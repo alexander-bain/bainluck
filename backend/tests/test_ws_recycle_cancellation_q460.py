@@ -92,6 +92,20 @@ class _Result:
         return list(self._rows)
 
 
+def _is_poly_open_contract_read(stmt) -> bool:
+    """#9484: the Polymarket open-contract admission read. It runs beside the
+    watcher, so it is routed by statement rather than by position, and
+    answered as "no open contracts" so this file's slate and reread keep
+    their own sequence."""
+    from app.tasks.polymarket_open_contracts import (
+        open_contract_markets_stmt, open_contract_outcomes_stmt,
+    )
+
+    return str(stmt) in {
+        str(open_contract_markets_stmt()), str(open_contract_outcomes_stmt()),
+    }
+
+
 class _Session:
     """Replays a fixed, repeating sequence of row batches.
 
@@ -103,6 +117,8 @@ class _Session:
         self._batches = batches
 
     async def execute(self, stmt):
+        if _is_poly_open_contract_read(stmt):
+            return _Result([])
         # #9462 review: the #9418 admission watcher rereads the live arm as
         # soon as a run starts (its baseline). That query is not part of the
         # slate sequence, so it must not consume a slate batch — answered as
