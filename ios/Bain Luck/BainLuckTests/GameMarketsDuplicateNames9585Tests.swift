@@ -203,5 +203,113 @@ final class GameMarketsDuplicateNames9585Tests: XCTestCase {
                      gradedTwice: true), over: back, fence: &fence)
         XCTAssertEqual(conflicted.spreads?.first?.probability, 0.75,
                        "a graded row turning ambiguous does not read as a vanished grade")
+        func graded(_ body: GameMarketsResponse) -> [GameMarketOther] {
+            (body.other ?? []).filter { $0.marketName == "Graded" }
+        }
+        XCTAssertEqual(graded(conflicted).map(\.isWinner), [true], "the verified grade is what is shown, once")
+        XCTAssertEqual(graded(conflicted).map(\.probability), [1])
+        XCTAssertFalse((conflicted.other ?? []).contains { $0.marketName == "Both teams to score" },
+                       "a conflicting group with nothing verified behind it is withheld, not guessed")
+        let clear = GameMarketsPriceReconciliation.adopting(
+            try body(duplicate: 0.7, idless: 0.3, spread: 0.8, clock: "2030-01-01T00:00:00.000006Z"),
+            over: conflicted, fence: &fence)
+        XCTAssertEqual(clear.spreads?.first?.probability, 0.8, "the conflict clearing holds nothing")
+        XCTAssertEqual(graded(clear).map(\.isWinner), [true])
+
+        var first = GameMarketsPriceReconciliation.Fence()
+        let firstPaint = GameMarketsPriceReconciliation.adopting(
+            try body(duplicate: 0.7, idless: 0.3, spread: 0.5, clock: t0, gradedTwice: true), over: nil, fence: &first)
+        XCTAssertTrue(graded(firstPaint).isEmpty, "a contradictory grade never reaches the first paint either")
+        XCTAssertEqual(firstPaint.spreads?.first?.probability, 0.5)
+    }
+
+    // 8 — Codex review of 9dcdc7f0, finding 1: a row's identity cannot depend
+    // on whether a same-named peer in its own market is still served.
+    func testASurvivorKeepsItsIdentityWhenItsSameMarketPeerComesAndGoes() throws {
+        func body(peer: Bool, survivor: Double = 0.4, grade: Bool? = nil, clocks: [Int: String],
+                  spread: Double, reversed: Bool = false) throws -> GameMarketsResponse {
+            func row(_ contributor: Int, _ price: Double, _ winner: Bool?) -> [String: Any] {
+                ["market_name": "Both teams to score", "outcome_name": "Yes", "probability": price,
+                 "source": "kalshi", "_market_id": 41, "contributor_outcome_ids": [contributor],
+                 "is_winner": winner.map { $0 as Any } ?? NSNull()]
+            }
+            var other = [row(101, survivor, grade)]
+            if peer { other.append(row(102, 0.3, nil)) }
+            var bindings = ["101": 41, "5": 42]
+            if peer { bindings["102"] = 41 }
+            return try decode(["event_id": 12, "status": "live", "stream_market_ids": [41, 42],
+                "outcome_market_ids": bindings,
+                "outcome_revision_at": Dictionary(uniqueKeysWithValues: clocks.map { (String($0.key), $0.value) }),
+                "spreads": [["market_name": "Spread", "outcome_name": "Home -3.5", "probability": spread,
+                             "source": "kalshi", "_market_id": 42, "contributor_outcome_ids": [5]]],
+                "other": reversed ? Array(other.reversed()) : other])
+        }
+        func survivor(_ body: GameMarketsResponse) -> GameMarketOther? {
+            body.other?.first { $0.contributorOutcomeIds == [101] }
+        }
+        let t3 = "2030-01-01T00:00:00.000004Z"
+        for grade in [nil, true] as [Bool?] {
+            var fence = GameMarketsPriceReconciliation.Fence()
+            let held = GameMarketsPriceReconciliation.adopting(
+                try body(peer: true, grade: grade, clocks: [101: t0, 102: t0, 5: t0], spread: 0.5),
+                over: nil, fence: &fence)
+            let alone = GameMarketsPriceReconciliation.adopting(
+                try body(peer: false, grade: grade, clocks: [101: t0, 5: t1], spread: 0.6), over: held, fence: &fence)
+            XCTAssertEqual(alone.spreads?.first?.probability, 0.6, "the peer leaving freezes nothing (grade \(String(describing: grade)))")
+            XCTAssertEqual(survivor(alone)?.probability, 0.4)
+            XCTAssertEqual(survivor(alone)?.isWinner, grade)
+            let back = GameMarketsPriceReconciliation.adopting(
+                try body(peer: true, grade: grade, clocks: [101: t0, 102: t2, 5: t2], spread: 0.7, reversed: true),
+                over: alone, fence: &fence)
+            XCTAssertEqual(back.spreads?.first?.probability, 0.7, "the peer returning on its own clock freezes nothing")
+            XCTAssertEqual(back.other?.first { $0.contributorOutcomeIds == [102] }?.probability, 0.3)
+            XCTAssertEqual(survivor(back)?.isWinner, grade)
+            let borrowed = GameMarketsPriceReconciliation.adopting(
+                try body(peer: true, survivor: 0.9, grade: grade, clocks: [101: t0, 102: t2, 5: t3], spread: 0.8),
+                over: back, fence: &fence)
+            XCTAssertEqual(survivor(borrowed)?.probability, 0.4,
+                           "the survivor still cannot move on its unchanged clock or borrow an unrelated one")
+        }
+    }
+
+    // 9 — Codex review of 9dcdc7f0, finding 2: a conflicting group's clock
+    // neither lends a same-market sibling a revision nor is spent while it is
+    // hidden, and what is shown meanwhile is the verified row, once.
+    func testAConflictingGroupLendsNoClockAndSpendsNoneWhileHidden() throws {
+        let t3 = "2030-01-01T00:00:00.000004Z"
+        func body(conflict: Bool, over: Double = 0.4, yes: Double = 0.3,
+                  clocks: [Int: String], spread: Double = 0.5) throws -> GameMarketsResponse {
+            func row(_ market: String, _ outcome: String, _ price: Double, _ contributor: Int) -> [String: Any] {
+                ["market_name": market, "outcome_name": outcome, "probability": price, "source": "kalshi",
+                 "_market_id": 41, "contributor_outcome_ids": [contributor]]
+            }
+            var other = [row("Total goals", "Over", over, 101), row("Both teams to score", "Yes", yes, 102)]
+            if conflict { other.append(row("Both teams to score", "Yes", 0.6, 102)) }
+            return try decode(["event_id": 12, "status": "live", "stream_market_ids": [41, 42],
+                "outcome_market_ids": ["101": 41, "102": 41, "5": 42],
+                "outcome_revision_at": Dictionary(uniqueKeysWithValues: clocks.map { (String($0.key), $0.value) }),
+                "spreads": [["market_name": "Spread", "outcome_name": "Home -3.5", "probability": spread,
+                             "source": "kalshi", "_market_id": 42, "contributor_outcome_ids": [5]]],
+                "other": other])
+        }
+        func prices(_ body: GameMarketsResponse, _ market: String) -> [Double?] {
+            (body.other ?? []).filter { $0.marketName == market }.map(\.probability)
+        }
+        var fence = GameMarketsPriceReconciliation.Fence()
+        let held = GameMarketsPriceReconciliation.adopting(
+            try body(conflict: false, clocks: [101: t0, 102: t0, 5: t0]), over: nil, fence: &fence)
+        let lent = GameMarketsPriceReconciliation.adopting(
+            try body(conflict: true, over: 0.9, clocks: [101: t0, 102: t1, 5: t0]), over: held, fence: &fence)
+        XCTAssertEqual(prices(lent, "Total goals"), [0.4], "a hidden group's clock cannot move its market's sibling")
+        let hidden = GameMarketsPriceReconciliation.adopting(
+            try body(conflict: true, clocks: [101: t0, 102: t1, 5: t2], spread: 0.6), over: lent, fence: &fence)
+        XCTAssertEqual(hidden.spreads?.first?.probability, 0.6)
+        XCTAssertEqual(prices(hidden, "Both teams to score"), [0.3], "the verified row is shown, once")
+        let clear = GameMarketsPriceReconciliation.adopting(
+            try body(conflict: false, yes: 0.6, clocks: [101: t0, 102: t1, 5: t3], spread: 0.7),
+            over: hidden, fence: &fence)
+        XCTAssertEqual(prices(clear, "Both teams to score"), [0.6],
+                       "the clock that advanced while hidden still orders the row once it is identifiable")
+        XCTAssertEqual(clear.spreads?.first?.probability, 0.7)
     }
 }

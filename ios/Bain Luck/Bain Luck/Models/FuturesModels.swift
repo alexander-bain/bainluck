@@ -50,12 +50,12 @@ nonisolated struct GameMarketsResponse: Decodable, Equatable, Sendable {
     let status: String?
     let homeScore: Int?
     let awayScore: Int?
-    let playerProps: [GameMarketPlayerProp]?
-    let spreads: [GameMarketOutcome]?
-    let totals: [GameMarketOutcome]?
-    let teamTotals: [GameMarketOutcome]?
-    let periodMarkets: [GameMarketOutcome]?
-    let other: [GameMarketOther]?
+    var playerProps: [GameMarketPlayerProp]?
+    var spreads: [GameMarketOutcome]?
+    var totals: [GameMarketOutcome]?
+    var teamTotals: [GameMarketOutcome]?
+    var periodMarkets: [GameMarketOutcome]?
+    var other: [GameMarketOther]?
     let pace: GameMarketPace?
     // Raw row revision orders projections; real observation remains separate.
     var streamMarketIds: [Int]? = nil

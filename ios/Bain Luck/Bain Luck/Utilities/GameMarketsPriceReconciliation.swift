@@ -29,72 +29,73 @@ nonisolated enum GameMarketsPriceReconciliation {
 
     /// #9585 — a display name is not an identity: Bears–Eagles served four
     /// `Both teams to score / Yes` rows from four markets. The key is the
-    /// section, the name, and the durable market ids; contributor ids join it
-    /// only to separate rows the markets cannot. Exact duplicates coalesce.
-    /// Rows still conflicting are returned apart, so they are never used to
-    /// order or hold the rest of the page. Never position, price or clock.
-    static func identified(_ raw: [Row]) -> (rows: [Row], ambiguous: [Row]) {
-        func qualified(_ row: Row, _ tag: String, _ ids: [String]) -> Row {
-            guard !ids.isEmpty else { return row }
-            var row = row
-            row.key += tag + ids.joined(separator: ",")
-            return row
-        }
-        func partition(_ rows: [Row]) -> (unique: [Row], conflicted: [Row]) {
-            var order: [String] = []
-            var groups: [String: [Row]] = [:]
-            for row in rows {
-                if groups[row.key] == nil { order.append(row.key) }
-                groups[row.key, default: []].append(row)
-            }
-            var unique: [Row] = []
-            var conflicted: [Row] = []
-            for key in order {
-                let group = groups[key] ?? []
-                if group.allSatisfy({ $0 == group[0] }) { unique.append(group[0]) } else { conflicted += group }
-            }
-            return (unique, conflicted)
-        }
-        let byMarket = partition(raw.map { row in
-            var row = qualified(row, "#m", row.markets.sorted().map(String.init))
-            row.base = row.key
-            return row
-        })
-        let byContributor = partition(byMarket.conflicted.map { qualified($0, "#c", $0.contributors.sorted()) })
-        return (byMarket.unique + byContributor.unique, byContributor.conflicted)
+    /// section, the name, the durable market ids and, whenever present, the
+    /// row's own contributor ids — a function of the row alone, so a row keeps
+    /// its identity (and its grade and withdrawal fences) whichever siblings
+    /// come and go. Exact duplicates coalesce. Rows still conflicting are
+    /// returned apart, so they never order or hold the rest of the page.
+    /// Never position, price or clock.
+    static func identity(_ row: Row) -> Row {
+        var row = row
+        let markets = row.markets.sorted().map(String.init)
+        if !markets.isEmpty { row.key += "#m" + markets.joined(separator: ",") }
+        row.base = row.key
+        let contributors = row.contributors.sorted()
+        if !contributors.isEmpty { row.key += "#c" + contributors.joined(separator: ",") }
+        return row
     }
 
-    static func rows(_ body: GameMarketsResponse) -> [Row] {
-        func markets(_ one: Int?, _ many: [Int]?) -> Set<Int> {
-            Set((many ?? []) + (one.map { [$0] } ?? []))
+    static func identified(_ raw: [Row]) -> (rows: [Row], ambiguous: [Row]) {
+        var order: [String] = []
+        var groups: [String: [Row]] = [:]
+        for row in raw.map(identity) {
+            if groups[row.key] == nil { order.append(row.key) }
+            groups[row.key, default: []].append(row)
         }
-        func ids(_ values: [Int]?) -> Set<String> { Set((values ?? []).map(String.init)) }
-        var result = (body.playerProps ?? []).map {
-            Row(key: "props:\($0.id)", prices: [$0.overProbability], source: $0.source,
-                markets: markets($0._marketId, $0._marketIds), contributors: ids($0.contributorOutcomeIds),
-                verdict: $0.hit, winner: $0.isWinner, actual: $0.actual)
+        var unique: [Row] = []
+        var conflicted: [Row] = []
+        for key in order {
+            let group = groups[key] ?? []
+            if group.allSatisfy({ $0 == group[0] }) { unique.append(group[0]) } else { conflicted += group }
         }
-        for (section, entries) in [("spreads", body.spreads), ("totals", body.totals),
-                                    ("teamTotals", body.teamTotals), ("period", body.periodMarkets)] {
-            result += (entries ?? []).map {
-                Row(key: "\(section):\($0.id)", prices: [$0.probability, $0.overProbability], source: $0.source,
-                    markets: markets($0._marketId, $0._marketIds), contributors: ids($0.contributorOutcomeIds),
-                    verdict: nil, winner: $0.isWinner, actual: nil)
-            }
-        }
-        result += (body.other ?? []).map {
-            Row(key: "other:\($0.id)", prices: [$0.probability], source: $0.source,
-                markets: markets($0._marketId, $0._marketIds), contributors: ids($0.contributorOutcomeIds),
+        return (unique, conflicted)
+    }
+
+    private static func markets(_ one: Int?, _ many: [Int]?) -> Set<Int> {
+        Set((many ?? []) + (one.map { [$0] } ?? []))
+    }
+    private static func ids(_ values: [Int]?) -> Set<String> { Set((values ?? []).map(String.init)) }
+    private static func row(_ prop: GameMarketPlayerProp) -> Row {
+        Row(key: "props:\(prop.id)", prices: [prop.overProbability], source: prop.source,
+            markets: markets(prop._marketId, prop._marketIds), contributors: ids(prop.contributorOutcomeIds),
+            verdict: prop.hit, winner: prop.isWinner, actual: prop.actual)
+    }
+    private static func row(_ section: String, _ entry: GameMarketOutcome) -> Row {
+        Row(key: "\(section):\(entry.id)", prices: [entry.probability, entry.overProbability], source: entry.source,
+            markets: markets(entry._marketId, entry._marketIds), contributors: ids(entry.contributorOutcomeIds),
+            verdict: nil, winner: entry.isWinner, actual: nil)
+    }
+    private static func row(_ entry: GameMarketOther) -> Row {
+        Row(key: "other:\(entry.id)", prices: [entry.probability], source: entry.source,
+            markets: markets(entry._marketId, entry._marketIds), contributors: ids(entry.contributorOutcomeIds),
+            verdict: nil, winner: entry.isWinner, actual: nil)
+    }
+    private static func rows(_ matchup: GameMarketMatchup) -> [Row] {
+        matchup.outcomes.map {
+            Row(key: "matchups:\(matchup.id):\($0.name)", prices: [$0.probability], source: matchup.source,
+                markets: markets(matchup._marketId, matchup._marketIds),
+                contributors: ids($0.contributorOutcomeIds ?? matchup.contributorOutcomeIds),
                 verdict: nil, winner: $0.isWinner, actual: nil)
         }
-        for matchup in body.matchups ?? [] {
-            result += matchup.outcomes.map {
-                Row(key: "matchups:\(matchup.id):\($0.name)", prices: [$0.probability], source: matchup.source,
-                    markets: markets(matchup._marketId, matchup._marketIds),
-                    contributors: ids($0.contributorOutcomeIds ?? matchup.contributorOutcomeIds),
-                    verdict: nil, winner: $0.isWinner, actual: nil)
-            }
-        }
+    }
+    private static let sections: [(String, KeyPath<GameMarketsResponse, [GameMarketOutcome]?>)] = [
+        ("spreads", \.spreads), ("totals", \.totals), ("teamTotals", \.teamTotals), ("period", \.periodMarkets)]
+
+    static func rows(_ body: GameMarketsResponse) -> [Row] {
+        var result = (body.playerProps ?? []).map(row)
+        for (section, path) in sections { result += (body[keyPath: path] ?? []).map { row(section, $0) } }
+        result += (body.other ?? []).map(row)
+        for matchup in body.matchups ?? [] { result += rows(matchup) }
         if let quote = body.openWinnerQuote {
             result.append(Row(key: "finalWinner:\(quote.marketId)",
                 prices: quote.outcomes.sorted { $0.outcomeId < $1.outcomeId }.map { $0.probability },
@@ -102,6 +103,39 @@ nonisolated enum GameMarketsPriceReconciliation {
                 contributors: quote.contributorOutcomeIds, verdict: nil, winner: nil, actual: nil))
         }
         return result
+    }
+
+    /// #9585 — the body a reader is shown never carries a conflicting group:
+    /// each one is replaced by the held page's own verified entry for that
+    /// identity (its grade, actual and withdrawal state intact), or withheld
+    /// when nothing verified exists. Every other entry is the incoming one.
+    private static func quarantined(_ body: GameMarketsResponse, keys ambiguous: Set<String>,
+                                    held: GameMarketsResponse?) -> GameMarketsResponse {
+        guard !ambiguous.isEmpty else { return body }
+        func keys(_ rows: [Row]) -> [String] { rows.map { identity($0).key } }
+        func replaced<T>(_ incoming: [T]?, _ held: [T]?, group: (T) -> String, rows: (T) -> [Row]) -> [T]? {
+            guard let incoming else { return nil }
+            var verified: [String: T] = [:]
+            for entry in held ?? [] where verified[group(entry)] == nil { verified[group(entry)] = entry }
+            var placed = Set<String>()
+            return incoming.compactMap { entry in
+                guard keys(rows(entry)).contains(where: ambiguous.contains) else { return entry }
+                guard placed.insert(group(entry)).inserted else { return nil }
+                return verified[group(entry)]
+            }
+        }
+        func flat<T>(_ incoming: [T]?, _ held: [T]?, _ row: (T) -> Row) -> [T]? {
+            replaced(incoming, held, group: { identity(row($0)).key }, rows: { [row($0)] })
+        }
+        var body = body
+        body.playerProps = flat(body.playerProps, held?.playerProps, row)
+        body.spreads = flat(body.spreads, held?.spreads) { row("spreads", $0) }
+        body.totals = flat(body.totals, held?.totals) { row("totals", $0) }
+        body.teamTotals = flat(body.teamTotals, held?.teamTotals) { row("teamTotals", $0) }
+        body.periodMarkets = flat(body.periodMarkets, held?.periodMarkets) { row("period", $0) }
+        body.other = flat(body.other, held?.other, row)
+        body.matchups = replaced(body.matchups, held?.matchups, group: { "matchups:\($0.id)" }, rows: rows)
+        return body
     }
 
     static func adopting(_ incoming: GameMarketsResponse, over held: GameMarketsResponse?,
@@ -132,15 +166,20 @@ nonisolated enum GameMarketsPriceReconciliation {
                                           fence: inout Fence) -> GameMarketsResponse {
         let identity = identified(rows(incoming))
         let nextRows = identity.rows
-        let ambiguous = Set(identity.ambiguous.map(\.base))
+        let ambiguous = Set(identity.ambiguous.map(\.key))
         let next = Dictionary(uniqueKeysWithValues: nextRows.map { ($0.key, $0) })
+        // A contributor seen only on conflicting rows neither orders nor is
+        // ordered: its clock waits until its row is identifiable again.
+        let unordered = Set(identity.ambiguous.flatMap(\.contributors))
+            .subtracting(nextRows.flatMap(\.contributors))
         let clocks = (incoming.outcomeRevisionAt ?? [:]).compactMapValues {
             FuturesPriceReconciliation.observationDate($0)
         }
+        let published = quarantined(incoming, keys: ambiguous, held: held)
         guard let held else {
-            fence.revisions = clocks
+            fence.revisions = clocks.filter { !unordered.contains($0.key) }
             for row in nextRows where !row.priced && !row.isUnordered { fence.withdrawn[row.key] = row.contributors }
-            return incoming
+            return published
         }
         guard incoming.eventId == held.eventId else { return held }
         if EventState.isFinished(held.status) {
@@ -156,13 +195,15 @@ nonisolated enum GameMarketsPriceReconciliation {
         var changedMarkets = Set<Int>()
         for (id, date) in clocks {
             if let prior = fence.revisions[id], date < prior { return held }
-            if fence.revisions[id].map({ date > $0 }) ?? true,
+            if !unordered.contains(id), fence.revisions[id].map({ date > $0 }) ?? true,
                let market = bindings[id] { changedMarkets.insert(market) }
         }
-        for (id, market) in bindings where oldBindings[id] != market { changedMarkets.insert(market) }
+        for (id, market) in bindings where oldBindings[id] != market && !unordered.contains(id) {
+            changedMarkets.insert(market)
+        }
         // A genuine withdrawal changes the normalization denominator even if
         // no replacement observation clock exists. Never mix old/new vectors.
-        for prior in beforeRows where !ambiguous.contains(prior.base) {
+        for prior in beforeRows where !ambiguous.contains(prior.key) {
             let row = next[prior.key]
             if prior.verdict != nil && row?.verdict != prior.verdict
                 || prior.winner != nil && row?.winner != prior.winner
@@ -226,8 +267,10 @@ nonisolated enum GameMarketsPriceReconciliation {
                 guard terminal || !row.markets.isDisjoint(with: changedMarkets) else { return held }
             }
         }
-        for (id, date) in clocks { nextFence.revisions[id] = max(date, nextFence.revisions[id] ?? date) }
+        for (id, date) in clocks where !unordered.contains(id) {
+            nextFence.revisions[id] = max(date, nextFence.revisions[id] ?? date)
+        }
         fence = nextFence
-        return incoming
+        return published
     }
 }
