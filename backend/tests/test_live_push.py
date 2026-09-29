@@ -323,14 +323,14 @@ class TestRefresherPublishContainment:
 
 
 class TestLiveGate:
-    """Push is for LIVE events only; everything else polls (the ruling)."""
+    """Live compatibility plus the supported nonlive quote phases."""
 
-    def test_only_live_is_pushed(self):
-        from app.routes.event_stream import LIVE_STATUSES
+    def test_supported_quote_phases_preserve_terminal_refusal(self):
+        from app.routes.event_stream import QUOTE_STATUSES
 
-        assert "live" in LIVE_STATUSES
-        for polled in ("scheduled", "completed", "closed", "postponed"):
-            assert polled not in LIVE_STATUSES
+        assert {"live", "scheduled", "suspended"} == QUOTE_STATUSES
+        for polled in ("completed", "closed", "postponed"):
+            assert polled not in QUOTE_STATUSES
 
     def test_heartbeat_fits_inside_the_heroku_router_idle_timeout(self):
         """~55s idle and the router closes the connection. Two heartbeats have

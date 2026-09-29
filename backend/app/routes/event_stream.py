@@ -1,7 +1,8 @@
-"""Server-Sent Events stream for LIVE events (live/034 S1).
+"""Server-Sent Events for live and supported open-market event quotes.
 
-Ruling (RULINGS-BATCH-2026-08-30, LIVE UPDATES): push for LIVE events only; web
-and iOS subscribe; non-live keeps polling.
+Alex September 28: quotes follow open contracts, independently of game phase.
+The scheduled/suspended increment uses the existing producer cohort; wider
+markets and standalone quotes remain separate delivery work.
 
 WHY THIS IS SMALL. The hard part shipped already. `worker-ws` streams Kalshi and
 Polymarket prices, flushes every 2 s, and `LiveBlendRefresher` stamps the blend
@@ -39,7 +40,7 @@ import asyncio
 import json
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import AsyncIterator, Optional
 
 from fastapi import APIRouter, HTTPException, Request
@@ -48,7 +49,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models import Event
+from app.models import Event, FuturesMarket
 from app.services.database import async_session_maker
 from app.utils.live_push import (
     MAX_FRAME_AGE_S, event_channel, parse_frame, sse_encode,
@@ -87,11 +88,10 @@ RETRY_MS = int(os.getenv("SSE_RETRY_MS", "5000"))
 #: mid-wait ends the wait immediately.
 FRAME_WAIT_S = 1.0
 
-#: Statuses that get a push. Everything else polls, per the ruling. This keys
-#: off `Event.status` deliberately and inherits whatever that column means —
-#: see the design doc §5: a match wrongly left at `scheduled` is an event-graph
-#: defect, and widening the gate here would hide it behind a UI feature (D27).
+#: Existing live connections remain compatible. New nonlive connections also
+#: require a publishable, mapped winner market in the producer's cohort.
 LIVE_STATUSES = frozenset({"live"})
+QUOTE_STATUSES = frozenset({"live", "scheduled", "suspended"})
 
 #: Per-worker connection count. A plain int on the worker process, not Redis:
 #: it is a guard on THIS loop's capacity, and asking Redis how loaded we are
@@ -125,6 +125,94 @@ async def _event_status(db: AsyncSession, event_id: int) -> Optional[str]:
     return (
         await db.execute(select(Event.status).where(Event.id == event_id))
     ).scalar_one_or_none()
+
+
+def _market_in_quote_cohort(event, market, now: datetime) -> bool:
+    """Current #9499 producer coverage, not a permanent venue-hours policy."""
+    if event.completed_at is not None or market.source not in {"kalshi", "polymarket"}:
+        return False
+    if market.status == "resolved":
+        return False
+    if event.status == "live":
+        return True
+    start = event.commence_time
+    if start is None:
+        return False
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    if event.status == "suspended":
+        return start >= now - timedelta(hours=24)
+    if event.status == "scheduled":
+        return start <= now + timedelta(hours=6) and (
+            market.source == "kalshi" or start >= now - timedelta(hours=24)
+        )
+    return False
+
+
+def _mapped_outcome_ids(entry) -> set[int]:
+    """Prove persisted producer mappings without venue I/O or token top-ups."""
+    if entry.market.source == "kalshi":
+        return {o.id for o in entry.outcomes if isinstance(o.external_id, str) and o.external_id.strip()}
+    metadata = entry.market.market_metadata or {}
+    if not isinstance(metadata, dict):
+        return set()
+    tokens = metadata.get("clob_token_ids") or metadata.get("clobTokenIds")
+    if tokens:
+        if isinstance(tokens, str):
+            try:
+                tokens = json.loads(tokens)
+            except (ValueError, TypeError):
+                return set()
+        # The producer pairs the entire ordered outcome list with this list.
+        # Partial lists suppress its per-outcome top-up: never use that cache
+        # to declare an unmapped tail eligible.
+        if (not isinstance(tokens, list) or len(tokens) != len(entry.outcomes)
+                or not all(isinstance(t, (str, int)) and not isinstance(t, bool)
+                           and str(t).strip() for t in tokens)
+                or len(set(map(str, tokens))) != len(tokens)):
+            return set()
+        return {o.id for o in entry.outcomes}
+    cached = metadata.get("clob_yes_token_by_outcome")
+    if not isinstance(cached, dict):
+        return set()
+    return {o.id for o in entry.outcomes
+            if isinstance(cached.get(str(o.id)), (str, int))
+            and not isinstance(cached[str(o.id)], bool)
+            and str(cached[str(o.id)]).strip()}
+
+
+def _has_mapped_winner(event, markets, now: datetime) -> bool:
+    from app.utils.live_blend import MarketOutcomes, compute_source_home_probability
+
+    for source in ("kalshi", "polymarket"):
+        group = [MarketOutcomes(m, m.outcomes, event_has_result=False)
+                 for m in markets if m.source == source and _market_in_quote_cohort(event, m, now)]
+        reading = compute_source_home_probability(group, event.home_team_name, event.away_team_name)
+        if reading is None:
+            continue
+        mapped = set().union(*(_mapped_outcome_ids(entry) for entry in group))
+        contributors = reading.contributing_outcomes or (reading.outcome,)
+        if contributors and all(o.id in mapped for o in contributors):
+            return True
+    return False
+
+
+async def _nonlive_stream_eligible(db: AsyncSession, event_id: int, contributor_ids: list[int]) -> bool:
+    """Bounded fold lookup before returning the session; never query per frame."""
+    events = (await db.execute(select(Event).where(Event.id.in_(contributor_ids)))).scalars().all()
+    canonical = next((event for event in events if event.id == event_id), None)
+    if (canonical is None or canonical.completed_at is not None
+            or canonical.status not in QUOTE_STATUSES):
+        return False
+    markets = (await db.execute(
+        select(FuturesMarket).options(selectinload(FuturesMarket.outcomes)).where(
+            FuturesMarket.event_id.in_(contributor_ids),
+            FuturesMarket.source.in_(("kalshi", "polymarket")),
+        )
+    )).scalars().all()
+    now = datetime.now(timezone.utc)
+    return any(_has_mapped_winner(event, [m for m in markets if m.event_id == event.id], now)
+               for event in events)
 
 
 async def _fold_stream_ids(db: AsyncSession, event_id: int) -> list[int]:
@@ -192,7 +280,7 @@ def _fold_invalidation(frame: dict, event_id: int, origin_id: int) -> Optional[d
     return {
         "event_id": event_id, "origin_event_id": origin_id, "invalidation": True,
         "p": None, "source": None, "source_value": None,
-        "updated_at": frame.get("updated_at"), "rev": rev, "status": "live",
+        "updated_at": frame.get("updated_at"), "rev": rev,
     }
 
 
@@ -258,7 +346,7 @@ async def _stream(
                     # from reaping us; a busy market should not also pay for
                     # pings it does not need.
                     last_beat = loop_now
-                    if frame.get("status") not in LIVE_STATUSES:
+                    if origin_id == event_id and frame.get("status") not in QUOTE_STATUSES:
                         # The match ended under us. Say so and close, so the
                         # client refetches once and settles rather than holding
                         # a stream open on a decided event forever.
@@ -313,10 +401,9 @@ async def _stream(
 async def stream_event(event_id: int, request: Request):
     """SSE stream of live blend updates for one event.
 
-    Non-live events are refused rather than served an empty stream: a client
-    holding an open connection on a scheduled match would sit silent for hours
-    and look identical to a live match nobody is trading. The 409 tells the
-    client to poll, which is the ruling's stated behaviour for non-live.
+    Scheduled/suspended events require a mapped winner in the current producer
+    cohort. Connection eligibility is not proof of a venue subscription or a
+    new observation: only a received quote provides that evidence.
 
     THE SESSION IS OPENED BY HAND, AND THAT IS THE WHOLE POINT — do not put this
     connect lookup back on `Depends(get_db)`. FastAPI finalises a yield-dependency only
@@ -333,11 +420,14 @@ async def stream_event(event_id: int, request: Request):
     async with async_session_maker() as session:
         status = await _event_status(session, event_id)
         contributor_ids = (
-            await _fold_stream_ids(session, event_id) if status in LIVE_STATUSES else [event_id]
+            await _fold_stream_ids(session, event_id) if status in QUOTE_STATUSES else [event_id]
         )
+        eligible = status in LIVE_STATUSES
+        if status in QUOTE_STATUSES and not eligible:
+            eligible = await _nonlive_stream_eligible(session, event_id, contributor_ids)
     if status is None:
         raise HTTPException(status_code=404, detail="Event not found")
-    if status not in LIVE_STATUSES:
+    if not eligible:
         raise HTTPException(
             status_code=409,
             detail={"reason": "not_live", "status": status, "poll": True},
