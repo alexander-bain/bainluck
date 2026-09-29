@@ -156,10 +156,16 @@ async def _market_cards(db, ids, now):
         data = item["data"]
         market = by_id[data["id"]]
         clocks = clocks_by_id[market.id]
-        data["outcome_observed_at"] = clocks
+        # These are loaded-row REVISION clocks, not proof a price was observed.
+        # Preserve the original pre-release client keys only as ordering aliases;
+        # never replace their values with differently ordered snapshot clocks.
+        data["outcome_revision_at"] = clocks
+        data["outcome_observed_at"] = clocks  # Deprecated ordering alias.
+        data["outcome_clock_kind"] = "row_revision"
         data["external_id"] = market.external_id
         for outcome in data.get("top_outcomes") or []:
-            outcome["price_observed_at"] = clocks.get(str(outcome["id"]))
+            outcome["price_revision_at"] = clocks.get(str(outcome["id"]))
+            outcome["price_observed_at"] = outcome["price_revision_at"]  # Legacy ordering only.
         dispositions[f"futures-{market.id}"] = "updated"
     return items, dispositions
 

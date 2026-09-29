@@ -134,6 +134,9 @@ async def test_futures_clock_map_covers_off_top_rows_and_preserves_unknown(proje
     assert states == {"futures-1": "updated", "futures-99": "missing"}
     data = items[0]["data"]
     assert data["external_id"] == "venue-exact"
+    assert data["outcome_clock_kind"] == "row_revision"
+    assert data["outcome_revision_at"] == data["outcome_observed_at"]
+    assert data["top_outcomes"][0]["price_revision_at"] == data["top_outcomes"][0]["price_observed_at"]
     assert data["outcome_observed_at"]["14"] == (NOW - timedelta(minutes=2)).isoformat()
     assert data["outcome_observed_at"]["13"] is None
     assert data["top_outcomes"][0]["price_observed_at"] == NOW.isoformat()
@@ -263,3 +266,21 @@ async def test_futures_ordering_clock_does_not_truncate_subsecond_updates(projec
     assert first[0]["data"]["top_outcomes"][0]["price_observed_at"].endswith(".123456+00:00")
     assert second[0]["data"]["top_outcomes"][0]["price_observed_at"].endswith(".987654+00:00")
     assert second[0]["data"]["outcome_observed_at"]["11"].endswith(".987654+00:00")
+
+
+@pytest.mark.asyncio
+async def test_ordering_aliases_never_replace_card_quote_freshness(monkeypatch, projection_dependencies):
+    value = market()
+    db = AsyncMock()
+    db.execute.return_value = result([value])
+    actual_observation = (NOW - timedelta(hours=7)).isoformat()
+    projected = {"type": "futures", "data": {"id": value.id,
+        "price_observed_at": actual_observation,
+        "top_outcomes": [{"id": value.outcomes[0].id, "probability": .61}]}}
+    monkeypatch.setattr(feed, "_score_futures", AsyncMock(return_value=[projected]))
+    items, _ = await route._market_cards(db, [value.id], NOW)
+    card = items[0]["data"]
+    assert card["price_observed_at"] == actual_observation
+    assert card["outcome_clock_kind"] == "row_revision"
+    assert card["top_outcomes"][0]["price_revision_at"] == NOW.isoformat()
+    assert card["outcome_revision_at"] == card["outcome_observed_at"]
