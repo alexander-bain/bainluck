@@ -209,6 +209,27 @@ final class LivePriceActivityTests: XCTestCase {
         XCTAssertEqual(vm.event?.status, "suspended")
     }
 
+    /// The #9501 contributor invalidation exactly as `_fold_invalidation` emits
+    /// it: no `status` key, null price/source, rev keyed by the ORIGIN event.
+    /// Absent status must not promote or close the page; the paired refetch
+    /// whose fold covers the origin row earns the one receipt.
+    func testAbsentStatusContributorInvalidationAdoptsFoldWithoutChangingPhase() async throws {
+        for status in ["scheduled", "suspended"] {
+            let client = Client(try event(source: "opening", status: status))
+            client.historyResponse = try pairedHistory(p: 0.52, revision: #"{"4242":11,"999":6}"#)
+            let handle = Handle(), vm = model(client, handle)
+            defer { vm.stopRefresh() }
+            await vm.load()
+            handle.fire("open")
+            client.response = try event(p: 0.52, status: status, revision: #"{"4242":11,"999":6}"#)
+            handle.fire("probability", #"{"event_id":4242,"origin_event_id":999,"invalidation":true,"p":null,"source":null,"source_value":null,"updated_at":"2026-09-25T17:10:00Z","rev":{"999":6}}"#)
+            await settle { vm.event?.heroProbabilitySource == "blend" }
+            XCTAssertEqual(vm.event?.currentOdds?.homeProbability, 0.52, status)
+            XCTAssertEqual(vm.priceActivity?.sequence, 1, status)
+            XCTAssertEqual(vm.event?.status, status, "absent frame status never changes the sports phase")
+        }
+    }
+
     func testOnlyAcceptedNewerPricesCreateLocalReceipts() async throws {
         let client = Client(try event(p: 0.6))
         let handle = Handle(), vm = model(client, handle)
