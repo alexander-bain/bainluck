@@ -139,6 +139,9 @@ POLY_PROP_AND_MONEYLINE = [
 KALSHI_ONE_MARKET = [
     [("KXATPMATCH-26SEP28ANGJOH", 7, 900)],
     [("KXATPMATCH-26SEP28ANGJOH-ANG", 7, 71)],
+    # #9484: the open-contract admission read — none here, so reread call 1
+    # is still the watcher's baseline.
+    [],
 ]
 
 
