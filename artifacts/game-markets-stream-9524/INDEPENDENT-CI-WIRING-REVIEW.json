@@ -1,0 +1,17 @@
+{
+  "verdict": "SOURCE PASS",
+  "base": "9f2f4a5da1964d48ba9f626a19fbeb69e7abc294",
+  "reviewer": "/root/deep_live_delivery_review",
+  "files": [
+    {
+      "path": "frontend/__tests__/eventOwnMoneylineNotAProp7064.test.ts",
+      "sha256": "da0c0eb78d15f782a5a32e106ab541f30eba7db3a0fe7e76d9ab54d159d80e8f"
+    },
+    {
+      "path": "artifacts/game-markets-stream-9524/BUILD.txt",
+      "sha256": "9a1059607628b67deaa342f0ac342fc8aba8e29b441d272f1cd84a4e19909875"
+    }
+  ],
+  "tests_executed_by_reviewer": false,
+  "findings_remaining": []
+}
