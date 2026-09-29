@@ -51,14 +51,12 @@ describe("#8135 — the promise, withdrawn", () => {
     expect(priceCadenceNote(false, { dormant: true })).toBe(null);
   });
 
-  it("CONTROL — a board that IS printing numbers keeps the promise, unchanged", () => {
+  it("CONTROL — a board that IS printing numbers is not dormant (#9567: and is silent too)", () => {
     expect(isCadenceDormant(NOW - 90 * 60 * 1000, NOW)).toBe(false);
-    expect(priceCadenceNote(false, { dormant: false })).toMatch(
-      /Prices update every 1–2 hours/,
-    );
-    // ...and the default is the old behaviour, so no existing caller moved.
+    // Until #9567 this board kept "Prices update every 1–2 hours". Open contracts
+    // now stream, so no open board carries a cadence promise, dormant or not.
+    expect(priceCadenceNote(false, { dormant: false })).toBeNull();
     expect(priceCadenceNote(false)).toBe(priceCadenceNote(false, { dormant: false }));
-    expect(priceCadenceNote(false, { long: true })).toMatch(/for this market$/);
   });
 
   it("lets SETTLED outrank dormant — a decided board still says Final", () => {
