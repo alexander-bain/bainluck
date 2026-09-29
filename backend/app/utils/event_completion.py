@@ -256,6 +256,130 @@ def odds_api_listing_withdrawn(
     return sport_last_seen - listing_last_seen >= WITHDRAWN_LISTING_GAP
 
 
+# ── A VENUE STAMP DOES NOT START A MATCH OUR SCHEDULE PUTS LATER (#9588) ──────
+#
+#: The market stamps that name no start. ``kalshi`` is a Kalshi market's own
+#: ``commence_time`` (gotcha #14: a close/expiry time), ``kalshi_occurrence`` is
+#: the settlement backstop #5905 measured, and ``polymarket`` is Gamma's
+#: ``startDate`` listing stamp (``tasks.polymarket.LISTING_COMMENCE_SOURCE``).
+#: ``polymarket_venue`` is deliberately absent: Gamma's ``startTime`` is the
+#: fixture instant (#6073), and on 2026-09-29 it put Chengdu doubles 15320657 on
+#: court while StatPal still said three hours later. ``kalshi_ticker`` is absent
+#: because ``commence_time_is_a_reported_start`` already holds it.
+VENUE_STAMP_COMMENCE_SOURCES = frozenset({
+    "kalshi",
+    KALSHI_OCCURRENCE_COMMENCE_SOURCE,
+    "polymarket",
+})
+
+#: How far StatPal's start must sit after the row's own before the two count as
+#: a disagreement. A lesser gap is two readings of one session and is left to
+#: the clock. It is also the band the census below was taken on.
+STATPAL_LATER_SESSION_MARGIN = timedelta(hours=1)
+
+#: StatPal's start as ``link_tennis_statpal_fixtures`` recorded it on the anchor
+#: (``claim_context.statpal_start_time``). Keyed by event, and filtered to the
+#: row's CURRENT fixture in Python (:func:`statpal_start_from_anchors`), so an
+#: anchor for a fixture the row no longer carries says nothing.
+STATPAL_SCHEDULED_START_SQL = """
+    SELECT a.event_id,
+           a.source_id,
+           a.first_seen_at,
+           a.claim_context->>'statpal_start_time' AS statpal_start_time
+    FROM event_provider_anchors a
+    WHERE a.event_id = ANY(:event_ids)
+      AND a.source = 'statpal'
+"""
+
+
+def statpal_schedule_candidate(
+    commence_time_source, statpal_fixture_id, has_play_evidence
+) -> bool:
+    """May StatPal's schedule speak for this row's state? (#9588)
+
+    The cheap, in-memory half of :func:`statpal_names_a_later_session`, so the
+    anchor read runs only for rows that could be held.
+    """
+    if commence_time_source not in VENUE_STAMP_COMMENCE_SOURCES:
+        return False
+    if not row_carries_an_authority_id(None, statpal_fixture_id):
+        return False
+    return not has_play_evidence
+
+
+def statpal_start_from_anchors(rows, statpal_fixture_id):
+    """StatPal's recorded start for the row's current fixture, or None.
+
+    ``rows`` carry ``source_id``, ``first_seen_at`` and ``statpal_start_time``
+    (an ISO string, as the JSONB holds it). Only a ``tennis:<id>`` anchor naming
+    the row's own ``statpal_fixture_id`` counts. That is the only writer of the
+    key. If there are several, the newest wins. An unparseable value is no
+    value.
+    """
+    fixture = str(statpal_fixture_id or "").strip()
+    if not fixture:
+        return None
+    wanted = f"tennis:{fixture}"
+    best = None
+    for row in rows:
+        if row.source_id != wanted or not row.statpal_start_time:
+            continue
+        try:
+            start = datetime.fromisoformat(str(row.statpal_start_time))
+        except ValueError:
+            continue
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=timezone.utc)
+        key = row.first_seen_at or datetime.min.replace(tzinfo=timezone.utc)
+        if best is None or key > best[0]:
+            best = (key, start)
+    return best[1] if best else None
+
+
+def statpal_names_a_later_session(
+    commence_time_source,
+    statpal_fixture_id,
+    has_play_evidence,
+    commence_time,
+    statpal_start,
+    now,
+) -> bool:
+    """Does our own StatPal anchor put this match in a later session? (#9588)
+
+    True ⇒ the row is not live on the clock. ``scheduled → live`` must not
+    promote it, and a row the clock already promoted goes back to
+    ``scheduled``. The row's start is a venue stamp that names no start, and
+    StatPal, the schedule the row is anchored to, puts the match materially
+    later and has not reached it yet.
+
+    MEASURED, production 2026-09-29 09:22Z. ``/events/15320754`` Bublik / Shang
+    v Cerundolo / Rinderknech read LIVE with no score from 05:00Z 9/29, Kalshi's
+    ``expected_expiration_time``. StatPal (``tennis:2638141``) had it at 02:00Z
+    9/30, the Beijing session start, and ESPN at 05:30Z 9/30. All seven Beijing
+    doubles rows had the same shape. Over the 21 days before, 37 rows stamped
+    ``kalshi``/``polymarket`` had a StatPal start more than
+    :data:`STATPAL_LATER_SESSION_MARGIN` after their own: US Open, São Paulo,
+    Guadalajara, Seoul, Singapore, Hangzhou and Beijing doubles and qualifying.
+    None of the 37 ever got a score, and none ended before StatPal's start.
+    The same test over ``odds_api`` rows found two Guadalajara singles played a
+    day BEFORE StatPal's stamp. That is why only a venue stamp is read here: a
+    reported start is not overruled by StatPal.
+
+    The hold ends at StatPal's start, when the clock runs as before. It also
+    ends on evidence: play on the row, or a better source rewriting
+    ``commence_time_source``. Every clause fails OPEN.
+    """
+    if not statpal_schedule_candidate(
+        commence_time_source, statpal_fixture_id, has_play_evidence
+    ):
+        return False
+    if statpal_start is None or commence_time is None:
+        return False
+    if statpal_start - commence_time <= STATPAL_LATER_SESSION_MARGIN:
+        return False
+    return now < statpal_start
+
+
 # ── WHEN DID THIS FINISHED GAME END? (D109) ──────────────────────────────────
 
 
