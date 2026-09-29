@@ -1,0 +1,7 @@
+{
+  "at": "2026-09-29T05:07:27.081537+00:00",
+  "verdict": "SOURCE PASS",
+  "path": "backend/tests/test_game_markets.py",
+  "sha256": "2b3b985b34076af28e50fcb7b02d675d3993e2265b59be7fa5e473a642361c07",
+  "review": "Only adds expected contributor_outcome_ids201/202/203 to three exact fixtures, matched to their fixture outcome identities; all old business assertions retained, no production source change. Author121game-market/startup PASS reported; no duplicate execution."
+}
