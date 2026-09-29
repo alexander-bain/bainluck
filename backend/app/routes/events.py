@@ -6332,6 +6332,58 @@ def _resolved_club_outcome_match(term: str, exp: str | None, club_words: list[st
     )
 
 
+def _multi_term_outcome_match(expanded: list[tuple[str, str | None]]):
+    """#9646: the futures OUTCOME arm for a query of two or more terms.
+
+    Each term used to need SOME outcome of the market, each its own. `cy young`
+    therefore served five boards reached by one word here and the other there,
+    read on production 2026-09-29:
+
+        Presidential Election Winner 2028   Person CY      / Glenn Youngkin
+        NFL Championship Halftime Show      Miley Cyrus    / Young Thug
+        FCS National Championship Winner    Mercyhurst     / Youngstown St.
+        LOTTE Championship (x2)             Lucy Li        / Jin Young Ko
+
+    A term pg_trgm cannot serve (`_has_extractable_trigram` false: `cy`, `us`,
+    `f1`, `2.5`) is spelled inside nearly every tenth name, so on its own it
+    attests nothing, which is LAT-P010's single-term finding. It now counts only
+    in the SAME outcome as one of the query's longer terms. The longer terms
+    keep their own outcomes, so a board holding two names the reader typed
+    (`zelenskyy putin`, `falcons packers`) is still reached, and the short term
+    still FILTERS (LAT-P006: `us recession` must not admit "Euro area growth").
+
+    The cost, named: a short term found only in an outcome while its partner is
+    only in the market NAME no longer reaches through this arm (`award d'or` ->
+    "France Football Award 2026", whose `d'Or` and `Award` sit in different
+    outcomes). An OR onto the name would put an unservable `%cy%` subquery
+    under a top-level OR, the LAT-P006 plan that timed out.
+
+    Every term short, or every term long: unchanged.
+    """
+
+    def _some_outcome(term: str, exp: str | None):
+        return FuturesMarket.id.in_(
+            select(FuturesOutcome.market_id).where(
+                _build_expanded_ilike(FuturesOutcome.name, term, exp)
+            )
+        )
+
+    long_terms = [(t, e) for t, e in expanded if _has_extractable_trigram(t)]
+    short_terms = [(t, e) for t, e in expanded if not _has_extractable_trigram(t)]
+    if not long_terms or not short_terms:
+        return and_(*[_some_outcome(t, e) for t, e in expanded])
+    # The long-term ILIKE is AND-ed inside the one subquery, so the trigram
+    # index drives it and the short term is a recheck on the rows it returned.
+    anchored = select(FuturesOutcome.market_id).where(
+        or_(*[_build_expanded_ilike(FuturesOutcome.name, t, e) for t, e in long_terms]),
+        *[_build_expanded_ilike(FuturesOutcome.name, t, e) for t, e in short_terms],
+    )
+    return and_(
+        *[_some_outcome(t, e) for t, e in long_terms],
+        FuturesMarket.id.in_(anchored),
+    )
+
+
 def _futures_name_match_term(term: str, exp: str | None):
     """One term against a market NAME: substring RECALL and word ABOUT-NESS.
 
@@ -10670,9 +10722,7 @@ async def search_events(
             for term, exp in expanded
         ]
         futures_name_ilike = and_(*futures_name_conditions)
-        futures_outcome_match = and_(
-            *[_outcome_id_match(term, exp) for term, exp in expanded]
-        )
+        futures_outcome_match = _multi_term_outcome_match(expanded)
     else:
         term, exp = expanded[0]
         futures_name_ilike = _futures_name_match_term(term, exp)

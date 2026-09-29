@@ -230,6 +230,21 @@ _FUTURES_SEEDS = [
     ("polymarket-chengdu-dbl-8689", "Chengdu Open (Doubles): Peers/Venus vs Johnson/Zielinski",
      ["Peers/Venus", "Johnson/Zielinski"]),
     ("kalshi-ausopen-mens-8689", "Australian Open Men's Singles Winner", ["Jannik Sinner"]),
+    # ---- #9646: a short term counts only beside a long one, in ONE outcome. ---
+    #
+    # Transcribed from production 2026-09-29, `cy young`: the halftime board was
+    # reached by `cy` in Miley Cyrus and `young` in Young Thug. Its name carries
+    # neither term, so only the OUTCOME arm can admit it — the arm the fix changes.
+    ("kalshi-halftime-9646", "NFL Championship Halftime Show: Performers",
+     ["Miley Cyrus", "Young Thug"]),
+    # The control that must survive: both terms in ONE outcome, name holds neither.
+    ("kalshi-ohtani-awards-9646", "Shohei Ohtani season honors",
+     ["Wins Cy Young", "Wins MVP"]),
+    # Two LONG terms in two outcomes keep reaching the board that holds both.
+    ("kalshi-first-visit-9646", "Who visits the White House first?",
+     ["Volodymyr Zelenskyy", "Vladimir Putin"]),
+    # `award d'or` in ONE outcome: the multi-term no-trigram arm still serves it.
+    ("kalshi-golden-ball-9646", "Golden Ball 2026", ["Award of the d'Or"]),
 ]
 
 # LAT-P053 Item 5 — the seeded futures corpus, carried FIVE times and ruled into
@@ -874,13 +889,47 @@ async def test_a_multi_term_query_keeps_its_no_trigram_outcome_arm(search):
     term drive. The multi-term path has no defect to fix, and LAT-P006 pins that a
     short term must still FILTER there.
 
-    So "France Football Award 2026", unreachable for the single term `d'or`, IS
-    reachable for `award d'or`, where `award` seeds and `d'or` filters.
+    So "Golden Ball 2026", unreachable for the single term `d'or`, IS reachable
+    for `award d'or`, where `award` seeds and `d'or` filters.
+
+    #9646 moved the row this pins. "France Football Award 2026" carries `Award`
+    and `d'Or` in DIFFERENT outcomes, the `cy young` scatter shape, and a short
+    term now counts only in the same outcome as a long one; see
+    `test_a_short_term_in_another_outcome_no_longer_attests`.
     """
     names = _futures_names(await search("award d'or"))
-    assert "France Football Award 2026" in names, (
+    assert "Golden Ball 2026" in names, (
         f"got {names!r} — the single-term gate has leaked into the multi-term "
         "branch and is dropping outcome recall it must not touch"
+    )
+
+
+async def test_a_short_term_in_another_outcome_no_longer_attests(search):
+    """#9646: `cy young` served the halftime show through Miley Cyrus + Young Thug.
+
+    Neither name carries both words, so the board is refused, while "Shohei Ohtani
+    season honors" (one outcome, "Wins Cy Young") is kept. The named cost rides
+    the same rule: `award d'or` no longer reaches "France Football Award 2026",
+    whose `d'Or` sits in a different outcome from its `Award`.
+    """
+    names = _futures_names(await search("cy young"))
+    assert "NFL Championship Halftime Show: Performers" not in names, (
+        f"got {names!r} — `cy` and `young` matched two different outcomes again"
+    )
+    assert "Shohei Ohtani season honors" in names, (
+        f"got {names!r} — the same-outcome control was dropped with the scatter"
+    )
+    assert "France Football Award 2026" not in _futures_names(
+        await search("award d'or")
+    )
+
+
+async def test_two_long_terms_still_reach_a_board_across_its_outcomes(search):
+    """#9646 binds only the SHORT term. A board holding both names the reader
+    typed, each in its own outcome, keeps its outcome recall."""
+    names = _futures_names(await search("zelenskyy putin"))
+    assert "Who visits the White House first?" in names, (
+        f"got {names!r} — the #9646 anchor leaked onto long terms"
     )
 
 
