@@ -438,6 +438,18 @@ struct EvolutionChartView: View {
                 // Task cancelled (e.g. view disappeared) — don't show error
                 return
             }
+            if let seconds = FuturesPriceReadCooldown.timelineRetrySeconds(for: apiError) {
+                self.error = "Prices are temporarily unavailable. Trying again shortly."
+                errorIsRetryable = true
+                loading = false
+                // A successful detail must not strand its chart after the last
+                // invalidation. Retry transport failures boundedly; respect a
+                // server cooldown when the response provides one.
+                try? await Task.sleep(nanoseconds: UInt64(min(seconds, 86_400) * 1_000_000_000))
+                guard !Task.isCancelled, generation == requestGeneration else { return }
+                await loadData()
+                return
+            }
             switch apiError {
             case .networkError:
                 self.error = "Connection failed. Check your network."

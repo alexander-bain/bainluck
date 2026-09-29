@@ -3,7 +3,7 @@ import XCTest
 
 @MainActor
 final class FuturesStreamingTests: XCTestCase {
-    private func detail(_ x: Double = 0.31, _ y: Double = 0.22,
+    private func detail(_ x: Double? = 0.31, _ y: Double? = 0.22,
                         xClock: String? = "2030-01-01T00:00:00Z",
                         yClock: String? = "2030-01-01T00:00:00Z",
                         status: String = "open", source: String = "kalshi",
@@ -13,8 +13,8 @@ final class FuturesStreamingTests: XCTestCase {
         func string(_ value: String?) -> String { value.map { "\"\($0)\"" } ?? "null" }
         return try d.decode(FuturesMarketDetail.self, from: Data("""
         {"id":7,"name":"Held prop","status":"\(status)","source":"\(source)",
-         "outcomes":[{"id":1,"name":"X","probability":\(x),"last_updated":\(string(xClock)),"is_winner":\(winner.map(String.init) ?? "null")},
-                     {"id":2,"name":"Y","probability":\(y),"last_updated":\(string(yClock))}]}
+         "outcomes":[{"id":1,"name":"X","probability":\(x.map(String.init(describing:)) ?? "null"),"last_updated":\(string(xClock)),"is_winner":\(winner.map(String.init) ?? "null")},
+                     {"id":2,"name":"Y","probability":\(y.map(String.init(describing:)) ?? "null"),"last_updated":\(string(yClock))}]}
         """.utf8))
     }
 
@@ -62,6 +62,47 @@ final class FuturesStreamingTests: XCTestCase {
         XCTAssertEqual(FuturesPriceReconciliation.adopting(equalClockChange, over: held).outcomes[0].probability, 0.31)
     }
 
+
+    func testWithdrawalClearsEqualOrUnknownClockAndCannotBeResurrectedByCachedPrice() throws {
+        for clock in ["2030-01-01T00:00:00Z", nil] {
+            let held = try detail()
+            var fences: [Int: FuturesPriceReconciliation.Withdrawal] = [:]
+            let withdrawn = FuturesPriceReconciliation.adopting(try detail(nil, xClock: clock),
+                over: held, withdrawals: &fences)
+            XCTAssertNil(withdrawn.outcomes[0].probability)
+            XCTAssertEqual(withdrawn.outcomes[0].lastUpdated, clock, "do not manufacture a wire clock")
+            let cached = FuturesPriceReconciliation.adopting(held, over: withdrawn, withdrawals: &fences)
+            XCTAssertNil(cached.outcomes[0].probability)
+            let unknown = FuturesPriceReconciliation.adopting(try detail(0.7, xClock: nil),
+                over: cached, withdrawals: &fences)
+            XCTAssertNil(unknown.outcomes[0].probability)
+            let fresh = FuturesPriceReconciliation.adopting(
+                try detail(0.4, xClock: "2030-01-01T00:00:01Z"), over: unknown, withdrawals: &fences)
+            XCTAssertEqual(fresh.outcomes[0].probability, 0.4)
+            XCTAssertNil(fences[1])
+        }
+    }
+
+    func testInitiallyWithheldUnknownQuoteRequiresDatedRestoration() throws {
+        var fences: [Int: FuturesPriceReconciliation.Withdrawal] = [:]
+        let initial = FuturesPriceReconciliation.adopting(try detail(nil, xClock: nil),
+            over: nil, withdrawals: &fences)
+        let cached = FuturesPriceReconciliation.adopting(try detail(0.7, xClock: nil),
+            over: initial, withdrawals: &fences)
+        XCTAssertNil(cached.outcomes[0].probability)
+        let fresh = FuturesPriceReconciliation.adopting(try detail(0.4),
+            over: cached, withdrawals: &fences)
+        XCTAssertEqual(fresh.outcomes[0].probability, 0.4)
+    }
+
+    func testStrictlyOlderWithdrawalCannotHideNewerQuote() throws {
+        var fences: [Int: FuturesPriceReconciliation.Withdrawal] = [:]
+        let result = FuturesPriceReconciliation.adopting(
+            try detail(nil, xClock: "2029-12-31T23:59:59Z"), over: try detail(), withdrawals: &fences)
+        XCTAssertEqual(result.outcomes[0].probability, 0.31)
+        XCTAssertNil(fences[1])
+    }
+
     func testStaleLegCannotWearDifferentProviderOrUndoSettlement() throws {
         let held = try detail()
         let switched = try detail(0.34, 0.20, xClock: "2030-01-01T00:00:02Z", yClock: nil, source: "polymarket")
@@ -76,7 +117,7 @@ final class FuturesStreamingTests: XCTestCase {
 
     func testGenuineInvalidationUpdatesHeldDetailAndHeartbeatCreatesNoActivity() async throws {
         let client = Client(try detail()), handle = Handle()
-        let vm = FuturesDetailViewModel(marketId: 7, client: client, makeStreamHandle: { _ in handle })
+        let vm = FuturesDetailViewModel(marketId: 7, client: client, makeStreamHandle: { _ in handle }, minimumRefreshInterval: 0)
         defer { vm.setVisible(false) }
         await vm.load()
         vm.setVisible(true)
@@ -114,7 +155,7 @@ final class FuturesStreamingTests: XCTestCase {
 
     func testFailedLastInvalidationRetriesDespiteHealthyHeartbeats() async throws {
         let client = Client(try detail()), handle = Handle(), pause = Pause()
-        let vm = FuturesDetailViewModel(marketId: 7, client: client, makeStreamHandle: { _ in handle },
+        let vm = FuturesDetailViewModel(marketId: 7, client: client, makeStreamHandle: { _ in handle }, minimumRefreshInterval: 0,
             sleep: { await pause.sleep($0) })
         await vm.load()
         vm.setVisible(true)
@@ -136,7 +177,7 @@ final class FuturesStreamingTests: XCTestCase {
 
     func testInvalidationDuringRequestGetsOneTrailingFetch() async throws {
         let client = Client(try detail()), handle = Handle()
-        let vm = FuturesDetailViewModel(marketId: 7, client: client, makeStreamHandle: { _ in handle })
+        let vm = FuturesDetailViewModel(marketId: 7, client: client, makeStreamHandle: { _ in handle }, minimumRefreshInterval: 0)
         defer { vm.setVisible(false) }
         await vm.load()
         vm.setVisible(true)
@@ -156,7 +197,7 @@ final class FuturesStreamingTests: XCTestCase {
 
     func testOlderOverlappingLoadAndHiddenResponseCannotLand() async throws {
         let client = Client(try detail()), handle = Handle()
-        let vm = FuturesDetailViewModel(marketId: 7, client: client, makeStreamHandle: { _ in handle })
+        let vm = FuturesDetailViewModel(marketId: 7, client: client, makeStreamHandle: { _ in handle }, minimumRefreshInterval: 0)
         var waiting: CheckedContinuation<Void, Never>?
         client.beforeResponse = { await withCheckedContinuation { waiting = $0 } }
         let old = Task { await vm.load() }
@@ -176,6 +217,55 @@ final class FuturesStreamingTests: XCTestCase {
         waiting?.resume()
         await Task.yield()
         XCTAssertEqual(vm.market?.outcomes.first?.probability, 0.34)
+    }
+
+
+    func testAutomaticRefreshWaitsTwoSecondsAndCoalescesBurst() async throws {
+        let client = Client(try detail()), handle = Handle(), pause = Pause()
+        var clock: TimeInterval = 100
+        let vm = FuturesDetailViewModel(marketId: 7, client: client,
+            makeStreamHandle: { _ in handle }, now: { clock },
+            refreshSleep: { await pause.sleep($0) })
+        await vm.load()
+        vm.setVisible(true)
+        handle.invalidate()
+        await settle { client.count == 2 }
+        clock = 101
+        for _ in 0..<20 { handle.invalidate() }
+        for _ in 0..<30 { await Task.yield() }
+        XCTAssertEqual(client.count, 2, "burst cannot dispatch at round-trip speed")
+        clock = 102
+        await pause.release()
+        await settle { client.count == 3 }
+        XCTAssertEqual(client.count, 3, "one delayed request covers the whole waiting burst")
+        vm.setVisible(false)
+        await pause.release()
+    }
+
+    func testTimelineRetryOnlyForTransientFailures() {
+        XCTAssertEqual(FuturesPriceReadCooldown.timelineRetrySeconds(for:
+            .networkError(underlying: URLError(.networkConnectionLost))), 60)
+        XCTAssertEqual(FuturesPriceReadCooldown.timelineRetrySeconds(for:
+            .httpError(statusCode: 503, body: nil)), 60)
+        XCTAssertEqual(FuturesPriceReadCooldown.timelineRetrySeconds(for:
+            .httpError(statusCode: 429, body: #"{"retry_after":123}"#)), 123)
+        XCTAssertNil(FuturesPriceReadCooldown.timelineRetrySeconds(for:
+            .networkError(underlying: URLError(.cancelled))))
+        XCTAssertNil(FuturesPriceReadCooldown.timelineRetrySeconds(for:
+            .httpError(statusCode: 404, body: nil)))
+        XCTAssertNil(FuturesPriceReadCooldown.timelineRetrySeconds(for:
+            .decodingError(underlying: URLError(.cannotDecodeContentData))))
+    }
+
+    func testRateLimitCooldownUsesServerSecondsAndMalformedFallback() {
+        XCTAssertEqual(FuturesPriceReadCooldown.seconds(for:
+            APIError.httpError(statusCode: 429, body: #"{"retry_after":123}"#)), 123)
+        XCTAssertEqual(FuturesPriceReadCooldown.seconds(for:
+            APIError.httpError(statusCode: 429, body: #"{"retry_after":"75"}"#)), 75)
+        XCTAssertEqual(FuturesPriceReadCooldown.seconds(for:
+            APIError.httpError(statusCode: 429, body: #"{"retry_after":-1}"#)), 60)
+        XCTAssertNil(FuturesPriceReadCooldown.seconds(for:
+            APIError.httpError(statusCode: 503, body: nil)))
     }
 
     func testRefusalRetriesBoundedlyAndUnrelatedMarketNeverRefreshes() {

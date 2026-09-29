@@ -60,6 +60,7 @@ actor APIClient {
 
     /// In-memory response cache with TTL
     private var responseCache: [String: CacheEntry] = [:]
+    private var freshMarketRetryAt: Date?
 
     private struct CacheEntry {
         let data: Data
@@ -333,6 +334,12 @@ actor APIClient {
         revalidationQuery: [String: String] = [:],
         trace: (@Sendable (RequestTrace) -> Void)? = nil
     ) async throws -> sending T {
+        let freshMarketRead = requiresNetwork && revalidationQuery["fresh"] == "true"
+            && path.hasPrefix("/api/futures/")
+        if freshMarketRead, let until = freshMarketRetryAt, until > Date() {
+            let seconds = max(1, Int(ceil(until.timeIntervalSinceNow)))
+            throw APIError.httpError(statusCode: 429, body: "{\"retry_after\":\(seconds)}")
+        }
         // Check cache
         let cacheKey: String?
         if let ttl = cacheTTL {
@@ -398,7 +405,11 @@ actor APIClient {
 
         if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
             let body = String(data: data, encoding: .utf8)
-            throw APIError.httpError(statusCode: http.statusCode, body: body)
+            let error = APIError.httpError(statusCode: http.statusCode, body: body)
+            if freshMarketRead, let seconds = FuturesPriceReadCooldown.seconds(for: error) {
+                freshMarketRetryAt = Date().addingTimeInterval(seconds)
+            }
+            throw error
         }
         let http = response as? HTTPURLResponse
 
@@ -946,7 +957,7 @@ actor APIClient {
 
     /// Fetches a futures market detail page by backend market ID.
     func fetchFuturesDetail(id: Int) async throws -> FuturesMarketDetail {
-        return try await fetch("/api/futures/\(id)")
+        return try await fetch("/api/futures/\(id)", requiresNetwork: true, revalidationQuery: ["fresh": "true"])
     }
 
     /// Fetches outcome probability history for a futures market.
@@ -954,7 +965,7 @@ actor APIClient {
         return try await fetch("/api/futures/\(marketId)/probability-timeline", query: [
             "top": "\(top)",
             "hours": "\(hours)",
-        ])
+        ], requiresNetwork: true, revalidationQuery: ["fresh": "true"])
     }
 
     // MARK: - EI Rankings

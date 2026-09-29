@@ -19,6 +19,11 @@ final class FuturesDetailViewModel: ObservableObject {
     let marketId: Int
     private let client: FuturesDetailProviding
     private let makeStreamHandle: MarketStreamSubscription.Factory?
+    private let now: () -> TimeInterval
+    private let refreshSleep: @Sendable (TimeInterval) async -> Void
+    private let minimumRefreshInterval: TimeInterval
+    private var lastRefreshAt: TimeInterval?
+    private var retryAt: TimeInterval = 0
     private let sleep: @Sendable (TimeInterval) async -> Void
     private var subscription: MarketStreamSubscription?
     private var fallbackTask: Task<Void, Never>?
@@ -27,9 +32,15 @@ final class FuturesDetailViewModel: ObservableObject {
     private var loadGeneration = 0
     private var visibilityGeneration = 0
     private var visible = false
+    private var withdrawals: [Int: FuturesPriceReconciliation.Withdrawal] = [:]
 
     init(marketId: Int, client: FuturesDetailProviding = APIClient.shared,
          makeStreamHandle: MarketStreamSubscription.Factory? = nil,
+         now: @escaping () -> TimeInterval = { Date().timeIntervalSince1970 },
+         minimumRefreshInterval: TimeInterval = 2,
+         refreshSleep: @escaping @Sendable (TimeInterval) async -> Void = {
+             try? await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000))
+         },
          sleep: @escaping @Sendable (TimeInterval) async -> Void = {
              try? await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000))
          }) {
@@ -37,6 +48,9 @@ final class FuturesDetailViewModel: ObservableObject {
         self.client = client
         self.makeStreamHandle = makeStreamHandle
         self.sleep = sleep
+        self.now = now
+        self.minimumRefreshInterval = minimumRefreshInterval
+        self.refreshSleep = refreshSleep
     }
 
     @MainActor
@@ -54,6 +68,11 @@ final class FuturesDetailViewModel: ObservableObject {
         } catch {
             guard !Task.isCancelled, generation == loadGeneration,
                   visibility == visibilityGeneration else { return }
+            if let seconds = FuturesPriceReadCooldown.seconds(for: error) {
+                retryAt = max(retryAt, now() + seconds)
+                // A refused final invalidation is still owed, even on a healthy wire.
+                if refreshTask != nil { refreshPending = true }
+            }
             self.error = error.localizedDescription
             logger.error("Failed to load futures \(self.marketId): \(error)")
         }
@@ -82,7 +101,7 @@ final class FuturesDetailViewModel: ObservableObject {
     @MainActor
     private func adopt(_ fetched: FuturesMarketDetail) {
         let held = market
-        let accepted = FuturesPriceReconciliation.adopting(fetched, over: held)
+        let accepted = FuturesPriceReconciliation.adopting(fetched, over: held, withdrawals: &withdrawals)
         market = accepted
         if let held {
             // This token refreshes the chart, not a pushed-price receipt. An
@@ -126,7 +145,8 @@ final class FuturesDetailViewModel: ObservableObject {
         }
     }
 
-    /// At most one fetch plus one trailing fetch for a burst. The latest
+    /// At most one fetch plus one trailing fetch for a burst, no faster than
+    /// two seconds between automatic dispatches. The latest
     /// invalidation cannot be dropped while an older response is in flight.
     @MainActor
     private func requestRefresh() {
@@ -136,7 +156,15 @@ final class FuturesDetailViewModel: ObservableObject {
         refreshTask = Task { @MainActor [weak self] in
             guard let self else { return }
             repeat {
+                let nextEligible = max(self.retryAt,
+                    self.lastRefreshAt.map { $0 + self.minimumRefreshInterval } ?? self.now())
+                let delay = nextEligible - self.now()
+                if delay > 0 { await self.refreshSleep(delay) }
+                guard !Task.isCancelled, self.visible,
+                      self.visibilityGeneration == visibility else { return }
+                // Everything received during the wait is covered by this read.
                 self.refreshPending = false
+                self.lastRefreshAt = self.now()
                 await self.load()
                 guard !Task.isCancelled, self.visible,
                       self.visibilityGeneration == visibility else { return }
