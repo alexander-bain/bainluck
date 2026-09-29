@@ -23,7 +23,8 @@ WHAT EACH TEST DEFENDS:
   and stops blending Kalshi;
 * 🔴 no scheduled row yet, two scheduled rows, a destination that is itself a
   mint, a retired row, another sport, outside the ticker's window → no move;
-* 🔴 a row somebody scheduled, a Polymarket market, a tennis mint → not this arm;
+* 🔴 a row somebody scheduled, a Polymarket market, a SINGLES tennis mint →
+  not this arm (#9624 gave doubles their own arm);
 * the predicate reads provenance only.
 """
 
