@@ -4,9 +4,9 @@ rootdir: /Users/bain/.codex-personal/worktrees/feed-prices-9484/backend
 configfile: pytest.ini
 plugins: asyncio-1.4.0, anyio-4.13.0
 asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
-collected 22 items
+collected 23 items
 
-tests/test_feed_price_cards_9515.py ......................               [100%]
+tests/test_feed_price_cards_9515.py .......................              [100%]
 
 =============================== warnings summary ===============================
 app/routes/auth.py:118
@@ -14,4 +14,4 @@ app/routes/auth.py:118
     class UserProfileResponse(BaseModel):
 
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-======================== 22 passed, 1 warning in 2.31s =========================
+======================== 23 passed, 1 warning in 4.35s =========================

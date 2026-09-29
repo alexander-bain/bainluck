@@ -17,7 +17,7 @@ from app.models import Event, FuturesMarket
 from app.services import get_db
 from app.utils.aggregation import newest_source_reading_time
 from app.utils.draw_priced_winner import printable_away
-from app.utils.futures_market_snapshot import from_plain, outcome_observed_at, to_plain
+from app.utils.futures_market_snapshot import from_plain, to_plain
 from app.utils.hero_probability import resolve_hero
 from app.utils.personalization import PersonalizationContext
 from app.utils.proven_duplicates import (
@@ -46,6 +46,18 @@ def _ids(raw: str) -> list[int]:
 
 def _iso(stamp):
     return stamp.isoformat() if stamp is not None else None
+
+
+def _outcome_clock(outcome):
+    # Feed's cached age codec intentionally truncates to whole seconds. Ordering
+    # two pushes must retain subsecond fidelity; use the already-loaded column,
+    # not the age codec and never a market/request/publication timestamp.
+    stamp = outcome.__dict__.get("last_updated")
+    if not isinstance(stamp, datetime):
+        return None
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    return stamp.isoformat()
 
 
 def _public(item):
@@ -126,6 +138,10 @@ async def _market_cards(db, ids, now):
     eligible = [market for market in rows if not market_assigned_settled(market)]
     if not eligible:
         return [], dispositions
+    clocks_by_id = {
+        market.id: {str(outcome.id): _outcome_clock(outcome) for outcome in market.outcomes}
+        for market in eligible
+    }
     snapshots = from_plain(to_plain(
         eligible,
         withheld_by_market=await withheld_price_outcome_ids_for_markets(db, eligible),
@@ -139,8 +155,7 @@ async def _market_cards(db, ids, now):
     for item in items:
         data = item["data"]
         market = by_id[data["id"]]
-        clocks = {str(outcome.id): _iso(outcome_observed_at(outcome))
-                  for outcome in market.outcomes}
+        clocks = clocks_by_id[market.id]
         data["outcome_observed_at"] = clocks
         data["external_id"] = market.external_id
         for outcome in data.get("top_outcomes") or []:

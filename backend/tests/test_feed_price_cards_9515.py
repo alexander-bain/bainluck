@@ -248,3 +248,18 @@ async def test_changed_value_with_unknown_source_clock_keeps_unknown(monkeypatch
 async def test_fresh_mode_requires_caller_owned_rows():
     with pytest.raises(ValueError):
         await feed._score_futures(AsyncMock(), NOW, None, PersonalizationContext(), price_refresh=True)
+
+
+@pytest.mark.asyncio
+async def test_futures_ordering_clock_does_not_truncate_subsecond_updates(projection_dependencies):
+    value = market()
+    value.outcomes[0].last_updated = NOW.replace(microsecond=123456)
+    db = AsyncMock()
+    db.execute.return_value = result([value])
+    first, _ = await route._market_cards(db, [1], NOW)
+    value.outcomes[0].last_updated = NOW.replace(microsecond=987654)
+    value.outcomes[0].current_probability = .62
+    second, _ = await route._market_cards(db, [1], NOW)
+    assert first[0]["data"]["top_outcomes"][0]["price_observed_at"].endswith(".123456+00:00")
+    assert second[0]["data"]["top_outcomes"][0]["price_observed_at"].endswith(".987654+00:00")
+    assert second[0]["data"]["outcome_observed_at"]["11"].endswith(".987654+00:00")
