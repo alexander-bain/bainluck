@@ -88,8 +88,16 @@ def pg():
     engine = create_engine(DB_URL.replace("+asyncpg", "+psycopg2"))
     Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine, tables=_tables_for_outcomes())
-    yield engine
-    engine.dispose()
+    try:
+        yield engine
+    finally:
+        # CI runs the real-Postgres files one after another on ONE database.
+        # The seed writes explicit ids (market 7) without advancing the
+        # sequences, so leaving the rows behind hands the next file's first
+        # autoincrement insert a duplicate key (the #5869 step, CI run
+        # 36538546164). Leave the schema as empty as the opening drop found it.
+        Base.metadata.drop_all(engine)
+        engine.dispose()
 
 
 def _seed(engine, *, probability, book):
