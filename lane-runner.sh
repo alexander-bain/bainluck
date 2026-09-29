@@ -688,7 +688,8 @@ maybe_restock () {
     READY_RC=$?
     [ "$READY_RC" -eq 1 ] || { rs_say "[restock:$L] lane policy unavailable — no model launched"; return 1; }
     PROG=$(lane_program "$L") || {
-      rs_say "[restock:$L] NO PROGRAM FILE — service lane left idle"
+      rs_say "[restock:$L] NO PROGRAM FILE — service lane left idle. Add a line to"
+      rs_say "[restock:$L]   $HANDOFF/lane-program-map.txt   (format: '$L <file-in-handoff>')"
       return 1
     }
   fi

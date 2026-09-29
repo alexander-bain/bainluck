@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -86,7 +87,10 @@ def main() -> int:
     parser.add_argument("--is-build-lane", action="store_true", help="Policy lookup only; no API call")
     args = parser.parse_args()
     try:
-        policy = json.loads((ROOT / "config/lane-ownership.json").read_text())
+        # BL_LANE_POLICY lets a harness (test_lane_launchers.py) name its own scratch
+        # lanes; unset, the committed charter is the only policy.
+        policy_path = os.environ.get("BL_LANE_POLICY") or ROOT / "config/lane-ownership.json"
+        policy = json.loads(Path(policy_path).read_text())
         if not isinstance(policy, dict) or policy.get("schema_version") != 1 or not isinstance(policy.get("lanes"), dict):
             raise ValueError("malformed lane policy")
         entry = policy["lanes"].get(args.lane)
