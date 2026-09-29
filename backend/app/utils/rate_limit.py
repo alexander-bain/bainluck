@@ -62,6 +62,10 @@ _FRESH_FEED_PRICE_PATH = "/api/feed/price-cards"
 FRESH_MARKET_RATE_LIMIT = "120/minute"
 _FRESH_MARKET_MAX = 120
 _FRESH_MARKET_PATH = r"/api/futures/[1-9][0-9]*(?:/probability-timeline)?"
+# Full event-market projections have a separate finite allowance.
+FRESH_GAME_MARKET_RATE_LIMIT = "60/minute"
+_FRESH_GAME_MARKET_MAX = 60
+_FRESH_GAME_MARKET_PATH = r"/api/events/[1-9][0-9]*/game-markets"
 
 # Queue 315 Item 1: /api/admin is rate limited, not exempt. This is ONE SHARED
 # BUCKET per token value (P3) — Alex's browser, every agent lane, `/health`, the
@@ -259,6 +263,7 @@ _trusted_limit = None
 _fresh_event_limit = None
 _fresh_feed_price_limit = None
 _fresh_market_limit = None
+_fresh_game_market_limit = None
 
 
 def _is_fresh_event_read(request: Request) -> bool:
@@ -330,6 +335,23 @@ def _get_fresh_market_limit():
         from limits import parse as parse_limit
         _fresh_market_limit = parse_limit(FRESH_MARKET_RATE_LIMIT)
     return _fresh_market_limit
+
+
+def _is_fresh_game_market_read(request: Request) -> bool:
+    """Opt-in uncached event-market reads share one allowance across event IDs."""
+    return (
+        request.method == "GET"
+        and re.fullmatch(_FRESH_GAME_MARKET_PATH, request.url.path) is not None
+        and request.query_params.get("fresh", "").lower() in {"1", "true", "t", "on", "yes", "y"}
+    )
+
+
+def _get_fresh_game_market_limit():
+    global _fresh_game_market_limit
+    if _fresh_game_market_limit is None:
+        from limits import parse as parse_limit
+        _fresh_game_market_limit = parse_limit(FRESH_GAME_MARKET_RATE_LIMIT)
+    return _fresh_game_market_limit
 
 
 def _get_limits():
@@ -781,6 +803,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             key = f"fresh-market:{key}"
             max_requests = _FRESH_MARKET_MAX
 
+        fresh_game_market_read = not admin_key and _is_fresh_game_market_read(request)
+        if fresh_game_market_read:
+            key = f"fresh-game-market:{key}"
+            max_requests = _FRESH_GAME_MARKET_MAX
+
         # Check rate limit.
         #
         # #1197 (r259 ROOT CAUSE): the sync `limits` FixedWindowRateLimiter.hit() is
@@ -822,6 +849,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         anon_limit, auth_limit = _get_limits()
         if admin_key:
             limit = _get_admin_limit()
+        elif fresh_game_market_read:
+            limit = _get_fresh_game_market_limit()
         elif fresh_market_read:
             limit = _get_fresh_market_limit()
         elif fresh_feed_price_read:
