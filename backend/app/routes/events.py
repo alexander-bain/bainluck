@@ -3332,6 +3332,93 @@ def _settled_day_order_key(lead_keys: frozenset | None):
     ).desc().nulls_last()
 
 
+#: #9632: how many finals page one keeps when a club has nothing left to play
+#: in the window but still has live futures. Three is "how did the last week
+#: go" at phone width; everything past it moves to page two, not away.
+_SEARCH_BYE_FINALS_CAP = 3
+
+
+def _search_bye_team_ids(team_rows, query: str) -> list[int]:
+    """#9632: every team row of the club the TEAMS card leads with, or [].
+
+    `dodgers` on production 2026-09-29, the first day of the postseason: the
+    Dodgers have a first-round bye, so every game in the window is a final and
+    page one opened with 23 of them — the World Series (30%) and NL pennant
+    (42%) rows sat ~5,500px down at phone width. The futures probe reads the
+    club's own outcomes by `team_id`, and a club carries one row per
+    competition (`Los Angeles Dodgers` mlb AND preseason), so the ids are
+    every row whose name is a lead-tier card name, the tier
+    `_team_card_lead_sport_keys` reads (one definition of "the" club). Unlike
+    that helper this is NOT disarmed when every row is a lead sport — that is
+    exactly the `dodgers` shape.
+    """
+    keyed = _team_card_keyed(team_rows, query)
+    if not keyed:
+        return []
+    lead_key = keyed[0][0]
+    lead_names = {
+        (card.get("name") or "").lower() for key, card in keyed if key == lead_key
+    }
+    return sorted({
+        row.id for row in team_rows
+        if not _is_individual_sport(row.sport_key)
+        and (getattr(row, "name", "") or "").lower() in lead_names
+    })
+
+
+def _search_bye_finals_probe(event_conditions, team_ids: list[int]):
+    """#9632: ONE statement — nothing left to play AND the club has live futures.
+
+    True only when (a) no matched game is `live` or `scheduled` — a stale
+    `scheduled` row counts as "something to play", which fails toward today's
+    page — and (b) an OPEN futures market not tied to a game carries one of the
+    club's outcomes at 1% or more. (b) is what separates `dodgers` (World
+    Series, pennant) from a club whose question is over; a game-linked market
+    is excluded because Kalshi leaves settled game markets `open` (gotcha #33).
+    Both arms are EXISTS, so the upcoming-game case (`chiefs`) stops at its
+    first scheduled row.
+    """
+    nothing_to_play = ~(
+        select(Event.id)
+        .join(Sport, Event.sport_id == Sport.id)
+        .where(*event_conditions, Event.status.in_(("live", "scheduled")))
+        .exists()
+    )
+    live_futures = (
+        select(FuturesOutcome.id)
+        .join(FuturesMarket, FuturesMarket.id == FuturesOutcome.market_id)
+        .where(
+            FuturesOutcome.team_id.in_(team_ids),
+            FuturesMarket.status == "open",
+            FuturesMarket.event_id.is_(None),
+            FuturesOutcome.current_probability >= 0.01,
+        )
+        .exists()
+    )
+    return select(and_(nothing_to_play, live_futures))
+
+
+def _search_games_page_window(page: int, per_page: int, capped: bool) -> tuple[int, int]:
+    """#9632: `(offset, limit)` of the games page. Uncapped: the plain window.
+
+    Capped, page one holds the first `_SEARCH_BYE_FINALS_CAP` rows and page two
+    starts at the row right after them, so every raw row is on exactly one page
+    — the same reachability rule #5513 set for the pager.
+    """
+    if not capped:
+        return (page - 1) * per_page, per_page
+    if page == 1:
+        return 0, _SEARCH_BYE_FINALS_CAP
+    return _SEARCH_BYE_FINALS_CAP + (page - 2) * per_page, per_page
+
+
+def _search_games_total_pages(raw_total: int, per_page: int, capped: bool) -> int:
+    """#9632: the page count `_search_games_page_window` partitions `raw_total` into."""
+    if not capped:
+        return (raw_total + per_page - 1) // per_page
+    return 1 + (raw_total - _SEARCH_BYE_FINALS_CAP + per_page - 1) // per_page
+
+
 def _todays_final_order_key(armed: bool, status_order, upcoming_order, now: datetime):
     """#9211: a club's game that FINISHED TODAY sits right behind its next game.
 
@@ -9442,6 +9529,11 @@ async def search_events(
         sport_facets = None
         degraded.append("event_count")
     _mark("event_count")
+    # #9632: the count the primary predicate produced. Every rescue arm below
+    # fires only on 0 and replaces `query` wholesale, so the bye-finals probe
+    # (which reads `event_conditions`) is armed only when this number is the one
+    # the page will be cut from.
+    _primary_total_count = total_count
 
     # #5821 — THE PROVEN-DUPLICATE BRIDGE: a fold must never cost the reader a way in.
     #
@@ -9973,8 +10065,37 @@ async def search_events(
             fuzzy_corrected = None
 
     # Apply pagination
-    offset = (page - 1) * per_page
-    query = query.offset(offset).limit(per_page)
+    # #9632: a club with nothing left to play and live futures (`dodgers` on a
+    # postseason bye) keeps only its latest finals on page one, so the pennant
+    # rows are not buried under three weeks of results. Decided BEFORE the page
+    # is cut, from the query alone, so page two computes the same answer and
+    # starts where page one stopped. A shed probe leaves the page as it was.
+    _bye_finals_capped = False
+    _bye_team_ids = (
+        _search_bye_team_ids(_early_team_rows, _q_identity)
+        if _early_team_rows and _primary_total_count > _SEARCH_BYE_FINALS_CAP
+        else []
+    )
+    if _bye_team_ids and time.monotonic() <= _deadline:
+        _bye_savepoint = await db.begin_nested()
+        try:
+            _bye_finals_capped = bool(
+                (await db.execute(
+                    _search_bye_finals_probe(event_conditions, _bye_team_ids)
+                )).scalar()
+            )
+        except Exception as exc:  # noqa: BLE001
+            await _bye_savepoint.rollback()
+            if not _is_query_timeout(exc):
+                raise
+            logger.warning("search bye-finals probe timed out for %r", q)
+            await _apply_search_statement_timeout(db, _deadline)
+        else:
+            await _bye_savepoint.commit()
+    _mark("bye_finals_probe")
+
+    offset, _page_limit = _search_games_page_window(page, per_page, _bye_finals_capped)
+    query = query.offset(offset).limit(_page_limit)
 
     # Execute
     try:
@@ -10424,7 +10545,7 @@ async def search_events(
     # 🔴 AND THE PAGE COUNT IS NOT THE SAME QUESTION. `total_results` is a
     # sentence about the rows ("· 16 games"); `total_pages` is a claim about
     # what the NEXT button can still reach, and the two live in different
-    # spaces. `offset = (page - 1) * per_page` indexes the UNFOLDED result set
+    # spaces. The page window (`_search_games_page_window`) indexes the UNFOLDED result set
     # — folding after the limit is what keeps it there (see the fold stage
     # above) — so every page boundary is a raw-row boundary, and a page count
     # derived from the adjusted number can retire a page that still holds rows.
@@ -10470,7 +10591,7 @@ async def search_events(
     # on page one; the other five already satisfy `total_results == rendered`
     # and are untouched by this branch.
     _raw_total_count = total_count
-    total_pages = (_raw_total_count + per_page - 1) // per_page
+    total_pages = _search_games_total_pages(_raw_total_count, per_page, _bye_finals_capped)
     _page_duplicates_dropped = _fixture_duplicates_dropped + _twin_duplicates_dropped
     if _page_duplicates_dropped and total_pages <= 1:
         total_count = max(len(formatted_results), total_count - _page_duplicates_dropped)

@@ -886,6 +886,33 @@ jobs:
             exit 1
           fi
 
+      - name: "#9632 a bye club's search keeps its latest finals, pennant odds up top (real Postgres)"
+        # PILLAR: DISCOVER. SHIP: searching `dodgers` or `brewers` (a first-round
+        # bye) shows the World Series/pennant odds instead of burying them under 23
+        # finished regular-season games (production 2026-09-29). All-finished +
+        # live futures -> page one keeps the latest 3 finals, page two the rest.
+        #
+        # The probe reads the route's own full-text predicate, so only a real
+        # database behind the real route can observe it. One strawman, four
+        # controls (upcoming game, no futures, open game market, sub-1% outcome),
+        # page-two reachability. Three refusals.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_search_bye_team_finals_cap_pg_9632.py \
+            -v -rs 2>&1 | tee /tmp/byefinals9632.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/byefinals9632.txt; then
+            echo "::error::#9632 bye-finals gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          if grep -qiE "no tests ran|collected 0 items" /tmp/byefinals9632.txt; then
+            echo "::error::#9632 bye-finals gate collected NOTHING"
+            exit 1
+          fi
+          if ! grep -qE "^=+ 6 passed" /tmp/byefinals9632.txt; then
+            echo "::error::#9632 bye-finals gate did not pass all 6"
+            exit 1
+          fi
+
       - name: "#5030 a game being played stays in the search dropdown (real Postgres)"
         # PILLAR: DISCOVER. SHIP: typing a player or team while their game is on
         # offers that game, not last week's finals.
