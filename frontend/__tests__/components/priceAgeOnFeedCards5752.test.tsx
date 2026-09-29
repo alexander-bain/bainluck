@@ -229,10 +229,18 @@ describe("#5752 adoption — every futures card format hands the bar its stamp",
     const code = read(rel);
     const sites = code.split("<ActionBar").slice(1);
     expect(sites.length).toBeGreaterThan(0);
-    for (const site of sites) {
-      // Up to the element's close — enough to hold its whole prop list.
+    for (const [index, site] of sites.entries()) {
+      // Assigned results have no live price: the first FuturesCard branch
+      // deliberately suppresses stale quote age. All forecasting branches
+      // still must carry their real observation clock.
       const props = site.slice(0, site.indexOf("/>"));
-      expect(props).toContain("priceObservedAt={data.price_observed_at}");
+      if (props.includes("priceObservedAt={null}")) {
+        expect(rel).toBe("components/discover/FuturesCard.tsx");
+        expect(index).toBe(0);
+        expect(code.slice(0, code.indexOf("<ActionBar"))).toContain('data-card-format="resolved"');
+      } else {
+        expect(props).toContain("priceObservedAt={data.price_observed_at}");
+      }
     }
   });
 

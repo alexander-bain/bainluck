@@ -1,0 +1,16 @@
+{
+  "at": "2026-09-29T04:36:40.261159+00:00",
+  "verdict": "SOURCE PASS",
+  "files": [
+    {
+      "path": "frontend/components/discover/FuturesCard.tsx",
+      "sha256": "a1af06a2d2c7b17cfc05424c5dfade7a0fde96c76276e4a8a346a192981e6645"
+    },
+    {
+      "path": "frontend/__tests__/components/DiscoverFuturesTerminal9515.test.tsx",
+      "sha256": "ce87b11397125523997366b5f33e327b0af713e607a14db7ad58ce3c81266b0b"
+    }
+  ],
+  "test_harness_rebind_at": "2026-09-29T04:43:52.324136+00:00",
+  "test_harness_rebind": "Read final mounted minimalDom/createRoot test and fixture type corrections; component unchanged, acceptance assertions preserved. Author reports12new+23adjacent/build/typecheck66/startup4 PASS."
+}
