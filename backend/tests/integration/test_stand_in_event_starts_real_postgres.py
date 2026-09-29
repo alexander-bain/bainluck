@@ -1291,7 +1291,7 @@ async def test_what_the_event_api_reads_back_is_the_published_hour(
     """The third clause of the regression: the value the PAGE gets.
 
     `GET /api/events/{id}` loads the row through the ORM and serves
-    `"commence_time": event.commence_time.isoformat()` (`_format_event`, the
+    `served_commence_time(...)` of `event.commence_time` (`_format_event`, the
     formatter the detail route calls at the end of its handler). This asserts that
     ORM read against the real server on a fresh session — the same projection
     the route performs — rather than raw SQL, because an ORM identity-map or
@@ -1331,7 +1331,20 @@ async def test_what_the_event_api_reads_back_is_the_published_hour(
     import app.routes.events as events_route
 
     src = inspect.getsource(events_route._format_event)
-    assert '"commence_time": event.commence_time.isoformat()' in src
+    assert '"commence_time": _served_start.isoformat()' in src
+    assert "_served_start = served_commence_time(\n        event.status, event.commence_time," in src
+
+    # #9634: `served_commence_time` moves the start ONLY for a row holding a
+    # live StatPal later-session stamp. This row carries none, so the value the
+    # page gets is the ORM attribute verbatim — asked of the row just read back.
+    from datetime import datetime, timezone
+
+    from app.utils.event_completion import served_commence_time
+
+    assert served_commence_time(
+        event.status, event.commence_time, event.win_probability_sources,
+        datetime.now(timezone.utc),
+    ) == _REFRESH_OCCURRENCE
 
     # The detail cache must EXPIRE, or a repaired row would be served stale
     # until the dyno restarted. 300s is the bound this ship inherits.
