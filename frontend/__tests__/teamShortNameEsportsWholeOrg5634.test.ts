@@ -90,8 +90,11 @@ describe("#5634 — an esports organisation keeps its whole name", () => {
     expect(teamShortName("G2 Esports")).toBe("Esports");
   });
 
-  it("the crest badge does not move", () => {
-    expect(teamCrestBadge("G2 Esports", ESPORTS)).toBe(teamCrestBadge("G2 Esports"));
+  // The label change did not re-letter a badge. A badge that WAS the type
+  // word ("G2 Esports" `ESP`) is its own later fix: see
+  // teamCrestBadgeEsportsTypeWord5634.test.ts.
+  it("the label change does not move a badge that is not a type word", () => {
     expect(teamCrestBadge("Paper Rex", ESPORTS)).toBe(teamCrestBadge("Paper Rex"));
+    expect(teamCrestBadge("Natus Vincere", ESPORTS)).toBe(teamCrestBadge("Natus Vincere"));
   });
 });
