@@ -37,7 +37,7 @@ nonisolated enum LiveEventPriceReconciliation {
     /// hero resolved to `"blend"` and whose printed number IS that hero. Only
     /// then does `blendFoldRevision` date what the reader sees.
     static func holdsLiveBlend(_ event: EventDetail) -> Bool {
-        guard event.status == "live", event.heroProbabilitySource == "blend",
+        guard EventPriceStreaming.isEligible(event.status), event.heroProbabilitySource == "blend",
               let hero = event.heroProbability, hero.isFinite,
               let shown = event.currentOdds?.homeProbability else { return false }
         return shown == hero
@@ -67,7 +67,7 @@ nonisolated enum LiveEventPriceReconciliation {
     static func keepingNewerHeldHeadline(_ polled: EventDetail, held: EventDetail?) -> EventDetail {
         guard let held, held.id == polled.id,
               let heldRevision = pairedFoldRevision(in: held),
-              polled.status == "live", polled.heroProbabilitySource == "blend",
+              EventPriceStreaming.isEligible(polled.status), polled.heroProbabilitySource == "blend",
               let polledHero = polled.heroProbability, polledHero.isFinite else { return polled }
         if let polledRevision = pairedFoldRevision(in: polled),
            FoldRevision.compare(polledRevision, heldRevision) != .older { return polled }
@@ -91,7 +91,7 @@ nonisolated enum LiveEventPriceReconciliation {
 
     static func shouldPreserve(_ frame: LiveStreamFrame?, over polled: EventDetail, streamRecoverable: Bool) -> Bool {
         guard streamRecoverable, let frame, frame.eventId == polled.id,
-              polled.status == "live",
+              EventPriceStreaming.isEligible(polled.status),
               let p = frame.p, p.isFinite, (0...1).contains(p),
               let served = polled.currentOdds?.homeProbability, served.isFinite else { return false }
         // #9051: when the response's blend carries its fold revision, commit

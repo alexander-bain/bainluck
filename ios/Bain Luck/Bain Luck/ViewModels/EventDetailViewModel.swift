@@ -79,6 +79,7 @@ final class EventDetailViewModel: ObservableObject {
     /// delivers a price. Socket open / cached unchanged reads do not.
     private var deliveryGeneration = 0
     private var streamRefetchGeneration: Int?
+    private var provenanceRefetchFrame: LiveStreamFrame?
 
     /// A failed authoritative pair is a delivery failure even if SSE stays open.
     /// Separate from the full-load error: a successful game-state read cannot
@@ -86,7 +87,7 @@ final class EventDetailViewModel: ObservableObject {
     @Published private(set) var pricePairRefreshFailed = false
 
     var liveUpdateStatus: LiveUpdateStatus {
-        if pricePairRefreshFailed && event?.status == "live" { return .interrupted }
+        if pricePairRefreshFailed && EventPriceStreaming.isEligible(event?.status) { return .interrupted }
         return LiveUpdateStatus.decide(status: event?.status, delivering: streamDelivering,
                                 acceptedUpdate: streamHasPushedPrice,
                                 refreshFailed: error != nil)
@@ -214,10 +215,10 @@ final class EventDetailViewModel: ObservableObject {
             let fetched = try await client.fetchEvent(id: eventId)
             adopt(fetched)
             // A refusal retires the controller, not this page's eligibility for
-            // push forever. Only a successful live detail may authorize another
+            // push forever. Only a successful eligible detail may authorize another
             // attempt, at most once per fallback poll interval. Delivery callbacks
             // never retry, and an active/reconnecting transport remains its owner.
-            if fetched.status == "live", event?.status == "live",
+            if EventPriceStreaming.isEligible(fetched.status), EventPriceStreaming.isEligible(event?.status),
                stream?.state.stopped == true,
                let attemptedAt = lastStreamAttemptAt,
                now() - attemptedAt >= EventRefreshPlan.livePollInterval {
@@ -335,7 +336,8 @@ final class EventDetailViewModel: ObservableObject {
 
     @MainActor
     private func recordPriceActivity(from prior: EventDetail, to current: EventDetail) {
-        guard prior.id == current.id, prior.status == "live", current.status == "live" else { return }
+        guard prior.id == current.id, EventPriceStreaming.isEligible(prior.status),
+              EventPriceStreaming.isEligible(current.status) else { return }
         let before = LivePriceActivity.displayedPercents(in: prior)
         let after = LivePriceActivity.displayedPercents(in: current)
         guard after.home != nil || after.away != nil else { return }
@@ -391,7 +393,7 @@ final class EventDetailViewModel: ObservableObject {
     private func rereadGameState() async {
         do {
             var fetched = try await client.fetchEvent(id: eventId)
-            if pricePairRefreshFailed, fetched.status == "live", let held = event {
+            if pricePairRefreshFailed, EventPriceStreaming.isEligible(fetched.status), let held = event {
                 // A clock-only success cannot publish the successful half of
                 // a failed pair. Keep its complete price/source identity until
                 // detail AND history recover, but take the new game state.
@@ -428,6 +430,8 @@ final class EventDetailViewModel: ObservableObject {
             // revision/removal reconciliation against the baseline at adoption.
             let (fetched, h) = try await (detailRead, historyRead)
             guard !Task.isCancelled else { return }
+            let prior = event
+            let priorActivity = priceActivity?.sequence
             let priorRevision = event.flatMap { LiveEventPriceReconciliation.pairedFoldRevision(in: $0) }
             let recordsActivity = requestedGeneration == nil || (
                 requestedGeneration == deliveryGeneration && streamRefetchGeneration == requestedGeneration
@@ -435,6 +439,24 @@ final class EventDetailViewModel: ObservableObject {
             adopt(fetched, recordsPriceActivity: recordsActivity)
             history = h
             if recordsActivity { pricePairRefreshFailed = false }
+            // An opening/consensus hero first becomes a stream-proven blend
+            // through this pair. Require its own revision to cover the frame
+            // that requested it; never borrow a revision from the old label.
+            if requestedGeneration == deliveryGeneration,
+               streamRefetchGeneration == requestedGeneration,
+               let requested = provenanceRefetchFrame?.rev?.revision,
+               let current = event,
+               let adopted = LiveEventPriceReconciliation.pairedFoldRevision(in: current),
+               requested.rows.allSatisfy({ key, revision in
+                   adopted.rows[key].map { $0 >= revision } ?? false
+               }) {
+                streamHasPushedPrice = true
+                streamRefetchGeneration = nil
+                provenanceRefetchFrame = nil
+                if let prior, priceActivity?.sequence == priorActivity {
+                    recordPriceActivity(from: prior, to: current)
+                }
+            }
             if requestedGeneration == deliveryGeneration,
                streamRefetchGeneration == requestedGeneration,
                let priorRevision, let current = event,
@@ -468,10 +490,9 @@ final class EventDetailViewModel: ObservableObject {
 
     @MainActor
     private func configureAutoRefresh() {
-        // The push stream stays a LIVE-only affair, exactly as the #2687 ruling
-        // left it: a scheduled page now polls, but it does not open a socket to
-        // wait for a match that has not started.
-        if event?.status == "live" {
+        // Open-contract prices can move before play or during a suspension.
+        // The server owns contract/window admission; a refusal keeps polling.
+        if EventPriceStreaming.isEligible(event?.status) {
             startStreamIfNeeded()
         } else {
             stopStream()
@@ -586,6 +607,7 @@ final class EventDetailViewModel: ObservableObject {
                     self.streamHasPushedPrice = false
                     self.deliveryGeneration += 1
                     self.streamRefetchGeneration = nil
+                    self.provenanceRefetchFrame = nil
                     // The dot and fast polling reflect the outage immediately.
                     // A recoverable outage does not invalidate a price already
                     // observed; load() checks terminal refusal before using it.
@@ -621,6 +643,7 @@ final class EventDetailViewModel: ObservableObject {
     private func stopStream() {
         deliveryGeneration += 1
         streamRefetchGeneration = nil
+        provenanceRefetchFrame = nil
         streamHasPushedPrice = false
         streamTickTask?.cancel()
         streamTickTask = nil
@@ -666,7 +689,19 @@ final class EventDetailViewModel: ObservableObject {
             frame: frame.rev?.revision
         )
         let priceIsNotNewer: Bool
-        if let foldOrder {
+        if EventPriceStreaming.isEligible(current.status),
+           current.heroProbabilitySource != "blend",
+           frame.rev?.revision != nil || (current.heroProbabilitySource != nil && frame.p != nil) {
+            // A raw row is not the opening/consensus quote this page labels.
+            // Adopt its authoritative detail/history pair first, keeping both
+            // value and provenance together. Coalesce frames during that read.
+            priceIsNotNewer = true
+            if revisionRefetchTask == nil {
+                provenanceRefetchFrame = frame
+                streamRefetchGeneration = deliveryGeneration
+                requestRevisionRefetch()
+            }
+        } else if let foldOrder {
             priceIsNotNewer = foldOrder != .newer
             if foldOrder == .incomparable {
                 streamRefetchGeneration = deliveryGeneration
@@ -745,8 +780,7 @@ final class EventDetailViewModel: ObservableObject {
         if acceptedNewPrice { recordPriceActivity(from: prior, to: current) }
         // Re-planned only when the window OPENS: a move inside an open window
         // extends it and the loop is already on the fast cadence. Only a live
-        // page, because `configureAutoRefresh` stops the stream on anything else
-        // and this runs inside the stream's own callback.
+        // page: score catch-up is sports state, independent of quote eligibility.
         if armScoreCatchUp, current.status == "live" { configureAutoRefresh() }
         // NOT `lastLoadedAt`: that field means "a load completed" and drives the
         // refresh countdown chrome. A pushed frame is not a load, and claiming

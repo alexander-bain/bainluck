@@ -6,7 +6,8 @@ nonisolated enum LiveEventSourceReconciliation {
     static func applying(
         _ frame: LiveStreamFrame, to event: EventDetail, newerThan acceptedAt: Date? = nil
     ) -> EventDetail? {
-        guard event.id == frame.eventId, event.status == "live", frame.status == "live",
+        guard event.id == frame.eventId, EventPriceStreaming.isEligible(event.status),
+              EventPriceStreaming.isEligible(frame.status),
               let key = frame.source, key != "final_result",
               WinProbSourceCatalog.realSourceKeys.contains(key),
               let quote = frame.sourceValue, quote.isFinite, (0...1).contains(quote),
@@ -40,7 +41,7 @@ nonisolated enum LiveEventSourceReconciliation {
         _ frames: inout [String: LiveStreamFrame], over polled: EventDetail,
         streamRecoverable: Bool
     ) -> EventDetail {
-        guard streamRecoverable, polled.status == "live" else {
+        guard streamRecoverable, EventPriceStreaming.isEligible(polled.status) else {
             frames.removeAll()
             return polled
         }

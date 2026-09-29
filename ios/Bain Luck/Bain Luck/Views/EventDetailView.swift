@@ -92,7 +92,8 @@ struct EventDetailView: View {
     private func heroRising(away: Bool) -> Bool? {
         (away ? vm.priceActivity?.awayDelta : vm.priceActivity?.homeDelta).map { $0 > 0 }
     }
-    private var heroMoves: Bool { isLive && vm.liveUpdateStatus != .interrupted }
+    private var priceStreamingEligible: Bool { EventPriceStreaming.isEligible(vm.event?.status) }
+    private var heroMoves: Bool { priceStreamingEligible && vm.liveUpdateStatus != .interrupted }
     /// #4002 — this page kept a PRIVATE COPY of a vocabulary `EventState`
     /// already owns, and `suspended` (live/048) matched none of its arms. So
     /// the hero drew no badge, no score, a grey `Proj. 3-2` where the score
@@ -694,7 +695,7 @@ struct EventDetailView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Probability confidence and update details. " +
-            (isLive ? LivePriceReceiptCue.accessibilityText(status: vm.liveUpdateStatus,
+            (priceStreamingEligible ? LivePriceReceiptCue.accessibilityText(status: vm.liveUpdateStatus,
                 receivedAt: vm.priceActivity?.receivedAt) : ""))
         .accessibilityHint("Shows connection status and when the last price update reached this phone")
         // #9408 — open BELOW the button (on iOS, `.top` measured below; the
@@ -1203,7 +1204,7 @@ struct EventDetailView: View {
                                     .foregroundStyle(colors.away)
                                     .livePriceChangeFeedback(sequence: vm.priceActivity?.sequence ?? 0,
                                                              valueChanged: vm.priceActivity.map { $0.previousAwayLabel != $0.awayLabel } ?? false,
-                                                             color: colors.away, isEnabled: isLive && vm.liveUpdateStatus != .interrupted)
+                                                             color: colors.away, isEnabled: priceStreamingEligible && vm.liveUpdateStatus != .interrupted)
                                 Text("\u{2013}")
                                     .font(.title3)
                                     .foregroundStyle(.secondary.opacity(0.4))
@@ -1213,7 +1214,7 @@ struct EventDetailView: View {
                                     .foregroundStyle(colors.home)
                                     .livePriceChangeFeedback(sequence: vm.priceActivity?.sequence ?? 0,
                                                              valueChanged: vm.priceActivity.map { $0.previousHomeLabel != $0.homeLabel } ?? false,
-                                                             color: colors.home, isEnabled: isLive && vm.liveUpdateStatus != .interrupted)
+                                                             color: colors.home, isEnabled: priceStreamingEligible && vm.liveUpdateStatus != .interrupted)
                             }
                         } else {
                             // #5271 — a draw-priced sport. There is one price
@@ -1251,7 +1252,7 @@ struct EventDetailView: View {
                                     .foregroundStyle(colors.home)
                                     .livePriceChangeFeedback(sequence: vm.priceActivity?.sequence ?? 0,
                                                              valueChanged: vm.priceActivity.map { $0.previousHomeLabel != $0.homeLabel } ?? false,
-                                                             color: colors.home, isEnabled: isLive && vm.liveUpdateStatus != .interrupted)
+                                                             color: colors.home, isEnabled: priceStreamingEligible && vm.liveUpdateStatus != .interrupted)
                             }
                         }
                         // Trend indicator (change since opening).
@@ -1317,11 +1318,11 @@ struct EventDetailView: View {
                                 .map { abs(home - $0) > 0.001 } ?? false
                         )?.rawValue
                         probabilityDetails(confidenceTier: confidenceTier)
-                        if isLive {
+                        if priceStreamingEligible {
                             LivePriceMovementCaption(sequence: vm.priceActivity?.sequence ?? 0,
                                                      text: movementCaption(event),
                                                      color: colors.home,
-                                                     isEnabled: isLive && vm.liveUpdateStatus != .interrupted)
+                                                     isEnabled: priceStreamingEligible && vm.liveUpdateStatus != .interrupted)
                         }
                         // #8320 — #3313's live sparkline was drawn here, and it
                         // is gone: it was a thumbnail of the full chart one card
@@ -1331,7 +1332,7 @@ struct EventDetailView: View {
                             .font(.title2)
                             .fontWeight(.medium)
                             .foregroundStyle(.secondary)
-                        if isLive { probabilityDetails(confidenceTier: nil) }
+                        if priceStreamingEligible { probabilityDetails(confidenceTier: nil) }
                     }
                     // Projected final score.
                     //
@@ -2276,10 +2277,9 @@ struct EventDetailView: View {
     // Delivery status is plain text under the title; manual refresh is a
     // separate control. The compatibility helper below still feeds older charts.
 
-    /// A refresh status is honest ONLY when the page really refreshes — which
-    /// the VM does for live events only. Scheduled/completed pages perform no
-    /// periodic reload, so they carry no status at all (C43 P2).
-    static func showsRefreshStatus(status: String?) -> Bool { status == "live" }
+    /// Quote delivery and fallback are visible for the same eligible phases
+    /// the VM connects; sports LIVE labels still use the actual game status.
+    static func showsRefreshStatus(status: String?) -> Bool { EventPriceStreaming.isEligible(status) }
 
     /// What the refresh control is entitled to say.
     ///

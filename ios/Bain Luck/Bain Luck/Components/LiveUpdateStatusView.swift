@@ -6,7 +6,7 @@ nonisolated enum LiveUpdateStatus: Equatable {
 
     static func decide(status: String?, delivering: Bool, acceptedUpdate: Bool,
                        refreshFailed: Bool) -> Self {
-        guard status == "live" else { return .hidden }
+        guard EventPriceStreaming.isEligible(status) else { return .hidden }
         if delivering && acceptedUpdate { return .live }
         if refreshFailed { return .interrupted }
         return delivering ? .awaitingUpdate : .autoRefresh

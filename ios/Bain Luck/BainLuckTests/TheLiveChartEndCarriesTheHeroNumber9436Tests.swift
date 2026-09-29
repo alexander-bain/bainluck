@@ -89,9 +89,13 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
         XCTAssertEqual(pair.home.flatMap { Int($0.dropLast()) }.map { $0 + Int(pair.away!.dropLast())! }, 100)
     }
 
-    func testNoReadingOffALivePage() throws {
-        XCTAssertNil(LiveEdgeReading.current(in: try event(p: 0.6, status: "final")))
-        XCTAssertNil(LiveEdgeReading.current(in: try event(p: 0.6, status: "scheduled")))
+    func testCurrentQuoteReadingFollowsPriceEligibilityNotSportsLive() throws {
+        for status in ["scheduled", "live", "suspended"] {
+            XCTAssertEqual(LiveEdgeReading.current(in: try event(p: 0.6, status: status))?.homeProbability, 0.6)
+        }
+        for status in ["final", "completed", "closed", "postponed"] {
+            XCTAssertNil(LiveEdgeReading.current(in: try event(p: 0.6, status: status)))
+        }
     }
 
     func testTheEdgeIsCurrentOnlyWhenTheVertexIsTheHeroValue() {

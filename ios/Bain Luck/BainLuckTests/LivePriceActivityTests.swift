@@ -41,9 +41,9 @@ final class LivePriceActivityTests: XCTestCase {
         func on(_ event: String, _ handler: @escaping @MainActor (String) -> Void) { handlers[event, default: []].append(handler) }
         func close() { isClosed = true }
         func fire(_ event: String, _ raw: String = "") { for h in handlers[event] ?? [] { h(raw) } }
-        func push(p: Double, at: String, rev: String?, source: String = "polymarket") {
+        func push(p: Double, at: String, rev: String?, source: String = "polymarket", status: String = "live") {
             fire("probability", """
-            {"event_id":4242,"p":\(p),"source":"\(source)","source_value":0.4,"updated_at":"\(at)","status":"live","rev":\(rev ?? "null")}
+            {"event_id":4242,"p":\(p),"source":"\(source)","source_value":0.4,"updated_at":"\(at)","status":"\(status)","rev":\(rev ?? "null")}
             """)
         }
     }
@@ -91,6 +91,122 @@ final class LivePriceActivityTests: XCTestCase {
 
     private func settle(until condition: () -> Bool) async {
         for _ in 0..<200 where !condition() { await Task.yield() }
+    }
+
+    func testEligibleNonLivePagesStreamHeroSourceAndChartWithoutChangingSportsStatus() async throws {
+        for status in ["scheduled", "suspended"] {
+            let client = Client(try event(status: status))
+            let handle = Handle(), vm = model(client, handle)
+            await vm.load()
+            XCTAssertFalse(handle.handlers.isEmpty, "the initial load must connect")
+            XCTAssertNil(vm.priceActivity)
+            handle.fire("open")
+            XCTAssertEqual(vm.liveUpdateStatus, .awaitingUpdate)
+            handle.push(p: 0.55, at: "2026-09-25T17:10:00Z", rev: #"{"4242":11}"#, status: status)
+            XCTAssertEqual(vm.event?.status, status)
+            XCTAssertEqual(vm.event?.currentOdds?.homeProbability, 0.55)
+            XCTAssertEqual(vm.event?.winProbabilitySources?["polymarket"]?.updatedAt, "2026-09-25T17:10:00Z")
+            XCTAssertEqual(vm.liveBlend.last?.homeProbability, 0.55)
+            XCTAssertEqual(vm.event.flatMap { LiveEdgeReading.current(in: $0) }?.homeProbability, 0.55)
+            XCTAssertEqual(vm.priceActivity?.sequence, 1)
+            XCTAssertEqual(vm.liveUpdateStatus, .live)
+
+            // A cached poll cannot undo the newly received price or its source.
+            await vm.load()
+            XCTAssertEqual(vm.event?.currentOdds?.homeProbability, 0.55)
+            XCTAssertEqual(vm.event?.status, status)
+            XCTAssertEqual(vm.priceActivity?.sequence, 1)
+            handle.push(p: 0.9, at: "2026-09-25T17:30:00Z", rev: #"{"4242":10}"#, status: status)
+            XCTAssertEqual(vm.event?.currentOdds?.homeProbability, 0.55)
+            XCTAssertEqual(vm.liveBlend.last?.homeProbability, 0.55)
+            XCTAssertEqual(vm.event.flatMap { LiveEdgeReading.current(in: $0) }?.homeProbability, 0.55)
+            XCTAssertEqual(vm.priceActivity?.sequence, 1)
+            vm.stopRefresh()
+        }
+    }
+
+    func testSubsequentAdoptionStartsEligibleStreamAndFinalStopsIt() async throws {
+        let client = Client(try event(status: "postponed"))
+        let handle = Handle(), vm = model(client, handle)
+        defer { vm.stopRefresh() }
+        await vm.load()
+        XCTAssertTrue(handle.handlers.isEmpty)
+        client.response = try event(status: "scheduled")
+        await vm.load()
+        XCTAssertFalse(handle.handlers.isEmpty)
+        client.response = try event(p: 1, source: "final_result", status: "completed")
+        await vm.load()
+        XCTAssertTrue(handle.isClosed)
+        XCTAssertEqual(vm.liveUpdateStatus, .hidden)
+        XCTAssertEqual(vm.event?.currentOdds?.homeProbability, 1)
+    }
+
+    func testNonLiveRefusalKeepsPollingAndRetriesOnlyAfterEligibleReadAndInterval() async throws {
+        for status in ["scheduled", "suspended"] {
+            let client = Client(try event(status: status))
+            var clock: TimeInterval = 1_790_355_605
+            var opened = 0
+            let first = Handle(), second = Handle()
+            let vm = EventDetailViewModel(eventId: 4242, client: client,
+                makeStreamHandle: { _ in opened += 1; return opened == 1 ? first : second },
+                now: { clock }, sleep: { _ in try? await Task.sleep(nanoseconds: 60_000_000_000) })
+            await vm.load()
+            first.fire("open")
+            first.isClosed = true
+            first.fire("error")
+            XCTAssertEqual(vm.liveUpdateStatus, .autoRefresh)
+            XCTAssertTrue(vm.isAutoRefreshing)
+            await vm.load()
+            XCTAssertEqual(opened, 1)
+            clock += EventRefreshPlan.livePollInterval
+            await vm.load()
+            XCTAssertEqual(opened, 2)
+            XCTAssertEqual(vm.event?.status, status)
+            vm.stopRefresh()
+        }
+    }
+
+    func testScheduledOpeningHeroRefetchesAuthoritativePairBeforeTakingStreamPrice() async throws {
+        let client = Client(try event(source: "opening", status: "scheduled"))
+        client.historyResponse = try pairedHistory(p: 0.52, revision: #"{"4242":11,"999":5}"#)
+        let handle = Handle(), vm = model(client, handle)
+        defer { vm.stopRefresh() }
+        await vm.load()
+        handle.fire("open")
+        client.response = try event(p: 0.52, status: "scheduled", revision: #"{"4242":11,"999":5}"#)
+        handle.push(p: 0.9, at: "2026-09-25T17:10:00Z", rev: #"{"4242":11}"#, status: "scheduled")
+        XCTAssertEqual(vm.event?.currentOdds?.homeProbability, 0.6, "raw frame is not an opening quote")
+        XCTAssertTrue(vm.liveBlend.isEmpty)
+        XCTAssertFalse(vm.streamHasPushedPrice)
+        await settle { vm.event?.heroProbabilitySource == "blend" }
+        XCTAssertEqual(vm.event?.currentOdds?.homeProbability, 0.52)
+        XCTAssertEqual(vm.event?.status, "scheduled")
+        XCTAssertEqual(vm.priceActivity?.homeLabel, "52%")
+        XCTAssertEqual(vm.liveUpdateStatus, .live)
+        XCTAssertEqual(vm.priceActivity?.sequence, 1)
+        // Once the authoritative pair is a single-row blend, normal frames
+        // can land directly again; folded vectors still require their pair.
+        client.response = try event(p: 0.52, status: "scheduled", revision: #"{"4242":11}"#)
+        await vm.load()
+        handle.push(p: 0.53, at: "2026-09-25T17:11:00Z", rev: #"{"4242":12}"#, status: "scheduled")
+        XCTAssertEqual(vm.event?.currentOdds?.homeProbability, 0.53)
+        XCTAssertEqual(vm.liveBlend.last?.homeProbability, 0.53)
+    }
+
+    func testOpeningInvalidationWithoutPriceAdoptsAuthoritativeBlend() async throws {
+        let client = Client(try event(source: "opening", status: "suspended"))
+        client.historyResponse = try pairedHistory(p: 0.52, revision: #"{"4242":11,"999":5}"#)
+        let handle = Handle(), vm = model(client, handle)
+        defer { vm.stopRefresh() }
+        await vm.load()
+        handle.fire("open")
+        client.response = try event(p: 0.52, status: "suspended", revision: #"{"4242":11,"999":5}"#)
+        handle.fire("probability", #"{"event_id":4242,"p":null,"status":"suspended","rev":{"4242":11}}"#)
+        await settle { vm.event?.heroProbabilitySource == "blend" }
+        XCTAssertEqual(vm.event?.currentOdds?.homeProbability, 0.52)
+        XCTAssertEqual(vm.priceActivity?.sequence, 1)
+        XCTAssertEqual(vm.liveUpdateStatus, .live)
+        XCTAssertEqual(vm.event?.status, "suspended")
     }
 
     func testOnlyAcceptedNewerPricesCreateLocalReceipts() async throws {
