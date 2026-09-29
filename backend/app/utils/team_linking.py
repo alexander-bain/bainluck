@@ -168,13 +168,98 @@ def match_outcome_to_league_team(
 
     exact = {team_id for team_id, names in names_by_team.items() if candidate in names}
     if exact:
+        winner = _unique_unshadowed(exact)
+    else:
+        city = set()
+        for team in league_teams:
+            words = (_normalize_name(team["name"]) or "").split()
+            if any(len(words) > k and " ".join(words[:-k]) == candidate for k in (1, 2)):
+                city.add(team["id"])
+        winner = _unique_unshadowed(city)
+    if winner is not None:
+        return winner
+    return _match_league_team_by_spelling(outcome_name, league_teams)
+
+
+# Venue names for a school that no spelling rule reaches (#9663), keyed on
+# `normalize_name` of the venue's outcome name. Each is the school our row names:
+# Houston Christian was Houston Baptist until 2022; Kalshi keeps the "St." on
+# Central Connecticut, whose row carries no "State".
+_VENUE_SCHOOL_NAMES: dict[str, str] = {
+    "tennessee-martin": "ut martin",
+    "houston christian": "houston baptist",
+    "university at albany": "albany",
+    "central connecticut st.": "central connecticut",
+}
+
+
+def _spelling_key(name: str) -> str:
+    """One spelling of a college name: "St." is "State", "&" is "and", a hyphen a space."""
+    from app.utils.name_normalization import normalize_team_name_for_matching
+
+    key = normalize_team_name_for_matching(name.replace("&", " and ").replace("-", " "))
+    return " ".join(key.split())
+
+
+def _match_league_team_by_spelling(outcome_name: str, league_teams: list[dict]) -> Optional[int]:
+    """The strict arms' fallback: the same school written the way a college feed writes it (#9663).
+
+    Kalshi's FCS title board names "Montana St.", "South Carolina St.", "William &
+    Mary", "Arkansas-Pine Bluff"; our rows say "Montana State Bobcats" (alias
+    "Montana St"), "South Carolina State Bulldogs", "William and Mary Tribe". Both
+    sides are compared through :func:`_spelling_key`, with the same two arms and
+    the same one-team rule as :func:`match_outcome_to_league_team`. Reached only
+    when those arms answer nothing, so no answer they give changes.
+
+    Two differences, both about "State" being its own school:
+
+    * a sibling whose name continues the candidate with "State" does not shadow
+      it — "Montana" is the Grizzlies although "Montana State" starts with it;
+    * a city form never drops a "State": "Idaho State Bengals" does not read as
+      "Idaho".
+
+    Any other continuation still shadows ("Miami" beside "Miami (OH)"), and a
+    sibling that merely contains the candidate no longer does ("Tennessee St."
+    beside "East Tennessee State").
+    """
+    raw = _normalize_name(outcome_name)
+    if not raw:
+        return None
+    candidate = _spelling_key(_VENUE_SCHOOL_NAMES.get(raw, raw))
+    if not candidate:
+        return None
+
+    keys_by_team = {
+        team["id"]: [
+            k for k in (_spelling_key(n) for n in [team["name"]] + (team.get("alternate_names") or []))
+            if k
+        ]
+        for team in league_teams
+    }
+
+    def _unique_unshadowed(hits: set) -> Optional[int]:
+        if len(hits) != 1:
+            return None
+        winner = next(iter(hits))
+        prefix = candidate + " "
+        for team_id, keys in keys_by_team.items():
+            if team_id == winner:
+                continue
+            for k in keys:
+                if k.startswith(prefix) and k[len(prefix):].split()[0] != "state":
+                    return None
+        return winner
+
+    exact = {team_id for team_id, keys in keys_by_team.items() if candidate in keys}
+    if exact:
         return _unique_unshadowed(exact)
 
     city = set()
     for team in league_teams:
-        words = (_normalize_name(team["name"]) or "").split()
-        if any(len(words) > k and " ".join(words[:-k]) == candidate for k in (1, 2)):
-            city.add(team["id"])
+        words = _spelling_key(team["name"]).split()
+        for k in (1, 2):
+            if len(words) > k and words[-k] != "state" and " ".join(words[:-k]) == candidate:
+                city.add(team["id"])
     return _unique_unshadowed(city)
 
 
