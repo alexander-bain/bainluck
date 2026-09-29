@@ -743,7 +743,10 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
                             # A city-only name is ambiguous across the category
                             # (Knicks + Liberty) and unique inside one league.
                             team_id = _match_in_ticker_league(outcome, teams)
-                            if team_id:
+                            # ...and inside the conference the ticker names (#8072,
+                            # CERT-3801's follow-up): "Los Angeles D" on the AL
+                            # champion board is the Dodgers by city and an NL club.
+                            if _admit(outcome, team_id):
                                 outcome.team_id = team_id
                                 stats["outcomes_linked"] += 1
                                 stats["outcomes_linked_by_league"] += 1
