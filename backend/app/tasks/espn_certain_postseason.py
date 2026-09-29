@@ -33,6 +33,17 @@ ESPN event disappears. It never lands a Game 2 claim on the Game 1 row
 would move Game 1's start). It writes no score, status or probability — the
 live pass owns those on game day. A group-scoped board is never read.
 
+**What it corrects (#9602).** Every certain game's row — one it just made or
+attached, and one it already held — is marked ``llm_importance = 'playoff'``,
+the rule the ESPN game-day pass applies from ``season.type = 3``, and like that
+rule it never downgrades ``'championship'``. Without this a Game 2 that StatPal
+created a day early carries the LLM classifier's ``'regular_season'`` fallback
+until it reaches today's board, so its card reads as a regular-season game
+("PHI 88-74 · ATL 94-68") instead of "Playoff game". It is one Core ``UPDATE``
+per league, scoped by league and ESPN id, and idempotent: a row the metadata
+enrichment re-labels before its first enrichment (it writes importance on any
+row with no gender/level yet) is marked again on the next hourly run.
+
 **What the later Odds row does.** The Odds API claim is a listing, not a
 dereference, so it creates its own row when it arrives, and the two are one
 game. ``fold_twin_events`` shows that pair as one card with both venues on
@@ -51,7 +62,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import or_, select, update
 
 from app.utils.postseason_series import certain_to_be_played
 
@@ -72,6 +83,11 @@ LOOKAHEAD_DAYS = 3
 
 _EASTERN = ZoneInfo("America/New_York")
 _POSTSEASON = 3
+
+#: ``espn_helpers``' season-type rule: type 3 is ``'playoff'``, and a row that
+#: already reads ``'championship'`` keeps it (a World Series game is both).
+_PLAYOFF = "playoff"
+_NOT_DOWNGRADED = ("playoff", "championship")
 
 
 def board_days(now: datetime, days: int = LOOKAHEAD_DAYS) -> list[str]:
@@ -145,6 +161,73 @@ def claim_identity(sport_key: str, ee: Any):
     )
 
 
+def _needs_playoff(sport_key: str, espn_ids: list[str]):
+    """The rows of these ESPN games, in this league, not yet marked postseason."""
+    from app.models.models import Event, Sport
+
+    return (
+        Event.espn_id.in_(espn_ids),
+        Event.sport_id.in_(select(Sport.id).where(Sport.key == sport_key)),
+        or_(Event.llm_importance.is_(None), Event.llm_importance.notin_(_NOT_DOWNGRADED)),
+    )
+
+
+def mark_playoff_statement(sport_key: str, espn_ids: list[str]):
+    """``UPDATE events SET llm_importance = 'playoff'`` for those rows (#9602).
+
+    Core, not ORM assignment (gotcha #5): the registry's rows are not loaded here.
+    """
+    from app.models.models import Event
+
+    return (
+        update(Event)
+        .where(*_needs_playoff(sport_key, espn_ids))
+        .values(llm_importance=_PLAYOFF)
+        .returning(Event.id)
+        .execution_options(synchronize_session=False)
+    )
+
+
+async def _mark_playoff(session, candidates, held: set[str], apply: bool, stats: dict) -> None:
+    """Mark every certain game's row we hold as a playoff game (#9602).
+
+    ``held`` is every candidate id a row carries after the claims — the ones
+    already held and the ones just made or attached. On a dry run it names only
+    the rows held before the run, and the rows it would mark are counted, not
+    written.
+    """
+    from app.models.models import Event
+
+    by_sport: dict[str, set[str]] = {}
+    for sport_key, ee in candidates:
+        if str(ee.espn_id) in held:
+            by_sport.setdefault(sport_key, set()).add(str(ee.espn_id))
+    for sport_key, ids in sorted(by_sport.items()):
+        wanted = sorted(ids)
+        try:
+            if apply:
+                rows = (await session.execute(mark_playoff_statement(sport_key, wanted))).all()
+                await session.commit()
+            else:
+                rows = (
+                    await session.execute(
+                        select(Event.id).where(*_needs_playoff(sport_key, wanted))
+                    )
+                ).all()
+        except Exception as e:  # noqa: BLE001 — gotcha #42: one league, not the run
+            await session.rollback()
+            stats["errors"].append(f"{sport_key}/importance: {e}")
+            continue
+        marked = sorted(int(r[0]) for r in rows)
+        stats["marked_playoff"] += len(marked)
+        stats["marked_playoff_ids"].extend(marked)
+        if marked:
+            logger.info(
+                "Certain postseason games (#9602): %s %d row(s) %s playoff: %s",
+                sport_key, len(marked), "marked" if apply else "would be marked", marked,
+            )
+
+
 async def _read_candidates(espn, now: datetime, stats: dict) -> list[tuple[str, Any]]:
     """``[(sport_key, espn_event)]`` across the lookahead, soonest day first."""
     from app.services.espn_api import ESPN_FULL_SLATE_GROUPS
@@ -196,9 +279,11 @@ async def _run_create_certain_postseason_games(apply: bool = True) -> dict:
         "already_held": 0,
         "created": 0,
         "attached": 0,
+        "marked_playoff": 0,
         "planned": [],
         "created_ids": [],
         "attached_ids": [],
+        "marked_playoff_ids": [],
         "errors": [],
     }
 
@@ -256,12 +341,15 @@ async def _run_create_certain_postseason_games(apply: bool = True) -> dict:
                 "created" if created else "attached",
             )
 
+        await _mark_playoff(session, candidates, held, apply, stats)
+
     stats["status"] = "complete" if not stats["errors"] else "partial"
     logger.info(
         "Certain postseason games (#9216): %d boards (%d dark), %d certain, %d held, "
-        "%d created, %d attached, apply=%s",
+        "%d created, %d attached, %d marked playoff, apply=%s",
         stats["boards_read"], stats["boards_dark"], stats["certain"],
-        stats["already_held"], stats["created"], stats["attached"], apply,
+        stats["already_held"], stats["created"], stats["attached"],
+        stats["marked_playoff"], apply,
     )
     return stats
 
