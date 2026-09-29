@@ -1,5 +1,8 @@
 import SwiftUI
 
+/// Never `.disabled`: at the pin limit the tap still reaches `togglePin`, which
+/// says why nothing was pinned. A dimmed button that ignores taps is the
+/// silent path #9495 removed.
 struct PinButton: View {
     let type: String
     let id: Int
@@ -7,7 +10,7 @@ struct PinButton: View {
     @EnvironmentObject var pinManager: PinManager
 
     private var pinned: Bool { pinManager.isPinned(type: type, id: id) }
-    private var disabled: Bool { !pinned && !pinManager.canPin(type: type) }
+    private var saving: Bool { pinManager.isSaving(type: type, id: id) }
 
     var body: some View {
         Button {
@@ -16,15 +19,20 @@ struct PinButton: View {
             #endif
             pinManager.togglePin(type: type, id: id)
         } label: {
-            Image(systemName: pinned ? "bookmark.fill" : "bookmark")
-                .font(.system(size: compact ? 12 : 14))
-                .foregroundStyle(pinned ? .orange : .secondary)
-                .frame(width: compact ? 28 : 44, height: compact ? 28 : 44)
-                .contentShape(Rectangle())
+            Group {
+                if saving {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Image(systemName: pinned ? "bookmark.fill" : "bookmark")
+                        .font(.system(size: compact ? 12 : 14))
+                        .foregroundStyle(pinned ? .orange : .secondary)
+                }
+            }
+            .frame(width: compact ? 28 : 44, height: compact ? 28 : 44)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .opacity(disabled ? 0.3 : 1.0)
-        .disabled(disabled)
-        .accessibilityLabel(pinned ? "Unpin" : "Pin")
+        .accessibilityLabel(saving ? "Saving pin" : (pinned ? "Unpin" : "Pin"))
     }
 }
