@@ -15,7 +15,12 @@ nonisolated struct FinalGameWinnerQuote: Decodable, Equatable, Sendable {
     var contributorOutcomeIds: Set<String> { Set(outcomes.map { String($0.outcomeId) }) }
 
     var printableProbabilities: [Int: String] {
-        let percents = renderedCardPercents(outcomes.map { $0.probability })
+        let values = outcomes.map { $0.probability }
+        // The backend deliberately keeps raw nonunit books outside its squeeze
+        // policy. Only an actual unit-sum pair earns complementary rounding;
+        // this tolerance covers Double arithmetic, not a venue's overround.
+        let percents = abs(values.reduce(0, +) - 1) < 1e-9
+            ? renderedCardPercents(values) : values.map { renderedPercent($0) }
         return Dictionary(zip(outcomes, percents).map { outcome, percent in
             (outcome.outcomeId, formatProbability(outcome.probability, renderedPercent: percent))
         }, uniquingKeysWith: { first, _ in first })

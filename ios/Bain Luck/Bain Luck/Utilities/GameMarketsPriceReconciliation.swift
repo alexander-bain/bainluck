@@ -6,6 +6,7 @@ nonisolated enum GameMarketsPriceReconciliation {
     struct Fence {
         var revisions: [String: Date] = [:]
         var withdrawn: [String: Set<String>] = [:]
+        var winnerQuotes = FinalGameWinnerQuoteFence()
     }
 
     struct Row {
@@ -18,6 +19,7 @@ nonisolated enum GameMarketsPriceReconciliation {
         let winner: Bool?
         let actual: Double?
         var priced: Bool { prices.contains { $0 != nil } }
+        var isWinnerQuote: Bool { key.hasPrefix("finalWinner:") }
     }
 
     static func rows(_ body: GameMarketsResponse) -> [Row] {
@@ -43,11 +45,49 @@ nonisolated enum GameMarketsPriceReconciliation {
                 markets: markets($0._marketId, $0._marketIds), contributors: ids($0.contributorOutcomeIds),
                 verdict: nil, winner: $0.isWinner, actual: nil)
         }
+        for matchup in body.matchups ?? [] {
+            result += matchup.outcomes.map {
+                Row(key: "matchups:\(matchup.id):\($0.name)", prices: [$0.probability], source: matchup.source,
+                    markets: markets(matchup._marketId, matchup._marketIds),
+                    contributors: ids($0.contributorOutcomeIds ?? matchup.contributorOutcomeIds),
+                    verdict: nil, winner: $0.isWinner, actual: nil)
+            }
+        }
+        if let quote = body.openWinnerQuote {
+            result.append(Row(key: "finalWinner:\(quote.marketId)",
+                prices: quote.outcomes.sorted { $0.outcomeId < $1.outcomeId }.map { $0.probability },
+                source: quote.source, markets: [quote.marketId],
+                contributors: quote.contributorOutcomeIds, verdict: nil, winner: nil, actual: nil))
+        }
         return result
     }
 
     static func adopting(_ incoming: GameMarketsResponse, over held: GameMarketsResponse?,
                          fence: inout Fence) -> GameMarketsResponse {
+        // A different event cannot add terminal evidence to this held page.
+        if let held, incoming.eventId != held.eventId { return held }
+        fence.winnerQuotes.recordClosed(incoming.closedWinnerMarketIds)
+        func checkedQuote(_ body: GameMarketsResponse) -> GameMarketsResponse {
+            var checked = body
+            checked.closedWinnerMarketIds = fence.winnerQuotes.closedMarketIds.sorted()
+            checked.openWinnerQuote = fence.winnerQuotes.visible(
+                body.openWinnerQuote, eventId: body.eventId, eventStatus: body.status)
+            if let quote = checked.openWinnerQuote,
+               !(body.streamMarketIds ?? []).contains(quote.marketId)
+                || !quote.contributorOutcomeIds.allSatisfy({ body.outcomeMarketIds?[$0] == quote.marketId }) {
+                checked.openWinnerQuote = nil
+            }
+            return checked
+        }
+        // Terminal evidence clears the quote even when a regressed unrelated
+        // score, grade, or row clock forces the rest of this response to be held.
+        let checked = checkedQuote(incoming)
+        let checkedHeld = held.map(checkedQuote)
+        return adoptingProjection(checked, over: checkedHeld, fence: &fence)
+    }
+
+    private static func adoptingProjection(_ incoming: GameMarketsResponse, over held: GameMarketsResponse?,
+                                          fence: inout Fence) -> GameMarketsResponse {
         let nextRows = rows(incoming)
         guard Set(nextRows.map(\.key)).count == nextRows.count else { return held ?? incoming }
         let next = Dictionary(uniqueKeysWithValues: nextRows.map { ($0.key, $0) })
@@ -83,9 +123,15 @@ nonisolated enum GameMarketsPriceReconciliation {
             let row = next[prior.key]
             if prior.verdict != nil && row?.verdict != prior.verdict
                 || prior.winner != nil && row?.winner != prior.winner
-                || prior.actual != nil && row?.actual != prior.actual { return held }
+                || prior.actual != nil && (prior.verdict != nil || prior.winner != nil)
+                    && row?.actual != prior.actual { return held }
             if row?.priced != true {
-                nextFence.withdrawn[prior.key] = prior.contributors
+                // Choosing a different whole winner book does not withdraw the
+                // previous venue's still-valid price. A genuinely absent quote
+                // does fence restoration of that book behind its own revision.
+                if !prior.isWinnerQuote || incoming.openWinnerQuote == nil {
+                    nextFence.withdrawn[prior.key] = prior.contributors
+                }
                 changedMarkets.formUnion(prior.markets)
             }
         }
@@ -122,7 +168,7 @@ nonisolated enum GameMarketsPriceReconciliation {
                       }) else { return held }
                 nextFence.withdrawn.removeValue(forKey: row.key)
             }
-            if prior == nil, !terminal,
+            if prior == nil, !terminal, !row.isWinnerQuote,
                !row.contributors.isEmpty,
                row.contributors.allSatisfy({ fence.revisions[$0] != nil }) {
                 guard row.contributors.contains(where: { id in

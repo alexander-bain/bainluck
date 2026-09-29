@@ -62,6 +62,31 @@ nonisolated struct GameMarketsResponse: Decodable, Equatable, Sendable {
     var outcomeMarketIds: [String: Int]? = nil
     var outcomeRevisionAt: [String: String?]? = nil
     var outcomeObservedAt: [String: String?]? = nil
+    /// Separate from the immutable final sport result and settled prop buckets.
+    var openWinnerQuote: FinalGameWinnerQuote? = nil
+    var closedWinnerMarketIds: [Int]? = nil
+    var matchups: [GameMarketMatchup]? = nil
+}
+
+/// A head-to-head/field bucket keeps every nested quote and grade identifiable.
+nonisolated struct GameMarketMatchup: Decodable, Equatable, Identifiable, Sendable {
+    var id: String { _marketId.map(String.init) ?? marketName }
+    let marketName: String
+    let type: String?
+    let source: String?
+    let outcomes: [GameMarketMatchupOutcome]
+    var _marketId: Int? = nil
+    var _marketIds: [Int]? = nil
+    var contributorOutcomeIds: [Int]? = nil
+}
+
+nonisolated struct GameMarketMatchupOutcome: Decodable, Equatable, Sendable {
+    let name: String
+    let probability: Double?
+    let observedAt: String?
+    var contributorOutcomeIds: [Int]? = nil
+    var isWinner: Bool? = nil
+    var resolutionSource: String? = nil
 }
 
 /// Miscellaneous game market outcome that does not fit a primary section.

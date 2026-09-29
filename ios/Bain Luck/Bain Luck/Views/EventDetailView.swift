@@ -325,6 +325,13 @@ struct EventDetailView: View {
                                     heroBottom: proxy.frame(in: .named(Self.scrollSpace)).maxY,
                                     viewportTop: scrollViewportTop))
                         })
+                    if let gameMarkets = vm.gameMarkets,
+                       let quote = gameMarkets.openWinnerQuote {
+                        FinalGameWinnerQuoteView(
+                            quote: quote, eventId: event.id, eventStatus: event.status,
+                            closedMarketIds: Set(gameMarkets.closedWinnerMarketIds ?? [])
+                        )
+                    }
                     VStack(spacing: 0) {
                         OddsChartView(eventId: event.id, teamColors: teamColors(event),
                                      commenceTime: event.commenceTime, status: event.status,
@@ -611,6 +618,8 @@ struct EventDetailView: View {
             || !(gm.periodMarkets ?? []).isEmpty
             || !(gm.playerProps ?? []).isEmpty
             || !(gm.other ?? []).isEmpty
+            || gm.openWinnerQuote?.isPresentable(eventId: gm.eventId, eventStatus: gm.status,
+                                                closedMarketIds: Set(gm.closedWinnerMarketIds ?? [])) == true
     }
 
     /// #3821 — the copy is tensed by ``EventState/noGameMarketsLine(status:)``.
