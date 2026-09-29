@@ -694,10 +694,12 @@ struct EventCardView: View {
             ? reading?.homeProbability
             : (awayIsWithheld ? nil : reading?.awayProbability)
         if let prob {
-            let wasUnderdog = prob < 0.4
             let wasHeavyFavorite = prob > 0.7
             let won = (side == .home && homeWon) || (side == .away && awayWon)
-            let isUpset = won && wasUnderdog
+            // #9490 — against the side it beat on the same reading, not a
+            // fixed cut: on a three-way board 39.5% can be the favourite.
+            let isUpset = won && (reading?.winnerWasUnderdog(
+                homeWon: homeWon, awayWon: awayWon, pricesADraw: awayIsWithheld) ?? false)
 
             HStack(spacing: 2) {
                 Text(formatProbability(prob, renderedPercent: reading?.percents[side == .home ? 1 : 0]))
