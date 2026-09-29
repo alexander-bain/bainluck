@@ -2349,6 +2349,29 @@ def _strip_search_scaffolding(terms: list[str]) -> list[str]:
     return kept if kept else terms
 
 
+def _matchup_subject(q: str) -> str:
+    """`q` with a matchup connector between two words dropped. Pure. (#9527)
+
+    For the sites that ask whether the reader NAMED the teams, and for the
+    ranker. #9533 dropped the connector from the database terms only, so
+    `query_names_participant("eagles v bears", ...)` still asked the Eagles or
+    the Bears to own the word "v" — False — and the dropdown lost the finished
+    game and sank the next one below four inning markets that happen to SAY
+    "vs.". Same between-two-words rule as `_strip_search_scaffolding`, plus
+    `at`, which is scaffolding there and a connector here. The recall pattern,
+    the terms and the concept detectors keep reading the subject unchanged.
+    """
+    words = (q or "").split()
+    kept = [
+        w for i, w in enumerate(words)
+        if not (
+            0 < i < len(words) - 1
+            and (w.lower() in _MATCHUP_CONNECTORS or w.lower() == "at")
+        )
+    ]
+    return " ".join(kept) if kept else (q or "")
+
+
 def _apply_search_synonyms(
     expanded: list[tuple[str, str | None]]
 ) -> list[tuple[str, str | None]]:
@@ -12586,6 +12609,10 @@ async def typeahead_search(
     # used to find the thing they asked it about.
     _ta_intent = parse_intent(q)
     _q_identity = _ta_intent.subject if _ta_intent else q
+    # #9527: the same subject with a matchup connector dropped, for the sites
+    # that ask whether the reader named the teams and for the ranker. Read
+    # `_matchup_subject` for why those, and only those.
+    _q_matchup = _matchup_subject(_q_identity)
 
     # The recall pattern for the futures OUTCOME arm
     # (`FuturesOutcome.name ILIKE pattern`). On the subject, because it is a
@@ -13000,7 +13027,7 @@ async def typeahead_search(
         names = (ev.home_team_name, ev.away_team_name)
         # The SUBJECT (T2-3): this asks whether the reader NAMED a participant,
         # which is an identity question. "red sox tonight" names the Red Sox.
-        if query_names_participant(_q_identity, names):
+        if query_names_participant(_q_matchup, names):
             return True
         return _nickname_names_participant(
             _ta_nickname_admissions,
@@ -13051,7 +13078,7 @@ async def typeahead_search(
             _ta_matchups = [
                 ev for ev in _ta_next
                 if query_names_both_sides(
-                    _q_identity, ev.home_team_name, ev.away_team_name
+                    _q_matchup, ev.home_team_name, ev.away_team_name
                 )
             ]
             _ta_last = []
@@ -13180,7 +13207,7 @@ async def typeahead_search(
     # markets, then tonight's game. Gated on the team being the entity the query
     # names (`query_resolves_team`), so `angel`/`new` keep ruling 041.
     if _ta_lead_team is not None and query_resolves_team(
-        _q_identity, _typeahead_evidence(_ta_lead_team, _q_identity)
+        _q_matchup, _typeahead_evidence(_ta_lead_team, _q_matchup)
     ):
         _ta_lead_team_row_ids |= {
             ev.id for ev in _ta_rows if _ta_is_lead_team_fixture(ev)
@@ -14395,9 +14422,11 @@ async def typeahead_search(
     # withheld-evidence shape wearing different clothes: the team owns every
     # token of the subject and none of the question, so it scores MC3 on the
     # full string and MC0 on the subject. Handing the two halves different
-    # strings would be two rules, so both read `_q_identity`.
+    # strings would be two rules, so both read `_q_identity` — connector
+    # dropped (`_q_matchup`, #9527), else `red sox vs yankees` scores the game
+    # below every market whose name says "vs.".
     _ta_candidates = [
-        (_typeahead_evidence(item, _q_identity), item)
+        (_typeahead_evidence(item, _q_matchup), item)
         for item in (*hub_pool, *team_pool, *event_pool,
                      *event_concept_pool, *futures_pool)
     ]
@@ -14411,7 +14440,7 @@ async def typeahead_search(
     # keys come back from the scorer instead of being recomputed here: the full
     # key carries the plural-namesake penalty, which is a property of the whole
     # candidate set, so a second per-row derivation would be a second rule.
-    _ta_keyed = _s_rank_with_keys(_q_identity, _ta_candidates)
+    _ta_keyed = _s_rank_with_keys(_q_matchup, _ta_candidates)
     # #9415: a game's own winner market leaves when its game is in the seven.
     suggestions = _typeahead_seven_without_served_game_winners(
         _ta_keyed, _ta_headline_ids
