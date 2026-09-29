@@ -3116,6 +3116,37 @@ def _team_card_keyed(team_rows, query: str) -> list:
     return rank_with_keys(query, [(_search_team_evidence(t), t) for t in cards])[:5]
 
 
+def _unify_school_st_spelling(cards: list) -> list:
+    """#9309: one school, one spelling, when the card shows it twice.
+
+    `bucs` on production 2026-09-28 carded `East Tennessee St Buccaneers`
+    (baseball, a source's abbreviation) directly above `East Tennessee State
+    Buccaneers` (football) — same logo, two spellings, so a reader saw one
+    school listed twice. They are two real rows for two sports; only the
+    display name is wrong.
+
+    A middle `St`/`St.` word is rewritten to `State` ONLY when that exact
+    `State` spelling is already evidenced: another row on the same card is
+    named it, or the row's own aliases hold it (3607 stores `East Tennessee
+    State Buccaneers` as an alias). So `Mount St Mary's` and `St Johns` (Saint,
+    no such evidence) never change. Display only: ids, slugs and order are
+    untouched. Reads the private `_aliases` key, so it runs before that key is
+    popped. Mutates and returns `cards`.
+    """
+    spelled = {str(c.get("name") or "").casefold() for c in cards}
+    for card in cards:
+        own = {a.casefold() for a in card.get("_aliases") or () if isinstance(a, str)}
+        words = str(card.get("name") or "").split(" ")
+        for i in range(1, len(words) - 1):
+            if words[i] not in ("St", "St."):
+                continue
+            candidate = " ".join(words[:i] + ["State"] + words[i + 1:])
+            if candidate.casefold() in spelled | own:
+                card["name"] = candidate
+                break
+    return cards
+
+
 def _split_terms_order_key(team_rows, query: str, expanded: list):
     """#9044: 0 for a game where every query word lands on ONE side, 1 otherwise.
 
@@ -11866,7 +11897,9 @@ async def search_events(
     # key also reads (#8765) — so the games list cannot follow a club the card
     # does not lead with. Ranked HERE, before the World Cup check below, so that
     # check still reads the card a reader sees and not the whole window.
-    matched_teams = [card for _key, card in _team_card_keyed(_team_result_rows, _q_identity)]
+    matched_teams = _unify_school_st_spelling(
+        [card for _key, card in _team_card_keyed(_team_result_rows, _q_identity)]
+    )
     # The scorer's import lives here; `event_concepts` uses it below.
     from app.utils.search_match_class import rank as _search_rank_candidates
 
