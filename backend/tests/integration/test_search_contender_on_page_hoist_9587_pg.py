@@ -122,9 +122,13 @@ async def maker():
                 ))
         await session.commit()
 
-    yield session_maker
-
-    await engine.dispose()
+    try:
+        yield session_maker
+    finally:
+        # Leave nothing behind: the `search-recall` database is shared with the next suite.
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
+        await engine.dispose()
 
 
 @pytest.fixture
