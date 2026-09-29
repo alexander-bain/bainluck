@@ -275,6 +275,10 @@ class _NoopRefresher:
         # #837 tail: the quiet-flush path; a fake never defers a stamp.
         return None
 
+    async def publish_market_changes(self, _session):
+        # #9484: market invalidations have their own tests; publish nothing.
+        return 0
+
 
 class TestTheSocketSubscribesToAMarketItHadToAskFor:
     async def test_a_tokenless_slate_row_becomes_a_correctly_attributed_tick(
