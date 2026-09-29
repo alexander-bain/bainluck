@@ -5127,6 +5127,40 @@ def _tennis_link_players_agree(
     return straight or swapped
 
 
+def _tennis_raw_name_players_agree(
+    event_sport_key: Optional[str],
+    market_name: Optional[str],
+    home: Optional[str],
+    away: Optional[str],
+) -> bool:
+    """:func:`_tennis_link_players_agree` over a RAW market name. Pure. #9472.
+
+    Phase 1.5's re-date link check asks ``_fuzzy_team_match`` of the raw name, so
+    a row stored by a <=3-letter surname (`Tomic v Sun`, `Kozlov v Kim`) refused
+    every Polymarket leg as ``teams_absent`` and kept its Kalshi close-time start:
+    3 of 260 Challenger rows read LIVE hours early on 2026-09-29 (15320530 Tomic v
+    Sun, live since 03:00Z against a venue start of 07:35Z).
+
+    The raw name needs splitting first, and the prefix is the hard part: the
+    grammar returns ``None`` for "Jingshan: Bernard Tomic vs Fajing Sun" (it knows
+    "China Open:", not every Challenger town). ``bare_matchup_sides`` reads the
+    moneyline's one "Tournament: " prefix; ``extract_matchup`` reads the
+    surname-only prop lines ("Tomic vs. Sun: Match O/U 22.5"). Anything neither
+    can split stays refused.
+    """
+    if not (event_sport_key or "").startswith("tennis"):
+        return False
+    from app.utils.matchup_sides import bare_matchup_sides
+
+    sides = bare_matchup_sides(market_name)
+    if sides is None:
+        matchup = extract_matchup(market_name or "")
+        if matchup is None:
+            return False
+        sides = (matchup.team_a, matchup.team_b)
+    return _tennis_link_players_agree(event_sport_key, sides[0], sides[1], home, away)
+
+
 # --- Resolved-row cross-sport sweep (#3478 / CERT-2102) ---------------------
 # Phase 1.5 revalidates linked markets, but only `status='open'` ones — see
 # `_phase15_eligible_where`. That is right for the common case and it leaves a
@@ -5900,7 +5934,13 @@ async def phase15_link_is_valid_for_redate(session, market, event) -> tuple[bool
     if not home or not away or not name:
         return False, "unnamed"
     if not (_fuzzy_team_match(name, home) and _fuzzy_team_match(name, away)):
-        return False, "teams_absent"
+        # #9472: the raw test cannot read a <=3-letter surname stored alone
+        # (`Tomic v Sun`); on a tennis row, ask the tennis comparator of the
+        # name's two sides before refusing.
+        if not _tennis_raw_name_players_agree(
+            await _event_sport_key(session, event), name, home, away,
+        ):
+            return False, "teams_absent"
 
     market_sport = _market_sport_prefix(market)
     if market_sport and getattr(event, "sport_id", None):
