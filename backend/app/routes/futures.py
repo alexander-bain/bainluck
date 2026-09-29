@@ -9310,6 +9310,13 @@ def _format_market_detail(
         ]
         if len(served_leads) == 1:
             lead_outcome_id = served_leads[0]
+    # #9531: a cumulative ladder leads with the rung the `/weather` card quotes
+    # (#9283), not its loosest one. Set only when that rung is not already the
+    # price leader, so a board whose hero is right serves null as before.
+    if lead_outcome_id is None and market.status != "resolved":
+        from app.utils.ladder_headline import ladder_headline_outcome_id
+
+        lead_outcome_id = ladder_headline_outcome_id(outcomes, market.name)
 
     # B7 (L2-91): the up-link mesh. Resolve this market's event-concept key
     # (`event:<domain>:<slug>`, richer per-event page) and its competition hub slug
@@ -9383,8 +9390,9 @@ def _format_market_detail(
         "outcomes": outcomes,
         "outcome_count": len(outcomes),
         # #8892: on a game container, the outcome a hero should lead with — the
-        # match winner — rather than whichever leg is priced highest. Always
-        # present; null everywhere else, so absence means an old build.
+        # match winner — rather than whichever leg is priced highest. #9531: on
+        # a cumulative ladder, its median rung when that is not the leader.
+        # Always present; null everywhere else, so absence means an old build.
         "lead_outcome_id": lead_outcome_id,
         # #5539: true when this field's openings were refused as incoherent, so a
         # probe can tell a withheld opening from one that never existed. Always

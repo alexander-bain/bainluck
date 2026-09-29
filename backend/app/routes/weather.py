@@ -20,7 +20,7 @@ from sqlalchemy.orm import selectinload
 from app.models import FuturesMarket, FuturesOddsSnapshot, FuturesOutcome
 from app.services import get_db
 from app.utils.cross_source_matching import group_markets_by_group_id
-from app.utils.ladder_monotonicity import DEC, cumulative_outcome_ladder
+from app.utils.ladder_headline import ladder_median_row
 from app.utils.market_staleness import should_exclude_from_featured, is_title_implied_stale
 
 logger = logging.getLogger(__name__)
@@ -566,30 +566,16 @@ def _ladder_median_rung(market: FuturesMarket):
     as "3+ is likely" over a rung that says it is not. Unpriced rungs take no
     part. When even the loosest priced rung is under 50% there is no median to
     quote and this returns None — the ordinary leader stands, unchanged.
+
+    The walk lives in `app.utils.ladder_headline` since #9531, so the market
+    page this card links to quotes the same rung.
     """
-    outcomes = list(market.outcomes or [])
-    ladder = cumulative_outcome_ladder(
-        [{"name": o.name, "outcome": o} for o in outcomes],
-        dates=True,
+    row = ladder_median_row(
+        [{"name": o.name, "outcome": o} for o in (market.outcomes or [])],
         question=market.name,
+        probability=lambda r: r["outcome"].current_probability,
     )
-    if ladder is None:
-        return None
-    rungs, direction = ladder
-    priced = [
-        (value, row["outcome"])
-        for value, row in rungs
-        if row["outcome"].current_probability is not None
-    ]
-    # Loosest first: the lowest threshold of an "above" ladder, the latest
-    # date of a "by" ladder.
-    priced.sort(key=lambda pair: pair[0], reverse=(direction != DEC))
-    median = None
-    for _value, outcome in priced:
-        if float(outcome.current_probability) < 0.5:
-            break
-        median = outcome
-    return median
+    return row["outcome"] if row is not None else None
 
 
 def _card_probability(market: FuturesMarket) -> float:
