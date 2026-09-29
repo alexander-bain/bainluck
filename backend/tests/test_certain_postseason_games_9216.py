@@ -346,13 +346,29 @@ def _board_event(espn_id, game, *, season_type=3, status="scheduled", wins=(0, 0
 
 
 class _Session:
-    def __init__(self, held=()):
+    """``held``: ids a row carries. ``unmarked``: held ids whose row is not yet
+    marked playoff — the fake answers the #9602 statement from it; the predicate
+    itself is proved on real Postgres (``test_certain_postseason_playoff_pg_9602``)."""
+
+    def __init__(self, held=(), unmarked=(), fail_marking=()):
         self.held = set(held)
+        self.unmarked = set(unmarked)
+        self.fail_marking = set(fail_marking)
         self.commits = 0
         self.rollbacks = 0
+        self.marks: list[tuple[str, list, bool]] = []
 
     async def execute(self, statement, params=None):
-        wanted = next(iter(statement.compile().params.values()))
+        compiled = statement.compile().params
+        if "llm_importance" in str(statement):
+            sport = next(v for k, v in compiled.items() if k.startswith("key"))
+            wanted = next(v for k, v in compiled.items() if k.startswith("espn_id"))
+            self.marks.append((sport, list(wanted), statement.is_dml))
+            if sport in self.fail_marking:
+                raise RuntimeError("lock timeout")
+            rows = [(9000 + int(i),) for i in wanted if i in self.unmarked]
+            return SimpleNamespace(all=lambda: rows)
+        wanted = next(iter(compiled.values()))
         rows = [(i,) for i in wanted if i in self.held]
         return SimpleNamespace(all=lambda: rows)
 
@@ -374,11 +390,11 @@ class _Ctx:
         return False
 
 
-def _wire(monkeypatch, boards, *, held=(), fail_ids=()):
+def _wire(monkeypatch, boards, *, held=(), fail_ids=(), unmarked=(), fail_marking=()):
     import app.services.espn_api as espn_api
     import app.tasks.base as task_base
 
-    session = _Session(held)
+    session = _Session(held, unmarked, fail_marking)
     reads, claims = [], []
 
     class _Espn:
@@ -442,7 +458,9 @@ async def test_the_pass_claims_game_two_and_leaves_game_three_alone(monkeypatch)
     assert claims[0].commence_time == G2_TIME
     assert stats["created"] == 2 and stats["created_ids"] == [501, 502]
     assert stats["refused_if_necessary"] == 1
-    assert session.commits == 2
+    # One per claimed game, then one for the #9602 playoff mark over both rows.
+    assert session.commits == 3
+    assert session.marks == [("baseball_mlb", ["401907897", "401907972"], True)]
     # Every lookahead day for every league; empty boards do not stop the read.
     assert [r for r in reads if r[0] == "baseball_mlb"] == [
         ("baseball_mlb", "20260929"), ("baseball_mlb", "20260930"), ("baseball_mlb", "20261001"),
@@ -532,3 +550,103 @@ def test_the_claim_carries_the_placeholder_flag_for_an_unannounced_start():
     assert task.claim_identity("baseball_mlb", ee).commence_time_is_placeholder is True
     ee.time_valid = True
     assert task.claim_identity("baseball_mlb", ee).commence_time_is_placeholder is False
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Part E — #9602: a certain game's row reads as a playoff game before game day
+# ════════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+async def test_a_held_game_two_that_reads_regular_season_is_marked_playoff(monkeypatch):
+    """THE SHIP. Production 9/29 11:05Z: 15320701 / 15320702 hold 401907972 /
+    401907897, ESPN's 9/30 board says season.type=3, the rows said
+    'regular_season', and the pass counted both `already_held` and moved on."""
+    boards = {
+        ("baseball_mlb", "20260930"): [
+            _board_event("401907972", 2),
+            _board_event("401907897", 2, home="Houston Astros", away="Chicago White Sox"),
+        ],
+    }
+    held = {"401907972", "401907897"}
+    session, _reads, claims = _wire(monkeypatch, boards, held=held, unmarked=held)
+
+    stats = await task._run_create_certain_postseason_games(apply=True)
+
+    assert claims == [] and stats["already_held"] == 2
+    assert session.marks == [("baseball_mlb", ["401907897", "401907972"], True)]
+    assert stats["marked_playoff"] == 2
+    assert stats["marked_playoff_ids"] == [9000 + 401907897, 9000 + 401907972]
+    assert session.commits == 1
+    assert stats["status"] == "complete"
+
+
+@pytest.mark.asyncio
+async def test_a_row_the_pass_just_made_is_marked_too_and_a_failed_claim_is_not(monkeypatch):
+    boards = {
+        ("baseball_mlb", "20260930"): [
+            _board_event("401907972", 2),
+            _board_event("401907897", 2),
+            _board_event("401907898", 2),
+        ],
+    }
+    session, _reads, _claims = _wire(
+        monkeypatch, boards, held={"401907897"}, fail_ids={"401907898"}
+    )
+
+    stats = await task._run_create_certain_postseason_games(apply=True)
+
+    # 972 was created this run, 897 was held; 898's claim raised — no row, no mark.
+    assert session.marks == [("baseball_mlb", ["401907897", "401907972"], True)]
+    assert stats["created"] == 1
+
+
+@pytest.mark.asyncio
+async def test_each_league_is_marked_on_its_own_and_one_failure_costs_only_that_league(monkeypatch):
+    boards = {
+        ("basketball_nba", "20260930"): [_board_event("401800100", 2)],
+        ("baseball_mlb", "20260930"): [_board_event("401907972", 2)],
+    }
+    held = {"401907972", "401800100"}
+    session, _reads, _claims = _wire(
+        monkeypatch, boards, held=held, unmarked=held, fail_marking={"baseball_mlb"}
+    )
+
+    stats = await task._run_create_certain_postseason_games(apply=True)
+
+    assert [(m[0], m[1]) for m in session.marks] == [
+        ("baseball_mlb", ["401907972"]), ("basketball_nba", ["401800100"]),
+    ]
+    assert session.rollbacks == 1
+    assert stats["marked_playoff_ids"] == [9000 + 401800100]
+    assert stats["errors"] == ["baseball_mlb/importance: lock timeout"]
+    assert stats["status"] == "partial"
+
+
+@pytest.mark.asyncio
+async def test_a_dry_run_counts_the_rows_it_would_mark_and_writes_nothing(monkeypatch):
+    boards = {("baseball_mlb", "20260930"): [_board_event("401907972", 2), _board_event("401907897", 2)]}
+    session, _reads, claims = _wire(
+        monkeypatch, boards, held={"401907972"}, unmarked={"401907972"}
+    )
+
+    stats = await task._run_create_certain_postseason_games(apply=False)
+
+    # Only the row held before the run; the planned one does not exist yet.
+    assert session.marks == [("baseball_mlb", ["401907972"], False)]
+    assert stats["marked_playoff"] == 1
+    assert claims == [] and session.commits == 0
+
+
+def test_the_statement_marks_playoff_and_never_downgrades_a_championship():
+    from sqlalchemy.dialects import postgresql
+
+    sql = str(
+        task.mark_playoff_statement("baseball_mlb", ["401907972"]).compile(
+            dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
+        )
+    )
+    assert "SET llm_importance='playoff'" in sql
+    assert "events.llm_importance IS NULL OR (events.llm_importance NOT IN ('playoff', 'championship'))" in sql
+    assert "sports.key = 'baseball_mlb'" in sql
+    assert "events.espn_id IN ('401907972')" in sql
