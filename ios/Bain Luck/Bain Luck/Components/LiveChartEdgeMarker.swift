@@ -8,8 +8,8 @@ import Charts
 /// Built from `LivePriceActivity.displayedLabels(in:)` — the one function the
 /// hero pair also prints from — so the label beside the dot cannot disagree
 /// with the hero on rounding, the served-or-neither pair (#2085) or the .445
-/// complement. `nil` whenever the page is not live: a finished or upcoming
-/// chart has no "now" to mark.
+/// complement. Only quote-eligible event phases can mark a current price;
+/// the sports LIVE label remains independent.
 ///
 /// `source` is the hero's own provenance (`hero_probability_source`). Only a
 /// `"blend"` hero is the number the blend line ends on — the backend pins the
@@ -21,7 +21,7 @@ nonisolated struct LiveEdgeReading: Equatable {
     var source: String? = "blend"
 
     static func current(in event: EventDetail) -> LiveEdgeReading? {
-        guard event.status == "live",
+        guard EventPriceStreaming.isEligible(event.status),
               let probability = event.currentOdds?.homeProbability,
               let label = LivePriceActivity.displayedLabels(in: event).home else { return nil }
         return LiveEdgeReading(homeProbability: probability, homeLabel: label,
