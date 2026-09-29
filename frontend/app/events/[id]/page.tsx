@@ -124,6 +124,7 @@ import {
   VENUE_SETTLED_DESCRIPTION,
   blendCaptionIsStale,
   hasNoReportedResult,
+  serverHeldPastKickoff,
   isFinishedStatus,
   startBadgeLabel,
   suspendedSummary,
@@ -2112,7 +2113,17 @@ export default function EventPage({ params }: EventPageProps) {
                       still printing "Pregame" over a "Since Start" chart. The
                       two-hour hole this falls into, and why the grace is not
                       the thing to widen, are in `startBadgeLabel`. */}
-                  {startBadgeLabel(hasStarted, gameCountdown)}
+                  {startBadgeLabel(
+                    hasStarted,
+                    gameCountdown,
+                    // #9634 — held by the server: "Pregame", not "Started".
+                    serverHeldPastKickoff(
+                      event?.status,
+                      event?.commence_time,
+                      undefined,
+                      event?.started_without_result,
+                    ),
+                  )}
                 </span>
               </span>
             )}

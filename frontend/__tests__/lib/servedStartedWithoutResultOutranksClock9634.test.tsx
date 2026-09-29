@@ -33,12 +33,16 @@ import EventCard from "@/components/EventCard";
 import {
   eventSectionKey,
   hasNoReportedResult,
+  serverHeldPastKickoff,
+  startBadgeLabel,
   startedWithoutResult,
   SUSPENDED_LABEL,
   UPCOMING_GRACE_MS,
 } from "@/lib/eventState";
 import { hasNoReportedResultForShare } from "@/lib/eventShareMeta";
 import type { Event } from "@/lib/types";
+import * as fs from "fs";
+import * as path from "path";
 
 const HOUR = 3600_000;
 const NOW = Date.parse("2026-09-29T15:50:00Z");
@@ -135,5 +139,37 @@ describe("#9634 · EventCard, rendered", () => {
 
   it("CONTROL: the same row with the key absent still prints it", () => {
     expect(text(makeEvent())).toContain(SUSPENDED_LABEL);
+  });
+});
+
+// Taking the row out of "No result reported" drops it to the badge that speaks
+// about the START. Without the held clause that badge said "Started" — the
+// server had just told us it had not.
+describe("#9634 · the hero badge says Pregame, not Started, for a held row", () => {
+  it("held = served false AND the clock alone past the grace", () => {
+    expect(serverHeldPastKickoff("scheduled", STAMP, NOW, false)).toBe(true);
+    // Inside the grace the server's false is the same clock — proves nothing.
+    expect(serverHeldPastKickoff("scheduled", INSIDE_GRACE, NOW, false)).toBe(false);
+    expect(serverHeldPastKickoff("scheduled", STAMP, NOW)).toBe(false);
+    expect(serverHeldPastKickoff("scheduled", STAMP, NOW, true)).toBe(false);
+    expect(serverHeldPastKickoff("live", STAMP, NOW, false)).toBe(false);
+  });
+
+  it("the badge word", () => {
+    expect(startBadgeLabel(true, null, true)).toBe("Pregame");
+    // #6031 unchanged: started, not held.
+    expect(startBadgeLabel(true, null, false)).toBe("Started");
+    expect(startBadgeLabel(true, null)).toBe("Started");
+    expect(startBadgeLabel(false, "2h 10m", false)).toBe("Starts in 2h 10m");
+  });
+
+  it("the page passes the held answer to the badge (a page has no exports to call)", () => {
+    const page = fs.readFileSync(
+      path.join(__dirname, "../../app/events/[id]/page.tsx"),
+      "utf8",
+    );
+    expect(page).toMatch(
+      /startBadgeLabel\(\s*hasStarted,\s*gameCountdown,[\s\S]{0,120}?serverHeldPastKickoff\(\s*event\?\.status,\s*event\?\.commence_time,\s*undefined,\s*event\?\.started_without_result,?\s*\)/,
+    );
   });
 });

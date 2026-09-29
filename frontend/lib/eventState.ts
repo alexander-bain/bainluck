@@ -135,6 +135,22 @@ export function hasNoReportedResult(
 }
 
 /**
+ * #9634 — the server holds this `scheduled` row as not started although the
+ * clock alone says its time ran out: a fresh ESPN "not started" stamp (#9195)
+ * or a StatPal later-session hold (#9613). Only the served `false` PAST the
+ * grace says that — inside the grace the server's `false` is the same clock,
+ * so it proves nothing and #6031's "Started" stands.
+ */
+export function serverHeldPastKickoff(
+  status: string | null | undefined,
+  commenceTime: string | null | undefined,
+  now: number = Date.now(),
+  served?: boolean | null,
+): boolean {
+  return served === false && startedWithoutResult(status, commenceTime, now);
+}
+
+/**
  * The short badge a suspended event wears.
  *
  * Deliberately NOT "Suspended" as a bare word: for a rain-delayed US Open match
@@ -357,12 +373,18 @@ export function authorityStoppageDescription(
  * Lives here rather than inline for the reason #5885 moved `hasStarted` into
  * `pageLiveClaimIsUnbacked`: a Next.js page carries no named exports, so a
  * ternary in the JSX is a decision no test can hold.
+ *
+ * #9634 — `heldByServer` ({@link serverHeldPastKickoff}): the server has said
+ * this match has NOT begun though its stamp is hours past, so "Started" would
+ * trade "No result reported" for a different false claim. It is not started;
+ * it is pregame.
  */
 export function startBadgeLabel(
   hasStarted: boolean,
   countdown: string | null | undefined,
+  heldByServer: boolean = false,
 ): string {
-  if (hasStarted) return "Started";
+  if (hasStarted && !heldByServer) return "Started";
   return countdown ? `Starts in ${countdown}` : "Pregame";
 }
 
