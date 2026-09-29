@@ -85,8 +85,9 @@ describe("#5634 — the other direction: nothing outside football moves", () => 
     ["baseball_mlb", "Boston Red Sox", "Red Sox"],
     ["americanfootball_nfl", "Kansas City Chiefs", "Chiefs"],
     ["tennis_atp_us_open", "Carlos Alcaraz", "Alcaraz"],
-    // A key that merely CONTAINS the word is not football.
-    ["esports_soccer_sim", "Team Berlin", "Berlin"],
+    // A key that merely CONTAINS the word is not football. (Not an esports
+    // key: since 2026-09-29 those keep the whole name by their own rule.)
+    ["basketball_soccer_sim", "Team Berlin", "Berlin"],
   ])("sport %p: %s → %s", (sport, name, label) => {
     expect(teamShortName(name, null, sport as string | null | undefined)).toBe(label);
   });
