@@ -3,6 +3,7 @@
  */
 
 import type { EntityAvailability, EntityTier } from "@/lib/entityPageChrome";
+import type { DiscoverPriceCards } from "@/lib/discover/priceRefresh";
 import type { TournamentPayload } from "@/lib/tournament";
 import type {
   EventsResponse,
@@ -1362,6 +1363,14 @@ export interface LineMovement {
 // ============================================================================
 // Unified Feed API
 // ============================================================================
+
+/** Exact painted leaves; the stream dispatcher owns pacing, retries and abort. */
+export async function fetchDiscoverPriceCards(eventIds: number[], marketIds: number[], signal?: AbortSignal): Promise<DiscoverPriceCards> {
+  const query = new URLSearchParams({ event_ids: eventIds.join(','), market_ids: marketIds.join(',') });
+  return apiFetch<DiscoverPriceCards>(`/api/feed/price-cards?${query}`, {
+    signal, cache: 'no-store', maxRetries: 0,
+  });
+}
 
 /**
  * Fetch the unified feed of interesting events and futures

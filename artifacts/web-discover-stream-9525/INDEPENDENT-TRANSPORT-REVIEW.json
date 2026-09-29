@@ -1,0 +1,9 @@
+{
+  "commit": "df52e7ee8a",
+  "sha256": {
+    "frontend/lib/marketStreamController.ts": "f11ee9e8b009d4116e686a1a8eb20b305b8eb58689c9e42ceb1ea5533e76c695",
+    "frontend/hooks/useMarketStream.ts": "ee90c2c98d94027bc48f6e228bae41143722a986c2bb8e9df12e04ef9da316a7",
+    "frontend/lib/api.ts": "2148f2ce477fb765640d2fa284398fca0ea866b734fa731c1ea3523527acabaf",
+    "frontend/__tests__/lib/marketStreamController9525.test.ts": "a899ecc7da9105abd41e73e4fc043daeec3d3c0668d61b0e0823af5791f483e2"
+  }
+}
