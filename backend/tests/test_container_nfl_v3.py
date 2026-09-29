@@ -388,6 +388,15 @@ class _Session:
             self.writes.append(stmt)
             return _Result([])
         self.reads.append((sql, params))
+        # Composition with #9651 / #9217 (authority): assemble_container asks
+        # whether the correction ledger is migrated (answered: not here, the
+        # old pass) and which markets' receipts another phase owns (none).
+        if sql.startswith("SELECT to_regclass('public.container_corrections')"):
+            self.reads.pop()
+            return _Result([(False, False)])
+        if sql.startswith("SELECT market_id FROM market_match_receipts"):
+            self.reads.pop()
+            return _Result([])
         if sql == EVENTS_FOR_CONTESTS_SQL:
             ids = set(params["contest_ids"])
             return _Result([self._event(r) for r in self.events if r.statpal_fixture_id in ids])
