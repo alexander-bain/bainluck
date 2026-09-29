@@ -23,6 +23,10 @@ THE CASES (Kalshi, the real `_run_kalshi_ws_consumer`):
                                    one frame on its market channel, carrying
                                    the stored `last_updated` of that row, and
                                    the row was already committed when it went.
+    the_tick_that_changed_nothing  Same price, same book → the row is written
+                                   (liveness) but no frame (ux, #9526). The
+                                   book-only arm needs Postgres: see
+                                   integration/test_ws_quote_moved_9484_pg.py.
     the_settled_row .............. #5411 refuses the write (0 rows returned) →
                                    no frame. A buffered id is not evidence.
     the_commit_that_failed ....... The first commit fails → no frame; the retry
@@ -82,7 +86,8 @@ SETTLE = json.dumps({
 # ------------------------------------------------------------- the rig ----
 
 
-def _database(tmp_path, resolution_source=None):
+def _database(tmp_path, resolution_source=None, current_probability=0.30,
+              book=(None, None), price_changed_at=None):
     """A file-backed SQLite DB holding the one market and its one outcome."""
     url = f"sqlite:///{tmp_path / 'ws.db'}"
     engine = create_engine(url)
@@ -106,7 +111,9 @@ def _database(tmp_path, resolution_source=None):
         ))
         conn.execute(insert(FuturesOutcome.__table__).values(
             id=OUTCOME_ID, market_id=MARKET_ID, external_id=TICKER,
-            name="Yes", current_probability=0.30,
+            name="Yes", current_probability=current_probability,
+            current_yes_bid=book[0], current_yes_ask=book[1],
+            price_changed_at=price_changed_at,
             resolution_source=resolution_source,
         ))
     return engine
@@ -365,6 +372,34 @@ class TestTheKalshiSocketSaysWhichMarketMoved:
         # failed attempt was discarded, not carried into the next commit.
         assert len(published) == 1, published
         assert published[0][2] == pytest.approx(0.42)
+
+    async def test_the_tick_that_changed_nothing(self, monkeypatch, tmp_path):
+        """ux's #9526 finding: the same quote again is written, never signalled.
+
+        The row already holds the tick's price (0.42, the 0.40/0.44 midpoint)
+        and its book. The write still lands — `last_updated` is liveness — but
+        no frame goes, so no held page re-reads an unchanged row.
+        """
+        moved_at = datetime(2026, 9, 1, tzinfo=timezone.utc)
+        # The midpoint exactly as the socket computes it: SQLite ignores
+        # NUMERIC(7, 6), so it compares the raw float, not the stored rounding
+        # (the Postgres file covers that).
+        engine = _database(
+            tmp_path, current_probability=(0.40 + 0.44) / 2, book=(0.40, 0.44),
+            price_changed_at=moved_at,
+        )
+        published, stats = await _drive_kalshi(monkeypatch, engine, [TICK])
+
+        assert stats["errors"] == 0
+        assert published == []
+        assert stats["quotes_unchanged"] == 1
+        # Written, not skipped: the liveness stamp moved, the change stamp did not.
+        assert _as_utc(
+            _stored(engine, "futures_outcomes", "last_updated", OUTCOME_ID)
+        ) > moved_at
+        assert _as_utc(
+            _stored(engine, "futures_outcomes", "price_changed_at", OUTCOME_ID)
+        ) == moved_at
 
     async def test_the_standalone_market(self, monkeypatch, tmp_path):
         engine = _database(tmp_path)

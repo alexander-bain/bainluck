@@ -43,7 +43,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import Numeric, case, cast, func, literal
+from sqlalchemy import Numeric, case, cast, func, literal, or_, select
 
 #: The stored type of `FuturesOutcome.current_probability`. Comparisons happen
 #: at the precision the database actually keeps, never at the provider's.
@@ -77,3 +77,48 @@ def price_changed_at_value(current_col: Any, stamp_col: Any, new_probability: An
         ),
         else_=stamp_col,
     )
+
+
+def quote_moved_column(table: Any, book: tuple[Any, Any] | None = None) -> Any:
+    """A RETURNING column: did this UPDATE change what a reader is served? #9484.
+
+    A socket writer stamps ``last_updated`` on every tick, moved or not — the
+    playoff grid reads it as liveness (module docstring) — so "the UPDATE
+    returned a row" does not mean "the quote changed". Sending a market
+    invalidation for every returned row made most frames noise: on
+    ``/futures/63140248`` 7 of 11 frames were for an outcome whose price never
+    moved (ux, #9526), and each one costs a held page a fresh read pair (#9536).
+
+    THE PRICE ARM IS THE STAMP ABOVE, NOT A SECOND COMPARISON. The writer sets
+    ``last_updated = now()`` and ``price_changed_at`` through
+    :func:`price_changed_at_value`, which is ``now()`` exactly when the stored
+    price changed. Both are the one transaction clock, so the returned values are
+    equal iff this transaction moved the price — the precision trap is answered
+    once, where it already is.
+
+    THE BOOK ARM (``book=(yes_bid, yes_ask)``, only when the write carries both
+    sides). A book can widen around an unchanged midpoint, and the serve path
+    reads the book (``_leg_prices_an_empty_book``, #6676), so a book-only move is
+    a served change. RETURNING only sees the new row; a scalar subquery inside it
+    reads the statement's snapshot, which in Postgres is the row BEFORE this
+    UPDATE. Compared at the columns' own types, as the price is.
+    SQLite evaluates that subquery after the write (it sees the new row), so on
+    SQLite this arm is always false — the Postgres test is its evidence.
+    """
+    moved = table.c.price_changed_at == table.c.last_updated
+    if book is not None:
+        before = table.alias("quote_before")
+        bid, ask = before.c.current_yes_bid, before.c.current_yes_ask
+        book_moved = (
+            select(
+                or_(
+                    bid.is_distinct_from(cast(literal(book[0]), bid.type)),
+                    ask.is_distinct_from(cast(literal(book[1]), ask.type)),
+                )
+            )
+            .where(before.c.id == table.c.id)
+            .correlate(table)
+            .scalar_subquery()
+        )
+        moved = or_(moved, book_moved)
+    return moved.label("quote_moved")
