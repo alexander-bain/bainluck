@@ -75,6 +75,15 @@ from typing import Any, Iterable, Optional
 from sqlalchemy import text
 
 from app.utils.container_class import MemberEvidence, classify_member
+from app.utils.container_corrections import (
+    WITHHELD_WITHDRAWN,
+    bump_revision,
+    correction_schema_present,
+    current_members,
+    delete_member_edges,
+    lock_container_chain,
+    withdrawn_members,
+)
 from app.utils.market_identity import ticker_game_date
 from app.utils.container_graph import (
     ASSEMBLY_WRITABLE_KINDS,
@@ -102,6 +111,10 @@ logger = logging.getLogger(__name__)
 #: D51. What to run to undo one assembly pass. Quoted in the alex-inbox note
 #: alongside the pass's own counts, so the undo is never reconstructed from
 #: memory at the moment it is needed.
+#:
+#: ``container_corrections`` is deliberately NOT in it (#9651): a withdrawal is
+#: a decision, not a pass's output, and undoing a pass must not quietly undo
+#: the decisions that bound it.
 UNDO_LINE = (
     "DELETE FROM event_edges WHERE parent_type = 'container' "
     "AND parent_id = :container_id AND source = :source; "
@@ -171,6 +184,20 @@ class AssemblyReport:
     rejected: dict = field(default_factory=dict)
     unresolved: list = field(default_factory=list)
     errors: list = field(default_factory=list)
+    #: #9651. ``absent`` until the correction migration is applied, and then
+    #: ``honoured``: the pass says which rule it ran under, so "no withdrawal
+    #: bound" and "there was no ledger to read" are different sentences.
+    corrections: str = "absent"
+    #: Candidates the evidence proved but a standing withdrawal refused.
+    withdrawn: list = field(default_factory=list)
+    #: Edges for withdrawn members found in place and removed by this pass.
+    purged_withdrawn: int = 0
+    #: Members new to this container, and members whose section moved.
+    added: int = 0
+    reclassified: int = 0
+    #: The container's ``membership_revision`` after this pass; None when the
+    #: pass changed nothing a reader sees, or the column is not migrated.
+    revision: Optional[int] = None
 
     def as_dict(self) -> dict:
         return {
@@ -182,6 +209,12 @@ class AssemblyReport:
             "rejected": dict(sorted(self.rejected.items())),
             "unresolved": self.unresolved[:50],
             "errors": self.errors[:20],
+            "corrections": self.corrections,
+            "withdrawn": self.withdrawn[:50],
+            "purged_withdrawn": self.purged_withdrawn,
+            "added": self.added,
+            "reclassified": self.reclassified,
+            "revision": self.revision,
         }
 
 
@@ -801,6 +834,15 @@ async def assemble_container(session, container, candidates: list[Candidate]) ->
     class and confidence in place instead of doubling every member — which is
     the failure that would make the hub grow without bound and look, from the
     outside, like the container was working unusually well.
+
+    A WITHDRAWN MEMBER STAYS WITHDRAWN (#9651). Once the correction ledger is
+    migrated, the pass locks the container chain root-first and only THEN reads
+    the ledger, so a withdrawal committed while this pass was gathering is
+    read, and one arriving mid-write waits for this commit and then deletes the
+    edge. A candidate with a standing withdrawal is counted in ``withdrawn`` and
+    never edged; an edge found in place for one is removed. Nothing here
+    retires a member the pass merely failed to see — see
+    ``app/utils/container_corrections.py``.
     """
     from sqlalchemy.dialects.postgresql import insert as pg_insert
 
@@ -808,6 +850,15 @@ async def assemble_container(session, container, candidates: list[Candidate]) ->
 
     report = AssemblyReport(container_id=container.id, slug=container.slug)
     now = datetime.now(timezone.utc)
+
+    schema = await correction_schema_present(session)
+    withdrawn: set = set()
+    existing: dict = {}
+    if schema.ledger:
+        report.corrections = "honoured"
+        await lock_container_chain(session, container.id, with_columns=schema.columns)
+        withdrawn = await withdrawn_members(session, container.id)
+        existing = await current_members(session, container.id)
 
     # One existence query per child type, not one per candidate. A COUNT in a
     # loop re-scans the whole table when the key is a Join Filter rather than
@@ -824,6 +875,24 @@ async def assemble_container(session, container, candidates: list[Candidate]) ->
 
     for candidate in candidates:
         try:
+            if (candidate.child_type, candidate.child_id) in withdrawn:
+                # Proved by the evidence, refused by a standing decision. No
+                # receipt: `market_match_receipts` is one row per market and
+                # this would overwrite how the market actually matched.
+                report.withdrawn.append(
+                    {
+                        "child_type": candidate.child_type,
+                        "child_id": candidate.child_id,
+                        "name": candidate.name,
+                        "source": candidate.source,
+                        "external_id": candidate.external_id,
+                    }
+                )
+                report.rejected[WITHHELD_WITHDRAWN] = (
+                    report.rejected.get(WITHHELD_WITHDRAWN, 0) + 1
+                )
+                continue
+
             receipt = None
             if candidate.child_type == "market":
                 receipt = MatchReceipt(
@@ -945,6 +1014,22 @@ async def assemble_container(session, container, candidates: list[Candidate]) ->
         )
         await session.execute(stmt)
         report.edges_written += len(batch)
+
+    if schema.ledger:
+        stale = withdrawn & set(existing)
+        if stale:
+            report.purged_withdrawn = await delete_member_edges(
+                session, container.id, stale
+            )
+        for row in ordered:
+            key = (row["child_type"], row["child_id"])
+            if key not in existing:
+                report.added += 1
+            elif existing[key] != row["class"]:
+                report.reclassified += 1
+        changed = report.added or report.reclassified or report.purged_withdrawn
+        if schema.columns and changed:
+            report.revision = await bump_revision(session, container.id)
 
     if receipts:
         report.receipts_written = await flush_receipts(session, receipts)
