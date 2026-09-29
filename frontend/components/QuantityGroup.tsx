@@ -116,9 +116,10 @@ interface QuantityGroupProps {
   wideLabels?: boolean;
 }
 
-// #9576 — the rows' boundary rule, not a bare round: a still-trading 0.995 is
-// ">99%", never "100%". /futures/59699693 (Hurricane Polo) printed "≥ 5 · 100%"
-// on this map directly above its own All Outcomes row reading ">99%".
+// #9576 — the rows' boundary rule, not a bare round: a still-trading 0.995
+// reads as above 99, never 100. /futures/59699693 (Hurricane Polo) printed
+// 100 on every rung of this map, directly above All Outcomes rows that said
+// otherwise. The boundary's spelling lives only in probabilityDisplay.ts.
 function pct(p: number | null): string {
   return p == null ? "—" : formatProbabilityPercent(p);
 }
