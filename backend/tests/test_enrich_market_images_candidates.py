@@ -94,9 +94,9 @@ async def test_the_qualified_query_goes_first_and_the_bare_one_is_never_asked(ri
 
     stats = await enrich_markets.enrich_market_images(limit=10)
 
-    assert asked == ["Presidents Cup golf"], (
-        "the category-qualified query must be the one that fetched the picture"
-    )
+    assert asked == [
+        "Presidents Cup golf"
+    ], "the category-qualified query must be the one that fetched the picture"
     assert stats["found"] == 1 and stats["requests"] == 1
     assert session.updates == 1
 
@@ -211,7 +211,10 @@ class TestTheRepickInterlock:
         # The comparison is only worth anything if the "old" side is really the
         # query that fetched the Thunderbirds and the swimmer.
         script = self._script()
-        assert script._legacy_image_keywords("Presidents Cup Winner", "golf") == "Presidents Cup"
+        assert (
+            script._legacy_image_keywords("Presidents Cup Winner", "golf")
+            == "Presidents Cup"
+        )
         assert (
             script._legacy_image_keywords(
                 "Will Taylor Swift meet with Pope Leo XIV before 2027?", "entertainment"
@@ -229,7 +232,11 @@ class TestTheRepickInterlock:
     def test_the_default_scope_is_exactly_the_two_filed_rows(self):
         script = self._script()
         assert script._parse_ids(None) == (16757297, 109295)
-        assert script._parse_ids("1, 2 3") == (1, 2, 3)
+        import pytest
+
+        assert script._parse_ids("109295") == (109295,)
+        with pytest.raises(ValueError, match="only narrow"):
+            script._parse_ids("1, 2 3")
 
     def test_the_producer_app_is_the_main_app_not_heavy(self):
         # `app.tasks.enrich_market_images` is not in HEAVY_TASKS, so the deploy
@@ -240,3 +247,115 @@ class TestTheRepickInterlock:
         script = self._script()
         assert "app.tasks.enrich_market_images" not in HEAVY_TASKS
         assert script.PRODUCER_APP == "bainluck"
+
+
+class TestPinnedImageRepair:
+    """SQLite executes the portable UPDATE predicates; not a PG scheduling test."""
+
+    @staticmethod
+    def specimen(script, market_id=109295, **changes):
+        from types import SimpleNamespace
+
+        name, category, photo = script.PINNED_SPECIMENS[market_id]
+        values = dict(
+            id=market_id,
+            name=name,
+            llm_sport_category=category,
+            status="open",
+            image_url=f"https://images.pexels.com/photos/{photo}/pexels-photo-{photo}.jpeg?auto=compress",
+            image_width=940,
+            image_height=650,
+        )
+        values.update(changes)
+        return SimpleNamespace(**values)
+
+    def test_replaced_image_or_changed_identity_is_out_of_scope(self):
+        script = TestTheRepickInterlock._script()
+        row = self.specimen(script)
+        assert script.is_filed_bad_image(row)
+        for changes in [
+            dict(name="Different question"),
+            dict(llm_sport_category="golf"),
+            dict(image_url=None),
+            dict(image_url="https://example.com/good.jpeg"),
+            dict(image_url=row.image_url.replace("images.pexels.com", "example.com")),
+        ]:
+            assert not script.is_filed_bad_image(self.specimen(script, **changes))
+
+    @staticmethod
+    def session(script, rows):
+        import sqlite3
+
+        db = sqlite3.connect(":memory:")
+        db.execute(
+            "CREATE TABLE futures_markets (id INTEGER PRIMARY KEY, name TEXT, llm_sport_category TEXT, status TEXT, image_url TEXT, image_width INTEGER, image_height INTEGER)"
+        )
+        db.execute(
+            f"CREATE TABLE {script.BACKUP_TABLE} (id INTEGER PRIMARY KEY, image_url TEXT, image_width INTEGER, image_height INTEGER)"
+        )
+        for row in rows:
+            db.execute(
+                "INSERT INTO futures_markets VALUES (?, ?, ?, ?, ?, ?, ?)",
+                tuple(getattr(row, c) for c in script.CAPTURED_COLUMNS),
+            )
+            db.execute(
+                f"INSERT INTO {script.BACKUP_TABLE} VALUES (?, ?, ?, ?)",
+                (row.id, row.image_url, row.image_width, row.image_height),
+            )
+        db.commit()
+
+        class Session:
+            async def execute(self, statement, params):
+                return db.execute(str(statement), params)
+
+            async def rollback(self):
+                db.rollback()
+
+        return db, Session()
+
+    def test_exact_backup_allows_clear_including_null_dimensions(self):
+        import asyncio
+
+        script = TestTheRepickInterlock._script()
+        row = self.specimen(script, image_width=None, image_height=None)
+        db, session = self.session(script, [row])
+        assert asyncio.run(script.clear_captured_rows(session, [row]))
+        assert db.execute("SELECT image_url FROM futures_markets").fetchone() == (None,)
+        assert db.execute(
+            f"SELECT image_url FROM {script.BACKUP_TABLE}"
+        ).fetchone() == (row.image_url,)
+
+    def test_changes_after_snapshot_refuse_and_rollback_earlier_clear(self):
+        import asyncio
+
+        script = TestTheRepickInterlock._script()
+        rows = [self.specimen(script, 16757297), self.specimen(script)]
+        mutations = [
+            ("futures_markets", "name", "Different question"),
+            ("futures_markets", "llm_sport_category", "politics"),
+            ("futures_markets", "status", "resolved"),
+            ("futures_markets", "image_url", "https://example.com/good.jpeg"),
+            ("futures_markets", "image_width", 123),
+            ("futures_markets", "image_height", 456),
+            (script.BACKUP_TABLE, "image_url", "https://example.com/stale.jpeg"),
+            (script.BACKUP_TABLE, "image_width", 123),
+            (script.BACKUP_TABLE, "image_height", 456),
+        ]
+        for table, column, value in mutations:
+            db, session = self.session(script, rows)
+            # Simulate commit between operator snapshot/precheck and UPDATE.
+            db.execute(
+                f"UPDATE {table} SET {column} = ? WHERE id = ?", (value, rows[1].id)
+            )
+            db.commit()
+            assert not asyncio.run(script.clear_captured_rows(session, rows)), (
+                table,
+                column,
+            )
+            assert db.execute(
+                "SELECT image_url FROM futures_markets WHERE id = ?", (rows[0].id,)
+            ).fetchone() == (rows[0].image_url,)
+            assert db.execute(
+                f"SELECT {column} FROM {table} WHERE id = ?", (rows[1].id,)
+            ).fetchone() == (value,)
+            db.close()
