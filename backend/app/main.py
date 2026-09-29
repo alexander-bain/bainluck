@@ -28,7 +28,7 @@ if os.getenv("DYNO"):
 
 logger = logging.getLogger(__name__)
 
-from app.routes import containers, events, event_stream, sports, health, futures, admin, admin_analytics, admin_backfill_linkage, admin_backfill_odds, admin_judgments, admin_llm_diagnosis, admin_source_health, admin_rate_limit, admin_feed_config, admin_label_pass, admin_team_clusters, admin_cockpit, admin_file_issue, admin_cohort, auth, user, feed, market_moves, oscars, oscars_pool, golf, event, hub, march_madness, playoffs, tournaments, weather, economics, politics, entertainment, league_futures, predictions, og_image, teams, prop_families, feedback, calibration, source_intelligence, notifications, challenges, unsubscribe, telemetry
+from app.routes import containers, events, event_stream, market_stream, sports, health, futures, admin, admin_analytics, admin_backfill_linkage, admin_backfill_odds, admin_judgments, admin_llm_diagnosis, admin_source_health, admin_rate_limit, admin_feed_config, admin_label_pass, admin_team_clusters, admin_cockpit, admin_file_issue, admin_cohort, auth, user, feed, market_moves, oscars, oscars_pool, golf, event, hub, march_madness, playoffs, tournaments, weather, economics, politics, entertainment, league_futures, predictions, og_image, teams, prop_families, feedback, calibration, source_intelligence, notifications, challenges, unsubscribe, telemetry
 from app.services.database import init_db
 
 # Initialize Sentry error tracking
@@ -305,6 +305,7 @@ app.include_router(events.router, prefix="/api/events", tags=["Events"])
 # live/034 — SSE live push. Same `/api/events` prefix as the REST reader so a
 # client builds one base URL, not two.
 app.include_router(event_stream.router, prefix="/api/events", tags=["Events Live Stream"])
+app.include_router(market_stream.router, prefix="/api/markets", tags=["Market Quote Stream"])
 app.include_router(futures.router, prefix="/api/futures", tags=["Futures"])
 app.include_router(admin.router, prefix="/api/admin", tags=["Admin"], dependencies=ADMIN_ROUTER_DEPENDENCIES)
 app.include_router(admin_analytics.router, prefix="/api/admin", tags=["Admin Analytics"], dependencies=ADMIN_ROUTER_DEPENDENCIES)
