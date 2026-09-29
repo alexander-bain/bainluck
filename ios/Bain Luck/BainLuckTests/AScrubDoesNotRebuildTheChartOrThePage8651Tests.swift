@@ -117,8 +117,10 @@ final class AScrubDoesNotRebuildTheChartOrThePage8651Tests: XCTestCase {
         XCTAssertFalse(chart.contains("@BindingvarselectedPlayPoint"), "the scrubbed moment is bound to a parent again")
         // #9185 — the fullscreen site draws `fullscreenReadout`'s card (the page's
         // card or the chart's own), so each site is counted by its own spelling.
-        XCTAssertEqual(chart.components(separatedBy: "ifletreadout{OddsChartSelectionReadout(selection:selection,readout:readout.finished(EventState.isFinished(status)),dataPoints:dataPoints,sportKey:sportKey)}").count - 1, 1,
-                       "the inline readout must be handed the scrub")
+        // #9517 — the inline chart has no resting readout; its scrub card is the
+        // selection overlay's `floatingCard` (TheInlineChartScrubShowsATooltip8651Tests).
+        XCTAssertEqual(chart.components(separatedBy: "OddsChartSelectionReadout(").count - 1, 1,
+                       "only the fullscreen chart rests a readout above its plot")
         XCTAssertEqual(chart.components(separatedBy: "OddsChartSelectionReadout(selection:selection,readout:card.finished(EventState.isFinished(status)),dataPoints:dataPoints,sportKey:sportKey,pageGaveCard:readout!=nil)").count - 1, 1,
                        "the fullscreen readout must be handed the scrub")
     }

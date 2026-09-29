@@ -126,7 +126,10 @@ final class ChartSelectionLeavesDataPlotStable8651Tests: XCTestCase {
 
     /// Snapshotting explicitly redraws the hierarchy, so visual correctness is
     /// tested separately from the live body's no-rebuild assertion above.
-    func testMountedReadoutChangesWithSelectionAndReturnsToTheLiveEdge() throws {
+    /// #9517 — released, the readout LEAVES: at rest the page's hero already
+    /// prints the live edge (60%), and the chart repeating it under the hero is
+    /// what Alex's rage shake #162 circled.
+    func testMountedReadoutFollowsSelectionAndLeavesWithTheFinger() throws {
         let payload = try history()
         let selection = OddsChartSelection()
         let chart = OddsChartView(eventId: 1, status: "live", homeTeamName: "Home", awayTeamName: "Away",
@@ -147,8 +150,9 @@ final class ChartSelectionLeavesDataPlotStable8651Tests: XCTestCase {
         selection.end()
         pump(host)
         let restingText = try visibleText(host, name: "released")
-        XCTAssertTrue(restingText.contains("60%"), restingText)
-        XCTAssertFalse(restingText.contains("43%"), "the readout did not return to the live edge")
+        XCTAssertFalse(restingText.contains("43%"), "the scrubbed moment outlived the finger: \(restingText)")
+        XCTAssertFalse(restingText.contains("60%"),
+                       "the chart rests a readout that repeats the hero again (#9517): \(restingText)")
     }
 
     func testEnrichmentMemoInvalidatesOnHistoryAndAcceptedLiveFrames() throws {

@@ -388,6 +388,12 @@ struct OddsChartView: View {
     /// the top of the chart is — which is whenever there is a chart to press.
     /// The page builds it (it owns the resting last-point), the chart places it
     /// and hands it the scrubbed moment (#8651: `showing(_:)`).
+    ///
+    /// #9517 — the inline chart no longer draws it AT REST. Alex's rage shake
+    /// #162 (Bears–Eagles MNF, build 31) circled that row and the hero: "Q2
+    /// 6:14 · 7 – 0 · Bears 61% — Eagles 39%" under a hero saying the same.
+    /// Under a finger it floats over the plot (`inlineScrubCard`), so the plot
+    /// still never moves. Fullscreen covers the hero and keeps its resting row.
     var readout: GamePlayCardView?
     /// #8481 — the page's one All / Since Start choice, which this chart's
     /// picker writes and the Score Differential chart below also reads. It was a
@@ -750,7 +756,7 @@ struct OddsChartView: View {
                         .frame(maxWidth: .infinity)
                         .frame(height: chartHeight)
                 } else {
-                    if let readout { OddsChartSelectionReadout(selection: selection, readout: readout.finished(EventState.isFinished(status)), dataPoints: dataPoints, sportKey: sportKey) }
+                    // #9517 — no readout row here at rest: the hero above says it.
                     // Chart with vertical team labels alongside Y-axis
                     HStack(spacing: 0) {
                         // Vertical team labels on left (#2903 — the run is stated so
@@ -1001,9 +1007,9 @@ struct OddsChartView: View {
         ).pinningProbabilities()
     }
 
-    /// #8651 — the inline chart's scrub tooltip: the fullscreen chart's own
-    /// card, floating, wherever the page gave no readout of its own. Nil when
-    /// the page gave one (#925's card above the plot already rewrites).
+    /// #8651 — the inline chart's scrub tooltip: the fullscreen chart's card,
+    /// floating. #9517 — the page's card too, when it gave one: that card no
+    /// longer rests above the plot, so this is the only place a scrub reads.
     static func inlineScrubCard(
         page: GamePlayCardView?,
         homeTeam: String?,
@@ -1013,9 +1019,8 @@ struct OddsChartView: View {
         awayLogo: String?,
         finished: Bool
     ) -> GamePlayCardView? {
-        guard page == nil else { return nil }
-        return fullscreenReadout(page: nil, homeTeam: homeTeam, awayTeam: awayTeam, colors: colors,
-                                 homeLogo: homeLogo, awayLogo: awayLogo)?.finished(finished).floating()
+        fullscreenReadout(page: page, homeTeam: homeTeam, awayTeam: awayTeam, colors: colors,
+                          homeLogo: homeLogo, awayLogo: awayLogo)?.finished(finished).floating()
     }
 
     // MARK: - Time Range Picker

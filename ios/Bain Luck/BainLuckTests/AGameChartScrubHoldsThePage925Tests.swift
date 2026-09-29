@@ -182,15 +182,16 @@ final class AGameChartScrubHoldsThePage925Tests: XCTestCase {
         #endif
     }
 
-    /// The readout lives above the plot, and the page no longer draws its own
-    /// copy below the chart.
-    func testTheReadoutIsDrawnAboveThePlotNotBelowTheChart() throws {
+    /// The page no longer draws its own copy below the chart. #9517 — nor does
+    /// the inline chart draw it above the plot at rest (the hero says it); the
+    /// page's card reaches the chart and floats over the plot under a finger.
+    func testTheReadoutFloatsOverThePlotNotBelowTheChart() throws {
         let chart = try code(at: "Bain Luck/Components/OddsChartView.swift")
-        guard let readout = chart.range(of: "if let readout { OddsChartSelectionReadout(selection: selection, readout: readout.finished(EventState.isFinished(status)), dataPoints: dataPoints, sportKey: sportKey) }"),
-              let plotRow = chart.range(of: "ChartGutter.run(chartHeight: chartHeight, verticalPadding: 8)") else {
-            return XCTFail("the chart no longer places its readout")
-        }
-        XCTAssertTrue(readout.lowerBound < plotRow.lowerBound, "the readout is not above the plot")
+        XCTAssertFalse(chart.contains("if let readout { OddsChartSelectionReadout("),
+                       "the inline chart rests the page's readout above its plot again (#9517)")
+        XCTAssertTrue(chart.contains("floatingCard: Self.inlineScrubCard(")
+                      && chart.contains("page: readout, homeTeam: homeTeamName"),
+                      "the page's readout no longer reaches the inline chart's scrub")
 
         let page = try code(at: "Bain Luck/Views/EventDetailView.swift")
         XCTAssertTrue(page.contains("readout: (isLive || isFinished)"),

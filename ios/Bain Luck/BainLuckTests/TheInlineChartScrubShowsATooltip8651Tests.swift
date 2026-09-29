@@ -40,10 +40,18 @@ final class TheInlineChartScrubShowsATooltip8651Tests: XCTestCase {
         XCTAssertNil(card.lastPoint, "it shows only the scrubbed moment, never a resting one")
     }
 
-    /// #925's card above the plot already rewrites under the finger: never two.
-    func testAChartThePageGaveACardFloatsNone() {
-        let page = GamePlayCardView(homeTeam: "Padres", awayTeam: "Cubs", lastPoint: point())
-        XCTAssertNil(card(page: page))
+    /// #9517 — the page's card no longer rests above the plot, so it is the one
+    /// that floats: its names and logos, both numbers, only under a finger.
+    func testAChartThePageGaveACardFloatsThePagesCard() throws {
+        let page = GamePlayCardView(homeTeam: "Padres", awayTeam: "Cubs", homeTeamLogo: "sd.png",
+                                    awayTeamLogo: "chc.png", lastPoint: point())
+        let card = try XCTUnwrap(card(page: page), "a scrub on a live page must show its moment")
+        XCTAssertTrue(card.floats)
+        XCTAssertTrue(card.pinsProbabilities, "a scoring play must not take the numbers' place")
+        XCTAssertEqual(card.homeTeam, "Padres")
+        XCTAssertEqual(card.awayTeamLogo, "chc.png")
+        XCTAssertNil(card.selectedPoint)
+        XCTAssertEqual(self.card(page: page, finished: true)?.gameFinished, true)
     }
 
     func testNoNamesNoCard() {
