@@ -18,6 +18,7 @@ import {
   teamShortName,
   teamShortNames,
 } from "@/lib/teamShortName";
+import { marginSideLabels } from "@/components/MarketMapSection";
 
 const PRODUCTION_NAMES: ReadonlyArray<[string, string, string]> = [
   ["Dubai Basketball", "basketball_euroleague", "Basketball"],
@@ -25,6 +26,9 @@ const PRODUCTION_NAMES: ReadonlyArray<[string, string, string]> = [
   ["Valencia Basket", "basketball_euroleague", "Basket"],
   ["Modo Hockey", "icehockey_sweden_allsvenskan", "Hockey"],
   ["TUTO Hockey", "icehockey_mestis", "Hockey"],
+  // Re-read 2026-09-29 with the non-English sport words too (shopper pass 0126,
+  // `/events/15318706`, a EuroLeague final that printed "Bàsquet" / "BÀS").
+  ["FC Barcelona Bàsquet", "basketball_euroleague", "Bàsquet"],
 ];
 
 describe("#5634 — a trailing sport word never stands for the club", () => {
@@ -50,6 +54,7 @@ describe("#5634 — a trailing sport word never stands for the club", () => {
     expect(teamCrestBadge("Valencia Basket", "basketball_euroleague")).toBe("VAL");
     expect(teamCrestBadge("Modo Hockey", "icehockey_sweden_allsvenskan")).toBe("MOD");
     expect(teamCrestBadge("TUTO Hockey", "icehockey_mestis")).toBe("TUT");
+    expect(teamCrestBadge("FC Barcelona Bàsquet", "basketball_euroleague")).toBe("BAR");
   });
 
   it("the specimen's hero pair names Dubai, and Real Madrid is untouched", () => {
@@ -72,4 +77,25 @@ describe("#5634 — a trailing sport word never stands for the club", () => {
     expect(teamShortName("Boston Celtics", null, "basketball_nba")).toBe("Celtics");
     expect(teamShortName("Toronto Maple Leafs", null, "icehockey_nhl")).toBe("Maple Leafs");
   });
+
+  it("an accented sport word is folded before the lookup (#5634, pass 0126)", () => {
+    // `alphanumeric` alone turns "Bàsquet" into "Bsquet", which matches nothing.
+    for (const w of ["Bàsquet", "BÀSQUET", "Basquet", "bàsquet"]) {
+      expect(isNonDistinctiveTrailingWord(w)).toBe(true);
+    }
+    const pair = teamShortNames(
+      { name: "Dubai Basketball" },
+      { name: "FC Barcelona Bàsquet" },
+      "basketball_euroleague",
+    );
+    expect(pair.away).toBe("FC Barcelona Bàsquet");
+    expect(pair.away).not.toBe("Bàsquet");
+    // The margin card's axis ends read "BÀS by 18+" on the specimen.
+    const margin = marginSideLabels("Dubai Basketball", "FC Barcelona Bàsquet", undefined, undefined, "basketball_euroleague");
+    expect(margin.away).toBe("FC Barcelona Bàsquet");
+    // The fold feeds only this lookup: an accented NICKNAME still shortens.
+    expect(teamShortName("Club Atlético Tigres")).toBe("Tigres");
+    expect(teamShortName("Montréal Canadiens", null, "icehockey_nhl")).toBe("Canadiens");
+  });
 });
+

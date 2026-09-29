@@ -124,7 +124,17 @@ const SPORT_WORD_SUFFIXES: ReadonlySet<string> = new Set([
   "basketball", // 2  Dubai Basketball, Paris Basketball
   "basket", // 1  Valencia Basket
   "hockey", // 2  Modo Hockey, TUTO Hockey
+  // Re-measured 2026-09-29 across the Catalan/Spanish/Italian/Portuguese forms
+  // too (bàsquet, baloncesto, pallacanestro, basquete, hóquei, ...): one more
+  // name, FC Barcelona Bàsquet, printed "Bàsquet" / "BÀS" on a EuroLeague final.
+  // The lookup folds accents first — `alphanumeric` alone makes it "Bsquet".
+  "basquet", // 1  FC Barcelona Bàsquet
 ]);
+
+/** "Bàsquet" -> "Basquet": NFD, then drop the combining marks. */
+function foldAccents(token: string): string {
+  return token.normalize("NFD").replace(/\p{M}/gu, "");
+}
 
 function alphanumeric(token: string): string {
   return token.replace(/[^A-Za-z0-9]/g, "");
@@ -404,7 +414,7 @@ export function isNonDistinctiveTrailingWord(token: string): boolean {
   if (bare.length === 0) return true;
   if (bare.length <= 2) return true;
   if (CLUB_TYPE_SUFFIXES.has(bare.toLowerCase())) return true;
-  if (SPORT_WORD_SUFFIXES.has(bare.toLowerCase())) return true;
+  if (SPORT_WORD_SUFFIXES.has(alphanumeric(foldAccents(token)).toLowerCase())) return true;
   // Squad markers: "U21", "U23", and bare reserve numbers.
   if (/^u\d{1,2}$/i.test(bare)) return true;
   if (/^\d+$/.test(bare)) return true;
