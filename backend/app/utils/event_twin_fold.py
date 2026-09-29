@@ -151,6 +151,7 @@ number on them.
 
 from __future__ import annotations
 
+import bisect
 import logging
 import re
 from dataclasses import dataclass, field
@@ -1902,6 +1903,38 @@ def _anchored_claim_name_clusters(
 
 _CATCHALL_SUFFIX = "_other"
 
+CATCHALL_SHADOW_KICKOFF_DRIFT = timedelta(minutes=90)
+"""How far a venue's own id-less catch-all row may sit from the league row it is. #9686.
+
+ONE bound, asked in two places about one question — "is this Polymarket shadow
+that scheduled game?": the matcher's catch-all shadow arm (#7904), which moves
+the shadow's markets onto the league row, and the catch-all fold below, which
+joins the shadow once it carries nothing. Both used to ask it at the venue's
+minute, and on NHL opening night Polymarket does not list the minute:
+
+    Gamma 994277 Islanders vs. Rangers       00:00Z  ESPN 401892452  23:30Z  30 min
+    Gamma 994283 Golden Knights vs. Kraken   01:40Z  ESPN 401892454  01:00Z  40 min
+
+(the other 20 of the 22 opening-fortnight shadows sit at ESPN's exact minute,
+read 2026-09-29 21:2xZ). So the Rangers' home opener would have been two cards:
+the NHL row with no Polymarket, and `OTHER HOCKEY · Rangers v Islanders` at
+8:00 PM ET with it.
+
+WHY 90 AND NOT THE SPECIMEN. The bound sits between the 40-minute reading and
+the nearest thing that is NOT one game: two real games between the same pair.
+A traditional doubleheader starts game two about 30 minutes after game one ENDS
+(the #8547 Orioles–Yankees pair was exactly 3.0h apart) and a split one hours
+later; nothing starts one pair twice inside 90 minutes. It is also the same 90
+minutes `_PM_VENUE_NAMES_ANOTHER_GAME` already calls "not a timing wobble" from
+the other side. And it is never the only guard: the matcher still needs EXACTLY
+ONE covered-league row in the window, and the fold still needs both clubs named,
+the provenance asymmetry and a single claimant.
+
+NOT SOCCER. Soccer's catch-all rows carry the 30-minute re-mint class #5918
+refuses on purpose (see :data:`SOCCER_KICKOFF_DRIFT`), so a soccer shadow keeps
+its measured five minutes and this bound never reaches it.
+"""
+
 
 def _catchall_sport_prefix(sport_key: Optional[str]) -> Optional[str]:
     """The SPORT behind a `*_other` catch-all key, or ``None`` for a real league.
@@ -2080,7 +2113,10 @@ def _catchall_claim_names_league_row(
     same_away = identity[0] == league_identity[0]
     same_home = identity[1] == league_identity[1]
     if same_away and same_home:
-        return False
+        # At the same minute the exact-identity pass owns this pair. At another
+        # minute — only ever an empty shadow asked across
+        # CATCHALL_SHADOW_KICKOFF_DRIFT (#9686) — nothing else can reach it.
+        return identity[2] != league_identity[2]
     both_differ = not same_away and not same_home
     if both_differ and not (league_key and _both_sides_may_differ(league_key)):
         return False
@@ -2141,6 +2177,13 @@ def _catchall_name_variant_merges(
     byte-equal squashed names to :func:`soccer_pair_matches`, the same predicate
     `_merge_soccer_name_variants` has used within a league since #5918.
 
+    #9686 — ONE EXCEPTION TO "THE MINUTE". A non-soccer catch-all cluster that
+    carries NOTHING (:func:`_group_carries_oriented_readings` false — the state
+    the matcher's shadow arm leaves behind once it has moved the markets off) is
+    asked across :data:`CATCHALL_SHADOW_KICKOFF_DRIFT` instead, because its
+    minute is only the venue's listing. Every other clause below still decides,
+    and both ambiguity refusals now also cover two league rows in that window.
+
     Three refusals, each of which leaves both rows standing (two cards, today's
     behaviour) rather than guessing:
 
@@ -2163,6 +2206,18 @@ def _catchall_name_variant_merges(
         )
     if not league_by_minute:
         return []
+    league_minutes = sorted(league_by_minute)
+
+    def minutes_to_ask(index: int, minute, prefix: str) -> list:
+        # #9686: an EMPTY non-soccer shadow is asked across
+        # CATCHALL_SHADOW_KICKOFF_DRIFT, because its minute is the venue's
+        # listing and nothing it holds can land on a club. Everyone else keeps
+        # the exact minute. Bisected: this runs on the `/api/feed` hot path.
+        if prefix == "soccer" or _group_carries_oriented_readings(clusters[index]):
+            return [minute]
+        lo = bisect.bisect_left(league_minutes, minute - CATCHALL_SHADOW_KICKOFF_DRIFT)
+        hi = bisect.bisect_right(league_minutes, minute + CATCHALL_SHADOW_KICKOFF_DRIFT)
+        return league_minutes[lo:hi]
 
     def names(index: int) -> tuple:
         rep = _group_representative(clusters[index])
@@ -2183,8 +2238,10 @@ def _catchall_name_variant_merges(
                 # `None` is a real league; `""` is a bare `_other` key naming no
                 # sport, and `startswith("")` would admit every league there is.
                 continue
-            for target, target_key, target_identity in league_by_minute.get(
-                identity[2], ()
+            for target, target_key, target_identity in (
+                entry
+                for minute in minutes_to_ask(index, identity[2], prefix)
+                for entry in league_by_minute[minute]
             ):
                 if target == index or not target_key.startswith(prefix):
                     continue
