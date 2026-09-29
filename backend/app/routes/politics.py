@@ -49,8 +49,18 @@ router = APIRouter()
 # Sub-theme classification
 # ---------------------------------------------------------------------------
 
+# #9477 residual — `kxelection` is gone from this table, and from classification
+# altogether. Its only two series ever, on production 2026-09-28, are
+# KXELECTIONEMERGENCY ("Will Trump declare an election emergency?") and
+# KXELECTIONBILL ("Will the SAVE America Act become law?"): an administration
+# question and a bill, both Policy by NAME. The prefix filed them presidential
+# ahead of any name line, so once #9477 moved the administration out of the
+# 2028 race they were the two Trump-administration questions left in its
+# Related Markets pool. Both rows carry `llm_sport_category = 'politics'`, so
+# the category arm still fetches them and the LIKE arm bought nothing (#9165).
+# 🔴 Do not restore it as a label: "election" is not "presidential election",
+# and the name lines read the difference.
 _THEME_BY_TICKER: list[tuple[str, str]] = [
-    ("kxelection", "presidential"),
     ("kxsenate", "congressional"),
     ("kxhouse", "congressional"),
     ("kxcongress", "congressional"),
