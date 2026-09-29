@@ -18,7 +18,7 @@ from datetime import datetime, timezone, timedelta
 from types import SimpleNamespace
 from typing import Optional
 
-from sqlalchemy import select, or_, and_, func, delete, case, update, text, bindparam, String
+from sqlalchemy import select, or_, and_, func, delete, case, cast, update, text, bindparam, String
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import defer, joinedload
 from sqlalchemy.sql.functions import FunctionElement
@@ -3120,6 +3120,44 @@ async def _prune_orphaned_blend_source(
     return changed
 
 
+async def _delete_departing_market_snapshots(
+    session, event_id: int, source: str, market_ids
+) -> int:
+    """Delete the win-prob rows the DEPARTING markets wrote on ``event_id``, and
+    nothing else. #9504.
+
+    Phase 1.5 used to delete every ``source`` row on the event when it moved one
+    market off it. An event holds several markets of one source — a soccer
+    match's Polymarket moneyline beside its Exact Score / Halftime Result books —
+    so unlinking one derivative erased the match line's whole history, and the
+    derivative was re-linked and unlinked again every cycle (684 unlinks over 65
+    events in 24h; SC Braga v Sporting CP drew sportsbooks only).
+
+    Every row is attributable: each writer stamps ``game_state.market_id``
+    (78,625 of 78,625 Polymarket rows in the 48h to 2026-09-29 02:35Z). A row
+    with NO stamp cannot be attributed to a staying market either, so it goes
+    with the departing one — the old delete's behaviour, kept for exactly the
+    rows it was right about.
+    """
+    from app.models.models import WinProbSnapshot
+
+    ids = sorted({str(int(m)) for m in market_ids if m is not None})
+    if not ids:
+        return 0
+    # Compared as text: `->>` is text on Postgres, and the explicit cast keeps
+    # an integer-typed JSON read (SQLite's rail) from silently matching nothing.
+    stamped = WinProbSnapshot.game_state["market_id"].astext
+    stamped = cast(stamped, String)
+    result = await session.execute(
+        delete(WinProbSnapshot).where(
+            WinProbSnapshot.event_id == event_id,
+            WinProbSnapshot.source == source,
+            or_(stamped.in_(ids), stamped.is_(None)),
+        )
+    )
+    return result.rowcount or 0
+
+
 async def _cleanup_orphaned_blend_sources(session, time_remaining_fn=None, limit: int = 2000) -> int:
     """Backfill/clean EXISTING phantom PM source keys — events carrying a
     kalshi/polymarket key in win_probability_sources with no linked market of
@@ -5876,8 +5914,8 @@ async def _phase15_revalidate(
     """
     # FuturesMarket and Event are no longer imported here: #2325 moved every
     # Phase 1.5 query into the module-level `_phase15_*` helpers, which import
-    # the models themselves. Only WinProbSnapshot is still read in this body.
-    from app.models.models import WinProbSnapshot
+    # the models themselves. #9504 moved the last one, WinProbSnapshot, into
+    # `_delete_departing_market_snapshots`.
 
     stats["funnel"].setdefault("stale_relinked", 0)
     stats["funnel"].setdefault("mislink_fixed", 0)
@@ -6205,8 +6243,17 @@ async def _phase15_revalidate(
                     stats["funnel"]["shadowed_futures_unlinked"] += 1
                 continue
 
-            matchup = extract_matchup_with_ticker_fallback(
-                market.name, external_id=market.external_id,
+            # #9504: the SEARCH copy, the one the forward path links with
+            # (#6134). Raw, a derivative's team_b is "Sporting CP - Exact
+            # Score", which no event row carries, so this pass called the link
+            # the forward path had just made "mislinked", unlinked it, and the
+            # next cycle linked it again — 684 unlinks over 65 events in a day.
+            # Every use below is a comparison or a search; nothing here mints.
+            matchup = matchup_for_link_search(
+                extract_matchup_with_ticker_fallback(
+                    market.name, external_id=market.external_id,
+                ),
+                market.name,
             )
             if not matchup or not matchup.team_b:
                 continue
@@ -6474,13 +6521,24 @@ async def _phase15_revalidate(
                     linked_event.id, better_match["event_id"],
                 )
                 if is_auto_created or not teams_match or sport_mismatch:
-                    del_result = await session.execute(
-                        delete(WinProbSnapshot).where(
-                            WinProbSnapshot.event_id == linked_event.id,
-                            WinProbSnapshot.source == market.source,
+                    # #9504: only the rows of what MOVES — this market and, for
+                    # a Polymarket group, the siblings the group-follow UPDATE
+                    # below carries with it. A market of the same source that
+                    # stays on the event keeps its curve.
+                    departing_ids = [market.id]
+                    if market.group_id and market.source == "polymarket":
+                        from sqlalchemy import text as _text
+                        departing_ids += list((await session.execute(_text("""
+                            SELECT id FROM futures_markets
+                            WHERE group_id = :gid
+                              AND group_type = 'polymarket_sub_market'
+                              AND event_id = :old
+                        """), {"gid": market.group_id, "old": linked_event.id})).scalars())
+                    stats["orphaned_snapshots_deleted"] += (
+                        await _delete_departing_market_snapshots(
+                            session, linked_event.id, market.source, departing_ids,
                         )
                     )
-                    stats["orphaned_snapshots_deleted"] += del_result.rowcount
                 market.event_id = better_match["event_id"]
                 _set_market_sport_fields(market, better_match)
                 _record_link_change(
@@ -6585,13 +6643,13 @@ async def _phase15_revalidate(
                     "Unlinking %s '%s' from mismatched event %d — no better match (reason=%s)",
                     market.source, market.name, linked_event.id, reason,
                 )
-                del_result = await session.execute(
-                    delete(WinProbSnapshot).where(
-                        WinProbSnapshot.event_id == linked_event.id,
-                        WinProbSnapshot.source == market.source,
+                # #9504: this market's rows only — a sibling of the same source
+                # (the match line beside a derivative book) keeps its curve.
+                stats["orphaned_snapshots_deleted"] += (
+                    await _delete_departing_market_snapshots(
+                        session, linked_event.id, market.source, [market.id],
                     )
                 )
-                stats["orphaned_snapshots_deleted"] += del_result.rowcount
                 _unlinked_event_id = linked_event.id
                 market.event_id = None
                 _record_link_change(
