@@ -45,6 +45,10 @@ nonisolated struct EventDetail: Decodable, Identifiable, Sendable {
     /// always move together. All optional: an older server or cache omits them.
     var heroProbability: Double?
     var heroProbabilitySource: String?
+    /// #9470 — the away side of the hero pair (`printable_away`, so absent on a
+    /// draw-priced sport). Read only where the hero prints the server's pair
+    /// (`OpeningLineHero`).
+    let heroProbabilityAway: Double?
     var heroProbabilityObservedAt: String?
     var blendFoldRevision: ServedFoldRevision?
     let ei: EIData?

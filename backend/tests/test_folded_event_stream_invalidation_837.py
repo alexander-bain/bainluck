@@ -69,7 +69,7 @@ async def test_own_frame_is_unchanged_and_twin_terminal_does_not_close(monkeypat
         await anext(stream)
         hub.subscriptions["live:event:2"].offer(json.dumps(frame(status="completed")))
         sibling = await asyncio.wait_for(anext(stream), 1)
-        assert '"status": "live"' in sibling and 'event: closed' not in sibling
+        assert '"status"' not in sibling and 'event: closed' not in sibling
         own = frame(1, status="completed")
         hub.subscriptions["live:event:1"].offer(json.dumps(own))
         chunk = await asyncio.wait_for(anext(stream), 1)

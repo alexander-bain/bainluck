@@ -854,6 +854,31 @@ jobs:
             exit 1
           fi
 
+      - name: "#9493 the search dropdown offers today's suspended match (real Postgres)"
+        # PILLAR: TRUTH. SHIP: typing a player whose match today is suspended
+        # offers that match, not only its Kalshi market as a separate row.
+        #
+        # The fix is a WHERE clause plus a sort term, so only a real database
+        # can observe it. Two strawmen: the old live/scheduled window (specimen
+        # gone, its market back), and no sort term (a suspended row takes a full
+        # pool's slot). Three refusals: a skip, a zero count, and a short count.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_typeahead_offers_todays_suspended_match_9493_pg.py \
+            -v -rs 2>&1 | tee /tmp/ta9493.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/ta9493.txt; then
+            echo "::error::#9493 suspended-match dropdown gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          if grep -qiE "no tests ran|collected 0 items" /tmp/ta9493.txt; then
+            echo "::error::#9493 suspended-match dropdown gate collected NOTHING"
+            exit 1
+          fi
+          if ! grep -qE "^=+ 8 passed" /tmp/ta9493.txt; then
+            echo "::error::#9493 suspended-match dropdown gate did not report exactly 8 passed"
+            exit 1
+          fi
+
       - name: "#9211 the search dropdown offers today's final beside the next game (real Postgres)"
         # PILLAR: DISCOVER. SHIP: typing a club on game day offers the result
         # it just finished right behind its next game.
@@ -5433,6 +5458,30 @@ jobs:
           # only by the accident of this file currently raising warnings.
           grep -qE "[^0-9]12 passed[,[:space:]]" /tmp/slate837.txt || {
             echo "::error::#837 slate contract did not run all twelve cases"
+            exit 1
+          }
+
+      - name: "#9484 a suspended match whose market still trades keeps its stream (real Postgres)"
+        # Both sockets subscribed from `live` or `scheduled` within 6 h, so a
+        # row the graph suspends fell off at the next recycle while its market
+        # kept trading (Dickerson v Pereira, 2026-09-28: frozen at .51 while
+        # Kalshi traded .90). The new arm subscribes an open market on an event
+        # suspended inside 24 h. Reuses the #837 database provisioned above;
+        # the file drops and recreates its own six tables.
+        #
+        # Count pin: 12 = 6 cases x 2 venues. Four of the six are kill controls
+        # for the arm's own clauses (status, floor, market, NULL), so a run that
+        # lost the ship case would still print green without the count.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_ws_slate_suspended_open_market_pg_9484.py \
+            -v -rs 2>&1 | tee /tmp/slate9484.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/slate9484.txt; then
+            echo "::error::#9484 suspended-arm contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]12 passed[,[:space:]]" /tmp/slate9484.txt || {
+            echo "::error::#9484 suspended-arm contract did not run all twelve cases"
             exit 1
           }
 

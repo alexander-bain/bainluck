@@ -62,6 +62,8 @@ interface LiveAgeStampProps {
    * the admission, not the claim.
    */
   claimWithdrawn?: boolean;
+  /** Quote activity must not promote an upcoming/suspended sports phase. */
+  showLiveLabel?: boolean;
 }
 
 /** Past this the number is not "live" in any useful sense; say so plainly. */
@@ -132,6 +134,7 @@ export default function LiveAgeStamp({
   oldestFact = null,
   connected,
   claimWithdrawn = false,
+  showLiveLabel = true,
 }: LiveAgeStampProps) {
   const [age, setAge] = useState<number | null>(() => ageSeconds(updatedAt));
 
@@ -189,8 +192,8 @@ export default function LiveAgeStamp({
             ? `Score last confirmed ${label}. The probability is newer.`
             : `Last update ${label}. Waiting for a fresh price.`
           : oldestFact === "score"
-            ? `Live. Score confirmed ${label}.`
-            : `Live. Updated ${label}.`
+            ? `${showLiveLabel ? "Live. " : ""}Score confirmed ${label}.`
+            : `${showLiveLabel ? "Live. " : ""}Updated ${label}.`
       }
       title={
         oldestFact === "score"
@@ -208,7 +211,7 @@ export default function LiveAgeStamp({
         }`}
       />
       <span className="tabular-nums">
-        {stale ? label : `live · ${label}`}
+        {stale || !showLiveLabel ? label : `live · ${label}`}
       </span>
     </span>
   );

@@ -1,3 +1,4 @@
+import { isQuoteStreamStatus } from "./eventQuoteStream";
 /**
  * What an OPEN event page still refetches while the push stream is healthy, and
  * what a pushed frame is allowed to overwrite when it lands.
@@ -343,6 +344,7 @@ export interface LiveFrame {
   updated_at: string;
   /** #9051: the written row's revision — see `lib/foldRevision.ts`. */
   rev?: Record<string, number> | null;
+  status?: string | null;
 }
 
 /**
@@ -363,7 +365,7 @@ type HeldHero = {
 };
 
 function holdsLiveBlend(held: HeldHero): boolean {
-  return held.status === "live" && held.hero_probability_source === "blend" &&
+  return isQuoteStreamStatus(held.status) && held.hero_probability_source === "blend" &&
     typeof held.hero_probability === "number" && Number.isFinite(held.hero_probability);
 }
 
@@ -374,9 +376,12 @@ function holdsLiveBlend(held: HeldHero): boolean {
  * still says the blend moved, so the page refetches the paired detail instead
  * of waiting out a stream-connected poll.
  */
-export function frameInvalidatesFoldedBlend(held: unknown, frame: Pick<LiveFrame, "rev">): boolean {
+export function frameInvalidatesFoldedBlend(held: unknown, frame: Pick<LiveFrame, "rev" | "status"> & { p?: number | null }): boolean {
   if (!held) return false;
   const hero = held as HeldHero;
+  if (!isQuoteStreamStatus(hero.status)) return false;
+  if (frame.p === null || (frame.status && frame.status !== hero.status) ||
+      !holdsLiveBlend(hero)) return true;
   return holdsLiveBlend(hero) && frameFoldOrder(hero.blend_fold_revision, frame.rev) === "incomparable";
 }
 
@@ -386,6 +391,10 @@ export function applyLiveFrame<T>(prev: T | undefined, frame: LiveFrame): T | un
   // Arrival order is not observation order. Keep the newer paired value/clock
   // and its source metadata; the transport still records the frame separately.
   const current = prev as HeldHero;
+  if (!isQuoteStreamStatus(current.status) ||
+      (current.hero_probability_source !== undefined && current.hero_probability_source !== "blend") ||
+      (frame.status && frame.status !== current.status) ||
+      !Number.isFinite(frame.p) || frame.p < 0 || frame.p > 1) return prev;
   const currentAt = Date.parse(current.hero_probability_observed_at ?? "");
   const frameAt = Date.parse(frame.updated_at);
   const liveBlend = holdsLiveBlend(current);

@@ -86,6 +86,7 @@ from app.utils.sports_first_page_rails import (
     finished_event_age_anchor,
     swap_client_deleted_finished_off_first_page,
 )
+from app.utils.sports_imminent_marquee import lead_upcoming_with_imminent_marquee_games
 from app.utils.tonights_games import (
     MARQUEE_PIN_KEY,
     MAX_LEAD,
@@ -2834,6 +2835,28 @@ def apply_discover_display_chain(
             )
     _tick("futures_first_page_cap")
 
+    # === TONIGHT'S MARQUEE GAME LEADS UPCOMING (#9489) ===
+    #
+    # Measured 2026-09-28 23:05Z, an hour before Monday Night Football: the
+    # Sports first page served Eagles @ Bears (tier:1, score 48) fifth among
+    # upcoming games, below four that start TOMORROW (87/70/55/52), and
+    # `groupFeedIntoSections` never re-sorts, so "Upcoming" printed it fifth.
+    # The score has no "starts in an hour" term and must not grow one (#4541's
+    # pin-not-boost reasoning); this refills the upcoming-game slots with the
+    # imminent marquee games first and touches no score and no other card.
+    #
+    # Gated exactly as the three passes above, for the same CERT-2190 reason.
+    # AFTER them, so it reorders the upcoming slots they settled; BEFORE the
+    # live hoist, which keeps the last word on first-page membership — and
+    # which vacates the WORST window slots, i.e. the later-starting games this
+    # pass has just moved behind tonight's.
+    imminent_marquee_meta = None
+    if sports_mode and not my_teams_only:
+        items, imminent_marquee_meta = lead_upcoming_with_imminent_marquee_games(
+            items, now=now
+        )
+    _tick("imminent_marquee_upcoming")
+
     # === LIVE COMPLETENESS ON THE GAMES-LED SURFACES (#2709, Alex P1) ===
     #
     # The `include_tonights_games=discover_mode` gate above is correct and stays:
@@ -2886,6 +2909,7 @@ def apply_discover_display_chain(
         "finished_rail_cap": finished_rail_cap_meta,
         "client_deletion_swap": client_deletion_swap_meta,
         "futures_first_page_cap": futures_cap_meta,
+        "imminent_marquee_upcoming": imminent_marquee_meta,
         "live_first_page": live_first_page_meta,
         # 0 = the check passed OR no marquee game was required this request.
         # The two are distinguished by `marquee_lead_required` beside it, so a

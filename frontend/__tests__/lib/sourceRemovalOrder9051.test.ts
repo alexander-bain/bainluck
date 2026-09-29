@@ -232,9 +232,9 @@ describe('no revision on either side: every pre-contract rule applies unchanged'
   test('settled and non-live caches are outside the rule', () => {
     const final = served({ status: 'completed', blend_fold_revision: { [ROW]: 9 } });
     expect(reconcileEventPoll(final, { ...kalshiFrame, rev: { [ROW]: 1 } })).toBe(final);
-    // The push path keeps its old reach outside a held live blend.
+    // #9509: opening needs an authoritative pair; a raw row is not its label.
     const opening = served({ hero_probability_source: 'opening', blend_fold_revision: { [ROW]: 9 } });
-    expect(applyLiveFrame(opening, pushed({ ...kalshiFrame, rev: { [ROW]: 1 } }))?.hero_probability).toBe(0.6);
+    expect(applyLiveFrame(opening, pushed({ ...kalshiFrame, rev: { [ROW]: 1 } }))).toBe(opening);
   });
 });
 
@@ -542,13 +542,13 @@ describe('Codex 64a14a3d8d: a value never borrows a revision from another value'
     expect(applyLiveFrame(legacyHeld, pushed(kalshiFrame))?.hero_probability).toBe(0.6);
   });
 
-  test('push path: an applied frame carries its own vector or none, never the held one', () => {
-    // Outside a held live blend the frame lands (its old reach) — without the held rev9.
+  test('opening refuses raw frames so its label and vector remain paired', () => {
+    // #9509 requires a fresh pair before replacing an opening/nonblend claim.
     const opening = served({ hero_probability_source: 'opening', blend_fold_revision: { [ROW]: 9 } });
     const bare = applyLiveFrame(opening, pushed(kalshiFrame))!;
-    expect(bare.hero_probability).toBe(0.6);
-    expect(bare.blend_fold_revision).toBeUndefined();
-    expect(applyLiveFrame(opening, pushed({ ...kalshiFrame, rev: { [ROW]: 1 } }))?.blend_fold_revision).toEqual({ [ROW]: 1 });
+    expect(bare).toBe(opening);
+    expect(frameInvalidatesFoldedBlend(opening, pushed(kalshiFrame))).toBe(true);
+    expect(applyLiveFrame(opening, pushed({ ...kalshiFrame, rev: { [ROW]: 1 } }))).toBe(opening);
   });
 
   test('history path: a revisionless edge adopted by a revisionless headline mints no vector', () => {

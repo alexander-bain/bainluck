@@ -49,8 +49,11 @@ _THE_HOUSE = [
     ("KXRECNCH-26", "When will the House pass a reconciliation bill?"),
 ]
 
-# Controls: what the widening must NOT move.
-_STILL_PRESIDENTIAL = [
+# Controls: what the widening must NOT move. "The White House" is not "the
+# House". These two were presidential when this file was written; since #9477
+# the race line no longer reads "white house" and they are the administration
+# (Policy) — never Congressional either way.
+_THE_WHITE_HOUSE = [
     ("KXSUPERBOWLWHITEHOUSE", "Will the 2026 Pro Football champs visit the White House?"),
     ("KXWHVISIT-27", "Who will visit the White House in 2026?"),
 ]
@@ -70,9 +73,9 @@ def test_a_the_house_question_is_congressional(external_id, name):
     assert _classify_theme(_market(external_id, name)) == "congressional"
 
 
-@pytest.mark.parametrize("external_id, name", _STILL_PRESIDENTIAL)
-def test_the_white_house_stays_presidential(external_id, name):
-    assert _classify_theme(_market(external_id, name)) == "presidential"
+@pytest.mark.parametrize("external_id, name", _THE_WHITE_HOUSE)
+def test_the_white_house_is_not_congress(external_id, name):
+    assert _classify_theme(_market(external_id, name)) == "policy"
 
 
 @pytest.mark.parametrize("external_id, name", _STILL_POLICY)
@@ -84,7 +87,7 @@ def test_no_specimen_is_decided_by_its_ticker():
     """If a future ticker prefix claimed one of these, the name-rule assertions
     above would pass for the wrong reason."""
     prefixes = [p for p, _ in (*_THEME_BY_TICKER, *_THEME_BY_TICKER_CLASSIFY_ONLY)]
-    everything = _SENATORS + _THE_HOUSE + _STILL_PRESIDENTIAL + _STILL_POLICY
+    everything = _SENATORS + _THE_HOUSE + _THE_WHITE_HOUSE + _STILL_POLICY
     claimed = [e for e, _ in everything if any(e.lower().startswith(p) for p in prefixes)]
     assert claimed == []
 
