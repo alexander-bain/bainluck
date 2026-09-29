@@ -9858,6 +9858,7 @@ async def _score_events(
     my_team_names: Optional[list] = None,
     tag_filter: Optional[list[str]] = None,
     static_tag_filter: Optional[list[str]] = None,
+    price_refresh_events: list | None = None,
 ) -> list[dict]:
     """Score and format events for the feed.
 
@@ -10056,8 +10057,13 @@ async def _score_events(
         )
         query = query.limit(EVENT_CANDIDATE_BUDGET)  # Safety cap (all events)
 
-    result = await db.execute(query)
-    events = result.scalars().all()
+    if price_refresh_events is None:
+        result = await db.execute(query)
+        events = result.scalars().all()
+    else:
+        # Already-painted exact identities, freshly loaded/folded by price-cards.
+        # No candidate pool, pagination, ranking or response cache is traversed.
+        events = list(price_refresh_events)
 
     if not events:
         return []
@@ -10088,28 +10094,29 @@ async def _score_events(
     # improvement to the page, never a precondition for having one. If anything
     # in it raises, the feed serves the unfolded candidate set — the bug Alex
     # reported — instead of serving nothing.
-    try:
-        _fold = fold_twin_events(events)
-        if _fold.dropped_ids:
-            for _survivor_id, _merged in _fold.merged_sources.items():
-                _survivor = next(e for e in _fold.events if e.id == _survivor_id)
-                set_committed_value(_survivor, "win_probability_sources", _merged)
-            logger.info(
-                "feed twin fold: %d duplicate event rows collapsed, %d cards gained "
-                "a venue (dropped=%s)",
-                _fold.folded_count,
-                len(_fold.merged_sources),
-                _fold.dropped_ids[:20],
-            )
-            events = _fold.events
-    except Exception:
-        logger.exception("feed twin fold failed; serving the unfolded candidate set")
+    if price_refresh_events is None:
+        try:
+            _fold = fold_twin_events(events)
+            if _fold.dropped_ids:
+                for _survivor_id, _merged in _fold.merged_sources.items():
+                    _survivor = next(e for e in _fold.events if e.id == _survivor_id)
+                    set_committed_value(_survivor, "win_probability_sources", _merged)
+                logger.info(
+                    "feed twin fold: %d duplicate event rows collapsed, %d cards gained "
+                    "a venue (dropped=%s)",
+                    _fold.folded_count,
+                    len(_fold.merged_sources),
+                    _fold.dropped_ids[:20],
+                )
+                events = _fold.events
+        except Exception:
+            logger.exception("feed twin fold failed; serving the unfolded candidate set")
 
     # Batch fallback: for events where _compute_aggregate_probability() returns
     # None, query the latest win_prob_snapshot per event. This catches
     # Kalshi/Polymarket pregame data that's only in snapshots (not on Event model).
     snapshot_fallbacks: dict[int, float] = {}
-    events_needing_fallback = [
+    events_needing_fallback = [] if price_refresh_events is not None else [
         e for e in events if _compute_aggregate_probability(e) is None
     ]
     if events_needing_fallback:
@@ -10178,7 +10185,7 @@ async def _score_events(
     scored_items = []
     user_team_ids = set(ctx.team_relations.keys()) if my_teams_only else set()
 
-    champ_probs = await _get_championship_probabilities(db)
+    champ_probs = {} if price_refresh_events is not None else await _get_championship_probabilities(db)
 
     from app.utils.feed_scoring import (
         apply_completed_freshness_decay,
@@ -10203,7 +10210,7 @@ async def _score_events(
 
     for event in events:
         try:
-            if not my_teams_only:
+            if not my_teams_only and price_refresh_events is None:
                 if event.id in ctx.recent_dismissed_event_ids:
                     continue
                 if event.id in ctx.recent_seen_event_ids and event.status != "live":
@@ -10256,13 +10263,29 @@ async def _score_events(
             current_away_prob = (
                 round(1.0 - current_home_prob, 6) if current_home_prob is not None else None
             )
+            if price_refresh_events is not None:
+                # The displayed quote is the same authoritative folded hero as
+                # detail. Opening-only/final-unresolved is not a current quote.
+                from app.utils.draw_priced_winner import printable_away
+
+                price_hero = resolve_hero(event)
+                current_home_prob = None
+                current_away_prob = None
+                if price_hero is not None and price_hero.source in ("blend", "settled"):
+                    current_home_prob = price_hero.home_probability
+                    current_away_prob = price_hero.away_probability
+                    if price_hero.source != "settled":
+                        current_away_prob = printable_away(
+                            current_away_prob, current_home_prob,
+                            event.sport.key if event.sport else None,
+                        )
 
             # Skip events without any probability data:
             # - Scheduled: StatPal-created events not yet matched to Odds API
             # - Completed/closed with no scores: no odds movement, no final score
             #   = terrible UX (empty chart, no data). These are typically niche
             #   sports where only StatPal has schedules but no odds coverage.
-            if current_home_prob is None and event.status == "scheduled":
+            if price_refresh_events is None and current_home_prob is None and event.status == "scheduled":
                 continue
             # live/048 — `suspended` joins this skip, and admitting it to the
             # candidate query above is exactly why it has to. A row with no
@@ -10273,7 +10296,8 @@ async def _score_events(
             # being absent. That is most of the 89% esports mass, and this is
             # where it stops — on having no data, not on being suspended.
             if (
-                current_home_prob is None
+                price_refresh_events is None
+                and current_home_prob is None
                 and event.status in ("completed", "closed", EVENT_SUSPENDED)
                 and not event.home_score
                 and not event.away_score
@@ -10513,7 +10537,7 @@ async def _score_events(
             # — with the full penalty — is what ranks, which is the entire
             # behaviour of #5453.
             admission_score = _discover_admission_score(base_score, p_result)
-            if admission_score < min_score:
+            if price_refresh_events is None and admission_score < min_score:
                 continue
 
             # --- Completed-game freshness decay (#3484) ---
@@ -12123,6 +12147,7 @@ async def _score_futures(
     broaden_config: dict[str, float | bool] | None = None,
     capture_broadened: dict | None = None,
     category_filter: Optional[str] = None,
+    price_refresh: bool = False,
 ) -> list[dict]:
     """Score and format futures markets for the feed.
 
@@ -12139,6 +12164,8 @@ async def _score_futures(
     Every market is then scored once instead of twice; the measured cost of the
     second scoring was ~383 ms of every cold Discover build.
     """
+    if price_refresh and (preloaded_base is None or preloaded_base.get("markets") is None):
+        raise ValueError("price refresh requires freshly loaded exact markets")
     timing_previous_at = time.perf_counter()
     config = config or _discover_runtime_config_defaults()
     stale_no_movement_days = float(config.get("stale_no_movement_days", 2))
@@ -12451,9 +12478,15 @@ async def _score_futures(
     candidate_canonical_keys = {
         market.canonical_market_key for market in markets if market.canonical_market_key
     }
-    canonical_source_counts = await _get_canonical_source_counts(
-        db, keys=candidate_canonical_keys
-    )
+    fresh_source_names = None
+    if price_refresh:
+        canonical_source_counts, fresh_source_names = await _query_canonical_source_counts(
+            db, keys=candidate_canonical_keys
+        )
+    else:
+        canonical_source_counts = await _get_canonical_source_counts(
+            db, keys=candidate_canonical_keys
+        )
     mark_timing("canonical_counts")
 
     # #6550: the leader's verb, resolved for the whole pool in one PK SELECT.
@@ -12465,78 +12498,79 @@ async def _score_futures(
     mark_timing("team_names")
 
     # --- Load precomputed interestingness scores from Redis ---
-    try:
-        # Queue 271: shared client + bounded ops (no per-request pool, no
-        # unbounded await on a large MGET). A Redis stall degrades to no-blend.
-        from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
+    if not price_refresh:
+        try:
+            # Queue 271: shared client + bounded ops (no per-request pool, no
+            # unbounded await on a large MGET). A Redis stall degrades to no-blend.
+            from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
 
-        _int_redis = await get_shared_async_redis()
-        # A caller may pin the weight for THIS scoring pass only — the
-        # ratification diagnostic (LAT-P043) renders one slate at two weights
-        # and must not touch the live key to do it. Deliberately an in-process
-        # argument rather than a second Redis key: a diagnostic that switches
-        # the blend on for real users, even briefly, is the exact accident
-        # Alex's dark ruling exists to prevent. Absent from the runtime config
-        # defaults, so the served path is byte-identical to before.
-        _weight_override = (config or {}).get("interestingness_blend_weight_override")
-        # Read the blend weight. ABSENT MEANS DARK — LAT-P043, Alex's ruling of
-        # 2026-08-12: the interestingness signal stays off until he has seen a
-        # side-by-side and ratified a weight, so the blend requires an explicit
-        # key and there is no implicit one.
-        #
-        # This used to default to 0.2, which made the ruled-OFF state depend on
-        # a cache entry surviving. The kill switch lives in a 100 MB Redis under
-        # `allkeys-lru` with no TTL (measured 2026-08-12: 36.3 MB used,
-        # evicted_keys 0) — so eviction, a flush, or a plan migration would have
-        # silently turned the blend back ON, and nothing would have reported it.
-        # A switch whose "off" position is the absence of a key fails open.
-        # Fail dark instead: to enable the blend, set the key.
-        if _weight_override is not None:
-            raw_weight = str(_weight_override)
-        else:
-            _weight_res = await bounded_redis_call(
-                lambda: _int_redis.get("interestingness:blend_weight")
-            )
-            raw_weight = _weight_res.value if _weight_res.is_ok else None
-        if raw_weight is not None:
-            try:
-                _interestingness_blend_weight = float(
-                    raw_weight.decode()
-                    if isinstance(raw_weight, bytes)
-                    else str(raw_weight)
+            _int_redis = await get_shared_async_redis()
+            # A caller may pin the weight for THIS scoring pass only — the
+            # ratification diagnostic (LAT-P043) renders one slate at two weights
+            # and must not touch the live key to do it. Deliberately an in-process
+            # argument rather than a second Redis key: a diagnostic that switches
+            # the blend on for real users, even briefly, is the exact accident
+            # Alex's dark ruling exists to prevent. Absent from the runtime config
+            # defaults, so the served path is byte-identical to before.
+            _weight_override = (config or {}).get("interestingness_blend_weight_override")
+            # Read the blend weight. ABSENT MEANS DARK — LAT-P043, Alex's ruling of
+            # 2026-08-12: the interestingness signal stays off until he has seen a
+            # side-by-side and ratified a weight, so the blend requires an explicit
+            # key and there is no implicit one.
+            #
+            # This used to default to 0.2, which made the ruled-OFF state depend on
+            # a cache entry surviving. The kill switch lives in a 100 MB Redis under
+            # `allkeys-lru` with no TTL (measured 2026-08-12: 36.3 MB used,
+            # evicted_keys 0) — so eviction, a flush, or a plan migration would have
+            # silently turned the blend back ON, and nothing would have reported it.
+            # A switch whose "off" position is the absence of a key fails open.
+            # Fail dark instead: to enable the blend, set the key.
+            if _weight_override is not None:
+                raw_weight = str(_weight_override)
+            else:
+                _weight_res = await bounded_redis_call(
+                    lambda: _int_redis.get("interestingness:blend_weight")
                 )
-            except (ValueError, TypeError):
-                # An unparsable weight is not a licence to pick one.
+                raw_weight = _weight_res.value if _weight_res.is_ok else None
+            if raw_weight is not None:
+                try:
+                    _interestingness_blend_weight = float(
+                        raw_weight.decode()
+                        if isinstance(raw_weight, bytes)
+                        else str(raw_weight)
+                    )
+                except (ValueError, TypeError):
+                    # An unparsable weight is not a licence to pick one.
+                    _interestingness_blend_weight = 0.0
+            else:
                 _interestingness_blend_weight = 0.0
-        else:
-            _interestingness_blend_weight = 0.0
 
-        if _interestingness_blend_weight > 0:
-            _int_keys = [f"interestingness:{mid}" for mid in market_ids]
-            if _int_keys:
-                _mget_res = await bounded_redis_call(
-                    lambda: _int_redis.mget(_int_keys),
-                    treat_none_as_miss=False,
-                )
-                _int_values = _mget_res.value if _mget_res.is_ok else None
-                _interestingness_cache = {}
-                for mid, raw_val in zip(market_ids, _int_values or []):
-                    if raw_val is not None:
-                        try:
-                            parsed = _json_module.loads(
-                                raw_val.decode()
-                                if isinstance(raw_val, bytes)
-                                else raw_val
-                            )
-                            _interestingness_cache[mid] = parsed
-                        except (ValueError, TypeError):
-                            pass
-    except Exception:
-        logger.debug(
-            "Interestingness cache load failed — skipping blend", exc_info=True
-        )
-        _interestingness_cache = None
-        _interestingness_blend_weight = 0.0
+            if _interestingness_blend_weight > 0:
+                _int_keys = [f"interestingness:{mid}" for mid in market_ids]
+                if _int_keys:
+                    _mget_res = await bounded_redis_call(
+                        lambda: _int_redis.mget(_int_keys),
+                        treat_none_as_miss=False,
+                    )
+                    _int_values = _mget_res.value if _mget_res.is_ok else None
+                    _interestingness_cache = {}
+                    for mid, raw_val in zip(market_ids, _int_values or []):
+                        if raw_val is not None:
+                            try:
+                                parsed = _json_module.loads(
+                                    raw_val.decode()
+                                    if isinstance(raw_val, bytes)
+                                    else raw_val
+                                )
+                                _interestingness_cache[mid] = parsed
+                            except (ValueError, TypeError):
+                                pass
+        except Exception:
+            logger.debug(
+                "Interestingness cache load failed — skipping blend", exc_info=True
+            )
+            _interestingness_cache = None
+            _interestingness_blend_weight = 0.0
     mark_timing("interestingness_cache")
 
     scored_items: list[dict] = []
@@ -12545,7 +12579,7 @@ async def _score_futures(
     for market in markets:
         try:
             is_recycled = False
-            if not my_teams_only:
+            if not my_teams_only and not price_refresh:
                 if market.id in ctx.recent_dismissed_futures_ids:
                     continue
                 if market.id in ctx.recent_seen_futures_ids:
@@ -12566,7 +12600,7 @@ async def _score_futures(
             # Skip markets past their resolution date (belt-and-suspenders;
             # base_filters should exclude these at the SQL level, but naive
             # datetime timezone mismatches can let them through — issue #486).
-            if market.resolution_date:
+            if market.resolution_date and not price_refresh:
                 res_dt = _utc(market.resolution_date)
                 if res_dt and res_dt < now:
                     continue
@@ -12579,7 +12613,7 @@ async def _score_futures(
             # Discover at live-looking probabilities for weeks. The title-implied
             # calendar already existed in market_staleness but was wired only
             # into the debug trace, never into this live path.
-            if _market_title_implied_stale_blocker(
+            if not price_refresh and _market_title_implied_stale_blocker(
                 market.name, market.llm_sport_category, now
             ):
                 continue
@@ -12899,7 +12933,7 @@ async def _score_futures(
                 strict_no_movement_days=_strict_no_movement_days,
                 strict_no_resolution_stale_days=_strict_no_resolution_days,
             )
-            if not runtime_filters["eligible"]:
+            if not price_refresh and not runtime_filters["eligible"]:
                 continue
             # LAT-P105: on the unfused path the gate WAS the strict gate, so
             # everything that got here is strict-eligible.
@@ -12929,7 +12963,7 @@ async def _score_futures(
             # >=99% or <=1%) with no live interest — the lone "100%"/"0%" junk cards
             # Manus flagged. Guarded: a genuine near-certain mover (>=10pt 24h swing)
             # or a high-volume market stays eligible.
-            if market.outcomes and is_locked_near_certain(
+            if not price_refresh and market.outcomes and is_locked_near_certain(
                 leader_prob,
                 max(
                     (
@@ -13155,9 +13189,9 @@ async def _score_futures(
                 external_id=market.external_id,
                 status=market.status,  # R6: resolved sports never surface
             )
-            if quality.quality_class == "suppress":
+            if not price_refresh and quality.quality_class == "suppress":
                 continue
-            if _should_skip_futures_for_recent_dismissal(
+            if not price_refresh and _should_skip_futures_for_recent_dismissal(
                 market=market,
                 quality=quality,
                 ctx=ctx,
@@ -13495,11 +13529,11 @@ async def _score_futures(
 
             # "If it's wild" — higher bar for low-affinity futures too
             is_low_affinity = any("sport_suppress" in r for r in p_result.reasons)
-            if is_low_affinity and not my_teams_only and admission_score < 55:
+            if not price_refresh and is_low_affinity and not my_teams_only and admission_score < 55:
                 continue
 
             # Filter low-signal futures (my_teams_only shows everything)
-            if not my_teams_only and admission_score < 15:
+            if not price_refresh and not my_teams_only and admission_score < 15:
                 continue
 
             reason = generate_futures_reason(
@@ -13528,7 +13562,7 @@ async def _score_futures(
             )
 
             source_names = (
-                (_canonical_source_names_cache or {}).get(
+                (fresh_source_names if fresh_source_names is not None else (_canonical_source_names_cache or {})).get(
                     market.canonical_market_key, [market.source]
                 )
                 if market.canonical_market_key
@@ -13764,6 +13798,11 @@ async def _score_futures(
             )
             continue
     mark_timing("scoring_loop")
+
+    if price_refresh:
+        # Hydrate every requested leaf independently. Existing parent/group
+        # membership belongs to the held page, not this price response.
+        return scored_items
 
     def _dedupe_and_cap(items: list[dict]) -> list[dict]:
         # Dedup by group_id: keep only the highest-scoring market per group.
