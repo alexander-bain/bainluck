@@ -105,6 +105,7 @@ from app.utils.event_completion import (
     EVENT_SUSPENDED,
     SETTLED_STATUSES,
     is_retired_event_status,
+    served_commence_time,
     started_without_result,
 )
 from app.utils.current_odds_probability import current_odds_probability
@@ -32515,6 +32516,10 @@ def _format_event(
     # `started_without_result` can never be computed from two different
     # instants — see the note on that key.
     _served_now = datetime.now(timezone.utc)
+    _served_start = served_commence_time(
+        event.status, event.commence_time,
+        getattr(event, "win_probability_sources", None), _served_now,
+    )
 
     # Named once, used by both source blocks below. `is not None` and not `or`:
     # an event whose twins add nothing folds to `{}`, and `{} or x` would fall
@@ -32569,11 +32574,15 @@ def _format_event(
         else None,
         "home_team": event.home_team_name,
         "away_team": event.away_team_name,
-        "commence_time": event.commence_time.isoformat(),
+        # #9634: StatPal's start while a held row waits for its session; the
+        # stored start otherwise. See `served_commence_time`.
+        "commence_time": _served_start.isoformat(),
         # #8841: the venue listed the game before its start was announced and
         # `commence_time` is a placeholder — print the date, not the clock.
+        # Asked of the served start: a placeholder tag names the stored instant,
+        # and StatPal's start is not a placeholder.
         "start_is_tbd": start_is_tbd(
-            getattr(event, "event_tags", None), event.commence_time, event.status
+            getattr(event, "event_tags", None), _served_start, event.status
         ),
         # Emit completed_at so finished-event cards (My Stuff, etc.) have an
         # authoritative game-date fallback instead of showing a stale/future
