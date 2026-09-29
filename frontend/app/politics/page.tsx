@@ -843,14 +843,19 @@ function MultiCard({
             {market.q}
           </h3>
 
+          {/* #9474 follow-up: a pick-several row's name can be a whole case
+              caption ("Bird v. Iowa Migrant Movement for Justice"); with no gap
+              it ran into the number as "…for Justice39%". The name wraps, the
+              number keeps its width. */}
           <div
             style={{
               display: "flex",
               alignItems: "baseline",
               justifyContent: "space-between",
+              gap: 12,
             }}
           >
-            <div style={{ display: "flex", flexDirection: "column" }}>
+            <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
               {namesALeader && (
                 <span
                   style={{
@@ -875,7 +880,10 @@ function MultiCard({
                 {leader.name}
               </span>
             </div>
-            <span className={s.probNum} style={{ fontSize: 28, color: "var(--text-primary)" }}>
+            <span
+              className={s.probNum}
+              style={{ fontSize: 28, color: "var(--text-primary)", flexShrink: 0 }}
+            >
               {Math.round(leader.prob)}%
             </span>
           </div>
