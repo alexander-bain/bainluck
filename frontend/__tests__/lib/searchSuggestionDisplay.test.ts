@@ -410,6 +410,59 @@ describe("suggestionSubtitle", () => {
     });
   });
 
+  // #9550: production 2026-09-29, event 15320435 — the dropdown said "No result
+  // reported" while the page one tap away said "Settled · Pereira wins". A row
+  // the venue graded says the page's words; an ungraded one keeps the badge.
+  describe("a match the venue graded says what its event page says (#9550)", () => {
+    const suspended = (over: Partial<TypeaheadSuggestion>) =>
+      suggestionSubtitle(
+        suggestion({
+          type: "event",
+          text: "Pereira at Dickerson",
+          status: "suspended",
+          commence_time: "2026-08-09T15:00:00.000Z",
+          ...over,
+        }),
+        NOW
+      );
+
+    test("a graded winner is named: 'Settled · Pereira wins'", () => {
+      expect(
+        suspended({ venue_settled: true, venue_settled_result: "Pereira wins" })
+      ).toEqual({ kind: "event-time", text: "Settled · Pereira wins" });
+    });
+
+    test("graded with no named result says 'Settled' alone", () => {
+      expect(suspended({ venue_settled: true, venue_settled_result: null })).toEqual({
+        kind: "event-time",
+        text: "Settled",
+      });
+    });
+
+    // The other direction: an ungraded suspended row keeps the badge, and a
+    // result string without the flag is not a grade.
+    test("not graded keeps 'No result reported'", () => {
+      expect(suspended({ venue_settled: false, venue_settled_result: "Pereira wins" })).toEqual({
+        kind: "event-time",
+        text: SUSPENDED_LABEL,
+      });
+      expect(suspended({})).toEqual({ kind: "event-time", text: SUSPENDED_LABEL });
+    });
+
+    // The flag cannot move a row outside the no-result arm: a live match and a
+    // scheduled one inside its grace window keep their own words.
+    test("a live or on-time row ignores a stray settled flag", () => {
+      const graded = { venue_settled: true, venue_settled_result: "Pereira wins" };
+      expect(suspended({ status: "live", ...graded })).toEqual({
+        kind: "event-time",
+        text: "Live now",
+      });
+      expect(
+        suspended({ status: "scheduled", commence_time: "2026-08-09T17:00:00.000Z", ...graded })
+      ).toEqual({ kind: "event-time", text: "Recently" });
+    });
+  });
+
   test("a priced futures row leads with the answer", () => {
     const sub = suggestionSubtitle(
       suggestion({
