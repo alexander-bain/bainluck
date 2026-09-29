@@ -33429,6 +33429,7 @@ from app.utils.outcome_display import (  # noqa: E402
     leader_pick_order as _leader_pick_order,
     drop_dominant_field_outcomes as _drop_dominant_field_outcomes,
     drop_incoherent_near_certain as _drop_incoherent_near_certain,
+    drop_incoherent_ladder_outcomes as _drop_incoherent_ladder_outcomes,
     drop_unbacked_legs as _drop_unbacked_legs,
 )
 from app.utils.futures_liveness import leg_is_graded  # noqa: E402  #8640
@@ -34428,6 +34429,18 @@ def _search_ladder_window(
     ]
     if any(o.id not in withheld_ids and o.current_probability is not None for o in live):
         ordered = live
+    # #9676. A rung priced against its own ladder is not evidence, and the feed
+    # has stripped it since #4610 — search drew it. `?q=fed rate`, 390px,
+    # 2026-09-29 19:10Z: 108626 printed `Above 4.50% 28% · Above 4.75% 76%` off
+    # 8¢/76¢ and 2¢/78¢ books. Same helper, same never-collapse rule, so the two
+    # surfaces cannot disagree about which rung is impossible. Withheld rungs
+    # read as unpriced: a price the card will not print cannot condemn one it will.
+    ordered = _drop_incoherent_ladder_outcomes(
+        ordered,
+        lambda o: o.name,
+        lambda o: None if o.id in withheld_ids else o.current_probability,
+        getattr(market, "name", None),
+    )
     priced = [
         index
         for index, o in enumerate(ordered)
