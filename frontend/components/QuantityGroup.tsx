@@ -24,7 +24,7 @@
  */
 
 import { probabilityHeat } from "@/lib/probabilityColors";
-import { formatMovementPoints, isRenderedMove } from "@/lib/probabilityDisplay";
+import { formatMovementPoints, formatProbabilityPercent, isRenderedMove } from "@/lib/probabilityDisplay";
 
 export interface QuantityRung {
   /** Stable key (outcome id or the threshold string). */
@@ -116,8 +116,12 @@ interface QuantityGroupProps {
   wideLabels?: boolean;
 }
 
+// #9576 — the rows' boundary rule, not a bare round: a still-trading 0.995
+// reads as above 99, never 100. /futures/59699693 (Hurricane Polo) printed
+// 100 on every rung of this map, directly above All Outcomes rows that said
+// otherwise. The boundary's spelling lives only in probabilityDisplay.ts.
 function pct(p: number | null): string {
-  return p == null ? "—" : `${Math.round(p * 100)}%`;
+  return p == null ? "—" : formatProbabilityPercent(p);
 }
 
 export default function QuantityGroup({
