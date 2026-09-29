@@ -486,6 +486,9 @@ nonisolated struct FeedEventData: Decodable, Identifiable, Sendable {
     let status: String?
     let homeScore: Int?
     let awayScore: Int?
+    let blendFoldRevision: ServedFoldRevision?
+    let heroProbabilitySource: String?
+    let heroProbabilityObservedAt: String?
     let currentOdds: CurrentOdds?
     let openingOdds: OpeningOdds?
     let highlight: Highlight?
@@ -618,6 +621,8 @@ nonisolated struct FeedFuturesData: Decodable, Identifiable, Sendable {
     /// `price_observed_at` via the decoder's `.convertFromSnakeCase`; rendered by
     /// `PriceAgeMarkView`, dated by `SourceAge`.
     let priceObservedAt: String?
+    /// Complete raw-leg vector, including outcomes outside the displayed leaders.
+    var outcomeObservedAt: [String: String?]? = nil
     /// #2088: why this card's two printed percents do not total 100, decided once
     /// on the server (`graded_card.card_sum_reason`) and served by both futures
     /// serializers. Rendered as a sentence by `cardSumExplanation` (`CardSum.swift`).
@@ -745,8 +750,15 @@ nonisolated struct FeedFuturesOutcome: Decodable, Identifiable, Sendable {
     let id: Int
     let name: String
     let probability: Double?
+    let priceObservedAt: String?
     let rank: Int?
     let movement: Double?
+
+    init(id: Int, name: String, probability: Double?, rank: Int?, movement: Double?, priceObservedAt: String? = nil) {
+        self.id = id; self.name = name; self.probability = probability
+        self.rank = rank; self.movement = movement; self.priceObservedAt = priceObservedAt
+    }
+
 }
 
 // MARK: - Feed Lifecycle (shared terminal-state semantics)
