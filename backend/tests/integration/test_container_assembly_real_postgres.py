@@ -353,6 +353,105 @@ class TestAMissingChildIsReceiptedNotEdged:
         assert len(report.unresolved) == 1
 
 
+class TestTheMatchersReceiptIsKept:
+    """#9217 (v3): assembly edges a market the matcher linked WITHOUT replacing
+    the matcher's receipt. `market_match_receipts` is one row per market and
+    last-writer-wins, so before this the container pass erased how the market
+    was linked to its game."""
+
+    async def test_a_matcher_receipt_survives_the_pass_and_the_edge_is_written(
+        self, pg_session
+    ):
+        from app.utils.match_receipts import (
+            PHASE_PASS1_TICKER,
+            REJECT_NO_CANDIDATE,
+            MatchReceipt,
+            flush_receipts,
+        )
+
+        container, market_ids = await _seed(pg_session)
+        matched = MatchReceipt(
+            market_id=market_ids[0],
+            source="kalshi",
+            external_id="KXATPMATCH-26SEP02SINALC",
+            market_name="Sinner vs Alcaraz",
+            phase=PHASE_PASS1_TICKER,
+            attempted_at=datetime.now(timezone.utc),
+        )
+        matched.reject(REJECT_NO_CANDIDATE)
+        await flush_receipts(pg_session, [matched])
+        await pg_session.commit()
+
+        report = await assemble_container(pg_session, container, _candidates(market_ids))
+        await pg_session.commit()
+
+        assert report.edges_written == 3
+        assert len(await _edge_rows(pg_session, container.id)) == 3
+        assert (report.receipts_written, report.receipts_preserved) == (2, 1)
+        rows = dict(
+            (
+                await pg_session.execute(
+                    text("SELECT market_id, phase FROM market_match_receipts")
+                )
+            ).fetchall()
+        )
+        assert rows[market_ids[0]] == PHASE_PASS1_TICKER
+        assert rows[market_ids[1]] == rows[market_ids[2]] == "container_assembly"
+
+    async def test_assemblys_own_receipt_is_still_refreshed(self, pg_session):
+        container, market_ids = await _seed(pg_session)
+        await assemble_container(pg_session, container, _candidates(market_ids))
+        await pg_session.commit()
+
+        report = await assemble_container(pg_session, container, _candidates(market_ids))
+        await pg_session.commit()
+
+        assert (report.receipts_written, report.receipts_preserved) == (3, 0)
+
+
+class TestTheCollectionRow:
+    """#9217 (v3): an NFL week / MLB postseason gets ONE flat row, and a re-run
+    neither doubles it nor rewrites it."""
+
+    async def test_the_flat_bootstrap_creates_once_and_never_rewrites(self, pg_session):
+        from app.tasks.container_assembly import _collection_container
+
+        first, how = await _collection_container(
+            pg_session, "nfl-2026-week-4", "NFL 2026 · Week 4", "season", None, None,
+            apply=True,
+        )
+        await pg_session.commit()
+        assert how == "created" and first.id is not None
+
+        await pg_session.execute(
+            text("UPDATE containers SET name = 'corrected' WHERE id = :id"), {"id": first.id}
+        )
+        again, how = await _collection_container(
+            pg_session, "nfl-2026-week-4", "NFL 2026 · Week 4", "season", None, None,
+            apply=True,
+        )
+        await pg_session.commit()
+        assert how == "existing" and again.id == first.id
+        rows = (
+            await pg_session.execute(
+                text("SELECT kind, name FROM containers WHERE slug = 'nfl-2026-week-4'")
+            )
+        ).fetchall()
+        assert [tuple(r) for r in rows] == [("season", "corrected")]
+
+    async def test_a_dry_run_writes_no_row(self, pg_session):
+        from app.tasks.container_assembly import _collection_container
+
+        stand_in, how = await _collection_container(
+            pg_session, "mlb-2026-postseason", "MLB 2026 Postseason", "tournament",
+            None, None, apply=False,
+        )
+        assert how == "would_create" and stand_in.id is None
+        assert (
+            await pg_session.execute(text("SELECT count(*) FROM containers"))
+        ).scalar() == 0
+
+
 class TestTheBootstrap:
     """Creating the tree is idempotent, and its undo cannot delete a live hub."""
 
