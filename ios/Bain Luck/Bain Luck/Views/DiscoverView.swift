@@ -5,6 +5,13 @@ private enum DiscoverGroupedItem: Identifiable {
     case single(FeedItem)
     case group(title: String, items: [FeedItem], kind: String? = nil, theme: String? = nil)
 
+    var priceCards: [FeedItem] {
+        switch self {
+        case .single(let item): return [item]
+        case .group(_, let items, _, _): return items
+        }
+    }
+
     var id: String {
         switch self {
         case .single(let item): return item.id
@@ -101,6 +108,8 @@ enum NativeDiscoverDebugState {
 
 struct DiscoverView: View {
     @StateObject private var vm = DiscoverViewModel()
+    @Environment(\.scenePhase) private var priceScenePhase
+    @State private var priceViewVisible = false
     @EnvironmentObject private var authManager: AuthManager
     @EnvironmentObject private var navCoordinator: NavigationCoordinator
     @State private var visibleCount = 20
@@ -1155,7 +1164,15 @@ struct DiscoverView: View {
             }
         }
         .id(gi.id)
+        .onDisappear { vm.setPriceCardsVisible(owner: gi.id, cards: [], visible: false) }
+        .onChange(of: DiscoverPriceRefresh.leaves(gi.priceCards).map(\.id)) { _, _ in
+            vm.updateVisiblePriceCards(owner: gi.id, cards: gi.priceCards)
+        }
         .onAppear {
+            switch gi {
+            case .single(let item): vm.setPriceCardsVisible(owner: gi.id, cards: [item], visible: true)
+            case .group(_, let members, _, _): vm.setPriceCardsVisible(owner: gi.id, cards: members, visible: true)
+            }
             // The first eligible card actually on screen → the
             // true first-render milestone, once per generation
             // (L2-206 Item 3 / L2-212 Item 2). Acknowledgement is
@@ -1806,7 +1823,14 @@ struct DiscoverView: View {
                 }
             }
         }
-        .onAppear { AnalyticsService.trackScreen(name: "discover", type: "discover") }
+        .onAppear {
+            AnalyticsService.trackScreen(name: "discover", type: "discover")
+            priceViewVisible = true
+            vm.setPriceDeliveryActive(priceScenePhase == .active)
+        }
+        .onChange(of: priceScenePhase) { _, phase in
+            vm.setPriceDeliveryActive(priceViewVisible && phase == .active)
+        }
         .task {
             if vm.items.isEmpty {
                 // 🔴 ARM THE FELT-NUMBER RAIL HERE, on tab activation with an
@@ -1831,6 +1855,8 @@ struct DiscoverView: View {
             }
         }
         .onDisappear {
+            priceViewVisible = false
+            vm.setPriceDeliveryActive(false)
             // The reader left. Stands the deadline down, and reports a screen they
             // actually waited on and never saw a card in.
             ScreenTimingSession.disarmScreen(surface: ScreenTimingSurface.discover)

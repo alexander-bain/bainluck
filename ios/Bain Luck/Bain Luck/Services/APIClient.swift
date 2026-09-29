@@ -953,6 +953,14 @@ actor APIClient {
         return try await fetch("/api/teams/\(slug)")
     }
 
+    /// Fresh projections of already-painted cards. No editorial feed-cache read.
+    func fetchDiscoverPriceCards(eventIds: [Int], marketIds: [Int]) async throws -> DiscoverPriceCards {
+        return try await fetch("/api/feed/price-cards", query: [
+            "event_ids": eventIds.map(String.init).joined(separator: ","),
+            "market_ids": marketIds.map(String.init).joined(separator: ",")
+        ], requiresNetwork: true)
+    }
+
     // MARK: - Futures Detail
 
     /// Fetches a futures market detail page by backend market ID.
