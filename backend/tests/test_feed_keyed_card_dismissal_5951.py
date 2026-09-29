@@ -148,12 +148,12 @@ def _recent_items_session(recent_rows):
     return session, seen_statements
 
 
-async def _load(recent_rows):
+async def _load(recent_rows, user=None):
     from app.routes.feed import _load_personalization_context
 
     session, statements = _recent_items_session(recent_rows)
     ctx = await _load_personalization_context(
-        session, None, session_id=_SESSION_ID, config=None
+        session, user, session_id=_SESSION_ID, config=None
     )
     return ctx, statements
 
@@ -262,8 +262,14 @@ async def test_a_keyed_swipe_also_reaches_the_by_name_suppression():
     families, and "Spanish Grand Prix Winner" is not one), so a story-key
     assertion here would be pinning a coincidence of this name rather than the
     repair. The token set is what these rows actually contribute.
+
+    Signed in since #9645: the resemblance penalty is a learned preference and
+    is written only for a signed-in reader. The EXACT keyed suppression every
+    other test here drives stays on the anonymous session.
     """
-    ctx, _ = await _load([_row("concept", _F1_KEY)])
+    from types import SimpleNamespace
+
+    ctx, _ = await _load([_row("concept", _F1_KEY)], user=SimpleNamespace(id=5951))
 
     assert ctx.recent_dismissed_feature_token_sets, (
         "a keyed swipe must still feed the by-name suppression it used to skip"

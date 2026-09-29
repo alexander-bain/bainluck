@@ -61,22 +61,28 @@ def test_discover_category_affinity_ignores_unknown_actions_and_empty_categories
     assert _build_discover_category_affinities(rows) == {}
 
 
+# #9645: the unlike specimens below were sports categories (soccer, baseball) and
+# a sports negative no longer teaches a category penalty at all — see
+# `test_feed_sports_negative_feedback_9645.py`. The arithmetic they guard still
+# runs for every non-sports category, so they are pinned there.
+
+
 def test_discover_category_affinity_counts_unlike_as_soft_downrank():
     rows = [
-        ("soccer", "unlike", 3),
-        ("soccer", "context_expand", 1),
+        ("economics", "unlike", 3),
+        ("economics", "context_expand", 1),
         ("_pad", "open", 20),  # push above cold-start threshold
     ]
 
     result = _build_discover_category_affinities(rows)
 
-    assert result["soccer"] == pytest.approx((-3.0 + 0.35) / 20.0)
+    assert result["economics"] == pytest.approx((-3.0 + 0.35) / 20.0)
 
 
 def test_discover_category_affinity_escalates_repeated_unlikes():
     rows = [
-        ("baseball", "unlike", 10),
-        ("baseball", "context_collapse", 1),
+        ("economics", "unlike", 10),
+        ("economics", "context_collapse", 1),
         ("_pad", "open", 20),  # push above cold-start threshold
     ]
 
@@ -84,7 +90,7 @@ def test_discover_category_affinity_escalates_repeated_unlikes():
 
     # 10 unlikes → raw=-10, n_negative=10 >= 5, score < -8 → floor -0.60
     # affinity = max(-0.60, -10/20) = max(-0.60, -0.50) = -0.50
-    assert result["baseball"] == -0.50
+    assert result["economics"] == -0.50
 
 
 def test_discover_feature_tokens_include_archetype_and_entities():
@@ -197,7 +203,7 @@ def test_discover_feature_affinity_region_bridge_can_connect_team_and_local_mark
 
 def test_discover_feature_affinity_uses_unlike_as_soft_downrank():
     rows = [
-        ("event", "Red Sox vs Yankees", "baseball", "unlike", 2),
+        ("futures", "Wu vs Kelley mayoral debate", "politics", "unlike", 2),
     ]
 
     result = _build_discover_feature_affinities(rows)
@@ -205,27 +211,39 @@ def test_discover_feature_affinity_uses_unlike_as_soft_downrank():
     assert result["format:matchup"] < 0
 
 
-def test_discover_feature_affinity_unlike_downranks_team_and_regions_softly():
+def test_discover_feature_affinity_unlike_downranks_regions_softly():
     rows = [
-        ("event", "Tampa Bay Rays vs Boston Red Sox", "baseball", "unlike", 1),
+        ("futures", "Will Boston elect a new mayor?", "politics", "unlike", 1),
     ]
 
     result = _build_discover_feature_affinities(rows)
 
-    assert result["team:boston_red_sox"] == pytest.approx(-1.0 / 18.0)
     assert result["region:boston"] == pytest.approx(-1.0 / 18.0)
     assert result["region:massachusetts"] == pytest.approx(-1.0 / 18.0)
     assert result["region:new_england"] == pytest.approx(-1.0 / 18.0)
 
 
-def test_discover_feature_affinity_repeated_unlikes_are_bounded_downranks():
+def test_a_sports_unlike_teaches_no_team_or_region_dislike_9645():
+    """#9645 — this test used to assert the OPPOSITE: that unliking Rays v Red
+    Sox wrote `team:boston_red_sox` and `region:boston` dislikes. That is the
+    defect Alex screenshotted — swiping an unrelated game away taught the feed
+    to push down the team the reader favours. A two-team card cannot say which
+    side is disliked, so it teaches no side."""
     rows = [
         ("event", "Tampa Bay Rays vs Boston Red Sox", "baseball", "unlike", 10),
     ]
 
+    assert _build_discover_feature_affinities(rows) == {}
+
+
+def test_discover_feature_affinity_repeated_unlikes_are_bounded_downranks():
+    rows = [
+        ("futures", "Will Boston elect a new mayor?", "politics", "unlike", 10),
+    ]
+
     result = _build_discover_feature_affinities(rows)
 
-    assert result["team:boston_red_sox"] == -0.12
+    assert result["region:boston"] == -0.12
     assert result["region:massachusetts"] == -0.12
 
 

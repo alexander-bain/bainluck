@@ -41,11 +41,13 @@ if this change ever turns into a mute button.
 """
 
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from app.routes.feed import (
+    _discover_feature_tokens,
     _DISCOVER_NEGATIVE_ACTIONS,
     _build_discover_category_affinities,
     _build_discover_category_negative_counts,
@@ -58,6 +60,14 @@ from app.utils.personalization import (
 )
 
 _SESSION_ID = "swipe-loop-session-5453"
+
+#: A signed-in reader. #9645 (Alex, 2026-09-29: "No preference is learned
+#: without sign-in"): the category and feature rollups this file drives are the
+#: LEARNING reads, and they now run only for a signed-in principal, over rows
+#: that principal wrote while signed in. Every ladder below is therefore a
+#: signed-in reader's ladder; the anonymous case is pinned in
+#: `test_feed_sports_negative_feedback_9645.py`.
+_READER = SimpleNamespace(id=5453)
 
 #: Enough impressions to clear the ``< 20`` cold-start fast lane in
 #: ``_build_discover_category_affinities``. Pinned explicitly because the
@@ -107,7 +117,7 @@ async def _load(rollup_rows):
     from app.routes.feed import _load_personalization_context
 
     return await _load_personalization_context(
-        _rollup_session(rollup_rows), None, session_id=_SESSION_ID, config=None
+        _rollup_session(rollup_rows), _READER, session_id=_SESSION_ID, config=None
     )
 
 
@@ -336,6 +346,14 @@ def test_categories_are_lowercased_like_the_affinity_builder():
 #
 # These drive the REAL loader and the REAL `compute_event_multiplier`, at every
 # rung, with the positive-engagement control beside them.
+#
+# #9645 SUPERSEDES THE NFL LADDER. Alex (2026-09-29): swiping away unrelated MLB
+# games must not push down the Red Sox the reader opens. A sports negative is
+# now exact/story scoped — it teaches no category penalty — so the rungs below
+# assert that an NFL card is untouched at every rung. The CERT-2672 canonical
+# key still matters and is still pinned: positives must merge across the two
+# vocabularies, and `americanfootball` must be recognised as a sport at all.
+# The ladder itself still runs for every non-sports category (politics above).
 
 
 def _nfl_multiplier(ctx):
@@ -352,65 +370,25 @@ def _nfl_multiplier(ctx):
 
 
 @pytest.mark.asyncio
-async def test_eight_nfl_event_swipes_reach_the_eight_swipe_floor_5453():
-    """THE CERT-2672 SPECIMEN, end to end.
+@pytest.mark.parametrize("swipes", [3, 5, 8, 500])
+async def test_no_nfl_rung_teaches_a_football_penalty_9645(swipes):
+    """THE CERT-2672 SPECIMEN, under #9645's contract, at every former rung.
 
-    Eight NFL EVENT swipes — written under `americanfootball`, the only key a
-    web or native event card has ever produced — must reach the deepest floor
-    when the card they are meant to push down is scored. Before the repair this
-    returned multiplier 1.0 with no personalization reason at all: the rollup
-    key and the lookup key were two different strings, and `.get(key, 0.0)`
-    cannot report a miss.
-    """
-    ctx = await _load([("americanfootball", "unlike", 8), _WARM])
-    result = _nfl_multiplier(ctx)
-
-    assert result.multiplier == pytest.approx(
-        1.0 + CATEGORY_DISMISS_8_SWIPE_MAX_PENALTY
-    ), (
-        f"an NFL card scored {result.multiplier} after eight swipes away from "
-        f"NFL cards; reasons={result.reasons}"
-    )
-    assert any("discover_dismiss" in r for r in result.reasons), result.reasons
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "swipes,expected",
-    [
-        # -0.15 is master's shallow end and this tree keeps serving it: three
-        # swipes do not reach the -0.40 floor, because the floor is a BOUND and
-        # `max(floor, value)` returns the value. Same number as
-        # `test_three_swipes_are_unchanged_by_this_fix` asserts for politics —
-        # the point of repeating it here is that NFL must behave identically to
-        # a category whose two vocabularies never disagreed.
-        (3, -0.15),
-        (5, CATEGORY_DISMISS_5_SWIPE_MAX_PENALTY),
-        (8, CATEGORY_DISMISS_8_SWIPE_MAX_PENALTY),
-    ],
-)
-async def test_the_nfl_ladder_runs_through_the_real_event_scorer(swipes, expected):
-    """Every rung, on the vocabulary the defect lives in — not just the top one.
-
-    A single 8-swipe assertion would pass against a repair that merged the keys
-    but broke the ladder underneath it.
+    Eight NFL EVENT swipes, written under `americanfootball`, used to reach the
+    deepest floor here. They now hide their own cards (the recent-items read)
+    and teach nothing about football, so an NFL card the reader never swiped
+    scores exactly as it would for a reader who never swiped at all.
     """
     ctx = await _load([("americanfootball", "unlike", swipes), _WARM])
+    result = _nfl_multiplier(ctx)
 
-    assert _nfl_multiplier(ctx).multiplier == pytest.approx(1.0 + expected)
-
-
-@pytest.mark.asyncio
-async def test_the_nfl_ladder_is_monotonic_through_the_real_event_scorer():
-    multipliers = [
-        _nfl_multiplier(
-            await _load([("americanfootball", "unlike", n), _WARM])
-        ).multiplier
-        for n in (3, 5, 8)
-    ]
-
-    assert multipliers == sorted(multipliers, reverse=True), multipliers
-    assert len(set(multipliers)) == 3, f"rungs must be distinguishable: {multipliers}"
+    assert result.multiplier == 1.0, (
+        f"{swipes} NFL swipes still push down an unrelated NFL card: "
+        f"multiplier={result.multiplier}, reasons={result.reasons}"
+    )
+    assert not any("discover_dismiss" in r for r in result.reasons), result.reasons
+    assert "football" not in ctx.discover_category_affinities
+    assert ctx.discover_category_negative_counts == {}
 
 
 @pytest.mark.asyncio
@@ -434,21 +412,20 @@ async def test_an_nfl_reader_who_also_engages_is_not_penalised():
 
 
 @pytest.mark.asyncio
-async def test_a_football_futures_swipe_and_an_nfl_event_swipe_are_one_reader():
+async def test_a_football_futures_open_and_an_nfl_event_open_are_one_reader():
     """The merge itself: the two vocabularies must reach the SAME bucket.
 
-    Five swipes under each key is ten swipes at one sport, and a reader who has
-    said no ten times should be past the eight-swipe rung — not sitting at the
-    three-swipe floor twice over.
+    Re-pointed at POSITIVES by #9645 (negatives no longer land in any bucket).
+    One open under each key is two signals at one sport: merged, they clear the
+    two-signal minimum and lift the NFL card; split, each bucket holds one
+    signal and nothing is learned — so this fails if the merge breaks.
     """
     ctx = await _load(
-        [("americanfootball", "unlike", 5), ("football", "unlike", 5), _WARM]
+        [("americanfootball", "open", 1), ("football", "open", 1), _WARM]
     )
 
-    assert ctx.discover_category_negative_counts == {"football": 10}
-    assert _nfl_multiplier(ctx).multiplier == pytest.approx(
-        1.0 + CATEGORY_DISMISS_8_SWIPE_MAX_PENALTY
-    )
+    assert set(ctx.discover_category_affinities) == {"football"}
+    assert _nfl_multiplier(ctx).multiplier == pytest.approx(1.0 + 3.0 / 20.0)
 
 
 @pytest.mark.asyncio
@@ -526,11 +503,16 @@ def test_the_two_builders_agree_on_the_canonical_key():
     The BLOCKed tree passed every assertion above this section while these two
     dictionaries were keyed differently from the scorer's lookup.
     """
-    rows = [("americanfootball", "unlike", 6), _WARM]
+    rows = [("americanfootball", "open", 6), _WARM]
 
-    assert _build_discover_category_negative_counts(rows) == {"football": 6}
     assert "football" in _build_discover_category_affinities(rows)
     assert "americanfootball" not in _build_discover_category_affinities(rows)
+
+    # #9645: the sports test reads the SAME canonical key, so neither spelling of
+    # a football negative reaches either dictionary.
+    negatives = [("americanfootball", "unlike", 6), ("football", "unlike", 6), _WARM]
+    assert _build_discover_category_negative_counts(negatives) == {}
+    assert _build_discover_category_affinities(negatives) == {}
 
 
 # ---------------------------------------------------------------------------
@@ -563,6 +545,26 @@ _FUTURES_MIN_SCORE = 15  # the ordinary futures floor
 _BASE_SCORES = (40, 60, 98)
 
 
+def _legacy_eight_nfl_swipe_context():
+    """The context the loader built from eight NFL swipes BEFORE #9645.
+
+    The loader no longer writes a sports category penalty, but the SCORER's
+    contract — a swipe-derived downrank ranks and never decides admission — is
+    category-agnostic and still binds every term a context can carry (politics
+    writes all three today). These gate tests keep the football specimen the
+    certs named, built directly with the exact values the old loader produced
+    (affinity -0.40, eight negatives → the -0.80 rung), so the gate arithmetic
+    is still proven on the numbers CERT-2676 reported.
+    """
+    from app.utils.personalization import PersonalizationContext
+
+    return PersonalizationContext(
+        is_authenticated=True,
+        discover_category_affinities={"football": -0.40},
+        discover_category_negative_counts={"football": 8},
+    )
+
+
 def _futures_multiplier(ctx, sport_category="football"):
     from app.utils.personalization import compute_futures_multiplier
 
@@ -585,7 +587,7 @@ async def test_eighth_nfl_swipe_downranks_without_filtering_the_event_5453(base_
     """
     from app.routes.feed import _discover_admission_score
 
-    ctx = await _load([("americanfootball", "unlike", 8), _WARM])
+    ctx = _legacy_eight_nfl_swipe_context()
     p_result = _nfl_multiplier(ctx)
 
     # It DOWNRANKS: the rank score still carries the full eight-swipe penalty.
@@ -608,7 +610,7 @@ async def test_the_eighth_swipe_does_not_filter_a_futures_card_either_5453(base_
     """The futures equivalent the repair asked for. Bars are 15 and 55."""
     from app.routes.feed import _discover_admission_score
 
-    ctx = await _load([("football", "unlike", 8), _WARM])
+    ctx = _legacy_eight_nfl_swipe_context()
     p_result = _futures_multiplier(ctx)
 
     assert min(98, int(base_score * p_result.multiplier)) < base_score
@@ -633,7 +635,7 @@ async def test_the_eighth_swipe_does_not_filter_a_sports_mode_futures_card_5453(
     """
     from app.routes.feed import _discover_admission_score
 
-    ctx = await _load([("football", "unlike", 8), _WARM])
+    ctx = _legacy_eight_nfl_swipe_context()
     p_result = _futures_multiplier(ctx)
 
     # The gate's own bar, as written at `_score_sports_mode_futures`.
@@ -649,7 +651,7 @@ async def test_the_blocked_tree_is_what_this_guard_would_have_caught():
     were not, the two tests above would pass against the BLOCKed tree and prove
     nothing. 40/60/98 -> 7/11/19 is the cert's own probe.
     """
-    ctx = await _load([("americanfootball", "unlike", 8), _WARM])
+    ctx = _legacy_eight_nfl_swipe_context()
     m = _nfl_multiplier(ctx).multiplier
 
     dropped = [min(98, int(b * m)) for b in _BASE_SCORES]
@@ -664,7 +666,7 @@ async def test_the_downrank_still_reorders_against_an_untouched_sport():
     Admitting the card is only correct if it still loses to a baseball card of
     the same base score — otherwise the fix has quietly removed the penalty.
     """
-    ctx = await _load([("americanfootball", "unlike", 8), _WARM])
+    ctx = _legacy_eight_nfl_swipe_context()
     from app.utils.personalization import compute_event_multiplier
 
     nfl = _nfl_multiplier(ctx).multiplier
@@ -898,7 +900,7 @@ async def _load_with_features(rollup_rows, feature_rows, recent_rows=()):
     session.rollback = AsyncMock()
 
     return await _load_personalization_context(
-        session, None, session_id=_SESSION_ID, config=None
+        session, _READER, session_id=_SESSION_ID, config=None
     )
 
 
@@ -922,18 +924,70 @@ _EIGHT_NFL_SWIPES = [
 #: is the one the cert's probe dropped.
 _UNSEEN_NFL_TOKENS = ["category:americanfootball", "type:event", "entity:cowboys"]
 
+#: #9645: a sports negative writes no feature term any more, so the specimen on
+#: which ALL THREE swipe-derived terms still fire is a non-sports one — eight
+#: Senate-race futures swiped away, and a ninth race the reader never saw. The
+#: invariant is the same invariant; only the card that can still trip it moved.
+_POLITICS_RACES = (
+    ("Brown", "Ohio"),
+    ("Tester", "Montana"),
+    ("Casey", "Pennsylvania"),
+    ("Baldwin", "Wisconsin"),
+    ("Rosen", "Nevada"),
+    ("Slotkin", "Michigan"),
+    ("Gallego", "Arizona"),
+    ("Allred", "Texas"),
+)
+_EIGHT_POLITICS_SWIPES = [
+    ("futures", f"Will {who} win the {state} Senate race?", "politics", "unlike", 1)
+    for who, state in _POLITICS_RACES
+]
+_UNSEEN_POLITICS_TOKENS = sorted(
+    _discover_feature_tokens(
+        item_name="Will Mucarsel-Powell win the Florida Senate race?",
+        category="politics",
+        item_type="futures",
+    )
+)
+
+
+def _politics_futures_multiplier(ctx, feature_tokens=_UNSEEN_POLITICS_TOKENS):
+    from app.utils.personalization import compute_futures_multiplier
+
+    return compute_futures_multiplier(
+        ctx,
+        sport_category="politics",
+        outcome_team_ids=[],
+        futures_market_id=None,
+        sport_key=None,
+        feature_tokens=feature_tokens,
+    )
+
 
 @pytest.mark.asyncio
 async def test_the_feature_term_is_really_written_by_these_swipes():
     """PREMISE. If the swipes produce no feature affinities, everything below is
-    vacuous — it would be asserting an invariant over an empty input."""
-    ctx = await _load_with_features([("americanfootball", "unlike", 8), _WARM], _EIGHT_NFL_SWIPES)
+    vacuous — it would be asserting an invariant over an empty input.
+
+    #9645: the eight NFL swipes now write NONE (the other half of this test),
+    so the premise is carried by the politics specimen."""
+    ctx = await _load_with_features(
+        [("politics", "unlike", 8), _WARM], _EIGHT_POLITICS_SWIPES
+    )
 
     assert ctx.discover_feature_affinities, (
         "the eight swipes wrote no feature affinities — the guards below would "
         "pass against the BLOCKed tree"
     )
     assert any(v < 0 for v in ctx.discover_feature_affinities.values())
+
+    nfl = await _load_with_features(
+        [("americanfootball", "unlike", 8), _WARM], _EIGHT_NFL_SWIPES
+    )
+    assert nfl.discover_feature_affinities == {}, (
+        "#9645: eight NFL swipes taught feature dislikes (format/archetype/team "
+        f"tokens): {nfl.discover_feature_affinities}"
+    )
 
 
 @pytest.mark.asyncio
@@ -946,40 +1000,37 @@ async def test_no_swipe_derived_term_of_any_name_reaches_admission():
     is nothing else in the product that may filter them, so the admission
     multiplier is exactly 1.0. Any future swipe-derived term fails this on the
     day it is written, whatever it is called.
+
+    Since #9645 the NFL reader's swipes reach no unseen NFL card at all — rank
+    AND admission are 1.0 — so the downrank-but-admit half is proven on the
+    politics specimen, where the category and feature terms still fire.
     """
-    from app.utils.personalization import (
-        compute_event_multiplier,
-        compute_futures_multiplier,
+    from app.utils.personalization import compute_event_multiplier
+
+    politics_ctx = await _dismissal_only_context(
+        [("politics", "unlike", 8), _WARM], _EIGHT_POLITICS_SWIPES
+    )
+    futures = _politics_futures_multiplier(politics_ctx)
+    assert futures.multiplier < 1.0, (
+        "futures: the swipes stopped downranking — this guard would pass for "
+        "the wrong reason"
+    )
+    assert futures.admission_multiplier == pytest.approx(1.0), (
+        f"futures: a swipe-derived term is still deciding eligibility. "
+        f"multiplier={futures.multiplier}, "
+        f"admission_multiplier={futures.admission_multiplier}, "
+        f"reasons={futures.reasons}"
     )
 
-    ctx = await _dismissal_only_context(
+    nfl_ctx = await _dismissal_only_context(
         [("americanfootball", "unlike", 8), _WARM], _EIGHT_NFL_SWIPES
     )
-
     event = compute_event_multiplier(
-        ctx, None, None, "americanfootball_nfl", None,
+        nfl_ctx, None, None, "americanfootball_nfl", None,
         feature_tokens=_UNSEEN_NFL_TOKENS,
     )
-    futures = compute_futures_multiplier(
-        ctx,
-        sport_category="football",
-        outcome_team_ids=[],
-        futures_market_id=None,
-        sport_key="americanfootball_nfl",
-        feature_tokens=_UNSEEN_NFL_TOKENS,
-    )
-
-    for name, result in (("event", event), ("futures", futures)):
-        assert result.multiplier < 1.0, (
-            f"{name}: the swipes stopped downranking — this guard would pass "
-            f"for the wrong reason"
-        )
-        assert result.admission_multiplier == pytest.approx(1.0), (
-            f"{name}: a swipe-derived term is still deciding eligibility. "
-            f"multiplier={result.multiplier}, "
-            f"admission_multiplier={result.admission_multiplier}, "
-            f"reasons={result.reasons}"
-        )
+    assert event.multiplier == 1.0, event.reasons
+    assert event.admission_multiplier == 1.0, event.reasons
 
 
 @pytest.mark.asyncio
@@ -1016,8 +1067,10 @@ async def test_an_if_its_wild_reader_still_sees_the_unseen_football_card_5453():
         f"low-affinity bar as {admission} (multiplier={p_result.multiplier}, "
         f"admission_multiplier={p_result.admission_multiplier})"
     )
-    # And it still ranks below where it would sit unswiped.
-    assert min(98, int(98 * p_result.multiplier)) < admission
+    # #9645: this line used to assert the card ranks BELOW its unswiped place.
+    # Eight swipes at OTHER NFL matchups now teach nothing about this one, so
+    # its rank carries the reader's own onboarding choice and nothing else.
+    assert p_result.multiplier == pytest.approx(p_result.admission_multiplier)
 
 
 @pytest.mark.asyncio
@@ -1119,6 +1172,14 @@ async def test_the_semantic_term_is_really_written_and_really_fires():
     )
 
 
+#: The same eight politics swipes as rows of the RECENT-ITEMS read, so the
+#: semantic term fires on the politics specimen too. #9645.
+_EIGHT_POLITICS_RECENT = [
+    ("futures", 9100 + i, "unlike", _NOW, name, category)
+    for i, (_t, name, category, _a, _n) in enumerate(_EIGHT_POLITICS_SWIPES)
+]
+
+
 @pytest.mark.asyncio
 async def test_the_invariant_holds_with_all_three_terms_live_at_once():
     """The invariant again, on the context where every swipe-derived term fires.
@@ -1126,24 +1187,28 @@ async def test_the_invariant_holds_with_all_three_terms_live_at_once():
     `test_no_swipe_derived_term_of_any_name_reaches_admission` runs without the
     recent-items read; this is the same assertion with the semantic term live
     too, so all three are excluded simultaneously rather than one at a time.
+
+    #9645 moved the specimen to politics: an NFL negative no longer writes the
+    category or feature term, so only a non-sports card can have all three live.
     """
     from app.routes.feed import _discover_admission_score
-    from app.utils.personalization import compute_event_multiplier
 
     ctx = await _dismissal_only_context(
-        [("americanfootball", "unlike", 8), _WARM],
-        _EIGHT_NFL_SWIPES,
-        _EIGHT_NFL_RECENT,
+        [("politics", "unlike", 8), _WARM],
+        _EIGHT_POLITICS_SWIPES,
+        _EIGHT_POLITICS_RECENT,
     )
-    resembling = list(ctx.recent_dismissed_feature_token_sets[0])
-    p_result = compute_event_multiplier(
-        ctx, None, None, "americanfootball_nfl", None, feature_tokens=resembling
-    )
+    # A card that looks like one they just swiped away. Its `topic:elections`
+    # is also a feature token, so the feature term fires on it too.
+    resembling = sorted(ctx.recent_dismissed_feature_token_sets[0])
+    p_result = _politics_futures_multiplier(ctx, feature_tokens=resembling)
 
     fired = {r.split(":")[0] for r in p_result.reasons}
-    assert {"discover_category_dismiss", "semantic_dismiss"} <= fired or (
-        "discover_feature_dislike" in fired and "semantic_dismiss" in fired
-    ), f"expected the swipe-derived terms to be live on this context: {p_result.reasons}"
+    assert {
+        "discover_dismiss",
+        "discover_feature_dislike",
+        "semantic_dismiss",
+    } <= fired, f"expected all three swipe-derived terms live: {p_result.reasons}"
 
     assert p_result.admission_multiplier == pytest.approx(1.0)
     assert _discover_admission_score(40, p_result) == 40
