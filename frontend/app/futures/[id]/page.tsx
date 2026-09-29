@@ -76,6 +76,7 @@ import { resolveShape, SHAPE_QUANTITY } from "@/lib/marketShape";
 import {
   buildOutcomeLadderRungs,
   buildSettledOutcomeLadderRungs,
+  ladderInclusionRanks,
   ladderNeedsWideLabels,
   ladderOrderFor,
   thresholdLadderTitles,
@@ -427,8 +428,13 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
       sortField,
       sortDirection,
       market.status === "resolved",
+      // #9574 — tied rungs keep the ladder's order. Cumulative markets only
+      // (`ladderOrderFor`): a disjoint set has no nesting to break a tie with.
+      ladderOrderFor(market.mutually_exclusive) === "cumulative"
+        ? ladderInclusionRanks(market.outcomes)
+        : null,
     );
-  }, [market?.outcomes, market?.status, sortField, sortDirection]);
+  }, [market?.outcomes, market?.status, market?.mutually_exclusive, sortField, sortDirection]);
 
   // #2831: a two-outcome market prints both sides of one question, so the pair is
   // decided ONCE — here, over `market.outcomes` — and looked up per row by id.

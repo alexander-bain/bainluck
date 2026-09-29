@@ -41,16 +41,18 @@ describe("#2437 probe: settled date ladder order on current source", () => {
     ]);
   });
 
-  test("non-date cumulative rungs keep serve order (the remaining gap)", () => {
+  test("non-date cumulative rungs break ties by nesting (#9574 closed the remaining gap)", () => {
     const rows = [
       { id: 1, name: "Over 9000", probability: 1 },
       { id: 2, name: "Over 7000", probability: 1 },
       { id: 3, name: "Over 5000", probability: 0 },
     ];
     const rungs = buildOutcomeLadderRungs(rows, "cumulative");
-    // Price groups partition (0s before 1s) but WITHIN each group there is no
-    // signal — serve order stands, which may be wrong. Documented, not fixed.
-    expect(rungs.map((r) => r.label)).toEqual(["Over 5000", "Over 9000", "Over 7000"]);
+    // Price groups partition (0s before 1s). WITHIN a group this used to be
+    // serve order ("Documented, not fixed"); #9574's `ladderInclusionRanks` now
+    // reads the nesting direction from the untied pairs (here the higher number
+    // carries the higher price) and orders the tie by it.
+    expect(rungs.map((r) => r.label)).toEqual(["Over 5000", "Over 7000", "Over 9000"]);
   });
 });
 

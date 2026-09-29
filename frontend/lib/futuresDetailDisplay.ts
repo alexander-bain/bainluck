@@ -1214,6 +1214,13 @@ export function sortFuturesOutcomes<T extends SortableOutcome>(
   field: FuturesSortField,
   direction: FuturesSortDirection,
   resolved = false,
+  /**
+   * #9574 — a probability TIE on a cumulative ladder is broken by the ladder's
+   * nesting (`ladderInclusionRanks`), not by serve order. Ascending like every
+   * key here, so the one flip below reverses it with the price. Probability
+   * field only: a name or last-move sort is answered literally.
+   */
+  tieRanks?: ReadonlyMap<T, number> | null,
 ): T[] {
   const winnerLeads = resolved && field === "probability" && direction === "desc";
 
@@ -1232,6 +1239,9 @@ export function sortFuturesOutcomes<T extends SortableOutcome>(
       switch (field) {
         case "probability":
           comparison = (a.probability ?? 0) - (b.probability ?? 0);
+          if (comparison === 0 && tieRanks) {
+            comparison = (tieRanks.get(a) ?? 0) - (tieRanks.get(b) ?? 0);
+          }
           break;
         case "change": {
           // The signed change, never its magnitude: ascending puts the biggest
