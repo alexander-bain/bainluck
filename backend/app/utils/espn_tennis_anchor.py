@@ -1485,11 +1485,67 @@ def anchorable_sport_keys(
     match does not become correct by acquiring an authority id — it becomes a
     violation of the invariant with an id on it.
     """
-    on_board = board_tournaments(competitions)
+    named = named_board_tournaments(sport_keys, competitions)
     return [
         key for key in sport_keys
-        if (token := tournament_token(key)) is not None and token in on_board
+        if (token := tournament_token(key)) is not None and token in named
     ]
+
+
+def named_board_tournaments(
+    sport_keys: Iterable[str], competitions: Iterable[dict[str, Any]]
+) -> dict[str, str]:
+    """Our bucket's token -> the board tournament it names. Pure. #9563.
+
+    ═══ WHY EQUALITY WAS NOT ENOUGH ═══
+
+    ESPN prints a tournament under its sponsored title and the Odds API keys it
+    by the plain one. ``"US Open"`` and ``"China Open"`` fold to exactly what
+    ``tennis_atp_us_open``/``tennis_atp_china_open`` fold to, but on 2026-09-29
+    ESPN's Tokyo event was ``"Kinoshita Group Japan Open Tennis Championships"``
+    — ``kinoshitagroupjapanopentennischampionships``, never equal to
+    ``japanopen``. So ``tennis_atp_japan_open`` named nothing on the board, its
+    twelve rows never entered the pass, and the #9465 contest that labels a late
+    tournament row onto the tour-week holder never saw them: Alcaraz v Michelsen
+    printed a sportsbooks-only card in search while Kalshi and Polymarket sat on
+    the ESPN-anchored row.
+
+    So a bucket also names a board tournament whose token CONTAINS its own —
+    the sponsor goes in front and "Tennis Championships" behind, and the plain
+    name survives in the middle.
+
+    ═══ AND WHAT IT REFUSES ═══
+
+    Containment is looser than equality, so it only ever answers uniquely:
+
+    * an exact match always wins, and is never displaced by a containing one;
+    * a token contained in TWO board tournaments names neither;
+    * a board tournament contained-matched by two DIFFERENT tokens is named by
+      neither of them (the same token from both tours — ``tennis_atp_x`` and
+      ``tennis_wta_x`` — is one token, as it always was).
+
+    The pair key and :func:`within_tournament_window` still decide every match
+    inside the tournament; this only decides which bucket's rows are read.
+    """
+    on_board = board_tournaments(competitions)
+    tokens = {t for t in (tournament_token(k) for k in sport_keys) if t}
+    named: dict[str, str] = {}
+    contained: dict[str, str] = {}
+    for token in tokens:
+        if token in on_board:
+            named[token] = token
+            continue
+        hosts = [b for b in on_board if token in b]
+        if len(hosts) == 1:
+            contained[token] = hosts[0]
+    exact_hosts = set(named.values())
+    host_counts: dict[str, int] = {}
+    for host in contained.values():
+        host_counts[host] = host_counts.get(host, 0) + 1
+    for token, host in contained.items():
+        if host not in exact_hosts and host_counts[host] == 1:
+            named[token] = host
+    return named
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -1549,7 +1605,8 @@ def bucketless_competitions(
     anchored through its own bucket or through the generic buckets, never both,
     so the two passes cannot claim one competition from two sides.
     """
-    named = {t for t in (tournament_token(k) for k in sport_keys) if t}
+    competitions = list(competitions)
+    named = set(named_board_tournaments(sport_keys, competitions).values())
     return [
         c for c in competitions
         if (token := _fold_token(c.get("event_name"))) and token not in named
