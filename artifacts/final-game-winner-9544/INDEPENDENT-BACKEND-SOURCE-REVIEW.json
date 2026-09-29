@@ -1,0 +1,15 @@
+{
+  "reviewer": "Codex recover_source_bars",
+  "verdict": "SOURCE PASS",
+  "checked_at": "2026-09-29T04:33:55.787943+00:00",
+  "files": [
+    {
+      "path": "backend/app/utils/final_game_winner_quote.py",
+      "sha256": "c0b47554b6fead106477a6bb4dba55989ab25ce27df1964c83230115857fe4a9"
+    },
+    {
+      "path": "backend/tests/test_final_game_winner_quote.py",
+      "sha256": "0996016b1206e93c578ab1ef87ddf6ccd3710a31b4b3c1a2448fc275d74b625c"
+    }
+  ]
+}
