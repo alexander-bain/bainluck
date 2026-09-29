@@ -76,9 +76,11 @@ import { resolveShape, SHAPE_QUANTITY } from "@/lib/marketShape";
 import {
   buildOutcomeLadderRungs,
   buildSettledOutcomeLadderRungs,
+  ladderInclusionRanks,
   ladderNeedsWideLabels,
   ladderOrderFor,
   thresholdLadderTitles,
+  tieGroupRanks,
 } from "@/lib/futuresLadder";
 import { buildAmbientPoints } from "@/lib/futuresAmbient";
 import { formatResolvesLabel } from "@/lib/gameTimeLabel";
@@ -420,6 +422,20 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   // price is routinely not the highest on the board — so without this the section
   // headed "Final Results" led with a loser. `market.status`, never `is_winner`
   // alone: a stray flag must not make a live market claim a result.
+  // #9574 — tied rungs keep the ladder's order. Cumulative markets only
+  // (`ladderOrderFor`): a disjoint set has no nesting to break a tie with.
+  const tieRanks = useMemo(
+    () =>
+      market?.outcomes && ladderOrderFor(market.mutually_exclusive) === "cumulative"
+        ? ladderInclusionRanks(market.outcomes)
+        : null,
+    [market?.outcomes, market?.mutually_exclusive],
+  );
+  // …and so do their rank badges (see `tieGroupRanks`).
+  const tieBadgeRanks = useMemo(
+    () => tieGroupRanks(market?.outcomes ?? [], tieRanks),
+    [market?.outcomes, tieRanks],
+  );
   const sortedOutcomes = useMemo(() => {
     if (!market?.outcomes) return [];
     return sortFuturesOutcomes(
@@ -427,8 +443,9 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
       sortField,
       sortDirection,
       market.status === "resolved",
+      tieRanks,
     );
-  }, [market?.outcomes, market?.status, sortField, sortDirection]);
+  }, [market?.outcomes, market?.status, tieRanks, sortField, sortDirection]);
 
   // #2831: a two-outcome market prints both sides of one question, so the pair is
   // decided ONCE — here, over `market.outcomes` — and looked up per row by id.
@@ -1436,8 +1453,12 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           {displayedOutcomes.map((outcome, index) => (
             <OutcomeRow
               key={outcome.id}
-              outcome={outcome}
-              rank={outcome.rank ?? index + 1}
+              outcome={
+                tieBadgeRanks.has(outcome)
+                  ? { ...outcome, rank_change_24h: null }
+                  : outcome
+              }
+              rank={tieBadgeRanks.get(outcome) ?? outcome.rank ?? index + 1}
               isLeader={outcome.id === leader?.id}
               isSelected={selectedOutcomes.has(outcome.id)}
               onToggleSelect={() => toggleOutcomeSelection(outcome.id)}

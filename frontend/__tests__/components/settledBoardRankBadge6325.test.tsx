@@ -261,6 +261,10 @@ describe("#6325 — the futures detail page (SOURCE SCAN)", () => {
   });
 
   it("still passes the rank expression `pageRank` mirrors", () => {
-    expect(page).toMatch(/rank=\{outcome\.rank \?\? index \+ 1\}/);
+    // #9574 prefixes `tieBadgeRanks.get(outcome) ??`: inside a price tie on a
+    // cumulative ladder it reorders the group's OWN served ranks. It skips every
+    // row whose `rank` is NULL, so it can never mint the second `1` this file
+    // guards against, and the fallback below is unchanged.
+    expect(page).toMatch(/rank=\{(?:tieBadgeRanks\.get\(outcome\) \?\? )?outcome\.rank \?\? index \+ 1\}/);
   });
 });

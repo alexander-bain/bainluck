@@ -230,6 +230,105 @@ function chronologicalRanks(
 }
 
 /**
+ * ── #9574: WHAT BREAKS A PRICE TIE ON A NUMERIC LADDER ──
+ *
+ * `/futures/63153672` (Brent crude, Kalshi, cumulative "Above $X" rungs) served
+ * `Above $103 6%` then `Above $102.50 6%` under Probability ↓ on 2026-09-29, and
+ * `/futures/59699693` (Hurricane Polo, five "Category N or above" rungs all at
+ * 0.995) listed Cat 1, Cat 2, **Cat 5**, Cat 3, Cat 4. A tie fell through to serve
+ * order, and serve order is not the ladder's order.
+ *
+ * On a cumulative ladder a tie is a saturation, not a disagreement: the rungs
+ * still nest, so the one honest tie-break is the NESTING — the more inclusive
+ * rung is the one whose price can only be at least as high. That is what this
+ * returns: a rank that rises with inclusiveness, so it composes with ascending
+ * probability as a secondary key and flips with it.
+ *
+ * Dates reuse `chronologicalRanks` ("Before July" contains "Before April").
+ * Otherwise every label must carry exactly ONE number (all-or-nothing, the same
+ * rule as dates: "Between 95 and 96" refuses, and one unparsed rung refuses the
+ * set). Which way the numbers nest is read from the PRICES, never from words:
+ * across untied pairs, does the higher number carry the higher price ("Below
+ * $X") or the lower ("Above $X", "Category N or above")? A set tied everywhere
+ * — the hurricane — carries no price signal and reads low-to-high, which is the
+ * order its ladder is written in. Null — keep serve order — for anything else.
+ */
+const LABEL_NUMBER_RE = /\d[\d,]*(?:\.\d+)?/g;
+
+function labelNumber(label: string): number | null {
+  const found = label.match(LABEL_NUMBER_RE);
+  if (!found || found.length !== 1) return null;
+  const n = Number(found[0].replace(/,/g, ""));
+  return Number.isFinite(n) ? n : null;
+}
+
+export function ladderInclusionRanks<T extends LadderOutcome>(
+  rows: readonly T[],
+): Map<T, number> | null {
+  const chrono = chronologicalRanks(rows) as Map<T, number> | null;
+  if (chrono) return chrono;
+  if (rows.length < 2) return null;
+
+  const values = new Map<T, number>();
+  for (const row of rows) {
+    const v = labelNumber(row.name ?? "");
+    if (v === null) return null;
+    values.set(row, v);
+  }
+
+  let signal = 0;
+  for (let i = 0; i < rows.length; i++) {
+    for (let j = i + 1; j < rows.length; j++) {
+      const pi = rows[i].probability;
+      const pj = rows[j].probability;
+      if (pi == null || pj == null || pi === pj) continue;
+      signal += Math.sign((pi - pj) * ((values.get(rows[i]) as number) - (values.get(rows[j]) as number)));
+    }
+  }
+  const higherIsMoreInclusive = signal > 0;
+  const ranks = new Map<T, number>();
+  for (const [row, v] of values) ranks.set(row, higherIsMoreInclusive ? v : -v);
+  return ranks;
+}
+
+/**
+ * #9574 — the rank BADGE inside a price tie follows the ladder too.
+ *
+ * `rank` is the server's price rank, and inside a tie it is serve order: once
+ * the table orders Hurricane Polo's five tied rungs Cat 1 → Cat 5, their served
+ * ranks read `1 2 4 5 3` down the column. This reassigns each tie group's OWN
+ * served rank numbers in nesting order (most inclusive gets the smallest), so no
+ * number outside the group moves and none is invented. Only rows whose badge
+ * changes are returned; the caller drops their `rank_change_24h` arrow, whose
+ * baseline was the old number.
+ */
+export function tieGroupRanks<T extends LadderOutcome & { rank?: number | null }>(
+  rows: readonly T[],
+  inclusion: ReadonlyMap<T, number> | null,
+): Map<T, number> {
+  const out = new Map<T, number>();
+  if (!inclusion) return out;
+  const groups = new Map<number, T[]>();
+  for (const row of rows) {
+    if (row.probability == null || row.rank == null) continue;
+    const g = groups.get(row.probability);
+    if (g) g.push(row);
+    else groups.set(row.probability, [row]);
+  }
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    const served = group.map((r) => r.rank as number).sort((a, b) => a - b);
+    const byNesting = [...group].sort(
+      (a, b) => (inclusion.get(b) ?? 0) - (inclusion.get(a) ?? 0),
+    );
+    byNesting.forEach((row, i) => {
+      if (row.rank !== served[i]) out.set(row, served[i]);
+    });
+  }
+  return out;
+}
+
+/**
  * Build ladder rungs from a market's own outcomes.
  *
  * Labels are the outcome names verbatim — a date rung has no numeric value to
@@ -262,13 +361,16 @@ export function buildOutcomeLadderRungs(
     // 1596640 = July, 1596641 = April — so insertion order renders **July above
     // April**, a backwards timeline on the exact market Q478 was about. Neither
     // rule below can reach an id.
-    const chrono = chronologicalRanks(rows);
+    //
+    // #9574 — a numeric ladder breaks its ties by nesting too; see
+    // `ladderInclusionRanks`, which is `chronologicalRanks` for a date ladder.
+    const inclusion = ladderInclusionRanks(rows);
     rows.sort((a, b) => {
       const ap = a.probability ?? Number.POSITIVE_INFINITY;
       const bp = b.probability ?? Number.POSITIVE_INFINITY;
       if (ap !== bp) return ap - bp;
-      if (!chrono) return 0;
-      return (chrono.get(a) ?? 0) - (chrono.get(b) ?? 0);
+      if (!inclusion) return 0;
+      return (inclusion.get(a) ?? 0) - (inclusion.get(b) ?? 0);
     });
   }
 
