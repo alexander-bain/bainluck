@@ -254,11 +254,11 @@ describe("UX-1065: the measured population", () => {
     expect(new Set(NAMES).size).toBe(4701);
   });
 
-  it("563 of 4,701 distinct names (12.0%) no longer print their bare last word", () => {
+  it("564 of 4,701 distinct names (12.0%) no longer print their bare last word", () => {
     const changed = NAMES.filter((n) => teamShortName(n) !== n.split(" ").pop());
-    // 542 until the #5634 sport-word five, 547 until its sixteen countries
-    // (both named below).
-    expect(changed).toHaveLength(563);
+    // 542 until the #5634 sport-word five, 547 until its sixteen countries,
+    // 563 until its accented sport word (all named below).
+    expect(changed).toHaveLength(564);
     expect(Math.round((changed.length / NAMES.length) * 1000) / 10).toBe(12.0);
   });
 
@@ -382,12 +382,23 @@ describe("UX-1065: the measured population", () => {
     expect(Object.keys(gained)).toHaveLength(563 - 547);
   });
 
+  /**
+   * #5634 — the one an ACCENTED sport word added (shopper pass 0126: a
+   * EuroLeague final named Barcelona "Bàsquet" / "BÀS"). The lookup folds
+   * accents first; nothing else in the corpus moved.
+   */
+  it("the one #5634 accented sport-word club keeps its whole name", () => {
+    expect(NAMES).toContain("FC Barcelona Bàsquet");
+    expect("FC Barcelona Bàsquet".split(" ").pop()).toBe("Bàsquet");
+    expect(teamShortName("FC Barcelona Bàsquet")).toBe("FC Barcelona Bàsquet");
+  });
+
   it("the other 88.0% keep split-pop output byte for byte", () => {
     const same = NAMES.filter((n) => teamShortName(n) === n.split(" ").pop());
     // 4,220 until #5634 kept 61 two-word nicknames whole (named above), and
     // 4,159 until its five sport-word clubs kept their whole name, and 4,154
-    // until its sixteen countries did.
-    expect(same).toHaveLength(4138);
+    // until its sixteen countries did, and 4,138 until its accented sport word.
+    expect(same).toHaveLength(4137);
   });
 
   /**
