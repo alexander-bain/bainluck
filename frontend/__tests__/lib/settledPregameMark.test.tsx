@@ -47,6 +47,8 @@ describe("#8315 — which number the settled hero prints", () => {
       percent: 39,
       source: "kalshi",
       label: null,
+      loserProbability: 0.61,
+      loserPercent: 61,
     });
   });
 
@@ -89,6 +91,8 @@ describe("#8315 — which number the settled hero prints", () => {
       percent: null,
       source: "books",
       label: "sportsbooks",
+      loserProbability: 0.6007,
+      loserPercent: null,
     });
   });
 
@@ -182,6 +186,8 @@ describe("#8315 — what the hero prints from it", () => {
     percent?: number | null;
     label?: string | null;
     source?: string | null;
+    loserProb?: number | null;
+    loserPercent?: number | null;
   }): string {
     return renderToStaticMarkup(
       <SettledOutcomeHero
@@ -191,20 +197,29 @@ describe("#8315 — what the hero prints from it", () => {
         winnerPregamePercent={props.percent}
         winnerPregameLabel={props.label}
         winnerPregameSource={props.source}
+        loserPregameProb={props.loserProb}
+        loserPregamePercent={props.loserPercent}
       />,
     );
   }
 
   it("prints the card's rounded percent, not a local re-rounding", () => {
     // 0.395 rounds to 40 locally; the served pair (UX-P114) said 39.
-    const text = visibleText(hero({ prob: 0.395, percent: 39, source: "kalshi" }));
+    const text = visibleText(hero({ prob: 0.395, percent: 39, source: "kalshi", loserProb: 0.605, loserPercent: 61 }));
     expect(text).toContain("Upset · 39% pregame");
     expect(text).not.toContain("40%");
     expect(text).not.toContain("sportsbooks");
   });
 
   it("names the sportsbooks rung the way the card does", () => {
-    const html = hero({ prob: 0.3993, percent: 40, label: "sportsbooks", source: "books" });
+    const html = hero({
+      prob: 0.3993,
+      percent: 40,
+      label: "sportsbooks",
+      source: "books",
+      loserProb: 0.6007,
+      loserPercent: 60,
+    });
     expect(visibleText(html)).toContain("Upset · 40% pregame sportsbooks");
     // Its own line, not a suffix on the pregame span (the 390px column).
     expect(html).toMatch(/data-testid="event-hero-pregame-label"[^>]*>sportsbooks</);
