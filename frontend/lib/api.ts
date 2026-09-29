@@ -936,8 +936,9 @@ export async function fetchFuturesMarkets(params?: {
 /**
  * Fetch a single futures market by ID
  */
-export async function fetchFuturesMarket(id: number): Promise<FuturesMarketDetailResponse> {
-  return apiFetch<FuturesMarketDetailResponse>(`/api/futures/${id}`);
+export async function fetchFuturesMarket(id: number, options?: { fresh?: boolean; signal?: AbortSignal }): Promise<FuturesMarketDetailResponse> {
+  return apiFetch<FuturesMarketDetailResponse>(`/api/futures/${id}${options?.fresh ? "?fresh=true" : ""}`,
+    options?.fresh ? { cache: "no-store", maxRetries: 0, signal: options.signal } : undefined);
 }
 
 /**
@@ -1013,7 +1014,8 @@ export async function fetchFuturesHistory(
   hours = 168,
   outcomeId?: number,
   topN?: number,
-  champion?: string
+  champion?: string,
+  options?: { fresh?: boolean; signal?: AbortSignal }
 ): Promise<FuturesHistoryResponse> {
   const params = new URLSearchParams();
   params.set("hours", hours.toString());
@@ -1022,9 +1024,11 @@ export async function fetchFuturesHistory(
   // #232: settled winner-field champion name so /history resolves the winner's
   // evolution line to 1.0 (odds_api winner fields never carry an is_winner grade).
   if (champion) params.set("champion", champion);
+  if (options?.fresh) params.set("fresh", "true");
 
   return apiFetch<FuturesHistoryResponse>(
-    `/api/futures/${marketId}/history?${params.toString()}`
+    `/api/futures/${marketId}/history?${params.toString()}`,
+    options?.fresh ? { cache: "no-store", maxRetries: 0, signal: options.signal } : undefined
   );
 }
 
