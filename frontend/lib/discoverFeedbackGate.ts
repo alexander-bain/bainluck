@@ -18,7 +18,15 @@
  *
  * A refused attempt is dropped, never queued. Signing in afterwards does not
  * replay it — the first thing a new account learns from is its own first swipe.
+ *
+ * Two layers. The writers themselves refuse anything but `learn`
+ * (`setDiscoverLearningGate` in `lib/discoverInteractions.ts`), which covers
+ * impressions, taps, shares and expands too. This file's attempt decision is the
+ * UI half: an explicit like / dismiss is refused before the card changes state,
+ * and a signed-out reader is shown the invitation.
  */
+
+import { createContext, useContext } from "react";
 
 export type DiscoverLearningState = "learn" | "invite" | "hold";
 
@@ -64,4 +72,15 @@ export async function runDiscoverInviteSignIn(
   } finally {
     onSettled();
   }
+}
+
+/**
+ * The page's attempt handler, for explicit feedback controls deep in the card
+ * tree (the bundle action bar) that the page does not render directly. Absent ⇒
+ * every attempt proceeds, as before; the writers' own gate still applies.
+ */
+export const DiscoverFeedbackAttemptContext = createContext<(() => boolean) | null>(null);
+
+export function useDiscoverFeedbackAttempt(): (() => boolean) | null {
+  return useContext(DiscoverFeedbackAttemptContext);
 }

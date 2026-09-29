@@ -22,6 +22,7 @@ import {
   readDiscoverInteractionProfile,
   recordDiscoverInteraction,
   sendDiscoverInteraction,
+  setDiscoverLearningGate,
   type DiscoverProfile,
 } from "@/lib/discoverInteractions";
 import { SHAPE_UNSHAPED } from "@/lib/marketShape";
@@ -55,7 +56,7 @@ import { spaceBySport } from "@/lib/discover/spacedOrder";
 import { feedItemHasRenderableContent, collectSuppressedEnvelopes, feedItemCanBeGuessed } from "@/components/discover/utils";
 import FirstRunOrientation from "@/components/discover/FirstRunOrientation";
 import SignInToPersonalizeInvite from "@/components/discover/SignInToPersonalizeInvite";
-import { decideDiscoverFeedbackAttempt, resolveDiscoverLearning } from "@/lib/discoverFeedbackGate";
+import { DiscoverFeedbackAttemptContext, decideDiscoverFeedbackAttempt, resolveDiscoverLearning } from "@/lib/discoverFeedbackGate";
 import {
   areGamesUnlocked,
   isFirstRunAnonymous,
@@ -505,6 +506,12 @@ export default function DiscoverPage() {
   useEffect(() => {
     if (learningState === "learn") setSignInInviteOpen(false);
   }, [learningState]);
+  // The same rule at the writers: impressions, taps, shares, expands and bundle
+  // likes all score the profile, so nothing but `learn` may write or queue one.
+  useEffect(() => {
+    setDiscoverLearningGate(() => learningStateRef.current === "learn");
+    return () => setDiscoverLearningGate(null);
+  }, []);
 
   // L2-242 / C133 — only the PROVEN first request of a fresh, signed-out,
   // zero-interaction visitor may reuse the shared `anon` warm feed. Flips false
@@ -1471,6 +1478,7 @@ export default function DiscoverPage() {
           each against ~300px before, which is the "comfortably readable" half of the ask. A fifth
           column at this width would take them back down to ~291px, narrower than the defect, so
           the column ladder is deliberately untouched. */}
+      <DiscoverFeedbackAttemptContext.Provider value={handleFeedbackAttempt}>
       <main className="max-w-content mx-auto px-4 py-4">
         {isLoading && <DiscoverSkeletonGrid />}
 
@@ -1644,6 +1652,7 @@ export default function DiscoverPage() {
           </div>
         )}
       </main>
+      </DiscoverFeedbackAttemptContext.Provider>
     </div>
     </ErrorBoundary>
   );
