@@ -5,7 +5,8 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import useSWR from "swr";
-import { fetchEvent, fetchEventHistory, fetchGameMarkets, fetchTeamProgression, fetchEventTournament, formatProbability } from "@/lib/api";
+import { useGameMarketsStream } from "@/hooks/useGameMarketsStream";
+import { fetchEvent, fetchEventHistory, fetchTeamProgression, fetchEventTournament, formatProbability } from "@/lib/api";
 import type { EventDetailResponse, EventTournamentResponse, TeamProgressionResponse } from "@/lib/types";
 import { EVENT_BOOT_HISTORY_HOURS } from "@/lib/event/detailBoot";
 import {
@@ -43,6 +44,7 @@ import {
   liveHeroGamesLine,
 } from "@/lib/eventOutcome";
 import SettledOutcomeHero from "@/components/event/SettledOutcomeHero";
+import FinalGameWinnerQuote from "@/components/event/FinalGameWinnerQuote";
 const ChartSkeleton = () => <div className="animate-pulse h-48 bg-surface-card rounded-xl" />;
 const OddsChart = dynamic(() => import("@/components/OddsChart"), { ssr: false, loading: ChartSkeleton });
 const ScoreDifferentialChart = dynamic(() => import("@/components/ScoreDifferentialChart"), { ssr: false, loading: ChartSkeleton });
@@ -985,11 +987,7 @@ export default function EventPage({ params }: EventPageProps) {
   };
 
   // Game-level markets (totals spectrum, player props)
-  const { data: servedGameMarkets } = useSWR(
-    ["game-markets", eventId],
-    () => fetchGameMarkets(eventId),
-    { refreshInterval: isLive ? LIVE_REFRESH_INTERVAL : SCHEDULED_REFRESH_INTERVAL }
-  );
+  const { data: servedGameMarkets } = useGameMarketsStream(eventId, event?.id ?? eventId);
 
   // #7064: the hero already answers the game's own moneyline, so the props body must not answer it
   // again — it was arriving once PER VENUE, so the page showed the same question two more times,
@@ -2934,6 +2932,9 @@ export default function EventPage({ params }: EventPageProps) {
         </div>
         </SectionErrorBoundary>
       )}
+
+      <FinalGameWinnerQuote quote={servedGameMarkets?.open_winner_quote}
+        eventId={event.id} finished={isFinished} closedIds={servedGameMarkets?.closed_winner_market_ids} />
 
       {/* Market Map cards — Margin Map + Total Map */}
       {/* #3240: the mount condition is shared with `totalsMapRenders` above, so
