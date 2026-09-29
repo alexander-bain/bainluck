@@ -2242,6 +2242,8 @@ export default function EventPage({ params }: EventPageProps) {
                   winnerPregamePercent={settledPregame?.percent ?? null}
                   winnerPregameSource={settledPregame?.source ?? null}
                   winnerPregameLabel={settledPregame?.label ?? null}
+                  loserPregameProb={settledPregame?.loserProbability ?? null}
+                  loserPregamePercent={settledPregame?.loserPercent ?? null}
                 />
               ) : (
               // #2085: the two sides are ONE decision — see
