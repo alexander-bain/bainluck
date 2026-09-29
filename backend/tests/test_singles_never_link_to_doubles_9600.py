@@ -21,8 +21,9 @@ unlinked one: 62937255 was unlinked 9 times in 24 hours.
 ## What this file gates
 
 * the pure shape test, including the club names a slash on ONE side belongs to;
-* the forward scorer, Phase 1.5 and the group-sibling resolver, each driven for
-  real, each with a control that the correct link still happens.
+* the forward scorer, Phase 1.5, the group-sibling resolver and the two relink
+  finders (Kalshi self-mint #6720, venue-confirmed #5544), each driven for real,
+  each with a control that the correct link still happens.
 
 Population replay (production, links on rows dated now-10d..now+10d whose market
 or both row sides carry a slash, 1,936 two-sided): old-yes/new-no = 9, every one
@@ -376,3 +377,144 @@ def test_the_group_shape_reads_every_parseable_title():
     assert pmm._group_pair_shape(["Set Handicap: A (-1.5) vs B (+1.5)"]) is None
     # Titles that disagree give the group no shape — nothing is refused on a guess.
     assert pmm._group_pair_shape([PM_SINGLES_LEG, KALSHI_DOUBLES]) is None
+
+
+# --------------------------------------------------------------------------
+# The two relink finders (CERT-3788 follow-up `9600-RELINK-CALLSITE-GUARDS`)
+#
+# Both MOVE a link rather than decline one, and both confirm the row they move
+# it to with `_names_both_sides`. The helper is gated above; these drive each
+# caller on real rows so a finder that stops routing through it (or grows its
+# own name test) is caught at the call site, not trusted to the helper.
+# --------------------------------------------------------------------------
+
+KALSHI_SINGLES_TICKER = "KXATPCHALLENGERMATCH-26SEP29HARBAL"
+
+
+def _scheduled_row(session, sport, home, away, external_id):
+    """A row somebody scheduled: it carries a provider id, so a finder may pick it."""
+    from app.models.models import Event
+
+    row = Event(
+        sport_id=sport.id, home_team_name=home, away_team_name=away,
+        commence_time=DOUBLES_START, status="scheduled",
+        external_id=external_id, commence_time_source="odds_api",
+    )
+    session.add(row)
+    session.flush()
+    return row
+
+
+def _second_sport(session, key):
+    from app.models.models import Sport
+
+    sport = Sport(key=key, name=key)
+    session.add(sport)
+    session.flush()
+    return sport
+
+
+class TestTheKalshiSelfMintRelink:
+    """`_kalshi_self_mint_real_fixture` (#6720) — moves a Kalshi market off its own mint."""
+
+    async def _find(self, session, mint, name=KALSHI_SINGLES):
+        market = SimpleNamespace(
+            source="kalshi", external_id=KALSHI_SINGLES_TICKER, name=name,
+        )
+        return await pmm._kalshi_self_mint_real_fixture(
+            _AsyncShim(session), extract_matchup(name), market, mint,
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_singles_market_does_not_move_onto_the_doubles_row(self):
+        """🔴 The only scheduled row in the window is the doubles match."""
+        session, sport = _rail()
+        mint = _row(session, sport, "Harris", "Balshaw")
+        doubles = _scheduled_row(session, sport, DOUBLES_HOME, DOUBLES_AWAY, "oa_dbl")
+
+        found = await self._find(session, mint)
+        assert found is None, (
+            f"the singles market was moved off its mint onto doubles row "
+            f"{doubles.id}: {found}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_singles_row_is_the_one_answer_beside_the_doubles_row(self):
+        """Without the shape test both rows qualify and the finder declines as ambiguous."""
+        session, sport = _rail()
+        mint = _row(session, sport, "Harris", "Balshaw")
+        _scheduled_row(session, sport, DOUBLES_HOME, DOUBLES_AWAY, "oa_dbl")
+        singles = _scheduled_row(session, sport, "Felix Balshaw", "Billy Harris", "oa_sgl")
+
+        found = await self._find(session, mint)
+        assert found == {"event_id": singles.id, "sport_id": sport.id}
+
+    @pytest.mark.asyncio
+    async def test_the_doubles_market_still_moves_onto_its_doubles_row(self):
+        """Control: the finder still moves the right shape."""
+        session, sport = _rail()
+        mint = _row(session, sport, "Balshaw / Martineau", "Harris / Whitehouse")
+        doubles = _scheduled_row(session, sport, DOUBLES_HOME, DOUBLES_AWAY, "oa_dbl")
+
+        found = await self._find(session, mint, name=KALSHI_DOUBLES)
+        assert found == {"event_id": doubles.id, "sport_id": sport.id}
+
+
+class TestTheVenueConfirmedRelink:
+    """`_venue_confirmed_covered_fixture` (#5544) — moves a market onto the venue's fixture."""
+
+    async def _find(self, session, mint, league, name=PM_SINGLES_LEG):
+        market = SimpleNamespace(
+            source="polymarket", external_id="0xsingles", name=name,
+            market_metadata={"venue_game_start": DOUBLES_START.isoformat()},
+        )
+        # The league resolver reads the teams table and the split-pair tie-break
+        # reads Gamma; neither is this gate. Pin the league, refuse the tie-break,
+        # so the name test is the only thing deciding.
+        with patch.object(
+            pmm, "covered_league_for_matchup", new=AsyncMock(return_value=league),
+        ), patch.object(
+            pmm, "_split_pair_by_venue_home", new=AsyncMock(return_value=None),
+        ):
+            return await pmm._venue_confirmed_covered_fixture(
+                _AsyncShim(session), extract_matchup(name), market, mint,
+            )
+
+    @pytest.mark.asyncio
+    async def test_the_singles_market_does_not_move_onto_the_doubles_fixture(self):
+        """🔴 The venue's minute holds only the doubles match.
+
+        The leg names surnames ("Harris vs. Balshaw"), which is what containment
+        finds inside "Harris/Whitehouse"; a full name ("Billy Harris") never did.
+        """
+        session, sport = _rail()
+        league = _second_sport(session, "tennis_atp_challenger")
+        mint = _row(session, sport, "Billy Harris", "Felix Balshaw")
+        doubles = _scheduled_row(session, league, DOUBLES_HOME, DOUBLES_AWAY, "oa_dbl")
+
+        found = await self._find(session, mint, league.key)
+        assert found is None, (
+            f"the singles market was moved onto doubles fixture {doubles.id}: {found}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_singles_fixture_is_the_one_answer_beside_the_doubles_one(self):
+        session, sport = _rail()
+        league = _second_sport(session, "tennis_atp_challenger")
+        mint = _row(session, sport, "Billy Harris", "Felix Balshaw")
+        _scheduled_row(session, league, DOUBLES_HOME, DOUBLES_AWAY, "oa_dbl")
+        singles = _scheduled_row(session, league, "Felix Balshaw", "Billy Harris", "oa_sgl")
+
+        found = await self._find(session, mint, league.key)
+        assert found is not None and found["event_id"] == singles.id, found
+
+    @pytest.mark.asyncio
+    async def test_the_doubles_market_still_moves_onto_its_doubles_fixture(self):
+        """Control: the finder still moves the right shape."""
+        session, sport = _rail()
+        league = _second_sport(session, "tennis_atp_challenger")
+        mint = _row(session, sport, "Balshaw / Martineau", "Harris / Whitehouse")
+        doubles = _scheduled_row(session, league, DOUBLES_HOME, DOUBLES_AWAY, "oa_dbl")
+
+        found = await self._find(session, mint, league.key, name=KALSHI_DOUBLES)
+        assert found is not None and found["event_id"] == doubles.id, found
