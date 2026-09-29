@@ -23,12 +23,16 @@ refuses only when BOTH sides say which sport they are and the two disagree:
 
 from __future__ import annotations
 
+import re
+
 from app.utils.sport_keys import (
     NON_SPORT_LLM_CATEGORIES,
     SPORT_LEAGUE_MAP,
     SPORT_PREFIX_TO_LLM_CATEGORY,
+    competition_gender,
     get_sport_key_from_ticker,
     league_family_identity,
+    sport_family_key,
 )
 
 # Team sport-key prefixes `SPORT_PREFIX_TO_LLM_CATEGORY` does not carry — the
@@ -176,3 +180,77 @@ def link_crosses_league(
     if not market_sport_key:
         return False
     return league_family_identity(market_sport_key) != league_family_identity(team_sport_key)
+
+
+# A market name that says it is women's play. Word-bounded, so "Men's" never
+# reads as "Women's" and "WTA" never fires inside another word. The league
+# abbreviations are the women's competitions whose names carry no "women":
+# WNBA, the women's college game (WNCAA…), NWSL, the WSL, UWCL, AFLW, NRLW, WTA,
+# LPGA, and Kalshi's "(W)" suffix ("College Basketball (W): …").
+_WOMENS_MARKET_NAME = re.compile(
+    r"\bwomen\b|\bwomen'?s\b|\bwnba\b|\bwncaa\w*|\bnwsl\b|\bwsl\b|\buwcl\b"
+    r"|\baflw\b|\bnrlw\b|\bwta\b|\blpga\b|\(w\)",
+    re.IGNORECASE,
+)
+
+# Families where one market can hold both sides ("Who will win a Grand Slam in
+# 2027?" lists Sabalenka beside Sinner), so an unmarked name is no claim.
+_MIXED_FIELD_FAMILIES = frozenset({"tennis", "golf"})
+
+
+def market_names_womens_play(
+    market_name: str | None,
+    market_sport_key: str | None = None,
+    market_source: str | None = None,
+    market_external_id: str | None = None,
+) -> bool:
+    """Whether a market says it is a women's competition.
+
+    By its name, its sport key, or the league its venue id names. The venue id
+    matters for Kalshi's "Caitlin Clark's Next Team" (``KXWNBANEXTTEAM``), whose
+    name carries no marker.
+    """
+    if _WOMENS_MARKET_NAME.search(market_name or ""):
+        return True
+    if competition_gender(market_sport_key) == "women":
+        return True
+    venue_key = _market_league_sport_key(market_source, market_external_id)
+    return competition_gender(venue_key) == "women"
+
+
+def link_crosses_gender(
+    market_name: str | None,
+    team_sport_key: str | None,
+    market_sport_key: str | None = None,
+    market_source: str | None = None,
+    market_external_id: str | None = None,
+) -> bool:
+    """True when a market of one side is linked to a team of the other (#9593).
+
+    :func:`link_crosses_sport` cannot see it: Arsenal and Arsenal Women are both
+    ``soccer``, so every soccer "Arsenal" leg reached both pages. The women's
+    page printed "Championship 59%", which was Kalshi's men's English Premier
+    League Champion. The men's page listed the UEFA Women's Champions League
+    Winner. The WNCAAB rows carry "Men's Round of 16 Qualifiers" and "NCAAB
+    Championship Winner" by stored link.
+
+    * A men's team refuses a market that names women's play.
+    * A women's team refuses a market that does NOT. In a team sport a
+      competition is gendered, and the unmarked name is the men's one
+      (English Premier League Champion, NCAAB Championship Winner, Final KenPom
+      Ratings; every unmarked market stored on a WNCAAB row on 2026-09-29 was
+      a men's one). Tennis and golf are exempt (:data:`_MIXED_FIELD_FAMILIES`),
+      because an unmarked market there can be a mixed field.
+    * A team whose key cannot say its side (a catch-all, or no key) never refuses.
+    """
+    team_gender = competition_gender(team_sport_key)
+    if team_gender is None:
+        return False
+    womens_market = market_names_womens_play(
+        market_name, market_sport_key, market_source, market_external_id
+    )
+    if team_gender == "men":
+        return womens_market
+    if womens_market:
+        return False
+    return sport_family_key(team_sport_key) not in _MIXED_FIELD_FAMILIES
