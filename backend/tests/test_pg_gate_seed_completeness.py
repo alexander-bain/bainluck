@@ -794,7 +794,7 @@ def test_every_real_postgres_gate_is_wired_into_ci():
     one DISCOVERS instead.
     """
     workflow = yaml.safe_load(CI_WORKFLOW.read_text())
-    job = workflow["jobs"]["search-recall"]
+    job = workflow["jobs"]["database-integration"]
     invoked = "\n".join(s.get("run") or "" for s in job["steps"])
 
     unwired = sorted(
@@ -820,7 +820,7 @@ def test_the_never_wired_allowlist_has_not_grown_stale():
     """
     workflow = yaml.safe_load(CI_WORKFLOW.read_text())
     invoked = "\n".join(
-        s.get("run") or "" for s in workflow["jobs"]["search-recall"]["steps"]
+        s.get("run") or "" for s in workflow["jobs"]["database-integration"]["steps"]
     )
     stale = sorted(
         name
@@ -852,7 +852,7 @@ def test_every_search_recall_step_that_runs_something_has_a_name():
     )
     anonymous = [
         step
-        for step in workflow["jobs"]["search-recall"]["steps"]
+        for step in workflow["jobs"]["database-integration"]["steps"]
         if "run" in step and not step.get("name")
     ]
     assert not anonymous, (
