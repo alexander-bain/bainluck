@@ -71,6 +71,7 @@ from app.utils.prediction_market_matching import (
     is_kalshi_match_segment_ticker,
     _fuzzy_team_match,
     _names_both_sides,
+    pair_shape,
     _expand_team_search_terms,
     _SPORT_CATEGORY_TO_KEY_PREFIX,
     auto_create_sport_key_from_category,
@@ -9318,6 +9319,83 @@ _GROUP_SIBLING_HELD_CAP = 16
 _GROUP_SIBLING_OPEN_STATUSES = ("scheduled", "live")
 
 
+def _market_name_sides(name: Optional[str]) -> Optional[tuple[str, str]]:
+    """The two sides a Polymarket child's title names, or None. Pure. #9600.
+
+    The venue-labelled moneyline ("Mouilleron-Le-Captif: Billy Harris vs Felix
+    Balshaw") reads through ``bare_matchup_sides``; the prop lines ("Harris vs.
+    Balshaw: Match O/U 22.5") through ``extract_matchup``. Handicap titles
+    ("Set Handicap: A (-1.5) vs B (+1.5)") read as neither and say nothing.
+    """
+    from app.utils.matchup_sides import bare_matchup_sides
+
+    sides = bare_matchup_sides(name)
+    if sides is not None:
+        return sides[0], sides[1]
+    matchup = extract_matchup(name or "")
+    if matchup is None or not matchup.team_b:
+        return None
+    return matchup.team_a, matchup.team_b
+
+
+def _group_pair_shape(names) -> Optional[bool]:
+    """True: a doubles group. False: singles. None: its titles don't say. Pure. #9600.
+
+    Only a title whose two sides agree on a shape votes, and the group has a
+    shape only when every vote agrees.
+    """
+    shapes = set()
+    for name in names:
+        sides = _market_name_sides(name)
+        if sides is None:
+            continue
+        shape = pair_shape(*sides)
+        if shape is not None:
+            shapes.add(shape)
+    return shapes.pop() if len(shapes) == 1 else None
+
+
+async def _held_rows_of_the_groups_shape(session, market, group_id, held):
+    """``held`` without the rows whose sides are the other shape from the group. #9600.
+
+    A row names a shape only when both of its sides agree (a slash on one side
+    is a club, "Bodø/Glimt"), and a group only when its titles agree, so a
+    group or row that says nothing keeps every row it had.
+    """
+    from app.models.models import Event, FuturesMarket
+
+    names = [market.name] + list((
+        await session.execute(
+            select(FuturesMarket.name).where(
+                FuturesMarket.source == "polymarket",
+                FuturesMarket.group_id == group_id,
+                FuturesMarket.id != market.id,
+            )
+        )
+    ).scalars())
+    group_shape = _group_pair_shape(names)
+    if group_shape is None:
+        return held
+    rows = (
+        await session.execute(
+            select(Event.id, Event.home_team_name, Event.away_team_name)
+            .where(Event.id.in_(held))
+        )
+    ).all()
+    other_shape = {
+        row.id for row in rows
+        if pair_shape(row.home_team_name, row.away_team_name) not in (None, group_shape)
+    }
+    if other_shape:
+        logger.info(
+            "Not joining Polymarket child %s to event(s) %s (#9600) — group %s "
+            "names a %s match and the row names the other shape",
+            market.external_id, sorted(other_shape), group_id,
+            "doubles" if group_shape else "singles",
+        )
+    return [event_id for event_id in held if event_id not in other_shape]
+
+
 async def _polymarket_group_sibling_event_id(session, market) -> Optional[int]:
     """The event another child of this market's OWN Polymarket event already holds.
 
@@ -9411,6 +9489,14 @@ async def _polymarket_group_sibling_event_id(session, market) -> Optional[int]:
         return None
 
     from app.models.models import Event
+
+    # #9600: the venue's id says the children are one match; it does not say
+    # the ROW they sit on is that match. A singles group swept onto a doubles
+    # row by the name gate stayed there through this join, however often
+    # Phase 1.5 unlinked its legs. A row of the other shape is never the answer.
+    held = await _held_rows_of_the_groups_shape(session, market, group_id, held)
+    if not held:
+        return None
 
     # (a) #9338: the guard picks among several rows; it no longer vetoes them all.
     accepted = [

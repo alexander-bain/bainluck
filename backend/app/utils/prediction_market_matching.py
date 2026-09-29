@@ -1469,6 +1469,44 @@ def _fuzzy_team_match(market_team: str, event_team: str) -> bool:
     return False
 
 
+#: A venue's over/under label, the one slash a singles market name carries.
+_OVER_UNDER_RE = re.compile(r"\bO/U\b", re.IGNORECASE)
+
+
+def _names_a_pair(name: Optional[str]) -> bool:
+    """Is this side a doubles pair ("Balshaw/Martineau", "Balshaw / Martineau")?"""
+    return isinstance(name, str) and "/" in _OVER_UNDER_RE.sub("", name)
+
+
+def pair_shape(side_a: Optional[str], side_b: Optional[str]) -> Optional[bool]:
+    """True: two pairs. False: two single players. None: the sides disagree. #9600."""
+    a, b = _names_a_pair(side_a), _names_a_pair(side_b)
+    return a if a == b else None
+
+
+def pair_shapes_disagree(
+    team_a: Optional[str], team_b: Optional[str],
+    event_home_team: Optional[str], event_away_team: Optional[str],
+) -> bool:
+    """Is one side of this comparison two single players and the other two pairs? #9600.
+
+    `_fuzzy_team_match` reads containment, so the singles market "Harris vs
+    Balshaw" (Kalshi KXATPCHALLENGERMATCH-26SEP29HARBAL) named both sides of the
+    doubles row "Balshaw/Martineau v Harris/Whitehouse" 15320104 and linked to
+    it. The matched path then swept all eleven Polymarket legs of the singles
+    match onto the doubles page ("Felix Balshaw wins Set 1 >99%"), and the
+    singles match never got a row of its own.
+
+    A doubles row writes BOTH sides as a pair, so the test needs both sides of
+    each comparison to agree on a shape before it can disagree. A slash on one
+    side alone is a club name, not a pair: "Bodø/Glimt v Kristiansund",
+    "Scranton/Wilkes-Barre RailRiders". Those are left to the name test.
+    """
+    market = pair_shape(team_a, team_b)
+    event = pair_shape(event_home_team, event_away_team)
+    return market is not None and event is not None and market != event
+
+
 def _names_both_sides(
     team_a: str, team_b: str, event_home_team: str, event_away_team: str,
 ) -> bool:
@@ -1485,7 +1523,12 @@ def _names_both_sides(
     one name may match both sides (the "New York" case `match_teams_to_event`
     disambiguates), as long as some assignment puts the two names on opposite
     sides.
+
+    #9600: and a match between two players is never a match between two pairs.
+    See :func:`pair_shapes_disagree`.
     """
+    if pair_shapes_disagree(team_a, team_b, event_home_team, event_away_team):
+        return False
     a_home = _fuzzy_team_match(team_a, event_home_team)
     a_away = _fuzzy_team_match(team_a, event_away_team)
     b_home = _fuzzy_team_match(team_b, event_home_team)
