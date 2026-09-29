@@ -20,7 +20,8 @@
  * has been deciding the badge this way since UX-P180 and the two sections now
  * agree with it BY CONSTRUCTION rather than by a second implementation that can
  * drift again. Changing what "live" means is a different ship from making one
- * page stop contradicting itself.
+ * page stop contradicting itself — #9596 was that ship: it retired the price
+ * arm (see the last line of `isTournamentLive`), for every reader at once.
  *
  * NOT to be confused with `isTournamentLive` local to
  * `app/categories/golf/tournaments/[slug]/page.tsx`. That one answers a stronger
@@ -40,7 +41,6 @@ export interface TournamentLiveInput {
   start_date?: string | null;
   end_date?: string | null;
   schedule_status?: string | null;
-  golfers?: readonly { movement_24h?: number | null }[];
   champion?: string | null;
 }
 
@@ -75,10 +75,14 @@ export function isTournamentLive(tournament: TournamentLiveInput): boolean {
   }
 
   if (tournament.schedule_status === "in-progress") return true;
-  // No schedule window to veto against — fall back to the price signal.
-  return (tournament.golfers ?? []).some(
-    (g) => g.movement_24h !== null && g.movement_24h !== undefined && Math.abs(g.movement_24h) >= 0.01,
-  );
+  // #9596 — no dates of play and no in-progress status: we do not know, and
+  // "not known to be live" is not LIVE. This arm used to fall back to the price
+  // signal (any golfer's 24h movement ≥ 0.01), but a price move is not evidence
+  // golf is being played — it is likeliest right after a book opens, which is
+  // always BEFORE round 1. Production 2026-09-29: the LPGA LOTTE Championship
+  // (no `start_date`/`end_date` served) read ● LIVE under Live Now a day after
+  // Kalshi opened it and two days before its first tee time.
+  return false;
 }
 
 /**
