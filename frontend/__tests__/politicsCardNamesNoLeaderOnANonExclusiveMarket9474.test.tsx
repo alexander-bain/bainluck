@@ -158,3 +158,47 @@ describe("a payload or row without the flag", () => {
     expect(cardText(markup, TRUMP_SUES.market_id)).toMatch(/Leader Center for American Progress/);
   });
 });
+
+// Production 2026-09-29 04:05Z, 390px: with the "Leader" line gone, the top
+// row of a pick-several list is its name and its number side by side, and a
+// case caption ran straight into the figure: "…Movement for Justice39%".
+const SCOTUS_CASES: PoliticsMarketRow = {
+  q: "What cases will the Supreme Court agree to hear in 2026?",
+  prob: 39.0,
+  src: "kalshi",
+  market_id: 56775624,
+  top_outcomes: [
+    { name: "Bird v. Iowa Migrant Movement for Justice", prob: 39.0 },
+    { name: "U.S. DOGE Service v. U.S. District Court", prob: 36.0 },
+    { name: "Norfolk Southern Railway v. Mallory", prob: 35.0 },
+  ],
+  outcome_count: 10,
+  more_count: 7,
+  mutually_exclusive: false,
+};
+
+describe("a long top-row name never touches its number", () => {
+  it.each([
+    ["pick-several list", SCOTUS_CASES],
+    ["one-winner field", NEXT_POPE],
+  ])("%s: the row keeps a gap, the name may shrink, the number may not", (_kind, row) => {
+    const markup = render([row]);
+    const at = markup.indexOf(`href="/futures/${row.market_id}"`);
+    const card = markup.slice(at);
+    const figure = `${Math.round(row.top_outcomes[0].prob)}%`;
+    const numberAt = card.indexOf(`>${figure}</span>`);
+    expect(numberAt).toBeGreaterThan(0);
+    // The number's own span, then the row that holds name + number.
+    const numberSpan = card.slice(card.lastIndexOf("<span", numberAt), numberAt);
+    expect(numberSpan).toContain("flex-shrink:0");
+    const nameAt = card.indexOf(`>${row.top_outcomes[0].name}</span>`);
+    expect(nameAt).toBeGreaterThan(0);
+    expect(nameAt).toBeLessThan(numberAt);
+    const rowOpen = card.lastIndexOf('<div style="display:flex;align-items:baseline', nameAt);
+    expect(rowOpen).toBeGreaterThanOrEqual(0);
+    const rowTag = card.slice(rowOpen, card.indexOf(">", rowOpen));
+    expect(rowTag).toMatch(/gap:12px/);
+    const nameColumn = card.slice(rowOpen, nameAt);
+    expect(nameColumn).toMatch(/flex-direction:column;min-width:0/);
+  });
+});
