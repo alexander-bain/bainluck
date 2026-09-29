@@ -255,7 +255,8 @@ function emptyBucket(now: string): ProfileBucket {
  * answers from the CURRENT auth state: `true` only for a resolved, signed-in
  * reader. A refused write is dropped, never queued, so a later sign-in replays
  * nothing. The GA4 `trackEvent` beside each call is ordinary analytics and is
- * not gated here. No gate registered ⇒ the writers behave exactly as before.
+ * not gated here. No gate registered ⇒ refuse: child mount effects can run before the page
+ * registers its auth gate, and pending timers can fire after page unmount.
  */
 let learningGate: (() => boolean) | null = null;
 
@@ -264,7 +265,7 @@ export function setDiscoverLearningGate(gate: (() => boolean) | null): void {
 }
 
 function mayLearnFromDiscoverInteraction(): boolean {
-  if (!learningGate) return true;
+  if (!learningGate) return false;
   try {
     return learningGate();
   } catch {

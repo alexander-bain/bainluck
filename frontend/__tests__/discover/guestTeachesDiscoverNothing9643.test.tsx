@@ -262,11 +262,22 @@ describe("the writers refuse every learning action unless the reader is signed i
     expect(di.peekPendingDiscoverInteractions()).toEqual([]);
   });
 
-  it("no gate registered: the writers behave as before", () => {
-    di.recordDiscoverInteraction("politics", "like");
+  it("before the page auth effect registers, child interactions cannot learn", () => {
+    writeEveryAction();
+    expect(browser.store[PROFILE_KEY]).toBeUndefined();
+    expect(di.peekPendingDiscoverInteractions()).toEqual([]);
+    di.flushDiscoverInteractions();
+    expect(browser.fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("unmounting the auth owner cannot flush a previously queued batch", () => {
+    registerPageGate("learn");
     di.sendDiscoverInteraction(ITEM, "like", 0);
-    expect(JSON.parse(browser.store[PROFILE_KEY]).categories.politics.likes).toBe(1);
     expect(di.peekPendingDiscoverInteractions()).toHaveLength(1);
+    di.setDiscoverLearningGate(null);
+    di.flushDiscoverInteractions();
+    expect(browser.fetchMock).not.toHaveBeenCalled();
+    expect(di.peekPendingDiscoverInteractions()).toEqual([]);
   });
 });
 
