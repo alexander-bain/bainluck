@@ -1,0 +1,6 @@
+
+Test Suites: 6 passed, 6 total
+Tests:       94 passed, 94 total
+Snapshots:   0 total
+Time:        11.041 s
+Ran all test suites matching eventOwnMoneylineNotAProp7064|gameMarkets(Hook|Stream)9524|finalGameWinnerQuote9544|futuresDetailStream9526|marketStreamController9525.

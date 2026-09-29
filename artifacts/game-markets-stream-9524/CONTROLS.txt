@@ -1,0 +1,6 @@
+
+Test Suites: 5 passed, 5 total
+Tests:       56 passed, 56 total
+Snapshots:   0 total
+Time:        7.026 s
+Ran all test suites matching gameMarkets(Hook|Stream)9524|finalGameWinnerQuote9544|futuresDetailStream9526|marketStreamController9525.

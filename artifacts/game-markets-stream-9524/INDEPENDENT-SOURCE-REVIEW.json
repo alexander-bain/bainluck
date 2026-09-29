@@ -1,0 +1,39 @@
+{
+  "verdict": "SOURCE PASS",
+  "reviewer": "/root/deep_live_delivery_review",
+  "base": "05ded4f9d5eebccba718e990e3f86c4f970eae7e",
+  "files": [
+    {
+      "path": "frontend/lib/gameMarketsStream.ts",
+      "sha256": "3b77f923871041007f4f6c59c8d49598e890e7f42cc3f87a2475fd16c57ef518"
+    },
+    {
+      "path": "frontend/hooks/useGameMarketsStream.ts",
+      "sha256": "1b6f6afd390b8c04af7c7825896d6b5014616cd13933ecccfb856b0087423e58"
+    },
+    {
+      "path": "frontend/components/event/FinalGameWinnerQuote.tsx",
+      "sha256": "5f75c3eac427b651741e1f059b8c5e99d8410687cbbbb732d355ff087042a288"
+    },
+    {
+      "path": "frontend/app/events/[id]/page.tsx",
+      "sha256": "3f773dca98ebef145b725d9f838d27c21b2359a8337a6592c9887e9a8377ee41"
+    },
+    {
+      "path": "frontend/__tests__/lib/gameMarketsStream9524.test.ts",
+      "sha256": "552bf82e96ea133908f561b38c74c4662ca79ae08846c5ffe8a5b68e2f2d7d3b"
+    },
+    {
+      "path": "frontend/__tests__/lib/gameMarketsHook9524.test.tsx",
+      "sha256": "4b0bb80080990a8a4d218dcb399f3b35aaaf06d7993ce805578124d46dec6814"
+    },
+    {
+      "path": "frontend/__tests__/components/finalGameWinnerQuote9544.test.tsx",
+      "sha256": "2b44ceaf261d634e6b7051d359e199ada14db8a4529d88682ccc959c213bb2da"
+    }
+  ],
+  "tests_executed_by_reviewer": false,
+  "production_or_runtime_acceptance": false,
+  "findings_remaining": [],
+  "post_review_note": "Post-review bookkeeping: the gameMarketsStream9524 test fixture cast changed only from `as LiveGameMarkets` to `as unknown as LiveGameMarkets` to resolve TS2352. Reversing that single replacement exactly reproduces the previously reviewed SHA256. The other six files remain unchanged. Source PASS retained; no reviewer gates rerun. Author reports 56 focused/adjacent tests, build, and typecheck passing; local 390px component evidence is not held-page or production acceptance."
+}
