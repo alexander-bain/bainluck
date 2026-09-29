@@ -2988,7 +2988,7 @@ export default function EventPage({ params }: EventPageProps) {
       )}
 
       {/* Game Markets — Player Props + Matchups + Special Markets */}
-      {gameMarkets && (gameMarkets.player_props.length > 0 || (gameMarkets.matchups?.length ?? 0) > 0 || (gameMarkets.other?.length ?? 0) >= 3) && (
+      {gameMarkets && (gameMarkets.player_props.length > 0 || (gameMarkets.matchups?.length ?? 0) > 0 || (gameMarkets.other?.length ?? 0) >= SPECIAL_MARKETS_MIN_WIRE_ROWS) && (
         <div className="space-y-3">
 
           {/* UX-P055: #1722's actual crash site. This is the one boundary that
