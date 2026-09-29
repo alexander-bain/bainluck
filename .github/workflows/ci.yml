@@ -5436,6 +5436,30 @@ jobs:
             exit 1
           }
 
+      - name: "#9484 a suspended match whose market still trades keeps its stream (real Postgres)"
+        # Both sockets subscribed from `live` or `scheduled` within 6 h, so a
+        # row the graph suspends fell off at the next recycle while its market
+        # kept trading (Dickerson v Pereira, 2026-09-28: frozen at .51 while
+        # Kalshi traded .90). The new arm subscribes an open market on an event
+        # suspended inside 24 h. Reuses the #837 database provisioned above;
+        # the file drops and recreates its own six tables.
+        #
+        # Count pin: 12 = 6 cases x 2 venues. Four of the six are kill controls
+        # for the arm's own clauses (status, floor, market, NULL), so a run that
+        # lost the ship case would still print green without the count.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_ws_slate_suspended_open_market_pg_9484.py \
+            -v -rs 2>&1 | tee /tmp/slate9484.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/slate9484.txt; then
+            echo "::error::#9484 suspended-arm contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]12 passed[,[:space:]]" /tmp/slate9484.txt || {
+            echo "::error::#9484 suspended-arm contract did not run all twelve cases"
+            exit 1
+          }
+
       - name: "#7867 a team's Championship Path reads the sport family's roster (real Postgres)"
         # #7867. `_build_related_futures` now refuses a name-matched row when
         # every occurrence of this team's token sits inside a longer name of
