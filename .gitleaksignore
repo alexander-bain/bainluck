@@ -100,3 +100,10 @@ cad97a4d4476a0b95d771cd3ed755cd370f3d2b6:frontend/__tests__/lib/analyticsSanitiz
 f5a465ac884f0c97445aaf09d10cb72e21612da0:artifacts/cal-p147/render-banker.py:generic-api-key:75
 f5a465ac884f0c97445aaf09d10cb72e21612da0:artifacts/cal-p147-renders/banker-heartbeat.json:generic-api-key:7
 
+
+# #9525 source-review SHA-256 checksums, not credentials. The generic API-key
+# rule matches file names containing api next to hashes. Exact historical
+# fingerprints only; verified from gitleaks36514517858 and source hash receipts.
+0b9fca9729d929bf86884a1866d41096360ea71f:artifacts/web-discover-stream-9525/INDEPENDENT-TRANSPORT-REVIEW.json:generic-api-key:6
+0b9fca9729d929bf86884a1866d41096360ea71f:artifacts/web-discover-stream-9525/INDEPENDENT-DISCOVER-SOURCE-REVIEW.json:generic-api-key:6
+0b9fca9729d929bf86884a1866d41096360ea71f:artifacts/web-discover-stream-9525/INDEPENDENT-DISCOVER-SOURCE-REVIEW.json:generic-api-key:9
