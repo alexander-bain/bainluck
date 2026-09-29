@@ -287,4 +287,21 @@ final class GameMarketsStreamingTests: XCTestCase {
         XCTAssertEqual(count, 1, "parent load is not held by the pending 429 retry")
         delivery.setVisible(false)
     }
+
+    func testLoadDuringFailureCooldownReturnsWithoutWaitingForTheRetry() async throws {
+        let reader = Reader(try body())
+        await reader.armFailure()
+        let clock = Clock()
+        let delivery = GameMarketsPriceDelivery(eventID: 12, fetch: { try await reader.read($0) },
+            publish: { _ in }, makeHandle: { _ in Handle() }, now: { clock.time },
+            sleep: { _ in try? await Task.sleep(nanoseconds: 60_000_000_000) })
+        await delivery.load()
+        let started = Date()
+        await delivery.load()
+        XCTAssertLessThan(Date().timeIntervalSince(started), 5,
+                          "a second load inside the cooldown does not hang on the owed retry")
+        let count = await reader.count
+        XCTAssertEqual(count, 1, "the cooldown is still honoured: no second read before retryAt")
+        delivery.setVisible(false)
+    }
 }

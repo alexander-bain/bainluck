@@ -190,8 +190,7 @@ nonisolated struct GameMarketOutcome: Decodable, Equatable, Identifiable, Sendab
     var _marketId: Int? = nil
     var _marketIds: [Int]? = nil
     var contributorOutcomeIds: [Int]? = nil
-    var isWinner: Bool? = nil
-    var resolutionSource: String? = nil
+    // isWinner / resolutionSource are declared below (#9108).
     var id: String { "\(marketName)-\(outcomeName)" }
     let marketName: String
     let outcomeName: String

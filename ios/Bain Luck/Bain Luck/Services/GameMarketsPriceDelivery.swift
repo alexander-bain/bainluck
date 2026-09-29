@@ -66,6 +66,13 @@ final class GameMarketsPriceDelivery {
     /// Initial/manual/periodic reads share the same serialization and budget as
     /// publications. A first load may run before the view becomes visible.
     func load() async {
+        // During a failure cooldown the owed read happens at `retryAt`; a load
+        // (the page's pull-to-refresh, its periodic reload) returns with the
+        // held value instead of hanging on that retry for up to a minute.
+        if retryAt > now() {
+            requestRefresh(allowHidden: true)
+            return
+        }
         await withCheckedContinuation { continuation in
             nextWaiterID += 1
             loadWaiters[nextWaiterID] = continuation
