@@ -394,7 +394,13 @@ export default function EventCard({
   // matches that reached no rail at all would, on reaching one, have rendered
   // "Sep 1 5:00 PM" — the upcoming-branch fall-through `lib/eventState.ts`
   // opens by naming as the quieter lie.
-  const isSuspended = hasNoReportedResult(event.status, event.commence_time);
+  // #9634: the served `started_without_result` outranks the clock when present.
+  const isSuspended = hasNoReportedResult(
+    event.status,
+    event.commence_time,
+    undefined,
+    event.started_without_result,
+  );
 
   // #7070 — THE CARD STOPS DENYING A RESULT ITS OWN PAYLOAD CARRIES.
   //

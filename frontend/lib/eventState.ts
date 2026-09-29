@@ -78,13 +78,28 @@ export const UPCOMING_GRACE_MS = 2 * 60 * 60 * 1000;
  * the clock is one we have no standing to move off the schedule, and `new
  * Date("").getTime()` is `NaN`, which compares false against everything — so
  * the guard is written out rather than left to that accident.
+ *
+ * ── #9634: THE SERVED ANSWER OUTRANKS THE CLOCK ──
+ *
+ * `served` is the payload's own `started_without_result`, computed by
+ * `event_completion.started_without_result` — the same clock, plus the two
+ * things only the server can see: a fresh ESPN "not started" stamp (#9195)
+ * and a StatPal later-session hold (#9613). Recomputing from the clock alone
+ * threw both away: `/events/15320754` (a China Open doubles match StatPal has
+ * at 02:00Z) served `false` and its hero still read "No result reported".
+ * So a boolean wins; the clock answers only when the key is ABSENT (the feed,
+ * search and league envelopes do not carry it). The status gate still runs
+ * first — the server's predicate is `scheduled`-only too, so a `true` on any
+ * other status would be a payload we have no reading for.
  */
 export function startedWithoutResult(
   status: string | null | undefined,
   commenceTime: string | null | undefined,
   now: number = Date.now(),
+  served?: boolean | null,
 ): boolean {
   if (status !== "scheduled") return false;
+  if (typeof served === "boolean") return served;
   if (!commenceTime) return false;
   const t = new Date(commenceTime).getTime();
   if (!Number.isFinite(t)) return false;
@@ -103,13 +118,36 @@ export function startedWithoutResult(
  * `isSuspendedStatus` stays, and stays narrow: it answers "is the status
  * literally `suspended`", which is the right question for anything reasoning
  * about the ladder's own vocabulary rather than about pixels.
+ *
+ * `served` is the payload's `started_without_result` — pass it wherever the
+ * payload carries it (#9634, see {@link startedWithoutResult}).
  */
 export function hasNoReportedResult(
   status: string | null | undefined,
   commenceTime: string | null | undefined,
   now: number = Date.now(),
+  served?: boolean | null,
 ): boolean {
-  return isSuspendedStatus(status) || startedWithoutResult(status, commenceTime, now);
+  return (
+    isSuspendedStatus(status) ||
+    startedWithoutResult(status, commenceTime, now, served)
+  );
+}
+
+/**
+ * #9634 — the server holds this `scheduled` row as not started although the
+ * clock alone says its time ran out: a fresh ESPN "not started" stamp (#9195)
+ * or a StatPal later-session hold (#9613). Only the served `false` PAST the
+ * grace says that — inside the grace the server's `false` is the same clock,
+ * so it proves nothing and #6031's "Started" stands.
+ */
+export function serverHeldPastKickoff(
+  status: string | null | undefined,
+  commenceTime: string | null | undefined,
+  now: number = Date.now(),
+  served?: boolean | null,
+): boolean {
+  return served === false && startedWithoutResult(status, commenceTime, now);
 }
 
 /**
@@ -335,12 +373,18 @@ export function authorityStoppageDescription(
  * Lives here rather than inline for the reason #5885 moved `hasStarted` into
  * `pageLiveClaimIsUnbacked`: a Next.js page carries no named exports, so a
  * ternary in the JSX is a decision no test can hold.
+ *
+ * #9634 — `heldByServer` ({@link serverHeldPastKickoff}): the server has said
+ * this match has NOT begun though its stamp is hours past, so "Started" would
+ * trade "No result reported" for a different false claim. It is not started;
+ * it is pregame.
  */
 export function startBadgeLabel(
   hasStarted: boolean,
   countdown: string | null | undefined,
+  heldByServer: boolean = false,
 ): string {
-  if (hasStarted) return "Started";
+  if (hasStarted && !heldByServer) return "Started";
   return countdown ? `Starts in ${countdown}` : "Pregame";
 }
 
@@ -505,12 +549,15 @@ export function eventSectionKey(
     venue_settled?: boolean | null;
     venue_settled_result?: string | null;
     stoppage?: string | null;
+    /** #9634 — the served `started_without_result`, when the payload has it. */
+    started_without_result?: boolean | null;
   } | null,
 ): "live" | "finished" | "upcoming" {
+  const served = settlement?.started_without_result;
   if (settlement?.stoppage && isSuspendedStatus(status)) return "finished";
   if (
     settlement &&
-    hasNoReportedResult(status, commenceTime, now) &&
+    hasNoReportedResult(status, commenceTime, now, served) &&
     venueSettledSummary(
       settlement.venue_settled,
       settlement.venue_settled_result,
@@ -520,7 +567,7 @@ export function eventSectionKey(
   }
   if (status === "live" || isSuspendedStatus(status)) return "live";
   if (isFinishedStatus(status)) return "finished";
-  if (startedWithoutResult(status, commenceTime, now)) return "live";
+  if (startedWithoutResult(status, commenceTime, now, served)) return "live";
   return "upcoming";
 }
 

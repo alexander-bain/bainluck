@@ -124,6 +124,7 @@ import {
   VENUE_SETTLED_DESCRIPTION,
   blendCaptionIsStale,
   hasNoReportedResult,
+  serverHeldPastKickoff,
   isFinishedStatus,
   startBadgeLabel,
   suspendedSummary,
@@ -515,7 +516,12 @@ export default function EventPage({ params }: EventPageProps) {
   // #4015 exists precisely so the hero badge, the games map (`noResultReported`)
   // and the projected-final suppression cannot answer this question three ways.
   const isSuspended =
-    hasNoReportedResult(event?.status, event?.commence_time) || liveClaimUnbacked;
+    hasNoReportedResult(
+      event?.status,
+      event?.commence_time,
+      undefined,
+      event?.started_without_result,
+    ) || liveClaimUnbacked;
 
   // #6381 — WHAT THAT STATE SAYS, when a source that carried this match's
   // markets has already graded it. Null on every other row, so the badge keeps the sentence
@@ -2107,7 +2113,17 @@ export default function EventPage({ params }: EventPageProps) {
                       still printing "Pregame" over a "Since Start" chart. The
                       two-hour hole this falls into, and why the grace is not
                       the thing to widen, are in `startBadgeLabel`. */}
-                  {startBadgeLabel(hasStarted, gameCountdown)}
+                  {startBadgeLabel(
+                    hasStarted,
+                    gameCountdown,
+                    // #9634 — held by the server: "Pregame", not "Started".
+                    serverHeldPastKickoff(
+                      event?.status,
+                      event?.commence_time,
+                      undefined,
+                      event?.started_without_result,
+                    ),
+                  )}
                 </span>
               </span>
             )}
