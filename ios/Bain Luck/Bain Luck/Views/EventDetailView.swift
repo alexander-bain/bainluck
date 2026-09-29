@@ -15,6 +15,8 @@ private struct SourceRowWidthKey: PreferenceKey {
 // MARK: - View
 
 struct EventDetailView: View {
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var marketPageVisible = false
     let eventId: Int
     @StateObject private var vm: EventDetailViewModel
     /// Closed for every reader. Starts open only when the LOOK rig asks
@@ -285,13 +287,19 @@ struct EventDetailView: View {
                 }
             }
             .task {
+                marketPageVisible = true
+                vm.setMarketPageVisible(scenePhase == .active)
                 await vm.load()
                 AnalyticsService.trackEventDetailView(eventId: eventId, sport: vm.event?.sport)
             }
             .refreshable {
                 await vm.load()
             }
+            .onChange(of: scenePhase) { _, phase in
+                vm.setMarketPageVisible(marketPageVisible && phase == .active)
+            }
             .onDisappear {
+                marketPageVisible = false
                 vm.stopRefresh()
             }
     }
