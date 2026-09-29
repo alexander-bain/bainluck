@@ -19310,6 +19310,17 @@ def _prop_player_and_stat(
         who = m.group("who").strip().lower()
         return who, (m.group("stat").strip().lower() or stat)
 
+    # Polymarket Yes/No (#9608): market "Pierce Charles: 1+ saves", outcome "Yes".
+    # A bare Yes/No names nobody either, so the fallback below keyed every player on
+    # `yes`/`no` — Pierce Charles's settled 1+ saves was averaged into Balázs Tóth's
+    # open one on /events/15316808 and served under Tóth's name. The subject names
+    # the player. A matchup subject ("A vs B: Both teams to score") is the game's
+    # question, not a person's, and keeps the old key, as in the O/U branch above.
+    if oname.lower() in ("yes", "no") and ":" in mname:
+        who = mname.rsplit(":", 1)[0].strip()
+        if who and not _MATCHUP_SUBJECT_RE.search(who):
+            return who.lower(), stat
+
     # Neither shape: fall back to what the old key used, so a row we cannot identify
     # groups exactly as it did rather than joining someone else's group.
     return oname.lower(), stat
