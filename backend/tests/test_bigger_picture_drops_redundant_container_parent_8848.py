@@ -219,3 +219,39 @@ def test_the_verdict_is_wired_in_after_the_partial_field_door():
     resp_at = src.find('"home_team_futures": home_futures')
     assert partial_at != -1 and scope_at != -1 and verdict_at != -1 and resp_at != -1
     assert partial_at < scope_at < verdict_at < resp_at
+
+
+# ── #4646, `/events/15320104`: a member the fixture fold took still reached the reader ──
+
+
+def test_a_member_folded_to_game_markets_counts_as_served():
+    """16:00Z shape: the parent's only surviving child was the match winner, and
+    `_fold_event_match_winner_futures` had taken it because `/game-markets` draws it."""
+    home = [_row(PARENT, "Hangzhou Open (Doubles): Reynolds/Watt vs King/"), _row(PARENT, "Completed Match")]
+    kept_home, _ = _withhold_redundant_parent_futures(
+        home, [], {PARENT}, GROUP_MARKETS, PARENT_LEGS
+    )
+    assert _ids(kept_home) == [PARENT, PARENT], "control: with nothing folded the parent stays"
+
+    kept_home, kept_away = _withhold_redundant_parent_futures(
+        home, [], {PARENT}, GROUP_MARKETS, PARENT_LEGS, drawn_by_game_markets=frozenset({MATCH})
+    )
+    assert kept_home == [] and kept_away == []
+
+
+def test_a_folded_id_outside_the_group_does_not_convict_a_parent():
+    home = [_row(PARENT, "Reynolds/Watt"), _row(PARENT, "Completed Match")]
+    kept_home, _ = _withhold_redundant_parent_futures(
+        home, [], {PARENT}, GROUP_MARKETS, PARENT_LEGS, drawn_by_game_markets=frozenset({70000009})
+    )
+    assert _ids(kept_home) == [PARENT, PARENT]
+
+
+def test_the_fold_hands_its_ids_to_the_verdict():
+    src = inspect.getsource(events_module._build_related_futures)
+    fold_at = src.find("home_futures, away_futures = _fold_event_match_winner_futures(")
+    folded_at = src.find("folded_to_game_markets = frozenset(")
+    passed_at = src.find("drawn_by_game_markets=folded_to_game_markets")
+    verdict_at = src.find("home_futures, away_futures = _withhold_redundant_parent_futures(")
+    assert -1 not in (fold_at, folded_at, passed_at, verdict_at)
+    assert fold_at < folded_at < verdict_at < passed_at
