@@ -260,3 +260,11 @@ def test_helper_has_no_route_import_or_event_write_boundary():
     imports = [node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)]
     assert not any(name.startswith("app.routes") for name in imports)
     assert "event" not in final_game_winner_quotes.__annotations__
+
+
+@pytest.mark.parametrize("partial", [[], legs()[:1]])
+def test_explicit_closed_contract_is_fenced_even_when_its_outcomes_disappear(partial):
+    assert build(markets=[market(status="closed")], outcomes=partial) == {
+        "open_winner_quote": None, "closed_winner_market_ids": [11],
+    }
+    assert build(markets=[market()], outcomes=partial)["closed_winner_market_ids"] == []

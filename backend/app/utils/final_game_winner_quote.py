@@ -86,6 +86,11 @@ def final_game_winner_quotes(
                 or source not in {"kalshi", "polymarket"}):
             continue
         exclusive_by_market[market_id] = fields.get("mutually_exclusive") is True
+        # An explicit contract closure survives missing/partial outcome rows.
+        # These IDs only fence that same contract; absence alone never closes it.
+        if fields.get("settled_at") is not None or market_assigned_settled(market, []):
+            closed.add(market_id)
+            continue
         legs = by_market.get(market_id, [])
         if not legs or len({leg.id for leg in legs}) != len(legs):
             continue
