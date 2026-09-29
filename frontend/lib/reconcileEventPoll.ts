@@ -1,3 +1,4 @@
+import { isQuoteStreamStatus } from "./eventQuoteStream";
 import { adoptNewerBlendEdge, type BlendEdgeObservation } from './blendObservationClock';
 import { applyLiveFrame } from './eventLivePush';
 import { compareFoldRevision, frameFoldOrder, parseFoldRevision } from './foldRevision';
@@ -29,7 +30,8 @@ export function reconcileEventPoll<T extends PolledEvent>(
   polled: T,
   frame: LiveStreamFrame | null,
 ): T {
-  if (!frame || frame.event_id !== polled.id || polled.status !== 'live'
+  if (!frame || frame.event_id !== polled.id || !isQuoteStreamStatus(polled.status)
+      || (frame.status != null && frame.status !== polled.status)
       || polled.hero_probability_source !== 'blend'
       || typeof polled.hero_probability !== 'number'
       || !Number.isFinite(polled.hero_probability)
@@ -82,7 +84,7 @@ export function keepNewerHeldHeadline<T extends PolledEvent>(polled: T, held: T 
   if (!held || held.id !== polled.id) return polled;
   const heldRevision = parseFoldRevision(held.blend_fold_revision);
   if (!heldRevision) return polled;
-  const liveBlend = (e: T) => e.status === 'live' && e.hero_probability_source === 'blend'
+  const liveBlend = (e: T) => isQuoteStreamStatus(e.status) && e.hero_probability_source === 'blend'
     && typeof e.hero_probability === 'number' && Number.isFinite(e.hero_probability);
   if (!liveBlend(polled) || !liveBlend(held)) return polled;
   const polledRevision = parseFoldRevision(polled.blend_fold_revision);

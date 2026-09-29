@@ -1,3 +1,5 @@
+import { parseFoldRevision } from "./foldRevision";
+import { isQuoteStreamStatus } from "./eventQuoteStream";
 /**
  * Extracted helpers for the event detail page (events/[id]/page.tsx).
  *
@@ -1000,6 +1002,12 @@ export function resolveProbability(
   let probSourceLabel: string | null = null;
   const openingHomeProb = opening?.home_probability ?? null;
   const openingAwayProb = opening?.away_probability ?? null;
+  const heroBooks = event.hero_sportsbook_count;
+  const scheduledBooks = typeof heroBooks === "number" && event.hero_probability_source === "blend"
+    ? heroBooks : (odds?.bookmaker_count ?? 0);
+  const scheduledCaption = scheduledBooks > 0
+    ? `${scheduledBooks} sportsbook${scheduledBooks !== 1 ? "s" : ""}`
+    : odds?.source === "aggregate" ? "Aggregate" : null;
   // #2085 — set by the branch that reads `odds`, so `withRenderedPercents` can
   // tell whether the served pair describes the pair being returned. A later
   // branch that OVERRIDES the pair must clear it; that is the whole reason this
@@ -1021,7 +1029,13 @@ export function resolveProbability(
       awayProb = odds?.away_probability ?? null;
       fromCurrentOdds = true;
     }
-  } else if (isLive) {
+  } else if (isLive || (!withheld && isQuoteStreamStatus(event.status) &&
+      event.hero_probability_source === "blend" && typeof event.hero_probability === "number" &&
+      (!noReportedResult || parseFoldRevision(event.blend_fold_revision) !== null ||
+        (Number.isFinite(Date.parse(event.hero_probability_observed_at ?? "")) &&
+         (!lastChartPoint || Date.parse(event.hero_probability_observed_at!) >= Date.parse(lastChartPoint.timestamp)))))) {
+    // A quote can move before kickoff or during a suspension. Sports labels
+    // still use isLive; the authoritative blend supplies the number.
     // Live: THE BLEND IS THE HERO (L2-163 Item 2b, Alex ruling). The chart draws
     // the aggregated Bain Luck line (historyData.aggregate_line); the hero must
     // read the SAME number so a lagged sportsbook consensus never contradicts the
@@ -1070,9 +1084,9 @@ export function resolveProbability(
       // rather than adding a sentence explaining it. The number still shows;
       // only the claim about its currency goes, and the grey age badge above
       // is already saying how old it is.
-      probSourceLabel = blendIsStale
-        ? "Bain Luck blend"
-        : "Live · Bain Luck blend";
+      probSourceLabel = !isLive && !noReportedResult
+        ? scheduledCaption
+        : blendIsStale || !isLive ? "Bain Luck blend" : "Live · Bain Luck blend";
       // 🔴 #2085 — `fromCurrentOdds` stays FALSE here on purpose. This pair is
       // the BLEND (`hero_probability` / `hero_probability_away`), which the
       // backend derives as `round(1 - agg, 6)` and serves with no rendered
@@ -1211,16 +1225,7 @@ export function resolveProbability(
     // Kalshi-only 13% read "4 sportsbooks" (Clemson v Miami, /events/14870012).
     // The server knows which books the blend admitted (`hero_sportsbook_count`,
     // 0 = none); absent means unknown, and the row count stands as before.
-    const heroBooks = event.hero_sportsbook_count;
-    const count =
-      typeof heroBooks === "number" && event.hero_probability_source === "blend"
-        ? heroBooks
-        : (odds?.bookmaker_count ?? 0);
-    if (count > 0) {
-      probSourceLabel = `${count} sportsbook${count !== 1 ? "s" : ""}`;
-    } else if (homeProb !== null && odds?.source === "aggregate") {
-      probSourceLabel = "Aggregate";
-    }
+    if (homeProb !== null) probSourceLabel = scheduledCaption;
   }
 
   // Fallback: use win_prob_history (ESPN/stat_model/Kalshi)

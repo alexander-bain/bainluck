@@ -60,11 +60,16 @@ d("the iOS event detail hero prints a decided pair", () => {
     // other. `DiscoverEventCard` still coalesces per side (`?? duelFallback[0]`)
     // — that is a separate surface and a separate fix; this assertion is here so
     // the pattern is not copied INTO this view later.
+    //
+    // #9470 RE-ANCHORED: the pair is now read off `shown` (`OpeningLineHero`),
+    // which is `current_odds` with its served percents except on a pre-game
+    // `opening` hero, where it is the server's hero pair with none. The rule
+    // asserted is unchanged: both served percents or neither.
     expect(view).toContain(
-      "let bothServed = odds.awayRenderedPercent != nil && odds.homeRenderedPercent != nil",
+      "let bothServed = shown.awayRenderedPercent != nil && shown.homeRenderedPercent != nil",
     );
-    expect(view).toContain("bothServed ? odds.awayRenderedPercent : duelFallback[0]");
-    expect(view).toContain("bothServed ? odds.homeRenderedPercent : duelFallback[1]");
+    expect(view).toContain("bothServed ? shown.awayRenderedPercent : duelFallback[0]");
+    expect(view).toContain("bothServed ? shown.homeRenderedPercent : duelFallback[1]");
   });
 
   it("no probability pair in this view is formatted without a decided percent", () => {

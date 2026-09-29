@@ -52,7 +52,7 @@ export interface LiveStreamFrame {
   source: string;
   source_value: number | null;
   updated_at: string;
-  status: string | null;
+  status?: string | null;
   /**
    * #9051: `{ "<row id>": rev }` for the one row this frame's write touched —
    * see `lib/foldRevision.ts`. Absent from a producer before the contract.

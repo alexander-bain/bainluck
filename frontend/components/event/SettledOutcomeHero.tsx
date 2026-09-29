@@ -46,10 +46,31 @@ export interface SettledOutcomeHeroProps {
   winnerPregameSource?: string | null;
   /** "sportsbooks" when the rung is not a prediction market — the card's label. */
   winnerPregameLabel?: string | null;
+  /** #9490 — the losing side's leg of the same pair. Decides "Upset"; never printed. */
+  loserPregameProb?: number | null;
+  /** The loser's whole percent from the same pair rounding as the winner's. */
+  loserPregamePercent?: number | null;
 }
 
-/** Below this, winning is a surprise worth marking (L2-131 Item 1). */
-const UPSET_THRESHOLD = 0.4;
+/**
+ * #9490 — an upset is the winner priced BELOW the side it beat, on the pair
+ * this hero prints. It used to be a fixed cut (`winner < 0.40`) on the winner
+ * alone, which called a three-way favourite an upset — Italy at 0.395 over
+ * Turkey at 0.325, the draw taking the rest. Compared on the whole percents the
+ * pair renders, so the label never contradicts the number beside it (0.395
+ * printed "40%" under a "< 40%" rule), and a tie on screen is no upset. No
+ * loser number, no comparison, no label.
+ */
+export function pregameUpset(args: {
+  winnerProb: number | null;
+  winnerPercent?: number | null;
+  loserProb?: number | null;
+  loserPercent?: number | null;
+}): boolean {
+  const winner = args.winnerPercent ?? renderedPercent(args.winnerProb);
+  const loser = args.loserPercent ?? renderedPercent(args.loserProb);
+  return winner !== null && loser !== null && winner < loser;
+}
 
 export default function SettledOutcomeHero({
   outcome,
@@ -58,9 +79,15 @@ export default function SettledOutcomeHero({
   winnerPregamePercent = null,
   winnerPregameSource = null,
   winnerPregameLabel = null,
+  loserPregameProb = null,
+  loserPregamePercent = null,
 }: SettledOutcomeHeroProps) {
-  const wasUnderdog =
-    winnerPregameProb !== null && winnerPregameProb < UPSET_THRESHOLD;
+  const wasUnderdog = pregameUpset({
+    winnerProb: winnerPregameProb,
+    winnerPercent: winnerPregamePercent,
+    loserProb: loserPregameProb,
+    loserPercent: loserPregamePercent,
+  });
 
   return (
     /* UX-P043 (#1649): the settled hero's stable hook. The browser pack read

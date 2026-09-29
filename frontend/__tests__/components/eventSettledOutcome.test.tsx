@@ -96,13 +96,18 @@ const TENNIS_EVENT = {
 
 function renderHero(
   outcome: ReturnType<typeof resolveEventOutcome>,
-  opts: { hasNumericScore?: boolean; winnerPregameProb?: number | null } = {}
+  opts: {
+    hasNumericScore?: boolean;
+    winnerPregameProb?: number | null;
+    loserPregameProb?: number | null;
+  } = {}
 ): string {
   return renderToStaticMarkup(
     <SettledOutcomeHero
       outcome={outcome}
       hasNumericScore={opts.hasNumericScore ?? false}
       winnerPregameProb={opts.winnerPregameProb ?? null}
+      loserPregameProb={opts.loserPregameProb ?? null}
     />
   );
 }
@@ -387,10 +392,12 @@ describe("#3619 — the settled hero's pregame line has no grammatical number", 
   });
 
   it("keeps the upset prefix, and that arm has no verb either", () => {
-    // < UPSET_THRESHOLD, so the amber branch renders. It prepends to the same
-    // string, so a verb reintroduced here would be missed by the arm above.
+    // Priced below the loser (#9490), so the amber branch renders. It prepends
+    // to the same string, so a verb reintroduced here would be missed above.
     const outcome = resolveEventOutcome(MENSIK_TIEN);
-    const text = visibleText(renderHero(outcome, { winnerPregameProb: 0.32 }));
+    const text = visibleText(
+      renderHero(outcome, { winnerPregameProb: 0.32, loserPregameProb: 0.68 })
+    );
 
     expect(text).toContain("Upset");
     expect(text).toContain("32% pregame");

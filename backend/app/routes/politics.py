@@ -49,8 +49,18 @@ router = APIRouter()
 # Sub-theme classification
 # ---------------------------------------------------------------------------
 
+# #9477 residual — `kxelection` is gone from this table, and from classification
+# altogether. Its only two series ever, on production 2026-09-28, are
+# KXELECTIONEMERGENCY ("Will Trump declare an election emergency?") and
+# KXELECTIONBILL ("Will the SAVE America Act become law?"): an administration
+# question and a bill, both Policy by NAME. The prefix filed them presidential
+# ahead of any name line, so once #9477 moved the administration out of the
+# 2028 race they were the two Trump-administration questions left in its
+# Related Markets pool. Both rows carry `llm_sport_category = 'politics'`, so
+# the category arm still fetches them and the LIKE arm bought nothing (#9165).
+# 🔴 Do not restore it as a label: "election" is not "presidential election",
+# and the name lines read the difference.
 _THEME_BY_TICKER: list[tuple[str, str]] = [
-    ("kxelection", "presidential"),
     ("kxsenate", "congressional"),
     ("kxhouse", "congressional"),
     ("kxcongress", "congressional"),
@@ -121,9 +131,11 @@ _THEME_BY_TICKER: list[tuple[str, str]] = [
 _THEME_BY_TICKER_CLASSIFY_ONLY: list[tuple[str, str]] = [
     ("controlh-", "congressional"),
     ("controls-", "congressional"),
-    # #9477 — `KXPRESSSEC*` is the White House Press Secretary, not a
-    # presidential race: the same prefix collision as `KXPRESCUP*` above.
-    ("kxpresssec", "policy"),
+    # #9477 — `KXPRESS*` is the White House press office (KXPRESSSEC, the
+    # Press Secretary; KXPRESSBRIEFINGCOUNT, "Number of White House Press
+    # Briefings in Sep 2026?"), not a presidential race: the same prefix
+    # collision as `KXPRESCUP*` above.
+    ("kxpress", "policy"),
     ("kxpres", "presidential"),
     ("kxgovtcuts", "policy"),        # How much government spending will Trump cut?
     ("kxgovtshut", "policy"),        # KXGOVTSHUTDOWN, KXGOVTSHUTLENGTH
@@ -154,7 +166,19 @@ _THEME_BY_NAME: list[tuple[re.Pattern, str]] = [
         r"eu|kyiv|zelensk\w*|"
         # `venezuela` (#9477): "Will Trump endorse María Corina Machado for
         # Venezuela president in 2026?" was a 2028 Related Market on "president".
-        r"venezuela|venezuelan)\b", re.I,
+        r"venezuela|venezuelan|"
+        # #9477 — the countries whose "…out as President of X?" or "X
+        # presidential election winner?" reached the 2028 race on the word
+        # "president" (2026-09-28: Peru, Cuba, both Congos, Lebanon, Estonia,
+        # Kosovo, Bosnia, Serbia, Bulgaria, Ghana, Moldova, Mongolia, Portugal,
+        # Costa Rica, Gambia, Cape Verde, the Palestinian presidency, Saxony-
+        # Anhalt's Minister-President, the ECB). `philippine` because the venue
+        # writes "Philippine presidential election winner?", not "Philippines".
+        r"peru|peruvian|cuba|congo|drc|lebanon|lebanese|estonia|estonian|"
+        r"kosovo|bosnia|herzegovina|srpska|serbia|serbian|bulgaria|bulgarian|"
+        r"ghana|ghanaian|moldova|moldovan|mongolia|mongolian|portugal|portuguese|"
+        r"costa\s*rica|costa\s*rican|gambia|gambian|cape\s*verde|palestine|palestinian|"
+        r"philippine|new\s*zealand|nz|saxony|ecb)\b", re.I,
     ), "international"),
     # #9477 — there is no candidate-NAME line here any more. It read
     # `trump|biden|desantis|harris|newsom|haley|ramaswamy|kennedy|rfk` as
@@ -178,6 +202,59 @@ _THEME_BY_NAME: list[tuple[re.Pattern, str]] = [
     # White House Correspondents Dinner?", "Trump bans more news outlets from
     # White House…", "How many presidential actions will Trump take this week?"
     (re.compile(r"\b(?:press\s+secretary|correspondents|news\s+outlets?|presidential\s+actions?)\b", re.I), "policy"),
+    # #9477 — the presidential line below is the US RACE, and the word
+    # "president" alone does not say so. On 2026-09-28 it filed 464 open rows
+    # there; these lines take the ones that name some OTHER presidency, a
+    # House seat, a state office, or the sitting administration, before it
+    # can. Each is a class measured on the production pool, not a row list.
+    #
+    # Someone else's president: an organisation ("Gianni Infantino out as
+    # President of FIFA", "Next President of Lucasfilm", "…of the Federal
+    # Reserve Bank of Atlanta", "Shawn Fain … UAW President", "Real Madrid:
+    # Florentino Pérez Out as President", "Chicago Board of Education
+    # President winner?") or a tribal nation ("Navajo Nation presidential
+    # election winner?"). A foreign country's president is International,
+    # above. Before the administration line, which reads "out as president".
+    (re.compile(
+        r"\bpresident\s+of\s+(?!the\s+united\s+states\b|the\s+u\.?s\.?\b)|"
+        r"\b(?:uaw|real\s+madrid|board\s+of\s+education|navajo)\b", re.I,
+    ), "other"),
+    # The sitting presidency, not the next one: "Trump out as President
+    # before 2027?", "Donald Trump announces departure as President?",
+    # "Who will receive the Presidential Medal of Freedom in 2026?", "Natalie
+    # Harp out as Special Assistant to the President…", "Will Trump repeal
+    # Presidential term limits in 2026?", "Will Trump post "President Xi"…".
+    (re.compile(
+        r"\b(?:(?:out|departure)\s+as\s+president|medal\s+of\s+freedom|"
+        r"to\s+the\s+president|presidential\s+term\s+limits|president\s+xi)\b", re.I,
+    ), "policy"),
+    # A past race or a book is neither: "…Joe Biden used Ambien before the
+    # 2024 presidential debate?", "When will Biden release his presidential
+    # memoir?".
+    (re.compile(r"\b(?:(?:2016|2020|2024)\s+presidential|presidential\s+memoir)\b", re.I), "other"),
+    (re.compile(r"\bsupreme\s+court\s+justices?\b", re.I), "scotus"),
+    # A House seat's nominee or primary is written with its district code —
+    # "TX-38 Democratic nominee?", "Margin of victory in the NJ-11 special
+    # Democratic primary?", "Who will advance from the CA-22 primary?" — which
+    # "nominee" and "primary" below would file presidential (134 open rows).
+    # Only the nominee/primary rows: a bare "WA-09 House Election Winner" never
+    # reached the race and stays where it is. The code is case-SENSITIVE and
+    # closed over the real state codes, so "COVID-19" can never read as a seat.
+    (re.compile(
+        r"^(?=.*\b(?i:nominee|primar(?:y|ies))\b)"
+        r"(?=.*\b(?:A[KLRZ]|C[AOT]|D[CE]|FL|GA|HI|I[ADLN]|K[SY]|LA|M[ADEINOST]|"
+        r"N[CDEHJMVY]|O[HKR]|PA|RI|S[CD]|T[NX]|UT|V[AT]|W[AIVY])-(?:\d{1,2}|AL)\b)"
+    ), "congressional"),
+    # A state office's primary or nominee: "Illinois Democratic Comptroller
+    # nominee?", "Illinois Republican Attorney General nominee?", "California
+    # Insurance Commissioner primary: who will advance?".
+    (re.compile(
+        r"\b(?:comptroller|insurance\s+commissioner|attorney\s+general\s+(?:nominee|primary))\b", re.I,
+    ), "other"),
+    # A ballot measure that says "primary": "Massachusetts passes jungle
+    # primary ballot measure?", "Will Wyoming vote to exempt 50% of
+    # primary-home assessed value?".
+    (re.compile(r"\bprimary(?:\s+ballot\s+measure|[-\s]home)\b", re.I), "policy"),
     # #9193 — `primary` is not a presidential word on its own: here it filed
     # "Texas Senate primary: which counties will Paxton win?" as the first
     # Related Market under the 2028 nominee race, with 15 more Senate and five
@@ -190,7 +267,15 @@ _THEME_BY_NAME: list[tuple[re.Pattern, str]] = [
     # will hold more governorships after the midterms?" is a governor question.
     # `third term` (#9477): "Will Trump run for a third term?" is the one
     # 2028 question the removed name line caught that no word here did.
-    (re.compile(r"\b(?:president|presidential|2028\s*election|white\s*house|nominee|run\s+for\s+president|(?:third|3rd)\s*term)\b", re.I), "presidential"),
+    # `white house` is no longer a word of the race (#9477): every open row that
+    # carried it on 2026-09-28 was the administration — visits ("Mamdani
+    # visits the White House by…?", the Super Bowl champions), staff ("Susie
+    # Wiles out as White House Chief of Staff…", "Natalie Harp White House
+    # departure announced?"), briefings and post counts. Only "win the White
+    # House" / "occupant of the White House" is the race; the rest falls to
+    # the Policy line just below.
+    (re.compile(r"\b(?:president|presidential|2028\s*election|(?:win|occupant\s+of)\s+the\s+white\s+house|nominee|run\s+for\s+president|(?:third|3rd)\s*term)\b", re.I), "presidential"),
+    (re.compile(r"\bwhite\s*house\b", re.I), "policy"),
     # `senators?` and `the\s+house` for the same reason as `midterms?`: venues
     # write "How many Senators will vote for the Clarity Act?" and "Will the
     # House pass a cap on federal student loan interest rates?", and both sat
@@ -214,10 +299,20 @@ _THEME_BY_NAME: list[tuple[re.Pattern, str]] = [
     (re.compile(r"\bfed(?:eral\s*reserve)?\s*(?:chair\s*(?:or|and|/)\s*)?governor(?:s|ship)?\b", re.I), "policy"),
     (re.compile(r"\b(?:governors?|governorships?|gubernatorial)\b", re.I), "gubernatorial"),
     (re.compile(r"\bmidterms?\b", re.I), "congressional"),
-    (re.compile(r"\bprimar(?:y|ies)\b", re.I), "presidential"),
+    # #9477 — a primary is the 2028 race only when it says 2028 ("2028 South
+    # Carolina Democratic primary winner?"). Every other open primary is this
+    # cycle's — "Trump-endorsed May primary candidates combo", "Which Georgia
+    # primary elections will have a first-round winner?" — the midterms'.
+    (re.compile(r"^(?=.*\b2028\b).*\bprimar(?:y|ies)\b", re.I), "presidential"),
+    (re.compile(r"\bprimar(?:y|ies)\b", re.I), "congressional"),
     (re.compile(r"\b(?:supreme\s*court|scotus|justice|roe|overturn)\b", re.I), "scotus"),
     (re.compile(r"\b(?:bill|legislation|executive\s*order|policy|tariff|immigration|gun|abortion|cannabis|marijuana|legalize|ban|mandate|regulation)\b", re.I), "policy"),
-    (re.compile(r"\b(?:approval\s*rating|favorab|popular\s*vote|electoral\s*college)\b", re.I), "presidential"),
+    (re.compile(r"\b(?:popular\s*vote|electoral\s*college)\b", re.I), "presidential"),
+    # #9477 — approval is the SITTING president's ("How high will Trump's
+    # approval rating get before 2027?", "Trump's approval rating on Oct 2,
+    # 2026?"): about twenty open rows, every one of them the administration,
+    # and two of them the 2028 board's Related Markets.
+    (re.compile(r"\b(?:approval\s*rating|favorab)\b", re.I), "policy"),
     # `be confirmed as`, `u.s. attorney`, `become law` (#9193 residual): "When will
     # James McDonald be confirmed as SDNY U.S. attorney?" and "Which ICE
     # reforms will become law in 2026?" sat in Other beside the ambassador
@@ -232,6 +327,11 @@ _THEME_BY_NAME: list[tuple[re.Pattern, str]] = [
     # favor of Trump's tariffs?" stays SCOTUS.
     (re.compile(r"\b(?:trump|rfk)\b", re.I), "policy"),
 ]
+
+# The country line, by name, for `_classify_theme`'s `KXPRES*` check (#9477).
+# It is the list's first line so a foreign presidency never reaches the race;
+# the guard test holds both facts.
+_INTERNATIONAL_RE: re.Pattern = _THEME_BY_NAME[0][0]
 
 
 _NON_POLITICS_RE = re.compile(
@@ -331,10 +431,16 @@ def _place_led_gov_race_is_us(name: str) -> bool | None:
 
 def _classify_theme(market: FuturesMarket) -> str:
     ext = (market.external_id or "").lower()
+    name = market.name or ""
     for prefix, theme in (*_THEME_BY_TICKER, *_THEME_BY_TICKER_CLASSIFY_ONLY):
         if ext.startswith(prefix):
+            # #9477 — Kalshi files every country's presidential election under
+            # `KXPRES*` (KXPRESTAIWAN, KXPRESTURKEYR1, KXPRESNIGERIA), so the
+            # prefix says "a presidential election", not "ours". The country
+            # the name gives decides, as it does for a ticker-less row.
+            if theme == "presidential" and _INTERNATIONAL_RE.search(name):
+                return "international"
             return theme
-    name = market.name or ""
     # Decide a place-led race by WHOSE governorship it is, before the name
     # patterns below can assert a US one from the word "governor" alone.
     # Those patterns recognise a foreign contest only by a country word, and

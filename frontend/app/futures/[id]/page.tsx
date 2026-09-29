@@ -4,6 +4,7 @@ import { useState, useMemo, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import useSWR from "swr";
+import { useFuturesDetailStream } from "@/hooks/useFuturesDetailStream";
 import {
   fetchFuturesMarket,
   fetchFuturesHistory,
@@ -158,7 +159,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   } = useSWR(
     isValidId ? ["futures-market", marketId] : null,
     () => fetchFuturesMarket(marketId),
-    { refreshInterval: 60000, keepPreviousData: true, revalidateOnFocus: false }
+    { refreshInterval: 0, keepPreviousData: true, revalidateOnFocus: false, revalidateOnReconnect: false }
   );
 
   // #7545 — the history window is a RUNG THE READER CAN SEE AND MOVE, not a
@@ -204,6 +205,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     data: historyData,
     error: historyError,
     isLoading: historyLoading,
+    mutate: refreshHistory,
   } = useSWR(
     market ? ["futures-history", marketId, historyHours] : null,
     () => fetchFuturesHistory(marketId, historyHours),
@@ -213,8 +215,13 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     // a wide "All" fetch (1.18 MB on /futures/1) leaves them looking at an empty
     // slot for the whole request. Keyed by hours, so the return trip to an
     // already-loaded rung is served from cache with no flash at all.
-    { keepPreviousData: true }
+    { keepPreviousData: true, revalidateOnFocus: false, revalidateOnReconnect: false }
   );
+  useFuturesDetailStream({
+    marketId, market, history: historyData, historyHours,
+    setMarket: next => refreshMarket(next, { revalidate: false }),
+    setHistory: next => refreshHistory(next, { revalidate: false }),
+  });
   const historyOutcomes = Array.isArray(historyData?.outcomes)
     ? historyData.outcomes
     : [];

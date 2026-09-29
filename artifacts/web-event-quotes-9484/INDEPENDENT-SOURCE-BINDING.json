@@ -1,0 +1,19 @@
+{
+  "base": "eebbd047af47cc4e10acd88b121ae7f0c7b92df8",
+  "files": {
+    "frontend/__tests__/lib/blendObservationClock8758.test.ts": "0a11bd43cae493ebea413240f4002b39fdf2139a8d586110ee895b30ef2bb329",
+    "frontend/__tests__/lib/liveChartHistory920.test.ts": "54a64c2ce057b9cb0bd42ae20da0fefd5f4485907753c40e223768db5ec9a9bf",
+    "frontend/app/events/[id]/page.tsx": "c924a8d5e275792a692a80d06c3c98fdda0d9a0e748ecfb90eada92aa6baf2a4",
+    "frontend/components/event/LiveAgeStamp.tsx": "f8a296c06402bf5946524fa0fc04fac2645dda5773de611b76f036855b44d6b3",
+    "frontend/hooks/useLiveEventStream.ts": "de51493c440894a923dd8dac07f5086033d7034cb671375a6a7b6fbdca60a65f",
+    "frontend/lib/blendObservationClock.ts": "c5b52f136ab5c986e652fa3c6b71d3eed34c25ba0a8b431ce6e9e6d5296935df",
+    "frontend/lib/chartRevisionRefresh.ts": "5e0a63bd6995832911eb27b739cded6c0db1dfcaad07a496db9e62f6374bcb48",
+    "frontend/lib/eventKeyStats.ts": "5e915a61174e82f75a64846465858b639997264e78c7cdbc4057f5811fe001b4",
+    "frontend/lib/eventLivePush.ts": "71a62bb84f8b5a1ffd54c2fe818e8ed93314a190f982d44d34add527b8495499",
+    "frontend/lib/liveChartHistory.ts": "cdb04cac60155d2f2322c76e26cd43939ccfb7dfd339ad1af1752cee75ec7510",
+    "frontend/lib/liveStreamController.ts": "fa7d0baa38144d55b6d943aceec1a918798c04184b9e0a5f05ba0150deb4c02d",
+    "frontend/lib/reconcileEventPoll.ts": "7424bce38ba324cce9b7ccae480153ad615b5769689ea5a596183d4d1ebe5d1d",
+    "frontend/lib/eventQuoteStream.ts": "750f83a48fdbe45ee8bb2000298800147e4df70ad1d1547f3e81f6f64b25a46b",
+    "frontend/__tests__/lib/eventQuoteStream9509.test.ts": "ea7fecaa34abf77c3df8e423113b4b535ebe6d6649e5e53d769679bc84160161"
+  }
+}

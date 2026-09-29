@@ -225,8 +225,12 @@ VIEW_MUTATIONS: list[dict] = [
     },
     {
         "id": "M9-ios-single-sided-served-coalesce",
-        "needle": "let bothServed = odds.awayRenderedPercent != nil && odds.homeRenderedPercent != nil",
-        "replacement": "let bothServed = odds.awayRenderedPercent != nil || odds.homeRenderedPercent != nil",
+        # RE-TARGETED for #9470. The hero now reads its pair off
+        # `OpeningLineHero.resolve(odds, for: event)`, bound as `shown`, so the
+        # served-percent coalesce reads `shown.` where it read `odds.`. The
+        # mutation is unchanged in substance.
+        "needle": "let bothServed = shown.awayRenderedPercent != nil && shown.homeRenderedPercent != nil",
+        "replacement": "let bothServed = shown.awayRenderedPercent != nil || shown.homeRenderedPercent != nil",
         "why": "M2 on native — and the pattern the neighbouring `DiscoverEventCard` "
         "still uses, so this is the mutation most likely to arrive as a "
         "well-meaning consistency edit.",
