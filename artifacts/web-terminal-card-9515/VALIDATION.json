@@ -10,5 +10,9 @@
   },
   "startup_tests": 4,
   "whitespace": "PASS",
-  "release_acceptance": "pending"
+  "release_acceptance": "pending",
+  "corrective_at": "2026-09-29T05:30:16.542584+00:00",
+  "corrective_tests": 91,
+  "corrective_build": "PASS",
+  "corrective_typecheck": "PASS 66=baseline66"
 }

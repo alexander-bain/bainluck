@@ -545,7 +545,7 @@ describe("🔴 PART 2 — every <article> root inside those components carries t
   /**
    * THE ARM THAT WOULD HAVE CAUGHT CERT-678.
    *
-   * `FuturesCard` is ONE component with FOUR `<article>` roots, so
+   * `FuturesCard` is ONE component with FIVE `<article>` roots, so
    * per-component coverage is not enough: the previous build satisfied
    * "FuturesCard renders the chip" with a chip only Variant A ever reached.
    * Each `<article>` is one card the reader can be looking at, so each one is
@@ -562,11 +562,11 @@ describe("🔴 PART 2 — every <article> root inside those components carries t
   });
 
   it("found the article roots (the scan is not vacuous)", () => {
-    // 4 in FuturesCard + 1 EventCard + 1 ComparisonCard. GuessCard and
+    // 5 in FuturesCard (including assigned result) + 1 EventCard + 1 ComparisonCard. GuessCard and
     // FuturesCompactRow root on a <div>/<a> and are covered by the
     // per-component arm above.
-    expect(articleBlocks.length).toBeGreaterThanOrEqual(6);
-    expect(articleBlocks.filter((b) => b.label.includes("FuturesCard.tsx:FuturesCard")).length).toBe(4);
+    expect(articleBlocks.length).toBeGreaterThanOrEqual(7);
+    expect(articleBlocks.filter((b) => b.label.includes("FuturesCard.tsx:FuturesCard")).length).toBe(5);
   });
 
   it("blanking comments did not eat the code it was protecting", () => {
@@ -574,7 +574,7 @@ describe("🔴 PART 2 — every <article> root inside those components carries t
     // delete real JSX and every assertion below would pass on nothing.
     const futures = ITEM_TAKING.find((c) => c.name === "FuturesCard")!;
     const code = blankComments(futures.body);
-    expect(code.split("<ForYouChip").length - 1).toBe(4);
+    expect(code.split("<ForYouChip").length - 1).toBe(5);
     expect(code).toContain('data-card-variant="A"');
     expect(code).toContain('data-card-format="leaderboard"');
     // ...and it really did remove the prose that broke the first run.

@@ -166,11 +166,13 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
   // else stays on the futures market page.
   const conceptKey = marketEventKey(data);
   const detailHref = conceptKey ? eventPath(conceptKey) : `/futures/${data.id}`;
+  const cue = forYouCue(item);
   const result = assignedFuturesResult(data);
   if (result) {
     return (
       <article className="relative overflow-hidden rounded-[10px] border border-surface-border bg-surface-card p-4 shadow-md" aria-label={`${data.name} — resolved`} data-card-format="resolved">
         <DismissBtn onDismiss={onDismiss} />
+        {cue && <div className="mb-2"><ForYouChip cue={cue} /></div>}
         <div className={`text-[10px] font-semibold uppercase tracking-[0.04em] text-text-muted ${dismissCornerPad(onDismiss)}`}>Resolved</div>
         <Link href={detailHref} onClick={onDetailClick} className="block group mt-2">
           <h3 className="text-[15px] font-semibold leading-snug text-text-primary group-hover:text-accent-brand transition-colors">{data.name}</h3>
@@ -178,7 +180,7 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
         {data.winner?.trim() && <p className="mt-3 text-lg font-semibold text-text-primary" data-testid="futures-assigned-result">{result}</p>}
         <ActionBar liked={liked} setLiked={setLiked} shareUrl={buildDiscoverShareUrl(detailHref, "futures", data.id)}
           shareTitle={data.name} shareText={`${data.name} — ${data.winner?.trim() ? `resolved: ${result}` : "resolved"} on Bain Luck.`}
-          contentType="futures" itemId={data.id} onShare={onShare} pin={pin} />
+          contentType="futures" itemId={data.id} onShare={onShare} pin={pin} priceObservedAt={null} priceStatus={data.status} />
       </article>
     );
   }
@@ -230,13 +232,12 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
   // UX-P248 / CERT-678 repair — computed ONCE, above the variant fork, because
   // the fork is the defect. The first version of this ship read `forYouCue(item)`
   // inline at the single place it remembered to render, and this component has
-  // FOUR `<article>` roots: threshold heatmap, outcome-distribution leaderboard,
+  // FIVE `<article>` roots: assigned result, threshold heatmap, outcome-distribution leaderboard,
   // Variant B and Variant A. Three of them returned before the call site was
   // reached, so the same reader saw the cue or did not depending on which shape
   // the feed picked for the market. Hoisting it does not by itself fix that —
   // `forYouCueRenderPaths.test.tsx` does, by asserting every article root prints
   // it — but it removes the reason the omission was easy to make.
-  const cue = forYouCue(item);
   // Queue 309 Item 4 — no dollar volume on a feed card. Standing rule,
   // docs/design-system.md: "Dollar volume as social proof is banned too"
   // (ruling 2026-07-30). Volume still does its job in ranking and gating; it
@@ -1178,6 +1179,7 @@ export function FuturesCompactRow({ item, data }: { item: FeedItem; data: FeedFu
           <div className="text-xs text-text-secondary mt-0.5" data-testid="compact-row-assigned-result">
             {data.winner?.trim() ? `Resolved · ${result}` : "Resolved"}
           </div>
+          {rowCue && <div className="mt-1"><ForYouChip cue={rowCue} /></div>}
         </div>
       </Link>
     );

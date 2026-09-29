@@ -35,12 +35,13 @@ describe('held Discover futures cards consume assigned results', () => {
     try {
       act(() => root.render(full(card())));
       expect(host.textContent).toContain('99%');
-      act(() => root.render(full(card({ resolved: true, winner: 'Bob', top_outcomes: [] }))));
+      act(() => root.render(full(card({ resolved: true, winner: 'Bob', top_outcomes: [], price_observed_at: '2020-01-01T00:00:00Z' }))));
       expect(host.textContent).toContain('Bob');
       expect(host.textContent).toContain('Resolved');
       expect(host.textContent).not.toMatch(/99%|Alice/);
-      const markup = renderToStaticMarkup(full(card({ resolved: true, winner: 'Bob', top_outcomes: [] })));
+      const markup = renderToStaticMarkup(full(card({ resolved: true, winner: 'Bob', top_outcomes: [], price_observed_at: '2020-01-01T00:00:00Z' })));
       expect(markup).toContain('href="/futures/712"');
+      expect(markup).not.toContain('price-age-mark');
     } finally { act(() => root.unmount()); document.body.removeChild(host); }
   });
 
