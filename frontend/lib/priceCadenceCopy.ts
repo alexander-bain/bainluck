@@ -41,15 +41,25 @@
  * ingest hiccup or a quiet overnight cannot flip the copy, while a board silent
  * for a day cannot be described as updating hourly. Fail-safe, not a feature
  * removal: the promise returns by itself the moment a number arrives.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * #9567 — THE PROMISE ITSELF WENT FALSE, IN THE OTHER DIRECTION.
+ *
+ * `/futures/63153672` (Brent crude, Kalshi) read "Prices update every 1–2 hours
+ * for this market" at 07:20Z on 2026-09-29, five minutes after open Kalshi
+ * contracts began streaming (#9554); its legs were moving every few seconds, and
+ * open Polymarket contracts stream too since #9561. A fixed cadence is no longer
+ * a true sentence about an open board: it understates a streamed one, and no
+ * other source's cadence is ours to promise either. So an open board says
+ * nothing about cadence at all. "Limited price history available" stays beside
+ * it — snapshot history is a separate, still-sparse fact. Settled copy (#1803)
+ * is unchanged; `dormant` (#8135) still returns silence, now the same silence.
  */
-
-/** Sparse history, but the question is still open — the number will keep moving. */
-const LIVE_CADENCE = `Prices update every 1–2 hours`;
 
 /** Settled: never promise an update that cannot come. */
 const SETTLED_CADENCE = `Final — prices no longer update`;
 
-/** The upper bound the promise itself states. */
+/** The upper bound the retired open-board promise stated (#9567) — still #8135's unit. */
 export const CADENCE_PROMISE_CEILING_MS = 2 * 60 * 60 * 1000;
 
 /** Silent this long and the promise above is not describing this board (#8135). */
@@ -96,11 +106,13 @@ export interface PriceCadenceOptions {
  */
 export function priceCadenceNote(
   settled: boolean,
-  { long = false, dormant = false }: PriceCadenceOptions = {}
+  // #9567: no option changes the answer any more — the settled line is the same
+  // in both lengths, and an open board is silent dormant or not. They stay so
+  // each caller keeps passing what only it knows.
+  _options: PriceCadenceOptions = {}
 ): string | null {
   // Settled outranks dormant: "Final — prices no longer update" is the stronger
   // and more useful fact, and every settled board goes dormant sooner or later.
   if (settled) return SETTLED_CADENCE;
-  if (dormant) return null;
-  return long ? `${LIVE_CADENCE} for this market` : LIVE_CADENCE;
+  return null;
 }

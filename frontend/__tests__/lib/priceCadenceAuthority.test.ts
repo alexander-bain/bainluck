@@ -73,9 +73,12 @@ function cadenceConstructionSites(): string[] {
 const AUTHORITY = "lib/priceCadenceCopy.ts";
 
 describe("price-cadence copy: one authority", () => {
-  it("is built in EXACTLY one file", () => {
-    // Equality, not a subset check against a list that could quietly grow.
-    expect(cadenceConstructionSites()).toEqual([AUTHORITY]);
+  it("is built in NO file — #9567 retired the promise, and a copy must not return", () => {
+    // Equality, not a subset check against a list that could quietly grow. Until
+    // #9567 this was `[AUTHORITY]`; open Kalshi and Polymarket contracts now
+    // stream, so a fixed 1–2 hour cadence is false on the pages it printed on.
+    expect(cadenceConstructionSites()).toEqual([]);
+    expect(fs.existsSync(path.join(FRONTEND, AUTHORITY))).toBe(true);
   });
 
   it("is non-vacuous — the scan can actually see a violation", () => {
@@ -105,25 +108,17 @@ describe("priceCadenceNote", () => {
     expect(priceCadenceNote(true, { long: true })).toBe(settled);
   });
 
-  it("still tells a live market how often it moves", () => {
-    expect(priceCadenceNote(false)).toMatch(/Prices update every 1–2 hours/);
-    expect(priceCadenceNote(false, { long: true })).toMatch(/for this market$/);
+  it("#9567 — promises an open market NO cadence, in either length", () => {
+    // Specimen: /futures/63153672 (Brent crude, Kalshi) read "Prices update every
+    // 1–2 hours for this market" while its legs streamed every few seconds.
+    expect(priceCadenceNote(false)).toBeNull();
+    expect(priceCadenceNote(false, { long: true })).toBeNull();
+    expect(priceCadenceNote(false, { dormant: false })).toBeNull();
   });
 
-  it("uses ONE dash spelling across both lengths (the drift that was there)", () => {
-    // #8135 widened the return type to `string | null` ("say nothing" on a
-    // dormant board). Neither of these is dormant — asserted, so the dash check
-    // below cannot go green on a pair of nulls that match no dash at all.
-    const notes = [priceCadenceNote(false), priceCadenceNote(false, { long: true })];
-    expect(notes.every((s) => typeof s === "string")).toBe(true);
-    const dashes = notes.map((s) => (s as string).match(/1(.)2/)?.[1]);
-    expect(new Set(dashes).size).toBe(1);
-    expect(dashes[0]).toBe("–");
-  });
-
-  it("defaults to the short form", () => {
-    expect(priceCadenceNote(false)).toBe(priceCadenceNote(false, {}));
-    expect(priceCadenceNote(false)).not.toMatch(/for this market/);
+  it("CONTROL — the settled line survives #9567, identical in both lengths", () => {
+    expect(priceCadenceNote(true)).toBe("Final — prices no longer update");
+    expect(priceCadenceNote(true, { long: true })).toBe(priceCadenceNote(true));
   });
 });
 
