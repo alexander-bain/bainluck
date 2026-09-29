@@ -37,6 +37,18 @@ _SKIP_PATTERNS = (
 )
 SKIP_REGEX = "|".join(f"({p})" for p in _SKIP_PATTERNS)
 
+# A name this short is a generic word ("Yes", "Tie", "AFC") far more often than
+# a team, so only a Kalshi leg is selected with one, and only the ticker's own
+# league may bind it (Step 0): "USC" on Kalshi's college board is USC, "LSU" is
+# LSU, "VMI" is VMI (#9687). No category-wide or LLM step reads it, and the
+# roster matcher refuses it itself.
+_MIN_NAME_CHARS = 4
+
+
+def _short_name(name: str | None) -> bool:
+    return len(name or "") < _MIN_NAME_CHARS
+
+
 # Prioritize US major sports where we have roster data.
 # Skip golf — individual sport, no team rosters to match against.
 _US_SPORTS = ("basketball", "baseball", "football", "hockey")
@@ -160,7 +172,10 @@ def unlinked_outcomes_query(*, open_markets: bool, cursor: int, batch: int):
         .where(
             FuturesOutcome.team_id.is_(None),
             ~FuturesOutcome.name.op("~*")(SKIP_REGEX),
-            func.length(FuturesOutcome.name) >= 4,
+            or_(
+                func.length(FuturesOutcome.name) >= _MIN_NAME_CHARS,
+                FuturesMarket.source == "kalshi",
+            ),
             FuturesMarket.llm_sport_category.in_(_US_SPORTS),  # US sports only
             status_clause,
             FuturesOutcome.id > cursor,
@@ -785,6 +800,9 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
                                 outcome.team_id = team_id
                                 stats["outcomes_linked"] += 1
                                 stats["outcomes_linked_by_league"] += 1
+                                continue
+                            if _short_name(outcome.name):
+                                # #9687: Step 0 is the only reader of a short name.
                                 continue
 
                             # Step 1: Try name matching first (no LLM)

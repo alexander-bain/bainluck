@@ -12,10 +12,10 @@ league. Measured 2026-09-29: 68 of the board's 128 legs linked, all 68 on FBS
 rows, and none of the 60 unlinked could ever bind. Read as FCS, 49 of the 68
 moved and 19 cleared: the league matcher could not read "Montana St." as
 "Montana State Bobcats" or "William & Mary" as "William and Mary Tribe"
-(CERT-3806). With the spelling fallback the league matcher answers 125 of the
-128 legs, and the backfill lands 123: VMI and LIU are under the Phase 2
-selector's 4-character floor (#9687). Brown, Princeton and Mercyhurst have no
-FCS row and stay NULL.
+(CERT-3806). With the spelling fallback, and VMI and LIU admitted past the
+Phase 2 selector's 4-character floor (CERT-3807, #9687), 125 of the 128 legs
+reach their FCS school; Brown, Princeton and Mercyhurst have no FCS row and stay
+NULL.
 
 The team rows are production's own shapes (``teams`` read 2026-09-29).
 """
@@ -281,25 +281,13 @@ def test_the_whole_board_leaves_every_fbs_page_and_lands_on_its_fcs_school():
 
     # Wrong page: no leg is left on an FBS school.
     assert [name_of[o] for o, t in links.items() if t in fbs_ids] == []
-    # Right page: each leg is on the FCS school read for it by hand, except the
-    # two the Phase 2 selector never reads (names under 4 characters, #9687).
-    held = {"LIU", "VMI"}
-    expected = {
-        name_of[o]: None if name_of[o] in held else fcs_by_name.get(fx["expected"][name_of[o]])
-        for o in links
-    }
+    # Right page: each leg is on the FCS school read for it by hand.
+    expected = {name_of[o]: fcs_by_name.get(fx["expected"][name_of[o]]) for o in links}
     assert {name_of[o]: t for o, t in links.items()} == expected
-    assert sum(1 for t in links.values() if t is not None) == 123
-    assert sorted(n for o, n in name_of.items() if links[o] is None) == [
-        "Brown", "LIU", "Mercyhurst", "Princeton", "VMI",
-    ]
-    # No FCS row exists for three; the matcher already answers the two held legs.
-    assert [n for n, school in fx["expected"].items() if school is None] == [
-        "Brown", "Mercyhurst", "Princeton",
-    ]
-    from app.utils.team_linking import match_outcome_to_league_team
-
-    fcs_rows = [_team(tid, name, aliases) for tid, name, aliases in fx["fcs_teams"]]
-    assert {n: match_outcome_to_league_team(n, fcs_rows) for n in sorted(held)} == {
-        "LIU": fcs_by_name["LIU Sharks"], "VMI": fcs_by_name["VMI Keydets"],
+    assert sum(1 for t in links.values() if t is not None) == 125
+    assert {name_of[o]: links[o] for o in links if name_of[o] in ("LIU", "VMI")} == {
+        "LIU": fcs_by_name["LIU Sharks"], "VMI": fcs_by_name["VMI Keydets"],  # #9687
     }
+    assert sorted(n for o, n in name_of.items() if links[o] is None) == [
+        "Brown", "Mercyhurst", "Princeton",  # no FCS row exists
+    ]
