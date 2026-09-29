@@ -305,7 +305,11 @@ def test_the_page_serves_the_btts_row_under_a_readable_heading():
 
 def test_the_venue_abbreviation_never_reaches_the_reader():
     payload = _sounders_page()
-    for bucket in payload.values():
+    for name, bucket in payload.items():
+        # Stream identity metadata is not a rendered row bucket.
+        if name in {"stream_market_ids", "closed_winner_market_ids"}:
+            assert all(isinstance(value, int) and value > 0 for value in bucket)
+            continue
         if not isinstance(bucket, list):
             continue
         for row in bucket:

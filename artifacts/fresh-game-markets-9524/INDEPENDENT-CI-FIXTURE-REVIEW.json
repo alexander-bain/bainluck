@@ -1,0 +1,17 @@
+{
+  "verdict": "SOURCE PASS",
+  "base": "853ac35cc2d980bf60f3b6a3b238980bf9e8c18d",
+  "reviewer": "/root/deep_live_delivery_review",
+  "files": [
+    {
+      "path": "backend/tests/integration/test_route_events_seeded.py",
+      "sha256": "af26a6d487ff2dce81ae0225d1af1b40ebbed28d67c63a3ed9b4b05ad6bd618b"
+    },
+    {
+      "path": "backend/tests/test_btts_reader_bucket_2127.py",
+      "sha256": "fe5eeb6b14ca82bf221780210a50facaf8b062cf736fcb1491a49a3f7f5b0171"
+    }
+  ],
+  "tests_executed_by_reviewer": false,
+  "findings_remaining": []
+}
