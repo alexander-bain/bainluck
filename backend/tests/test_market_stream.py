@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
+from fastapi.responses import StreamingResponse
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
@@ -235,6 +236,13 @@ async def test_database_session_ends_before_stream_and_refusals_are_explicit(
         response = await route.stream_markets(Request(), "1,2")
         assert response.status_code == 200
         assert maker.closed
+        with pytest.raises(RuntimeError, match="gone before body"):
+            await response(
+                {"type": "http", "asgi": {"spec_version": "2.4"}},
+                AsyncMock(),
+                AsyncMock(side_effect=RuntimeError("gone before body")),
+            )
+        assert route._open_connections == 0
     else:
         with pytest.raises(HTTPException) as error:
             await route.stream_markets(Request(), "1,2")
@@ -252,6 +260,67 @@ async def test_capacity_refuses_before_a_database_connection(monkeypatch):
     assert error.value.status_code == 503
     assert error.value.detail["poll"] is True
     lookup.assert_not_awaited()
+
+
+async def test_concurrent_admission_reserves_capacity_before_any_generator_starts(
+    monkeypatch,
+):
+    monkeypatch.setattr(route, "MAX_CONNECTIONS", 1)
+
+    class Maker:
+        def __call__(self):
+            return self
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+    monkeypatch.setattr(route, "async_session_maker", Maker())
+    arrived = 0
+    both_in_database = asyncio.Event()
+
+    async def lookup(_db, _ids):
+        nonlocal arrived
+        arrived += 1
+        if arrived == 2:
+            both_in_database.set()
+        await both_in_database.wait()
+        return [1], [1]
+
+    monkeypatch.setattr(route, "_eligible_markets", lookup)
+    results = await asyncio.gather(
+        route.stream_markets(Request(), "1"),
+        route.stream_markets(Request(), "1"),
+        return_exceptions=True,
+    )
+    accepted = [r for r in results if isinstance(r, StreamingResponse)]
+    refused = [r for r in results if isinstance(r, HTTPException)]
+    assert len(accepted) == len(refused) == 1
+    assert refused[0].status_code == 503
+    assert route._open_connections == 1
+    with pytest.raises(asyncio.CancelledError):
+        await accepted[0](
+            {"type": "http", "asgi": {"spec_version": "2.4"}},
+            AsyncMock(),
+            AsyncMock(side_effect=asyncio.CancelledError()),
+        )
+    assert route._open_connections == 0
+
+
+async def test_response_completion_releases_reservation_and_hub(monkeypatch):
+    hub = Hub()
+    monkeypatch.setattr(live_fanout, "fanout", lambda: hub)
+    monkeypatch.setattr(route, "MAX_CONNECTION_S", 0)
+    response = route._MarketStreamResponse(route._stream([1], [], Request()))
+    response.reserve()
+    assert route._open_connections == 1
+    await response(
+        {"type": "http", "asgi": {"spec_version": "2.4"}}, AsyncMock(), AsyncMock()
+    )
+    assert route._open_connections == 0
+    assert hub.released == ["live:market:1"]
 
 
 def test_route_is_mounted_on_the_public_api():

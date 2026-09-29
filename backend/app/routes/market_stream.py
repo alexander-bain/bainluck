@@ -116,12 +116,10 @@ class _MarketSubscriptions:
 
 
 async def _stream(ids: list[int], unavailable: list[int], request: Request):
-    global _open_connections
     from app.utils.live_fanout import CLOSED, fanout
 
     subscriptions = _MarketSubscriptions(fanout())
     started = asyncio.get_running_loop().time()
-    _open_connections += 1
     settled = []
     try:
         await subscriptions.subscribe(ids)
@@ -171,8 +169,29 @@ async def _stream(ids: list[int], unavailable: list[int], request: Request):
         logger.warning("market stream failed for %s markets", len(ids), exc_info=True)
         yield sse_encode(json.dumps({"reason": "upstream"}), event="reconnect")
     finally:
-        _open_connections -= 1
         subscriptions.release()
+
+
+class _MarketStreamResponse(StreamingResponse):
+    """Reserve at admission, release even if sending fails before body startup."""
+
+    def reserve(self):
+        global _open_connections
+        # No await between the capacity check and reservation: simultaneous
+        # eligible requests cannot all borrow the same last available slot.
+        if _open_connections >= MAX_CONNECTIONS:
+            raise HTTPException(503, detail={"reason": "stream_capacity", "poll": True})
+        _open_connections += 1
+        self._reserved = True
+
+    async def __call__(self, scope, receive, send):
+        global _open_connections
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            if getattr(self, "_reserved", False):
+                self._reserved = False
+                _open_connections -= 1
 
 
 @router.get("/stream")
@@ -186,9 +205,7 @@ async def stream_markets(request: Request, ids: str):
         raise HTTPException(404, detail={"reason": "markets_not_found", "poll": True})
     if not admitted:
         raise HTTPException(409, detail={"reason": "markets_unavailable", "poll": True})
-    if _open_connections >= MAX_CONNECTIONS:
-        raise HTTPException(503, detail={"reason": "stream_capacity", "poll": True})
-    return StreamingResponse(
+    response = _MarketStreamResponse(
         _stream(admitted, [mid for mid in requested if mid not in admitted], request),
         media_type="text/event-stream",
         headers={
@@ -197,3 +214,5 @@ async def stream_markets(request: Request, ids: str):
             "Connection": "keep-alive",
         },
     )
+    response.reserve()
+    return response
