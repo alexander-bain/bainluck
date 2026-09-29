@@ -41,6 +41,16 @@ test('equal-vector terminal result can land without inventing an observation sta
   expect(canAdoptPrice(event({ '1': 3 }, null, 'completed'), event())).toBe(true);
   expect(canAdoptPrice(event({ '1': 4 }, T3), event({ '1': 3 }, null, 'completed'))).toBe(false);
 });
+test('known final scores survive changed or missing scores, including a withheld response', () => {
+  const held = event({ '1': 3 }, null, 'completed', null);
+  Object.assign(held.data, { home_score: 3, away_score: 1 });
+  for (const home of [2, null]) {
+    const stale = event({ '1': 4 }, null, 'completed', null);
+    Object.assign(stale.data, { home_score: home, away_score: 1 });
+    expect(canAdoptPrice(stale, held, true)).toBe(false);
+    expect(adoptPriceCards(new Map(), [held], { items: [stale], dispositions: { 'event-1': 'withheld' }, built_at: 101 }, new Set(['event-1'])).size).toBe(0);
+  }
+});
 test('market terminal truth ignores elapsed resolution dates and preserves source identity', () => {
   const old = market();
   (old.data as FeedFuturesData).resolution_date = '2000-01-01T00:00:00Z';

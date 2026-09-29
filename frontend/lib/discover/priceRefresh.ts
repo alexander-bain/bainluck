@@ -65,7 +65,11 @@ export function canAdoptPrice(incoming: FeedItem, held: FeedItem, withheld = fal
   if (priceKey(incoming) !== priceKey(held) || incoming.type !== held.type) return false;
   if (held.type === 'event') {
     const old = held.data as EventQuote, next = incoming.data as EventQuote;
-    if (isFinishedStatus(old.status) && !isFinishedStatus(next.status)) return false;
+    if (isFinishedStatus(old.status)) {
+      if (!isFinishedStatus(next.status)) return false;
+      if (old.home_score != null && old.home_score !== next.home_score) return false;
+      if (old.away_score != null && old.away_score !== next.away_score) return false;
+    }
     if (!isFinishedStatus(old.status) && isFinishedStatus(next.status)) return true;
     const prior = parseFoldRevision(old.blend_fold_revision), revision = parseFoldRevision(next.blend_fold_revision);
     if (prior) {
