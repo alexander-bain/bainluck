@@ -515,7 +515,12 @@ export default function EventPage({ params }: EventPageProps) {
   // #4015 exists precisely so the hero badge, the games map (`noResultReported`)
   // and the projected-final suppression cannot answer this question three ways.
   const isSuspended =
-    hasNoReportedResult(event?.status, event?.commence_time) || liveClaimUnbacked;
+    hasNoReportedResult(
+      event?.status,
+      event?.commence_time,
+      undefined,
+      event?.started_without_result,
+    ) || liveClaimUnbacked;
 
   // #6381 — WHAT THAT STATE SAYS, when a source that carried this match's
   // markets has already graded it. Null on every other row, so the badge keeps the sentence

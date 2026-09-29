@@ -370,6 +370,15 @@ export interface Event {
   /** @see Event.venue_settled */
   venue_settled_result?: string | null;
   /**
+   * #9634 — the server's answer to "has this `scheduled` row's clock run out
+   * with nothing reported?" (`event_completion.started_without_result`). It
+   * knows what the clock cannot: an ESPN "not started" stamp (#9195) and a
+   * StatPal later-session hold (#9613). Served by `/api/events/{id}` and the
+   * `/api/events` list; ABSENT on the feed, search and league envelopes, where
+   * `lib/eventState` falls back to the clock. Pass it to `hasNoReportedResult`.
+   */
+  started_without_result?: boolean | null;
+  /**
    * #8515 — the provider's own doubleheader flag and 1-based game number (MLB
    * Stats API `doubleHeader` / `gameNumber`), under the names
    * `TeamGameBrief` already declares. Read through `providerGameNumber` and
