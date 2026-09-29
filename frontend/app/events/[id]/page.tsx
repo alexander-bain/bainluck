@@ -22,8 +22,9 @@ import { withoutEventOwnMoneyline } from "@/lib/eventOwnMoneyline";
 import { eventPageProjectedPair } from "@/lib/projectedFinalPair";
 import { teamTextColor } from "@/lib/teamColors";
 import { useLiveEventStream, type LiveFrame } from "@/hooks/useLiveEventStream";
-import { fetchEventWithLiveFrame } from "@/lib/reconcileEventPoll";
-import { appendHeroObservation, mergeLiveChartHistory } from "@/lib/liveChartHistory";
+import { fetchEventWithLiveFrame, keepNewerHeldHeadline } from "@/lib/reconcileEventPoll";
+import { appendHeroObservation, mergeLiveChartHistory, quoteChartFrames } from "@/lib/liveChartHistory";
+import { canSubscribeEventQuotes, quotePairCoversTrigger } from "@/lib/eventQuoteStream";
 import FreshnessChip from "@/components/event/FreshnessChip";
 import {
   applyLiveFrame,
@@ -311,10 +312,19 @@ export default function EventPage({ params }: EventPageProps) {
   // with a trailing refetch so a burst's last request is never lost.
   // Through a ref: `refreshEvent` is bound to this page's key, which changes
   // when a client-side navigation reuses the component for another event.
+  const pairedQuoteReadRef = useRef<(() => Promise<unknown>) | null>(null);
+  const quoteTriggerRef = useRef<LiveFrame | null>(null);
+  const quoteEventIdRef = useRef(eventId);
+  if (quoteEventIdRef.current !== eventId) quoteTriggerRef.current = null;
+  quoteEventIdRef.current = eventId;
   const refreshEventRef = useRef(refreshEvent);
   refreshEventRef.current = refreshEvent;
   const [foldedRefetch] = useState(() => createFoldedRefetchScheduler(
-    () => { freshNextEventReadRef.current = true; return refreshEventRef.current(); }, FOLDED_FRAME_REFETCH_MS,
+    () => {
+      if (quoteTriggerRef.current && pairedQuoteReadRef.current) return pairedQuoteReadRef.current();
+      freshNextEventReadRef.current = true;
+      return refreshEventRef.current();
+    }, FOLDED_FRAME_REFETCH_MS,
   ));
   useEffect(() => () => foldedRefetch.cancel(), [foldedRefetch]);
 
@@ -367,13 +377,14 @@ export default function EventPage({ params }: EventPageProps) {
   const refreshInterval = isLive ? LIVE_REFRESH_INTERVAL : SCHEDULED_REFRESH_INTERVAL;
 
   // ── live/034 S2 — SSE push ────────────────────────────────────────────────
-  // Live events only, per the ruling; everything else keeps polling. The number
+  // Quote delivery is independent of the sports badge. The number
   // in the database was already live (worker-ws flushes every 2s, the blend is
   // stamped at most once per event per 5s) — it was the 32s poll that made it
   // look stale on screen.
+  const quoteEligible = canSubscribeEventQuotes(event);
   const { frame: liveFrame, connected: streamConnected, chartPoints } = useLiveEventStream(
     eventId,
-    isLive,
+    quoteEligible,
   );
   streamConnectedRef.current = streamConnected;
 
@@ -388,6 +399,16 @@ export default function EventPage({ params }: EventPageProps) {
     // still says the blend moved: refetch the folded detail — and write nothing
     // this tick, because swr drops a fetch that a later mutation (even a no-op
     // `applyLiveFrame` returning `prev`) post-dates. See the scheduler.
+    const held = heldEventRef.current;
+    if (held && canSubscribeEventQuotes(held) && (
+      liveFrame.p === null || held.hero_probability_source !== "blend" ||
+      (liveFrame.status && liveFrame.status !== held.status) ||
+      (held.status !== "live" && frameInvalidatesFoldedBlend(held, liveFrame))
+    )) {
+      quoteTriggerRef.current = liveFrame;
+      foldedRefetch.request();
+      return;
+    }
     if (frameInvalidatesFoldedBlend(heldEventRef.current, liveFrame)) {
       foldedRefetch.request();
       return;
@@ -711,6 +732,8 @@ export default function EventPage({ params }: EventPageProps) {
      page's setter. Keying on the resulting RANGE rather than on the tap is what
      makes all three one code path. */
   const [fullHistoryRequested, setFullHistoryRequested] = useState(false);
+  const quoteHistoryRangeRef = useRef(fullHistoryRequested);
+  quoteHistoryRangeRef.current = fullHistoryRequested;
 
   const {
     data: servedHistory,
@@ -748,16 +771,16 @@ export default function EventPage({ params }: EventPageProps) {
   // for detail/history responses served by different workers.
   const historyData = useMemo(
     () => {
-      const pushed = mergeLiveChartHistory(servedHistory, isLive ? chartPoints : []);
+      const pushed = mergeLiveChartHistory(servedHistory, quoteEligible ? quoteChartFrames(chartPoints, event) : []);
       // A push is an observation at its own time, not permission to rewrite
       // the previous poll's endpoint with today's hero value (#920).
       const joined = pushed !== servedHistory ? pushed : pinChartEdgeToHero(servedHistory, event);
       // #8749: and so is the blend a detail refresh delivered — when it is
       // newer than the line's edge, the line gets it at its own clock, so the
       // headline never moves alone.
-      return isLive ? appendHeroObservation(joined, event, servedHistory) : joined;
+      return quoteEligible ? appendHeroObservation(joined, event, servedHistory) : joined;
     },
-    [servedHistory, event, isLive, chartPoints],
+    [servedHistory, event, quoteEligible, chartPoints],
   );
 
   // A newer membership revision may carry an older surviving quote. Keep the
@@ -765,6 +788,26 @@ export default function EventPage({ params }: EventPageProps) {
   // never give that quote a made-up timestamp or refetch for ordinary pushes.
   const refreshHistoryRef = useRef(refreshHistory);
   refreshHistoryRef.current = refreshHistory;
+  // Read BOTH authoritative halves before leaving an opening/nonblend label.
+  // The scheduler keeps one trailing request when another invalidation lands.
+  pairedQuoteReadRef.current = async () => {
+    const readingEventId = eventId;
+    const trigger = quoteTriggerRef.current;
+    const [detail, history] = await Promise.all([
+      fetchEvent(readingEventId, true),
+      fetchEventHistory(readingEventId, EVENT_BOOT_HISTORY_HOURS,
+        historyRangeParam(fullHistoryRequested), true),
+    ]);
+    if (quoteEventIdRef.current !== readingEventId || quoteHistoryRangeRef.current !== fullHistoryRequested ||
+        !quotePairCoversTrigger(detail, history, readingEventId, quoteTriggerRef.current?.rev)) return;
+    await Promise.all([
+      refreshHistoryRef.current(history, { revalidate: false }),
+      refreshEventRef.current(keepNewerHeldHeadline(detail, heldEventRef.current), { revalidate: false }),
+    ]);
+    if (quoteTriggerRef.current === trigger) quoteTriggerRef.current = null;
+    setLastRefresh(Date.now());
+  };
+
   const [foldedHistoryRefetch] = useState(() => createFoldedRefetchScheduler(
     () => { freshNextHistoryReadRef.current = true; return refreshHistoryRef.current(); }, FOLDED_FRAME_REFETCH_MS,
   ));
@@ -1717,6 +1760,7 @@ export default function EventPage({ params }: EventPageProps) {
       updatedAt={heroStamp.stamp}
       oldestFact={heroStamp.fact}
       connected={streamConnected}
+      showLiveLabel={isLive}
       // #5459 — the hero below reads "No result reported" on a pinned page.
       // Without this the badge would pulse a green `live · 20s ago` beside it,
       // whose stamp really is that fresh.

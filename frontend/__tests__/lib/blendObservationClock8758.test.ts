@@ -205,7 +205,7 @@ test('the page wires both directions', () => {
   const fs = require('fs');
   const path = require('path');
   const page: string = fs.readFileSync(path.join(__dirname, '../../app/events/[id]/page.tsx'), 'utf8');
-  expect(page).toContain('isLive ? appendHeroObservation(joined, event, servedHistory) : joined');
+  expect(page).toContain('quoteEligible ? appendHeroObservation(joined, event, servedHistory) : joined');
   expect(page).toContain('() => latestBlendEdgeRef.current,');
   expect(page).toMatch(/const edge = servedBlendEdgeObservation\(servedHistory\);\s+latestBlendEdgeRef\.current = edge;/);
   expect(page).toContain('refreshEvent((prev) => adoptNewerBlendEdge(prev, edge), { revalidate: false });');

@@ -1,3 +1,4 @@
+import { isQuoteStreamStatus } from "./eventQuoteStream";
 import { PINNABLE_HERO_SOURCE } from "./chartEdgePin";
 import { compareFoldRevision, parseFoldRevision } from "./foldRevision";
 import type { ChartHistory, HeroObservation } from "./liveChartHistory";
@@ -24,7 +25,7 @@ export function chartRevisionRefreshKey(
   served: RevisionHistory | null | undefined,
   plotted: ChartHistory | null | undefined,
 ): string | null {
-  if (event?.status !== "live" || event.hero_probability_source !== PINNABLE_HERO_SOURCE ||
+  if (!event || !isQuoteStreamStatus(event.status) || event.hero_probability_source !== PINNABLE_HERO_SOURCE ||
       !served?.blend_edge_pinned) return null;
   const p = event.hero_probability;
   if (typeof p !== "number" || !Number.isFinite(p) || p < 0 || p > 1) return null;
