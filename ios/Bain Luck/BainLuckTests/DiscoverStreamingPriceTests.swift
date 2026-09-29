@@ -38,7 +38,7 @@ final class DiscoverStreamingPriceTests: XCTestCase {
 
     func testFinalResultDoesNotNeedANewProbabilityRevisionOrFakeClock() throws {
         XCTAssertTrue(DiscoverPriceRefresh.canAdopt(
-            try event(rev: 3, clock: nil, status: "finished"),
+            try event(rev: 3, clock: nil, status: "completed"),
             over: try event(rev: 3, clock: "2026-09-29T00:01:00Z", status: "live")))
     }
 
@@ -75,7 +75,7 @@ final class DiscoverStreamingPriceTests: XCTestCase {
     func testSettledStateAndSourceIdentityCannotRegress() throws {
         XCTAssertFalse(DiscoverPriceRefresh.canAdopt(try market(), over: try market(status: "closed")))
         XCTAssertFalse(DiscoverPriceRefresh.canAdopt(try market(group: "other"), over: try market()))
-        XCTAssertFalse(DiscoverPriceRefresh.canAdopt(try event(rev: 4, clock: nil), over: try event(rev: 3, clock: nil, status: "finished")))
+        XCTAssertFalse(DiscoverPriceRefresh.canAdopt(try event(rev: 4, clock: nil), over: try event(rev: 3, clock: nil, status: "completed")))
     }
 
     func testFreshUpdatePreservesMembershipOrderAndEditorials() throws {
