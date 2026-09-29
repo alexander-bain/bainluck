@@ -2189,6 +2189,12 @@ export function computeLastChartPoint(
    * simply gets `scoreStamp: null` on the event-row arm.
    */
   eventScoreObservedAt?: string | null,
+  /**
+   * #925 — the LIVE event row's `espn.period` / `espn.game_clock`, i.e. what the
+   * header prints. Read only when no history row has ever carried a period or a
+   * clock. The caller passes it for a live event only; omitted, nothing changes.
+   */
+  eventLiveState?: { period?: string | null; game_clock?: string | null } | null,
 ): ActiveChartPoint | null {
   if (!historyData) return null;
 
@@ -2411,8 +2417,25 @@ export function computeLastChartPoint(
     }
     return { value: null, at: null, carried: false };
   };
-  const periodReading = newestEspnField((row) => row.period?.toString() ?? null);
-  const clockReading = newestEspnField((row) => row.game_clock ?? null);
+  let periodReading = newestEspnField((row) => row.period?.toString() ?? null);
+  let clockReading = newestEspnField((row) => row.game_clock ?? null);
+
+  // #925, second arm — NO ROW EVER NAMED THE INNING, BUT THE HEADER DID.
+  // `/events/15320300` (Astros v White Sox, MLB, live, 2026-09-29 21:26Z): all
+  // six `espn_history` rows carried `period: null` (the MLB win-prob rows name
+  // no inning), so the carry above had nothing to carry and the readout read
+  // "—" under a header reading "Top 1st" from `event.espn.period`. The event
+  // row is overwritten in place, so it is current — but it is not the reading
+  // AT this point's timestamp, so it is marked approximate ("~Top 1st") and
+  // left undated: the row stamps no observation time for its period. Only
+  // when history holds neither field, so an event clock never sits beside a
+  // history period it did not observe.
+  if (periodReading.value == null && clockReading.value == null && eventLiveState) {
+    const p = eventLiveState.period?.toString() || null;
+    const c = eventLiveState.game_clock || null;
+    if (p) periodReading = { value: p, at: null, carried: true };
+    if (c) clockReading = { value: c, at: null, carried: true };
+  }
 
   // #8967 — THE RESTING PLAY MUST BE THE PLAY THAT PRODUCED THE SCORE BESIDE IT.
   //

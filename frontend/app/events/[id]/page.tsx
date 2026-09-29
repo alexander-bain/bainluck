@@ -1032,8 +1032,11 @@ export default function EventPage({ params }: EventPageProps) {
         // #4571 — the event row's own clock, so the helper can date the score by
         // the arm that supplied it rather than by its neighbouring timestamp.
         event?.score_observed_at,
+        // #925 — the header's own inning, for a live game whose history rows
+        // never named one. Live only: a finished row's period is its result.
+        event?.status === "live" ? event?.espn ?? null : null,
       ),
-    [historyData, event?.home_score, event?.away_score, event?.score_observed_at],
+    [historyData, event?.home_score, event?.away_score, event?.score_observed_at, event?.status, event?.espn],
   );
 
   // Best-known scores. #5521 — the comment that stood here said *"prefer latest
