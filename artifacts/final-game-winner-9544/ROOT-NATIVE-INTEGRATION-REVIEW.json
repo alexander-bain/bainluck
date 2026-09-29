@@ -1,0 +1,37 @@
+{
+  "at": "2026-09-29T04:46:04.203127+00:00",
+  "verdict": "SOURCE PASS",
+  "base": "ac074bef3b",
+  "files": [
+    {
+      "path": "ios/Bain Luck/Bain Luck/Models/FuturesModels.swift",
+      "sha256": "fa0360f6a7d076fb7fc702011f96cc1f4450cbd20efc352e35410b575e49e480"
+    },
+    {
+      "path": "ios/Bain Luck/Bain Luck/Models/FinalGameWinnerQuote.swift",
+      "sha256": "d30c375baf889e38294bb51643a1576dc1ecf654622b8d674d16ecd41b2a63d0"
+    },
+    {
+      "path": "ios/Bain Luck/Bain Luck/Utilities/GameMarketsPriceReconciliation.swift",
+      "sha256": "806a330fcc550854ec743a1d4ca870cc893af6e558a06a8ce37103c0bac7fede"
+    },
+    {
+      "path": "ios/Bain Luck/Bain Luck/Views/EventDetailView.swift",
+      "sha256": "46e40649187ec98e1f143d5aeed940dd039f016fe9de9b53bcf73d17866014c2"
+    },
+    {
+      "path": "ios/Bain Luck/BainLuckTests/FinalGameWinnerQuoteTests.swift",
+      "sha256": "41ecd68c4a406bfe0e3acfa0c6dbf16b8e23defa4a6ccce95288918a82c98c9c"
+    },
+    {
+      "path": "ios/Bain Luck/BainLuckTests/FinalGameWinnerStreamingTests.swift",
+      "sha256": "2030b59de044a230b22fc7b267439566ebb37597cfe2f77de02cb9bc27bf87bf"
+    },
+    {
+      "path": "ios/Bain Luck/BainLuckTests/GameMarketsProjectionEdgeTests.swift",
+      "sha256": "eecd14dfd890cd26ab7ddcb11d85eb9ea3a2e0d25ccd841549f993937cbb03ef"
+    }
+  ],
+  "executable_tests": "Not run here; Native owns composed compile/XCTest/capture",
+  "review": "Read full reconciler/model and new tests plus view diff. Terminal evidence clears held and incoming quote before whole-body refusal, foreign-event guard precedes fence, exact outcome binding/own-clock withdrawal guards, book selection not falsely withdrawn. Provisional actual updates until grade; nested matchup legs participate. Raw nonunit quote vector avoids complementary normalization. Final hero/results remain separate."
+}

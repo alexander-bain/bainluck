@@ -92,4 +92,18 @@ final class FinalGameWinnerQuoteTests: XCTestCase {
         XCTAssertEqual(pair.printableProbabilities[1], "93%")
         XCTAssertEqual(pair.printableProbabilities[2], "7%")
     }
+
+    func testRawNonunitQuotesNeverAcquireAnInventedComplement() {
+        for values in [[0.5, 0.51], [0.65, 0.55], [0.5, 0.49]] {
+            let pair = FinalGameWinnerQuote(eventId: 42, marketId: 11, marketName: "Bears vs Eagles",
+                source: "kalshi", status: "open", observedAt: nil, outcomes: [
+                    FinalGameWinnerQuoteOutcome(outcomeId: 1, side: .home, name: "Bears",
+                                               probability: values[0], observedAt: nil),
+                    FinalGameWinnerQuoteOutcome(outcomeId: 2, side: .away, name: "Eagles",
+                                               probability: values[1], observedAt: nil),
+                ])
+            XCTAssertEqual(pair.printableProbabilities[1], "\(Int(values[0] * 100))%")
+            XCTAssertEqual(pair.printableProbabilities[2], "\(Int(values[1] * 100))%")
+        }
+    }
 }
