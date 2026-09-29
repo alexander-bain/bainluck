@@ -2272,6 +2272,25 @@ async def retire_priorless_stat_model(session, event, *, mirror_orm: bool) -> bo
     return True
 
 
+#: #9521: clock sports whose `parse_game_clock` prices a period boundary
+#: ("Halftime", "End of 1st Quarter", "End of 2nd Period") from a "0:00" clock.
+_BREAK_CLOCK_SPORT_PREFIXES = (
+    "americanfootball_", "football_", "basketball_", "icehockey_", "hockey_",
+)
+
+
+def _break_clock(ee, sport_key: str) -> str | None:
+    """"0:00" when a live, clockless reading sits at a known break, else None."""
+    if ee.status != "in" or ee.clock or not sport_key.startswith(
+        _BREAK_CLOCK_SPORT_PREFIXES
+    ):
+        return None
+    detail = (_sanitize_period(ee.status_detail) or "").strip().lower()
+    if detail == "halftime" or detail.startswith("end of "):
+        return "0:00"
+    return None
+
+
 async def compute_and_write_stat_model(session, event, ee, sport_key, stats):
     """Compute statistical model win probability for live games and write snapshot.
 
@@ -2284,7 +2303,13 @@ async def compute_and_write_stat_model(session, event, ee, sport_key, stats):
     # specimen read `stat_model` 0.0762 for a team up 7 in the 4th.
     ee = orient_espn_event_to_row(event, ee)
 
-    has_game_progress = ee.clock or sport_key.startswith("baseball_")
+    # #9521: at a break ESPN sends no clock, and skipping the reading left the
+    # one priced before the last score of the half on the row for the whole
+    # break (MNF: 80.7% Bears at 10–7, every market ~42%). A break's position
+    # is known without a clock — Halftime and "End of Nth ..." sit at a period
+    # boundary — so price it there.
+    break_clock = _break_clock(ee, sport_key)
+    has_game_progress = ee.clock or break_clock or sport_key.startswith("baseball_")
     if ee.status != "in" or ee.home_score is None or ee.away_score is None or not has_game_progress:
         # Track missing data for live games
         if ee.status == "in":
@@ -2341,7 +2366,7 @@ async def compute_and_write_stat_model(session, event, ee, sport_key, stats):
             period_str = _sanitize_period(ee.status_detail)
             if ee.period and not period_str:
                 period_str = str(ee.period)
-            model_clock = ee.clock
+            model_clock = ee.clock or break_clock
             # #9020 / CERT-3657: the row refused this reading's position as
             # outrunning the wall clock. The model is priced at the position
             # the row DID admit (with this pass's score, which has its own
