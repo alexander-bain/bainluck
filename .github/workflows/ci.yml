@@ -858,6 +858,34 @@ jobs:
             exit 1
           fi
 
+      - name: "#9597 a playoff club's search shows its pennant, not a column of one game's props (real Postgres)"
+        # PILLAR: DISCOVER. SHIP: searching `red sox`, `yankees` or `phillies` on a
+        # playoff game day shows the AL/NL pennant and division-series odds. Production
+        # 2026-09-29 served the World Series and nine props from tonight's game: the
+        # window was all name matches, so the outcome arm was skipped, and the
+        # fixture cap's sunk rows still shipped.
+        #
+        # The fix is a second, outcome-only execution of the window statement, so only
+        # a real database behind the real route can observe it. One strawman (arm
+        # disarmed -> props fill the page), two controls, the World Series pin, and a
+        # seed the drop-the-exclusion mutant bites. Three refusals.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_search_sunk_slot_outcome_arm_9597_pg.py \
+            -v -rs 2>&1 | tee /tmp/sunkslot9597.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/sunkslot9597.txt; then
+            echo "::error::#9597 sunk-slot outcome arm gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          if grep -qiE "no tests ran|collected 0 items" /tmp/sunkslot9597.txt; then
+            echo "::error::#9597 sunk-slot outcome arm gate collected NOTHING"
+            exit 1
+          fi
+          if ! grep -qE "^=+ 9 passed" /tmp/sunkslot9597.txt; then
+            echo "::error::#9597 sunk-slot outcome arm gate did not pass all 9"
+            exit 1
+          fi
+
       - name: "#5030 a game being played stays in the search dropdown (real Postgres)"
         # PILLAR: DISCOVER. SHIP: typing a player or team while their game is on
         # offers that game, not last week's finals.

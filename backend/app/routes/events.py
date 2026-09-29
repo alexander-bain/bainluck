@@ -4647,6 +4647,92 @@ def _futures_refill_in_hand(arm_state: str, spare_rows: list) -> list | None:
     return None
 
 
+def _needs_sunk_slot_outcome_arm(
+    arm_state: str, answer_rows: int, over_cap_ids: set
+) -> bool:
+    """#9597: should the outcome arm run for the slots #8628 r2's sunk rows hold?
+
+    Only when all three are true: the window SKIPPED the arm (LAT-P111's proof
+    that it could not matter holds only while every slot is a name match), the
+    cap sank at least one row, and the answer rows cannot fill the page, so a
+    sunk row would be SHIPPED. Any other page is untouched and pays nothing.
+    """
+    return (
+        arm_state == "skipped"
+        and bool(over_cap_ids)
+        and answer_rows < _SEARCH_FUTURES_PAGE
+    )
+
+
+async def _fetch_sunk_slot_outcome_rows(
+    db, window_query, candidates_in, tier1_arms: list, outcome_arm, deadline: float
+) -> tuple[list, str]:
+    """#9597: the outcome-only rows, for the page slots #8628 r2's sunk rows hold.
+
+    `?q=red sox` on the first day of MLB's postseason (production `462717ea48`,
+    2026-09-29): the 20-row window was all name matches from tonight's Red Sox @
+    Yankees game, so `_fetch_futures_window` SKIPPED the outcome arm. The
+    fixture cap then sank seven of them, but nothing else was in hand, so the
+    sunk rows still filled the page (nine game props) and `MLB: 2026 American
+    League Champion` (199045, tier 2, $4.4M, an OUTCOME match for Boston) was
+    never fetched. LAT-P111's skip is exact only while every slot goes to a
+    name match; a sunk row is a slot the name matches gave back.
+
+    OUTCOME-ONLY by exclusion, not by the window's order: `window_query` sorts
+    name tier first, and on this page the tier<=1 set is saturated, so the arm
+    alone would return twenty game props whose OUTCOMES name the club and no
+    outcome-only row at all. Excluding the tier<=1 arms leaves exactly the rows
+    `_futures_name_tier` scores 2, in the window's own order.
+
+    The arm's own bound (`_search_outcome_arm_bound_ms`) and a SAVEPOINT, never a
+    session rollback: `deduped_futures` is live and read again afterwards
+    (LAT-P255/#3731). On timeout the caller ships the page it already had, so
+    this does NOT join `degraded`: the page is not short, and marking it would
+    make a term whose arm always sheds permanently uncacheable (#3399).
+
+    Returns ``(rows, state)``; ``state`` is ``absent``, ``shed``,
+    ``budget_exceeded`` or ``merged``, reported under ``?debug_timing=1``.
+    """
+    if outcome_arm is None or not tier1_arms:
+        return [], "absent"
+    bound_ms = _search_outcome_arm_bound_ms(deadline)
+    if bound_ms is None:
+        return [], "shed"
+    await _apply_search_statement_timeout(db, deadline, bound_ms=bound_ms)
+    nested = await db.begin_nested()
+    try:
+        rows = list(
+            (
+                await db.execute(
+                    window_query(
+                        and_(
+                            candidates_in([outcome_arm]),
+                            ~candidates_in(tier1_arms),
+                        )
+                    )
+                )
+            )
+            .scalars()
+            .unique()
+            .all()
+        )
+    except Exception as exc:  # noqa: BLE001 — re-raised below unless it is the bound
+        if not _is_query_timeout(exc):
+            with suppress(Exception):
+                await nested.rollback()
+            raise
+        await nested.rollback()
+        await _apply_search_statement_timeout(db, deadline)
+        logger.warning(
+            "search sunk-slot outcome arm exceeded its %d ms budget — keeping "
+            "the capped page", bound_ms,
+        )
+        return [], "budget_exceeded"
+    await nested.commit()
+    await _apply_search_statement_timeout(db, deadline)
+    return rows, "merged"
+
+
 def _search_tsquery(q: str):
     """Build a PostgreSQL query parser expression for user search text."""
     return func.websearch_to_tsquery(_SEARCH_TS_CONFIG_SQL, q.strip())
@@ -11244,6 +11330,41 @@ async def search_events(
             deduped_futures, _team_sport_categories
         )
 
+    # #9597: a sunk row that would be SHIPPED is a slot the name matches gave
+    # back, and the outcome-only rows the window skipped are what it owes. Counted
+    # fresh, because the window path above counts an over-cap row as an answer.
+    # The rows join the list and the sink below puts them above every sunk row.
+    _futures_sunk_slot_arm = "not_fired"
+    if _needs_sunk_slot_outcome_arm(
+        _futures_outcome_arm,
+        sum(
+            1 for m in deduped_futures
+            if m.id not in _over_match_cap_ids
+            and not _is_teamless_sport(m, _team_sport_categories)
+        ),
+        _over_match_cap_ids,
+    ):
+        _sunk_slot_rows, _futures_sunk_slot_arm = await _fetch_sunk_slot_outcome_rows(
+            db,
+            _futures_window_query,
+            _futures_candidates_in,
+            _futures_tier1_arms,
+            futures_outcome_match,
+            _deadline,
+        )
+        _deduped_ids = {m.id for m in deduped_futures}
+        for m in _rerank_search_futures(
+            _sunk_slot_rows, expanded, _resolved_sport_category,
+            _team_sport_categories,
+        ):
+            if m.id in _deduped_ids or not _admit_search_future(
+                m, seen_search_keys, kept_sources_by_question, kept_boards
+            ):
+                continue
+            if _is_over_match_cap(m, _match_counts, _query_words):
+                _over_match_cap_ids.add(m.id)
+            deduped_futures.append(m)
+
     # #8628 r2: sink the over-cap rows, on EITHER path — the window alone can
     # hold them. Then the teamless pass again, so a nickname cousin still sits
     # below a real match's third row. Both partitions are stable; with nothing
@@ -12153,7 +12274,8 @@ async def search_events(
         **({"debug_timing": {**_stage_ms,
                              "total_ms": sum(_stage_ms.values()),
                              "futures_outcome_arm": _futures_outcome_arm,
-                             "futures_refill_source": _futures_refill_source}}
+                             "futures_refill_source": _futures_refill_source,
+                             "futures_sunk_slot_arm": _futures_sunk_slot_arm}}
            if debug_timing else {}),
     }
 

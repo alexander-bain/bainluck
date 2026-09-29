@@ -208,7 +208,8 @@ class TestTheHandlerWiring:
         import re
 
         calls = re.findall(r"_rerank_search_futures\([^)]*?\)", self.SRC)
-        assert len(calls) == 2
+        # #9597: window, refill, and the sunk-slot outcome rows.
+        assert len(calls) == 3
         assert all("_team_sport_categories" in c for c in calls)
 
     def test_the_teams_shed_path_uses_a_savepoint_not_a_rollback(self):

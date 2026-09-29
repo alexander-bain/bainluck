@@ -153,7 +153,8 @@ class TestTheHandlerWiring:
     SRC = inspect.getsource(ev.search_events)
 
     def test_both_admission_loops_count_the_cap(self):
-        assert self.SRC.count("if _is_over_match_cap(m, _match_counts, _query_words):") == 2
+        # #9597: the sunk-slot outcome loop is the third admission loop.
+        assert self.SRC.count("if _is_over_match_cap(m, _match_counts, _query_words):") == 3
 
     def test_the_refill_gate_still_counts_an_over_cap_row(self):
         """The cap must never FIRE a refill (2.4-4.0 s on `united`, 3 ms on
