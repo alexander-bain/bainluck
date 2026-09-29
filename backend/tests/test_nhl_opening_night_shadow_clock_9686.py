@@ -268,3 +268,51 @@ def test_the_same_minute_fold_is_unchanged():
     result = fold_twin_events([_nhl_card(timedelta(0)), _empty_shadow()])
 
     assert [row.id for row in result.events] == [15169788]
+
+
+# --------------------------------------------------------------------------
+# CERT-3808 repair 9686-CATCHALL-MISSING-MINUTE — a real, mixed slate
+# --------------------------------------------------------------------------
+
+
+def test_an_unrelated_priced_catchall_neither_raises_nor_blocks_the_fold(caplog):
+    """🔴 CERT-3808's reproduction. A priced catch-all is asked at its EXACT
+    minute; when no league row sits there, that is zero candidates. Master's
+    first cut indexed the minute and raised `KeyError`, the pass's fail-open
+    swallowed it, and every card on the page stayed — the opening-night pair
+    included (`survivor_of == {}`)."""
+    import logging
+
+    stranger = _Row(15310999, away="Oilers", home="Ducks",
+                    sport_key="icehockey_other", sources={"polymarket": 0.44})
+    stranger.commence_time = PUCK_DROP + timedelta(hours=5)
+
+    with caplog.at_level(logging.ERROR, logger="app.utils.event_twin_fold"):
+        result = fold_twin_events(
+            [stranger, _nhl_card(timedelta(minutes=-30)), _empty_shadow()]
+        )
+
+    assert result.survivor_of == {15308567: 15169788}
+    assert sorted(row.id for row in result.events) == [15169788, 15310999]
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR], (
+        [r.getMessage() for r in caplog.records]
+    )
+
+
+@pytest.mark.parametrize("stranger_key", ["soccer_other", "icehockey_other"])
+def test_the_minute_lookup_never_raises(stranger_key, caplog):
+    """Both exact-minute branches (soccer; a priced shadow) on a minute with no
+    league row: the pass completes and logs nothing at ERROR."""
+    import logging
+
+    stranger = _Row(15310998, away="Galaxy", home="Sounders", sport_key=stranger_key,
+                    sources={"polymarket": 0.5})
+    stranger.commence_time = PUCK_DROP + timedelta(hours=7)
+
+    with caplog.at_level(logging.ERROR, logger="app.utils.event_twin_fold"):
+        result = fold_twin_events(
+            [_nhl_card(timedelta(minutes=40)), _empty_shadow(), stranger]
+        )
+
+    assert result.survivor_of == {15308567: 15169788}
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]

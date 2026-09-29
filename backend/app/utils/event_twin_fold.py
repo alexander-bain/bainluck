@@ -2241,7 +2241,10 @@ def _catchall_name_variant_merges(
             for target, target_key, target_identity in (
                 entry
                 for minute in minutes_to_ask(index, identity[2], prefix)
-                for entry in league_by_minute[minute]
+                # `.get`: the exact minute of a soccer or priced cluster may hold
+                # no league row, which is zero candidates — never a KeyError
+                # that the caller's fail-open turns into "no pass for anyone".
+                for entry in league_by_minute.get(minute, ())
             ):
                 if target == index or not target_key.startswith(prefix):
                     continue
