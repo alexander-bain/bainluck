@@ -145,6 +145,15 @@ def _market_league_sport_key(source: str | None, external_id: str | None) -> str
     return None
 
 
+def market_league_sport_key(source: str | None, external_id: str | None) -> str | None:
+    """The league a market's own venue id names, for a writer that binds inside it (#5119).
+
+    The same read :func:`link_crosses_league` refuses on, so the team linker's
+    rebind target and the championship path's refusal can never disagree.
+    """
+    return _market_league_sport_key(source, external_id)
+
+
 def link_crosses_league(
     market_source: str | None,
     market_external_id: str | None,
