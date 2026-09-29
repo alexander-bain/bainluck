@@ -54,6 +54,19 @@ function rows(body: LiveGameMarkets): Row[] {
       source: quote.source, markets: [quote.market_id], contributors: quote.outcomes.map(row => String(row.outcome_id)),
       hit: null, winner: null, actual: null, priced: true });
   }
+  // #9579: display fields do not name a row — four Kalshi "Both teams to score · Yes" markets share
+  // all of them. A colliding key is qualified by its markets, then by an ordinal, so one read never
+  // refuses itself (on the first read that left the page with no props at all).
+  const count = new Map<string, number>();
+  result.forEach(row => count.set(row.key, (count.get(row.key) ?? 0) + 1));
+  const seen = new Map<string, number>();
+  for (const row of result) {
+    if (count.get(row.key)! < 2) continue;
+    const qualified = JSON.stringify([row.key, [...row.markets].sort((a, b) => a - b)]);
+    const n = seen.get(qualified) ?? 0;
+    seen.set(qualified, n + 1);
+    row.key = n ? JSON.stringify([qualified, n]) : qualified;
+  }
   return result;
 }
 
