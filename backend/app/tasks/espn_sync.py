@@ -4638,6 +4638,56 @@ def _is_bogus_future_settled(status, commence_time, home_score, away_score, now)
 SUSPENDED_RESUME_WINDOW = timedelta(hours=48)
 
 
+async def _statpal_later_session_starts(session, events) -> dict:
+    """StatPal's recorded start for each row StatPal's schedule may hold. #9588.
+
+    One read, and only when a row is a candidate (a venue-stamped start, a
+    StatPal id, no play). A pass with none runs no query. Returns
+    ``{event_id: statpal_start}`` for the candidates whose current fixture has
+    a recorded start. The decision itself is
+    :func:`~app.utils.event_completion.statpal_names_a_later_session`.
+    """
+    from sqlalchemy import text as _sql_text
+
+    from app.utils.espn_helpers import play_evidence
+    from app.utils.event_completion import (
+        STATPAL_SCHEDULED_START_SQL,
+        statpal_schedule_candidate,
+        statpal_start_from_anchors,
+    )
+
+    # `getattr` because this runs over every live row the staleness arm loads,
+    # and a row that does not carry a field is not a candidate.
+    candidates = {
+        event.id: getattr(event, "statpal_fixture_id", None)
+        for event in events
+        if statpal_schedule_candidate(
+            getattr(event, "commence_time_source", None),
+            getattr(event, "statpal_fixture_id", None),
+            play_evidence(
+                getattr(event, "home_score", None),
+                getattr(event, "away_score", None),
+                getattr(event, "period", None),
+                getattr(event, "game_clock", None),
+            ),
+        )
+    }
+    if not candidates:
+        return {}
+    by_event: dict = {}
+    for row in (await session.execute(
+        _sql_text(STATPAL_SCHEDULED_START_SQL),
+        {"event_ids": list(candidates)},
+    )).all():
+        by_event.setdefault(row.event_id, []).append(row)
+    starts = {}
+    for event_id, fixture_id in candidates.items():
+        start = statpal_start_from_anchors(by_event.get(event_id, ()), fixture_id)
+        if start is not None:
+            starts[event_id] = start
+    return starts
+
+
 async def _transition_event_statuses_impl() -> dict:
     """Transition event statuses based on commence_time (zero API calls).
 
@@ -4820,6 +4870,16 @@ async def _transition_event_statuses_impl() -> dict:
                 for r in sighting_rows
             }
 
+        # #9588: A VENUE STAMP DOES NOT START A MATCH OUR SCHEDULE PUTS LATER.
+        #
+        # The fourth hold. Seven Beijing doubles rows went LIVE at 05:00Z 9/29
+        # on Kalshi's expiry stamp while their own StatPal anchor had them at
+        # the next day's session. One read, for candidates only.
+        stats["held_statpal_later_session"] = 0
+        from app.utils.event_completion import statpal_names_a_later_session
+
+        statpal_starts = await _statpal_later_session_starts(session, started_events)
+
         for event in started_events:
             if not commence_time_is_a_reported_start(event.commence_time_source):
                 stats["held_derived_start"] += 1
@@ -4856,6 +4916,18 @@ async def _transition_event_statuses_impl() -> dict:
                 *listing_sightings[event.id],
             ):
                 stats["held_withdrawn_listing"] += 1
+                continue
+            if event.id in statpal_starts and statpal_names_a_later_session(
+                event.commence_time_source,
+                event.statpal_fixture_id,
+                play_evidence(
+                    event.home_score, event.away_score, event.period, event.game_clock
+                ),
+                event.commence_time,
+                statpal_starts[event.id],
+                now,
+            ):
+                stats["held_statpal_later_session"] += 1
                 continue
             event.status = "live"
             stats["scheduled_to_live"] += 1
@@ -5018,6 +5090,40 @@ async def _transition_event_statuses_impl() -> dict:
             )
         )
         live_events = live_result.scalars().all()
+
+        # #9588, the other half of the fourth hold: a row the clock promoted
+        # before the hold existed, or before its StatPal link landed, goes back
+        # to `scheduled` while StatPal's session is still ahead. This happens
+        # before the staleness arm, which would otherwise suspend a match
+        # nobody has played yet. The same predicate as the hold, so the two
+        # arms cannot trade a row.
+        stats["demoted_statpal_later_session"] = 0
+        if live_events:
+            from app.utils.espn_helpers import play_evidence as _play_evidence
+            from app.utils.event_completion import (
+                statpal_names_a_later_session as _later_session,
+            )
+
+            live_statpal_starts = await _statpal_later_session_starts(
+                session, live_events
+            )
+            demoted_ids = set()
+            for event in live_events:
+                if event.id in live_statpal_starts and _later_session(
+                    event.commence_time_source,
+                    event.statpal_fixture_id,
+                    _play_evidence(
+                        event.home_score, event.away_score, event.period, event.game_clock
+                    ),
+                    event.commence_time,
+                    live_statpal_starts[event.id],
+                    now,
+                ):
+                    event.status = "scheduled"
+                    demoted_ids.add(event.id)
+            if demoted_ids:
+                stats["demoted_statpal_later_session"] = len(demoted_ids)
+                live_events = [e for e in live_events if e.id not in demoted_ids]
 
         # The guard this docstring has always promised but never implemented.
         # A wall-clock timeout is not evidence a game is over — long games (extra

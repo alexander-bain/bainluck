@@ -5379,6 +5379,25 @@ jobs:
             exit 1
           }
 
+      - name: "#9588 a venue stamp does not start a later StatPal session (real Postgres)"
+        # Seven Beijing doubles read LIVE a day early on Kalshi's expiry stamp
+        # while their own StatPal anchor had them at the next session. The hold
+        # reads `claim_context->>'statpal_start_time'` from JSONB through
+        # `ANY(:event_ids)` under asyncpg, which only Postgres can answer.
+        # Reuses the #7617 database: this file drops and creates its own tables.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_a_venue_stamp_later_session_pg_9588.py \
+            -v -rs 2>&1 | tee /tmp/latersession9588.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/latersession9588.txt; then
+            echo "::error::#9588 later-session contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]5 passed," /tmp/latersession9588.txt || {
+            echo "::error::#9588 later-session contract did not run all five cases"
+            exit 1
+          }
+
       - name: "#7878 win-prob evidence collapse — provision the disposable database"
         # Its own database for the reason the #7617 step above gives: the file
         # drops and creates the five tables it touches.
