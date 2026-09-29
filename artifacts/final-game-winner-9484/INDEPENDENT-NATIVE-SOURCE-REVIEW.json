@@ -1,0 +1,18 @@
+{
+  "at": "2026-09-29T04:32:09.624543+00:00",
+  "verdict": "SOURCE PASS standalone native helper only",
+  "files": [
+    {
+      "path": "ios/Bain Luck/Bain Luck/Models/FinalGameWinnerQuote.swift",
+      "sha256": "ab162a36d6c148c6a25ec217f5356c3f33aea19d2e8e21af8664ad6ede1edacf"
+    },
+    {
+      "path": "ios/Bain Luck/Bain Luck/Components/FinalGameWinnerQuoteView.swift",
+      "sha256": "0cf029a13418ff85d55b3998b837019a6ebbfcd26edf33bffe5f0f1e89769a16"
+    },
+    {
+      "path": "ios/Bain Luck/BainLuckTests/FinalGameWinnerQuoteTests.swift",
+      "sha256": "3eb4e5e5382df5bf17fac0c53b915cd2ef7dcf3fcf2cb2b0d6b4a395c39b574d"
+    }
+  ]
+}
