@@ -52,6 +52,29 @@ PRICE_FLUSH_SECONDS = float(os.getenv("WS_PRICE_FLUSH_SECONDS", "2"))
 FINAL_FLUSH_ATTEMPTS = int(os.getenv("WS_FINAL_FLUSH_ATTEMPTS", "3"))
 
 
+def _kalshi_slate_event_window():
+    """The events whose Kalshi markets the socket subscribes to.
+
+    Live, scheduled within 6 h, and (#9484) an open market on a recently
+    suspended event — see `app.tasks.ws_slate`. A function rather than inline
+    so the real-Postgres contract reads the shipped expression.
+    """
+    from sqlalchemy import and_, or_, text
+
+    from app.models.models import Event
+    from app.tasks.ws_slate import suspended_open_market_arm
+
+    return or_(
+        Event.status == "live",
+        and_(
+            Event.status == "scheduled",
+            Event.commence_time.isnot(None),
+            Event.commence_time <= text("NOW() + INTERVAL '6 hours'"),
+        ),
+        suspended_open_market_arm(),
+    )
+
+
 async def _run_kalshi_ws_consumer():
     """Main WebSocket consumer loop.
 
@@ -70,10 +93,12 @@ async def _run_kalshi_ws_consumer():
     from app.tasks.base import get_task_session
     from app.tasks.kalshi import _kalshi_yes_probability  # #8753
     from app.tasks.live_blend_refresh import (
-        LiveBlendRefresher, event_ids_for_outcomes,
+        LiveBlendRefresher, adopt_handed_off, event_ids_for_outcomes,
+        hand_off_pending,
     )
     from app.tasks.ws_admission import (  # #9418
-        run_until_admission, watch_for_unadmitted_live_events,
+        run_until_admission, unadmitted_live_events,
+        watch_for_unadmitted_live_events,
     )
     from app.tasks.ws_liveness import report as _report_liveness
     from app.utils.futures_rank import rerank_market_fields_stmt  # #6598
@@ -109,14 +134,7 @@ async def _run_kalshi_ws_consumer():
             .where(
                 FuturesMarket.source == "kalshi",
                 FuturesMarket.event_id.isnot(None),
-                or_(
-                    Event.status == "live",
-                    and_(
-                        Event.status == "scheduled",
-                        Event.commence_time.isnot(None),
-                        Event.commence_time <= text("NOW() + INTERVAL '6 hours'"),
-                    ),
-                ),
+                _kalshi_slate_event_window(),
             )
         )
         rows = result.all()
@@ -207,6 +225,9 @@ async def _run_kalshi_ws_consumer():
         outcome_id: market_id for market_id, outcome_id in ticker_to_ids.values()
     }
     blend_refresher = LiveBlendRefresher("kalshi")
+    # #9462 review: stamps the previous run still owed when it recycled. Its
+    # prices are already stored; the first flush below stamps them.
+    stats["blend_pending_adopted"] = adopt_handed_off(blend_refresher)
 
     async def flush_prices():
         """Write buffered price updates to DB in one batch."""
@@ -583,13 +604,25 @@ async def _run_kalshi_ws_consumer():
 
     _report_liveness("kalshi", "subscribing", legs=len(market_tickers))
 
+    # #9462 review: the markets with a ticker on the wire. A market row that
+    # exists without an outcome ticker (or gained its winner market after the
+    # slate was read) is not among them.
+    legged_market_ids = {market_id for market_id, _ in ticker_to_ids.values()}
+
     # #9418: the slate's live arm, re-read while the socket runs. Same source,
     # same join and same status test as the slate above, so it can only name an
     # event that turned live after the slate was read.
-    async def load_live_event_ids():
+    # #9462 review: read per MARKET, beside the reading the card renders, so
+    # an event counts as subscribed only when the leg that feeds its displayed
+    # number has a ticker here (`unadmitted_live_events`).
+    async def load_unadmitted_live_event_ids():
         async with get_task_session() as session:
             result = await session.execute(
-                select(FuturesMarket.event_id)
+                select(
+                    FuturesMarket.event_id,
+                    FuturesMarket.id,
+                    Event.win_probability_sources["kalshi"],
+                )
                 .join(Event, FuturesMarket.event_id == Event.id)
                 .where(
                     FuturesMarket.source == "kalshi",
@@ -598,7 +631,7 @@ async def _run_kalshi_ws_consumer():
                 )
                 .distinct()
             )
-            return {row[0] for row in result.all()}
+            return unadmitted_live_events(result.all(), legged_market_ids)
 
     try:
         # Q460: RECYCLE, don't run forever. The subscription list above is built
@@ -616,7 +649,7 @@ async def _run_kalshi_ws_consumer():
             run_until_admission(
                 ws.run(market_tickers=market_tickers),
                 watch_for_unadmitted_live_events(
-                    load_live_event_ids,
+                    load_unadmitted_live_event_ids,
                     event_id_by_market.values(),
                     arm="Kalshi",
                     started_at=run_started_at,
@@ -629,7 +662,8 @@ async def _run_kalshi_ws_consumer():
             stats["recycle_reason"] = "admission"
             stats["admitted_event_ids"] = sorted(admitted)[:20]
             logger.info(
-                "Kalshi WS: %d live event(s) not subscribed, recycling early: %s",
+                "Kalshi WS: %d live event(s) without a mapped leg for their rendered "
+                "price, recycling early: %s",
                 len(admitted), sorted(admitted)[:20],
             )
     except asyncio.TimeoutError:
@@ -646,7 +680,13 @@ async def _run_kalshi_ws_consumer():
         stats_task.cancel()
         # Q491 repair (CERT-654 BLOCK): the last flush has no successor, so it
         # must RETRY rather than requeue into a buffer nobody will read again.
-        await drain_prices()
+        try:
+            await drain_prices()
+        finally:
+            # #9462 review: the drain returns once the price BUFFER is empty,
+            # but a price it (or the last flush) committed inside the 2 s
+            # throttle is still owed its blend stamp. The next run adopts it.
+            stats["blend_pending_carried"] = hand_off_pending(blend_refresher)
 
     logger.info("Kalshi WS consumer exiting: %s", stats)
     return stats

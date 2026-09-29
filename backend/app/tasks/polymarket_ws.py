@@ -235,6 +235,7 @@ def _slate_event_window():
     from sqlalchemy import text, or_, and_
 
     from app.models.models import Event
+    from app.tasks.ws_slate import suspended_open_market_arm
 
     return or_(
         # Clock-free and fail-open, on purpose. Unchanged from before the floor
@@ -251,6 +252,10 @@ def _slate_event_window():
             ),
             Event.commence_time <= text("NOW() + INTERVAL '6 hours'"),
         ),
+        # #9484: an open market on a recently suspended event. Floored like the
+        # scheduled arm, because nothing advances a suspended row out; this arm
+        # also reads `futures_markets`, which every caller already joins.
+        suspended_open_market_arm(),
     )
 
 
@@ -455,13 +460,15 @@ async def _run_polymarket_ws_consumer():
     from app.services.polymarket_ws import PolymarketWebSocket
     from app.tasks.base import get_task_session
     from app.tasks.live_blend_refresh import (
-        LiveBlendRefresher, TailReceipts, event_ids_for_outcomes,
+        LiveBlendRefresher, TailReceipts, adopt_handed_off,
+        event_ids_for_outcomes, hand_off_pending,
     )
     from app.tasks.polymarket_token_topup import (
         topup_clob_tokens, topup_outcome_clob_tokens,
     )
     from app.tasks.ws_admission import (  # #9418
-        run_until_admission, watch_for_unadmitted_live_events,
+        run_until_admission, unadmitted_live_events,
+        watch_for_unadmitted_live_events,
     )
     from app.tasks.ws_liveness import report as _report_liveness
     from app.utils.futures_rank import rerank_market_fields_stmt  # #6598
@@ -760,6 +767,9 @@ async def _run_polymarket_ws_consumer():
     # entry per subscribed outcome) and holds the mark of the buffered value.
     tail_receipts = TailReceipts("polymarket")
     blend_refresher.receipts = tail_receipts
+    # #9462 review: stamps the previous run still owed when it recycled. Its
+    # prices are already stored; the first flush below stamps them.
+    stats["blend_pending_adopted"] = adopt_handed_off(blend_refresher)
     input_marks: dict = {}
 
     async def flush_prices():
@@ -1066,13 +1076,27 @@ async def _run_polymarket_ws_consumer():
 
     _report_liveness("polymarket", "subscribing", legs=len(asset_ids))
 
+    # #9462 review: the markets this run can actually attribute a tick to. A
+    # market the slate SELECTED but whose tokens the top-up could not find is
+    # not among them, however many of its event's props are streaming.
+    legged_market_ids = {
+        asset_to_market[a] for a in asset_to_outcome if a in asset_to_market
+    }
+
     # #9418: the slate's live arm, re-read while the socket runs — the slate
     # query above with `_slate_event_window()` narrowed to its live arm, so it
     # can only name an event that turned live after the slate was read.
-    async def load_live_event_ids():
+    # #9462 review: read per MARKET, beside the reading the card renders, so
+    # an event counts as subscribed only when the leg that feeds its displayed
+    # number is mapped here (`unadmitted_live_events`).
+    async def load_unadmitted_live_event_ids():
         async with get_task_session() as session:
             result = await session.execute(
-                select(FuturesMarket.event_id)
+                select(
+                    FuturesMarket.event_id,
+                    FuturesMarket.id,
+                    Event.win_probability_sources["polymarket"],
+                )
                 .select_from(FuturesOutcome)
                 .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
                 .join(Event, FuturesMarket.event_id == Event.id)
@@ -1084,7 +1108,7 @@ async def _run_polymarket_ws_consumer():
                 )
                 .distinct()
             )
-            return {row[0] for row in result.all()}
+            return unadmitted_live_events(result.all(), legged_market_ids)
 
     exit_reason = "consumer_exit"
     try:
@@ -1097,7 +1121,7 @@ async def _run_polymarket_ws_consumer():
             run_until_admission(
                 ws.run(asset_ids=asset_ids),
                 watch_for_unadmitted_live_events(
-                    load_live_event_ids,
+                    load_unadmitted_live_event_ids,
                     event_id_by_market.values(),
                     arm="Polymarket",
                     started_at=run_started_at,
@@ -1110,7 +1134,8 @@ async def _run_polymarket_ws_consumer():
             stats["recycle_reason"] = "admission"
             stats["admitted_event_ids"] = sorted(admitted)[:20]
             logger.info(
-                "Polymarket WS: %d live event(s) not subscribed, recycling early: %s",
+                "Polymarket WS: %d live event(s) without a mapped leg for their "
+                "rendered price, recycling early: %s",
                 len(admitted), sorted(admitted)[:20],
             )
     except asyncio.TimeoutError:
@@ -1128,8 +1153,13 @@ async def _run_polymarket_ws_consumer():
         try:
             await drain_prices()
         finally:
-            # #837 receipt — the next run's refresher starts empty, so a held
-            # price still open here was never stamped by this run. Said so.
+            # #9462 review: the drain returns once the price BUFFER is empty,
+            # but a price it (or the last flush) committed inside the 2 s
+            # throttle is still owed its blend stamp. The next run adopts it.
+            stats["blend_pending_carried"] = hand_off_pending(blend_refresher)
+            # #837 receipt — the next run's refresher starts empty of chains,
+            # so a held price still open here was never stamped by this run.
+            # Said so; the stamp itself is carried above.
             with contextlib.suppress(Exception):
                 tail_receipts.close_all(
                     "recycle_reset" if stats.get("status") == "resubscribe"

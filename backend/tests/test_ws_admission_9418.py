@@ -89,7 +89,7 @@ def _install_session(monkeypatch, slate_batches, reread):
                 return _Result(state["slate"].pop(0))
             state["reread_calls"] += 1
             state["rereads"].append(stmt)
-            return _Result([(eid,) for eid in reread()])
+            return _Result([_reread_row(r) for r in reread()])
 
     class _Ctx:
         async def __aenter__(self):
@@ -100,6 +100,15 @@ def _install_session(monkeypatch, slate_batches, reread):
 
     monkeypatch.setattr(task_base, "get_task_session", lambda *a, **kw: _Ctx())
     return state
+
+
+def _reread_row(r):
+    """#9462 review: the reread is per market, beside the stored reading. A
+    bare event id stands for one market with no reading — event 900's slate
+    market 7 (mapped in both venues), any other event's unmapped market."""
+    if isinstance(r, tuple):
+        return r
+    return (r, 7 if r == 900 else r * 10, None)
 
 
 #: Event 900 is on the slate in both venues.
@@ -228,7 +237,7 @@ class TestTheThrashFloorHolds:
         async def load():
             calls["n"] += 1
             now["t"] += 10  # each check is 10 s later
-            return {900, 901}
+            return {901}
 
         missing = await asyncio.wait_for(
             admission.watch_for_unadmitted_live_events(
@@ -241,7 +250,7 @@ class TestTheThrashFloorHolds:
 
         assert missing == frozenset({901})
         assert now["t"] >= 60
-        assert calls["n"] == 6  # 10..50 held, 60 returns
+        assert calls["n"] == 6  # 10 baseline, 20..50 held, 60 returns
 
     def test_production_defaults_bound_admission_to_about_ninety_seconds(self):
         assert admission.ADMISSION_CHECK_SECONDS == 30
@@ -274,8 +283,9 @@ class TestAFailedRereadNeverRecycles:
         assert connects["n"] == 1
 
     async def test_a_failure_then_a_missing_event_still_recycles(self):
-        """A failed reread is skipped, not fatal to the watcher."""
-        answers = iter([RuntimeError("blip"), {900, 901}])
+        """A failed reread is skipped, not fatal to the watcher — and the
+        baseline is the first reread that SUCCEEDS."""
+        answers = iter([RuntimeError("blip"), set(), {901}])
 
         async def load():
             a = next(answers)

@@ -6,6 +6,7 @@ import { fetchWildCards } from "@/lib/weatherApi";
 import Sparkline from "@/components/Sparkline";
 import { SourceBadge } from "./SourceBadge";
 import ProbabilityNumber from "./ProbabilityNumber";
+import MarketLink from "./MarketLink";
 
 function pillBg(label: string): string {
   if (label === "Likely") return "#ECFDF5";
@@ -91,8 +92,10 @@ export default function WildCards() {
         const spark = realSpark(card.history);
 
         return (
-          <div
+          // The card opens its market when the route names one (#9478).
+          <MarketLink
             key={i}
+            marketId={card.market_id}
             className="border border-surface-border"
             style={{
               backgroundColor: "#fff",
@@ -102,7 +105,6 @@ export default function WildCards() {
               display: "flex",
               flexDirection: "column",
               transition: "transform 160ms ease, box-shadow 160ms ease",
-              cursor: "default",
             }}
             onMouseEnter={(e) => {
               (e.currentTarget as HTMLElement).style.transform = "translateY(-1px)";
@@ -204,7 +206,7 @@ export default function WildCards() {
                 {label}
               </span>
             </div>
-          </div>
+          </MarketLink>
         );
       })}
     </div>

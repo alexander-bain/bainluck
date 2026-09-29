@@ -103,6 +103,18 @@ def _reset_rate_limit_module_state():
 
 
 @pytest.fixture(autouse=True)
+def _reset_live_blend_pending_handoff():
+    """#9462 review: a WS consumer run leaves its owed blend stamps for the next
+    run of its source in a process-global hand-off. In a suite the "next run"
+    is the next test's consumer, which would adopt events it never seeded."""
+    from app.tasks import live_blend_refresh as _lbr
+
+    _lbr._pending_handoff.clear()
+    yield
+    _lbr._pending_handoff.clear()
+
+
+@pytest.fixture(autouse=True)
 def _reset_request_cache_state():
     """Isolate the process-local request-cache primitives (Queue 271).
 

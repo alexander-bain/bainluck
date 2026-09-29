@@ -5,6 +5,7 @@ import { probColor, weatherProbability, type ClimateMarket } from "./data";
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import { fetchClimate } from "@/lib/weatherApi";
 import { SourceBadge } from "./SourceBadge";
+import MarketLink from "./MarketLink";
 
 const COLUMNS: { scale: ClimateMarket["scale"]; label: string; kicker: string }[] = [
   { scale: "2026", label: "2026", kicker: "Next 12 months" },
@@ -67,7 +68,8 @@ function ClimateColumn({
           const color = probColor(item.prob);
 
           return (
-            <div key={i}>
+            // Each row opens its market when the route names one (#9478).
+            <MarketLink key={i} marketId={item.market_id} className="block">
               {/* Question */}
               <div
                 style={{
@@ -146,7 +148,7 @@ function ClimateColumn({
                   </span>
                 ) : null}
               </div>
-            </div>
+            </MarketLink>
           );
         })}
       </div>

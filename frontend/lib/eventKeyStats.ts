@@ -1177,6 +1177,30 @@ export function resolveProbability(
     // Gated on there BEING a usable chart point: with no series to fall back to,
     // a stale `current_odds` still beats an empty hero, so such an event keeps
     // exactly the behaviour it has today.
+  } else if (
+    event.hero_probability_source === "opening" &&
+    typeof event.hero_probability === "number"
+  ) {
+    // #9470 — THE SERVER SAYS NOBODY HAS QUOTED THIS SINCE THE LINE WAS POSTED,
+    // so the caption says so. `resolve_hero` serves `opening` when no source
+    // stands behind a current number; the branch below ignored the word and
+    // captioned `current_odds` by its row count. Measured on production
+    // 2026-09-28, /events/14780556 (Packers v Bears, Oct 11): `hero_probability`
+    // 0.5996 `opening`, `current_odds` the same 0.5996 captured 09-13 15:10Z,
+    // printed "60% – 40% · 2 sportsbooks" fifteen days after both books pulled
+    // the line. 24 of 28 week-6/7 NFL games carry the same shape.
+    //
+    // The pair is read from the hero, not `current_odds`, so the caption and the
+    // number cannot come apart: an event whose 1–2 books ARE still quoting is
+    // also `opening` (ruling 051 drops a consensus under 3), and "Opening line"
+    // beside that fresh row would be the same lie reversed. The card already
+    // prints `hero_probability`, so this also keeps card == hero (UX-P003).
+    homeProb = event.hero_probability;
+    awayProb =
+      typeof event.hero_probability_away === "number"
+        ? event.hero_probability_away
+        : 1 - event.hero_probability;
+    probSourceLabel = "Opening line";
   } else {
     // Scheduled: current betting consensus
     homeProb = odds?.home_probability ?? null;
