@@ -79,9 +79,9 @@ export function createMarketStreamController(deps: MarketStreamDependencies) {
     });
     next.addEventListener('error', () => {
       if (!current()) return;
-      // CONNECTING belongs to EventSource's network retry. An HTTP refusal
-      // closes it; never turn that into a round-trip-speed reconnect loop.
-      if (next.readyState === 2) recycle(60_000);
+      // EventSource does not reveal the HTTP status and can retry while still
+      // CONNECTING. Own every error retry so refusals cannot spin invisibly.
+      recycle(60_000);
     });
   };
 

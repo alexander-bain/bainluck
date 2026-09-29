@@ -56,6 +56,19 @@ test('a closed/refused wire waits sixty seconds; rollover waits five', () => {
   expect(r.wires).toHaveLength(3);
 });
 
+test('CONNECTING errors cannot leave an unbounded browser retry loop or late callback', () => {
+  const r = rig();
+  r.wires[0].readyState = 0;
+  r.wires[0].emit('error');
+  expect(r.wires[0].readyState).toBe(2);
+  r.wires[0].emit('open');
+  expect(r.onInvalidate).not.toHaveBeenCalled();
+  r.tick(59_999);
+  expect(r.wires).toHaveLength(1);
+  r.tick(60_000);
+  expect(r.wires).toHaveLength(2);
+});
+
 test('quiet wires recover; old handles and stopped timers have no authority', () => {
   const r = rig();
   r.tick(65_001);
