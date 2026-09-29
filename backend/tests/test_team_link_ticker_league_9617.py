@@ -116,6 +116,16 @@ def test_no_substring_match_inside_a_league():
     assert match_outcome_to_league_team("Western Kentucky", [KENTUCKY_M]) is None
 
 
+def test_a_player_or_a_matchup_is_not_a_team():
+    # CERT-3796 follow-up 9617-PLAYER-MATCHUP-REFUSAL-GUARDS. A player's name
+    # and a head-to-head label both reach this matcher from Kalshi award and
+    # game series. Neither equals a team's name, alias or city, so neither binds
+    # — while the category matcher's substring arm hands the matchup to the Knicks.
+    assert match_outcome_to_league_team("Caitlin Clark", WNBA) is None
+    assert match_outcome_to_team("New York vs Toronto", NBA) == KNICKS["id"]
+    assert match_outcome_to_league_team("New York vs Toronto", NBA) is None
+
+
 def test_empty_and_unknown_names_bind_nothing():
     assert match_outcome_to_league_team("", NBA) is None
     assert match_outcome_to_league_team("Seattle", NBA) is None
