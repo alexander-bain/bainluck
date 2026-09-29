@@ -1469,6 +1469,30 @@ def _fuzzy_team_match(market_team: str, event_team: str) -> bool:
     return False
 
 
+def _names_both_sides(
+    team_a: str, team_b: str, event_home_team: str, event_away_team: str,
+) -> bool:
+    """Do a two-sided market's names land on the event's two DIFFERENT sides? #9584.
+
+    The two-sided name gate used to ask each market name "do you match home or
+    away?" on its own, so two names that both match the SAME side passed it.
+    Polymarket's W15 Maanshan legs are "Sun vs. Sun" (Yingqun Sun v Junlu Sun);
+    both halves matched the `Sun` of `Tomic v Sun` 15320530, and six legs of a
+    different match landed on Tomic's page — a ">99%" Set 1 line under its
+    Additional Markets and a second fixture clock that froze the row.
+
+    A game's two sides are never one player, so this refuses no correct link:
+    one name may match both sides (the "New York" case `match_teams_to_event`
+    disambiguates), as long as some assignment puts the two names on opposite
+    sides.
+    """
+    a_home = _fuzzy_team_match(team_a, event_home_team)
+    a_away = _fuzzy_team_match(team_a, event_away_team)
+    b_home = _fuzzy_team_match(team_b, event_home_team)
+    b_away = _fuzzy_team_match(team_b, event_away_team)
+    return (a_home and b_away) or (a_away and b_home)
+
+
 def match_teams_to_event(
     matchup: MatchupInfo,
     event_home_team: str,

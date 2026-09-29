@@ -70,6 +70,7 @@ from app.utils.prediction_market_matching import (
     is_combat_fight_ticker,
     is_kalshi_match_segment_ticker,
     _fuzzy_team_match,
+    _names_both_sides,
     _expand_team_search_terms,
     _SPORT_CATEGORY_TO_KEY_PREFIX,
     auto_create_sport_key_from_category,
@@ -2275,12 +2276,9 @@ async def _kalshi_self_mint_real_fixture(session, matchup, market, linked_event)
     )).all()
     confirmed = [
         row for row in candidates
-        if (
-            _fuzzy_team_match(matchup.team_a, row.home_team_name)
-            or _fuzzy_team_match(matchup.team_a, row.away_team_name)
-        ) and (
-            _fuzzy_team_match(matchup.team_b, row.home_team_name)
-            or _fuzzy_team_match(matchup.team_b, row.away_team_name)
+        if _names_both_sides(
+            matchup.team_a, matchup.team_b,
+            row.home_team_name, row.away_team_name,
         )
     ]
     if len(confirmed) != 1:
@@ -2442,12 +2440,9 @@ async def _venue_confirmed_covered_fixture(
     # definition of "same club" that could drift from the one above it.
     confirmed = [
         row for row in candidates
-        if (
-            _fuzzy_team_match(matchup.team_a, row.home_team_name)
-            or _fuzzy_team_match(matchup.team_a, row.away_team_name)
-        ) and (
-            _fuzzy_team_match(matchup.team_b, row.home_team_name)
-            or _fuzzy_team_match(matchup.team_b, row.away_team_name)
+        if _names_both_sides(
+            matchup.team_a, matchup.team_b,
+            row.home_team_name, row.away_team_name,
         )
     ]
     if len(confirmed) == 2 and not is_kalshi:
@@ -6320,15 +6315,11 @@ async def _phase15_revalidate(
             if not matchup or not matchup.team_b:
                 continue
 
-            a_matches = (
-                _fuzzy_team_match(matchup.team_a, linked_event.home_team_name)
-                or _fuzzy_team_match(matchup.team_a, linked_event.away_team_name)
+            # #9584: on opposite sides — "Sun vs. Sun" is not Tomic v Sun.
+            teams_match = _names_both_sides(
+                matchup.team_a, matchup.team_b,
+                linked_event.home_team_name, linked_event.away_team_name,
             )
-            b_matches = (
-                _fuzzy_team_match(matchup.team_b, linked_event.home_team_name)
-                or _fuzzy_team_match(matchup.team_b, linked_event.away_team_name)
-            )
-            teams_match = a_matches and b_matches
             if not teams_match:
                 # #9472: `_fuzzy_team_match` cannot read a surname of <=3
                 # letters stored alone (`Cui` v `Jie Cui`), so a correct tennis
@@ -8843,18 +8834,15 @@ def _score_candidates(
         # matching "Georgia Southern Eagles vs South Florida Bulls"
         # (Pistons ≠ Georgia Southern Eagles).
         if matchup.team_b:
-            a_matches = (
-                _fuzzy_team_match(matchup.team_a, event.home_team_name)
-                or _fuzzy_team_match(matchup.team_a, event.away_team_name)
-            )
-            b_matches = (
-                _fuzzy_team_match(matchup.team_b, event.home_team_name)
-                or _fuzzy_team_match(matchup.team_b, event.away_team_name)
-            )
-            if not (a_matches and b_matches):
+            # #9584: and on OPPOSITE sides. Both halves of "Sun vs. Sun"
+            # (Yingqun Sun v Junlu Sun) match the one `Sun` of Tomic v Sun.
+            if not _names_both_sides(
+                matchup.team_a, matchup.team_b,
+                event.home_team_name, event.away_team_name,
+            ):
                 # Coverage is what separates a rejected candidate from a row
                 # the ILIKE happened to return on one shared token — and it is
-                # measured INDEPENDENTLY of a_matches/b_matches, which are the
+                # measured INDEPENDENTLY of the side test above, which is the
                 # verdict being explained. "CLE Browns vs JAC Jaguars" against
                 # Jacksonville Jaguars / Cleveland Browns fails both halves here
                 # and covers both sides; that is a name-gate bug of ours, not an
