@@ -23028,6 +23028,8 @@ def _estimate_game_pace(
 async def get_game_markets(
     event_id: int,
     db: AsyncSession = Depends(get_db),
+    fresh: bool = False,
+    response: Response = None,
 ):
     """Game-level markets for an event (totals spectrum, player props, spreads).
 
@@ -23061,6 +23063,14 @@ async def get_game_markets(
     (#6355), so the first reader after the release rebuilds it.
     """
     from app.utils import game_markets_cache as gmc
+
+    # Invalidation readers need current rows, not either cached response tier.
+    # This read never publishes into the ordinary route's cache ladder.
+    if fresh is True:
+        body, _status, _market_ids = await _build_game_markets(event_id, db)
+        if response is not None:
+            response.headers["Cache-Control"] = "no-store"
+        return body
 
     # L1 — in-memory. Live 30 s, completed `gmc.FRESH_TTL_FINAL` (#6355), and a
     # miss whenever the entry was built by another release.
@@ -23406,6 +23416,7 @@ async def _build_game_markets(
     Everything below this line is the pre-LAT-P121 route body, moved unchanged.
     """
     from app.models import FuturesOddsSnapshot
+    from app.utils.game_market_stream_envelope import game_market_stream_envelope
 
     # 1. Load event with sport
     result = await db.execute(
@@ -23634,7 +23645,20 @@ async def _build_game_markets(
 
     if not markets:
         return (
-            {"event_id": event_id, "totals": [], "player_props": [], "spreads": [], "matchups": [], "other": [], "pace": None, "props_script": []},
+            {
+                "event_id": event_id,
+                "home_team": event.home_team_name,
+                "away_team": event.away_team_name,
+                "home_score": event.home_score,
+                "away_score": event.away_score,
+                "status": served_event_status(
+                    event.status, event.commence_time, datetime.now(timezone.utc)
+                ),
+                "totals": [], "player_props": [], "team_totals": [],
+                "spreads": [], "period_markets": [], "matchups": [],
+                "other": [], "pace": None, "props_script": [],
+                **game_market_stream_envelope([], [], {}),
+            },
             event.status or "",
             [],
         )
@@ -23963,6 +23987,7 @@ async def _build_game_markets(
                         "market_name": market.name,
                         "outcome_name": o.name,
                         "observed_at": _observed(o),
+                        "contributor_outcome_ids": [o.id],
                         "threshold": threshold,
                         "over_probability": round(over_prob, 4),
                         "opening_over_probability": tt_opening_over,
@@ -24043,6 +24068,7 @@ async def _build_game_markets(
                         "market_name": market.name,
                         "outcome_name": o.name,
                         "observed_at": _observed(o),
+                        "contributor_outcome_ids": [o.id],
                         # Same expression as the `other` branch below, so the
                         # two ways into this section cannot serve two shapes.
                         "probability": round(prob, 4) if prob else None,
@@ -24064,6 +24090,7 @@ async def _build_game_markets(
                     "market_name": market.name,
                     "outcome_name": o.name,
                     "observed_at": _observed(o),
+                    "contributor_outcome_ids": [o.id],
                     **_settled_over_verdict(_grade, _inverted, _market_settled),
                     "movement": round(float(o.current_probability) - float(o.opening_probability), 4)
                         if o.opening_probability is not None and o.current_probability is not None else None,
@@ -24108,6 +24135,7 @@ async def _build_game_markets(
                     "market_name": market.name,
                     "outcome_name": o.name,
                     "observed_at": _observed(o),
+                    "contributor_outcome_ids": [o.id],
                     "threshold": threshold,
                     "over_probability": round(over_prob, 4),
                     "opening_over_probability": opening_over,
@@ -24138,6 +24166,7 @@ async def _build_game_markets(
                     "market_name": market.name,
                     "outcome_name": o.name,
                     "observed_at": _observed(o),
+                    "contributor_outcome_ids": [o.id],
                     "threshold": threshold,
                     # 🔴 #6312: `if prob else None` — 0.0 IS FALSY, so a rung the
                     # venue settled at zero published a NULL probability beside a
@@ -24197,6 +24226,7 @@ async def _build_game_markets(
                     "market_name": market.name,
                     "outcome_name": o.name,
                     "observed_at": _observed(o),
+                    "contributor_outcome_ids": [o.id],
                     "threshold": threshold,
                     "probability": round(prob, 4) if prob else None,
                     "source": market.source,
@@ -24216,6 +24246,7 @@ async def _build_game_markets(
                         "name": o.name,
                         "probability": round(prob, 4),
                         "observed_at": _observed(o),
+                        "contributor_outcome_ids": [o.id],
                         **_settled_grade_fields(market, o, **_grade_ctx),
                     })
             if outcomes_list:
@@ -24224,6 +24255,10 @@ async def _build_game_markets(
                     "type": market_type,
                     "source": market.source,
                     "outcomes": outcomes_list,
+                    "contributor_outcome_ids": sorted({
+                        oid for row in outcomes_list
+                        for oid in row["contributor_outcome_ids"]
+                    }),
                     "_market_id": market.id,
                 })
 
@@ -24288,6 +24323,7 @@ async def _build_game_markets(
                             "market_name": market.name,
                             "outcome_name": o.name,
                             "observed_at": _observed(o),
+                            "contributor_outcome_ids": [o.id],
                             "threshold": threshold,
                             "over_probability": round(over_prob, 4),
                             "opening_over_probability": opening_over,
@@ -24334,6 +24370,7 @@ async def _build_game_markets(
                         "market_name": market.name,
                         "outcome_name": o.name,
                         "observed_at": _observed(o),
+                        "contributor_outcome_ids": [o.id],
                         "threshold": threshold,
                         "over_probability": round(over_prob, 4),
                         "opening_over_probability": opening_over,
@@ -24360,6 +24397,7 @@ async def _build_game_markets(
                     ),
                     "outcome_name": o.name,
                     "observed_at": _observed(o),
+                    "contributor_outcome_ids": [o.id],
                     "probability": round(prob, 4) if prob else None,
                     "source": market.source,
                     **_settled_grade_fields(market, o, **_grade_ctx),
@@ -25078,6 +25116,10 @@ async def _build_game_markets(
                 )
                 if merged_ids:
                     best["_market_ids"] = merged_ids
+                best["contributor_outcome_ids"] = sorted({
+                    oid for entry in entries
+                    for oid in entry.get("contributor_outcome_ids", [])
+                })
                 merged_props.append(best)
         player_props = merged_props
 
@@ -25426,6 +25468,9 @@ async def _build_game_markets(
     # reached through the stale-refresh path publishes through exactly the same
     # writer as one reached through a request. Two writers for one tier is
     # LAT-P001's defect and it is not being rebuilt here.
+    response.update(game_market_stream_envelope(
+        market_ids, outcomes, _observed_at_by_outcome
+    ))
     return response, event.status or "", market_ids
 
 
