@@ -292,6 +292,43 @@ export function ladderInclusionRanks<T extends LadderOutcome>(
 }
 
 /**
+ * #9574 — the rank BADGE inside a price tie follows the ladder too.
+ *
+ * `rank` is the server's price rank, and inside a tie it is serve order: once
+ * the table orders Hurricane Polo's five tied rungs Cat 1 → Cat 5, their served
+ * ranks read `1 2 4 5 3` down the column. This reassigns each tie group's OWN
+ * served rank numbers in nesting order (most inclusive gets the smallest), so no
+ * number outside the group moves and none is invented. Only rows whose badge
+ * changes are returned; the caller drops their `rank_change_24h` arrow, whose
+ * baseline was the old number.
+ */
+export function tieGroupRanks<T extends LadderOutcome & { rank?: number | null }>(
+  rows: readonly T[],
+  inclusion: ReadonlyMap<T, number> | null,
+): Map<T, number> {
+  const out = new Map<T, number>();
+  if (!inclusion) return out;
+  const groups = new Map<number, T[]>();
+  for (const row of rows) {
+    if (row.probability == null || row.rank == null) continue;
+    const g = groups.get(row.probability);
+    if (g) g.push(row);
+    else groups.set(row.probability, [row]);
+  }
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    const served = group.map((r) => r.rank as number).sort((a, b) => a - b);
+    const byNesting = [...group].sort(
+      (a, b) => (inclusion.get(b) ?? 0) - (inclusion.get(a) ?? 0),
+    );
+    byNesting.forEach((row, i) => {
+      if (row.rank !== served[i]) out.set(row, served[i]);
+    });
+  }
+  return out;
+}
+
+/**
  * Build ladder rungs from a market's own outcomes.
  *
  * Labels are the outcome names verbatim — a date rung has no numeric value to

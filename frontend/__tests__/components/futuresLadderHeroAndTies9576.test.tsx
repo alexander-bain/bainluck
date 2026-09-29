@@ -15,7 +15,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { FuturesHero } from "../../components/FuturesHero";
 import { sortFuturesOutcomes } from "../../lib/futuresDetailDisplay";
-import { buildOutcomeLadderRungs, ladderInclusionRanks } from "../../lib/futuresLadder";
+import { buildOutcomeLadderRungs, ladderInclusionRanks, tieGroupRanks } from "../../lib/futuresLadder";
 
 const CURVE = [0.97, 0.98, 0.99, 0.995];
 
@@ -142,10 +142,32 @@ describe("#9574 — tied rungs keep the ladder's order", () => {
     expect(names(sortFuturesOutcomes(HURRICANE, "probability", "desc"))).toEqual(names(HURRICANE));
   });
 
-  test("the futures page breaks table ties only on a cumulative market", () => {
+  test("hurricane badges read 1–5 down the reordered column, from the served ranks only", () => {
+    // Served ranks follow serve order: Cat 5 holds rank 3.
+    const served = HURRICANE.map((o, i) => ({ ...o, rank: i + 1 }));
+    const inclusion = ladderInclusionRanks(served);
+    const moved = tieGroupRanks(served, inclusion);
+    const sorted = sortFuturesOutcomes(served, "probability", "desc", false, inclusion);
+    expect(sorted.map((o) => moved.get(o) ?? o.rank)).toEqual([1, 2, 3, 4, 5]);
+    // Cat 1 and Cat 2 kept their numbers, so they are not in the moved set.
+    expect(Array.from(moved.keys()).map((o) => o.name).sort()).toEqual([
+      "Category 3 or above",
+      "Category 4 or above",
+      "Category 5 or above",
+    ]);
+    // An untied row, or no ranks passed, never moves.
+    expect(tieGroupRanks(served, null).size).toBe(0);
+    const brent = BRENT.map((o, i) => ({ ...o, rank: i + 1 }));
+    const brentMoved = tieGroupRanks(brent, ladderInclusionRanks(brent));
+    expect(brentMoved.has(brent[0])).toBe(false);
+  });
+
+  test("the futures page breaks table ties only on a cumulative market, and badges follow", () => {
     const page = readFileSync(path.join(__dirname, "../../app/futures/[id]/page.tsx"), "utf8");
     expect(page).toMatch(
       /ladderOrderFor\(market\.mutually_exclusive\) === "cumulative"\s*\? ladderInclusionRanks\(market\.outcomes\)\s*: null/,
     );
+    expect(page).toContain("rank={tieBadgeRanks.get(outcome) ?? outcome.rank ?? index + 1}");
+    expect(page).toMatch(/tieBadgeRanks\.has\(outcome\)\s*\? \{ \.\.\.outcome, rank_change_24h: null \}/);
   });
 });
