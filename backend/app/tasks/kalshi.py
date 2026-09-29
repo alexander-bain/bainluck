@@ -1248,6 +1248,35 @@ def _least_recently_polled_first(existing_events, last_polled):
     return sorted(existing_events, key=_age_key)
 
 
+def _settled_rows_last(events, resolved_tickers):
+    """#9543: an event whose row is already ``resolved`` AND whose fetched
+    markets are all terminal goes behind everything else.
+
+    Rewriting such a row writes back the status it already has. The floor
+    series' fetch returns months of settled games (KXMLBGAME from July,
+    KXLOLGAME, KXATPMATCH…), and oldest-first ordering put them at the front:
+    measured on the first two beats after heavy v116 (10:45Z and 12:47Z,
+    2026-09-29), 6,685 of 7,361 rewrites were settled floor rows, only 140
+    open non-floor rows were reached, and 60481264 was still unreached.
+
+    Both sides must agree. A ``resolved`` row the venue lists as active (#8586:
+    closed on the start date, then reopened) keeps its place, because that
+    rewrite turns the row back to ``open``. An event with no fetched markets is
+    not terminal (``all_terminal([])`` is False), so it is never demoted here.
+    The loop skips it anyway. Stable within both groups."""
+    if not resolved_tickers:
+        return events
+    live, settled = [], []
+    for e in events:
+        if e.event_ticker in resolved_tickers and all_terminal(
+            m.status for m in (e.markets or [])
+        ):
+            settled.append(e)
+        else:
+            live.append(e)
+    return live + settled
+
+
 def _floor_series_first(events):
     """#8586: the guaranteed-floor series (``_ALWAYS_FETCH_SERIES``) are
     upserted before everything else, new events included.
@@ -1644,17 +1673,22 @@ async def _poll_kalshi_markets():
             existing_tickers: set = set()
             # #9543: when this poll last reached each existing row.
             last_polled: dict = {}
+            # #9543: rows already resolved, for `_settled_rows_last`.
+            resolved_tickers: set = set()
             if fetched_tickers:
                 _rows = await session.execute(
                     text(
-                        "SELECT external_id, volume_updated_at FROM futures_markets "
+                        "SELECT external_id, volume_updated_at, status "
+                        "FROM futures_markets "
                         "WHERE source='kalshi' AND external_id = ANY(:tks)"
                     ),
                     {"tks": fetched_tickers},
                 )
-                for _ext_id, _polled_at in _rows:
+                for _ext_id, _polled_at, _row_status in _rows:
                     existing_tickers.add(_ext_id)
                     last_polled[_ext_id] = _polled_at
+                    if _row_status == "resolved":
+                        resolved_tickers.add(_ext_id)
             new_events, existing_events = _partition_new_events_first(
                 events, existing_tickers
             )
@@ -1662,6 +1696,7 @@ async def _poll_kalshi_markets():
                 existing_events, last_polled
             )
             events = _floor_series_first(new_events + existing_events)
+            events = _settled_rows_last(events, resolved_tickers)
             stats["new_events_fetched"] = len(new_events)
             stats["existing_events_fetched"] = len(existing_events)
             if new_events:

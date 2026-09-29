@@ -3083,8 +3083,8 @@ jobs:
             echo "::error::#9543 Kalshi poll reach gate SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]3 passed" /tmp/kalshireach9543.txt || {
-            echo "::error::#9543 Kalshi poll reach gate did not run all three cases"
+          grep -qE "[^0-9]5 passed" /tmp/kalshireach9543.txt || {
+            echo "::error::#9543 Kalshi poll reach gate did not run all five cases"
             exit 1
           }
 
