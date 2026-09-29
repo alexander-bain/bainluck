@@ -951,6 +951,47 @@ def _ladder_is_mostly_quoted(outcomes: list) -> bool:
     return quoted * 2 > len(priced)
 
 
+# A rung label that is a bare percentage, e.g. "0.2%" or "-0.4%" — what is left
+# of "Above 0.2%" once the threshold wording is stripped.
+_PERCENT_RUNG_RE = re.compile(r'^(-?\d+)(?:\.(\d+))?%$')
+
+
+def _print_grid_step(clean_labels: list[str], thresholds: list[float]) -> tuple[int, float] | None:
+    """(decimals, step) when a ladder's rungs sit on the grid its figure is printed on (#9558).
+
+    Kalshi's CPI rule reads "increases by above 0.2%", and BLS prints to one
+    decimal, so "above 0.2% and not above 0.3%" is a print of exactly 0.3% — the
+    difference covers ONE printable value, and it is the UPPER threshold's. The
+    tell is in the labels themselves: every rung written to d decimals, and the
+    rungs 10^-d apart. Then a difference can only be one value (or, across a
+    missing rung, a short run of them).
+
+    None for everything else, which keeps its old labels: the Fed ladder (0.25
+    apart, written to two decimals — "4.00%" names a target range by its floor),
+    Brazil's IPCA (0.10 apart, written and printed to two decimals, so each
+    difference is ten prints wide), whole-number rungs, and every dollar or
+    index ladder.
+    """
+    decimals = set()
+    for label in clean_labels:
+        match = _PERCENT_RUNG_RE.match(label)
+        if not match:
+            return None
+        decimals.add(len(match.group(2) or ""))
+    if len(decimals) != 1 or len(thresholds) < 2:
+        return None
+    d = decimals.pop()
+    # Whole-number rungs ("Above -4%") are not a print grid: no statistic here
+    # is published to the whole percent, so "above -5, not above -4" is a range.
+    if d == 0:
+        return None
+    step = 10 ** -d
+    gaps = [round(b - a, d + 2) for a, b in zip(thresholds, thresholds[1:])]
+    if min(gaps) <= 0 or round(min(gaps), d + 2) != round(step, d + 2):
+        return None
+    return d, step
+
+
 def _cumulative_to_discrete(outcomes: list, max_buckets: int = 8) -> list[list]:
     """Convert cumulative 'Above X' outcomes to discrete bracket probabilities.
 
@@ -1019,13 +1060,37 @@ def _cumulative_to_discrete(outcomes: list, max_buckets: int = 8) -> list[list]:
     # Rows carry their threshold as a third element so the re-sort below can
     # order by it; it is projected away before returning, because callers
     # (`_modal_bracket`) unpack exactly [prob, label].
+    #
+    # On a print grid (#9558) each difference is named by what it covers: the
+    # upper threshold ("above 0.2, not above 0.3" is a 0.3% print), a run where
+    # a rung is missing ("0.4–0.6%"), "X%+" for the top rung's own price, and
+    # the bottom bucket, 1 − P(above lowest), which the lower-threshold naming
+    # had no label for and so never drew ("≤0.0%"). Kalshi's CPI combo market
+    # on the same card words its legs the same way ("Exactly 0.4%", "0.5% or
+    # above"). Off the grid the labels are unchanged.
+    grid = _print_grid_step([r[1] for r in raw], [r[2] for r in raw])
     discrete = []
+    if grid:
+        d, step = grid
+        fmt = lambda v: f"{round(v, d) + 0.0:.{d}f}%"  # noqa: E731  (+0.0: never "-0.0%")
+        bottom_p = round(100 - raw[0][0], 1)
+        if bottom_p >= 0.1:
+            discrete.append([bottom_p, f"≤{raw[0][1]}", raw[0][2] - step])
     for i in range(len(raw)):
         cum_p = raw[i][0]
         next_p = raw[i + 1][0] if i + 1 < len(raw) else 0
         bracket_p = round(cum_p - next_p, 1)
         if bracket_p >= 0.1:
-            discrete.append([bracket_p, raw[i][1], raw[i][2]])
+            label = raw[i][1]
+            if grid:
+                low = raw[i][2] + step
+                if i + 1 == len(raw):
+                    label = f"{fmt(low)}+"
+                elif round(raw[i + 1][2] - raw[i][2], d + 2) == round(step, d + 2):
+                    label = raw[i + 1][1]
+                else:
+                    label = f"{fmt(low)[:-1]}–{raw[i + 1][1]}"
+            discrete.append([bracket_p, label, raw[i][2]])
 
     # If too many, keep top by probability, then restore threshold order.
     # Sorting the survivors by their LABEL instead would reverse an
