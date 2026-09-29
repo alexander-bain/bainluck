@@ -364,6 +364,24 @@ final class DiscoverViewModel: ObservableObject {
     /// response from one identity clobbering another's.
     private var loadGeneration = 0
 
+    // #9513: price delivery owns no editorial, pagination or impression state.
+    private let priceClient: DiscoverPriceCardsProviding?
+    private let makePriceMarketHandle: MarketStreamSubscription.Factory?
+    private let makePriceEventHandle: (@MainActor (Int) throws -> LiveStreamHandle)?
+    private var visiblePriceCards: [String: [FeedItem]] = [:]
+    private var priceDeliveryActive = false
+    private var priceDeliveryGeneration = 0
+    private var priceRequestTask: Task<Void, Never>?
+    private var priceTickTask: Task<Void, Never>?
+    private var priceRequestPending = false
+    private var acceptedPriceCards: [String: FeedItem] = [:]
+    private var priceReadSequence = 0
+    private var priceEpochs: [String: Double] = [:]
+    private var marketPriceStreams: [MarketStreamSubscription] = []
+    private var marketPriceIDs: [Int] = []
+    private var eventPriceStreams: [Int: LiveStreamController] = [:]
+
+
     /// Bounded first page (L2-201 / #1472). The initial load requests only enough
     /// cards for the first viewport so first paint no longer waits on the full
     /// former window to transfer/decode/interleave (C42 P1). The remaining pages
@@ -380,8 +398,163 @@ final class DiscoverViewModel: ObservableObject {
     /// `limit` rows, so this is a wide-but-finite forward window.
     private static let maxPageScans = 6
 
+    @MainActor
+    func setPriceCardsVisible(owner: String, cards: [FeedItem], visible: Bool) {
+        if visible { visiblePriceCards[owner] = DiscoverPriceRefresh.leaves(cards) }
+        else { visiblePriceCards.removeValue(forKey: owner) }
+        reconcilePriceSubscriptions()
+    }
+
+    @MainActor
+    func updateVisiblePriceCards(owner: String, cards: [FeedItem]) {
+        guard visiblePriceCards[owner] != nil else { return }
+        setPriceCardsVisible(owner: owner, cards: cards, visible: true)
+    }
+
+    @MainActor
+    private var visiblePriceLeaves: [FeedItem] {
+        let keys = Set(visiblePriceCards.values.flatMap { $0 }.map(\.id))
+        var seen = Set<String>()
+        return DiscoverPriceRefresh.leaves(items).filter { keys.contains($0.id) && seen.insert($0.id).inserted }
+    }
+
+    @MainActor
+    func setPriceDeliveryActive(_ active: Bool) {
+        guard active != priceDeliveryActive else { return }
+        priceDeliveryActive = active
+        priceDeliveryGeneration += 1
+        if !active {
+            priceRequestTask?.cancel(); priceRequestTask = nil
+            priceTickTask?.cancel(); priceTickTask = nil
+            priceRequestPending = false
+            marketPriceStreams.forEach { $0.stop() }; marketPriceStreams = []; marketPriceIDs = []
+            eventPriceStreams.values.forEach { $0.stop() }; eventPriceStreams = [:]
+            return
+        }
+        guard priceClient != nil else { return }
+        reconcilePriceSubscriptions()
+        requestPriceRefresh()
+        priceTickTask = Task { @MainActor [weak self] in
+            var ticks = 0
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                guard !Task.isCancelled, let self, self.priceDeliveryActive else { return }
+                self.eventPriceStreams.values.forEach { $0.tick() }
+                ticks += 1
+                // Reconcile lost pubsub/terminal frames too. This is fallback,
+                // never evidence that a pushed quote was received.
+                if ticks % 12 == 0 {
+                    self.reconcilePriceSubscriptions()
+                    self.requestPriceRefresh()
+                }
+            }
+        }
+    }
+
+    @MainActor
+    private func reconcilePriceSubscriptions() {
+        guard priceDeliveryActive, priceClient != nil else { return }
+        let visible = visiblePriceLeaves
+        let markets = Array(Set(visible.compactMap { item -> Int? in
+            guard let market = item.futures, !DiscoverPriceRefresh.marketIsResolved(market) else { return nil }
+            return market.id
+        })).sorted()
+        if markets != marketPriceIDs {
+            marketPriceStreams.forEach { $0.stop() }; marketPriceStreams = []
+            marketPriceIDs = markets
+            for start in stride(from: 0, to: markets.count, by: 50) {
+                let subscription = MarketStreamSubscription(makeHandle: makePriceMarketHandle,
+                    onInvalidate: { [weak self] _ in self?.requestPriceRefresh() })
+                marketPriceStreams.append(subscription)
+                subscription.start(ids: Array(markets[start..<min(start + 50, markets.count)]))
+            }
+        }
+        let events = Set(visible.compactMap { item -> Int? in
+            guard let event = item.event, ["live", "scheduled", "suspended"].contains(event.status ?? "") else { return nil }
+            return event.id
+        })
+        for id in Array(eventPriceStreams.keys) where !events.contains(id) {
+            eventPriceStreams.removeValue(forKey: id)?.stop()
+        }
+        for id in events where eventPriceStreams[id] == nil || eventPriceStreams[id]?.state.stopped == true {
+            eventPriceStreams[id]?.stop()
+            let factory = makePriceEventHandle
+            let stream = LiveStreamController(open: {
+                if let factory { return try factory(id) }
+                let transport = try LiveEventStreamTransport(eventId: id)
+                transport.connect()
+                return transport
+            }, now: { Date().timeIntervalSince1970 }, onFrame: { [weak self] _ in
+                self?.requestPriceRefresh()
+            }, onDeliveringChange: { [weak self] _ in
+                self?.requestPriceRefresh()
+            })
+            eventPriceStreams[id] = stream
+            stream.start()
+        }
+        // New visible cards reconcile from REST too; opening a socket does not
+        // claim that the stale feed-cache body was a current quote.
+        requestPriceRefresh()
+    }
+
+    @MainActor
+    private func requestPriceRefresh() {
+        guard priceDeliveryActive, !visiblePriceLeaves.isEmpty, priceClient != nil else { return }
+        priceRequestPending = true
+        guard priceRequestTask == nil, !loading, !loadingMore else { return }
+        let generation = priceDeliveryGeneration
+        priceRequestTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled, self.priceDeliveryActive, self.priceRequestPending,
+                  generation == self.priceDeliveryGeneration, !self.loading, !self.loadingMore {
+                self.priceRequestPending = false
+                await self.refreshPricesInPlace()
+            }
+            guard generation == self.priceDeliveryGeneration else { return }
+            self.priceRequestTask = nil
+        }
+    }
+
+    /// A fresh bounded projection of exactly the visible cards. The feed cache,
+    /// ranking, pagination offsets and impression-generation state are untouched.
+    @MainActor
+    func refreshPricesInPlace() async {
+        guard let priceClient, priceDeliveryActive, !loading, !loadingMore else { return }
+        priceReadSequence += 1
+        let sequence = priceReadSequence
+        let generation = priceDeliveryGeneration
+        let load = loadGeneration
+        let principal = await client.currentFeedPrincipal()
+        let leaves = visiblePriceLeaves
+        do {
+            for start in stride(from: 0, to: leaves.count, by: 50) {
+                let batch = Array(leaves[start..<min(start + 50, leaves.count)])
+                let response = try await priceClient.fetchDiscoverPriceCards(
+                    eventIds: batch.compactMap { $0.event?.id }, marketIds: batch.compactMap { $0.futures?.id })
+                let currentPrincipal = await client.currentFeedPrincipal()
+                guard !Task.isCancelled, priceDeliveryActive, generation == priceDeliveryGeneration,
+                      load == loadGeneration, sequence == priceReadSequence, principal == currentPrincipal else { return }
+                // Never let an unsolicited identity or a card that has since
+                // scrolled away consume this response's price authority.
+                let requested = Set(batch.map(\.id)).intersection(Set(visiblePriceLeaves.map(\.id)))
+                let bounded = DiscoverPriceCards(items: response.items.filter { requested.contains($0.id) },
+                    dispositions: response.dispositions, builtAt: response.builtAt)
+                items = DiscoverPriceRefresh.apply(bounded, to: items, epochs: &priceEpochs)
+                for item in DiscoverPriceRefresh.leaves(items) where priceEpochs[item.id] != nil {
+                    acceptedPriceCards[item.id] = item
+                }
+            }
+        } catch {
+            // Keep last-good prices. The existing periodic reconciliation pays
+            // failed and unknowably missed reads without claiming receipt.
+        }
+    }
+
     init(
         client: DiscoverFeedProviding = APIClient.shared,
+        priceClient: DiscoverPriceCardsProviding? = nil,
+        makePriceMarketHandle: MarketStreamSubscription.Factory? = nil,
+        makePriceEventHandle: (@MainActor (Int) throws -> LiveStreamHandle)? = nil,
         lastGood: DiscoverLastGoodReading? = APIClient.shared,
         telemetry: (@Sendable (DiscoverFeedTelemetry) -> Void)? = { AnalyticsService.trackDiscoverFeedCache($0) },
         retryBudget: TimeInterval = 6,
@@ -390,6 +563,9 @@ final class DiscoverViewModel: ObservableObject {
         autoRecoveryDelays: [TimeInterval] = [2, 5, 10]
     ) {
         self.client = client
+        self.priceClient = priceClient ?? (client as? DiscoverPriceCardsProviding)
+        self.makePriceMarketHandle = makePriceMarketHandle
+        self.makePriceEventHandle = makePriceEventHandle
         self.lastGood = lastGood
         self.telemetry = telemetry
         self.retryBudget = retryBudget
@@ -421,6 +597,9 @@ final class DiscoverViewModel: ObservableObject {
         // response instead of overwriting a newer session's feed (L2-201 / #1472).
         loadGeneration &+= 1
         let generation = loadGeneration
+        defer {
+            if generation == loadGeneration, !loading { reconcilePriceSubscriptions() }
+        }
         let loadStart = Date()
         // Re-arm first-render provenance for this load (L2-208 Item 2): the next
         // data to become renderable — cache seed or network — stamps it once.
@@ -466,7 +645,7 @@ final class DiscoverViewModel: ObservableObject {
                         itemCount: 0))
                 } else {
                     let mergeStart = Date()
-                    items = Self.interleave(renderable)
+                    items = DiscoverPriceRefresh.retainingPrices(Self.interleave(renderable), accepted: &acceptedPriceCards)
                     // #4110: record WHICH ordered list this paint is, so the
                     // network response that follows can tell whether it is the
                     // same one. A pre-`edition` cached body leaves this nil, which
@@ -666,7 +845,7 @@ final class DiscoverViewModel: ObservableObject {
                 reportSuppressedEnvelopes(response.items)
                 let mergeStart = Date()
                 // #4110: THE FIX. This used to be an unconditional
-                // `items = Self.interleave(renderable)`, which re-derived the
+                // `items = DiscoverPriceRefresh.retainingPrices(Self.interleave(renderable), accepted: &acceptedPriceCards)`, which re-derived the
                 // whole order from a different input than the boot seed had — so
                 // a card the reader was mid-way through could move or vanish the
                 // moment the network answered. Now the server's own edition token
@@ -677,10 +856,10 @@ final class DiscoverViewModel: ObservableObject {
                     incomingEdition: staged.edition
                 ) {
                 case .repaint:
-                    items = Self.interleave(renderable)
+                    items = DiscoverPriceRefresh.retainingPrices(Self.interleave(renderable), accepted: &acceptedPriceCards)
                 case .reconcile:
-                    items = DiscoverFeedReconcile.merge(
-                        painted: items, incoming: renderable, key: Self.itemKey)
+                    items = DiscoverPriceRefresh.retainingPrices(DiscoverFeedReconcile.merge(
+                        painted: items, incoming: renderable, key: Self.itemKey), accepted: &acceptedPriceCards)
                 }
                 // Both reads come from `staged` so the token recorded as painted
                 // describes the list actually painted. Taking the decision from
@@ -1006,6 +1185,9 @@ final class DiscoverViewModel: ObservableObject {
     /// and seeds the new identity's own last-good cache.
     @MainActor
     func rebindForIdentityChange() async {
+        let resumePrices = priceDeliveryActive
+        setPriceDeliveryActive(false)
+        acceptedPriceCards = [:]; priceEpochs = [:]; visiblePriceCards = [:]
         items = []
         // #4110: the painted edition belongs to the list being cleared. Leaving
         // it set would let the next identity's first response compare against
@@ -1020,6 +1202,7 @@ final class DiscoverViewModel: ObservableObject {
         error = nil
         loading = true
         await load()
+        if resumePrices { setPriceDeliveryActive(true) }
     }
 
     /// Cards the feed can actually render, admitted through ONE shared
@@ -1226,7 +1409,7 @@ final class DiscoverViewModel: ObservableObject {
     func loadMoreIfNeeded() async {
         guard hasMore, !loading, !loadingMore else { return }
         loadingMore = true
-        defer { loadingMore = false }
+        defer { loadingMore = false; reconcilePriceSubscriptions() }
 
         // Capture the active load generation BEFORE the first await (C78 Item 1).
         // Re-checked after every await below so a response that returns after an
@@ -1358,7 +1541,7 @@ final class DiscoverViewModel: ObservableObject {
                 // defect as the network path, just triggered by the reader instead
                 // of by the clock. The new page is interleaved among ITSELF so the
                 // page keeps its category diversity; the painted prefix does not move.
-                items = items + Self.interleave(fresh)
+                items = items + DiscoverPriceRefresh.retainingPrices(Self.interleave(fresh), accepted: &acceptedPriceCards)
                 hasMore = response.hasMore
                 error = nil
                 return
