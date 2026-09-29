@@ -9,8 +9,8 @@ nonisolated enum GameMarketsPriceReconciliation {
         var winnerQuotes = FinalGameWinnerQuoteFence()
     }
 
-    struct Row {
-        let key: String
+    struct Row: Equatable {
+        var key: String
         let prices: [Double?]
         let source: String?
         let markets: Set<Int>
@@ -18,8 +18,50 @@ nonisolated enum GameMarketsPriceReconciliation {
         let verdict: Bool?
         let winner: Bool?
         let actual: Double?
+        /// The market-qualified key, before any contributor refinement.
+        var base = ""
         var priced: Bool { prices.contains { $0 != nil } }
         var isWinnerQuote: Bool { key.hasPrefix("finalWinner:") }
+        /// #9585 — no market and no contributor id: nothing can order this
+        /// row's quote, so it may display as served but never fence or freeze.
+        var isUnordered: Bool { markets.isEmpty && contributors.isEmpty && !isWinnerQuote }
+    }
+
+    /// #9585 — a display name is not an identity: Bears–Eagles served four
+    /// `Both teams to score / Yes` rows from four markets. The key is the
+    /// section, the name, and the durable market ids; contributor ids join it
+    /// only to separate rows the markets cannot. Exact duplicates coalesce.
+    /// Rows still conflicting are returned apart, so they are never used to
+    /// order or hold the rest of the page. Never position, price or clock.
+    static func identified(_ raw: [Row]) -> (rows: [Row], ambiguous: [Row]) {
+        func qualified(_ row: Row, _ tag: String, _ ids: [String]) -> Row {
+            guard !ids.isEmpty else { return row }
+            var row = row
+            row.key += tag + ids.joined(separator: ",")
+            return row
+        }
+        func partition(_ rows: [Row]) -> (unique: [Row], conflicted: [Row]) {
+            var order: [String] = []
+            var groups: [String: [Row]] = [:]
+            for row in rows {
+                if groups[row.key] == nil { order.append(row.key) }
+                groups[row.key, default: []].append(row)
+            }
+            var unique: [Row] = []
+            var conflicted: [Row] = []
+            for key in order {
+                let group = groups[key] ?? []
+                if group.allSatisfy({ $0 == group[0] }) { unique.append(group[0]) } else { conflicted += group }
+            }
+            return (unique, conflicted)
+        }
+        let byMarket = partition(raw.map { row in
+            var row = qualified(row, "#m", row.markets.sorted().map(String.init))
+            row.base = row.key
+            return row
+        })
+        let byContributor = partition(byMarket.conflicted.map { qualified($0, "#c", $0.contributors.sorted()) })
+        return (byMarket.unique + byContributor.unique, byContributor.conflicted)
     }
 
     static func rows(_ body: GameMarketsResponse) -> [Row] {
@@ -88,15 +130,16 @@ nonisolated enum GameMarketsPriceReconciliation {
 
     private static func adoptingProjection(_ incoming: GameMarketsResponse, over held: GameMarketsResponse?,
                                           fence: inout Fence) -> GameMarketsResponse {
-        let nextRows = rows(incoming)
-        guard Set(nextRows.map(\.key)).count == nextRows.count else { return held ?? incoming }
+        let identity = identified(rows(incoming))
+        let nextRows = identity.rows
+        let ambiguous = Set(identity.ambiguous.map(\.base))
         let next = Dictionary(uniqueKeysWithValues: nextRows.map { ($0.key, $0) })
         let clocks = (incoming.outcomeRevisionAt ?? [:]).compactMapValues {
             FuturesPriceReconciliation.observationDate($0)
         }
         guard let held else {
             fence.revisions = clocks
-            for row in nextRows where !row.priced { fence.withdrawn[row.key] = row.contributors }
+            for row in nextRows where !row.priced && !row.isUnordered { fence.withdrawn[row.key] = row.contributors }
             return incoming
         }
         guard incoming.eventId == held.eventId else { return held }
@@ -105,8 +148,8 @@ nonisolated enum GameMarketsPriceReconciliation {
                   held.homeScore == nil || incoming.homeScore == held.homeScore,
                   held.awayScore == nil || incoming.awayScore == held.awayScore else { return held }
         }
-        let beforeRows = rows(held)
-        let before = Dictionary(beforeRows.map { ($0.key, $0) }, uniquingKeysWith: { a, _ in a })
+        let beforeRows = identified(rows(held)).rows
+        let before = Dictionary(uniqueKeysWithValues: beforeRows.map { ($0.key, $0) })
         var nextFence = fence
         let bindings = incoming.outcomeMarketIds ?? [:]
         let oldBindings = held.outcomeMarketIds ?? [:]
@@ -119,7 +162,7 @@ nonisolated enum GameMarketsPriceReconciliation {
         for (id, market) in bindings where oldBindings[id] != market { changedMarkets.insert(market) }
         // A genuine withdrawal changes the normalization denominator even if
         // no replacement observation clock exists. Never mix old/new vectors.
-        for prior in beforeRows {
+        for prior in beforeRows where !ambiguous.contains(prior.base) {
             let row = next[prior.key]
             if prior.verdict != nil && row?.verdict != prior.verdict
                 || prior.winner != nil && row?.winner != prior.winner
@@ -129,7 +172,7 @@ nonisolated enum GameMarketsPriceReconciliation {
                 // Choosing a different whole winner book does not withdraw the
                 // previous venue's still-valid price. A genuinely absent quote
                 // does fence restoration of that book behind its own revision.
-                if !prior.isWinnerQuote || incoming.openWinnerQuote == nil {
+                if !prior.isUnordered, !prior.isWinnerQuote || incoming.openWinnerQuote == nil {
                     nextFence.withdrawn[prior.key] = prior.contributors
                 }
                 changedMarkets.formUnion(prior.markets)
@@ -145,7 +188,9 @@ nonisolated enum GameMarketsPriceReconciliation {
             let prior = before[row.key]
             let terminal = newGrade(row)
             if !row.priced {
-                nextFence.withdrawn[row.key] = row.contributors.union(prior?.contributors ?? [])
+                if !row.isUnordered {
+                    nextFence.withdrawn[row.key] = row.contributors.union(prior?.contributors ?? [])
+                }
                 continue
             }
             // A displayed quote must never hide a regressed/missing raw clock.
@@ -176,7 +221,7 @@ nonisolated enum GameMarketsPriceReconciliation {
                     return date > old
                 }) else { return held }
             }
-            if let prior, prior.priced,
+            if let prior, prior.priced, !row.isUnordered,
                prior.prices != row.prices || prior.source != row.source {
                 guard terminal || !row.markets.isDisjoint(with: changedMarkets) else { return held }
             }
