@@ -68,6 +68,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Iterable, Optional
@@ -93,6 +94,7 @@ from app.utils.container_graph import (
     validate_anchor_id_kind,
     validate_anchor_provider,
     validate_confidence,
+    validate_container_kind,
     validate_edge_kind_and_class,
     validate_edge_source,
     validate_node_type,
@@ -180,6 +182,9 @@ class AssemblyReport:
     slug: str
     edges_written: int = 0
     receipts_written: int = 0
+    #: Market receipts NOT written because another phase (the matcher) owns
+    #: that market's receipt. The edge still records membership.
+    receipts_preserved: int = 0
     by_class: dict = field(default_factory=dict)
     rejected: dict = field(default_factory=dict)
     unresolved: list = field(default_factory=list)
@@ -205,6 +210,7 @@ class AssemblyReport:
             "slug": self.slug,
             "edges_written": self.edges_written,
             "receipts_written": self.receipts_written,
+            "receipts_preserved": self.receipts_preserved,
             "by_class": dict(sorted(self.by_class.items())),
             "rejected": dict(sorted(self.rejected.items())),
             "unresolved": self.unresolved[:50],
@@ -1032,9 +1038,46 @@ async def assemble_container(session, container, candidates: list[Candidate]) ->
             report.revision = await bump_revision(session, container.id)
 
     if receipts:
+        receipts, report.receipts_preserved = await _drop_matcher_owned_receipts(
+            session, receipts
+        )
+    if receipts:
         report.receipts_written = await flush_receipts(session, receipts)
 
     return report
+
+
+async def _drop_matcher_owned_receipts(
+    session, receipts: list[MatchReceipt]
+) -> tuple[list[MatchReceipt], int]:
+    """Assembly never overwrites another decider's receipt. #9217 (v3).
+
+    `market_match_receipts` is ONE row per market and the upsert is last-writer
+    wins, so a container pass that receipts a market the matcher linked would
+    replace "how this market was linked to its game" with "a container holds
+    it" — the linkage explanation gone, for a fact the edge already records.
+    The edge IS the membership record; the receipt stays the matcher's. So any
+    market whose current receipt was written by another phase keeps it, and
+    only markets with no receipt, or whose receipt is assembly's own, are
+    written. One `ANY(:ids)` read per pass, not per market.
+    """
+    ids = sorted({r.market_id for r in receipts})
+    owned = {
+        int(row[0])
+        for row in (
+            await session.execute(
+                text(
+                    "SELECT market_id FROM market_match_receipts "
+                    "WHERE market_id = ANY(:ids) AND phase <> :phase"
+                ),
+                {"ids": ids, "phase": PHASE_CONTAINER_ASSEMBLY},
+            )
+        ).fetchall()
+    }
+    if not owned:
+        return receipts, 0
+    kept = [r for r in receipts if r.market_id not in owned]
+    return kept, len(owned)
 
 
 # ---------------------------------------------------------------------------
@@ -1490,10 +1533,288 @@ async def run_declared_assembly(session, declaration, *, apply: bool = True) -> 
 
 @dataclass(frozen=True)
 class _ContainerRow:
-    id: int
+    #: None only for a dry run's stand-in (a collection with no row yet).
+    id: Optional[int]
     slug: str
     window_start: Optional[datetime]
     window_end: Optional[datetime]
+
+
+# ---------------------------------------------------------------------------
+# League collections (v3, #9217): NFL weeks and the MLB postseason
+# ---------------------------------------------------------------------------
+#
+# The membership rules are calibration's (`container_nfl`, `container_mlb_playoffs`
+# and their task halves); this is only the dispatch: which collection to run,
+# the container row it runs against, and one transaction per run. The adapters
+# import this module, so they are imported lazily here.
+
+#: Collections write edges (and receipts) for NFL and MLB on the hourly pass.
+#: Off by default so a merge changes nothing on production until the flag is
+#: set; an explicit ``only=<collection slug>`` dispatch runs one regardless,
+#: because naming it IS the attended step.
+COLLECTIONS_ENABLED_ENV = "CONTAINER_COLLECTIONS_ENABLED"
+
+#: A league collection's kind, from the existing vocabulary. An NFL week is a
+#: slice of the league season; the MLB postseason is a bracket tournament.
+NFL_WEEK_KIND = "season"
+MLB_POSTSEASON_KIND = "tournament"
+
+_NFL_STAGE_ORDER = {"Pre Season": 0, "Regular Season": 1, "Post Season": 2}
+
+
+def collections_enabled() -> bool:
+    return os.environ.get(COLLECTIONS_ENABLED_ENV, "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def nfl_weeks_in_window(
+    fixtures: Iterable, season: int, start: datetime, end: datetime
+) -> tuple[list, Optional[str]]:
+    """The NFL week(s) the authority files a kickoff under inside ``[start, end]``.
+
+    Pure. The WEEK comes from the schedule's own ``stage / week`` label on each
+    contest (never from a date), and the window only picks which of the
+    season's weeks are current. A schedule that is not ``season`` — or whose
+    season cannot be read — answers no weeks and says why, in the adapter's
+    own words, rather than assembling last season's week under this one's slug.
+    """
+    from app.utils.container_nfl import (
+        UNAVAILABLE_SEASON_MISMATCH,
+        UNAVAILABLE_SEASON_UNKNOWN,
+        NflWeek,
+        is_placeholder_contest,
+        parse_round_identity,
+        schedule_season,
+    )
+
+    fixtures = list(fixtures)
+    read = schedule_season(fixtures)
+    if read is None:
+        return [], UNAVAILABLE_SEASON_UNKNOWN
+    if read != season:
+        return [], UNAVAILABLE_SEASON_MISMATCH
+
+    weeks: set = set()
+    for fixture in fixtures:
+        kickoff = fixture.start_time
+        if kickoff is None or getattr(fixture, "start_is_placeholder", False):
+            continue
+        if is_placeholder_contest(fixture) or not (start <= kickoff <= end):
+            continue
+        identity = parse_round_identity(fixture.round_info)
+        if identity is not None:
+            weeks.add(identity)
+    ordered = sorted(weeks, key=lambda sw: (_NFL_STAGE_ORDER[sw[0]], sw[1]))
+    return [NflWeek(season=season, week=week, stage=stage) for stage, week in ordered], None
+
+
+async def _collection_container(
+    session,
+    slug: str,
+    name: str,
+    kind: str,
+    window_start: Optional[datetime],
+    window_end: Optional[datetime],
+    *,
+    apply: bool,
+) -> tuple[Optional["_ContainerRow"], str]:
+    """The one flat container row a collection runs against, and how it got it.
+
+    ``existing`` — already there, never updated (its window or status may have
+    been corrected since). ``created`` — inserted now, ``ON CONFLICT (slug) DO
+    NOTHING`` so two passes cannot make two. ``would_create`` — a dry run with
+    no row gets a stand-in (no id) so the adapter still reports every member it
+    WOULD edge; nothing is written. ``absent`` — apply, and the row is still not
+    there after the insert: the caller reports it, never skips it.
+    """
+    validate_container_kind(kind)
+    row = await _resolve_container(session, slug)
+    if row is not None:
+        return _ContainerRow(int(row[0]), row[1], row[2], row[3]), "existing"
+    if not apply:
+        return _ContainerRow(None, slug, window_start, window_end), "would_create"
+    await session.execute(
+        text(
+            "INSERT INTO containers (kind, name, slug, window_start, window_end) "
+            "VALUES (:kind, :name, :slug, :window_start, :window_end) "
+            "ON CONFLICT (slug) DO NOTHING"
+        ),
+        {
+            "kind": kind,
+            "name": name,
+            "slug": slug,
+            "window_start": window_start,
+            "window_end": window_end,
+        },
+    )
+    row = await _resolve_container(session, slug)
+    if row is None:
+        return None, "absent"
+    return _ContainerRow(int(row[0]), row[1], row[2], row[3]), "created"
+
+
+def _row_absent(slug: str, family: str) -> dict:
+    return {
+        "slug": slug,
+        "family": family,
+        "terminal": "unavailable",
+        "reason": "container_row_absent",
+    }
+
+
+async def _one_collection_run(session, slug: str, family: str, run_coro_factory, *, apply: bool) -> dict:
+    """One collection run in its own transaction (gotcha #42, per run)."""
+    try:
+        run = await run_coro_factory()
+        run.setdefault("family", family)
+        if apply:
+            await session.commit()
+        return run
+    except Exception as exc:  # noqa: BLE001 — one run must not cost the rest
+        await session.rollback()
+        logger.exception("container collection failed for %s", slug)
+        return {
+            "slug": slug,
+            "family": family,
+            "terminal": "failed",
+            "reason": "assembly_error",
+            "error": repr(exc),
+        }
+
+
+async def run_nfl_collection(
+    session, declaration, *, apply: bool, now: Optional[datetime] = None, service=None
+) -> list[dict]:
+    """Every current week of one declared NFL season, one run per week.
+
+    The schedule is read ONCE and shared by every week's run. An unreadable
+    schedule, a schedule of another season, or no week in the window is one
+    ``unavailable`` run naming why — a declared season never goes silent.
+    """
+    from app.services.statpal_api import StatPalUpstreamError, get_statpal_service
+    from app.tasks.container_nfl_assembly import run_nfl_week_assembly
+
+    root = declaration.root_slug
+    now = now or datetime.now(timezone.utc)
+    service = service or get_statpal_service()
+    try:
+        fixtures = list(await service.get_schedule_fixtures("nfl"))
+    except StatPalUpstreamError as exc:
+        logger.warning("NFL collection %s: schedule unreadable: %s", root, exc)
+        return [
+            {
+                "slug": root,
+                "family": "nfl",
+                "terminal": "unavailable",
+                "reason": "schedule_unreadable",
+                "error": str(exc),
+            }
+        ]
+
+    weeks, why = nfl_weeks_in_window(
+        fixtures, declaration.season, now - declaration.lookback, now + declaration.lookahead
+    )
+    if why or not weeks:
+        return [
+            {
+                "slug": root,
+                "family": "nfl",
+                "terminal": "unavailable",
+                "reason": why or "no_week_in_window",
+            }
+        ]
+
+    runs = []
+    for target in weeks:
+
+        async def _run(target=target):
+            container, bootstrap = await _collection_container(
+                session, target.slug, target.display_name, NFL_WEEK_KIND, None, None,
+                apply=apply,
+            )
+            if container is None:
+                return _row_absent(target.slug, "nfl")
+            run = await run_nfl_week_assembly(session, container, fixtures, target, apply=apply)
+            run["bootstrap"] = bootstrap
+            return run
+
+        runs.append(await _one_collection_run(session, target.slug, "nfl", _run, apply=apply))
+    return runs
+
+
+async def run_mlb_collection(session, declaration, *, apply: bool, espn=None) -> list[dict]:
+    """One declared MLB postseason, over its declared board days."""
+    from app.tasks.container_mlb_playoffs_assembly import assemble_mlb_postseason
+    from app.utils.container_mlb_playoffs import MlbPostseason
+
+    target = MlbPostseason(declaration.season)
+
+    async def _run():
+        container, bootstrap = await _collection_container(
+            session,
+            target.slug,
+            target.display_name,
+            MLB_POSTSEASON_KIND,
+            declaration.window_start,
+            declaration.window_end,
+            apply=apply,
+        )
+        if container is None:
+            return _row_absent(target.slug, "mlb")
+        run = await assemble_mlb_postseason(
+            session,
+            container,
+            target,
+            declaration.window_start.date(),
+            declaration.window_end.date(),
+            apply=apply,
+            espn=espn,
+        )
+        run["bootstrap"] = bootstrap
+        return run
+
+    return [await _one_collection_run(session, target.slug, "mlb", _run, apply=apply)]
+
+
+async def run_declared_collection(session, declaration, *, apply: bool = True) -> list[dict]:
+    from app.utils.container_tournaments import (
+        MlbPostseasonDeclaration,
+        NflSeasonDeclaration,
+    )
+
+    if isinstance(declaration, NflSeasonDeclaration):
+        return await run_nfl_collection(session, declaration, apply=apply)
+    if isinstance(declaration, MlbPostseasonDeclaration):
+        return await run_mlb_collection(session, declaration, apply=apply)
+    raise TypeError(f"no collection dispatch for {type(declaration).__name__}")
+
+
+def roll_up_terminal(runs: list[dict]) -> tuple[str, Optional[str]]:
+    """The pass's verdict from each run's OWN ``terminal``. #9217 (v3).
+
+    Not from a member count: the NFL and MLB runs carry ``terminal`` and no
+    ``members``, and a partial week with members is still partial. ``complete``
+    only when EVERY run says complete; every run failed is ``failed``; anything
+    else — partial, unavailable, refused, failed, or no run at all — is
+    ``partial`` (gotcha #53: it returned is not it worked).
+    """
+    terminals = [r.get("terminal") for r in runs]
+    if terminals and all(t == "failed" for t in terminals):
+        return "failed", "every_edition_failed"
+    if terminals and all(t == "complete" for t in terminals):
+        return "complete", None
+    return "partial", "some_edition_incomplete"
+
+
+def _run_edges(run: dict) -> int:
+    if "edges_written" in run:
+        return run["edges_written"] or 0
+    return (run.get("assembly") or {}).get("edges_written", 0) or 0
 
 
 async def _run_assemble_containers(apply: bool = True, only: Optional[str] = None) -> dict:
@@ -1507,7 +1828,10 @@ async def _run_assemble_containers(apply: bool = True, only: Optional[str] = Non
     counters (gotcha #53).
     """
     from app.tasks.base import get_task_session
-    from app.utils.container_tournaments import DECLARED_TOURNAMENTS
+    from app.utils.container_tournaments import (
+        DECLARED_COLLECTIONS,
+        DECLARED_TOURNAMENTS,
+    )
 
     started = datetime.now(timezone.utc)
     declarations = [
@@ -1515,6 +1839,17 @@ async def _run_assemble_containers(apply: bool = True, only: Optional[str] = Non
         for d in DECLARED_TOURNAMENTS
         if only is None or d.root_slug == only
     ]
+    # League collections (#9217) ride the hourly pass only behind the flag; an
+    # explicit `only=<slug>` runs that one collection regardless.
+    if only is not None:
+        collections = [c for c in DECLARED_COLLECTIONS if c.root_slug == only]
+        collections_state = "requested" if collections else "not_requested"
+    elif collections_enabled():
+        collections = list(DECLARED_COLLECTIONS)
+        collections_state = "enabled"
+    else:
+        collections = []
+        collections_state = "disabled"
 
     async with get_task_session() as session:
         if not await containers_tables_present(session):
@@ -1545,21 +1880,32 @@ async def _run_assemble_containers(apply: bool = True, only: Optional[str] = Non
                     }
                 )
 
-    members = sum(r.get("members", 0) for r in runs)
-    failed = [r for r in runs if r.get("terminal") == "failed"]
-    if failed and len(failed) == len(runs):
-        terminal, reason = "failed", "every_edition_failed"
-    elif failed or not members:
-        terminal, reason = "partial", "some_edition_yielded_nothing"
-    else:
-        terminal, reason = "complete", None
+        for declaration in collections:
+            try:
+                runs.extend(
+                    await run_declared_collection(session, declaration, apply=apply)
+                )
+            except Exception as exc:  # noqa: BLE001 — gotcha #42, per COLLECTION
+                await session.rollback()
+                logger.exception("container collection failed for %s", declaration.root_slug)
+                runs.append(
+                    {
+                        "slug": declaration.root_slug,
+                        "terminal": "failed",
+                        "reason": "assembly_error",
+                        "error": repr(exc),
+                    }
+                )
+
+    terminal, reason = roll_up_terminal(runs)
 
     return {
         "terminal": terminal,
         "reason": reason,
         "editions": len(runs),
-        "members": members,
-        "edges_written": sum(r.get("edges_written", 0) for r in runs),
+        "members": sum(r.get("members", 0) for r in runs),
+        "edges_written": sum(_run_edges(r) for r in runs),
+        "collections": collections_state,
         "runs": runs,
         "started_at": started.isoformat(),
         "duration_s": (datetime.now(timezone.utc) - started).total_seconds(),

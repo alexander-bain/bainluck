@@ -26,7 +26,7 @@ WHAT IS DELIBERATELY NOT HERE.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 
@@ -158,6 +158,73 @@ US_OPEN_2026 = TournamentDeclaration(
 #: Every edition the assembly pass knows about. A list, so the pass can walk it
 #: and so a second tournament costs one entry.
 DECLARED_TOURNAMENTS: tuple = (US_OPEN_2026,)
+
+
+# ---------------------------------------------------------------------------
+# League collections (v3, #9217): an NFL week, an MLB postseason
+# ---------------------------------------------------------------------------
+#
+# Same rule as the tournaments above: a declaration names WHICH collection
+# exists, never what is in it. Membership is each adapter's (calibration's
+# `container_nfl` / `container_mlb_playoffs`), keyed on the authority's own ids.
+
+
+@dataclass(frozen=True)
+class NflSeasonDeclaration:
+    """One NFL season. Its WEEKS are not declared: at run time the pass asks the
+    authority's schedule which week(s) hold a kickoff inside
+    ``[now - lookback, now + lookahead]`` and assembles each of those."""
+
+    season: int
+    lookback: timedelta = timedelta(days=2)
+    lookahead: timedelta = timedelta(days=9)
+    evidence: Optional[str] = None
+
+    @property
+    def root_slug(self) -> str:
+        return f"nfl-{self.season}"
+
+
+@dataclass(frozen=True)
+class MlbPostseasonDeclaration:
+    """One MLB postseason and the ESPN board days to read for it (<=45)."""
+
+    season: int
+    window_start: datetime
+    window_end: datetime
+    evidence: Optional[str] = None
+
+    @property
+    def root_slug(self) -> str:
+        # Must equal `MlbPostseason(season).slug`; the adapter refuses otherwise.
+        return f"mlb-{self.season}-postseason"
+
+
+#: The 2026 NFL season. StatPal's `season-schedule` is one season per call and
+#: the adapter reads which season it is off the regular-season kickoffs; a read
+#: that turns out to be another season is `unavailable`, never re-labelled.
+NFL_2026 = NflSeasonDeclaration(
+    season=2026,
+    evidence="StatPal nfl season-schedule; season read off its own Regular Season kickoffs",
+)
+
+#: The 2026 MLB postseason.
+#: * **2026-09-29** — Wild Card Game 1. ESPN's dated board for 2026-09-30
+#:   lists event 401907972 as "NLWC - Game 2" (read 2026-09-28, banked in
+#:   `test_certain_postseason_games_9216.py`), so Game 1 is the day before.
+#: * **2026-11-12** — the 45th board day, the adapter's cap. OURS, not an
+#:   authority's: a World Series Game 7 falls in early November, and a day past
+#:   the last game costs one empty board read, while a day short loses a game.
+#:   The window reads boards; membership is ESPN's season.type == 3, not dates.
+MLB_2026_POSTSEASON = MlbPostseasonDeclaration(
+    season=2026,
+    window_start=_utc(2026, 9, 29),
+    window_end=_utc(2026, 11, 12),
+    evidence="ESPN board 20260930 event 401907972 = NLWC Game 2; end = 45-day board cap",
+)
+
+#: Every league collection the assembly pass knows about.
+DECLARED_COLLECTIONS: tuple = (NFL_2026, MLB_2026_POSTSEASON)
 
 
 def declaration_for(slug: str) -> Optional[TournamentDeclaration]:
