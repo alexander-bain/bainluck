@@ -23695,6 +23695,8 @@ async def _build_game_markets(
                 "spreads": [], "period_markets": [], "matchups": [],
                 "other": [], "pace": None, "props_script": [],
                 **game_market_stream_envelope([], [], {}),
+                "open_winner_quote": None,
+                "closed_winner_market_ids": [],
             },
             event.status or "",
             [],
@@ -25507,6 +25509,21 @@ async def _build_game_markets(
     # LAT-P001's defect and it is not being rebuilt here.
     response.update(game_market_stream_envelope(
         market_ids, outcomes, _observed_at_by_outcome
+    ))
+    from app.utils.final_game_winner_quote import final_game_winner_quotes
+    from app.utils.outcome_display import normalize_display_probs
+
+    response.update(final_game_winner_quotes(
+        event_id=event_id, event_is_finished=event_is_finished,
+        mapped_event_ids=market_event_ids,
+        home_name=event.home_team_name, away_name=event.away_team_name,
+        markets=markets, outcomes=outcomes,
+        observed_at=_observed_at_by_outcome,
+        is_match_winner=_market_is_event_match_winner,
+        winner_side=_match_winner_side,
+        fold_winner_markets=_fold_duplicate_match_winner_markets,
+        resolve_outcome_name=resolve_binary_matchup_outcome_name,
+        normalize_probs=normalize_display_probs,
     ))
     return response, event.status or "", market_ids
 

@@ -1,0 +1,11 @@
+# #9544 independent backend source review — PASS
+
+Reviewed the complete new helper and tests, bound in the accompanying JSON. This reviewer did not author these files or repeat executable gates. Source PASS only; route integration, exact executable gates, native rendering and delivery remain separate.
+
+The helper uses only already-loaded candidate rows and proven folded event IDs. Existing whole-match name/side recognition and whole-market selection callbacks retain their current scope. It rejects missing/duplicate/unidentified legs, unsupported source/book values, unknown/suspended status, all-zero books and unlinked fallback matches. Explicit settlement stamps/assigned status/row verdicts fence the exact contract, independently of current quote availability; missing markets are not invented settlements. The returned quote is separate from final scores and never mutates the event.
+
+One review correction: raw independently quoted legs could exceed the common display total. The final source injects the existing normalize_display_probs policy after selecting a whole market, with that selected market's explicit mutually_exclusive metadata and full-leg completeness. It preserves the policy's no-squeeze/refusal bands rather than inventing a new probability model. If normalization changes a vector, every derived leg gets the oldest real contributor observation (unknown stays unknown), never a row revision. Targeted regressions cover the metadata/selection boundary, non-unit vectors and unknown ages.
+
+The canonical normalizer may deliberately preserve raw overround outside its squeeze band or for unknown/nonexclusive fields. The native presenter must honor the same distinction and must not manufacture complementary percentages for those raw quotes. This review does not certify the separately owned native presenter or installed-phone behavior.
+
+Final delta reviewed: reuse existing venue_leg_count on the actual market metadata/name/mutual-exclusivity before accepting a priced book; declared missing legs withhold the quote without fabricating closure, and a parent sibling count is not treated as the own field. One focused regression binds both sides. SOURCE PASS remains for updated hashes.

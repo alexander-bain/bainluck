@@ -1,0 +1,15 @@
+{
+  "at": "2026-09-29T04:37:05.374816+00:00",
+  "base": "e90100fc59",
+  "verdict": "SOURCE PASS integration delta only",
+  "files": [
+    {
+      "path": "backend/app/routes/events.py",
+      "sha256": "831b51357d72619f1040d4b5765aa490ad9718663e5bc20a48d9d8150c60c20a"
+    },
+    {
+      "path": "backend/tests/test_final_game_winner_route_9544.py",
+      "sha256": "0cd063c3919aa56a5f65d91f767470416b508424e66235e581248b32e921b984"
+    }
+  ]
+}
