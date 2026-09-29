@@ -402,6 +402,45 @@ enum TeamShortName {
     /// takes the last-word rule exactly as before.
     private static let wholeClubNameMaxWords = 3
 
+    /// #5634 — does this sport key name an esports competition, where the last
+    /// word of an organisation's name is so often its TYPE that the last-word
+    /// rule cannot be used at all?
+    ///
+    /// The browser's hero read **"Esports"** and **"Rex"** for G2 Esports v
+    /// Paper Rex (`/events/15319232`, 2026-09-29), and this file gives the
+    /// iPhone the same two words from the same line. ux measured the 1,000
+    /// most-used esports names of 60 days of production `events` the same day:
+    /// the rule folded about a hundred organisations onto "Esports", 45 onto
+    /// "Gaming" and 16 onto "Esport", and cut the rest to a fragment ("Natus
+    /// Vincere" → "Vincere"). Leading short tokens are the org itself here ("KT
+    /// Rolster", "SK Gaming"), so `wholeClubName`'s leading drop does not apply
+    /// either: the name is kept verbatim.
+    ///
+    /// The browser's `keepsWholeOrgName` (`frontend/lib/teamShortName.ts`, PR
+    /// #9682): the same first-segment match and fail-closed nil as
+    /// `keepsWholeClubName`.
+    static func keepsWholeOrgName(sportKey: String?) -> Bool {
+        guard let key = sportKey?.trimmingCharacters(in: .whitespaces).lowercased(),
+              !key.isEmpty else { return false }
+        let sport = key.split(separator: "_").first.map(String.init) ?? key
+        return sport == "esports"
+    }
+
+    /// #5634 — the organisation-type words an esports name ends in. A name
+    /// longer than `wholeClubNameMaxWords` still keeps itself whole when it ends
+    /// in one, so "Gamespace Mediterranean College Esports" never prints
+    /// "Esports". Compared as `nicknameKey` (letters and digits, lower case), so
+    /// "E-SPORTS" and "eSports" are one word.
+    ///
+    /// The browser's `ESPORTS_ORG_SUFFIXES`, compared out of source by
+    /// `frontend/__tests__/teamDesignatorParityAcrossClients.test.ts`.
+    static let esportsOrgSuffixes: Set<String> = [
+        "esports",
+        "esport",
+        "gaming",
+        "team", // "Once Upon A Team", "EDward Gaming Youth Team"
+    ]
+
     /// #5634 — a football club's label: its own name with LEADING designators
     /// dropped, never below two words. "1. FC Union Berlin" → "Union Berlin",
     /// "CA Boca Juniors" → "Boca Juniors", "1. FC Köln" → "FC Köln" (the floor);
@@ -549,9 +588,10 @@ enum TeamShortName {
     /// never has to supply its own fallback for the empty or single-word case.
     ///
     /// #7163 — `sportKey` is optional and opens the particle rule (a person's
-    /// sport) and, since #5634, the whole-club rule (a soccer key); omitting it
-    /// keeps the shipped last-word behaviour exactly, which is what every call
-    /// site that does not know its sport still gets.
+    /// sport), since #5634 the whole-club rule (a soccer key) and the whole-org
+    /// rule (an esports key); omitting it keeps the shipped last-word behaviour
+    /// exactly, which is what every call site that does not know its sport
+    /// still gets.
     static func short(_ name: String, sportKey: String? = nil) -> String {
         // #5634 — "Czech Republic", never "Republic".
         if isMultiWordCountry(name) { return name }
@@ -582,6 +622,16 @@ enum TeamShortName {
             if !words.isEmpty {
                 let whole = wholeClubName(words)
                 if whole.split(separator: " ").count <= wholeClubNameMaxWords { return whole }
+            }
+        }
+        // #5634 — an esports organisation is not its type: "G2 Esports", never
+        // "Esports"; "Paper Rex", never "Rex". The browser's order: below the
+        // football rule, above the last-word rule.
+        if keepsWholeOrgName(sportKey: sportKey) {
+            let words = name.split(whereSeparator: \.isWhitespace)
+            if let last = words.last,
+               words.count <= wholeClubNameMaxWords || esportsOrgSuffixes.contains(nicknameKey(last)) {
+                return name
             }
         }
         let parts = name.split(separator: " ").filter { !$0.isEmpty }
