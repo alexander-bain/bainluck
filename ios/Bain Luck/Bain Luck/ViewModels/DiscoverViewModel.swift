@@ -867,7 +867,7 @@ final class DiscoverViewModel: ObservableObject {
                 reportSuppressedEnvelopes(response.items)
                 let mergeStart = Date()
                 // #4110: THE FIX. This used to be an unconditional
-                // `items = DiscoverPriceRefresh.retainingPrices(Self.interleave(renderable), accepted: &acceptedPriceCards, fences: &priceFences)`, which re-derived the
+                // `items = Self.interleave(renderable)`, which re-derived the
                 // whole order from a different input than the boot seed had — so
                 // a card the reader was mid-way through could move or vanish the
                 // moment the network answered. Now the server's own edition token

@@ -82,13 +82,16 @@ d("#4110 — the feed does not reshuffle under the reader", () => {
       expect(sites).toEqual([
         // Boot seed — the FIRST paint. Nothing on screen to protect, so the full
         // interleave is correct here and stays.
-        "items = Self.interleave(renderable)",
+        // #9513 wraps each site in `DiscoverPriceRefresh.retainingPrices`, which
+        // keeps already-accepted streamed prices on the cards. It changes no
+        // order: the interleave inside is the same call on the same input.
+        "items = DiscoverPriceRefresh.retainingPrices(Self.interleave(renderable), accepted: &acceptedPriceCards, fences: &priceFences)",
         // Network publish — now the `.repaint` ARM of the decision, not the
         // unconditional assignment it used to be. Guarded below.
-        "items = Self.interleave(renderable)",
+        "items = DiscoverPriceRefresh.retainingPrices(Self.interleave(renderable), accepted: &acceptedPriceCards, fences: &priceFences)",
         // Pagination — interleaves the NEW PAGE among itself and appends. The
         // painted prefix is not an input, so it cannot move.
-        "items = items + Self.interleave(fresh)",
+        "items = items + DiscoverPriceRefresh.retainingPrices(Self.interleave(fresh), accepted: &acceptedPriceCards, fences: &priceFences)",
       ]);
     });
 
@@ -127,7 +130,7 @@ d("#4110 — the feed does not reshuffle under the reader", () => {
       const repaintArm = body.indexOf("case .repaint:");
       expect(repaintArm).toBeGreaterThan(-1);
       const afterArm = body.slice(repaintArm, repaintArm + 200);
-      expect(afterArm).toContain("items = Self.interleave(renderable)");
+      expect(afterArm).toContain("items = DiscoverPriceRefresh.retainingPrices(Self.interleave(renderable)");
 
       // And the pre-fix shape — verbatim from origin/master `3b9a420a` — is
       // detectable, so this assertion is not merely describing today's text.
