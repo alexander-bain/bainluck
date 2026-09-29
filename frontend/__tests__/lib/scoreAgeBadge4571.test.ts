@@ -413,7 +413,9 @@ describe("#4571 the page hands the badge the score it actually rendered", () => 
     // helper the event clock can only re-derive it, which is the near-miss.
     const code = executableSource(PAGE);
     expect(code).toMatch(
-      /computeLastChartPoint\(\s*historyData,\s*event\?\.home_score,\s*event\?\.away_score,\s*event\?\.score_observed_at,?\s*\)/,
+      // #925 added a fifth argument (the live event row's inning); the fourth
+      // must still be the event clock, so the pattern allows exactly that tail.
+      /computeLastChartPoint\(\s*historyData,\s*event\?\.home_score,\s*event\?\.away_score,\s*event\?\.score_observed_at,\s*(?:event\?\.status === "live" \? event\?\.espn \?\? null : null,?\s*)?\)/,
     );
     // And it is a dependency of the memo, or the badge freezes at the first
     // stamp the page ever saw.
