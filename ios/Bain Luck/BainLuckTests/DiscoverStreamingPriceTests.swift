@@ -133,6 +133,35 @@ final class DiscoverStreamingPriceTests: XCTestCase {
         }
     }
 
+    func testBurstAndFiftyCardBatchesShareOneDispatchBudget() {
+        var pacer = DiscoverPriceReadPacer()
+        var dispatched = 0
+        for tick in 0..<1000 {
+            let now = Double(tick) / 1000
+            if pacer.delay(at: now) == 0 {
+                pacer.didDispatch(at: now)
+                dispatched += 1
+            }
+        }
+        XCTAssertEqual(dispatched, 1)
+        XCTAssertEqual(pacer.delay(at: 1), 1)
+        XCTAssertEqual(pacer.delay(at: 2), 0)
+        pacer.didDispatch(at: 2)
+        XCTAssertEqual(pacer.delay(at: 2), 2, "the next50-card batch has the same budget")
+    }
+
+    func testRateLimitBackoffSurvivesNewInvalidationsAndUsesSafeFallback() {
+        var pacer = DiscoverPriceReadPacer()
+        pacer.didDispatch(at: 100)
+        XCTAssertTrue(pacer.observe(APIError.httpError(statusCode: 429, body: "{\"retry_after\":17}"), at: 101))
+        XCTAssertEqual(pacer.delay(at: 110), 8)
+        XCTAssertEqual(pacer.delay(at: 118), 0)
+        XCTAssertTrue(pacer.observe(APIError.httpError(statusCode: 429, body: "malformed"), at: 118))
+        XCTAssertEqual(pacer.delay(at: 120), 58)
+        XCTAssertFalse(pacer.observe(APIError.httpError(statusCode: 503, body: nil), at: 121))
+        XCTAssertEqual(pacer.delay(at: 120), 58)
+    }
+
     private nonisolated final class Client: DiscoverFeedProviding, DiscoverPriceCardsProviding, @unchecked Sendable {
         let feed: FeedResponse
         private var next: DiscoverPriceCards
@@ -177,7 +206,7 @@ final class DiscoverStreamingPriceTests: XCTestCase {
         let observation = vm.$items.sink { items in
             if items.first?.futures?.topOutcomes?.first?.probability == 0.8 { arrived.fulfill() }
         }
-        await fulfillment(of: [arrived], timeout: 2)
+        await fulfillment(of: [arrived], timeout: 6)
         observation.cancel()
         XCTAssertEqual(vm.items.map(\.id), [old.id])
         await vm.load() // the fake returns the OLD cached price body again
