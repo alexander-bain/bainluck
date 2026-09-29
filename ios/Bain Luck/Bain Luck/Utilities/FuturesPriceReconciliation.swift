@@ -56,8 +56,7 @@ nonisolated enum FuturesPriceReconciliation {
             mutuallyExclusive: incoming.mutuallyExclusive, commenceTime: incoming.commenceTime,
             resolutionDate: incoming.resolutionDate, updatedAt: held.updatedAt,
             outcomeCount: outcomes.count, bookmakers: held.bookmakers, outcomes: outcomes,
-            hookDescription: incoming.hookDescription, imageUrl: incoming.imageUrl,
-            leadOutcomeId: incoming.leadOutcomeId)
+            hookDescription: incoming.hookDescription, imageUrl: incoming.imageUrl)
     }
 
     /// Only an accepted, dated new quote or authoritative result is activity.
