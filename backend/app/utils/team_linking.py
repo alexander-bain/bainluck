@@ -123,6 +123,61 @@ def match_outcome_to_team(
     return None
 
 
+def match_outcome_to_league_team(
+    outcome_name: str,
+    league_teams: list[dict],
+) -> Optional[int]:
+    """Bind an outcome to a team when the market's LEAGUE is already known (#9617).
+
+    Kalshi names teams by city alone ("New York", "Minnesota", "Golden State").
+    ``match_outcome_to_team`` is run over a whole sport category — basketball is
+    NBA + WNBA + men's and women's college — so "New York" hits the Knicks AND
+    the Liberty, reads ambiguous, and binds to nothing. Measured 2026-09-29: the
+    open KXNBA champion market had 7 of 30 outcomes linked, KXWNBA 2 of 15. The
+    ticker already says which league it is; inside that one league the city is
+    usually unique.
+
+    Two arms, both requiring exactly ONE team in ``league_teams``:
+
+    * exact: the outcome equals one team's name or alias;
+    * city: the outcome equals one team's own NAME minus its nickname (the last
+      one or two words) — "Atlanta" for "Atlanta Falcons", "Portland" for
+      "Portland Trail Blazers". Aliases are not shortened: "Penn State" is an
+      alias, and dropping its last word would make "Penn" name Penn State.
+
+    Either arm is refused when the outcome is a shortening of ANOTHER team's name
+    in the league (a bare "Los Angeles" still names the Clippers). The substring
+    arm of ``_names_match`` is deliberately not used here: scoped to one college
+    league it would bind "Western Kentucky" to Kentucky.
+    """
+    candidate = _normalize_name(outcome_name)
+    if not candidate:
+        return None
+
+    names_by_team = {team["id"]: _normalized_names(team) for team in league_teams}
+
+    def _unique_unshadowed(hits: set) -> Optional[int]:
+        if len(hits) != 1:
+            return None
+        winner = next(iter(hits))
+        shortens_a_sibling = any(
+            team_id != winner and any(candidate in n for n in names)
+            for team_id, names in names_by_team.items()
+        )
+        return None if shortens_a_sibling else winner
+
+    exact = {team_id for team_id, names in names_by_team.items() if candidate in names}
+    if exact:
+        return _unique_unshadowed(exact)
+
+    city = set()
+    for team in league_teams:
+        words = (_normalize_name(team["name"]) or "").split()
+        if any(len(words) > k and " ".join(words[:-k]) == candidate for k in (1, 2)):
+            city.add(team["id"])
+    return _unique_unshadowed(city)
+
+
 from app.utils.name_normalization import strip_diacritics as _strip_diacritics
 
 
