@@ -6,6 +6,7 @@ Both _brackets_from_outcomes and _cumulative_to_discrete must normalize when
 the total exceeds 105%.
 """
 
+import re
 from types import SimpleNamespace
 
 from app.routes.economics import (
@@ -191,27 +192,31 @@ class TestCumulativeSignedThresholds:
     ]
 
     def test_mixed_sign_ladder_pairs_mass_with_the_right_label(self):
-        """The two biggest non-modal brackets belong to +0.2% and +0.3%.
+        """The two biggest non-modal brackets belong to +0.3% and +0.4%.
 
-        Before the fix they were served as -0.3% and -0.4% — 42 points of
-        probability shown against deflation.
+        Before #7081 they were served as -0.3% and -0.4% — 42 points of
+        probability shown against deflation. #7081 moved them to "+0.2%" and
+        "+0.3%", which was still one rung low (#9558): "above 0.2%, not above
+        0.3%" is a print of exactly 0.3%, because BLS prints to one decimal.
         """
         outcomes = [_make_outcome(n, p) for n, p in self._CPI_SEPTEMBER]
         brackets = _cumulative_to_discrete(outcomes, max_buckets=6)
         by_label = {lbl: prob for prob, lbl in brackets}
 
-        assert by_label.get("0.2%") == 22.5
-        assert by_label.get("0.3%") == 19.5
+        assert by_label.get("0.3%") == 22.5
+        assert by_label.get("0.4%") == 19.5
         # The mass must not appear on the deflation legs at all.
         assert by_label.get("-0.3%") != 22.5
         assert by_label.get("-0.4%") != 19.5
-        # The modal bar was always right; it must stay right.
-        assert by_label.get("0.6%") == 36.0
+        # The modal bar is P(above 0.6%): a print of 0.7% or more.
+        assert by_label.get("0.7%+") == 36.0
 
     def test_mixed_sign_ladder_is_ascending_by_threshold(self):
         outcomes = [_make_outcome(n, p) for n, p in self._CPI_SEPTEMBER]
         labels = [lbl for _, lbl in _cumulative_to_discrete(outcomes, max_buckets=6)]
-        vals = [float(lbl.rstrip("%")) for lbl in labels]
+        # Labels now carry "≤" and "+" ("≤-0.4%", "0.7%+"), and a run across a
+        # missing rung reads "0.4–0.6%": order by the first number in each.
+        vals = [float(re.search(r"-?\d+(?:\.\d+)?", lbl).group()) for lbl in labels]
         assert vals == sorted(vals), f"ladder not ascending: {labels}"
 
     def test_all_negative_ladder_does_not_collapse_to_one_bar(self):
