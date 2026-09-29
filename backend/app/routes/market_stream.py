@@ -189,9 +189,15 @@ class _MarketStreamResponse(StreamingResponse):
         try:
             await super().__call__(scope, receive, send)
         finally:
-            if getattr(self, "_reserved", False):
-                self._reserved = False
-                _open_connections -= 1
+            try:
+                # A send can fail while the generator is suspended at yield.
+                # async-for does not close that retained iterator for us; close
+                # it now so its synchronous hub cleanup precedes slot release.
+                await self.body_iterator.aclose()
+            finally:
+                if getattr(self, "_reserved", False):
+                    self._reserved = False
+                    _open_connections -= 1
 
 
 @router.get("/stream")

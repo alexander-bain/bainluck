@@ -323,6 +323,34 @@ async def test_response_completion_releases_reservation_and_hub(monkeypatch):
     assert hub.released == ["live:market:1"]
 
 
+@pytest.mark.parametrize("after", ["open", "market"])
+@pytest.mark.parametrize("failure", [RuntimeError, asyncio.CancelledError])
+async def test_send_failure_at_body_yield_immediately_closes_all_subscriptions(
+    monkeypatch, after, failure
+):
+    hub = Hub()
+    monkeypatch.setattr(live_fanout, "fanout", lambda: hub)
+    response = route._MarketStreamResponse(route._stream([1, 2], [], Request()))
+    response.reserve()
+
+    async def send(message):
+        body = message.get("body", b"")
+        if body.startswith(b"event: open"):
+            hub.subscriptions["live:market:1"].offer(frame(1))
+        if body.startswith(f"event: {after}".encode()):
+            raise failure()
+
+    with pytest.raises(failure):
+        await response(
+            {"type": "http", "asgi": {"spec_version": "2.4"}}, AsyncMock(), send
+        )
+    # Retain response/body_iterator while asserting: relying on GC would hide
+    # the leak that the response's explicit aclose must prevent.
+    assert response.body_iterator is not None
+    assert set(hub.released) == {"live:market:1", "live:market:2"}
+    assert route._open_connections == 0
+
+
 def test_route_is_mounted_on_the_public_api():
     from app.main import app
 
