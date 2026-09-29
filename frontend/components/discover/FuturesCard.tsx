@@ -99,6 +99,14 @@ interface FuturesCardProps extends CardActionCallbacks {
   pin?: ActionBarProps["pin"];
 }
 
+/** Assigned results only. Expired dates and extreme quotes are still forecasts. */
+function assignedFuturesResult(data: FeedFuturesData): string | null {
+  const winner = data.winner?.trim();
+  const terminal = data.resolved === true || !!winner ||
+    ["closed", "resolved", "settled", "finalized", "final"].includes((data.status ?? "").toLowerCase());
+  return terminal ? winner || "Resolved" : null;
+}
+
 export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, showProbabilityHint, onDetailClick, onShare, onContextExpand, onContextCollapse, pin }: FuturesCardProps) {
   const [showContext, setShowContext] = useState(false);
   const [showHeatmapContext, setShowHeatmapContext] = useState(false);
@@ -158,6 +166,22 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
   // else stays on the futures market page.
   const conceptKey = marketEventKey(data);
   const detailHref = conceptKey ? eventPath(conceptKey) : `/futures/${data.id}`;
+  const result = assignedFuturesResult(data);
+  if (result) {
+    return (
+      <article className="relative overflow-hidden rounded-[10px] border border-surface-border bg-surface-card p-4 shadow-md" aria-label={`${data.name} — resolved`} data-card-format="resolved">
+        <DismissBtn onDismiss={onDismiss} />
+        <div className={`text-[10px] font-semibold uppercase tracking-[0.04em] text-text-muted ${dismissCornerPad(onDismiss)}`}>Resolved</div>
+        <Link href={detailHref} onClick={onDetailClick} className="block group mt-2">
+          <h3 className="text-[15px] font-semibold leading-snug text-text-primary group-hover:text-accent-brand transition-colors">{data.name}</h3>
+        </Link>
+        {data.winner?.trim() && <p className="mt-3 text-lg font-semibold text-text-primary" data-testid="futures-assigned-result">{result}</p>}
+        <ActionBar liked={liked} setLiked={setLiked} shareUrl={buildDiscoverShareUrl(detailHref, "futures", data.id)}
+          shareTitle={data.name} shareText={`${data.name} — ${data.winner?.trim() ? `resolved: ${result}` : "resolved"} on Bain Luck.`}
+          contentType="futures" itemId={data.id} onShare={onShare} pin={pin} />
+      </article>
+    );
+  }
   const shareUrl = buildDiscoverShareUrl(detailHref, "futures", data.id);
   const leaderProbability = prob != null ? formatShareProbability(prob) : null;
   const shareText = leader && leaderProbability
@@ -1145,6 +1169,19 @@ export function FuturesCompactRow({ item, data }: { item: FeedItem; data: FeedFu
   const rowCue = forYouCue(item);
   const conceptKey = marketEventKey(data);
   const detailHref = conceptKey ? eventPath(conceptKey) : `/futures/${data.id}`;
+  const result = assignedFuturesResult(data);
+  if (result) {
+    return (
+      <Link href={detailHref} className="flex items-center gap-3 group" aria-label={`${data.name} — resolved`}>
+        <div className="flex-1 min-w-0">
+          <div className="text-sm font-semibold line-clamp-2 group-hover:text-accent-brand transition-colors">{data.name}</div>
+          <div className="text-xs text-text-secondary mt-0.5" data-testid="compact-row-assigned-result">
+            {data.winner?.trim() ? `Resolved · ${result}` : "Resolved"}
+          </div>
+        </div>
+      </Link>
+    );
+  }
   return (
     <Link href={detailHref} className="flex items-center gap-3 group">
       <div className="flex-1 min-w-0">
