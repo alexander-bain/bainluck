@@ -3196,6 +3196,64 @@ def sport_family_key(sport_key: Optional[str]) -> Optional[str]:
     return key.split("_", 1)[0] or None
 
 
+#: Women's competitions whose key carries no ``_women`` marker. A substring
+#: test alone reads the WNBA, the women's college game, AFLW and NRLW as men's
+#: leagues, and every one of them shares team names with its men's twin (#9581).
+_WOMENS_COMPETITION_KEYS: frozenset[str] = frozenset(
+    {
+        "basketball_wnba",
+        "basketball_wncaab",
+        "aussierules_aflw",
+        "rugbyleague_nrlw",
+    }
+)
+
+
+def competition_gender(sport_key: Optional[str]) -> Optional[str]:
+    """``"women"``, ``"men"``, or ``None`` when the key cannot say. Pure.
+
+    ``None`` is for a missing key and for a catch-all (``soccer_other``), which
+    holds both. A caller EXCLUDING on gender treats ``None`` as compatible with
+    either side: a wrong exclusion costs a club a real game, a wrong admission
+    costs what the page already showed.
+
+    ``tennis_wta`` and its tournament keys are women's play. A tour key is a
+    prefix family (:data:`TOUR_LEAGUES_INCLUDING_TOURNAMENTS`), so the test is a
+    prefix too.
+    """
+    key = (sport_key or "").strip().lower()
+    if not key or key.endswith(_SPORT_CATCH_ALL_SUFFIX):
+        return None
+    if (
+        key in _WOMENS_COMPETITION_KEYS
+        or "_women" in key
+        or key == "tennis_wta"
+        or key.startswith("tennis_wta_")
+    ):
+        return "women"
+    return "men"
+
+
+def same_sport_same_gender(a: Optional[str], b: Optional[str]) -> bool:
+    """Could a row under key ``b`` be play of a team registered under key ``a``?
+
+    The question a NAME match has to pass before a team page may claim the row
+    (#9581): same sport (:func:`sport_family_key`) and no gender contradiction
+    (:func:`competition_gender`). An unknown key on either side answers True —
+    this gate only ever removes rows, so it fails open.
+
+    Family equality is widened by a prefix test in either direction, so
+    ``rugby_other`` (family ``rugby``) still reaches a ``rugbyleague_nrl`` club.
+    """
+    fa, fb = sport_family_key(a), sport_family_key(b)
+    if fa is None or fb is None:
+        return True
+    if not (fa == fb or fa.startswith(fb) or fb.startswith(fa)):
+        return False
+    ga, gb = competition_gender(a), competition_gender(b)
+    return ga is None or gb is None or ga == gb
+
+
 def _sport_family_word(sport_key: str) -> str:
     """The reader-facing family word for a key, full key first then its head.
 
