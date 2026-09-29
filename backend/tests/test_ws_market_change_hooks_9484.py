@@ -37,8 +37,9 @@ THE CASES (Kalshi, the real `_run_kalshi_ws_consumer`):
     the_settlement ............... A lifecycle `settled` push → one terminal
                                    frame carrying the stored `settled_at`.
 
-And the Polymarket twin, through its real consumer: the flush's ship case, and
-its `market_resolved` push → one terminal frame carrying the `settled_at` that
+And the Polymarket twin, through its real consumer: the flush's ship case, the
+same price again (written, no frame — price arm only, this socket writes no
+book), and its `market_resolved` push → one terminal frame carrying the `settled_at` that
 transaction stored (read back inside it, so the read runs for real too).
 """
 
@@ -217,6 +218,10 @@ def _frames(messages):
 POLY_YES_TOKEN = "111"
 POLY_NO_TOKEN = "222"
 POLY_CONDITION = "0xabc"
+POLY_TICK = json.dumps({
+    "event_type": "best_bid_ask", "asset_id": POLY_YES_TOKEN,
+    "best_bid": "0.40", "best_ask": "0.44",
+})
 POLY_SLATE = [
     [
         (OUTCOME_ID, MARKET_ID, f"{POLY_CONDITION}_yes", POLY_CONDITION, EVENT_ID),
@@ -425,12 +430,8 @@ class TestThePolymarketSocketSaysWhichMarketMoved:
     async def test_the_price_that_landed(self, monkeypatch, tmp_path):
         """Twin of the Kalshi ship case, through the real Polymarket consumer."""
         engine = _database(tmp_path)
-        tick = json.dumps({
-            "event_type": "best_bid_ask", "asset_id": POLY_YES_TOKEN,
-            "best_bid": "0.40", "best_ask": "0.44",
-        })
         published, stats = await _drive_kalshi(
-            monkeypatch, engine, [tick], venue="polymarket"
+            monkeypatch, engine, [POLY_TICK], venue="polymarket"
         )
 
         assert stats["errors"] == 0
@@ -448,6 +449,30 @@ class TestThePolymarketSocketSaysWhichMarketMoved:
         )
         assert _as_utc(parsed["outcome_observed_at"][str(OUTCOME_ID)]) == stored
         assert stored_at_publish == pytest.approx(0.42)
+
+    async def test_the_tick_that_changed_nothing(self, monkeypatch, tmp_path):
+        """Twin of the Kalshi case: the same price again is written, never
+        signalled. The row holds the tick's midpoint exactly as the socket
+        computes it (SQLite compares the raw float; the Postgres file covers
+        the stored rounding)."""
+        moved_at = datetime(2026, 9, 1, tzinfo=timezone.utc)
+        engine = _database(
+            tmp_path, current_probability=(0.40 + 0.44) / 2,
+            price_changed_at=moved_at,
+        )
+        published, stats = await _drive_kalshi(
+            monkeypatch, engine, [POLY_TICK], venue="polymarket"
+        )
+
+        assert stats["errors"] == 0
+        assert published == []
+        assert stats["quotes_unchanged"] == 1
+        assert _as_utc(
+            _stored(engine, "futures_outcomes", "last_updated", OUTCOME_ID)
+        ) > moved_at
+        assert _as_utc(
+            _stored(engine, "futures_outcomes", "price_changed_at", OUTCOME_ID)
+        ) == moved_at
 
     async def test_the_resolution(self, monkeypatch, tmp_path):
         """Twin of the Kalshi settlement: a `market_resolved` push → one terminal
