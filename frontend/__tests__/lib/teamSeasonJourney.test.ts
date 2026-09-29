@@ -1,7 +1,7 @@
 // L2-162: season-journey line picker — tier priority + eligibility.
 import { isPlayerDestinationMarket, pickJourneyFuture } from "../../lib/teamSeasonJourney";
 import { teamHeadline } from "../../lib/teamHeadline";
-import type { TeamFutureItem } from "../../lib/api";
+import type { ChampionshipPathEntry, TeamFutureItem } from "../../lib/api";
 
 function item(overrides: Partial<TeamFutureItem>): TeamFutureItem {
   return {
@@ -102,5 +102,61 @@ describe("player-destination markets never stand in for a team's season (#9113)"
     "Who will be the next Pope?",
   ])("%s is not", (name) => {
     expect(isPlayerDestinationMarket(name)).toBe(false);
+  });
+});
+
+// #9569: the Warriors' hero read CHAMPIONSHIP 1% off `championship_path` (market
+// 2 "NBA Championship Winner", the tier-1 average 0.0069) while the journey under
+// it charted "NBA: 2026 NBA Cup Winner" at 2% — tier 1 as well, and it won the
+// probability tie-break. Values from production `/api/teams/golden-state-warriors`,
+// 2026-09-29 07:33Z.
+describe("pickJourneyFuture follows the page's headline market (#9569)", () => {
+  const WARRIORS: TeamFutureItem[] = [
+    item({ market_id: 57777176, outcome_id: 1, market_tier: 5, market_name: "NBA: Steph Curry Next Team", probability: 0.9865 }),
+    item({ market_id: 60087207, outcome_id: 2, market_tier: 2, market_name: "NBA Playoffs: Team to advance to Western Conference Semifinals", probability: 0.22 }),
+    item({ market_id: 59249431, outcome_id: 220348459, market_tier: 1, market_name: "NBA: 2026 NBA Cup Winner", probability: 0.02 }),
+    item({ market_id: 2, outcome_id: 44, market_tier: 1, market_name: "NBA Championship Winner", probability: 0.013193 }),
+    item({ market_id: 20569230, outcome_id: 3, market_tier: 1, market_name: "NBA: 2027 Champion", probability: 0.0105 }),
+  ];
+  const PATH: ChampionshipPathEntry[] = [
+    { tier: 1, label: "Championship", market_name: "NBA Championship Winner", market_id: 2, probability: 0.0069, rank: 17, movement: null, season: "2026-27" },
+  ];
+
+  test("strawman: without the path the tier rule picks the Cup (the defect)", () => {
+    expect(pickJourneyFuture(WARRIORS)?.marketName).toBe("NBA: 2026 NBA Cup Winner");
+  });
+
+  test("with the path, the journey charts the hero's market and prints the hero's number", () => {
+    const pick = pickJourneyFuture(WARRIORS, PATH);
+    expect(pick).toEqual({
+      marketId: 2,
+      outcomeId: 44,
+      marketName: "NBA Championship Winner",
+      probability: 0.0069,
+    });
+    expect(pick?.probability).toBe(teamHeadline(PATH, WARRIORS)?.probability);
+  });
+
+  test("a non-tier-1 headline step is followed too (path[0] when no tier 1)", () => {
+    const path: ChampionshipPathEntry[] = [
+      { ...PATH[0], tier: 2, label: "Conference", market_id: 60087207, probability: 0.21 },
+    ];
+    expect(pickJourneyFuture(WARRIORS, path)).toMatchObject({ marketId: 60087207, outcomeId: 2, probability: 0.21 });
+  });
+
+  test("falls back to the tier rule when the headline market is not in the futures list", () => {
+    const path: ChampionshipPathEntry[] = [{ ...PATH[0], market_id: 999 }];
+    expect(pickJourneyFuture(WARRIORS, path)?.marketId).toBe(59249431);
+  });
+
+  test("falls back to the tier rule when the headline step has no number", () => {
+    const path: ChampionshipPathEntry[] = [{ ...PATH[0], probability: null }];
+    expect(pickJourneyFuture(WARRIORS, path)?.marketId).toBe(59249431);
+    expect(pickJourneyFuture(WARRIORS, [])?.marketId).toBe(59249431);
+  });
+
+  test("never charts an ineligible row even when it is the headline market", () => {
+    const settled = WARRIORS.map((f) => (f.market_id === 2 ? { ...f, is_winner: true } : f));
+    expect(pickJourneyFuture(settled, PATH)?.marketId).toBe(59249431);
   });
 });

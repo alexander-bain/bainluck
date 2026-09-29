@@ -393,6 +393,7 @@ export default function TeamPage() {
       {/* Season Journey — the team's championship prob over the season (one line). */}
       <TeamSeasonJourney
         futures={futures}
+        championshipPath={championship_path}
         teamColor={team.primary_color}
         season={season?.season ?? null}
       />
