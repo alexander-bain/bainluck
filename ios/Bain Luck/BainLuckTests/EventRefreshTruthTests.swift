@@ -32,9 +32,18 @@ final class EventRefreshTruthTests: XCTestCase {
         XCTAssertTrue(EventDetailView.showsRefreshStatus(status: "live"))
     }
 
-    func testScheduledDoesNotShowStatus() {
-        // The C43 defect: scheduled pages have no reload request but cycled a ring.
-        XCTAssertFalse(EventDetailView.showsRefreshStatus(status: "scheduled"))
+    func testOpenContractPhasesShowHonestDeliveryStatus() {
+        for status in ["scheduled", "suspended", "live"] {
+            XCTAssertTrue(EventDetailView.showsRefreshStatus(status: status))
+            XCTAssertEqual(indicator(status: status, streaming: true, pushed: false), .polling)
+            XCTAssertEqual(indicator(status: status, streaming: true), .streaming)
+            XCTAssertEqual(LiveUpdateStatus.decide(status: status, delivering: true,
+                acceptedUpdate: false, refreshFailed: false), .awaitingUpdate)
+            XCTAssertEqual(LiveUpdateStatus.decide(status: status, delivering: true,
+                acceptedUpdate: true, refreshFailed: false), .live)
+            XCTAssertEqual(LiveUpdateStatus.decide(status: status, delivering: false,
+                acceptedUpdate: false, refreshFailed: true), .interrupted)
+        }
     }
 
     func testCompletedDoesNotShowStatus() {
@@ -86,7 +95,7 @@ final class EventRefreshTruthTests: XCTestCase {
         // `streamDelivering` cannot resurrect chrome on a page that has no
         // refresh at all; the VM never opens a stream off `live`, and if that
         // ever changed the indicator must not be what discovers it.
-        for status in ["scheduled", "completed", "closed"] {
+        for status in ["postponed", "completed", "closed"] {
             XCTAssertEqual(indicator(status: status, streaming: true), .hidden, "status \(status)")
             XCTAssertEqual(indicator(status: status, streaming: false), .hidden, "status \(status)")
         }

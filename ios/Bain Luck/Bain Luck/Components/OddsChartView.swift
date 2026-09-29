@@ -954,7 +954,7 @@ struct OddsChartView: View {
             // compresses its words into a glass circle on iOS. Reserve readable
             // content space below navigation without covering the chart/readout.
             .safeAreaInset(edge: .top, spacing: 0) {
-                if status == "live" && liveUpdateStatus != .hidden {
+                if EventPriceStreaming.isEligible(status) && liveUpdateStatus != .hidden {
                     LiveUpdateStatusView(status: liveUpdateStatus)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal)
@@ -1631,7 +1631,7 @@ struct OddsChartView: View {
                     // one-shot ring the chart had before #9436, unchanged.
                     LiveChartEndpointFeedback(selection: selection, activity: priceActivity,
                                               probability: latest.probability,
-                                              isLive: status == "live" && liveUpdateStatus != .interrupted,
+                                              isLive: EventPriceStreaming.isEligible(status) && liveUpdateStatus != .interrupted,
                                               color: teamColors?.home ?? .accentColor)
                         .position(x: plotFrame.minX + x, y: plotFrame.minY + y)
                         .allowsHitTesting(false)
@@ -1725,7 +1725,7 @@ struct OddsChartView: View {
     /// the x-domain, as the old endpoint ring required, so the overlay never
     /// draws where the plot would not.
     private func liveEdgeSplit(dataPoints: [ChartDataPoint], domain: ClosedRange<Date>) -> LiveEdgeSplit? {
-        guard let liveEdge, status == "live", liveUpdateStatus != .interrupted,
+        guard let liveEdge, EventPriceStreaming.isEligible(status), liveUpdateStatus != .interrupted,
               let newest = LiveChartEdgeMarkerPlan.edgeVertex(
                 in: dataPoints, visible: Self.defaultVisibleSources(in: dataPoints),
                 reading: liveEdge, latestFrame: liveFrames.last)

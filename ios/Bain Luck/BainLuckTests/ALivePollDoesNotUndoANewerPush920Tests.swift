@@ -58,12 +58,14 @@ final class ALivePollDoesNotUndoANewerPush920Tests: XCTestCase {
         XCTAssertEqual(LiveEventPriceReconciliation.applying(frame(), to: polled, streamRecoverable: false).currentOdds?.homeProbability, 0.4)
     }
 
-    func testFinalAndSuspendedResponsesRemainAuthoritative() throws {
+    func testFinalResultsStayAuthoritativeWhileSuspensionKeepsIndependentQuoteDelivery() throws {
         for status in ["final", "completed", "suspended"] {
             let result = LiveEventPriceReconciliation.applying(frame(), to: try event(p: "1", status: status, score: 4), streamRecoverable: true)
             XCTAssertEqual(result.status, status)
             XCTAssertEqual(result.homeScore, 4)
-            XCTAssertEqual(result.currentOdds?.homeProbability, 1)
+            XCTAssertEqual(result.currentOdds?.homeProbability, status == "suspended" ? 0.55 : 1)
+            XCTAssertEqual(EventPriceStreaming.isEligible(result.status), status == "suspended",
+                "suspended quotes remain eligible without pretending the game is live")
         }
     }
 
@@ -235,6 +237,7 @@ final class ALivePollDoesNotUndoANewerPush920Tests: XCTestCase {
         XCTAssertEqual(vm.event?.currentOdds?.homeProbability, expectedPrice, file: file, line: line)
         XCTAssertEqual(vm.event?.status, expectedStatus, file: file, line: line)
         XCTAssertEqual(vm.event?.homeScore, response.homeScore, file: file, line: line)
+        XCTAssertEqual(vm.event?.commenceTime, response.commenceTime, "quote preservation never overrides schedule authority", file: file, line: line)
         XCTAssertEqual(vm.liveBlend.last?.homeProbability, 0.55, file: file, line: line)
         XCTAssertEqual(vm.currentRefreshPlan, expectedPlan, file: file, line: line)
         XCTAssertEqual(handle.isClosed, expectedClosed, file: file, line: line)
@@ -278,19 +281,19 @@ final class ALivePollDoesNotUndoANewerPush920Tests: XCTestCase {
             expectedPrice: 0.55, expectedPlan: .poll(every: EventRefreshPlan.livePollInterval), expectedDelivering: true)
     }
 
-    func testScheduledCorrectionWithChangedMissingOrFutureStartIsAuthoritative() async throws {
+    func testScheduledCorrectionKeepsAuthoritativePhaseAndStartWhileNewerQuoteSurvives() async throws {
         let start = "2026-09-25T17:00:00Z"
         for pair: (String?, String?) in [(start, nil), (nil, start), (start, "2026-09-25T16:00:00Z"), (start, "2026-09-26T17:00:00Z"), ("2026-09-26T17:00:00Z", "2026-09-26T17:00:00Z")] {
             let response = try event(status: "scheduled", commence: pair.1)
             let plan = EventRefreshPlan.decide(status: "scheduled", streamDelivering: false, commenceTime: pair.1?.asDate, now: Date(timeIntervalSince1970: 1_790_355_622))
-            try await checkRecovery(initial: event(commence: pair.0), response: response, expectedPrice: 0.4, expectedStatus: "scheduled", expectedPlan: plan, expectedClosed: true)
+            try await checkRecovery(initial: event(commence: pair.0), response: response, expectedPrice: 0.55, expectedStatus: "scheduled", expectedPlan: plan, expectedClosed: false, expectedDelivering: true)
         }
     }
 
-    func testScheduledUnknownClockAndTerminalControllerStayAuthoritative() async throws {
+    func testScheduledUnknownClockUsesRestWithoutClosingEligibleStreamAndRefusalStaysTerminal() async throws {
         let start = "2026-09-25T17:00:00Z"
         try await checkRecovery(initial: event(commence: start), response: event(status: "scheduled", commence: start, sources: #""kalshi":{"value":0.4}"#),
-            expectedPrice: 0.4, expectedStatus: "scheduled", expectedPlan: .poll(every: 60), expectedClosed: true)
+            expectedPrice: 0.4, expectedStatus: "scheduled", expectedPlan: .poll(every: 60), expectedClosed: false, expectedDelivering: true)
         try await checkRecovery(initial: event(commence: start), response: event(status: "scheduled", commence: start), transitions: ["error", "refusal"],
             expectedPrice: 0.4, expectedStatus: "scheduled", expectedPlan: .poll(every: 60), expectedClosed: true)
     }

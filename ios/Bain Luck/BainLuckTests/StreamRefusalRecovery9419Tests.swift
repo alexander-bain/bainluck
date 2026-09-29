@@ -93,14 +93,15 @@ final class StreamRefusalRecovery9419Tests: XCTestCase {
         XCTAssertEqual(r.handles.count, 3, "each new refusal has its own bounded retry")
     }
 
-    func testSuspendedDoesNotOpenStreamAndLaterLiveDetailCanStartIt() async {
+    func testSuspendedOpensOneQuoteStreamAndLaterLiveDetailReusesIt() async {
         let r = Rig()
         defer { r.vm.stopRefresh() }
         r.client.status = "suspended"
         await r.vm.load()
         r.clock.time += 30
         await r.vm.load()
-        XCTAssertTrue(r.handles.isEmpty)
+        XCTAssertEqual(r.handles.count, 1)
+        XCTAssertEqual(r.vm.event?.status, "suspended", "quote eligibility must not mark the sport live")
         r.client.status = "live"
         await r.vm.load()
         XCTAssertEqual(r.handles.count, 1)
@@ -123,7 +124,7 @@ final class StreamRefusalRecovery9419Tests: XCTestCase {
         XCTAssertFalse(first.isClosed)
     }
 
-    func testNonLiveDetailAfterRefusalDoesNotRetryStream() async {
+    func testSuspendedAfterRefusalRetriesBoundedlyButCompletedDoesNot() async {
         let r = Rig()
         defer { r.vm.stopRefresh() }
         await r.vm.load()
@@ -131,6 +132,14 @@ final class StreamRefusalRecovery9419Tests: XCTestCase {
         r.clock.time += 30
         r.client.status = "suspended"
         await r.vm.load()
-        XCTAssertEqual(r.handles.count, 1)
+        XCTAssertEqual(r.handles.count, 2, "the admitted suspended contract recovers after its bounded refusal delay")
+        XCTAssertEqual(r.vm.event?.status, "suspended")
+        guard r.handles.count == 2 else { return }
+        r.handles[1].refuse()
+        r.clock.time += 30
+        r.client.status = "completed"
+        await r.vm.load()
+        XCTAssertEqual(r.handles.count, 2, "terminal sport results stay off quote retry")
+        XCTAssertEqual(r.vm.event?.status, "completed")
     }
 }

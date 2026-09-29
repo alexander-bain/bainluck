@@ -103,7 +103,7 @@ final class LiveEventStreamTransport: LiveStreamHandle {
     /// from a drop until the retry's 200.
     var isConnecting: Bool { !closed && connecting }
 
-    init(
+    convenience init(
         eventId: Int,
         baseURL: String = "https://api.bainluck.com",
         session: URLSession? = nil,
@@ -112,6 +112,13 @@ final class LiveEventStreamTransport: LiveStreamHandle {
         guard let url = URL(string: "\(baseURL)/api/events/\(eventId)/stream") else {
             throw URLError(.badURL)
         }
+        self.init(url: url, session: session, retryDelay: retryDelay)
+    }
+
+    /// Reuse the same SSE transport for bounded market invalidation streams.
+    /// The event initializer above retains its existing URL and behavior.
+    init(url: URL, session: URLSession? = nil,
+         retryDelay: TimeInterval = LiveEventStreamTransport.defaultRetryDelay) {
         self.url = url
         self.retryDelay = retryDelay
         if let session {

@@ -43,24 +43,60 @@ nonisolated struct ProgressionStageData: Decodable, Sendable {
 // MARK: - Game Markets Response
 
 /// Full set of prediction markets attached to a game detail page.
-nonisolated struct GameMarketsResponse: Decodable, Sendable {
+nonisolated struct GameMarketsResponse: Decodable, Equatable, Sendable {
     let eventId: Int
     let homeTeam: String?
     let awayTeam: String?
     let status: String?
     let homeScore: Int?
     let awayScore: Int?
-    let playerProps: [GameMarketPlayerProp]?
-    let spreads: [GameMarketOutcome]?
-    let totals: [GameMarketOutcome]?
-    let teamTotals: [GameMarketOutcome]?
-    let periodMarkets: [GameMarketOutcome]?
-    let other: [GameMarketOther]?
+    var playerProps: [GameMarketPlayerProp]?
+    var spreads: [GameMarketOutcome]?
+    var totals: [GameMarketOutcome]?
+    var teamTotals: [GameMarketOutcome]?
+    var periodMarkets: [GameMarketOutcome]?
+    var other: [GameMarketOther]?
     let pace: GameMarketPace?
+    // Raw row revision orders projections; real observation remains separate.
+    var streamMarketIds: [Int]? = nil
+    var outcomeMarketIds: [String: Int]? = nil
+    var outcomeRevisionAt: [String: String?]? = nil
+    var outcomeObservedAt: [String: String?]? = nil
+    /// Separate from the immutable final sport result and settled prop buckets.
+    var openWinnerQuote: FinalGameWinnerQuote? = nil
+    var closedWinnerMarketIds: [Int]? = nil
+    var matchups: [GameMarketMatchup]? = nil
+}
+
+/// A head-to-head/field bucket keeps every nested quote and grade identifiable.
+nonisolated struct GameMarketMatchup: Decodable, Equatable, Identifiable, Sendable {
+    var id: String { _marketId.map(String.init) ?? marketName }
+    let marketName: String
+    let type: String?
+    let source: String?
+    let outcomes: [GameMarketMatchupOutcome]
+    var _marketId: Int? = nil
+    var _marketIds: [Int]? = nil
+    var contributorOutcomeIds: [Int]? = nil
+}
+
+nonisolated struct GameMarketMatchupOutcome: Decodable, Equatable, Sendable {
+    let name: String
+    let probability: Double?
+    let observedAt: String?
+    var contributorOutcomeIds: [Int]? = nil
+    var isWinner: Bool? = nil
+    var resolutionSource: String? = nil
 }
 
 /// Miscellaneous game market outcome that does not fit a primary section.
-nonisolated struct GameMarketOther: Decodable, Identifiable, Sendable {
+nonisolated struct GameMarketOther: Decodable, Equatable, Identifiable, Sendable {
+    // Leading underscores are retained by convertFromSnakeCase.
+    var _marketId: Int? = nil
+    var _marketIds: [Int]? = nil
+    var contributorOutcomeIds: [Int]? = nil
+    var isWinner: Bool? = nil
+    var resolutionSource: String? = nil
     var id: String { "\(marketName)-\(outcomeName)" }
     let marketName: String
     let outcomeName: String
@@ -90,7 +126,7 @@ nonisolated struct GameMarketOther: Decodable, Identifiable, Sendable {
 }
 
 /// Live scoring pace context for totals and in-game markets.
-nonisolated struct GameMarketPace: Decodable, Sendable {
+nonisolated struct GameMarketPace: Decodable, Equatable, Sendable {
     let totalScored: Int?
     let projectedTotal: Double?
     let fractionElapsed: Double?
@@ -98,7 +134,13 @@ nonisolated struct GameMarketPace: Decodable, Sendable {
 }
 
 /// Player prop market with threshold, probability, and player metadata.
-nonisolated struct GameMarketPlayerProp: Decodable, Identifiable, Sendable {
+nonisolated struct GameMarketPlayerProp: Decodable, Equatable, Identifiable, Sendable {
+    // Leading underscores are retained by convertFromSnakeCase.
+    var _marketId: Int? = nil
+    var _marketIds: [Int]? = nil
+    var contributorOutcomeIds: [Int]? = nil
+    var isWinner: Bool? = nil
+    var resolutionSource: String? = nil
     var id: String { "\(marketName)-\(outcomeName)" }
     let marketName: String
     let outcomeName: String
@@ -143,7 +185,12 @@ nonisolated struct GameMarketPlayerProp: Decodable, Identifiable, Sendable {
 }
 
 /// Generic game market outcome used for spreads, totals, team totals, and periods.
-nonisolated struct GameMarketOutcome: Decodable, Identifiable, Sendable {
+nonisolated struct GameMarketOutcome: Decodable, Equatable, Identifiable, Sendable {
+    // Leading underscores are retained by convertFromSnakeCase.
+    var _marketId: Int? = nil
+    var _marketIds: [Int]? = nil
+    var contributorOutcomeIds: [Int]? = nil
+    // isWinner / resolutionSource are declared below (#9108).
     var id: String { "\(marketName)-\(outcomeName)" }
     let marketName: String
     let outcomeName: String

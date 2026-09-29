@@ -198,8 +198,10 @@ struct EvolutionChartView: View {
     var height: CGFloat = 280
     var tournamentStart: String?
     var tournamentEnd: String?
+    var refreshToken: Int = 0
 
     @State private var data: ProbabilityTimelineResponse?
+    @State private var requestGeneration = 0
     @State private var loading = true
     @State private var error: String?
     @State private var errorIsRetryable = false
@@ -343,12 +345,13 @@ struct EvolutionChartView: View {
                 }
             }
         }
-        .task {
-            if hasTournamentDates, let start = parsedTournamentStart, start <= Date() {
+        .task(id: refreshToken) {
+            if data == nil, hasTournamentDates, let start = parsedTournamentStart, start <= Date() {
                 selectedRange = .tournament
             }
             await loadData()
         }
+        .onDisappear { requestGeneration += 1 }
     }
 
     // MARK: - Empty State
@@ -396,6 +399,8 @@ struct EvolutionChartView: View {
     // MARK: - Load Data
 
     private func loadData() async {
+        requestGeneration += 1
+        let generation = requestGeneration
         loading = data == nil
         errorIsRetryable = false
         do {
@@ -419,6 +424,7 @@ struct EvolutionChartView: View {
             let result = try await APIClient.shared.fetchProbabilityTimeline(
                 marketId: marketId, top: 50, hours: fetchHours
             )
+            guard !Task.isCancelled, generation == requestGeneration else { return }
             data = result
             requestedHours = fetchHours
             if selectedNames.isEmpty {
@@ -427,8 +433,21 @@ struct EvolutionChartView: View {
             error = nil
             loading = false
         } catch let apiError as APIError {
+            guard !Task.isCancelled, generation == requestGeneration else { return }
             if apiError.isCancellation {
                 // Task cancelled (e.g. view disappeared) — don't show error
+                return
+            }
+            if let seconds = FuturesPriceReadCooldown.timelineRetrySeconds(for: apiError) {
+                self.error = "Prices are temporarily unavailable. Trying again shortly."
+                errorIsRetryable = true
+                loading = false
+                // A successful detail must not strand its chart after the last
+                // invalidation. Retry transport failures boundedly; respect a
+                // server cooldown when the response provides one.
+                try? await Task.sleep(nanoseconds: UInt64(min(seconds, 86_400) * 1_000_000_000))
+                guard !Task.isCancelled, generation == requestGeneration else { return }
+                await loadData()
                 return
             }
             switch apiError {
@@ -453,6 +472,7 @@ struct EvolutionChartView: View {
             }
             loading = false
         } catch {
+            guard !Task.isCancelled, generation == requestGeneration else { return }
             self.error = "Failed to load timeline"
             errorIsRetryable = true
             loading = false
