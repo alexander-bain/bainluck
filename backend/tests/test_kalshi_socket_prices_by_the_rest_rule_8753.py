@@ -122,7 +122,9 @@ def _stored_after(stmt) -> tuple[float, float, float]:
             current_yes_bid=SEEDED_BID,
             current_yes_ask=SEEDED_ASK,
         ))
-        assert conn.execute(stmt).rowcount == 1
+        # #9484: the UPDATE RETURNS the row it wrote; consume it (SQLite
+        # holds the statement open until the rows are read).
+        assert len(conn.execute(stmt).all()) == 1
         row = conn.execute(
             select(
                 table.c.current_probability,

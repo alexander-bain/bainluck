@@ -735,6 +735,12 @@ class LiveBlendRefresher:
             # #837 tail — stamps that stopped waiting on another transaction's
             # row lock and were re-queued. Not an error: the retry is the path.
             "lock_skipped": 0,
+            # #9484 — committed market invalidations (`live:market:{id}`) this
+            # consumer's writers published through the same client. Counted
+            # for the same reason as `published`: a quiet market and a dead
+            # market publisher must not look alike.
+            "market_published": 0,
+            "market_publish_errors": 0,
         }
         #: Lazily-built async Redis client, reused for the life of this
         #: refresher. Built on first publish rather than in __init__ so a
@@ -1261,6 +1267,35 @@ class LiveBlendRefresher:
                 else:
                     self._last_snapshot_at[event_id] = at
             raise
+
+    async def publish_market_changes(self, session) -> int:
+        """#9484: drain the market invalidations ``session`` staged and committed.
+
+        Call AFTER the writer's ``get_task_session()`` block has exited, so only
+        an outer commit that landed can publish (`market_quote_push` holds the
+        rows until its after-commit hook moves them). It shares ``self._redis``
+        with the event frames: one client per consumer, never one per flush,
+        and it does not wait on ``refresh()`` — a standalone future has no
+        event blend to stamp, and its quote is just as real. Never raises.
+        """
+        from app.utils.market_quote_push import publish_committed_market_changes
+
+        try:
+            if self._redis is None:
+                from app.tasks.redis_state import get_async_redis_client
+
+                self._redis = get_async_redis_client()
+            sent = await publish_committed_market_changes(session, self._redis)
+        except Exception:
+            self.stats["market_publish_errors"] += 1
+            self._redis = None
+            logger.warning(
+                "live_blend_refresh[%s]: market publication failed",
+                self.source, exc_info=True,
+            )
+            return 0
+        self.stats["market_published"] += sent
+        return sent
 
     async def _publish(self, frames: list[dict]) -> None:
         """Fan the committed frames out to any SSE subscribers. Never raises.

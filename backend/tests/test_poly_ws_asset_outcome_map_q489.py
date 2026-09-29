@@ -161,6 +161,10 @@ class _NoopRefresher:
         # #837 tail: the quiet-flush path; a fake never defers a stamp.
         return None
 
+    async def publish_market_changes(self, _session):
+        # #9484: market invalidations have their own tests; publish nothing.
+        return 0
+
 
 def _frame(event_type, asset_id, **kw):
     import json

@@ -16,6 +16,7 @@ import time
 from datetime import datetime, timezone
 
 from app.utils.kalshi_market_status import is_terminal
+from app.utils.market_quote_push import queue_market_change
 from app.utils.market_settlement import settled_values
 
 logger = logging.getLogger(__name__)
@@ -262,7 +263,13 @@ async def _run_kalshi_ws_consumer():
                     # splat, so the #4958 writer scan can read the mapping.
                     tick_has_book = yes_bid is not None and yes_ask is not None
                     result = await session.execute(
-                        update(FuturesOutcome)
+                        # #9484: the TABLE, not the entity. An ORM-enabled
+                        # UPDATE ... RETURNING comes back as an ORM result with
+                        # no `rowcount`, and the #5411 guard below reads it;
+                        # the Core form keeps the CursorResult (asyncpg sets
+                        # its rowcount from the command status) and returns
+                        # the rows that actually took the price.
+                        update(FuturesOutcome.__table__)
                         .where(
                             FuturesOutcome.id == outcome_id,
                             # #5411 — A SETTLED CONTRACT HAS NO LIVE PRICE. It is
@@ -325,6 +332,11 @@ async def _run_kalshi_ws_consumer():
                                 else FuturesOutcome.current_yes_ask
                             ),
                         )
+                        .returning(
+                            FuturesOutcome.id,
+                            FuturesOutcome.market_id,
+                            FuturesOutcome.last_updated,
+                        )
                     )
                     # #5411 — a settled row matches the id and fails the guard, so
                     # the statement affects 0 rows. (A row deleted between
@@ -335,6 +347,19 @@ async def _run_kalshi_ws_consumer():
                         declined += 1
                     else:
                         written_outcome_ids.append(outcome_id)
+                    # #9484: one market invalidation per row the UPDATE
+                    # RETURNED, stamped with the stored `last_updated` — never
+                    # the buffered id, never a local clock. A #5411 refusal or
+                    # a deleted row returns nothing, so it signals nothing.
+                    # Staged against this transaction; published below only
+                    # once the outer commit has landed.
+                    for row in result.all():
+                        queue_market_change(
+                            session,
+                            market_id=row.market_id,
+                            source="kalshi",
+                            outcome_observed_at={row.id: row.last_updated},
+                        )
 
                 # #6598 / CERT-3182. `rank` is derived from the price this loop
                 # just moved, and nothing in this module has ever written it —
@@ -374,6 +399,12 @@ async def _run_kalshi_ws_consumer():
                 "Kalshi WS: flush error (%d updates retained for retry)", len(batch)
             )
             return
+
+        # #9484 — the commit landed, so the rows it carried may now say so on
+        # `live:market:{id}`. Before the buffer bookkeeping and the blend
+        # refresh, so neither can suppress it: a standalone future or prop has
+        # no event blend, and its moved quote is just as real.
+        await blend_refresher.publish_market_changes(session)
 
         # Q491 repair 2 — the write landed, so and only so do these entries
         # leave the buffer. The `== prob` test is what used to be `setdefault`:
@@ -510,14 +541,31 @@ async def _run_kalshi_ws_consumer():
 
         try:
             async with get_task_session() as session:
-                await session.execute(
-                    update(FuturesMarket)
-                    .where(FuturesMarket.id == market_id)
-                    .values(
-                        status="resolved",
-                        **settled_values(FuturesMarket.settled_at),
+                settled = (
+                    await session.execute(
+                        update(FuturesMarket)
+                        .execution_options(synchronize_session=False)
+                        .where(FuturesMarket.id == market_id)
+                        .values(
+                            status="resolved",
+                            **settled_values(FuturesMarket.settled_at),
+                        )
+                        .returning(FuturesMarket.id, FuturesMarket.settled_at)
                     )
-                )
+                ).first()
+                # #9484: the terminal invalidation carries the stored
+                # `settled_at` this write returned, and only if it returned
+                # one. It mirrors exactly what REST will now serve for the
+                # market; clients refetch and apply their settlement guards.
+                if settled is not None:
+                    queue_market_change(
+                        session,
+                        market_id=settled.id,
+                        source="kalshi",
+                        outcome_observed_at={},
+                        terminal=True,
+                        updated_at=settled.settled_at,
+                    )
 
                 if result in ("yes", "no"):
                     is_winner = result == "yes"
@@ -549,6 +597,7 @@ async def _run_kalshi_ws_consumer():
                     )
 
             stats["settlements"] += 1
+            await blend_refresher.publish_market_changes(session)
             logger.info(
                 "Kalshi WS: %s settled (result=%s, closing=%.3f)",
                 ticker, result, closing_price or 0,
