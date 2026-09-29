@@ -3317,9 +3317,12 @@ _KALSHI_TICKER_LIKE_PATTERNS = [f"{prefix}%" for prefix in _KALSHI_GAME_TICKER_P
 async def _try_link_market(
     session, market, matchup, matched_event, stats: dict,
     ticker_game_date, now: datetime, polymarket_backfill_queue: list,
-    *, receipt=None,
+    *, receipt=None, allow_create: bool = True,
 ) -> None:
     """Link a matched market to its event, or auto-create an event if needed.
+
+    ``allow_create=False`` (#9494) keeps the link and drops the auto-create:
+    no match, or a refused one, ends as ``auto_create_declined``.
 
     ``receipt`` (#2705) is write-only: the outcome of this call is the outcome
     the receipt records. Note that this is where the two REFUSALS live —
@@ -3406,6 +3409,13 @@ async def _try_link_market(
         return
 
     # No existing event — try auto-creating
+    if not allow_create:
+        stats["funnel"]["no_event_found"] += 1
+        if receipt is not None:
+            receipt.detail["auto_create"] = "declined"
+            if receipt.reject_reason is None:
+                receipt.reject(_receipts.REJECT_AUTO_CREATE_DECLINED)
+        return
     if matchup and matchup.team_b:
         auto_event = await _create_event_from_prediction_market(
             session, matchup, market, now,
@@ -3983,11 +3993,62 @@ async def _join_polymarket_group_row(
     return True
 
 
+def _venue_moneyline_match_name(market) -> Optional[str]:
+    """The ``A vs B`` behind a venue-labelled tennis moneyline's title, or None.
+
+    #9494. Polymarket titles a Challenger or ITF match with the bare city as its
+    label: "Curitiba: Ryan Dickerson vs Jose Pereira", "M15 Ann Arbor, MI: …",
+    "W35 Reims: …". `_CATEGORY_PREFIX_RE` strips a tournament it can name
+    ("China Open:", "Porto 2 (Doubles):"), and a city is a list with no end, so
+    these read as not game level. A bigger group still reached its row, because
+    an O/U sibling ("A vs. B: Total Sets O/U 2.5") IS game level: it linked the
+    row, and #9450 pulled the match market onto it. A Challenger group often
+    carries the moneyline and nothing else. Nothing links it, so the match's
+    page runs on Kalshi alone. Production, 2026-09-28: Dickerson v Pereira
+    (event 15320435), plus 20 more upcoming matches with a row to join.
+
+    The label is only stripped when two independent signals agree (standing
+    notice 40): Gamma's own ``sportsMarketType`` says this market prices who
+    wins the match (`is_full_contest_winner_type`, exact match), and what
+    follows the one colon is a bare matchup on its own. A prop label never gets
+    through. "Set 1 Winner:", "Set Handicap:" and "Completed Match:" all carry
+    their own Gamma types, and a title with a second colon is refused outright.
+    An absent label (~21% of markets) answers None, the refusal as before.
+    """
+    if getattr(market, "source", None) != "polymarket":
+        return None
+    if getattr(market, "llm_sport_category", None) != "tennis":
+        return None
+    from app.services.polymarket_api import is_full_contest_winner_type
+    from app.utils.content_understanding import understanding_from_metadata
+
+    understanding = understanding_from_metadata(
+        getattr(market, "market_metadata", None)
+    )
+    if not understanding or not is_full_contest_winner_type(
+        understanding.get("venue_type")
+    ):
+        return None
+    label, colon, rest = (market.name or "").partition(":")
+    rest = rest.strip()
+    if not colon or not label.strip() or not rest or ":" in rest:
+        return None
+    if not is_game_level_market(rest, market.category):
+        return None
+    return rest
+
+
 async def _run_one_attempt(
     session, market, receipt: MatchReceipt, stats: dict, now: datetime,
     polymarket_backfill_queue: list, _time_remaining,
 ) -> None:
     """The attempt itself: classify, parse, search, link. May raise."""
+    match_name = market.name
+    # #9494: a venue-labelled moneyline read through its city label may JOIN a
+    # row that already exists, and never mints one. Its title alone would have
+    # created nothing, and a row minted from a full name beside Kalshi's
+    # surname row would be two rows for one game.
+    join_only = False
     if not is_game_level_market(
         market.name, market.category,
         external_id=market.external_id,
@@ -3996,18 +4057,21 @@ async def _run_one_attempt(
             session, market, receipt, stats, polymarket_backfill_queue,
         ):
             return
-        stats["funnel"]["not_game_level"] += 1
-        if len(stats["funnel"]["sample_not_game_level"]) < 10:
-            stats["funnel"]["sample_not_game_level"].append(
-                {"source": market.source, "name": market.name,
-                 "external_id": market.external_id}
-            )
-        if not _receipt_parent_or_not_game_level(market, receipt):
-            receipt.reject(_receipts.REJECT_NOT_GAME_LEVEL, category=market.category)
-        return
+        match_name = _venue_moneyline_match_name(market)
+        if match_name is None:
+            stats["funnel"]["not_game_level"] += 1
+            if len(stats["funnel"]["sample_not_game_level"]) < 10:
+                stats["funnel"]["sample_not_game_level"].append(
+                    {"source": market.source, "name": market.name,
+                     "external_id": market.external_id}
+                )
+            if not _receipt_parent_or_not_game_level(market, receipt):
+                receipt.reject(_receipts.REJECT_NOT_GAME_LEVEL, category=market.category)
+            return
+        join_only = True
 
     matchup = extract_matchup_with_ticker_fallback(
-        market.name, external_id=market.external_id,
+        match_name, external_id=market.external_id,
     )
     if not matchup:
         stats["funnel"]["no_matchup_extracted"] += 1
@@ -4027,7 +4091,7 @@ async def _run_one_attempt(
     # cleaned, which is the half `is_derivative_market_name`'s own docstring
     # promised ("may link to a fixture we already hold") and never had.
     matched_event = await _find_matching_event(
-        session, matchup_for_link_search(matchup, market.name), market, now,
+        session, matchup_for_link_search(matchup, match_name), market, now,
         game_date_override=game_date,
         receipt=receipt,
         probe_allowed=_time_remaining() > _PROBE_MIN_SECONDS_REMAINING,
@@ -4036,8 +4100,11 @@ async def _run_one_attempt(
     await _try_link_market(
         session, market, matchup, matched_event, stats,
         game_date, now, polymarket_backfill_queue,
-        receipt=receipt,
+        receipt=receipt, **({"allow_create": False} if join_only else {}),
     )
+    if join_only and receipt.outcome == _receipts.OUTCOME_LINKED:
+        stats["funnel"].setdefault("venue_moneyline_joins", 0)
+        stats["funnel"]["venue_moneyline_joins"] += 1
 
 
 async def _phase1_pass3_backlog_scan(
