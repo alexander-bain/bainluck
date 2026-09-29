@@ -323,9 +323,16 @@ export function parsePlayerName(
     // guard as above — a colon, a leading "<n>+" and a KNOWN stat — and Kalshi
     // never writes a rung after its matchup colon, so no shape that parses
     // today changes (fixture census: 2 of 1,840 pairs, both this market).
+    //
+    // #9608: and, as #9384 ruled for the O/U shape, whatever the stat is called.
+    // "Shea Charles: 1+ goals + assists" failed the STAT_TYPES lookup, fell to the
+    // suffix strip, and the settled rail printed "1+ goals +: 1+ assists". An
+    // unknown phrase is kept whole; a matchup subject keeps today's parse.
     const rung = afterColon.match(/^\d+\+\s+(.+)$/);
-    const rungStat = rung
-      ? STAT_TYPES.find((st) => st.toLowerCase() === rung[1].trim().toLowerCase())
+    const rungPhrase = rung ? rung[1].trim().replace(/\s+/g, " ") : "";
+    const rungStat = rungPhrase
+      ? STAT_TYPES.find((st) => st.toLowerCase() === rungPhrase.toLowerCase()) ??
+        (/[a-z]/i.test(rungPhrase) && !isMatchupSubject(beforeColon) ? rungPhrase : undefined)
       : undefined;
     if (rungStat) {
       return { player: beforeColon.trim(), stat: rungStat, team: "", identified: true };
