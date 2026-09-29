@@ -24,7 +24,7 @@
  */
 
 import type { ChampionshipPathEntry, TeamFutureItem } from "@/lib/api";
-import { pickJourneyFuture } from "@/lib/teamSeasonJourney";
+import { headlinePathEntry, pickJourneyFuture } from "@/lib/teamSeasonJourney";
 
 export interface TeamHeadline {
   /** "Championship", "Conference", "Division", or the path entry's own label. */
@@ -61,8 +61,7 @@ export function teamHeadline(
   championshipPath: ChampionshipPathEntry[] | null | undefined,
   futures: TeamFutureItem[] | null | undefined,
 ): TeamHeadline | null {
-  const path = championshipPath ?? [];
-  const pathEntry = path.find((e) => e.tier === 1) ?? path[0] ?? null;
+  const pathEntry = headlinePathEntry(championshipPath);
   if (pathEntry && pathEntry.probability !== null) {
     return {
       label: pathEntry.label,

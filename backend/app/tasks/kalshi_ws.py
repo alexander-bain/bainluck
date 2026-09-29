@@ -108,6 +108,7 @@ async def _run_kalshi_ws_consumer():
     )
     from app.utils.futures_rank import rerank_market_fields_stmt  # #6598
     from app.utils.price_change_stamp import price_changed_at_value
+    from app.utils.price_change_stamp import quote_moved_column  # #9484
     from app.utils.resolution_authority import AUTHORITATIVE_SOURCES
 
     api_key_id = os.getenv("KALSHI_API_KEY_ID")
@@ -231,6 +232,9 @@ async def _run_kalshi_ws_consumer():
         # absence — "it returned" is not "it wrote" (gotcha #53). A refusal is
         # terminal, not an error: the entry leaves the buffer like any other.
         "settled_declined": 0,
+        # #9484: rows a flush wrote whose price and book were already what it
+        # stored — written (liveness), but no market invalidation sent.
+        "quotes_unchanged": 0,
         # #6598 / CERT-3182: rows whose `rank` a flush corrected. This socket
         # moves `current_probability` faster than anything else in the system
         # and had never heard of the column derived from it, so a favourite
@@ -381,6 +385,10 @@ async def _run_kalshi_ws_consumer():
                             FuturesOutcome.id,
                             FuturesOutcome.market_id,
                             FuturesOutcome.last_updated,
+                            quote_moved_column(
+                                FuturesOutcome.__table__,
+                                (yes_bid, yes_ask) if tick_has_book else None,
+                            ),
                         )
                     )
                     # #5411 — a settled row matches the id and fails the guard, so
@@ -398,7 +406,17 @@ async def _run_kalshi_ws_consumer():
                     # a deleted row returns nothing, so it signals nothing.
                     # Staged against this transaction; published below only
                     # once the outer commit has landed.
+                    #
+                    # And only when the write changed what a reader is served
+                    # (price or book, `quote_moved_column`). A tick that only
+                    # re-stamped `last_updated` (volume, open interest, the
+                    # same quote again) still writes — liveness reads that
+                    # stamp — but a frame for it sends every held page to
+                    # re-read an unchanged row (ux, #9526).
                     for row in result.all():
+                        if not row.quote_moved:
+                            stats["quotes_unchanged"] += 1
+                            continue
                         queue_market_change(
                             session,
                             market_id=row.market_id,

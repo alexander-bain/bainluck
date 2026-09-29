@@ -42,10 +42,51 @@ nonisolated struct EventHistoryResponse: Decodable, Sendable {
     /// from (detail's `blend_fold_revision` twin; null when there is no pin).
     let blendEdgePinned: Bool?
     let blendEdgeFoldRevision: ServedFoldRevision?
+    /// #9496 — the prediction-market spread/total ladders' projected final
+    /// (`pm_spread_data.projected_final`). Only that one field is read; see
+    /// `PMSpreadData`. Optional and never-throwing: additive, and a malformed
+    /// block must not blank the chart.
+    let pmSpreadData: PMSpreadData?
     let points: Int?
     let bookmakerCount: Int?
     let snapshotCount: Int?
     let espnSnapshotCount: Int?
+}
+
+/// `pm_spread_data` on `/history` (#9496), reduced to the one field the page
+/// prints.
+///
+/// The server solves `projected_final` from Kalshi/Polymarket spread and total
+/// LADDERS (`backend/app/utils/binary_spread.py` `select_projected_final`),
+/// names the source of each half, refuses any pair that is not a scoreline,
+/// and withholds it once the game is final (#5078). Web's
+/// `eventPageProjectedPair` falls back to it before kickoff whenever the
+/// sportsbooks' pair is not a margin — baseball's run line — and the phone
+/// never read it, so tomorrow's Red Sox–Yankees page held a served forecast it
+/// could not use. The ladders themselves are the chart's business and are not
+/// decoded here.
+nonisolated struct PMSpreadData: Decodable, Sendable {
+    let projectedFinal: ProjectedFinal?
+
+    nonisolated struct ProjectedFinal: Decodable, Sendable {
+        let homeScore: Double
+        let awayScore: Double
+        let spreadSource: String?
+        let totalSource: String?
+    }
+
+    private enum CodingKeys: String, CodingKey { case projectedFinal }
+
+    init(projectedFinal: ProjectedFinal?) {
+        self.projectedFinal = projectedFinal
+    }
+
+    /// NEVER THROWS, for the reason `EvidenceContract.init(from:)` gives: a
+    /// mistyped block degrades to "no projection", never to "no chart".
+    init(from decoder: Decoder) throws {
+        let c = try? decoder.container(keyedBy: CodingKeys.self)
+        projectedFinal = (try? c?.decodeIfPresent(ProjectedFinal.self, forKey: .projectedFinal)) ?? nil
+    }
 }
 
 // MARK: - History Points

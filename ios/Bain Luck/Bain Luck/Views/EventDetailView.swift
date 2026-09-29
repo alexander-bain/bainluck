@@ -906,6 +906,8 @@ struct EventDetailView: View {
             commenceTime: event.commenceTime?.asDate,
             projectedHome: event.currentOdds?.projectedHomeScore,
             projectedAway: event.currentOdds?.projectedAwayScore,
+            ladderHome: vm.history?.pmSpreadData?.projectedFinal?.homeScore,
+            ladderAway: vm.history?.pmSpreadData?.projectedFinal?.awayScore,
             hasScore: hasScore)
     }
 
@@ -918,19 +920,54 @@ struct EventDetailView: View {
     /// Score Differential chart (`SportVocab.sportsbookSpreadIsAMargin`), and ux
     /// ruled withhold rather than print the total: a total alone does not say
     /// who wins, and the hero still carries the percentages.
+    ///
+    /// #9496 — BEFORE THE OFF, THE LADDERS ANSWER WHERE THE SPORTSBOOKS CANNOT.
+    /// `ladderHome`/`ladderAway` are `/history`'s `pm_spread_data.projected_final`
+    /// (Kalshi/Polymarket spread and total ladders, solved and source-checked
+    /// server-side). Web's `eventPageProjectedPair` rule, ported: pre-game the
+    /// sportsbooks' pair wins wherever it is a margin — it is the pair the search
+    /// card prints (#9034) — and the ladders' pair is used only where it is not.
+    /// A ladder margin is read off six thresholds either side of even, not one
+    /// pinned ±1.5 point, so #8617's run-line objection does not reach it; web
+    /// already prints it on baseball. Once the game is underway this stays the
+    /// sportsbooks' pair, as before.
+    ///
+    /// Whichever pair is chosen then passes web's hero gates: the sport must
+    /// score in the unit the pair is in (tennis quotes games, not sets), both
+    /// halves must be positive, and a sport that cannot end level never prints a
+    /// level final (#8156) — Red Sox–Yankees' `3.2 – 3.0` rounds to `3-3` and
+    /// is withheld. Notice 34: the space is left empty, not explained.
     static func projectionText(
         sport: String?, status: String?, commenceTime: Date?,
-        projectedHome: Double?, projectedAway: Double?, hasScore: Bool,
+        projectedHome: Double?, projectedAway: Double?,
+        ladderHome: Double? = nil, ladderAway: Double? = nil,
+        hasScore: Bool,
         now: Date = Date()
     ) -> String? {
         let vocab = SportVocab.forSport(sport)
-        guard vocab.sportsbookSpreadIsAMargin,
-              let phs = projectedHome, let pas = projectedAway,
-              showsProjection(
+        guard showsProjection(
                 status: status, commenceTime: commenceTime,
                 hasScore: hasScore, now: now) else { return nil }
-        let pair = "\(Int(pas.rounded()))-\(Int(phs.rounded()))"
-        return "Proj. \(vocab.scoreboardCountsTheUnit ? pair : vocab.withUnit(pair))"
+        let underway = status == "live"
+            || EventState.hasStarted(commenceTime: commenceTime, now: now)
+        let pair: (home: Double, away: Double)
+        if vocab.sportsbookSpreadIsAMargin,
+           let phs = projectedHome, let pas = projectedAway, phs >= 0, pas >= 0 {
+            pair = (phs, pas)
+        } else if !underway,
+                  // web's `hasDerivedSpread`: declared, and scored in its unit
+                  vocab.scoreboardCountsTheUnit, !vocab.unit.isEmpty,
+                  let lhs = ladderHome, let las = ladderAway {
+            pair = (lhs, las)
+        } else {
+            return nil
+        }
+        // Raw halves above zero, as web asks — a soccer `0.4` still prints `0`.
+        let home = Int(pair.home.rounded()), away = Int(pair.away.rounded())
+        guard pair.home > 0, pair.away > 0,
+              vocab.canEndInATie || home != away else { return nil }
+        let text = "\(away)-\(home)"
+        return "Proj. \(vocab.scoreboardCountsTheUnit ? text : vocab.withUnit(text))"
     }
 
     /// The opening line, named, for Game Info on a live game (#8320). The hero's

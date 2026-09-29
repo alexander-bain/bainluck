@@ -102,6 +102,16 @@ struct SportVocab: Equatable {
     /// shape but no page specimen yet, and web left its row `true` — this row
     /// follows web, not a guess.
     let sportsbookSpreadIsAMargin: Bool
+    /// Can a game in this sport END level? (#8156 on web, #9496 here)
+    ///
+    /// Web's `canEndInATie`, ported in meaning. The projected final is rounded
+    /// per side, so any pair under a run apart lands on one integer: the
+    /// ladders' `3.2 – 3.0` for Red Sox–Yankees prints `3-3`, a final baseball
+    /// cannot produce. Where this is `false` a level projection is withheld —
+    /// the rule is about IMPOSSIBLE results, not unlikely ones, so soccer (a
+    /// league draw) and the NFL (a tie after one overtime) keep theirs.
+    /// An undeclared sport keeps printing, as on web.
+    let canEndInATie: Bool
 }
 
 extension SportVocab {
@@ -127,7 +137,8 @@ extension SportVocab {
         winnerMarketPricesADraw: false,
         // The status quo for a sport nobody has measured: its projection keeps
         // drawing. Withholding is only right where the point was measured.
-        sportsbookSpreadIsAMargin: true
+        sportsbookSpreadIsAMargin: true,
+        canEndInATie: true
     )
 
     /// The declared sports. Substring match against the sport key, in order, so
@@ -140,7 +151,8 @@ extension SportVocab {
             totalRange: 4...14,
             scoreboardCountsTheUnit: true, scoreboardUnit: "",
             winnerMarketPricesADraw: false,
-            sportsbookSpreadIsAMargin: false)),
+            sportsbookSpreadIsAMargin: false,
+            canEndInATie: false)),
         (["hockey", "nhl"], SportVocab(
             marginTitle: "Goal margin map", totalTitle: "Goals map",
             unit: "goals", unitSingular: "goal", marginRange: 5,
@@ -149,7 +161,8 @@ extension SportVocab {
             // A regular-season game that is level after overtime is decided by
             // a shootout, so the winner market has two outcomes.
             winnerMarketPricesADraw: false,
-            sportsbookSpreadIsAMargin: true)),
+            sportsbookSpreadIsAMargin: true,
+            canEndInATie: false)),
         (["soccer", "mls", "epl", "uefa", "fifa"], SportVocab(
             marginTitle: "Goal margin map", totalTitle: "Goals map",
             unit: "goals", unitSingular: "goal", marginRange: 5,
@@ -158,7 +171,8 @@ extension SportVocab {
             // THE ONE ROW THAT SAYS YES (#5271). A league draw prices around
             // 20–30% pre-match, and the app held no slot for it.
             winnerMarketPricesADraw: true,
-            sportsbookSpreadIsAMargin: true)),
+            sportsbookSpreadIsAMargin: true,
+            canEndInATie: true)),
         // A tennis match is scored in GAMES inside SETS; the market quotes a
         // game spread and a game total, and neither is a point. The scoreboard
         // reports sets, which is why this is the one row with
@@ -174,7 +188,8 @@ extension SportVocab {
             totalRange: 12...48,
             scoreboardCountsTheUnit: false, scoreboardUnit: "sets",
             winnerMarketPricesADraw: false,
-            sportsbookSpreadIsAMargin: true)),
+            sportsbookSpreadIsAMargin: true,
+            canEndInATie: false)),
         // 180...230 is the literal `MarketMapView` used to hardcode for every
         // sport on earth. It is kept verbatim HERE, where it is actually true,
         // so basketball's rail does not move on a fix aimed at everyone else.
@@ -184,7 +199,8 @@ extension SportVocab {
             totalRange: 180...230,
             scoreboardCountsTheUnit: true, scoreboardUnit: "",
             winnerMarketPricesADraw: false,
-            sportsbookSpreadIsAMargin: true)),
+            sportsbookSpreadIsAMargin: true,
+            canEndInATie: false)),
         (["americanfootball", "nfl", "ncaaf"], SportVocab(
             marginTitle: "Margin map", totalTitle: "Points map",
             unit: "points", unitSingular: "point", marginRange: 18,
@@ -193,7 +209,8 @@ extension SportVocab {
             // An NFL tie is possible and the books do not price one: the h2h
             // market has two outcomes, and ties run near 0.2% of games.
             winnerMarketPricesADraw: false,
-            sportsbookSpreadIsAMargin: true)),
+            sportsbookSpreadIsAMargin: true,
+            canEndInATie: true)),
     ]
 
     /// The same span for a HALF.
