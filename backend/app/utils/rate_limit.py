@@ -57,6 +57,12 @@ _FRESH_EVENT_PATH = r"/api/events/[1-9][0-9]*(?:/history)?"
 FRESH_FEED_PRICE_RATE_LIMIT = "60/minute"
 _FRESH_FEED_PRICE_MAX = 60
 _FRESH_FEED_PRICE_PATH = "/api/feed/price-cards"
+# 2s detail/history pairs spend60/min; bounded headroom for initial/reconnect reads.
+# This ceiling is not a claim of measured server capacity.
+FRESH_MARKET_RATE_LIMIT = "120/minute"
+_FRESH_MARKET_MAX = 120
+_FRESH_MARKET_PATH = r"/api/futures/[1-9][0-9]*(?:/probability-timeline)?"
+
 # Queue 315 Item 1: /api/admin is rate limited, not exempt. This is ONE SHARED
 # BUCKET per token value (P3) — Alex's browser, every agent lane, `/health`, the
 # browser-audit rail and flow_sentinel's nightly self-calls all present the same
@@ -252,6 +258,7 @@ _admin_limit = None
 _trusted_limit = None
 _fresh_event_limit = None
 _fresh_feed_price_limit = None
+_fresh_market_limit = None
 
 
 def _is_fresh_event_read(request: Request) -> bool:
@@ -292,6 +299,37 @@ def _get_fresh_feed_price_limit():
         from limits import parse as parse_limit
         _fresh_feed_price_limit = parse_limit(FRESH_FEED_PRICE_RATE_LIMIT)
     return _fresh_feed_price_limit
+
+
+def _is_fresh_market_read(request: Request) -> bool:
+    """Exact opt-in standalone reads, sharing one budget across IDs and queries.
+
+    Both routes already read outcome prices from the database. `fresh` bypasses
+    client caches; this classifier isolates those reads, it does not alter data.
+    """
+    if request.method != "GET" or not re.fullmatch(_FRESH_MARKET_PATH, request.url.path):
+        return False
+    if request.query_params.get("fresh", "").lower() not in {"1", "true", "t", "on", "yes", "y"}:
+        return False
+    if request.url.path.endswith("/probability-timeline"):
+        from pydantic import TypeAdapter, ValidationError
+        for field, maximum in (("top", 50), ("hours", 8760)):
+            if field in request.query_params:
+                try:
+                    value = TypeAdapter(int).validate_python(request.query_params[field])
+                except ValidationError:
+                    return False
+                if not 1 <= value <= maximum:
+                    return False
+    return True
+
+
+def _get_fresh_market_limit():
+    global _fresh_market_limit
+    if _fresh_market_limit is None:
+        from limits import parse as parse_limit
+        _fresh_market_limit = parse_limit(FRESH_MARKET_RATE_LIMIT)
+    return _fresh_market_limit
 
 
 def _get_limits():
@@ -738,6 +776,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             key = f"fresh-feed-price:{key}"
             max_requests = _FRESH_FEED_PRICE_MAX
 
+        fresh_market_read = not admin_key and _is_fresh_market_read(request)
+        if fresh_market_read:
+            key = f"fresh-market:{key}"
+            max_requests = _FRESH_MARKET_MAX
+
         # Check rate limit.
         #
         # #1197 (r259 ROOT CAUSE): the sync `limits` FixedWindowRateLimiter.hit() is
@@ -779,6 +822,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         anon_limit, auth_limit = _get_limits()
         if admin_key:
             limit = _get_admin_limit()
+        elif fresh_market_read:
+            limit = _get_fresh_market_limit()
         elif fresh_feed_price_read:
             limit = _get_fresh_feed_price_limit()
         elif trusted_peer:

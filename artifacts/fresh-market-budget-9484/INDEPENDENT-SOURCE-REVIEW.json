@@ -1,0 +1,4 @@
+{
+  "backend/app/utils/rate_limit.py": "4ca0c6cf18f211b21868414fdcd6b40c0c04bfe432fd0bd4aec61e3f26a9ccf3",
+  "backend/tests/test_fresh_market_rate_limit.py": "da237734febdc5a774e06c18face877b5b16127070ca2fb1c036cf553060a4e5"
+}
