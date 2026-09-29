@@ -8,6 +8,18 @@ nonisolated enum FuturesPriceReconciliation {
             || market.outcomes.contains { $0.isWinner == true }
     }
 
+    /// ISO8601DateFormatter truncates submillisecond precision on some runtimes.
+    /// Preserve the producer's microseconds for ordering; never display this watermark.
+    static func observationDate(_ raw: String?) -> Date? {
+        guard let raw else { return nil }
+        guard let fraction = raw.range(of: "\\.[0-9]+(?=Z|[+-][0-9]{2}:[0-9]{2}$)", options: .regularExpression) else {
+            return raw.asDate
+        }
+        let base = String(raw[..<fraction.lowerBound]) + String(raw[fraction.upperBound...])
+        guard let date = base.asDate, let subsecond = Double("0" + raw[fraction]) else { return nil }
+        return date.addingTimeInterval(subsecond)
+    }
+
     struct Withdrawal { let lastKnownObservation: Date? }
 
     static func adopting(_ incoming: FuturesMarketDetail, over held: FuturesMarketDetail?) -> FuturesMarketDetail {
@@ -19,7 +31,7 @@ nonisolated enum FuturesPriceReconciliation {
                          withdrawals: inout [Int: Withdrawal]) -> FuturesMarketDetail {
         guard let held else {
             for outcome in incoming.outcomes where outcome.probability == nil {
-                withdrawals[outcome.id] = Withdrawal(lastKnownObservation: outcome.lastUpdated?.asDate)
+                withdrawals[outcome.id] = Withdrawal(lastKnownObservation: observationDate(outcome.lastUpdated))
             }
             return incoming
         }
@@ -32,12 +44,23 @@ nonisolated enum FuturesPriceReconciliation {
         }
         guard Set(incoming.outcomes.map(\.id)).count == incoming.outcomes.count else { return held }
         let old = Dictionary(held.outcomes.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        // Displayed probabilities in a mutually exclusive field share a divisor.
+        // A newer sibling can legitimately move an unchanged-clock row; adopt
+        // the full nonregressive vector, never splice old/new normalized bodies.
+        let normalized = incoming.mutuallyExclusive == true || held.mutuallyExclusive == true
+        let normalizedChange = normalized && (held.outcomes.count != incoming.outcomes.count
+            || incoming.outcomes.contains { outcome in
+                guard let prior = old[outcome.id] else { return true }
+                if prior.probability != nil && outcome.probability == nil { return true }
+                guard let after = observationDate(outcome.lastUpdated) else { return false }
+                return observationDate(prior.lastUpdated).map { after > $0 } ?? true
+            })
         var nextWithdrawals = withdrawals
         var preserved = false
         var outcomes = incoming.outcomes.map { outcome -> FuturesOutcome in
             guard let prior = old[outcome.id] else {
                 if outcome.probability == nil {
-                    nextWithdrawals[outcome.id] = Withdrawal(lastKnownObservation: outcome.lastUpdated?.asDate)
+                    nextWithdrawals[outcome.id] = Withdrawal(lastKnownObservation: observationDate(outcome.lastUpdated))
                 }
                 return outcome
             }
@@ -55,27 +78,27 @@ nonisolated enum FuturesPriceReconciliation {
             // Withholding is an authoritative absence, not a conflicting quote.
             // Keep its ordering watermark privately: the wire clock stays unknown.
             if outcome.probability == nil {
-                let watermark = [prior.lastUpdated?.asDate,
+                let watermark = [observationDate(prior.lastUpdated),
                     nextWithdrawals[outcome.id]?.lastKnownObservation].compactMap { $0 }.max()
-                if let watermark, let after = outcome.lastUpdated?.asDate, after < watermark {
+                if let watermark, let after = observationDate(outcome.lastUpdated), after < watermark {
                     preserved = true
                     return prior
                 }
                 nextWithdrawals[outcome.id] = Withdrawal(lastKnownObservation:
-                    [watermark, outcome.lastUpdated?.asDate].compactMap { $0 }.max())
+                    [watermark, observationDate(outcome.lastUpdated)].compactMap { $0 }.max())
                 return outcome
             }
             if let withdrawal = nextWithdrawals[outcome.id] {
-                guard let after = outcome.lastUpdated?.asDate,
+                guard let after = observationDate(outcome.lastUpdated),
                       withdrawal.lastKnownObservation.map({ after > $0 }) ?? true else {
                     preserved = true
                     return prior
                 }
                 nextWithdrawals.removeValue(forKey: outcome.id)
             }
-            if let before = prior.lastUpdated?.asDate {
-                guard let after = outcome.lastUpdated?.asDate, after >= before,
-                      after != before || outcome.probability == prior.probability else {
+            if let before = observationDate(prior.lastUpdated) {
+                guard let after = observationDate(outcome.lastUpdated), after >= before,
+                      after != before || outcome.probability == prior.probability || normalizedChange else {
                     preserved = true
                     return prior
                 }
@@ -83,11 +106,12 @@ nonisolated enum FuturesPriceReconciliation {
             return outcome
         }
         let included = Set(outcomes.map(\.id))
-        for prior in held.outcomes where !included.contains(prior.id) {
+        for prior in held.outcomes where !normalized && !included.contains(prior.id) {
             preserved = true
             outcomes.append(prior)
         }
         guard preserved else { withdrawals = nextWithdrawals; return incoming }
+        if normalized { return held }
         // A retained quote cannot wear a new provider identity. Wait for a
         // fully acceptable authoritative body if the market provenance changes.
         guard incoming.source == held.source, incoming.externalId == held.externalId,
@@ -100,8 +124,7 @@ nonisolated enum FuturesPriceReconciliation {
             mutuallyExclusive: incoming.mutuallyExclusive, commenceTime: incoming.commenceTime,
             resolutionDate: incoming.resolutionDate, updatedAt: held.updatedAt,
             outcomeCount: outcomes.count, bookmakers: held.bookmakers, outcomes: outcomes,
-            hookDescription: incoming.hookDescription, imageUrl: incoming.imageUrl,
-            leadOutcomeId: incoming.leadOutcomeId)
+            hookDescription: incoming.hookDescription, imageUrl: incoming.imageUrl)
     }
 
     /// Only an accepted, dated new quote or authoritative result is activity.
@@ -110,8 +133,8 @@ nonisolated enum FuturesPriceReconciliation {
         if !isSettled(held), isSettled(incoming) { return true }
         let old = Dictionary(held.outcomes.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         return incoming.outcomes.contains { outcome in
-            guard let after = outcome.lastUpdated?.asDate else { return false }
-            guard let prior = old[outcome.id], let before = prior.lastUpdated?.asDate else { return true }
+            guard let after = observationDate(outcome.lastUpdated) else { return false }
+            guard let prior = old[outcome.id], let before = observationDate(prior.lastUpdated) else { return true }
             return after > before
         }
     }

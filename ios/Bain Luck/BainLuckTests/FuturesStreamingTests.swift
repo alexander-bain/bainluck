@@ -7,12 +7,12 @@ final class FuturesStreamingTests: XCTestCase {
                         xClock: String? = "2030-01-01T00:00:00Z",
                         yClock: String? = "2030-01-01T00:00:00Z",
                         status: String = "open", source: String = "kalshi",
-                        winner: Bool? = nil) throws -> FuturesMarketDetail {
+                        winner: Bool? = nil, mutuallyExclusive: Bool = false) throws -> FuturesMarketDetail {
         let d = JSONDecoder()
         d.keyDecodingStrategy = .convertFromSnakeCase
         func string(_ value: String?) -> String { value.map { "\"\($0)\"" } ?? "null" }
         return try d.decode(FuturesMarketDetail.self, from: Data("""
-        {"id":7,"name":"Held prop","status":"\(status)","source":"\(source)",
+        {"id":7,"name":"Held prop","status":"\(status)","source":"\(source)","mutually_exclusive":\(mutuallyExclusive),
          "outcomes":[{"id":1,"name":"X","probability":\(x.map(String.init(describing:)) ?? "null"),"last_updated":\(string(xClock)),"is_winner":\(winner.map(String.init) ?? "null")},
                      {"id":2,"name":"Y","probability":\(y.map(String.init(describing:)) ?? "null"),"last_updated":\(string(yClock))}]}
         """.utf8))
@@ -47,6 +47,29 @@ final class FuturesStreamingTests: XCTestCase {
 
     private func settle(_ condition: () -> Bool) async {
         for _ in 0..<300 where !condition() { await Task.yield() }
+    }
+
+    func testNormalizedFieldAdoptsOneDivisorAndRejectsAnyStaleSibling() throws {
+        let initial = try detail(0.3, 0.7, mutuallyExclusive: true)
+        var fences: [Int: FuturesPriceReconciliation.Withdrawal] = [:]
+        let next = try detail(0.4, 0.6, xClock: "2030-01-01T00:00:02Z", mutuallyExclusive: true)
+        let accepted = FuturesPriceReconciliation.adopting(next, over: initial, withdrawals: &fences)
+        XCTAssertEqual(accepted.outcomes.map(\.probability), [0.4, 0.6])
+        let mixed = try detail(0.5, 0.5, xClock: "2030-01-01T00:00:03Z",
+            yClock: "2029-12-31T23:59:59Z", mutuallyExclusive: true)
+        XCTAssertEqual(FuturesPriceReconciliation.adopting(mixed, over: accepted,
+            withdrawals: &fences).outcomes.map(\.probability), [0.4, 0.6])
+        let withdrawn = try detail(nil, 1, xClock: "2030-01-01T00:00:02Z", mutuallyExclusive: true)
+        XCTAssertEqual(FuturesPriceReconciliation.adopting(withdrawn, over: accepted,
+            withdrawals: &fences).outcomes.map(\.probability), [nil, 1])
+    }
+
+    func testMicrosecondObservationChangesRemainOrdered() throws {
+        let old = try detail(xClock: "2030-01-01T00:00:00.000001Z")
+        let new = try detail(0.4, xClock: "2030-01-01T00:00:00.000002Z")
+        let accepted = FuturesPriceReconciliation.adopting(new, over: old)
+        XCTAssertEqual(accepted.outcomes[0].probability, 0.4)
+        XCTAssertEqual(FuturesPriceReconciliation.adopting(old, over: accepted).outcomes[0].probability, 0.4)
     }
 
     func testEachOutcomeMustAdvanceOnItsOwnClock() throws {
