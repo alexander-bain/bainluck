@@ -19,6 +19,7 @@
  * exact mistake has red-ed master before.
  */
 import type { TypeaheadSuggestion } from "../../lib/api";
+import { SUSPENDED_LABEL } from "../../lib/eventState";
 import {
   MOVEMENT_MIN_ABS,
   countAnswersShown,
@@ -361,6 +362,52 @@ describe("suggestionSubtitle", () => {
       NOW
     );
     expect((sub as { text: string }).text).not.toBe("Recently");
+  });
+
+  // #9493: latency's typeahead now serves today's started `suspended` match.
+  // It fell through to formatEventTime and read "Pereira at Dickerson ·
+  // Recently". It wears the event page's badge, SUSPENDED_LABEL, instead.
+  describe("a match with no reported result wears the event page's badge (#9493)", () => {
+    const event = (over: Partial<TypeaheadSuggestion>) =>
+      suggestionSubtitle(
+        suggestion({ type: "event", text: "Pereira at Dickerson", ...over }),
+        NOW
+      );
+
+    test("a suspended match says 'No result reported', not 'Recently'", () => {
+      expect(event({ status: "suspended", commence_time: "2026-08-09T15:00:00.000Z" })).toEqual({
+        kind: "event-time",
+        text: SUSPENDED_LABEL,
+      });
+      expect(SUSPENDED_LABEL).toBe("No result reported");
+    });
+
+    test("a suspended row's partial score is not printed as a result", () => {
+      expect(
+        event({
+          status: "suspended",
+          commence_time: "2026-08-09T15:00:00.000Z",
+          home_score: 1,
+          away_score: 0,
+        })
+      ).toEqual({ kind: "event-time", text: SUSPENDED_LABEL });
+    });
+
+    test("a 'scheduled' row hours past its kickoff gets the same badge", () => {
+      expect(event({ status: "scheduled", commence_time: "2026-08-09T15:00:00.000Z" })).toEqual({
+        kind: "event-time",
+        text: SUSPENDED_LABEL,
+      });
+    });
+
+    // The other direction: inside the event page's own grace window a late
+    // `scheduled` row is still plausibly starting, so it keeps the time word.
+    test("a 'scheduled' row inside the grace window keeps its time wording", () => {
+      expect(event({ status: "scheduled", commence_time: "2026-08-09T17:00:00.000Z" })).toEqual({
+        kind: "event-time",
+        text: "Recently",
+      });
+    });
   });
 
   test("a priced futures row leads with the answer", () => {
