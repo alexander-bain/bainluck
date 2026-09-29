@@ -1002,6 +1002,12 @@ export function resolveProbability(
   let probSourceLabel: string | null = null;
   const openingHomeProb = opening?.home_probability ?? null;
   const openingAwayProb = opening?.away_probability ?? null;
+  const heroBooks = event.hero_sportsbook_count;
+  const scheduledBooks = typeof heroBooks === "number" && event.hero_probability_source === "blend"
+    ? heroBooks : (odds?.bookmaker_count ?? 0);
+  const scheduledCaption = scheduledBooks > 0
+    ? `${scheduledBooks} sportsbook${scheduledBooks !== 1 ? "s" : ""}`
+    : odds?.source === "aggregate" ? "Aggregate" : null;
   // #2085 — set by the branch that reads `odds`, so `withRenderedPercents` can
   // tell whether the served pair describes the pair being returned. A later
   // branch that OVERRIDES the pair must clear it; that is the whole reason this
@@ -1078,9 +1084,9 @@ export function resolveProbability(
       // rather than adding a sentence explaining it. The number still shows;
       // only the claim about its currency goes, and the grey age badge above
       // is already saying how old it is.
-      probSourceLabel = blendIsStale || !isLive
-        ? "Bain Luck blend"
-        : "Live · Bain Luck blend";
+      probSourceLabel = !isLive && !noReportedResult
+        ? scheduledCaption
+        : blendIsStale || !isLive ? "Bain Luck blend" : "Live · Bain Luck blend";
       // 🔴 #2085 — `fromCurrentOdds` stays FALSE here on purpose. This pair is
       // the BLEND (`hero_probability` / `hero_probability_away`), which the
       // backend derives as `round(1 - agg, 6)` and serves with no rendered
@@ -1195,16 +1201,7 @@ export function resolveProbability(
     // Kalshi-only 13% read "4 sportsbooks" (Clemson v Miami, /events/14870012).
     // The server knows which books the blend admitted (`hero_sportsbook_count`,
     // 0 = none); absent means unknown, and the row count stands as before.
-    const heroBooks = event.hero_sportsbook_count;
-    const count =
-      typeof heroBooks === "number" && event.hero_probability_source === "blend"
-        ? heroBooks
-        : (odds?.bookmaker_count ?? 0);
-    if (count > 0) {
-      probSourceLabel = `${count} sportsbook${count !== 1 ? "s" : ""}`;
-    } else if (homeProb !== null && odds?.source === "aggregate") {
-      probSourceLabel = "Aggregate";
-    }
+    if (homeProb !== null) probSourceLabel = scheduledCaption;
   }
 
   // Fallback: use win_prob_history (ESPN/stat_model/Kalshi)

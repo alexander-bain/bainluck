@@ -314,7 +314,7 @@ export function appendHeroObservation<T extends ChartHistory>(
  * Preserve historical observations from the same row; an authoritative pair
  * supplies the current folded edge instead of a made-up aggregate. */
 export function quoteChartFrames(
-  points: LiveChartFrame[],
+  points: LiveChartFrame[] = [],
   hero: (HeroObservation & { blend_fold_revision?: unknown }) | null | undefined,
 ): LiveChartFrame[] {
   if (!hero || !isQuoteStreamStatus(hero.status) || hero.hero_probability_source !== "blend") return [];

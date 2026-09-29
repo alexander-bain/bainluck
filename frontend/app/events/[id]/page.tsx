@@ -315,12 +315,13 @@ export default function EventPage({ params }: EventPageProps) {
   const pairedQuoteReadRef = useRef<(() => Promise<unknown>) | null>(null);
   const quoteTriggerRef = useRef<LiveFrame | null>(null);
   const quoteEventIdRef = useRef(eventId);
+  if (quoteEventIdRef.current !== eventId) quoteTriggerRef.current = null;
   quoteEventIdRef.current = eventId;
   const refreshEventRef = useRef(refreshEvent);
   refreshEventRef.current = refreshEvent;
   const [foldedRefetch] = useState(() => createFoldedRefetchScheduler(
     () => {
-      if (pairedQuoteReadRef.current) return pairedQuoteReadRef.current();
+      if (quoteTriggerRef.current && pairedQuoteReadRef.current) return pairedQuoteReadRef.current();
       freshNextEventReadRef.current = true;
       return refreshEventRef.current();
     }, FOLDED_FRAME_REFETCH_MS,
@@ -398,8 +399,17 @@ export default function EventPage({ params }: EventPageProps) {
     // still says the blend moved: refetch the folded detail — and write nothing
     // this tick, because swr drops a fetch that a later mutation (even a no-op
     // `applyLiveFrame` returning `prev`) post-dates. See the scheduler.
-    if (frameInvalidatesFoldedBlend(heldEventRef.current, liveFrame)) {
+    const held = heldEventRef.current;
+    if (held && canSubscribeEventQuotes(held) && (
+      liveFrame.p === null || held.hero_probability_source !== "blend" ||
+      (liveFrame.status && liveFrame.status !== held.status) ||
+      (held.status !== "live" && frameInvalidatesFoldedBlend(held, liveFrame))
+    )) {
       quoteTriggerRef.current = liveFrame;
+      foldedRefetch.request();
+      return;
+    }
+    if (frameInvalidatesFoldedBlend(heldEventRef.current, liveFrame)) {
       foldedRefetch.request();
       return;
     }
@@ -782,6 +792,7 @@ export default function EventPage({ params }: EventPageProps) {
   // The scheduler keeps one trailing request when another invalidation lands.
   pairedQuoteReadRef.current = async () => {
     const readingEventId = eventId;
+    const trigger = quoteTriggerRef.current;
     const [detail, history] = await Promise.all([
       fetchEvent(readingEventId, true),
       fetchEventHistory(readingEventId, EVENT_BOOT_HISTORY_HOURS,
@@ -793,6 +804,7 @@ export default function EventPage({ params }: EventPageProps) {
       refreshHistoryRef.current(history, { revalidate: false }),
       refreshEventRef.current(keepNewerHeldHeadline(detail, heldEventRef.current), { revalidate: false }),
     ]);
+    if (quoteTriggerRef.current === trigger) quoteTriggerRef.current = null;
     setLastRefresh(Date.now());
   };
 

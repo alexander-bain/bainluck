@@ -35,7 +35,7 @@ test.each(['scheduled', 'suspended', 'live'])('%s moves hero, source and chart w
   const displayed = resolveProbability(adopted as unknown as EventDetailResponse,
     chart as unknown as EventHistoryResponse, null, status === 'live', false, status === 'suspended');
   expect(displayed.homeProb).toBe(.6);
-  expect(displayed.probSourceLabel).toBe(status === 'live' ? 'Live · Bain Luck blend' : 'Bain Luck blend');
+  expect(displayed.probSourceLabel).toBe(status === 'live' ? 'Live · Bain Luck blend' : status === 'scheduled' ? 'Aggregate' : 'Bain Luck blend');
   expect(reconcileEventPoll(held, quote).hero_probability).toBe(.6);
   expect(keepNewerHeldHeadline(held, adopted).hero_probability).toBe(.6);
   expect(applyLiveFrame(adopted, { ...quote, p: .1, rev: { '14780549': 9 } })).toBe(adopted);

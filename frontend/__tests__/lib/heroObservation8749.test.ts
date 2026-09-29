@@ -100,7 +100,7 @@ test('the page derives historyData through appendHeroObservation on the live arm
   const path = require('path');
   const page: string = fs.readFileSync(path.join(__dirname, '../../app/events/[id]/page.tsx'), 'utf8');
   const memo = page.slice(page.indexOf('const historyData = useMemo('), page.indexOf('const backendBlendServed'));
-  expect(memo).toContain('mergeLiveChartHistory(servedHistory, isLive ? chartPoints : [])');
-  expect(memo).toContain('isLive ? appendHeroObservation(joined, event, servedHistory) : joined');
-  expect(memo).toMatch(/\[servedHistory, event, isLive, chartPoints\]/);
+  expect(memo).toContain('mergeLiveChartHistory(servedHistory, quoteEligible ? quoteChartFrames(chartPoints, event) : [])');
+  expect(memo).toContain('quoteEligible ? appendHeroObservation(joined, event, servedHistory) : joined');
+  expect(memo).toMatch(/\[servedHistory, event, quoteEligible, chartPoints\]/);
 });
