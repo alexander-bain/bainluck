@@ -380,6 +380,82 @@ def statpal_names_a_later_session(
     return now < statpal_start
 
 
+# ── The #9588 hold, as the readers that cannot run it see it (#9613) ─────────
+#
+# The hold above is decided inside `transition_event_statuses`, which reads the
+# StatPal anchor. The serve path and the rails do not, so a held row stayed
+# `scheduled` (good) and still served `started_without_result: true` off its
+# venue stamp: `/events/15320754` read "No result reported" on 2026-09-29 11:50Z
+# for a match StatPal had at 02:00Z 9/30. The task records its answer on the
+# row, in the `win_probability_sources` mirror that already carries
+# `espn_not_started_at` for #9195's reason, and every reader reads that.
+#
+# The value is StatPal's start, so the stamp runs out on its own at the instant
+# the hold would have. It is honoured only while the row's own start is inside
+# the promoter's 24h window, the window in which the task revisits the row every
+# pass and rewrites or clears the stamp. A reader therefore never trusts a stamp
+# the task has stopped maintaining. The upper bound gives the SQL half a text
+# range that a malformed value cannot satisfy.
+STATPAL_LATER_SESSION_KEY = "statpal_later_session_start"
+STATPAL_LATER_SESSION_HORIZON = timedelta(hours=24)
+
+
+def statpal_later_session_value(statpal_start) -> str:
+    """The stored form: UTC ``isoformat``, which the SQL half compares as text."""
+    return statpal_start.astimezone(timezone.utc).isoformat()
+
+
+def stamp_statpal_later_session(sources, statpal_start):
+    """A NEW sources dict carrying the hold, or the original when it already does.
+
+    A new object, because an in-place JSONB change is invisible to the ORM
+    (gotcha #4). The original when nothing changes, so a held row costs one
+    write when it is first held and none on the passes after.
+    """
+    value = statpal_later_session_value(statpal_start)
+    if isinstance(sources, dict) and sources.get(STATPAL_LATER_SESSION_KEY) == value:
+        return sources
+    updated = dict(sources or {})
+    updated[STATPAL_LATER_SESSION_KEY] = value
+    return updated
+
+
+def clear_statpal_later_session(sources):
+    """A NEW sources dict without the hold, or the original when it has none."""
+    if not isinstance(sources, dict) or STATPAL_LATER_SESSION_KEY not in sources:
+        return sources
+    updated = dict(sources)
+    updated.pop(STATPAL_LATER_SESSION_KEY, None)
+    return updated
+
+
+def statpal_later_session_pending(sources, commence_time, now) -> bool:
+    """The row carries a live #9588 hold: StatPal's session is still ahead.
+
+    :func:`~app.utils.event_rails.statpal_later_session_rows` is the SQL half
+    and must agree. Fails CLOSED to "no hold" on every unreadable input, so a
+    bad value can only leave the row where the clock alone puts it.
+    """
+    if now is None or commence_time is None:
+        return False
+    raw = sources.get(STATPAL_LATER_SESSION_KEY) if isinstance(sources, dict) else None
+    if not isinstance(raw, str):
+        return False
+    try:
+        start = datetime.fromisoformat(raw)
+    except (ValueError, TypeError):
+        return False
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    try:
+        return (
+            commence_time >= now - STATPAL_LATER_SESSION_HORIZON
+            and now < start <= now + STATPAL_LATER_SESSION_HORIZON
+        )
+    except TypeError:
+        return False
+
+
 # ── WHEN DID THIS FINISHED GAME END? (D109) ──────────────────────────────────
 
 
@@ -778,6 +854,12 @@ def started_without_result(status, commence_time, now, sources=None) -> bool:
         if commence_time >= now - AUTHORITY_NOT_STARTED_HORIZON and (
             authority_not_started_fresh(sources, now)
         ):
+            return False
+        # #9613: nor has a venue-stamped row whose own StatPal schedule puts it
+        # in a later session. `transition_event_statuses` holds it `scheduled`
+        # (#9588) and records why on the row; without this it read "No result
+        # reported" from its venue stamp + 2h until StatPal's start.
+        if statpal_later_session_pending(sources, commence_time, now):
             return False
         return commence_time < now - UPCOMING_GRACE
     except TypeError:
