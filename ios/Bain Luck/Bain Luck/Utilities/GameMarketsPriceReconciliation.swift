@@ -138,6 +138,19 @@ nonisolated enum GameMarketsPriceReconciliation {
         return body
     }
 
+    /// #9585 — every key `quarantined` keeps off the page: the conflicting
+    /// rows, and every leg of a matchup one of them sits in (a matchup is held
+    /// or withheld whole). None of these values is published, so none may
+    /// lend, spend or be refused by an ordering clock.
+    private static func unpublished(_ body: GameMarketsResponse, ambiguous: Set<String>) -> Set<String> {
+        var keys = ambiguous
+        for matchup in body.matchups ?? [] {
+            let legs = rows(matchup).map { identity($0).key }
+            if legs.contains(where: ambiguous.contains) { keys.formUnion(legs) }
+        }
+        return keys
+    }
+
     static func adopting(_ incoming: GameMarketsResponse, over held: GameMarketsResponse?,
                          fence: inout Fence) -> GameMarketsResponse {
         // A different event cannot add terminal evidence to this held page.
@@ -165,12 +178,15 @@ nonisolated enum GameMarketsPriceReconciliation {
     private static func adoptingProjection(_ incoming: GameMarketsResponse, over held: GameMarketsResponse?,
                                           fence: inout Fence) -> GameMarketsResponse {
         let identity = identified(rows(incoming))
-        let nextRows = identity.rows
         let ambiguous = Set(identity.ambiguous.map(\.key))
+        let hidden = unpublished(incoming, ambiguous: ambiguous)
+        let nextRows = identity.rows.filter { !hidden.contains($0.key) }
         let next = Dictionary(uniqueKeysWithValues: nextRows.map { ($0.key, $0) })
-        // A contributor seen only on conflicting rows neither orders nor is
-        // ordered: its clock waits until its row is identifiable again.
-        let unordered = Set(identity.ambiguous.flatMap(\.contributors))
+        // A contributor seen only on unpublished rows neither orders nor is
+        // ordered: its clock waits until its row is shown again. One also on
+        // a published row stays fully ordered.
+        let unordered = Set((identity.ambiguous + identity.rows.filter { hidden.contains($0.key) })
+            .flatMap(\.contributors))
             .subtracting(nextRows.flatMap(\.contributors))
         let clocks = (incoming.outcomeRevisionAt ?? [:]).compactMapValues {
             FuturesPriceReconciliation.observationDate($0)
@@ -194,8 +210,9 @@ nonisolated enum GameMarketsPriceReconciliation {
         let oldBindings = held.outcomeMarketIds ?? [:]
         var changedMarkets = Set<Int>()
         for (id, date) in clocks {
+            guard !unordered.contains(id) else { continue }
             if let prior = fence.revisions[id], date < prior { return held }
-            if !unordered.contains(id), fence.revisions[id].map({ date > $0 }) ?? true,
+            if fence.revisions[id].map({ date > $0 }) ?? true,
                let market = bindings[id] { changedMarkets.insert(market) }
         }
         for (id, market) in bindings where oldBindings[id] != market && !unordered.contains(id) {
@@ -203,7 +220,7 @@ nonisolated enum GameMarketsPriceReconciliation {
         }
         // A genuine withdrawal changes the normalization denominator even if
         // no replacement observation clock exists. Never mix old/new vectors.
-        for prior in beforeRows where !ambiguous.contains(prior.key) {
+        for prior in beforeRows where !hidden.contains(prior.key) {
             let row = next[prior.key]
             if prior.verdict != nil && row?.verdict != prior.verdict
                 || prior.winner != nil && row?.winner != prior.winner

@@ -312,4 +312,94 @@ final class GameMarketsDuplicateNames9585Tests: XCTestCase {
                        "the clock that advanced while hidden still orders the row once it is identifiable")
         XCTAssertEqual(clear.spreads?.first?.probability, 0.7)
     }
+
+    // 10 — Codex review of db4f063d, correction 1: an older clock seen only on
+    // conflicting rows cannot refuse the body; the same regression on an id a
+    // published row still carries does.
+    func testAnOlderClockOnlyOnConflictingRowsCannotFreezeAnUnrelatedSpread() throws {
+        func body(conflict: Bool, clocks: [Int: String], spread: Double) throws -> GameMarketsResponse {
+            func row(_ market: String, _ outcome: String, _ price: Double, _ contributor: Int) -> [String: Any] {
+                ["market_name": market, "outcome_name": outcome, "probability": price, "source": "kalshi",
+                 "_market_id": 41, "contributor_outcome_ids": [contributor]]
+            }
+            var other = [row("Total goals", "Over", 0.4, 101), row("Both teams to score", "Yes", 0.3, 102)]
+            if conflict { other.append(row("Both teams to score", "Yes", 0.6, 102)) }
+            return try decode(["event_id": 12, "status": "live", "stream_market_ids": [41, 42],
+                "outcome_market_ids": ["101": 41, "102": 41, "5": 42],
+                "outcome_revision_at": Dictionary(uniqueKeysWithValues: clocks.map { (String($0.key), $0.value) }),
+                "spreads": [["market_name": "Spread", "outcome_name": "Home -3.5", "probability": spread,
+                             "source": "kalshi", "_market_id": 42, "contributor_outcome_ids": [5]]],
+                "other": other])
+        }
+        func prices(_ body: GameMarketsResponse, _ market: String) -> [Double?] {
+            (body.other ?? []).filter { $0.marketName == market }.map(\.probability)
+        }
+        var fence = GameMarketsPriceReconciliation.Fence()
+        let held = GameMarketsPriceReconciliation.adopting(
+            try body(conflict: false, clocks: [101: t1, 102: t1, 5: t0], spread: 0.5), over: nil, fence: &fence)
+        let older = GameMarketsPriceReconciliation.adopting(
+            try body(conflict: true, clocks: [101: t1, 102: t0, 5: t1], spread: 0.6), over: held, fence: &fence)
+        XCTAssertEqual(older.spreads?.first?.probability, 0.6, "a hidden group's older clock freezes nothing")
+        XCTAssertEqual(prices(older, "Both teams to score"), [0.3], "the verified row is still what is shown")
+        XCTAssertEqual(fence.revisions["102"], FuturesPriceReconciliation.observationDate(t1),
+                       "the hidden fence is not moved back")
+        let regressed = GameMarketsPriceReconciliation.adopting(
+            try body(conflict: true, clocks: [101: t0, 102: t1, 5: t2], spread: 0.7), over: older, fence: &fence)
+        XCTAssertEqual(regressed, older, "a published row's regressed clock still refuses the body")
+    }
+
+    // 11 — Codex review of db4f063d, correction 2: one conflicting leg holds
+    // its whole matchup, so its sibling legs' values are unpublished too and
+    // may not spend their clocks while hidden.
+    func testASiblingLegHiddenWithItsMatchupSpendsNoClockAndIsAcceptedOnceClear() throws {
+        func body(conflict: Bool, away: Double?, clocks: [Int: String], spread: Double) throws -> GameMarketsResponse {
+            func leg(_ name: String, _ price: Double?, _ contributor: Int) -> [String: Any] {
+                ["name": name, "probability": price.map { $0 as Any } ?? NSNull(), "contributor_outcome_ids": [contributor]]
+            }
+            var legs = [leg("Home", 0.6, 201), leg("Away", away, 202)]
+            if conflict { legs.append(leg("Home", 0.9, 201)) }
+            return try decode(["event_id": 12, "status": "live", "stream_market_ids": [51, 42],
+                "outcome_market_ids": ["201": 51, "202": 51, "5": 42],
+                "outcome_revision_at": Dictionary(uniqueKeysWithValues: clocks.map { (String($0.key), $0.value) }),
+                "spreads": [["market_name": "Spread", "outcome_name": "Home -3.5", "probability": spread,
+                             "source": "kalshi", "_market_id": 42, "contributor_outcome_ids": [5]]],
+                "matchups": [["market_name": "Match winner", "source": "kalshi", "_market_id": 51, "outcomes": legs]]])
+        }
+        func away(_ body: GameMarketsResponse) -> [Double?] {
+            (body.matchups?.first?.outcomes ?? []).filter { $0.name == "Away" }.map(\.probability)
+        }
+        var fence = GameMarketsPriceReconciliation.Fence()
+        let held = GameMarketsPriceReconciliation.adopting(
+            try body(conflict: false, away: 0.4, clocks: [201: t0, 202: t0, 5: t0], spread: 0.5),
+            over: nil, fence: &fence)
+        let hidden = GameMarketsPriceReconciliation.adopting(
+            try body(conflict: true, away: 0.35, clocks: [201: t0, 202: t1, 5: t1], spread: 0.6),
+            over: held, fence: &fence)
+        XCTAssertEqual(hidden.spreads?.first?.probability, 0.6, "an unrelated verified spread keeps updating")
+        XCTAssertEqual(hidden.matchups?.first?.outcomes.map(\.probability), [0.6, 0.4],
+                       "the matchup is held whole; the sibling's new quote is not published")
+        XCTAssertEqual(fence.revisions["202"], FuturesPriceReconciliation.observationDate(t0),
+                       "the hidden sibling's clock is not spent")
+        let clear = GameMarketsPriceReconciliation.adopting(
+            try body(conflict: false, away: 0.35, clocks: [201: t0, 202: t1, 5: t2], spread: 0.7),
+            over: hidden, fence: &fence)
+        XCTAssertEqual(away(clear), [0.35], "the conflict clearing at the same revision publishes the sibling")
+        XCTAssertEqual(clear.spreads?.first?.probability, 0.7)
+
+        // A hidden sibling that goes unpriced for one read was never shown
+        // withdrawn, so it leaves no withdrawal fence behind.
+        var quiet = GameMarketsPriceReconciliation.Fence()
+        let shown = GameMarketsPriceReconciliation.adopting(
+            try body(conflict: false, away: 0.4, clocks: [201: t0, 202: t0, 5: t0], spread: 0.5),
+            over: nil, fence: &quiet)
+        let gap = GameMarketsPriceReconciliation.adopting(
+            try body(conflict: true, away: nil, clocks: [201: t0, 202: t0, 5: t1], spread: 0.6),
+            over: shown, fence: &quiet)
+        XCTAssertEqual(away(gap), [0.4])
+        let back = GameMarketsPriceReconciliation.adopting(
+            try body(conflict: false, away: 0.4, clocks: [201: t0, 202: t0, 5: t2], spread: 0.7),
+            over: gap, fence: &quiet)
+        XCTAssertEqual(back.spreads?.first?.probability, 0.7, "an unpublished withdrawal holds nothing once clear")
+        XCTAssertEqual(away(back), [0.4])
+    }
 }
