@@ -143,14 +143,16 @@ async def test_futures_clock_map_covers_off_top_rows_and_preserves_unknown(proje
 
 
 @pytest.mark.asyncio
-async def test_settled_or_refused_market_is_explicit_unresolved_not_deleted(projection_dependencies):
+async def test_assigned_closed_market_replaces_forecast_but_refused_open_stays_unresolved(projection_dependencies):
     settled = market()
     settled.status = "closed"
     db = AsyncMock()
     db.execute.return_value = result([settled])
     items, states = await route._market_cards(db, [1], NOW)
-    assert items == []
-    assert states == {"futures-1": "unresolved"}
+    assert states == {"futures-1": "updated"}
+    assert items[0]["data"]["resolved"] is True
+    assert items[0]["data"]["winner"] is None
+    assert items[0]["data"]["top_outcomes"] == []
     db.execute.return_value = result([_spacex()])
     items, states = await route._market_cards(db, [_spacex().id], NOW)
     assert items == []
@@ -284,3 +286,90 @@ async def test_ordering_aliases_never_replace_card_quote_freshness(monkeypatch, 
     assert card["outcome_clock_kind"] == "row_revision"
     assert card["top_outcomes"][0]["price_revision_at"] == NOW.isoformat()
     assert card["outcome_revision_at"] == card["outcome_observed_at"]
+
+
+@pytest.mark.asyncio
+async def test_graded_open_status_card_uses_actual_winner_not_price_leader(projection_dependencies):
+    value = market()
+    value.outcomes[1].is_winner = True
+    value.outcomes[1].current_probability = .01
+    value.outcomes[0].current_probability = .99
+    value.external_id = "same-contract"
+    value.group_id = "polymarket:same-group"
+    value.canonical_market_key = "same-question"
+    db = AsyncMock()
+    db.execute.return_value = result([value])
+    items, states = await route._market_cards(db, [1], NOW)
+    data = items[0]["data"]
+    assert states == {"futures-1": "updated"}
+    assert data["status"] == value.status
+    assert data["resolved"] is True and data["winner"] == "Bob"
+    assert data["top_outcomes"] == [] and data["price_observed_at"] is None
+    assert data["external_id"] == "same-contract"
+    assert data["group_id"] == value.group_id
+    assert data["canonical_market_key"] == value.canonical_market_key
+    assert data["outcome_revision_at"] == {"11": NOW.isoformat(), "12": NOW.isoformat()}
+    assert value.outcomes[0].current_probability == .99  # no persisted price mutation
+
+
+@pytest.mark.asyncio
+async def test_terminal_and_open_siblings_both_survive_exact_leaf_refresh(projection_dependencies):
+    ended, active = market(1), market(2)
+    ended.status = "resolved"
+    db = AsyncMock()
+    db.execute.return_value = result([ended, active])
+    items, states = await route._market_cards(db, [1, 2, 3], NOW)
+    by_id = {i["data"]["id"]: i["data"] for i in items}
+    assert by_id[1]["resolved"] is True
+    assert by_id[1]["winner"] is None  # high forecast does not become result
+    assert by_id[2]["top_outcomes"][0]["probability"] == .6
+    assert states == {"futures-1": "updated", "futures-2": "updated", "futures-3": "missing"}
+
+
+@pytest.mark.parametrize("prices", [(.99, .01), (1.0, 0.0)])
+def test_terminal_projection_never_infers_a_grade_from_price_or_date(prices):
+    from app.utils.settled_feed_price_card import settled_feed_price_card
+    value = market()
+    value.resolution_date = NOW - timedelta(days=10)
+    for outcome, price in zip(value.outcomes, prices):
+        outcome.current_probability = price
+        outcome.resolution_source = "ungradeable_result"
+    assert settled_feed_price_card(value, {}) is None
+
+
+def test_multiple_winners_are_not_collapsed_into_one_champion():
+    from app.utils.settled_feed_price_card import settled_feed_price_card
+    value = market()
+    for outcome in value.outcomes:
+        outcome.is_winner = True
+    data = settled_feed_price_card(value, {})["data"]
+    assert data["resolved"] is True
+    assert data["winner"] is None
+    assert data["top_outcomes"] == []
+
+
+@pytest.mark.asyncio
+async def test_all_explicit_graded_losses_clear_open_status_without_inventing_winner(projection_dependencies):
+    value = market()
+    for outcome in value.outcomes:
+        outcome.is_winner = False
+        outcome.resolution_source = "api_settlement"
+    db = AsyncMock()
+    db.execute.return_value = result([value])
+    items, states = await route._market_cards(db, [1], NOW)
+    assert len(items) == 1  # not duplicated by ordinary open scorer
+    data = items[0]["data"]
+    assert data["resolved"] is True and data["winner"] is None
+    assert data["top_outcomes"] == []
+    assert states == {"futures-1": "updated"}
+
+
+@pytest.mark.parametrize("other_grade,source", [(None, "api_settlement"), (False, "ungradeable_result"), (False, None)])
+def test_partial_loss_or_ungradeable_retraction_does_not_settle_open_field(other_grade, source):
+    from app.utils.settled_feed_price_card import settled_feed_price_card
+    value = market()
+    value.outcomes[0].is_winner = False
+    value.outcomes[0].resolution_source = "api_settlement"
+    value.outcomes[1].is_winner = other_grade
+    value.outcomes[1].resolution_source = source
+    assert settled_feed_price_card(value, {}) is None
