@@ -1,3 +1,4 @@
+import { isQuoteStreamStatus } from "./eventQuoteStream";
 import { PINNABLE_HERO_SOURCE } from "./chartEdgePin";
 import { compareFoldRevision, parseFoldRevision, type FoldRevision } from "./foldRevision";
 
@@ -98,7 +99,7 @@ export function servedBlendEdgeObservation(
 export function adoptNewerBlendEdge<T extends AdoptingHero>(
   event: T | undefined, edge: BlendEdgeObservation | null | undefined,
 ): T | undefined {
-  if (!event || !edge || event.status !== "live" ||
+  if (!event || !edge || !isQuoteStreamStatus(event.status) ||
       event.hero_probability_source !== PINNABLE_HERO_SOURCE ||
       typeof event.hero_probability !== "number" ||
       !Number.isFinite(event.hero_probability)) return event;
@@ -132,7 +133,7 @@ export function adoptNewerBlendEdge<T extends AdoptingHero>(
 export function edgeInvalidatesHeldBlend(
   event: AdoptingHero | undefined, edge: BlendEdgeObservation | null | undefined,
 ): boolean {
-  if (!event || !edge || event.status !== "live" ||
+  if (!event || !edge || !isQuoteStreamStatus(event.status) ||
       event.hero_probability_source !== PINNABLE_HERO_SOURCE) return false;
   const heldRevision = parseFoldRevision(event.blend_fold_revision);
   const edgeRevision = parseFoldRevision(edge.foldRevision);

@@ -1,3 +1,5 @@
+import { parseFoldRevision } from "./foldRevision";
+import { isQuoteStreamStatus } from "./eventQuoteStream";
 /**
  * Extracted helpers for the event detail page (events/[id]/page.tsx).
  *
@@ -1021,7 +1023,13 @@ export function resolveProbability(
       awayProb = odds?.away_probability ?? null;
       fromCurrentOdds = true;
     }
-  } else if (isLive) {
+  } else if (isLive || (!withheld && isQuoteStreamStatus(event.status) &&
+      event.hero_probability_source === "blend" && typeof event.hero_probability === "number" &&
+      (!noReportedResult || parseFoldRevision(event.blend_fold_revision) !== null ||
+        (Number.isFinite(Date.parse(event.hero_probability_observed_at ?? "")) &&
+         (!lastChartPoint || Date.parse(event.hero_probability_observed_at!) >= Date.parse(lastChartPoint.timestamp)))))) {
+    // A quote can move before kickoff or during a suspension. Sports labels
+    // still use isLive; the authoritative blend supplies the number.
     // Live: THE BLEND IS THE HERO (L2-163 Item 2b, Alex ruling). The chart draws
     // the aggregated Bain Luck line (historyData.aggregate_line); the hero must
     // read the SAME number so a lagged sportsbook consensus never contradicts the
@@ -1070,7 +1078,7 @@ export function resolveProbability(
       // rather than adding a sentence explaining it. The number still shows;
       // only the claim about its currency goes, and the grey age badge above
       // is already saying how old it is.
-      probSourceLabel = blendIsStale
+      probSourceLabel = blendIsStale || !isLive
         ? "Bain Luck blend"
         : "Live · Bain Luck blend";
       // 🔴 #2085 — `fromCurrentOdds` stays FALSE here on purpose. This pair is

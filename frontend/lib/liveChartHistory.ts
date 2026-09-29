@@ -1,3 +1,5 @@
+import { isQuoteStreamStatus } from "./eventQuoteStream";
+import { frameFoldOrder } from "./foldRevision";
 import { PINNABLE_HERO_SOURCE } from "./chartEdgePin";
 import type { LiveStreamFrame } from "./liveStreamController";
 import type { OddsHistoryPoint, WinProbHistoryPoint } from "./types";
@@ -21,6 +23,7 @@ export type LiveChartPoint = { timestamp: string; home_probability: number };
 export type LiveChartFrame = LiveChartPoint & {
   source?: string;
   source_probability?: number;
+  rev?: Record<string, number> | null;
 };
 
 export type ChartHistory = {
@@ -33,7 +36,7 @@ export type ChartHistory = {
 export function rememberLiveChartFrame(
   points: LiveChartFrame[], frame: LiveStreamFrame, eventId: number,
 ): LiveChartFrame[] {
-  if (frame.event_id !== eventId || frame.status !== "live" ||
+  if (frame.event_id !== eventId || !isQuoteStreamStatus(frame.status) ||
       typeof frame.p !== "number" || !Number.isFinite(frame.p) ||
       frame.p < 0 || frame.p > 1 || !Number.isFinite(Date.parse(frame.updated_at))) {
     return points;
@@ -43,6 +46,7 @@ export function rememberLiveChartFrame(
   if (existing?.home_probability === frame.p) return points;
   const next: LiveChartFrame = {
     timestamp: frame.updated_at, home_probability: frame.p,
+    ...(frame.rev ? { rev: frame.rev } : {}),
   };
   // Carried on the same validity bar as `p`: a probability, finite, in range.
   // A frame missing it is still a perfectly good blend observation — it simply
@@ -268,7 +272,7 @@ export function appendHeroObservation<T extends ChartHistory>(
   history: T | undefined, hero: HeroObservation | null | undefined,
   served?: ServedEdgeClock | null,
 ): T | undefined {
-  if (!history || !hero || hero.status !== "live" ||
+  if (!history || !hero || !isQuoteStreamStatus(hero.status) ||
       hero.hero_probability_source !== PINNABLE_HERO_SOURCE) return history;
   const p = hero.hero_probability;
   if (typeof p !== "number" || !Number.isFinite(p) || p < 0 || p > 1) return history;
@@ -304,4 +308,25 @@ export function appendHeroObservation<T extends ChartHistory>(
     return history;
   }
   return { ...history, aggregate_line: [...line, { timestamp: stamp, home_probability: p }] };
+}
+
+/** Raw row prices cannot represent an opening label or a multi-row fold.
+ * Preserve historical observations from the same row; an authoritative pair
+ * supplies the current folded edge instead of a made-up aggregate. */
+export function quoteChartFrames(
+  points: LiveChartFrame[],
+  hero: (HeroObservation & { blend_fold_revision?: unknown }) | null | undefined,
+): LiveChartFrame[] {
+  if (!hero || !isQuoteStreamStatus(hero.status) || hero.hero_probability_source !== "blend") return [];
+  return points.filter(point => {
+    const order = frameFoldOrder(hero.blend_fold_revision, point.rev);
+    if (order === "incomparable") return false;
+    // A delayed old commit may carry a newer observation clock. It is not
+    // permission to draw a value the headline correctly refused at the edge.
+    if (order === "older") {
+      const heldAt = Date.parse(hero.hero_probability_observed_at ?? "");
+      return Number.isFinite(heldAt) && Date.parse(point.timestamp) < heldAt;
+    }
+    return true;
+  });
 }

@@ -68,7 +68,7 @@ describe("#920 actual published observations reach the main chart", () => {
   it("wires the shared history into both the main chart and expanded chart",()=>{
     const page=readFileSync(join(process.cwd(),"app/events/[id]/page.tsx"),"utf8");
     const hook=readFileSync(join(process.cwd(),"hooks/useLiveEventStream.ts"),"utf8");
-    expect(page).toContain("mergeLiveChartHistory(servedHistory, isLive ? chartPoints : [])");
+    expect(page).toContain("mergeLiveChartHistory(servedHistory, quoteEligible ? quoteChartFrames(chartPoints, event) : [])");
     expect(page.match(/aggregateLine=\{historyData\?\.aggregate_line \?\? undefined\}/g)).toHaveLength(2);
     expect(hook).toContain("rememberLiveChartFrame");
     expect(hook).toContain("chartEventId === eventId");
