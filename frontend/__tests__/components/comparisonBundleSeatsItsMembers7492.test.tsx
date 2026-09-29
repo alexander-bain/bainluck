@@ -178,7 +178,7 @@ describe("#7492 — the comparison bundle seats the comparison", () => {
     // so there is no control: a footer that reveals a row by costing a row is
     // the defect, not a smaller version of it.
     expect(html).not.toContain("Show 1 more");
-    expect(html).not.toContain("Show all");
+    expect(html).not.toMatch(/All \d+ questions/);
   });
 
   it("🔴 seats exactly the peek when there are more members, in the sibling's words", () => {
@@ -186,7 +186,7 @@ describe("#7492 — the comparison bundle seats the comparison", () => {
 
     expect(seated(html, OVERFLOW)).toBe(BUNDLE_PEEK_COUNT);
     expect(seated(html, OVERFLOW.slice(0, BUNDLE_PEEK_COUNT))).toBe(BUNDLE_PEEK_COUNT);
-    expect(html).toContain(`Show all ${OVERFLOW.length}`);
+    expect(html).toContain(`All ${OVERFLOW.length} questions`);
     // `Show N more` was this card's private grammar; the family has one.
     expect(html).not.toContain("more</button>");
   });
@@ -208,6 +208,6 @@ describe("#7492 — the comparison bundle seats the comparison", () => {
     const html = render(OVERFLOW, { kind: "theme", story_key: "ipo" });
 
     expect(seated(html, OVERFLOW)).toBe(BUNDLE_PEEK_COUNT);
-    expect(html).toContain(`Show all ${OVERFLOW.length}`);
+    expect(html).toContain(`All ${OVERFLOW.length} questions`);
   });
 });

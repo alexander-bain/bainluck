@@ -5,7 +5,8 @@ import { trackEvent } from "@/lib/analytics";
 import { getDiscoverItemAnalytics, recordDiscoverInteraction, sendDiscoverInteraction } from "@/lib/discoverInteractions";
 import type { FeedItem, FeedFuturesData } from "@/lib/types";
 import { BundleActionBar } from "./BundleActionBar";
-import { BUNDLE_PEEK_COUNT, getCat } from "./constants";
+import { BundleHeader } from "./BundleHeader";
+import { BUNDLE_PEEK_COUNT } from "./constants";
 import { FuturesCard, FuturesCompactRow } from "./FuturesCard";
 
 interface ThemeBundleCardProps {
@@ -39,13 +40,12 @@ const PEEK_COUNT = BUNDLE_PEEK_COUNT;
  * exactly that — a count of what is behind the chevron, which is navigation, not
  * a reason to read. It now carries the question the members are all answers to.
  * The count has not been lost: the peek rows beneath are the members, and
- * "Show all N" still prints it.
+ * "All N questions" still prints it.
  */
 export function ThemeBundleCard({ items, title, sharedQuestion, storyKey, positionIndex }: ThemeBundleCardProps) {
   const [expanded, setExpanded] = useState(false);
   const primary = items[0];
   const cat = primary?.type === "futures" ? (primary.data as FeedFuturesData).llm_sport_category : null;
-  const catStyle = getCat(cat);
   const analytics = primary ? getDiscoverItemAnalytics(primary) : { category: "geopolitics" };
   const peek = items.slice(0, PEEK_COUNT);
 
@@ -67,42 +67,20 @@ export function ThemeBundleCard({ items, title, sharedQuestion, storyKey, positi
 
   return (
     <div className="rounded-2xl border border-surface-border bg-surface-card shadow-lg overflow-hidden">
-      {/* Theme header */}
-      <button
-        onClick={toggleExpanded}
-        className="w-full flex items-center justify-between gap-3 px-4 py-2.5 bg-surface-elevated/50 hover:bg-surface-elevated transition-colors text-left"
-        aria-expanded={expanded}
-      >
-        {/* Two lines, not one: a question is a sentence and does not fit beside
-            the chip at 390px. The chip stays the category badge it was; the
-            question is the line the reader actually reads. */}
-        <div className="flex flex-col gap-1 min-w-0">
-          <span className="flex items-center gap-2 min-w-0">
-            {/* `truncate` (not a bare `whitespace-nowrap`) — the comment above says the chip stays
-                the category badge it was, but `title` is not always a short category word, and the
-                chip cannot enforce that from here. A 45-character tournament name grew it 13.6px
-                past the card, where the card's `overflow-hidden` cut it mid-word (#6929). Same
-                markup and same defect as GroupCard; fixed the same way so the two do not drift. */}
-            <span className={`${catStyle.bg} ${catStyle.text} text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full min-w-0 max-w-full truncate`}>
-              {catStyle.emoji} {title}
-            </span>
-            {!sharedQuestion && (
-              <span className="text-xs text-text-muted whitespace-nowrap">· {items.length} related</span>
-            )}
-          </span>
-          {sharedQuestion && (
-            <span className="text-sm font-semibold text-text-primary leading-snug">{sharedQuestion}</span>
-          )}
-        </div>
-        <svg className={`w-4 h-4 text-text-muted shrink-0 transition-transform ${expanded ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-        </svg>
-      </button>
+      <BundleHeader
+        title={title}
+        sharedQuestion={sharedQuestion}
+        fallbackCount={`· ${items.length} related`}
+        category={cat}
+        expanded={expanded}
+        canExpand
+        onToggle={toggleExpanded}
+      />
 
       {/* Collapsed: mini-ranked-peek */}
       {!expanded && (
         <>
-          <div className="divide-y divide-surface-border">
+          <div className="divide-y divide-surface-border border-t border-surface-border">
             {peek.map((member, i) => (
               <div key={i} className="px-4 py-3">
                 {member.type === "futures" ? (
@@ -117,14 +95,14 @@ export function ThemeBundleCard({ items, title, sharedQuestion, storyKey, positi
             onClick={toggleExpanded}
             className="w-full text-center py-2.5 text-xs font-medium text-accent-brand hover:text-accent-brand/80 border-t border-surface-border"
           >
-            {items.length > PEEK_COUNT ? `Show all ${items.length}` : "Expand"}
+            {items.length > PEEK_COUNT ? `All ${items.length} questions` : "Expand"}
           </button>
         </>
       )}
 
       {/* Expanded: the real member cards */}
       {expanded && (
-        <div className="p-3 space-y-3 bg-surface-elevated/30">
+        <div className="p-3 space-y-3 bg-surface-elevated/30 border-t border-surface-border">
           {items.map((member, i) => (
             <ThemeBundleMember key={i} member={member} />
           ))}

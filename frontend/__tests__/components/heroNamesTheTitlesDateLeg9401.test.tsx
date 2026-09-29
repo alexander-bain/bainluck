@@ -42,7 +42,16 @@ jest.mock("@/components/Analytics", () => ({
 import DiscoverCard from "../../components/DiscoverCard";
 
 function bundle(): FeedItem {
-  return JSON.parse(JSON.stringify(fixture.middle_east)) as FeedItem;
+  const item = JSON.parse(JSON.stringify(fixture.middle_east)) as FeedItem;
+  // #9642: a collapsed bundle now seats three rows (selected design A), and the
+  // specimen was row 5 — behind "All N questions". Hoist the two rows under test
+  // into the peek so the render arms still go through the real entry point; the
+  // members themselves stay verbatim.
+  const data = item.data as unknown as FeedBundleData;
+  const members = data.items as unknown as FeedItem[];
+  const underTest = (m: FeedItem) => [ARAB, IRAQ].includes((m.data as FeedFuturesData).name);
+  (data as unknown as { items: FeedItem[] }).items = [...members.filter(underTest), ...members.filter((m) => !underTest(m))];
+  return item;
 }
 
 function member(item: FeedItem, id: number): FeedFuturesData {

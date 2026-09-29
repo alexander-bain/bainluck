@@ -12,8 +12,13 @@ import { getCategoryForLeague } from "@/lib/sportCategories";
  * that: its header asks "which of these is priced highest to list?" and a
  * single row cannot answer a comparison. One constant is what keeps the answer
  * from drifting apart again.
+ *
+ * #9642 — three, not five: Alex's selected Discover design (A, 9/29) seats three
+ * related questions at equal weight and puts the rest behind "All N questions".
+ * Three still answers a comparison, and it lets a group sit beside standalone
+ * cards on one phone screen instead of taking the whole screen.
  */
-export const BUNDLE_PEEK_COUNT = 5;
+export const BUNDLE_PEEK_COUNT = 3;
 
 export const CATEGORY_GRADIENTS: Record<string, string> = {
   basketball: "linear-gradient(135deg, #7c2d12, #c2410c)",
