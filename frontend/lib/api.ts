@@ -181,6 +181,8 @@ async function apiFetch<T>(
   endpoint: string,
   options?: RequestInit & {
     timeoutMs?: number;
+    /** Stream owners pace their reads and pass 0 to avoid hidden retry bursts. */
+    maxRetries?: number;
     /**
      * Optional observability hook (L2-189). When provided, it is invoked with
      * the raw `Response` (before the body is parsed) and a small meta object,
@@ -202,7 +204,7 @@ async function apiFetch<T>(
   }
 
   const timeoutMs = options?.timeoutMs ?? 20000;
-  const maxRetries = 2;
+  const maxRetries = Math.max(0, Math.min(2, Math.floor(options?.maxRetries ?? 2)));
 
   // An externally-supplied signal (e.g. SearchBar's typeahead AbortController)
   // must cancel the in-flight fetch AND stop the retry loop. It is separate
