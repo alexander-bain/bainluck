@@ -854,6 +854,31 @@ jobs:
             exit 1
           fi
 
+      - name: "#9493 the search dropdown offers today's suspended match (real Postgres)"
+        # PILLAR: TRUTH. SHIP: typing a player whose match today is suspended
+        # offers that match, not only its Kalshi market as a separate row.
+        #
+        # The fix is a WHERE clause plus a sort term, so only a real database
+        # can observe it. Two strawmen: the old live/scheduled window (specimen
+        # gone, its market back), and no sort term (a suspended row takes a full
+        # pool's slot). Three refusals: a skip, a zero count, and a short count.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_typeahead_offers_todays_suspended_match_9493_pg.py \
+            -v -rs 2>&1 | tee /tmp/ta9493.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/ta9493.txt; then
+            echo "::error::#9493 suspended-match dropdown gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          if grep -qiE "no tests ran|collected 0 items" /tmp/ta9493.txt; then
+            echo "::error::#9493 suspended-match dropdown gate collected NOTHING"
+            exit 1
+          fi
+          if ! grep -qE "^=+ 8 passed" /tmp/ta9493.txt; then
+            echo "::error::#9493 suspended-match dropdown gate did not report exactly 8 passed"
+            exit 1
+          fi
+
       - name: "#9211 the search dropdown offers today's final beside the next game (real Postgres)"
         # PILLAR: DISCOVER. SHIP: typing a club on game day offers the result
         # it just finished right behind its next game.

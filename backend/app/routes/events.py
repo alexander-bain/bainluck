@@ -12899,8 +12899,9 @@ async def typeahead_search(
         )
         .where(
             event_team_filter,
-            Event.status.in_(["live", "scheduled"]),
-            _pool_start_floor(now),
+            # #9493: live/scheduled on #5030's floor, plus a match that started
+            # today and is `suspended` (`/search` has always admitted it).
+            _typeahead_event_pool_window(now),
             Event.commence_time <= now + timedelta(days=7),
             # #2263 / CERT-439: the dropdown is the FIRST search surface a person
             # touches, and it takes four slots. Two of them spent on one game is
@@ -12908,6 +12909,8 @@ async def typeahead_search(
             not_a_proven_duplicate(),
         )
         .order_by(
+            # #9493: first, so a suspended row only fills slots nothing else took.
+            _typeahead_suspended_last(),
             # Q438: live-AND-started. This pool serves its status through
             # `served_event_status`, so ordering on the raw column would sort a
             # row above the field that the same payload prints as `scheduled`.
@@ -34416,6 +34419,71 @@ def _pool_start_floor(now: datetime):
             Event.status == "live",
         ),
     )
+
+
+def _typeahead_suspended_started(now: datetime):
+    """#9493: a `suspended` row the dropdown's upcoming pool may offer.
+
+    Production 2026-09-28 23:32Z, `/typeahead?q=Dickerson`, from Alex's tap on
+    build 31: today's Dickerson v Pereira Challenger match (15320435, started
+    17:10Z, `suspended`) was absent. The dropdown offered tomorrow's doubles, then
+    the match's own Kalshi market as a "Prop" row, and the tap landed on a
+    futures page with no way back to the match. `/search?q=Dickerson` returned
+    the match, because `_SEARCH_STATUSES` admits `suspended` by design ("a reader
+    who types Alcaraz during a rain delay is asking the question this state
+    exists to answer"). Every typeahead event arm admitted live/scheduled or
+    completed/closed, and nothing else, so the two doors disagreed.
+
+    It is the #5030 defect by another route. `_transition_event_statuses_impl`
+    moves a row nothing reports on from `live` to `suspended` once its unobserved
+    bound passes (`UNOBSERVED_MAX_HOURS["tennis"]` is 3h), and from that moment
+    the match left the dropdown while its venue was still trading it. The
+    doubles row names "Dickerson", so the or-NEXT/or-LAST arms never opened.
+
+    Two bounds (gotcha #41). STARTED (`commence_time <= now`): a suspended row
+    dated in the future is the #4114 mislabel, not a match that stopped, and it
+    is not this arm's to offer. At most :data:`_MAX_GAME_DURATION` ago, the same
+    ceiling a live row gets, so the 2,597-row suspended-forever bucket (#5028)
+    never reaches the pool.
+    """
+    return and_(
+        Event.status == EVENT_SUSPENDED,
+        Event.commence_time <= now,
+        Event.commence_time >= now - _MAX_GAME_DURATION,
+    )
+
+
+def _typeahead_event_pool_window(now: datetime):
+    """#9493: the upcoming pool's status-and-time window.
+
+    The live/scheduled half is exactly what the pool selected before, through
+    the shared :func:`_pool_start_floor`. The suspended half is
+    :func:`_typeahead_suspended_started`. The outer `commence_time` floor
+    repeats a bound both halves already carry, so the `commence_time` range
+    scan stays outside the OR.
+    """
+    return and_(
+        Event.commence_time >= now - _MAX_GAME_DURATION,
+        or_(
+            and_(Event.status.in_(["live", "scheduled"]), _pool_start_floor(now)),
+            _typeahead_suspended_started(now),
+        ),
+    )
+
+
+def _typeahead_suspended_last():
+    """#9493: the FIRST sort term of the upcoming pool. Suspended rows go last.
+
+    This is what keeps the change additive. The pool fetches
+    `_EVENT_POOL_FETCH_LIMIT` rows ordered by start time, and a suspended row
+    always started earlier than the scheduled ones, so without this term it would
+    take the first slots. For a broad query (`tennis`, `challenger`) that would
+    push upcoming matches out of the fetch. Sorted last, a suspended row fills
+    only slots the old pool left empty. A query whose pool was already full gets
+    the same rows in the same order as before. The term is 0 for every
+    live/scheduled row, so `live_first_order` keeps ordering them unchanged.
+    """
+    return case((Event.status == EVENT_SUSPENDED, 1), else_=0)
 
 
 def _next_match_query(event_name_filter, now: datetime):
