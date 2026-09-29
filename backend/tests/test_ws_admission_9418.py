@@ -115,6 +115,9 @@ def _reread_row(r):
 KALSHI_SLATE = [
     [("KXATPMATCH-26SEP28ANGJOH", 7, 900)],
     [("KXATPMATCH-26SEP28ANGJOH-ANG", 7, 71)],
+    # #9484: the open-contract admission read — none here, so this file's
+    # reread stays the first query after the slate.
+    [],
 ]
 POLY_SLATE = [
     [(71, 7, "0xabc_yes", "0xabc", 900)],

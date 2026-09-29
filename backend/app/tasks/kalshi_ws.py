@@ -101,6 +101,10 @@ async def _run_kalshi_ws_consumer():
         watch_for_unadmitted_live_events,
     )
     from app.tasks.ws_liveness import report as _report_liveness
+    from app.tasks.ws_open_contracts import (  # #9484
+        kalshi_open_contract_stmt, open_contract_prices_enabled,
+        open_contract_ticker_map, shard_tickers,
+    )
     from app.utils.futures_rank import rerank_market_fields_stmt  # #6598
     from app.utils.price_change_stamp import price_changed_at_value
     from app.utils.resolution_authority import AUTHORITATIVE_SOURCES
@@ -139,11 +143,6 @@ async def _run_kalshi_ws_consumer():
         )
         rows = result.all()
 
-    if not rows:
-        logger.info("Kalshi WS: no live/upcoming linked markets")
-        _report_liveness("kalshi", "no_markets", legs=0)
-        return {"status": "no_markets"}
-
     event_tickers = list({row[0] for row in rows})
     market_id_by_ext = {row[0]: row[1] for row in rows}
     # Q460: the linked event behind each market, so a flushed price can be
@@ -154,24 +153,59 @@ async def _run_kalshi_ws_consumer():
 
     # Load outcome tickers for subscription
     all_market_ids = list(market_id_by_ext.values())
-    async with get_task_session() as session:
-        outcome_result = await session.execute(
-            select(
-                FuturesOutcome.external_id,
-                FuturesOutcome.market_id,
-                FuturesOutcome.id,
-            ).where(
-                FuturesOutcome.market_id.in_(all_market_ids),
-                FuturesOutcome.external_id.isnot(None),
+    outcome_rows = []
+    if all_market_ids:
+        async with get_task_session() as session:
+            outcome_result = await session.execute(
+                select(
+                    FuturesOutcome.external_id,
+                    FuturesOutcome.market_id,
+                    FuturesOutcome.id,
+                ).where(
+                    FuturesOutcome.market_id.in_(all_market_ids),
+                    FuturesOutcome.external_id.isnot(None),
+                )
             )
-        )
-        outcome_rows = outcome_result.all()
+            outcome_rows = outcome_result.all()
 
     ticker_to_ids: dict[str, tuple[int, int]] = {}
     for ext_id, market_id, outcome_id in outcome_rows:
         ticker_to_ids[ext_id.upper()] = (market_id, outcome_id)
 
     market_tickers = list(ticker_to_ids.keys())
+
+    # #9484 — every other unsettled Kalshi contract, for PRICES only, on its own
+    # connections (`app.tasks.ws_open_contracts`). Never added to
+    # `market_id_by_ext` (the lifecycle map) or to `ticker_to_ids` (which the
+    # #9418 admission watcher reads as "this event is subscribed"). A failed read
+    # costs the arm, never the game slate.
+    async def read_open_contracts() -> tuple[dict[str, tuple[int, int]], bool]:
+        if not open_contract_prices_enabled():
+            return {}, False
+        try:
+            async with get_task_session() as session:
+                open_rows = (
+                    await session.execute(kalshi_open_contract_stmt())
+                ).all()
+            return open_contract_ticker_map(open_rows, ticker_to_ids), False
+        except Exception:
+            logger.exception(
+                "Kalshi WS: open-contract admission read failed; "
+                "streaming the linked slate only this run"
+            )
+            return {}, True
+
+    # Read up front ONLY when there is no game slate for the read to delay:
+    # production's read takes ~2.8 s, and on the recycle path that would be
+    # 2.8 s more of every live game without a socket. Otherwise it runs beside
+    # the game socket (`admit_open_contracts` below).
+    preread = None
+    if not market_tickers:
+        preread = await read_open_contracts()
+        if not preread[0]:
+            logger.info("Kalshi WS: no live/upcoming linked markets")
+            _report_liveness("kalshi", "no_markets", legs=0)
+            return {"status": "no_markets"}
 
     logger.info(
         "Kalshi WS: %d tickers (%d events)", len(market_tickers), len(event_tickers),
@@ -203,6 +237,13 @@ async def _run_kalshi_ws_consumer():
         # Counted unconditionally — the re-derivation is a no-op on a field that
         # did not cross, so 0 is the healthy reading and absence is the failure.
         "ranks_rederived": 0,
+        # #9484: the open-contract arm. `open_contract_prices_written` counts
+        # rows that TOOK a price, so "the arm is subscribed" and "the arm is
+        # moving stored prices" are two numbers, not one.
+        "open_contract_tickers": 0,
+        "open_contract_connections": 0,
+        "open_contract_admission_error": False,
+        "open_contract_prices_written": 0,
     }
 
     # -- Buffered price updates --
@@ -224,6 +265,10 @@ async def _run_kalshi_ws_consumer():
     market_id_by_outcome: dict[int, int] = {
         outcome_id: market_id for market_id, outcome_id in ticker_to_ids.values()
     }
+    # #9484: filled IN PLACE by `admit_open_contracts`, which the handlers and
+    # the flush read through these same objects.
+    open_contract_ids: dict[str, tuple[int, int]] = {}
+    open_contract_outcome_ids: set[int] = set()
     blend_refresher = LiveBlendRefresher("kalshi")
     # #9462 review: stamps the previous run still owed when it recycled. Its
     # prices are already stored; the first flush below stamps them.
@@ -361,6 +406,10 @@ async def _run_kalshi_ws_consumer():
             stats["flushes"] += 1
             stats["price_updates"] += len(batch) - declined
             stats["settled_declined"] += declined
+            stats["open_contract_prices_written"] += sum(
+                1 for oid in written_outcome_ids
+                if oid in open_contract_outcome_ids
+            )
         except Exception:
             # Q491 — the batch is still in `price_buffer`, so the next flush
             # retries it. Before Q491 the buffer was drained up front and a
@@ -453,7 +502,7 @@ async def _run_kalshi_ws_consumer():
 
     async def handle_ticker(msg: dict):
         ticker = (msg.get("market_ticker") or msg.get("ticker", "")).upper()
-        ids = ticker_to_ids.get(ticker)
+        ids = ticker_to_ids.get(ticker) or open_contract_ids.get(ticker)
         if not ids:
             return
 
@@ -602,6 +651,41 @@ async def _run_kalshi_ws_consumer():
     flush_task = asyncio.create_task(flush_loop())
     stats_task = asyncio.create_task(stats_loop())
 
+    # #9484: the open-contract connections — `ticker` channel only (never
+    # lifecycle, see `ws_open_contracts`), admitted beside the game socket and
+    # torn down in the `finally` on every exit path.
+    open_contract_sockets = []
+    open_contract_tasks = []
+
+    async def admit_open_contracts():
+        ids, failed = preread if preread is not None else await read_open_contracts()
+        stats["open_contract_admission_error"] = failed
+        # An open contract's field is re-ranked like a linked one's.
+        market_id_by_outcome.update(
+            (outcome_id, market_id) for market_id, outcome_id in ids.values()
+        )
+        open_contract_outcome_ids.update(oid for _, oid in ids.values())
+        open_contract_ids.update(ids)
+        shards = shard_tickers(ids)
+        stats["open_contract_tickers"] = len(ids)
+        stats["open_contract_connections"] = len(shards)
+        for shard in shards:
+            sock = KalshiWebSocket()
+            sock.on_ticker = handle_ticker
+            open_contract_sockets.append(sock)
+            open_contract_tasks.append(
+                asyncio.create_task(
+                    sock.run(market_tickers=shard, channels=["ticker"])
+                )
+            )
+        if ids:
+            logger.info(
+                "Kalshi WS: %d open-contract tickers over %d connection(s)",
+                len(ids), len(shards),
+            )
+
+    admission_task = asyncio.create_task(admit_open_contracts())
+
     _report_liveness("kalshi", "subscribing", legs=len(market_tickers))
 
     # #9462 review: the markets with a ticker on the wire. A market row that
@@ -647,7 +731,15 @@ async def _run_kalshi_ws_consumer():
         # slate missed ends the run early through the same cancellation.
         admitted = await asyncio.wait_for(
             run_until_admission(
-                ws.run(market_tickers=market_tickers),
+                # #9484: an EMPTY ticker list means "every market, both
+                # channels" to `KalshiWebSocket.run`, so a run whose linked
+                # slate is empty (open contracts only) opens no game socket
+                # and simply waits out the recycle.
+                (
+                    ws.run(market_tickers=market_tickers)
+                    if market_tickers
+                    else asyncio.Event().wait()
+                ),
                 watch_for_unadmitted_live_events(
                     load_unadmitted_live_event_ids,
                     event_id_by_market.values(),
@@ -678,6 +770,11 @@ async def _run_kalshi_ws_consumer():
     finally:
         flush_task.cancel()
         stats_task.cancel()
+        # #9484: cancelled here, awaited only after the drain below, so a
+        # second cancellation landing on that await can never skip the drain.
+        admission_task.cancel()
+        for task in open_contract_tasks:
+            task.cancel()
         # Q491 repair (CERT-654 BLOCK): the last flush has no successor, so it
         # must RETRY rather than requeue into a buffer nobody will read again.
         try:
@@ -687,6 +784,12 @@ async def _run_kalshi_ws_consumer():
             # but a price it (or the last flush) committed inside the 2 s
             # throttle is still owed its blend stamp. The next run adopts it.
             stats["blend_pending_carried"] = hand_off_pending(blend_refresher)
+            stats["open_contract_messages"] = sum(
+                sock.stats.get("messages", 0) for sock in open_contract_sockets
+            )
+            await asyncio.gather(
+                admission_task, *open_contract_tasks, return_exceptions=True,
+            )
 
     logger.info("Kalshi WS consumer exiting: %s", stats)
     return stats

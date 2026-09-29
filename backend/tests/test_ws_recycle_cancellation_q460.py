@@ -109,6 +109,12 @@ class _Session:
         # "nothing live". It is the only query that reads the stored blend.
         if "win_probability_sources" in str(stmt):
             return _Result([])
+        # #9484: the Kalshi open-contract admission read is not part of the
+        # slate sequence either — answered as "no open contracts", so this
+        # file's connection count stays the game socket's. It is the only
+        # query that filters on `is_winner`.
+        if "futures_outcomes.is_winner IS NULL" in str(stmt):
+            return _Result([])
         return _Result(next(self._batches))
 
 
