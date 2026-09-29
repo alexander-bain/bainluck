@@ -82,6 +82,8 @@ nonisolated func futuresDetailHeroOutcome(_ market: FuturesMarketDetail) -> Futu
 
 struct FuturesDetailView: View {
     private let marketId: Int
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var pageVisible = false
     @StateObject private var viewModel: FuturesDetailViewModel
     @State private var sortField: FuturesSortField = .probability
     @State private var sortAscending = false
@@ -168,7 +170,8 @@ struct FuturesDetailView: View {
                                     marketId: marketId,
                                     hours: 168,
                                     tournamentStart: golfTournamentStart(market),
-                                    tournamentEnd: golfTournamentEnd(market)
+                                    tournamentEnd: golfTournamentEnd(market),
+                                    refreshToken: viewModel.chartRefreshToken
                                 )
                             }
 
@@ -206,6 +209,8 @@ struct FuturesDetailView: View {
             }
         }
         .task {
+            pageVisible = true
+            viewModel.setVisible(scenePhase == .active)
             await viewModel.load()
             if let market = viewModel.market {
                 AnalyticsService.trackScreen(name: "futures_detail", type: "futures_detail")
@@ -214,6 +219,13 @@ struct FuturesDetailView: View {
         }
         .refreshable {
             await viewModel.load()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            viewModel.setVisible(pageVisible && phase == .active)
+        }
+        .onDisappear {
+            pageVisible = false
+            viewModel.setVisible(false)
         }
     }
 
