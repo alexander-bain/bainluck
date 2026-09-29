@@ -758,6 +758,8 @@ jobs:
         # substr/concat inside two route bodies, so only a real database can
         # observe it. A strawman (round map emptied -> old answer) and two
         # controls. Three refusals: a skip, a zero count, and a short count.
+        # 24 = 15 round cases + 9 for #9578 (`playoffs`/`mlb playoffs` show
+        # today's Wild Card games, with its strawman and controls).
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_postseason_round_pg.py \
@@ -770,8 +772,8 @@ jobs:
             echo "::error::postseason-round search gate collected NOTHING"
             exit 1
           fi
-          if ! grep -qE "^=+ 15 passed" /tmp/round.txt; then
-            echo "::error::postseason-round search gate did not pass all 15"
+          if ! grep -qE "^=+ 24 passed" /tmp/round.txt; then
+            echo "::error::postseason-round search gate did not pass all 24"
             exit 1
           fi
 

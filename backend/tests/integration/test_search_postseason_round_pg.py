@@ -349,3 +349,44 @@ async def test_without_the_round_partition_the_collisions_lead(get, maker, monke
     collisions = await _add_name_collisions(maker)
     futures = _typeahead_futures(await get("typeahead", "wild card"))
     assert futures and futures[0] in collisions, futures
+
+
+# #9578, production 2026-09-29, the first day of MLB's postseason: these served
+# ZERO games while `wild card` served the day's four Wild Card games. No event
+# row says "playoffs"; the round map is the only signal.
+@pytest.mark.parametrize(
+    "q", ["playoffs", "mlb playoffs", "MLB Playoffs", "mlb postseason", "baseball playoffs"]
+)
+async def test_a_postseason_word_serves_the_rounds_games(get, q):
+    games = _search_games(await get("search", q))
+    assert set(games) == set(WILD_CARD_GAMES), (
+        f"{q!r} should serve exactly the games of the round in progress: {games}"
+    )
+
+
+@pytest.mark.parametrize("q", ["playoffs", "postseason"])
+async def test_the_dropdown_offers_the_rounds_games_for_a_postseason_word(get, q):
+    """Bare words only: `mlb playoffs` already reaches every MLB game through the
+    dropdown's league arm, so it cannot testify for this rule."""
+    games = _typeahead_games(await get("typeahead", q))
+    assert games and games <= set(WILD_CARD_GAMES), f"typeahead {q!r} offered {games}"
+
+
+async def test_another_leagues_playoffs_get_no_mlb_games(get):
+    """Control: `nfl playoffs` is another league's question."""
+    assert _search_games(await get("search", "nfl playoffs")) == []
+
+
+async def test_without_the_postseason_games_rule_playoffs_serves_no_games(get, monkeypatch):
+    """Strawman: the fixture reproduces production's empty games list."""
+    from app.routes import events as events_module
+
+    def _round_name_only(terms):
+        rnd, consumed = events_module._resolve_postseason_round(terms)
+        return ([rnd], consumed) if rnd else ([], set())
+
+    monkeypatch.setattr(events_module, "_resolve_postseason_games", _round_name_only)
+    assert _search_games(await get("search", "mlb playoffs")) == []
+    assert _typeahead_games(await get("typeahead", "playoffs")) == set()
+    # The strawman keeps the round name working, so it disarms the new rule alone.
+    assert set(_search_games(await get("search", "wild card"))) == set(WILD_CARD_GAMES)
