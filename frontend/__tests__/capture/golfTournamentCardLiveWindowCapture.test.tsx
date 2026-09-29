@@ -167,6 +167,13 @@ const STALE_CAPTURE_ROW = "golfers_to_win_a_pga_tour_major_before_2030";
 // the same reason as the row above.
 const OUT_OF_SEASON_ROW = "golfers_to_win_a_pga_tour_major_in_2027";
 const EYEBROW_DATE_SPAN = /<span class="text-text-tertiary">[^<]*<\/span>/g;
+// #9596 — the one windowless row whose price is moving at the capture clock, so
+// the frozen card called it LIVE on the price arm alone. That arm is retired:
+// the badge goes and the eyebrow date the card prints when not live comes in.
+// Named explicitly for the same reason as the two rows above.
+const PRICE_ARM_ROW = "asia_masters_2026";
+const LIVE_BADGE_SPAN =
+  /<span class="inline-flex items-center gap-1 text-\[11px\] font-semibold text-red-500 uppercase tracking-wide"><span class="w-\[7px\] h-\[7px\] rounded-full bg-red-500 animate-pulse"><\/span>LIVE<\/span>/g;
 
 const MOVEMENT_SPAN = /<span class=" text-(?:green|red)-600 font-semibold">[^<]*<\/span>/g;
 const withoutMovement = (m: string) => m.replace(MOVEMENT_SPAN, "");
@@ -356,7 +363,7 @@ describe("UX-P180 · the windowless population is untouched", () => {
 
   it.each(
     WINDOWLESS.filter(
-      (t) => t.key !== STALE_CAPTURE_ROW && t.key !== OUT_OF_SEASON_ROW,
+      (t) => t.key !== STALE_CAPTURE_ROW && t.key !== OUT_OF_SEASON_ROW && t.key !== PRICE_ARM_ROW,
     ).map((t) => [t.key, t] as const),
   )("%s renders byte-identically before and after the fix", (_key, t) => {
     // A veto keyed on `start_date && end_date` must be invisible to rows that
@@ -441,25 +448,50 @@ describe("UX-P180 · the windowless population is untouched", () => {
     expect(fixed.match(EYEBROW_DATE_SPAN)).toHaveLength(1);
   });
 
+  it(`${PRICE_ARM_ROW} keeps every byte except the LIVE badge, which becomes its date (#9596)`, () => {
+    // Same split as the two rows above (notice 50): remainder byte-identical,
+    // the changed span asserted POSITIVELY on BOTH sides. The legacy side is
+    // REQUIRED to still pulse LIVE — no window, no in-progress status, a price
+    // moving — so this fails loudly if the fixture ever stops exercising the
+    // arm #9596 retired.
+    const now = "2026-08-29T20:39:00Z";
+    const t = tournament(PRICE_ARM_ROW);
+    expect(t.start_date && t.end_date).toBeFalsy();
+    const fixed = at(now, () => markup(TournamentCard, t));
+    const legacy = at(now, () => markup(TournamentCardLegacy, t));
+
+    expect(legacy.match(LIVE_BADGE_SPAN)).toHaveLength(1);
+    expect(legacy.match(EYEBROW_DATE_SPAN)).toBeNull();
+    expect(fixed.match(LIVE_BADGE_SPAN)).toBeNull();
+    expect(fixed.match(EYEBROW_DATE_SPAN)).toHaveLength(1);
+
+    assertOnlyTheMovementUnitMoved(
+      fixed.replace(EYEBROW_DATE_SPAN, ""),
+      legacy.replace(LIVE_BADGE_SPAN, ""),
+    );
+  });
+
   it.each([
     ["a start with no end", { start_date: "2026-08-27T00:00:00+00:00", end_date: null }],
     ["an end with no start", { start_date: null, end_date: "2026-08-30T00:00:00+00:00" }],
-  ])("half a window (%s) is not a window — it falls through to the price signal", (_label, dates) => {
+  ])("half a window (%s) is not a window — it falls through to the status arm", (_label, dates) => {
     // No tournament in the served population carries exactly ONE of the two
     // dates, so this case is invisible to every other test in this file — the
     // mutation harness found the hole by flipping the `&&` to `||`, which
     // survived. A half-window must behave like no window at all: `new Date(null)`
     // is the epoch, and letting it reach the arithmetic would silently pin the
     // card dark forever.
+    //
+    // #9596 retired the price arm this used to fall through to, so the
+    // discriminating row is now `schedule_status: "in-progress"`: the real
+    // predicate reaches the status arm and says LIVE; the `||` mutant runs the
+    // half-window arithmetic and says not live, on either half.
     const moving = { ...TOUR_CHAMPIONSHIP, ...dates } as GolfTournament;
-    const still = {
-      ...moving,
-      golfers: moving.golfers.map((g) => ({ ...g, movement_24h: null })),
-    } as GolfTournament;
+    const inProgress = { ...moving, schedule_status: "in-progress" } as GolfTournament;
     // Well outside any window either date could describe.
     const now = "2027-01-01T12:00:00Z";
-    expect(saysLive(TournamentCard, moving, now)).toBe(true);
-    expect(saysLive(TournamentCard, still, now)).toBe(false);
+    expect(saysLive(TournamentCard, inProgress, now)).toBe(true);
+    expect(saysLive(TournamentCard, moving, now)).toBe(false);
   });
 });
 
