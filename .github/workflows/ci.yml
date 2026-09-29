@@ -2970,6 +2970,26 @@ jobs:
             exit 1
           }
 
+      - name: "#9543 the Kalshi beat reaches the existing rows it wrote longest ago first (real Postgres)"
+        # The poll breaks on a deadline every beat and walked existing events in
+        # the venue's listing order, so the same tail was cut off every beat
+        # (scan report 9/29: three beats `starved`, 9,436-17,579 existing events
+        # unreached each). It now orders them by `volume_updated_at`, the stamp
+        # only this poll writes, read from the server. Same rig and database as
+        # the #9460 step. Skip detection plus a count.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_kalshi_poll_reaches_the_stalest_rows_first_real_postgres_9543.py \
+            -v -rs 2>&1 | tee /tmp/kalshireach9543.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/kalshireach9543.txt; then
+            echo "::error::#9543 Kalshi poll reach gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]3 passed" /tmp/kalshireach9543.txt || {
+            echo "::error::#9543 Kalshi poll reach gate did not run all three cases"
+            exit 1
+          }
+
       - name: "#3569 The live poll speaks the venue's current price dialect (real Postgres)"
         # `get_markets` returns the venue's RAW JSON and the 2-minute poll read
         # `yes_bid`/`yes_ask`/`last_price` off it. The venue emits none of those

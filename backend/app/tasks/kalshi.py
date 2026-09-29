@@ -1218,6 +1218,36 @@ def _partition_new_events_first(events, existing_tickers):
     return new_events, existing_events
 
 
+def _least_recently_polled_first(existing_events, last_polled):
+    """#9543: upsert the existing events this poll wrote LONGEST ago first.
+
+    ``last_polled`` maps ``event_ticker`` → the row's ``volume_updated_at``,
+    which for a Kalshi row only this poll writes, so it is "when the discovery
+    poll last reached this row". A row with no stamp sorts first.
+
+    The loop breaks on a deadline every beat, and it used to walk the existing
+    partition in the venue's listing order — the same order every beat — so the
+    SAME tail was cut off every beat and never reached. Measured on the scan
+    report 2026-09-29: three straight beats `starved`, 9,436–17,579 existing
+    events unreached per beat; 60481264 (Pokemon Up/Down) unwritten since
+    06:57Z 9/28, so #9383's threshold label never reached it. Oldest-first
+    turns the cut into a rotation: each beat's unreached rows are the next
+    beat's first. Prices do not ride on this order — tier-1 futures have their
+    own hourly refresh (#2199) and live prices the websocket and live poll.
+    Stable: ties keep their listing order."""
+    _never = datetime.min.replace(tzinfo=timezone.utc)
+
+    def _age_key(event):
+        stamp = last_polled.get(event.event_ticker)
+        if stamp is None:
+            return _never
+        if stamp.tzinfo is None:
+            stamp = stamp.replace(tzinfo=timezone.utc)
+        return stamp
+
+    return sorted(existing_events, key=_age_key)
+
+
 def _floor_series_first(events):
     """#8586: the guaranteed-floor series (``_ALWAYS_FETCH_SERIES``) are
     upserted before everything else, new events included.
@@ -1612,17 +1642,24 @@ async def _poll_kalshi_markets():
             # not a free lunch some other channel picks up.
             fetched_tickers = [e.event_ticker for e in events if e.event_ticker]
             existing_tickers: set = set()
+            # #9543: when this poll last reached each existing row.
+            last_polled: dict = {}
             if fetched_tickers:
                 _rows = await session.execute(
                     text(
-                        "SELECT external_id FROM futures_markets "
+                        "SELECT external_id, volume_updated_at FROM futures_markets "
                         "WHERE source='kalshi' AND external_id = ANY(:tks)"
                     ),
                     {"tks": fetched_tickers},
                 )
-                existing_tickers = {r[0] for r in _rows}
+                for _ext_id, _polled_at in _rows:
+                    existing_tickers.add(_ext_id)
+                    last_polled[_ext_id] = _polled_at
             new_events, existing_events = _partition_new_events_first(
                 events, existing_tickers
+            )
+            existing_events = _least_recently_polled_first(
+                existing_events, last_polled
             )
             events = _floor_series_first(new_events + existing_events)
             stats["new_events_fetched"] = len(new_events)
