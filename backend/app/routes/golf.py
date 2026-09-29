@@ -2931,7 +2931,7 @@ def _lpga_name_tokens(text: str) -> set[str]:
 
 
 def _fill_dates_from_espn_lpga_calendar(
-    tournaments: list[dict], calendar: list[dict],
+    tournaments: list[dict], calendar: list[dict], now: datetime | None = None,
 ) -> None:
     """Give a dateless women's card its dates from ESPN's LPGA calendar. #8591.
 
@@ -2948,14 +2948,31 @@ def _fill_dates_from_espn_lpga_calendar(
        a card onto a new key (and a new URL) or cross a men's event.
 
     `resolution_date` and `commence_time` stay as they were, as in #8139.
+
+    #9596 — two ways a real LPGA card missed its row, both on the LOTTE
+    Championship (played Oct 1-4, 2026), which `/sports` then called LIVE on price
+    movement two days before round 1:
+
+    * **The card is LPGA by its tour, not only by its name.** "LOTTE Championship
+      presented by Hoakalei" carries no women's word, so `is_womens` reads False,
+      while `_classify_tour` already filed it `lpga` off its Kalshi ticker.
+    * **A market served now opened no later than now.** A Kalshi `commence_time`
+      is often the market's CLOSE (gotcha #14): LOTTE's read 2026-10-18, the same
+      as its resolution, which put the window's floor two weeks after round 1.
+      With `now` given, a commence in the future is capped at today.
     """
+    today = now.date() if now else None
     for t in tournaments:
-        if t.get("start_date") or t.get("end_date") or not t.get("is_womens"):
+        if t.get("start_date") or t.get("end_date"):
+            continue
+        if not (t.get("is_womens") or t.get("tour") == "lpga"):
             continue
         wanted = _lpga_name_tokens((t.get("key") or "").replace("_", " ")) - _LPGA_GENERIC_TOKENS
         if not wanted:
             continue
         opened = _as_utc_date(t.get("commence_time"))
+        if opened is not None and today is not None and opened > today:
+            opened = today
         resolves = _as_utc_date(t.get("resolution_date"))
         if opened is None and resolves is None:
             continue
@@ -3436,9 +3453,12 @@ async def get_golf(
     # allowed to be the reason a finished row survives.
     _fill_dates_from_calendar(tournaments, now)
     # #8591 — same point, same reason: ESPN dates the LPGA cards DataGolf cannot.
-    if any(t.get("is_womens") and not (t.get("start_date") or t.get("end_date")) for t in tournaments):
+    if any(
+        (t.get("is_womens") or t.get("tour") == "lpga") and not (t.get("start_date") or t.get("end_date"))
+        for t in tournaments
+    ):
         try:
-            _fill_dates_from_espn_lpga_calendar(tournaments, await _get_espn_lpga_calendar())
+            _fill_dates_from_espn_lpga_calendar(tournaments, await _get_espn_lpga_calendar(), now)
         except Exception as e:  # noqa: BLE001 — a dark ESPN must never cost the listing
             logger.warning("ESPN LPGA calendar fill failed: %s", e)
 
