@@ -30,6 +30,12 @@
 #                             `Executed N tests, with 0 failures` line that
 #                             standing notice 10's iOS clause requires verbatim
 #                             in the PR body of any Tier A change touching ios/**.
+#   3a. test-file proof     — each changed BainLuckTests file compiled in THIS
+#                             log, or vouched for by an identified cached object,
+#                             or recompiled + re-tested by ONE bounded fallback
+#                             over just those files (#9659). Never a full rerun.
+#   4. manifest.json        — tree, sha, iOS tree, verdict, per-file evidence and
+#                             stage timings, beside the logs: the handoff file.
 #
 # It does NOT run the frontend gates or pytest — those are unchanged, they live in
 # CLAUDE.md, and folding them in here would make a 90-second check a 6-minute one
@@ -96,6 +102,19 @@
 # do-not-paste; `$LINE` is empty in both, so the SUMMARY cannot pair FAIL with a
 # green-looking number either. `--explain` states the whole rule without building.
 #
+# ═══ AN INCREMENTAL BUILD IS NOT MISSING COVERAGE (#9659) ═══
+#
+# Build 32 ran its full suite green, 4356/0 in 37.3 minutes, and this gate still
+# failed: 15 changed test files had no NEW SwiftCompile line, because an earlier
+# run had compiled them into the same DerivedData. Absence from one log is "could
+# not tell", not "not covered". So a file the log does not show is checked
+# against the run's own artifacts — the output-file map its log names, the
+# object, and a ledger of what earlier gate runs watched compile — and accepted
+# only with an identity (exact tree path, target, configuration, content). Short
+# of that, ONE bounded xcodebuild recompiles just those files and runs just their
+# test classes (19 s by hand on build 32, against 37 minutes). A blind PASS is
+# never an outcome. The rules are in full above `test_file_map_from_log`.
+#
 # ═══ USAGE ═══
 #
 #   tools/native-gates.sh              # both gates, diff measured vs origin/master
@@ -104,6 +123,11 @@
 #   tools/native-gates.sh --explain    # resolve tree/sha/diff and STOP. No xcodebuild.
 #   tools/native-gates.sh --selftest   # prove the #5591 pass-line rule. No Xcode, no tree.
 #   tools/native-gates.sh --project-root <path>   # gate a tree explicitly
+#   tools/native-gates.sh --no-fallback           # unproven test files stay unproven (no targeted run)
+#   tools/native-gates.sh --check-manifest <manifest.json>
+#                                      # may an earlier run's evidence stand for THIS tree?
+#                                      # Same clean iOS tree + complete green run = yes. No xcodebuild.
+#   tools/native-gates.sh --selftest-provenance   # just the #9659 cases, fast. No Xcode.
 #
 # Exit 0 only when every gate it ran passed. Logs are left in $TMPDIR for reading;
 # their paths are printed. Gotcha #54: a gate is never piped, its exit code is
@@ -119,6 +143,9 @@ BUILD_ONLY=""
 EXPLAIN=""
 SELFTEST=""
 PROJECT_ROOT=""
+NO_FALLBACK=""
+CHECK_MANIFEST=""
+SELFTEST_PROVENANCE=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -127,6 +154,9 @@ while [ $# -gt 0 ]; do
     --selftest) SELFTEST=1 ;;
     --base) BASE="${2:?--base needs a ref}"; shift ;;
     --project-root) PROJECT_ROOT="${2:?--project-root needs a path}"; shift ;;
+    --no-fallback) NO_FALLBACK=1 ;;
+    --check-manifest) CHECK_MANIFEST="${2:?--check-manifest needs a manifest.json path}"; shift ;;
+    --selftest-provenance) SELFTEST_PROVENANCE=1 ;;
     # Derived, not a magic number: everything above `set -u` is the header. The
     # literal 85 was already clipping the last lines of USAGE before #5591 added
     # a section above it, which would have cut the usage list off entirely.
@@ -209,8 +239,13 @@ is_test_source () { case "$1" in */BainLuckTests/*) return 0 ;; *) return 1 ;; e
 # Prints one verdict line per file and sets PROOF_UNSEEN to how many were not
 # evidenced. Callers print their own follow-up, because "not in the macOS
 # target" is a shrug and "not compiled by the test target" is a gate failure.
+#
+# PROOF_SEEN_FILES / PROOF_UNSEEN_FILES carry the same split as paths (#9659):
+# the provenance step below needs to know WHICH files are unproven, not how many.
 prove_compiled () {   # <newline-separated files> <log> <clause-or-empty>
   PROOF_UNSEEN=0
+  PROOF_SEEN_FILES=""
+  PROOF_UNSEEN_FILES=""
   _pc_clause="${3:-}"
   while IFS= read -r _pc_f; do
     [ -n "$_pc_f" ] || continue
@@ -218,9 +253,13 @@ prove_compiled () {   # <newline-separated files> <log> <clause-or-empty>
     _pc_n=$(recompile_refs "$_pc_b" "$2" "$_pc_clause")
     if [ "$_pc_n" -gt 0 ]; then
       echo "  compiled ($_pc_n log refs)  $_pc_b"
+      PROOF_SEEN_FILES="${PROOF_SEEN_FILES:+$PROOF_SEEN_FILES
+}$_pc_f"
     else
       PROOF_UNSEEN=$((PROOF_UNSEEN + 1))
       echo "  NOT SEEN      $_pc_b"
+      PROOF_UNSEEN_FILES="${PROOF_UNSEEN_FILES:+$PROOF_UNSEEN_FILES
+}$_pc_f"
     fi
   done <<< "$1"
 }
@@ -247,7 +286,9 @@ watch_for_stall () {   # <pid> <logfile> <limit-seconds>
   _ws_last_size=-1
   _ws_last_growth=$(date +%s)
   while kill -0 "$_ws_pid" 2>/dev/null; do
-    sleep 5
+    # WATCH_POLL_SECS exists for the #9659 self-test only, whose fake xcodebuild
+    # exits at once; a real run always polls every 5 s.
+    sleep "${WATCH_POLL_SECS:-5}"
     # `wc -c` on a file the child is still writing is a snapshot, which is all
     # this needs: it only ever asks "did it change", never "how far along is it".
     _ws_size=$(wc -c < "$_ws_log" 2>/dev/null || echo 0)
@@ -313,9 +354,754 @@ resolve_changed_swift () {   # <root> <base>
              | sed '/^$/d' | sort -u )
 }
 
+# ── compile provenance: cached evidence, the ledger, the fallback (#9659) ─────
+#
+# ═══ WHY ═══
+#
+# Build 32 (63455d0dfa, 2026-09-29): the full suite ran green — 4356 tests, 0
+# failures, 37.3 minutes — and the gate still FAILED, because 15 changed test
+# files were "NOT SEEN" in the test log. The run was incremental: an earlier run
+# had compiled those files into the same DerivedData, Xcode correctly skipped
+# them, and #5635's proof reads only THIS run's log, so it had nothing to point
+# at. The honest reading was "could not tell", and the only remedy the gate
+# offered was another 37 minutes. Native closed it by hand with a targeted
+# compile of exactly those 15 files plus their 210 tests: 19 seconds.
+#
+# This section makes that hand fix the gate's own behaviour, and adds what the
+# hand fix lacked: when an earlier gate run DID watch the file compile, the gate
+# can say so with an identity instead of recompiling at all.
+#
+# ═══ WHAT COUNTS AS CACHED EVIDENCE — all six, or it is not evidence ═══
+#
+#   1. This run finished GREEN (notice10_select said PASS_LINE). A partial or
+#      failed run vouches for nothing, cached or not.
+#   2. This run's own log names exactly ONE `BainLuckTests-OutputFileMap.json`:
+#      Xcode's map from each source path to its object, for the DerivedData this
+#      run actually used. It is read from the log, never guessed, so another
+#      tree's or another DerivedData's objects cannot be borrowed. Every run
+#      prints it, incremental or not (the SwiftDriver step's command line).
+#   3. The map sits under `Debug-iphonesimulator/BainLuckTests.build/`, the
+#      configuration and target this run tests.
+#   4. The map lists the file's EXACT absolute path in the gated tree, which
+#      proves membership in the target AND the right tree, and the object it
+#      names exists.
+#   5. The object is not older than the source (Xcode's own staleness rule).
+#   6. The LEDGER (below) has a row saying a gate run SAW this file compiled,
+#      with this same content (the git blob of the file as it is now), into this
+#      same object, with this same object mtime. Rules 4-5 only prove "Xcode
+#      thinks the object is current", which is an mtime claim; a copy that
+#      preserves an old mtime defeats it. Rule 6 is the identity: this content
+#      was watched becoming this object.
+#
+# Failing rule 1 means the gate fails anyway. Failing any of 2-6 means the
+# evidence is INSUFFICIENT and the file goes to the fallback — never to a blind
+# pass, and never to an automatic full rerun.
+#
+# ═══ THE LEDGER ═══
+#
+# One TSV per DerivedData, beside it: `<DerivedData>/bainluck-compile-evidence.tsv`.
+# Deleting DerivedData deletes the objects and the ledger together, which is the
+# point. A row is written only for a file a run's log showed compiled into the
+# test target, from a run that reached the end of its suite (so the build
+# succeeded), and only if the object is not older than the source at that moment.
+#   source path · git blob · object path · object mtime · target · config · gate sha · epoch
+#
+# ═══ THE FALLBACK ═══
+#
+# `touch` the insufficient files (mtime only: content and `git status` are
+# unchanged) and run ONE bounded xcodebuild on the same simulator and packages:
+# `test -only-testing:BainLuckTests/<Class>` for every XCTestCase class those
+# files declare, or `build-for-testing` when they declare none (helpers). The
+# files must then appear compiled in THAT log, and the run must pass on its own
+# 'Selected tests' summary with at least one test executed. That summary is
+# never the notice-10 line; the full suite's 'All tests' total still is.
+
+XCODEBUILD="${NATIVE_GATES_XCODEBUILD:-xcodebuild}"
+TEST_TARGET="BainLuckTests"
+TEST_CONFIG_DIR="Debug-iphonesimulator"
+
+# `date -r FILE` reads an mtime on both BSD (this Mac) and GNU (CI) date;
+# `stat` spells it differently on each.
+mtime_of () { date -r "$1" +%s 2>/dev/null; }
+
+# PURE. Sets OFM_MAP (empty unless exactly ONE map is named) and OFM_COUNT.
+# Log paths escape spaces (`Bain\ Luck.build`), so the pattern accepts `\ `.
+test_file_map_from_log () {   # <log>
+  OFM_MAP=""; OFM_COUNT=0
+  [ -f "$1" ] || return 0
+  _ofm=$(/usr/bin/grep -o -E 'output-file-map ([^ \\]|\\ )*/'"$TEST_TARGET"'-OutputFileMap\.json' "$1" 2>/dev/null \
+         | sed -e 's/^output-file-map //' -e 's/\\ / /g' | sort -u)
+  OFM_COUNT=$(printf '%s' "$_ofm" | /usr/bin/grep -c .)
+  [ "$OFM_COUNT" -eq 1 ] && OFM_MAP="$_ofm"
+  return 0
+}
+
+# Prints the object the map assigns to an exact source path, or nothing.
+map_object_for () {   # <map> <absolute source path>
+  python3 - "$1" "$2" 2>/dev/null <<'PY'
+import json, sys
+try:
+    print((json.load(open(sys.argv[1])).get(sys.argv[2]) or {}).get("object", ""))
+except Exception:
+    print("")
+PY
+}
+
+ledger_for_map () {   # <map>
+  if [ -n "${NATIVE_GATES_EVIDENCE_LEDGER:-}" ]; then echo "$NATIVE_GATES_EVIDENCE_LEDGER"; return; fi
+  case "$1" in
+    */Build/Intermediates.noindex/*) echo "${1%%/Build/Intermediates.noindex/*}/bainluck-compile-evidence.tsv" ;;
+    *) echo "$(dirname "$1")/bainluck-compile-evidence.tsv" ;;
+  esac
+}
+
+# Appends a ledger row per file. Callers pass ONLY files a log showed compiled,
+# from a run that reached the end of its suite. Sets RECORDED.
+record_compile_evidence () {   # <root> <newline-separated relative files> <map> <gate sha>
+  RECORDED=0
+  { [ -n "$3" ] && [ -f "$3" ]; } || return 0
+  _re_ledger="$(ledger_for_map "$3")"
+  while IFS= read -r _re_f; do
+    [ -n "$_re_f" ] || continue
+    _re_src="$1/$_re_f"
+    [ -f "$_re_src" ] || continue
+    _re_obj="$(map_object_for "$3" "$_re_src")"
+    { [ -n "$_re_obj" ] && [ -f "$_re_obj" ]; } || continue
+    _re_om="$(mtime_of "$_re_obj")"; _re_sm="$(mtime_of "$_re_src")"
+    { [ -n "$_re_om" ] && [ -n "$_re_sm" ] && [ "$_re_om" -ge "$_re_sm" ]; } || continue
+    _re_blob="$(git -C "$1" hash-object -- "$_re_src" 2>/dev/null)" || continue
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$_re_src" "$_re_blob" "$_re_obj" "$_re_om" \
+      "$TEST_TARGET" "$TEST_CONFIG_DIR" "$4" "$(date +%s)" >> "$_re_ledger" 2>/dev/null \
+      && RECORDED=$((RECORDED + 1))
+  done <<< "$2"
+}
+
+# PURE (reads, never writes). Applies the six rules above to one file.
+# Sets CACHE_OK=1|0 and CACHE_WHY (the identity, or the first rule that failed).
+cached_compile_evidence () {   # <root> <relative file> <map-or-empty> <verdict>
+  CACHE_OK=0
+  _ce_src="$1/$2"
+  if [ "$4" != PASS_LINE ]; then
+    CACHE_WHY="this run did not finish green ($4), so nothing it built vouches for anything"; return 0
+  fi
+  if [ -z "$3" ]; then
+    CACHE_WHY="this run's log does not name exactly one $TEST_TARGET output-file map"; return 0
+  fi
+  if [ ! -f "$3" ]; then
+    CACHE_WHY="the output-file map named in the log does not exist: $3"; return 0
+  fi
+  case "$3" in
+    */"$TEST_CONFIG_DIR"/"$TEST_TARGET".build/*) : ;;
+    *) CACHE_WHY="the map is not for $TEST_TARGET in $TEST_CONFIG_DIR: $3"; return 0 ;;
+  esac
+  _ce_obj="$(map_object_for "$3" "$_ce_src")"
+  if [ -z "$_ce_obj" ]; then
+    CACHE_WHY="this exact path is not in the run's $TEST_TARGET map (outside the target, or another tree's map)"; return 0
+  fi
+  if [ ! -f "$_ce_obj" ]; then
+    CACHE_WHY="the map names an object that does not exist: $(basename "$_ce_obj")"; return 0
+  fi
+  _ce_om="$(mtime_of "$_ce_obj")"; _ce_sm="$(mtime_of "$_ce_src")"
+  if [ -z "$_ce_om" ] || [ -z "$_ce_sm" ] || [ "$_ce_om" -lt "$_ce_sm" ]; then
+    CACHE_WHY="stale: the object is older than the source"; return 0
+  fi
+  _ce_blob="$(git -C "$1" hash-object -- "$_ce_src" 2>/dev/null)"
+  _ce_ledger="$(ledger_for_map "$3")"
+  _ce_row=""
+  if [ -n "$_ce_blob" ] && [ -f "$_ce_ledger" ]; then
+    # ENVIRON, not -v: awk -v interprets backslashes in the value.
+    _ce_row=$(S="$_ce_src" B="$_ce_blob" O="$_ce_obj" M="$_ce_om" T="$TEST_TARGET" C="$TEST_CONFIG_DIR" \
+      awk -F'\t' '$1==ENVIRON["S"] && $2==ENVIRON["B"] && $3==ENVIRON["O"] && $4==ENVIRON["M"] \
+                  && $5==ENVIRON["T"] && $6==ENVIRON["C"] { r=$7 } END { if (r != "") print r }' "$_ce_ledger")
+  fi
+  if [ -z "$_ce_row" ]; then
+    CACHE_WHY="no recorded identity: no gate run saw this content (blob ${_ce_blob:0:10}) compiled into that object"; return 0
+  fi
+  CACHE_OK=1
+  CACHE_WHY="blob ${_ce_blob:0:10} was seen compiled into $(basename "$_ce_obj") by the gate run at ${_ce_row:0:10}"
+}
+
+# The XCTestCase classes a Swift file declares, one per line. A class that
+# inherits through an intermediate base is not listed; its file still has to
+# COMPILE in the fallback, it just contributes no -only-testing selector.
+xctest_classes () {   # <swift file>
+  sed -n -E 's/^[[:space:]]*(@[A-Za-z]+[[:space:]]+)*((final|public|internal|open)[[:space:]]+)*class[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*:[[:space:]]*XCTestCase([^A-Za-z0-9_].*)?$/\4/p' "$1" 2>/dev/null
+}
+
+# PURE. Sets FB_MODE (test | build-for-testing), FB_ONLY (array) and FB_CLASSES.
+fallback_plan () {   # <root> <newline-separated relative files>
+  FB_ONLY=()
+  FB_CLASSES=""
+  while IFS= read -r _fp_f; do
+    [ -n "$_fp_f" ] || continue
+    while IFS= read -r _fp_c; do
+      [ -n "$_fp_c" ] || continue
+      FB_ONLY+=("-only-testing:$TEST_TARGET/$_fp_c")
+      FB_CLASSES="${FB_CLASSES:+$FB_CLASSES }$_fp_c"
+    done <<< "$(xctest_classes "$1/$_fp_f")"
+  done <<< "$2"
+  if [ ${#FB_ONLY[@]} -gt 0 ]; then FB_MODE=test; else FB_MODE=build-for-testing; fi
+}
+
+# PURE — the fallback's twin of notice10_select. An -only-testing run's total
+# lives under 'Selected tests', never 'All tests' (measured on a real run,
+# 2026-09-29), which is why it can never be taken for the notice-10 line.
+# Sets FB_OK=1|0 and FB_TOTAL_LINE.
+fallback_select () {   # <log> <exit> <mode>
+  FB_OK=0
+  FB_TOTAL_LINE=""
+  if [ "$3" = build-for-testing ]; then
+    if [ "$2" -eq 0 ] && /usr/bin/grep -q '^\*\* TEST BUILD SUCCEEDED \*\*' "$1" 2>/dev/null; then FB_OK=1; fi
+    return 0
+  fi
+  FB_TOTAL_LINE=$(/usr/bin/grep -A1 -E "Test Suite 'Selected tests' (passed|failed)" "$1" 2>/dev/null \
+                  | /usr/bin/grep -E "Executed [0-9]+ tests?, with .* failures?" | tail -1 | sed 's/^[[:space:]]*//')
+  _fs_n=$(printf '%s' "$FB_TOTAL_LINE" | sed -n -E 's/^Executed ([0-9]+) tests?, .*/\1/p')
+  # "Executed 0 tests" with exit 0 is what a selector naming no real class gets.
+  # That is a vacuous pass, so at least one test must have run.
+  if [ "$2" -eq 0 ] && /usr/bin/grep -q '^\*\* TEST SUCCEEDED \*\*' "$1" 2>/dev/null \
+     && [ -n "$_fs_n" ] && [ "$_fs_n" -gt 0 ] \
+     && [ "${FB_TOTAL_LINE#*with 0 failures}" != "$FB_TOTAL_LINE" ]; then
+    FB_OK=1
+  fi
+}
+
+# Runs the fallback. Reads the run's globals: PROJECT, SCHEME, UDID, SPM_FLAGS,
+# SWIFT_FLAGS, STALL_LIMIT, XCODEBUILD. Sets FB_EXIT, FB_OK, FB_TOTAL_LINE,
+# FB_STALLED, FB_SECS, FB_UNPROVEN, FB_PROVEN_FILES; the per-file proof lines
+# are left in <logfile>.proof.
+run_compile_fallback () {   # <root> <newline-separated relative files> <logfile>
+  FB_LOG="$3"; FB_STALLED=0
+  fallback_plan "$1" "$2"
+  while IFS= read -r _rf_f; do
+    [ -n "$_rf_f" ] && touch "$1/$_rf_f"
+  done <<< "$2"
+  _rf_t0=$(date +%s)
+  set -m
+  "$XCODEBUILD" "$FB_MODE" -project "$PROJECT" -scheme "$SCHEME" -destination "id=$UDID" \
+    ${SPM_FLAGS[@]+"${SPM_FLAGS[@]}"} ${FB_ONLY[@]+"${FB_ONLY[@]}"} \
+    OTHER_SWIFT_FLAGS="$SWIFT_FLAGS" > "$FB_LOG" 2>&1 &
+  _rf_pid=$!
+  set +m
+  watch_for_stall "$_rf_pid" "$FB_LOG" "${STALL_LIMIT:-300}" || FB_STALLED=1
+  wait "$_rf_pid" 2>/dev/null
+  FB_EXIT=$?
+  FB_SECS=$(( $(date +%s) - _rf_t0 ))
+  fallback_select "$FB_LOG" "$FB_EXIT" "$FB_MODE"
+  prove_test_sources "$2" "$FB_LOG" > "$FB_LOG.proof"
+  FB_UNPROVEN=$PROOF_UNSEEN
+  FB_PROVEN_FILES="$PROOF_SEEN_FILES"
+}
+
+# One evidence row per file: path · blob · kind (log|cache|fallback|none) · detail.
+evidence_rows () {   # <newline-separated relative files> <kind> <detail>
+  while IFS= read -r _er_f; do
+    [ -n "$_er_f" ] || continue
+    printf '%s\t%s\t%s\t%s\n' "$_er_f" \
+      "$(git -C "$GATE_ROOT" hash-object -- "$GATE_ROOT/$_er_f" 2>/dev/null)" "$2" "$3" >> "$EVIDENCE_TSV"
+  done <<< "$1"
+}
+
+# The whole provenance decision for the test files this run's log did not show
+# compiled. A named function so --selftest drives the REAL sequence (cached →
+# fallback → ledger) against a fake xcodebuild, not a copy of it. Prints its
+# verdict lines; sets STILL_UNSEEN (the files nothing could vouch for) and FB_RAN.
+provenance_for_unseen () {   # <root> <newline-separated unseen files> <map> <verdict> <fallback-log>
+  STILL_UNSEEN="$2"
+  FB_RAN=0
+  [ -n "$2" ] || return 0
+  if [ "$4" != PASS_LINE ]; then
+    evidence_rows "$2" none "the run did not finish green ($4)"
+    return 0
+  fi
+  _pu_need=""
+  while IFS= read -r _pu_f; do
+    [ -n "$_pu_f" ] || continue
+    cached_compile_evidence "$1" "$_pu_f" "$3" "$4"
+    if [ "$CACHE_OK" -eq 1 ]; then
+      echo "  cached        $(basename "$_pu_f") — $CACHE_WHY"
+      evidence_rows "$_pu_f" cache "$CACHE_WHY"
+    else
+      echo "  insufficient  $(basename "$_pu_f") — $CACHE_WHY"
+      _pu_need="${_pu_need:+$_pu_need
+}$_pu_f"
+    fi
+  done <<< "$2"
+  STILL_UNSEEN="$_pu_need"
+  [ -n "$_pu_need" ] || return 0
+  if [ -n "${NO_FALLBACK:-}" ]; then
+    echo "  --no-fallback: the files above stay unproven."
+    evidence_rows "$_pu_need" none "insufficient provenance; fallback disabled"
+    return 0
+  fi
+  FB_RAN=1
+  echo "  bounded fallback: recompile ONLY these files, run ONLY their tests — not the full suite"
+  run_compile_fallback "$1" "$_pu_need" "$5"
+  echo "    mode : $FB_MODE${FB_CLASSES:+ -only-testing $FB_CLASSES}"
+  echo "    EXIT CODE: $FB_EXIT   log: $FB_LOG   (${FB_SECS}s)"
+  sed 's/^/  /' "$FB_LOG.proof"
+  if [ "$FB_OK" -eq 1 ] && [ "$FB_UNPROVEN" -eq 0 ] && [ "$FB_STALLED" -eq 0 ]; then
+    echo "    fallback PASSED — ${FB_TOTAL_LINE:-test build succeeded}, every file compiled by it"
+    evidence_rows "$_pu_need" fallback "${FB_TOTAL_LINE:-build-for-testing succeeded} ($FB_SECS s)"
+    test_file_map_from_log "$FB_LOG"
+    record_compile_evidence "$1" "$FB_PROVEN_FILES" "$OFM_MAP" "${GATE_SHA:-UNKNOWN}"
+    STILL_UNSEEN=""
+    return 0
+  fi
+  if [ "$FB_STALLED" -eq 1 ]; then
+    _pu_why="the fallback STALLED and was killed (#2975)"
+  elif [ "$FB_UNPROVEN" -gt 0 ]; then
+    _pu_why="$FB_UNPROVEN file(s) were not compiled even after touching them: outside the $TEST_TARGET target, or the build never reached them"
+  elif [ "$FB_MODE" = test ] && [ -n "$FB_TOTAL_LINE" ]; then
+    _pu_why="their tests FAILED on freshly compiled objects ($FB_TOTAL_LINE): a real failure the full-suite pass could not see"
+  else
+    _pu_why="the fallback did not finish green (exit $FB_EXIT)"
+  fi
+  echo "    fallback FAILED — $_pu_why"
+  evidence_rows "$_pu_need" none "fallback failed: $_pu_why"
+}
+
+# The integration manifest: what was tested, on which iOS tree, with what
+# evidence. Written beside the logs on every full run, so the Native→Integrator
+# handoff is one file and `--check-manifest` can decide reuse without a person.
+write_manifest () {   # <out>
+  M_ROOT="$GATE_ROOT" M_SHA="$GATE_SHA" M_BRANCH="$GATE_BRANCH" M_BASE="$BASE" \
+  M_TREE0="${IOS_TREE_START:-}" M_DIRTY0="${IOS_DIRTY_START:-}" \
+  M_TREE1="$(git -C "$GATE_ROOT" rev-parse HEAD:ios 2>/dev/null)" \
+  M_DIRTY1="$(git -C "$GATE_ROOT" status --porcelain --untracked-files=all -- ios 2>/dev/null | head -1)" \
+  M_UDID="${UDID:-}" M_MAC="${MAC_EXIT:-}" M_TEST="${TEST_EXIT:-}" M_VERDICT="${VERDICT:-}" \
+  M_LINE="${LINE:-}" M_ALL="${ALL_TESTS_LINE:-}" M_UNPROVEN="${TESTPROOF_UNSEEN:-0}" \
+  M_CHANGED_ERR="${CHANGED_ERR:-}" M_FB_RAN="${FB_RAN:-0}" M_FB_MODE="${FB_MODE:-}" \
+  M_FB_CLASSES="${FB_CLASSES:-}" M_FB_EXIT="${FB_EXIT:-}" M_FB_OK="${FB_OK:-}" \
+  M_FB_TOTAL="${FB_TOTAL_LINE:-}" M_FB_SECS="${FB_SECS:-}" M_FB_LOG="${FB_LOG:-}" \
+  M_MAC_SECS="${MAC_SECS:-}" M_TEST_SECS="${TEST_SECS:-}" M_T0="${GATE_T0:-}" \
+  M_MACLOG="${MACLOG:-}" M_TESTLOG="${TESTLOG:-}" M_GATE_EXIT="$FAILED" \
+  python3 - "$1" "$EVIDENCE_TSV" <<'PY'
+import json, os, sys, time
+e = os.environ.get
+def num(k):
+    v = e(k, "")
+    return int(v) if v.lstrip("-").isdigit() else None
+rows = []
+try:
+    for line in open(sys.argv[2]):
+        p = line.rstrip("\n").split("\t")
+        if len(p) >= 4:
+            rows.append({"path": p[0], "blob": p[1], "evidence": p[2], "detail": p[3]})
+except FileNotFoundError:
+    pass
+t0 = num("M_T0")
+m = {
+    "schema": "native-gates-manifest/1",
+    "written_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    "gated_tree": e("M_ROOT"), "gated_sha": e("M_SHA"), "gated_branch": e("M_BRANCH"),
+    "base": e("M_BASE"),
+    "ios_tree_start": e("M_TREE0"), "ios_tree_end": e("M_TREE1"),
+    "ios_dirty_start": bool(e("M_DIRTY0")), "ios_dirty_end": bool(e("M_DIRTY1")),
+    "configuration": "Debug", "test_target": "BainLuckTests", "destination": e("M_UDID"),
+    "macos_build_exit": num("M_MAC"), "test_exit": num("M_TEST"),
+    "verdict": e("M_VERDICT"), "notice10_line": e("M_LINE"), "all_tests_line": e("M_ALL"),
+    "changed_files_error": e("M_CHANGED_ERR") or None,
+    "tests_unproven": num("M_UNPROVEN"),
+    "evidence": rows,
+    "fallback": {
+        "ran": e("M_FB_RAN") == "1", "mode": e("M_FB_MODE") or None,
+        "classes": (e("M_FB_CLASSES") or "").split(), "exit": num("M_FB_EXIT"),
+        "ok": e("M_FB_OK") == "1", "total_line": e("M_FB_TOTAL") or None,
+        "seconds": num("M_FB_SECS"), "log": e("M_FB_LOG") or None,
+    },
+    "seconds": {
+        "macos_build": num("M_MAC_SECS"), "tests": num("M_TEST_SECS"),
+        "fallback": num("M_FB_SECS"),
+        "total": (int(time.time()) - t0) if t0 is not None else None,
+    },
+    "logs": {"macos": e("M_MACLOG"), "tests": e("M_TESTLOG")},
+    "gate_exit": num("M_GATE_EXIT"),
+}
+with open(sys.argv[1], "w") as f:
+    json.dump(m, f, indent=2)
+    f.write("\n")
+PY
+}
+
+# May an earlier run's evidence stand in for a new one on THIS tree? Yes only
+# when the iOS tree is byte-identical (HEAD:ios), clean on both sides, and the
+# earlier run was a complete green with every changed test file evidenced.
+# Prints the verdict; returns 0 reusable, 1 not.
+check_manifest () {   # <root> <manifest>
+  CUR_IOS_TREE="$(git -C "$1" rev-parse HEAD:ios 2>/dev/null)" \
+  CUR_IOS_DIRTY="$(git -C "$1" status --porcelain --untracked-files=all -- ios 2>/dev/null | head -1)" \
+  CUR_SHA="$(git -C "$1" rev-parse HEAD 2>/dev/null)" \
+  python3 - "$2" <<'PY'
+import json, os, sys
+try:
+    m = json.load(open(sys.argv[1]))
+except Exception as ex:
+    print(f"  NOT REUSABLE — cannot read the manifest: {ex}")
+    sys.exit(1)
+cur = os.environ.get("CUR_IOS_TREE", "")
+why = []
+if m.get("schema") != "native-gates-manifest/1":
+    why.append(f"unknown manifest schema {m.get('schema')!r}")
+if not cur:
+    why.append("cannot resolve HEAD:ios in this tree")
+elif m.get("ios_tree_start") != cur:
+    why.append(f"the iOS tree differs: the evidence is for {m.get('ios_tree_start')}, HEAD:ios here is {cur}")
+if m.get("ios_tree_end") != m.get("ios_tree_start"):
+    why.append("the iOS tree changed while that gate was running")
+if m.get("ios_dirty_start") or m.get("ios_dirty_end"):
+    why.append("that gate ran on uncommitted iOS changes, so HEAD:ios does not describe what it tested")
+if os.environ.get("CUR_IOS_DIRTY"):
+    why.append("this tree has uncommitted iOS changes")
+if m.get("macos_build_exit") != 0:
+    why.append(f"its macOS build did not pass (exit {m.get('macos_build_exit')})")
+if m.get("test_exit") != 0 or m.get("verdict") != "PASS_LINE" or not m.get("notice10_line"):
+    why.append(f"its test run was not a complete pass (verdict {m.get('verdict')}, exit {m.get('test_exit')})")
+if m.get("changed_files_error"):
+    why.append("it could not tell which files changed")
+if m.get("tests_unproven") != 0:
+    why.append(f"{m.get('tests_unproven')} changed test file(s) had no compile evidence")
+bare = [r.get("path") for r in m.get("evidence", []) if r.get("evidence") not in ("log", "cache", "fallback")]
+if bare:
+    why.append("no compile evidence for: " + ", ".join(bare))
+if m.get("gate_exit") != 0:
+    why.append(f"the gate itself exited {m.get('gate_exit')}")
+if why:
+    print("  NOT REUSABLE — that evidence does not cover this tree:")
+    for w in why:
+        print(f"    - {w}")
+    sys.exit(1)
+print("  REUSABLE — same iOS tree, clean, a complete green run, every changed test file evidenced")
+print(f"    {m['notice10_line']}")
+print(f"    gated at {m.get('gated_sha')} ({m.get('gated_branch')}); HEAD here is {os.environ.get('CUR_SHA')}")
+print(f"    iOS tree {cur}")
+sys.exit(0)
+PY
+}
+
 # ── --selftest: prove the rule above, on log shapes, with no Xcode ───────────
 # A gate that lied is being repaired; the repair owes proof that it no longer
 # does. These fixtures go through notice10_select() itself, not a copy of it.
+# ── #9659 self-test: compile provenance, no Xcode ─────────────────────────────
+# A named function so `--selftest` and the fast `--selftest-provenance` (which
+# the CI guard drives) run the SAME cases. Real git, a real DerivedData layout
+# (spaces and all, copied from a live run), and a FAKE xcodebuild only where a
+# run is needed — so the fallback's plan, argv, proof and ledger write are all
+# exercised through run_compile_fallback itself, not described.
+selftest_provenance () {
+  say "--selftest — #9659 compile provenance (no xcodebuild; a fake one where a run is needed)"
+  PV="$(mktemp -d)"
+  _pv_tab="$(printf '\t')"
+  pv_ok () { # name actual expected
+    if [ "$2" = "$3" ]; then echo "  ok    $1 -> ${2:-<empty>}"
+    else echo "  FAIL  $1 -> got \"$2\", wanted \"$3\""; ST_FAIL=1; fi
+  }
+  pv_has () { # name haystack needle
+    case "$2" in *"$3"*) echo "  ok    $1" ;;
+      *) echo "  FAIL  $1 -> \"$2\" does not contain \"$3\""; ST_FAIL=1 ;; esac
+  }
+  pv_lacks () { # name haystack needle
+    case "$2" in *"$3"*) echo "  FAIL  $1 -> \"$2\" contains \"$3\""; ST_FAIL=1 ;;
+      *) echo "  ok    $1" ;; esac
+  }
+  pv_git () { git -C "$GATE_ROOT" -c user.email=gate@selftest -c user.name=gate "$@"; }
+
+  # ── a tree shaped like this repo ──
+  GATE_ROOT="$PV/tree"
+  _pv_t="$GATE_ROOT/ios/Bain Luck/BainLuckTests"
+  mkdir -p "$_pv_t"
+  git init -q -b master "$GATE_ROOT"
+  printf 'import XCTest\n@MainActor final class FooTests: XCTestCase {\n    func testA() {}\n}\n' > "$_pv_t/FooTests.swift"
+  printf 'import XCTest\nfinal class BarTests:XCTestCase, @unchecked Sendable {\n}\n// final class GhostTests: XCTestCase {}\nfinal class NotATest: XCTestCaseLike {}\nclass Helper {}\n' > "$_pv_t/BarTests.swift"
+  printf 'enum Fixtures { static let x = 1 }\n' > "$_pv_t/Fixtures.swift"
+  pv_git add -A; pv_git commit -q -m base
+  FOO="ios/Bain Luck/BainLuckTests/FooTests.swift"
+  BAR="ios/Bain Luck/BainLuckTests/BarTests.swift"
+  FIX="ios/Bain Luck/BainLuckTests/Fixtures.swift"
+
+  # ── a DerivedData with the real layout ──
+  _pv_dd="$PV/DerivedData"
+  _pv_obj="$_pv_dd/Build/Intermediates.noindex/Bain Luck.build/$TEST_CONFIG_DIR/$TEST_TARGET.build/Objects-normal/arm64"
+  mkdir -p "$_pv_obj"
+  _pv_map="$_pv_obj/$TEST_TARGET-OutputFileMap.json"
+  python3 - "$_pv_map" "$GATE_ROOT" "$_pv_obj" <<'PY'
+import json, sys
+out, root, obj = sys.argv[1:]
+base = root + "/ios/Bain Luck/BainLuckTests/"
+m = {"": {"swift-dependencies": obj + "/BainLuckTests-primary.swiftdeps"}}
+for n in ("FooTests", "BarTests", "Fixtures"):
+    m[base + n + ".swift"] = {"object": f"{obj}/{n}.o", "swift-dependencies": f"{obj}/{n}.swiftdeps"}
+json.dump(m, open(out, "w"))
+PY
+  # Sources at T, objects a minute later: a clean incremental state.
+  touch -t 202609290000 "$_pv_t/FooTests.swift" "$_pv_t/BarTests.swift" "$_pv_t/Fixtures.swift"
+  for _pv_n in FooTests BarTests Fixtures; do : > "$_pv_obj/$_pv_n.o"; touch -t 202609290001 "$_pv_obj/$_pv_n.o"; done
+  # The map as xcodebuild prints it: inside the SwiftDriver command, spaces escaped.
+  printf '    builtin-Swift-Compilation -- /x/swiftc -module-name BainLuckTests -output-file-map %s -use-frontend-parseable-output\n' \
+    "$(printf '%s' "$_pv_map" | sed 's/ /\\ /g')" > "$PV/incremental.log"
+
+  # ── rule 2: the map comes from THIS run's log, and only if it is unambiguous ──
+  test_file_map_from_log "$PV/incremental.log"
+  pv_ok "the map is read from the log, escaped spaces undone" "$OFM_MAP" "$_pv_map"
+  { cat "$PV/incremental.log"; printf '    -output-file-map /elsewhere/%s-OutputFileMap.json\n' "$TEST_TARGET"; } > "$PV/two-maps.log"
+  test_file_map_from_log "$PV/two-maps.log"
+  pv_ok "two different maps in one log -> neither is trusted" "${OFM_MAP:-none} ($OFM_COUNT)" "none (2)"
+  test_file_map_from_log "$PV/no-such.log"
+  pv_ok "no log -> no map" "${OFM_MAP:-none}" none
+
+  # ── the ledger learns from a run that saw the file compiled ──
+  record_compile_evidence "$GATE_ROOT" "$FOO" "$_pv_map" selftestsha0
+  pv_ok "a file seen compiled is recorded" "$RECORDED" 1
+  pv_ok "the ledger lives beside the DerivedData it describes" "$(ledger_for_map "$_pv_map")" "$_pv_dd/bainluck-compile-evidence.tsv"
+
+  # ── the six rules ──
+  cached_compile_evidence "$GATE_ROOT" "$FOO" "$_pv_map" PASS_LINE
+  pv_ok "recorded content, current object, green run -> CACHED" "$CACHE_OK" 1
+  pv_has "...and the reason names the identity" "$CACHE_WHY" "was seen compiled into FooTests.o"
+
+  cached_compile_evidence "$GATE_ROOT" "$BAR" "$_pv_map" PASS_LINE
+  pv_ok "current object, but no gate run ever saw it compiled -> insufficient" "$CACHE_OK" 0
+  pv_has "...named as missing identity" "$CACHE_WHY" "no recorded identity"
+  # ANTI-VACUITY: BarTests passes rules 1-5, so the case above fails on rule 6 alone.
+  pv_ok "...(its object IS newer than its source: only the ledger refused it)" \
+    "$([ "$(mtime_of "$_pv_obj/BarTests.o")" -ge "$(mtime_of "$_pv_t/BarTests.swift")" ] && echo yes)" yes
+
+  cached_compile_evidence "$GATE_ROOT" "$FOO" "$_pv_map" PARTIAL
+  pv_ok "rule 1: a run that did not finish green vouches for nothing" "$CACHE_OK" 0
+  cached_compile_evidence "$GATE_ROOT" "$FOO" "$_pv_map" SUITE_FAILED
+  pv_ok "rule 1: nor does a run that finished red" "$CACHE_OK" 0
+  cached_compile_evidence "$GATE_ROOT" "$FOO" "" PASS_LINE
+  pv_ok "rule 2: no map in the log -> insufficient" "$CACHE_OK" 0
+
+  _pv_rel="$_pv_dd/Build/Intermediates.noindex/Bain Luck.build/Release-iphonesimulator/$TEST_TARGET.build/Objects-normal/arm64"
+  mkdir -p "$_pv_rel"; cp "$_pv_map" "$_pv_rel/"
+  cached_compile_evidence "$GATE_ROOT" "$FOO" "$_pv_rel/$TEST_TARGET-OutputFileMap.json" PASS_LINE
+  pv_ok "rule 3: a Release map is not this run's configuration" "$CACHE_OK" 0
+  pv_has "...said as a configuration mismatch" "$CACHE_WHY" "not for $TEST_TARGET in $TEST_CONFIG_DIR"
+
+  mkdir -p "$PV/other"; cp -R "$GATE_ROOT/." "$PV/other/"
+  cached_compile_evidence "$PV/other" "$FOO" "$_pv_map" PASS_LINE
+  pv_ok "rule 4: the same relative file in ANOTHER tree is not in this map" "$CACHE_OK" 0
+  pv_has "...said as a membership/tree mismatch" "$CACHE_WHY" "not in the run's $TEST_TARGET map"
+
+  mv "$_pv_obj/FooTests.o" "$PV/FooTests.o.aside"
+  cached_compile_evidence "$GATE_ROOT" "$FOO" "$_pv_map" PASS_LINE
+  pv_ok "rule 4: the map names an object that is gone -> insufficient" "$CACHE_OK" 0
+  mv "$PV/FooTests.o.aside" "$_pv_obj/FooTests.o"
+
+  touch -t 202609290002 "$_pv_t/FooTests.swift"
+  cached_compile_evidence "$GATE_ROOT" "$FOO" "$_pv_map" PASS_LINE
+  pv_ok "rule 5: source edited after its object -> stale" "$CACHE_OK" 0
+  pv_has "...said as stale" "$CACHE_WHY" "stale"
+
+  # THE HOLE RULE 6 EXISTS FOR: new content, old mtime (cp -p, rsync -a, tar).
+  # Xcode's own rule is fooled — the object reads newer — and the identity is not.
+  echo "// edited, then its mtime put back" >> "$_pv_t/FooTests.swift"
+  touch -t 202609290000 "$_pv_t/FooTests.swift"
+  cached_compile_evidence "$GATE_ROOT" "$FOO" "$_pv_map" PASS_LINE
+  pv_ok "rule 6: changed content behind a preserved mtime -> insufficient" "$CACHE_OK" 0
+  pv_ok "...(and the mtime rule alone WOULD have passed it)" \
+    "$([ "$(mtime_of "$_pv_obj/FooTests.o")" -ge "$(mtime_of "$_pv_t/FooTests.swift")" ] && echo yes)" yes
+  pv_git checkout -q -- "$FOO"; touch -t 202609290000 "$_pv_t/FooTests.swift"
+  cached_compile_evidence "$GATE_ROOT" "$FOO" "$_pv_map" PASS_LINE
+  pv_ok "...and restoring the recorded content restores the evidence" "$CACHE_OK" 1
+
+  # ── which tests the fallback may run ──
+  pv_ok "classes: attribute + final" "$(xctest_classes "$_pv_t/FooTests.swift")" FooTests
+  pv_ok "classes: no space, extra conformance; comment, lookalike, helper skipped" \
+    "$(xctest_classes "$_pv_t/BarTests.swift" | tr '\n' ' ')" "BarTests "
+  pv_ok "classes: a helper file declares none" "$(xctest_classes "$_pv_t/Fixtures.swift")" ""
+  fallback_plan "$GATE_ROOT" "$FOO
+$FIX"
+  pv_ok "plan: a test class present -> test mode" "$FB_MODE" test
+  pv_ok "plan: selectors are that file's classes only" "${FB_ONLY[*]}" "-only-testing:$TEST_TARGET/FooTests"
+  fallback_plan "$GATE_ROOT" "$FIX"
+  pv_ok "plan: helpers only -> build-for-testing" "$FB_MODE" build-for-testing
+  pv_ok "...with no selectors (an empty -only-testing set would run EVERYTHING)" "${#FB_ONLY[@]}" 0
+
+  # ── reading a targeted run (shapes copied from a real -only-testing run) ──
+  { echo "Test Suite 'Selected tests' started at 2026-09-29 11:51:39.510."
+    echo "Test Suite 'Selected tests' passed at 2026-09-29 11:52:41.613."
+    echo "${_pv_tab} Executed 11 tests, with 0 failures (0 unexpected) in 62.096 (62.102) seconds"
+    echo "** TEST SUCCEEDED **"; } > "$PV/sel-pass.log"
+  fallback_select "$PV/sel-pass.log" 0 test
+  pv_ok "a green targeted run passes the fallback" "$FB_OK" 1
+  notice10_select "$PV/sel-pass.log" 0
+  pv_ok "...and is NEVER a notice-10 line (no 'All tests' summary)" "${LINE:-none}" none
+  { echo "Test Suite 'Selected tests' passed at 2026-09-29 11:52:41.613."
+    echo "${_pv_tab} Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.001) seconds"
+    echo "** TEST SUCCEEDED **"; } > "$PV/sel-zero.log"
+  fallback_select "$PV/sel-zero.log" 0 test
+  pv_ok "0 tests executed is a vacuous pass -> refused" "$FB_OK" 0
+  { echo "Test Suite 'Selected tests' failed at 2026-09-29 11:52:41.613."
+    echo "${_pv_tab} Executed 11 tests, with 2 failures (0 unexpected) in 62.096 (62.102) seconds"
+    echo "** TEST FAILED **"; } > "$PV/sel-fail.log"
+  fallback_select "$PV/sel-fail.log" 65 test
+  pv_ok "a failing targeted run -> refused" "$FB_OK" 0
+  fallback_select "$PV/sel-pass.log" 137 test
+  pv_ok "a killed targeted run, whatever it printed -> refused" "$FB_OK" 0
+  echo "** TEST BUILD SUCCEEDED **" > "$PV/bft.log"
+  fallback_select "$PV/bft.log" 0 build-for-testing
+  pv_ok "build-for-testing success -> passes" "$FB_OK" 1
+  fallback_select "$PV/bft.log" 65 build-for-testing
+  pv_ok "build-for-testing non-zero exit -> refused" "$FB_OK" 0
+
+  # ── the whole sequence, through the REAL functions, against a fake xcodebuild ──
+  _pv_fake="$PV/fake-xcodebuild"
+  cat > "$_pv_fake" <<'FAKE'
+#!/usr/bin/env bash
+# Records its argv, "compiles" the basenames in FAKE_COMPILE (a line naming each
+# in the test target, and a fresh object), then prints the outcome asked for.
+printf '%s\n' "$@" > "$FAKE_ARGV"
+mode="$1"
+printf '    -output-file-map %s\n' "$(printf '%s' "$FAKE_MAP" | sed 's/ /\\ /g')"
+for b in $FAKE_COMPILE; do
+  echo "SwiftCompile normal arm64 Compiling\\ $b /x/BainLuckTests/$b (in target 'BainLuckTests' from project 'Bain Luck')"
+  touch "$FAKE_OBJDIR/${b%.swift}.o"
+done
+if [ "$FAKE_OUTCOME" = fail ]; then
+  echo "Test Suite 'Selected tests' failed at 2026-09-29 11:52:41.613."
+  printf '\t Executed 3 tests, with 1 failure (0 unexpected) in 0.100 (0.100) seconds\n'
+  echo "** TEST FAILED **"; exit 65
+fi
+if [ "$mode" = build-for-testing ]; then echo "** TEST BUILD SUCCEEDED **"; exit 0; fi
+echo "Test Suite 'Selected tests' passed at 2026-09-29 11:52:41.613."
+printf '\t Executed 3 tests, with 0 failures (0 unexpected) in 0.100 (0.100) seconds\n'
+echo "** TEST SUCCEEDED **"
+FAKE
+  chmod +x "$_pv_fake"
+  XCODEBUILD="$_pv_fake"; PROJECT="$GATE_ROOT/ios/Bain Luck/Bain Luck.xcodeproj"; SCHEME="Bain Luck"
+  UDID="SELFTEST-UDID"; SPM_FLAGS=(); STALL_LIMIT=30; WATCH_POLL_SECS=1; GATE_SHA=selftestsha1
+  EVIDENCE_TSV="$PV/evidence.tsv"; : > "$EVIDENCE_TSV"; NO_FALLBACK=""
+  export FAKE_ARGV="$PV/argv" FAKE_MAP="$_pv_map" FAKE_OBJDIR="$_pv_obj"
+
+  # A. THE SHIP: one file cached, two insufficient. Only the two are rebuilt and
+  #    only their tests run — the cached file's class is NOT in the argv.
+  FAKE_COMPILE="BarTests.swift Fixtures.swift" FAKE_OUTCOME=pass \
+    provenance_for_unseen "$GATE_ROOT" "$FOO
+$BAR
+$FIX" "$_pv_map" PASS_LINE "$PV/fb-a.txt" > "$PV/a.out"
+  pv_ok "A: cached + fallback leave nothing unproven" "${STILL_UNSEEN:-nothing}" nothing
+  pv_ok "A: the fallback ran" "$FB_RAN" 1
+  _pv_argv="$(tr '\n' ' ' < "$PV/argv")"
+  pv_has "A: it ran the insufficient file's tests" "$_pv_argv" "-only-testing:$TEST_TARGET/BarTests"
+  pv_lacks "A: NOT the cached file's (no full rerun, no re-test of what is proven)" "$_pv_argv" "FooTests"
+  pv_lacks "A: NOT a lookalike class" "$_pv_argv" "NotATest"
+  pv_has "A: on the run's own simulator" "$_pv_argv" "id=SELFTEST-UDID"
+  pv_ok "A: evidence rows are cache/fallback/fallback" \
+    "$(cut -f3 "$EVIDENCE_TSV" | tr '\n' ' ')" "cache fallback fallback "
+  cached_compile_evidence "$GATE_ROOT" "$BAR" "$_pv_map" PASS_LINE
+  pv_ok "A: the ledger learned from the fallback — next run, BarTests is cached" "$CACHE_OK" 1
+
+  # B-F start from an EMPTY ledger so nothing is cached.
+  export NATIVE_GATES_EVIDENCE_LEDGER="$PV/empty-ledger.tsv"
+  : > "$EVIDENCE_TSV"; rm -f "$PV/argv"
+  FAKE_COMPILE="" FAKE_OUTCOME=pass \
+    provenance_for_unseen "$GATE_ROOT" "$BAR" "$_pv_map" PASS_LINE "$PV/fb-b.txt" > "$PV/b.out"
+  pv_ok "B: a file the fallback did not compile stays unproven" "$STILL_UNSEEN" "$BAR"
+  pv_has "B: ...and says it is outside the target or unreached" "$(cat "$PV/b.out")" "not compiled even after touching"
+  pv_ok "B: evidence row is none" "$(cut -f3 "$EVIDENCE_TSV")" none
+
+  FAKE_COMPILE="BarTests.swift" FAKE_OUTCOME=fail \
+    provenance_for_unseen "$GATE_ROOT" "$BAR" "$_pv_map" PASS_LINE "$PV/fb-c.txt" > "$PV/c.out"
+  pv_ok "C: tests failing on fresh objects -> unproven" "$STILL_UNSEEN" "$BAR"
+  pv_has "C: ...and called a REAL failure, not a proof gap" "$(cat "$PV/c.out")" "FAILED on freshly compiled objects"
+
+  rm -f "$PV/argv"
+  FAKE_COMPILE="BarTests.swift" FAKE_OUTCOME=pass \
+    provenance_for_unseen "$GATE_ROOT" "$BAR" "$_pv_map" PARTIAL "$PV/fb-d.txt" > "$PV/d.out"
+  pv_ok "D: a run that did not finish green gets no fallback" "$FB_RAN" 0
+  pv_ok "D: ...no xcodebuild was started" "$([ -f "$PV/argv" ] && echo started || echo none)" none
+  pv_ok "D: ...and the file stays unproven" "$STILL_UNSEEN" "$BAR"
+
+  NO_FALLBACK=1
+  FAKE_COMPILE="BarTests.swift" FAKE_OUTCOME=pass \
+    provenance_for_unseen "$GATE_ROOT" "$BAR" "$_pv_map" PASS_LINE "$PV/fb-e.txt" > "$PV/e.out"
+  pv_ok "E: --no-fallback leaves the file unproven" "$STILL_UNSEEN" "$BAR"
+  pv_ok "E: ...and runs nothing" "$FB_RAN" 0
+  NO_FALLBACK=""
+
+  FAKE_COMPILE="Fixtures.swift" FAKE_OUTCOME=pass \
+    provenance_for_unseen "$GATE_ROOT" "$FIX" "$_pv_map" PASS_LINE "$PV/fb-f.txt" > "$PV/f.out"
+  pv_ok "F: a helper-only set is proven by build-for-testing" "${STILL_UNSEEN:-nothing}" nothing
+  pv_ok "F: ...which is what was run" "$(head -1 "$PV/argv")" build-for-testing
+  unset NATIVE_GATES_EVIDENCE_LEDGER
+
+  # ── the manifest, and whether it can stand for another run ──
+  BASE=master; GATE_SHA="$(git -C "$GATE_ROOT" rev-parse HEAD)"; GATE_BRANCH=master
+  IOS_TREE_START="$(git -C "$GATE_ROOT" rev-parse HEAD:ios)"; IOS_DIRTY_START=""
+  MAC_EXIT=0; TEST_EXIT=0; VERDICT=PASS_LINE; CHANGED_ERR=""; FAILED=0; TESTPROOF_UNSEEN=0
+  LINE="Executed 2083 tests, with 0 failures (0 unexpected) in 27.902 (29.156) seconds"
+  ALL_TESTS_LINE="$LINE"; GATE_T0=$(date +%s)
+  printf '%s\t%s\t%s\t%s\n' "$FOO" b1 log "compiled in this run's log" "$BAR" b2 cache "identity" > "$EVIDENCE_TSV"
+  write_manifest "$PV/good.json"
+  pv_ok "manifest: written, and says what it tested" \
+    "$(python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); print(m["ios_tree_start"], m["verdict"], len(m["evidence"]))' "$PV/good.json")" \
+    "$IOS_TREE_START PASS_LINE 2"
+  check_manifest "$GATE_ROOT" "$PV/good.json" > "$PV/cm.out"; _pv_rc=$?
+  pv_ok "reuse: same clean iOS tree, green, all evidenced -> REUSABLE" "$_pv_rc" 0
+  pv_has "reuse: ...and it prints the line it stands for" "$(cat "$PV/cm.out")" "Executed 2083 tests"
+
+  echo "// later" >> "$_pv_t/Fixtures.swift"; pv_git commit -qam later
+  check_manifest "$GATE_ROOT" "$PV/good.json" > "$PV/cm.out"; _pv_rc=$?
+  pv_ok "reuse: a different iOS tree -> NOT reusable" "$_pv_rc" 1
+  pv_has "reuse: ...said as a tree mismatch" "$(cat "$PV/cm.out")" "the iOS tree differs"
+  pv_git reset -q --hard HEAD~1
+
+  echo "// uncommitted" >> "$_pv_t/Fixtures.swift"
+  check_manifest "$GATE_ROOT" "$PV/good.json" > /dev/null; _pv_rc=$?
+  pv_ok "reuse: uncommitted iOS edits here -> NOT reusable" "$_pv_rc" 1
+  pv_git checkout -q -- "$FIX"
+  # File-system-synchronized groups compile an UNTRACKED Swift file, so it
+  # changes what would be tested even though HEAD:ios does not move.
+  echo "// new" > "$_pv_t/Untracked.swift"
+  check_manifest "$GATE_ROOT" "$PV/good.json" > /dev/null; _pv_rc=$?
+  pv_ok "reuse: an untracked Swift file here -> NOT reusable" "$_pv_rc" 1
+  rm -f "$_pv_t/Untracked.swift"
+  check_manifest "$GATE_ROOT" "$PV/good.json" > /dev/null; _pv_rc=$?
+  pv_ok "reuse: ...(and clean again -> reusable, so the three refusals above are real)" "$_pv_rc" 0
+
+  VERDICT=PARTIAL; LINE=""; TEST_EXIT=137; FAILED=1
+  write_manifest "$PV/partial.json"
+  check_manifest "$GATE_ROOT" "$PV/partial.json" > /dev/null; _pv_rc=$?
+  pv_ok "reuse: evidence from a partial run -> NOT reusable" "$_pv_rc" 1
+  VERDICT=PASS_LINE; LINE="$ALL_TESTS_LINE"; TEST_EXIT=0; FAILED=1; TESTPROOF_UNSEEN=1
+  printf '%s\t%s\t%s\t%s\n' "$BAR" b2 none "fallback failed" > "$EVIDENCE_TSV"
+  write_manifest "$PV/unproven.json"
+  check_manifest "$GATE_ROOT" "$PV/unproven.json" > "$PV/cm.out"; _pv_rc=$?
+  pv_ok "reuse: a changed test file with no evidence -> NOT reusable" "$_pv_rc" 1
+  pv_has "reuse: ...naming the file" "$(cat "$PV/cm.out")" "BarTests.swift"
+  FAILED=0; TESTPROOF_UNSEEN=0
+  printf '%s\t%s\t%s\t%s\n' "$FOO" b1 log "compiled" > "$EVIDENCE_TSV"
+  IOS_TREE_START="0000000000000000000000000000000000000000"
+  write_manifest "$PV/moved.json"
+  check_manifest "$GATE_ROOT" "$PV/moved.json" > "$PV/cm.out"; _pv_rc=$?
+  pv_ok "reuse: the tree moved while that gate ran -> NOT reusable" "$_pv_rc" 1
+  pv_has "reuse: ...said so" "$(cat "$PV/cm.out")" "changed while that gate was running"
+
+  # ── section 3a itself needs a real build, so its wiring is pinned by text ──
+  # Weaker than the behavioural cases above (it asserts text, not conduct); it is
+  # here because the alternative for these two regressions is no guard at all:
+  # the unseen files must reach provenance_for_unseen with THIS run's map and
+  # verdict, and the verdict must exist before that call reads it.
+  _pv_self="${BASH_SOURCE[0]}"
+  _pv_call=$(/usr/bin/grep -n 'provenance_for_unseen "\$GATE_ROOT" "\$LOG_UNSEEN" "\$OFM_MAP" "\$VERDICT"' "$_pv_self" | head -1 | cut -d: -f1)
+  _pv_sel=$(/usr/bin/grep -n '^notice10_select "\$TESTLOG" "\$TEST_EXIT"' "$_pv_self" | head -1 | cut -d: -f1)
+  pv_ok "section 3a hands the unseen files to provenance_for_unseen with this run's map + verdict" \
+    "$([ -n "$_pv_call" ] && echo yes || echo no)" yes
+  pv_ok "...after notice10_select has set that verdict" \
+    "$([ -n "$_pv_call" ] && [ -n "$_pv_sel" ] && [ "$_pv_sel" -lt "$_pv_call" ] && echo yes || echo no)" yes
+
+  rm -rf "$PV"
+}
+
+if [ -n "$SELFTEST_PROVENANCE" ] && [ -z "$SELFTEST" ]; then
+  ST_FAIL=0
+  selftest_provenance
+  say "done (--selftest-provenance) — $([ $ST_FAIL -eq 0 ] && echo 'all cases passed' || echo 'FAILURES ABOVE'); nothing was built"
+  exit $ST_FAIL
+fi
+
 if [ -n "$SELFTEST" ]; then
   say "--selftest — #5591 pass-line selection (no xcodebuild, no tree needed)"
   ST_DIR="$(mktemp -d)"; ST_FAIL=0
@@ -647,6 +1433,8 @@ if [ -n "$SELFTEST" ]; then
     echo "  FAIL  shallow AND baseless -> lost the unshallow remedy: \"${CHANGED_ERR:-<empty>}\""; ST_FAIL=1
   fi
 
+  selftest_provenance
+
   rm -rf "$ST_DIR"
   say "done (--selftest) — $([ $ST_FAIL -eq 0 ] && echo 'all cases passed' || echo 'FAILURES ABOVE'); nothing was built"
   exit $ST_FAIL
@@ -696,8 +1484,25 @@ if [ ! -d "$PROJECT" ]; then
   exit 2
 fi
 
+# The iOS tree this run tests, read BEFORE anything builds (#9659). The manifest
+# compares it with the tree at the end, so an edit made mid-run cannot hide.
+GATE_T0=$(date +%s)
+IOS_TREE_START="$(git -C "$GATE_ROOT" rev-parse HEAD:ios 2>/dev/null)"
+IOS_DIRTY_START="$(git -C "$GATE_ROOT" status --porcelain --untracked-files=all -- ios 2>/dev/null | head -1)"
+echo "  iOS tree      : ${IOS_TREE_START:-UNKNOWN}$([ -n "$IOS_DIRTY_START" ] && echo "  + UNCOMMITTED iOS changes (evidence from this run is not reusable)")"
+
+if [ -n "$CHECK_MANIFEST" ]; then
+  say "can the evidence in $CHECK_MANIFEST stand for this tree? (#9659)"
+  check_manifest "$GATE_ROOT" "$CHECK_MANIFEST"
+  CM_EXIT=$?
+  say "done (--check-manifest) — nothing was built"
+  exit $CM_EXIT
+fi
+
 mkdir -p "$LOGDIR"
 FAILED=0
+EVIDENCE_TSV="$LOGDIR/evidence.tsv"
+: > "$EVIDENCE_TSV"
 # Initialised here, not in section 3a: under `set -u` the summary reads it even
 # on the paths where that section never runs (--build-only, no changed tests).
 TESTPROOF_UNSEEN=0
@@ -752,6 +1557,13 @@ if [ -n "$EXPLAIN" ]; then
   echo "  this suite, 1 of them the total), so on a killed run the last one is a"
   echo "  class count wearing the suite's clothes (#5591, #5229)."
   echo "  Short of both conditions the count still prints, labelled, marked do-not-paste."
+  say "a changed test file this run's log does not show compiled (#9659)"
+  echo "  1. cached evidence, only with an identity: green run, this log's own"
+  echo "     test-target output-file map ($TEST_CONFIG_DIR), the exact path in this tree,"
+  echo "     an object not older than the source, and a ledger row for this content;"
+  echo "  2. otherwise ONE bounded fallback: those files recompiled, only their"
+  echo "     XCTestCase classes run ('Selected tests' — never the notice-10 line);"
+  echo "  3. otherwise the file is unproven and the gate fails. Never a full rerun."
   say "done (--explain) — nothing was built"
   exit 0
 fi
@@ -786,13 +1598,15 @@ fi
 # ── 1. THE macOS BUILD ───────────────────────────────────────────────────────
 say "macOS build (the target that went dark for five days)"
 MACLOG="$LOGDIR/macos-build.txt"
-xcodebuild build \
+MAC_T0=$(date +%s)
+"$XCODEBUILD" build \
   -project "$PROJECT" -scheme "$SCHEME" \
   -destination 'platform=macOS,arch=arm64' \
   ${SPM_FLAGS[@]+"${SPM_FLAGS[@]}"} \
   OTHER_SWIFT_FLAGS="$SWIFT_FLAGS" > "$MACLOG" 2>&1
 MAC_EXIT=$?
-echo "EXIT CODE: $MAC_EXIT   log: $MACLOG"
+MAC_SECS=$(( $(date +%s) - MAC_T0 ))
+echo "EXIT CODE: $MAC_EXIT   log: $MACLOG   (${MAC_SECS}s)"
 if [ $MAC_EXIT -eq 0 ]; then
   echo "  ** BUILD SUCCEEDED **"
 else
@@ -910,8 +1724,9 @@ STALL_LIMIT=${NATIVE_GATES_STALL_LIMIT:-300}
 # no such group, and killing the leader alone orphans the xcodebuild children
 # that are holding the simulator — the stall would be reported and the machine
 # would keep the hung run. macOS ships no `setsid`; this is the portable form.
+TEST_T0=$(date +%s)
 set -m
-xcodebuild test \
+"$XCODEBUILD" test \
   -project "$PROJECT" -scheme "$SCHEME" \
   -destination "id=$UDID" \
   ${SPM_FLAGS[@]+"${SPM_FLAGS[@]}"} \
@@ -922,7 +1737,8 @@ watch_for_stall "$XCB_PID" "$TESTLOG" "$STALL_LIMIT"
 TEST_STALLED=$?
 wait "$XCB_PID" 2>/dev/null
 TEST_EXIT=$?
-echo "EXIT CODE: $TEST_EXIT   log: $TESTLOG"
+TEST_SECS=$(( $(date +%s) - TEST_T0 ))
+echo "EXIT CODE: $TEST_EXIT   log: $TESTLOG   (${TEST_SECS}s)"
 if [ "$TEST_STALLED" -eq 1 ]; then
   FAILED=1
   echo "  STALLED — the log did not grow for ${STALL_LIMIT}s, so this run was KILLED (#2975)."
@@ -943,18 +1759,43 @@ fi
 # basename match would pass for a file that failed to compile. Requiring
 # "in target 'BainLuckTests'" on the same line means the build system said it
 # built it.
+#
+# #9659: NOT SEEN in this log is not yet "not covered". An incremental run skips
+# files an earlier run compiled, so the unseen ones go through
+# provenance_for_unseen: cached evidence with an identity, else ONE bounded
+# fallback over just those files. Only what survives both is unproven.
+# The pass-line selection is read first because the provenance step needs to
+# know whether this run finished green; it is pure and prints nothing.
+notice10_select "$TESTLOG" "$TEST_EXIT"
 if [ -n "$CHANGED_TESTS" ] && [ -z "$CHANGED_ERR" ]; then
   say "recompile proof — were your changed TEST files compiled by that run?"
   prove_test_sources "$CHANGED_TESTS" "$TESTLOG"
-  TESTPROOF_UNSEEN=$PROOF_UNSEEN
-  if [ "$PROOF_UNSEEN" -gt 0 ]; then
+  LOG_SEEN="$PROOF_SEEN_FILES"
+  LOG_UNSEEN="$PROOF_UNSEEN_FILES"
+  evidence_rows "$LOG_SEEN" log "compiled in this run's log"
+  test_file_map_from_log "$TESTLOG"
+  # The ledger learns from every run that reached the end of the suite, so the
+  # NEXT incremental run can vouch for these files without recompiling them.
+  if [ -n "$ALL_TESTS_LINE" ] && [ -n "$LOG_SEEN" ]; then
+    record_compile_evidence "$GATE_ROOT" "$LOG_SEEN" "$OFM_MAP" "$GATE_SHA"
+  fi
+  if [ -n "$LOG_UNSEEN" ]; then
+    say "provenance — the files this log did not show compiled (#9659)"
+    provenance_for_unseen "$GATE_ROOT" "$LOG_UNSEEN" "$OFM_MAP" "$VERDICT" "$LOGDIR/fallback.txt"
+  else
+    STILL_UNSEEN=""
+  fi
+  TESTPROOF_UNSEEN=$(printf '%s' "$STILL_UNSEEN" | /usr/bin/grep -c .)
+  if [ "$TESTPROOF_UNSEEN" -gt 0 ]; then
     # Unlike the app-target case this has no innocent reading: a changed file
-    # under BainLuckTests/ that the test target did not compile is either
-    # outside the target or was never reached, and either way the suite total
-    # below does not cover the lines you changed.
+    # under BainLuckTests/ that nothing could show compiled — not this log, not
+    # an identified cached object, not the fallback — is either outside the
+    # target or was never reached, and either way the suite total below does
+    # not cover the lines you changed.
     FAILED=1
-    echo "      → under BainLuckTests/, but this run did not build it."
-    echo "        The suite count below does NOT cover your change (#5635)."
+    echo "      → under BainLuckTests/, and no compile evidence exists for it:"
+    printf '%s\n' "$STILL_UNSEEN" | sed 's|.*/|          |'
+    echo "        The suite count below does NOT cover your change (#5635, #9659)."
   fi
 fi
 
@@ -974,8 +1815,8 @@ fi
 # So: the line is taken from the 'All tests' summary BY NAME rather than by
 # position, and it is offered as a notice-10 line only when the run both exited 0
 # and left "** TEST SUCCEEDED **" in the log. Anything else is printed as labelled
-# evidence that explicitly must not be pasted.
-notice10_select "$TESTLOG" "$TEST_EXIT"
+# evidence that explicitly must not be pasted. (notice10_select ran above,
+# before section 3a, which needs its verdict.)
 
 # #5635, same principle as #5591: a suite total only vouches for the lines the
 # run actually compiled. If a changed test file was NOT built, the count is
@@ -990,8 +1831,9 @@ fi
 if [ "$VERDICT" = UNCOVERED ]; then
   echo "  SUITE PASSED BUT DOES NOT COVER YOUR CHANGE — not a notice-10 line, do not paste it (#5635)."
   echo "    suite total : $ALL_TESTS_LINE"
-  echo "    $TESTPROOF_UNSEEN changed test file(s) were not compiled by this run (above)."
-  echo "    Touch them and re-run, or check they are inside the BainLuckTests target."
+  echo "    $TESTPROOF_UNSEEN changed test file(s) have no compile evidence — not in this log, no"
+  echo "    identified cached object, and no passing fallback. The reason per file is printed"
+  echo "    under 'provenance' above (#9659)."
 elif [ "$VERDICT" = PASS_LINE ]; then
   echo "  $LINE"
   echo "  ^ paste this line into the PR body — notice 10's iOS clause requires it"
@@ -1035,5 +1877,12 @@ echo "  recompile   : $([ -n "$CHANGED_ERR" ] && echo "COULD NOT TELL — proof 
 # changed test file was compiled (#5635), so the summary can no longer pair a
 # green-looking count with a dead run or with a run that skipped your change.
 echo "  BainLuckTests: $([ $TEST_EXIT -eq 0 ] && [ "$TESTPROOF_UNSEEN" -eq 0 ] && echo PASS || echo "FAIL$([ $TEST_EXIT -ne 0 ] && echo " (exit $TEST_EXIT)" || echo " (change not covered)")")   ${LINE:-no notice-10 line — see above}"
+if [ -s "$EVIDENCE_TSV" ]; then
+  _ev () { awk -F'\t' -v k="$1" '$3==k' "$EVIDENCE_TSV" | /usr/bin/grep -c .; }
+  echo "  test evidence: $(_ev log) compiled in this log · $(_ev cache) cached, identified · $(_ev fallback) by the bounded fallback · $(_ev none) none"
+fi
 echo "  logs: $LOGDIR"
+# #9659: the handoff is this one file. `--check-manifest <it>` on an identical,
+# clean iOS tree says whether this evidence can stand without a rerun.
+write_manifest "$LOGDIR/manifest.json" && echo "  manifest: $LOGDIR/manifest.json"
 exit $FAILED
