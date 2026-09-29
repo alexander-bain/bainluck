@@ -1,0 +1,18 @@
+[
+  {
+    "path": "backend/app/routes/events.py",
+    "sha256": "6c82cea08e15578884d878cd41901698cb90aeeb4bf993d9e1d9e06e59f6dfbb"
+  },
+  {
+    "path": "backend/app/utils/game_market_stream_envelope.py",
+    "sha256": "d6723243be99097e9fd6a56a351a77b1eea292790487e3ebde7edfc815c50ba7"
+  },
+  {
+    "path": "backend/tests/test_game_market_stream_envelope_9524.py",
+    "sha256": "7f428e5ca6a529408a409c03b7a33f05040bacd7a97188c4610b7551fe9315f5"
+  },
+  {
+    "path": "artifacts/fresh-game-markets-9524/API.md",
+    "sha256": "fdbaefddbbf7659a2d6e080a87f07c4eb03086a22f7cad00c01b68b5257a9f53"
+  }
+]
