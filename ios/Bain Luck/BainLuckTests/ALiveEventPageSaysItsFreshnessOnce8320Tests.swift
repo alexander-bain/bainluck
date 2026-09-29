@@ -119,10 +119,16 @@ final class ALiveEventPageSaysItsFreshnessOnce8320Tests: XCTestCase {
     func testFullscreenKeepsTheSameReadableStatusAsThePage() throws {
         let chart = try chartCode()
         XCTAssertEqual(occurrences(of: "LivePushDot(", in: chart), 0)
-        XCTAssertTrue(chart.contains(".safeAreaInset(edge:.top,spacing:0){ifstatus==\"live\"&&liveUpdateStatus != .hidden{LiveUpdateStatusView(status:liveUpdateStatus)".replacingOccurrences(of: " ", with: "")))
+        XCTAssertTrue(chart.contains(".safeAreaInset(edge:.top,spacing:0){ifEventPriceStreaming.isEligible(status)&&liveUpdateStatus != .hidden{LiveUpdateStatusView(status:liveUpdateStatus)".replacingOccurrences(of: " ", with: "")))
         XCTAssertFalse(chart.contains("ToolbarItem(placement:.cancellationAction)"),
                        "Readonly fullscreen status must not be squeezed into a navigation action")
         XCTAssertTrue(try code("Views", "EventDetailView.swift").contains("liveUpdateStatus:vm.liveUpdateStatus"))
+        for phase in ["scheduled", "live", "suspended"] {
+            XCTAssertEqual(LiveUpdateStatus.decide(status: phase, delivering: true,
+                acceptedUpdate: false, refreshFailed: false), .awaitingUpdate)
+        }
+        XCTAssertEqual(LiveUpdateStatus.decide(status: "completed", delivering: true,
+            acceptedUpdate: true, refreshFailed: false), .hidden)
     }
 
     /// The Final chip is a settled-state label, not a freshness claim, and

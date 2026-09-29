@@ -268,10 +268,9 @@ final class HeroSaysTheCountdownOnce6544Tests: XCTestCase {
     }
 
     /// ⭐ THE TICK. The chip derives its text from `commenceTime` on each render
-    /// and nothing else on a pregame page re-renders it — the refresh status is
-    /// live-only (`showsRefreshStatus`). Delete this wrapper and the chip
-    /// freezes at the minute the page opened, silently, on the one state whose
-    /// entire content is a clock.
+    /// independently of quote delivery. Pregame quotes now expose delivery
+    /// status too, but that status is not the kickoff countdown and cannot
+    /// replace its minute clock.
     func testTheChipStillTicks() throws {
         let code = try heroCode()
         XCTAssertTrue(
@@ -285,13 +284,13 @@ final class HeroSaysTheCountdownOnce6544Tests: XCTestCase {
             the sole reader of a 60-second Timer's @State — is gone
             """
         )
-        XCTAssertFalse(
-            EventDetailView.showsRefreshStatus(status: "scheduled"),
-            """
-            a pregame page has no refresh ring, so nothing else on it re-renders \
-            on a clock. If this ever becomes true the TimelineView is still \
-            correct, but this test's reasoning needs re-reading
-            """
-        )
+        XCTAssertTrue(EventDetailView.showsRefreshStatus(status: "scheduled"),
+            "pregame quotes now have delivery status; the sports countdown keeps its own clock")
+        let delivery = LiveUpdateStatus.decide(status: "scheduled", delivering: false,
+            acceptedUpdate: false, refreshFailed: false)
+        XCTAssertEqual(delivery, .autoRefresh)
+        XCTAssertEqual(delivery.title, "Auto-refresh", "delivery status is not a duplicate kickoff countdown")
+        XCTAssertFalse(delivery.title.contains("In "))
+        XCTAssertFalse(EventDetailView.showsRefreshStatus(status: "completed"))
     }
 }
