@@ -51,6 +51,12 @@ AUTH_RATE_LIMIT = "120/minute"
 FRESH_EVENT_RATE_LIMIT = "180/minute"
 _FRESH_EVENT_MAX = 180
 _FRESH_EVENT_PATH = r"/api/events/[1-9][0-9]*(?:/history)?"
+# #9515: visible-card invalidations must not spend feed/search's ordinary
+# budget. One finite ceiling per existing caller identity, across all IDs and
+# batches. This is a configured limit, not a measured throughput promise.
+FRESH_FEED_PRICE_RATE_LIMIT = "60/minute"
+_FRESH_FEED_PRICE_MAX = 60
+_FRESH_FEED_PRICE_PATH = "/api/feed/price-cards"
 # Queue 315 Item 1: /api/admin is rate limited, not exempt. This is ONE SHARED
 # BUCKET per token value (P3) — Alex's browser, every agent lane, `/health`, the
 # browser-audit rail and flow_sentinel's nightly self-calls all present the same
@@ -245,6 +251,7 @@ _auth_limit = None
 _admin_limit = None
 _trusted_limit = None
 _fresh_event_limit = None
+_fresh_feed_price_limit = None
 
 
 def _is_fresh_event_read(request: Request) -> bool:
@@ -273,6 +280,18 @@ def _get_fresh_event_limit():
         from limits import parse as parse_limit
         _fresh_event_limit = parse_limit(FRESH_EVENT_RATE_LIMIT)
     return _fresh_event_limit
+
+
+def _is_fresh_feed_price_read(request: Request) -> bool:
+    return request.method == "GET" and request.url.path == _FRESH_FEED_PRICE_PATH
+
+
+def _get_fresh_feed_price_limit():
+    global _fresh_feed_price_limit
+    if _fresh_feed_price_limit is None:
+        from limits import parse as parse_limit
+        _fresh_feed_price_limit = parse_limit(FRESH_FEED_PRICE_RATE_LIMIT)
+    return _fresh_feed_price_limit
 
 
 def _get_limits():
@@ -623,6 +642,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     - Anonymous requests: 60/minute keyed by client IP
     - Authenticated requests (Bearer JWT): 120/minute keyed by user UID
     - Fresh event detail/history GETs: separate shared 180/minute caller bucket
+    - Fresh feed price-card GETs: separate shared 60/minute caller bucket
     - Admin paths with the admin token: 300/minute keyed by a hash of that token
     - Addresses in ``RATE_LIMIT_TRUSTED_IPS``: 600/minute, keyed separately (D70)
     - Docs / health paths: exempt
@@ -711,6 +731,13 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             key = f"fresh-event:{key}"
             max_requests = _FRESH_EVENT_MAX
 
+        fresh_feed_price_read = not admin_key and _is_fresh_feed_price_read(request)
+        if fresh_feed_price_read:
+            # Also isolate trusted callers: card refreshes cannot consume their
+            # ordinary API budget. IDs/query/auth presentation never mint keys.
+            key = f"fresh-feed-price:{key}"
+            max_requests = _FRESH_FEED_PRICE_MAX
+
         # Check rate limit.
         #
         # #1197 (r259 ROOT CAUSE): the sync `limits` FixedWindowRateLimiter.hit() is
@@ -752,6 +779,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         anon_limit, auth_limit = _get_limits()
         if admin_key:
             limit = _get_admin_limit()
+        elif fresh_feed_price_read:
+            limit = _get_fresh_feed_price_limit()
         elif trusted_peer:
             limit = _get_trusted_limit()
         elif fresh_event_read:
