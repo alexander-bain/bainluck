@@ -7,6 +7,7 @@ import os
 import re
 import time
 from collections import Counter
+from types import SimpleNamespace
 from contextlib import asynccontextmanager, suppress
 
 logger = logging.getLogger(__name__)
@@ -13216,10 +13217,12 @@ async def typeahead_search(
                 )
 
     event_pool = []
-    # #9550: the ORM row behind each event suggestion, by id, so the settled
-    # verdict is gated on the row's own score rather than the suggestion's
-    # (which carries a score only once the row is finished).
-    _ta_event_rows: dict[int, Event] = {}
+    # #9550: the facts of the row behind each event suggestion, by id, so the
+    # settled verdict is gated on the row's own score rather than the
+    # suggestion's (which carries a score only once the row is finished).
+    # PLAIN DATA, never the ORM row: the futures-timeout recovery below rolls
+    # the session back after this loop, which expires every live row (gotcha #6).
+    _ta_event_rows: dict[int, object] = {}
     # #2580 is #2623 seen through this dropdown: typing "Alcaraz" offered the
     # same first-round match twice, "Alcaraz at Faria 5:00 PM" beside "Carlos
     # Alcaraz at Jaime Faria 5:10 PM". Same collapse, same helper.
@@ -13251,7 +13254,7 @@ async def typeahead_search(
     # cannot drop a game that was fetched and marked as the team's.
     _ta_events = _typeahead_lead_fixtures_first(_ta_events, _ta_lead_team_row_ids)
     for event in _ta_events[:_EVENT_POOL_SIZE]:
-        _ta_event_rows[event.id] = event  # #9550
+        _ta_event_rows[event.id] = _typeahead_settlement_facts(event)  # #9550
         home = event.home_team
         away = event.away_team
         _ta_served_status = served_event_status(
@@ -14312,7 +14315,7 @@ async def typeahead_search(
                     .limit(3)
                 )
                 for event in fuzzy_events.scalars().all():
-                    _ta_event_rows[event.id] = event  # #9550
+                    _ta_event_rows[event.id] = _typeahead_settlement_facts(event)  # #9550
                     home = event.home_team
                     away = event.away_team
                     event_pool.append({
@@ -34777,6 +34780,35 @@ def _typeahead_final_score(served_status: str | None, home_score, away_score) ->
     return {"home_score": home_score, "away_score": away_score}
 
 
+#: #9550: the row columns :func:`_typeahead_settlement_facts` copies.
+_TYPEAHEAD_SETTLEMENT_FACTS = (
+    "status",
+    "commence_time",
+    "home_score",
+    "away_score",
+    "win_probability_sources",
+    "home_team_name",
+    "away_team_name",
+)
+
+
+def _typeahead_settlement_facts(event) -> SimpleNamespace:
+    """#9550: the columns the settlement gate and reader read, copied off a LIVE row.
+
+    Taken inside the event loops, because the row cannot be carried to the
+    attach: a futures-stage timeout runs ``_recover_search_session`` between the
+    two, and that ``db.rollback()`` expires every ORM row in the session
+    (gotcha #6) — reading one afterwards is a lazy refresh inside async, i.e. a
+    ``MissingGreenlet`` 500 on exactly the request that was already degraded.
+    Every name here is one ``attach_venue_settlement`` reads with ``getattr``,
+    and is read the same tolerant way (an absent attribute is ``None``).
+    """
+    return SimpleNamespace(
+        id=event.id,
+        **{name: getattr(event, name, None) for name in _TYPEAHEAD_SETTLEMENT_FACTS},
+    )
+
+
 async def _typeahead_attach_venue_settlement(
     db, suggestions: list[dict], rows_by_id: dict, now
 ) -> None:
@@ -34785,6 +34817,8 @@ async def _typeahead_attach_venue_settlement(
     The same shared reader the events list, search and league rails call, so a
     row cannot say "Settled · Pereira wins" on its event page and "No result
     reported" in the dropdown one tap before it.
+
+    ``rows_by_id`` holds :func:`_typeahead_settlement_facts`, never ORM rows.
 
     🔴 THE GATE READS THE ROW, NOT THE SUGGESTION. A suggestion carries a score
     only when its row is finished (#9226, :func:`_typeahead_final_score`), so a

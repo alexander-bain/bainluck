@@ -198,6 +198,79 @@ async def test_an_ungraded_suspended_match_gets_no_verdict(typeahead):
     assert row.get("venue_settled_result") is None, row
 
 
+class QueryCanceledError(Exception):
+    """Named like asyncpg's, so `_is_query_timeout` reads it as a real timeout."""
+
+
+# stage -> (the function whose return arms the rig, what the cancelled statement reads)
+_DEGRADED_STAGES = {
+    # The outcome-name arm's probe, cancelled: the arm SHEDS inside its savepoint.
+    "outcome_arm_shed": ("_typeahead_lead_fixtures_first", "FROM futures_outcomes"),
+    # The futures query, cancelled: `_recover_search_session` = a full rollback.
+    "futures_timeout": ("_resolve_typeahead_outcome_arm", "FROM futures_markets"),
+}
+
+
+@pytest.mark.parametrize("stage", sorted(_DEGRADED_STAGES))
+async def test_the_verdict_survives_a_degraded_stage(typeahead, monkeypatch, stage):
+    """Both degraded stages run AFTER the event loop, and both expire its rows.
+
+    `_recover_search_session` is a real `db.rollback()`, and an async rollback
+    expires every ORM row the session holds (gotcha #6); the outcome arm's
+    savepoint rollback did the same here, measured. The event rows were read
+    before either, so anything carried across as a live row is lazy-refreshed
+    inside async — a degraded 200 turned into a `MissingGreenlet` 500 (both
+    stages were red on 14fc745aa3, which carried the rows). The attach must work
+    from plain data taken while the rows were live.
+
+    The rig arms when the named function returns and cancels the next
+    statement, asserted to be the intended one so a moved stage cannot pass
+    vacuously.
+    """
+    import inspect
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.routes import events as events_module
+
+    arm_after, expected_sql = _DEGRADED_STAGES[stage]
+    armed = {"on": False, "fired": []}
+    orig_fn = getattr(events_module, arm_after)
+
+    if inspect.iscoroutinefunction(orig_fn):
+
+        async def _arm(*a, **kw):
+            out = await orig_fn(*a, **kw)
+            armed["on"] = True
+            return out
+
+    else:
+
+        def _arm(*a, **kw):
+            out = orig_fn(*a, **kw)
+            armed["on"] = True
+            return out
+
+    orig_exec = AsyncSession.execute
+
+    async def _exec(self, stmt, *a, **kw):
+        sql = str(stmt)
+        if armed["on"] and not sql.lstrip().upper().startswith("SET"):
+            armed["on"] = False
+            armed["fired"].append(sql)
+            raise QueryCanceledError("canceling statement due to statement timeout")
+        return await orig_exec(self, stmt, *a, **kw)
+
+    monkeypatch.setattr(events_module, arm_after, _arm)
+    monkeypatch.setattr(AsyncSession, "execute", _exec)
+
+    row = await typeahead(_SPECIMEN_Q, "specimen")
+    assert len(armed["fired"]) == 1 and expected_sql in armed["fired"][0], armed
+    assert row["status"] == "suspended", row
+    assert row.get("venue_settled") is True, row
+    assert row.get("venue_settled_result") == "Pereira wins", row
+
+
 async def test_a_suspended_match_holding_a_score_is_not_asked(typeahead):
     """The gate reads the ROW's score, which the suggestion does not carry.
 
