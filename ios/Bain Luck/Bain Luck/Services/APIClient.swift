@@ -925,6 +925,12 @@ actor APIClient {
         return try await fetch("/api/events/\(eventId)/game-markets", cacheTTL: 60)
     }
 
+    /// Stream invalidations must read the authoritative full projection.
+    func fetchFreshGameMarkets(eventId: Int) async throws -> GameMarketsResponse {
+        try await fetch("/api/events/\(eventId)/game-markets", requiresNetwork: true,
+                        revalidationQuery: ["fresh": "true"])
+    }
+
     // MARK: - Search
 
     /// Searches event pages by text query, with optional sport scoping and pagination.

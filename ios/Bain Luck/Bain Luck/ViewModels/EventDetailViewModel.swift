@@ -19,6 +19,7 @@ protocol EventDetailProviding: Sendable {
     func fetchRelatedFutures(eventId: Int) async throws -> RelatedFuturesResponse
     func fetchTeamProgression(eventId: Int) async throws -> TeamProgressionResponse
     func fetchGameMarkets(eventId: Int) async throws -> GameMarketsResponse
+    func fetchFreshGameMarkets(eventId: Int) async throws -> GameMarketsResponse
     func fetchLineMovement(eventId: Int) async throws -> LineMovementResponse
 }
 
@@ -28,6 +29,14 @@ extension EventDetailProviding {
     func fetchFreshEvent(id: Int) async throws -> EventDetail { try await fetchEvent(id: id) }
     func fetchFreshEventHistory(id: Int, hours: Int) async throws -> EventHistoryResponse {
         try await fetchEventHistory(id: id, hours: hours)
+    }
+}
+
+// Existing providers keep source compatibility; APIClient supplies a true
+// no-cache authoritative implementation for production streaming.
+extension EventDetailProviding {
+    func fetchFreshGameMarkets(eventId: Int) async throws -> GameMarketsResponse {
+        try await fetchGameMarkets(eventId: eventId)
     }
 }
 
@@ -183,6 +192,17 @@ final class EventDetailViewModel: ObservableObject {
         }
     }
 
+    @MainActor private lazy var marketDelivery = GameMarketsPriceDelivery(
+        eventID: eventId,
+        fetch: { [client] id in try await client.fetchFreshGameMarkets(eventId: id) },
+        publish: { [weak self] body in self?.gameMarkets = body }
+    )
+
+    @MainActor
+    func setMarketPageVisible(_ visible: Bool) {
+        marketDelivery.setVisible(visible)
+    }
+
     @MainActor
     func load() async {
         loading = event == nil
@@ -201,10 +221,7 @@ final class EventDetailViewModel: ObservableObject {
             do { return try await client.fetchTeamProgression(eventId: eventId) }
             catch { logger.error("Team progression failed for \(self.eventId): \(error)"); return nil }
         }
-        let gameMarketsTask = Task { () -> GameMarketsResponse? in
-            do { return try await client.fetchGameMarkets(eventId: eventId) }
-            catch { logger.error("Game markets failed for \(self.eventId): \(error)"); return nil }
-        }
+        let gameMarketsTask = Task { await marketDelivery.load() }
         let lineMovementTask = Task { () -> LineMovementResponse? in
             do { return try await client.fetchLineMovement(eventId: eventId) }
             catch { logger.error("Line movement failed for \(self.eventId): \(error)"); return nil }
@@ -250,15 +267,7 @@ final class EventDetailViewModel: ObservableObject {
                 teamProgression = progression
             }
         }
-        if let markets = await gameMarketsTask.value {
-            let hasContent = (markets.playerProps != nil && !(markets.playerProps?.isEmpty ?? true))
-                || (markets.spreads != nil && !(markets.spreads?.isEmpty ?? true))
-                || (markets.totals != nil && !(markets.totals?.isEmpty ?? true))
-                || (markets.other != nil && !(markets.other?.isEmpty ?? true))
-            if gameMarkets == nil || hasContent {
-                gameMarkets = markets
-            }
-        }
+        await gameMarketsTask.value
         if let movement = await lineMovementTask.value {
             lineMovement = movement
         }
@@ -568,6 +577,7 @@ final class EventDetailViewModel: ObservableObject {
 
     @MainActor
     func stopRefresh() {
+        marketDelivery.setVisible(false)
         refreshTask?.cancel()
         refreshTask = nil
         revisionRefetchTask?.cancel()

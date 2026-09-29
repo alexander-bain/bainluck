@@ -1,0 +1,12 @@
+# #9524 native held embedded-market delivery
+PILLAR TRUTH. SHIP: embedded event props, spreads, totals and existing additional market rows follow genuine price publications while a held page remains open, before/during/after play. A final sports score and known grades remain authoritative. This does not cover the separate final-game still-open winner presentation.
+
+Isolated branch codex/9524-native-game-markets from Native e16a01fdb0 plus already handed dependencies9500 guard3d35a3a731 and9512 correction0882423269/369af45cb8. Native must compose only the eventual new9524 commit; do not duplicate those source parents or executable gates.
+
+Fresh route `/api/events/{id}/game-markets?fresh=true` returns the complete original projection and additive stream_market_ids, outcome_market_ids, outcome_revision_at ordering vector, outcome_observed_at real observation map, and row contributor_outcome_ids. Ordering revisions never become displayed quote ages or sporting live labels. Candidate IDs include withheld/no-price contracts. Existing leading-underscore market IDs are decoded with snake-case conversion preserved.
+
+A page-specific owner uses the existing MarketStreamSubscription. Stream open/invalidation/reconnect cause an authoritative full-body read. One active+one trailing read,2s automatic floor,429 body cooldown, final failed read retry, visibility generation/cancellation. All candidate IDs are partitioned into existing50-ID subscriptions feeding one shared reader; full-body fallback discovers new memberships. A completed sporting event does not stop open embedded market reads. Actual dates/data drive projection; no synthetic chart or price activity.
+
+Reconciler adopts coherent normalized bodies on nonregressed relevant raw revisions and retains private withdrawal fences. Known grades/final scores cannot disappear or regress. Exact contributor IDs prevent an unrelated sibling revision from resurrecting a withdrawn row. Real quote observation clocks stay independently nullable.
+
+Source syntax parse and whitespace checks passed;13 focused XCTest methods authored, NOT executed by source author. Native owns focused/composed XCTest, Xcode and simulator evidence. Root independent corrective SOURCE PASS binds all7 source/test files in ROOT-CORRECTIVE-SOURCE-REVIEW.json. Backend route/producer carriage and root finite60/min route budget are separate delivery dependencies. No merge/release/production write/Apple action or user-visible acceptance claimed.
