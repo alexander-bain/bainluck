@@ -879,6 +879,31 @@ jobs:
             exit 1
           fi
 
+      - name: "#9527/#9522 'red sox vs yankees' finds the game; a tennis row reads 'v' (real Postgres)"
+        # PILLAR: DISCOVER. SHIP: typing "red sox vs yankees" finds the game on
+        # /search and in the dropdown, and a tennis match in the dropdown reads
+        # "Michelsen v Alcaraz", not "at".
+        #
+        # Both routes' term filters and the dropdown's row text, so only a real
+        # database can observe it. Strawman: the connector set emptied (search
+        # finds no game). Three refusals: a skip, a zero count, a short count.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_typeahead_individual_sport_v_pg_9522.py \
+            -v -rs 2>&1 | tee /tmp/ta9527.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/ta9527.txt; then
+            echo "::error::#9527 vs-query gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          if grep -qiE "no tests ran|collected 0 items" /tmp/ta9527.txt; then
+            echo "::error::#9527 vs-query gate collected NOTHING"
+            exit 1
+          fi
+          if ! grep -qE "^=+ 18 passed" /tmp/ta9527.txt; then
+            echo "::error::#9527 vs-query gate did not report exactly 18 passed"
+            exit 1
+          fi
+
       - name: "#9211 the search dropdown offers today's final beside the next game (real Postgres)"
         # PILLAR: DISCOVER. SHIP: typing a club on game day offers the result
         # it just finished right behind its next game.

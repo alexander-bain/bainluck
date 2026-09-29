@@ -1240,6 +1240,21 @@ def _is_individual_sport(sport_key: str | None) -> bool:
     return sport_key.startswith(_INDIVIDUAL_SPORT_PREFIXES)
 
 
+def _typeahead_event_text(
+    away: str | None, home: str | None, sport_key: str | None
+) -> str:
+    """#9522: the dropdown row's matchup — "Michelsen v Alcaraz", never "at".
+
+    A tennis match, a fight or a golf match has no home side, so "at" tells the
+    reader one player is visiting the other. The 1-on-1 sports read " v "; every
+    other sport keeps " at ". Away stays FIRST either way: the web prints a
+    finished row's score away-first (`finalScoreText`) so the numbers sit under
+    the names they belong to.
+    """
+    sep = "v" if _is_individual_sport(sport_key) else "at"
+    return f"{away} {sep} {home}"
+
+
 def _normalize_team_sport_key(sport_key: str | None) -> str | None:
     """Collapse tournament-specific sport keys to their base league.
 
@@ -2309,13 +2324,27 @@ def _only_the_rounds_league(terms: list[str], consumed: set[str], sport_key: str
     return all(t.lower() in league_words for t, _e in rest) and sport_key in (keys or [])
 
 
+# #9527: the words that join the two sides of a matchup. `at` is already
+# scaffolding above; these are not, so `red sox vs yankees` asked every row to
+# contain "vs" and no team or game name does — zero games, on the way most
+# people type a matchup. Dropped only BETWEEN two words: a trailing "v" is a
+# numeral ("grand theft auto v"), not a connector.
+_MATCHUP_CONNECTORS: frozenset[str] = frozenset({
+    "vs", "vs.", "v", "v.", "versus", "@",
+})
+
+
 def _strip_search_scaffolding(terms: list[str]) -> list[str]:
     """Drop generic scaffolding words from a >=3-term query; never strip to empty.
     Pure — safe to unit test. Leaves 1-2 word queries untouched (name collisions
     like 'Will Smith')."""
     if len(terms) < 3:
         return terms
-    kept = [t for t in terms if t.lower() not in _SEARCH_SCAFFOLDING]
+    kept = [
+        t for i, t in enumerate(terms)
+        if t.lower() not in _SEARCH_SCAFFOLDING
+        and not (0 < i < len(terms) - 1 and t.lower() in _MATCHUP_CONNECTORS)
+    ]
     return kept if kept else terms
 
 
@@ -13225,7 +13254,11 @@ async def typeahead_search(
         )
         event_pool.append({
             "type": "event",
-            "text": f"{event.away_team_name} at {event.home_team_name}",
+            "text": _typeahead_event_text(
+                event.away_team_name,
+                event.home_team_name,
+                event.sport.key if event.sport else None,
+            ),
             "event_id": event.id,
             "status": _ta_served_status,
             # #9226: a finished row carries its result. This pool is the only
@@ -14278,7 +14311,11 @@ async def typeahead_search(
                     away = event.away_team
                     event_pool.append({
                         "type": "event",
-                        "text": f"{event.away_team_name} at {event.home_team_name}",
+                        "text": _typeahead_event_text(
+                            event.away_team_name,
+                            event.home_team_name,
+                            event.sport.key if event.sport else None,
+                        ),
                         "event_id": event.id,
                         # Q438: typeahead's OTHER event pool (above) already went
                         # through the invariant; this fuzzy pool was left raw, so

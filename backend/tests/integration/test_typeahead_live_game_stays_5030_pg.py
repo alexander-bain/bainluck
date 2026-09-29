@@ -45,9 +45,10 @@ _LIVE_IN_PROGRESS = timedelta(hours=3)  # past the old 1h floor, inside 12h
 _LIVE_STUCK = timedelta(hours=13)  # past the 12h ceiling: a row the net missed
 _SCHEDULED_OVERDUE = timedelta(hours=2)  # not live, past the 1h grace
 
-_LIVE_MATCH = "Adrian Mannarino at Alejandro Tabilo"
-_STUCK_MATCH = "Adrian Mannarino at Giovanni Mpetshi Perricard"
-_OVERDUE_MATCH = "Adrian Mannarino at Tomas Machac"
+# #9522: a 1-on-1 row reads " v " in the dropdown; the AFLW game keeps " at ".
+_LIVE_MATCH = "Adrian Mannarino v Alejandro Tabilo"
+_STUCK_MATCH = "Adrian Mannarino v Giovanni Mpetshi Perricard"
+_OVERDUE_MATCH = "Adrian Mannarino v Tomas Machac"
 _LIVE_GAME = "Carlton Blues at Richmond Tigers"
 
 

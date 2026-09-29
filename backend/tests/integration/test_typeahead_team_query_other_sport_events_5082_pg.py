@@ -45,7 +45,7 @@ NINERS = "San Francisco 49ers"
 DOLPHINS = "Miami Dolphins"
 
 PATS_GAME = f"{PATRIOTS} at Buffalo Bills"
-KORPATSCH = "Tamara Korpatsch at Taylah Preston"
+KORPATSCH = "Tamara Korpatsch v Taylah Preston"  # #9522: 1-on-1 reads " v "
 NINERS_GAME = f"Denver Broncos at {NINERS}"
 CHEMNITZ = "Niners Chemnitz at Tofas SK Bursa"
 DOLPHINS_GAME = f"{DOLPHINS} at Minnesota Vikings"
