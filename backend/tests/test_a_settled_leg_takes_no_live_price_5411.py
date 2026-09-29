@@ -177,6 +177,10 @@ class _NoopRefresher:
         # #837 tail: the quiet-flush path; a fake never defers a stamp.
         return None
 
+    async def publish_market_changes(self, _session):
+        # #9484: market invalidations have their own tests; publish nothing.
+        return 0
+
 
 async def _drive_the_socket(monkeypatch, rowcount=1):
     """Run the REAL consumer over one tick; return (captured stmts, stats)."""
@@ -238,11 +242,15 @@ def _run_against_a_real_row(stmt, resolution_source, is_winner=False,
             is_winner=is_winner,
             resolution_source=resolution_source,
         ))
-        result = conn.execute(stmt)
+        # #9484: the statement RETURNS the rows it wrote, and those rows are
+        # what the socket signals on. Counting them is the same verdict the
+        # guard's `rowcount` gives on Postgres — and it is the number that
+        # decides whether a settled leg would publish a market change.
+        written = conn.execute(stmt).all()
         stored = conn.execute(
             select(table.c.current_probability).where(table.c.id == OUTCOME_ID)
         ).scalar_one()
-    return result.rowcount, float(stored)
+    return len(written), float(stored)
 
 
 @pytest.fixture

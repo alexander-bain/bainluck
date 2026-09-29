@@ -23,6 +23,7 @@ from app.tasks.kalshi_ws import (
     SUBSCRIPTION_REFRESH_SECONDS,
 )
 from app.tasks.polymarket import _poly_book_is_untradeable
+from app.utils.market_quote_push import queue_market_change
 from app.utils.market_settlement import settled_values
 
 logger = logging.getLogger(__name__)
@@ -794,8 +795,10 @@ async def _run_polymarket_ws_consumer():
         try:
             async with get_task_session() as session:
                 for outcome_id, prob in batch.items():
-                    await session.execute(
-                        update(FuturesOutcome)
+                    result = await session.execute(
+                        # #9484, twin of the Kalshi socket's: the TABLE, so the
+                        # UPDATE ... RETURNING stays a Core CursorResult.
+                        update(FuturesOutcome.__table__)
                         .where(FuturesOutcome.id == outcome_id)
                         .values(
                             current_probability=prob,
@@ -810,7 +813,21 @@ async def _run_polymarket_ws_consumer():
                                 prob,
                             ),
                         )
+                        .returning(
+                            FuturesOutcome.id,
+                            FuturesOutcome.market_id,
+                            FuturesOutcome.last_updated,
+                        )
                     )
+                    # #9484: only a row the UPDATE returned is evidence — a
+                    # buffered id whose row is gone signals nothing.
+                    for row in result.all():
+                        queue_market_change(
+                            session,
+                            market_id=row.market_id,
+                            source="polymarket",
+                            outcome_observed_at={row.id: row.last_updated},
+                        )
 
                 # #6598 / CERT-3182, twin of the Kalshi socket's. Every price
                 # above moved the value `rank` is derived from and this module
@@ -849,6 +866,10 @@ async def _run_polymarket_ws_consumer():
                 "Polymarket WS: flush error (%d retained for retry)", len(batch)
             )
             return
+
+        # #9484 — twin of the Kalshi socket's: the commit landed, so publish
+        # before the buffer bookkeeping and the blend refresh can suppress it.
+        await blend_refresher.publish_market_changes(session)
 
         # Q491 repair 2 — the write landed, so and only so do these entries
         # leave the buffer. The `== prob` test is what used to be `setdefault`:
@@ -1026,7 +1047,28 @@ async def _run_polymarket_ws_consumer():
                 written = await _apply_ws_resolution(
                     session, market_id, outcomes, winning_outcome
                 )
+                # #9484: the terminal invalidation carries the `settled_at`
+                # this transaction stored, read back inside it — the market is
+                # resolved exactly as REST will now serve it.
+                settled_at = (
+                    await session.execute(
+                        select(FuturesMarket.settled_at).where(
+                            FuturesMarket.id == market_id,
+                            FuturesMarket.status == "resolved",
+                        )
+                    )
+                ).scalar_one_or_none()
+                if settled_at is not None:
+                    queue_market_change(
+                        session,
+                        market_id=market_id,
+                        source="polymarket",
+                        outcome_observed_at={},
+                        terminal=True,
+                        updated_at=settled_at,
+                    )
             stats["resolutions"] += 1
+            await blend_refresher.publish_market_changes(session)
             logger.info(
                 "Polymarket WS: %s resolved (winner=%s, %d/%d outcomes written, "
                 "no calibration scalar captured)",

@@ -100,6 +100,10 @@ class _NoopRefresher:
         # #837 tail: the quiet-flush path; a fake never defers a stamp.
         return None
 
+    async def publish_market_changes(self, _session):
+        # #9484: market invalidations have their own tests; publish nothing.
+        return 0
+
 
 async def _run(monkeypatch, legs, frames):
     import app.tasks.base as task_base
