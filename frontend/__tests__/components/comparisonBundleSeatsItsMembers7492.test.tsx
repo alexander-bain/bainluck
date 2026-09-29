@@ -191,6 +191,21 @@ describe("#7492 — the comparison bundle seats the comparison", () => {
     expect(html).not.toContain("more</button>");
   });
 
+  it.each([["comparison"], ["theme"]])(
+    "🔴 %s: one member past the peek is seated, not hidden behind a footer that costs a row (#9642)",
+    (kind) => {
+      // At a five-seat peek a four-member group never asked for a tap; the
+      // three-seat peek of design A must not make it start. `All 4 questions`
+      // under three rows is `Show 1 more` in new words.
+      const ONE_OVER = OVERFLOW.slice(0, BUNDLE_PEEK_COUNT + 1);
+      const html = render(ONE_OVER, kind === "theme" ? { kind: "theme", story_key: "ipo" } : {});
+
+      expect(html).toContain(SHARED_QUESTION);
+      expect(seated(html, ONE_OVER)).toBe(ONE_OVER.length);
+      expect(html).not.toMatch(/All \d+ questions/);
+    },
+  );
+
   it("🔴 grows no raw Tailwind palette class on either bundle kind", () => {
     // CLAUDE.md, Frontend Design System (MANDATORY): tokens, never raw palette
     // classes. `text-blue-600 hover:text-blue-700` is why the two footers were

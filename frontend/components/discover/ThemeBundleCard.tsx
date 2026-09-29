@@ -6,7 +6,7 @@ import { getDiscoverItemAnalytics, recordDiscoverInteraction, sendDiscoverIntera
 import type { FeedItem, FeedFuturesData } from "@/lib/types";
 import { BundleActionBar } from "./BundleActionBar";
 import { BundleHeader } from "./BundleHeader";
-import { BUNDLE_PEEK_COUNT } from "./constants";
+import { bundleSeatCount } from "./constants";
 import { FuturesCard, FuturesCompactRow } from "./FuturesCard";
 
 interface ThemeBundleCardProps {
@@ -23,9 +23,8 @@ interface ThemeBundleCardProps {
   positionIndex?: number;
 }
 
-// Number of members shown in the collapsed mini-ranked-peek before "show all".
-// Shared with the comparison sibling since #7492 — see `BUNDLE_PEEK_COUNT`.
-const PEEK_COUNT = BUNDLE_PEEK_COUNT;
+// Members shown in the collapsed mini-ranked-peek come from `bundleSeatCount`,
+// shared with the comparison sibling since #7492 — see `BUNDLE_PEEK_COUNT`.
 
 /**
  * Theme bundle (geopolitics archetype — Phase 1, slice 1).
@@ -47,7 +46,7 @@ export function ThemeBundleCard({ items, title, sharedQuestion, storyKey, positi
   const primary = items[0];
   const cat = primary?.type === "futures" ? (primary.data as FeedFuturesData).llm_sport_category : null;
   const analytics = primary ? getDiscoverItemAnalytics(primary) : { category: "geopolitics" };
-  const peek = items.slice(0, PEEK_COUNT);
+  const peek = items.slice(0, bundleSeatCount(items.length));
 
   const toggleExpanded = () => {
     const next = !expanded;
@@ -95,7 +94,7 @@ export function ThemeBundleCard({ items, title, sharedQuestion, storyKey, positi
             onClick={toggleExpanded}
             className="w-full text-center py-2.5 text-xs font-medium text-accent-brand hover:text-accent-brand/80 border-t border-surface-border"
           >
-            {items.length > PEEK_COUNT ? `All ${items.length} questions` : "Expand"}
+            {items.length > peek.length ? `All ${items.length} questions` : "Expand"}
           </button>
         </>
       )}

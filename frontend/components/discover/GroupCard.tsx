@@ -6,7 +6,7 @@ import { getDiscoverItemAnalytics, recordDiscoverInteraction, sendDiscoverIntera
 import type { FeedItem, FeedFuturesData } from "@/lib/types";
 import { BundleActionBar } from "./BundleActionBar";
 import { BundleHeader } from "./BundleHeader";
-import { BUNDLE_PEEK_COUNT } from "./constants";
+import { bundleSeatCount } from "./constants";
 import { FuturesCompactRow } from "./FuturesCard";
 
 interface GroupCardProps {
@@ -52,14 +52,14 @@ interface GroupCardProps {
 export function GroupCard({ items, title, sharedQuestion, positionIndex }: GroupCardProps) {
   const [expanded, setExpanded] = useState(false);
   const primary = items[0];
-  const peek = items.slice(0, BUNDLE_PEEK_COUNT);
+  const peek = items.slice(0, bundleSeatCount(items.length));
   // Every row this card draws is a `FuturesCompactRow` in BOTH states — unlike
   // the theme sibling, which swaps compact rows for full member cards — so
   // expanding a bundle that already seats all of its members changes nothing on
   // screen. The chevron and the header's click target are therefore conditional
   // on there being something behind them; a control that does nothing is the
   // same lie as the `Show 1 more` this fix removes.
-  const canExpand = items.length > BUNDLE_PEEK_COUNT;
+  const canExpand = items.length > peek.length;
   const shown = expanded ? items : peek;
   const cat = primary.type === "futures" ? (primary.data as FeedFuturesData).llm_sport_category : null;
   const analytics = getDiscoverItemAnalytics(primary);
@@ -90,7 +90,7 @@ export function GroupCard({ items, title, sharedQuestion, positionIndex }: Group
         onToggle={() => setExpandedWithTracking(!expanded)}
       />
 
-      {/* The members: the first BUNDLE_PEEK_COUNT of them collapsed, all of them
+      {/* The members: the first `bundleSeatCount` of them collapsed, all of them
           expanded. Both are the same compact row — the header's question is
           answered by the rows, so the rows are what the card is for. */}
       <div className="divide-y divide-surface-border border-t border-surface-border">
