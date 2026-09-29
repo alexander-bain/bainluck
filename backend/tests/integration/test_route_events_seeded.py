@@ -848,6 +848,7 @@ class TestGameMarketsPopulatedShape:
             "is_winner": None,
             "resolution_source": None,
             "_market_id": 202,
+            "contributor_outcome_ids": [302],
         }
         period = body["period_markets"][0]
         assert period["market_type"] == "half_total"
