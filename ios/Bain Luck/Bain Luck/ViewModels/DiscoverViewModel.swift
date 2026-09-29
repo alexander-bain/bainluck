@@ -378,6 +378,7 @@ final class DiscoverViewModel: ObservableObject {
     private var priceReadSequence = 0
     private var priceReadPacer = DiscoverPriceReadPacer()
     private var priceEpochs: [String: Double] = [:]
+    private var priceFences: [String: DiscoverPriceRefresh.MarketFence] = [:]
     private var marketPriceStreams: [MarketStreamSubscription] = []
     private var marketPriceIDs: [Int] = []
     private var eventPriceStreams: [Int: LiveStreamController] = [:]
@@ -554,7 +555,7 @@ final class DiscoverViewModel: ObservableObject {
                 let requested = Set(batch.map(\.id)).intersection(Set(visiblePriceLeaves.map(\.id)))
                 let bounded = DiscoverPriceCards(items: response.items.filter { requested.contains($0.id) },
                     dispositions: response.dispositions, builtAt: response.builtAt)
-                items = DiscoverPriceRefresh.apply(bounded, to: items, epochs: &priceEpochs)
+                items = DiscoverPriceRefresh.apply(bounded, to: items, epochs: &priceEpochs, fences: &priceFences)
                 for item in DiscoverPriceRefresh.leaves(items) where priceEpochs[item.id] != nil {
                     acceptedPriceCards[item.id] = item
                 }
@@ -666,7 +667,7 @@ final class DiscoverViewModel: ObservableObject {
                         itemCount: 0))
                 } else {
                     let mergeStart = Date()
-                    items = DiscoverPriceRefresh.retainingPrices(Self.interleave(renderable), accepted: &acceptedPriceCards)
+                    items = DiscoverPriceRefresh.retainingPrices(Self.interleave(renderable), accepted: &acceptedPriceCards, fences: &priceFences)
                     // #4110: record WHICH ordered list this paint is, so the
                     // network response that follows can tell whether it is the
                     // same one. A pre-`edition` cached body leaves this nil, which
@@ -866,7 +867,7 @@ final class DiscoverViewModel: ObservableObject {
                 reportSuppressedEnvelopes(response.items)
                 let mergeStart = Date()
                 // #4110: THE FIX. This used to be an unconditional
-                // `items = DiscoverPriceRefresh.retainingPrices(Self.interleave(renderable), accepted: &acceptedPriceCards)`, which re-derived the
+                // `items = DiscoverPriceRefresh.retainingPrices(Self.interleave(renderable), accepted: &acceptedPriceCards, fences: &priceFences)`, which re-derived the
                 // whole order from a different input than the boot seed had — so
                 // a card the reader was mid-way through could move or vanish the
                 // moment the network answered. Now the server's own edition token
@@ -877,10 +878,10 @@ final class DiscoverViewModel: ObservableObject {
                     incomingEdition: staged.edition
                 ) {
                 case .repaint:
-                    items = DiscoverPriceRefresh.retainingPrices(Self.interleave(renderable), accepted: &acceptedPriceCards)
+                    items = DiscoverPriceRefresh.retainingPrices(Self.interleave(renderable), accepted: &acceptedPriceCards, fences: &priceFences)
                 case .reconcile:
                     items = DiscoverPriceRefresh.retainingPrices(DiscoverFeedReconcile.merge(
-                        painted: items, incoming: renderable, key: Self.itemKey), accepted: &acceptedPriceCards)
+                        painted: items, incoming: renderable, key: Self.itemKey), accepted: &acceptedPriceCards, fences: &priceFences)
                 }
                 // Both reads come from `staged` so the token recorded as painted
                 // describes the list actually painted. Taking the decision from
@@ -1208,7 +1209,7 @@ final class DiscoverViewModel: ObservableObject {
     func rebindForIdentityChange() async {
         let resumePrices = priceDeliveryActive
         setPriceDeliveryActive(false)
-        acceptedPriceCards = [:]; priceEpochs = [:]; visiblePriceCards = [:]
+        acceptedPriceCards = [:]; priceEpochs = [:]; priceFences = [:]; visiblePriceCards = [:]
         items = []
         // #4110: the painted edition belongs to the list being cleared. Leaving
         // it set would let the next identity's first response compare against
@@ -1562,7 +1563,7 @@ final class DiscoverViewModel: ObservableObject {
                 // defect as the network path, just triggered by the reader instead
                 // of by the clock. The new page is interleaved among ITSELF so the
                 // page keeps its category diversity; the painted prefix does not move.
-                items = items + DiscoverPriceRefresh.retainingPrices(Self.interleave(fresh), accepted: &acceptedPriceCards)
+                items = items + DiscoverPriceRefresh.retainingPrices(Self.interleave(fresh), accepted: &acceptedPriceCards, fences: &priceFences)
                 hasMore = response.hasMore
                 error = nil
                 return
