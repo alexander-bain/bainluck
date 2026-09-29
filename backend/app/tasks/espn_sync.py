@@ -28,6 +28,7 @@ from app.utils.event_completion import (
 )
 from app.utils.start_time_authority import provider_may_set_start
 from app.utils.team_binding_invariant import accept_team_binding
+from app.utils.espn_team_spelling import apply_espn_respelling
 from app.utils.name_normalization import (
     token_overlap_score as _team_name_match_score,
     names_match as _canonical_names_match,
@@ -2993,6 +2994,10 @@ async def _process_live_sport(
         stats["events_synced"] += 1
         stats[f"match_{match_method}"] = stats.get(f"match_{match_method}", 0) + 1
         changed = False
+
+        # #9482: a spelling-only difference takes ESPN's name first, so the
+        # side resolves (and #1918 binds) to ESPN's id-anchored team row.
+        apply_espn_respelling(event, ee, team_cache, stats, source="espn_live")
 
         # Upsert team records with ESPN data (colors, logos)
         home_team = await upsert_team_fn(session, event.home_team_name, ee.home_team, event.sport_id, team_cache, stats)

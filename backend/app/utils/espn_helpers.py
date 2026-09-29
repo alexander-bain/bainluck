@@ -54,6 +54,7 @@ from app.utils.game_pairing import (
 # own door since the guard shipped; the two doors in THIS module write the same
 # column from the same `upsert_team` and were never routed through it (#4883).
 from app.utils.team_binding_invariant import accept_team_binding
+from app.utils.espn_team_spelling import apply_espn_respelling
 
 logger = logging.getLogger(__name__)
 
@@ -2699,6 +2700,9 @@ async def sync_scheduled_events(session, sport_key, espn_events, stats):
             continue
 
         ee = matched_espn
+        # #9482: a spelling-only difference takes ESPN's name first, so the
+        # side resolves (and #1918 binds) to ESPN's id-anchored team row.
+        apply_espn_respelling(event, ee, sched_team_cache, stats, source="espn_scheduled")
         home_team = await upsert_team(session, event.home_team_name, ee.home_team, event.sport_id, sched_team_cache, stats)
         away_team = await upsert_team(session, event.away_team_name, ee.away_team, event.sport_id, sched_team_cache, stats)
         # #1918/#4883. Same column, same resolver and the same OVERWRITE shape as
