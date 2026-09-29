@@ -87,6 +87,7 @@ from app.utils.sports_first_page_rails import (
     swap_client_deleted_finished_off_first_page,
 )
 from app.utils.sports_imminent_marquee import lead_upcoming_with_imminent_marquee_games
+from app.utils.sports_series_order import order_series_games_by_kickoff
 from app.utils.tonights_games import (
     MARQUEE_PIN_KEY,
     MAX_LEAD,
@@ -2835,6 +2836,19 @@ def apply_discover_display_chain(
             )
     _tick("futures_first_page_cap")
 
+    # === THE SOONER GAME OF A SERIES TAKES THE EARLIER SLOT (#9602) ===
+    #
+    # Measured 2026-09-29 11:12Z: tomorrow's NLWC Game 2 (Kalshi 51%, score 65)
+    # sat 3rd and today's Game 1 of the same series (a 63/37 favorite, 45) sat
+    # 15th. Both scores are honest; the order is not. Within each same-matchup
+    # set of upcoming games, the slots they hold are refilled in kickoff order —
+    # no score changes and no other card moves. BEFORE #9489's pass, which keeps
+    # served order inside its two groups, so a series it touches stays in order.
+    series_order_meta = None
+    if sports_mode and not my_teams_only:
+        items, series_order_meta = order_series_games_by_kickoff(items)
+    _tick("series_kickoff_order")
+
     # === TONIGHT'S MARQUEE GAME LEADS UPCOMING (#9489) ===
     #
     # Measured 2026-09-28 23:05Z, an hour before Monday Night Football: the
@@ -2909,6 +2923,7 @@ def apply_discover_display_chain(
         "finished_rail_cap": finished_rail_cap_meta,
         "client_deletion_swap": client_deletion_swap_meta,
         "futures_first_page_cap": futures_cap_meta,
+        "series_kickoff_order": series_order_meta,
         "imminent_marquee_upcoming": imminent_marquee_meta,
         "live_first_page": live_first_page_meta,
         # 0 = the check passed OR no marquee game was required this request.
