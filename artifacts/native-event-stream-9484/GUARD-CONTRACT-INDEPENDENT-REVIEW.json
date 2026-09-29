@@ -1,0 +1,13 @@
+{
+  "ios/Bain Luck/BainLuckTests/ALiveEventPageSaysItsFreshnessOnce8320Tests.swift": "c999551abedb1cef4b8401648b4ed4cfa89acf26c7b4eb1e06252acf8fb4e7bf",
+  "ios/Bain Luck/BainLuckTests/ALivePollDoesNotUndoANewerPush920Tests.swift": "41886a5505c8cfa1344b5bf258eb09ea01c026784b37020725a7c04a1027aad0",
+  "ios/Bain Luck/BainLuckTests/HeroSaysTheCountdownOnce6544Tests.swift": "38de6c7983120aa516f21c87656d079752529e8fb8942edd21918b58a0a0d5b8",
+  "ios/Bain Luck/BainLuckTests/StreamRefusalRecovery9419Tests.swift": "910335e44152fa0f0e75956ed4b1ffdd9582391cbd95bc2af7a1f4c178e0706e",
+  "ios/Bain Luck/Bain Luck/Utilities/EventPriceStreaming.swift": "fc77da8aa04e20e4e6866b6cb23ff45502aba8a2869e0f0c27bec2426e2d989f",
+  "ios/Bain Luck/Bain Luck/Utilities/LiveEventPriceReconciliation.swift": "20810044f5a8492e0ee315eac68e3a02ecd88ae226d05bf157c34ceef1426e49",
+  "ios/Bain Luck/Bain Luck/Utilities/EventRefreshPlan.swift": "a01bfdf07da51cb017613bf2129a53b4d170563ad5cfce5365c97186efe6298c",
+  "ios/Bain Luck/Bain Luck/ViewModels/EventDetailViewModel.swift": "b6908f3d97bd2d22d3cf7964ab90a62538ad263212555020c180c3d373f445bb",
+  "ios/Bain Luck/Bain Luck/Components/LiveUpdateStatusView.swift": "7b450a1734cafde00ba91570851f935813e13aef3fbd455c6fa3d95ddf2afcd6",
+  "ios/Bain Luck/Bain Luck/Views/EventDetailView.swift": "d730b171298c795b1ea3a93a62d420f94585909e6c9936ff4908aff008a3830f",
+  "ios/Bain Luck/Bain Luck/Components/OddsChartView.swift": "ca472f6e314cd93be4e8a8136691f625405ba175a16964ac16a4e5152ef3146d"
+}
