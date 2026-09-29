@@ -1240,18 +1240,13 @@ struct EventDetailView: View {
                             // that says nothing false.
                             EmptyView()
                         }
-                    } else if let currentOdds = event.currentOdds,
+                    } else if let odds = event.currentOdds,
                               // #9470 — an `opening` hero prints the server's
                               // pair and is named as an opening line.
-                              case let odds = OpeningLineHero.resolve(
-                                currentOdds: currentOdds,
-                                heroSource: event.heroProbabilitySource,
-                                heroHome: event.heroProbability,
-                                heroAway: event.heroProbabilityAway,
-                                status: event.status),
+                              case let shown = OpeningLineHero.resolve(odds, for: event),
                               let pair = DrawPricedWinner.printablePair(
-                                away: odds.awayProbability,
-                                home: odds.homeProbability,
+                                away: shown.awayProbability,
+                                home: shown.homeProbability,
                                 sport: event.sport) {
                         let home = pair.home
                         let oddsFontSize: CGFloat = sizeClass == .regular ? 36 : 28
@@ -1268,9 +1263,9 @@ struct EventDetailView: View {
                             // and an older deploy can carry one field and not the
                             // other, so the pair falls back whole.
                             let duelFallback = complementDisplayPercents(away: away, home: home)
-                            let bothServed = odds.awayRenderedPercent != nil && odds.homeRenderedPercent != nil
-                            let awayPct = bothServed ? odds.awayRenderedPercent : duelFallback[0]
-                            let homePct = bothServed ? odds.homeRenderedPercent : duelFallback[1]
+                            let bothServed = shown.awayRenderedPercent != nil && shown.homeRenderedPercent != nil
+                            let awayPct = bothServed ? shown.awayRenderedPercent : duelFallback[0]
+                            let homePct = bothServed ? shown.homeRenderedPercent : duelFallback[1]
                             HStack(spacing: 8) {
                                 Text(formatProbability(away, renderedPercent: awayPct))
                                     .acceptedValueChange(heroValue(away: true), rising: heroRising(away: true), animates: heroMoves)
@@ -1364,10 +1359,10 @@ struct EventDetailView: View {
                         // directly below draws the whole move, and Game Info
                         // carries the opening line it started from.
                         if carriesContext, let caption = SinceOpenCaption.caption(
-                            away: odds.awayProbability,
-                            home: odds.homeProbability,
-                            servedAwayPercent: odds.awayRenderedPercent,
-                            servedHomePercent: odds.homeRenderedPercent,
+                            away: shown.awayProbability,
+                            home: shown.homeProbability,
+                            servedAwayPercent: shown.awayRenderedPercent,
+                            servedHomePercent: shown.homeRenderedPercent,
                             openingAway: event.openingOdds?.awayProbability,
                             openingHome: event.openingOdds?.homeProbability,
                             sport: event.sport,
@@ -1380,7 +1375,7 @@ struct EventDetailView: View {
                             )
                         ),
                            // #9470 — an opening line has no "since open".
-                           !odds.isOpeningLine {
+                           !shown.isOpeningLine {
                             Text(caption.text)
                                 .font(.system(size: 10, weight: .medium))
                                 .foregroundStyle(caption.isHome ? colors.home : colors.away)
@@ -1393,7 +1388,7 @@ struct EventDetailView: View {
                             hasMovement: event.openingOdds?.homeProbability
                                 .map { abs(home - $0) > 0.001 } ?? false
                         )?.rawValue
-                        if odds.isOpeningLine {
+                        if shown.isOpeningLine {
                             // #9470 — where the line opened, not a forecast:
                             // no confidence bars, no delivery status (the page
                             // is pre-game, so there is no stream to report).

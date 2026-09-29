@@ -42,18 +42,12 @@ nonisolated struct OpeningLineHero: Equatable, Sendable {
     static let openingSource = "opening"
     static let caption = "Opening line"
 
-    static func resolve(
-        currentOdds: CurrentOdds,
-        heroSource: String?,
-        heroHome: Double?,
-        heroAway: Double?,
-        status: String?
-    ) -> OpeningLineHero {
-        if heroSource == openingSource,
-           status != "live", !EventState.isFinished(status),
-           let home = heroHome, home.isFinite, home > 0, home < 1 {
+    static func resolve(_ currentOdds: CurrentOdds, for event: EventDetail) -> OpeningLineHero {
+        if event.heroProbabilitySource == openingSource,
+           event.status != "live", !EventState.isFinished(event.status),
+           let home = event.heroProbability, home.isFinite, home > 0, home < 1 {
             return OpeningLineHero(
-                awayProbability: heroAway.flatMap { $0.isFinite ? $0 : nil },
+                awayProbability: event.heroProbabilityAway.flatMap { $0.isFinite ? $0 : nil },
                 homeProbability: home,
                 awayRenderedPercent: nil,
                 homeRenderedPercent: nil,

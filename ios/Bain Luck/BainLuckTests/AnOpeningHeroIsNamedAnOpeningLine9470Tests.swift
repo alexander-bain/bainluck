@@ -32,12 +32,7 @@ final class AnOpeningHeroIsNamedAnOpeningLine9470Tests: XCTestCase {
     }
 
     private func resolve(_ e: EventDetail) throws -> OpeningLineHero {
-        OpeningLineHero.resolve(
-            currentOdds: try XCTUnwrap(e.currentOdds),
-            heroSource: e.heroProbabilitySource,
-            heroHome: e.heroProbability,
-            heroAway: e.heroProbabilityAway,
-            status: e.status)
+        OpeningLineHero.resolve(try XCTUnwrap(e.currentOdds), for: e)
     }
 
     func testTheSpecimenIsAnOpeningLineAndKeepsItsNumber() throws {
@@ -91,15 +86,16 @@ final class AnOpeningHeroIsNamedAnOpeningLine9470Tests: XCTestCase {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
         let page = try String(contentsOf: root.appendingPathComponent("Bain Luck/Views/EventDetailView.swift"),
                               encoding: .utf8)
-        let start = try XCTUnwrap(page.range(of: "} else if let currentOdds = event.currentOdds,"))
+        let start = try XCTUnwrap(page.range(of: "} else if let odds = event.currentOdds,"))
         let end = try XCTUnwrap(page.range(of: "// Projected final score.", range: start.upperBound..<page.endIndex))
         let hero = String(page[start.upperBound..<end.lowerBound])
-        XCTAssertTrue(hero.contains("OpeningLineHero.resolve("))
-        XCTAssertFalse(hero.contains("currentOdds.homeProbability"), "the pair comes from the resolver")
+        XCTAssertTrue(hero.contains("case let shown = OpeningLineHero.resolve(odds, for: event),"))
+        XCTAssertFalse(hero.contains("odds.homeProbability"), "the pair comes from the resolver")
+        XCTAssertFalse(hero.contains("odds.homeRenderedPercent"), "so do its served percents")
         let sinceOpen = try XCTUnwrap(hero.range(of: "if carriesContext, let caption = SinceOpenCaption.caption("))
         let sinceOpenBody = hero[sinceOpen.upperBound...].prefix(1200)
-        XCTAssertTrue(sinceOpenBody.contains("!odds.isOpeningLine {"), "the since-open caption is gated off an opening line")
-        XCTAssertTrue(hero.contains("if odds.isOpeningLine {"))
+        XCTAssertTrue(sinceOpenBody.contains("!shown.isOpeningLine {"), "the since-open caption is gated off an opening line")
+        XCTAssertTrue(hero.contains("if shown.isOpeningLine {"))
         XCTAssertTrue(hero.contains("Text(OpeningLineHero.caption)"))
         XCTAssertEqual(OpeningLineHero.caption, "Opening line")
     }
