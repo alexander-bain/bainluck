@@ -171,6 +171,7 @@ from app.utils.search_headline_contender import (
     MIN_CONTENDER_PROBABILITY,
     MIN_CONTENDER_VOLUME,
     contender_patterns,
+    on_page_contender_candidates,
     promote_headline_contenders,
     reserve_headline_slot,
 )
@@ -11356,19 +11357,40 @@ async def search_events(
     # at 7,384 blocks, 69% of everything that query touched.
     _headline_patterns = contender_patterns(expanded)
     _headline_promoted = 0
+    # #6327: `_deduped_page`, not `futures_markets` — the gate reads the page as
+    # dedup produced it, so this lane's firing condition is unchanged by the price
+    # filter. Full reasoning at `_deduped_page`'s definition above.
+    _headline_absent_arm = bool(
+        len(futures_markets_raw) >= _SEARCH_FUTURES_WINDOW
+        and _deduped_page
+        and all(_query_name_match(m, expanded) for m in _deduped_page)
+    )
+    # #9587 — THE HOIST ARM. The gate above fires only when the contender cannot
+    # be on the page; when it IS on the page it kept the reranker's slot. On the
+    # first day of MLB's postseason `cubs` served `MLB World Series Champion
+    # 2026` at row 7 behind six game props while `yankees` (market absent, lane
+    # fired) had it at row 0. So when the SHIPPED page holds a tier-1
+    # outcome-only row below row 0, the same statement runs restricted to those
+    # ids: same rule, same bound, same savepoint and shed path, and it can only
+    # REORDER the page — every id it may return is already on it, and
+    # `promote_headline_contenders` hoists the page's own row. `futures_markets`,
+    # not `_deduped_page`: a row the price filter withdrew is not on the page,
+    # and handing it to the promoter would put it back.
+    _headline_hoist_ids = (
+        []
+        if _headline_absent_arm or not _headline_patterns
+        else on_page_contender_candidates(
+            futures_markets, lambda m: _query_name_match(m, expanded)
+        )
+    )
     # Resolved ONCE and reused. Calling the helper in the condition and again for
     # the value would read the clock twice, and the two reads can disagree across
     # the stage floor — the gate passes, the value comes back `None`, and the
     # arming line raises `TypeError` on the rarest request in the system.
     _headline_bound_ms = _search_headline_bound_ms(_deadline)
-    # #6327: `_deduped_page`, not `futures_markets` — the gate reads the page as
-    # dedup produced it, so this lane's firing condition is unchanged by the price
-    # filter. Full reasoning at `_deduped_page`'s definition above.
     if (
         _headline_patterns
-        and len(futures_markets_raw) >= _SEARCH_FUTURES_WINDOW
-        and _deduped_page
-        and all(_query_name_match(m, expanded) for m in _deduped_page)
+        and (_headline_absent_arm or _headline_hoist_ids)
         and _headline_bound_ms is not None
     ):
         # THE LANE'S OWN BOUND, not the request's remainder — see
@@ -11424,17 +11446,21 @@ async def search_events(
         # path correct in both).
         _headline_savepoint = await db.begin_nested()
         try:
-            _headline_result = await db.execute(
-                _headline_contender_statement(
-                    _headline_patterns,
-                    _futures_open_now,
-                    limit=_SEARCH_FUTURES_PAGE,
-                    options=(
-                        selectinload(FuturesMarket.sport),
-                        selectinload(FuturesMarket.outcomes),
-                    ),
-                )
+            _headline_statement = _headline_contender_statement(
+                _headline_patterns,
+                _futures_open_now,
+                limit=_SEARCH_FUTURES_PAGE,
+                options=(
+                    selectinload(FuturesMarket.sport),
+                    selectinload(FuturesMarket.outcomes),
+                ),
             )
+            if _headline_hoist_ids:
+                # #9587: the hoist arm may only answer about rows already shipped.
+                _headline_statement = _headline_statement.where(
+                    FuturesMarket.id.in_(_headline_hoist_ids)
+                )
+            _headline_result = await db.execute(_headline_statement)
             _headline_rows = _headline_result.scalars().unique().all()
         except Exception as exc:  # noqa: BLE001
             # THE SAVEPOINT ROLLBACK, and it comes before the re-raise decision

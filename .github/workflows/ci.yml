@@ -829,6 +829,33 @@ jobs:
             exit 1
           fi
 
+      - name: "#9587 a club's World Series card leads search when it is already on the page (real Postgres)"
+        # PILLAR: DISCOVER. SHIP: a Cubs or Padres fan searching their club sees
+        # the World Series card first in Futures & Markets, the way Yankees and
+        # Dodgers fans already do. Production v5274 2026-09-29 served it at row 7
+        # of 10 for `cubs`, behind six game props: the headline lane fired only
+        # when the market was ABSENT from the page.
+        #
+        # The hoist arm restricts the lane's own SQL to the page's ids, so only a
+        # real database behind the real route can observe it. One strawman (arm
+        # disarmed -> props lead) and two controls. Three refusals.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_search_contender_on_page_hoist_9587_pg.py \
+            -v -rs 2>&1 | tee /tmp/hoist9587.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/hoist9587.txt; then
+            echo "::error::#9587 on-page contender hoist gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          if grep -qiE "no tests ran|collected 0 items" /tmp/hoist9587.txt; then
+            echo "::error::#9587 on-page contender hoist gate collected NOTHING"
+            exit 1
+          fi
+          if ! grep -qE "^=+ 6 passed" /tmp/hoist9587.txt; then
+            echo "::error::#9587 on-page contender hoist gate did not pass all 6"
+            exit 1
+          fi
+
       - name: "#5030 a game being played stays in the search dropdown (real Postgres)"
         # PILLAR: DISCOVER. SHIP: typing a player or team while their game is on
         # offers that game, not last week's finals.
