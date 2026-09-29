@@ -18295,6 +18295,7 @@ async def get_event(
         _team_for_event(team_lookup, event.away_team_name, loaded_sport_key(event)),
         event.home_team_name,
         event.away_team_name,
+        importance=getattr(event, "llm_importance", None),
     )
     if standings_context:
         response["standings_context"] = standings_context
@@ -32263,11 +32264,19 @@ async def _rebuild_team_lookup() -> None:
     _team_cache_time = time.monotonic()
 
 
-def _compute_standings_context(home_team, away_team, home_name: str, away_name: str) -> dict | None:
+def _compute_standings_context(
+    home_team,
+    away_team,
+    home_name: str,
+    away_name: str,
+    importance: str | None = None,
+) -> dict | None:
     """Compute standings context text for an event.
 
     Returns a dict with 'home', 'away' record strings and optional 'stakes' text,
-    or None if no standings data is available.
+    or None if no standings data is available. `importance` is the event's own
+    `llm_importance`; a playoff or championship game says so before any
+    standings rule is consulted (#9623).
     """
     if not home_team and not away_team:
         return None
@@ -32320,7 +32329,18 @@ def _compute_standings_context(home_team, away_team, home_name: str, away_name: 
 
     # Compute simple stakes text via rules
     stakes = None
-    if home_team and away_team:
+    # The event's own importance comes first (#9623). The standings rules below
+    # answer a whole playoff round with regular-season words: on 2026-09-29 the
+    # AL Wild Card Game 1 (Red Sox @ Yankees, `importance:playoff`) served
+    # "Division rivals" as the page's only chip, because in a Wild Card round
+    # every pairing is two winning teams and often two from one division. The
+    # words are the ones `utils/highlights.py` puts on the feed card for the
+    # same importance, so the card and the page it opens agree.
+    if importance == "championship":
+        stakes = "Championship game"
+    elif importance == "playoff":
+        stakes = "Playoff game"
+    if not stakes and home_team and away_team:
         # The public view here too (#5377) — otherwise "Division rivals" keeps
         # firing off the same unsupported pre-season ranks the line above just
         # stopped printing, and a stakes badge is a louder claim than a number.
