@@ -34584,6 +34584,43 @@ def _search_query_matched_leg(market, board: list, top: list, query_terms, withh
     return max(matched, key=lambda o: o.current_probability or 0)
 
 
+def _search_keep_settled_winners(real: list, limit: int, headline_tier) -> tuple[list, list]:
+    """#9675: the top ``limit`` of an already-sorted open multi-winner board,
+    with its graded winners guaranteed a row. Returns ``(top, kept_winners)``.
+
+    The winners go in a STABLE order — rank, then name, then id — because the
+    sort ahead of this ties them (every winner is 1.0, and on the specimen both
+    are rank 1), and a tie left to load order is what made the card show the
+    Dodgers in one read and the Brewers in the next.
+
+    One row stays with the best live leg while any exists: #8640's point is
+    that a result must not headline an open board, and a board with more
+    winners than rows would otherwise be all results. Everything else keeps its
+    sorted place — live legs, then the winners, then graded losers and
+    unpriced legs — so a board whose winners already fit is unchanged except
+    for the order among its tied winners.
+    """
+    winners = sorted(
+        (o for o in real if headline_tier(o) == 1 and getattr(o, "is_winner", None) is True),
+        key=lambda o: (
+            getattr(o, "rank", None) is None,
+            getattr(o, "rank", None) or 0,
+            o.name or "",
+            o.id or 0,
+        ),
+    )
+    if not winners:
+        return real[:limit], []
+    has_live = any(headline_tier(o) == 2 for o in real)
+    kept = winners[: max(limit - 1, 0) if has_live else limit]
+    kept_ids = {id(o) for o in kept}
+    rest = [o for o in real if id(o) not in kept_ids]
+    room = limit - len(kept)
+    live = [o for o in rest if headline_tier(o) == 2][:room]
+    tail = [o for o in rest if headline_tier(o) != 2][: room - len(live)]
+    return live + kept + tail, kept
+
+
 def _build_search_top_outcomes(
     market: "FuturesMarket",
     limit: int = 5,
@@ -34737,11 +34774,31 @@ def _build_search_top_outcomes(
             reverse=True,
         )
         top = real[:limit]
+        # #9675: EVERY SETTLED WINNER OF A MULTI-WINNER BOARD STAYS ON THE CARD.
+        # `?q=braves` (2026-09-29) drew *Team to advance to NLDS* (60087232) as
+        # four live teams and `Milwaukee Brewers ✓ Won` — the Dodgers, graded a
+        # winner at 1.0 on the same board, had gone. The demotion above puts
+        # both winners in tier 1 behind four live legs; the five-row slice kept
+        # one, and with both at 1.0 and rank 1 WHICH one was arbitrary (the
+        # morning read showed the Dodgers and no Brewers). A card that names
+        # one of two teams through reads as if only that team is through.
+        winners: list = []
+        if _demote_graded:
+            top, winners = _search_keep_settled_winners(real, limit, _headline_tier)
         # #8842: a card recalled through an outcome name shows that outcome, in
         # the last row, when the probability cut left it out. Not on the ladder
         # window above: a threshold rung is never a player or a team.
         pinned = _search_query_matched_leg(market, real, top, query_terms, _withheld_ids)
         if pinned is not None:
+            # It displaces the last row that is not a kept winner, so searching
+            # for a live team cannot evict the result #9675 put back.
+            if len(top) >= limit:
+                kept = {id(o) for o in winners}
+                drop = next(
+                    (i for i in range(len(top) - 1, -1, -1) if id(top[i]) not in kept),
+                    len(top) - 1,
+                )
+                top = top[:drop] + top[drop + 1:]
             top = top[: limit - 1] + [pinned]
     # #6479, and it is the SAME rung a reader meets on the detail page. Search
     # ranks these boards by probability, so the truncated name is not buried in
