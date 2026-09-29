@@ -6174,6 +6174,41 @@ def _resolved_club_words(term: str, resolved: list[tuple[str, str]]) -> list[str
     return words
 
 
+def _is_finished_club_word(term: str, team_rows) -> bool:
+    """#9609: `term` is a WHOLE word of a club the page's own teams read returned.
+
+    `rays` + Tampa Bay Rays, `mets` + New York Mets. The reader has finished a word
+    the registry recognises, so — the reason #9306 gives for a round word — the
+    progressive-typing case the outcome arm's substring protects does not apply,
+    and the substring is somebody's surname: `rays` reached two Senate races and
+    "Who will Bernie endorse?" through G(rays)on, `mets` a Demon Slayer award and
+    three table-tennis matches through Ki(mets)u / E(mets). #9292 sank those rows,
+    but on these pages the real rows are too few to fill ten, so the sunk junk
+    still filled them.
+
+    Two refusals keep the old arm, both about typing. A row from an individual
+    sport or with no sport is ignored (`_rescue_teams_from_rows`' strip: a golfer
+    is not a club). And if any club word the term STARTS is longer than it
+    (`red` + California Redwoods, `heat` + Flackwell Heath FC), the reader may
+    still be typing, so nothing changes. Pure, so the rule is testable without a
+    database.
+    """
+
+    lowered = term.lower()
+    finished = False
+    for row in team_rows or ():
+        sport_key = getattr(row, "sport_key", None)
+        if not sport_key or _is_individual_sport(sport_key):
+            continue
+        for word in re.findall(r"[^\W_]+", row.name or ""):
+            word = word.lower()
+            if word == lowered:
+                finished = True
+            elif word.startswith(lowered):
+                return False
+    return finished
+
+
 def _outcome_whole_word(term: str):
     """An outcome NAME carrying `term` as a whole word, never inside one.
 
@@ -10672,6 +10707,14 @@ async def search_events(
             futures_outcome_match = _resolved_club_outcome_match(
                 term, exp, _club_words
             )
+        # #9609: a finished CLUB word, read from the page's own teams read (which
+        # runs on every page, not only the empty rail) — whole word + expansion,
+        # the round-word arm. See `_is_finished_club_word`. Measured on production
+        # 2026-09-29, open markets reached only mid-word, all collisions:
+        #     rays 16 (Grayson)  mets 8 (Kimetsu, Emets)  suns 10 (Samsunspor)
+        #     nets 39 (Hornets, Volynets)  rams 28 (Abrams)  kings 30 (Vikings)
+        elif _is_finished_club_word(term, _early_team_rows):
+            futures_outcome_match = _resolved_club_outcome_match(term, exp, [])
         else:
             futures_outcome_match = _outcome_id_match(term, exp)
 
