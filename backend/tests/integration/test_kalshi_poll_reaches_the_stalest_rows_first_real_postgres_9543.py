@@ -65,7 +65,7 @@ _NEW = "KXNCAAFOT-26OCT03CINARIZ"
 _THRESHOLD_LABEL = "1+ overtime periods"
 
 
-def _ot_event(event_ticker, title):
+def _ot_event(event_ticker, title, status="active"):
     """A single-leg NCAAF Overtime event, as the venue serves it."""
     return KalshiEvent(
         event_ticker=event_ticker,
@@ -78,7 +78,7 @@ def _ot_event(event_ticker, title):
                 event_ticker=event_ticker,
                 title=_THRESHOLD_LABEL,
                 yes_sub_title=_THRESHOLD_LABEL,
-                status="active",
+                status=status,
                 close_time=CLOSE,
                 occurrence_datetime=KICKOFF,
                 yes_bid=0.04,
@@ -104,11 +104,12 @@ def _events(*tickers):
     return [_ot_event(t, _TITLES[t]) for t in tickers]
 
 
-async def _run_poll(session, events):
+async def _run_poll(session, events, record="_floor_series_first"):
     """The REAL `_poll_kalshi_markets` on this session.
 
-    Returns ``(stats, order)``: ``order`` is the ticker list the upsert loop
-    was handed, read off the real `_floor_series_first`.
+    Returns ``(stats, order)``: ``order`` is the ticker list returned by the
+    real ordering step named in ``record`` (default `_floor_series_first`).
+    `_settled_rows_last` is the last step before the loop.
     """
     service = MagicMock()
     service.get_all_events = AsyncMock(return_value=events)
@@ -120,11 +121,11 @@ async def _run_poll(session, events):
 
     from app.tasks import kalshi as kalshi_mod
 
-    real_floor = kalshi_mod._floor_series_first
+    real_step = getattr(kalshi_mod, record)
     seen: list[list[str]] = []
 
-    def _recording_floor(evs):
-        out = real_floor(evs)
+    def _recording_step(*args):
+        out = real_step(*args)
         seen.append([e.event_ticker for e in out])
         return out
 
@@ -140,7 +141,7 @@ async def _run_poll(session, events):
             )
         )
         es.enter_context(
-            patch("app.tasks.kalshi._floor_series_first", _recording_floor)
+            patch(f"app.tasks.kalshi.{record}", _recording_step)
         )
         es.enter_context(patch.dict(os.environ, {"KALSHI_API_KEY": "test-key"}))
         stats = await kalshi_mod._poll_kalshi_markets()
@@ -237,4 +238,77 @@ class TestCreationStillGoesFirst:
         assert order[0] == _NEW, (
             f"loop order {order}: a never-seen event must be created before "
             "any existing row is rewritten (#995)"
+        )
+
+
+class TestSettledRowsGoBehindTheOpenTail:
+    """After heavy v116, oldest-first ordering put months of settled floor games
+    ahead of the open tail. In one beat, 6,685 of 7,361 rewrites wrote
+    ``resolved`` back onto ``resolved`` rows, and 60481264 was still unreached.
+    Arms: a row settled on both sides goes last; a row we hold ``resolved`` that
+    the venue lists active keeps its place (#8586)."""
+
+    async def test_a_row_settled_on_both_sides_is_handed_to_the_loop_last(
+        self, pg_session
+    ):
+        await _seed_existing(pg_session)
+        # _NEVER (no stamp) would go first on poll age. It is settled on both
+        # sides, so rewriting it changes nothing.
+        await pg_session.execute(
+            text(
+                "UPDATE futures_markets SET status = 'resolved' "
+                "WHERE source = 'kalshi' AND external_id = :t"
+            ),
+            {"t": _NEVER},
+        )
+        await pg_session.commit()
+        events = [
+            _ot_event(_RECENT, _TITLES[_RECENT]),
+            _ot_event(_STALE, _TITLES[_STALE]),
+            _ot_event(_NEVER, _TITLES[_NEVER], status="finalized"),
+            _ot_event(_NEW, _TITLES[_NEW]),
+        ]
+        stats, order = await _run_poll(
+            pg_session, events, record="_settled_rows_last"
+        )
+        assert stats["errors"] == [], stats["errors"]
+        assert order == [_NEW, _STALE, _RECENT, _NEVER], (
+            f"loop order {order}. A row resolved in our table whose venue "
+            "markets are all finalized must go behind the open rows. On poll "
+            "age alone it goes first and eats the beat."
+        )
+
+    async def test_a_resolved_row_the_venue_lists_active_keeps_its_place(
+        self, pg_session
+    ):
+        """Control (#8586): the venue reopened it, so this rewrite is what turns
+        it back to ``open``. It must not be pushed behind the open tail."""
+        await _seed_existing(pg_session)
+        await pg_session.execute(
+            text(
+                "UPDATE futures_markets SET status = 'resolved' "
+                "WHERE source = 'kalshi' AND external_id = :t"
+            ),
+            {"t": _NEVER},
+        )
+        await pg_session.commit()
+        stats, order = await _run_poll(
+            pg_session,
+            _events(_RECENT, _STALE, _NEVER, _NEW),
+            record="_settled_rows_last",
+        )
+        assert stats["errors"] == [], stats["errors"]
+        assert order == [_NEW, _NEVER, _STALE, _RECENT], order
+        status = (
+            await pg_session.execute(
+                text(
+                    "SELECT status FROM futures_markets "
+                    "WHERE source = 'kalshi' AND external_id = :t"
+                ),
+                {"t": _NEVER},
+            )
+        ).scalar_one()
+        assert status == "open", (
+            f"{_NEVER} reads {status!r}: the venue lists it active, so the "
+            "rewrite must reopen it"
         )

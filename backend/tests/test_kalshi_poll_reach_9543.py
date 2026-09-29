@@ -14,13 +14,16 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from app.tasks import kalshi as kalshi_mod
-from app.tasks.kalshi import _least_recently_polled_first
+from app.tasks.kalshi import _least_recently_polled_first, _settled_rows_last
 
 NOW = datetime(2026, 9, 29, 4, 0, tzinfo=timezone.utc)
 
 
-def _ev(ticker):
-    return SimpleNamespace(event_ticker=ticker)
+def _ev(ticker, *statuses):
+    return SimpleNamespace(
+        event_ticker=ticker,
+        markets=[SimpleNamespace(status=s) for s in statuses],
+    )
 
 
 def _order(tickers, stamps):
@@ -67,21 +70,73 @@ class TestTheBeatUsesIt:
 
     SRC = inspect.getsource(kalshi_mod._poll_kalshi_markets)
 
-    def test_the_existing_tickers_query_reads_the_poll_stamp(self):
-        assert (
-            "SELECT external_id, volume_updated_at FROM futures_markets" in self.SRC
-        )
+    def test_the_existing_tickers_query_reads_the_poll_stamp_and_status(self):
+        assert '"SELECT external_id, volume_updated_at, status "' in self.SRC
+        assert 'if _row_status == "resolved":' in self.SRC
 
     def test_existing_events_are_rotated_before_the_floor_and_the_loop(self):
         rotate = self.SRC.index("existing_events = _least_recently_polled_first(")
         floor = self.SRC.index(
             "events = _floor_series_first(new_events + existing_events)"
         )
+        settled = self.SRC.index(
+            "events = _settled_rows_last(events, resolved_tickers)"
+        )
         loop = self.SRC.index('_mark_phase("upsert_loop")')
-        assert rotate < floor < loop
+        assert rotate < floor < settled < loop
 
     def test_the_upsert_still_rewrites_the_stamp_it_orders_by(self):
         """Without this the stalest row stays stalest and the rotation stalls."""
         update_set = self.SRC[self.SRC.index("update_set = {") :]
         update_set = update_set[: update_set.index("}")]
         assert '"volume_updated_at": func.now()' in update_set
+
+
+def _settled_order(events, resolved):
+    return [e.event_ticker for e in _settled_rows_last(events, resolved)]
+
+
+class TestSettledRowsGoLast:
+    """After heavy v116, 6,685 of the 7,361 rewrites in one beat were settled
+    floor games sorted to the front by poll age. The open tail, 60481264
+    included, was still unreached. A rewrite that writes back ``resolved``
+    changes nothing, so those events go behind everything else."""
+
+    def test_a_resolved_row_whose_venue_markets_all_settled_goes_last(self):
+        evs = [_ev("OLD_GAME", "finalized"), _ev("OPEN_BOARD", "active")]
+        assert _settled_order(evs, {"OLD_GAME"}) == ["OPEN_BOARD", "OLD_GAME"]
+
+    def test_a_resolved_row_the_venue_lists_active_keeps_its_place(self):
+        """#8586: closed on the start date, then reopened. This rewrite is
+        what turns the row back to open, so it must not be demoted."""
+        evs = [
+            _ev("REOPENED", "closed", "active"),
+            _ev("OPEN_BOARD", "active"),
+        ]
+        assert _settled_order(evs, {"REOPENED"}) == ["REOPENED", "OPEN_BOARD"]
+
+    def test_an_open_row_whose_venue_markets_settled_keeps_its_place(self):
+        """The game that just ended. This rewrite is what settles it."""
+        evs = [_ev("JUST_ENDED", "finalized"), _ev("OPEN_BOARD", "active")]
+        assert _settled_order(evs, set()) == ["JUST_ENDED", "OPEN_BOARD"]
+        assert _settled_order(evs, {"OTHER"}) == ["JUST_ENDED", "OPEN_BOARD"]
+
+    def test_an_event_with_no_fetched_markets_is_not_read_as_settled(self):
+        evs = [_ev("NO_MARKETS"), _ev("OPEN_BOARD", "active")]
+        assert _settled_order(evs, {"NO_MARKETS"}) == ["NO_MARKETS", "OPEN_BOARD"]
+
+    def test_both_groups_keep_their_order(self):
+        evs = [
+            _ev("S1", "finalized"),
+            _ev("L1", "active"),
+            _ev("S2", "settled"),
+            _ev("L2", "active"),
+            _ev("S3", "determined"),
+        ]
+        assert _settled_order(evs, {"S1", "S2", "S3"}) == [
+            "L1", "L2", "S1", "S2", "S3",
+        ]
+
+    def test_empty(self):
+        assert _settled_rows_last([], {"A"}) == []
+        assert _settled_rows_last([], set()) == []
