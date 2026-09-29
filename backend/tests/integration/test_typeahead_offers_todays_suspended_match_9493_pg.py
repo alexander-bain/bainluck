@@ -42,17 +42,18 @@ _SUSPENDED_STALE = timedelta(hours=13)  # past the 12h ceiling (#5028's bucket)
 _SUSPENDED_FUTURE = timedelta(hours=-20)  # the #4114 mislabel: dated tomorrow
 _DOUBLES_TOMORROW = timedelta(hours=-14)  # scheduled, names the query
 
-_SPECIMEN = "Pereira at Dickerson"
-_DOUBLES = "Soto/Zeballos at Dickerson/Rodriguez"
-_STALE = "Ortega at Dickerson"
-_FUTURE = "Moreno at Dickerson"
+# #9522: a 1-on-1 row reads " v " in the dropdown, not " at ".
+_SPECIMEN = "Pereira v Dickerson"
+_DOUBLES = "Soto/Zeballos v Dickerson/Rodriguez"
+_STALE = "Ortega v Dickerson"
+_FUTURE = "Moreno v Dickerson"
 
 # Broad-query control: a sport-alias-free query that matches many rows. Nine
 # scheduled matches fill the 8-row fetch, and the suspended one must not take a
 # slot from any of them.
 _BROAD_TOKEN = "Zzqtest"
-_BROAD_SCHEDULED = [f"{_BROAD_TOKEN} Opp{i} at {_BROAD_TOKEN} Home{i}" for i in range(9)]
-_BROAD_SUSPENDED = f"{_BROAD_TOKEN} Late at {_BROAD_TOKEN} Stopped"
+_BROAD_SCHEDULED = [f"{_BROAD_TOKEN} Opp{i} v {_BROAD_TOKEN} Home{i}" for i in range(9)]
+_BROAD_SUSPENDED = f"{_BROAD_TOKEN} Late v {_BROAD_TOKEN} Stopped"
 
 
 _KALSHI_MARKET = "Dickerson vs Pereira"
