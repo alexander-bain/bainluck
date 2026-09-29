@@ -97,8 +97,8 @@ class TestTheSpecimen:
         assert started_without_result("scheduled", KALSHI_STAMP, at_start, _sources(HELD)) is True
 
     def test_a_row_past_the_horizon_is_not_held(self):
-        """The writer only revisits rows inside the promoter's 24h window, so a
-        stamp past it is one nothing maintains."""
+        """The writer only revisits a stamped row inside the band, so a stamp
+        past it is one nothing maintains."""
         old = READ - STATPAL_LATER_SESSION_HORIZON - timedelta(minutes=1)
         far = statpal_later_session_value(READ + timedelta(hours=3))
         assert started_without_result("scheduled", old, READ, _sources(far)) is True

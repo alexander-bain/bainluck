@@ -368,16 +368,48 @@ def statpal_names_a_later_session(
     The hold ends at StatPal's start, when the clock runs as before. It also
     ends on evidence: play on the row, or a better source rewriting
     ``commence_time_source``. Every clause fails OPEN.
+
+    The band StatPal's start may sit in is
+    :data:`STATPAL_LATER_SESSION_HORIZON`, the same constant every reader of
+    the stamp honours (#9613), so a row this holds is never a row a reader
+    calls "No result reported". Beyond it the hold fails OPEN.
+    """
+    start = statpal_later_session_clock(
+        commence_time_source,
+        statpal_fixture_id,
+        has_play_evidence,
+        commence_time,
+        statpal_start,
+    )
+    return start is not None and now < start
+
+
+def statpal_later_session_clock(
+    commence_time_source,
+    statpal_fixture_id,
+    has_play_evidence,
+    commence_time,
+    statpal_start,
+):
+    """StatPal's start when it is this row's real start, else None. #9588, #9613.
+
+    The clock-free half of :func:`statpal_names_a_later_session`. Before
+    StatPal's start it is the hold. After it, it is where the row's clock
+    starts: ``transition_event_statuses`` measures a promoted row's staleness
+    from here, not from the venue stamp. Otherwise a match promoted at its
+    Beijing session would be 21 hours "past its start" on the same pass and be
+    suspended before a ball was hit.
     """
     if not statpal_schedule_candidate(
         commence_time_source, statpal_fixture_id, has_play_evidence
     ):
-        return False
+        return None
     if statpal_start is None or commence_time is None:
-        return False
-    if statpal_start - commence_time <= STATPAL_LATER_SESSION_MARGIN:
-        return False
-    return now < statpal_start
+        return None
+    gap = statpal_start - commence_time
+    if gap <= STATPAL_LATER_SESSION_MARGIN or gap > STATPAL_LATER_SESSION_HORIZON:
+        return None
+    return statpal_start
 
 
 # ── The #9588 hold, as the readers that cannot run it see it (#9613) ─────────
@@ -392,12 +424,26 @@ def statpal_names_a_later_session(
 #
 # The value is StatPal's start, so the stamp runs out on its own at the instant
 # the hold would have. It is honoured only while the row's own start is inside
-# the promoter's 24h window, the window in which the task revisits the row every
-# pass and rewrites or clears the stamp. A reader therefore never trusts a stamp
+# STATPAL_LATER_SESSION_HORIZON. The task revisits a stamped row every pass for
+# that long and rewrites or clears the stamp, so a reader never trusts a stamp
 # the task has stopped maintaining. The upper bound gives the SQL half a text
 # range that a malformed value cannot satisfy.
 STATPAL_LATER_SESSION_KEY = "statpal_later_session_start"
-STATPAL_LATER_SESSION_HORIZON = timedelta(hours=24)
+
+#: THE ONE BAND of the #9588 hold. Three readers and one writer bound it here:
+#: the writer holds only while StatPal's start is at most this far after the
+#: row's own, the promoter keeps revisiting a stamped row for this long, and
+#: both reader halves honour the stamp inside it. So every stamp the writer
+#: writes is one the readers honour for as long as it is live.
+#:
+#: MEASURED, production 2026-09-29 22:05Z, over the 37 rows the #9588 census
+#: found (venue-stamped, StatPal start more than the margin later, 35 days):
+#: the largest gap is 34.66h (15309330, Polymarket 05:20Z 9/10 → StatPal 16:00Z
+#: 9/11), and 9 of the 37 exceed 24h (26.0–34.66h). The band was 24h, so on
+#: those nine a held row read "No result reported" once its venue stamp aged out
+#: while StatPal's session was still ahead. 48h is the largest gap with half
+#: a day to spare.
+STATPAL_LATER_SESSION_HORIZON = timedelta(hours=48)
 
 
 def statpal_later_session_value(statpal_start) -> str:

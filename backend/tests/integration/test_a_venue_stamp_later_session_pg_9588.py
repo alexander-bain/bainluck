@@ -35,15 +35,25 @@ needs_postgres = pytest.mark.skipif(
 )
 
 
+#: What a pass that read the row writes, computed from the seed's own clock.
+EXPECTED_STAMPS: dict = {}
+
+
 async def _seed(session):
     from app.models.models import Event, EventProviderAnchor, Sport
+    from app.utils.event_completion import (
+        STATPAL_LATER_SESSION_KEY,
+        statpal_later_session_value,
+    )
 
     now = datetime.now(timezone.utc)
     tennis = Sport(key="tennis_atp", name="ATP")
     session.add(tennis)
     await session.flush()
 
-    def _match(name, *, commence, source="kalshi", status="scheduled", fixture):
+    def _match(
+        name, *, commence, source="kalshi", status="scheduled", fixture, sources=None
+    ):
         return Event(
             sport_id=tennis.id,
             home_team_name=f"{name} A / B",
@@ -52,6 +62,7 @@ async def _seed(session):
             commence_time_source=source,
             status=status,
             statpal_fixture_id=fixture,
+            win_probability_sources=sources,
         )
 
     rows = {
@@ -82,6 +93,34 @@ async def _seed(session):
             source="odds_api",
             fixture="958805",
         ),
+        # #9613, THE BAND: 30h past its venue stamp (outside the promoter's 24h
+        # window) and still held, StatPal's session 4h ahead. The stamp is
+        # what brings it back into the read. RED before #9613: never read,
+        # so the stamp was never maintained.
+        "the_old_held_match": _match(
+            "OldHeld",
+            commence=now - timedelta(hours=30),
+            fixture="958806",
+            # Seeded an hour off the anchor, so only a pass that READ the row
+            # can leave it at the anchor's start.
+            sources={STATPAL_LATER_SESSION_KEY: (now + timedelta(hours=3)).isoformat()},
+        ),
+        # THE WINDOW CONTROL: the same shape with no stamp is ancient. A read
+        # that dropped the 24h bound for everyone stamps it and fails here.
+        "the_old_unstamped_match": _match(
+            "OldBare", commence=now - timedelta(hours=30), fixture="958807"
+        ),
+        # #9613, THE CLOCK: StatPal's session began 5 minutes ago, 29h55m after
+        # the venue stamp. Promoted, and on the same pass NOT suspended, because
+        # its clock starts at StatPal's start. RED before #9613: never read.
+        "the_old_released_match": _match(
+            "OldReleased",
+            commence=now - timedelta(hours=30),
+            fixture="958808",
+            sources={
+                STATPAL_LATER_SESSION_KEY: (now - timedelta(minutes=5)).isoformat()
+            },
+        ),
     }
     session.add_all(list(rows.values()))
     await session.flush()
@@ -106,6 +145,12 @@ async def _seed(session):
     _anchor("the_session_reached", "tennis:958803", now - timedelta(minutes=10))
     _anchor("the_stale_fixture", "tennis:111111", tomorrow)
     _anchor("the_reported_start", "tennis:958805", tomorrow)
+    _anchor("the_old_held_match", "tennis:958806", now + timedelta(hours=4))
+    EXPECTED_STAMPS["the_old_held_match"] = statpal_later_session_value(
+        now + timedelta(hours=4)
+    )
+    _anchor("the_old_unstamped_match", "tennis:958807", now + timedelta(hours=4))
+    _anchor("the_old_released_match", "tennis:958808", now - timedelta(minutes=5))
 
     await session.commit()
     return {name: row.id for name, row in rows.items()}
@@ -182,13 +227,39 @@ async def statuses(seeded):
     return {name: by_id[event_id] for name, event_id in ids.items()}, stats
 
 
+@pytest.fixture
+async def stamps_after(seeded, statuses):
+    """Each row's #9613 stamp as the run left it (None when absent)."""
+    from sqlalchemy import select
+
+    from app.models.models import Event
+    from app.utils.event_completion import STATPAL_LATER_SESSION_KEY
+
+    maker, ids = seeded
+    async with maker() as session:
+        rows = (
+            await session.execute(
+                select(Event.id, Event.win_probability_sources).where(
+                    Event.id.in_(list(ids.values()))
+                )
+            )
+        ).all()
+    by_id = {
+        row.id: (row.win_probability_sources or {}).get(STATPAL_LATER_SESSION_KEY)
+        for row in rows
+    }
+    return {name: by_id[event_id] for name, event_id in ids.items()}
+
+
 @needs_postgres
 class TestAVenueStampDoesNotStartALaterSession:
     async def test_the_held_match_stays_scheduled(self, statuses):
-        """THE SHIP. RED before #9588: promoted on Kalshi's stamp."""
+        """THE SHIP. RED before #9588: promoted on Kalshi's stamp.
+
+        Two holds: this row and #9613's ``the_old_held_match``."""
         by_case, stats = statuses
         assert by_case["the_held_match"] == "scheduled"
-        assert stats["held_statpal_later_session"] == 1
+        assert stats["held_statpal_later_session"] == 2
 
     async def test_the_promoted_match_goes_back(self, statuses):
         by_case, stats = statuses
@@ -208,3 +279,27 @@ class TestAVenueStampDoesNotStartALaterSession:
     async def test_a_reported_start_is_not_overruled(self, statuses):
         by_case, _ = statuses
         assert by_case["the_reported_start"] == "live"
+
+    async def test_an_old_held_match_is_still_maintained(self, statuses, stamps_after):
+        """#9613, THE BAND. The stamp brought a 30h-old row back into the read,
+        the hold ran on it, and the stamp is StatPal's start, rewritten from
+        the anchor rather than left over from the seed."""
+        by_case, _ = statuses
+        assert by_case["the_old_held_match"] == "scheduled"
+        assert stamps_after["the_old_held_match"] == EXPECTED_STAMPS["the_old_held_match"]
+
+    async def test_an_old_unstamped_row_is_still_ancient(self, statuses, stamps_after):
+        """THE WINDOW CONTROL. Outside 24h and never held: nothing touches it."""
+        by_case, _ = statuses
+        assert by_case["the_old_unstamped_match"] == "scheduled"
+        assert stamps_after["the_old_unstamped_match"] is None
+
+    async def test_a_released_old_match_goes_live_and_stays_live(
+        self, statuses, stamps_after
+    ):
+        """#9613, THE CLOCK. Promoted at StatPal's start and, on the same pass,
+        measured from it: 5 minutes, not 30 hours."""
+        by_case, stats = statuses
+        assert by_case["the_old_released_match"] == "live"
+        assert stamps_after["the_old_released_match"] is None
+        assert stats["live_to_suspended"] == 0
