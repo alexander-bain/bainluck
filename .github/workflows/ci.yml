@@ -1050,6 +1050,32 @@ jobs:
             exit 1
           fi
 
+      - name: "#9609 typing rays or mets shows the club's markets, not Grayson or Kimetsu (real Postgres)"
+        # PILLAR: DISCOVER. SHIP: searching a club's word (rays, mets, suns)
+        # fills Futures & Markets with the club's markets, not Senate races and
+        # anime awards whose options spell the word inside a surname.
+        #
+        # The fix is an outcome predicate (whole word when the page's own teams
+        # read names the club), so only a real database can observe which rows it
+        # admits. A strawman (rule off -> collisions back) and two controls.
+        # Three refusals: a skip, a zero count, and a short count.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_search_finished_club_word_outcome_arm_pg_9609.py \
+            -v -rs 2>&1 | tee /tmp/cw9609.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/cw9609.txt; then
+            echo "::error::#9609 finished-club-word gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          if grep -qiE "no tests ran|collected 0 items" /tmp/cw9609.txt; then
+            echo "::error::#9609 finished-club-word gate collected NOTHING"
+            exit 1
+          fi
+          if ! grep -qE "^=+ 5 passed" /tmp/cw9609.txt; then
+            echo "::error::#9609 finished-club-word gate did not report exactly 5 passed"
+            exit 1
+          fi
+
       - name: typeahead folds one question asked by two venues, the search page's #8851 fold (real Postgres, #9444)
         # `oscars` in the dropdown printed Best Picture twice — Polymarket
         # `Oscars 2027: Best Picture Winner` and Kalshi `Oscar Winner: Best
