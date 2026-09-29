@@ -4284,6 +4284,49 @@ _SUNK_POLY_UNLINKED_GAME_SQL = text(
 )
 _SUNK_POLY_UNLINKED_GAME_MAX = 200
 
+#: #9572: the CHILDLESS game arm — sunk linked game parents whose group holds no
+#: child row at all, soonest kick-off first, read right after the head arm.
+#:
+#: A childless game parent is the worst case this pass exists for: its game has
+#: no Polymarket number anywhere, because a parent is only a group anchor and
+#: the moneyline is a CHILD, which only the poll's writer mints. The head arm
+#: reaches it only in turn. Measured 2026-09-29 08:10Z: 4,000 stale linked
+#: parents in the window, the head at its 100 limit, 1,221 of them kicking off
+#: before Rams @ Eagles (parent 59552330, Gamma 909441). So 11 of 16 NFL Week 5
+#: games (Oct 4-6) served sportsbooks + Kalshi only while the venue priced
+#: every one (909441: 328 markets, 78 priced, moneyline 61.5/38.5), and an
+#: Oct 4 game would get its children about a day before kickoff. Their last
+#: write was 09-20, the poll's newest-2,000 window having left them behind.
+#:
+#: The group test is the child's own `group_type`, the same one the poll's
+#: link sweep keys on (`LINK_SUB_MARKETS_SQL`), and it counts a child of ANY
+#: status: a minted child means the writer reached the game, which is all this
+#: arm is for. `polymarket_event` only — a negrisk or single-market parent
+#: prices itself. 850 rows matched, the NFL specimens at positions 303-429, so
+#: 100 a pass reaches them on the fourth; a row read leaves for
+#: `SUNK_POLY_STALE_HOURS` like every other arm, minted or not. EXPLAIN ANALYZE
+#: 0.9 s (events window bitmap → event_id index → group_id index anti-join).
+_SUNK_POLY_CHILDLESS_GAME_SQL = text(
+    "SELECT s.id, s.external_id FROM (SELECT fm.id, fm.external_id, fm.event_id, fm.group_id"
+    + _SUNK_POLY_WHERE
+    + """
+       AND fm.group_type = 'polymarket_event'
+    ) s
+      JOIN events e ON e.id = s.event_id
+     WHERE """
+    + _LINKED_POLY_EVENT_WINDOW
+    + """
+       AND NOT EXISTS (
+             SELECT 1 FROM futures_markets c
+              WHERE c.group_id = s.group_id
+                AND c.group_type = 'polymarket_sub_market'
+           )
+     ORDER BY e.commence_time, s.id
+     LIMIT :max_rows
+    """
+)
+_SUNK_POLY_CHILDLESS_GAME_MAX = 100
+
 #: #7930: the POST-START arm — game parents whose own `venue_game_start` is
 #: behind us (inside two days), linked or not, oldest start first.
 #:
@@ -4487,6 +4530,7 @@ async def _recover_sunk_polymarket_events(deadline_s: float | None = None) -> di
     stats: dict = {
         "head_selected": 0,
         "unlinked_game_selected": 0,  # #8373
+        "childless_game_selected": 0,  # #9572
         "post_start_selected": 0,  # #7930
         "head_pool_at_limit": False,
         "imminent_selected": 0,
@@ -4599,14 +4643,27 @@ async def _recover_sunk_polymarket_events(deadline_s: float | None = None) -> di
                 },
             )
         ).fetchall()
+        # #9572: executed last for the same reason as the head (the arms above
+        # keep their order); its ids go right after the head's below.
+        childless_game = (
+            await session.execute(
+                _SUNK_POLY_CHILDLESS_GAME_SQL,
+                {**head_params, "max_rows": _SUNK_POLY_CHILDLESS_GAME_MAX},
+            )
+        ).fetchall()
         # Plain scalars before any commit (gotcha #6).
         head_ids = [str(r.external_id) for r in head]
+        childless_game_ids = [str(r.external_id) for r in childless_game]
         unlinked_game_ids = [str(r.external_id) for r in unlinked_game]
         post_start_ids = [str(r.external_id) for r in post_start]
         imminent_ids = [str(r.external_id) for r in imminent]
         rotate_pairs = [(int(r.id), str(r.external_id)) for r in rotate]
 
     stats["head_selected"] = len(head_ids)
+    stats["childless_game_selected"] = len(childless_game_ids)
+    stats["childless_game_pool_at_limit"] = (
+        len(childless_game_ids) >= _SUNK_POLY_CHILDLESS_GAME_MAX
+    )
     stats["unlinked_game_selected"] = len(unlinked_game_ids)
     stats["unlinked_game_pool_at_limit"] = (
         len(unlinked_game_ids) >= _SUNK_POLY_UNLINKED_GAME_MAX
@@ -4620,7 +4677,8 @@ async def _recover_sunk_polymarket_events(deadline_s: float | None = None) -> di
     stats["cursor_wrapped"] = wrapped
 
     if (
-        not head_ids and not unlinked_game_ids and not post_start_ids
+        not head_ids and not childless_game_ids and not unlinked_game_ids
+        and not post_start_ids
         and not imminent_ids and not rotate_pairs
     ):
         # Gotcha #53: say which question returned nothing.
@@ -4632,12 +4690,17 @@ async def _recover_sunk_polymarket_events(deadline_s: float | None = None) -> di
     # rotate cursor from there: `max()` below would jump the cursor over every
     # rotate row between it and the last one actually read.
     # #8373: the same holds for an unlinked-game row, and (#7930) a post-start one.
-    head_set = set(head_ids) | set(unlinked_game_ids) | set(post_start_ids)
+    # #9572: and a childless-game one.
+    head_set = (
+        set(head_ids) | set(childless_game_ids) | set(unlinked_game_ids)
+        | set(post_start_ids)
+    )
     rotate_id_by_ext = {ext: mid for mid, ext in rotate_pairs if ext not in head_set}
     seen: set[str] = set()
     work: list[str] = []
     for ext in (
-        head_ids + unlinked_game_ids + post_start_ids + imminent_ids
+        head_ids + childless_game_ids + unlinked_game_ids + post_start_ids
+        + imminent_ids
         + [ext for _mid, ext in rotate_pairs]
     ):
         if ext not in seen:  # one Gamma id, one write — never twice in a pass
