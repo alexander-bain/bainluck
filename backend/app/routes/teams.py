@@ -24,7 +24,11 @@ from app.utils.season_variant_team import (
     choose_parent_league_row,
     wants_parent_league_row,
 )
-from app.utils.sport_keys import league_family_identity, sport_display_name
+from app.utils.sport_keys import (
+    league_family_identity,
+    same_sport_same_gender,
+    sport_display_name,
+)
 from app.utils.standings_shape import public_standings
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -307,15 +311,24 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
     # not a league (#1798/#4945: every MLB club has a preseason row too), and a
     # tennis player registered under `tennis_atp_us_open` must keep their
     # `tennis_atp` matches.
-    team_family = league_family_identity(getattr(team.sport, "key", None))
+    team_sport_key = getattr(team.sport, "key", None)
+    team_family = league_family_identity(team_sport_key)
     family_sport_ids: list[int] = []
-    if team_family is not None:
-        family_sport_ids = [
+    # #9581: the sports a NAME match may come from at all — see the name arm.
+    # Read off the same one query as the family list; `None` = no constraint.
+    name_arm_sport_ids: list[int] | None = None
+    if team_sport_key:
+        all_sports = (await db.execute(select(Sport.id, Sport.key))).all()
+        if team_family is not None:
+            family_sport_ids = [
+                sport_id
+                for sport_id, sport_key in all_sports
+                if league_family_identity(sport_key) == team_family
+            ]
+        name_arm_sport_ids = [
             sport_id
-            for sport_id, sport_key in (
-                await db.execute(select(Sport.id, Sport.key))
-            ).all()
-            if league_family_identity(sport_key) == team_family
+            for sport_id, sport_key in all_sports
+            if same_sport_same_gender(team_sport_key, sport_key)
         ]
 
     club_ids, club_names = await _club_row_identity(db, team, family_sport_ids)
@@ -344,6 +357,19 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
                     Event.sport_id.in_(family_sport_ids),
                 ),
             )
+
+    # A BOUND ROW STILL HAS TO BE THIS SPORT AND THIS SIDE (#9581). The guard
+    # above only tests unbound rows, so a row bound to ANY team passed on the
+    # name alone: `/team/alabama-crimson-tide` (WNCAAB) listed Alabama's
+    # football schedule, and Arsenal's men's and women's pages each listed the
+    # other's fixtures (15316358 Arsenal v HB Køge, UWCL women, on the EPL
+    # club). The bound arm exists for a SIBLING competition — an EPL match
+    # bound to the EPL "Arsenal" row reaching the club whose page row sits
+    # under `soccer_england_efl_cup` — and `same_sport_same_gender` keeps
+    # exactly that. The id arms are untouched: a row bound to one of this
+    # club's own rows is its game whatever the key says.
+    if name_arm_sport_ids is not None:
+        name_arm = and_(name_arm, Event.sport_id.in_(name_arm_sport_ids))
 
     base_event_filter = or_(
         Event.home_team_id.in_(club_id_list),
