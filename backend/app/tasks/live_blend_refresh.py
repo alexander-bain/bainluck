@@ -1268,6 +1268,19 @@ class LiveBlendRefresher:
                     self._last_snapshot_at[event_id] = at
             raise
 
+    def _client(self):
+        """The one async Redis client this refresher publishes on, built lazily.
+
+        Both publishers (event frames and #9484 market invalidations) take it
+        from here, so a consumer holds one pool, not one per publisher — the
+        #6515 census counts this as one construction site.
+        """
+        if self._redis is None:
+            from app.tasks.redis_state import get_async_redis_client
+
+            self._redis = get_async_redis_client()
+        return self._redis
+
     async def publish_market_changes(self, session) -> int:
         """#9484: drain the market invalidations ``session`` staged and committed.
 
@@ -1281,11 +1294,7 @@ class LiveBlendRefresher:
         from app.utils.market_quote_push import publish_committed_market_changes
 
         try:
-            if self._redis is None:
-                from app.tasks.redis_state import get_async_redis_client
-
-                self._redis = get_async_redis_client()
-            sent = await publish_committed_market_changes(session, self._redis)
+            sent = await publish_committed_market_changes(session, self._client())
         except Exception:
             self.stats["market_publish_errors"] += 1
             self._redis = None
@@ -1310,13 +1319,10 @@ class LiveBlendRefresher:
         try:
             from app.utils.live_push import publish_frame
 
-            if self._redis is None:
-                from app.tasks.redis_state import get_async_redis_client
-
-                self._redis = get_async_redis_client()
+            client = self._client()
             sent = 0
             for frame in frames:
-                if await publish_frame(self._redis, frame):
+                if await publish_frame(client, frame):
                     sent += 1
                     self.stats["published"] += 1
                 else:
