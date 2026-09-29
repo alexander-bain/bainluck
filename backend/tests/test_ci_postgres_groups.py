@@ -10,6 +10,7 @@ from collections import Counter
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 
 import pytest
@@ -94,7 +95,13 @@ def test_disposable_consumers_keep_their_provisioner_on_the_same_runner():
           "test_phone_history_detail_7547_real_pg_redis.py"]),
         ("bl_nascar_print_7548", ["test_polymarket_trade_print_7548_real_pg.py"]),
         ("bl_canonical_own_7594", ["test_7594_canonical_ownership_pg.py"]),
-        ("bl_delay_contract_7617", ["test_a_delay_is_not_silence_pg_7617.py"]),
+        ("bl_delay_contract_7617", ["test_a_delay_is_not_silence_pg_7617.py",
+          "test_a_withdrawn_listing_is_not_a_start_pg_8755.py",
+          "test_a_venue_stamp_later_session_pg_9588.py",
+          "test_espn_pass_survives_one_failed_statement_pg_8796.py",
+          "test_espn_pass_releases_rows_pg_9049.py",
+          "test_certain_postseason_playoff_pg_9602.py",
+          "test_live_box_pass_survives_one_failed_write_pg_8913.py"]),
         ("bl_evidence_collapse_7878", ["test_winprob_evidence_collapse_pg_7878.py"]),
         ("bl_ws_slate_837", ["test_ws_slate_age_floor_pg_837.py",
           "test_ws_slate_suspended_open_market_pg_9484.py"]),
@@ -112,6 +119,52 @@ def test_disposable_consumers_keep_their_provisioner_on_the_same_runner():
             index, step = matches[0]
             assert provision_index < index
             assert provision["if"] == step["if"] == "matrix.group == 'isolated'"
+
+
+def _env_group_splits(steps):
+    """Steps reading a `$GITHUB_ENV` variable that no earlier step in their group wrote.
+
+    The curated chain list above is exactly what missed #8755 and five more: they
+    reuse the #7617 database through its variable (two of them through a fixture
+    imported from #8796), never naming the database, so the split ran them on a
+    runner without it and every one skipped. Derived here instead: the variables
+    each provisioner writes, and every consumer whose step, test file, or the
+    `tests.integration` modules that file imports mention one.
+    """
+    provisioners = {}
+    for i, step in enumerate(steps):
+        run = step.get("run", "")
+        if "$GITHUB_ENV" in run:
+            for var in set(re.findall(r'"([A-Z][A-Z0-9_]*)=', run)) | set(
+                    re.findall(r'echo\s+"?([A-Z][A-Z0-9_]*)=', run)):
+                provisioners.setdefault(var, []).append((i, step.get("if")))
+    assert "DELAY_CONTRACT_DATABASE_URL" in provisioners  # the scan still sees the #7617 write
+    splits = []
+    for i, step in enumerate(steps):
+        text = step.get("run", "")
+        for rel in re.findall(r"tests/integration/[\w./-]+\.py", step.get("run", "")):
+            source = (ROOT / "backend" / rel).read_text()
+            text += source
+            for module in re.findall(r"from tests\.integration\.(\w+) import", source):
+                text += (ROOT / "backend/tests/integration" / f"{module}.py").read_text()
+        for var, writers in provisioners.items():
+            if var in text and not any(w <= i and group == step.get("if") for w, group in writers):
+                splits.append((step.get("name"), var))
+    return splits
+
+
+def test_every_env_consumer_runs_after_its_provisioner_in_the_same_group():
+    jobs, _ = _inputs()
+    assert _env_group_splits(jobs["database-integration"]["steps"]) == []
+
+
+def test_env_split_guard_catches_the_8755_split():
+    """Mutant: #8755 back in `shared`, as first offered — the guard must name it."""
+    jobs, _ = _inputs()
+    steps = jobs["database-integration"]["steps"]
+    step = next(s for s in steps if s.get("name", "").startswith("#8755 "))
+    step["if"] = "matrix.group == 'shared'"
+    assert _env_group_splits(steps) == [(step["name"], "DELAY_CONTRACT_DATABASE_URL")]
 
 
 def test_required_aggregate_runs_after_failure_and_deploy_still_depends_on_it():

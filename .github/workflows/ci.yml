@@ -5633,7 +5633,7 @@ jobs:
         # PRE-GAME-only sibling read so a LIVE_ONLY quota night withdraws
         # nothing) that only Postgres can compute. Reuses the #7617 database:
         # this file drops and creates its own tables, after that step.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'isolated'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_a_withdrawn_listing_is_not_a_start_pg_8755.py \
@@ -5653,7 +5653,7 @@ jobs:
         # reads `claim_context->>'statpal_start_time'` from JSONB through
         # `ANY(:event_ids)` under asyncpg, which only Postgres can answer.
         # Reuses the #7617 database: this file drops and creates its own tables.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'isolated'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_a_venue_stamp_later_session_pg_9588.py \
@@ -5742,7 +5742,7 @@ jobs:
         # Postgres aborts a transaction, so only Postgres can show that the
         # savepoints restore it. Reuses the #7617 database; this file drops and
         # creates its own tables. Skip detection plus a count.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'isolated'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_espn_pass_survives_one_failed_statement_pg_8796.py \
@@ -5762,7 +5762,7 @@ jobs:
         # (12-23 s on production), and the socket's price write queued behind
         # it. Only Postgres holds the lock, so only Postgres can show it free.
         # Same database and fixture as the #8796 step. Skip detection + count.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'isolated'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_espn_pass_releases_rows_pg_9049.py \
@@ -5782,7 +5782,7 @@ jobs:
         # league and ESPN id. Only a database proves what that WHERE does to
         # rows. Same database and table closure as the #8796 step. Skip
         # detection plus a count.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'isolated'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_certain_postseason_playoff_pg_9602.py \
@@ -5803,7 +5803,7 @@ jobs:
         # Only Postgres aborts a transaction, so only Postgres can show the
         # per-game savepoint contains it. Same database and fixture as the
         # #8796 step. Skip detection plus a count.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'isolated'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_live_box_pass_survives_one_failed_write_pg_8913.py \
