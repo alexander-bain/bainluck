@@ -20824,6 +20824,7 @@ def _withhold_redundant_parent_futures(
     parent_ids: set,
     group_markets: list,
     legs_by_market: dict,
+    drawn_by_game_markets: frozenset = frozenset(),
 ) -> tuple[list, list]:
     """#4189 / #5273's verdict, at the second door (#8848).
 
@@ -20855,6 +20856,20 @@ def _withhold_redundant_parent_futures(
     Rows that speak for merged contributors (`contributor_market_ids`) are kept
     unless EVERY id behind them is a redundant parent — door one's rule for its
     merged rows — so a member's price never leaves with the container's.
+
+    🔴 A MEMBER THE #4646 FOLD TOOK STILL REACHED THE READER (#4646,
+    `/events/15320104`). The two doors run the same two passes in opposite
+    orders. Door one judges its parents BEFORE it folds duplicate winner cards
+    (#6799), so the match-winner child counts as served. This door folds the
+    fixture's winner first (:func:`_fold_event_match_winner_futures`), and that
+    fold is the only reason the child's row is gone: `/game-markets` draws it
+    as the labelled card. Measured 2026-09-29 16:00Z: parent `62829653`
+    (`field`) served one leg, "Mouilleron-Le-Captif (Doubles): Balshaw/Martineau
+    vs Harris/" at 60% under a 95% hero. That leg is a copy of child `62842567`
+    (`duel`), which the fold had taken, so no member survived and the parent
+    stayed. ``drawn_by_game_markets`` is the set of ids that fold removed. They
+    count as surviving; nothing else does, so a parent whose children were all
+    filtered away for any other reason still stays (CERT-2335/2340).
     """
     if not parent_ids or not group_markets:
         return home_futures, away_futures
@@ -20871,7 +20886,7 @@ def _withhold_redundant_parent_futures(
         if m.group_id and (m.market_type or "") in _DECOMPOSED_MEMBER_SHAPES:
             member_ids_by_group.setdefault(m.group_id, set()).add(m.id)
 
-    surviving_ids: set = set()
+    surviving_ids: set = set(drawn_by_game_markets)
     for row in list(home_futures) + list(away_futures):
         surviving_ids |= _futures_row_market_ids(row)
 
@@ -27662,6 +27677,9 @@ async def _build_related_futures(
     # as one labelled card. Drawn again here it becomes unlabelled chips split
     # across two columns. Folded BEFORE the merges, while every leg still carries
     # its own market's id.
+    pre_fold_market_ids = {
+        r.get("market_id") for r in list(home_futures) + list(away_futures)
+    }
     home_futures, away_futures = _fold_event_match_winner_futures(
         home_futures,
         away_futures,
@@ -27670,6 +27688,13 @@ async def _build_related_futures(
         event.home_team_name,
         event.away_team_name,
         headline_market_ids=_headline_winner_market_ids(event.win_probability_sources),
+    )
+    # #4646 / #8848 — what the fold just took is drawn by `/game-markets`, so the
+    # redundant-parent verdict below still counts it as having reached the reader.
+    folded_to_game_markets = frozenset(
+        pre_fold_market_ids
+        - {r.get("market_id") for r in list(home_futures) + list(away_futures)}
+        - {None}
     )
 
     # ── Cross-source deduplication ──────────────────────────────────
@@ -27824,6 +27849,7 @@ async def _build_related_futures(
             redundant_parent_ids,
             group_markets,
             parent_legs,
+            drawn_by_game_markets=folded_to_game_markets,
         )
 
     # ── Enrich matchup outcomes with team logos ───────────────────
