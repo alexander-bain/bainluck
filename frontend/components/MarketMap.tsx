@@ -361,23 +361,30 @@ export default function MarketMap({
             );
           })}
 
-        {/* Axis labels */}
+        {/* Axis labels. A grid, not `space-between`: since the margin rail
+            names whole clubs, a wrapping side label ran into the centre one
+            and read `0Dubai Basketball by 18+` at 390px (/events/15318706).
+            Equal side tracks keep the mid label centred, the gap keeps it
+            apart, and each side wraps toward its own end of the rail. */}
         <div
+          data-axis-labels=""
           style={{
             position: "absolute",
             left: 0,
             right: 0,
             top: 68,
-            display: "flex",
-            justifyContent: "space-between",
+            display: "grid",
+            gridTemplateColumns: "minmax(0, 1fr) auto minmax(0, 1fr)",
+            columnGap: 12,
+            alignItems: "start",
             fontSize: 12,
             fontWeight: 950,
             color: "#94a3b8",
           }}
         >
-          <span>{axisLabels.left}</span>
-          <span>{axisLabels.mid}</span>
-          <span>{axisLabels.right}</span>
+          <span style={{ textAlign: "left" }}>{axisLabels.left}</span>
+          <span style={{ textAlign: "center" }}>{axisLabels.mid}</span>
+          <span style={{ textAlign: "right" }}>{axisLabels.right}</span>
         </div>
         {/* Zero label positioned at actual zero on the rail */}
         {zeroPct != null && zeroPct > 5 && zeroPct < 95 && Math.abs(zeroPct - 50) > 3 && (
