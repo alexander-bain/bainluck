@@ -150,11 +150,12 @@ async def test_the_offer_is_one_the_fixture_guard_admits():
 
 @pytest.mark.asyncio
 async def test_a_game_with_no_row_yet_is_still_refused_by_the_guard():
-    # Game 3 has no ESPN row. The wider reach offers the nearest game (Game 2),
-    # and #4965 refuses it — the same outcome as before, never a wrong link.
+    # Game 3 has no ESPN row. The wider reach sees the nearest game (Game 2),
+    # which #4965 refuses — and since the scorer asks that same predicate
+    # (#9427, second half) it is never offered at all. Never a wrong link.
     market = _market(venue_start=GAME_3_VENUE)
     picked, _ = await _pick(market)
-    assert picked is not None and picked["event_id"] == GAME_2[0]
+    assert picked is None
 
     class _CommenceSession:
         async def execute(self, statement):

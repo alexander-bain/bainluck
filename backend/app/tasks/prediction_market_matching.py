@@ -2047,6 +2047,26 @@ def _venue_game_day_disagrees(market, commence) -> bool:
     return (ec.astimezone(timezone.utc) + offset).date() != game_date
 
 
+def _venue_fixture_disagrees(market, commence) -> bool:
+    """Would #4965's fixture guard refuse a row starting at ``commence``? Pure.
+
+    The guard's whole decision, minus the DB read of the event's start, so the
+    scorer can ask it BEFORE ranking (#9427). A day-only stamp is judged by day
+    (#9117); a real instant by ±``_PM_FIXTURE_MAX_DIFF_HOURS``. Fails OPEN when
+    either side is missing, exactly as the guard does, and for every source
+    but Polymarket, which is the only one the guard judges (#8373's gate).
+    """
+    if getattr(market, "source", None) != "polymarket":
+        return False
+    if venue_game_day(market) is not None:
+        return _venue_game_day_disagrees(market, commence)
+    fixture = venue_game_start(market)
+    if fixture is None or not isinstance(commence, datetime):
+        return False
+    ec = commence if commence.tzinfo else commence.replace(tzinfo=timezone.utc)
+    return abs((fixture - ec).total_seconds()) / 3600 > _PM_FIXTURE_MAX_DIFF_HOURS
+
+
 async def _check_polymarket_fixture_reason(session, event_id: int, market):
     """Why linking this Polymarket market to ``event_id`` must be refused.
 
@@ -2088,8 +2108,10 @@ async def _check_polymarket_fixture_reason(session, event_id: int, market):
             )
             return _REFUSAL_VENUE_FIXTURE
         return None
-    diff_hours = abs((fixture - ec).total_seconds()) / 3600
-    if diff_hours > _PM_FIXTURE_MAX_DIFF_HOURS:
+    # The scorer pre-filters on this same predicate (#9427), so the row it
+    # offers is never one this line refuses.
+    if _venue_fixture_disagrees(market, ec):
+        diff_hours = abs((fixture - ec).total_seconds()) / 3600
         logger.warning(
             "Venue-fixture linkage blocked (#4965): polymarket %s (fixture=%s) "
             "would link to event %d (commence=%s) — %.1fh apart, so these are "
@@ -8641,11 +8663,12 @@ def _score_candidates(
     best_score = -1
 
     for event in candidates:
-        # #9117: when the venue named only a DAY, a row on another day is a
+        # #9117 / #9427: a row #4965's fixture guard would refuse is a
         # different game however it scores. The guard refuses it after the
         # fact, and the +8 for an Odds API id (32h of proximity) let Game 1's
-        # row outscore Game 2's own StatPal row, so Game 2 never linked.
-        if _venue_game_day_disagrees(market, event.commence_time):
+        # row outscore Game 2's own row, so Game 2 never linked — first for a
+        # day-only stamp (#9117), then for a real first pitch (#9427).
+        if _venue_fixture_disagrees(market, event.commence_time):
             _trace(event, _receipts.REJECT_OUTSIDE_TIME_WINDOW)
             continue
 

@@ -230,16 +230,17 @@ class TestTheScorerOffersTheRowOnTheVenuesDay:
         assert await _pick(_market(TBD_G3)) is None
 
     @pytest.mark.asyncio
-    async def test_a_real_instant_scores_exactly_as_before(self):
-        # Control for the narrow scope: with a real first pitch the pre-filter
-        # does not fire, so the Odds API row still wins the score and #4965's
-        # guard is what refuses it, unchanged. The instant is one minute off
-        # the TBD sentinel on the market's own mlb- slug: since #9434 a slug's
-        # league code names the sport, so a borrowed nba- slug would make the
-        # scorer refuse every MLB row as the wrong sport.
+    async def test_a_real_instant_is_judged_by_the_three_hour_rule(self):
+        # Control: one minute off the TBD sentinel on the market's own mlb-
+        # slug (since #9434 a slug's league code names the sport), so the stamp
+        # is a real first pitch 11.5h/12.4h from the two rows. Since #9427 the
+        # scorer asks #4965's ±3h predicate too, so neither is offered — before,
+        # the Odds API row won the score and the guard refused it after.
         m = _market(("1085449", "mlb-bos-nyy-2026-09-30", "2026-09-30T07:34:00+00:00"))
+        assert await _pick(m) is None
+        m = _market(("1085449", "mlb-bos-nyy-2026-09-30", "2026-09-30T20:05:00+00:00"))
         picked = await _pick(m)
-        assert picked is not None and picked["event_id"] == GAME_1[0]
+        assert picked is not None and picked["event_id"] == GAME_2[0]
 
 
 # ── Minting ──────────────────────────────────────────────────────────────────
