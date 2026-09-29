@@ -376,6 +376,7 @@ final class DiscoverViewModel: ObservableObject {
     private var priceRequestPending = false
     private var acceptedPriceCards: [String: FeedItem] = [:]
     private var priceReadSequence = 0
+    private var priceReadPacer = DiscoverPriceReadPacer()
     private var priceEpochs: [String: Double] = [:]
     private var marketPriceStreams: [MarketStreamSubscription] = []
     private var marketPriceIDs: [Int] = []
@@ -528,7 +529,21 @@ final class DiscoverViewModel: ObservableObject {
         let leaves = visiblePriceLeaves
         do {
             for start in stride(from: 0, to: leaves.count, by: 50) {
-                let batch = Array(leaves[start..<min(start + 50, leaves.count)])
+                let requestedBatch = Array(leaves[start..<min(start + 50, leaves.count)])
+                // Space every HTTP batch, including bursts from several event
+                // sockets. Keep the pending trailing invalidation while asleep.
+                while priceReadPacer.delay(at: Date().timeIntervalSince1970) > 0 {
+                    let wait = min(60, priceReadPacer.delay(at: Date().timeIntervalSince1970))
+                    try await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
+                    guard !Task.isCancelled, priceDeliveryActive, generation == priceDeliveryGeneration,
+                          load == loadGeneration, sequence == priceReadSequence else { return }
+                }
+                guard !Task.isCancelled, priceDeliveryActive, generation == priceDeliveryGeneration,
+                      load == loadGeneration, sequence == priceReadSequence else { return }
+                let stillVisible = Set(visiblePriceLeaves.map(\.id))
+                let batch = requestedBatch.filter { stillVisible.contains($0.id) }
+                guard !batch.isEmpty else { continue }
+                priceReadPacer.didDispatch(at: Date().timeIntervalSince1970)
                 let response = try await priceClient.fetchDiscoverPriceCards(
                     eventIds: batch.compactMap { $0.event?.id }, marketIds: batch.compactMap { $0.futures?.id })
                 let currentPrincipal = await client.currentFeedPrincipal()
@@ -545,8 +560,14 @@ final class DiscoverViewModel: ObservableObject {
                 }
             }
         } catch {
-            // Keep last-good prices. The existing periodic reconciliation pays
-            // failed and unknowably missed reads without claiming receipt.
+            guard !Task.isCancelled, priceDeliveryActive, generation == priceDeliveryGeneration,
+                  sequence == priceReadSequence else { return }
+            if priceReadPacer.observe(error, at: Date().timeIntervalSince1970) {
+                priceRequestPending = true
+                requestPriceRefresh()
+            }
+            // Keep last-good prices. Rate limits retry after their cooldown;
+            // other failures use the existing lost-publication reconciliation.
         }
     }
 

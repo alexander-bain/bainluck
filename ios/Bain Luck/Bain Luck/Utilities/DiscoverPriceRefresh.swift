@@ -143,3 +143,32 @@ nonisolated enum DiscoverPriceRefresh {
         return painted.map(replace)
     }
 }
+
+/// A push burst causes one read plus a trailing coalesced read, never a
+/// round-trip-speed request loop. This budget spans batches and reconnects.
+nonisolated struct DiscoverPriceReadPacer {
+    static let minimumGap: TimeInterval = 2
+    private(set) var notBefore: TimeInterval = -.infinity
+
+    func delay(at now: TimeInterval) -> TimeInterval { max(0, notBefore - now) }
+
+    mutating func didDispatch(at now: TimeInterval) {
+        notBefore = max(notBefore, now + Self.minimumGap)
+    }
+
+    @discardableResult
+    mutating func observe(_ error: Error, at now: TimeInterval) -> Bool {
+        guard let api = error as? APIError,
+              case .httpError(let status, let body) = api, status == 429 else { return false }
+        // The middleware emits the same seconds in JSON and Retry-After.
+        // Generic APIError already preserves that body; no shared error-shape
+        // change is needed. Unknown/malformed cooldown falls back conservatively.
+        let data = body?.data(using: .utf8)
+        let object = data.flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any]
+        let raw = object?["retry_after"]
+        let seconds = (raw as? Double) ?? (raw as? String).flatMap(Double.init)
+        let pause = seconds.flatMap { $0.isFinite && $0 > 0 ? $0 : nil } ?? 60
+        notBefore = max(notBefore, now + pause)
+        return true
+    }
+}
