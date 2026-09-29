@@ -162,6 +162,95 @@ final class DiscoverStreamingPriceTests: XCTestCase {
         XCTAssertEqual(pacer.delay(at: 120), 58)
     }
 
+    private func nullableMarket(_ p: Double?, clock: String?, siblingClock: String = "2026-09-29T00:01:00Z",
+                                status: String = "open", winner: String? = nil, external: String = "K1") throws -> FeedItem {
+        let stamp: Any = clock.map { $0 as Any } ?? NSNull()
+        var data: [String: Any] = ["id": 1, "name": "Market?", "source": "kalshi", "external_id": external,
+            "status": status, "group_id": "g", "canonical_market_key": "key",
+            "outcome_observed_at": ["10": stamp, "20": siblingClock],
+            "top_outcomes": [["id": 10, "name": "Leader", "probability": p.map { $0 as Any } ?? NSNull(),
+                              "price_observed_at": stamp]], "outcome_count": 2]
+        if let winner { data["winner"] = winner }
+        return try decode(["type": "futures", "data": data], as: FeedItem.self)
+    }
+
+    func testExplicitWithdrawalSurvivesCachedLoadsEvenWhenSiblingAdvances() throws {
+        for stamp in ["2026-09-29T00:01:00Z", nil] {
+            let old = try nullableMarket(0.4, clock: "2026-09-29T00:01:00Z")
+            let withdrawn = try nullableMarket(nil, clock: stamp, siblingClock: "2026-09-29T00:02:00Z")
+            var epochs: [String: Double] = [:]
+            var fences: [String: DiscoverPriceRefresh.MarketFence] = [:]
+            let result = DiscoverPriceRefresh.apply(DiscoverPriceCards(items: [withdrawn], dispositions: [old.id: "updated"], builtAt: 100),
+                to: [old], epochs: &epochs, fences: &fences)
+            XCTAssertNil(result[0].futures?.topOutcomes?.first?.probability)
+            XCTAssertEqual(result[0].futures?.topOutcomes?.first?.priceObservedAt, stamp)
+            let cached = try nullableMarket(0.8, clock: "2026-09-29T00:01:00Z", siblingClock: "2026-09-29T00:03:00Z")
+            var accepted = [old.id: result[0]]
+            let retained = DiscoverPriceRefresh.retainingPrices([cached], accepted: &accepted, fences: &fences)
+            XCTAssertNil(retained[0].futures?.topOutcomes?.first?.probability)
+            let refused = DiscoverPriceRefresh.apply(DiscoverPriceCards(items: [cached], dispositions: [old.id: "updated"], builtAt: 101),
+                to: retained, epochs: &epochs, fences: &fences)
+            XCTAssertNil(refused[0].futures?.topOutcomes?.first?.probability)
+            let fresh = try nullableMarket(0.6, clock: "2026-09-29T00:04:00Z", siblingClock: "2026-09-29T00:04:00Z")
+            let restored = DiscoverPriceRefresh.apply(DiscoverPriceCards(items: [fresh], dispositions: [old.id: "updated"], builtAt: 102),
+                to: refused, epochs: &epochs, fences: &fences)
+            XCTAssertEqual(restored[0].futures?.topOutcomes?.first?.probability, 0.6)
+        }
+    }
+
+    func testInitialNullCannotBecomeUndatedQuoteFromSiblingOnlyAdvance() throws {
+        let initial = try nullableMarket(nil, clock: nil)
+        let undated = try nullableMarket(0.8, clock: nil, siblingClock: "2026-09-29T00:02:00Z")
+        XCTAssertFalse(DiscoverPriceRefresh.canAdopt(undated, over: initial, authoritative: true))
+        let dated = try nullableMarket(0.6, clock: "2026-09-29T00:02:00Z", siblingClock: "2026-09-29T00:02:00Z")
+        XCTAssertTrue(DiscoverPriceRefresh.canAdopt(dated, over: initial, authoritative: true))
+    }
+
+    func testOlderWithdrawalAndProviderIdentityCannotOverrideCurrentBody() throws {
+        let held = try nullableMarket(0.4, clock: "2026-09-29T00:02:00Z")
+        XCTAssertFalse(DiscoverPriceRefresh.canAdopt(try nullableMarket(nil, clock: "2026-09-29T00:01:00Z"),
+            over: held, authoritative: true))
+        XCTAssertFalse(DiscoverPriceRefresh.canAdopt(try nullableMarket(0.6, clock: "2026-09-29T00:03:00Z", external: "OTHER"), over: held))
+    }
+
+    func testKnownFinalWinnerCannotDisappearOrChangeInAnotherFinalBody() throws {
+        let held = try nullableMarket(1, clock: nil, status: "closed", winner: "Leader")
+        for winner in [nil, "Other"] {
+            XCTAssertFalse(DiscoverPriceRefresh.canAdopt(try nullableMarket(1, clock: nil, status: "closed", winner: winner), over: held))
+        }
+    }
+
+    func testEqualCompleteEventRevisionCannotRewriteHeroOrRestoreWithheldValue() throws {
+        let held = try event(rev: 3, clock: "2026-09-29T00:01:00Z")
+        XCTAssertFalse(DiscoverPriceRefresh.canAdopt(try event(rev: 3, clock: "2026-09-29T00:02:00Z", p: 0.8), over: held))
+        let withheld = try decode(["type": "event", "data": ["id": 1, "home_team": "Home", "away_team": "Away",
+            "status": "scheduled", "blend_fold_revision": ["1": 3]]], as: FeedItem.self)
+        XCTAssertFalse(DiscoverPriceRefresh.canAdopt(held, over: withheld))
+    }
+
+    func testMicrosecondRawVectorChangesAreNotRoundedIntoAnEqualClock() throws {
+        let old = try nullableMarket(0.4, clock: "2026-09-29T00:01:00.000001Z")
+        let new = try nullableMarket(0.6, clock: "2026-09-29T00:01:00.000002Z")
+        XCTAssertTrue(DiscoverPriceRefresh.canAdopt(new, over: old))
+        XCTAssertFalse(DiscoverPriceRefresh.canAdopt(old, over: new))
+    }
+
+    func testKnownFinalScoresCannotDisappearOrRegressInANewerQuoteBody() throws {
+        func finished(_ home: Int?) throws -> FeedItem {
+            var data: [String: Any] = ["id": 1, "home_team": "Home", "away_team": "Away",
+                "status": "completed", "away_score": 1, "blend_fold_revision": ["1": 3]]
+            if let home { data["home_score"] = home }
+            return try decode(["type": "event", "data": data], as: FeedItem.self)
+        }
+        let held = try finished(3)
+        XCTAssertFalse(DiscoverPriceRefresh.canAdopt(try finished(2), over: held))
+        XCTAssertFalse(DiscoverPriceRefresh.canAdopt(try finished(nil), over: held))
+        XCTAssertTrue(DiscoverPriceRefresh.canAdopt(try finished(3), over: held))
+        var epochs: [String: Double] = [:]
+        let staleWithheld = DiscoverPriceCards(items: [try finished(2)], dispositions: [held.id: "withheld"], builtAt: 100)
+        XCTAssertEqual(DiscoverPriceRefresh.apply(staleWithheld, to: [held], epochs: &epochs)[0].event?.homeScore, 3)
+    }
+
     private nonisolated final class Client: DiscoverFeedProviding, DiscoverPriceCardsProviding, @unchecked Sendable {
         let feed: FeedResponse
         private var next: DiscoverPriceCards

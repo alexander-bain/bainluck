@@ -571,6 +571,8 @@ extension FeedEventData {
 /// Futures-market payload embedded inside a futures-type feed card.
 nonisolated struct FeedFuturesData: Decodable, Identifiable, Sendable {
     let id: Int
+    /// Fresh leaf identity; older cached feed bodies may omit it.
+    var externalId: String? = nil
     let name: String
     let sport: String?
     let sportName: String?

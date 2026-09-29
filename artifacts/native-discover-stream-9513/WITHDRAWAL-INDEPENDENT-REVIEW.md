@@ -1,0 +1,9 @@
+# #9513 corrective withdrawal/fold source review PASS
+
+Reviewer: Codex deep_live_delivery_review. Four-file delta over 55fb13ecd5 reviewed and bound in accompanying SHA-256 map. No executable or simulator gates duplicated.
+
+The private market fence retains the maximum known raw clock per outcome, including withdrawn/hidden legs, separately from displayed provenance. Explicit nulls seed withdrawal even when another leg advances; restoring a quote needs that leg's own strictly newer known observation. Whole normalized bodies remain coherent and nonregressive across every raw outcome, so a valid divisor/top-N change may move equal-clock displayed percentages. Clock decoding preserves backend microseconds. Group/source/canonical identity and the additive optional externalId protect replacement; known terminal winners and final event scores cannot disappear/change.
+
+Equal complete event folds bind their hero value/source. Explicit authoritative event withholding remains an independent checked path; newer folds and initial terminal transitions retain the existing admission. All production feed-cache, edition reconciliation, paging and fresh-leaf adoption call sites thread the same fence dictionary; identity rebind clears it together with accepted cards/epochs. Two-second pacing, visibility, request cancellation and dispatch identity logic are unchanged.
+
+Seven added test methods exercise equal/unknown-clock withdrawal, advanced-sibling resurrection refusal, valid own-clock restoration, initial null, old withdrawal/provider mismatch, terminal winner and score stability, same-fold hero conflict and microseconds. Source PASS only; Native owns exact composed compilation/XCTest/simulator gates. Backend no-item unresolved/assigned-settlement representation debt, release and held native delivery proof remain separate. This receipt does not claim TestFlight or phone acceptance.
