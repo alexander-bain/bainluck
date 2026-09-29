@@ -1,0 +1,13 @@
+{
+  "reviewed_at": "2026-09-29T01:27:31.793906+00:00",
+  "sha": "55886319be918db1dc26b4b6870e600ce0960122",
+  "verdict": "PASS source only",
+  "reviewer": "Codex review_recovered_source_bars; not author",
+  "files": {
+    "backend/app/routes/feed_prices.py": "b1fbd6c3cf92d299ca1053ca113cc9e921f676cf90654c8f2f5de75b0cee6632",
+    "backend/app/routes/feed.py": "577fc1426f16fb1f3b1327b4cd7edbfb009a98d5ed5ac7936e004dfc85c7d2ab",
+    "backend/app/main.py": "bcec811e3966458046141a3e59fba25feda73ba334dfe488aa4a64f0a6998b32",
+    "backend/app/routes/__init__.py": "5b09e237d3317edd93c0c82f7b34792df7ca464f1100948d028835ba83053cf2",
+    "backend/tests/test_feed_price_cards_9515.py": "8d2369854d6f451a93b85f0d92225aca323d72e5ad2062573a91b0910f193a97"
+  }
+}

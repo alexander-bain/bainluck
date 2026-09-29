@@ -2,7 +2,7 @@
 
 PILLAR: TRUTH. SHIP: already-painted Discover cards update prices without a gesture.
 
-GET `/api/feed/price-cards?event_ids=1,2&market_ids=3,4` accepts at most50 combined unique positive identities. Public read-only, `Cache-Control: no-store`; no full-feed cache/ranking rebuild, LLM or global invalidation.
+GET `/api/feed/price-cards?event_ids=1,2&market_ids=3,4` accepts at most 50 combined unique positive identities. Public read-only, `Cache-Control: no-store`; no full-feed cache/ranking rebuild, LLM or global invalidation.
 
 Response: `{items:[FeedItem], dispositions:{"event-1":"updated", "futures-3":"unresolved"}, built_at:178...}`. `built_at` is numeric request-start epoch seconds, NEVER quote observation time. Items have exact existing `type` and `data.id`, ordered as requested events then markets. Private scoring fields are stripped. Native replaces exact matching leaves inside existing groups and keeps parent identity/order; never substitute a grouped question with standalone detail.
 
@@ -14,4 +14,6 @@ Dispositions: `updated` identifies a supported fresh projection, not acceptance 
 
 Fresh futures reuse existing quote/withholding/divisor formatting via `_score_futures(preloaded_base=..., price_refresh=True)`, skipping only editorial membership/caps and caches. Fresh events reuse `_score_events(price_refresh_events=...)` on already folded, read-only proxies. Ordinary feed defaults and display-chain code remain unchanged.
 
-Gates:23 direct tests pass;51 existing price-safety, event resilience/hero, snapshot projection and startup controls pass. Ruff on new route/tests passes; feed.py's13 pre-existing lint findings unchanged (RUFF-BASELINE.json). Independent source review pending. No production read/write, merge, release or phone acceptance performed.
+Gates: 23 direct tests pass; 51 existing price-safety, event resilience/hero, snapshot projection and startup controls pass. Ruff on new route/tests passes; feed.py's 13 pre-existing lint findings unchanged (RUFF-BASELINE.json). Independent source review passed for endpoint head 55886319be918db1dc26b4b6870e600ce0960122; separate rate-limit delta review accompanies the successor. No production read/write, merge, release or phone acceptance performed.
+
+Automatic price-card reads have a separate finite 60/minute bucket per existing caller identity, shared across query/ID batches and isolated from ordinary feed/search traffic. Anonymous, authenticated and trusted callers use this same route ceiling; Redis and memory fallback agree. This is a configured budget, not a measured throughput guarantee. Native owns its minimum 2-second dispatch/coalescing and 429 backoff. Rate-limit, endpoint and startup suite: 91 tests passed.
