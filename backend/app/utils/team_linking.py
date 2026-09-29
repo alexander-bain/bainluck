@@ -203,6 +203,7 @@ def match_outcome_to_roster(
     if name_lower in ("yes", "no", "over", "under", "draw", "tie"):
         return None
 
+    matched: list[int] = []
     for team_id, players in team_rosters.items():
         for player in players:
             player_lower = _strip_diacritics(player.lower())
@@ -214,9 +215,35 @@ def match_outcome_to_roster(
             if " " not in player_lower:
                 continue
             if player_lower in name_lower:
-                return team_id
+                matched.append(team_id)
+                break
 
-    return None
+    if not matched:
+        return None
+    # #8072: two clubs can carry the same name — the Dodgers' and the Athletics'
+    # Max Muncy, the Rams' and the Eagles' Byron Young. Whichever roster came
+    # first won, so "NL MVP Winner? — Max Muncy" was linked to the Athletics.
+    # A name on two DIFFERENT clubs' rosters is no answer. Two rows for one club
+    # carry the same roster, so they still resolve to the first, as before.
+    first = _roster_key_set(team_rosters[matched[0]])
+    for other in matched[1:]:
+        if not _same_club_roster(first, _roster_key_set(team_rosters[other])):
+            return None
+    return matched[0]
+
+
+def _roster_key_set(players: list[str]) -> set[str]:
+    return {_strip_diacritics(p.lower()) for p in players}
+
+
+def _same_club_roster(a: set[str], b: set[str]) -> bool:
+    """Two team rows are one club's when they share more than half the smaller roster.
+
+    A namesake shares one player; two rows for one club share (nearly) all of them.
+    One shared player is never enough, however short the rosters.
+    """
+    shared = len(a & b)
+    return shared >= 2 and shared * 2 > min(len(a), len(b))
 
 
 # =============================================================================
