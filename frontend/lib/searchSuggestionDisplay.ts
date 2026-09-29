@@ -15,6 +15,7 @@
  */
 import type { TypeaheadSuggestion, TypeaheadOutcome, TeamSeasonAnswer } from "@/lib/api";
 import { getEmojiForLeague, getLeagueDisplay } from "@/lib/sportCategories";
+import { hasNoReportedResult, SUSPENDED_LABEL } from "@/lib/eventState";
 
 /**
  * How many season facts a team row shows (T2-1 / #5058). Two, because two is
@@ -244,6 +245,13 @@ export function suggestionSubtitle(
     if (s.status === "completed" || s.status === "closed") {
       const score = finalScoreText(s);
       return { kind: "event-time", text: score ? `Final · ${score}` : "Final" };
+    }
+    // #9493: a `suspended` match, or one still `scheduled` hours past its own
+    // kickoff, fell through to formatEventTime and read "Recently" — a time
+    // word for a match that has no result. It wears the event page's badge.
+    // No score beside it: a suspended row's score is partial, not a result.
+    if (hasNoReportedResult(s.status, s.commence_time, now?.getTime())) {
+      return { kind: "event-time", text: SUSPENDED_LABEL };
     }
     return {
       kind: "event-time",

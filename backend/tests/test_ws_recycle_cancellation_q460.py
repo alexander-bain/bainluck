@@ -102,7 +102,13 @@ class _Session:
     def __init__(self, batches):
         self._batches = batches
 
-    async def execute(self, _stmt):
+    async def execute(self, stmt):
+        # #9462 review: the #9418 admission watcher rereads the live arm as
+        # soon as a run starts (its baseline). That query is not part of the
+        # slate sequence, so it must not consume a slate batch — answered as
+        # "nothing live". It is the only query that reads the stored blend.
+        if "win_probability_sources" in str(stmt):
+            return _Result([])
         return _Result(next(self._batches))
 
 

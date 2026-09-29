@@ -351,7 +351,17 @@ class TestGolfEnvelope:
                  "resolution_date": "2026-09-27T00:00:00+00:00", "golfers": []},
             ]
         }
-        with patch("app.routes.golf.get_golf", return_value=rows):
+        # Pin the clock to the week the fixture describes (Presidents Cup starts
+        # tomorrow). On the real clock the card settles once 2026-09-27 passes and
+        # drops off the rail, so `names.index("Presidents Cup")` raised from 9/29 on.
+        class _FrozenDatetime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return datetime(2026, 9, 23, 12, 0, tzinfo=timezone.utc)
+
+        with patch("app.routes.golf.get_golf", return_value=rows), patch(
+            "app.utils.event_concept.datetime", _FrozenDatetime
+        ):
             out = await list_golf_tournament_concepts(db=None)
 
         names = [c["name"] for c in out]

@@ -63,6 +63,8 @@ describe("#9097 scheduled hero caption", () => {
 
   it("CONTROL: a count beside a non-blend hero is not trusted", () => {
     const r = scheduled(specimen({ hero_probability_source: "opening", hero_sportsbook_count: 0 }));
-    expect(r.probSourceLabel).toBe("4 sportsbooks");
+    // #9470: an `opening` hero is captioned as the opening line, never by a
+    // sportsbook count — this used to assert the row count "4 sportsbooks".
+    expect(r.probSourceLabel).toBe("Opening line");
   });
 });
