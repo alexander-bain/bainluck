@@ -16,6 +16,14 @@ set: zero games again. And the tennis row's new text, typed back as a query
 (a saved recent search), still finds its match — the reason the two ship
 together.
 
+#9527 second half, production 2026-09-29 ~06:20Z (after #9533): the dropdown
+found the game but ranked `red sox vs yankees` 6th, below four inning markets
+that SAY "vs.", and `eagles v bears` lost Monday night's final (a Korean
+baseball row instead) while `eagles bears` showed it. The participant checks
+and the ranker still read the raw subject. THE TARGET: a connector query
+orders exactly like the plain one, and `eagles v`/`at`/`vs bears` offer the
+final. THE STRAWMAN hands those sites the raw subject again.
+
     SEARCH_TEST_DATABASE_URL=postgresql+asyncpg://postgres@localhost/bl_searchtest \\
         python3 -m pytest tests/integration/test_typeahead_individual_sport_v_pg_9522.py -v
 """
@@ -40,6 +48,8 @@ pytestmark = [
 TENNIS = "tennis_atp"
 MMA = "mma_mixed_martial_arts"
 MLB = "baseball_mlb"
+NFL = "americanfootball_nfl"
+KBO = "baseball_kbo"
 
 
 async def _seed(session) -> dict[str, int]:
@@ -49,7 +59,9 @@ async def _seed(session) -> dict[str, int]:
     tennis = Sport(key=TENNIS, name="ATP")
     mma = Sport(key=MMA, name="MMA")
     mlb = Sport(key=MLB, name="MLB")
-    session.add_all([tennis, mma, mlb])
+    nfl = Sport(key=NFL, name="NFL")
+    kbo = Sport(key=KBO, name="KBO")
+    session.add_all([tennis, mma, mlb, nfl, kbo])
     await session.flush()
 
     teams = {
@@ -57,12 +69,16 @@ async def _seed(session) -> dict[str, int]:
         for name, sport, abbr, alts in [
             ("Boston Red Sox", mlb, "BOS", ["Red Sox"]),
             ("New York Yankees", mlb, "NYY", ["Yankees"]),
+            ("Philadelphia Eagles", nfl, "PHI", ["Eagles"]),
+            ("Chicago Bears", nfl, "CHI", ["Bears"]),
+            ("Hanwha Eagles", kbo, "HAN", ["Eagles"]),
+            ("Samsung Lions", kbo, "SAM", ["Lions"]),
         ]
     }
     session.add_all(teams.values())
     await session.flush()
 
-    def _game(sport, away, home, when):
+    def _game(sport, away, home, when, status="scheduled"):
         return Event(
             sport_id=sport.id,
             away_team_name=away,
@@ -70,13 +86,20 @@ async def _seed(session) -> dict[str, int]:
             away_team_id=teams[away].id if away in teams else None,
             home_team_id=teams[home].id if home in teams else None,
             commence_time=when,
-            status="scheduled",
+            status=status,
         )
 
     games = {
         "tennis": _game(tennis, "Michelsen", "Alcaraz", now + timedelta(hours=23)),
         "mma": _game(mma, "Conor McGregor", "Paddy Pimblett", now + timedelta(days=3)),
         "mlb": _game(mlb, "Boston Red Sox", "New York Yankees", now + timedelta(hours=22)),
+        # #9527's second specimen: Monday night's game, final six hours ago,
+        # and the namesake production served in its place.
+        "nfl": _game(
+            nfl, "Philadelphia Eagles", "Chicago Bears",
+            now - timedelta(hours=6), status="completed",
+        ),
+        "kbo": _game(kbo, "Hanwha Eagles", "Samsung Lions", now + timedelta(hours=10)),
     }
     session.add_all(games.values())
     await session.flush()
@@ -155,7 +178,15 @@ async def typeahead():
                     assert resp.status_code == 200, f"{q!r} -> HTTP {resp.status_code}"
                     return [r["id"] for r in resp.json().get("results") or []]
 
+                async def _order(q: str) -> list[tuple[str, str]]:
+                    resp = await client.get("/api/events/typeahead", params={"q": q})
+                    assert resp.status_code == 200, f"{q!r} -> HTTP {resp.status_code}"
+                    return [
+                        (r.get("type"), r.get("text")) for r in resp.json()["suggestions"]
+                    ]
+
                 _do.search = _search
+                _do.order = _order
                 _do.ids = ids
                 yield _do
     finally:
@@ -251,3 +282,50 @@ def test_the_dropdown_terms_for_vs_equal_the_terms_for_at():
         assert strip(f"red sox {connector} yankees".split()) == strip(
             "red sox at yankees".split()
         ), connector
+
+
+# #9527 second half. The game first, not below the markets that say "vs.".
+GAME = ("event", "Boston Red Sox at New York Yankees")
+ORDER_QUERIES = [*VS_QUERIES, "red sox at yankees"]
+
+
+@pytest.mark.parametrize("q", ORDER_QUERIES)
+async def test_a_connector_query_orders_like_the_plain_query(typeahead, q):
+    """The whole seven, not one row: a connector is not a word the ranker scores."""
+    plain = await typeahead.order("red sox yankees")
+    assert GAME in plain, plain
+    assert await typeahead.order(q) == plain, q
+
+
+async def test_the_game_leads_the_markets_that_say_vs(typeahead):
+    order = await typeahead.order("red sox vs yankees")
+    markets = [i for i, (kind, _t) in enumerate(order) if kind == "futures"]
+    assert GAME in order and markets, order
+    assert order.index(GAME) < min(markets), order
+
+
+FINAL = "Philadelphia Eagles at Chicago Bears"
+
+
+@pytest.mark.parametrize("q", ["eagles v bears", "eagles at bears", "eagles vs bears"])
+async def test_a_connector_query_offers_the_finished_game(typeahead, q):
+    """Monday night's final, as `eagles bears` offers it (the control below)."""
+    events = await typeahead(q)
+    assert FINAL in events, (q, events)
+
+
+async def test_the_plain_query_offers_the_finished_game(typeahead):
+    """The control: production served this on `eagles bears` all along."""
+    assert FINAL in await typeahead("eagles bears")
+
+
+async def test_the_raw_subject_strawman_reproduces_production(typeahead, monkeypatch):
+    """Those sites handed the raw subject again: the final is gone and the game
+    sinks below the markets — both halves of the report."""
+    from app.routes import events as events_module
+
+    monkeypatch.setattr(events_module, "_matchup_subject", lambda q: q or "")
+    assert FINAL not in await typeahead("eagles v bears")
+    order = await typeahead.order("red sox vs yankees")
+    markets = [i for i, (kind, _t) in enumerate(order) if kind == "futures"]
+    assert GAME not in order or order.index(GAME) > min(markets), order

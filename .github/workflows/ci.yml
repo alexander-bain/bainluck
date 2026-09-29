@@ -899,8 +899,8 @@ jobs:
             echo "::error::#9527 vs-query gate collected NOTHING"
             exit 1
           fi
-          if ! grep -qE "^=+ 18 passed" /tmp/ta9527.txt; then
-            echo "::error::#9527 vs-query gate did not report exactly 18 passed"
+          if ! grep -qE "^=+ 30 passed" /tmp/ta9527.txt; then
+            echo "::error::#9527 vs-query gate did not report exactly 30 passed"
             exit 1
           fi
 

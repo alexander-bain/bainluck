@@ -63,3 +63,57 @@ def test_both_routes_build_their_terms_through_the_stripper():
         ev_mod.typeahead_search
     )
     assert "_strip_search_scaffolding(" in inspect.getsource(ev_mod.search_events)
+
+
+# #9527 second half: the participant checks and the ranker read the subject
+# with the connector dropped (`_matchup_subject`); the terms above already did.
+matchup = ev_mod._matchup_subject
+
+
+@pytest.mark.parametrize(
+    "q, want",
+    [
+        ("red sox vs yankees", "red sox yankees"),
+        ("eagles v bears", "eagles bears"),
+        ("eagles v. bears", "eagles bears"),
+        ("eagles at bears", "eagles bears"),
+        ("red sox @ yankees", "red sox yankees"),
+        ("Celtics VERSUS Knicks", "Celtics Knicks"),
+    ],
+)
+def test_the_matchup_subject_drops_a_connector_between_two_words(q, want):
+    assert matchup(q) == want
+
+
+@pytest.mark.parametrize("q", ["grand theft auto v", "vs red sox", "at", "v bears", "eagles", ""])
+def test_the_matchup_subject_keeps_edge_words(q):
+    """Trailing `v` is a numeral, a leading connector joins nothing."""
+    assert matchup(q) == q
+
+
+def test_the_participant_check_now_says_yes():
+    """The measurement in the #9527 06:20Z comment, turned round."""
+    from app.utils.search_match_class import query_names_both_sides, query_names_participant
+
+    nfl = ["Chicago Bears", "Philadelphia Eagles"]
+    assert not query_names_participant("eagles v bears", nfl)  # the defect
+    for q in ("eagles v bears", "eagles at bears", "eagles vs. bears"):
+        assert query_names_participant(matchup(q), nfl), q
+        assert query_names_both_sides(matchup(q), "Chicago Bears", "Philadelphia Eagles"), q
+
+
+def test_the_route_hands_those_sites_the_matchup_subject():
+    """Every identity-by-participant site and the ranker, and nothing else moved."""
+    src = inspect.getsource(ev_mod.typeahead_search)
+    assert "_q_matchup = _matchup_subject(_q_identity)" in src
+    for site in (
+        "query_names_participant(_q_matchup, names)",
+        "query_names_both_sides(\n                    _q_matchup,",
+        "query_resolves_team(\n        _q_matchup, _typeahead_evidence(_ta_lead_team, _q_matchup)",
+        "(_typeahead_evidence(item, _q_matchup), item)",
+        "_s_rank_with_keys(_q_matchup, _ta_candidates)",
+    ):
+        assert site in src, site
+    # The recall pattern and the terms stay on the subject.
+    assert 'pattern = f"%{_q_identity}%"' in src
+    assert "_strip_search_scaffolding(_q_identity.strip().split())" in src
