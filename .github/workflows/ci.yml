@@ -1546,6 +1546,21 @@ jobs:
             exit 1
           fi
 
+      - name: "#9484 the Kalshi socket signals only a quote that moved (real Postgres)"
+        # A tick that re-stamps `last_updated` with the same price and book is
+        # written (liveness) but sends no market invalidation. The book arm reads
+        # the pre-UPDATE row through a scalar subquery in RETURNING — Postgres
+        # snapshot semantics; SQLite sees the new row, so only this server can
+        # pass or fail it.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_ws_quote_moved_9484_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/quote_moved_9484.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/quote_moved_9484.txt; then
+            echo "::error::#9484 quote-moved contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#5869 a vanished futures leg retires to NULL (real Postgres)"
         # A leg the venue stopped listing was stored as `current_probability = 0`,
         # which serves as `probability: 0.0` and renders a flat `0%` — the site
