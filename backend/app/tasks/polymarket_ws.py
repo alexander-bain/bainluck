@@ -409,6 +409,26 @@ def _log_stats_line(stats: dict, ws_stats: dict, blend: dict) -> None:
     )
 
 
+def _log_open_contract_line(stats: dict, open_stats: dict) -> None:
+    """#9484 — the open-contract client's minute line, beside the game line.
+
+    Its own line so the game line's format (and every grep of it) is untouched.
+    `written` is rows that took a price; `deferred` is open rows a periodic
+    flush left buffered for the next one — non-zero is a backlog, not a loss.
+    """
+    logger.info(
+        "Polymarket WS open contracts: assets=%d shards=%d/%d served=%d/%d "
+        "msgs=%d written=%d deferred=%d",
+        stats.get("open_contract_assets", 0),
+        open_stats.get("shards_connected", 0), open_stats.get("shards", 0),
+        open_stats.get("assets_served", 0),
+        open_stats.get("assets_subscribed", 0),
+        open_stats.get("messages", 0),
+        stats.get("open_contract_prices_written", 0),
+        stats.get("open_contract_flush_deferred", 0),
+    )
+
+
 def _log_unserved_sample(ws) -> None:
     """Name a few of the ids the venue never sent, once per recycle.
 
@@ -471,9 +491,44 @@ async def _run_polymarket_ws_consumer():
         run_until_admission, unadmitted_live_events,
         watch_for_unadmitted_live_events,
     )
+    from app.tasks.polymarket_open_contracts import (  # #9484
+        FLUSH_CHUNK_ROWS, OPEN_CONTRACT_MAX_CONCURRENT_HANDSHAKES,
+        OPEN_CONTRACT_MAX_QUEUE, OPEN_FLUSH_CHUNKS_PER_FLUSH,
+        open_contract_asset_map, open_contract_markets_stmt,
+        open_contract_outcome_stmts, open_contract_prices_enabled,
+        plan_flush_chunks,
+    )
     from app.tasks.ws_liveness import report as _report_liveness
     from app.utils.futures_rank import rerank_market_fields_stmt  # #6598
     from app.utils.price_change_stamp import price_changed_at_value
+
+    # #9484 — every other unsettled Polymarket contract, for PRICES only, on a
+    # second client (`app.tasks.polymarket_open_contracts`). Never added to the
+    # settlement maps or to the maps the #9418 admission watcher reads as "this
+    # event is subscribed". A failed read costs the arm, never the game slate.
+    async def read_open_contracts(taken_assets, excluded_market_ids):
+        if not open_contract_prices_enabled():
+            return None, False
+        try:
+            async with get_task_session() as session:
+                market_rows = (
+                    await session.execute(open_contract_markets_stmt())
+                ).all()
+                outcome_rows = []
+                for stmt in open_contract_outcome_stmts(r[0] for r in market_rows):
+                    outcome_rows.extend((await session.execute(stmt)).all())
+            return (
+                open_contract_asset_map(
+                    market_rows, outcome_rows, taken_assets, excluded_market_ids
+                ),
+                False,
+            )
+        except Exception:
+            logger.exception(
+                "Polymarket WS: open-contract admission read failed; "
+                "streaming the linked slate only this run"
+            )
+            return None, True
 
     # Q504-b: see the Kalshi arm — reported before the slate work, so a stall in
     # the token top-up or the slate query is visible as an AGE rather than as a
@@ -505,9 +560,14 @@ async def _run_polymarket_ws_consumer():
         )
         rows = result.all()
 
+    # #9484: with no game slate there is nothing for the open-contract read to
+    # delay, so it runs up front; otherwise it runs beside the game socket.
+    preread = None
     if not rows:
-        logger.info("Polymarket WS: no live/upcoming linked markets")
-        return {"status": "no_markets"}
+        preread = await read_open_contracts(set(), set())
+        if preread[0] is None or not preread[0].asset_to_outcome:
+            logger.info("Polymarket WS: no live/upcoming linked markets")
+            return {"status": "no_markets"}
 
     # Polymarket outcomes store condition_id as external_id (e.g. "0xabc..._yes").
     # But the WS needs asset_ids (token IDs), which we store in market_metadata.
@@ -698,9 +758,12 @@ async def _run_polymarket_ws_consumer():
     unmapped_assets = [a for a in asset_ids if a not in asset_to_outcome]
 
     if not asset_ids:
-        logger.info("Polymarket WS: no asset IDs found in market_metadata")
-        _report_liveness("polymarket", "no_asset_ids", legs=0)
-        return {"status": "no_asset_ids"}
+        if preread is None:
+            preread = await read_open_contracts(set(), market_ids)
+        if preread[0] is None or not preread[0].asset_to_outcome:
+            logger.info("Polymarket WS: no asset IDs found in market_metadata")
+            _report_liveness("polymarket", "no_asset_ids", legs=0)
+            return {"status": "no_asset_ids"}
 
     logger.info(
         "Polymarket WS: %d asset IDs (%d markets), %d mapped to an outcome, "
@@ -742,6 +805,14 @@ async def _run_polymarket_ws_consumer():
         # Counted unconditionally: the statement is a no-op on a field that did
         # not cross, so 0 is healthy and absence is the failure.
         "ranks_rederived": 0,
+        # #9484: the open-contract arm. `open_contract_prices_written` counts
+        # rows that TOOK a price, so "the arm is subscribed" and "the arm is
+        # moving stored prices" are two numbers, not one; `_flush_deferred`
+        # counts open rows a flush left buffered for the next one.
+        "open_contract_assets": 0,
+        "open_contract_admission_error": False,
+        "open_contract_prices_written": 0,
+        "open_contract_flush_deferred": 0,
     }
 
     # Buffered price updates
@@ -773,17 +844,22 @@ async def _run_polymarket_ws_consumer():
     stats["blend_pending_adopted"] = adopt_handed_off(blend_refresher)
     input_marks: dict = {}
 
-    async def flush_prices():
-        async with buffer_lock:
-            batch = dict(price_buffer)
-            batch_marks = [input_marks[oid] for oid in batch if oid in input_marks]
-        if not batch:
-            # #837 tail — a flush with no new prices still owes the stamps a row
-            # lock deferred: those prices are already stored, so waiting for the
-            # next venue tick would strand them on a quiet market. Free when
-            # nothing is queued (no session is opened).
-            await blend_refresher.refresh_pending()
-            return
+    # #9484: filled IN PLACE by `admit_open_contracts`, which the handlers and
+    # the flush read through these same objects. Separate from the game maps so
+    # nothing the #9418 watcher or the settlement handler reads can see them.
+    open_asset_to_outcome: dict[str, int] = {}
+    open_asset_to_market: dict[str, int] = {}
+    open_outcome_ids: set[int] = set()
+    open_sockets: list = []
+
+    async def write_chunk(chunk: dict[int, float]) -> bool:
+        """One flush transaction: write, re-rank, commit, publish, un-buffer.
+
+        #9484: the flush used to write its whole batch in ONE transaction, so a
+        standalone flood would have held every linked quote behind it and one
+        failure would have retried all of it. Each chunk now commits and
+        publishes on its own; a failed chunk keeps only its own rows buffered.
+        """
         # Q491 repair 2 (CERT-659 BLOCK) — THE BUFFER IS DELIBERATELY *NOT*
         # CLEARED HERE. Twin of the Kalshi socket: draining first and putting
         # the batch back on failure only covers the failures you thought to
@@ -794,7 +870,7 @@ async def _run_polymarket_ws_consumer():
         # "put back", because it was never taken away.
         try:
             async with get_task_session() as session:
-                for outcome_id, prob in batch.items():
+                for outcome_id, prob in chunk.items():
                     result = await session.execute(
                         # #9484, twin of the Kalshi socket's: the TABLE, so the
                         # UPDATE ... RETURNING stays a Core CursorResult.
@@ -833,12 +909,13 @@ async def _run_polymarket_ws_consumer():
                 # above moved the value `rank` is derived from and this module
                 # has never written that column, so a crossing mid-game left the
                 # board numbered by whichever poll last saw it. One statement
-                # for every market the batch touched, in the same session as the
+                # for every market the chunk touched, in the same session as the
                 # prices. `market_by_outcome` is the slate map already in memory
-                # — no per-flush lookup on a two-second cadence.
+                # (plus the open contracts' legs) — no per-flush lookup on a
+                # two-second cadence.
                 reranked_markets = {
                     market_by_outcome[oid]
-                    for oid in batch
+                    for oid in chunk
                     if oid in market_by_outcome
                 }
                 if reranked_markets:
@@ -847,9 +924,12 @@ async def _run_polymarket_ws_consumer():
                             rerank_market_fields_stmt(sorted(reranked_markets))
                         )
                     ).rowcount
-            stats["price_updates"] += len(batch)
+            stats["price_updates"] += len(chunk)
+            stats["open_contract_prices_written"] += sum(
+                1 for oid in chunk if oid in open_outcome_ids
+            )
         except Exception:
-            # Q491 — THE SHIP. The batch is still in `price_buffer`, so the next
+            # Q491 — THE SHIP. The chunk is still in `price_buffer`, so the next
             # flush retries it. Before Q491 the buffer was drained up front and
             # a failed write DISCARDED those prices outright: the socket only
             # refills an outcome when that market ticks again, and 86.7% of open
@@ -858,14 +938,14 @@ async def _run_polymarket_ws_consumer():
             # either (#2024).
             #
             # Bounded by construction: the buffer is keyed by outcome_id over a
-            # fixed slate, so a long outage holds at most one entry per
+            # fixed subscription, so a long outage holds at most one entry per
             # subscribed outcome however many attempts are burned.
             stats["errors"] += 1
-            stats["requeued"] += len(batch)
+            stats["requeued"] += len(chunk)
             logger.exception(
-                "Polymarket WS: flush error (%d retained for retry)", len(batch)
+                "Polymarket WS: flush error (%d retained for retry)", len(chunk)
             )
-            return
+            return False
 
         # #9484 — twin of the Kalshi socket's: the commit landed, so publish
         # before the buffer bookkeeping and the blend refresh can suppress it.
@@ -878,17 +958,51 @@ async def _run_polymarket_ws_consumer():
         # it must survive to the next flush rather than be dropped as "already
         # written". Same contract, enforced at removal instead of at re-queue.
         async with buffer_lock:
-            for outcome_id, prob in batch.items():
+            for outcome_id, prob in chunk.items():
                 if price_buffer.get(outcome_id) == prob:
                     del price_buffer[outcome_id]
+        return True
+
+    async def flush_prices(final=False):
+        async with buffer_lock:
+            batch = dict(price_buffer)
+            batch_marks = {
+                oid: input_marks[oid] for oid in batch if oid in input_marks
+            }
+        if not batch:
+            # #837 tail — a flush with no new prices still owes the stamps a row
+            # lock deferred: those prices are already stored, so waiting for the
+            # next venue tick would strand them on a quiet market. Free when
+            # nothing is queued (no session is opened).
+            await blend_refresher.refresh_pending()
+            return
+        # #9484: every linked row, then a bounded number of open-contract
+        # chunks, oldest-dirty first (the buffer's insertion order). Open rows
+        # past the bound stay buffered and lead the next flush — none dropped.
+        # The FINAL drain has no successor flush, so it takes every row.
+        chunks = plan_flush_chunks(
+            batch, open_outcome_ids, FLUSH_CHUNK_ROWS,
+            None if final else OPEN_FLUSH_CHUNKS_PER_FLUSH,
+        )
+        stats["open_contract_flush_deferred"] += len(batch) - sum(
+            len(c) for c in chunks
+        )
+        written: list[int] = []
+        for chunk_ids in chunks:
+            if await write_chunk({oid: batch[oid] for oid in chunk_ids}):
+                written.extend(chunk_ids)
+        if not written:
+            return
 
         # Q460 — THE SHIP. Carry the freshly-flushed prices through to
         # `Event.win_probability_sources`, the JSONB the card actually renders.
-        # #837 receipt: the revisions this write committed ride into the
+        # #837 receipt: the revisions this flush committed ride into the
         # refresh that follows it, and only that one.
-        tail_receipts.stage(batch_marks)
+        tail_receipts.stage(
+            [batch_marks[oid] for oid in written if oid in batch_marks]
+        )
         await blend_refresher.refresh(
-            event_ids_for_outcomes(event_id_by_outcome, batch.keys())
+            event_ids_for_outcomes(event_id_by_outcome, written)
         )
 
     async def drain_prices():
@@ -903,7 +1017,8 @@ async def _run_polymarket_ws_consumer():
         """
         try:
             for attempt in range(FINAL_FLUSH_ATTEMPTS):
-                await flush_prices()
+                # #9484: no successor flush, so no open-contract bound either.
+                await flush_prices(final=True)
                 async with buffer_lock:
                     if not price_buffer:
                         return
@@ -939,7 +1054,11 @@ async def _run_polymarket_ws_consumer():
     async def handle_price(msg: dict):
         """Handle best_bid_ask event."""
         asset_id = msg.get("asset_id", "")
-        market_id = asset_to_market.get(asset_id)
+        # #9484: a game-slate token, else an open contract's (never both —
+        # the open map excludes every token the game socket carries).
+        market_id = asset_to_market.get(asset_id) or open_asset_to_market.get(
+            asset_id
+        )
         if not market_id:
             return
 
@@ -973,6 +1092,8 @@ async def _run_polymarket_ws_consumer():
         # the No token it is P(No), which belongs on the No leg and nowhere else.
         outcome_id = asset_to_outcome.get(asset_id)
         if outcome_id is None:
+            outcome_id = open_asset_to_outcome.get(asset_id)
+        if outcome_id is None:
             return
 
         async with buffer_lock:
@@ -995,7 +1116,11 @@ async def _run_polymarket_ws_consumer():
     async def handle_trade(msg: dict):
         """Handle last_trade_price event."""
         asset_id = msg.get("asset_id", "")
-        market_id = asset_to_market.get(asset_id)
+        # #9484: a game-slate token, else an open contract's (never both —
+        # the open map excludes every token the game socket carries).
+        market_id = asset_to_market.get(asset_id) or open_asset_to_market.get(
+            asset_id
+        )
         if not market_id:
             return
 
@@ -1012,6 +1137,8 @@ async def _run_polymarket_ws_consumer():
         # Q489: same contract as `handle_price` — a `last_trade_price` is a trade
         # in THIS token, so it grades THIS token's leg.
         outcome_id = asset_to_outcome.get(asset_id)
+        if outcome_id is None:
+            outcome_id = open_asset_to_outcome.get(asset_id)
         if outcome_id is None:
             return
 
@@ -1103,9 +1230,14 @@ async def _run_polymarket_ws_consumer():
             # ratio is stated every minute, whether or not anything is wrong.
             ws_stats = ws.stats
             _log_stats_line(stats, ws_stats, blend)
+            open_connected = any(s.is_connected for s in open_sockets)
+            if open_sockets:
+                _log_open_contract_line(stats, open_sockets[0].stats)
             _report_liveness(
                 "polymarket",
-                "streaming" if getattr(ws, "is_connected", False) else "disconnected",
+                "streaming"
+                if getattr(ws, "is_connected", False) or open_connected
+                else "disconnected",
                 legs=len(asset_ids),
                 msgs=ws_stats.get("messages", 0),
                 served=ws_stats.get("assets_served", 0),
@@ -1124,6 +1256,56 @@ async def _run_polymarket_ws_consumer():
     legged_market_ids = {
         asset_to_market[a] for a in asset_to_outcome if a in asset_to_market
     }
+
+    # #9484: the open-contract client — prices only (no `on_resolved`), its
+    # handshakes and initial dumps bounded, admitted beside the game socket and
+    # torn down in the `finally` on every exit path. Its run lives inside this
+    # task, so cancelling the task closes every one of its connections.
+    async def admit_open_contracts():
+        admission, failed = (
+            preread
+            if preread is not None
+            else await read_open_contracts(set(asset_ids), market_ids)
+        )
+        stats["open_contract_admission_error"] = failed
+        if admission is None:
+            return
+        for key, value in admission.counts.items():
+            stats[f"open_contract_{key}"] = value
+        stats["open_contract_assets"] = len(admission.asset_to_outcome)
+        if not admission.asset_to_outcome:
+            return
+        # An open contract's field is re-ranked like a linked one's.
+        market_by_outcome.update(
+            (oid, admission.asset_to_market[token])
+            for token, oid in admission.asset_to_outcome.items()
+        )
+        open_outcome_ids.update(admission.asset_to_outcome.values())
+        open_asset_to_market.update(admission.asset_to_market)
+        open_asset_to_outcome.update(admission.asset_to_outcome)
+        open_ws = PolymarketWebSocket(
+            max_concurrent_handshakes=OPEN_CONTRACT_MAX_CONCURRENT_HANDSHAKES,
+            max_queue=OPEN_CONTRACT_MAX_QUEUE,
+        )
+        open_ws.on_price = handle_price
+        open_ws.on_trade = handle_trade
+        open_sockets.append(open_ws)
+        logger.info(
+            "Polymarket WS: %d open-contract assets (%d markets) admitted "
+            "beside the game slate: %s",
+            len(admission.asset_to_outcome),
+            admission.counts["markets_admitted"],
+            admission.counts,
+        )
+        # Sorted so a recycle re-deals the same shards when nothing moved.
+        try:
+            await open_ws.run(asset_ids=sorted(admission.asset_to_outcome))
+        except Exception:
+            # Costs the arm until the next recycle, never the game socket.
+            stats["open_contract_admission_error"] = True
+            logger.exception("Polymarket WS: open-contract client failed")
+
+    admission_task = asyncio.create_task(admit_open_contracts())
 
     # #9418: the slate's live arm, re-read while the socket runs — the slate
     # query above with `_slate_event_window()` narrowed to its live arm, so it
@@ -1161,7 +1343,10 @@ async def _run_polymarket_ws_consumer():
         # slate missed ends the run early through the same cancellation.
         admitted = await asyncio.wait_for(
             run_until_admission(
-                ws.run(asset_ids=asset_ids),
+                # #9484: an EMPTY id list means "every market" to
+                # `PolymarketWebSocket.run`, so a run with only open contracts
+                # opens no game socket and simply waits out the recycle.
+                ws.run(asset_ids=asset_ids) if asset_ids else asyncio.Event().wait(),
                 watch_for_unadmitted_live_events(
                     load_unadmitted_live_event_ids,
                     event_id_by_market.values(),
@@ -1190,6 +1375,9 @@ async def _run_polymarket_ws_consumer():
     finally:
         flush_task.cancel()
         stats_task.cancel()
+        # #9484: cancelled here, awaited only after the drain below, so a
+        # second cancellation landing on that await can never skip the drain.
+        admission_task.cancel()
         # Q491 repair (CERT-654 BLOCK): the last flush has no successor, so it
         # must RETRY rather than requeue into a buffer nobody will read again.
         try:
@@ -1199,6 +1387,7 @@ async def _run_polymarket_ws_consumer():
             # but a price it (or the last flush) committed inside the 2 s
             # throttle is still owed its blend stamp. The next run adopts it.
             stats["blend_pending_carried"] = hand_off_pending(blend_refresher)
+            await asyncio.gather(admission_task, return_exceptions=True)
             # #837 receipt — the next run's refresher starts empty of chains,
             # so a held price still open here was never stamped by this run.
             # Said so; the stamp itself is carried above.
@@ -1224,6 +1413,11 @@ async def _run_polymarket_ws_consumer():
     # stood out precisely because one shard crossed its own denominator.
     stats["on_wire_by_shard"] = exit_stats.get("on_wire_by_shard", {})
     _log_unserved_sample(ws)
+    if open_sockets:
+        open_exit = open_sockets[0].stats
+        stats["open_contract_shards"] = open_exit.get("shards", 0)
+        stats["open_contract_assets_served"] = open_exit.get("assets_served", 0)
+        stats["open_contract_messages"] = open_exit.get("messages", 0)
     logger.info("Polymarket WS consumer exiting: %s", stats)
     return stats
 
