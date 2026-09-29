@@ -1,4 +1,4 @@
-"""#9484 — the Kalshi socket signals a quote that moved, on real Postgres.
+"""#9484 — the venue sockets signal a quote that moved, on real Postgres.
 
 WHY POSTGRES. The book arm of `quote_moved_column` reads the row as it was
 BEFORE the UPDATE through a scalar subquery in RETURNING. That is statement-
@@ -23,6 +23,13 @@ handed a Postgres engine instead of a SQLite one: its UPDATE ... RETURNING, the
                                    trap, answered by the columns' own types).
     the_price_that_moved ......... CONTROL: 0.30 → 0.42 → one frame.
 
+And the Polymarket twin (price arm only — that socket writes no book), through
+the real `_run_polymarket_ws_consumer`:
+
+    the_polymarket_rounding ...... Stored 0.420000, tick midpoint
+                                   0.42000000000000004 → written, no frame.
+    the_polymarket_price_moved ... CONTROL: 0.30 → 0.42 → one frame.
+
 Opt-in on `SEARCH_TEST_DATABASE_URL` (CI job `search-recall`, whose step fails
 on a skip).
 """
@@ -38,6 +45,7 @@ from tests.test_ws_market_change_hooks_9484 import (
     MARKET_EXT,
     MARKET_ID,
     OUTCOME_ID,
+    POLY_TICK,
     TICK,
     _as_utc,
     _drive_kalshi,
@@ -155,6 +163,32 @@ async def test_the_rounding_that_hides(monkeypatch, pg):
 async def test_the_price_that_moved(monkeypatch, pg):
     _seed(pg, probability=0.30, book=(0.40, 0.44))
     published, stats = await _drive_kalshi(monkeypatch, pg, [TICK])
+
+    assert stats["errors"] == 0
+    assert len(published) == 1, published
+    assert published[0][2] == pytest.approx(0.42)
+    assert stats["quotes_unchanged"] == 0
+
+
+async def test_the_polymarket_rounding(monkeypatch, pg):
+    assert (0.40 + 0.44) / 2 != 0.42
+    _seed(pg, probability=0.42, book=(None, None))
+    published, stats = await _drive_kalshi(
+        monkeypatch, pg, [POLY_TICK], venue="polymarket"
+    )
+
+    assert stats["errors"] == 0
+    assert published == []
+    assert stats["quotes_unchanged"] == 1
+    assert _as_utc(_stored(pg, "futures_outcomes", "last_updated", OUTCOME_ID)) > MOVED_AT
+    assert _as_utc(_stored(pg, "futures_outcomes", "price_changed_at", OUTCOME_ID)) == MOVED_AT
+
+
+async def test_the_polymarket_price_moved(monkeypatch, pg):
+    _seed(pg, probability=0.30, book=(None, None))
+    published, stats = await _drive_kalshi(
+        monkeypatch, pg, [POLY_TICK], venue="polymarket"
+    )
 
     assert stats["errors"] == 0
     assert len(published) == 1, published

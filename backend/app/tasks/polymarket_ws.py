@@ -501,6 +501,7 @@ async def _run_polymarket_ws_consumer():
     from app.tasks.ws_liveness import report as _report_liveness
     from app.utils.futures_rank import rerank_market_fields_stmt  # #6598
     from app.utils.price_change_stamp import price_changed_at_value
+    from app.utils.price_change_stamp import quote_moved_column  # #9484
 
     # #9484 — every other unsettled Polymarket contract, for PRICES only, on a
     # second client (`app.tasks.polymarket_open_contracts`). Never added to the
@@ -813,6 +814,10 @@ async def _run_polymarket_ws_consumer():
         "open_contract_admission_error": False,
         "open_contract_prices_written": 0,
         "open_contract_flush_deferred": 0,
+        # #9484, twin of the Kalshi socket's: rows a flush wrote whose price
+        # was already what it stored — written (liveness), but no market
+        # invalidation sent.
+        "quotes_unchanged": 0,
     }
 
     # Buffered price updates
@@ -893,11 +898,20 @@ async def _run_polymarket_ws_consumer():
                             FuturesOutcome.id,
                             FuturesOutcome.market_id,
                             FuturesOutcome.last_updated,
+                            # Price arm only: this socket writes no book.
+                            quote_moved_column(FuturesOutcome.__table__),
                         )
                     )
                     # #9484: only a row the UPDATE returned is evidence — a
-                    # buffered id whose row is gone signals nothing.
+                    # buffered id whose row is gone signals nothing. And only
+                    # a row whose stored price moved: the same price again
+                    # still re-stamps `last_updated` (liveness), but a frame
+                    # for it sends every held page to re-read an unchanged row
+                    # (twin of the Kalshi socket's, ux #9526).
                     for row in result.all():
+                        if not row.quote_moved:
+                            stats["quotes_unchanged"] += 1
+                            continue
                         queue_market_change(
                             session,
                             market_id=row.market_id,
