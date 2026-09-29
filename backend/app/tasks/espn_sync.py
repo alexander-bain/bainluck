@@ -4688,6 +4688,53 @@ async def _statpal_later_session_starts(session, events) -> dict:
     return starts
 
 
+def _record_statpal_later_sessions(events, statpal_starts, now, stats) -> set:
+    """Decide the #9588 hold for each row and record it ON the row. #9613.
+
+    Returns the ids held. The decision is
+    :func:`~app.utils.event_completion.statpal_names_a_later_session`, taken
+    once here so the promoter and the stamp cannot disagree. A held row gets
+    StatPal's start under ``STATPAL_LATER_SESSION_KEY`` so the serve path and
+    the rails, which never read the anchor, stop calling it "started without a
+    result"; a row no longer held loses the key. Plain ORM assignment of a new
+    dict, as the rest of this task writes (gotcha #4/#5), and only when the
+    value changes, so a held row costs one write, not one per pass.
+    """
+    from app.utils.espn_helpers import play_evidence
+    from app.utils.event_completion import (
+        clear_statpal_later_session,
+        stamp_statpal_later_session,
+        statpal_names_a_later_session,
+    )
+
+    stats["statpal_later_session_stamped"] = 0
+    stats["statpal_later_session_cleared"] = 0
+    held = set()
+    for event in events:
+        sources = event.win_probability_sources
+        if event.id in statpal_starts and statpal_names_a_later_session(
+            event.commence_time_source,
+            event.statpal_fixture_id,
+            play_evidence(
+                event.home_score, event.away_score, event.period, event.game_clock
+            ),
+            event.commence_time,
+            statpal_starts[event.id],
+            now,
+        ):
+            held.add(event.id)
+            updated = stamp_statpal_later_session(sources, statpal_starts[event.id])
+            if updated is not sources:
+                event.win_probability_sources = updated
+                stats["statpal_later_session_stamped"] += 1
+            continue
+        updated = clear_statpal_later_session(sources)
+        if updated is not sources:
+            event.win_probability_sources = updated
+            stats["statpal_later_session_cleared"] += 1
+    return held
+
+
 async def _transition_event_statuses_impl() -> dict:
     """Transition event statuses based on commence_time (zero API calls).
 
@@ -4876,9 +4923,10 @@ async def _transition_event_statuses_impl() -> dict:
         # on Kalshi's expiry stamp while their own StatPal anchor had them at
         # the next day's session. One read, for candidates only.
         stats["held_statpal_later_session"] = 0
-        from app.utils.event_completion import statpal_names_a_later_session
-
         statpal_starts = await _statpal_later_session_starts(session, started_events)
+        statpal_held_ids = _record_statpal_later_sessions(
+            started_events, statpal_starts, now, stats
+        )
 
         for event in started_events:
             if not commence_time_is_a_reported_start(event.commence_time_source):
@@ -4917,16 +4965,7 @@ async def _transition_event_statuses_impl() -> dict:
             ):
                 stats["held_withdrawn_listing"] += 1
                 continue
-            if event.id in statpal_starts and statpal_names_a_later_session(
-                event.commence_time_source,
-                event.statpal_fixture_id,
-                play_evidence(
-                    event.home_score, event.away_score, event.period, event.game_clock
-                ),
-                event.commence_time,
-                statpal_starts[event.id],
-                now,
-            ):
+            if event.id in statpal_held_ids:
                 stats["held_statpal_later_session"] += 1
                 continue
             event.status = "live"
@@ -5101,6 +5140,9 @@ async def _transition_event_statuses_impl() -> dict:
         if live_events:
             from app.utils.espn_helpers import play_evidence as _play_evidence
             from app.utils.event_completion import (
+                stamp_statpal_later_session as _stamp_later_session,
+            )
+            from app.utils.event_completion import (
                 statpal_names_a_later_session as _later_session,
             )
 
@@ -5121,6 +5163,14 @@ async def _transition_event_statuses_impl() -> dict:
                 ):
                     event.status = "scheduled"
                     demoted_ids.add(event.id)
+                    # #9613: carry the hold's reason with the row, as the
+                    # scheduled arm does, so the demoted row does not read
+                    # "No result reported" until the next pass.
+                    _stamped = _stamp_later_session(
+                        event.win_probability_sources, live_statpal_starts[event.id]
+                    )
+                    if _stamped is not event.win_probability_sources:
+                        event.win_probability_sources = _stamped
             if demoted_ids:
                 stats["demoted_statpal_later_session"] = len(demoted_ids)
                 live_events = [e for e in live_events if e.id not in demoted_ids]
