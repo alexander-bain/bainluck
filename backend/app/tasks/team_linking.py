@@ -200,6 +200,28 @@ async def _load_teams_by_sport(
     ]
 
 
+def _match_in_ticker_league(outcome, teams: list[dict]) -> Optional[int]:
+    """Bind a Kalshi outcome inside the league its ticker names, else None (#9617).
+
+    ``teams`` is the category's team list; only the rows whose sport key is the
+    ticker's league are consulted. No league, or no team rows for it, leaves the
+    outcome to the category-wide matcher exactly as before.
+    """
+    from app.utils.sport_keys import get_sport_key_from_ticker
+    from app.utils.team_linking import match_outcome_to_league_team
+
+    market = outcome.market
+    if market is None or market.source != "kalshi":
+        return None
+    league = get_sport_key_from_ticker(market.external_id)
+    if not league:
+        return None
+    league_teams = [t for t in teams if t.get("sport_key") == league]
+    if not league_teams:
+        return None
+    return match_outcome_to_league_team(outcome.name, league_teams)
+
+
 async def link_outcome_to_team(
     session: AsyncSession,
     outcome_name: str,
@@ -290,6 +312,7 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
         "outcomes_processed": 0,
         "outcomes_linked": 0,
         "outcomes_linked_by_name": 0,
+        "outcomes_linked_by_league": 0,
         "outcomes_linked_by_roster": 0,
         "outcomes_linked_by_llm": 0,
         "markets_tiered": 0,
@@ -497,6 +520,16 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
                     for outcome in cat_outcomes:
                         try:
                             stats["outcomes_processed"] += 1
+
+                            # Step 0: the Kalshi ticker names the league (#9617).
+                            # A city-only name is ambiguous across the category
+                            # (Knicks + Liberty) and unique inside one league.
+                            team_id = _match_in_ticker_league(outcome, teams)
+                            if team_id:
+                                outcome.team_id = team_id
+                                stats["outcomes_linked"] += 1
+                                stats["outcomes_linked_by_league"] += 1
+                                continue
 
                             # Step 1: Try name matching first (no LLM)
                             from app.utils.team_linking import match_outcome_to_team
