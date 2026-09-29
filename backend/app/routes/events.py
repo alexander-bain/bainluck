@@ -5382,6 +5382,35 @@ def _resolve_postseason_round(terms):
     return None, set()
 
 
+def _resolve_postseason_games(terms):
+    """``(rounds, consumed_terms)`` — the ticker rounds whose GAMES a query asks for.
+
+    #9578. A round name (`wild card`) is its own round, via
+    `_resolve_postseason_round`. A postseason word (`playoffs`, `postseason`)
+    names no round and asks for every one in progress: on production
+    2026-09-29, the first day of MLB's postseason, `mlb playoffs`, `playoffs`,
+    `mlb postseason` and `baseball playoffs` served ZERO games while `wild
+    card` served that day's four Wild Card games. No event row says either
+    word; the round map is the only signal, so these queries read it too.
+
+    Only the postseason word and league words naming the round's league
+    (`_only_the_rounds_league`): `nfl playoffs` is another league's question,
+    and `patriots playoffs` one club's, so neither gets the MLB round's games.
+    Pure — no database — so the guard tests pin it.
+    """
+    rnd, consumed = _resolve_postseason_round(terms)
+    if rnd is not None:
+        return [rnd], consumed
+    consumed = {t.lower() for t in terms if t.lower() in _BARE_POSTSEASON_TERMS}
+    if not consumed:
+        return [], set()
+    rounds = [
+        r for r in dict.fromkeys(_POSTSEASON_ROUND_ALIASES.values())
+        if _only_the_rounds_league(terms, consumed, r[0])
+    ]
+    return rounds, (consumed if rounds else set())
+
+
 def _ticker_range(column, prefix: str):
     """``column LIKE 'prefix%'`` in a form `uq_futures_source_external` can serve.
 
@@ -5428,11 +5457,18 @@ def _postseason_round_event_scope(rnd):
     every `KXMLBGAME` ticker once per MLB event in the window (1,166 ms on
     production 2026-09-28); as one set it is 72-85 ms, and only a query naming
     a round pays it.
+
+    #9578: the league is checked INSIDE the set, on its own alias of `sports`.
+    It used to be `Sport.key == …` beside the `IN`, which names the OUTER
+    query's `sports`: the zero-result bridge (`bridged_canonical_ids`) reads the
+    recall arms with no `sports` join, so that statement became a cartesian
+    product of `events` and `sports` (SAWarning in the playoffs gate).
     """
     sport_key, _stem, winner, game_prefix, code = rnd
     game = aliased(FuturesMarket, name="round_game")
     series = aliased(FuturesMarket, name="round_series")
     game_event = aliased(Event, name="round_game_event")
+    game_sport = aliased(Sport, name="round_game_sport")
     # `KXMLBSERIES-26BOSNYYWC`: the two-digit year follows the prefix, the pair
     # sits between the year and the round code.
     year = func.substr(series.external_id, len(winner) + 1, 2)
@@ -5461,9 +5497,13 @@ def _postseason_round_event_scope(rnd):
                 game_event.commence_time >= series.created_at,
             ),
         )
+        .join(
+            game_sport,
+            and_(game_sport.id == game_event.sport_id, game_sport.key == sport_key),
+        )
         .where(game.source == "kalshi", _ticker_range(game.external_id, game_prefix))
     )
-    return and_(Sport.key == sport_key, Event.id.in_(round_games))
+    return Event.id.in_(round_games)
 
 
 # Built once at import: a dict rebuild per keystroke on the typeahead path would be
@@ -8871,11 +8911,12 @@ async def search_events(
     # see `_POSTSEASON_ROUND_ALIASES`. A separate UNION arm, so it only ADDS
     # cards; the words left beside it (`yankees wild card`) narrow it, and league
     # words (`mlb wild card`) are already consumed.
-    _postseason_round, _round_consumed_terms = _resolve_postseason_round(terms)
-    if _postseason_round:
+    # #9578: `playoffs` / `mlb playoffs` name every round in progress.
+    _postseason_rounds, _round_consumed_terms = _resolve_postseason_games(terms)
+    if _postseason_rounds:
         _event_recall_arms.append(
             and_(
-                _postseason_round_event_scope(_postseason_round),
+                or_(*[_postseason_round_event_scope(r) for r in _postseason_rounds]),
                 *[
                     _event_name_match(t, e)
                     for t, e in non_league_expanded
@@ -12769,8 +12810,9 @@ async def typeahead_search(
     # #9333: the round's games, from the same builder `/search` uses. Upcoming
     # pool only: a round names no participant, so the or-last arm's admission
     # test would discard them anyway.
-    _ta_round, _ta_round_consumed = _resolve_postseason_round(terms)
-    if _ta_round:
+    # #9578: and every round in progress for `playoffs` / `mlb playoffs`.
+    _ta_rounds, _ta_round_consumed = _resolve_postseason_games(terms)
+    if _ta_rounds:
         _ta_round_rest = [
             (t, e) for t, e in ta_expanded if t.lower() not in _ta_round_consumed
         ]
@@ -12778,7 +12820,7 @@ async def typeahead_search(
         event_team_filter = or_(
             event_team_filter,
             and_(
-                _postseason_round_event_scope(_ta_round),
+                or_(*[_postseason_round_event_scope(r) for r in _ta_rounds]),
                 *[
                     or_(
                         _build_expanded_ilike(Event.home_team_name, t, e),
