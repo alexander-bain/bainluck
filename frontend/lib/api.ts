@@ -559,6 +559,10 @@ export interface TypeaheadSuggestion {
   // is completed/closed and both sides were reported (live rows never carry it).
   home_score?: number;
   away_score?: number;
+  // #9550: the venue's grade of a match we hold as `suspended` — the pair the
+  // event detail route serves, so the dropdown says what the page says.
+  venue_settled?: boolean | null;
+  venue_settled_result?: string | null;
   // Event concept fields (#999 L2-65: tournament pages)
   event_key?: string;
   // Hub fields (L2-88: competition-hub landing shortcut)
