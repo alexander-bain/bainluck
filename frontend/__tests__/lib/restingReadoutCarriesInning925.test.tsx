@@ -125,3 +125,57 @@ describe("#925 the resting readout takes the newest reading of each field", () =
     expect(html).not.toMatch(/Top|Bottom|Middle|End \d/);
   });
 });
+
+// #925, second arm — `/events/15320300` (Astros v White Sox, MLB, live,
+// 2026-09-29 21:26Z, 390px): all six served `espn_history` rows carried
+// `period: null`, so there was nothing to carry and the readout read "—" under
+// a header reading "Top 1st" off `event.espn.period`. The page now hands the
+// live event row's state in; it is used only when history names neither field.
+describe("#925 a live game whose history never named the inning reads the header's", () => {
+  const NONE: Row[] = [
+    { at: "2026-09-29T21:22:03Z", period: null, clock: null },
+    { at: "2026-09-29T21:24:03Z", period: null, clock: null },
+  ];
+  function restingWith(rows: Row[], live: { period?: string | null; game_clock?: string | null } | null): string {
+    const lastPoint = computeLastChartPoint(history(rows), 2, 1, null, live);
+    return renderToStaticMarkup(
+      <GamePlayCard
+        homeTeam="Texas Rangers"
+        awayTeam="New York Mets"
+        sportKey="baseball_mlb"
+        activePoint={null}
+        lastPoint={lastPoint}
+      />,
+    );
+  }
+
+  test("specimen: the event row's inning fills the badge, marked approximate and undated", () => {
+    const p = computeLastChartPoint(history(NONE), 2, 1, null, { period: "Top 1st", game_clock: null })!;
+    expect(p.period).toBe("Top 1st");
+    expect(p.periodApprox).toBe(true);
+    expect(p.periodObservedAt).toBeNull();
+    const html = restingWith(NONE, { period: "Top 1st", game_clock: null });
+    expect(html).toContain("~Top 1st");
+    expect(html).not.toContain("as of");
+  });
+
+  test("control: a history row that named an inning outranks the event row", () => {
+    const rows: Row[] = [{ at: "2026-09-29T21:20:03Z", period: "Top 1st", clock: null }, ...NONE];
+    const p = computeLastChartPoint(history(rows), 2, 1, null, { period: "Bottom 1st", game_clock: null })!;
+    expect(p.period).toBe("Top 1st");
+    expect(p.periodObservedAt).toBe("2026-09-29T21:20:03Z");
+  });
+
+  test("control: a history clock alone blocks the event row, so no mixed-clock badge", () => {
+    const rows: Row[] = [{ at: "2026-09-29T21:20:03Z", period: null, clock: "5:00" }];
+    const p = computeLastChartPoint(history(rows), 2, 1, null, { period: "2nd Period", game_clock: "4:10" })!;
+    expect(p.period).toBeNull();
+    expect(p.clock).toBe("5:00");
+  });
+
+  test("not live (the caller passes null): nothing is invented", () => {
+    const html = restingWith(NONE, null);
+    expect(html).not.toMatch(/Top|Bottom|Middle|End \d/);
+    expect(html).not.toContain("~");
+  });
+});
