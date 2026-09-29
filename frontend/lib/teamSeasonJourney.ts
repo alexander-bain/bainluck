@@ -11,7 +11,7 @@
  *
  * Side-effect-free + SSR-safe so it is unit-testable.
  */
-import type { TeamFutureItem } from "./api";
+import type { ChampionshipPathEntry, TeamFutureItem } from "./api";
 
 // Tier preference for the single journey line. Lower array index = preferred.
 const JOURNEY_TIER_PRIORITY = [1, 2, 4];
@@ -31,6 +31,20 @@ export function isPlayerDestinationMarket(marketName: string | null | undefined)
   return PLAYER_DESTINATION_RE.test(marketName ?? "");
 }
 
+/**
+ * The championship-path step a team page leads with: the tier-1 step, else the
+ * strongest one — or null when the path is empty or that step has no number.
+ * `teamHeadline` and the journey both read the headline through this, so the
+ * chart can never name a different question than the number above it.
+ */
+export function headlinePathEntry(
+  championshipPath: ChampionshipPathEntry[] | null | undefined,
+): ChampionshipPathEntry | null {
+  const path = championshipPath ?? [];
+  const entry = path.find((e) => e.tier === 1) ?? path[0] ?? null;
+  return entry && entry.probability !== null ? entry : null;
+}
+
 export interface JourneyPick {
   marketId: number;
   outcomeId: number;
@@ -41,9 +55,18 @@ export interface JourneyPick {
 /**
  * Choose the futures outcome whose season-long history best represents the
  * team's year, or null when the team has no eligible season future.
+ *
+ * With a `championshipPath`, the page's headline step decides (#9569): the
+ * Warriors' hero read CHAMPIONSHIP 1% (the path, market 2 "NBA Championship
+ * Winner") while the journey under it charted "NBA: 2026 NBA Cup Winner" at 2%
+ * — the Cup is tier 1 too (`\bwinner\b`) and out-priced the title on the
+ * tie-break below. The path never admitted it (its key is a prior season), so
+ * the chart follows the path's market and prints the path's number. The tier
+ * rule is the fallback for pages with no path.
  */
 export function pickJourneyFuture(
   futures: TeamFutureItem[] | null | undefined,
+  championshipPath?: ChampionshipPathEntry[] | null,
 ): JourneyPick | null {
   if (!futures || futures.length === 0) return null;
 
@@ -80,7 +103,22 @@ export function pickJourneyFuture(
   );
   if (eligible.length === 0) return null;
 
-  const rank = (tier: number | null): number => {
+  const headline = headlinePathEntry(championshipPath);
+  const onHeadline = headline
+    ? eligible
+        .filter((f) => f.market_id === headline.market_id)
+        .sort((a, b) => (b.probability ?? 0) - (a.probability ?? 0))[0]
+    : undefined;
+  if (headline && onHeadline) {
+    return {
+      marketId: onHeadline.market_id,
+      outcomeId: onHeadline.outcome_id,
+      marketName: onHeadline.market_name,
+      probability: headline.probability,
+    };
+  }
+
+  const rank =(tier: number | null): number => {
     const idx = tier == null ? -1 : JOURNEY_TIER_PRIORITY.indexOf(tier);
     // Unknown/other tiers rank after the known preference order.
     return idx === -1 ? JOURNEY_TIER_PRIORITY.length : idx;
