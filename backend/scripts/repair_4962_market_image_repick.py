@@ -79,10 +79,10 @@ migration-class: nothing here runs on merge or on release.
 
     python3 scripts/restore_4962_market_images.py --apply
 
-CAUTION: the existing restore command restores EVERY backup-table row and
-unconditionally overwrites current images. Before an attended production repair,
-inspect its full scope and current row identities/images and arrange a safe undo.
-This apply hardening alone does not establish production-ready scoped rollback.
+The restore command is pinned to these identities and only restores still-NULL
+image columns; a re-picked image is never overwritten. Both commands default to
+the two specimens and accept --ids only to narrow scope. An attended operator
+must confirm the repair invocation: NULL alone is not an immutable repair receipt.
 
 USAGE
 
@@ -251,8 +251,8 @@ def _parse_ids(raw: str | None) -> tuple[int, ...]:
 async def run(args) -> int:
     try:
         ids = _parse_ids(args.ids)
-    except ValueError as exc:
-        print(f"REFUSING: {exc}")
+    except ValueError as invalid_scope:
+        print(f"REFUSING: {invalid_scope}")
         return 2
     id_list = ", ".join(str(i) for i in ids)
 
@@ -404,7 +404,8 @@ async def run(args) -> int:
             print(
                 "  open rows are eligible for a future enrich-market-images fire; resolved rows stay imageless. "
                 "Replacement is not guaranteed; verify reader-visible output. Undo:\n"
-                "    python3 scripts/restore_4962_market_images.py --apply"
+                "    python3 scripts/restore_4962_market_images.py --apply --ids "
+                + ",".join(str(row.id) for row in in_scope)
             )
     return 0
 
