@@ -60,6 +60,11 @@ export type FeaturedMarket = ServedPercent & {
    *  built before the field existed, and an absent field must mean "no line",
    *  never "invent one". */
   history?: number[];
+  /** The market this card is about, for the link to its page (#9478). The
+   *  route has served it since the hero existed; OPTIONAL because a row
+   *  without one must render as the plain card it was, never as a link to
+   *  `/futures/undefined` (`marketHref`, MarketLink.tsx). */
+  market_id?: number | null;
 };
 
 export type CityData = {
@@ -137,6 +142,8 @@ export type EventMarket = ServedPercent & {
   closes: string;
   /** See {@link FeaturedMarket.leader} — same field, same contract. */
   leader?: string | null;
+  /** See {@link FeaturedMarket.market_id} — same field, same contract. */
+  market_id?: number | null;
 };
 
 export type ClimateMarket = ServedPercent & {
@@ -145,6 +152,8 @@ export type ClimateMarket = ServedPercent & {
   scale: "2026" | "2030" | "2050";
   /** See {@link FeaturedMarket.leader} — same field, same contract (#9289). */
   leader?: string | null;
+  /** See {@link FeaturedMarket.market_id} — same field, same contract. */
+  market_id?: number | null;
 };
 
 export type WildCard = ServedPercent & {
@@ -155,6 +164,8 @@ export type WildCard = ServedPercent & {
   leader?: string | null;
   /** See {@link FeaturedMarket.history} — same field, same contract. */
   history?: number[];
+  /** See {@link FeaturedMarket.market_id} — same field, same contract. */
+  market_id?: number | null;
 };
 
 // Colors sourced from the one registry (@/lib/sourceColors). color=solid hex,
