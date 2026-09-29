@@ -242,8 +242,10 @@ class TestTheChildlessGameSelector:
     @pytest.mark.asyncio
     async def test_it_is_executed_last_so_the_other_arms_keep_their_order(self, monkeypatch):
         _st, _w, selector, *_ = await _run(monkeypatch)
-        assert selector.calls[-1][0] == self.SQL
-        assert len(selector.calls) == 6
+        # #9605: the starved arm executes after this one, for the same reason.
+        assert selector.calls[5][0] == self.SQL
+        assert selector.calls[6][0] == str(poly._SUNK_POLY_STARVED_SQL)
+        assert len(selector.calls) == 7
 
     def test_the_arm_adds_five_gamma_calls(self):
         assert poly._SUNK_POLY_CHILDLESS_GAME_MAX == 100
