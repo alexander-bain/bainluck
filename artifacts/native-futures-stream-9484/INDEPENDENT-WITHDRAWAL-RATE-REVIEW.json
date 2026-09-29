@@ -1,0 +1,7 @@
+{
+  "ios/Bain Luck/Bain Luck/Services/APIClient.swift": "0caecc2e15206b35acf4b3f69585016a89bfe08a216f11a667168eae13369c41",
+  "ios/Bain Luck/Bain Luck/Utilities/FuturesPriceReconciliation.swift": "c9de66d9c063c22a7501e5ca9e623da75eea1fee28310087ffc6598a24e0dc80",
+  "ios/Bain Luck/Bain Luck/ViewModels/FuturesDetailViewModel.swift": "202351419edc5da61b2d85a205375a0de467a5d9f9880e877ba402d7204de905",
+  "ios/Bain Luck/Bain Luck/Components/EvolutionChartView.swift": "1002b1dd8d04b33cb60955571c05f667eaa87d3d7b4313966056bc58a8c78bf5",
+  "ios/Bain Luck/BainLuckTests/FuturesStreamingTests.swift": "6a4078c25a4154b4bf51ef646aa84ffbafefcf7c77d6ede71f32c70176c35f6a"
+}
