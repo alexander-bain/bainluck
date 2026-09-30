@@ -47,6 +47,7 @@ from app.utils.event_twin_fold import (  # #7904/#9686, the catch-all shadow arm
     _catchall_sport_prefix,
 )
 from app.utils.futures_liveness import KALSHI_BOOK_SILENT_SQL
+from app.utils.venue_club_spellings import venue_spellings_of  # #8100
 from app.utils.polymarket_empty_book import (  # #9083, the pregame pin's book guard
     POLYMARKET_BOOKMAKER,
     is_empty_polymarket_book,
@@ -1128,6 +1129,10 @@ async def leagues_by_side_for_matchup(
         known = {(name or "").lower()}
         if isinstance(alternates, list):
             known |= {str(a).lower() for a in alternates if a}
+        # #8100: Polymarket's "South East Melbourne Phoenix" is teams 2919
+        # "S.E. Melbourne Phoenix". Without this the Phoenix alone of the ten
+        # NBL clubs was placed in `basketball_other`, beside its league row.
+        known |= venue_spellings_of(name)
         for index, side in enumerate(lowered):
             if side in known:
                 leagues_by_side[index].add(league)
