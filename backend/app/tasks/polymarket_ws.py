@@ -75,6 +75,39 @@ def trade_sets_a_price(msg: dict) -> bool:
         return True
 
 
+def trade_prints_outside_wide_book(prob: float, books: tuple) -> bool:
+    """True for a trade that swept through a book too wide to price anything.
+
+    #9913. PHI @ ATL, 2026-09-30 18:54Z: the Braves series token's book was
+    0.12 × 5 / 0.11 × 394 bid, 0.73 ask, and a 20-share SELL printed at 0.1125,
+    the average of 0.12 × 5 and 0.11 × 15 (the tick is a cent, so no resting
+    order sat at 0.1125). It cleared #9733's size floor, became Braves 11% and,
+    through ``with_complements``, Phillies 89%, while Kalshi read Atlanta 71%.
+
+    A trade fills at resting prices, so it prints at the edge of the book it
+    hit or, when it eats more than the top level, beyond it. Beyond the edge of
+    a book wider than ``_poly_book_is_untradeable``'s bar means someone emptied
+    what little was left, which says nothing about the market's price.
+
+    ``books`` is ``(latest, previous)`` for the token, each ``(bid, ask)`` or
+    None. The venue does not promise whether the post-trade book arrives before
+    or after the trade: before, the latest book already lacks the level the
+    trade ate (0.11 bid, and 0.1125 sits inside it), so the previous book is
+    read too, but only when the latest is also wide. A market whose book has
+    come back tight is priced by its midpoint and is not second-guessed here.
+    """
+    latest = books[0] if books else None
+    if latest is None or not _poly_book_is_untradeable(*latest):
+        return False
+    for book in books:
+        if book is None or not _poly_book_is_untradeable(*book):
+            continue
+        bid, ask = book
+        if prob < bid or prob > ask:
+            return True
+    return False
+
+
 def with_complements(
     targets: list, prob: float, complement_of: dict
 ) -> list[tuple[int, float]]:
@@ -850,6 +883,9 @@ async def _run_polymarket_ws_consumer():
         # #9733: trades refused because they were smaller than the smallest
         # order the venue accepts (`trade_sets_a_price`).
         "trades_below_min_order": 0,
+        # #9913: trades refused because they printed beyond the edge of a
+        # book too wide to price (`trade_prints_outside_wide_book`).
+        "trades_outside_wide_book": 0,
         "resolutions": 0,
         "errors": 0,
         # Q491: prices a failed flush put BACK on the buffer instead of dropping.
@@ -922,6 +958,10 @@ async def _run_polymarket_ws_consumer():
     open_complement_of: dict[int, int] = {}
     open_outcome_ids: set[int] = set()
     open_sockets: list = []
+    # #9913: token → (latest, previous) distinct top of book, wide or not, so
+    # a trade can be read against the book it hit. One entry per subscribed
+    # token; rebuilt from the subscribe snapshot on every recycle.
+    books_by_asset: dict[str, tuple] = {}
 
     async def write_chunk(chunk: dict[int, float]) -> bool:
         """One flush transaction: write, re-rank, commit, publish, un-buffer.
@@ -1156,6 +1196,12 @@ async def _run_polymarket_ws_consumer():
         except (ValueError, TypeError):
             return
 
+        # #9913: kept before the width test below, because a wide book is the
+        # one `handle_trade` needs to see.
+        latest = books_by_asset.get(asset_id, (None,))[0]
+        if latest != (bid_f, ask_f):
+            books_by_asset[asset_id] = ((bid_f, ask_f), latest)
+
         # #1578: never stream a midpoint from a book nobody will trade inside.
         # This path matters most of the five, because it is the only one that
         # UPDATEs an outcome directly rather than going through the upsert — a
@@ -1246,6 +1292,12 @@ async def _run_polymarket_ws_consumer():
         # price. Counted, so a refusal is a number and not an absence.
         if not trade_sets_a_price(msg):
             stats["trades_below_min_order"] += 1
+            return
+
+        # #9913: nor is a trade that swept past the edge of a wide book. The
+        # leg keeps the last price a book supported.
+        if trade_prints_outside_wide_book(prob, books_by_asset.get(asset_id, ())):
+            stats["trades_outside_wide_book"] += 1
             return
 
         async with buffer_lock:
