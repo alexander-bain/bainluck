@@ -854,6 +854,9 @@ async def _run_polymarket_ws_consumer():
     # nothing the #9418 watcher or the settlement handler reads can see them.
     open_asset_to_outcome: dict[str, int] = {}
     open_asset_to_market: dict[str, int] = {}
+    # #9736: token → [(outcome_id, market_id)] of the other markets' legs that
+    # name a token another leg owns. Each tick lands on the owner AND these.
+    open_asset_mirrors: dict[str, list[tuple[int, int]]] = {}
     open_outcome_ids: set[int] = set()
     open_sockets: list = []
 
@@ -1073,7 +1076,7 @@ async def _run_polymarket_ws_consumer():
         market_id = asset_to_market.get(asset_id) or open_asset_to_market.get(
             asset_id
         )
-        if not market_id:
+        if not market_id and asset_id not in open_asset_mirrors:
             return
 
         best_bid = msg.get("best_bid")
@@ -1104,15 +1107,32 @@ async def _run_polymarket_ws_consumer():
         # Q489: the outcome this ASSET is the book for — not "the market's first
         # outcome". `prob` here is the midpoint of THIS token's own book, so on
         # the No token it is P(No), which belongs on the No leg and nowhere else.
-        outcome_id = asset_to_outcome.get(asset_id)
-        if outcome_id is None:
-            outcome_id = open_asset_to_outcome.get(asset_id)
-        if outcome_id is None:
+        targets = _tick_targets(asset_id)
+        if not targets:
             return
 
         async with buffer_lock:
-            price_buffer[outcome_id] = prob
-            _mark_input(outcome_id, prob, "price", msg)
+            for outcome_id in targets:
+                price_buffer[outcome_id] = prob
+                _mark_input(outcome_id, prob, "price", msg)
+
+    def _tick_targets(asset_id: str) -> list[int]:
+        """Every leg a tick in this token prices: its owner, then its mirrors.
+
+        #9736: a token two markets name (the NLDS board's Cubs leg and the
+        standalone Cubs binary) is subscribed once; both legs are the same
+        contract, so both take its price."""
+        targets = []
+        owner = asset_to_outcome.get(asset_id)
+        if owner is None:
+            owner = open_asset_to_outcome.get(asset_id)
+        if owner is not None:
+            targets.append(owner)
+        targets.extend(
+            oid for oid, _mid in open_asset_mirrors.get(asset_id, ())
+            if oid != owner
+        )
+        return targets
 
     def _mark_input(outcome_id, prob, kind, msg):
         # Under `buffer_lock`, so seq order is buffer order. Never raises into
@@ -1135,7 +1155,7 @@ async def _run_polymarket_ws_consumer():
         market_id = asset_to_market.get(asset_id) or open_asset_to_market.get(
             asset_id
         )
-        if not market_id:
+        if not market_id and asset_id not in open_asset_mirrors:
             return
 
         price = msg.get("price")
@@ -1150,15 +1170,14 @@ async def _run_polymarket_ws_consumer():
 
         # Q489: same contract as `handle_price` — a `last_trade_price` is a trade
         # in THIS token, so it grades THIS token's leg.
-        outcome_id = asset_to_outcome.get(asset_id)
-        if outcome_id is None:
-            outcome_id = open_asset_to_outcome.get(asset_id)
-        if outcome_id is None:
+        targets = _tick_targets(asset_id)
+        if not targets:
             return
 
         async with buffer_lock:
-            price_buffer[outcome_id] = prob
-            _mark_input(outcome_id, prob, "trade", msg)
+            for outcome_id in targets:
+                price_buffer[outcome_id] = prob
+                _mark_input(outcome_id, prob, "trade", msg)
         stats["trade_updates"] += 1
 
     async def handle_resolved(msg: dict):
@@ -1287,6 +1306,12 @@ async def _run_polymarket_ws_consumer():
         for key, value in admission.counts.items():
             stats[f"open_contract_{key}"] = value
         stats["open_contract_assets"] = len(admission.asset_to_outcome)
+        # #9736: a mirror of a game-socket token needs no open subscription, so
+        # it is registered even when this arm subscribes nothing of its own.
+        mirrored = admission.mirrored_outcomes()
+        market_by_outcome.update(mirrored)
+        open_outcome_ids.update(mirrored)
+        open_asset_mirrors.update(admission.asset_mirrors)
         if not admission.asset_to_outcome:
             return
         # An open contract's field is re-ranked like a linked one's.
