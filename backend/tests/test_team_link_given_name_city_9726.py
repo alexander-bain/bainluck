@@ -158,7 +158,7 @@ OUTCOMES = [
     (2, 301, "Darnell Washington", HUSKIES[0]),   # cleared, then the roster: Steelers
     (3, 302, "Malik Washington", HUSKIES[0]),     # cleared, no roster answer: NULL
     (4, 302, "Jordan Washington", HUSKIES[0]),    # the Huskies' own roster: kept
-    (5, 303, "Washington D/ST", HUSKIES[0]),      # the city leads: not this shape, kept
+    (5, 303, "Washington D/ST", HUSKIES[0]),      # the Commanders' fantasy defense: cleared, NULL
     (6, 301, "Darnell Washington", STEELERS[0]),  # already right: kept
     (7, 302, "Matt Campbell", None),              # unlinked: Step 1 no longer binds it
 ]
@@ -168,7 +168,7 @@ EXPECTED = {
     2: STEELERS[0],
     3: None,
     4: HUSKIES[0],
-    5: HUSKIES[0],
+    5: None,
     6: STEELERS[0],
     7: None,
 }
@@ -223,8 +223,8 @@ def test_stored_surname_links_clear_and_the_roster_takes_over():
         links = _links(session)
 
     assert first["errors"] == [] and second["errors"] == []
-    assert first["links_on_given_name_city_alias"] == 3        # outcomes 1, 2, 3
-    assert first["outcomes_unlinked_given_name_city_alias"] == 3
+    assert first["links_on_given_name_city_alias"] == 4        # outcomes 1, 2, 3, 5
+    assert first["outcomes_unlinked_given_name_city_alias"] == 4
     assert links == EXPECTED
     # A second run finds nothing left to clear and undoes nothing.
     assert second["links_on_given_name_city_alias"] == 0
@@ -237,7 +237,7 @@ def test_the_unlink_budget_is_the_runs_limit():
         asyncio.run(team_linking._unlink_given_name_city_alias(_AsyncShim(session), stats, 1))
         links = _links(session)
 
-    assert stats["links_on_given_name_city_alias"] == 3
+    assert stats["links_on_given_name_city_alias"] == 4
     assert links[1] is None
     assert links[2] == HUSKIES[0] and links[3] == HUSKIES[0]
 
@@ -277,3 +277,78 @@ def test_phase_3c_never_clears_a_link_step_1_would_make_again():
     assert not rests(
         "Parker Washington", "Washington Huskies", ["Washington", "Parker Washington"]
     )
+
+
+# --- a fantasy defense named by its city (#9726, after-check 2026-09-30) -------
+#
+# The production after-check (06:59Z) found the page still listing "Washington
+# D/ST", which the issue names: the city leads, so the given-name rule never saw
+# it. Every open D/ST outcome linked on production at 07:06Z, with its team's
+# stored names (07:12Z): the four named by a city sit on a college; the eighteen
+# named by a nickname sit on their NFL club.
+
+# name, team, alternate_names, still linked after the fix
+DST_LINKS = [
+    ("Chargers D/ST", "Los Angeles Chargers", ["Chargers"], True),
+    ("Cincinnati D/ST", "Cincinnati Bearcats", ["Cincinnati", "Bearcats"], False),
+    ("Commanders D/ST", "Washington Commanders", ["Commanders"], True),
+    ("Dolphins D/ST", "Miami Dolphins", ["fins", "phins", "Dolphins"], True),
+    ("LA Chargers D/ST", "Los Angeles Chargers", ["Chargers"], True),
+    ("LA Chargers D/ST", "Los Angeles Chargers", ["Chargers"], True),
+    ("MIA Dolphins D/ST", "Miami Dolphins", ["fins", "phins", "Dolphins"], True),
+    ("MIA Dolphins D/ST", "Miami Dolphins", ["fins", "phins", "Dolphins"], True),
+    ("Minnesota D/ST", "Minnesota Golden Gophers", ["Minnesota", "Golden Gophers"], False),
+    ("NE Patriots D/ST", "New England Patriots", ["pats", "Patriots"], True),
+    ("NE Patriots D/ST", "New England Patriots", ["pats", "Patriots"], True),
+    ("Patriots D/ST", "New England Patriots", ["pats", "Patriots"], True),
+    ("PIT Steelers D/ST", "Pittsburgh Steelers", ["Steelers"], True),
+    ("PIT Steelers D/ST", "Pittsburgh Steelers", ["Steelers"], True),
+    ("PIT Steelers D/ST", "Pittsburgh Steelers", ["Steelers"], True),
+    ("PIT Steelers D/ST", "Pittsburgh Steelers", ["Steelers"], True),
+    ("PIT Steelers D/ST: 1+", "Pittsburgh Steelers", ["Steelers"], True),
+    ("Steelers D/ST", "Pittsburgh Steelers", ["Steelers"], True),
+    ("Tennessee D/ST", "Tennessee Volunteers", ["vols", "Tennessee", "Volunteers"], False),
+    ("WAS Commanders D/ST", "Washington Commanders", ["Commanders"], True),
+    ("WAS Commanders D/ST", "Washington Commanders", ["Commanders"], True),
+    ("Washington D/ST", "Washington Huskies", ["Washington", "Huskies"], False),
+]
+
+
+def test_production_dst_links_only_the_city_named_defenses_lose():
+    assert len(DST_LINKS) == 22
+    kept = [(n, t) for n, t, a, _ in DST_LINKS if _names_match(n, t, a)]
+    lost = sorted({(n, t) for n, t, a, _ in DST_LINKS if not _names_match(n, t, a)})
+    assert len(kept) == 18
+    assert lost == [
+        ("Cincinnati D/ST", "Cincinnati Bearcats"),
+        ("Minnesota D/ST", "Minnesota Golden Gophers"),
+        ("Tennessee D/ST", "Tennessee Volunteers"),
+        ("Washington D/ST", "Washington Huskies"),
+    ]
+    assert all(_names_match(n, t, a) == keep for n, t, a, keep in DST_LINKS)
+
+
+@pytest.mark.parametrize(
+    "name", ["Washington D/ST", "Washington DST", "Washington D/ST: 1+", "washington d/st"]
+)
+def test_a_city_and_then_dst_binds_to_no_club(name):
+    assert match_outcome_to_team(name, _dicts()) is None
+
+
+def test_only_a_city_alias_before_dst_is_guarded():
+    guard = linking.fantasy_defense_on_city
+    assert guard("Washington D/ST", "Washington", "Washington Huskies")
+    assert guard("Minnesota D/ST: 1+", "Minnesota", "Minnesota Golden Gophers")
+    # A nickname alias; the city with no D/ST; D/ST alone; a name that is all alias.
+    assert not guard("Steelers D/ST", "Steelers", "Pittsburgh Steelers")
+    assert not guard("Washington 8.5+", "Washington", "Washington Huskies")
+    assert not guard("D/ST", "Washington", "Washington Huskies")
+    assert not guard("Athletics DST", "Athletics", "Athletics")
+
+
+def test_strawman_without_the_dst_guard_the_defense_binds_to_the_huskies(monkeypatch):
+    monkeypatch.setattr(linking, "fantasy_defense_on_city", lambda *a: False)
+    assert match_outcome_to_team("Washington D/ST", _dicts()) == HUSKIES[0]
+    assert team_linking._rests_on_given_name_city(
+        "Washington D/ST", "Washington Huskies", ["Washington", "Huskies"]
+    ) is False

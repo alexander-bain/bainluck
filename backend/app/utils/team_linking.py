@@ -56,7 +56,7 @@ def _names_match(candidate: str, team_name: str, alt_names: Optional[list] = Non
         if len(candidate_norm) >= 8 and len(name_norm) >= 8:
             if candidate_norm in name_norm:
                 return True
-            if name_norm in candidate_norm and not given_name_before_city(
+            if name_norm in candidate_norm and not city_alias_names_someone_else(
                 candidate, name, team_name
             ):
                 return True
@@ -96,6 +96,39 @@ def given_name_before_city(candidate: str, alias: str, team_name: str) -> bool:
     if len(tokens) < 2 or not _GIVEN_NAME.match(tokens[0]):
         return False
     return _normalize_name(" ".join(tokens[1:])) == alias_norm
+
+
+# Fantasy-defense labels as venues print them: "Washington D/ST", "Minnesota D/ST: 1+".
+_FANTASY_DEFENSE = frozenset({"d/st", "dst"})
+
+
+def fantasy_defense_on_city(candidate: str, alias: str, team_name: str) -> bool:
+    """True when ``candidate`` is the team's city alias and then "D/ST" (#9726).
+
+    A D/ST is an NFL fantasy defense. "Washington D/ST" (the Commanders') bound to
+    the Washington Huskies through the alias "Washington", and Cincinnati,
+    Minnesota and Tennessee D/ST to the Bearcats, Golden Gophers and Volunteers.
+    Venues name the NFL club's defense by nickname too ("WAS Commanders D/ST",
+    "Steelers D/ST"), which this leaves alone; only a CITY alias qualifies, as in
+    ``given_name_before_city``. Anything after a colon ("D/ST: 1+") is a line on
+    the same defense.
+    """
+    alias_norm = _normalize_name(alias)
+    if not alias_norm or not _normalize_name(team_name).startswith(alias_norm + " "):
+        return False
+    tokens = candidate.split(":", 1)[0].split()
+    if len(tokens) < 2 or tokens[-1].lower() not in _FANTASY_DEFENSE:
+        return False
+    return _normalize_name(" ".join(tokens[:-1])) == alias_norm
+
+
+def city_alias_names_someone_else(candidate: str, alias: str, team_name: str) -> bool:
+    """True when the team's city alias sits in ``candidate`` as another thing's name (#9726):
+    a person's surname ("Parker Washington") or an NFL fantasy defense ("Washington D/ST").
+    """
+    return given_name_before_city(candidate, alias, team_name) or fantasy_defense_on_city(
+        candidate, alias, team_name
+    )
 
 
 def _normalized_names(team: dict) -> list[str]:

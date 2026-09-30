@@ -391,16 +391,17 @@ _GIVEN_NAME_SHAPE = r"^[^ ]+( [^ ]+){1,3}$"
 
 
 def _rests_on_given_name_city(name: str, team_name: str, alternate_names) -> bool:
-    """True when a stored link can only have come from a given name before the team's city (#9726).
+    """True when a stored link can only have come from a given name before the team's city,
+    or from the city and then "D/ST" (#9726).
 
     False whenever any of the team's names still matches the outcome.
     """
-    from app.utils.team_linking import _names_match, given_name_before_city
+    from app.utils.team_linking import _names_match, city_alias_names_someone_else
 
     alts = [a for a in alternate_names if isinstance(a, str)] if isinstance(
         alternate_names, list
     ) else []
-    if not any(given_name_before_city(name, alias, team_name) for alias in alts):
+    if not any(city_alias_names_someone_else(name, alias, team_name) for alias in alts):
         return False
     return not _names_match(name, team_name, alts)
 
