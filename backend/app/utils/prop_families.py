@@ -127,6 +127,15 @@ _STANDALONE_AWARDS: list[tuple[str, str]] = [
     ("all star game mvp", "all-star game mvp"),
     ("all-star mvp", "all-star game mvp"),
     ("all star mvp", "all-star game mvp"),
+    # Series MVPs are not the season award either.  Kalshi's "Pro Baseball
+    # Championship Series MVP Winner" is the World Series MVP (ticker
+    # KXMLBWSMVP); "championship mvp" above misses it on the word "series", so
+    # it keyed to "mvp" and headed the Yankees' season-MVP card as "Aaron Judge
+    # 34%" while his AL MVP price was 1% (#9769).  The league series get their
+    # own cards: an ALCS MVP is neither the season award nor the World Series.
+    ("championship series mvp", "championship game mvp"),
+    ("alcs mvp", "alcs mvp"),
+    ("nlcs mvp", "nlcs mvp"),
     # The award spelled out.  Without it "MLS: 2026 Most Valuable Player",
     # "PLL: 2026 Jim Brown Most Valuable Player" and "WBC: Most Valuable
     # Player" are not family-shaped AT ALL (#6630) — they key to None and
@@ -207,6 +216,8 @@ _LABEL_OVERRIDES = {
     "finals mvp": "Finals MVP",
     "championship game mvp": "Championship Game MVP",
     "all-star game mvp": "All-Star Game MVP",
+    "alcs mvp": "ALCS MVP",
+    "nlcs mvp": "NLCS MVP",
     "cy young": "Cy Young",
     "heisman": "Heisman",
     "ballon dor": "Ballon d'Or",

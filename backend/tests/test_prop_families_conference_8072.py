@@ -37,6 +37,9 @@ def _pair(oid, player, market):
 
 NL_ROWS = [
     _pair(1395, "Max Muncy", _market(209, "NL MVP Winner?", "KXMLBNLMVP-26")),
+    # #9769: a second NL MVP candidate. The Dodgers' MVP card used to reach two
+    # entities only because the World Series MVP leg rode the season family.
+    _pair(1390, "Shohei Ohtani", _market(209, "NL MVP Winner?", "KXMLBNLMVP-26")),
     _pair(1458, "Max Muncy", _market(211, "NL Hank Aaron Award Winner?", "KXMLBNLHAARON-26")),
     _pair(198634611, "Max Muncy",
           _market(52755974, "Silver Slugger: NL Third Baseman", "KXMLBSS-26NL3B")),
@@ -48,8 +51,13 @@ AL_ROWS = [
     _pair(1608, "Jacob Wilson", _market(216, "AL MVP Winner?", "KXMLBALMVP-26")),
 ]
 # The league's own board names no conference: nothing to refuse on either page.
+# #9769: the World Series MVP is its own card now (it used to ride the season
+# "mvp" family, which is what printed it here), and a card needs two entities,
+# so the board carries a second candidate.
 LEAGUE_ROWS = [
     _pair(237492328, "Max Muncy (LAD)",
+          _market(62952889, "Pro Baseball Championship Series MVP Winner", "KXMLBWSMVP-26")),
+    _pair(237492260, "Aaron Judge",
           _market(62952889, "Pro Baseball Championship Series MVP Winner", "KXMLBWSMVP-26")),
 ]
 
