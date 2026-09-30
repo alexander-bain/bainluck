@@ -44,6 +44,7 @@ async def _seed(session):
     from app.utils.event_completion import (
         STATPAL_LATER_SESSION_KEY,
         statpal_later_session_value,
+        statpal_released_session_value,
     )
 
     now = datetime.now(timezone.utc)
@@ -151,6 +152,9 @@ async def _seed(session):
     )
     _anchor("the_old_unstamped_match", "tennis:958807", now + timedelta(hours=4))
     _anchor("the_old_released_match", "tennis:958808", now - timedelta(minutes=5))
+    EXPECTED_STAMPS["receipt:the_old_released_match"] = statpal_released_session_value(
+        now - timedelta(minutes=5), "958808"
+    )
 
     await session.commit()
     return {name: row.id for name, row in rows.items()}
@@ -249,6 +253,70 @@ async def stamps_after(seeded, statuses):
         for row in rows
     }
     return {name: by_id[event_id] for name, event_id in ids.items()}
+
+
+@pytest.fixture
+async def played_second_pass(seeded, statuses):
+    """CERT-3811's second pass, on Postgres. After the first pass released
+    ``the_old_released_match``, StatPal writes play onto it (a period and a
+    score, Core update as the livescores writer does, no win-prob snapshot),
+    and the task runs again. Returns (receipt after pass 1, status, stats)."""
+    import contextlib
+    from unittest.mock import patch
+
+    from sqlalchemy import select, update
+
+    from app.models.models import Event
+    from app.utils.event_completion import STATPAL_RELEASED_SESSION_KEY
+
+    maker, ids = seeded
+    event_id = ids["the_old_released_match"]
+    async with maker() as session:
+        receipt = (
+            await session.execute(
+                select(Event.win_probability_sources).where(Event.id == event_id)
+            )
+        ).scalar_one()
+        await session.execute(
+            update(Event)
+            .where(Event.id == event_id)
+            .values(period="1st Set", home_score=0, away_score=0)
+        )
+        await session.commit()
+
+    @contextlib.asynccontextmanager
+    async def _session(**_kwargs):
+        async with maker() as session:
+            yield session
+            await session.commit()
+
+    from app.tasks.espn_sync import _transition_event_statuses_impl
+
+    with patch("app.tasks.base.get_task_session", _session):
+        stats = await _transition_event_statuses_impl()
+
+    async with maker() as session:
+        status = (
+            await session.execute(select(Event.status).where(Event.id == event_id))
+        ).scalar_one()
+    return (receipt or {}).get(STATPAL_RELEASED_SESSION_KEY), status, stats
+
+
+@needs_postgres
+class TestAReleasedSessionKeepsItsClockOncePlayed:
+    async def test_the_release_receipt_is_persisted(self, played_second_pass):
+        """The JSONB round trip: the first pass's ORM write of a new sources
+        dict lands, carrying StatPal's start and its fixture."""
+        receipt, _, _ = played_second_pass
+        assert receipt == EXPECTED_STAMPS["receipt:the_old_released_match"]
+
+    async def test_played_it_stays_live_on_statpals_clock(self, played_second_pass):
+        """THE SHIP, CERT-3811. RED at f6d229bc23: play ends the hold's
+        predicate, the clock falls back to the 30h-old venue stamp, and the
+        match being played is suspended."""
+        _, status, stats = played_second_pass
+        assert status == "live"
+        assert stats["live_to_suspended"] == 0
 
 
 @needs_postgres

@@ -36,11 +36,14 @@ from app.utils.event_completion import (
     STATPAL_LATER_SESSION_HORIZON,
     STATPAL_LATER_SESSION_KEY,
     STATPAL_LATER_SESSION_MARGIN,
+    STATPAL_RELEASED_SESSION_KEY,
     started_without_result,
     statpal_later_session_clock,
     statpal_later_session_pending,
     statpal_later_session_value,
     statpal_names_a_later_session,
+    statpal_released_session_clock,
+    statpal_released_session_value,
 )
 from app.utils.event_rails import started_without_result_rows
 from tests.test_a_held_later_session_is_not_result_less_9613 import _db_row
@@ -245,3 +248,155 @@ class TestTheClock:
         assert row.status == "scheduled"
         assert STATPAL_LATER_SESSION_KEY not in row.win_probability_sources
         assert stats["cleared_statpal_outside_window"] == 1
+
+
+# ---------------------------------------------------------------------------
+# CERT-3811: the clock survives the first score StatPal writes.
+# ---------------------------------------------------------------------------
+
+RECEIPT = statpal_released_session_value(STATPAL_START, FIXTURE)
+
+
+def _playing(row, period="1st Set"):
+    """What StatPal livescores write once the session is under way: a period
+    (and a score), and no qualifying non-venue win-prob snapshot."""
+    row.period = period
+    row.home_score, row.away_score = 0, 0
+    return row
+
+
+class TestTheReceipt:
+    @pytest.mark.asyncio
+    async def test_held_released_then_played_stays_live_then_suspends_on_statpals_clock(self):
+        """THE SHIP, CERT-3811's two passes and on. Held the evening before,
+        promoted at StatPal's start, then StatPal writes '1st Set'. RED at
+        f6d229bc23: the play pass returned suspended, live_to_suspended=1,
+        because play ended the hold's predicate and the clock fell back to
+        Kalshi's stamp 21h earlier."""
+        row = _Row(15320754)
+        anchors = [_anchor_for(15320754)]
+
+        stats = await _run_at(STATPAL_START - timedelta(hours=1), scheduled=[row], anchors=anchors)
+        assert row.status == "scheduled"
+        assert stats["held_statpal_later_session"] == 1
+        assert STATPAL_RELEASED_SESSION_KEY not in row.win_probability_sources
+
+        stats = await _run_at(STATPAL_START + timedelta(minutes=1), scheduled=[row], anchors=anchors)
+        assert row.status == "live"
+        assert row.win_probability_sources[STATPAL_RELEASED_SESSION_KEY] == RECEIPT
+        assert STATPAL_LATER_SESSION_KEY not in row.win_probability_sources
+        assert stats["statpal_released_session_stamped"] == 1
+
+        _playing(row)
+        stats = await _run_at(STATPAL_START + timedelta(hours=1), live=[row], anchors=anchors)
+        assert row.status == "live"
+        assert stats["live_to_suspended"] == 0
+
+        stats = await _run_at(STATPAL_START + timedelta(hours=6), live=[row], anchors=anchors)
+        assert row.status == "live"
+        assert stats["live_to_suspended"] == 0
+
+        # The KILL control: the receipt is a clock, not a pardon. Past tennis's
+        # bound measured from StatPal's start, with nothing reporting, it goes.
+        stats = await _run_at(STATPAL_START + timedelta(hours=7), live=[row], anchors=anchors)
+        assert row.status == "suspended"
+        assert stats["live_to_suspended"] == 1
+
+    @pytest.mark.asyncio
+    async def test_without_the_receipt_the_played_row_is_suspended(self):
+        """The CONTROL, and CERT-3811's reproduction verbatim: the same played
+        row with no receipt. It is suspended, so the receipt is what holds the
+        ship above, not some other path."""
+        row = _playing(_Row(15320754, status="live"))
+        stats = await _run_at(
+            STATPAL_START + timedelta(hours=1), live=[row], anchors=[_anchor_for(15320754)]
+        )
+        assert row.status == "suspended"
+        assert stats["live_to_suspended"] == 1
+
+    @pytest.mark.asyncio
+    async def test_a_row_the_clock_promoted_earlier_gets_its_receipt_on_the_live_arm(self):
+        """A row already live before StatPal's start (promoted before the hold
+        existed, or before its link landed, then left live) is released by the
+        live arm's pre-play pass. That pass writes the receipt too."""
+        row = _Row(15320754, status="live")
+        anchors = [_anchor_for(15320754)]
+        await _run_at(STATPAL_START + timedelta(minutes=5), live=[row], anchors=anchors)
+        assert row.status == "live"
+        assert row.win_probability_sources[STATPAL_RELEASED_SESSION_KEY] == RECEIPT
+
+        _playing(row)
+        stats = await _run_at(STATPAL_START + timedelta(hours=2), live=[row], anchors=anchors)
+        assert row.status == "live"
+        assert stats["live_to_suspended"] == 0
+
+    @pytest.mark.asyncio
+    async def test_a_receipt_costs_one_write(self):
+        row = _Row(15320754, status="live")
+        anchors = [_anchor_for(15320754)]
+        await _run_at(STATPAL_START + timedelta(minutes=5), live=[row], anchors=anchors)
+        written = row.win_probability_sources
+        stats = await _run_at(STATPAL_START + timedelta(minutes=20), live=[row], anchors=anchors)
+        assert row.win_probability_sources is written
+        assert stats["statpal_released_session_stamped"] == 0
+
+    @pytest.mark.asyncio
+    async def test_a_sibling_with_play_and_no_statpal_link_is_still_suspended(self):
+        """gotcha #42: the receipt path must not stop the arm for everyone."""
+        released = _Row(15320754, status="live")
+        released.win_probability_sources = {STATPAL_RELEASED_SESSION_KEY: RECEIPT}
+        _playing(released)
+        sibling = _playing(_Row(15320999, status="live", fixture=None))
+        sibling.win_probability_sources = {STATPAL_RELEASED_SESSION_KEY: RECEIPT}
+        stats = await _run_at(
+            STATPAL_START + timedelta(hours=1),
+            live=[released, sibling],
+            anchors=[_anchor_for(15320754)],
+        )
+        assert released.status == "live"
+        assert sibling.status == "suspended"
+        assert stats["live_to_suspended"] == 1
+
+
+class TestTheReceiptIsTrustedOnlyWhereTheClockIs:
+    def _clock(self, receipt=RECEIPT, source="kalshi", fixture=FIXTURE,
+               commence=KALSHI_STAMP, now=STATPAL_START + timedelta(hours=1)):
+        return statpal_released_session_clock(
+            {STATPAL_RELEASED_SESSION_KEY: receipt}, source, fixture, commence, now
+        )
+
+    def test_the_receipt_is_statpals_start(self):
+        assert self._clock() == STATPAL_START
+
+    def test_the_receipt_is_a_string_like_the_hold_stamp(self):
+        """Several readers walk every key of win_probability_sources and treat
+        a dict as a source entry; a string is the shape they already skip."""
+        assert isinstance(RECEIPT, str)
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"source": "espn"},
+            {"source": "odds_api"},
+            {"fixture": None},
+            {"fixture": "9999999"},
+            {"now": STATPAL_START - timedelta(minutes=1)},
+            {"commence": STATPAL_START - STATPAL_LATER_SESSION_MARGIN},
+            {"commence": STATPAL_START - STATPAL_LATER_SESSION_HORIZON - timedelta(minutes=1)},
+            {"commence": None},
+            {"now": None},
+            {"receipt": "not-a-date|" + FIXTURE},
+            {"receipt": statpal_later_session_value(STATPAL_START)},
+            {"receipt": statpal_later_session_value(STATPAL_START) + "|"},
+            {"receipt": {"start": statpal_later_session_value(STATPAL_START)}},
+            {"receipt": None},
+        ],
+        ids=[
+            "espn-rewrote-start", "reported-start", "no-fixture", "other-fixture",
+            "not-yet-reached", "inside-margin", "beyond-band", "no-commence",
+            "no-now", "malformed-date", "no-fixture-part", "empty-fixture-part",
+            "dict-shaped", "absent",
+        ],
+    )
+    def test_every_way_the_clock_ends_ends_the_receipt_except_play(self, kwargs):
+        assert self._clock(**kwargs) is None

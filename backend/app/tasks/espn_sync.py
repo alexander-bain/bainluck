@@ -4978,9 +4978,11 @@ async def _transition_event_statuses_impl() -> dict:
             started_events, statpal_starts, now, stats
         )
         stats["cleared_statpal_outside_window"] = 0
+        stats["statpal_released_session_stamped"] = 0
         statpal_released_ids = _statpal_sessions_reached(
             started_events, statpal_starts, now
         )
+        from app.utils.event_completion import stamp_statpal_released_session
 
         for event in started_events:
             if not commence_time_is_a_reported_start(event.commence_time_source):
@@ -5034,6 +5036,18 @@ async def _transition_event_statuses_impl() -> dict:
                 continue
             event.status = "live"
             stats["scheduled_to_live"] += 1
+            # #9613, CERT-3811: the receipt that StatPal's start released this
+            # row, so its clock survives the first score or period StatPal
+            # writes (which ends the hold's own predicate).
+            if event.id in statpal_released_ids:
+                _released = stamp_statpal_released_session(
+                    event.win_probability_sources,
+                    statpal_starts[event.id],
+                    event.statpal_fixture_id,
+                )
+                if _released is not event.win_probability_sources:
+                    event.win_probability_sources = _released
+                    stats["statpal_released_session_stamped"] += 1
 
         # --- live → suspended, ON THE VENUE'S WORD (rung 2 of §R) ---
         #
@@ -5244,22 +5258,51 @@ async def _transition_event_statuses_impl() -> dict:
             # The hold released it at 02:00Z; measured from the 05:00Z venue
             # stamp the day before it would already be 21h "past its start"
             # and the arm below would suspend it on the pass that promoted it.
+            #
+            # CERT-3811: StatPal's first score or period makes the row no longer
+            # a hold candidate, so the clock above goes quiet exactly when the
+            # match is being played. Before play the clock is written to the row
+            # as a receipt; after it, the receipt is the clock.
+            from app.utils.event_completion import (
+                stamp_statpal_released_session as _stamp_released,
+            )
             from app.utils.event_completion import (
                 statpal_later_session_clock as _later_session_clock,
             )
+            from app.utils.event_completion import (
+                statpal_released_session_clock as _released_clock,
+            )
 
+            stats.setdefault("statpal_released_session_stamped", 0)
             for event in live_events:
-                if event.id not in live_statpal_starts:
-                    continue
-                _clock = _later_session_clock(
-                    event.commence_time_source,
-                    event.statpal_fixture_id,
-                    _play_evidence(
-                        event.home_score, event.away_score, event.period, event.game_clock
-                    ),
-                    event.commence_time,
-                    live_statpal_starts[event.id],
-                )
+                _clock = None
+                if event.id in live_statpal_starts:
+                    _clock = _later_session_clock(
+                        event.commence_time_source,
+                        event.statpal_fixture_id,
+                        _play_evidence(
+                            event.home_score, event.away_score, event.period, event.game_clock
+                        ),
+                        event.commence_time,
+                        live_statpal_starts[event.id],
+                    )
+                if _clock is not None:
+                    _released = _stamp_released(
+                        event.win_probability_sources, _clock, event.statpal_fixture_id
+                    )
+                    if _released is not event.win_probability_sources:
+                        event.win_probability_sources = _released
+                        stats["statpal_released_session_stamped"] += 1
+                else:
+                    # `getattr`: this runs over every live row, and a row that
+                    # does not carry a field carries no receipt.
+                    _clock = _released_clock(
+                        getattr(event, "win_probability_sources", None),
+                        getattr(event, "commence_time_source", None),
+                        getattr(event, "statpal_fixture_id", None),
+                        getattr(event, "commence_time", None),
+                        now,
+                    )
                 if _clock is not None:
                     statpal_clock_starts[event.id] = _clock
 

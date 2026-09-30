@@ -475,6 +475,77 @@ def clear_statpal_later_session(sources):
     return updated
 
 
+# ── The receipt the hold leaves when it releases a row (#9613, CERT-3811) ────
+#
+# The clock above is only computable while the row is a hold candidate, and a
+# candidate has no play on it. So the first StatPal score or period on a
+# released row ended the clock: the staleness arm fell back to the venue stamp,
+# 21h or more before the session, and suspended a match being played. CERT-3811
+# reproduced it one hour into the session with ``period='1st Set'``.
+#
+# When the task releases a row onto StatPal's clock it writes this receipt, and
+# after play arrives the staleness arm reads the clock from it. It is honoured
+# only where the clock itself would be: the row's start is still the venue
+# stamp, it still carries the same StatPal fixture, the start sits inside the
+# hold's band, and it has arrived. A string, like the hold's stamp, because
+# several readers walk every key of ``win_probability_sources`` and a string is
+# the shape they already pass over.
+STATPAL_RELEASED_SESSION_KEY = "statpal_released_session"
+
+
+def statpal_released_session_value(statpal_start, statpal_fixture_id) -> str:
+    """The stored form: ``<UTC isoformat>|<StatPal fixture id>``."""
+    return (
+        f"{statpal_later_session_value(statpal_start)}|"
+        f"{str(statpal_fixture_id or '').strip()}"
+    )
+
+
+def stamp_statpal_released_session(sources, statpal_start, statpal_fixture_id):
+    """A NEW sources dict carrying the receipt, or the original when it already does."""
+    value = statpal_released_session_value(statpal_start, statpal_fixture_id)
+    if isinstance(sources, dict) and sources.get(STATPAL_RELEASED_SESSION_KEY) == value:
+        return sources
+    updated = dict(sources or {})
+    updated[STATPAL_RELEASED_SESSION_KEY] = value
+    return updated
+
+
+def statpal_released_session_clock(
+    sources, commence_time_source, statpal_fixture_id, commence_time, now
+):
+    """StatPal's start from the release receipt, when it still counts, else None.
+
+    Play on the row does not end it: play is what a released session brings.
+    Everything else that ends the hold's clock ends this one, through the same
+    predicate (:func:`statpal_later_session_clock`): a better source rewriting
+    the start, the StatPal id gone, a start outside the band. A receipt for a
+    different fixture, or a start not yet reached, is no receipt. Fails CLOSED
+    to None on every unreadable input, so the row keeps its own start.
+    """
+    raw = sources.get(STATPAL_RELEASED_SESSION_KEY) if isinstance(sources, dict) else None
+    if not isinstance(raw, str) or now is None:
+        return None
+    stamp, sep, fixture = raw.rpartition("|")
+    if not sep or not fixture or fixture != str(statpal_fixture_id or "").strip():
+        return None
+    try:
+        start = datetime.fromisoformat(stamp)
+    except (ValueError, TypeError):
+        return None
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    try:
+        clock = statpal_later_session_clock(
+            commence_time_source, statpal_fixture_id, False, commence_time, start
+        )
+        if clock is None or clock > now:
+            return None
+    except TypeError:
+        return None
+    return clock
+
+
 def statpal_later_session_pending(sources, commence_time, now) -> bool:
     """The row carries a live #9588 hold: StatPal's session is still ahead.
 
