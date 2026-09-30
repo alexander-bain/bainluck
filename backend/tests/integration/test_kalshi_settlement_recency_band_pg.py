@@ -541,9 +541,12 @@ def _corpus() -> list[tuple]:
             "retracted_padded", "kalshi", "open", "R6B-27SEP13", None, years_out,
             [("leg-a", False, "ungradeable_result"), ("leg-b", None, "ungradeable_result")],
         ),
-        # NOT selected — one leg is not a retraction, so it is not the cohort.
-        # Pins the NOT EXISTS; without it the band is "every open Kalshi market
-        # with one retracted leg".
+        # SELECTED — a retraction beside a leg that was never graded. Stage A of
+        # #7000's after-check: 8 of 13 `KXLEADERMLB*` boards, finalized at Kalshi,
+        # each carried 1-6 NULL legs among 27-72 retractions, and the old
+        # "every leg a retraction" rule kept them all out (the Cubs' page still
+        # served "WAR Leader 99.5%"). A leg with any OTHER stamp still refuses
+        # (NNN-26SEP14, band 3's), and all-NULL legs still refuse (L4Y-28JAN01).
         (
             "retracted_one_live_leg", "kalshi", "open", "R6N-26OCT15", None, future,
             [("leg-a", False, "ungradeable_result"), ("leg-b", None, None)],
@@ -1885,6 +1888,10 @@ async def test_a_fully_retracted_open_market_is_selected(pg_engine):
         "still open — must be reachable by some band"
     )
     assert "R6B-27SEP13" in selected
+    assert "R6N-26OCT15" in selected, (
+        "a retraction beside a never-graded leg — the KXLEADERMLB shape band 6 "
+        "missed on 09-30 — must be reachable"
+    )
 
 
 @needs_postgres
@@ -1941,8 +1948,8 @@ async def test_band_six_is_disjoint_from_every_other_band(pg_engine):
             "resolved and fully retracted — band 2's alphabetical walk owns it",
         ),
         (
-            "R6N-26OCT15",
-            "one leg is not a retraction, so it is not the cohort",
+            "NNN-26SEP14",
+            "an api_settlement leg beside the retraction — band 3's, never band 6's",
         ),
         ("R6E-26OCT15", "no legs at all is not 'every leg retracted'"),
         ("R6Z-26OCT15", "Polymarket — the grader asks Kalshi's event endpoint"),
@@ -1966,11 +1973,15 @@ async def test_dropping_the_status_clause_steals_band_twos_row(pg_engine):
         FROM futures_markets fm
         WHERE fm.source = 'kalshi'
           AND fm.external_id > ''
-          AND EXISTS (SELECT 1 FROM futures_outcomes fo WHERE fo.market_id = fm.id)
+          AND EXISTS (
+              SELECT 1 FROM futures_outcomes fo
+              WHERE fo.market_id = fm.id AND fo.resolution_source = 'ungradeable_result'
+          )
           AND NOT EXISTS (
               SELECT 1 FROM futures_outcomes fo
               WHERE fo.market_id = fm.id
-                AND COALESCE(fo.resolution_source, '') <> 'ungradeable_result'
+                AND fo.resolution_source IS NOT NULL
+                AND fo.resolution_source <> 'ungradeable_result'
           )
         GROUP BY fm.external_id
         ORDER BY fm.external_id ASC
@@ -1985,13 +1996,67 @@ async def test_dropping_the_status_clause_steals_band_twos_row(pg_engine):
     assert set(widened) - set(shipped) == {"GGG-26SEP10"}
 
 
+async def _band_six_without(engine, drop: str) -> set:
+    """The shipped band-6 statement with one of its two leg clauses removed."""
+    exists_retraction = """
+          AND EXISTS (
+              SELECT 1 FROM futures_outcomes fo
+              WHERE fo.market_id = fm.id AND fo.resolution_source = 'ungradeable_result'
+          )"""
+    no_other_stamp = """
+          AND NOT EXISTS (
+              SELECT 1 FROM futures_outcomes fo
+              WHERE fo.market_id = fm.id
+                AND fo.resolution_source IS NOT NULL
+                AND fo.resolution_source <> 'ungradeable_result'
+          )"""
+    clauses = {"exists_retraction": exists_retraction, "no_other_stamp": no_other_stamp}
+    kept = "".join(v for k, v in clauses.items() if k != drop)
+    sql = text(f"""
+        SELECT fm.external_id
+        FROM futures_markets fm
+        WHERE fm.source = 'kalshi'
+          AND fm.status <> 'resolved'
+          AND fm.external_id > ''{kept}
+        GROUP BY fm.external_id
+        ORDER BY fm.external_id ASC
+        LIMIT 2000
+    """)
+    async with engine.connect() as conn:
+        return {r[0] for r in (await conn.execute(sql)).all()}
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_dropping_the_other_stamp_clause_steals_band_threes_row(pg_engine):
+    """Strawman for the NOT EXISTS: without it a retraction beside an
+    authoritative leg (band 3's early-settled specimen) joins band 6."""
+    widened = await _band_six_without(pg_engine, "no_other_stamp")
+    shipped = set(await _select_retracted_open(pg_engine, limit=2000))
+
+    assert "NNN-26SEP14" in widened, "the harness is not running this statement"
+    assert "NNN-26SEP14" not in shipped
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_dropping_the_retraction_clause_admits_boards_nothing_ever_read(pg_engine):
+    """Strawman for the EXISTS: without it an open board whose legs are all
+    blank (never read at all) joins band 6 — and so would every such row."""
+    widened = await _band_six_without(pg_engine, "exists_retraction")
+    shipped = set(await _select_retracted_open(pg_engine, limit=2000))
+
+    assert "L4Y-28JAN01" in widened, "the harness is not running this statement"
+    assert "L4Y-28JAN01" not in shipped
+
+
 @needs_postgres
 @pytest.mark.asyncio
 async def test_band_six_cursor_walks_forward_and_wraps(pg_engine):
     """A member leaves only when the venue settles it, and most never do this
     month — so the walk must advance, and must run dry for the caller's wrap."""
     everything = await _select_retracted_open(pg_engine, limit=2000)
-    assert everything == ["R6A-26OCT15", "R6B-27SEP13"]
+    assert everything == ["R6A-26OCT15", "R6B-27SEP13", "R6N-26OCT15"]
 
     page_one = await _select_retracted_open(pg_engine, limit=1, cursor="")
     page_two = await _select_retracted_open(pg_engine, limit=1, cursor=page_one[-1])
