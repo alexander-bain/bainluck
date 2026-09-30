@@ -81,6 +81,8 @@ def test_the_derived_event_expansions_are_exactly_these() -> None:
         # #9263
         "fins": ("Dolphins", "americanfootball_nfl"),
         "dubs": ("Warriors", "basketball_nba"),
+        # #9263 `avs`
+        "avs": ("Avalanche", "icehockey_nhl"),
         # #9272
         "o's": ("Orioles", "baseball_mlb"),
         "o\u2019s": ("Orioles", "baseball_mlb"),

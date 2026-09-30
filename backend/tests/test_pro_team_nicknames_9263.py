@@ -10,8 +10,9 @@ Measured before adding (the #8685 / #9076 / #9080 bar): each last-word token
 names exactly ONE club in its sport over 120 days of events. Open markets in the
 futures arm's category: Dolphins 18/19 football (the 19th, a Swedish basketball
 game filed as football, `phins` already reaches), Warriors 4/6 basketball (two
-Shinshu Brave Warriors B.League rows — kept, see the config comment). Refused: `avs`, `celts`, `bolts` — each
-is also how another club's fans type their own team.
+Shinshu Brave Warriors B.League rows — kept, see the config comment). Refused: `celts`, `bolts` — each
+is also how another club's fans type their own team. (`avs` was refused here too and
+admitted in a later round: `test_avs_avalanche_9263.py`.)
 """
 
 from __future__ import annotations
@@ -108,7 +109,8 @@ def test_the_nickname_does_not_name_another_sports_row(alias, wrong_sport, parti
 @pytest.mark.parametrize("shared", ["celts", "bolts"])
 def test_shared_nicknames_stay_out(shared) -> None:
     """`celts` is also Celtic FC ("the Celts"); `bolts` the Chargers AND the
-    Lightning. Curated for one it takes the word from the other. (`avs` is pinned
-    out by #8685's own test.)"""
+    Lightning. Curated for one it takes the word from the other. (`avs` was here
+    too; it is AVS Futebol's own name, so it takes nothing — see
+    `test_avs_avalanche_9263.py`.)"""
     curated = {a.lower() for aliases in CURATED_TEAM_ALIASES.values() for a in aliases}
     assert shared not in curated
