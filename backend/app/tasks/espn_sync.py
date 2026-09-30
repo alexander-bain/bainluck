@@ -4768,6 +4768,104 @@ def _record_statpal_later_sessions(events, statpal_starts, now, stats) -> set:
     return held
 
 
+#: Which of the held rows the venue may already have ended: any resolved market
+#: on the event. Runs only when a row is held, so a pass with none never issues
+#: it. Rung 2 writes ``suspended`` on a venue settlement, so a suspended row can
+#: carry an ending the other two doors never see.
+HELD_SUSPENDED_RESOLVED_SQL = """
+    SELECT DISTINCT fm.event_id AS statpal_held_resolved_id
+      FROM futures_markets fm
+     WHERE fm.event_id = ANY(:event_ids)
+       AND fm.status = 'resolved'
+"""
+
+
+async def _return_held_suspended_rows(session, suspended_events, now, stats) -> set:
+    """``suspended → scheduled`` for a row StatPal puts in a later session. #9588.
+
+    The hold's third door. ``scheduled → live`` holds a row and the live arm
+    demotes one, but a row the staleness arm already suspended stayed
+    suspended, and every surface reads that as "No result reported".
+
+    MEASURED, production 2026-09-30 14:06Z. The seven Beijing doubles rows
+    15320752–59 were released at 02:00Z 9/30, the start their StatPal anchors
+    recorded at link time. No source reported play, so they were suspended
+    about 2.5h later. StatPal's own feed by then had six of them on 10/1 and
+    10/2 (``2638138`` 03:00Z, ``2638143`` 06:00Z, the other four 02:00Z 10/2),
+    and ESPN agreed. All seven read "No result reported" for matches not yet
+    played.
+
+    ``suspended_events`` is the ``suspended → live`` door's own read, which
+    reaches this band (see its query), so this arm adds no read of its own
+    unless a row is actually held. The decision is the same predicate as the
+    other two doors
+    (:func:`~app.utils.event_completion.statpal_names_a_later_session`: a venue
+    stamp, a StatPal id, no play, StatPal's start ahead and inside the band),
+    so the three cannot trade a row. The row gets the hold's stamp as the
+    demoted live row does, and ``scheduled → live`` revisits it from then on.
+
+    Two refusals the other doors do not need, because a suspended row can
+    carry an ending they cannot: a ``completed_at`` (a game-end time) and any
+    resolved market (:data:`HELD_SUSPENDED_RESOLVED_SQL`). Either keeps the row
+    where it is. Returns the ids moved.
+    """
+    from app.utils.espn_helpers import play_evidence
+    from app.utils.event_completion import (
+        stamp_statpal_later_session,
+        statpal_names_a_later_session,
+    )
+
+    stats["unsuspended_statpal_later_session"] = 0
+    # `getattr`: this runs over every row the door reads, and a row that does
+    # not carry a field is not a candidate.
+    unfinished = [
+        e for e in suspended_events if getattr(e, "completed_at", None) is None
+    ]
+    starts = await _statpal_later_session_starts(session, unfinished)
+    held = [
+        e for e in unfinished
+        if e.id in starts and statpal_names_a_later_session(
+            e.commence_time_source,
+            e.statpal_fixture_id,
+            play_evidence(e.home_score, e.away_score, e.period, e.game_clock),
+            e.commence_time,
+            starts[e.id],
+            now,
+        )
+    ]
+    if not held:
+        return set()
+
+    resolved = {
+        row.statpal_held_resolved_id
+        for row in (await session.execute(
+            text(HELD_SUSPENDED_RESOLVED_SQL),
+            {"event_ids": [e.id for e in held]},
+        )).all()
+    }
+    returned = set()
+    for event in held:
+        if event.id in resolved:
+            continue
+        event.status = "scheduled"
+        stamped = stamp_statpal_later_session(
+            event.win_probability_sources, starts[event.id]
+        )
+        if stamped is not event.win_probability_sources:
+            event.win_probability_sources = stamped
+        returned.add(event.id)
+        logger.info(
+            "#9588 returned event %s (%s vs %s) from suspended to scheduled: "
+            "StatPal fixture %s starts %s, after the venue stamp %s, and "
+            "nothing has reported play.",
+            event.id, event.home_team_name, event.away_team_name,
+            event.statpal_fixture_id, starts[event.id].isoformat(),
+            event.commence_time.isoformat(),
+        )
+    stats["unsuspended_statpal_later_session"] = len(returned)
+    return returned
+
+
 async def _transition_event_statuses_impl() -> dict:
     """Transition event statuses based on commence_time (zero API calls).
 
@@ -5192,6 +5290,7 @@ async def _transition_event_statuses_impl() -> dict:
         # narrower bound exists for, and the whole rule would read as correct
         # while suspending nothing. Queue 067's lesson, one function over: a
         # guard is not wired by being correct.
+
         min_max_hours = min(
             min(SPORT_MAX_DURATIONS.values()), min(UNOBSERVED_MAX_HOURS.values())
         )
@@ -5444,6 +5543,8 @@ async def _transition_event_statuses_impl() -> dict:
         # It is deliberately the SAME predicate and the SAME venue-price
         # exclusion, so a Kalshi tick cannot resume a match any more than it
         # could hold one.
+        from app.utils.event_completion import VENUE_STAMP_COMMENCE_SOURCES
+
         suspended_result = await session.execute(
             select(Event).where(
                 Event.status == EVENT_SUSPENDED,
@@ -5460,10 +5561,35 @@ async def _transition_event_statuses_impl() -> dict:
                 # The bound only limits the NON-authority path. An anchored row
                 # — every US Open match, since lane1/057 — is reached by
                 # `espn_helpers` directly off its espn_id with no window at all.
-                Event.commence_time >= now - SUSPENDED_RESUME_WINDOW,
+                or_(
+                    Event.commence_time >= now - SUSPENDED_RESUME_WINDOW,
+                    # #9588: a venue-stamped StatPal row is read for the hold's
+                    # whole band, so the arm below can return it to
+                    # `scheduled` while its StatPal session is still ahead.
+                    # Only the return reaches these; the resume keeps 48h.
+                    and_(
+                        Event.commence_time >= now - STATPAL_LATER_SESSION_HORIZON,
+                        Event.statpal_fixture_id.isnot(None),
+                        Event.commence_time_source.in_(
+                            sorted(VENUE_STAMP_COMMENCE_SOURCES)
+                        ),
+                    ),
+                ),
             )
         )
         suspended_events = suspended_result.scalars().all()
+
+        # #9588: a suspended row StatPal puts in a later session is a match
+        # nobody has played yet. It goes back to `scheduled` and never reaches
+        # the resume loop below, which keeps its own 48h window.
+        returned_ids = await _return_held_suspended_rows(
+            session, suspended_events, now, stats
+        )
+        suspended_events = [
+            e for e in suspended_events
+            if e.id not in returned_ids
+            and e.commence_time >= now - SUSPENDED_RESUME_WINDOW
+        ]
 
         if suspended_events:
             resume_snaps = {
