@@ -1,0 +1,784 @@
+{
+ "captured_at": "2026-09-30T19:19:40Z",
+ "event_id": 15321782,
+ "source": "GET /api/events/15321782/game-markets props_script",
+ "props_script": [
+  {
+   "key": "Brandon Marsh: Total Bases O/U 2.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.915,
+   "current": 0.915,
+   "settled": false
+  },
+  {
+   "key": "Brandon Marsh: Total Bases O/U 3.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.94,
+   "current": 0.94,
+   "settled": false
+  },
+  {
+   "key": "Brandon Marsh: Total Bases O/U 2.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.085,
+   "current": 0.085,
+   "settled": false
+  },
+  {
+   "key": "Brandon Marsh: Total Bases O/U 3.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.06,
+   "current": 0.06,
+   "settled": false
+  },
+  {
+   "key": "Philadelphia vs Atlanta: Extra Innings|Yes",
+   "label": "Yes",
+   "pregame_mark": 0.115,
+   "current": 0.14,
+   "settled": false
+  },
+  {
+   "key": "Kyle Schwarber: Home Runs O/U 0.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.775,
+   "current": 0.775,
+   "settled": false
+  },
+  {
+   "key": "Kyle Schwarber: Home Runs O/U 0.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.225,
+   "current": 0.225,
+   "settled": false
+  },
+  {
+   "key": "Bryce Harper: Hits + Runs + RBIs O/U 3.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.89,
+   "current": 0.89,
+   "settled": false
+  },
+  {
+   "key": "Bryce Harper: Hits + Runs + RBIs O/U 4.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.925,
+   "current": 0.925,
+   "settled": false
+  },
+  {
+   "key": "Bryce Harper: Hits + Runs + RBIs O/U 3.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.11,
+   "current": 0.11,
+   "settled": false
+  },
+  {
+   "key": "Bryce Harper: Hits + Runs + RBIs O/U 4.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.075,
+   "current": 0.075,
+   "settled": false
+  },
+  {
+   "key": "Brandon Marsh: Hits + Runs + RBIs O/U 3.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.93,
+   "current": 0.93,
+   "settled": false
+  },
+  {
+   "key": "Brandon Marsh: Hits + Runs + RBIs O/U 3.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.07,
+   "current": 0.07,
+   "settled": false
+  },
+  {
+   "key": "Matt Olson: Hits + Runs + RBIs O/U 3.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.91,
+   "current": 0.91,
+   "settled": false
+  },
+  {
+   "key": "Matt Olson: Hits + Runs + RBIs O/U 4.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.935,
+   "current": 0.935,
+   "settled": false
+  },
+  {
+   "key": "Matt Olson: Hits + Runs + RBIs O/U 3.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.09,
+   "current": 0.09,
+   "settled": false
+  },
+  {
+   "key": "Matt Olson: Hits + Runs + RBIs O/U 4.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.065,
+   "current": 0.065,
+   "settled": false
+  },
+  {
+   "key": "Ozzie Albies: Hits + Runs + RBIs O/U 3.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.92,
+   "current": 0.92,
+   "settled": false
+  },
+  {
+   "key": "Ozzie Albies: Hits + Runs + RBIs O/U 4.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.945,
+   "current": 0.945,
+   "settled": false
+  },
+  {
+   "key": "Ozzie Albies: Hits + Runs + RBIs O/U 3.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.08,
+   "current": 0.08,
+   "settled": false
+  },
+  {
+   "key": "Ozzie Albies: Hits + Runs + RBIs O/U 4.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.055,
+   "current": 0.055,
+   "settled": false
+  },
+  {
+   "key": "Ronald Acu\u00f1a Jr.: Hits + Runs + RBIs O/U 3.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.91,
+   "current": 0.91,
+   "settled": false
+  },
+  {
+   "key": "Ronald Acu\u00f1a Jr.: Hits + Runs + RBIs O/U 4.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.945,
+   "current": 0.945,
+   "settled": false
+  },
+  {
+   "key": "Ronald Acu\u00f1a Jr.: Hits + Runs + RBIs O/U 3.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.09,
+   "current": 0.09,
+   "settled": false
+  },
+  {
+   "key": "Ronald Acu\u00f1a Jr.: Hits + Runs + RBIs O/U 4.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.055,
+   "current": 0.055,
+   "settled": false
+  },
+  {
+   "key": "Trea Turner: Hits + Runs + RBIs O/U 3.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.905,
+   "current": 0.905,
+   "settled": false
+  },
+  {
+   "key": "Trea Turner: Hits + Runs + RBIs O/U 4.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.935,
+   "current": 0.935,
+   "settled": false
+  },
+  {
+   "key": "Trea Turner: Hits + Runs + RBIs O/U 3.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.095,
+   "current": 0.095,
+   "settled": false
+  },
+  {
+   "key": "Trea Turner: Hits + Runs + RBIs O/U 4.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.065,
+   "current": 0.065,
+   "settled": false
+  },
+  {
+   "key": "Brandon Marsh: Hits O/U 1.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.91,
+   "current": 0.91,
+   "settled": false
+  },
+  {
+   "key": "Brandon Marsh: Hits O/U 1.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.09,
+   "current": 0.09,
+   "settled": false
+  },
+  {
+   "key": "Trea Turner: Total Bases O/U 2.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.895,
+   "current": 0.895,
+   "settled": false
+  },
+  {
+   "key": "Trea Turner: Total Bases O/U 3.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.895,
+   "current": 0.895,
+   "settled": false
+  },
+  {
+   "key": "Trea Turner: Total Bases O/U 4.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.95,
+   "current": 0.95,
+   "settled": false
+  },
+  {
+   "key": "Trea Turner: Total Bases O/U 2.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.105,
+   "current": 0.105,
+   "settled": false
+  },
+  {
+   "key": "Trea Turner: Total Bases O/U 3.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.105,
+   "current": 0.105,
+   "settled": false
+  },
+  {
+   "key": "Trea Turner: Total Bases O/U 4.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.05,
+   "current": 0.05,
+   "settled": false
+  },
+  {
+   "key": "Trea Turner: Home Runs O/U 0.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.95,
+   "current": 0.945,
+   "settled": false
+  },
+  {
+   "key": "Trea Turner: Home Runs O/U 0.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.05,
+   "current": 0.055,
+   "settled": false
+  },
+  {
+   "key": "Bryce Harper: Total Bases O/U 3.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.89,
+   "current": 0.89,
+   "settled": false
+  },
+  {
+   "key": "Bryce Harper: Total Bases O/U 4.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.94,
+   "current": 0.945,
+   "settled": false
+  },
+  {
+   "key": "Bryce Harper: Total Bases O/U 3.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.11,
+   "current": 0.11,
+   "settled": false
+  },
+  {
+   "key": "Bryce Harper: Total Bases O/U 4.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.06,
+   "current": 0.055,
+   "settled": false
+  },
+  {
+   "key": "Ozzie Albies: Total Bases O/U 2.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.89,
+   "current": 0.89,
+   "settled": false
+  },
+  {
+   "key": "Ozzie Albies: Total Bases O/U 3.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.915,
+   "current": 0.915,
+   "settled": false
+  },
+  {
+   "key": "Ozzie Albies: Total Bases O/U 4.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.93,
+   "current": 0.93,
+   "settled": false
+  },
+  {
+   "key": "Ozzie Albies: Total Bases O/U 2.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.11,
+   "current": 0.11,
+   "settled": false
+  },
+  {
+   "key": "Ozzie Albies: Total Bases O/U 3.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.085,
+   "current": 0.085,
+   "settled": false
+  },
+  {
+   "key": "Ozzie Albies: Total Bases O/U 4.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.07,
+   "current": 0.07,
+   "settled": false
+  },
+  {
+   "key": "Ronald Acu\u00f1a Jr.: Total Bases O/U 3.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.91,
+   "current": 0.91,
+   "settled": false
+  },
+  {
+   "key": "Ronald Acu\u00f1a Jr.: Total Bases O/U 4.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.93,
+   "current": 0.93,
+   "settled": false
+  },
+  {
+   "key": "Ronald Acu\u00f1a Jr.: Total Bases O/U 3.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.09,
+   "current": 0.09,
+   "settled": false
+  },
+  {
+   "key": "Ronald Acu\u00f1a Jr.: Total Bases O/U 4.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.07,
+   "current": 0.07,
+   "settled": false
+  },
+  {
+   "key": "Bryce Harper: Home Runs O/U 0.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.91,
+   "current": 0.9,
+   "settled": false
+  },
+  {
+   "key": "Bryce Harper: Home Runs O/U 0.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.09,
+   "current": 0.09,
+   "settled": false
+  },
+  {
+   "key": "Tyler Mahle: Strikeouts O/U 5.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.765,
+   "current": 0.765,
+   "settled": false
+  },
+  {
+   "key": "Tyler Mahle: Strikeouts O/U 6.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.92,
+   "current": 0.92,
+   "settled": false
+  },
+  {
+   "key": "Tyler Mahle: Strikeouts O/U 7.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.95,
+   "current": 0.95,
+   "settled": false
+  },
+  {
+   "key": "Tyler Mahle: Strikeouts O/U 11.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.945,
+   "current": 0.95,
+   "settled": false
+  },
+  {
+   "key": "Tyler Mahle: Strikeouts O/U 5.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.235,
+   "current": 0.235,
+   "settled": false
+  },
+  {
+   "key": "Tyler Mahle: Strikeouts O/U 6.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.08,
+   "current": 0.08,
+   "settled": false
+  },
+  {
+   "key": "Tyler Mahle: Strikeouts O/U 7.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.05,
+   "current": 0.05,
+   "settled": false
+  },
+  {
+   "key": "Tyler Mahle: Strikeouts O/U 11.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.055,
+   "current": 0.05,
+   "settled": false
+  },
+  {
+   "key": "Bryson Stott: Home Runs O/U 0.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.95,
+   "current": 0.945,
+   "settled": false
+  },
+  {
+   "key": "Bryson Stott: Home Runs O/U 0.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.05,
+   "current": 0.055,
+   "settled": false
+  },
+  {
+   "key": "Trea Turner: Hits O/U 0.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.685,
+   "current": 0.685,
+   "settled": false
+  },
+  {
+   "key": "Trea Turner: Hits O/U 2.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.06,
+   "current": 0.06,
+   "settled": false
+  },
+  {
+   "key": "Trea Turner: Hits O/U 0.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.315,
+   "current": 0.315,
+   "settled": false
+  },
+  {
+   "key": "Trea Turner: Hits O/U 2.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.94,
+   "current": 0.94,
+   "settled": false
+  },
+  {
+   "key": "Kyle Schwarber: Hits + Runs + RBIs O/U 4.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.915,
+   "current": 0.915,
+   "settled": false
+  },
+  {
+   "key": "Kyle Schwarber: Hits + Runs + RBIs O/U 4.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.085,
+   "current": 0.085,
+   "settled": false
+  },
+  {
+   "key": "Will the game go to extra innings?: Philadelphia Phillies vs. Atlanta Braves|No",
+   "label": "No",
+   "pregame_mark": 0.88,
+   "current": 0.93,
+   "settled": false
+  },
+  {
+   "key": "Will the game go to extra innings?: Philadelphia Phillies vs. Atlanta Braves|Yes",
+   "label": "Yes",
+   "pregame_mark": 0.12,
+   "current": 0.07,
+   "settled": false
+  },
+  {
+   "key": "Drake Baldwin: Total Bases O/U 2.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.89,
+   "current": 0.89,
+   "settled": false
+  },
+  {
+   "key": "Drake Baldwin: Total Bases O/U 3.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.91,
+   "current": 0.93,
+   "settled": false
+  },
+  {
+   "key": "Drake Baldwin: Total Bases O/U 2.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.11,
+   "current": 0.11,
+   "settled": false
+  },
+  {
+   "key": "Drake Baldwin: Total Bases O/U 3.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.09,
+   "current": 0.07,
+   "settled": false
+  },
+  {
+   "key": "Drake Baldwin: Hits + Runs + RBIs O/U 3.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.91,
+   "current": 0.91,
+   "settled": false
+  },
+  {
+   "key": "Drake Baldwin: Hits + Runs + RBIs O/U 4.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.94,
+   "current": 0.94,
+   "settled": false
+  },
+  {
+   "key": "Drake Baldwin: Hits + Runs + RBIs O/U 3.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.09,
+   "current": 0.09,
+   "settled": false
+  },
+  {
+   "key": "Drake Baldwin: Hits + Runs + RBIs O/U 4.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.06,
+   "current": 0.06,
+   "settled": false
+  },
+  {
+   "key": "Ronald Acu\u00f1a Jr.: Home Runs O/U 0.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.93,
+   "current": 0.92,
+   "settled": false
+  },
+  {
+   "key": "Ronald Acu\u00f1a Jr.: Home Runs O/U 0.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.07,
+   "current": 0.08,
+   "settled": false
+  },
+  {
+   "key": "Kyle Schwarber: Total Bases O/U 4.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.93,
+   "current": 0.93,
+   "settled": false
+  },
+  {
+   "key": "Kyle Schwarber: Total Bases O/U 5.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.935,
+   "current": 0.935,
+   "settled": false
+  },
+  {
+   "key": "Kyle Schwarber: Total Bases O/U 4.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.07,
+   "current": 0.07,
+   "settled": false
+  },
+  {
+   "key": "Kyle Schwarber: Total Bases O/U 5.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.065,
+   "current": 0.065,
+   "settled": false
+  },
+  {
+   "key": "Cristopher S\u00e1nchez: Strikeouts O/U 5.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.555,
+   "current": 0.555,
+   "settled": false
+  },
+  {
+   "key": "Cristopher S\u00e1nchez: Strikeouts O/U 6.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.42,
+   "current": 0.45,
+   "settled": false
+  },
+  {
+   "key": "Cristopher S\u00e1nchez: Strikeouts O/U 8.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.105,
+   "current": 0.105,
+   "settled": false
+  },
+  {
+   "key": "Cristopher S\u00e1nchez: Strikeouts O/U 9.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.06,
+   "current": 0.065,
+   "settled": false
+  },
+  {
+   "key": "Cristopher S\u00e1nchez: Strikeouts O/U 5.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.445,
+   "current": 0.445,
+   "settled": false
+  },
+  {
+   "key": "Cristopher S\u00e1nchez: Strikeouts O/U 6.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.58,
+   "current": 0.58,
+   "settled": false
+  },
+  {
+   "key": "Cristopher S\u00e1nchez: Strikeouts O/U 8.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.895,
+   "current": 0.895,
+   "settled": false
+  },
+  {
+   "key": "Cristopher S\u00e1nchez: Strikeouts O/U 9.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.94,
+   "current": 0.935,
+   "settled": false
+  },
+  {
+   "key": "Brandon Marsh: Home Runs O/U 0.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.95,
+   "current": 0.94,
+   "settled": false
+  },
+  {
+   "key": "Brandon Marsh: Home Runs O/U 0.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.05,
+   "current": 0.06,
+   "settled": false
+  },
+  {
+   "key": "Ozzie Albies: Home Runs O/U 0.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.905,
+   "current": 0.945,
+   "settled": false
+  },
+  {
+   "key": "Ozzie Albies: Home Runs O/U 0.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.095,
+   "current": 0.055,
+   "settled": false
+  },
+  {
+   "key": "Kyle Schwarber: Hits O/U 1.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.89,
+   "current": 0.89,
+   "settled": false
+  },
+  {
+   "key": "Kyle Schwarber: Hits O/U 1.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.11,
+   "current": 0.11,
+   "settled": false
+  },
+  {
+   "key": "Michael Harris II: Home Runs O/U 0.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.945,
+   "current": 0.93,
+   "settled": false
+  },
+  {
+   "key": "Michael Harris II: Home Runs O/U 0.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.055,
+   "current": 0.07,
+   "settled": false
+  },
+  {
+   "key": "Matt Olson: Total Bases O/U 3.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.91,
+   "current": 0.915,
+   "settled": false
+  },
+  {
+   "key": "Matt Olson: Total Bases O/U 3.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.09,
+   "current": 0.085,
+   "settled": false
+  },
+  {
+   "key": "Alec Bohm: Home Runs O/U 0.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.95,
+   "current": 0.95,
+   "settled": false
+  },
+  {
+   "key": "Alec Bohm: Home Runs O/U 0.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.05,
+   "current": 0.05,
+   "settled": false
+  },
+  {
+   "key": "Matt Olson: Home Runs O/U 0.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.93,
+   "current": 0.91,
+   "settled": false
+  },
+  {
+   "key": "Matt Olson: Home Runs O/U 0.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.07,
+   "current": 0.09,
+   "settled": false
+  },
+  {
+   "key": "Drake Baldwin: Home Runs O/U 0.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.95,
+   "current": 0.94,
+   "settled": false
+  },
+  {
+   "key": "Drake Baldwin: Home Runs O/U 0.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.05,
+   "current": 0.06,
+   "settled": false
+  }
+ ]
+}
