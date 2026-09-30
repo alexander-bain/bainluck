@@ -257,6 +257,8 @@ class TestOneIdentityOneDestination:
         assert card["edition"] == edition_for_slug(slug)
         assert card["destination"] == container_destination(slug)
         assert card["destination"]["api"] == f"/api/containers/{slug}"
+        # #9886: Search's entry opens the web hub, the same page a nested child opens.
+        assert card["destination"]["web"] == f"/collections/{slug}"
 
     @pytest.mark.parametrize(
         "fixture", ["representative_nfl_week.json", "representative_mlb_postseason.json"]

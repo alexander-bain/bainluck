@@ -499,7 +499,7 @@ async def test_nested_collections_are_destinations_only_when_published():
     kids = {c["slug"]: c for c in payload["children"]}
     assert set(kids) == {"nfl-2026-week-5", "nfl-2026-week-6"}  # withdrawn left out
     assert kids["nfl-2026-week-5"]["destination"]["api"] == "/api/containers/nfl-2026-week-5"
-    assert kids["nfl-2026-week-5"]["destination"]["web"] is None  # no hub web page yet
+    assert kids["nfl-2026-week-5"]["destination"]["web"] == "/collections/nfl-2026-week-5"
     assert kids["nfl-2026-week-6"]["destination"] is None
     assert kids["nfl-2026-week-5"]["edition"]["week"] == 5
     # The draw's member reaches the season hub, as the published read includes draws.
