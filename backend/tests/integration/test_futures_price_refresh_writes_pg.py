@@ -1687,3 +1687,84 @@ class TestAConditionTwinIsPricedWithItsSibling:
 
         assert await _prob(db, legs["parent_dodgers"].id) == pytest.approx(0.71)
         assert await _prob(db, legs["parent_yankees"].id) == pytest.approx(0.12)
+
+
+# ── #9543 — THE THRESHOLD LABEL, MERGED INTO JSONB ON REAL POSTGRES ──────────
+
+
+class TestTheThresholdLabelWriteOnPostgres9543:
+    """#9543 — `_KALSHI_THRESHOLD_LABEL_WRITE_SQL` on real Postgres via asyncpg.
+
+    The unit file pins the statement's shape; only Postgres can answer the
+    JSONB half: `||` keeps every other key, `COALESCE` turns a NULL into the one
+    key, the text bind survives twice, and a same-label rerun is zero writes.
+    """
+
+    async def test_the_label_merges_and_every_other_key_survives(self, db):
+        from sqlalchemy import text
+
+        from app.models.models import FuturesMarket
+        from app.tasks import futures_price_refresh as fpr
+
+        def _m(ext, meta, source=_BOOKMAKER):
+            return FuturesMarket(
+                source=source,
+                external_id=ext,
+                name=ext,
+                category="futures",
+                market_tier=2,
+                status="open",
+                market_metadata=meta,
+            )
+
+        poll_meta = {
+            "kalshi_event_ticker": "KXCOWAGE-2027",
+            "event_title": "Colombia minimum wage growth minus inflation in 2027",
+        }
+        specimen = _m("KXCOWAGE-2027", dict(poll_meta))
+        null_meta = _m("KXPOKEMON-26SEPCELULTPR", None)  # ORM stores JSON null
+        stale = _m("KXSTALE-27", {"threshold_label": "Above 3.00 pp", "x": 1})
+        other = _m("0xpoly", {"a": 1}, source="polymarket")
+        db.add_all([specimen, null_meta, stale, other])
+        await db.flush()
+
+        async def _write(mid, label):
+            return (
+                await db.execute(
+                    fpr._KALSHI_THRESHOLD_LABEL_WRITE_SQL,
+                    {"mid": mid, "label": label},
+                )
+            ).rowcount
+
+        assert await _write(specimen.id, "Above 4.00 pp") == 1
+        assert await _write(specimen.id, "Above 4.00 pp") == 0  # idempotent
+        assert await _write(null_meta.id, "Above $1237.81") == 1
+        assert await _write(stale.id, "Above 4.00 pp") == 1  # corrected
+        assert await _write(other.id, "Above 4.00 pp") == 0  # Kalshi only
+        await db.commit()
+
+        rows = dict(
+            (
+                await db.execute(
+                    text("SELECT external_id, market_metadata FROM futures_markets")
+                )
+            ).fetchall()
+        )
+        assert rows["KXCOWAGE-2027"] == {**poll_meta, "threshold_label": "Above 4.00 pp"}
+        assert rows["KXPOKEMON-26SEPCELULTPR"] == {"threshold_label": "Above $1237.81"}
+        assert rows["KXSTALE-27"] == {"threshold_label": "Above 4.00 pp", "x": 1}
+        assert rows["0xpoly"] == {"a": 1}
+
+        # SQL NULL, the other non-object shape, gains the one key too.
+        await db.execute(
+            text("UPDATE futures_markets SET market_metadata = NULL WHERE id = :i"),
+            {"i": null_meta.id},
+        )
+        assert await _write(null_meta.id, "Above $1237.81") == 1
+        got = (
+            await db.execute(
+                text("SELECT market_metadata FROM futures_markets WHERE id = :i"),
+                {"i": null_meta.id},
+            )
+        ).scalar()
+        assert got == {"threshold_label": "Above $1237.81"}

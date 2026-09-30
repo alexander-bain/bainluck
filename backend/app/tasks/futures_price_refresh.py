@@ -73,6 +73,22 @@ whose stored date is still the backstop (the resolution sweep's own
 date is never how this task decides a market is over). See
 :func:`_kalshi_window_to_write`.
 
+AND THE THRESHOLD LABEL, FROM THE SAME PAYLOAD (#9543). A one-market Kalshi
+threshold event keeps its stored outcome name ``Yes`` and the venue's own leg
+label ("Above $1237.81") rides in ``market_metadata.threshold_label`` (#9383),
+which the served-name sites print instead. Only the discovery poll wrote it, and
+the poll's main scan has not wrapped its cursor in 14 runs. Measured
+2026-09-30 03:3xZ: of 1,046 open single-``Yes`` Kalshi rows with no label, the
+poll rewrote **28** in 24 h while **382** took a fresh price snapshot, and
+``/futures/61461638`` (Colombia wage growth, ``KXCOWAGE-2027``) still read
+"Yes" on a row this task priced at 00:55Z. It now runs the poll's own
+:func:`app.utils.kalshi_threshold_label.single_leg_threshold_label` over the
+parsed event it already holds and writes a non-empty result that differs from
+the stored one. It only ever ADDS or corrects a label, never removes one: a
+``None`` here means "not a threshold leg" or "unreadable", and the poll's
+wholesale ``market_metadata`` rewrite stays the only path that drops one. See
+:data:`_KALSHI_THRESHOLD_LABEL_WRITE_SQL`.
+
 THREE ARMS, BECAUSE THERE ARE THREE KINDS OF WORTH REFRESHING
 --------------------------------------------------------------
 The sweep selects on **value** (volume above a floor at any tier, or tier 1
@@ -205,6 +221,10 @@ from app.utils.futures_liveness import (
 )
 from app.utils.futures_rank import rerank_market_field_stmt  # #6598 / CERT-3182
 from app.utils.kalshi_resolution_window import derive_resolution_window  # #8871
+from app.utils.kalshi_threshold_label import (  # #9543
+    THRESHOLD_LABEL_KEY,
+    single_leg_threshold_label,
+)
 from app.utils.polymarket_settlement_scan import GAMMA_EVENT_ID_EXPR
 
 logger = logging.getLogger(__name__)
@@ -1919,6 +1939,39 @@ _KALSHI_WINDOW_WRITE_SQL = text(
 )
 
 
+# --- the threshold label, off the same payload (#9543) ----------------------
+
+#: #9543. The venue's leg label for a one-market threshold event, merged into
+#: ``market_metadata`` under the key the poll writes (#9383).
+#:
+#: A MERGE (``||``), not an assignment: every other key on the row is the
+#: poll's and this statement must leave them byte-identical. The ``CASE`` is
+#: for the two non-object shapes a row can hold: SQL NULL (``NULL || x`` is
+#: NULL) and JSON ``null``, which is what the ORM stores for a Python ``None``
+#: and which ``COALESCE`` passes straight through, so ``null || x`` built the
+#: ARRAY ``[null, {...}]`` on the Postgres gate. Either becomes ``{}`` first.
+#: ``IS DISTINCT FROM`` makes the healthy case zero row writes.
+#: No ``status`` fence, unlike the window: a label is the venue's wording, not a
+#: state, and the fetch only fills it from a book the venue still lists. No
+#: ``status`` and no grade in the SET, and no path that removes the key.
+_KALSHI_THRESHOLD_LABEL_WRITE_SQL = text(
+    f"""
+    UPDATE futures_markets
+       SET market_metadata = CASE
+                                 WHEN jsonb_typeof(market_metadata) = 'object'
+                                 THEN market_metadata
+                                 ELSE '{{}}'::jsonb
+                             END
+                             || jsonb_build_object('{THRESHOLD_LABEL_KEY}',
+                                                   CAST(:label AS text))
+     WHERE id = :mid
+       AND source = 'kalshi'
+       AND (market_metadata ->> '{THRESHOLD_LABEL_KEY}')
+           IS DISTINCT FROM CAST(:label AS text)
+    """
+)
+
+
 def _kalshi_window_to_write(
     external_id: Optional[str], markets, now: datetime
 ) -> Optional[tuple[datetime, Optional[datetime]]]:
@@ -1960,7 +2013,11 @@ def _kalshi_window_to_write(
 
 
 async def _fetch_kalshi_prices(
-    service, external_id: str, *, windows: Optional[dict] = None
+    service,
+    external_id: str,
+    *,
+    windows: Optional[dict] = None,
+    labels: Optional[dict] = None,
 ):
     """Prices for one Kalshi event ticker.
 
@@ -2003,6 +2060,11 @@ async def _fetch_kalshi_prices(
     from the same payload — see :func:`_kalshi_window_to_write` (#8871). It is
     written only on the list return: a settled or unreadable event has no
     window this task may act on.
+
+    ``labels``, when passed, is filled with ``{external_id: label}`` for a
+    one-market threshold event (#9543), under the same list-return rule. A
+    ``None`` from the helper is simply not entered: nothing downstream may
+    read "no label this pass" as "remove the label".
 
     🔴 WHAT (2) COSTS A READER, measured on production 2026-09-12 22:2xZ. Of the
     24 events kicking off in the future whose stored Kalshi blend leg sat at
@@ -2077,6 +2139,20 @@ async def _fetch_kalshi_prices(
                 "futures_price_refresh: no resolution window for %s: %s",
                 external_id, exc,
             )
+
+    # #9543. Same payload, same rule: a failed label costs this read its label,
+    # never its prices or its date.
+    if labels is not None:
+        try:
+            label = single_leg_threshold_label(event.markets)
+        except Exception as exc:  # noqa: BLE001 — see the comment above
+            logger.warning(
+                "futures_price_refresh: no threshold label for %s: %s",
+                external_id, exc,
+            )
+        else:
+            if label:
+                labels[external_id] = label
 
     # #7747. Keyed by ticker off the RAW list, because the parsed object's own
     # `volume_24h` cannot answer this question — see `venue_volume_24h`. Built
@@ -3165,6 +3241,10 @@ async def _refresh_stale_futures_prices(
         # `ranks_rederived` is: the healthy case writes nothing, so "zero" and
         # "never asked" are the two states it exists to separate.
         "resolution_windows_rederived": 0,
+        # #9543. Kalshi one-market threshold rows whose venue leg label this
+        # pass added or corrected. Unconditional, including as zero, for the
+        # same reason as the two counters above.
+        "threshold_labels_written": 0,
         # #5869. THE LEG THIS PASS DECLINED TO PRICE — the third outcome, and the
         # one the summary could not express. `legs_retired` says "the venue quotes
         # nothing, so we withdrew ours"; `markets_priced` says "we wrote". A leg
@@ -3709,6 +3789,8 @@ async def _refresh_stale_futures_prices(
             # #8871. One dict for the pass, filled by the fetch from the payload
             # it already read and consumed after the price commit below.
             windows: dict = {}
+            # #9543. Filled the same way, consumed after the window write.
+            labels: dict = {}
             for market in kalshi_markets:
                 if time.monotonic() - started > _TIME_BUDGET_S:
                     stats["budget_hit"] = True
@@ -3716,7 +3798,10 @@ async def _refresh_stale_futures_prices(
                 _note_attempt(market)
                 try:
                     priced = await _fetch_kalshi_prices(
-                        kalshi_service, market["external_id"], windows=windows
+                        kalshi_service,
+                        market["external_id"],
+                        windows=windows,
+                        labels=labels,
                     )
                 except Exception as exc:
                     stats["errors"].append(f"kalshi {market['external_id']}: {exc}")
@@ -3868,6 +3953,28 @@ async def _refresh_stale_futures_prices(
                                 market["id"], market["external_id"],
                                 window[0].isoformat(),
                             )
+
+                # #9543, in its OWN transaction for the #8871 reason: a label
+                # is independent of both the price and the date, so a failed
+                # label write must not roll back either (gotcha #42).
+                label = labels.get(market["external_id"])
+                if label:
+                    try:
+                        _labelled = (
+                            await session.execute(
+                                _KALSHI_THRESHOLD_LABEL_WRITE_SQL,
+                                {"mid": market["id"], "label": label},
+                            )
+                        ).rowcount
+                        await session.commit()
+                    except Exception as exc:
+                        await session.rollback()
+                        stats["errors"].append(
+                            f"kalshi label {market['external_id']}: {exc}"
+                        )
+                    else:
+                        if _labelled:
+                            stats["threshold_labels_written"] += _labelled
 
                 # #4253, AFTER the write on purpose. The event read above
                 # proves the venue is reachable and this market is live, so
