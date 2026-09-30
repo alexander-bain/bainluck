@@ -136,6 +136,16 @@ final class FeedViewModel: ObservableObject {
         liveNow.contains { EventState.isSuspended($0.event?.status) }
     }
 
+    /// #9777 — what the tab bar's red "N live" badge counts: games being
+    /// PLAYED. Not `liveNow.count`: that bucket holds `suspended` on purpose so
+    /// the header can say "Live & Paused", and on 2026-09-30 its only row was a
+    /// fight labelled "No result reported" 9.5 h after its start — the badge
+    /// read "1 live" on every screen of the app with nothing live. The macOS
+    /// menu-bar poller already counts `status == "live"` alone.
+    static func tabBadgeLiveCount(_ items: [FeedItem]) -> Int {
+        items.filter { $0.event?.status == "live" }.count
+    }
+
     /// #6440 — the finished games this tab still shows, aged out on the SAME rule
     /// the web client uses.
     ///
@@ -270,7 +280,7 @@ final class FeedViewModel: ObservableObject {
             error = nil
             refreshFailed = false
             loading = false
-            liveCount = liveNow.count
+            liveCount = Self.tabBadgeLiveCount(items)
             // Stamp the immutable render token from THIS main response (L2-211 Item
             // 2 / C73): frozen generation + start + count, before any sibling merge
             // can change the live count. An empty main leaves it nil, so an
@@ -413,7 +423,7 @@ final class FeedViewModel: ObservableObject {
         if let backfill {
             items = mergeFeedItems(items, withNonLiveEventsFrom: backfill.items)
             total = max(total, items.count)
-            liveCount = liveNow.count
+            liveCount = Self.tabBadgeLiveCount(items)
             emit(.eventsBackfill, start: start, count: items.count, success: true)
         } else {
             emit(.eventsBackfill, start: start, count: items.count, success: false)
