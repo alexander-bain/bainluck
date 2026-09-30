@@ -13,12 +13,16 @@ The unit file drives the refusals with dicts. What the repair DOES is SQL:
 * and the ship: the #9617 league step (``team_linking._match_in_ticker_league``),
   given the teams as the table now holds them, refuses Kalshi's "Detroit" and
   "Portland" before the repair and binds each to the real club after it. The
-  search route's own Teams filter answers "pistons" and "clippers" with ONE club.
+  search route's own Teams filter answers "pistons" and "clippers" with ONE club;
+* and the writer fence: a second session linking a leg to a duplicate while
+  ``--apply`` runs waits and then fails its FK check (never lands on a club), or,
+  if it got there first, makes the run refuse — never an unreviewed move.
 
 Built narrow, in a private schema with the real foreign-key actions, so it runs
 on the lane VM's Postgres 14 as well as in CI.
 """
 
+import asyncio
 import importlib.util
 import json
 import os
@@ -28,6 +32,7 @@ from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError
 
 DB_URL = os.environ.get("SEARCH_TEST_DATABASE_URL")
 
@@ -441,3 +446,94 @@ async def test_a_failure_mid_apply_rolls_back_everything(gate, monkeypatch):
     # The repoint, the delete, the leg edits and two whole folds ran first; the
     # rollback undoes all of them.
     assert await _snapshot(gate) == before
+
+
+# ── The writer fence (CERT-3816 repair 6974-NBA-APPLY-WRITER-FENCE) ─────────────
+# Kalshi writes legs onto a duplicate while the repair runs. A second, real
+# session plays that writer.
+
+NEW_LEG = 69743698
+
+
+@pytest.fixture
+async def writer(gate):
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    engine = create_async_engine(
+        DB_URL, connect_args={"server_settings": {"search_path": _GATE_SCHEMA}}
+    )
+    maker = async_sessionmaker(engine, expire_on_commit=False)
+    async with maker() as w:
+        yield w
+        await w.rollback()
+    await engine.dispose()
+
+
+def _link_new_leg(team_id):
+    return text(
+        "INSERT INTO futures_outcomes (id, market_id, external_id, name, team_id) VALUES "
+        f"({NEW_LEG}, 1, 'race', 'Cade Cunningham', {team_id})"
+    )
+
+
+async def test_a_writer_linking_a_duplicate_mid_apply_waits_and_never_lands(gate, writer, monkeypatch):
+    # The window the cert named: past validation, before the bank. The writer
+    # must WAIT on the frozen duplicate, then fail its FK check once it is gone.
+    real_bank = m._bank
+    seen = {}
+
+    async def bank_with_a_racing_writer(session):
+        async def link():
+            await writer.execute(_link_new_leg(DETROIT))
+            await writer.commit()
+
+        seen["task"] = asyncio.create_task(link())
+        await asyncio.sleep(0.5)
+        seen["waiting"] = not seen["task"].done()
+        await real_bank(session)
+
+    monkeypatch.setattr(m, "_bank", bank_with_a_racing_writer)
+    code, lines = await m.repair(gate, "apply")
+    assert code == 0, lines
+    assert seen["waiting"], "the writer's link went through while the run held the duplicate"
+    with pytest.raises(IntegrityError, match="foreign key"):
+        await seen["task"]
+    await writer.rollback()
+    assert await _scalar(gate, f"SELECT count(*) FROM futures_outcomes WHERE id = {NEW_LEG}") == 0
+    assert await _scalar(
+        gate, f"SELECT count(*) FROM {m.BACKUP_REFS} WHERE row_id = {NEW_LEG}"
+    ) == 0
+
+
+async def test_a_writer_that_got_there_first_makes_the_run_wait_then_refuse(gate, writer):
+    # The writer's link is in flight (uncommitted) when --apply starts. The run
+    # waits for it, sees it, and refuses on the pinned count — it does not fold it.
+    await writer.execute(_link_new_leg(DETROIT))
+    run = asyncio.create_task(m.repair(gate, "apply"))
+    await asyncio.sleep(0.5)
+    assert not run.done(), "the run read the population without waiting for the writer"
+    await writer.commit()
+    code, lines = await run
+    assert code == 2, lines
+    assert "population moved" in lines[-1] and "futures_outcomes.team_id 4" in lines[-1]
+    await gate.rollback()
+    assert await _team_of(gate, NEW_LEG) == DETROIT
+    assert await _scalar(gate, f"SELECT count(*) FROM teams WHERE id = {DETROIT}") == 1
+    assert await _scalar(gate, "SELECT to_regclass(:t)", t=m.BACKUP_TEAMS) is None
+
+
+async def test_a_writer_that_never_lets_go_makes_the_run_refuse(gate, writer, monkeypatch):
+    monkeypatch.setattr(m, "LOCK_TIMEOUT", "300ms")
+    before = await _snapshot(gate)
+    await gate.rollback()
+    await writer.execute(_link_new_leg(DETROIT))
+    # Bounded here too, so a run with no bound fails this test instead of hanging it.
+    run = asyncio.create_task(m.repair(gate, "apply"))
+    done, _ = await asyncio.wait({run}, timeout=5)
+    await writer.rollback()
+    code, lines = await run
+    assert run in done, "the run waited on the writer with no bound"
+    assert code == 2, lines
+    assert "could not freeze" in lines[-1]
+    assert await _snapshot(gate) == before
+    assert await _scalar(gate, "SELECT to_regclass(:t)", t=m.BACKUP_TEAMS) is None

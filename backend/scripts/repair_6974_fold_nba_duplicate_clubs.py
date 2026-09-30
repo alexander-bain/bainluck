@@ -220,6 +220,10 @@ BACKUP_TEAMS = "backup_6974nba_teams"
 BACKUP_REFS = "backup_6974nba_refs"
 BACKUP_MAPPINGS = "backup_6974nba_mappings"
 
+#: How long ``--apply`` waits to freeze its rows before it refuses. A writer that
+#: holds one of them longer is a writer the run must not race.
+LOCK_TIMEOUT = "10s"
+
 
 def all_team_ids() -> list[int]:
     ids = {f.dup_id for f in FOLDS} | {f.canon_id for f in FOLDS}
@@ -312,6 +316,42 @@ def counts_refusal(counts: dict[int, tuple[int, ...]]) -> str | None:
             ]
             drift.append(f"{f.dup_id} {f.dup_name!r}: " + ", ".join(moved))
     return "population moved — " + "; ".join(drift) if drift else None
+
+
+async def _fence(session) -> None:
+    """Freeze the population BEFORE it is read, for the life of the transaction.
+
+    Kalshi writes player legs onto ``12719`` while this runs. Without a lock, a leg
+    committed after ``_counts()`` rides the fold unreviewed — or, after ``_bank()``,
+    moves with no restore receipt — and every postcondition still passes.
+
+    * The duplicates, ``FOR UPDATE``. Every write that points a row at a team takes
+      ``FOR KEY SHARE`` on it through its foreign-key check, so a writer naming a
+      duplicate WAITS. After the commit the duplicate is gone and its write fails
+      its FK check; it never lands on a club. A write that committed before the
+      lock is visible to the reads below, and the pinned counts refuse it.
+    * The clubs and targets, ``FOR SHARE``: their names cannot change under the
+      run, and links onto them (``FOR KEY SHARE``) still go through.
+    * The pinned legs and mappings, ``FOR UPDATE``.
+
+    A lock not granted within ``LOCK_TIMEOUT`` raises; ``repair`` refuses.
+    """
+    await session.execute(text(f"SET LOCAL lock_timeout = '{LOCK_TIMEOUT}'"))
+    dups = sorted({f.dup_id for f in FOLDS})
+    others = sorted(set(all_team_ids()) - set(dups))
+    for sql, ids in (
+        ("SELECT id FROM teams WHERE id = ANY(:ids) ORDER BY id FOR UPDATE", dups),
+        ("SELECT id FROM teams WHERE id = ANY(:ids) ORDER BY id FOR SHARE", others),
+        (
+            "SELECT id FROM futures_outcomes WHERE id = ANY(:ids) ORDER BY id FOR UPDATE",
+            sorted(g.outcome_id for g in LEG_EDITS),
+        ),
+        (
+            "SELECT id FROM team_identity_mapping WHERE id = ANY(:ids) ORDER BY id FOR UPDATE",
+            sorted([e.mapping_id for e in MAPPING_EDITS] + deleted_ids()),
+        ),
+    ):
+        await session.execute(text(sql), {"ids": ids})
 
 
 async def _read_rows(session) -> dict[int, dict]:
@@ -615,6 +655,13 @@ async def repair(session, mode: str) -> tuple[int, list[str]]:
         )
         return 0, out
 
+    if mode == "apply":
+        try:
+            await _fence(session)
+        except Exception as exc:
+            await session.rollback()
+            out.append(f"REFUSED: could not freeze the rows within {LOCK_TIMEOUT} — {exc}")
+            return 2, out
     rows = await _read_rows(session)
     if all(f.dup_id not in rows for f in FOLDS) and await _backup_exists(session):
         out.append(f"already applied: every duplicate is gone and {BACKUP_TEAMS} holds them.")
