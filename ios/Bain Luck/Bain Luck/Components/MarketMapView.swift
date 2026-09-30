@@ -188,6 +188,14 @@ struct MarketMapView: View {
     private var scoredPace: GameMarketPace? {
         vocab.scoreboardCountsTheUnit ? gameMarkets.pace : nil
     }
+    /// #9708 — the live ACTUAL + PROJECTED pair draws only on a pace with
+    /// standing against the header's score (``LivePaceStanding``): a scoreless
+    /// 0 projects nothing, and a pace from an older score would put an ACTUAL
+    /// on this rail that the header above it contradicts. Both readers (the
+    /// markers and the empty-chrome predicate) take it from here.
+    private var liveProjection: (projected: Double, scored: Int)? {
+        LivePaceStanding.projection(scoredPace, scoreboardHome: homeScore, scoreboardAway: awayScore)
+    }
 
     /// The sentence a suppressed map owes the reader, once the match is under
     /// way and the missing tile would otherwise be conspicuous.
@@ -603,7 +611,7 @@ struct MarketMapView: View {
             isDone: isDone,
             hasScoreboardTotal: scoreboardIsComparable
                 && scoredHomeScore != nil && scoredAwayScore != nil,
-            hasProjectedTotal: scoreboardIsComparable && scoredPace?.projectedTotal != nil
+            hasProjectedTotal: scoreboardIsComparable && liveProjection != nil
         )
     }
 
@@ -714,7 +722,7 @@ struct MarketMapView: View {
             if scoreboardIsComparable,
                let homeScoreValue = scoredHomeScore,
                let awayScoreValue = scoredAwayScore,
-               let pace = scoredPace, let proj = pace.projectedTotal {
+               let proj = liveProjection?.projected {
                 let totalScore = homeScoreValue + awayScoreValue
                 markers.append(MapMarker(id: "actual", value: Double(totalScore), type: .actual, label: "ACTUAL", displayValue: "\(totalScore)"))
                 markers.append(MapMarker(id: "proj", value: proj, type: .proj, label: "PROJECTED", displayValue: "\(Int(proj.rounded()))"))
