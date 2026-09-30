@@ -23,7 +23,9 @@ from app.services.database import get_db, get_db_rw
 from app.utils.series_card_labels import market_threshold_label, reader_outcome_name
 from app.utils.market_team_sport import (
     link_crosses_gender as _link_crosses_gender,
+    link_crosses_league as _link_crosses_league,
     link_crosses_sport as _link_crosses_sport,
+    market_event_slug as _market_event_slug,
     sport_key_llm_category as _sport_key_llm_category,
 )
 from app.utils.name_normalization import names_match as _names_match
@@ -1661,6 +1663,14 @@ async def _query_team_futures(
         # English Premier League Champion) and the men's page listed the UEFA
         # Women's Champions League Winner. Every branch below asks
         # `_crosses_side` before it claims a team.
+        # #9761 — NOR IS A SPORT CATEGORY A LEAGUE. NFL and college football are
+        # both `football`, so a player still on a college roster carried his NFL
+        # props onto the school: LSU listed Mansoor Delane's "Pro Football: AP
+        # Defensive Rookie of the Year" after the linker had unbound the leg, and
+        # Notre Dame the NFL rookie board by Jeremiyah Love's name. The league
+        # the market's own venue id names (Kalshi series, Polymarket event slug)
+        # is the championship path's refusal and the linker's; it joins the side
+        # test here, so every branch asks it.
         def _crosses_side(team_id: int) -> bool:
             return _link_crosses_gender(
                 market.name,
@@ -1668,6 +1678,11 @@ async def _query_team_futures(
                 market_sport_key,
                 getattr(market, "source", None),
                 getattr(market, "external_id", None),
+            ) or _link_crosses_league(
+                getattr(market, "source", None),
+                getattr(market, "external_id", None),
+                team_sport_keys.get(team_id),
+                _market_event_slug(getattr(market, "market_metadata", None)),
             )
 
         canonical_id = id_to_canonical.get(outcome.team_id) if outcome.team_id else None
