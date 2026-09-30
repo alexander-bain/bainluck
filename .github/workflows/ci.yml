@@ -3290,6 +3290,22 @@ jobs:
             exit 1
           fi
 
+      - name: "#9653 collection discovery offers only eligible published hubs (real Postgres)"
+        # The discovery producer's eligibility filters live in ONE aggregate
+        # statement so an ineligible row cannot spend the LIMIT. A session
+        # double agrees with whatever SQL was built; only a server shows that
+        # unpublished/withdrawn/nested/empty/wrong-edition rows are excluded,
+        # a deleted member is not counted, and the array binds work (the
+        # local run caught `week-09` spending the only LIMIT slot).
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_container_discovery_real_postgres.py \
+            -v -s -rs 2>&1 | tee /tmp/discovery9653.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/discovery9653.txt; then
+            echo "::error::#9653 collection discovery SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#4229 Kalshi senate backfill moves the stored row (real Postgres)"
         # CERT-2372 blocked the classifier-only SHA because the diff made these
         # markets CLASSIFY as politics while every stored row stayed `hockey`:
