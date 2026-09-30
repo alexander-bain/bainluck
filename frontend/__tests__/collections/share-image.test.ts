@@ -5,6 +5,7 @@ import { ImageResponse } from "next/og";
 import Image from "@/app/collections/[slug]/opengraph-image";
 import { fetchCollection, parseCollection } from "@/lib/collections";
 import { accentFor } from "@/components/og/UnfurlCard";
+import { UNFURL_CACHE_MOVING } from "@/lib/unfurlImageCache";
 import { nflHub, mlbHub } from "./fixtures";
 
 const read = jest.mocked(fetchCollection);
@@ -22,7 +23,7 @@ describe("collection share image names its public edition without inventing a pr
       read.mockResolvedValue(hub);
       expect(await imageProps(fixture.slug)).toMatchObject({ title: hub.title, subtitle: hub.edition, rows: [], accent: accentFor(category), verdict: hub.note ?? "Explore games, results and related questions." });
     }
-    expect(response.mock.calls[0][1]).toEqual({ width: 1200, height: 630 });
+    expect(response.mock.calls[0][1]).toEqual({ width: 1200, height: 630, headers: { "cache-control": UNFURL_CACHE_MOVING } });
   });
   test("withdrawal drops the old name, edition and member facts", async () => {
     const raw = nflHub();

@@ -1,7 +1,6 @@
-jest.mock("@/components/collections/CollectionPageClient", () => ({ __esModule: true, default: () => null }));
 jest.mock("@/lib/collections", () => ({ ...jest.requireActual("@/lib/collections"), fetchCollection: jest.fn() }));
 
-import { generateMetadata } from "@/app/collections/[slug]/page";
+import { generateMetadata } from "@/app/collections/[slug]/layout";
 import { fetchCollection, parseCollection } from "@/lib/collections";
 import { nflHub } from "./fixtures";
 

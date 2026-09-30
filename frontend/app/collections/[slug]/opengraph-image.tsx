@@ -1,6 +1,7 @@
 import { ImageResponse } from "next/og";
 import { UnfurlCard, accentFor } from "@/components/og/UnfurlCard";
 import { fetchCollection } from "@/lib/collections";
+import { unfurlImageOptions } from "@/lib/unfurlImageCache";
 
 export const runtime = "edge";
 export const alt = "Bain Luck collection games and questions";
@@ -22,5 +23,6 @@ export default async function Image({ params }: { params: Promise<{ slug: string
       verdict = hub.note ?? "Explore games, results and related questions.";
     } else verdict = hub.note ?? verdict;
   } catch { /* an unavailable read makes no claim about existence */ }
-  return new ImageResponse(<UnfurlCard eyebrow="Collection" title={title} subtitle={subtitle} rows={[]} verdict={verdict} accent={accentFor(category)} />, size);
+  // Membership, publication and edition copy can change without a deploy.
+  return new ImageResponse(<UnfurlCard eyebrow="Collection" title={title} subtitle={subtitle} rows={[]} verdict={verdict} accent={accentFor(category)} />, unfurlImageOptions(size, "moving"));
 }
