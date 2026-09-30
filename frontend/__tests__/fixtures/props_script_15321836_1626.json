@@ -1,0 +1,412 @@
+{
+ "_source": "GET /api/events/15321836/game-markets props_script, banked 2026-09-30T22:25Z (#1626, CWS @ HOU live)",
+ "status": "live",
+ "props_script": [
+  {
+   "key": "Hunter Brown: Strikeouts O/U 5.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.43,
+   "current": 0.43,
+   "settled": false
+  },
+  {
+   "key": "Hunter Brown: Strikeouts O/U 6.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.555,
+   "current": 0.54,
+   "settled": false
+  },
+  {
+   "key": "Hunter Brown: Strikeouts O/U 7.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.725,
+   "current": 0.725,
+   "settled": false
+  },
+  {
+   "key": "Hunter Brown: Strikeouts O/U 8.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.89,
+   "current": 0.895,
+   "settled": false
+  },
+  {
+   "key": "Hunter Brown: Strikeouts O/U 9.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.93,
+   "current": 0.93,
+   "settled": false
+  },
+  {
+   "key": "Hunter Brown: Strikeouts O/U 5.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.57,
+   "current": 0.57,
+   "settled": false
+  },
+  {
+   "key": "Hunter Brown: Strikeouts O/U 6.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.445,
+   "current": 0.445,
+   "settled": false
+  },
+  {
+   "key": "Hunter Brown: Strikeouts O/U 7.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.275,
+   "current": 0.275,
+   "settled": false
+  },
+  {
+   "key": "Hunter Brown: Strikeouts O/U 8.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.11,
+   "current": 0.105,
+   "settled": false
+  },
+  {
+   "key": "Hunter Brown: Strikeouts O/U 9.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.07,
+   "current": 0.07,
+   "settled": false
+  },
+  {
+   "key": "Sean Burke: Strikeouts O/U 5.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.64,
+   "current": 0.64,
+   "settled": false
+  },
+  {
+   "key": "Sean Burke: Strikeouts O/U 6.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.795,
+   "current": 0.795,
+   "settled": false
+  },
+  {
+   "key": "Sean Burke: Strikeouts O/U 7.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.92,
+   "current": 0.92,
+   "settled": false
+  },
+  {
+   "key": "Sean Burke: Strikeouts O/U 10.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.9005,
+   "current": 0.92,
+   "settled": false
+  },
+  {
+   "key": "Sean Burke: Strikeouts O/U 11.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.9055,
+   "current": 0.92,
+   "settled": false
+  },
+  {
+   "key": "Sean Burke: Strikeouts O/U 5.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.4,
+   "current": 0.4,
+   "settled": false
+  },
+  {
+   "key": "Sean Burke: Strikeouts O/U 6.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.205,
+   "current": 0.205,
+   "settled": false
+  },
+  {
+   "key": "Sean Burke: Strikeouts O/U 7.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.08,
+   "current": 0.08,
+   "settled": false
+  },
+  {
+   "key": "Sean Burke: Strikeouts O/U 10.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.0995,
+   "current": 0.08,
+   "settled": false
+  },
+  {
+   "key": "Sean Burke: Strikeouts O/U 11.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.0945,
+   "current": 0.08,
+   "settled": false
+  },
+  {
+   "key": "Will the game go to extra innings?: Chicago White Sox vs. Houston Astros|No",
+   "label": "No",
+   "pregame_mark": 0.895,
+   "current": 0.89,
+   "settled": false
+  },
+  {
+   "key": "Will the game go to extra innings?: Chicago White Sox vs. Houston Astros|Yes",
+   "label": "Yes",
+   "pregame_mark": 0.105,
+   "current": 0.11,
+   "settled": false
+  },
+  {
+   "key": "Munetaka Murakami: Home Runs O/U 0.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.845,
+   "current": 0.845,
+   "settled": false
+  },
+  {
+   "key": "Munetaka Murakami: Home Runs O/U 0.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.155,
+   "current": 0.155,
+   "settled": false
+  },
+  {
+   "key": "Jose Altuve: Home Runs O/U 0.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.9,
+   "current": 0.905,
+   "settled": false
+  },
+  {
+   "key": "Jose Altuve: Home Runs O/U 0.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.1,
+   "current": 0.095,
+   "settled": false
+  },
+  {
+   "key": "Chicago White Sox vs Houston: Extra Innings|Yes",
+   "label": "Yes",
+   "pregame_mark": 0.11,
+   "current": 0.1,
+   "settled": false
+  },
+  {
+   "key": "Yordan Alvarez: Home Runs O/U 0.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.785,
+   "current": 0.785,
+   "settled": false
+  },
+  {
+   "key": "Yordan Alvarez: Home Runs O/U 0.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.22,
+   "current": 0.22,
+   "settled": false
+  },
+  {
+   "key": "Sean Burke: Earned Runs Allowed O/U 1.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.59,
+   "current": 0.59,
+   "settled": false
+  },
+  {
+   "key": "Sean Burke: Earned Runs Allowed O/U 2.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.425,
+   "current": 0.425,
+   "settled": false
+  },
+  {
+   "key": "Sean Burke: Earned Runs Allowed O/U 1.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.41,
+   "current": 0.41,
+   "settled": false
+  },
+  {
+   "key": "Sean Burke: Earned Runs Allowed O/U 2.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.575,
+   "current": 0.575,
+   "settled": false
+  },
+  {
+   "key": "Isaac Paredes: Home Runs O/U 0.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.875,
+   "current": 0.875,
+   "settled": false
+  },
+  {
+   "key": "Isaac Paredes: Home Runs O/U 0.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.125,
+   "current": 0.125,
+   "settled": false
+  },
+  {
+   "key": "Sean Burke: Hits Allowed O/U 4.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.575,
+   "current": 0.58,
+   "settled": false
+  },
+  {
+   "key": "Sean Burke: Hits Allowed O/U 4.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.425,
+   "current": 0.42,
+   "settled": false
+  },
+  {
+   "key": "Andrew Benintendi: Home Runs O/U 0.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.95,
+   "current": 0.95,
+   "settled": false
+  },
+  {
+   "key": "Andrew Benintendi: Home Runs O/U 0.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.05,
+   "current": 0.05,
+   "settled": false
+  },
+  {
+   "key": "Hunter Brown: Outs Recorded O/U 14.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.575,
+   "current": 0.575,
+   "settled": false
+  },
+  {
+   "key": "Hunter Brown: Outs Recorded O/U 14.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.425,
+   "current": 0.425,
+   "settled": false
+  },
+  {
+   "key": "Miguel Vargas: Home Runs O/U 0.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.925,
+   "current": 0.92,
+   "settled": false
+  },
+  {
+   "key": "Miguel Vargas: Home Runs O/U 0.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.075,
+   "current": 0.08,
+   "settled": false
+  },
+  {
+   "key": "Christian Walker: Home Runs O/U 0.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.83,
+   "current": 0.835,
+   "settled": false
+  },
+  {
+   "key": "Christian Walker: Home Runs O/U 0.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.17,
+   "current": 0.165,
+   "settled": false
+  },
+  {
+   "key": "Kyle Teel: Home Runs O/U 0.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.945,
+   "current": 0.945,
+   "settled": false
+  },
+  {
+   "key": "Kyle Teel: Home Runs O/U 0.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.055,
+   "current": 0.055,
+   "settled": false
+  },
+  {
+   "key": "Hunter Brown: Hits Allowed O/U 3.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.545,
+   "current": 0.545,
+   "settled": false
+  },
+  {
+   "key": "Hunter Brown: Hits Allowed O/U 3.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.455,
+   "current": 0.455,
+   "settled": false
+  },
+  {
+   "key": "Hunter Brown: Earned Runs Allowed O/U 1.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.51,
+   "current": 0.51,
+   "settled": false
+  },
+  {
+   "key": "Hunter Brown: Earned Runs Allowed O/U 1.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.49,
+   "current": 0.49,
+   "settled": false
+  },
+  {
+   "key": "Taylor Trammell: Home Runs O/U 0.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.94,
+   "current": 0.94,
+   "settled": false
+  },
+  {
+   "key": "Taylor Trammell: Home Runs O/U 0.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.06,
+   "current": 0.06,
+   "settled": false
+  },
+  {
+   "key": "Sean Burke: Outs Recorded O/U 14.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.555,
+   "current": 0.555,
+   "settled": false
+  },
+  {
+   "key": "Sean Burke: Outs Recorded O/U 14.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.445,
+   "current": 0.445,
+   "settled": false
+  },
+  {
+   "key": "Colson Montgomery: Home Runs O/U 0.5|Under",
+   "label": "Under",
+   "pregame_mark": 0.87,
+   "current": 0.875,
+   "settled": false
+  },
+  {
+   "key": "Colson Montgomery: Home Runs O/U 0.5|Over",
+   "label": "Over",
+   "pregame_mark": 0.13,
+   "current": 0.125,
+   "settled": false
+  },
+  {
+   "key": "Chicago WS vs Houston: First Inning Run|Yes",
+   "label": "Yes",
+   "pregame_mark": null,
+   "current": null,
+   "settled": true
+  }
+ ]
+}

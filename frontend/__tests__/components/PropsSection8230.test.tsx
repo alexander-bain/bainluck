@@ -153,13 +153,16 @@ describe("#8230 controls — both legs MUST survive", () => {
     expect(familyRows(render(pre, "script"), FRY)).toEqual(["Under | 94%", "Over | 6%"]);
   });
 
-  it("THE DIVERGENCE prints both sides", () => {
+  it("THE DIVERGENCE prints both sides of a pair that is not a complement", () => {
+    // #1626 made THE DIVERGENCE print one leg of a live complement pair (see
+    // PropsSection1626). A pair whose live legs do not sum to 1 is two numbers,
+    // and both stay.
     const live = SPECIMEN.map((m) => ({
       ...m,
       settled: false,
       graded_result: null,
       graded_label: null,
-      current: m.pregame_mark,
+      current: m.pregame_mark == null ? null : m.pregame_mark * 0.9,
     }));
     expect(familyRows(render(live, "divergence"), FRY)).toHaveLength(2);
   });

@@ -95,7 +95,10 @@ describe("#5296 THE DIVERGENCE's levels and its badge stop contradicting each ot
     expect(html).toContain("84%");
     // "17%" is what the independent rounding produced. The derived sibling is 16.
     expect(html).not.toContain("17%");
-    expect(html).toContain("16%");
+    // #1626: THE DIVERGENCE now prints one leg of a complement pair — the
+    // pregame favourite, `No` — so the derived sibling is no longer a row. The
+    // kept leg is still the contract-rounded one.
+    expect(html).not.toContain("16%");
   });
 
   test("SHIP: the OPENING pair stops summing to 101 as well", () => {
@@ -105,7 +108,8 @@ describe("#5296 THE DIVERGENCE's levels and its badge stop contradicting each ot
     // precisely so the "opened at" pair cannot be the one that is wrong.
     const html = divergence(HALF_POINT);
     expect(html).not.toContain("10% →");
-    expect(html).toContain("9% →");
+    // #1626: the kept leg is `Over` (the pregame favourite); its opening level.
+    expect(html).toContain("91% →");
   });
 
   test("SHIP: a half-point move prints no move, because both levels print 91%", () => {
@@ -130,7 +134,8 @@ describe("#5296 THE DIVERGENCE's levels and its badge stop contradicting each ot
     // base render this family has NO drawer at all — both rows sit in the moved
     // list — so the assertion is the drawer's existence, not the digit `2`, which
     // appears in the markup either way and would have been vacuous.
-    expect(divergence(HALF_POINT)).toContain("2 unchanged");
+    // #1626: one leg per complement pair now, so the drawer claims that one row.
+    expect(divergence(HALF_POINT)).toContain("1 unchanged");
   });
 
   // ── CONTROLS: states the code already got right, each named ────────────────
@@ -140,13 +145,15 @@ describe("#5296 THE DIVERGENCE's levels and its badge stop contradicting each ot
     // silenced real movement would pass every assertion above and be useless.
     const html = divergence(REAL_MOVE);
     expect(html).toContain("↑ 12");
-    expect(html).toContain("↓ 12");
+    // #1626: the `Under` leg (the same move, upside down) is no longer a row.
+    expect(html).not.toContain("↓ 12");
   });
 
-  test("CONTROL: a pair that really moved prints levels that still sum to 100", () => {
+  test("CONTROL: a pair that really moved prints the favourite's level", () => {
+    // #1626: one leg per complement pair — `Over`, which opened at 60%.
     const html = divergence(REAL_MOVE);
     expect(html).toContain("72%");
-    expect(html).toContain("28%");
+    expect(html).not.toContain("28%");
   });
 
   test("CONTROL: a NON-complement two-leg family keeps today's arithmetic exactly", () => {
