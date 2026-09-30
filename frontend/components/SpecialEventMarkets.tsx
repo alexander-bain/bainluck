@@ -32,6 +32,14 @@ interface SpecialEventMarketsProps {
    */
   venueSettled?: boolean;
   /**
+   * #9798: the venue closed this match with NO winner (`isVenueVoided`). Every
+   * leg was paid out at the void price — `is_winner=false` on both sides,
+   * probability 0.5 — so it is neither a grade nor a chance. Each card says
+   * "Void" once and its rows print their names only: no bar, no %, no verdict.
+   * Outranks `venueSettled` and `eventStatus`.
+   */
+  voided?: boolean;
+  /**
    * Sets already played out, for a match still in progress. The event page
    * passes it for tennis only; everything else leaves it undefined and no row
    * changes. See `buildMarketSection`'s `completedSets`.
@@ -164,13 +172,29 @@ function OutcomeBar({
    * its rows — see `PropMiniCard`.
    */
   showAge = false,
+  voided = false,
 }: {
   outcome: MarketCard["outcomes"][0];
   rank: number;
   /** #2086: the game is over, so this number is a frozen quote, not a chance. */
   settled: boolean;
   showAge?: boolean;
+  /** #9798: see `SpecialEventMarketsProps.voided`. The card says "Void". */
+  voided?: boolean;
 }) {
+  // #9798 — ABOVE EVERY OTHER BRANCH. On a voided match the row's grade is the
+  // void payout (`Lost` on both players) and its price is the 0.5 refund (a
+  // coin-flip that nobody is trading), so every branch below would print a
+  // claim the venue never made. The name stays; the card's "Void" says why
+  // the slot beside it is empty.
+  if (voided) {
+    return (
+      <div className="flex items-baseline gap-2 text-xs" data-testid="special-markets-voided-row">
+        <div className="flex-1 text-text-secondary">{outcome.label}</div>
+      </div>
+    );
+  }
+
   // #3867's ORIGINAL SURFACE. Alex filed the issue against these rows: on
   // `/events/15306225` the served 0.565 printed 56% and 0.145 printed 14% while
   // 0.585 and 0.615 printed 59% and 62%, one half rounding up and its neighbour
@@ -367,11 +391,14 @@ function PropMiniCard({
   item,
   settled,
   live,
+  voided = false,
 }: {
   item: MarketCard;
   settled: boolean;
   /** #4970: only a LIVE event's card can go quiet. See `SpecialEventMarkets`. */
   live: boolean;
+  /** #9798: see `SpecialEventMarketsProps.voided`. */
+  voided?: boolean;
 }) {
   const maxSourceCount = Math.max(...item.outcomes.map((o) => o.sourceCount ?? 1));
   const sourceCount =
@@ -422,7 +449,15 @@ function PropMiniCard({
         <div className="font-medium text-sm">{item.name}</div>
         <div className="flex items-center gap-2">
           <PriceAgeMark observedAt={cardStamp} scope="card" />
-          {sourceCount > 1 && (
+          {voided && (
+            <span
+              className="text-xs font-semibold text-text-muted"
+              data-testid="special-markets-void"
+            >
+              Void
+            </span>
+          )}
+          {!voided && sourceCount > 1 && (
             <span className="text-[10px] font-semibold text-blue-600">{sourceCount}x</span>
           )}
         </div>
@@ -435,6 +470,7 @@ function PropMiniCard({
             rank={i}
             settled={settled}
             showAge={live && !cardSpeaksForAll}
+            voided={voided}
           />
         ))}
       </div>
@@ -451,6 +487,7 @@ function PropMiniCard({
                 rank={1}
                 settled={settled}
                 showAge={live && !cardSpeaksForAll}
+                voided={voided}
               />
             ))}
           </div>
@@ -464,6 +501,7 @@ export default function SpecialEventMarkets({
   data,
   eventStatus,
   venueSettled = false,
+  voided = false,
   completedSets,
   decidedSetsWinner,
   setsWon,
@@ -507,7 +545,10 @@ export default function SpecialEventMarkets({
   // Harris) is `suspended`, so `isSettledStatus` is false, while its header read
   // "Settled · Harris wins" over an Exact Match Score card still drawing live
   // bars (59 / 20 / 19 / 2%) from quotes three hours old.
-  const settled = isSettledStatus(eventStatus) || venueSettled;
+  //
+  // #9798: NOT when the venue voided it. A void's legs are all `is_winner=false`
+  // at 0.5, and reading them as graded printed "Lost" on both players.
+  const settled = !voided && (isSettledStatus(eventStatus) || venueSettled);
 
   /* #4970: IS THE EVENT LIVE — not merely "not finished".
      `!settled` is the wrong test and the measurement says so. On the slate of
@@ -524,7 +565,7 @@ export default function SpecialEventMarkets({
      eleven-hour-old price under a rain delay is exactly what a reader wants
      told. An UNKNOWN status lands on pregame and draws nothing, which is the
      safe end for the same reason it is there. */
-  const live = !settled && !isPregameStatus(eventStatus);
+  const live = !voided && !settled && !isPregameStatus(eventStatus);
 
   if (section.categories.length === 0) return null;
 
@@ -636,7 +677,7 @@ export default function SpecialEventMarkets({
               )}
               <div className="space-y-3">
                 {shownCards.map((item) => (
-                  <PropMiniCard key={item.name} item={item} settled={settled} live={live} />
+                  <PropMiniCard key={item.name} item={item} settled={settled} live={live} voided={voided} />
                 ))}
                 {restCards.length > 0 && (
                   <details>
@@ -645,7 +686,7 @@ export default function SpecialEventMarkets({
                     </summary>
                     <div className="space-y-3 pt-3">
                       {restCards.map((item) => (
-                        <PropMiniCard key={item.name} item={item} settled={settled} live={live} />
+                        <PropMiniCard key={item.name} item={item} settled={settled} live={live} voided={voided} />
                       ))}
                     </div>
                   </details>

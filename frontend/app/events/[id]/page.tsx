@@ -130,6 +130,7 @@ import {
   startBadgeLabel,
   suspendedSummary,
   venueSettledSummary,
+  isVenueVoided,
   authorityStoppageDescription,
   scoresShowPlay,
 } from "@/lib/eventState";
@@ -542,6 +543,14 @@ export default function EventPage({ params }: EventPageProps) {
         event?.venue_closed_no_winner,
       )
     : null;
+
+  // #9798 — and whether that close was a VOID. Not `venueSettledSentence !==
+  // null`: the sentence is the same honest pill for both, but the market rows
+  // under it mean opposite things. A void pays every leg at the void price
+  // (`is_winner=false` on both sides, 0.5), so the settled reading printed
+  // "Lost" beside both players and the 0.5 read as a coin-flip price. The
+  // Additional Markets section says "Void" instead, and the maps stand down.
+  const venueVoided = isVenueVoided(event?.venue_settled, event?.venue_closed_no_winner);
 
   // #8810 — and the AUTHORITY'S word, when it reported the match stopped before
   // it could be played ("Postponed"). Same shape as #6381: beside `isSuspended`,
@@ -2958,7 +2967,7 @@ export default function EventPage({ params }: EventPageProps) {
                second reading of the same payload. `/events/15304382` held a
                fresh 2-1 games line and no game-total market, so the note sent
                the reader to a card that was not on the page. */
-            totalsMapPresent={totalsMapRenders(gameMarkets, event.status)}
+            totalsMapPresent={!venueVoided && totalsMapRenders(gameMarkets, event.status)}
             pmSpreadData={historyData?.pm_spread_data}
           />
         </div>
@@ -2971,7 +2980,10 @@ export default function EventPage({ params }: EventPageProps) {
       {/* Market Map cards — Margin Map + Total Map */}
       {/* #3240: the mount condition is shared with `totalsMapRenders` above, so
           the note's idea of what is on the page and the page cannot diverge. */}
-      {gameMarkets && marketMapSectionMounts(gameMarkets) && (
+      {/* #9798: not on a voided match. Every rung there is the void payout
+          (`Over 21.5 · 50%` on a match nobody played), and notice 34's remedy
+          for a number we cannot show honestly is the empty space. */}
+      {gameMarkets && !venueVoided && marketMapSectionMounts(gameMarkets) && (
         <SectionErrorBoundary label="The market maps" resetKey={gameMarkets}>
         <MarketMapSection
           gameMarkets={gameMarkets}
@@ -3123,7 +3135,10 @@ export default function EventPage({ params }: EventPageProps) {
                 eventStatus={event.status}
                 // #8816 — the page's ONE settled answer again (#6438's slot, the
                 // header pill): a graded `suspended` match freezes its props too.
-                venueSettled={venueSettledSentence !== null}
+                // #9798: a VOIDED one does not — its legs carry the void payout,
+                // not grades — so it goes in as `voided` and never as settled.
+                venueSettled={venueSettledSentence !== null && !venueVoided}
+                voided={venueVoided}
                 completedSets={completedSetsForTennis(event.sport, gameMarkets)}
                 decidedSetsWinner={decidedSetsWinnerFor(event.sport, gameMarkets)}
                 setsWon={tennisSetsWonFor(event.sport, gameMarkets)}
