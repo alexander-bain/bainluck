@@ -15,6 +15,8 @@ struct PinActionFeedback: Identifiable, Equatable {
     /// A save still in flight. The toast stays up until the outcome replaces it,
     /// so "Saving…" never quietly disappears into nothing (#9495).
     var isPending: Bool = false
+    var managementType: String? = nil
+    var managementAlertTitle: String = "Manage pins"
 }
 
 final class PinManager: ObservableObject {
@@ -24,21 +26,87 @@ final class PinManager: ObservableObject {
     /// Pins whose server save has not answered yet, keyed `type:id`.
     @Published private(set) var savingKeys: Set<String> = []
 
+    @Published private(set) var loadState: PinLoadState = .local
+    @Published private(set) var identityGeneration = UUID()
+    @Published var managementPresentation: PinManagementRequest?
+    private var pendingRemovals: Set<SavedPin> = []
+    private var binding = PinAccountBinding(userID: nil, authenticated: false)
+    private var usesAccountStorage = false
+    private var mutationRevision = 0
+    private var mutations: [SavedPin: (revision: Int, pinned: Bool)] = [:]
+    private var loadRequest = UUID()
+
+    var savedPins: [SavedPin] {
+        let events = pinnedEventIDs.map { SavedPin(type: "event", value: $0) }
+        let futures = pinnedFuturesIDs.map { SavedPin(type: "future", value: $0) }
+        return Set(events + futures).union(pendingRemovals).sorted {
+            $0.type == $1.type ? $0.value < $1.value : $0.type < $1.type
+        }
+    }
+
+    func presentManagement(type: String? = nil) {
+        managementPresentation = PinManagementRequest(focusType: type)
+        feedback = nil
+    }
+
+    /// Only the message being dismissed may clear; a newer message and an open
+    /// management destination are independent of this action.
+    func dismissFeedback(id: UUID) {
+        guard feedback?.id == id else { return }
+        feedback = nil
+    }
+
+    /// A remembered identity during restore is still that account, not a guest.
+    func bindAccount(_ next: PinAccountBinding) {
+        guard !usesAccountStorage || binding != next else { return }
+        usesAccountStorage = true
+        binding = next
+        isAuthenticated = next.authenticated
+        identityGeneration = UUID()
+        loadRequest = UUID()
+        mutationRevision += 1
+        savingKeys.removeAll()
+        pendingRemovals.removeAll()
+        mutations.removeAll()
+        feedback = nil
+        managementPresentation = nil
+        loadFromDefaults()
+        loadState = next.userID == nil ? .local : .loading
+    }
+
     static let maxPinsPerType = 6
 
     /// Writes one pin change to the server: `pinned` true adds, false removes.
     typealias ServerSync = (_ type: String, _ id: Int, _ pinned: Bool) async throws -> Void
 
-    private let eventsKey = "bainluck_pinnedEvents"
-    private let futuresKey = "bainluck_pinnedFutures"
+    private var eventsKey: String { storageKey("Events") }
+    private var futuresKey: String { storageKey("Futures") }
+    private func storageKey(_ suffix: String) -> String {
+        guard usesAccountStorage else { return "bainluck_pinned\(suffix)" }
+        return "bainluck_pins.\(binding.userID.map { "user.\($0)" } ?? "guest").\(suffix)"
+    }
     private let defaults: UserDefaults
     private let serverSync: ServerSync
+    private let serverLoad: () async throws -> PinsResponse
 
     /// Whether the user is authenticated (set externally).
     private(set) var isAuthenticated = false
 
-    init(defaults: UserDefaults = .standard, serverSync: ServerSync? = nil) {
+    init(defaults: UserDefaults = .standard, allowLegacyGuestPins: Bool = true, initialBinding: PinAccountBinding? = nil, serverLoad: (() async throws -> PinsResponse)? = nil, serverSync: ServerSync? = nil) {
         self.defaults = defaults
+        self.serverLoad = serverLoad ?? { try await APIClient.shared.fetchPins() }
+        // Build 32 shared these keys between guests and accounts. Import only
+        // on a device with no remembered account; account pins come from server.
+        if !defaults.bool(forKey: "bainluck_pins.guestMigrationDone") {
+            if allowLegacyGuestPins {
+                for suffix in ["Events", "Futures"] {
+                    if let data = defaults.data(forKey: "bainluck_pinned\(suffix)") {
+                        defaults.set(data, forKey: "bainluck_pins.guest.\(suffix)")
+                    }
+                }
+            }
+            defaults.set(true, forKey: "bainluck_pins.guestMigrationDone")
+        }
         self.serverSync = serverSync ?? { type, id, pinned in
             if pinned {
                 _ = try await APIClient.shared.addPin(type: type, id: id)
@@ -46,7 +114,8 @@ final class PinManager: ObservableObject {
                 _ = try await APIClient.shared.removePin(type: type, id: id)
             }
         }
-        loadFromDefaults()
+        if let initialBinding { bindAccount(initialBinding) }
+        else { loadFromDefaults() }
     }
 
     // MARK: - Public API
@@ -65,8 +134,8 @@ final class PinManager: ObservableObject {
 
     func canPin(type: String) -> Bool {
         switch type {
-        case "event": return pinnedEventIDs.count < Self.maxPinsPerType
-        case "future": return pinnedFuturesIDs.count < Self.maxPinsPerType
+        case "event": return savedPins.filter { $0.type == "event" }.count < Self.maxPinsPerType
+        case "future": return savedPins.filter { $0.type == "future" }.count < Self.maxPinsPerType
         default: return false
         }
     }
@@ -82,6 +151,12 @@ final class PinManager: ObservableObject {
     /// Returns the server save, if one started, so tests can await it.
     @discardableResult
     func togglePin(type: String, id: Int) -> Task<Void, Never>? {
+        guard type == "event" || type == "future" else { return nil }
+        if usesAccountStorage, binding.userID != nil, !isAuthenticated {
+            feedback = PinActionFeedback(message: "Restoring your account. Try again in a moment.", systemImage: "arrow.triangle.2.circlepath", isWarning: true)
+            return nil
+        }
+        let generation = identityGeneration
         let key = Self.key(type: type, id: id)
         guard !savingKeys.contains(key) else {
             feedback = PinActionFeedback(
@@ -101,14 +176,20 @@ final class PinManager: ObservableObject {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             #endif
         } else {
+            if usesAccountStorage, binding.userID != nil, loadState != .loaded {
+                feedback = PinActionFeedback(message: "Refresh your saved pins before adding another.", systemImage: "bookmark", isWarning: true, managementType: type, managementAlertTitle: "Refresh saved pins")
+                return nil
+            }
             guard canPin(type: type) else {
                 #if os(iOS)
                 UINotificationFeedbackGenerator().notificationOccurred(.warning)
                 #endif
                 feedback = PinActionFeedback(
-                    message: Self.limitMessage(type: type),
+                    message: Self.limitMessage(type: type, count: savedPins.filter { $0.type == type }.count),
                     systemImage: "exclamationmark.triangle.fill",
-                    isWarning: true
+                    isWarning: true,
+                    managementType: type,
+                    managementAlertTitle: "Pin limit reached"
                 )
                 return nil
             }
@@ -118,6 +199,8 @@ final class PinManager: ObservableObject {
             #endif
         }
 
+        mutationRevision += 1
+        mutations[SavedPin(type: type, value: id)] = (mutationRevision, !alreadyPinned)
         saveToDefaults()
 
         guard isAuthenticated else {
@@ -126,6 +209,7 @@ final class PinManager: ObservableObject {
         }
 
         savingKeys.insert(key)
+        if alreadyPinned { pendingRemovals.insert(SavedPin(type: type, value: id)) }
         feedback = PinActionFeedback(
             message: alreadyPinned ? "Removing…" : "Saving…",
             systemImage: "bookmark",
@@ -133,11 +217,14 @@ final class PinManager: ObservableObject {
             isPending: true
         )
         let serverSync = serverSync
-        return Task {
+        return Task { @MainActor in
+            guard identityGeneration == generation else { return }
             do {
                 try await serverSync(type, id, !alreadyPinned)
+                guard identityGeneration == generation else { return }
                 feedback = Self.confirmed(removed: alreadyPinned)
             } catch {
+                guard identityGeneration == generation else { return }
                 logger.error("Failed to sync pin to server: \(error)")
                 if alreadyPinned {
                     addLocally(type: type, id: id)
@@ -154,13 +241,16 @@ final class PinManager: ObservableObject {
                     isWarning: true
                 )
             }
+            pendingRemovals.remove(SavedPin(type: type, value: id))
+            mutationRevision += 1
+            mutations[SavedPin(type: type, value: id)] = (mutationRevision, isPinned(type: type, id: id))
             savingKeys.remove(key)
         }
     }
 
-    static func limitMessage(type: String) -> String {
+    static func limitMessage(type: String, count: Int = maxPinsPerType) -> String {
         let noun = type == "future" ? "markets" : "games"
-        return "You already have \(maxPinsPerType) pinned \(noun). Unpin one in My Stuff."
+        return "You already have \(count) pinned \(noun). Unpin one in My Stuff."
     }
 
     private static func confirmed(removed: Bool) -> PinActionFeedback {
@@ -182,31 +272,10 @@ final class PinManager: ObservableObject {
         }
     }
 
+    /// Kept for existing callers. Account binding never uploads a shared cache.
     @MainActor
     func syncLocalToServer() async {
-        guard isAuthenticated else { return }
-        let localEvents = pinnedEventIDs
-        let localFutures = pinnedFuturesIDs
-
-        guard !localEvents.isEmpty || !localFutures.isEmpty else { return }
-
-        for id in localEvents {
-            do {
-                _ = try await APIClient.shared.addPin(type: "event", id: id)
-            } catch {
-                logger.error("Failed to sync event pin \(id): \(error)")
-            }
-        }
-        for id in localFutures {
-            do {
-                _ = try await APIClient.shared.addPin(type: "future", id: id)
-            } catch {
-                logger.error("Failed to sync future pin \(id): \(error)")
-            }
-        }
-
-        // Reload from server to get the merged set
-        await loadFromServer()
+        await loadPins()
     }
 
     // MARK: - Private
@@ -231,11 +300,11 @@ final class PinManager: ObservableObject {
         if let data = defaults.data(forKey: eventsKey),
            let ids = try? JSONDecoder().decode([Int].self, from: data) {
             pinnedEventIDs = Set(ids)
-        }
+        } else { pinnedEventIDs = [] }
         if let data = defaults.data(forKey: futuresKey),
            let ids = try? JSONDecoder().decode([Int].self, from: data) {
             pinnedFuturesIDs = Set(ids)
-        }
+        } else { pinnedFuturesIDs = [] }
     }
 
     private func saveToDefaults() {
@@ -249,16 +318,28 @@ final class PinManager: ObservableObject {
 
     @MainActor
     private func loadFromServer() async {
+        let generation = identityGeneration
+        let revision = mutationRevision
+        let request = UUID()
+        loadRequest = request
+        loadState = .loading
         do {
-            let pins = try await APIClient.shared.fetchPins()
+            let pins = try await serverLoad()
+            guard identityGeneration == generation, loadRequest == request else { return }
+            // Keep unrelated server pins while preserving edits made during this
+            // read. Dropping the entire response would hide those other pins.
             pinnedEventIDs = Set(pins.events)
             pinnedFuturesIDs = Set(pins.futures)
+            for (pin, mutation) in mutations where mutation.revision > revision || savingKeys.contains(pin.id) {
+                if mutation.pinned { addLocally(type: pin.type, id: pin.value) }
+                else { removeLocally(type: pin.type, id: pin.value) }
+            }
             saveToDefaults()
-            logger.info("Loaded pins from server: \(pins.events.count) events, \(pins.futures.count) futures")
+            loadState = .loaded
         } catch {
+            guard identityGeneration == generation, loadRequest == request else { return }
             logger.error("Failed to load pins from server: \(error)")
-            // Fall back to local
-            loadFromDefaults()
+            loadState = .failed
         }
     }
 }

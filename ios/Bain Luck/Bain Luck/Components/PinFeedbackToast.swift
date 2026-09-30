@@ -13,9 +13,10 @@ struct PinFeedbackToast: View {
 
     /// How long a settled outcome stays up. A pending save has no timer: its
     /// outcome replaces it. A warning is two lines and asks the reader to act,
-    /// so it stays longer than a confirmation.
+    /// so it stays longer than a confirmation. Management warnings stay until
+    /// Manage pins or their accessible close control is pressed.
     static func displaySeconds(for feedback: PinActionFeedback) -> Double? {
-        if feedback.isPending { return nil }
+        if feedback.isPending || feedback.managementType != nil { return nil }
         return feedback.isWarning ? 4.0 : 2.5
     }
 
@@ -33,27 +34,49 @@ struct PinFeedbackToast: View {
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(feedback.isWarning ? .orange : .white)
                     }
-                    Text(feedback.message)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.white)
-                        .multilineTextAlignment(.leading)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(feedback.message)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.white)
+                            .multilineTextAlignment(.leading)
+                        if let type = feedback.managementType {
+                            Button("Manage pins") { pinManager.presentManagement(type: type) }
+                                .font(.subheadline.weight(.bold))
+                                .foregroundStyle(.white)
+                                .accessibilityIdentifier("pinLimitManagePins")
+                        }
+                    }
+                    if feedback.managementType != nil {
+                        Button {
+                            pinManager.dismissFeedback(id: feedback.id)
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.white)
+                                .frame(width: 44, height: 44)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Dismiss pin message")
+                        .accessibilityIdentifier("pinMessageDismiss")
+                    }
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
-                // One opaque dark capsule for every outcome: a translucent
+                // One opaque dark background for every outcome: a translucent
                 // orange warning was unreadable over page content.
                 .background(
-                    Capsule()
+                    RoundedRectangle(cornerRadius: 22)
                         .fill(Color.black.opacity(0.85))
                 )
                 .overlay(
-                    Capsule()
+                    RoundedRectangle(cornerRadius: 22)
                         .stroke(feedback.isWarning ? Color.orange.opacity(0.6) : Color.white.opacity(0.08), lineWidth: 1)
                 )
                 .shadow(color: .black.opacity(0.18), radius: 14, x: 0, y: 6)
                 .padding(.horizontal, 20)
                 .padding(.bottom, Self.bottomClearance(horizontalSizeClass: horizontalSizeClass))
                 .transition(.move(edge: .bottom).combined(with: .opacity))
+                .allowsHitTesting(feedback.managementType != nil)
                 .id(feedback.id)
                 .task(id: feedback.id) {
                     guard let seconds = Self.displaySeconds(for: feedback) else { return }
@@ -69,7 +92,11 @@ struct PinFeedbackToast: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .allowsHitTesting(false)
+        // Spacer and clear layout have no hit surface; only the visible action
+        // accepts taps. Presentation survives replacement/timeout of feedback.
+        .sheet(item: $pinManager.managementPresentation) { request in
+            PinManagementView(focusType: request.focusType).environmentObject(pinManager)
+        }
         .animation(.spring(response: 0.24, dampingFraction: 0.88), value: pinManager.feedback?.id)
     }
 }

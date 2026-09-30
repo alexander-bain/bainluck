@@ -24,7 +24,10 @@ struct Bain_LuckApp: App {
     #endif
     @StateObject private var authManager = AuthManager()
     @StateObject private var navCoordinator = NavigationCoordinator()
-    @StateObject private var pinManager = PinManager()
+    @StateObject private var pinManager = PinManager(
+        allowLegacyGuestPins: APIClient.persistedLastKnownUserId() == nil,
+        initialBinding: PinAccountBinding(userID: APIClient.persistedLastKnownUserId(), authenticated: false)
+    )
     /// Whether the consent ask is showing. Seeded from the authority: `true`
     /// only when no choice has ever been recorded.
     @State private var showTelemetryConsent = TelemetryConsent.shared.needsChoice
@@ -104,21 +107,19 @@ struct Bain_LuckApp: App {
                 .navigationTitle(navCoordinator.liveGameTitle)
                 .task { await pollLiveGames() }
                 #endif
-                .onChange(of: authManager.isAuthenticated) { _, isAuth in
-                    pinManager.setAuthenticated(isAuth)
+                .onChange(of: PinAccountBinding(userID: authManager.activeFeedUserId, authenticated: authManager.isAuthenticated)) { _, identity in
+                    let isAuth = identity.authenticated
+                    pinManager.bindAccount(identity)
                     NotificationManager.shared.setUser(id: isAuth ? authManager.user?.id : nil)
                     AnalyticsService.setCrashReportingUserId(
                         isAuth ? ((authManager.user?.id).map { String($0) } ?? "") : ""
                     )
                     Task {
-                        if isAuth {
-                            await pinManager.syncLocalToServer()
-                        }
                         await pinManager.loadPins()
                     }
                 }
                 .task {
-                    pinManager.setAuthenticated(authManager.isAuthenticated)
+                    pinManager.bindAccount(PinAccountBinding(userID: authManager.activeFeedUserId, authenticated: authManager.isAuthenticated))
                     await pinManager.loadPins()
                     // Wire up notification deep linking and request permission
                     NotificationManager.shared.navCoordinator = navCoordinator

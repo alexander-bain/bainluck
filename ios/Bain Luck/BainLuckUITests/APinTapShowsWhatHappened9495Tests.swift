@@ -18,7 +18,7 @@ final class APinTapShowsWhatHappened9495Tests: XCTestCase {
 
     func testUnderTheLimitEachTapSaysPinnedThenRemoved() throws {
         continueAfterFailure = false
-        let app = UITestLaunch.launchApp(extra: ["-launch_route", route, "-bainluck_pinnedEvents", noPins])
+        let app = UITestLaunch.launchApp(extra: ["-launch_route", route, "-bainluck_pins.guest.Events", noPins])
         let pin = toolbarPin(app, "Pin")
         XCTAssertTrue(pin.waitForExistence(timeout: 65), "game page pin did not appear")
 
@@ -37,7 +37,7 @@ final class APinTapShowsWhatHappened9495Tests: XCTestCase {
 
     func testAtTheLimitTheTapIsAcceptedAndExplained() throws {
         continueAfterFailure = false
-        let app = UITestLaunch.launchApp(extra: ["-launch_route", route, "-bainluck_pinnedEvents", sixPins])
+        let app = UITestLaunch.launchApp(extra: ["-launch_route", route, "-bainluck_pins.guest.Events", sixPins])
         let pin = toolbarPin(app, "Pin")
         XCTAssertTrue(pin.waitForExistence(timeout: 65), "game page pin did not appear")
         XCTAssertTrue(pin.isEnabled, "at the limit the pin must still take the tap")
