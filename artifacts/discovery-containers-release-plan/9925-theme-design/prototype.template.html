@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>#9925 theme collection page — design prototype (local, not deployed)</title>
+<style>
+  /* Bain Luck tokens, copied from frontend/app/globals.css (light mode only). */
+  :root {
+    --surface-deep:#F5F5F7; --surface-card:#FFFFFF; --surface-elevated:#F0F0F2; --surface-border:#E5E7EB;
+    --text-primary:#111827; --text-secondary:#6B7280; --text-muted:#9CA3AF;
+    --accent-brand:#10B981; --accent-futures:#8B5CF6; --accent-warning:#F59E0B;
+    --font-sans: ui-sans-serif,-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,Inter,"Segoe UI",Roboto,sans-serif;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:var(--font-sans); color:var(--text-primary); background:#E9EAEE; }
+  a { color:inherit; text-decoration:none; }
+  .gallery { display:flex; flex-wrap:wrap; gap:36px 28px; padding:28px; align-items:flex-start; }
+  .frame-wrap { width:390px; }
+  .frame-cap { font-size:13px; color:#374151; margin:0 0 8px; line-height:1.35; min-height:54px; }
+  .frame-cap b { color:#111827; }
+  .phone { width:390px; height:844px; overflow:hidden; position:relative; background:var(--surface-deep); border-radius:28px; box-shadow:0 10px 30px rgba(0,0,0,.14); }
+  .solo body, body.solo { background:var(--surface-deep); }
+  body.solo .gallery { padding:0; } body.solo .frame-cap, body.solo .banner, body.solo .legend { display:none; }
+  body.solo .phone { border-radius:0; box-shadow:none; }
+  .banner { margin:28px 28px 0; padding:14px 16px; background:#FFF7E6; border:1px solid #F5D08A; border-radius:12px; font-size:13px; line-height:1.45; }
+  .legend { margin:12px 28px 0; font-size:12.5px; color:#374151; line-height:1.5; }
+  .scroller { position:absolute; left:0; right:0; top:0; }
+  /* site chrome */
+  .topbar { position:absolute; top:0; left:0; right:0; height:56px; background:rgba(255,255,255,.96); border-bottom:1px solid var(--surface-border); display:flex; align-items:center; gap:10px; padding:0 16px; z-index:5; }
+  .logo { font-weight:800; font-size:17px; letter-spacing:-.01em; }
+  .search { flex:1; height:34px; border-radius:17px; background:var(--surface-elevated); color:var(--text-muted); font-size:14px; display:flex; align-items:center; padding:0 12px; }
+  .tabbar { position:absolute; bottom:0; left:0; right:0; height:58px; background:#fff; border-top:1px solid var(--surface-border); display:flex; justify-content:space-around; align-items:center; font-size:11px; color:var(--text-muted); z-index:5; }
+  .tabbar .on { color:var(--accent-brand); font-weight:600; }
+  .content { padding:68px 14px 90px; }
+  /* cards */
+  .card { background:var(--surface-card); border:1px solid var(--surface-border); border-radius:16px; overflow:hidden; }
+  .shadow { box-shadow:0 4px 14px rgba(17,24,39,.08); }
+  .eyebrow { font-size:10px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:var(--text-secondary); }
+  .q17 { font-size:17px; font-weight:700; line-height:1.2; letter-spacing:-.01em; }
+  .row { display:flex; justify-content:space-between; gap:12px; padding:12px 16px; border-top:1px solid var(--surface-border); align-items:center; }
+  .row .t { font-size:14.5px; font-weight:600; line-height:1.25; }
+  .row .s { font-size:13px; color:var(--text-secondary); margin-top:2px; }
+  .row .pct { font-size:17px; font-weight:700; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .row .pct small { display:block; font-size:10.5px; font-weight:500; color:var(--text-muted); text-align:right; }
+  .mark { font-size:11px; color:var(--text-muted); }
+  .link { color:var(--accent-brand); font-weight:600; }
+  .btnrow { display:block; text-align:center; padding:11px; font-size:13px; font-weight:600; color:var(--accent-brand); border-top:1px solid var(--surface-border); }
+  .actions { display:flex; justify-content:space-between; padding:10px 22px 12px; color:var(--text-secondary); font-size:14px; border-top:1px solid var(--surface-border); margin:0 16px; }
+  .chip { display:inline-block; padding:5px 11px; border-radius:999px; background:var(--surface-card); border:1px solid var(--surface-border); font-size:12.5px; font-weight:600; color:var(--text-primary); margin:0 6px 6px 0; white-space:nowrap; }
+  .chip span { color:var(--text-muted); font-weight:500; margin-left:3px; }
+  .h2 { font-size:18px; font-weight:700; letter-spacing:-.01em; margin:26px 2px 10px; display:flex; justify-content:space-between; align-items:baseline; }
+  .h2 a { font-size:13px; }
+  .grp { font-size:11px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:var(--text-secondary); padding:12px 16px 4px; display:flex; justify-content:space-between; }
+  .dist { padding:4px 16px 12px; }
+  .dist .o { display:grid; grid-template-columns:1fr 44px; gap:2px 10px; margin-top:9px; align-items:center; }
+  .dist .o .n { font-size:13.5px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .dist .o .v { font-size:13.5px; font-weight:700; text-align:right; font-variant-numeric:tabular-nums; }
+  .bar { grid-column:1 / 2; height:6px; border-radius:3px; background:var(--surface-elevated); overflow:hidden; }
+  .bar i { display:block; height:100%; background:#CBD5E1; } .bar i.lead { background:var(--accent-brand); }
+  .disclosure { display:flex; justify-content:space-between; align-items:center; padding:12px 16px; border-top:1px solid var(--surface-border); font-size:13.5px; font-weight:600; color:var(--text-secondary); }
+  .hl { animation:none; background:#ECFDF5; box-shadow: inset 3px 0 0 var(--accent-brand); }
+  .note { position:absolute; left:12px; right:12px; background:#1F2937; color:#F9FAFB; font-size:12px; line-height:1.4; border-radius:10px; padding:9px 11px; z-index:9; box-shadow:0 6px 18px rgba(0,0,0,.25); }
+  .note b { color:#6EE7B7; } .tap { position:absolute; width:34px; height:34px; border-radius:50%; background:rgba(16,185,129,.28); border:2px solid var(--accent-brand); z-index:8; }
+  .fixture { display:inline-block; font-size:9.5px; font-weight:800; letter-spacing:.08em; color:#92400E; background:#FEF3C7; border:1px solid #F59E0B; border-radius:5px; padding:1px 5px; vertical-align:middle; }
+  .state { margin-bottom:12px; }
+  .state .lbl { font-size:11px; font-weight:700; color:#374151; margin:0 2px 5px; }
+  img.shot { width:390px; display:block; }
+</style>
+</head>
+<body>
+<div class="banner"><b>Local design prototype for #9925. Not deployed, not an acceptance.</b> Every question, price and count comes from production reads on 2026-09-30 between 20:39 and 20:55Z (see <code>evidence/</code>). Items marked <span class="fixture">FIXTURE</span> show a state's shape only and use no real result. The ◆ rows depend on a cross-venue fold that does not exist yet (prerequisite P2 in README): the number shown is the most-traded venue row's price, not a blend.</div>
+<div class="legend">Flow: ① Discover card → ② whole page → ③ scroll to a ceremony → ④ tap a question (the existing member page, real screenshot) → ⑤ Back lands on the same row → ⑥ Back lands on the same Discover card. ⑦ sparse and untraded behaviour · ⑧ page states · ⑨–⑩ second theme (AI), showing how the same contract works with no ceremony structure.</div>
+<div class="gallery" id="gallery"></div>
+<script>
+const DATA = /*__DATA__*/null;
+const $ = (h) => { const t = document.createElement('template'); t.innerHTML = h.trim(); return t.content.firstChild; };
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const pct = (p) => p == null ? '—' : (p < 0.005 ? '<1%' : (p > 0.995 ? '>99%' : Math.round(p * 100) + '%'));
+const src = (list) => list.map((s) => s[0].toUpperCase() + s.slice(1)).join(' · ');
+const A = DATA.awards, AI = DATA.ai;
+const count = (secs) => secs.reduce((n, s) => n + s.groups.reduce((m, g) => m + g.rows.length, 0), 0);
+const HEADLINER_IDS = new Set([A.members[0].id, A.members[3].id]);
+const AWARDS_N = count(A.sections), AI_N = count(AI.sections);
+
+const chrome = (inner, { tab = 'Discover' } = {}) => `
+  <div class="topbar"><span>🍀</span><span class="logo">Bain Luck</span><span class="search">Search…</span></div>
+  <div class="scroller"><div class="content">${inner}</div></div>
+  <div class="tabbar">${['Discover','Sports','Browse','My Stuff'].map((t) => `<span class="${t === tab ? 'on' : ''}">${t}</span>`).join('')}</div>`;
+
+function compactRow(m, { id } = {}) {
+  const lead = m.top[0];
+  const move = m.context && /up|down/.test(m.context) ? m.context : `${esc(lead.name)} leads at ${pct(lead.p)}`;
+  return `<a class="row" ${id ? `id="${id}"` : ''} href="/futures/${m.id}"><div><div class="t">${esc(m.name)}</div><div class="s">${esc(move)}</div></div><div class="pct">${pct(lead.p)}</div></a>`;
+}
+
+function feedCard({ restored = false } = {}) {
+  return `<div class="card shadow" id="feed-awards">
+    <a href="#page" style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;padding:14px 16px 12px">
+      <div><div class="eyebrow">🎬 Awards Season</div><div class="q17" style="margin-top:6px">Who wins awards season?</div></div>
+      <span style="color:var(--text-muted);font-size:20px;line-height:1">›</span></a>
+    ${A.members.slice(0, 3).map((m) => compactRow(m)).join('')}
+    <a class="btnrow" href="#page">See all ${AWARDS_N} questions ›</a>
+    <div class="actions"><span>♡ Like</span><span>Share</span></div>
+  </div>`;
+}
+
+function dist(m, { title, kind = 'race', more } = {}) {
+  const top = m.top;
+  const exclusive = kind === 'race';
+  return `<a class="card" href="/futures/${m.id}" style="display:block;margin-bottom:10px">
+    <div style="padding:13px 16px 2px;display:flex;justify-content:space-between;gap:8px"><div class="t" style="font-size:15px;font-weight:700">${esc(title || m.name)}</div><span class="mark" style="white-space:nowrap">${m.folded ? '◆ ' : ''}${src(m.sources)}</span></div>
+    ${exclusive ? '' : '<div class="mark" style="padding:2px 16px 0">Each line is its own chance</div>'}
+    <div class="dist">${top.map((o, i) => `<div class="o"><span class="n">${esc(o.name)}</span><span class="v">${pct(o.p)}</span><span class="bar"><i class="${i === 0 ? 'lead' : ''}" style="width:${Math.round(o.p * 100)}%"></i></span></div>`).join('')}
+    ${more ? `<div class="mark" style="margin-top:9px">${more}</div>` : ''}
+    ${m.context && /up|down/.test(m.context) ? `<div class="s" style="margin-top:8px;font-size:12.5px;color:var(--text-secondary)">${esc(m.context)}</div>` : ''}</div></a>`;
+}
+
+function sectionRow(r, { hl = false, id } = {}) {
+  const lead = r.kind === 'nominee' ? `${esc(r.leader)} · chance of a nomination` : esc(r.leader);
+  return `<a class="row ${hl ? 'hl' : ''}" ${id ? `id="${id}"` : ''} href="/futures/${r.id}"><div><div class="t">${r.folded ? '◆ ' : ''}${esc(r.label)}</div><div class="s">${lead}</div></div><div class="pct">${pct(r.p)}<small>${src(r.sources)}</small></div></a>`;
+}
+
+function section(sec, { show = 5, hlId, openNoms = false } = {}) {
+  const groups = sec.groups.map((g, gi) => {
+    const traded = g.rows.filter((r) => r.traded), idle = g.rows.filter((r) => !r.traded);
+    const isNoms = g.title === 'Nominations';
+    if (isNoms && !openNoms) return `<div class="disclosure"><span>${g.title} (${g.rows.length})</span><span>⌄</span></div>`;
+    const shown = traded.filter((r) => !HEADLINER_IDS.has(r.id) && !(r.twins || []).some((t) => HEADLINER_IDS.has(t))).slice(0, show);
+    return `${g.title && sec.groups.length > 1 ? `<div class="grp"><span>${g.title}</span><span>${g.rows.length}</span></div>` : ''}
+      ${shown.map((r) => sectionRow(r, { hl: r.id === hlId, id: `m-${r.id}` })).join('')}
+      ${traded.length > shown.length ? `<a class="btnrow">Show all ${traded.length}</a>` : ''}
+      ${idle.length ? `<div class="disclosure"><span>Not traded yet (${idle.length})</span><span>⌄</span></div>` : ''}`;
+  }).join('');
+  return `<div class="h2" id="sec-${sec.key.replace(/\W+/g, '-')}"><span>${esc(sec.title)}</span>${sec.page ? `<a class="link" href="${sec.page}">Ceremony page ›</a>` : ''}</div>
+    <div class="card">${groups.replace(/^\s*<a class="row/, '<a style="border-top:0" class="row')}</div>`;
+}
+
+function awardsPage({ hlId } = {}) {
+  const [bp, , , aoty] = A.members;
+  const secCount = (s) => s.groups.reduce((n, g) => n + g.rows.length, 0);
+  return `<a class="link" style="font-size:14px;display:block;margin:2px 2px 14px">‹ Discover</a>
+    <div class="eyebrow">🎬 Collection · 2026–27 season</div>
+    <h1 style="font-size:28px;font-weight:800;letter-spacing:-.02em;margin:6px 0 4px">Awards Season</h1>
+    <div class="q17" style="font-weight:600;color:var(--text-primary)">Who wins awards season?</div>
+    <p style="font-size:14px;color:var(--text-secondary);margin:8px 0 4px;line-height:1.4">Winners and nominations for the Oscars, Grammys and Emmys. New questions join on their own.</p>
+    <div class="mark" style="margin-bottom:14px">${AWARDS_N} questions · prices as of 1:39 PM PT</div>
+    <div>${A.sections.map((s) => `<span class="chip">${s.key}<span>${secCount(s)}</span></span>`).join('')}</div>
+    <div class="h2" id="headliners"><span>Headliners</span></div>
+    ${dist(bp, { title: 'Oscars · Best Picture', more: '+38 more nominees' })}
+    ${dist(aoty, { title: 'Grammys · Album of the Year', more: '+12 more nominees' })}
+    ${A.sections.map((s) => section(s, { hlId })).join('')}
+    <div style="height:30px"></div>`;
+}
+
+function aiPage() {
+  const [best, hle, flash] = AI.members;
+  const secCount = (s) => s.groups.reduce((n, g) => n + g.rows.length, 0);
+  const secs = AI.sections.map((s) => ({ ...s, title: s.title.replace('Decided by the new year', 'Decided by the new year') }));
+  return `<a class="link" style="font-size:14px;display:block;margin:2px 2px 14px">‹ Discover</a>
+    <div class="eyebrow">🤖 Collection · ongoing</div>
+    <h1 style="font-size:28px;font-weight:800;letter-spacing:-.02em;margin:6px 0 4px">AI</h1>
+    <div class="q17" style="font-weight:600">What happens next in AI?</div>
+    <p style="font-size:14px;color:var(--text-secondary);margin:8px 0 4px;line-height:1.4">Models, companies and launches. Questions join and leave on their own.</p>
+    <div class="mark" style="margin-bottom:14px">${AI_N} questions · prices as of 1:39 PM PT</div>
+    <div>${secs.map((s) => `<span class="chip">${({'Decided in October':'October','Decided by the new year':'By New Year'}[s.key] || s.key)}<span>${secCount(s)}</span></span>`).join('')}</div>
+    <div class="h2"><span>Most followed</span></div>
+    ${dist(best, { title: best.name, more: '+5 more models' })}
+    ${dist(hle, { title: hle.name, kind: 'thresholds' })}
+    ${secs.map((s) => section(s, { show: 6 })).join('')}
+    <div style="height:30px"></div>`;
+}
+
+function statesPage() {
+  const oil = DATA.oil.members;
+  return `<a class="link" style="font-size:14px;display:block;margin:2px 2px 12px">‹ Discover</a>
+    <div class="state"><div class="lbl">a · Sparse theme (real: Oil, 2 questions). No chips, no section headers, no count chip.</div>
+      <div class="card" style="padding:12px 16px 4px"><div class="eyebrow">🛢️ Collection</div><div style="font-size:22px;font-weight:800;margin:4px 0 2px">Oil</div><div class="q17" style="font-weight:600;font-size:15px">Where is the oil price going?</div></div>
+      <div class="card" style="margin-top:8px">${oil.map((m) => compactRow(m)).join('').replace('<a class="row"', '<a style="border-top:0" class="row"')}</div></div>
+    <div class="state"><div class="lbl">b · One member cannot load. Siblings still render <span class="fixture">FIXTURE</span></div>
+      <div class="card"><div class="row" style="border-top:0"><div class="s" style="margin:0">This game or question isn't available right now</div></div>${sectionRow(A.sections[0].groups[0].rows[1])}</div></div>
+    <div class="state"><div class="lbl">c · A question settles: shows the result and moves to "Decided" at the end <span class="fixture">FIXTURE</span></div>
+      <div class="card"><div class="grp"><span>Decided</span><span>1</span></div><div class="row"><div><div class="t">Best ‹category›</div><div class="s">Won: ‹winner› · was ‹pre-ceremony %›</div></div><div class="pct" style="color:var(--accent-brand)">Won</div></div></div></div>
+    <div class="state"><div class="lbl">d · Collection withdrawn (existing withdrawn state)</div>
+      <div class="card" style="padding:14px 16px"><div class="t" style="font-weight:600">This collection is no longer available.</div><a class="link" style="font-size:14px">Back to Discover</a></div></div>
+    <div class="state"><div class="lbl">e · Load failed (existing CollectionHub copy)</div>
+      <div class="card" style="padding:14px 16px"><div class="s" style="color:var(--text-secondary)">Couldn't load this collection. Please try again.</div><a class="link" style="font-size:14px">Try again</a></div></div>`;
+}
+
+const FRAMES = [
+  { cap: '<b>① Discover card.</b> The header opens the page (›), and "See all N" replaces the inline "All 6 questions". The three-row preview is unchanged. The count is for the whole collection, not the feed sample.', html: () => chrome(feedCard()), anchor: 'feed-awards', off: 60 },
+  { cap: '<b>② Whole page, top.</b> Title, the group\'s own question, one plain line on what\'s included, and ceremony chips (earned: 4 sections). Headliners are each ceremony\'s marquee category (existing <code>event_awards</code> config). No combined percentage.', html: () => chrome(awardsPage()), anchor: null },
+  { cap: '<b>③ A ceremony section.</b> The existing ceremony page is linked. Winners come first with the 5 most traded; nominations fold away and are labelled "chance of a nomination" (not a race); untraded questions sit behind a toggle (D102).', html: () => chrome(awardsPage()), anchor: 'sec-Oscars', off: 64 },
+  { cap: '<b>④ Tap a question</b> → the existing member page (production screenshot; shown for Best Picture, /futures/6173044). The only change: its back link should read "Back to Awards Season" when arriving from the collection.', shot: 'shots/04-member-page-prod-futures-6173044.png' },
+  { cap: '<b>⑤ Back → same row.</b> CollectionHub\'s existing <code>collection-reading:{slug}</code> restore brings the tapped row (here Best Actor) back to where it was, briefly highlighted.', html: () => chrome(awardsPage({ hlId: 5869749 })), anchor: 'm-5869749', off: 200 },
+  { cap: '<b>⑥ Back → same Discover card.</b> The feed\'s existing snapshot and scroll mark (#7417, already used by DiscoverCollectionCard) bring back the card and its position.', html: () => chrome(feedCard({ restored: true })), anchor: 'feed-awards', off: 60 },
+  { cap: '<b>⑦ Sparse inside a big theme.</b> Grammys (12 of 36 winner questions traded) and Daytime Emmys (1 of 40): show what is traded and put the rest behind "Not traded yet (N)". No filler rows at a made-up 30%.', html: () => chrome(awardsPage()), anchor: 'sec-Grammys', off: 64 },
+  { cap: '<b>⑧ States.</b> Sparse theme (real Oil bundle), one member missing, a settled question, withdrawn, and load error. Error and withdrawn reuse CollectionHub copy.', html: () => chrome(statesPage()), anchor: null },
+  { cap: '<b>⑨ Second theme: AI.</b> AI has no ceremony structure, so sections come from the questions\' own decide-by dates and the "most followed" block from feed rank. Same template with no new taxonomy.', html: () => chrome(aiPage()), anchor: null },
+  { cap: '<b>⑩ AI section.</b> 150 distinct questions (347 rows fold into their venue groups). Rows that have not traded fold away, as on the awards page. Two things this frame shows that the build has to fix: the titles here are raw stored names ("released on...?", "hit __"), where the real page must use the served display name (#3513); and questions whose deadline has passed (the >99% rows closing Sep 30) belong under "Awaiting result", not in a live list.', html: () => chrome(aiPage()), anchor: 'sec-Decided-in-October', off: 64 },
+];
+
+const params = new URLSearchParams(location.search);
+const solo = params.get('frame');
+if (solo) document.body.classList.add('solo');
+const gallery = document.getElementById('gallery');
+FRAMES.forEach((f, i) => {
+  if (solo && Number(solo) !== i + 1) return;
+  const wrap = $(`<div class="frame-wrap"><p class="frame-cap">${f.cap}</p><div class="phone" data-frame="${i + 1}"></div></div>`);
+  const phone = wrap.querySelector('.phone');
+  if (f.shot) {
+    phone.innerHTML = `<img class="shot" src="${f.shot}" alt="production member page"><div class="note" style="top:104px"><b>Proposed:</b> "‹ Back to Awards Season" when the reader came from the collection. Everything else on this page stays as it is.</div><div class="tap" style="top:66px;left:4px"></div>`;
+  } else {
+    phone.innerHTML = f.html();
+  }
+  gallery.appendChild(wrap);
+  requestAnimationFrame(() => {
+    if (f.anchor) {
+      const el = phone.querySelector('#' + f.anchor);
+      const sc = phone.querySelector('.scroller');
+      if (el && sc) sc.style.transform = `translateY(${-(el.offsetTop + el.offsetParent.offsetTop - (f.off || 0))}px)`;
+    }
+    if (f.tap) phone.appendChild($(`<div class="tap" style="top:${f.tap.top}px;left:${f.tap.left}px"></div>`));
+  });
+});
+</script>
+</body>
+</html>

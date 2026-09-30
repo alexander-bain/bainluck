@@ -1,0 +1,1521 @@
+{
+ "story:ai": {
+  "type": "bundle",
+  "score": 95.0,
+  "reason": "What happens next in AI?",
+  "headline": "AI",
+  "data": {
+   "id": "theme:story:ai:109596-57566334-60093973-58918649-32127334",
+   "title": "AI",
+   "kind": "theme",
+   "story_key": "story:ai",
+   "shared_question": "What happens next in AI?",
+   "item_count": 5,
+   "member_ids": [
+    109596,
+    57566334,
+    60093973,
+    58918649,
+    32127334
+   ],
+   "items": [
+    {
+     "type": "futures",
+     "score": 95,
+     "reason": "Claude (75%) leads Best AI at the end of 2026?",
+     "headline": "Claude leads at 75%",
+     "context_summary": "Claude leads at 75%",
+     "data": {
+      "id": 109596,
+      "name": "Best AI at the end of 2026?",
+      "sport": null,
+      "sport_name": null,
+      "llm_sport_category": "tech",
+      "source": "kalshi",
+      "source_count": 1,
+      "sources": [
+       "kalshi"
+      ],
+      "market_tier": 2,
+      "market_type": "field",
+      "status": "open",
+      "resolution_date": "2026-12-31T15:00:00+00:00",
+      "price_observed_at": "2026-09-30T20:02:08+00:00",
+      "top_outcomes": [
+       {
+        "id": 1599086,
+        "name": "Claude",
+        "probability": 0.7455,
+        "rank": 1,
+        "movement": null,
+        "rendered_percent": 75
+       },
+       {
+        "id": 1599085,
+        "name": "Gemini",
+        "probability": 0.1125,
+        "rank": 2,
+        "movement": null,
+        "rendered_percent": 11
+       },
+       {
+        "id": 1599087,
+        "name": "ChatGPT",
+        "probability": 0.1035,
+        "rank": 3,
+        "movement": null,
+        "rendered_percent": 10
+       }
+      ],
+      "card_sum_reason": null,
+      "outcome_count": 8,
+      "canonical_market_key": "tech::championship:2026",
+      "group_id": "kalshi:KXLLM1-26DEC31",
+      "group_type": "kalshi_event",
+      "discover_card": {
+       "suggested_format": "outcome_distribution",
+       "bundle_candidate": false,
+       "comparison_theme": null,
+       "threshold_points": [],
+       "ladder_treatment_refused": false,
+       "field_is_a_race": true,
+       "distribution_outcomes": [
+        {
+         "label": "Claude",
+         "probability": 0.7455,
+         "movement": null
+        },
+        {
+         "label": "Gemini",
+         "probability": 0.1125,
+         "movement": null
+        },
+        {
+         "label": "ChatGPT",
+         "probability": 0.1035,
+         "movement": null
+        },
+        {
+         "label": "Muse Spark",
+         "probability": 0.0185,
+         "movement": null
+        },
+        {
+         "label": "Grok",
+         "probability": 0.0165,
+         "movement": null
+        },
+        {
+         "label": "Kimi",
+         "probability": 0.01,
+         "movement": null
+        },
+        {
+         "label": "Qwen",
+         "probability": 0.0045,
+         "movement": null
+        },
+        {
+         "label": "Ernie",
+         "probability": 0.0015,
+         "movement": null
+        }
+       ],
+       "remaining_outcome_count": 0,
+       "qa_signals": [],
+       "public_source_disagreement": false,
+       "reasons": [
+        "multi_outcome_distribution"
+       ]
+      },
+      "image_url": "https://images.pexels.com/photos/32417524/pexels-photo-32417524.jpeg?auto=compress&cs=tinysrgb&h=350",
+      "image_width": 525,
+      "image_height": 350,
+      "hook_description": null,
+      "temporal_badge": null,
+      "confidence_tier": "low",
+      "confidence_score": 0.3529,
+      "confidence_signals": {
+       "has_closing_line": false
+      },
+      "discover_llm": {
+       "topic": "tech",
+       "subtopic": "ai",
+       "archetype": "other",
+       "audience_scope": "mainstream",
+       "salience_score": 3,
+       "junk_flags": [],
+       "comparison_axes": []
+      },
+      "market_tags": [
+       "category:conference",
+       "market_status:open",
+       "source:kalshi",
+       "tier:2"
+      ]
+     }
+    },
+    {
+     "type": "futures",
+     "score": 86,
+     "reason": "50%+ moved down 52.5 points today in Next Google Gemini Pro Model: Humanity\u2019s Last Exam Debut?",
+     "headline": "50%+ down 52.5 points today",
+     "context_summary": "50%+ down 52.5 points today; 40%+ at 94%",
+     "data": {
+      "id": 57566334,
+      "name": "Next Google Gemini Pro Model: Humanity\u2019s Last Exam Debut?",
+      "sport": null,
+      "sport_name": null,
+      "llm_sport_category": "tech",
+      "source": "polymarket",
+      "source_count": 1,
+      "sources": [
+       "polymarket"
+      ],
+      "market_tier": 2,
+      "market_type": "field",
+      "status": "open",
+      "resolution_date": "2027-01-01T04:59:00+00:00",
+      "price_observed_at": "2026-09-30T20:26:56+00:00",
+      "top_outcomes": [
+       {
+        "id": 213582371,
+        "name": "40%+",
+        "probability": 0.9355,
+        "rank": 1,
+        "movement": null,
+        "rendered_percent": 94
+       },
+       {
+        "id": 213582372,
+        "name": "45%+",
+        "probability": 0.77,
+        "rank": 2,
+        "movement": null,
+        "rendered_percent": 77
+       },
+       {
+        "id": 213582373,
+        "name": "55%+",
+        "probability": 0.335,
+        "rank": 3,
+        "movement": null,
+        "rendered_percent": 34
+       }
+      ],
+      "card_sum_reason": null,
+      "outcome_count": 4,
+      "canonical_market_key": null,
+      "group_id": "polymarket:770183",
+      "group_type": "polymarket_event",
+      "discover_card": {
+       "suggested_format": "threshold_heatmap",
+       "bundle_candidate": false,
+       "comparison_theme": null,
+       "threshold_points": [
+        {
+         "source": "outcome",
+         "label": "40%+",
+         "value": 40.0,
+         "unit": "",
+         "direction": "exact",
+         "probability": 0.9355
+        },
+        {
+         "source": "outcome",
+         "label": "45%+",
+         "value": 45.0,
+         "unit": "",
+         "direction": "exact",
+         "probability": 0.77
+        },
+        {
+         "source": "outcome",
+         "label": "50%+",
+         "value": 50.0,
+         "unit": "",
+         "direction": "exact",
+         "probability": 0.17
+        },
+        {
+         "source": "outcome",
+         "label": "55%+",
+         "value": 55.0,
+         "unit": "",
+         "direction": "exact",
+         "probability": 0.335
+        }
+       ],
+       "ladder_treatment_refused": false,
+       "field_is_a_race": false,
+       "distribution_outcomes": [
+        {
+         "label": "40%+",
+         "probability": 0.9355,
+         "movement": null
+        },
+        {
+         "label": "45%+",
+         "probability": 0.77,
+         "movement": null
+        },
+        {
+         "label": "55%+",
+         "probability": 0.335,
+         "movement": null
+        },
+        {
+         "label": "50%+",
+         "probability": 0.17,
+         "movement": -0.5249999999999999
+        }
+       ],
+       "remaining_outcome_count": 0,
+       "qa_signals": [],
+       "public_source_disagreement": false,
+       "reasons": [
+        "threshold_values"
+       ]
+      },
+      "image_url": "https://images.pexels.com/photos/20716652/pexels-photo-20716652.jpeg?auto=compress&cs=tinysrgb&h=650&w=940",
+      "image_width": 940,
+      "image_height": 635,
+      "hook_description": null,
+      "temporal_badge": null,
+      "confidence_tier": "moderate",
+      "confidence_score": 0.6471,
+      "confidence_signals": {
+       "has_closing_line": false
+      },
+      "market_tags": [
+       "category:conference",
+       "market_status:open",
+       "source:polymarket",
+       "tier:2"
+      ]
+     }
+    },
+    {
+     "type": "futures",
+     "score": 86,
+     "reason": "October 31 moved up 31 points today in Next Gemini Flash Model (3.9+) released?",
+     "headline": "October 31 up 31 points today",
+     "context_summary": "October 31 up 31 points today",
+     "data": {
+      "id": 60093973,
+      "name": "Next Gemini Flash Model (3.9+) released?",
+      "sport": null,
+      "sport_name": null,
+      "llm_sport_category": "tech",
+      "source": "polymarket",
+      "source_count": 1,
+      "sources": [
+       "polymarket"
+      ],
+      "market_tier": 2,
+      "market_type": "field",
+      "status": "open",
+      "resolution_date": "2026-11-30T23:59:00+00:00",
+      "price_observed_at": "2026-09-30T16:57:06+00:00",
+      "top_outcomes": [
+       {
+        "id": 231082353,
+        "name": "November 30",
+        "probability": 0.945,
+        "rank": 1,
+        "movement": null,
+        "rendered_percent": 95
+       },
+       {
+        "id": 231082354,
+        "name": "October 31",
+        "probability": 0.755,
+        "rank": 2,
+        "movement": 0.31,
+        "rendered_percent": 76
+       },
+       {
+        "id": 234356706,
+        "name": "October 15",
+        "probability": 0.15,
+        "rank": 3,
+        "movement": null,
+        "rendered_percent": 15
+       }
+      ],
+      "card_sum_reason": null,
+      "outcome_count": 4,
+      "canonical_market_key": null,
+      "group_id": "polymarket:956714",
+      "group_type": "polymarket_event",
+      "discover_card": {
+       "suggested_format": "threshold_heatmap",
+       "bundle_candidate": false,
+       "comparison_theme": null,
+       "threshold_points": [
+        {
+         "source": "date_bucket",
+         "label": "September 30",
+         "value": 20000930,
+         "unit": "date",
+         "direction": "before",
+         "probability": 0.0305,
+         "movement": null
+        },
+        {
+         "source": "date_bucket",
+         "label": "October 15",
+         "value": 20001015,
+         "unit": "date",
+         "direction": "before",
+         "probability": 0.15,
+         "movement": null
+        },
+        {
+         "source": "date_bucket",
+         "label": "October 31",
+         "value": 20001031,
+         "unit": "date",
+         "direction": "before",
+         "probability": 0.755,
+         "movement": 0.31
+        },
+        {
+         "source": "date_bucket",
+         "label": "November 30",
+         "value": 20001130,
+         "unit": "date",
+         "direction": "before",
+         "probability": 0.945,
+         "movement": null
+        }
+       ],
+       "ladder_treatment_refused": false,
+       "field_is_a_race": false,
+       "distribution_outcomes": [
+        {
+         "label": "November 30",
+         "probability": 0.945,
+         "movement": null
+        },
+        {
+         "label": "October 31",
+         "probability": 0.755,
+         "movement": 0.31
+        },
+        {
+         "label": "October 15",
+         "probability": 0.15,
+         "movement": null
+        },
+        {
+         "label": "September 30",
+         "probability": 0.0305,
+         "movement": null
+        }
+       ],
+       "remaining_outcome_count": 0,
+       "qa_signals": [],
+       "public_source_disagreement": false,
+       "reasons": [
+        "threshold_values"
+       ]
+      },
+      "image_url": null,
+      "image_width": null,
+      "image_height": null,
+      "hook_description": null,
+      "temporal_badge": null,
+      "confidence_tier": "moderate",
+      "confidence_score": 0.6471,
+      "confidence_signals": {
+       "has_closing_line": false
+      },
+      "market_tags": [
+       "category:conference",
+       "market_status:open",
+       "source:polymarket",
+       "tier:2"
+      ]
+     }
+    },
+    {
+     "type": "futures",
+     "score": 81,
+     "reason": "Anthropic (89%) leads Which company has the best AI model end of October?",
+     "headline": "Anthropic leads at 89%",
+     "context_summary": "Anthropic leads at 89%",
+     "data": {
+      "id": 58918649,
+      "name": "Which company has the best AI model end of October?",
+      "sport": null,
+      "sport_name": null,
+      "llm_sport_category": "tech",
+      "source": "polymarket",
+      "source_count": 1,
+      "sources": [
+       "polymarket"
+      ],
+      "market_tier": 2,
+      "market_type": "field",
+      "status": "open",
+      "resolution_date": "2026-10-31T16:00:00+00:00",
+      "price_observed_at": "2026-09-30T20:00:53+00:00",
+      "top_outcomes": [
+       {
+        "id": 218636640,
+        "name": "Anthropic",
+        "probability": 0.885,
+        "rank": 1,
+        "movement": null,
+        "rendered_percent": 89
+       },
+       {
+        "id": 231007407,
+        "name": "Google",
+        "probability": 0.103,
+        "rank": 2,
+        "movement": null,
+        "rendered_percent": 10
+       },
+       {
+        "id": 218669788,
+        "name": "OpenAI",
+        "probability": 0.013,
+        "rank": 3,
+        "movement": null,
+        "rendered_percent": 1
+       }
+      ],
+      "card_sum_reason": null,
+      "outcome_count": 21,
+      "canonical_market_key": null,
+      "group_id": "polymarket:841230",
+      "group_type": "negrisk",
+      "discover_card": {
+       "suggested_format": "outcome_distribution",
+       "bundle_candidate": false,
+       "comparison_theme": null,
+       "threshold_points": [],
+       "ladder_treatment_refused": false,
+       "field_is_a_race": true,
+       "distribution_outcomes": [
+        {
+         "label": "Anthropic",
+         "probability": 0.885,
+         "movement": null
+        },
+        {
+         "label": "Google",
+         "probability": 0.103,
+         "movement": null
+        },
+        {
+         "label": "OpenAI",
+         "probability": 0.013,
+         "movement": null
+        },
+        {
+         "label": "Meta",
+         "probability": 0.0055,
+         "movement": null
+        },
+        {
+         "label": "SpaceXAI",
+         "probability": 0.0025,
+         "movement": null
+        },
+        {
+         "label": "Alibaba",
+         "probability": 0.002,
+         "movement": null
+        },
+        {
+         "label": "Moonshot",
+         "probability": 0.0015,
+         "movement": null
+        },
+        {
+         "label": "DeepSeek",
+         "probability": 0.0015,
+         "movement": null
+        }
+       ],
+       "remaining_outcome_count": 13,
+       "qa_signals": [],
+       "public_source_disagreement": false,
+       "reasons": [
+        "multi_outcome_distribution"
+       ]
+      },
+      "image_url": "https://images.pexels.com/photos/7464721/pexels-photo-7464721.jpeg?auto=compress&cs=tinysrgb&h=650&w=940",
+      "image_width": 940,
+      "image_height": 627,
+      "hook_description": null,
+      "temporal_badge": null,
+      "confidence_tier": "low",
+      "confidence_score": 0.3529,
+      "confidence_signals": {
+       "has_closing_line": false
+      },
+      "market_tags": [
+       "category:conference",
+       "market_status:open",
+       "source:polymarket",
+       "tier:2"
+      ]
+     }
+    },
+    {
+     "type": "futures",
+     "score": 76,
+     "reason": "Anthropic (78%) leads Which company has best AI model end of 2026?",
+     "headline": "Anthropic leads at 78%",
+     "context_summary": "Anthropic leads at 78%",
+     "data": {
+      "id": 32127334,
+      "name": "Which company has best AI model end of 2026?",
+      "sport": null,
+      "sport_name": null,
+      "llm_sport_category": "tech",
+      "source": "polymarket",
+      "source_count": 1,
+      "sources": [
+       "polymarket"
+      ],
+      "market_tier": 2,
+      "market_type": "field",
+      "status": "open",
+      "resolution_date": "2026-12-31T17:00:00+00:00",
+      "price_observed_at": "2026-09-30T20:00:51+00:00",
+      "top_outcomes": [
+       {
+        "id": 145828486,
+        "name": "Anthropic",
+        "probability": 0.775,
+        "rank": 1,
+        "movement": null,
+        "rendered_percent": 78
+       },
+       {
+        "id": 145828487,
+        "name": "Google",
+        "probability": 0.115,
+        "rank": 2,
+        "movement": null,
+        "rendered_percent": 12
+       },
+       {
+        "id": 145828488,
+        "name": "OpenAI",
+        "probability": 0.065,
+        "rank": 3,
+        "movement": null,
+        "rendered_percent": 7
+       }
+      ],
+      "card_sum_reason": null,
+      "outcome_count": 15,
+      "canonical_market_key": null,
+      "group_id": "polymarket:556382",
+      "group_type": "negrisk",
+      "discover_card": {
+       "suggested_format": "outcome_distribution",
+       "bundle_candidate": false,
+       "comparison_theme": null,
+       "threshold_points": [],
+       "ladder_treatment_refused": false,
+       "field_is_a_race": true,
+       "distribution_outcomes": [
+        {
+         "label": "Anthropic",
+         "probability": 0.775,
+         "movement": null
+        },
+        {
+         "label": "Google",
+         "probability": 0.115,
+         "movement": null
+        },
+        {
+         "label": "OpenAI",
+         "probability": 0.065,
+         "movement": null
+        },
+        {
+         "label": "Meta",
+         "probability": 0.0195,
+         "movement": null
+        },
+        {
+         "label": "xAI",
+         "probability": 0.016,
+         "movement": null
+        },
+        {
+         "label": "Alibaba",
+         "probability": 0.0075,
+         "movement": null
+        },
+        {
+         "label": "DeepSeek",
+         "probability": 0.0045,
+         "movement": null
+        },
+        {
+         "label": "ByteDance",
+         "probability": 0.0035,
+         "movement": null
+        }
+       ],
+       "remaining_outcome_count": 7,
+       "qa_signals": [],
+       "public_source_disagreement": false,
+       "reasons": [
+        "multi_outcome_distribution"
+       ]
+      },
+      "image_url": "https://images.pexels.com/photos/14393589/pexels-photo-14393589.jpeg?auto=compress&cs=tinysrgb&h=650&w=940",
+      "image_width": 940,
+      "image_height": 627,
+      "hook_description": null,
+      "temporal_badge": null,
+      "confidence_tier": "low",
+      "confidence_score": 0.3529,
+      "confidence_signals": {
+       "has_closing_line": false
+      },
+      "market_tags": [
+       "category:conference",
+       "market_status:open",
+       "source:polymarket",
+       "tier:2"
+      ]
+     }
+    }
+   ],
+   "debug_bundles": {
+    "grouped_by": "story_key",
+    "story_key": "story:ai",
+    "title_source": "authored",
+    "question_source": "authored",
+    "member_ids": [
+     109596,
+     57566334,
+     60093973,
+     58918649,
+     32127334
+    ],
+    "member_names": [
+     "Best AI at the end of 2026?",
+     "Next Google Gemini Pro Model: Humanity\u2019s Last Exam Debut?",
+     "Next Gemini Flash Model (3.9+) released?",
+     "Which company has the best AI model end of October?",
+     "Which company has best AI model end of 2026?"
+    ]
+   }
+  }
+ },
+ "story:major_entertainment_events": {
+  "type": "bundle",
+  "score": 88.0,
+  "reason": "Who wins awards season?",
+  "headline": "Awards Season",
+  "data": {
+   "id": "theme:story:major_entertainment_events:6173044-58492236-58492244-58495138-58492242-58492246",
+   "title": "Awards Season",
+   "kind": "theme",
+   "story_key": "story:major_entertainment_events",
+   "shared_question": "Who wins awards season?",
+   "item_count": 6,
+   "member_ids": [
+    6173044,
+    58492236,
+    58492244,
+    58495138,
+    58492242,
+    58492246
+   ],
+   "items": [
+    {
+     "type": "futures",
+     "score": 88,
+     "reason": "The Odyssey (48%) leads Oscar Winner: Best Picture",
+     "headline": "The Odyssey leads at 48%",
+     "context_summary": "The Odyssey leads at 48%",
+     "data": {
+      "id": 6173044,
+      "name": "Oscar Winner: Best Picture",
+      "sport": null,
+      "sport_name": null,
+      "llm_sport_category": "entertainment",
+      "source": "kalshi",
+      "source_count": 2,
+      "sources": [
+       "kalshi",
+       "polymarket"
+      ],
+      "market_tier": 1,
+      "market_type": "field",
+      "status": "open",
+      "resolution_date": "2027-12-31T15:00:00+00:00",
+      "price_observed_at": "2026-09-30T20:02:10+00:00",
+      "top_outcomes": [
+       {
+        "id": 31537937,
+        "name": "The Odyssey",
+        "probability": 0.475,
+        "rank": 1,
+        "movement": null,
+        "rendered_percent": 48
+       },
+       {
+        "id": 133031025,
+        "name": "The Black Ball",
+        "probability": 0.265,
+        "rank": 2,
+        "movement": null,
+        "rendered_percent": 27
+       },
+       {
+        "id": 31537950,
+        "name": "Dune: Part Three",
+        "probability": 0.095,
+        "rank": 3,
+        "movement": null,
+        "rendered_percent": 10
+       }
+      ],
+      "card_sum_reason": null,
+      "outcome_count": 41,
+      "canonical_market_key": "entertainment:AWARDS:championship:2027",
+      "group_id": "kalshi:KXOSCARPIC-27",
+      "group_type": "kalshi_event",
+      "discover_card": {
+       "suggested_format": "outcome_distribution",
+       "bundle_candidate": false,
+       "comparison_theme": null,
+       "threshold_points": [],
+       "ladder_treatment_refused": false,
+       "field_is_a_race": true,
+       "distribution_outcomes": [
+        {
+         "label": "The Odyssey",
+         "probability": 0.475,
+         "movement": null
+        },
+        {
+         "label": "The Black Ball",
+         "probability": 0.265,
+         "movement": null
+        },
+        {
+         "label": "Dune: Part Three",
+         "probability": 0.095,
+         "movement": null
+        },
+        {
+         "label": "Wild Horse Nine",
+         "probability": 0.035,
+         "movement": null
+        },
+        {
+         "label": "The Debut",
+         "probability": 0.025,
+         "movement": null
+        },
+        {
+         "label": "You Can See Everything",
+         "probability": 0.015,
+         "movement": null
+        },
+        {
+         "label": "The Death of Robin Hood",
+         "probability": 0.01,
+         "movement": null
+        },
+        {
+         "label": "Cry to Heaven",
+         "probability": 0.01,
+         "movement": null
+        }
+       ],
+       "remaining_outcome_count": 33,
+       "qa_signals": [
+        "multi_source_consistency_check"
+       ],
+       "public_source_disagreement": false,
+       "reasons": [
+        "multi_outcome_distribution"
+       ]
+      },
+      "image_url": "https://images.pexels.com/photos/7005636/pexels-photo-7005636.jpeg?auto=compress&cs=tinysrgb&h=350",
+      "image_width": 525,
+      "image_height": 350,
+      "hook_description": null,
+      "temporal_badge": null,
+      "confidence_tier": "moderate",
+      "confidence_score": 0.5294,
+      "confidence_signals": {
+       "has_closing_line": false
+      },
+      "market_tags": [
+       "category:championship",
+       "market_status:open",
+       "source:kalshi",
+       "sport:entertainment",
+       "tier:1"
+      ]
+     }
+    },
+    {
+     "type": "futures",
+     "score": 88,
+     "reason": "Wild Horse Nine is up 13.5 points since Aug 6 in Oscars 2027: Best Original Screenplay Winner",
+     "headline": "Wild Horse Nine leads at 44%, up 13.5 points since Aug 6",
+     "context_summary": "Wild Horse Nine leads at 44%, up 13.5 points since Aug 6",
+     "data": {
+      "id": 58492236,
+      "name": "Oscars 2027: Best Original Screenplay Winner",
+      "sport": null,
+      "sport_name": null,
+      "llm_sport_category": "entertainment",
+      "source": "polymarket",
+      "source_count": 1,
+      "sources": [
+       "polymarket"
+      ],
+      "market_tier": 1,
+      "market_type": "field",
+      "status": "open",
+      "resolution_date": "2027-07-01T03:59:00+00:00",
+      "price_observed_at": "2026-09-30T20:00:53+00:00",
+      "top_outcomes": [
+       {
+        "id": 217013333,
+        "name": "Wild Horse Nine",
+        "probability": 0.4382,
+        "rank": 1,
+        "movement": null,
+        "rendered_percent": 44
+       },
+       {
+        "id": 217013337,
+        "name": "The Debut",
+        "probability": 0.1912,
+        "rank": 2,
+        "movement": null,
+        "rendered_percent": 19
+       },
+       {
+        "id": 217003130,
+        "name": "Obsession",
+        "probability": 0.0708,
+        "rank": 3,
+        "movement": null,
+        "rendered_percent": 7
+       }
+      ],
+      "card_sum_reason": null,
+      "outcome_count": 17,
+      "canonical_market_key": null,
+      "group_id": "polymarket:805201",
+      "group_type": "negrisk",
+      "discover_card": {
+       "suggested_format": "outcome_distribution",
+       "bundle_candidate": false,
+       "comparison_theme": null,
+       "threshold_points": [],
+       "ladder_treatment_refused": false,
+       "field_is_a_race": true,
+       "distribution_outcomes": [
+        {
+         "label": "Wild Horse Nine",
+         "probability": 0.4382,
+         "movement": null
+        },
+        {
+         "label": "The Debut",
+         "probability": 0.1912,
+         "movement": null
+        },
+        {
+         "label": "Obsession",
+         "probability": 0.0708,
+         "movement": null
+        },
+        {
+         "label": "Elsinore",
+         "probability": 0.0637,
+         "movement": null
+        },
+        {
+         "label": "Digger",
+         "probability": 0.0372,
+         "movement": null
+        },
+        {
+         "label": "Fjord",
+         "probability": 0.0341,
+         "movement": null
+        },
+        {
+         "label": "The Drama",
+         "probability": 0.031,
+         "movement": null
+        },
+        {
+         "label": "The Invite",
+         "probability": 0.0283,
+         "movement": null
+        }
+       ],
+       "remaining_outcome_count": 9,
+       "qa_signals": [],
+       "public_source_disagreement": false,
+       "reasons": [
+        "multi_outcome_distribution"
+       ]
+      },
+      "image_url": "https://images.pexels.com/photos/7005636/pexels-photo-7005636.jpeg?auto=compress&cs=tinysrgb&h=650&w=940",
+      "image_width": 940,
+      "image_height": 627,
+      "hook_description": null,
+      "temporal_badge": null,
+      "confidence_tier": "moderate",
+      "confidence_score": 0.6471,
+      "confidence_signals": {
+       "has_closing_line": false
+      },
+      "market_tags": [
+       "category:championship",
+       "market_status:open",
+       "source:polymarket",
+       "sport:entertainment",
+       "tier:1"
+      ]
+     }
+    },
+    {
+     "type": "futures",
+     "score": 88,
+     "reason": "Don't Be Dumb - A$AP Rocky (17%) leads Grammys 2027: Best Rap Album Winner",
+     "headline": "Don't Be Dumb - A$AP Rocky leads at 17%",
+     "context_summary": "Don't Be Dumb - A$AP Rocky leads at 17%",
+     "data": {
+      "id": 58492244,
+      "name": "Grammys 2027: Best Rap Album Winner",
+      "sport": null,
+      "sport_name": null,
+      "llm_sport_category": "entertainment",
+      "source": "polymarket",
+      "source_count": 1,
+      "sources": [
+       "polymarket"
+      ],
+      "market_tier": 1,
+      "market_type": "field",
+      "status": "open",
+      "resolution_date": "2027-07-01T03:59:00+00:00",
+      "price_observed_at": "2026-09-30T20:00:53+00:00",
+      "top_outcomes": [
+       {
+        "id": 217003209,
+        "name": "Don't Be Dumb - A$AP Rocky",
+        "probability": 0.165,
+        "rank": 1,
+        "movement": null,
+        "rendered_percent": 17
+       },
+       {
+        "id": 217003213,
+        "name": "The Fall-Off - J. Cole",
+        "probability": 0.13,
+        "rank": 2,
+        "movement": null,
+        "rendered_percent": 13
+       },
+       {
+        "id": 217003210,
+        "name": "Octane - Don Toliver",
+        "probability": 0.075,
+        "rank": 3,
+        "movement": null,
+        "rendered_percent": 8
+       }
+      ],
+      "card_sum_reason": null,
+      "outcome_count": 5,
+      "canonical_market_key": null,
+      "group_id": "polymarket:805157",
+      "group_type": "negrisk",
+      "discover_card": {
+       "suggested_format": "outcome_distribution",
+       "bundle_candidate": false,
+       "comparison_theme": null,
+       "threshold_points": [],
+       "ladder_treatment_refused": false,
+       "field_is_a_race": true,
+       "distribution_outcomes": [
+        {
+         "label": "Don't Be Dumb - A$AP Rocky",
+         "probability": 0.165,
+         "movement": null
+        },
+        {
+         "label": "The Fall-Off - J. Cole",
+         "probability": 0.13,
+         "movement": null
+        },
+        {
+         "label": "Octane - Don Toliver",
+         "probability": 0.075,
+         "movement": null
+        },
+        {
+         "label": "Bully - Ye",
+         "probability": 0.0505,
+         "movement": null
+        },
+        {
+         "label": "Iceman - Drake",
+         "probability": 0.033,
+         "movement": null
+        }
+       ],
+       "remaining_outcome_count": 0,
+       "qa_signals": [],
+       "public_source_disagreement": false,
+       "reasons": [
+        "multi_outcome_distribution"
+       ]
+      },
+      "image_url": "https://images.pexels.com/photos/7955063/pexels-photo-7955063.jpeg?auto=compress&cs=tinysrgb&h=650&w=940",
+      "image_width": 940,
+      "image_height": 627,
+      "hook_description": null,
+      "temporal_badge": null,
+      "confidence_tier": "moderate",
+      "confidence_score": 0.6471,
+      "confidence_signals": {
+       "has_closing_line": false
+      },
+      "market_tags": [
+       "category:championship",
+       "market_status:open",
+       "source:polymarket",
+       "sport:entertainment",
+       "tier:1"
+      ]
+     }
+    },
+    {
+     "type": "futures",
+     "score": 88,
+     "reason": "you seem pretty sad for a girl so in love - Olivia Rodrigo (45%) leads Grammys 2027: Album of the Year Winner",
+     "headline": "you seem pretty sad for a girl so in love - Olivia Rodrigo leads at 45%",
+     "context_summary": "you seem pretty sad for a girl so in love - Olivia Rodrigo leads at 45%",
+     "data": {
+      "id": 58495138,
+      "name": "Grammys 2027: Album of the Year Winner",
+      "sport": null,
+      "sport_name": null,
+      "llm_sport_category": "entertainment",
+      "source": "polymarket",
+      "source_count": 1,
+      "sources": [
+       "polymarket"
+      ],
+      "market_tier": 1,
+      "market_type": "field",
+      "status": "open",
+      "resolution_date": "2027-07-01T03:59:00+00:00",
+      "price_observed_at": "2026-09-30T20:00:53+00:00",
+      "top_outcomes": [
+       {
+        "id": 217013434,
+        "name": "you seem pretty sad for a girl so in love - Olivia Rodrigo",
+        "probability": 0.445,
+        "rank": 1,
+        "movement": null,
+        "rendered_percent": 45
+       },
+       {
+        "id": 217013437,
+        "name": "The Art of Loving - Olivia Dean",
+        "probability": 0.2105,
+        "rank": 2,
+        "movement": null,
+        "rendered_percent": 21
+       },
+       {
+        "id": 217013438,
+        "name": "Lux - Rosal\u00eda",
+        "probability": 0.145,
+        "rank": 3,
+        "movement": null,
+        "rendered_percent": 15
+       }
+      ],
+      "card_sum_reason": null,
+      "outcome_count": 15,
+      "canonical_market_key": null,
+      "group_id": "polymarket:805160",
+      "group_type": "negrisk",
+      "discover_card": {
+       "suggested_format": "outcome_distribution",
+       "bundle_candidate": false,
+       "comparison_theme": null,
+       "threshold_points": [],
+       "ladder_treatment_refused": false,
+       "field_is_a_race": true,
+       "distribution_outcomes": [
+        {
+         "label": "you seem pretty sad for a girl so in love - Olivia Rodrigo",
+         "probability": 0.445,
+         "movement": null
+        },
+        {
+         "label": "The Art of Loving - Olivia Dean",
+         "probability": 0.2105,
+         "movement": null
+        },
+        {
+         "label": "Lux - Rosal\u00eda",
+         "probability": 0.145,
+         "movement": null
+        },
+        {
+         "label": "Lost Weekend - Phoebe Bridgers",
+         "probability": 0.06,
+         "movement": null
+        },
+        {
+         "label": "Confessions II - Madonna",
+         "probability": 0.05,
+         "movement": null
+        },
+        {
+         "label": "Dandelion - Ella Langley",
+         "probability": 0.0335,
+         "movement": null
+        },
+        {
+         "label": "The Romantic - Bruno Mars",
+         "probability": 0.0235,
+         "movement": null
+        },
+        {
+         "label": "The Life of a Showgirl - Taylor Swift",
+         "probability": 0.0225,
+         "movement": null
+        }
+       ],
+       "remaining_outcome_count": 7,
+       "qa_signals": [],
+       "public_source_disagreement": false,
+       "reasons": [
+        "multi_outcome_distribution"
+       ]
+      },
+      "image_url": "https://images.pexels.com/photos/15797142/pexels-photo-15797142.jpeg?auto=compress&cs=tinysrgb&h=650&w=940",
+      "image_width": 940,
+      "image_height": 627,
+      "hook_description": null,
+      "temporal_badge": null,
+      "confidence_tier": "low",
+      "confidence_score": 0.3529,
+      "confidence_signals": {
+       "has_closing_line": false
+      },
+      "market_tags": [
+       "category:championship",
+       "market_status:open",
+       "source:polymarket",
+       "sport:entertainment",
+       "tier:1"
+      ]
+     }
+    },
+    {
+     "type": "futures",
+     "score": 88,
+     "reason": "The Black Ball (79%) leads Oscars 2027: Best International Feature Film Winner",
+     "headline": "The Black Ball leads at 79%",
+     "context_summary": "The Black Ball leads at 79%",
+     "data": {
+      "id": 58492242,
+      "name": "Oscars 2027: Best International Feature Film Winner",
+      "sport": null,
+      "sport_name": null,
+      "llm_sport_category": "entertainment",
+      "source": "polymarket",
+      "source_count": 1,
+      "sources": [
+       "polymarket"
+      ],
+      "market_tier": 1,
+      "market_type": "field",
+      "status": "open",
+      "resolution_date": "2027-07-01T03:59:00+00:00",
+      "price_observed_at": "2026-09-30T20:00:53+00:00",
+      "top_outcomes": [
+       {
+        "id": 217003192,
+        "name": "The Black Ball",
+        "probability": 0.785,
+        "rank": 1,
+        "movement": null,
+        "rendered_percent": 79
+       },
+       {
+        "id": 217003193,
+        "name": "Fatherland",
+        "probability": 0.059,
+        "rank": 2,
+        "movement": null,
+        "rendered_percent": 6
+       },
+       {
+        "id": 217003195,
+        "name": "Possible Love",
+        "probability": 0.0495,
+        "rank": 3,
+        "movement": null,
+        "rendered_percent": 5
+       }
+      ],
+      "card_sum_reason": null,
+      "outcome_count": 15,
+      "canonical_market_key": null,
+      "group_id": "polymarket:805190",
+      "group_type": "negrisk",
+      "discover_card": {
+       "suggested_format": "outcome_distribution",
+       "bundle_candidate": false,
+       "comparison_theme": null,
+       "threshold_points": [],
+       "ladder_treatment_refused": false,
+       "field_is_a_race": true,
+       "distribution_outcomes": [
+        {
+         "label": "The Black Ball",
+         "probability": 0.785,
+         "movement": null
+        },
+        {
+         "label": "Fatherland",
+         "probability": 0.059,
+         "movement": null
+        },
+        {
+         "label": "Possible Love",
+         "probability": 0.0495,
+         "movement": null
+        },
+        {
+         "label": "All of a Sudden",
+         "probability": 0.0395,
+         "movement": null
+        },
+        {
+         "label": "Fjord",
+         "probability": 0.0365,
+         "movement": null
+        },
+        {
+         "label": "Minotaur",
+         "probability": 0.0235,
+         "movement": null
+        },
+        {
+         "label": "Rose",
+         "probability": 0.0065,
+         "movement": null
+        },
+        {
+         "label": "Sheep in the Box",
+         "probability": 0.0045,
+         "movement": null
+        }
+       ],
+       "remaining_outcome_count": 7,
+       "qa_signals": [],
+       "public_source_disagreement": false,
+       "reasons": [
+        "multi_outcome_distribution"
+       ]
+      },
+      "image_url": "https://images.pexels.com/photos/38199399/pexels-photo-38199399.jpeg?auto=compress&cs=tinysrgb&h=650&w=940",
+      "image_width": 940,
+      "image_height": 626,
+      "hook_description": null,
+      "temporal_badge": null,
+      "confidence_tier": "low",
+      "confidence_score": 0.3529,
+      "confidence_signals": {
+       "has_closing_line": false
+      },
+      "market_tags": [
+       "category:championship",
+       "market_status:open",
+       "source:polymarket",
+       "sport:entertainment",
+       "tier:1"
+      ]
+     }
+    },
+    {
+     "type": "futures",
+     "score": 88,
+     "reason": "Ella Langley (54%) leads Grammys 2027: Best New Artist Winner",
+     "headline": "Ella Langley leads at 54%",
+     "context_summary": "Ella Langley leads at 54%",
+     "data": {
+      "id": 58492246,
+      "name": "Grammys 2027: Best New Artist Winner",
+      "sport": null,
+      "sport_name": null,
+      "llm_sport_category": "entertainment",
+      "source": "polymarket",
+      "source_count": 1,
+      "sources": [
+       "polymarket"
+      ],
+      "market_tier": 1,
+      "market_type": "field",
+      "status": "open",
+      "resolution_date": "2027-07-01T03:59:00+00:00",
+      "price_observed_at": "2026-09-30T15:54:13+00:00",
+      "top_outcomes": [
+       {
+        "id": 217003222,
+        "name": "Ella Langley",
+        "probability": 0.5375,
+        "rank": 1,
+        "movement": null,
+        "rendered_percent": 54
+       },
+       {
+        "id": 217003224,
+        "name": "SIENNA SPIRO",
+        "probability": 0.2328,
+        "rank": 2,
+        "movement": null,
+        "rendered_percent": 23
+       },
+       {
+        "id": 217003228,
+        "name": "Ad\u00e9la",
+        "probability": 0.0229,
+        "rank": 3,
+        "movement": null,
+        "rendered_percent": 2
+       }
+      ],
+      "card_sum_reason": null,
+      "outcome_count": 30,
+      "canonical_market_key": null,
+      "group_id": "polymarket:805148",
+      "group_type": "negrisk",
+      "discover_card": {
+       "suggested_format": "outcome_distribution",
+       "bundle_candidate": false,
+       "comparison_theme": null,
+       "threshold_points": [],
+       "ladder_treatment_refused": false,
+       "field_is_a_race": true,
+       "distribution_outcomes": [
+        {
+         "label": "Ella Langley",
+         "probability": 0.5375,
+         "movement": null
+        },
+        {
+         "label": "SIENNA SPIRO",
+         "probability": 0.2328,
+         "movement": null
+        },
+        {
+         "label": "Ad\u00e9la",
+         "probability": 0.0229,
+         "movement": null
+        },
+        {
+         "label": "Magdalena Bay",
+         "probability": 0.019,
+         "movement": null
+        },
+        {
+         "label": "The Beaches",
+         "probability": 0.0178,
+         "movement": null
+        },
+        {
+         "label": "CMAT",
+         "probability": 0.0174,
+         "movement": null
+        },
+        {
+         "label": "Slayyyter",
+         "probability": 0.0174,
+         "movement": null
+        },
+        {
+         "label": "Geese",
+         "probability": 0.0169,
+         "movement": null
+        }
+       ],
+       "remaining_outcome_count": 22,
+       "qa_signals": [],
+       "public_source_disagreement": false,
+       "reasons": [
+        "multi_outcome_distribution"
+       ]
+      },
+      "image_url": "https://images.pexels.com/photos/38199433/pexels-photo-38199433.jpeg?auto=compress&cs=tinysrgb&h=650&w=940",
+      "image_width": 940,
+      "image_height": 627,
+      "hook_description": null,
+      "temporal_badge": null,
+      "confidence_tier": "low",
+      "confidence_score": 0.3529,
+      "confidence_signals": {
+       "has_closing_line": false
+      },
+      "market_tags": [
+       "category:championship",
+       "market_status:open",
+       "source:polymarket",
+       "sport:entertainment",
+       "tier:1"
+      ]
+     }
+    }
+   ],
+   "debug_bundles": {
+    "grouped_by": "story_key",
+    "story_key": "story:major_entertainment_events",
+    "title_source": "authored",
+    "question_source": "authored",
+    "member_ids": [
+     6173044,
+     58492236,
+     58492244,
+     58495138,
+     58492242,
+     58492246
+    ],
+    "member_names": [
+     "Oscar Winner: Best Picture",
+     "Oscars 2027: Best Original Screenplay Winner",
+     "Grammys 2027: Best Rap Album Winner",
+     "Grammys 2027: Album of the Year Winner",
+     "Oscars 2027: Best International Feature Film Winner",
+     "Grammys 2027: Best New Artist Winner"
+    ]
+   }
+  }
+ }
+}

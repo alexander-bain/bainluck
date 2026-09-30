@@ -1,0 +1,4071 @@
+{
+ "awards": {
+  "Oscars": {
+   "winners": [
+    {
+     "id": 6173044,
+     "name": "Oscar Winner: Best Picture",
+     "label": "Best Picture",
+     "leader": "The Odyssey 0.475",
+     "sources": [
+      "kalshi",
+      "polymarket"
+     ],
+     "twin_ids": [
+      57313556
+     ],
+     "twin_leaders": [
+      "The Odyssey 0.465"
+     ],
+     "img": true,
+     "vol24": 59366,
+     "res": "2027-12-31",
+     "n_out": 41,
+     "children": 0
+    },
+    {
+     "id": 5869749,
+     "name": "Oscar Winner: Best Actor",
+     "label": "Best Actor",
+     "leader": "John Malkovich 0.365",
+     "sources": [
+      "kalshi",
+      "polymarket"
+     ],
+     "twin_ids": [
+      57368169
+     ],
+     "twin_leaders": [
+      "John Malkovich 0.360"
+     ],
+     "img": true,
+     "vol24": 18932,
+     "res": "2027-12-31",
+     "n_out": 24,
+     "children": 0
+    },
+    {
+     "id": 59164600,
+     "name": "Oscar Winner: Best Animated Feature Film",
+     "label": "Best Animated Feature Film",
+     "leader": "Wildwood 0.560",
+     "sources": [
+      "kalshi",
+      "polymarket"
+     ],
+     "twin_ids": [
+      58492239
+     ],
+     "twin_leaders": [
+      "Wildwood 0.630"
+     ],
+     "img": true,
+     "vol24": 1523,
+     "res": "2027-12-31",
+     "n_out": 10,
+     "children": 0
+    },
+    {
+     "id": 52755611,
+     "name": "Oscar winner: Best Supporting Actor",
+     "label": "Best Supporting Actor",
+     "leader": "Paul Giamatti 0.360",
+     "sources": [
+      "kalshi",
+      "polymarket"
+     ],
+     "twin_ids": [
+      58495125
+     ],
+     "twin_leaders": [
+      "Paul Giamatti 0.390"
+     ],
+     "img": true,
+     "vol24": 1467,
+     "res": "2027-12-31",
+     "n_out": 26,
+     "children": 0
+    },
+    {
+     "id": 52755610,
+     "name": "Oscar Winner: Best Supporting Actress",
+     "label": "Best Supporting Actress",
+     "leader": "Anne Hathaway 0.500",
+     "sources": [
+      "kalshi",
+      "polymarket"
+     ],
+     "twin_ids": [
+      58492240
+     ],
+     "twin_leaders": [
+      "Anne Hathaway 0.520"
+     ],
+     "img": true,
+     "vol24": 1280,
+     "res": "2027-12-31",
+     "n_out": 16,
+     "children": 0
+    },
+    {
+     "id": 5869747,
+     "name": "Oscar Winner: Best Director",
+     "label": "Best Director",
+     "leader": "Christopher Nolan 0.655",
+     "sources": [
+      "kalshi",
+      "polymarket"
+     ],
+     "twin_ids": [
+      58519933
+     ],
+     "twin_leaders": [
+      "Christopher Nolan 0.595"
+     ],
+     "img": true,
+     "vol24": 1255,
+     "res": "2027-12-31",
+     "n_out": 18,
+     "children": 0
+    },
+    {
+     "id": 58492241,
+     "name": "Oscars 2027: Best Original Score Winner",
+     "label": "Best Original Score",
+     "leader": "The Odyssey 0.500",
+     "sources": [
+      "kalshi",
+      "polymarket"
+     ],
+     "twin_ids": [
+      59164595
+     ],
+     "twin_leaders": [
+      "The Odyssey 0.550"
+     ],
+     "img": true,
+     "vol24": 1214,
+     "res": "2027-07-01",
+     "n_out": 12,
+     "children": 0
+    },
+    {
+     "id": 5869748,
+     "name": "Oscar winner: Best Actress",
+     "label": "Best Actress",
+     "leader": "Julianne Moore 0.605",
+     "sources": [
+      "kalshi",
+      "polymarket"
+     ],
+     "twin_ids": [
+      57366460
+     ],
+     "twin_leaders": [
+      "Julianne Moore 0.665"
+     ],
+     "img": true,
+     "vol24": 1031,
+     "res": "2027-12-31",
+     "n_out": 18,
+     "children": 0
+    },
+    {
+     "id": 58519936,
+     "name": "Oscars 2027: Best Visual Effects Winner",
+     "label": "Best Visual Effects",
+     "leader": "Dune: Part Three 0.555",
+     "sources": [
+      "polymarket"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": 1030,
+     "res": "2027-07-01",
+     "n_out": 6,
+     "children": 0
+    },
+    {
+     "id": 59164599,
+     "name": "Oscar Winner: Best Adapted Screenplay",
+     "label": "Best Adapted Screenplay",
+     "leader": "The Black Ball 0.385",
+     "sources": [
+      "kalshi",
+      "polymarket"
+     ],
+     "twin_ids": [
+      58495122
+     ],
+     "twin_leaders": [
+      "The Black Ball 0.375"
+     ],
+     "img": true,
+     "vol24": 802,
+     "res": "2027-12-31",
+     "n_out": 15,
+     "children": 0
+    },
+    {
+     "id": 59164593,
+     "name": "Oscar Winner: Best Makeup and Hairstyling",
+     "label": "Best Makeup and Hairstyling",
+     "leader": "The Odyssey 0.280",
+     "sources": [
+      "kalshi",
+      "polymarket"
+     ],
+     "twin_ids": [
+      58492234,
+      59164596
+     ],
+     "twin_leaders": [
+      "The Odyssey 0.265",
+      "The Odyssey 0.180"
+     ],
+     "img": true,
+     "vol24": 659,
+     "res": "2027-12-31",
+     "n_out": 8,
+     "children": 0
+    },
+    {
+     "id": 59164597,
+     "name": "Oscar Winner: Best Documentary Feature Film",
+     "label": "Best Documentary Feature Film",
+     "leader": "You Can See Everything 0.580",
+     "sources": [
+      "kalshi",
+      "polymarket"
+     ],
+     "twin_ids": [
+      58492235
+     ],
+     "twin_leaders": [
+      "American Doctor 0.075"
+     ],
+     "img": true,
+     "vol24": 523,
+     "res": "2027-12-31",
+     "n_out": 11,
+     "children": 0
+    },
+    {
+     "id": 58492236,
+     "name": "Oscars 2027: Best Original Screenplay Winner",
+     "label": "Best Original Screenplay",
+     "leader": "Wild Horse Nine 0.495",
+     "sources": [
+      "kalshi",
+      "polymarket"
+     ],
+     "twin_ids": [
+      59164594
+     ],
+     "twin_leaders": [
+      "Wild Horse Nine 0.540"
+     ],
+     "img": true,
+     "vol24": 420,
+     "res": "2027-07-01",
+     "n_out": 17,
+     "children": 0
+    },
+    {
+     "id": 58492242,
+     "name": "Oscars 2027: Best International Feature Film Winner",
+     "label": "Best International Feature Film",
+     "leader": "The Black Ball 0.785",
+     "sources": [
+      "kalshi",
+      "polymarket"
+     ],
+     "twin_ids": [
+      62368062
+     ],
+     "twin_leaders": [
+      "La Bola Negra 0.800"
+     ],
+     "img": true,
+     "vol24": 327,
+     "res": "2027-07-01",
+     "n_out": 15,
+     "children": 0
+    },
+    {
+     "id": 58495124,
+     "name": "Oscars 2027: Best Cinematography Winner",
+     "label": "Best Cinematography",
+     "leader": "The Odyssey 0.605",
+     "sources": [
+      "kalshi",
+      "polymarket"
+     ],
+     "twin_ids": [
+      59164598
+     ],
+     "twin_leaders": [
+      "The Odyssey 0.610"
+     ],
+     "img": true,
+     "vol24": 50,
+     "res": "2027-07-01",
+     "n_out": 10,
+     "children": 0
+    },
+    {
+     "id": 58492238,
+     "name": "Oscars 2027: Best Casting Winner",
+     "label": "Best Casting",
+     "leader": "The Odyssey 0.425",
+     "sources": [
+      "polymarket"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": 7,
+     "res": "2027-07-01",
+     "n_out": 13,
+     "children": 0
+    },
+    {
+     "id": 110538,
+     "name": "Which film will win the most Oscars?",
+     "label": "Which film will win the most Oscars?",
+     "leader": "One Battle After Another 0.665",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": false,
+     "vol24": null,
+     "res": "2027-03-15",
+     "n_out": 6,
+     "children": 0
+    }
+   ],
+   "around": [
+    {
+     "id": 115607,
+     "name": "Which film will get the most Oscar nominations at the 99th Academy Awards?",
+     "label": "Which film will get the most Oscar nominations at the 99th Academy Awards?",
+     "leader": "The Odyssey 0.815",
+     "sources": [
+      "polymarket"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": 13871,
+     "res": "2027-07-01",
+     "n_out": 22,
+     "children": 0
+    },
+    {
+     "id": 109303,
+     "name": "Who will attend the Oscars?",
+     "label": "Who will attend the Oscars?",
+     "leader": "Hudson Williams 0.970",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": null,
+     "res": "2027-01-01",
+     "n_out": 12,
+     "children": 0
+    }
+   ],
+   "nominations": [
+    {
+     "id": 5165726,
+     "name": "Oscar nominees: Best Picture",
+     "label": "Best Picture",
+     "leader": "The Odyssey 0.980",
+     "sources": [
+      "kalshi",
+      "polymarket"
+     ],
+     "twin_ids": [
+      27988771
+     ],
+     "twin_leaders": [
+      "The Odyssey 0.997"
+     ],
+     "img": true,
+     "vol24": 7575,
+     "res": "2027-01-21",
+     "n_out": 53,
+     "children": 0
+    },
+    {
+     "id": 5388752,
+     "name": "Oscar nominees: Best Actor",
+     "label": "Best Actor",
+     "leader": "John Malkovich 0.920",
+     "sources": [
+      "kalshi",
+      "polymarket"
+     ],
+     "twin_ids": [
+      27988786
+     ],
+     "twin_leaders": [
+      "John Malkovich 0.940"
+     ],
+     "img": true,
+     "vol24": 2768,
+     "res": "2027-01-21",
+     "n_out": 34,
+     "children": 0
+    },
+    {
+     "id": 5388751,
+     "name": "Oscar nominees: Best Actress",
+     "label": "Best Actress",
+     "leader": "Julianne Moore 0.895",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": 1672,
+     "res": "2027-01-21",
+     "n_out": 26,
+     "children": 0
+    },
+    {
+     "id": 5601024,
+     "name": "Oscar nominees: Best Director",
+     "label": "Best Director",
+     "leader": "Christopher Nolan 0.950",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": 1403,
+     "res": "2027-01-21",
+     "n_out": 27,
+     "children": 0
+    },
+    {
+     "id": 5605130,
+     "name": "Oscar nominees: Best Supporting Actor",
+     "label": "Best Supporting Actor",
+     "leader": "Paul Giamatti 0.855",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": 1387,
+     "res": "2027-12-31",
+     "n_out": 24,
+     "children": 0
+    },
+    {
+     "id": 6330235,
+     "name": "Oscar nominees: Best Animated Feature Film",
+     "label": "Best Animated Feature Film",
+     "leader": "Wildwood 0.890",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": 1257,
+     "res": "2027-12-31",
+     "n_out": 9,
+     "children": 0
+    },
+    {
+     "id": 5392295,
+     "name": "Oscar nominees: Best Supporting Actress",
+     "label": "Best Supporting Actress",
+     "leader": "Anne Hathaway 0.930",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": 828,
+     "res": "2027-12-31",
+     "n_out": 15,
+     "children": 0
+    },
+    {
+     "id": 6330238,
+     "name": "Oscar nominees: Best Cinematography",
+     "label": "Best Cinematography",
+     "leader": "The Odyssey 0.920",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": 680,
+     "res": "2027-12-31",
+     "n_out": 10,
+     "children": 0
+    },
+    {
+     "id": 6330237,
+     "name": "Oscar nominees: Best International Feature Film",
+     "label": "Best International Feature Film",
+     "leader": "The Black Ball 0.970",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": 425,
+     "res": "2027-12-31",
+     "n_out": 15,
+     "children": 0
+    },
+    {
+     "id": 6330232,
+     "name": "Oscar nominees: Best Visual Effects",
+     "label": "Best Visual Effects",
+     "leader": "Dune: Part Three 0.905",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": 402,
+     "res": "2027-12-31",
+     "n_out": 7,
+     "children": 0
+    },
+    {
+     "id": 6330234,
+     "name": "Oscar nominees: Best Music (Original Score)",
+     "label": "Best Music (Original Score)",
+     "leader": "The Odyssey 0.965",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": 380,
+     "res": "2027-12-31",
+     "n_out": 13,
+     "children": 0
+    },
+    {
+     "id": 6330382,
+     "name": "Oscar nominees: Best Documentary Feature Film",
+     "label": "Best Documentary Feature Film",
+     "leader": "NAZA 0.805",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": 347,
+     "res": "2027-01-22",
+     "n_out": 10,
+     "children": 0
+    },
+    {
+     "id": 6330233,
+     "name": "Oscar nominees: Best Original Screenplay",
+     "label": "Best Original Screenplay",
+     "leader": "Wild Horse Nine 0.890",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": 158,
+     "res": "2027-12-31",
+     "n_out": 18,
+     "children": 0
+    },
+    {
+     "id": 6330239,
+     "name": "Oscar nominees: Achievement in Casting",
+     "label": "Achievement in Casting",
+     "leader": "The Odyssey 0.910",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": 138,
+     "res": "2027-12-31",
+     "n_out": 17,
+     "children": 0
+    },
+    {
+     "id": 6330240,
+     "name": "Oscar nominees: Best Adapted Screenplay",
+     "label": "Best Adapted Screenplay",
+     "leader": "The Odyssey 0.860",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": 71,
+     "res": "2027-12-31",
+     "n_out": 15,
+     "children": 0
+    },
+    {
+     "id": 6330236,
+     "name": "Oscar nominees: Best Makeup and Hairstyling",
+     "label": "Best Makeup and Hairstyling",
+     "leader": "The Odyssey 0.830",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": 52,
+     "res": "2027-12-31",
+     "n_out": 13,
+     "children": 0
+    }
+   ]
+  },
+  "Grammys": {
+   "winners": [
+    {
+     "id": 62368098,
+     "name": "Grammy Winner: Best R&B Solo Performance",
+     "label": "Best R&B Solo Performance",
+     "leader": "What You Need 0.570",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": 29959,
+     "res": "2027-02-08",
+     "n_out": 11,
+     "children": 0
+    },
+    {
+     "id": 62368097,
+     "name": "Grammy Winner: Best Rap Performance",
+     "label": "Best Rap Performance",
+     "leader": "GOMF 0.250",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": 3827,
+     "res": "2027-02-08",
+     "n_out": 11,
+     "children": 0
+    },
+    {
+     "id": 62368100,
+     "name": "Grammy Winner: Best R&B Collaboration or Duo/Group Performance",
+     "label": "Best R&B Collaboration or Duo/Group Performance",
+     "leader": "Don't Break Her Heart 0.290",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": false,
+     "vol24": 3000,
+     "res": "2027-02-08",
+     "n_out": 11,
+     "children": 0
+    },
+    {
+     "id": 62368101,
+     "name": "Grammy Winner: Best R&B Album",
+     "label": "Best R&B Album",
+     "leader": "To Whom This May Concern 0.125",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": false,
+     "vol24": 2878,
+     "res": "2027-02-08",
+     "n_out": 11,
+     "children": 0
+    },
+    {
+     "id": 62368104,
+     "name": "Grammy winner \u00b7 Best Progressive R&B Album",
+     "label": "Best Progressive R&B Album",
+     "leader": "Oh Yeah? 0.095",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": false,
+     "vol24": 2806,
+     "res": "2027-02-08",
+     "n_out": 11,
+     "children": 0
+    },
+    {
+     "id": 62368092,
+     "name": "Grammy Winner \u00b7 Best Traditional R&B Performance",
+     "label": "Best Traditional R&B Performance",
+     "leader": "Fear (Hey Friend) 0.830",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": false,
+     "vol24": 1224,
+     "res": "2027-02-08",
+     "n_out": 11,
+     "children": 0
+    },
+    {
+     "id": 58492246,
+     "name": "Grammys 2027: Best New Artist Winner",
+     "label": "Best New Artist",
+     "leader": "Ella Langley 0.635",
+     "sources": [
+      "kalshi",
+      "polymarket"
+     ],
+     "twin_ids": [
+      56775571
+     ],
+     "twin_leaders": [
+      "Ella Langley 0.675"
+     ],
+     "img": true,
+     "vol24": 896,
+     "res": "2027-07-01",
+     "n_out": 30,
+     "children": 0
+    },
+    {
+     "id": 52755801,
+     "name": "Grammy winner: Album of the Year",
+     "label": "Album of the Year",
+     "leader": "you seem pretty sad for a girl so in love 0.470",
+     "sources": [
+      "kalshi",
+      "polymarket"
+     ],
+     "twin_ids": [
+      58495138
+     ],
+     "twin_leaders": [
+      "you seem pretty sad for a girl so in love - Olivia Rodrigo 0.445"
+     ],
+     "img": true,
+     "vol24": 816,
+     "res": "2027-02-08",
+     "n_out": 12,
+     "children": 0
+    },
+    {
+     "id": 58492244,
+     "name": "Grammys 2027: Best Rap Album Winner",
+     "label": "Best Rap Album",
+     "leader": "Don't Be Dumb - A$AP Rocky 0.165",
+     "sources": [
+      "polymarket"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": 523,
+     "res": "2027-07-01",
+     "n_out": 5,
+     "children": 0
+    },
+    {
+     "id": 62368115,
+     "name": "Grammy Winner: Best Dance/Electronic Album",
+     "label": "Best Dance/Electronic Album",
+     "leader": "Confessions II 0.325",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": false,
+     "vol24": 200,
+     "res": "2027-02-08",
+     "n_out": 11,
+     "children": 0
+    },
+    {
+     "id": 58492243,
+     "name": "Grammys 2027: Song of the Year Winner",
+     "label": "Song of the Year",
+     "leader": "Choosin' Texas - Ella Langley 0.315",
+     "sources": [
+      "polymarket"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": 67,
+     "res": "2027-07-01",
+     "n_out": 10,
+     "children": 0
+    },
+    {
+     "id": 62368117,
+     "name": "Grammy Winner: Best Country Song",
+     "label": "Best Country Song",
+     "leader": "Mexico Honey 0.275",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": false,
+     "vol24": 18,
+     "res": "2027-02-08",
+     "n_out": 11,
+     "children": 0
+    },
+    {
+     "id": 62368110,
+     "name": "Grammy Winner: Best Latin Pop Album",
+     "label": "Best Latin Pop Album",
+     "leader": "JuanesTeban 0.295",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": false,
+     "vol24": null,
+     "res": "2027-02-08",
+     "n_out": 11,
+     "children": 0
+    },
+    {
+     "id": 62368099,
+     "name": "Grammy Winner: Best R&B Song",
+     "label": "Best R&B Song",
+     "leader": "The Feeling 0.295",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": false,
+     "vol24": null,
+     "res": "2027-02-08",
+     "n_out": 11,
+     "children": 0
+    },
+    {
+     "id": 62368107,
+     "name": "Grammy Winner: Best M\u00fasica Mexicana Album (Including Tejano)",
+     "label": "Best M\u00fasica Mexicana Album (Including Tejano)",
+     "leader": "Metamorfosis 0.295",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": false,
+     "vol24": null,
+     "res": "2027-02-08",
+     "n_out": 11,
+     "children": 0
+    },
+    {
+     "id": 62368102,
+     "name": "Grammy Winner: Best Reggae Album",
+     "label": "Best Reggae Album",
+     "leader": "Revelation 0.295",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": false,
+     "vol24": null,
+     "res": "2027-02-08",
+     "n_out": 11,
+     "children": 0
+    },
+    {
+     "id": 58492245,
+     "name": "Grammys 2027: Record of the Year Winner",
+     "label": "Record of the Year",
+     "leader": "Man I Need - Olivia Dean 0.375",
+     "sources": [
+      "polymarket"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": false,
+     "vol24": null,
+     "res": "2027-07-01",
+     "n_out": 7,
+     "children": 0
+    },
+    {
+     "id": 62368108,
+     "name": "Grammy Winner: Best Latin Song",
+     "label": "Best Latin Song",
+     "leader": "Desde Que Te Tengo 0.290",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": false,
+     "vol24": null,
+     "res": "2027-02-08",
+     "n_out": 11,
+     "children": 0
+    },
+    {
+     "id": 62368094,
+     "name": "Grammy Winner: Best Traditional Country Album",
+     "label": "Best Traditional Country Album",
+     "leader": "Memories and Empties 0.320",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": false,
+     "vol24": null,
+     "res": "2027-02-08",
+     "n_out": 11,
+     "children": 0
+    },
+    {
+     "id": 62368114,
+     "name": "Grammy Winner: Best Dance/Electronic Recording",
+     "label": "Best Dance/Electronic Recording",
+     "leader": "Rumpta 0.295",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": false,
+     "vol24": null,
+     "res": "2027-02-08",
+     "n_out": 11,
+     "children": 0
+    },
+    {
+     "id": 62368112,
+     "name": "Grammy Winner: Best Global Music Album",
+     "label": "Best Global Music Album",
+     "leader": "Oriad\u00e9 0.295",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": false,
+     "vol24": null,
+     "res": "2027-02-08",
+     "n_out": 11,
+     "children": 0
+    },
+    {
+     "id": 62368093,
+     "name": "Grammy Winner: Best Tropical Latin Album",
+     "label": "Best Tropical Latin Album",
+     "leader": "Pa\u00eds Port\u00e1til 0.395",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": false,
+     "vol24": null,
+     "res": "2027-02-08",
+     "n_out": 11,
+     "children": 0
+    },
+    {
+     "id": 62368111,
+     "name": "Grammy Winner: Best Global Music Performance",
+     "label": "Best Global Music Performance",
+     "leader": "My Mother's Song 0.290",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": false,
+     "vol24": null,
+     "res": "2027-02-08",
+     "n_out": 11,
+     "children": 0
+    },
+    {
+     "id": 62368105,
+     "name": "Grammy Winner: Best M\u00fasica Urbana Album",
+     "label": "Best M\u00fasica Urbana Album",
+     "leader": "Omert\u00e1 0.235",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": false,
+     "vol24": null,
+     "res": "2027-02-08",
+     "n_out": 11,
+     "children": 0
+    },
+    {
+     "id": 62368095,
+     "name": "Grammy Winner: Best Rap Song",
+     "label": "Best Rap Song",
+     "leader": "Girl, Get Up 0.185",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": false,
+     "vol24": null,
+     "res": "2027-02-08",
+     "n_out": 11,
+     "children": 0
+    },
+    {
+     "id": 62368103,
+     "name": "Grammy Winner \u00b7 Best Pop Solo Performance",
+     "label": "Best Pop Solo Performance",
+     "leader": "Man I Need 0.310",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": false,
+     "vol24": null,
+     "res": "2027-02-08",
+     "n_out": 11,
+     "children": 0
+    },
+    {
+     "id": 62368116,
+     "name": "Grammy Winner: Best Country Solo Performance",
+     "label": "Best Country Solo Performance",
+     "leader": "Choosin' Texas 0.530",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": false,
+     "vol24": null,
+     "res": "2027-02-08",
+     "n_out": 11,
+     "children": 0
+    },
+    {
+     "id": 62368118,
+     "name": "Grammy Winner: Best Country Duo/Group Performance",
+     "label": "Best Country Duo/Group Performance",
+     "leader": "Horses and Divorces 0.220",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": false,
+     "vol24": null,
+     "res": "2027-02-08",
+     "n_out": 11,
+     "children": 0
+    },
+    {
+     "id": 62368120,
+     "name": "Grammy Winner: Best African Music Performance",
+     "label": "Best African Music Performance",
+     "leader": "Chanel 0.355",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": false,
+     "vol24": null,
+     "res": "2027-02-08",
+     "n_out": 11,
+     "children": 0
+    },
+    {
+     "id": 62368119,
+     "name": "Grammy Winner: Best Contemporary Country Album",
+     "label": "Best Contemporary Country Album",
+     "leader": "Dandelion 0.370",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": false,
+     "vol24": null,
+     "res": "2027-02-08",
+     "n_out": 11,
+     "children": 0
+    },
+    {
+     "id": 62368106,
+     "name": "Grammy Winner: Best Melodic Rap Performance",
+     "label": "Best Melodic Rap Performance",
+     "leader": "E85 0.320",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": false,
+     "vol24": null,
+     "res": "2027-02-08",
+     "n_out": 11,
+     "children": 0
+    },
+    {
+     "id": 62368109,
+     "name": "Grammy Winner: Best Latin Rock or Alternative Album",
+     "label": "Best Latin Rock or Alternative Album",
+     "leader": "LUX 0.395",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": false,
+     "vol24": null,
+     "res": "2027-02-08",
+     "n_out": 11,
+     "children": 0
+    },
+    {
+     "id": 62368096,
+     "name": "Grammy Winner: Best Remixed Recording",
+     "label": "Best Remixed Recording",
+     "leader": "The Fate of Ophelia (Loud Luxury Remix) 0.280",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": false,
+     "vol24": null,
+     "res": "2027-02-08",
+     "n_out": 11,
+     "children": 0
+    },
+    {
+     "id": 62368113,
+     "name": "Grammy Winner: Best Dance Pop Recording",
+     "label": "Best Dance Pop Recording",
+     "leader": "Danceteria 0.235",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": false,
+     "vol24": null,
+     "res": "2027-02-08",
+     "n_out": 11,
+     "children": 0
+    },
+    {
+     "id": 52755781,
+     "name": " 69th Grammy Awards: Host",
+     "label": "69th Grammy Awards: Host",
+     "leader": "Jimmy Kimmel 0.330",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": null,
+     "res": "2027-03-31",
+     "n_out": 10,
+     "children": 0
+    },
+    {
+     "id": 56775574,
+     "name": "Will Travis Scott win a Grammy at the 69th Grammy Awards?",
+     "label": "Will Travis Scott win a Grammy at the 69th Grammy Awards?",
+     "leader": "Yes 0.190",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": null,
+     "res": "2027-02-08",
+     "n_out": 1,
+     "children": 0
+    }
+   ],
+   "nominations": [
+    {
+     "id": 108531,
+     "name": "Grammy nominees: Album of the Year",
+     "label": "Album of the Year",
+     "leader": "you seem pretty sad for a girl so in love 0.905",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": 978,
+     "res": "2027-11-01",
+     "n_out": 15,
+     "children": 0
+    },
+    {
+     "id": 33281692,
+     "name": "Grammy nominees: Best Rap Album",
+     "label": "Best Rap Album",
+     "leader": "The Fall-Off 0.800",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": 20,
+     "res": "2027-11-01",
+     "n_out": 5,
+     "children": 0
+    },
+    {
+     "id": 108528,
+     "name": "Grammy nominees: Song of the Year",
+     "label": "Song of the Year",
+     "leader": "the cure 0.900",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": 2,
+     "res": "2027-11-01",
+     "n_out": 11,
+     "children": 0
+    },
+    {
+     "id": 108529,
+     "name": "Grammy nominees: Record of the Year",
+     "label": "Record of the Year",
+     "leader": "Man I Need 0.895",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": null,
+     "res": "2027-11-01",
+     "n_out": 7,
+     "children": 0
+    },
+    {
+     "id": 108530,
+     "name": "Grammy nominees: Best New Artist",
+     "label": "Best New Artist",
+     "leader": "Ella Langley 0.970",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": null,
+     "res": "2027-11-01",
+     "n_out": 69,
+     "children": 0
+    }
+   ]
+  },
+  "Daytime Emmys": {
+   "winners": [
+    {
+     "id": 59699752,
+     "name": "Daytime Emmy Awards: Outstanding Daytime Talk Series Host",
+     "label": "Outstanding Daytime Talk Series Host",
+     "leader": "Kelly Clarkson 0.710",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": 13,
+     "res": "2026-10-31",
+     "n_out": 6,
+     "children": 0
+    },
+    {
+     "id": 59699763,
+     "name": "Daytime Emmy Awards: Outstanding Main Title and Graphic Design for a Daytime Program",
+     "label": "Outstanding Main Title and Graphic Design for a Daytime Program",
+     "leader": "The Kelly Clarkson Show 0.510",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": null,
+     "res": "2026-10-31",
+     "n_out": 4,
+     "children": 0
+    },
+    {
+     "id": 59699756,
+     "name": "Daytime Emmy Awards: Outstanding Daytime Special",
+     "label": "Outstanding Daytime Special",
+     "leader": "Living Proof 0.255",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": null,
+     "res": "2026-10-31",
+     "n_out": 6,
+     "children": 0
+    },
+    {
+     "id": 59699767,
+     "name": "Daytime Emmy Awards: Outstanding Lead Performer in a Daytime Drama Series: Actor",
+     "label": "Outstanding Lead Performer in a Daytime Drama Series: Actor",
+     "leader": "Eric Braeden 0.395",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": null,
+     "res": "2026-10-31",
+     "n_out": 6,
+     "children": 0
+    },
+    {
+     "id": 59699768,
+     "name": "Daytime Emmy Awards: Outstanding Instructional / How-To Program",
+     "label": "Outstanding Instructional / How-To Program",
+     "leader": "Fixer Upper: Colorado Mountain House 0.440",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": null,
+     "res": "2026-10-31",
+     "n_out": 6,
+     "children": 0
+    },
+    {
+     "id": 59699779,
+     "name": "Daytime Emmy Awards: Outstanding Culinary Host",
+     "label": "Outstanding Culinary Host",
+     "leader": "Kardea Brown 0.480",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": null,
+     "res": "2026-10-31",
+     "n_out": 6,
+     "children": 0
+    },
+    {
+     "id": 59699780,
+     "name": "Daytime Emmy Awards: Outstanding Culinary Cultural Series",
+     "label": "Outstanding Culinary Cultural Series",
+     "leader": "America The Bountiful 0.420",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": null,
+     "res": "2026-10-31",
+     "n_out": 6,
+     "children": 0
+    },
+    {
+     "id": 59699764,
+     "name": "Daytime Emmy Awards: Outstanding Lighting Direction for a Daytime Program",
+     "label": "Outstanding Lighting Direction for a Daytime Program",
+     "leader": "The Kelly Clarkson Show 0.755",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": false,
+     "vol24": null,
+     "res": "2026-10-31",
+     "n_out": 6,
+     "children": 0
+    },
+    {
+     "id": 59699762,
+     "name": "Daytime Emmy Awards: Outstanding Music Direction and Composition for a Daytime Program",
+     "label": "Outstanding Music Direction and Composition for a Daytime Program",
+     "leader": "The Kelly Clarkson Show 0.405",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": null,
+     "res": "2026-10-31",
+     "n_out": 6,
+     "children": 0
+    },
+    {
+     "id": 59699765,
+     "name": "Daytime Emmy Awards: Outstanding Lifestyle Program",
+     "label": "Outstanding Lifestyle Program",
+     "leader": "A Different Breed 0.375",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": null,
+     "res": "2026-10-31",
+     "n_out": 6,
+     "children": 0
+    },
+    {
+     "id": 59699783,
+     "name": "Daytime Emmy Awards: Outstanding Casting for a Daytime Program",
+     "label": "Outstanding Casting for a Daytime Program",
+     "leader": "Beyond the Gates 0.725",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": null,
+     "res": "2026-10-31",
+     "n_out": 4,
+     "children": 0
+    },
+    {
+     "id": 59699747,
+     "name": "Daytime Emmy Awards: Outstanding Daytime Drama Series",
+     "label": "Outstanding Daytime Drama Series",
+     "leader": "Beyond the Gates 0.665",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": null,
+     "res": "2026-11-01",
+     "n_out": 5,
+     "children": 0
+    },
+    {
+     "id": 59699750,
+     "name": "Daytime Emmy Awards: Outstanding Travel and Adventure Program",
+     "label": "Outstanding Travel and Adventure Program",
+     "leader": "Superskilled with Eva zu Beck 0.325",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": null,
+     "res": "2026-10-31",
+     "n_out": 6,
+     "children": 0
+    },
+    {
+     "id": 59699751,
+     "name": "Daytime Emmy Awards: Outstanding Technical Direction and Video for a Daytime Program",
+     "label": "Outstanding Technical Direction and Video for a Daytime Program",
+     "leader": "Disney Parks Magical Christmas Day Parade 0.305",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": null,
+     "res": "2026-10-31",
+     "n_out": 6,
+     "children": 0
+    },
+    {
+     "id": 59699753,
+     "name": "Daytime Emmy Awards: Outstanding Daytime Talk Series",
+     "label": "Outstanding Daytime Talk Series",
+     "leader": "The Kelly Clarkson Show 0.705",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": null,
+     "res": "2026-10-31",
+     "n_out": 7,
+     "children": 0
+    },
+    {
+     "id": 59699754,
+     "name": "Daytime Emmy Awards: Outstanding Supporting Performance in a Daytime Drama Series: Actress",
+     "label": "Outstanding Supporting Performance in a Daytime Drama Series: Actress",
+     "leader": "Trisha Mann-Grant 0.730",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": null,
+     "res": "2026-10-31",
+     "n_out": 6,
+     "children": 0
+    },
+    {
+     "id": 59699755,
+     "name": "Daytime Emmy Awards: Outstanding Supporting Performance in a Daytime Drama Series: Actor",
+     "label": "Outstanding Supporting Performance in a Daytime Drama Series: Actor",
+     "leader": "Sean Dominic 0.475",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": null,
+     "res": "2026-10-31",
+     "n_out": 7,
+     "children": 0
+    },
+    {
+     "id": 59699757,
+     "name": "Daytime Emmy Awards: Outstanding Sound Mixing and Sound Editing for a Prerecorded Daytime Program",
+     "label": "Outstanding Sound Mixing and Sound Editing for a Prerecorded Daytime Program",
+     "leader": "Expedition Unknown 0.390",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": null,
+     "res": "2026-10-31",
+     "n_out": 6,
+     "children": 0
+    },
+    {
+     "id": 59699758,
+     "name": "Daytime Emmy Awards: Outstanding Sound Mixing and Sound Editing for a Live Daytime Program",
+     "label": "Outstanding Sound Mixing and Sound Editing for a Live Daytime Program",
+     "leader": "The Kelly Clarkson Show 0.790",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": null,
+     "res": "2026-10-31",
+     "n_out": 6,
+     "children": 0
+    },
+    {
+     "id": 59699759,
+     "name": "Daytime Emmy Awards: Outstanding Daytime Short Form Program",
+     "label": "Outstanding Daytime Short Form Program",
+     "leader": "Glam Through The Ages 0.320",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": null,
+     "res": "2026-10-31",
+     "n_out": 6,
+     "children": 0
+    },
+    {
+     "id": 59699761,
+     "name": "Daytime Emmy Awards: Outstanding Daytime Personality \u2013 Daily",
+     "label": "Outstanding Daytime Personality \u2013 Daily",
+     "leader": "Cassie DiLaura, Denny Directo, Kevin Frazier, Rachel Smith & Nischelle Turner 0.740",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": null,
+     "res": "2026-10-31",
+     "n_out": 5,
+     "children": 0
+    },
+    {
+     "id": 59699769,
+     "name": "Daytime Emmy Awards: Outstanding Hairstyling and Makeup for a Daytime Program",
+     "label": "Outstanding Hairstyling and Makeup for a Daytime Program",
+     "leader": "The Kelly Clarkson Show 0.655",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": null,
+     "res": "2026-10-31",
+     "n_out": 5,
+     "children": 0
+    },
+    {
+     "id": 59699770,
+     "name": "Daytime Emmy Awards: Outstanding Guest Performance in a Daytime Drama Series",
+     "label": "Outstanding Guest Performance in a Daytime Drama Series",
+     "leader": "Jasmine Burke 0.395",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": null,
+     "res": "2026-10-31",
+     "n_out": 6,
+     "children": 0
+    },
+    {
+     "id": 59699773,
+     "name": "Daytime Emmy Awards: Outstanding Editing for a Daytime Studio Program",
+     "label": "Outstanding Editing for a Daytime Studio Program",
+     "leader": "The Kelly Clarkson Show 0.635",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": null,
+     "res": "2026-10-31",
+     "n_out": 5,
+     "children": 0
+    },
+    {
+     "id": 59699774,
+     "name": "Daytime Emmy Awards: Outstanding Editing for a Daytime Non-Studio Program",
+     "label": "Outstanding Editing for a Daytime Non-Studio Program",
+     "leader": "Expedition Unknown 0.605",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": null,
+     "res": "2026-10-31",
+     "n_out": 6,
+     "children": 0
+    },
+    {
+     "id": 59699775,
+     "name": "Daytime Emmy Awards: Outstanding Directing for a Daytime Studio Non-Fiction Series",
+     "label": "Outstanding Directing for a Daytime Studio Non-Fiction Series",
+     "leader": "The Kelly Clarkson Show 0.610",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": null,
+     "res": "2026-10-31",
+     "n_out": 6,
+     "children": 0
+    },
+    {
+     "id": 59699777,
+     "name": "Daytime Emmy Awards: Outstanding Directing Team for a Daytime Drama Series",
+     "label": "Outstanding Directing Team for a Daytime Drama Series",
+     "leader": "General Hospital 0.840",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": null,
+     "res": "2026-10-31",
+     "n_out": 4,
+     "children": 0
+    },
+    {
+     "id": 59699781,
+     "name": "Daytime Emmy Awards: Outstanding Legal / Courtroom Series",
+     "label": "Outstanding Legal / Courtroom Series",
+     "leader": "Divorce Court 0.240",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": null,
+     "res": "2026-10-31",
+     "n_out": 5,
+     "children": 0
+    },
+    {
+     "id": 59699782,
+     "name": "Daytime Emmy Awards: Outstanding Costume Design / Styling for a Daytime Program",
+     "label": "Outstanding Costume Design / Styling for a Daytime Program",
+     "leader": "The Kelly Clarkson Show 0.440",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": null,
+     "res": "2026-10-31",
+     "n_out": 6,
+     "children": 0
+    },
+    {
+     "id": 59699784,
+     "name": "Daytime Emmy Awards: Outstanding Cinematography or Camerawork for a Daytime Program",
+     "label": "Outstanding Cinematography or Camerawork for a Daytime Program",
+     "leader": "Long Way Home 0.375",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": null,
+     "res": "2026-10-31",
+     "n_out": 7,
+     "children": 0
+    },
+    {
+     "id": 59699785,
+     "name": "Daytime Emmy Awards: Outstanding Arts and Popular Culture Program",
+     "label": "Outstanding Arts and Popular Culture Program",
+     "leader": "Variety & CNN Actors on Actors 0.325",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": null,
+     "res": "2026-10-31",
+     "n_out": 6,
+     "children": 0
+    },
+    {
+     "id": 59699786,
+     "name": "Daytime Emmy Awards: Outstanding Art Direction / Set Decoration / Scenic Design for a Daytime Program",
+     "label": "Outstanding Art Direction / Set Decoration / Scenic Design for a Daytime Program",
+     "leader": "The Kelly Clarkson Show 0.325",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": null,
+     "res": "2026-10-31",
+     "n_out": 6,
+     "children": 0
+    },
+    {
+     "id": 59699776,
+     "name": "Daytime Emmy Awards: Outstanding Directing for a Daytime Non-Studio Non-Fiction Series",
+     "label": "Outstanding Directing for a Daytime Non-Studio Non-Fiction Series",
+     "leader": "The Wizard of Paws 0.245",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": null,
+     "res": "2026-10-31",
+     "n_out": 6,
+     "children": 0
+    },
+    {
+     "id": 59699760,
+     "name": "Daytime Emmy Awards: Outstanding Daytime Personality \u2013 Non-Daily",
+     "label": "Outstanding Daytime Personality \u2013 Non-Daily",
+     "leader": "Keke Palmer 0.205",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": false,
+     "vol24": null,
+     "res": "2026-10-31",
+     "n_out": 7,
+     "children": 0
+    },
+    {
+     "id": 59699748,
+     "name": "Daytime Emmy Awards: Outstanding Writing for a Daytime Non-Fiction Series",
+     "label": "Outstanding Writing for a Daytime Non-Fiction Series",
+     "leader": "Joseph Rosendo\u2019s Steppin\u2019 Out 0.265",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": null,
+     "res": "2026-10-31",
+     "n_out": 6,
+     "children": 0
+    },
+    {
+     "id": 59699772,
+     "name": "Daytime Emmy Awards: Outstanding Emerging Talent in a Daytime Drama Series",
+     "label": "Outstanding Emerging Talent in a Daytime Drama Series",
+     "leader": "Giovanni Mazza 0.515",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": null,
+     "res": "2026-10-31",
+     "n_out": 7,
+     "children": 0
+    },
+    {
+     "id": 59699749,
+     "name": "Daytime Emmy Awards: Outstanding Writing Team for a Daytime Drama Series",
+     "label": "Outstanding Writing Team for a Daytime Drama Series",
+     "leader": "General Hospital 0.455",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": null,
+     "res": "2026-10-31",
+     "n_out": 5,
+     "children": 0
+    },
+    {
+     "id": 59699766,
+     "name": "Daytime Emmy Awards: Outstanding Lead Performer in a Daytime Drama Series: Actress",
+     "label": "Outstanding Lead Performer in a Daytime Drama Series: Actress",
+     "leader": "Tamara Tunie 0.495",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": null,
+     "res": "2026-10-31",
+     "n_out": 6,
+     "children": 0
+    },
+    {
+     "id": 59699771,
+     "name": "Daytime Emmy Awards: Outstanding Entertainment News Series",
+     "label": "Outstanding Entertainment News Series",
+     "leader": "Entertainment Tonight 0.940",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": null,
+     "res": "2026-10-31",
+     "n_out": 4,
+     "children": 0
+    },
+    {
+     "id": 59699778,
+     "name": "Daytime Emmy Awards: Outstanding Culinary Instructional Series",
+     "label": "Outstanding Culinary Instructional Series",
+     "leader": "Delicious Miss Brown 0.410",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": null,
+     "res": "2026-10-31",
+     "n_out": 6,
+     "children": 0
+    }
+   ]
+  },
+  "Latin Grammys": {
+   "winners": [
+    {
+     "id": 56775679,
+     "name": "Latin Grammy Awards: Album of the Year",
+     "label": "Album of the Year",
+     "leader": "LUX 0.660",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": false,
+     "vol24": 2,
+     "res": "2026-11-14",
+     "n_out": 19,
+     "children": 0
+    },
+    {
+     "id": 61484919,
+     "name": "Latin Grammy Awards: Best Traditional Pop Album",
+     "label": "Best Traditional Pop Album",
+     "leader": null,
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": false,
+     "vol24": null,
+     "res": "2026-11-14",
+     "n_out": 6,
+     "children": 0
+    },
+    {
+     "id": 61484920,
+     "name": "Latin Grammy Awards: Best Rock Song",
+     "label": "Best Rock Song",
+     "leader": null,
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": false,
+     "vol24": null,
+     "res": "2026-11-14",
+     "n_out": 6,
+     "children": 0
+    },
+    {
+     "id": 61484921,
+     "name": "Latin Grammy Awards: Best Reggaeton Performance",
+     "label": "Best Reggaeton Performance",
+     "leader": null,
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": false,
+     "vol24": null,
+     "res": "2026-11-14",
+     "n_out": 6,
+     "children": 0
+    },
+    {
+     "id": 61484925,
+     "name": "Latin Grammy Awards: Best Pop/Rock Song",
+     "label": "Best Pop/Rock Song",
+     "leader": null,
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": false,
+     "vol24": null,
+     "res": "2026-11-14",
+     "n_out": 6,
+     "children": 0
+    },
+    {
+     "id": 61484928,
+     "name": "Latin Grammy Awards: Best Electronic Music Performance",
+     "label": "Best Electronic Music Performance",
+     "leader": "Tie 0.030",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": false,
+     "vol24": null,
+     "res": "2026-11-14",
+     "n_out": 6,
+     "children": 0
+    },
+    {
+     "id": 61484929,
+     "name": "Latin Grammy Awards: Best Contemporary Pop Album",
+     "label": "Best Contemporary Pop Album",
+     "leader": "(Enamorada) 0.820",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": false,
+     "vol24": null,
+     "res": "2026-11-14",
+     "n_out": 6,
+     "children": 0
+    },
+    {
+     "id": 61484927,
+     "name": "Latin Grammy Awards \u00b7 Best New Artist",
+     "label": "Latin Grammy Awards \u00b7 Best New Artist",
+     "leader": "Arath Herce 0.260",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": false,
+     "vol24": null,
+     "res": "2026-11-14",
+     "n_out": 12,
+     "children": 0
+    },
+    {
+     "id": 61484915,
+     "name": "Latin Grammy Awards: Record of the Year",
+     "label": "Record of the Year",
+     "leader": null,
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": false,
+     "vol24": null,
+     "res": "2026-11-14",
+     "n_out": 11,
+     "children": 0
+    },
+    {
+     "id": 61484916,
+     "name": "Latin Grammy Awards: Best Urban Song",
+     "label": "Best Urban Song",
+     "leader": "Tie 0.020",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": false,
+     "vol24": null,
+     "res": "2026-11-14",
+     "n_out": 6,
+     "children": 0
+    },
+    {
+     "id": 61484918,
+     "name": "Latin Grammy Awards: Best Urban Music Album",
+     "label": "Best Urban Music Album",
+     "leader": null,
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": false,
+     "vol24": null,
+     "res": "2026-11-14",
+     "n_out": 6,
+     "children": 0
+    },
+    {
+     "id": 61484917,
+     "name": "Latin Grammy Awards: Best Urban Performance",
+     "label": "Best Urban Performance",
+     "leader": null,
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": false,
+     "vol24": null,
+     "res": "2026-11-14",
+     "n_out": 6,
+     "children": 0
+    },
+    {
+     "id": 61484914,
+     "name": "Latin Grammy Awards \u00b7 Song of the Year",
+     "label": "Latin Grammy Awards \u00b7 Song of the Year",
+     "leader": "La Perla 0.480",
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": true,
+     "vol24": null,
+     "res": "2026-11-14",
+     "n_out": 11,
+     "children": 0
+    },
+    {
+     "id": 61484930,
+     "name": "Latin Grammy Awards: Best Alternative Music Album",
+     "label": "Best Alternative Music Album",
+     "leader": null,
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": false,
+     "vol24": null,
+     "res": "2026-11-14",
+     "n_out": 6,
+     "children": 0
+    },
+    {
+     "id": 61484926,
+     "name": "Latin Grammy Awards: Best Pop/Rock Album",
+     "label": "Best Pop/Rock Album",
+     "leader": null,
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": false,
+     "vol24": null,
+     "res": "2026-11-14",
+     "n_out": 6,
+     "children": 0
+    },
+    {
+     "id": 61484924,
+     "name": "Latin Grammy Awards: Best Pop Song",
+     "label": "Best Pop Song",
+     "leader": null,
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": false,
+     "vol24": null,
+     "res": "2026-11-14",
+     "n_out": 6,
+     "children": 0
+    },
+    {
+     "id": 61484923,
+     "name": "Latin Grammy Awards: Best Rock Album",
+     "label": "Best Rock Album",
+     "leader": null,
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": false,
+     "vol24": null,
+     "res": "2026-11-14",
+     "n_out": 6,
+     "children": 0
+    },
+    {
+     "id": 61484922,
+     "name": "Latin Grammy Awards: Best Rap/Hip Hop Song",
+     "label": "Best Rap/Hip Hop Song",
+     "leader": null,
+     "sources": [
+      "kalshi"
+     ],
+     "twin_ids": [],
+     "twin_leaders": [],
+     "img": false,
+     "vol24": null,
+     "res": "2026-11-14",
+     "n_out": 6,
+     "children": 0
+    }
+   ]
+  }
+ },
+ "ai": {
+  "Decided in October": [
+   {
+    "id": 58918649,
+    "name": "Which company has the best AI model end of October?",
+    "leader": "Anthropic 0.885",
+    "source": "polymarket",
+    "vol24": 87841,
+    "res": "2026-10-31",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 59133750,
+    "name": "Next Google Gemini Pro Model released on...?",
+    "leader": "No release by September 30 0.969",
+    "source": "polymarket",
+    "vol24": 47374,
+    "res": "2026-10-01",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 62383895,
+    "name": "Best AI this week",
+    "leader": "Gemini 0.940",
+    "source": "kalshi",
+    "vol24": 21676,
+    "res": "2026-10-05",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 59953594,
+    "name": "Will OpenAI's valuation hit __ by September 30?",
+    "leader": "\u2191$925B 1.000",
+    "source": "polymarket",
+    "vol24": 15170,
+    "res": "2026-10-01",
+    "img": true,
+    "children": 8
+   },
+   {
+    "id": 61988078,
+    "name": "Next Gemini Pro Model released on...?",
+    "leader": "No release by October 31 0.120",
+    "source": "polymarket",
+    "vol24": 9503,
+    "res": "2026-10-31",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 63135259,
+    "name": "DeepSeek market share this week",
+    "leader": "Above 22.0% 0.350",
+    "source": "kalshi",
+    "vol24": 2943,
+    "res": "2026-10-05",
+    "img": false,
+    "children": 0
+   },
+   {
+    "id": 58918659,
+    "name": "Which company has the best AI Agent end of October?",
+    "leader": "Anthropic 0.900",
+    "source": "polymarket",
+    "vol24": 2896,
+    "res": "2026-10-31",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 58918658,
+    "name": "Which company has the best Text Arena Math AI model end of October?",
+    "leader": "Anthropic 0.710",
+    "source": "polymarket",
+    "vol24": 2489,
+    "res": "2026-10-31",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 63135322,
+    "name": "Best AI model on October 12?",
+    "leader": "claude-opus-5.5-high 0.665",
+    "source": "polymarket",
+    "vol24": 2221,
+    "res": "2026-10-13",
+    "img": false,
+    "children": 0
+   },
+   {
+    "id": 63135255,
+    "name": "OpenAI market share this week",
+    "leader": "Above 13.3% 0.995",
+    "source": "kalshi",
+    "vol24": 1566,
+    "res": "2026-10-05",
+    "img": false,
+    "children": 0
+   },
+   {
+    "id": 58918639,
+    "name": "Which company has the best AI model on LiveBench (Mathematics) end of October?",
+    "leader": "Anthropic 0.715",
+    "source": "polymarket",
+    "vol24": 1182,
+    "res": "2026-10-31",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 58918652,
+    "name": "Which company has the best Code Arena WebDev AI model end of October?",
+    "leader": "Anthropic 0.790",
+    "source": "polymarket",
+    "vol24": 1114,
+    "res": "2026-10-31",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 60481171,
+    "name": "Gemini App Downloads in September",
+    "leader": "Above 70 0.195",
+    "source": "kalshi",
+    "vol24": 1103,
+    "res": "2026-10-08",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 59567984,
+    "name": "OpenAI\u2019s valuation end of October 2026?",
+    "leader": "$1.00-$1.10T 0.425",
+    "source": "polymarket",
+    "vol24": 993,
+    "res": "2026-10-31",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 63152484,
+    "name": "Top AI model this week?",
+    "leader": "claude-fable-5.1-max 0.030",
+    "source": "kalshi",
+    "vol24": 900,
+    "res": "2026-10-05",
+    "img": false,
+    "children": 0
+   },
+   {
+    "id": 58955706,
+    "name": "Second-best AI Agent Lab end of October?",
+    "leader": "OpenAI 0.755",
+    "source": "polymarket",
+    "vol24": 773,
+    "res": "2026-10-31",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 60636748,
+    "name": "OpenAI corporate adoption rate in September",
+    "leader": "Above 39.3% 0.940",
+    "source": "kalshi",
+    "vol24": 737,
+    "res": "2026-10-17",
+    "img": false,
+    "children": 0
+   },
+   {
+    "id": 61956895,
+    "name": "OpenAI resets Codex weekly limit on...?",
+    "leader": "September 25 1.000",
+    "source": "polymarket",
+    "vol24": 575,
+    "res": "2026-10-01",
+    "img": false,
+    "children": 1
+   },
+   {
+    "id": 59616320,
+    "name": "Will Claude go down on __ days in September?",
+    "leader": "5-7 0.999",
+    "source": "polymarket",
+    "vol24": 567,
+    "res": "2026-10-01",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 58918647,
+    "name": "Third-best AI Lab end of October?",
+    "leader": "Meta 0.345",
+    "source": "polymarket",
+    "vol24": 524,
+    "res": "2026-10-31",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 58957131,
+    "name": "Third-best AI Agent Lab end of October?",
+    "leader": "Google 0.161",
+    "source": "polymarket",
+    "vol24": 480,
+    "res": "2026-10-31",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 58918648,
+    "name": "Second-best AI Lab end of October?",
+    "leader": "Google 0.485",
+    "source": "polymarket",
+    "vol24": 458,
+    "res": "2026-10-31",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 62674353,
+    "name": "OpenAI resumes training on...?",
+    "leader": "Not resumed by October 20 0.225",
+    "source": "polymarket",
+    "vol24": 416,
+    "res": "2026-10-21",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 8656510,
+    "name": "Will any AI model reach ___ Overall Arena Score by September 30?",
+    "leader": "1520 1.000",
+    "source": "polymarket",
+    "vol24": 373,
+    "res": "2026-10-01",
+    "img": true,
+    "children": 3
+   },
+   {
+    "id": 60481180,
+    "name": "Claude App Downloads in September",
+    "leader": "Above 1300 0.985",
+    "source": "kalshi",
+    "vol24": 257,
+    "res": "2026-10-08",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 61953662,
+    "name": "Best AI model on October 5?",
+    "leader": "Other 0.963",
+    "source": "polymarket",
+    "vol24": 62,
+    "res": "2026-10-05",
+    "img": false,
+    "children": 0
+   },
+   {
+    "id": 59955263,
+    "name": "Anthropic vs OpenAI - greater valuation growth September 2026",
+    "leader": "OpenAI 0.520",
+    "source": "polymarket",
+    "vol24": 41,
+    "res": "2026-10-01",
+    "img": false,
+    "children": 0
+   },
+   {
+    "id": 63135256,
+    "name": "Best AI this week",
+    "leader": null,
+    "source": "kalshi",
+    "vol24": null,
+    "res": "2026-10-12",
+    "img": false,
+    "children": 0
+   },
+   {
+    "id": 58918638,
+    "name": "Which company has the best AI model on LiveBench (Coding) end of October?",
+    "leader": "Anthropic 0.815",
+    "source": "polymarket",
+    "vol24": null,
+    "res": "2026-10-31",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 58918646,
+    "name": "Which company has #1 AI model end of October? (Style Control On)",
+    "leader": "Anthropic 0.855",
+    "source": "polymarket",
+    "vol24": null,
+    "res": "2026-10-31",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 60636750,
+    "name": "DeepSeek corporate adoption rate in September",
+    "leader": "Above 0.28% 0.805",
+    "source": "kalshi",
+    "vol24": null,
+    "res": "2026-10-17",
+    "img": false,
+    "children": 0
+   },
+   {
+    "id": 58918640,
+    "name": "Which company has the best AI model on LiveBench (Overall) end of October?",
+    "leader": "Anthropic 0.875",
+    "source": "polymarket",
+    "vol24": null,
+    "res": "2026-10-31",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 12573788,
+    "name": "Best AI in Oct 2026?",
+    "leader": "Gemini 0.490",
+    "source": "kalshi",
+    "vol24": null,
+    "res": "2026-10-31",
+    "img": true,
+    "children": 0
+   }
+  ],
+  "Decided by the new year": [
+   {
+    "id": 109596,
+    "name": "Best AI at the end of 2026?",
+    "leader": "Claude 0.746",
+    "source": "kalshi",
+    "vol24": 83782,
+    "res": "2026-12-31",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 61002052,
+    "name": "OpenAI resumes US ChatGPT Pro 20x signups by...?",
+    "leader": "September 30, 2026 1.000",
+    "source": "polymarket",
+    "vol24": 82860,
+    "res": "2026-11-01",
+    "img": true,
+    "children": 2
+   },
+   {
+    "id": 32127334,
+    "name": "Which company has best AI model end of 2026?",
+    "leader": "Anthropic 0.775",
+    "source": "polymarket",
+    "vol24": 60006,
+    "res": "2026-12-31",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 59133748,
+    "name": "When will the next Google Gemini Pro model be released?",
+    "leader": "September 28\u2013October 4 0.281",
+    "source": "polymarket",
+    "vol24": 25076,
+    "res": "2026-11-01",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 60204030,
+    "name": "GPT Astra 6.1+ released by...?",
+    "leader": "December 31 0.885",
+    "source": "polymarket",
+    "vol24": 15918,
+    "res": "2026-12-31",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 58997439,
+    "name": "Next OpenAI GPT Terra (5.7+) released by...?",
+    "leader": "November 30 0.240",
+    "source": "polymarket",
+    "vol24": 9522,
+    "res": "2026-12-01",
+    "img": true,
+    "children": 3
+   },
+   {
+    "id": 22979764,
+    "name": "Will OpenAI's valuation hit __ by December 31?",
+    "leader": "\u2191$900B 1.000",
+    "source": "polymarket",
+    "vol24": 8625,
+    "res": "2027-01-05",
+    "img": true,
+    "children": 14
+   },
+   {
+    "id": 22737639,
+    "name": "Next Google Gemini Pro Model: Arena Debut?",
+    "leader": "1490+ 0.852",
+    "source": "polymarket",
+    "vol24": 3464,
+    "res": "2027-01-01",
+    "img": true,
+    "children": 5
+   },
+   {
+    "id": 62383594,
+    "name": "When will OpenAI release a personal AI agent?",
+    "leader": "Before Dec 1, 2026 0.295",
+    "source": "kalshi",
+    "vol24": 3077,
+    "res": "2027-01-01",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 61325120,
+    "name": "Which company has the best Text Arena Math AI model end of November?",
+    "leader": "Anthropic 0.688",
+    "source": "polymarket",
+    "vol24": 2938,
+    "res": "2026-12-01",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 113179,
+    "name": "OpenAI announces it has achieved AGI before 2027?",
+    "leader": "Yes 0.175",
+    "source": "polymarket",
+    "vol24": 2878,
+    "res": "2027-01-01",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 23449601,
+    "name": "Anthropic vs OpenAI - higher valuation on December 31?",
+    "leader": "Anthropic 0.890",
+    "source": "polymarket",
+    "vol24": 2536,
+    "res": "2027-01-05",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 62178321,
+    "name": "What will GPT Sol's output token price hit in 2026?",
+    "leader": "\u2193 $8 0.355",
+    "source": "polymarket",
+    "vol24": 2115,
+    "res": "2027-01-01",
+    "img": false,
+    "children": 4
+   },
+   {
+    "id": 109194,
+    "name": "Which companies will have a top-ranked AI model this year?",
+    "leader": "Google 0.980",
+    "source": "kalshi",
+    "vol24": 2026,
+    "res": "2027-01-01",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 115369,
+    "name": "What kind of product will OpenAI announce in 2026?",
+    "leader": "Clip-on device for clothing 0.165",
+    "source": "polymarket",
+    "vol24": 1596,
+    "res": "2027-01-01",
+    "img": true,
+    "children": 10
+   },
+   {
+    "id": 56916380,
+    "name": "Highest Claude score on Humanity\u2019s Last Exam in 2026?",
+    "leader": "55%+ 0.846",
+    "source": "polymarket",
+    "vol24": 1540,
+    "res": "2027-01-01",
+    "img": true,
+    "children": 5
+   },
+   {
+    "id": 59133757,
+    "name": "Next Claude Opus Model: Humanity\u2019s Last Exam Debut?",
+    "leader": "45%+ 0.953",
+    "source": "polymarket",
+    "vol24": 1483,
+    "res": "2027-01-01",
+    "img": true,
+    "children": 4
+   },
+   {
+    "id": 61329163,
+    "name": "Which company has the best AI model end of November?",
+    "leader": "Anthropic 0.845",
+    "source": "polymarket",
+    "vol24": 1101,
+    "res": "2026-12-01",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 109363,
+    "name": "Will OpenAI increase the cost of ChatGPT?",
+    "leader": "Yes 0.140",
+    "source": "kalshi",
+    "vol24": 1073,
+    "res": "2027-01-01",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 57566334,
+    "name": "Next Google Gemini Pro Model: Humanity\u2019s Last Exam Debut?",
+    "leader": "40%+ 0.936",
+    "source": "polymarket",
+    "vol24": 825,
+    "res": "2027-01-01",
+    "img": true,
+    "children": 4
+   },
+   {
+    "id": 62824249,
+    "name": "OpenAI resumes training by...?",
+    "leader": "October 31 0.760",
+    "source": "polymarket",
+    "vol24": 808,
+    "res": "2026-11-01",
+    "img": true,
+    "children": 5
+   },
+   {
+    "id": 56916357,
+    "name": "Highest OpenAI score on Humanity\u2019s Last Exam in 2026?",
+    "leader": "50%+ 1.000",
+    "source": "polymarket",
+    "vol24": 716,
+    "res": "2027-01-01",
+    "img": true,
+    "children": 4
+   },
+   {
+    "id": 61325121,
+    "name": "Third-best AI Agent Lab end of November?",
+    "leader": "Google 0.260",
+    "source": "polymarket",
+    "vol24": 660,
+    "res": "2026-12-01",
+    "img": false,
+    "children": 0
+   },
+   {
+    "id": 63448449,
+    "name": "Will OpenAI's valuation hit __ by October 31?",
+    "leader": "\u2191$1T 0.865",
+    "source": "polymarket",
+    "vol24": 627,
+    "res": "2026-11-01",
+    "img": false,
+    "children": 9
+   },
+   {
+    "id": 59693650,
+    "name": "Next Gemini Pro model release",
+    "leader": "Before Dec 1, 2026 0.970",
+    "source": "kalshi",
+    "vol24": 578,
+    "res": "2026-12-01",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 59693690,
+    "name": "When will Google release Gemini 4?",
+    "leader": "Before Jan 1, 2027 0.955",
+    "source": "kalshi",
+    "vol24": 574,
+    "res": "2027-01-01",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 31835408,
+    "name": "How low will the Claude Opus 4.8 input token price get in 2026?",
+    "leader": "$4/MTok or below 0.200",
+    "source": "kalshi",
+    "vol24": 547,
+    "res": "2027-01-01",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 16623050,
+    "name": "Which companies will have a #1 AI model by December 31?",
+    "leader": "Google 0.988",
+    "source": "polymarket",
+    "vol24": 508,
+    "res": "2027-01-01",
+    "img": true,
+    "children": 14
+   },
+   {
+    "id": 8649238,
+    "name": "Will any AI model reach ___ Math Arena Score by December 31?",
+    "leader": "1525 1.000",
+    "source": "polymarket",
+    "vol24": 476,
+    "res": "2027-01-01",
+    "img": true,
+    "children": 2
+   },
+   {
+    "id": 60093973,
+    "name": "Next Gemini Flash Model (3.9+) released by...?",
+    "leader": "November 30 0.945",
+    "source": "polymarket",
+    "vol24": 462,
+    "res": "2026-11-30",
+    "img": false,
+    "children": 4
+   },
+   {
+    "id": 61329160,
+    "name": "Which company has #1 AI model end of November? (Style Control On)",
+    "leader": "Anthropic 0.765",
+    "source": "polymarket",
+    "vol24": 452,
+    "res": "2026-12-01",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 61325123,
+    "name": "Second-best AI Agent Lab end of November?",
+    "leader": "OpenAI 0.695",
+    "source": "polymarket",
+    "vol24": 407,
+    "res": "2026-12-01",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 56916351,
+    "name": "Highest Google Gemini score on Humanity\u2019s Last Exam in 2026?",
+    "leader": "50%+ 0.919",
+    "source": "polymarket",
+    "vol24": 401,
+    "res": "2027-01-01",
+    "img": true,
+    "children": 5
+   },
+   {
+    "id": 8656574,
+    "name": "Will any AI model reach ___ Coding Arena Score by December 31?",
+    "leader": "1560 0.345",
+    "source": "polymarket",
+    "vol24": 339,
+    "res": "2027-01-01",
+    "img": true,
+    "children": 3
+   },
+   {
+    "id": 61085863,
+    "name": "Next DeepSeek Flash released by...?",
+    "leader": "November 30 0.270",
+    "source": "polymarket",
+    "vol24": 304,
+    "res": "2026-11-30",
+    "img": false,
+    "children": 2
+   },
+   {
+    "id": 61329161,
+    "name": "Third-best AI Lab end of November?",
+    "leader": "Google 0.375",
+    "source": "polymarket",
+    "vol24": 301,
+    "res": "2026-12-01",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 58997433,
+    "name": "Next Google Gemini Flash-Lite Model (3.6+) released by...?",
+    "leader": "November 30 0.815",
+    "source": "polymarket",
+    "vol24": 274,
+    "res": "2026-12-01",
+    "img": true,
+    "children": 3
+   },
+   {
+    "id": 23386026,
+    "name": "OpenAI vs Meta \u2014 higher valuation on December 31?",
+    "leader": "Meta 0.875",
+    "source": "polymarket",
+    "vol24": 259,
+    "res": "2027-01-05",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 58997430,
+    "name": "Next DeepSeek Pro released by...?",
+    "leader": "November 30 0.615",
+    "source": "polymarket",
+    "vol24": 217,
+    "res": "2026-11-30",
+    "img": true,
+    "children": 3
+   },
+   {
+    "id": 62178324,
+    "name": "What will Claude Sonnet's output token price hit in 2026?",
+    "leader": "\u2191 $20 0.205",
+    "source": "polymarket",
+    "vol24": 185,
+    "res": "2027-01-01",
+    "img": false,
+    "children": 4
+   },
+   {
+    "id": 62178323,
+    "name": "What will Claude Opus's output token price hit in 2026?",
+    "leader": "\u2191 $25 0.480",
+    "source": "polymarket",
+    "vol24": 178,
+    "res": "2027-01-01",
+    "img": false,
+    "children": 5
+   },
+   {
+    "id": 115350,
+    "name": "OpenAI $1T+ valuation in 2026?",
+    "leader": "Yes 0.816",
+    "source": "polymarket",
+    "vol24": 170,
+    "res": "2027-01-01",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 62178325,
+    "name": "What will Claude Fable's output token price hit in 2026?",
+    "leader": "\u2191 $55 0.375",
+    "source": "polymarket",
+    "vol24": 154,
+    "res": "2027-01-01",
+    "img": false,
+    "children": 6
+   },
+   {
+    "id": 52755940,
+    "name": "Gemini 3.5 Pro debut arena score",
+    "leader": "above 1490 0.915",
+    "source": "kalshi",
+    "vol24": 144,
+    "res": "2027-01-01",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 61329162,
+    "name": "Second-best AI Lab end of November?",
+    "leader": "Google 0.500",
+    "source": "polymarket",
+    "vol24": 141,
+    "res": "2026-12-01",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 23449678,
+    "name": "Anthropic + OpenAI vs Microsoft - higher valuation on December 31?",
+    "leader": "Microsoft 0.545",
+    "source": "polymarket",
+    "vol24": 140,
+    "res": "2027-01-05",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 13792328,
+    "name": "Will OpenAI be acquired before 2027?",
+    "leader": "No 0.981",
+    "source": "polymarket",
+    "vol24": 125,
+    "res": "2027-01-01",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 13794308,
+    "name": "Will the US federal government take a stake in OpenAI?",
+    "leader": "No 0.855",
+    "source": "polymarket",
+    "vol24": 101,
+    "res": "2027-01-01",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 33282977,
+    "name": "How low will the OpenAI GPT 5.5 input token price get in 2026?",
+    "leader": "$4/MTok or below 0.220",
+    "source": "kalshi",
+    "vol24": 95,
+    "res": "2027-01-01",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 34276575,
+    "name": "How low will the Claude Opus 4.8 output token price get in 2026?",
+    "leader": "$20/MTok or below 0.040",
+    "source": "kalshi",
+    "vol24": 94,
+    "res": "2027-01-01",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 34276652,
+    "name": "How low will the Google Gemini 3.5 Flash output token price (paid tier) get in 2026?",
+    "leader": "$8/MTok or below 0.080",
+    "source": "kalshi",
+    "vol24": 94,
+    "res": "2027-01-01",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 61446109,
+    "name": "Will OpenAI or Anthropic announce recursive self-improvement by December 31, 2026?",
+    "leader": "No 0.810",
+    "source": "polymarket",
+    "vol24": 85,
+    "res": "2027-01-01",
+    "img": false,
+    "children": 2
+   },
+   {
+    "id": 109425,
+    "name": "Will a Chinese AI model be #1 this year?",
+    "leader": "Yes 0.080",
+    "source": "kalshi",
+    "vol24": 85,
+    "res": "2027-01-01",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 109305,
+    "name": "What kind of device will Jony Ive and OpenAI announce?",
+    "leader": "Earbuds/Headphones 0.075",
+    "source": "kalshi",
+    "vol24": 85,
+    "res": "2027-01-01",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 61484869,
+    "name": "When will OpenAI release Astra 6.1?",
+    "leader": "Before Nov 13, 2026 0.480",
+    "source": "kalshi",
+    "vol24": 83,
+    "res": "2026-11-13",
+    "img": false,
+    "children": 0
+   },
+   {
+    "id": 62117398,
+    "name": "Next GPT Luna (6.1+) released by...?",
+    "leader": "December 31 0.915",
+    "source": "polymarket",
+    "vol24": 81,
+    "res": "2026-12-31",
+    "img": false,
+    "children": 2
+   },
+   {
+    "id": 62178328,
+    "name": "What will OpenAI's frontier output token price hit in 2026?",
+    "leader": "\u2193 $45 0.435",
+    "source": "polymarket",
+    "vol24": 68,
+    "res": "2027-01-01",
+    "img": false,
+    "children": 6
+   },
+   {
+    "id": 61325124,
+    "name": "Which company has the best AI Agent end of November?",
+    "leader": "Anthropic 0.825",
+    "source": "polymarket",
+    "vol24": 65,
+    "res": "2026-12-01",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 33282978,
+    "name": "How low will the Google Gemini 3.5 Flash input token price get in 2026?",
+    "leader": "$1.25/MTok or below 0.155",
+    "source": "kalshi",
+    "vol24": 63,
+    "res": "2027-01-01",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 8648794,
+    "name": "Will a Chinese company have a top ___ AI model by December 31?",
+    "leader": "#5 1.000",
+    "source": "polymarket",
+    "vol24": 57,
+    "res": "2027-01-01",
+    "img": true,
+    "children": 1
+   },
+   {
+    "id": 62851442,
+    "name": "Will GPT Astra's output price be at or above $75 in 2026?",
+    "leader": "No 0.710",
+    "source": "polymarket",
+    "vol24": 54,
+    "res": "2027-01-01",
+    "img": false,
+    "children": 6
+   },
+   {
+    "id": 61327483,
+    "name": "Will any AI model reach a Chatbot Arena score of at least 1530 by December 31?",
+    "leader": "Yes 0.971",
+    "source": "polymarket",
+    "vol24": 40,
+    "res": "2027-01-01",
+    "img": false,
+    "children": 6
+   },
+   {
+    "id": 113379,
+    "name": "Will a dLLM be the top AI model before 2027?",
+    "leader": "Yes 0.062",
+    "source": "polymarket",
+    "vol24": 26,
+    "res": "2027-01-01",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 63448419,
+    "name": "OpenAI\u2019s valuation end of November 2026?",
+    "leader": "$1.00-$1.10T 0.270",
+    "source": "polymarket",
+    "vol24": 20,
+    "res": "2026-11-30",
+    "img": false,
+    "children": 0
+   },
+   {
+    "id": 62141888,
+    "name": "Next Claude Opus (5.6+) released by November 30, 2026?",
+    "leader": "Yes 0.675",
+    "source": "polymarket",
+    "vol24": 20,
+    "res": "2026-11-30",
+    "img": false,
+    "children": 2
+   },
+   {
+    "id": 61079750,
+    "name": "DeepSeek matches Anthropic's evaluator commitment by October 31?",
+    "leader": "No 0.930",
+    "source": "polymarket",
+    "vol24": 16,
+    "res": "2026-11-01",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 60600196,
+    "name": "Will S\u00e9bastien Bubeck leave OpenAI?",
+    "leader": "Yes 0.180",
+    "source": "kalshi",
+    "vol24": 6,
+    "res": "2027-01-01",
+    "img": false,
+    "children": 0
+   },
+   {
+    "id": 109477,
+    "name": "Sam Altman replaced as OpenAI CEO this year?",
+    "leader": "Yes 0.065",
+    "source": "kalshi",
+    "vol24": 6,
+    "res": "2027-01-01",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 109443,
+    "name": "Will an AI model using neuralese recurrence be first released to the public before 2027?",
+    "leader": "Yes 0.770",
+    "source": "kalshi",
+    "vol24": 1,
+    "res": "2027-01-01",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 5979169,
+    "name": "When will Anthropic release Claude 5?",
+    "leader": "Before Jul 1, 2026 0.990",
+    "source": "kalshi",
+    "vol24": null,
+    "res": "2026-11-08",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 109478,
+    "name": "Will Elon win his case against OpenAI?",
+    "leader": "Yes 0.008",
+    "source": "kalshi",
+    "vol24": null,
+    "res": "2027-01-01",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 58015850,
+    "name": "Will Leopold Aschenbrenner return to OpenAI?",
+    "leader": "Yes 0.040",
+    "source": "kalshi",
+    "vol24": null,
+    "res": "2027-01-01",
+    "img": false,
+    "children": 0
+   },
+   {
+    "id": 61093146,
+    "name": "DeepSeek announces a training pause by October 31?",
+    "leader": "No 0.975",
+    "source": "polymarket",
+    "vol24": null,
+    "res": "2026-11-01",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 61354411,
+    "name": "OpenAI announces a full training pause in 2026?",
+    "leader": "No 0.905",
+    "source": "polymarket",
+    "vol24": null,
+    "res": "2027-01-01",
+    "img": false,
+    "children": 0
+   },
+   {
+    "id": 57000967,
+    "name": "OpenAI criminally charged in the US in 2026?",
+    "leader": "Yes 0.275",
+    "source": "polymarket",
+    "vol24": null,
+    "res": "2027-01-01",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 60608877,
+    "name": "Will Tristan Buckmaster sue OpenAI or Bubeck?",
+    "leader": "Yes 0.145",
+    "source": "kalshi",
+    "vol24": null,
+    "res": "2027-01-01",
+    "img": false,
+    "children": 0
+   },
+   {
+    "id": 109415,
+    "name": "Will Anthropic release Claude 5 this year?",
+    "leader": "Yes 0.990",
+    "source": "kalshi",
+    "vol24": null,
+    "res": "2027-01-01",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 33283081,
+    "name": "Claude Opus 4.8 debut arena score",
+    "leader": "Above 1495 0.130",
+    "source": "kalshi",
+    "vol24": null,
+    "res": "2027-01-01",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 34276653,
+    "name": "How low will the OpenAI GPT 5.5 output token price get in 2026?",
+    "leader": "$25/MTok or below 0.150",
+    "source": "kalshi",
+    "vol24": null,
+    "res": "2027-01-01",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 29207790,
+    "name": "Claude Pro price increase this year?",
+    "leader": "Yes 0.080",
+    "source": "kalshi",
+    "vol24": null,
+    "res": "2026-12-31",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 109304,
+    "name": "Will the OpenAI/Jony Ive device have a screen?",
+    "leader": "Yes 0.100",
+    "source": "kalshi",
+    "vol24": null,
+    "res": "2027-01-01",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 114165,
+    "name": "Will OpenAI acquire Pinterest in 2026?",
+    "leader": "Yes 0.013",
+    "source": "polymarket",
+    "vol24": null,
+    "res": "2027-01-01",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 60627478,
+    "name": "OpenAI retracts Navier-Stokes solution in 2026?",
+    "leader": "Yes 0.070",
+    "source": "polymarket",
+    "vol24": null,
+    "res": "2027-01-01",
+    "img": false,
+    "children": 0
+   },
+   {
+    "id": 60627479,
+    "name": "OpenAI retracts Navier-Stokes solution in 2026?",
+    "leader": "Yes 0.075",
+    "source": "polymarket",
+    "vol24": null,
+    "res": "2027-01-01",
+    "img": false,
+    "children": 0
+   },
+   {
+    "id": 115348,
+    "name": "Will OpenAI release a social network in 2026?",
+    "leader": "Yes 0.165",
+    "source": "polymarket",
+    "vol24": null,
+    "res": "2027-01-01",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 23449677,
+    "name": "OpenAI + Anthropic vs Google - higher valuation on December 31?",
+    "leader": "Google 0.810",
+    "source": "polymarket",
+    "vol24": null,
+    "res": "2027-01-05",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 113175,
+    "name": "Will Ari Weinstein leave OpenAI by December 31, 2026?",
+    "leader": "Yes 0.121",
+    "source": "polymarket",
+    "vol24": null,
+    "res": "2027-01-01",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 113324,
+    "name": "OpenAI acquired before 2027?",
+    "leader": "Yes 0.028",
+    "source": "polymarket",
+    "vol24": null,
+    "res": "2027-01-01",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 113328,
+    "name": "Will OpenAI launch a token before 2027?",
+    "leader": "Yes 0.030",
+    "source": "polymarket",
+    "vol24": null,
+    "res": "2027-01-01",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 13792152,
+    "name": "Sam Altman out as OpenAI CEO before 2027?",
+    "leader": "No 0.962",
+    "source": "polymarket",
+    "vol24": null,
+    "res": "2027-01-01",
+    "img": true,
+    "children": 0
+   }
+  ],
+  "Later": [
+   {
+    "id": 60607595,
+    "name": "OpenAI announces another Millennium Prize solution by...?",
+    "leader": "December 31, 2027 0.695",
+    "source": "polymarket",
+    "vol24": 34020,
+    "res": "2028-01-01",
+    "img": true,
+    "children": 3
+   },
+   {
+    "id": 63295926,
+    "name": "Next GPT Sol Model (6.1+): Humanity's Last Exam Debut?",
+    "leader": "40%+ 0.929",
+    "source": "polymarket",
+    "vol24": 9378,
+    "res": "2027-06-30",
+    "img": false,
+    "children": 4
+   },
+   {
+    "id": 112835,
+    "name": "When will OpenAI achieve AGI?",
+    "leader": "Before 2030 0.625",
+    "source": "kalshi",
+    "vol24": 6982,
+    "res": "2030-01-01",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 63295931,
+    "name": "Next GPT Sol Model (6.1+): Text Arena Debut?",
+    "leader": "1440+ 0.330",
+    "source": "polymarket",
+    "vol24": 6676,
+    "res": "2027-06-30",
+    "img": false,
+    "children": 4
+   },
+   {
+    "id": 61321742,
+    "name": "OpenAI announces bankruptcy by...?",
+    "leader": "December 31, 2029 0.195",
+    "source": "polymarket",
+    "vol24": 1746,
+    "res": "2030-01-01",
+    "img": true,
+    "children": 3
+   },
+   {
+    "id": 60197872,
+    "name": "Claude 6 released by...?",
+    "leader": "December 31, 2027 0.900",
+    "source": "polymarket",
+    "vol24": 479,
+    "res": "2027-12-31",
+    "img": true,
+    "children": 3
+   },
+   {
+    "id": 61461524,
+    "name": "When will Anthropic release Claude 6?",
+    "leader": "Before Dec 31, 2027 0.845",
+    "source": "kalshi",
+    "vol24": 439,
+    "res": "2027-12-31",
+    "img": false,
+    "children": 0
+   },
+   {
+    "id": 60626094,
+    "name": "Tristan Buckmaster sues OpenAI by...?",
+    "leader": "December 31, 2026 0.160",
+    "source": "polymarket",
+    "vol24": 374,
+    "res": "2028-01-01",
+    "img": true,
+    "children": 2
+   },
+   {
+    "id": 62178306,
+    "name": "GPT Astra 6.1+: Output Token Price Debut?",
+    "leader": "$40+ 0.820",
+    "source": "polymarket",
+    "vol24": 286,
+    "res": "2027-07-01",
+    "img": false,
+    "children": 4
+   },
+   {
+    "id": 63289465,
+    "name": "Next Claude Sonnet (5.6+) released by January 31, 2027?",
+    "leader": null,
+    "source": "polymarket",
+    "vol24": 190,
+    "res": "2027-01-31",
+    "img": false,
+    "children": 2
+   },
+   {
+    "id": 62178308,
+    "name": "Claude Opus 5.6+: Output Token Price Debut?",
+    "leader": "$15+ 0.790",
+    "source": "polymarket",
+    "vol24": 170,
+    "res": "2027-07-01",
+    "img": false,
+    "children": 4
+   },
+   {
+    "id": 62178309,
+    "name": "Claude Fable 5.2+: Output Token Price Debut?",
+    "leader": "$40+ 0.870",
+    "source": "polymarket",
+    "vol24": 134,
+    "res": "2027-07-01",
+    "img": false,
+    "children": 4
+   },
+   {
+    "id": 63045553,
+    "name": "Next Claude Opus Model (5.6+): Text Arena Debut?",
+    "leader": "1510+ 0.690",
+    "source": "polymarket",
+    "vol24": 120,
+    "res": "2027-07-01",
+    "img": false,
+    "children": 5
+   },
+   {
+    "id": 31833053,
+    "name": "What sector will OpenAI be assigned to?",
+    "leader": "Information Technology 0.875",
+    "source": "kalshi",
+    "vol24": 117,
+    "res": "2028-01-11",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 60600153,
+    "name": "Will OpenAI announce another Millennium Prize solution?",
+    "leader": "Before Jan 1, 2028 0.665",
+    "source": "kalshi",
+    "vol24": 83,
+    "res": "2028-01-01",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 108474,
+    "name": "New York Times wins OpenAI lawsuit?",
+    "leader": "Yes 0.570",
+    "source": "kalshi",
+    "vol24": 66,
+    "res": "2028-01-01",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 60199694,
+    "name": "GPT-7 released by...?",
+    "leader": "December 31, 2027 0.865",
+    "source": "polymarket",
+    "vol24": 20,
+    "res": "2027-12-31",
+    "img": true,
+    "children": 2
+   },
+   {
+    "id": 108484,
+    "name": "Will OpenAI pay a tort claim with more than $1 million in damages before 2028?",
+    "leader": "Yes 0.550",
+    "source": "kalshi",
+    "vol24": 3,
+    "res": "2028-01-01",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 62368075,
+    "name": "When will OpenAI release GPT-7?",
+    "leader": "Before 2028 0.805",
+    "source": "kalshi",
+    "vol24": null,
+    "res": "2028-01-01",
+    "img": false,
+    "children": 0
+   },
+   {
+    "id": 63115858,
+    "name": "Will Claude be permitted for use in the Department of War supply chain?",
+    "leader": "Before Jan 1, 2028 0.590",
+    "source": "kalshi",
+    "vol24": null,
+    "res": "2028-01-01",
+    "img": false,
+    "children": 0
+   },
+   {
+    "id": 24241908,
+    "name": "What will OpenAI's public ticker be?",
+    "leader": "$OAI 0.545",
+    "source": "polymarket",
+    "vol24": null,
+    "res": "2028-01-01",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 55674156,
+    "name": "Will the U.S. take at least 1% stakes in both OpenAI and Anthropic?",
+    "leader": "Before Jan 20, 2029 0.500",
+    "source": "kalshi",
+    "vol24": null,
+    "res": "2029-01-20",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 31833077,
+    "name": "Which banks will take OpenAI public?",
+    "leader": "Stifel Financial 0.405",
+    "source": "kalshi",
+    "vol24": null,
+    "res": "2028-01-01",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 60626098,
+    "name": "OpenAI vs. Anthropic: First to another Millennium Prize?",
+    "leader": "OpenAI 0.780",
+    "source": "polymarket",
+    "vol24": null,
+    "res": "2028-01-01",
+    "img": true,
+    "children": 0
+   },
+   {
+    "id": 61461511,
+    "name": "Will OpenAI or Anthropic announce recursive self-improvement?",
+    "leader": "Before Jan 1, 2029 0.710",
+    "source": "kalshi",
+    "vol24": null,
+    "res": "2028-12-31",
+    "img": false,
+    "children": 0
+   },
+   {
+    "id": 60625632,
+    "name": "Next GPT Image Model (2.6+) released by...?",
+    "leader": null,
+    "source": "polymarket",
+    "vol24": null,
+    "res": "2027-01-31",
+    "img": false,
+    "children": 0
+   },
+   {
+    "id": 60473039,
+    "name": "Will Apple win its case against OpenAI?",
+    "leader": "Yes 0.555",
+    "source": "kalshi",
+    "vol24": null,
+    "res": "2029-01-01",
+    "img": false,
+    "children": 0
+   }
+  ],
+  "No stated date": []
+ },
+ "awards_nearmiss": {
+  "other_season:2026": [
+   [
+    109587,
+    "Who will attend The Met Gala?",
+    "entertainment"
+   ],
+   [
+    109564,
+    "2026 Oscar for Best Animated Feature Film?",
+    "entertainment"
+   ],
+   [
+    109565,
+    "Oscar for Best Actress?",
+    "entertainment"
+   ],
+   [
+    109563,
+    "2026 Oscar for Animated Short Film?",
+    "entertainment"
+   ],
+   [
+    109562,
+    "Oscar for Best Adapted Screenplay?",
+    "entertainment"
+   ],
+   [
+    109561,
+    "2026 Oscar for best Casting?",
+    "entertainment"
+   ],
+   [
+    109560,
+    "Oscar for Best Cinematography?",
+    "entertainment"
+   ],
+   [
+    109559,
+    "2026 Oscar for Best Costume Design?",
+    "entertainment"
+   ],
+   [
+    109557,
+    "2026 Oscar for Best Documentary Feature Film?",
+    "entertainment"
+   ],
+   [
+    109556,
+    "2026 Oscar for best Documentary Short Film?",
+    "entertainment"
+   ],
+   [
+    109555,
+    "Oscar for Best Film Editing?",
+    "entertainment"
+   ],
+   [
+    109554,
+    "2026 Oscar for Best International Feature Film?",
+    "entertainment"
+   ],
+   [
+    109566,
+    "Oscar for Best Actor?",
+    "entertainment"
+   ],
+   [
+    109558,
+    "Oscar for Best Director?",
+    "entertainment"
+   ],
+   [
+    109553,
+    "2026 Oscar for best Live Action Short Film?",
+    "entertainment"
+   ],
+   [
+    109552,
+    "Oscar for Best Makeup and Hairstyling?",
+    "entertainment"
+   ],
+   [
+    109551,
+    "Oscar for Best Picture?",
+    "entertainment"
+   ],
+   [
+    109550,
+    "Oscar for Best Production Design?",
+    "entertainment"
+   ],
+   [
+    109549,
+    "2026 Oscar for Best Music (Original Score)?",
+    "entertainment"
+   ],
+   [
+    109548,
+    "2026 Oscar for Best Music (Original Song)?",
+    "entertainment"
+   ],
+   [
+    109547,
+    "2026 Oscar for Best Sound?",
+    "entertainment"
+   ],
+   [
+    109546,
+    "Oscar for Best Original Screenplay?",
+    "entertainment"
+   ],
+   [
+    109545,
+    "Oscar for Best Supporting Actor?",
+    "entertainment"
+   ],
+   [
+    109544,
+    "Oscar for Best Supporting Actress?",
+    "entertainment"
+   ],
+   [
+    109543,
+    "2026 Oscar for Best Visual Effects?",
+    "entertainment"
+   ]
+  ],
+  "not_entertainment_category(boxing)": [
+   [
+    61082201,
+    "Ricardo Rafael Sandoval vs Oscar Collazo",
+    "boxing"
+   ]
+  ],
+  "not_entertainment_category(tennis)": [
+   [
+    63448382,
+    "M15 Baku: Oscar Brown vs Digvijay Pratap Singh",
+    "tennis"
+   ],
+   [
+    63448383,
+    "M15 Baku: Oscar Brown vs Digvijay Pratap Singh",
+    "tennis"
+   ]
+  ]
+ },
+ "ai_nearmiss": {
+  "story_key_routes_elsewhere:story:ipo_markets": [
+   [
+    13791997,
+    "OpenAI IPO before 2027?",
+    "economics"
+   ],
+   [
+    128658,
+    "OpenAI IPO Closing Market Cap",
+    "economics"
+   ],
+   [
+    115417,
+    "Will Anthropic or OpenAI IPO first?",
+    "economics"
+   ],
+   [
+    24647105,
+    "What will OpenAI's IPO valuation be?",
+    "economics"
+   ],
+   [
+    113004,
+    "OpenAI IPO Closing Market Cap",
+    "economics"
+   ],
+   [
+    113184,
+    "OpenAI IPO by...?",
+    "tech"
+   ],
+   [
+    115379,
+    "OpenAI IPO closing market cap above ___ ?",
+    "economics"
+   ],
+   [
+    13791742,
+    "Will OpenAI IPO by December 31 2026?",
+    "tech"
+   ],
+   [
+    13794221,
+    "OpenAI IPO closing market cap above $800B?",
+    "economics"
+   ],
+   [
+    24019743,
+    "Will OpenAI IPO by September 30 2026?",
+    "tech"
+   ],
+   [
+    108231,
+    "Will OpenAI or Anthropic IPO first?",
+    "economics"
+   ],
+   [
+    108559,
+    "When will OpenAI officially announce an IPO?",
+    "economics"
+   ],
+   [
+    13794222,
+    "OpenAI IPO closing market cap above $1T?",
+    "economics"
+   ],
+   [
+    13794224,
+    "OpenAI IPO closing market cap above $1.6T?",
+    "economics"
+   ],
+   [
+    13794225,
+    "OpenAI IPO closing market cap above $1.4T?",
+    "economics"
+   ],
+   [
+    31833076,
+    "Which bank will lead OpenAI's IPO?",
+    "economics"
+   ],
+   [
+    59232434,
+    "Anthropic or OpenAI: higher IPO closing market cap?",
+    "tech"
+   ],
+   [
+    13794223,
+    "OpenAI IPO closing market cap above $1.2T?",
+    "economics"
+   ],
+   [
+    61324475,
+    "Will OpenAI IPO by June 30, 2027?",
+    "tech"
+   ],
+   [
+    61324474,
+    "Will OpenAI IPO by March 31 2027?",
+    "tech"
+   ],
+   [
+    113185,
+    "OpenAI $1t+ IPO before 2027?",
+    "economics"
+   ],
+   [
+    24586956,
+    "Lead Bank in OpenAI's IPO?",
+    "economics"
+   ],
+   [
+    24587405,
+    "How much will OpenAI raise in its IPO?",
+    "economics"
+   ]
+  ],
+  "story_key_routes_elsewhere:None": [
+   [
+    53995592,
+    "Will a Chinese company have one of the top 3 AI models by December 31?",
+    "tech"
+   ],
+   [
+    33283092,
+    "Will Trump order mandatory pre-release federal review of AI models?",
+    "politics"
+   ],
+   [
+    16756452,
+    "Will Trump order pre-release federal review of AI models?",
+    "politics"
+   ]
+  ],
+  "story_key_routes_elsewhere:story:spacex_ipo": [
+   [
+    115378,
+    "SpaceX or OpenAI higher IPO Market Cap?",
+    "tech"
+   ]
+  ]
+ },
+ "counts": {
+  "awards_candidates": 216,
+  "awards_rows": 188,
+  "awards_groups": 153,
+  "awards_questions": 134,
+  "ai_candidates": 375,
+  "ai_rows": 347,
+  "ai_questions": 150
+ }
+}

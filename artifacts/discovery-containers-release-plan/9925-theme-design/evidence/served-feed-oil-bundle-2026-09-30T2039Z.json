@@ -1,0 +1,283 @@
+{
+ "type": "bundle",
+ "score": 80.0,
+ "reason": "Where is the oil price going?",
+ "headline": "Oil",
+ "data": {
+  "id": "theme:story:oil:16625182-60789497",
+  "title": "Oil",
+  "kind": "theme",
+  "story_key": "story:oil",
+  "shared_question": "Where is the oil price going?",
+  "item_count": 2,
+  "member_ids": [
+   16625182,
+   60789497
+  ],
+  "items": [
+   {
+    "type": "futures",
+    "score": 80,
+    "reason": "Crude Oil all time high has shifted since May 6",
+    "headline": "Crude Oil all time high shifted since May 6",
+    "context_summary": "Shifted since May 6",
+    "data": {
+     "id": 16625182,
+     "name": "Crude Oil all time high?",
+     "sport": null,
+     "sport_name": null,
+     "llm_sport_category": "geopolitics",
+     "source": "polymarket",
+     "source_count": 1,
+     "sources": [
+      "polymarket"
+     ],
+     "market_tier": 2,
+     "market_type": "field",
+     "status": "open",
+     "resolution_date": "2027-01-01T04:59:00+00:00",
+     "price_observed_at": "2026-09-30T20:00:51+00:00",
+     "top_outcomes": [
+      {
+       "id": 95087097,
+       "name": "December 31",
+       "probability": 0.105,
+       "rank": 1,
+       "movement": null,
+       "rendered_percent": 11
+      },
+      {
+       "id": 95087098,
+       "name": "September 30",
+       "probability": 0.0005,
+       "rank": 2,
+       "movement": null,
+       "rendered_percent": 0
+      }
+     ],
+     "card_sum_reason": "independent_prices",
+     "outcome_count": 6,
+     "canonical_market_key": null,
+     "group_id": "polymarket:435099",
+     "group_type": "polymarket_event",
+     "discover_card": {
+      "suggested_format": "threshold_heatmap",
+      "bundle_candidate": true,
+      "comparison_theme": "commodity_ranges",
+      "threshold_points": [
+       {
+        "source": "date_bucket",
+        "label": "September 30",
+        "value": 20000930,
+        "unit": "date",
+        "direction": "before",
+        "probability": 0.0005,
+        "movement": null
+       },
+       {
+        "source": "date_bucket",
+        "label": "December 31",
+        "value": 20001231,
+        "unit": "date",
+        "direction": "before",
+        "probability": 0.105,
+        "movement": null
+       }
+      ],
+      "ladder_treatment_refused": false,
+      "field_is_a_race": true,
+      "distribution_outcomes": [
+       {
+        "label": "December 31",
+        "probability": 0.105,
+        "movement": null
+       },
+       {
+        "label": "September 30",
+        "probability": 0.0005,
+        "movement": null
+       }
+      ],
+      "remaining_outcome_count": 0,
+      "qa_signals": [],
+      "public_source_disagreement": false,
+      "reasons": [
+       "threshold_values",
+       "bundle_candidate"
+      ]
+     },
+     "image_url": "https://images.pexels.com/photos/16133914/pexels-photo-16133914.jpeg?auto=compress&cs=tinysrgb&h=350",
+     "image_width": 622,
+     "image_height": 350,
+     "hook_description": null,
+     "temporal_badge": null,
+     "confidence_tier": "low",
+     "confidence_score": 0.3529,
+     "confidence_signals": {
+      "has_closing_line": false
+     },
+     "discover_llm": {
+      "topic": "geopolitics",
+      "subtopic": "oil",
+      "archetype": "other",
+      "audience_scope": "mainstream",
+      "salience_score": 4,
+      "junk_flags": [],
+      "comparison_axes": []
+     },
+     "market_tags": [
+      "category:conference",
+      "market_status:open",
+      "source:polymarket",
+      "tier:2"
+     ]
+    }
+   },
+   {
+    "type": "futures",
+    "score": 77,
+    "reason": "",
+    "headline": null,
+    "context_summary": "",
+    "data": {
+     "id": 60789497,
+     "name": "Saudi Oil Pipeline (East-West) restarts?",
+     "sport": null,
+     "sport_name": null,
+     "llm_sport_category": "geopolitics",
+     "source": "polymarket",
+     "source_count": 1,
+     "sources": [
+      "polymarket"
+     ],
+     "market_tier": 2,
+     "market_type": "field",
+     "status": "open",
+     "resolution_date": "2026-11-01T03:59:00+00:00",
+     "price_observed_at": "2026-09-30T20:00:55+00:00",
+     "top_outcomes": [
+      {
+       "id": 236859217,
+       "name": "October 31",
+       "probability": 0.6155,
+       "rank": 1,
+       "movement": null,
+       "rendered_percent": 62
+      },
+      {
+       "id": 236859218,
+       "name": "October 15",
+       "probability": 0.445,
+       "rank": 2,
+       "movement": null,
+       "rendered_percent": 45
+      },
+      {
+       "id": 227744198,
+       "name": "September 30",
+       "probability": 0.0275,
+       "rank": 3,
+       "movement": null,
+       "rendered_percent": 3
+      }
+     ],
+     "card_sum_reason": null,
+     "outcome_count": 6,
+     "canonical_market_key": null,
+     "group_id": "polymarket:1007040",
+     "group_type": "polymarket_event",
+     "discover_card": {
+      "suggested_format": "threshold_heatmap",
+      "bundle_candidate": true,
+      "comparison_theme": "commodity_ranges",
+      "threshold_points": [
+       {
+        "source": "date_bucket",
+        "label": "September 30",
+        "value": 20000930,
+        "unit": "date",
+        "direction": "before",
+        "probability": 0.0275,
+        "movement": null
+       },
+       {
+        "source": "date_bucket",
+        "label": "October 15",
+        "value": 20001015,
+        "unit": "date",
+        "direction": "before",
+        "probability": 0.445,
+        "movement": null
+       },
+       {
+        "source": "date_bucket",
+        "label": "October 31",
+        "value": 20001031,
+        "unit": "date",
+        "direction": "before",
+        "probability": 0.6155,
+        "movement": null
+       }
+      ],
+      "ladder_treatment_refused": false,
+      "field_is_a_race": false,
+      "distribution_outcomes": [
+       {
+        "label": "October 31",
+        "probability": 0.6155,
+        "movement": null
+       },
+       {
+        "label": "October 15",
+        "probability": 0.445,
+        "movement": null
+       },
+       {
+        "label": "September 30",
+        "probability": 0.0275,
+        "movement": null
+       }
+      ],
+      "remaining_outcome_count": 0,
+      "qa_signals": [],
+      "public_source_disagreement": false,
+      "reasons": [
+       "threshold_values",
+       "bundle_candidate"
+      ]
+     },
+     "image_url": "https://images.pexels.com/photos/23878948/pexels-photo-23878948.jpeg?auto=compress&cs=tinysrgb&h=650&w=940",
+     "image_width": 940,
+     "image_height": 587,
+     "hook_description": null,
+     "temporal_badge": null,
+     "confidence_tier": "moderate",
+     "confidence_score": 0.6471,
+     "confidence_signals": {
+      "has_closing_line": false
+     },
+     "market_tags": [
+      "category:conference",
+      "market_status:open",
+      "source:polymarket",
+      "tier:2"
+     ]
+    }
+   }
+  ],
+  "debug_bundles": {
+   "grouped_by": "story_key",
+   "story_key": "story:oil",
+   "title_source": "authored",
+   "question_source": "authored",
+   "member_ids": [
+    16625182,
+    60789497
+   ],
+   "member_names": [
+    "Crude Oil all time high?",
+    "Saudi Oil Pipeline (East-West) restarts?"
+   ]
+  }
+ }
+}
