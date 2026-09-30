@@ -2563,83 +2563,28 @@ private struct GameSegmentsView: View {
                 //
                 // Retuned to 44 + 9×22 + 26 with 4pt gaps = 338pt, so a regulation
                 // nine-inning game fits the NARROWEST supported phone with room
-                // spare, and a 10th inning (364pt) still fits. Extras beyond that
-                // scroll — and the indicator is now ON, so the overflow announces
-                // itself instead of silently truncating the most important column.
-                // 22pt holds a two-digit monospaced caption ("12" ≈ 14pt).
-                ScrollView(.horizontal, showsIndicators: true) {
-                    Grid(alignment: .trailing, horizontalSpacing: 4, verticalSpacing: 8) {
-                        GridRow {
-                            // #3977 — the spacer above the team badges. It carries
-                            // the same floor as the badge and declares the column
-                            // leading-aligned, so two badges of unequal ink still
-                            // start their dots at the same x.
-                            Text("")
-                                .frame(
-                                    minWidth: GameSegmentTeamBadge.minimumWidthPoints,
-                                    alignment: .leading)
-                                .gridColumnAlignment(.leading)
-                            ForEach(breakdown.segments) { segment in
-                                Text(segment.label)
-                                    .font(.caption2.weight(.semibold))
-                                    .foregroundStyle(.secondary)
-                                    .frame(minWidth: 22)
-                            }
-                            Text("T")
-                                .font(.caption2.weight(.bold))
-                                .foregroundStyle(.primary)
-                                .frame(minWidth: 26)
-                                // A hairline gutter so the total reads as a separate
-                                // quantity from the last inning rather than a 10th.
-                                .padding(.leading, 6)
-                        }
-
-                        segmentRow(
-                            team: awayShort,
-                            color: awayTeamColor,
-                            cells: breakdown.segments.map(\.away),
-                            total: breakdown.awayTotal
-                        )
-                        segmentRow(
-                            team: homeShort,
-                            color: homeTeamColor,
-                            cells: breakdown.segments.map(\.home),
-                            total: breakdown.homeTotal
-                        )
-                    }
-                    .padding(.vertical, 2)
-                }
+                // spare, and a 10th inning (364pt) still fits. 22pt holds a
+                // two-digit monospaced caption ("12" ≈ 14pt).
+                //
+                // #4089 — past that (extras, or the accessibility text sizes) the
+                // team names and the total stay pinned and only the periods
+                // scroll; the whole row used to scroll, so `T` was the first
+                // thing off screen. The layout lives on `GameSegmentsTable`.
+                GameSegmentsTable(
+                    columns: breakdown.segments.map {
+                        LineScoreColumn(label: $0.label, away: $0.away, home: $0.home)
+                    },
+                    awayBadge: awayShort,
+                    homeBadge: homeShort,
+                    awayColor: awayTeamColor,
+                    homeColor: homeTeamColor,
+                    awayTotal: breakdown.awayTotal,
+                    homeTotal: breakdown.homeTotal
+                )
             }
             .padding()
             .background(Color.cardBackground)
             .clipShape(RoundedRectangle(cornerRadius: 12))
-        }
-    }
-
-    private func segmentRow(team: String, color: Color, cells: [LineScoreCell], total: Int) -> some View {
-        GridRow {
-            // UX-P090: 54 -> 44, matching the header row above. See the geometry
-            // note there — the two must move together or the columns shear.
-            // #3977 moved both to a FLOOR and put the badge in its own type so a
-            // camera can measure it; the reasoning lives on `GameSegmentTeamBadge`.
-            GameSegmentTeamBadge(team: team, color: color)
-
-            ForEach(Array(cells.enumerated()), id: \.offset) { _, cell in
-                // `·` for an inning we never observed. Printing `0` there would
-                // assert nobody scored, which we do not know (#1831). A period
-                // still to come is blank and baseball's unneeded half is `X`
-                // (#9067) — neither is a gap, so neither is dimmed as one.
-                Text(cell.text)
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(cell == .unknown ? .tertiary : .secondary)
-                    .frame(minWidth: 22)
-            }
-
-            Text("\(total)")
-                .font(.caption.weight(.bold).monospacedDigit())
-                .foregroundStyle(.primary)
-                .frame(minWidth: 26)
-                .padding(.leading, 6)
         }
     }
 }
