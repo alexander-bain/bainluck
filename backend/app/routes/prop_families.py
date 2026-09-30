@@ -58,6 +58,7 @@ post-deploy first-touch read on this endpoint is the falsifier.
 """
 
 import logging
+import re
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -96,8 +97,10 @@ from app.utils.market_team_sport import (
     link_crosses_gender,
     link_crosses_league,
     market_event_slug,
+    sport_key_llm_category,
 )
 from app.utils.prop_families import group_prop_families, resolve_family_key
+from app.utils.sport_keys import league_family_identity
 from app.utils.statement_timeout import is_statement_timeout
 
 logger = logging.getLogger(__name__)
@@ -185,6 +188,26 @@ _BRANCH_PRICE_SCREEN = "price_screen"
 #: #9610: the side screen, also a step after the fetch branches. It reports a
 #: failure through `branch_timeout:` like the price screen, and it never defers.
 _BRANCH_SIDE_SCREEN = "side_screen"
+
+#: #9761 residue: a market whose own QUESTION names the NFL season. Polymarket's
+#: player rushing-yards boards carry a slug that names no league
+#: (``jeremiyah-love-rushing-yards-2026-27``) and no ``sport_id``, so
+#: ``link_crosses_league`` has nothing to read; the question does: "Will
+#: Jeremiyah Love have 899.5+ rushing yards in the 2026-27 NFL regular season?"
+#: (61355765, and Jadarian Price's 61352844), matched on Notre Dame by roster
+#: name. Read only as a refusal on a football team outside the NFL, never to
+#: attach anything (notice 40: a title alone is not membership).
+_NFL_SEASON_IN_NAME = re.compile(r"\bNFL\s+(?:regular\s+)?season\b", re.IGNORECASE)
+_NFL_LEAGUE_FAMILY = league_family_identity("americanfootball_nfl")
+
+
+def _name_crosses_into_nfl(name: str | None, team_sport_key: str | None) -> bool:
+    """True when a market's name names the NFL season and the team is football outside it."""
+    if not team_sport_key or not _NFL_SEASON_IN_NAME.search(name or ""):
+        return False
+    if sport_key_llm_category(team_sport_key) != "football":
+        return False
+    return league_family_identity(team_sport_key) != _NFL_LEAGUE_FAMILY
 
 
 def _escape_like(s: str) -> str:
@@ -773,7 +796,9 @@ async def _withhold_other_side(
     Malachi Fields, so the roster branch matched Kalshi's NFL rookie board
     (``KXNFLOROTY-27``) and the page printed an "Offensive Rookie Of The Year"
     race after the linker had unbound every leg. ``link_crosses_league`` is the
-    linker's own refusal (Kalshi series, Polymarket event slug).
+    linker's own refusal (Kalshi series, Polymarket event slug). Where the venue
+    id names no league, a market whose question names the NFL season is refused
+    on a football team outside the NFL (``_name_crosses_into_nfl``).
 
     Returns a loss reason, or None. A team with no ``sport_id`` is not screened.
     A failed lookup FAILS OPEN (the page keeps today's rows) and says so in the
@@ -815,6 +840,7 @@ async def _withhold_other_side(
                 team_sport_key,
                 market_event_slug(by_market[mid].get("market_metadata")),
             )
+            or _name_crosses_into_nfl(name, team_sport_key)
         ):
             del by_market[mid]
     return None
