@@ -345,7 +345,7 @@ struct DiscoverView: View {
         // pure classifier. `filteredItems` sanitizes bundles up front, so this is
         // normally already the first child; the explicit admit keeps the
         // derivation correct for any caller that passes a raw bundle.
-        DiscoverCategory.of(item) { bundle in
+        DiscoverCollectionFeed.category(of: item) { bundle in
             Self.eligibleBundleItems(bundle).first ?? bundle.items.first
         }
     }
@@ -354,7 +354,7 @@ struct DiscoverView: View {
     /// key. Uses the SAME eligibility-gated bundle resolver as `itemCategory`, so
     /// a bundle's family and its category always describe the same child.
     private func itemFamily(_ item: FeedItem) -> String {
-        DiscoverCategory.family(item) { bundle in
+        DiscoverCollectionFeed.family(of: item) { bundle in
             Self.eligibleBundleItems(bundle).first ?? bundle.items.first
         }
     }
@@ -448,6 +448,7 @@ struct DiscoverView: View {
         if let t = item.tournament { return "tournament-\(t.key)" }
         if let c = item.concept { return "concept-\(c.key)" }
         if let b = item.bundle { return "bundle-\(b.id)" }
+        if let c = item.collection { return "collection-\(c.slug)" }
         return UUID().uuidString
     }
 
@@ -475,6 +476,7 @@ struct DiscoverView: View {
         if let t = item.tournament { return t.key }
         if let c = item.concept { return c.key }
         if let b = item.bundle { return b.id }
+        if let c = item.collection { return c.slug }
         return item.id
     }
 
@@ -484,6 +486,7 @@ struct DiscoverView: View {
         if let t = item.tournament { return t.name }
         if let c = item.concept { return c.name }
         if let b = item.bundle { return b.title }
+        if let c = item.collection { return c.name }
         return nil
     }
 
@@ -527,7 +530,7 @@ struct DiscoverView: View {
             profile.record(
                 category: itemCategory(item),
                 action: action,
-                onSportsCard: DiscoverCategory.isSportsFeedback(item) { bundle in
+                onSportsCard: DiscoverCollectionFeed.isSportsFeedback(item) { bundle in
                     Self.eligibleBundleItems(bundle).first ?? bundle.items.first
                 }
             )
@@ -999,7 +1002,24 @@ struct DiscoverView: View {
                     NativeGroupCard(title: title, items: items, kind: kind, theme: theme, sharedQuestion: sharedQuestion, navigationPath: $navigationPath)
                 }
             case .single(let item):
-                if isGuessSlot, item.type == "futures", let f = item.futures,
+                if item.type == "collection", let entry = DiscoverCollectionFeed.entry(for: item.collection) {
+                    SwipeToDismiss(
+                        onSwipeLeft: {
+                            recordInteraction(for: item, action: .unlike, source: "swipe")
+                            hideForSession(itemId(item))
+                        },
+                        onSwipeRight: {
+                            recordInteraction(for: item, action: .like, source: "swipe")
+                            hideForSession(itemId(item))
+                        },
+                        onRequiresSignIn: inviteSignInForFeedback
+                    ) {
+                        DiscoverCollectionCard(entry: entry, navigationPath: $navigationPath, onOpen: {
+                            recordInteraction(for: item, action: .detailOpen, source: "card")
+                        })
+                    }
+                    .contextMenu { discoverCardMenu(item) }
+                } else if isGuessSlot, item.type == "futures", let f = item.futures,
                    f.discoverCard?.suggestedFormat != "threshold_heatmap",
                    f.discoverCard?.suggestedFormat != "outcome_distribution",
                    f.discoverCard?.suggestedFormat != "cross_source_comparison",

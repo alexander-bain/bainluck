@@ -1308,6 +1308,9 @@ final class DiscoverViewModel: ObservableObject {
     ///  - `bundle`: needs ≥1 renderable member; else `empty_bundle`.
     ///  - unknown shape → `unknown_type`.
     static func suppressionReason(_ item: FeedItem, depth: Int = 0) -> String? {
+        if item.type == "collection" {
+            return DiscoverCollectionFeed.entry(for: item.collection) == nil ? "invalid_collection" : nil
+        }
         if item.event != nil { return nil }
         if let futures = item.futures {
             if let outcomes = futures.topOutcomes, !outcomes.isEmpty { return nil }
@@ -1631,7 +1634,7 @@ final class DiscoverViewModel: ObservableObject {
     /// first-child bundle rule as `category(for:)` — production paths sanitize
     /// bundles upstream, so the two agree.
     private static func family(for item: FeedItem) -> String {
-        DiscoverCategory.family(item)
+        DiscoverCollectionFeed.family(of: item)
     }
 
     /// #1883: delegates to the one shared classifier. This copy previously had no
@@ -1641,7 +1644,7 @@ final class DiscoverViewModel: ObservableObject {
     /// paths sanitize bundles upstream, so that agrees with the view's
     /// eligibility-gated resolver.
     private static func category(for item: FeedItem) -> String {
-        DiscoverCategory.of(item)
+        DiscoverCollectionFeed.category(of: item)
     }
 
     private static func itemKey(_ item: FeedItem) -> String {
