@@ -1179,6 +1179,12 @@ actor APIClient {
         try await fetch(ContainerHubService.path(for: slug), requiresNetwork: true)
     }
 
+    /// #9653: optional Browse discovery always revalidates publication/flags.
+    /// No local TTL or last-good fallback may restore a revoked entry.
+    func fetchContainerDiscovery(_ request: ContainerDiscoveryRequest) async throws -> ContainerDiscoveryResponse {
+        try await fetch(ContainerDiscoveryRequest.path, query: request.query, requiresNetwork: true)
+    }
+
     /// Fetches a registered tournament hub (`us-open`, …) — the same payload the
     /// web hub page renders.
     ///

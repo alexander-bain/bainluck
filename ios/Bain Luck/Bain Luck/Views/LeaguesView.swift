@@ -135,6 +135,7 @@ struct LeaguesView: View {
                 VStack(alignment: .leading, spacing: 26) {
                     browseHeader
                     featuredGrid
+                    BrowseCollectionsView()
                     // topicSection — hidden for v1 (prediction market category pages not ready)
                     leagueSections
                 }
