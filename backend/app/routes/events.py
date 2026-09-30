@@ -129,8 +129,14 @@ from app.utils.hero_probability import resolve_hero
 from app.utils.settled_hero import resolve_settled_hero
 from app.utils.settled_price import priceless_leg_keeps_its_row
 from app.utils.settledness import market_assigned_settled
-from app.utils.venue_settlement import venue_settlement_is_askable
-from app.utils.venue_settlement_reader import attach_venue_settlement
+from app.utils.venue_settlement import (
+    VENUE_CLOSED_NO_WINNER_KEY,
+    venue_settlement_is_askable,
+)
+from app.utils.venue_settlement_reader import (
+    attach_venue_settlement,
+    mark_venue_closed_no_winner,
+)
 from app.utils.standings_shape import (
     public_standings,
     reconciled_record_and_standings,
@@ -18122,6 +18128,28 @@ async def _venue_settlement(db: AsyncSession, event) -> dict | None:
     )
 
 
+async def _venue_settlement_served(db: AsyncSession, event) -> dict | None:
+    """The detail payload's settlement keys: the pair, plus #5811's void arm.
+
+    ``venue_closed_no_winner: True`` joins the pair when the venue settled every
+    market on the event and graded none (Visconde v Bulaid, ``15320964``) — the
+    same shared rule the list doors serve through
+    :func:`~app.utils.venue_settlement_reader.venue_settlements_for_events`.
+
+    A wrapper rather than an arm inside :func:`_venue_settlement`, because that
+    function's result-only reader (:func:`_settled_hero_result`, behind the
+    game-markets fold and the chart's terminal point) never reads the void key
+    and should not pay its statement. ``None`` stays ``None``: a failed pair
+    read refuses the whole answer, the void arm included.
+    """
+    settlement = await _venue_settlement(db, event)
+    if settlement is None:
+        return None
+    by_id = {event.id: settlement}
+    await mark_venue_closed_no_winner(db, by_id)
+    return by_id[event.id]
+
+
 # ═══ #6975: WHICH ROW A READER WHO ASKED FOR AN ID IS SERVED ══════════════════
 #
 # One decision, four callers. ``GET /api/events/{id}`` has resolved a twin id to
@@ -19074,7 +19102,7 @@ async def get_event(
         response,
         live_claim_is_unbacked=bool(_pinned and _pinned.get("pinned")),
     ):
-        _settlement = await _venue_settlement(db, event)
+        _settlement = await _venue_settlement_served(db, event)
         if _settlement is not None:
             response.update(_settlement)
 
@@ -35707,6 +35735,8 @@ async def _typeahead_attach_venue_settlement(
         if brief is not None:
             s["venue_settled"] = brief["venue_settled"]
             s["venue_settled_result"] = brief.get("venue_settled_result")
+            if brief.get(VENUE_CLOSED_NO_WINNER_KEY) is True:
+                s[VENUE_CLOSED_NO_WINNER_KEY] = True
 
 
 #: #8428: how many previous meetings a MATCHUP query adds beside the next one.

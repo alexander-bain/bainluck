@@ -518,7 +518,12 @@ class TestTheTwoStatesAreMutuallyExclusive:
         assert "venue_settlement_is_askable(\n        response," in source, (
             "get_event must pass the response dict itself to the gate"
         )
-        assert "_venue_settlement(db, event)" in source
+        # #5811: the route reaches the pair through `_venue_settlement_served`,
+        # which adds the void arm; the pair's reader is followed one hop, not
+        # dropped, so a wrapper that stopped asking it is still red here.
+        assert "_venue_settlement_served(db, event)" in source
+        served = inspect.getsource(events_route._venue_settlement_served)
+        assert "await _venue_settlement(db, event)" in served
 
 
 class TestTheFrontendContractStillHasTwoArms:
