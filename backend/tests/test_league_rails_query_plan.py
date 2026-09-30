@@ -315,7 +315,13 @@ def test_build_league_emits_the_fenced_statement_for_the_results_rail():
     )
     for statement in fenced:
         assert "events.commence_time" in statement
-        assert re.search(r"ORDER BY anon_\d+\.commence_time DESC", statement)
+        # #5602: the unreported rail leads with `unreported_anchor_rank` (a
+        # CASE on the OUTER select); the kick-off key still follows it.
+        assert re.search(
+            r"ORDER BY (CASE WHEN .*? END, )?anon_\d+\.commence_time DESC",
+            statement,
+            re.S,
+        )
 
 
 def test_build_league_still_emits_an_unfenced_upcoming_statement():
