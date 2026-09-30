@@ -65,5 +65,5 @@ class TestTheHandlerWiring:
         status = block.index("status_order,")
         day = block.index("*( (_settled_day_key,) if _settled_day_key is not None else () ),")
         lead = block.index("*( (_team_card_lead_key,) if _team_card_lead_key is not None else () ),")
-        rank = block.index("search_rank.desc(),")
+        rank = block.index("search_rank_key,")  # #9940: the club-aware rank key
         assert status < day < lead < rank

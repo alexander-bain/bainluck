@@ -4687,6 +4687,22 @@ jobs:
             exit 1
           fi
 
+      - name: "#9940 'new york' leads with this week's games, not the city-twice ones (real Postgres)"
+        # PILLAR: DISCOVER. SHIP: typing a bare city leads the games list with
+        # this week's games, not a Dec 27 Patriots @ Jets because the rank
+        # counts the city's words twice. `ts_rank_cd` over the weighted
+        # team-name vectors is the mechanism, a Postgres fact. The in-rig
+        # strawman proves the cases measure the fix.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_search_city_rank_ties_pg_9940.py \
+            -v -rs 2>&1 | tee /tmp/cityrankties.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/cityrankties.txt; then
+            echo "::error::#9940 city rank-ties contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#9735 one player of an unspaced doubles pair finds its match (real Postgres)"
         # PILLAR: DISCOVER. SHIP: searching a doubles player finds this week's
         # match. `q=Winegar` served 0 games while Rojer/Winegar was live: the
