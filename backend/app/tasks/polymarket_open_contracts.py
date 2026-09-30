@@ -81,6 +81,16 @@ def open_contract_prices_enabled() -> bool:
     )
 
 
+def book_snapshot_prices_enabled() -> bool:
+    """#9733: price open contracts from the venue's subscribe snapshot.
+
+    Without it a quiet book that moved while the socket was down keeps its old
+    price until the book moves again. ``POLYMARKET_WS_BOOK_SNAPSHOT_PRICES=0``
+    turns it off at the next recycle with no deploy — the undo line.
+    """
+    return os.getenv("POLYMARKET_WS_BOOK_SNAPSHOT_PRICES", "1").strip() != "0"
+
+
 def _open_market_clauses() -> list:
     from sqlalchemy import or_
 
