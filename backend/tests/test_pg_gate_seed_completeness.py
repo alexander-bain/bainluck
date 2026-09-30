@@ -333,6 +333,9 @@ COVERED = (
     # #9404. Seeds `futures_markets` and `futures_outcomes` by raw INSERT; drops
     # and recreates the schema like the #5082 gate above.
     "test_typeahead_one_question_one_row_9404_pg.py",
+    # #9865. Seeds `futures_markets` and `futures_outcomes` by raw INSERT; drops
+    # and recreates the schema like the #9404 gate above.
+    "test_typeahead_world_series_sport_pg_9865.py",
     # #9439. Seeds `futures_markets` and `futures_outcomes` by raw INSERT; drops
     # and recreates the schema like the #9404 gate above.
     "test_search_one_award_race_one_row_9439_pg.py",

@@ -2327,6 +2327,44 @@ _POSTSEASON_NAMED_ROUNDS: dict[tuple[str, ...], str] = {
 }
 
 
+#: #9865: a championship the reader names as ONE sport's, although another
+#: sport's markets carry the same words. Production 2026-09-28 16:05Z and again
+#: 2026-09-30 16:05Z, the MLB postseason: the dropdown for `world series` put
+#: "Dota 2: Ivory vs Team Kinetix (BO3) - EPL World Series Southeast Asia Group
+#: Stage" (esports, volume 22,272) in row 2, above "MLB Postseason: World Series
+#: MVP" and "MLB 2026: World Series Winning League", whose volume is NULL. Every
+#: row names both words, so the name-match split cannot tell them apart and the
+#: volume sort decides. No team resolves, so neither `/search`'s facet tally nor
+#: the dropdown's team pool supplies the sport that `_demote_wrong_sport` needs;
+#: the query itself does, when it is the championship's name and nothing else.
+#: `world series of poker` is another question and keeps the old order.
+#: Measured the same day: `super bowl`, `stanley cup`, `nba finals` and
+#: `world cup` serve no other sport's row, so they are not claimed here.
+_CHAMPIONSHIP_QUERY_SPORT_KEYS: dict[tuple[str, ...], str] = {
+    ("world", "series"): "baseball_mlb",
+}
+
+
+def _championship_query_sport_category(expanded) -> str | None:
+    """The `llm_sport_category` a bare championship query names (#9865), or None.
+
+    `world series` and `mlb world series` are asking about baseball's; any other
+    word beside the name (`world series of poker`, `nfl world series`) returns
+    None, and the caller's own signal stands. Translated through
+    `_resolved_search_sport_category` so the prefix map is applied in one place.
+    """
+    terms = [t.lower() for t, _e in expanded]
+    for phrase, sport_key in _CHAMPIONSHIP_QUERY_SPORT_KEYS.items():
+        width = len(phrase)
+        for i in range(len(terms) - width + 1):
+            if tuple(terms[i:i + width]) != phrase:
+                continue
+            if not _only_the_rounds_league(terms, set(phrase), sport_key):
+                return None
+            return _resolved_search_sport_category([{"key": sport_key}])
+    return None
+
+
 def _bare_postseason_named_round(terms: list[str]) -> tuple[str, ...] | None:
     """The round's abbreviations (`alcs`, `nlcs`) when the query IS a named round."""
     lowered = [t.lower() for t in terms]
@@ -3758,7 +3796,8 @@ def _rerank_search_futures(
     from the query text — it is what the query's GAMES resolved to, passed in by
     the caller that computed it. Optional and defaulted because only `/search`
     has it: see the demotion's own docstring, and the typeahead call site for why
-    that endpoint deliberately passes nothing.
+    that endpoint deliberately passes nothing. When the caller resolved none, a
+    bare championship query (`world series`, #9865) supplies it from its text.
 
     `team_sport_categories` (#7355) is the fourth, same provenance: the sports
     the query's matched teams play, for the multi-sport queries the third cannot
@@ -3800,8 +3839,13 @@ def _rerank_search_futures(
     ordered = _demote_teamless_sport(ordered, team_sport_categories)
     # And finally the wrong SPORT (#7259), below even the wrong league — the one
     # signal here that the query text cannot supply. `astros` must not lead with
-    # an LNBP basketball fixture. No-op when the caller resolved no single sport.
-    ordered = _demote_wrong_sport(ordered, resolved_sport_category)
+    # an LNBP basketball fixture. No-op when the caller resolved no single sport,
+    # unless the query is a championship's bare name (#9865): `world series`
+    # resolves no team, and its Dota 2 namesake must not lead the MLB boards.
+    ordered = _demote_wrong_sport(
+        ordered,
+        resolved_sport_category or _championship_query_sport_category(expanded),
+    )
     # #9340: a bare `playoffs` keeps the postseason in progress first — the SQL
     # key fetched those rows, and the name-match split above would otherwise
     # hand "Boston: First Playoff Opponent" (no `playoffs` in it) to the bottom.

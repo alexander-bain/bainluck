@@ -73,6 +73,7 @@
     "typeahead team query keeps other-sport futures below its own (real Postgres,",
     "typeahead team nickname keeps other-sport games below its own (real Postgres,",
     "typeahead shows one question once, the search page's repeat rule (real Postgres,",
+    "#9865 'world series' leads with baseball's boards, not a Dota 2 namesake (real Postgres)",
     "typeahead keeps the resolved team's own game in the four (real Postgres,",
     "futures_outcomes grade schema parity (real Postgres)",
     "Odds-enrichment equivalence (real Postgres)",
