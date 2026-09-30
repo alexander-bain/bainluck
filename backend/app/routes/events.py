@@ -1089,12 +1089,26 @@ def _is_over_match_cap(market, match_counts: dict, query_words: frozenset) -> bo
     `_SEARCH_MATCH_ROWS_CAP` rows are its highest-ranked ones. An over-cap row is
     SUNK, not dropped (`_sink_over_match_cap`): when nothing else answers the
     query it still fills the page.
+
+    #9724 — the fixture is also the GAME the row is linked to. `?q=braves` on
+    Wild Card day (production 2026-09-30 04:05Z) served 7 of its 10 market rows
+    from Phillies vs. Braves, and 6 of them named no fixture before a colon:
+    `Spread: Atlanta Braves (-1.5)`, `Atlanta Braves Team Total: O/U 3.5`,
+    `Will the game go to extra innings?: Philadelphia Phillies vs. Atlanta
+    Braves`. All six carry the game's `event_id`, and an open market that
+    carries one is a game's market (21,326 of 21,328 on production; the other
+    two are the Ryder Cup captains, one event of two rows), so the link is the
+    key the name could not give. A row counts against each key it has and is over once either is full.
+    The name's query test still disarms the cap for a row whose name has sides.
     """
     key = _search_match_key(market)
-    if key is None or _query_names_both_sides(key, query_words):
+    if key is not None and _query_names_both_sides(key, query_words):
         return False
-    match_counts[key] = match_counts.get(key, 0) + 1
-    return match_counts[key] > _SEARCH_MATCH_ROWS_CAP
+    event_id = getattr(market, "event_id", None)
+    keys = [k for k in (key, f"event:{event_id}" if event_id else None) if k]
+    for k in keys:
+        match_counts[k] = match_counts.get(k, 0) + 1
+    return any(match_counts[k] > _SEARCH_MATCH_ROWS_CAP for k in keys)
 
 
 def _sink_over_match_cap(markets: list, over_cap_ids: set) -> list:
