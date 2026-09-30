@@ -4009,7 +4009,22 @@ async def get_feed(
                 detail="category is not supported with mode=sports",
             )
 
-    if not debug and not exclude_reviewed:
+    from app.utils.feed_collections import (
+        add_feed_collections,
+        feed_collections_enabled,
+    )
+
+    _collections_enabled = feed_collections_enabled(
+        mode=mode,
+        include_events=include_events,
+        my_teams_only=my_teams_only,
+        debug=debug or exclude_reviewed,
+    )
+    # Publication/revocation is live authority. A collection-bearing page must
+    # never be served from response, stale, last-good or page-base caches.
+    # Flag-off requests retain all existing cache behavior. Shared scoring
+    # artifacts remain available to the flag-on build.
+    if not debug and not exclude_reviewed and not _collections_enabled:
         _cache_status = "miss"
         # LAT-P089: the request SHAPE, held once. The private key and the
         # principal-independent key differ only in the principal, so deriving
@@ -4214,6 +4229,8 @@ async def get_feed(
         _cache_status = "disabled_debug"
     elif exclude_reviewed:
         _cache_status = "disabled_reviewed_filter"
+    elif _collections_enabled:
+        _cache_status = "disabled_collections"
 
     now = datetime.now(timezone.utc)
 
@@ -5328,6 +5345,15 @@ async def get_feed(
                 "reviewed_key_count": len(reviewed_keys or ()),
                 "filtered_count": _chain_meta["reviewed_filtered_count"],
             }
+
+        if _collections_enabled:
+            feed_items = await add_feed_collections(
+                db,
+                feed_items,
+                rank_key=_rank_key,
+                page_window=DISCOVER_COMPOSITION_WINDOW,
+                budget_seconds=_feed_budget_remaining_s(),
+            )
 
         # T4-B2 / #5102: the pin, on the BUILD path. Applied to ``feed_items``
         # before the slice below, which is the only placement that works —

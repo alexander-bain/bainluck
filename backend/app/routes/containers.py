@@ -41,7 +41,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from sqlalchemy import text
@@ -279,6 +279,20 @@ def _container_header(row) -> dict:
         "window_end": row[7].isoformat() if row[7] else None,
         "parent_container_id": int(row[8]) if row[8] is not None else None,
     }
+
+
+@router.get("/discover")
+async def get_discoverable_containers(
+    league: Optional[Literal["nfl", "mlb"]] = Query(None),
+    season: int = Query(2026, ge=2000, le=2100),
+    limit: int = Query(20, ge=1, le=20),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Browse published NFL/MLB hubs using the shared discovery contract."""
+    from app.services.container_discovery import discover_collections
+
+    read = await discover_collections(db, league=league, season=season, limit=limit)
+    return {"collections": read.collections}
 
 
 @router.get("/{slug}")
