@@ -19141,11 +19141,30 @@ def _escape_like(s: str) -> str:
 # shared with a pro franchise, plus a league scope that lets NFL markets into an
 # NCAAF pool), and `'North Carolina Tar Heels'` still emits a bare `'Carolina'`.
 # Both need a recall census before they move; this one needs none.
+#
+# `port` MOVED 2026-09-30 (#6124) — a place-TYPE word, the same defect in the
+# city slot. Production, `/api/events/15315471/related-futures` (Port Vale v
+# Northampton Town, League Two): `'Port Vale'` emitted a bare `'Port'`, a whole
+# token of `Shanghai Port FC`, `Shanghai Port` and `Port FC`, so Port Vale's
+# card served the Chinese Super League and Thai League 1 titles. Neither club
+# has a `teams` row, so #7867's known-club cover cannot see them.
+#
+#   port   | RECALL CENSUS, production 2026-09-30 05:5xZ, every `futures_outcomes`
+#          | label with `port` as a whole token: all but three carry the club's
+#          | other word (`Port Vale`, `Port FC`, `Shanghai Port`, `Port Adelaide
+#          | Power`, `AS Port`). The three: `Tawny Port` (a horse), `Spain vs
+#          | Port` (cricket) and ONE `Port` — Port FC's leg of Polymarket's AFC
+#          | Champions League Elite winner market. That leg reaches Port FC's
+#          | own event page only through the bare token, and the same token
+#          | hands it to Port Vale, Shanghai Port and AS Port.       LOSS 1
+#          | Every club keeps its full name and, where it has one, its own word:
+#          | Port Vale on `Port Vale`/`Vale`, Port Adelaide on `Adelaide`,
+#          | Shanghai Port on `Shanghai`; `Port FC`/`AS Port` on their full names.
 _GENERIC_PLACE_QUALIFIERS = frozenset({
     "state", "university", "college", "academy", "institute", "tech",
     "north", "south", "east", "west", "central",
     "northern", "southern", "eastern", "western",
-    "saint",
+    "saint", "port",
 })
 
 # A word that names a club TYPE rather than a club — the same defect as the set
