@@ -44,6 +44,10 @@ An ownership transfer uses `--expected-owner` with the current exact value; it d
 
 An idle worker with an eligible ready assignment is a dispatch defect. A worker with no eligible work stays idle; no invented audit, duplicate shopping or self-generated architecture program.
 
+The current coordinator owns the next handoff. When a worker returns a result or a dependency changes, check the existing scoped next issue against available contributors. Prepare its Ready state and single lane routing label when its prerequisites are met; record the specific dependency when they are not. Within an active coordinator run, apply the same rule to completed local subagents and reuse available contributors. Alex should not have to assign routine follow-through. Existing issue scopes supply the work; staffing an idle slot is not a reason to create a task.
+
+Runner inboxes select queued messages in FIFO order. Before a required release handoff, the coordinator may hold specifically identified, unclaimed optional messages and leave exact reactivation pointers in the existing handoff. Preserve active directives and processes. This is a scoped priority decision within the existing inbox workflow; it adds no scheduler.
+
 ## Dispatch without empty model sessions
 
 `scripts/lane_ready_issue.py <lane>` reads only explicitly lane-routed open issues and their Project state. It chooses priority then oldest creation date. In Progress work prevents automatic restock. Missing, contradictory or truncated board reads never authorize work. It is a selector, not an atomic claim: the worker rechecks and claims before edits.
@@ -52,13 +56,15 @@ An idle worker with an eligible ready assignment is a dispatch defect. A worker 
 
 Adoption is gradual: label the next prepared issue and active issue when that worker hands back. Unlabelled historical issues are not automatically adopted. Existing processes use their loaded runner until the safe between-session refresh; source merge alone is not proof every runner has adopted this behavior. Do not kill active sessions or restart the whole fleet for adoption.
 
+Distinguish dispatch states before acting: a model session or descendants beyond the runner's direct idle sleep mean busy; an In Progress issue occupies WIP; an empty eligible Ready set is a legitimate wait. Missing routing on an otherwise prepared next issue needs the coordinator's handoff, while a contradictory label or board state needs its existing owner's correction. Neither authorizes widening the selector. Runtime adoption requires a verified idle boundary, replacement identity and loaded-source receipt. Documentation and issue claims do not establish that receipt.
+
 ## Shopper, board freshness and YOUR-TURN
 
 Shopper remains the dedicated mystery-shopping and bug-filing lane, with a reproducible user journey and duplicate-issue check. Product workers inspect their own changes; idle workers are not a second general shopping fleet. Preserve existing authorized testing/feedback intake until its owner changes it deliberately.
 
 Each implementation owner updates its issue at start, block, review, integration and delivery. Tooling should perform deterministic field/label synchronization and render progress from those facts. Shopper catches exceptions, stale receipts and missing ownership; it should not reconstruct every worker's progress on each pass.
 
-For v3, **V3 update work** owns scope and bottleneck decisions; **Start App Update Post-Mortem** owns the one current `V3-YOUR-TURN.md` projection. It contains actual user decisions/actions with exact steps, not a duplicate backlog. Shopper retains the general release/issue freshness role during this migration. Keep existing 9 AM / 5 PM summaries and meaningful-change updates; add no 15-minute model sweeps or new audit calendar. Do not overwrite a projection with stale or incomplete inputs.
+For v3, **the current coordinator** owns scope, bottleneck decisions and the one local `V3-YOUR-TURN.md` projection. It contains actual user decisions/actions with exact steps, not a duplicate backlog. **Dot** owns GitHub freshness and the daily GitHub summary; implementation owners still update their issues at each work transition. Shopper supplies independent journey evidence and routes freshness exceptions to the existing owner. Use the existing coordinator and summary cadence; add no model sweep or audit calendar. Do not overwrite a projection with stale or incomplete inputs.
 
 ## Testing and code boundaries
 
