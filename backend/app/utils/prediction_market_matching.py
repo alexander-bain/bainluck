@@ -305,6 +305,38 @@ _DASH_MATCHUP_RE = re.compile(
 # So the parse is left exactly as master has it. "University at Albany" still
 # does not reach its own game; that is a real defect, it predates this branch,
 # and it is filed rather than fixed by a parse preference that costs #3026.
+# #9873: a name that ENDS in the initial "V" — Kalshi's "Tokyo V" (Tokyo Verdy),
+# "Geerts / Prashanth V" — sits right before the real " vs ". Both matchup
+# patterns match case-insensitively and read their first side lazily, so the
+# split lands on that initial: "Tokyo V vs Kobe" -> ("Tokyo", "vs Kobe").
+# Production: 16 rows minted with a side name that starts with a separator word,
+# 13 of them Tokyo Verdy home games, since March.
+#
+# The fix reads the parse and does not choose between separators (that choice
+# is what #3026 turned down — see the note above). A second side that STARTS
+# with a strong separator ("vs", "at", "@") after a weak "v" split can only
+# mean the split landed inside the first name, so the "v" goes back onto that
+# name. The two directions it must not touch:
+#   * a strong split whose second side starts with "V " is a real name
+#     ("Tokyo vs V Varen"): the first separator was not "v", so nothing moves;
+#   * #3026's embedded matchup ("Announcers at Duke vs Virginia") has no
+#     separator at the start of its second side, so it parses exactly as before.
+_WEAK_V_SEPARATOR_RE = re.compile(r'^v\.?$', re.IGNORECASE)
+_LEADING_STRONG_SEPARATOR_RE = re.compile(r'^(?:vs\.?|at|@)\s+(\S.*)$', re.IGNORECASE | re.DOTALL)
+
+
+def _restore_name_final_initial_v(name: str, m: "re.Match[str]"):
+    """``(team_a, team_b)`` from a two-sided matchup match, the initial V restored. #9873."""
+    team_a = m.group(1).strip()
+    team_b = m.group(2).strip()
+    separator = name[m.end(1):m.start(2)].strip()
+    if _WEAK_V_SEPARATOR_RE.match(separator):
+        rest = _LEADING_STRONG_SEPARATOR_RE.match(team_b)
+        if rest:
+            return name[:m.start(2)].strip(), rest.group(1).strip()
+    return team_a, team_b
+
+
 # "Will (the) Team A beat/win against Team B?"
 _WILL_BEAT_RE = re.compile(
     r'^Will\s+(?:the\s+)?(.+?)\s+(?:beat|defeat|win\s+against)\s+(?:the\s+)?(.+?)\??$',
@@ -1269,8 +1301,7 @@ def _extract_matchup_impl(market_name: str) -> Optional[MatchupInfo]:
     # The stat suffix (": Points", ": Spread", etc.) is irrelevant for matching.
     m = _GAME_PROP_RE.match(market_name)
     if m:
-        team_a = m.group(1).strip()
-        team_b = m.group(2).strip()
+        team_a, team_b = _restore_name_final_initial_v(market_name, m)
         return MatchupInfo(team_a, team_b, yes_team=team_a, format_type="game_prop")
     m = _DASH_PROP_RE.match(market_name)
     if m:
@@ -1302,8 +1333,7 @@ def _extract_matchup_impl(market_name: str) -> Optional[MatchupInfo]:
     # "Team A at/vs/v Team B" (bare matchup)
     m = _BARE_MATCHUP_RE.match(market_name)
     if m:
-        team_a = m.group(1).strip()
-        team_b = m.group(2).strip()
+        team_a, team_b = _restore_name_final_initial_v(market_name, m)
         # A season-long futures ("Panthers vs. Saints Season Series Winner")
         # matches here because team_b absorbs the trailing descriptor. Do not
         # treat it as a game matchup (prevents bogus event auto-creation).
