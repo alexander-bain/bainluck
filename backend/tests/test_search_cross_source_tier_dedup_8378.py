@@ -130,8 +130,9 @@ def test_the_window_and_the_refill_both_call_the_admit_rule():
     code = "\n".join(
         line for line in src.splitlines() if not line.lstrip().startswith("#")
     )
-    # #9597: the sunk-slot outcome loop is the third admitting loop.
-    assert code.count("_admit_search_future(") == 3
+    # #9597: the sunk-slot outcome loop is the third admitting loop;
+    # #9724 r2: the spare-row loop is the fourth.
+    assert code.count("_admit_search_future(") == 4
     assert "dkey in seen_search_keys" not in code
 
 
