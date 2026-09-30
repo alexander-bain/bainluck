@@ -2338,6 +2338,10 @@ struct DiscoverView: View {
                 recordInteraction(for: item, action: .share, source: "copy_link")
             },
             onLessLikeThis: {
+                guard case .signedIn = feedbackAuthState else {
+                    inviteSignInForFeedback()
+                    return
+                }
                 recordInteraction(for: item, action: .unlike, source: "context_menu")
                 hideForSession(itemId(item))
             }

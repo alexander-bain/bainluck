@@ -3,23 +3,11 @@ import XCTest
 /// #6444 leg — **a card a reader swiped away is still gone the next time the app
 /// opens.**
 ///
-/// ## Why this is a test and not a signed-in walkthrough
-///
-/// This leg was carried for several sessions as "retained swipe history — needs a
-/// signed-in simulator", and that premise is wrong. The Discover dismiss store is
-/// **local and account-independent**: `DiscoverView` keeps `discover_dismissed_v2`
-/// in `UserDefaults` (a `[String: TimeInterval]` of item id → dismissal time, a
-/// 14-day TTL and a 500-entry cap), reads it into `@State` at launch and writes it
-/// on every swipe. No session token is consulted on either side, so retention is
-/// fully walkable by an anonymous reader — which is also the reader most likely to
-/// be doing the swiping.
-///
-/// The corollary matters as much: **My Stuff never shows swipe history at all**,
-/// signed in or out. It draws pins, the team feed and prediction stats. So a
-/// My Stuff screenshot — signed in or signed out — was never evidence about this
-/// behaviour in either direction, and the two questions should not be traded for
-/// one another. What genuinely needs an account is My Stuff's own content, and
-/// that is a different leg with a different blocker.
+/// #9644 gates dismissal writes and local-store loading on resolved sign-in.
+/// A signed-out swipe keeps the card and invites sign-in, so this persistence
+/// journey requires a real signed-in simulator. It never injects credentials or
+/// treats a guest run as proof of authenticated behavior. My Stuff's account
+/// controls establish setup only; the Discover card remains the retention witness.
 ///
 /// ## What makes this test able to fail
 ///
@@ -37,7 +25,11 @@ final class ASwipedCardStaysGoneAcrossALaunchTests: XCTestCase {
 
     func testACardSwipedAwayDoesNotComeBackOnTheNextLaunch() throws {
         let app = UITestLaunch.launchApp()
-        JourneyPrecondition.tabBar(of: app)
+        let signedIn = try AReaderCanSwipeAndRefreshDiscoverTests.isSignedInForFeedback(in: app)
+        try XCTSkipUnless(
+            signedIn,
+            "NOT WALKED: swipe persistence requires a signed-in simulator; guests retain the card and receive sign-in invitations (#9644)."
+        )
         _ = try JourneyPrecondition.firstCard(in: app)
 
         let cards = JourneyPrecondition.cards(in: app)
@@ -80,12 +72,16 @@ final class ASwipedCardStaysGoneAcrossALaunchTests: XCTestCase {
         //
         // `terminate()` then a fresh `launchApp()` is a genuine cold start
         // against the SAME container, which is what a reader reopening the app
-        // does. The store is read in `DiscoverView`'s `@State` initialiser, so a
+        // does. The store is read when Discover resolves signed-in auth, so a
         // dismissal that was never written — or was written and not read — shows
         // up here and nowhere else in this target.
         app.terminate()
         let relaunched = UITestLaunch.launchApp()
-        JourneyPrecondition.tabBar(of: relaunched)
+        let restoredSignedIn = try AReaderCanSwipeAndRefreshDiscoverTests.isSignedInForFeedback(in: relaunched)
+        try XCTSkipUnless(
+            restoredSignedIn,
+            "NOT WALKED: the account did not restore signed-in after relaunch; authenticated dismissal persistence is not proven."
+        )
         _ = try JourneyPrecondition.firstCard(in: relaunched)
 
         let cardsAfter = JourneyPrecondition.cards(in: relaunched)
