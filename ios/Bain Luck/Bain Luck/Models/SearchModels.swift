@@ -35,6 +35,34 @@ nonisolated struct SearchResponse: Decodable, Sendable {
     /// The stage names are for US, not for the reader: nothing built from this
     /// puts a stage name on screen (notice 34).
     let degraded: [String]?
+    /// Optional top-level `collections` producer cards (#9653). The shared
+    /// decoder tolerates missing/null lists and isolates malformed siblings.
+    let collectionDiscovery: ContainerDiscoveryResponse?
+}
+
+extension SearchResponse {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        query = try c.decode(String.self, forKey: .query)
+        teams = try c.decodeIfPresent([SearchTeam].self, forKey: .teams)
+        eventConcepts = try c.decodeIfPresent([SearchEventConcept].self, forKey: .eventConcepts)
+        results = try c.decode([SearchEvent].self, forKey: .results)
+        futures = try c.decode([SearchFuturesMarket].self, forKey: .futures)
+        futuresFamilies = try c.decodeIfPresent([SearchFuturesFamily].self, forKey: .futuresFamilies)
+        pagination = try c.decodeIfPresent(SearchPagination.self, forKey: .pagination)
+        sports = try c.decodeIfPresent([SportFacet].self, forKey: .sports)
+        filters = try c.decodeIfPresent(SearchFilters.self, forKey: .filters)
+        didYouMean = try c.decodeIfPresent(String.self, forKey: .didYouMean)
+        degraded = try c.decodeIfPresent([String].self, forKey: .degraded)
+        // Optional/new collection data must never make an ordinary answer fail.
+        // This reads the SAME response envelope; it performs no network request.
+        collectionDiscovery = try? ContainerDiscoveryResponse(from: decoder)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case query, teams, eventConcepts, results, futures, futuresFamilies
+        case pagination, sports, filters, didYouMean, degraded
+    }
 }
 
 /// A tournament, ceremony or race the query names, derived server-side from the
