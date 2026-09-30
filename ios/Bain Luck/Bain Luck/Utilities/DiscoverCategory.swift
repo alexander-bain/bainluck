@@ -163,6 +163,37 @@ enum DiscoverCategory {
         return domainTokens[lowered] ?? lowered
     }
 
+    /// The categories a sports card can write, for FEEDBACK purposes (#9648).
+    ///
+    /// Mirrors the server's `_SPORTS_FEEDBACK_CATEGORIES` (`routes/feed.py`,
+    /// #9645): its sports set plus every sport-key root an event card writes,
+    /// spelled both canonically and raw, because this profile stores the raw
+    /// token (`americanfootball`, not `football`). Deliberately NOT
+    /// `sportsCategories`: that set drives the interleave's partitions, and
+    /// widening it would move cycling and rugby cards between them. This one
+    /// only decides whether a left-swipe may teach a whole-category penalty.
+    static let sportsFeedbackCategories: Set<String> = sportsCategories.union([
+        "rugby", "rugbyleague", "rugbyunion", "aussierules", "lacrosse",
+        "esports", "wrestling", "cycling", "rodeo", "pickleball", "motorsport",
+    ])
+
+    /// Whether feedback on this card is feedback on a sports card (#9648).
+    ///
+    /// Same rule as the server's `_is_sports_feedback`: a game (`event`) is
+    /// always sports, whatever its sport key's root; otherwise the category
+    /// decides. A bundle answers for the child it renders.
+    static func isSportsFeedback(
+        _ item: FeedItem,
+        bundleChild: (FeedBundle) -> FeedItem? = { $0.items.first }
+    ) -> Bool {
+        if item.event != nil { return true }
+        if let bundle = item.bundle {
+            guard let child = bundleChild(bundle) else { return false }
+            return isSportsFeedback(child, bundleChild: bundleChild)
+        }
+        return sportsFeedbackCategories.contains(of(item, bundleChild: bundleChild))
+    }
+
     /// True when this item belongs in the interleave's sports partition.
     static func isSports(_ item: FeedItem, bundleChild: (FeedBundle) -> FeedItem? = { $0.items.first }) -> Bool {
         sportsCategories.contains(of(item, bundleChild: bundleChild))
