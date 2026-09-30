@@ -338,6 +338,9 @@ async def read_mlb_boards(espn, days: list[str]) -> list[tuple[str, Optional[lis
         except Exception as exc:  # noqa: BLE001 — one day must not cost the rest
             logger.warning("MLB postseason board %s unreadable: %s", day, exc)
             board = None
+        else:
+            if board is None:  # ESPN dark: silence is an unread day, never an empty one
+                logger.warning("MLB postseason board %s: ESPN gave no answer", day)
         boards.append((day, board))
     return boards
 
