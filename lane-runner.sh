@@ -672,7 +672,7 @@ RESTOCK_QUIET=0
 rs_say () { [ "$RESTOCK_QUIET" -eq 0 ] && echo "$@"; return 0; }
 
 maybe_restock () {
-  local L="$1" INBOX PROG NOW LAST STAMP F LASTF
+  local L="$1" INBOX PROG NOW LAST STAMP F LASTF READY_ISSUE READY_RC
   INBOX="$HANDOFF/runner-inbox/$L"
   [ -d "$INBOX" ] || { rs_say "[restock:$L] no inbox at $INBOX — nothing to do"; return 1; }
 
@@ -680,11 +680,19 @@ maybe_restock () {
   [ "$(inbox_running "$INBOX")" -eq 0 ]  || { rs_say "[restock:$L] a directive is .running — no restock"; return 1; }
   [ "$(inbox_restocks "$INBOX")" -eq 0 ] || { rs_say "[restock:$L] a RESTOCK is already pending — no restock"; return 1; }
 
-  PROG=$(lane_program "$L") || {
-    rs_say "[restock:$L] NO PROGRAM FILE — lane left idle on purpose. Add a line to"
-    rs_say "[restock:$L]   $HANDOFF/lane-program-map.txt   (format: '$L <file-in-handoff>')"
-    return 1
-  }
+  # Build lanes pull explicit Ready issues, never priorities from old program prose.
+  # Quality/integration keep their existing bounded mission dispatch.
+  if python3 "$BL_REPO/scripts/lane_ready_issue.py" "$L" --is-build-lane >/dev/null 2>&1; then
+    PROG="__issue_queue__"
+  else
+    READY_RC=$?
+    [ "$READY_RC" -eq 1 ] || { rs_say "[restock:$L] lane policy unavailable — no model launched"; return 1; }
+    PROG=$(lane_program "$L") || {
+      rs_say "[restock:$L] NO PROGRAM FILE — service lane left idle. Add a line to"
+      rs_say "[restock:$L]   $HANDOFF/lane-program-map.txt   (format: '$L <file-in-handoff>')"
+      return 1
+    }
+  fi
 
   LASTF="$INBOX/.last-restock"
   NOW=$(date +%s)
@@ -705,14 +713,32 @@ maybe_restock () {
     return 1
   fi
 
+  READY_ISSUE=""
+  if [ "$PROG" = "__issue_queue__" ]; then
+    # The timer throttles cheap API reads as well as successful dispatches.
+    # An empty/failed read never starts a model session. --dry-run writes nothing.
+    [ "$DRYRUN" -eq 1 ] || echo "$NOW" > "$LASTF"
+    READY_ISSUE=$(python3 "$BL_REPO/scripts/lane_ready_issue.py" "$L")
+    READY_RC=$?
+    if [ "$READY_RC" -ne 0 ]; then
+      if [ "$READY_RC" -eq 1 ]; then
+        rs_say "[restock:$L] no eligible Ready issue or active WIP — no model launched"
+      else
+        rs_say "[restock:$L] GitHub state unknown — no model launched"
+      fi
+      return 1
+    fi
+    [[ "$READY_ISSUE" =~ ^[1-9][0-9]*$ ]] || { rs_say "[restock:$L] invalid issue identity — no model launched"; return 1; }
+  fi
+
   STAMP=$(date +%Y%m%d-%H%M%S)
   F="$INBOX/RESTOCK-$STAMP.md"
   if [ "$DRYRUN" -eq 1 ]; then
     echo "[restock:$L] WOULD WRITE $F:"
-    restock_text "$L" "$PROG" | sed 's/^/    | /'
+    restock_text "$L" "$PROG" "$READY_ISSUE" | sed 's/^/    | /'
     return 0
   fi
-  restock_text "$L" "$PROG" > "$F"
+  restock_text "$L" "$PROG" "$READY_ISSUE" > "$F"
   echo "$NOW" > "$LASTF"
   echo "[restock:$L] inbox empty — wrote $(basename "$F") (program: $PROG)"
   return 0
@@ -722,7 +748,16 @@ maybe_restock () {
 # consumed filenames inlined — they are the cheapest possible orientation and
 # save the session an `ls` under the bonded-read rule.
 restock_text () {
-  local L="$1" PROG="$2" INBOX="$HANDOFF/runner-inbox/$1" c
+  local L="$1" PROG="$2" INBOX="$HANDOFF/runner-inbox/$1" c ISSUE="${3:-}"
+  if [ "$PROG" = "__issue_queue__" ]; then
+    echo "# $L — Ready issue #$ISSUE"
+    echo "Read docs/lane-workflow.md and GitHub issue #$ISSUE. Its PILLAR and SHIP govern this assignment."
+    echo "This selection is not a claim. Re-read current issue/project state, check owner/files, then claim with scripts/claim_issue.py."
+    echo "One active implementation; preserve existing work and resource locks. Use an isolated worktree."
+    echo "Update issue status, owner and next action on each handoff. Integrator alone merges/deploys."
+    echo "Do not use historical program files as another priority queue. Do not invent audits or duplicate Shopper work."
+    return 0
+  fi
   echo "# $L — self-restock (written by lane-runner.sh, no human in the loop)"
   echo
   echo "Your inbox is empty. Read \`.claude/handoff/$PROG\`, \`.claude/handoff/STANDING-NOTICES.md\`,"

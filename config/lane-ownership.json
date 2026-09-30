@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "lanes": {
+    "live": {"mode": "build", "responsibility": "Prompt, truthful probability updates and their visible state", "pillar": "TRUTH / FORMATTING"},
+    "discover": {"mode": "build", "responsibility": "Interesting Discover subjects, grouping, ranking and presentation", "pillar": "DISCOVER"},
+    "latency": {"mode": "build", "responsibility": "Fast page, tab and interaction response", "pillar": "DISCOVER / FORMATTING"},
+    "lane1": {"mode": "build", "responsibility": "Canonical event and market matching", "pillar": "MATCHING"},
+    "lane1b": {"mode": "build", "responsibility": "Explicitly assigned disjoint matching contributions", "pillar": "MATCHING"},
+    "authority": {"mode": "build", "responsibility": "Trustworthy identity, membership, source and result contracts", "pillar": "TRUTH / MATCHING"},
+    "calibration": {"mode": "build", "responsibility": "Reliable probability accuracy and resolved-outcome experience", "pillar": "TRUTH"},
+    "ux": {"mode": "build", "responsibility": "Cross-surface design and interaction contributions to a named product owner", "pillar": "FORMATTING"},
+    "native": {"mode": "build", "responsibility": "Apple platform support, native tooling and packaging; shared resource ownership", "pillar": "TRUTH / FORMATTING"},
+    "integrator": {"mode": "integration", "responsibility": "Prompt safe composition, merge and delivery of ready contributions", "pillar": "TRUTH"},
+    "shopper": {"mode": "quality", "responsibility": "Independent user-journey bug discovery, intake and freshness exceptions", "pillar": "TRUTH / DISCOVER"}
+  }
+}

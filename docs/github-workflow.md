@@ -1,11 +1,8 @@
 # GitHub Workflow
 
-This repo uses two layers on purpose:
+GitHub Issues are the single source of truth for priority, scope, rationale and execution state. Project 1 shows ownership and delivery state. Documents preserve decisions and reference material; they are not another ordered backlog.
 
-- `docs/backlog.md` is the strategic source of truth: what matters, why it matters, and how workstreams relate.
-- GitHub Issues are the execution queue: scoped packets of work that a person, Codex thread, Claude thread, or subagent can pick up.
-
-Avoid duplicating full descriptions in both places. The backlog should link to active issues; issues should link back to the relevant backlog section.
+See [Product lanes and delivery](lane-workflow.md) for the September 29 ownership and dispatch model. Existing active work and release evidence remain valid. A single `lane:<name>` label routes the next worker; `Delivery owner` retains product accountability.
 
 ## Labels
 
@@ -102,91 +99,39 @@ Conventions for these:
 - **Hard dependency:** backend issue-filing silently no-ops if `GITHUB_TOKEN` is unset on Heroku. If auto-filing "stops working," check that rail FIRST before debugging filing logic (memory `project_github_token_unset`).
 - Full system detail (files, beats, endpoints, thresholds) lives in `docs/architecture-reference.md` → "Reliability Machinery"; the quality-loop framing is in `docs/quality-audit.md` → "Automated Sentinels".
 
-## Backlog Sync
+## Work transitions and freshness
 
-Every active product issue should have a backlog parent, but not every backlog idea needs an issue.
+Ideas belong in GitHub as `type:idea`; promote only scoped, useful work to Ready. Each implementation issue names a product pillar, visible outcome, acceptance example, current owner and next step. Do not bulk-promote parked ideas or manufacture work to occupy a lane.
 
-Recommended backlog markers:
+Use `scripts/claim_issue.py` for status transitions. It is the existing common entrypoint for Project status, routing labels and owner handoff. Check its `--help` for supported delivery fields. Owners update records at the event that changes them; scheduled model sweeps are not the synchronization mechanism.
 
-- `[idea]` not ready for execution
-- `[ready]` scoped enough to become or already have an issue
-- `[active]` currently being worked
-- `[blocked]` waiting on dependency or user action
-- `[shipped]` done; move meaningful items to `docs/completed-features.md`
+- Before editing: resolve file overlaps, claim the issue, and use an isolated worktree.
+- When blocked: name the actual dependency, its owner and the next action. Awaiting Apple review does not block unrelated implementation.
+- When returning source: record exact source, test evidence and integration requirements. Keep built, merged, released and verified distinct.
+- When shipped: preserve platform-specific delivery facts and close only the scope that is complete.
+- At repeat/no-change transitions: avoid duplicate comments. Failed or partial writes must be reported honestly and retried from fresh state.
 
-Example:
+Shopper owns freshness exceptions and dedicated bug discovery; workers own their transitions. The v3 summary projection has one owner, Start App Update Post-Mortem, with V3 update work resolving scope and bottlenecks. `YOUR-TURN` is for actual user actions and decisions, with exact steps.
 
-```md
-### Discover Ranking
-
-Goal: Make the first page consistently surprising, timely, and culturally alive.
-
-Active execution:
-- [active] Tune external curator recall. Issue: #123
-- [ready] Add daily Kalshi/Polymarket front-page capture. Issue: #124
-
-Ideas:
-- [idea] Learn from repeated dismissals by market archetype
-```
-
-When an issue opens from a backlog item, add the issue number to the backlog line. When an issue closes, update or remove the backlog line in the same PR/commit if the change is meaningful.
-
-## Maintenance Rules
-
-When working in this repo, keep these invariants true:
-
-- New ideas start in `docs/backlog.md` unless they are already scoped enough for execution.
-- Create a GitHub issue when a backlog item has a clear outcome, likely scope, acceptance criteria, and owner/agent path.
-- Do not bulk-port vague backlog sections into GitHub. Split only the next actionable slice.
-- Every issue created from the backlog should include a `Backlog source` section and an `area:*`, `type:*`, and `priority:*` label when possible.
-- GitHub `created` date means the date the item was promoted into the execution queue, not the date the underlying bug/idea was discovered. When porting older backlog items, include the original source date or backlog section date in the issue body.
-- Every active product issue should be linked from `docs/backlog.md`, usually under `Active GitHub Execution Queue` or the relevant workstream.
-- When closing a product issue, update `docs/backlog.md` in the same change if the backlog line is now shipped, obsolete, or materially changed.
-- Alert-generated issues can be closed without backlog edits when they are stale, superseded, or purely operational. Leave a closing comment explaining why.
-- Prefer moving project cards to `Ready` only after the issue has enough scope for an agent. Keep rough captures in `Inbox`.
-- Treat `In Progress` as an ownership lock. When a human, Codex thread, Claude thread, or subagent starts work, move the issue to `In Progress`, add `in-progress`, remove `needs-agent`, and leave a short comment naming the active owner/context. Do not assign another agent to overlapping files until the issue moves to `Review / Verify` or `Done`.
-- Preferred claim command:
-  ```bash
-  python3 scripts/claim_issue.py 435 "In Progress" --owner "Codex Discover thread"
-  ```
-  The helper updates the GitHub Project status, labels, and ownership comment together.
-- Before spawning subagents, inspect `In Progress` and avoid splitting work across issues that touch the same files or ranking/matching pipeline unless write scopes are explicitly disjoint.
-
-Suggested weekly sweep:
-
-1. List open issues by `needs-agent`, `needs-user`, and `alert-intake`.
-2. Close stale alert issues whose head CI/deploy is now green or whose production error is resolved.
-3. Promote only the top few ready backlog items into issues.
-4. Remove shipped/obsolete items from `Active GitHub Execution Queue`.
-5. Keep `docs/completed-features.md` for meaningful shipped product work, not every ops cleanup.
-
-Run the advisory backlog/GitHub sync audit before making those edits:
-
-```bash
-python3 scripts/audit_backlog_github_sync.py --dry-run
-```
-
-The audit is read-only. It compares `docs/backlog.md` issue references against fetched GitHub issue state, labels, and Project status, then prints drift to review manually. `.github/workflows/backlog-sync-audit.yml` runs the same advisory audit weekly and writes findings to the job summary. Use `--issue-fixture path/to/issues.json` for fixture-based checks and `--fail-on-warn` only in contexts where warning-level drift should fail the command.
+Historical `docs/backlog.md` and program files are reference only. Do not run the retired backlog-sync workflow as a prerequisite for claiming or shipping work.
 
 ## Handoff Execution Lanes (queues, atomic claim, drive mode, cranks)
 
 Beyond the `In Progress` label lock, there is a queue-based execution system in `.claude/handoff/` (full protocol: `.claude/handoff/README.md`). It exists because parallel lanes (interactive sessions, the headless crank, subagents) collided on 2026-06-11 — stashed WIP, skipped priorities, unverified "shipped" claims. This directory lives inside `.claude/` and is **gitignored — never commit it**.
 
-The loop: **Fable** (the Cowork desktop "staging brain") and **Alex** decide priorities together; Fable writes `.claude/handoff/QUEUE.md` (and `QUEUE-2.md` for a disjoint parallel lane); a CLI session runs `/triage` (or `/triage2`), executes the queue end-to-end (claim → implement → gates → push/deploy), writes `REPORT.md`, flips the queue to `done`, and posts a run-log comment on the ops journal issue **#887** (Alex's phone-visible log).
+For new build assignments, the runner selects an explicitly lane-routed Ready GitHub issue using `scripts/lane_ready_issue.py`. It starts no model when work is absent, WIP is occupied, or state cannot be read reliably. Existing specific inbox assignments keep their owner; program prose is no longer a fallback priority queue.
 
-Key rules, all before any repo work:
-- **Atomic claim.** The flip-first rule is not atomic (two sessions reading `approved` at the same instant both think they own it — this happened on Queue #180). Claiming now requires: (1) read `status:` — if not `approved`, abort; (2) write `status: running` **and** an `owner:` line (your PID + mode) in the same save; (3) wait ~3s, **re-read**, and abort if the `owner:` line isn't yours (last-writer-wins detection).
-- **Drive mode.** When drive mode is ON (Alex at his desk), **headless cranks must not claim** — interactive sessions own the lanes. Cranks check drive-mode state before claiming and exit silently if set. The one exception where a `running` queue executes: the crank that spawned the session already won the atomic claim on the session's behalf (its `owner:` equals `$BAINLUCK_CRANK_CLAIM`).
-- **Lane disjointness.** `QUEUE.md` (Lane 1) and `QUEUE-2.md` (Lane 2) must be file-disjoint; use explicit-path `git add` (never `git add -A`/`.`) and check `git log origin/master..HEAD` before committing so a sibling lane's commit doesn't ride your push (gotcha in CLAUDE.md hot-list; catalog #115).
-- **Gates are mandatory per item:** claim via `claim_issue.py` (any item with an issue number), backend `test_startup.py` + targeted tests, frontend `npm run build` for FE changes, real `xcodebuild ... build` quoting `BUILD SUCCEEDED` for any `ios/` change, clean `git status`, and the final push's CI run recorded (red or unchecked CI = "PUSHED-CI-PENDING", not shipped).
+A selection is not a lock. Re-read current state, resolve file overlap and claim via `scripts/claim_issue.py` before editing. Preserve active queue/resource ownership and Integrator's sole master merge/deployment authority. Never execute a stale or superseded queue merely because it exists.
 
-This lane discipline is the source of truth when it is active; do not execute `SEQUENCE.md` priority items ad-hoc from an interactive plan — they get staged as queues with briefs, gates, and live-proof requirements.
+Keep focused tests, applicable frontend build/type checks, real native build/runtime evidence when required, and current CI/release gates. No status transition substitutes for those checks. Use exact source evidence, not a historical pass from another tree. Shared Xcode/simulator capacity is coordinated separately from source-file ownership.
+
+See [Product lanes and delivery](lane-workflow.md) for WIP, handoff and safe adoption rules. This supersedes the old Fable/QUEUE/SEQUENCE priority-dispatch instructions for future build work, not historical receipts or current claims.
 
 ## Agent Usage
 
 Good prompts:
 
-- "Work the oldest open `needs-agent` issue."
+- "Work the next Ready issue explicitly routed to your lane."
 - "Triage open `alert-intake` issues and fix the highest-priority one."
 - "Find `area:discover-ranking` + `type:quality` issues that are safe to parallelize."
 - "Promote the ready Discover backlog items into scoped GitHub issues."
