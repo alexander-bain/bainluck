@@ -58,23 +58,33 @@ d("a quiet leg on a live iOS Additional Markets card says so", () => {
       const src = view();
       expect(src).toMatch(/struct OutcomeEntry[\s\S]*?\bvar observedAt: String\?/);
       // Both construction sites — the append and the first-row case. A stamp
-      // that reaches only one of them dates half a card.
+      // that reaches only one of them dates half a card. Since #9917 both go
+      // through the one builder, `entry(label:from:)`, so pin that it carries
+      // the stamp and that BOTH sites call it.
       const built = src.match(/OutcomeEntry\([\s\S]{0,220}?observedAt: m\.observedAt/g) ?? [];
-      expect(built).toHaveLength(2);
+      expect(built).toHaveLength(1);
+      expect(src).toMatch(/static func entry\(label: String, from m: GameMarketOther\) -> OutcomeEntry \{\s*OutcomeEntry\(/);
+      expect(src.match(/Self\.entry\(label: [\w.]+, from: m\)/g) ?? []).toHaveLength(2);
     });
   });
 
   describe("the decision is wired into what renders", () => {
     it("propMiniCard computes it and draws the card mark", () => {
       const src = view();
-      expect(src).toMatch(/Self\.ageDecision\(\s*sorted,\s*live: isLiveEvent\s*\)/);
+      // #9917: only rows still carrying a live price are in the denominator —
+      // a `Won` or an unpriced row has no price for an age to be about.
+      expect(src).toMatch(
+        /Self\.ageDecision\(\s*sorted\.filter \{ Self\.isLivePriced\(treatment\(for: \$0\)\) \},\s*live: isLiveEvent\s*\)/
+      );
       expect(src).toMatch(/PriceAgeMarkView\(observedAt: age\.cardStamp, cadence: \.live\)/);
     });
 
     it("the row mark is drawn, and only when the card is not speaking", () => {
       const src = view();
       expect(src).toMatch(/outcomeRow\([\s\S]{0,80}?showAge: age\.showRowAges\)/);
-      expect(src).toMatch(/if showAge, !isGameFinished \{\s*PriceAgeMarkView\(observedAt: o\.observedAt, cadence: \.live\)/);
+      expect(src).toMatch(
+        /if showAge, !isGameFinished, Self\.isLivePriced\(rowTreatment\) \{\s*PriceAgeMarkView\(observedAt: o\.observedAt, cadence: \.live\)/
+      );
     });
 
     it("the live triple gates it, so a pregame card is never dated", () => {
