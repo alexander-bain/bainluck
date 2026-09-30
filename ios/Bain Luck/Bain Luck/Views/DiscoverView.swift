@@ -3,19 +3,19 @@ import Combine
 
 private enum DiscoverGroupedItem: Identifiable {
     case single(FeedItem)
-    case group(title: String, items: [FeedItem], kind: String? = nil, theme: String? = nil)
+    case group(title: String, items: [FeedItem], kind: String? = nil, theme: String? = nil, sharedQuestion: String? = nil)
 
     var priceCards: [FeedItem] {
         switch self {
         case .single(let item): return [item]
-        case .group(_, let items, _, _): return items
+        case .group(_, let items, _, _, _): return items
         }
     }
 
     var id: String {
         switch self {
         case .single(let item): return item.id
-        case .group(let title, _, let kind, let theme): return "group-\(kind ?? "related")-\(theme ?? title)"
+        case .group(let title, _, let kind, let theme, _): return "group-\(kind ?? "related")-\(theme ?? title)"
         }
     }
 }
@@ -490,7 +490,7 @@ struct DiscoverView: View {
     private func primaryItem(_ grouped: DiscoverGroupedItem) -> FeedItem? {
         switch grouped {
         case .single(let item): return item
-        case .group(_, let items, _, _): return items.first
+        case .group(_, let items, _, _, _): return items.first
         }
     }
 
@@ -972,7 +972,7 @@ struct DiscoverView: View {
         let isGuessSlot = ReleaseSurfaces.insertsInlineGuessSlot(at: idx)
         Group {
             switch gi {
-            case .group(let title, let items, let kind, let theme):
+            case .group(let title, let items, let kind, let theme, let sharedQuestion):
                 // #1773: group cards were the largest of three
                 // archetypes rendered with NO swipe wrapper at all
                 // (group / tournament / concept — 10 of 30 cards on
@@ -996,7 +996,7 @@ struct DiscoverView: View {
                     },
                     onRequiresSignIn: inviteSignInForFeedback
                 ) {
-                    NativeGroupCard(title: title, items: items, kind: kind, theme: theme, navigationPath: $navigationPath)
+                    NativeGroupCard(title: title, items: items, kind: kind, theme: theme, sharedQuestion: sharedQuestion, navigationPath: $navigationPath)
                 }
             case .single(let item):
                 if isGuessSlot, item.type == "futures", let f = item.futures,
@@ -1200,7 +1200,7 @@ struct DiscoverView: View {
         .onAppear {
             switch gi {
             case .single(let item): vm.setPriceCardsVisible(owner: gi.id, cards: [item], visible: true)
-            case .group(_, let members, _, _): vm.setPriceCardsVisible(owner: gi.id, cards: members, visible: true)
+            case .group(_, let members, _, _, _): vm.setPriceCardsVisible(owner: gi.id, cards: members, visible: true)
             }
             // The first eligible card actually on screen → the
             // true first-render milestone, once per generation
@@ -1349,7 +1349,8 @@ struct DiscoverView: View {
                     title: bundle.title,
                     items: eligibleChildren,
                     kind: bundle.kind,
-                    theme: bundle.comparisonTheme
+                    theme: bundle.comparisonTheme,
+                    sharedQuestion: bundle.sharedQuestion
                 ))
                 continue
             }
@@ -1374,7 +1375,7 @@ struct DiscoverView: View {
     }
 
     private func groupItemCount(_ item: DiscoverGroupedItem) -> Int {
-        if case .group(_, let items, _, _) = item { return items.count }
+        if case .group(_, let items, _, _, _) = item { return items.count }
         return 1
     }
 
@@ -1391,7 +1392,7 @@ struct DiscoverView: View {
         var result = items
         while result.count < Self.groupExpansionFloor {
             let expandable = result.enumerated().filter { entry in
-                if case .group(_, let its, let kind, _) = entry.element {
+                if case .group(_, let its, let kind, _, _) = entry.element {
                     return kind == nil && its.count >= 2
                 }
                 return false
@@ -1399,7 +1400,7 @@ struct DiscoverView: View {
             guard let target = expandable.max(by: { groupItemCount($0.element) < groupItemCount($1.element) }) else {
                 break
             }
-            if case .group(_, let its, _, _) = result[target.offset] {
+            if case .group(_, let its, _, _, _) = result[target.offset] {
                 result.replaceSubrange(target.offset...target.offset, with: its.map { DiscoverGroupedItem.single($0) })
             } else {
                 break
@@ -2413,111 +2414,155 @@ private struct NativeGroupCard: View {
     let items: [FeedItem]
     var kind: String? = nil
     var theme: String? = nil
-    /// Threaded through to the rows so they can navigate from a tap gesture
-    /// rather than a `NavigationLink` (#7074) — the same binding the event and
-    /// futures cards already take.
+    var sharedQuestion: String? = nil
     @Binding var navigationPath: NavigationPath
     @State private var expanded = false
-
-    /// Whether every row is on screen: because the group is small enough to be
-    /// drawn whole, or because the reader opened it (#7074). The rule, and the
-    /// reason it is ONE expression rather than two agreeing conditions, is in
-    /// `DiscoverGroupRows`.
-    private var showsAllRows: Bool {
-        DiscoverGroupRows.showsEveryRow(itemCount: items.count, expanded: expanded)
-    }
 
     private var category: String {
         items.first?.futures?.llmSportCategory?.lowercased() ?? ""
     }
 
-    private var gradient: (Color, Color) {
-        sportCategoryGradients[category] ?? sportDefaultGradient
+    private var canExpand: Bool {
+        DiscoverGroupRows.canExpand(itemCount: items.count, kind: kind)
     }
 
     var body: some View {
         VStack(spacing: 0) {
             Button { withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() } } label: {
-                HStack(spacing: 8) {
-                    Text(title)
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(.white)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Text("\(items.count)")
-                        .font(.system(size: 10, weight: .heavy).monospacedDigit())
-                        .foregroundStyle(.white.opacity(0.7))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(.white.opacity(0.15), in: Capsule())
-                    Spacer()
-                    Image(systemName: "chevron.down")
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(.white.opacity(0.7))
-                        .rotationEffect(.degrees(expanded ? 180 : 0))
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 6) {
+                            Text(FuturesHero.emoji(for: category)).accessibilityHidden(true)
+                            Text(title.uppercased())
+                                .font(.caption2.weight(.bold))
+                                .tracking(0.8)
+                                .foregroundStyle(DS.textSecondary)
+                                .lineLimit(2)
+                                .fixedSize(horizontal: false, vertical: true)
+                            if sharedQuestion?.isEmpty != false {
+                                Text("\(items.count)")
+                                    .font(.caption2)
+                                    .foregroundStyle(DS.textMuted)
+                            }
+                        }
+                        if let sharedQuestion, !sharedQuestion.isEmpty {
+                            Text(sharedQuestion)
+                                .font(.headline.weight(.bold))
+                                .foregroundStyle(DS.textPrimary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    if canExpand {
+                        Image(systemName: "chevron.down")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(DS.textMuted)
+                            .rotationEffect(.degrees(expanded ? 180 : 0))
+                    }
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 11)
-                .background(
-                    LinearGradient(
-                        colors: [gradient.0, gradient.1],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    )
-                )
+                .padding(14)
             }
             .buttonStyle(.plain)
+            .disabled(!canExpand)
+            .accessibilityValue(canExpand ? (expanded ? "Expanded" : "Collapsed") : "")
 
-            if kind == "comparison" {
-                NativeComparisonBundleRows(
-                    items: expanded ? Array(items.prefix(6)) : Array(items.prefix(3)),
-                    theme: theme
-                )
-                .padding(.horizontal, 12)
-                .padding(.vertical, 9)
-            } else {
-                if let primary = items.first, let f = primary.futures {
-                    NativeCompactFuturesRow(data: f, navigationPath: $navigationPath)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
+            Divider()
+            if expanded && kind != "comparison" {
+                // The already-hydrated members reuse their ordinary full cards,
+                // including their existing destination, imagery and live prices.
+                VStack(spacing: 12) {
+                    ForEach(items, id: \.id) { item in fullCard(item) }
                 }
-
-                if showsAllRows {
-                    ForEach(items.dropFirst(), id: \.id) { item in
-                        if let f = item.futures {
-                            Divider().padding(.horizontal, 12)
-                            NativeCompactFuturesRow(data: f, navigationPath: $navigationPath)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 8)
+                .padding(12)
+                .background(DS.surface)
+            } else {
+                ForEach(Array(items.prefix(DiscoverGroupRows.visibleCount(itemCount: items.count, expanded: expanded))), id: \.id) { item in
+                    if let data = item.futures {
+                        compactRow(data)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 12)
+                        if item.id != items.prefix(DiscoverGroupRows.visibleCount(itemCount: items.count, expanded: expanded)).last?.id {
+                            Divider().padding(.horizontal, 14)
                         }
                     }
                 }
             }
 
-            if !expanded && items.count > 3 && kind == "comparison" {
+            if let footer = DiscoverGroupRows.footerTitle(itemCount: items.count, kind: kind, expanded: expanded) {
+                Divider()
                 Button { withAnimation { expanded = true } } label: {
-                    Text("Compare \(items.count - 3) more")
+                    Text(footer)
                         .font(.caption.weight(.medium))
-                        .foregroundStyle(.blue)
+                        .foregroundStyle(DS.blue)
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
-                }
-                .buttonStyle(.plain)
-            } else if !showsAllRows && items.count > 1 && kind != "comparison" {
-                Button { withAnimation { expanded = true } } label: {
-                    Text("Show \(items.count - 1) more")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.blue)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
+                        .padding(.vertical, 10)
                 }
                 .buttonStyle(.plain)
             }
         }
-        .background(Color.cardBackground)
+        .background(DS.cardBg)
         .clipShape(RoundedRectangle(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.barTrack.opacity(0.55), lineWidth: 0.5))
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(DS.border, lineWidth: 0.5))
         .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 3)
+    }
+
+    private func compactRow(_ data: FeedFuturesData) -> some View {
+        let summary = DiscoverGroupRows.compactSummary(for: data)
+        return HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(data.name)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(DS.textPrimary)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let label = summary.label {
+                    Text(label)
+                        .font(.caption)
+                        .foregroundStyle(DS.textSecondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            if let probability = summary.probability {
+                VStack(alignment: .trailing, spacing: 4) {
+                    Text(formatProbability(probability))
+                        .font(.title2.weight(.bold).monospacedDigit())
+                        .foregroundStyle(DS.textPrimary)
+                    MovementBadge(movement: summary.movement)
+                }
+                .frame(minWidth: 58, alignment: .trailing)
+                .layoutPriority(1)
+            }
+        }
+        .contentShape(Rectangle())
+        // Keep the existing tap gesture: a NavigationLink here turns a swipe
+        // into navigation on touch-up (#7074).
+        .onTapGesture { navigationPath.append(Route.futuresDetail(id: data.id)) }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityIdentifier(NativeCompactFuturesRow.rowIdentifier)
+    }
+
+    @ViewBuilder
+    private func fullCard(_ item: FeedItem) -> some View {
+        if let data = item.futures {
+            switch DiscoverGroupRows.fullCardStyle(for: data) {
+            case .heatmap:
+                HeatMapCardView(data: data, navigationPath: $navigationPath)
+            case .distribution:
+                DistributionCardView(data: data, navigationPath: $navigationPath)
+            case .comparison:
+                ComparisonCardView(data: data, navigationPath: $navigationPath)
+            case .futures:
+                NativeFuturesDiscoverCard(
+                    data: data,
+                    feedContext: DiscoverCaption.feedCaption(contextSummary: item.contextSummary, headline: item.headline, reason: item.reason, hookDescription: data.hookDescription),
+                    expandedContext: DiscoverCaption.firstMeaningful([data.hookDescription, item.reason, item.headline]),
+                    navigationPath: $navigationPath
+                )
+            }
+        }
     }
 }
 
@@ -2550,7 +2595,10 @@ private struct NativeIPOComparisonRow: View {
     }
 
     private var likely: FeedDiscoverThresholdPoint? {
-        points.max { ($0.probability ?? -1) < ($1.probability ?? -1) } ?? points.first
+        if data.discoverCard?.suggestedFormat == "threshold_heatmap",
+           let rung = DiscoverGroupRows.markedRung(in: points) { return rung }
+        // Exclusive valuation buckets retain their most-probable outcome.
+        return points.max { ($0.probability ?? -1) < ($1.probability ?? -1) } ?? points.first
     }
 
     private var highEnd: FeedDiscoverThresholdPoint? {

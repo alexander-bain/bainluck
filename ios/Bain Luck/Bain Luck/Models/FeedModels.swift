@@ -145,18 +145,21 @@ nonisolated struct DiscoverInteractionEvent: Encodable, Sendable {
 nonisolated struct FeedBundle: Decodable, Sendable {
     let id: String
     let title: String
+    /// Existing backend context; absent on older cached bundles.
+    let sharedQuestion: String?
     let items: [FeedItem]
     let kind: String?
     let comparisonTheme: String?
 
     enum CodingKeys: String, CodingKey {
-        case id, title, items, kind, comparisonTheme
+        case id, title, sharedQuestion, items, kind, comparisonTheme
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
         title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
+        sharedQuestion = try c.decodeIfPresent(String.self, forKey: .sharedQuestion)
         items = try c.decodeIfPresent([FeedItem].self, forKey: .items) ?? []
         kind = try c.decodeIfPresent(String.self, forKey: .kind)
         comparisonTheme = try c.decodeIfPresent(String.self, forKey: .comparisonTheme)
@@ -165,9 +168,10 @@ nonisolated struct FeedBundle: Decodable, Sendable {
     /// Memberwise init so a sanitized bundle can be rebuilt with a lifecycle-
     /// admitted child list while preserving identity, title, kind, and comparison
     /// theme (C29 P2 — see `withItems`).
-    init(id: String, title: String, items: [FeedItem], kind: String?, comparisonTheme: String?) {
+    init(id: String, title: String, items: [FeedItem], kind: String?, comparisonTheme: String?, sharedQuestion: String? = nil) {
         self.id = id
         self.title = title
+        self.sharedQuestion = sharedQuestion
         self.items = items
         self.kind = kind
         self.comparisonTheme = comparisonTheme
@@ -179,7 +183,7 @@ nonisolated struct FeedBundle: Decodable, Sendable {
     /// every consumer derives its primary/category from the first ELIGIBLE child,
     /// never a stale raw first child.
     func withItems(_ newItems: [FeedItem]) -> FeedBundle {
-        FeedBundle(id: id, title: title, items: newItems, kind: kind, comparisonTheme: comparisonTheme)
+        FeedBundle(id: id, title: title, items: newItems, kind: kind, comparisonTheme: comparisonTheme, sharedQuestion: sharedQuestion)
     }
 }
 
