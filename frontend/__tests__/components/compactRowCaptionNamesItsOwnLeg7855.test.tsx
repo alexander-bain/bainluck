@@ -85,6 +85,20 @@ function member(item: FeedItem, question: string): FeedItem {
   return found;
 }
 
+/**
+ * #9642 — the Astra row is a DATE LADDER, and a ladder row now prints the rung
+ * its card marks (#8647's earliest date over even): `October 31 — 63%`, whose
+ * caption is about that same leg, so the served bundle no longer reaches this
+ * file's door at all. The door still guards every row that is not a ladder, so
+ * the arms that exercise it draw the same served row as the card's non-ladder
+ * shape, where the row takes the served first outcome as it did on 2026-09-21.
+ */
+function asNonLadder(item: FeedItem, question: string): FeedItem {
+  const data = member(item, question).data as unknown as { discover_card: { suggested_format: string | null } };
+  data.discover_card.suggested_format = null;
+  return item;
+}
+
 function render(item: FeedItem): string {
   return renderToStaticMarkup(<DiscoverCard groupedItem={{ type: "single", item }} positionIndex={0} />);
 }
@@ -149,7 +163,7 @@ describe("#7855 — the compact row's caption is about the leg its percentage is
     const html = render(bundle("ai"));
     expect(html).toContain(ASTRA);
     expect(html).toContain(BEST_AI);
-    expect(html).toContain("94%");
+    expect(html).toContain("63%");
   });
 
   it("the served row really is the two-leg one — 94% for December 31, the movement on October 31", () => {
@@ -163,14 +177,18 @@ describe("#7855 — the compact row's caption is about the leg its percentage is
     expect(rowAnswerLabel(heroOutcome(outcomes), feedContextSnippet(astra))).toBe("December 31");
   });
 
+  it("#9642 — as served, the ladder row prints its card's rung, and the caption is about it", () => {
+    expect(rowText(render(bundle("ai")), ASTRA)).toBe("GPT Astra 6.1+ released?October 31 up 20 points today20 pts63%");
+  });
+
   it("the row that printed `December 31 · October 31 up 20 points today` says one thing now", () => {
-    expect(rowText(render(bundle("ai")), ASTRA)).toBe("GPT Astra 6.1+ released?December 3194%");
+    expect(rowText(render(asNonLadder(bundle("ai"), ASTRA)), ASTRA)).toBe("GPT Astra 6.1+ released?December 3194%");
   });
 
   it("keeps the ANSWER, not the sentence — the number is still tied to an outcome", () => {
     // The other half of "drop one of them" would leave #4396's defect behind:
     // a 94% on a ladder with nothing saying which rung it is.
-    const row = rowText(render(bundle("ai")), ASTRA);
+    const row = rowText(render(asNonLadder(bundle("ai"), ASTRA)), ASTRA);
     expect(row).toContain("December 31");
     expect(row).not.toContain("October 31");
   });
@@ -215,7 +233,7 @@ describe("#7855 — the compact row's caption is about the leg its percentage is
   it("reads the relationship off the payload rather than holding one for this question", () => {
     // Rename the mover to the hero's own outcome: the caption is now about the
     // number beside it, and #4396's label goes silent on its own.
-    const item = bundle("ai");
+    const item = asNonLadder(bundle("ai"), ASTRA);
     const astra = member(item, ASTRA);
     astra.headline = "December 31 up 20 points today";
     astra.context_summary = null;

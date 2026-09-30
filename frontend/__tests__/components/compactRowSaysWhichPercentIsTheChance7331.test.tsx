@@ -162,8 +162,10 @@ describe("#7331 — the compact row says which of its percentages is the chance"
     // `Above 45` is the shape 5 of the 6 labelled rows on this feed carry. It is
     // the whole reason the predicate is "a digit and no letter" rather than
     // "contains a digit", and without this arm "say chance everywhere" passes.
+    // #9642: this is an at-least ladder, so the row prints the rung its card
+    // marks (#8788's most specific rung over even), `Above 60`, not `Above 45`.
     const html = render(bundle("rotten_tomatoes"));
-    expect(rowText(html, DIGGER)).toBe("Digger · Rotten Tomatoes scoreAbove 45 · Resolves within a month87%");
+    expect(rowText(html, DIGGER)).toBe("Digger · Rotten Tomatoes scoreAbove 60 · Resolves within a month62%");
     expect(html).not.toContain("compact-row-chance");
   });
 
@@ -188,6 +190,10 @@ describe("#7331 — the compact row says which of its percentages is the chance"
     const digger = members.find((m) => (m.data as { name: string }).name === DIGGER)!;
     const outcomes = (digger.data as unknown as { top_outcomes: { name: string }[] }).top_outcomes;
     outcomes[0].name = "45";
+    // #9642 — a ladder row prints its card's marked rung, which this rename does
+    // not reach, so the row is drawn as the card's non-ladder shape: the served
+    // first outcome is then the answer, as it was when this arm was written.
+    (digger.data as unknown as { discover_card: { suggested_format: string | null } }).discover_card.suggested_format = null;
 
     expect(rowText(render(item), DIGGER)).toBe("Digger · Rotten Tomatoes score45 · Resolves within a month87% chance");
   });
