@@ -26948,6 +26948,62 @@ def _settled_before_the_game(market, commence_time) -> bool:
     return resolved_at < commence_time
 
 
+def _squeeze_exclusive_series_outcomes(
+    outcomes: list[dict], *, exclusive: bool, decided_lost: set, whole_market: bool
+) -> list[dict]:
+    """A one-winner SERIES card never adds up to more than 100% (#9901).
+
+    WHAT A READER SAW, production 2026-09-30 18:00Z, `/events/15320289`
+    (Phillies v Braves, Wild Card Game 1, final — Atlanta won), 390px. Bigger
+    Picture drew *Series Exact Score: Philadelphia vs Atlanta* as ATL 2-0 49% /
+    ATL 2-1 30% / PHI 2-1 27% / PHI 2-0 --- — **106%** for a question with one
+    answer. Kalshi `62898792` is stored `mutually_exclusive = true`; its live legs
+    are 1-cent books (0.485 / 0.295 / 0.265) and PHI 2-0 is stored `is_winner =
+    False` at 0 — decided lost the moment Atlanta took Game 1.
+
+    #4724's `_squeeze_exclusive_field_markets` is the same rule for the
+    `game-markets` rows and never reaches this array. It also abstains on any
+    unpriced leg, which is right there (a settled market serves its losers as
+    None) and wrong here: a leg the venue has already graded LOST is not an
+    unknown price, it is a known 0, and the rest of the field is still the whole
+    field.
+
+    THE RULE. A venue-declared one-winner market, every one of whose legs is on
+    the card (`whole_market`) and each either priced or decided lost, with three
+    or more priced legs whose raw sum is at most `_FIELD_SUM_MAX`: divide the
+    priced legs by `display_divisor_mass` when that mass is past 1.0. Only down —
+    a field under 100% is left as it stands. A refused or unpriced leg that is
+    NOT graded lost makes the card abstain. The divisor is the page's and the
+    feed card's (#7537, #8595), so the 1-cent floor never counts as vig here
+    either. `probability_change_24h` stays the venue's move.
+
+    Entries are copied, never mutated.
+    """
+    from app.utils.outcome_display import _FIELD_SUM_MAX, display_divisor_mass
+
+    if exclusive is not True or not whole_market:
+        return outcomes
+    priced: list[float] = []
+    for outcome in outcomes:
+        p = outcome.get("probability")
+        if p is None:
+            if outcome.get("outcome_id") in decided_lost:
+                continue
+            return outcomes
+        priced.append(float(p))
+    if len(priced) < 3 or sum(priced) > _FIELD_SUM_MAX:
+        return outcomes
+    divisor = display_divisor_mass(priced)
+    if divisor <= 1.0:
+        return outcomes
+    return [
+        {**o, "probability": round(float(o["probability"]) / divisor, 4)}
+        if o.get("probability") is not None
+        else o
+        for o in outcomes
+    ]
+
+
 async def _related_futures_withheld_ids(db: AsyncSession, market_ids) -> set[int]:
     """The outcome ids each market's OWN page refuses to price (#9008).
 
@@ -28443,6 +28499,13 @@ async def _build_related_futures(
                         None if refused or not so.probability_change_24h else float(so.probability_change_24h)
                     ),
                 })
+            # #9901 — a one-winner series card never adds up past 100%.
+            top_outcomes = _squeeze_exclusive_series_outcomes(
+                top_outcomes,
+                exclusive=getattr(mkt, "mutually_exclusive", None),
+                decided_lost={so.id for so in outcomes_list if so.is_winner is False},
+                whole_market=len(outcomes_list) <= 10,
+            )
             formatted_series.append({
                 "market_id": mkt.id,
                 "market_name": mkt.name,
