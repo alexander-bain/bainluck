@@ -65,6 +65,11 @@ async def pg_session():
 
     engine = create_async_engine(DB_URL)
     async with engine.begin() as conn:
+        # #9651's ledger is created from its migration's own DDL, not the ORM,
+        # and it references `containers` — so `drop_all` cannot drop
+        # `containers` while it exists. Dropped first, unconditionally, so a
+        # crashed run can never wedge every later gate on this database.
+        await conn.execute(text("DROP TABLE IF EXISTS container_corrections"))
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
 
@@ -346,6 +351,105 @@ class TestAMissingChildIsReceiptedNotEdged:
         # forbid it.
         assert report.receipts_written == 3
         assert len(report.unresolved) == 1
+
+
+class TestTheMatchersReceiptIsKept:
+    """#9217 (v3): assembly edges a market the matcher linked WITHOUT replacing
+    the matcher's receipt. `market_match_receipts` is one row per market and
+    last-writer-wins, so before this the container pass erased how the market
+    was linked to its game."""
+
+    async def test_a_matcher_receipt_survives_the_pass_and_the_edge_is_written(
+        self, pg_session
+    ):
+        from app.utils.match_receipts import (
+            PHASE_PASS1_TICKER,
+            REJECT_NO_CANDIDATE,
+            MatchReceipt,
+            flush_receipts,
+        )
+
+        container, market_ids = await _seed(pg_session)
+        matched = MatchReceipt(
+            market_id=market_ids[0],
+            source="kalshi",
+            external_id="KXATPMATCH-26SEP02SINALC",
+            market_name="Sinner vs Alcaraz",
+            phase=PHASE_PASS1_TICKER,
+            attempted_at=datetime.now(timezone.utc),
+        )
+        matched.reject(REJECT_NO_CANDIDATE)
+        await flush_receipts(pg_session, [matched])
+        await pg_session.commit()
+
+        report = await assemble_container(pg_session, container, _candidates(market_ids))
+        await pg_session.commit()
+
+        assert report.edges_written == 3
+        assert len(await _edge_rows(pg_session, container.id)) == 3
+        assert (report.receipts_written, report.receipts_preserved) == (2, 1)
+        rows = dict(
+            (
+                await pg_session.execute(
+                    text("SELECT market_id, phase FROM market_match_receipts")
+                )
+            ).fetchall()
+        )
+        assert rows[market_ids[0]] == PHASE_PASS1_TICKER
+        assert rows[market_ids[1]] == rows[market_ids[2]] == "container_assembly"
+
+    async def test_assemblys_own_receipt_is_still_refreshed(self, pg_session):
+        container, market_ids = await _seed(pg_session)
+        await assemble_container(pg_session, container, _candidates(market_ids))
+        await pg_session.commit()
+
+        report = await assemble_container(pg_session, container, _candidates(market_ids))
+        await pg_session.commit()
+
+        assert (report.receipts_written, report.receipts_preserved) == (3, 0)
+
+
+class TestTheCollectionRow:
+    """#9217 (v3): an NFL week / MLB postseason gets ONE flat row, and a re-run
+    neither doubles it nor rewrites it."""
+
+    async def test_the_flat_bootstrap_creates_once_and_never_rewrites(self, pg_session):
+        from app.tasks.container_assembly import _collection_container
+
+        first, how = await _collection_container(
+            pg_session, "nfl-2026-week-4", "NFL 2026 · Week 4", "season", None, None,
+            apply=True,
+        )
+        await pg_session.commit()
+        assert how == "created" and first.id is not None
+
+        await pg_session.execute(
+            text("UPDATE containers SET name = 'corrected' WHERE id = :id"), {"id": first.id}
+        )
+        again, how = await _collection_container(
+            pg_session, "nfl-2026-week-4", "NFL 2026 · Week 4", "season", None, None,
+            apply=True,
+        )
+        await pg_session.commit()
+        assert how == "existing" and again.id == first.id
+        rows = (
+            await pg_session.execute(
+                text("SELECT kind, name FROM containers WHERE slug = 'nfl-2026-week-4'")
+            )
+        ).fetchall()
+        assert [tuple(r) for r in rows] == [("season", "corrected")]
+
+    async def test_a_dry_run_writes_no_row(self, pg_session):
+        from app.tasks.container_assembly import _collection_container
+
+        stand_in, how = await _collection_container(
+            pg_session, "mlb-2026-postseason", "MLB 2026 Postseason", "tournament",
+            None, None, apply=False,
+        )
+        assert how == "would_create" and stand_in.id is None
+        assert (
+            await pg_session.execute(text("SELECT count(*) FROM containers"))
+        ).scalar() == 0
 
 
 class TestTheBootstrap:
@@ -928,3 +1032,386 @@ class TestTheDeclaredPass:
             )
         ).scalar()
         assert edged == market.id
+
+
+# ---------------------------------------------------------------------------
+# #9651 — a corrected hub stays corrected
+# ---------------------------------------------------------------------------
+#
+# Only a server can grade these: the non-resurrection guarantee is a row lock
+# plus READ COMMITTED re-reading the ledger after the lock is granted, and the
+# one-snapshot read is a property of one SQL statement. A session double would
+# agree with whatever statement the code built.
+
+
+@pytest.fixture
+async def corrected_session(pg_session):
+    """`pg_session` with #9651's migration applied from its own statements."""
+    from app.utils.container_corrections import DOWNGRADE_STATEMENTS, UPGRADE_STATEMENTS
+
+    for statement in UPGRADE_STATEMENTS:
+        await pg_session.execute(text(statement))
+    await pg_session.commit()
+    try:
+        yield pg_session
+    finally:
+        await pg_session.rollback()
+        for statement in DOWNGRADE_STATEMENTS:
+            await pg_session.execute(text(statement))
+        await pg_session.commit()
+
+
+def _plain(container):
+    """Gotcha #6: an async rollback expires ORM rows even with
+    `expire_on_commit=False`, and these tests roll back after a refusal."""
+    from types import SimpleNamespace
+
+    return SimpleNamespace(id=container.id, slug=container.slug)
+
+
+async def _revision(session, container_id):
+    return (
+        await session.execute(
+            text("SELECT membership_revision FROM containers WHERE id = :id"),
+            {"id": container_id},
+        )
+    ).scalar()
+
+
+async def _ledger_count(session):
+    return (
+        await session.execute(text("SELECT count(*) FROM container_corrections"))
+    ).scalar()
+
+
+def _withdraw_kwargs(container_id, market_id, **extra):
+    return dict(
+        container_id=container_id,
+        child_type="market",
+        child_id=market_id,
+        reason="wrong edition: the 2025 winner market",
+        actor="test",
+        **extra,
+    )
+
+
+class TestCorrectionsBeforeTheMigration:
+    async def test_an_unmigrated_database_runs_the_old_pass(self, pg_session):
+        """No ledger, no rule to honour: the pass must be exactly the old one."""
+        container, market_ids = await _seed(pg_session)
+        report = await assemble_container(pg_session, container, _candidates(market_ids))
+        await pg_session.commit()
+
+        assert report.corrections == "absent"
+        assert report.revision is None
+        assert report.edges_written == 3
+
+
+class TestAWithdrawnMemberStaysWithdrawn:
+    async def test_the_next_pass_does_not_resurrect_it(self, corrected_session):
+        from app.utils.container_corrections import WITHHELD_WITHDRAWN, withdraw_member
+
+        s = corrected_session
+        container, market_ids = await _seed(s)
+        await assemble_container(s, container, _candidates(market_ids))
+        await s.commit()
+
+        result = await withdraw_member(s, **_withdraw_kwargs(container.id, market_ids[2]))
+        await s.commit()
+        assert result.applied and result.edges_removed == 1
+
+        for _ in range(2):  # the pass after, and the pass after that
+            report = await assemble_container(s, container, _candidates(market_ids))
+            await s.commit()
+            assert report.corrections == "honoured"
+            assert [w["child_id"] for w in report.withdrawn] == [market_ids[2]]
+            assert report.rejected[WITHHELD_WITHDRAWN] == 1
+            assert [r[0] for r in await _edge_rows(s, container.id)] == market_ids[:2]
+
+    async def test_a_second_withdrawal_is_a_retry_not_a_new_decision(
+        self, corrected_session
+    ):
+        from app.utils.container_corrections import withdraw_member
+
+        s = corrected_session
+        container, market_ids = await _seed(s)
+        await assemble_container(s, container, _candidates(market_ids))
+        first = await withdraw_member(s, **_withdraw_kwargs(container.id, market_ids[0]))
+        again = await withdraw_member(s, **_withdraw_kwargs(container.id, market_ids[0]))
+        await s.commit()
+
+        assert first.applied and not again.applied
+        assert again.revision == first.revision
+        assert await _ledger_count(s) == 1
+
+    async def test_an_edge_written_behind_the_ledgers_back_is_removed(
+        self, corrected_session
+    ):
+        """A legacy writer, an undo replay, a hand insert — the pass cleans it."""
+        from app.models.models import EventEdge
+        from app.utils.container_corrections import withdraw_member
+
+        s = corrected_session
+        container, market_ids = await _seed(s)
+        await withdraw_member(s, **_withdraw_kwargs(container.id, market_ids[1]))
+        s.add(
+            EventEdge(
+                parent_type="container",
+                parent_id=container.id,
+                child_type="market",
+                child_id=market_ids[1],
+                kind="contains",
+                edge_class="prop",
+                source="register",
+                confidence=1,
+            )
+        )
+        await s.commit()
+
+        report = await assemble_container(s, container, _candidates(market_ids))
+        await s.commit()
+
+        assert report.purged_withdrawn == 1
+        assert market_ids[1] not in [r[0] for r in await _edge_rows(s, container.id)]
+
+
+class TestLegitimateReadmission:
+    async def test_readmit_writes_no_edge_and_the_next_pass_reproves_it(
+        self, corrected_session
+    ):
+        from app.utils.container_corrections import readmit_member, withdraw_member
+
+        s = corrected_session
+        container, market_ids = await _seed(s)
+        await assemble_container(s, container, _candidates(market_ids))
+        await withdraw_member(s, **_withdraw_kwargs(container.id, market_ids[2]))
+        await s.commit()
+
+        lifted = await readmit_member(
+            s,
+            container_id=container.id,
+            child_type="market",
+            child_id=market_ids[2],
+            reason="it was the 2026 market after all",
+            actor="test",
+        )
+        await s.commit()
+        assert lifted.applied
+        assert len(await _edge_rows(s, container.id)) == 2, "a correction never adds"
+
+        report = await assemble_container(s, container, _candidates(market_ids))
+        await s.commit()
+        assert report.withdrawn == []
+        assert report.added == 1
+        assert len(await _edge_rows(s, container.id)) == 3
+
+    async def test_readmit_without_evidence_stays_out(self, corrected_session):
+        from app.utils.container_corrections import readmit_member, withdraw_member
+
+        s = corrected_session
+        container, market_ids = await _seed(s)
+        await assemble_container(s, container, _candidates(market_ids))
+        await withdraw_member(s, **_withdraw_kwargs(container.id, market_ids[2]))
+        await readmit_member(
+            s,
+            container_id=container.id,
+            child_type="market",
+            child_id=market_ids[2],
+            reason="lifted",
+            actor="test",
+        )
+        await s.commit()
+
+        await assemble_container(s, container, _candidates(market_ids[:2]))
+        await s.commit()
+        assert [r[0] for r in await _edge_rows(s, container.id)] == market_ids[:2]
+
+
+class TestStaleRevisions:
+    async def test_a_correction_decided_on_an_old_revision_is_refused(
+        self, corrected_session
+    ):
+        from app.utils.container_corrections import StaleRevision, withdraw_member
+
+        s = corrected_session
+        container, market_ids = await _seed(s)
+        container = _plain(container)
+        await assemble_container(s, container, _candidates(market_ids))
+        await s.commit()
+        seen = await _revision(s, container.id)
+        assert seen == 1, "the first pass added members, so it moved the revision"
+
+        await assemble_container(s, container, _candidates(market_ids))
+        await s.commit()
+        assert await _revision(s, container.id) == seen, "an unchanged pass does not"
+
+        await withdraw_member(s, **_withdraw_kwargs(container.id, market_ids[0]))
+        await s.commit()
+
+        with pytest.raises(StaleRevision):
+            await withdraw_member(
+                s, **_withdraw_kwargs(container.id, market_ids[1], expected_revision=seen)
+            )
+        await s.rollback()
+        assert await _ledger_count(s) == 1
+        assert market_ids[1] in [r[0] for r in await _edge_rows(s, container.id)]
+
+    async def test_a_pass_that_gathered_before_a_withdrawal_cannot_write_it_back(
+        self, corrected_session
+    ):
+        """THE RACE: a withdrawal holds the lock while a pass is about to write.
+
+        The pass's candidates were gathered before the decision existed. It
+        must block on the container lock, then read the committed ledger — not
+        write the member back from its stale list.
+        """
+        import asyncio
+
+        from sqlalchemy.ext.asyncio import async_sessionmaker
+
+        from app.utils.container_corrections import withdraw_member
+
+        s = corrected_session
+        container, market_ids = await _seed(s)
+        await assemble_container(s, container, _candidates(market_ids))
+        await s.commit()
+        stale_candidates = _candidates(market_ids)  # gathered NOW
+
+        Session = async_sessionmaker(s.bind, expire_on_commit=False)
+        async with Session() as decider, Session() as assembler:
+            await decider.execute(text("SET lock_timeout = '20s'"))
+            await assembler.execute(text("SET lock_timeout = '20s'"))
+
+            await withdraw_member(decider, **_withdraw_kwargs(container.id, market_ids[2]))
+            # The decider holds the lock, uncommitted. The pass must wait.
+            pass_task = asyncio.create_task(
+                assemble_container(assembler, container, stale_candidates)
+            )
+            await asyncio.sleep(1.0)
+            assert not pass_task.done(), "the pass did not wait for the container lock"
+
+            await decider.commit()
+            report = await asyncio.wait_for(pass_task, timeout=20)
+            await assembler.commit()
+
+        assert [w["child_id"] for w in report.withdrawn] == [market_ids[2]]
+        assert [r[0] for r in await _edge_rows(s, container.id)] == market_ids[:2]
+
+    async def test_a_withdrawal_arriving_mid_pass_waits_then_removes_the_edge(
+        self, corrected_session
+    ):
+        import asyncio
+
+        from sqlalchemy.ext.asyncio import async_sessionmaker
+
+        from app.utils.container_corrections import withdraw_member
+
+        s = corrected_session
+        container, market_ids = await _seed(s)
+        await s.commit()
+
+        Session = async_sessionmaker(s.bind, expire_on_commit=False)
+        async with Session() as decider, Session() as assembler:
+            await decider.execute(text("SET lock_timeout = '20s'"))
+            await assembler.execute(text("SET lock_timeout = '20s'"))
+
+            await assemble_container(assembler, container, _candidates(market_ids))
+            # The pass holds the lock, uncommitted. The withdrawal must wait.
+            decision = asyncio.create_task(
+                withdraw_member(decider, **_withdraw_kwargs(container.id, market_ids[2]))
+            )
+            await asyncio.sleep(1.0)
+            assert not decision.done(), "the withdrawal did not wait for the pass"
+
+            await assembler.commit()
+            result = await asyncio.wait_for(decision, timeout=20)
+            await decider.commit()
+
+        assert result.applied and result.edges_removed == 1
+        assert [r[0] for r in await _edge_rows(s, container.id)] == market_ids[:2]
+
+
+class TestRevisionsCoverTheDraws:
+    async def test_a_change_inside_a_draw_moves_the_hubs_revision(
+        self, corrected_session
+    ):
+        from app.models.models import Container
+        from app.utils.container_corrections import withdraw_member
+
+        s = corrected_session
+        root, market_ids = await _seed(s)
+        draw = Container(
+            kind="tournament",
+            name="US Open 2026 — Men's Singles",
+            slug="us-open-2026-mens-singles",
+            status="live",
+            parent_container_id=root.id,
+        )
+        s.add(draw)
+        await s.commit()
+
+        before = await _revision(s, root.id)
+        await assemble_container(s, draw, _candidates(market_ids[:1]))
+        await s.commit()
+        assert await _revision(s, root.id) == before + 1
+
+        await withdraw_member(s, **_withdraw_kwargs(draw.id, market_ids[0]))
+        await s.commit()
+        assert await _revision(s, root.id) == before + 2
+        assert await _revision(s, draw.id) == 2
+
+
+class TestTheReadContract:
+    async def test_every_publication_state_reads_safely(self, corrected_session):
+        from app.utils.container_corrections import (
+            NothingToPublish,
+            publish_container,
+            read_published,
+            withdraw_member,
+            withdraw_publication,
+        )
+
+        s = corrected_session
+        container, market_ids = await _seed(s)
+        container = _plain(container)
+        await s.commit()
+
+        assert (await read_published(s, "no-such-hub")).state == "unavailable"
+        with pytest.raises(NothingToPublish):
+            await publish_container(
+                s, container_id=container.id, reason="go", actor="test"
+            )
+        await s.rollback()
+
+        await assemble_container(s, container, _candidates(market_ids))
+        await s.commit()
+        unpublished = await read_published(s, container.slug)
+        assert unpublished.state == "unpublished" and unpublished.members == []
+
+        await publish_container(s, container_id=container.id, reason="go", actor="test")
+        await s.commit()
+        published = await read_published(s, container.slug)
+        assert published.state == "published"
+        assert sorted(m["id"] for m in published.members) == sorted(market_ids)
+        assert published.revision == await _revision(s, container.id)
+
+        await withdraw_publication(
+            s, container_id=container.id, reason="wrong week", actor="test"
+        )
+        await s.commit()
+        withdrawn = await read_published(s, container.slug)
+        assert withdrawn.state == "withdrawn" and withdrawn.members == []
+        assert len(await _edge_rows(s, container.id)) == 3, "membership is kept"
+
+        await publish_container(s, container_id=container.id, reason="fixed", actor="test")
+        for market_id in market_ids:
+            await withdraw_member(s, **_withdraw_kwargs(container.id, market_id))
+        await s.commit()
+        assert (await read_published(s, container.slug)).state == "empty"
+
+    async def test_the_upgrade_is_rerunnable(self, corrected_session):
+        from app.utils.container_corrections import UPGRADE_STATEMENTS
+
+        for statement in UPGRADE_STATEMENTS:
+            await corrected_session.execute(text(statement))
+        await corrected_session.commit()
