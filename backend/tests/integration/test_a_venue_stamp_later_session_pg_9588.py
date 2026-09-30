@@ -122,9 +122,59 @@ async def _seed(session):
                 STATPAL_LATER_SESSION_KEY: (now - timedelta(minutes=5)).isoformat()
             },
         ),
+        # #9588 AFTER-CHECK, THE THIRD DOOR: already suspended by the staleness
+        # arm, 33h past its Kalshi stamp, and StatPal's session is 12h ahead
+        # (15320752, Cash / Erler v Luz / Matos, 14:06Z 9/30). RED before: no
+        # arm read a suspended row, so it read "No result reported".
+        "the_suspended_held_match": _match(
+            "SuspHeld",
+            commence=now - timedelta(hours=33),
+            status="suspended",
+            fixture="958809",
+        ),
+        # THE BAND: 60h past its stamp, StatPal 9h ahead, a 69h gap (15320753,
+        # Kalshi 05:00Z 9/29, StatPal 02:00Z 10/2). RED at the 48h band: the
+        # hold failed OPEN and the row stayed suspended.
+        "the_suspended_far_match": _match(
+            "SuspFar",
+            commence=now - timedelta(hours=60),
+            status="suspended",
+            fixture="958810",
+        ),
+        # THE SETTLEMENT CONTROL: the same shape with a resolved market. The
+        # venue may have ended it, and rung 2 writes `suspended` too.
+        "the_suspended_settled_match": _match(
+            "SuspSettled",
+            commence=now - timedelta(hours=33),
+            status="suspended",
+            fixture="958811",
+        ),
+        # THE KILL CONTROL: StatPal's session began an hour ago. An arm that
+        # un-suspended every anchored Kalshi row passes the ship and fails here.
+        "the_suspended_reached_match": _match(
+            "SuspReached",
+            commence=now - timedelta(hours=33),
+            status="suspended",
+            fixture="958812",
+        ),
     }
     session.add_all(list(rows.values()))
     await session.flush()
+
+    from app.models.models import FuturesMarket
+
+    session.add(
+        FuturesMarket(
+            source="kalshi",
+            external_id="KXATPDOUBLES-9588SETTLED",
+            sport_id=tennis.id,
+            name="SuspSettled A / B vs SuspSettled C / D",
+            category="sports",
+            commence_time=now - timedelta(hours=33),
+            status="resolved",
+            event_id=rows["the_suspended_settled_match"].id,
+        )
+    )
 
     def _anchor(name, source_id, start):
         session.add(
@@ -155,6 +205,13 @@ async def _seed(session):
     EXPECTED_STAMPS["receipt:the_old_released_match"] = statpal_released_session_value(
         now - timedelta(minutes=5), "958808"
     )
+    _anchor("the_suspended_held_match", "tennis:958809", now + timedelta(hours=12))
+    EXPECTED_STAMPS["the_suspended_held_match"] = statpal_later_session_value(
+        now + timedelta(hours=12)
+    )
+    _anchor("the_suspended_far_match", "tennis:958810", now + timedelta(hours=9))
+    _anchor("the_suspended_settled_match", "tennis:958811", now + timedelta(hours=12))
+    _anchor("the_suspended_reached_match", "tennis:958812", now - timedelta(hours=1))
 
     await session.commit()
     return {name: row.id for name, row in rows.items()}
@@ -371,3 +428,37 @@ class TestAVenueStampDoesNotStartALaterSession:
         assert by_case["the_old_released_match"] == "live"
         assert stamps_after["the_old_released_match"] is None
         assert stats["live_to_suspended"] == 0
+
+
+@needs_postgres
+class TestASuspendedRowStatPalPutsLaterGoesBack:
+    """#9588 after-check: the hold's third door, ``suspended → scheduled``."""
+
+    async def test_the_suspended_held_match_goes_back_stamped(
+        self, statuses, stamps_after
+    ):
+        """THE SHIP. RED before: nothing read a suspended row. The stamp is
+        what keeps the readers off "No result reported" and brings the row
+        into the next pass's hold."""
+        by_case, stats = statuses
+        assert by_case["the_suspended_held_match"] == "scheduled"
+        assert (
+            stamps_after["the_suspended_held_match"]
+            == EXPECTED_STAMPS["the_suspended_held_match"]
+        )
+        assert stats["unsuspended_statpal_later_session"] == 2
+
+    async def test_a_69h_gap_is_inside_the_band(self, statuses):
+        """THE BAND. RED at 48h: outside the band the hold fails OPEN."""
+        by_case, _ = statuses
+        assert by_case["the_suspended_far_match"] == "scheduled"
+
+    async def test_a_resolved_market_keeps_it_suspended(self, statuses, stamps_after):
+        by_case, _ = statuses
+        assert by_case["the_suspended_settled_match"] == "suspended"
+        assert stamps_after["the_suspended_settled_match"] is None
+
+    async def test_a_reached_session_stays_suspended(self, statuses):
+        """THE KILL CONTROL."""
+        by_case, _ = statuses
+        assert by_case["the_suspended_reached_match"] == "suspended"

@@ -206,7 +206,9 @@ from app.utils.probability_eligibility import MARKET_DERIVED_SOURCES  # noqa: E4
 #    `statpal_later_session_start` (and removes it once the hold ends). When
 #    StatPal's start releases the row, the same function writes the receipt
 #    `statpal_released_session` (StatPal's start + fixture) so the staleness
-#    arm's clock survives StatPal's first score (CERT-3811). No
+#    arm's clock survives StatPal's first score (CERT-3811).
+#    `_return_held_suspended_rows` writes the same stamp on a suspended row it
+#    returns to `scheduled` (the hold's third door, #9588 after-check). No
 #    source, no market, no reading. ONE shape, `_sync_tennis_from_espn`'s: this
 #    task writes every other column by plain ORM assignment, so a Core update
 #    mixed in would be gotcha #5, and the helpers return a whole new dict so the
@@ -255,6 +257,8 @@ KNOWN_NON_READING_WRITES: dict[tuple[str, str, str], str] = {
      "_recover_unstarted_authority_fixtures", "update.values"): "sidecar",
     ("backend/app/tasks/espn_sync.py",
      "_record_statpal_later_sessions", "orm-assign"): "sidecar",
+    ("backend/app/tasks/espn_sync.py",
+     "_return_held_suspended_rows", "orm-assign"): "sidecar",
     ("backend/app/tasks/espn_sync.py",
      "_transition_event_statuses_impl", "orm-assign"): "sidecar",
     ("backend/app/tasks/futures_price_refresh.py",

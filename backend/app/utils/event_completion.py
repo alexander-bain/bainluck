@@ -443,7 +443,14 @@ STATPAL_LATER_SESSION_KEY = "statpal_later_session_start"
 #: those nine a held row read "No result reported" once its venue stamp aged out
 #: while StatPal's session was still ahead. 48h is the largest gap with half
 #: a day to spare.
-STATPAL_LATER_SESSION_HORIZON = timedelta(hours=48)
+#:
+#: RE-MEASURED 2026-09-30 14:15Z against StatPal's CURRENT fixtures, not the
+#: start the anchor recorded at link time: 45 venue-stamped StatPal-anchored
+#: tennis rows over 8 days, gaps to 54.7h on matches StatPal reports finished
+#: and 69.0h on four Beijing doubles (Kalshi 05:00Z 9/29, StatPal 02:00Z 10/2).
+#: 48h failed OPEN on five of the six Beijing rows still to be played. 96h is
+#: the largest gap with a day to spare.
+STATPAL_LATER_SESSION_HORIZON = timedelta(hours=96)
 
 
 def statpal_later_session_value(statpal_start) -> str:
