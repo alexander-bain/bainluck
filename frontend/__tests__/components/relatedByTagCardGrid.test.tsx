@@ -80,7 +80,10 @@ describe("ux/1034 B6 — the related section is a card grid", () => {
 
     // Two cards, in a grid that is two-up from `sm` — not a stack of strips.
     expect(html).toContain('data-testid="related-by-tag-grid"');
-    expect(html).toContain("grid gap-2 sm:grid-cols-2");
+    // #9808: read as class tokens, not a substring — a phone needs its own
+    // `grid-cols-1` template between them.
+    const gridClasses = html.match(/<div class="([^"]*)" data-testid="related-by-tag-grid"/)?.[1].split(/\s+/) ?? [];
+    expect(gridClasses).toEqual(expect.arrayContaining(["grid", "gap-2", "sm:grid-cols-2"]));
     expect(html.match(/data-testid="related-card"/g)).toHaveLength(2);
     expect(html).toContain("rounded-2xl border border-surface-border bg-surface-card");
 

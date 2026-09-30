@@ -64,3 +64,38 @@ describe("namesOnlyTheOtherLeague", () => {
     expect(namesOnlyTheOtherLeague("AL Reliever of the Year Winner?", null)).toBe(false);
   });
 });
+
+// #9809 — the NFL halves, and the rule that the other half is looked up inside
+// the same league only.
+describe("namesOnlyTheOtherLeague — NFL (#9809)", () => {
+  const AFC = "American Football Conference";
+  const NFC = "National Football Conference";
+
+  it("names the conference when both sides play in it", () => {
+    expect(sharedLeague([AFC, AFC])).toBe(AFC);
+    expect(sharedLeague([NFC, AFC])).toBeNull();
+  });
+
+  it.each([
+    "NFC Championship Winner",
+    "NFC South: Total Wins",
+    "NFC West: Exact Order",
+  ])("drops %s beside an AFC game", (name) => {
+    expect(namesOnlyTheOtherLeague(name, AFC)).toBe(true);
+  });
+
+  it.each([
+    "NFL Super Bowl Winner",
+    "NFL Conference Championship Qualifiers",
+    "AFC South: Total Wins",
+    "Pro Football: Team to advance to AFC Championship Game",
+  ])("keeps %s beside an AFC game", (name) => {
+    expect(namesOnlyTheOtherLeague(name, AFC)).toBe(false);
+  });
+
+  it("an AFC game never drops a title for naming baseball's AL or NL", () => {
+    expect(namesOnlyTheOtherLeague("NFL: most passing yards, NL-style overtime?", AFC)).toBe(false);
+    expect(namesOnlyTheOtherLeague("AL MVP", AFC)).toBe(false);
+    expect(namesOnlyTheOtherLeague("AFC East: Exact Order", "National League")).toBe(false);
+  });
+});
