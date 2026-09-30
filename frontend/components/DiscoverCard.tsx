@@ -50,11 +50,19 @@ interface DiscoverCardProps {
     atMax: boolean;
     noun: string;
   };
+  /**
+   * #9643 — asked before a like, unlike or dismiss (swipe or button) records
+   * anything. `false` refuses it: no liked state, no local profile write, no
+   * server interaction, no `onDismiss`. The page answers from auth state
+   * (`lib/discoverFeedbackGate.ts`) and opens the sign-in invitation itself.
+   * Absent ⇒ every attempt proceeds, exactly as before.
+   */
+  onFeedbackAttempt?: () => boolean;
 }
 
 // ── Main Export ──
 
-export default function DiscoverCard({ groupedItem, onDismiss, positionIndex, showProbabilityHint, pinFor }: DiscoverCardProps) {
+export default function DiscoverCard({ groupedItem, onDismiss, positionIndex, showProbabilityHint, pinFor, onFeedbackAttempt }: DiscoverCardProps) {
   if (groupedItem.type === "group" && groupedItem.items) {
     return (
       <GroupCard
@@ -67,12 +75,12 @@ export default function DiscoverCard({ groupedItem, onDismiss, positionIndex, sh
     );
   }
   const item = groupedItem.item!;
-  return <SingleCard item={item} onDismiss={onDismiss} positionIndex={positionIndex} showProbabilityHint={showProbabilityHint} pinFor={pinFor} />;
+  return <SingleCard item={item} onDismiss={onDismiss} positionIndex={positionIndex} showProbabilityHint={showProbabilityHint} pinFor={pinFor} onFeedbackAttempt={onFeedbackAttempt} />;
 }
 
 // ── Single Card Wrapper (handles swipe + analytics delegation) ──
 
-function SingleCard({ item, onDismiss, positionIndex, showProbabilityHint, pinFor }: { item: FeedItem; onDismiss?: () => void; positionIndex?: number; showProbabilityHint?: boolean; pinFor?: DiscoverCardProps["pinFor"] }) {
+function SingleCard({ item, onDismiss, positionIndex, showProbabilityHint, pinFor, onFeedbackAttempt }: { item: FeedItem; onDismiss?: () => void; positionIndex?: number; showProbabilityHint?: boolean; pinFor?: DiscoverCardProps["pinFor"]; onFeedbackAttempt?: () => boolean }) {
   const router = useRouter();
   const [liked, setLiked] = useState(false);
   const trending = isTrending(item);
@@ -90,20 +98,28 @@ function SingleCard({ item, onDismiss, positionIndex, showProbabilityHint, pinFo
     sendDiscoverInteraction(analytics, action, positionIndex);
   }, [analytics, positionIndex]);
 
+  // #9643 — the one gate for every preference write below. Taps, shares and
+  // context toggles do not pass through it.
+  const mayRecordFeedback = useCallback(() => onFeedbackAttempt?.() ?? true, [onFeedbackAttempt]);
+
   const setLikedWithTracking = useCallback((next: boolean) => {
+    if (!mayRecordFeedback()) return;
     setLiked(next);
     trackAction(next ? "like" : "unlike");
-  }, [trackAction]);
+  }, [mayRecordFeedback, trackAction]);
 
   const handleLike = useCallback(() => setLikedWithTracking(true), [setLikedWithTracking]);
   const handleSwipeLike = useCallback(() => {
-    setLikedWithTracking(true);
+    if (!mayRecordFeedback()) return;
+    setLiked(true);
+    trackAction("like");
     onDismiss?.();
-  }, [onDismiss, setLikedWithTracking]);
+  }, [mayRecordFeedback, onDismiss, trackAction]);
   const handleLessLike = useCallback(() => {
+    if (!mayRecordFeedback()) return;
     trackAction("unlike");
     onDismiss?.();
-  }, [onDismiss, trackAction]);
+  }, [mayRecordFeedback, onDismiss, trackAction]);
   // L2-175 Item 1: whole-card tap navigation. The card hero is not a link, so a
   // plain click on the top Discover cards did nothing. Navigate on a genuine,
   // unmodified click that didn't land on a real interactive child (the title

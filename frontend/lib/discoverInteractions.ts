@@ -243,8 +243,39 @@ function emptyBucket(now: string): ProfileBucket {
   };
 }
 
+/**
+ * #9643 — WHO MAY TEACH DISCOVER, enforced where the learning is written.
+ *
+ * Every action this module records feeds relevance: the local profile scores a
+ * category on impressions, taps, shares, expands and likes alike, and the server
+ * queue personalises the session from the same list. So the auth rule lives HERE,
+ * in the two writers, and not in each caller — a new button cannot forget it.
+ *
+ * The Discover page (the only mount point of every caller) registers a gate that
+ * answers from the CURRENT auth state: `true` only for a resolved, signed-in
+ * reader. A refused write is dropped, never queued, so a later sign-in replays
+ * nothing. The GA4 `trackEvent` beside each call is ordinary analytics and is
+ * not gated here. No gate registered ⇒ refuse: child mount effects can run before the page
+ * registers its auth gate, and pending timers can fire after page unmount.
+ */
+let learningGate: (() => boolean) | null = null;
+
+export function setDiscoverLearningGate(gate: (() => boolean) | null): void {
+  learningGate = gate;
+}
+
+function mayLearnFromDiscoverInteraction(): boolean {
+  if (!learningGate) return false;
+  try {
+    return learningGate();
+  } catch {
+    return false;
+  }
+}
+
 export function recordDiscoverInteraction(category: string, action: DiscoverAction): void {
   if (typeof window === "undefined") return;
+  if (!mayLearnFromDiscoverInteraction()) return;
 
   try {
     const now = new Date().toISOString();
@@ -363,6 +394,10 @@ export function flushDiscoverInteractions(): void {
   pending = [];
   if (batch.length === 0) return;
 
+  // #9643 — re-read at flush for the same reason consent is: a reader who signs
+  // out while a batch waits must not have it land afterwards.
+  if (!mayLearnFromDiscoverInteraction()) return;
+
   // No grant, no request. The reader who declined generates no network traffic
   // at all — not a request that fails, not a request that is ignored.
   if (!mayCaptureDiscoverInteraction(getTelemetryConsent())) return;
@@ -411,6 +446,7 @@ export function sendDiscoverInteraction(
   source = "card"
 ): void {
   if (typeof window === "undefined") return;
+  if (!mayLearnFromDiscoverInteraction()) return;
 
   try {
     pending.push({
