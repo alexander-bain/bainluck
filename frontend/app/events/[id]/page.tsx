@@ -126,6 +126,7 @@ import {
   hasNoReportedResult,
   serverHeldPastKickoff,
   isFinishedStatus,
+  playedBeforeItsClock,
   startBadgeLabel,
   suspendedSummary,
   venueSettledSummary,
@@ -1620,10 +1621,17 @@ export default function EventPage({ params }: EventPageProps) {
   // counterpart of `settledOutcome.resultLine` above. Every rule it follows
   // (home-first, why not `orientLinescore`, why it refuses a finished match)
   // is stated on the helper, beside the settled one it mirrors.
+  // #9780: a set already played under a future clock is an interrupted match —
+  // the badge says "Resumes in", and the games it has produced are shown.
+  const playedBeforeClock = playedBeforeItsClock({
+    hasStarted,
+    isFinished,
+    linescore: event.linescore,
+  });
   const liveGamesLine = liveHeroGamesLine({
     isFinished,
     isLive,
-    hasStarted,
+    hasStarted: hasStarted || playedBeforeClock,
     linescore: event.linescore,
   });
 
@@ -2130,6 +2138,7 @@ export default function EventPage({ params }: EventPageProps) {
                       undefined,
                       event?.started_without_result,
                     ),
+                    playedBeforeClock,
                   )}
                 </span>
               </span>
