@@ -37,7 +37,7 @@ genuine misses — the ones a person should look at — are buried under them.
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -364,3 +364,228 @@ class TestTheAlreadyLinkedLookup:
             "2631674": PRIOR_FOREIGN_SPORT,
             "2631675": PRIOR_UNANCHORED,
         }
+
+
+#: The placeholder `_link_one` wrote for the Beijing doubles (#9588), and the
+#: slot StatPal moved it to. The ISO form is what the task writes and what
+#: `event_completion.statpal_start_from_anchors` parses.
+STALE_START = "2026-09-30T02:00:00+00:00"
+MOVED_START = datetime(2026, 10, 1, 3, 0, tzinfo=timezone.utc)
+RUN_AT = datetime(2026, 9, 30, 14, 0, tzinfo=timezone.utc)
+
+
+async def _context(conn, event_id: int, source_id: str):
+    from sqlalchemy import text
+
+    return (
+        await conn.execute(
+            text(
+                "SELECT claim_context FROM event_provider_anchors "
+                "WHERE event_id = :e AND source_id = :s"
+            ),
+            {"e": event_id, "s": source_id},
+        )
+    ).scalar_one()
+
+
+async def _stamp_stale_start(conn, event_id: int, source_id: str) -> None:
+    from sqlalchemy import text
+
+    await conn.execute(
+        text(
+            "UPDATE event_provider_anchors SET claim_context = CAST(:ctx AS jsonb) "
+            "WHERE event_id = :e AND source_id = :s"
+        ),
+        {
+            "ctx": (
+                '{"written_by": "link_tennis_statpal_fixtures", '
+                f'"tournament": "China Open", "statpal_start_time": "{STALE_START}"}}'
+            ),
+            "e": event_id,
+            "s": source_id,
+        },
+    )
+
+
+def _moved(fixture_id: str = "2631673", start=MOVED_START):
+    fixture = _fixture(fixture_id, "B. Van De Zandschulp", "A. De Minaur")
+    fixture.start_time = start
+    return fixture
+
+
+PAIRED_PRIOR = {"state": PRIOR_PAIRED, "event_id": 301, "sport_key": "tennis_atp_us_open"}
+
+
+@needs_postgres
+class TestTheStartRefreshOnARealServer:
+    """#9588. `REFRESH_STATPAL_START` against the real unique index and JSONB.
+
+    Four things only a server decides: that `||` merges rather than replaces the
+    context, that `IS DISTINCT FROM` over `->>` makes an unchanged start a
+    no-op, that `COALESCE` rescues a NULL context, and that the `EXISTS` guard
+    refuses an anchor whose row no longer carries the fixture.
+    """
+
+    async def test_a_moved_start_is_restamped_and_the_rest_of_the_context_kept(
+        self, pg_engine
+    ):
+        from sqlalchemy.ext.asyncio import AsyncSession
+
+        from app.tasks.link_tennis_statpal_fixtures import _refresh_statpal_start
+
+        async with pg_engine.begin() as conn:
+            await _seed(conn)
+            await _stamp_stale_start(conn, 301, "tennis:2631673")
+
+        async with AsyncSession(pg_engine) as session:
+            wrote = await _refresh_statpal_start(
+                session, _moved(), PAIRED_PRIOR, now=RUN_AT
+            )
+            await session.commit()
+
+        async with pg_engine.connect() as conn:
+            ctx = await _context(conn, 301, "tennis:2631673")
+
+        assert wrote is True
+        assert ctx["statpal_start_time"] == MOVED_START.isoformat()
+        assert ctx["statpal_start_seen_at"] == RUN_AT.isoformat()
+        assert ctx["written_by"] == "link_tennis_statpal_fixtures"
+        assert ctx["tournament"] == "China Open"
+
+    async def test_the_restamped_value_is_what_the_hold_reads(self, pg_engine):
+        """The consumer's own parser, over the consumer's own query."""
+        from sqlalchemy import text
+        from sqlalchemy.ext.asyncio import AsyncSession
+
+        from app.tasks.link_tennis_statpal_fixtures import _refresh_statpal_start
+        from app.utils.event_completion import (
+            STATPAL_SCHEDULED_START_SQL,
+            statpal_start_from_anchors,
+        )
+
+        async with pg_engine.begin() as conn:
+            await _seed(conn)
+            await _stamp_stale_start(conn, 301, "tennis:2631673")
+
+        async with AsyncSession(pg_engine) as session:
+            before = statpal_start_from_anchors(
+                (
+                    await session.execute(
+                        text(STATPAL_SCHEDULED_START_SQL), {"event_ids": [301]}
+                    )
+                ).fetchall(),
+                "2631673",
+            )
+            await _refresh_statpal_start(session, _moved(), PAIRED_PRIOR, now=RUN_AT)
+            await session.commit()
+            after = statpal_start_from_anchors(
+                (
+                    await session.execute(
+                        text(STATPAL_SCHEDULED_START_SQL), {"event_ids": [301]}
+                    )
+                ).fetchall(),
+                "2631673",
+            )
+
+        assert before == datetime.fromisoformat(STALE_START)
+        assert after == MOVED_START
+
+    async def test_an_unchanged_start_writes_nothing(self, pg_engine):
+        """`seen_at` must mark the last CHANGE, so a same-start pass is a no-op."""
+        from sqlalchemy.ext.asyncio import AsyncSession
+
+        from app.tasks.link_tennis_statpal_fixtures import _refresh_statpal_start
+
+        async with pg_engine.begin() as conn:
+            await _seed(conn)
+            await _stamp_stale_start(conn, 301, "tennis:2631673")
+
+        async with AsyncSession(pg_engine) as session:
+            first = await _refresh_statpal_start(
+                session, _moved(), PAIRED_PRIOR, now=RUN_AT
+            )
+            await session.commit()
+            second = await _refresh_statpal_start(
+                session, _moved(), PAIRED_PRIOR, now=RUN_AT + timedelta(minutes=10)
+            )
+            await session.commit()
+
+        async with pg_engine.connect() as conn:
+            ctx = await _context(conn, 301, "tennis:2631673")
+
+        assert (first, second) == (True, False)
+        assert ctx["statpal_start_seen_at"] == RUN_AT.isoformat()
+
+    async def test_a_null_context_is_filled_not_left_null(self, pg_engine):
+        """The seed's own anchor has no context: `NULL || jsonb` would stay NULL."""
+        from sqlalchemy.ext.asyncio import AsyncSession
+
+        from app.tasks.link_tennis_statpal_fixtures import _refresh_statpal_start
+
+        async with pg_engine.begin() as conn:
+            await _seed(conn)
+            assert await _context(conn, 301, "tennis:2631673") is None
+
+        async with AsyncSession(pg_engine) as session:
+            wrote = await _refresh_statpal_start(
+                session, _moved(), PAIRED_PRIOR, now=RUN_AT
+            )
+            await session.commit()
+
+        async with pg_engine.connect() as conn:
+            ctx = await _context(conn, 301, "tennis:2631673")
+
+        assert wrote is True
+        assert ctx == {
+            "statpal_start_time": MOVED_START.isoformat(),
+            "statpal_start_seen_at": RUN_AT.isoformat(),
+        }
+
+    async def test_a_row_that_no_longer_carries_the_fixture_is_not_touched(
+        self, pg_engine
+    ):
+        """The anchor is a copy of the column. A disproven copy is not refreshed."""
+        from sqlalchemy import text
+        from sqlalchemy.ext.asyncio import AsyncSession
+
+        from app.tasks.link_tennis_statpal_fixtures import _refresh_statpal_start
+
+        async with pg_engine.begin() as conn:
+            await _seed(conn)
+            await _stamp_stale_start(conn, 301, "tennis:2631673")
+            await conn.execute(
+                text("UPDATE events SET statpal_fixture_id = '2639999' WHERE id = 301")
+            )
+
+        async with AsyncSession(pg_engine) as session:
+            wrote = await _refresh_statpal_start(
+                session, _moved(), PAIRED_PRIOR, now=RUN_AT
+            )
+            await session.commit()
+
+        async with pg_engine.connect() as conn:
+            ctx = await _context(conn, 301, "tennis:2631673")
+
+        assert wrote is False
+        assert ctx["statpal_start_time"] == STALE_START
+
+    async def test_only_the_exact_anchor_is_written(self, pg_engine):
+        """The baseball row's anchor on the neighbouring integer stays as it was."""
+        from sqlalchemy.ext.asyncio import AsyncSession
+
+        from app.tasks.link_tennis_statpal_fixtures import _refresh_statpal_start
+
+        async with pg_engine.begin() as conn:
+            await _seed(conn)
+            await _stamp_stale_start(conn, 301, "tennis:2631673")
+            await _stamp_stale_start(conn, 303, "baseball_mlb:2631674")
+
+        async with AsyncSession(pg_engine) as session:
+            await _refresh_statpal_start(session, _moved(), PAIRED_PRIOR, now=RUN_AT)
+            await session.commit()
+
+        async with pg_engine.connect() as conn:
+            bystander = await _context(conn, 303, "baseball_mlb:2631674")
+
+        assert bystander["statpal_start_time"] == STALE_START
+        assert "statpal_start_seen_at" not in bystander
