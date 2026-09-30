@@ -200,6 +200,8 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
     let tournament: FeedTournamentData?
     let concept: FeedConceptData?
     let bundle: FeedBundle?
+    /// Optional #9653 producer card in the ordinary data envelope.
+    let collection: ContainerHubCollection?
 
     // Personalization fields
     let personalized: Bool?
@@ -219,6 +221,7 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
         // than the headline-composed fallback below, which would collide for two
         // bundles sharing a title.
         if let b = bundle { return "bundle-\(b.id)" }
+        if let c = collection { return "collection-\(c.slug)" }
         return [
             "feed",
             type,
@@ -257,7 +260,16 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
         multiplier = try c.decodeIfPresent(Double.self, forKey: .multiplier)
         personalizationReasons = try c.decodeIfPresent([String].self, forKey: .personalizationReasons)
 
-        if type == "event" {
+        // Optional/malformed collection data never prevents siblings decoding.
+        collection = type == "collection" ? (try? c.decodeIfPresent(ContainerHubCollection.self, forKey: .data)) : nil
+
+        if type == "collection" {
+            event = nil
+            futures = nil
+            tournament = nil
+            concept = nil
+            bundle = nil
+        } else if type == "event" {
             event = try c.decodeIfPresent(FeedEventData.self, forKey: .data)
             futures = nil
             tournament = nil
@@ -330,7 +342,8 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
         personalized: Bool?,
         baseScore: Double?,
         multiplier: Double?,
-        personalizationReasons: [String]?
+        personalizationReasons: [String]?,
+        collection: ContainerHubCollection? = nil
     ) {
         self.type = type
         self.score = score
@@ -342,6 +355,7 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
         self.tournament = tournament
         self.concept = concept
         self.bundle = bundle
+        self.collection = collection
         self.personalized = personalized
         self.baseScore = baseScore
         self.multiplier = multiplier
@@ -367,7 +381,8 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
             personalized: personalized,
             baseScore: baseScore,
             multiplier: multiplier,
-            personalizationReasons: personalizationReasons
+            personalizationReasons: personalizationReasons,
+            collection: collection
         )
     }
 }
