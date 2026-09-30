@@ -39,6 +39,7 @@ from app.utils.resolution_authority import (
     price_crown_protected_sql,
     SINGLE_WINNER_GUESS_SOURCES_SQL,
 )
+from app.utils.box_score_capture import box_is_live_capture
 from app.utils.price_change_stamp import price_changed_at_value
 from app.utils.settled_price import (
     SETTLED_NO_PRICE,
@@ -5733,7 +5734,7 @@ async def _resolve_kalshi_player_props_from_boxscore():
     Single-query fetch of all markets + outcomes + box scores, then
     processes in Python. No per-market DB round-trips.
     """
-    stats = {"resolved": 0, "no_player": 0, "no_parse": 0, "errors": []}
+    stats = {"resolved": 0, "no_player": 0, "no_parse": 0, "live_box": 0, "errors": []}
 
     all_prop_prefixes = list(_PROP_TICKER_TO_STAT.keys()) + list(_COMBO_STATS.keys())
 
@@ -5824,6 +5825,11 @@ async def _resolve_kalshi_player_props_from_boxscore():
                 bs_map: dict = {}
                 for bs_row in bs_result.all():
                     raw_bs = bs_row.box_score_data or {}
+                    # #9734: a live-pass snapshot is the game mid-play. Its
+                    # zeros are not results; the event waits for its final box.
+                    if box_is_live_capture(raw_bs):
+                        stats["live_box"] += 1
+                        continue
                     raw_players = (
                         raw_bs.get("players", raw_bs)
                         if isinstance(raw_bs, dict)
@@ -5912,10 +5918,11 @@ async def _resolve_kalshi_player_props_from_boxscore():
         logger.error("Player prop resolution error: %s", e)
 
     logger.info(
-        "Player prop resolution: %d resolved, %d no_player, %d no_parse, %d errors",
+        "Player prop resolution: %d resolved, %d no_player, %d no_parse, %d live_box, %d errors",
         stats["resolved"],
         stats["no_player"],
         stats["no_parse"],
+        stats["live_box"],
         len(stats["errors"]),
     )
     return stats
@@ -5960,7 +5967,7 @@ async def _resolve_kalshi_total_bases_from_boxscore():
     certain winners for low N) without doubles/triples. Marked
     resolution_source='box_score_bound' so it's auditable as a bound, not exact.
     """
-    stats = {"resolved": 0, "no_player": 0, "no_parse": 0, "indeterminate": 0, "errors": []}
+    stats = {"resolved": 0, "no_player": 0, "no_parse": 0, "indeterminate": 0, "live_box": 0, "errors": []}
 
     try:
         async with get_task_session() as session:
@@ -6002,6 +6009,12 @@ async def _resolve_kalshi_total_bases_from_boxscore():
                 player_name = m.group(1).strip()
                 threshold = int(m.group(2))
 
+                # #9734: a live-pass snapshot never grades. This pass writes
+                # only `is_winner IS NULL` rows and never revisits them, so a
+                # bound computed off a first-inning box would be permanent.
+                if box_is_live_capture(row.box_score_data):
+                    stats["live_box"] += 1
+                    continue
                 bs_id = id(row.box_score_data)
                 if bs_id not in _bs_cache:
                     raw_bs = row.box_score_data or {}
@@ -6059,11 +6072,12 @@ async def _resolve_kalshi_total_bases_from_boxscore():
         logger.error("Total-bases bound resolution error: %s", e)
 
     logger.info(
-        "Total-bases bound resolution: %d resolved, %d indeterminate, %d no_player, %d no_parse, %d errors",
+        "Total-bases bound resolution: %d resolved, %d indeterminate, %d no_player, %d no_parse, %d live_box, %d errors",
         stats["resolved"],
         stats["indeterminate"],
         stats["no_player"],
         stats["no_parse"],
+        stats["live_box"],
         len(stats["errors"]),
     )
     return stats
