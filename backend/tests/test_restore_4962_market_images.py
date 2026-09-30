@@ -50,7 +50,8 @@ def case():
 
     class Session:
         async def execute(self, statement, params):
-            return db.execute(str(statement), params)
+            # SQLite covers predicates; the real-PG gate covers row locking.
+            return db.execute(str(statement).removesuffix(" FOR UPDATE"), params)
 
         async def rollback(self):
             db.rollback()

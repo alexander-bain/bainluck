@@ -175,7 +175,11 @@ async def clear_captured_rows(session, rows) -> bool:
     Any concurrent change refuses the entire batch, including earlier clears.
     The preliminary reconciliation is only a diagnostic, never the write gate.
     """
-    for row in rows:
+    for row in sorted(rows, key=lambda item: item.id):
+        if not await lock_captured_image_and_backup(session, row):
+            await session.rollback()
+            print(f"REFUSING: row {row.id} or backup changed; ALL clears rolled back.")
+            return False
         result = await session.execute(
             text(
                 "UPDATE futures_markets AS f SET image_url = NULL, image_width = NULL, "
@@ -195,6 +199,42 @@ async def clear_captured_rows(session, rows) -> bool:
             )
             return False
     return True
+
+
+async def lock_captured_image_and_backup(session, row, *, cleared=False) -> bool:
+    """Lock the market, then its exact backup, before the guarded write.
+
+    An EXISTS subquery in UPDATE alone can keep a stale backup snapshot while
+    waiting for the market lock. Separate locking reads use fresh READ COMMITTED
+    snapshots and retain both locks until commit/rollback. Market-first order is
+    shared by clear and restore; sorted batches prevent inverse row lock order.
+    """
+    params = {column: getattr(row, column) for column in CAPTURED_COLUMNS}
+    predicate = captured_predicate()
+    if cleared:
+        predicate = (
+            " AND ".join(
+                f"f.{column} IS NOT DISTINCT FROM :{column}"
+                for column in ("id", "name", "llm_sport_category", "status")
+            )
+            + " AND f.image_url IS NULL AND f.image_width IS NULL AND f.image_height IS NULL"
+        )
+    market = await session.execute(
+        text("SELECT f.id FROM futures_markets f WHERE " + predicate + " FOR UPDATE"),
+        params,
+    )
+    if market.fetchone() is None:
+        return False
+    backup = await session.execute(
+        text(
+            f"SELECT b.id FROM {BACKUP_TABLE} b WHERE b.id = :id "
+            "AND b.image_url IS NOT DISTINCT FROM :image_url "
+            "AND b.image_width IS NOT DISTINCT FROM :image_width "
+            "AND b.image_height IS NOT DISTINCT FROM :image_height FOR UPDATE"
+        ),
+        params,
+    )
+    return backup.fetchone() is not None
 
 
 #: The app whose deploy carries `enrich_market_images`. Not a heavy task.

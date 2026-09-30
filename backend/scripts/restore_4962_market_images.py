@@ -30,6 +30,7 @@ from scripts.repair_4962_market_image_repick import (  # noqa: E402
     PRODUCER_APP,
     _parse_ids,
     is_filed_bad_image,
+    lock_captured_image_and_backup,
 )
 
 
@@ -42,11 +43,17 @@ def eligible_restore(row) -> bool:
 
 async def restore_captured_rows(session, rows) -> bool:
     """Restore an unchanged snapshot only; refuse the entire batch on drift."""
-    for row in rows:
+    for row in sorted(rows, key=lambda item: item.id):
         if not eligible_restore(row):
             await session.rollback()
             print(
                 f"REFUSING: row {row.id} is not a pinned, still-cleared repair; batch rolled back."
+            )
+            return False
+        if not await lock_captured_image_and_backup(session, row, cleared=True):
+            await session.rollback()
+            print(
+                f"REFUSING: row {row.id} or backup changed; ALL restores rolled back."
             )
             return False
         result = await session.execute(
