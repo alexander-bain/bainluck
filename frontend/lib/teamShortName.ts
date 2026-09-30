@@ -475,8 +475,25 @@ export function namesAPerson(sportKey: string | null | undefined): boolean {
 }
 
 /**
- * #5634 — does this sport key name a football (soccer) competition, where a
- * club's last word is so often its CITY that the last-word rule cannot be used?
+ * #5634 — the non-football competitions whose clubs are named the European
+ * way, distinctive word first and city last, so they take the football rule.
+ *
+ * `/events/15318709`, Fenerbahce SK 100-76 FC Bayern München, 390px,
+ * 2026-09-29: the hero named the away side "München". Over all 30 distinct
+ * `basketball_euroleague` names of 60 days of production `events` the
+ * last-word rule printed a city or a fragment for eleven ("Real Madrid" →
+ * "Madrid", "Zalgiris Kaunas" → "Kaunas", "KK Crvena zvezda" → "zvezda") and
+ * folded BOTH Tel Aviv clubs onto "Aviv". Whole keys only, unlike the football
+ * prefix: `basketball_nba`, `basketball_wnba` and `basketball_nbl` name their
+ * clubs city-first ("Sydney Kings"), and `basketball_other` mixes the WNBA and
+ * Japan's B.League with the Bundesliga, so no rule reads it right.
+ */
+const WHOLE_CLUB_NAME_KEYS: ReadonlySet<string> = new Set(["basketball_euroleague"]);
+
+/**
+ * #5634 — does this sport key name a football (soccer) competition, or one of
+ * `WHOLE_CLUB_NAME_KEYS`, where a club's last word is so often its CITY that
+ * the last-word rule cannot be used?
  *
  * "1. FC Union Berlin" became "Berlin" (so did Hertha, Croatia and Füchse),
  * "Bayern Munich" became "Munich" (so did 1860), "Real Salt Lake" became
@@ -493,7 +510,7 @@ export function keepsWholeClubName(sportKey: string | null | undefined): boolean
   if (typeof sportKey !== "string") return false;
   const key = sportKey.trim().toLowerCase();
   if (!key) return false;
-  return key.split("_")[0] === "soccer";
+  return key.split("_")[0] === "soccer" || WHOLE_CLUB_NAME_KEYS.has(key);
 }
 
 /**
