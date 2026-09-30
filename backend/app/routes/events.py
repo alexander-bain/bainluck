@@ -171,6 +171,7 @@ from app.utils.game_window import (
 from app.utils.name_normalization import (
     city_abbreviated_names,
     city_abbreviation_query,
+    college_state_abbreviated_names,
     college_state_query,
     diacritic_fold_query,
     expand_search_terms,
@@ -36185,13 +36186,18 @@ def _search_team_evidence(row: dict, query: str | None = None) -> "_SearchEviden
 
     #9859: when the query opens with a city abbreviation (`sf giants`), the row
     also owns its name with that city abbreviated (`SF giants`), so the club the
-    reader named leads the card and arms #9044's split-words key. Every other
+    reader named leads the card and arms #9044's split-words key. #9836 does the
+    same for a non-leading `st` (`ohio st` -> `Ohio St Buckeyes`). Every other
     query builds exactly the evidence it built before."""
     aliases: tuple[str, ...] = tuple(row.get("_aliases") or ())
     if row.get("abbreviation"):
         aliases = (*aliases, row["abbreviation"])
     if city_abbreviation_query(query) is not None:
         aliases = (*aliases, *city_abbreviated_names(row.get("name")))
+    # #9836: `ohio st` owns every word of "Ohio St Buckeyes", so the carded
+    # school arms the split-words key (the `St` spelling the reader typed).
+    if query is not None and college_state_query(query) is not None:
+        aliases = (*aliases, *college_state_abbreviated_names(row.get("name")))
     return _SearchEvidence(
         name=row.get("name") or "",
         aliases=aliases,

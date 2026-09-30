@@ -262,6 +262,28 @@ def college_state_query(q: str) -> str | None:
     return " ".join(rewritten)
 
 
+def college_state_abbreviated_names(name: str | None) -> tuple[str, ...]:
+    """A school's own name with a non-leading `State` spelled `St`, or () (#9836).
+
+    ``"Ohio State Buckeyes"`` -> ``("Ohio St Buckeyes",)``; ``"State College
+    Spartans"`` (leading) and every name without the word -> ``()``. Production
+    2026-09-30 16:4xZ, web v5325: `ohio st` carded Ohio State but led its games
+    with Kent State v Ohio Bobcats, because the card's evidence read `ohio st` as
+    a prefix of "Ohio State Buckeyes" (MC1B), not as every word owned (MC1), and
+    #9044's split-words key only arms at MC1. The mirror of
+    :func:`college_state_query`, on the row side, so the scorer ranks on the
+    row's OWN name. Scoring evidence only, never shown.
+    """
+    words = (name or "").split()
+    rewritten = [
+        "St" if index > 0 and word.casefold() == "state" else word
+        for index, word in enumerate(words)
+    ]
+    if rewritten == words:
+        return ()
+    return (" ".join(rewritten),)
+
+
 # #9859 — the city a reader abbreviates in front of a club. Production 2026-09-30
 # 15:4xZ, `/api/events/search`: `sf giants`, `la kings`, `ny rangers`, `kc royals`
 # and eight more served no team card (the dropdown offered each one), `sf giants`
