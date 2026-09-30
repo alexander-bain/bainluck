@@ -19,7 +19,11 @@ from app.models import FuturesMarket, FuturesOutcome, FuturesOddsSnapshot, Sport
 from app.services import get_db, OddsAPIService
 from app.utils import movement_pool, probability_to_american
 from app.utils.durable_venue_receipt import log_durable_venue_serve
-from app.utils.feed_market_quality import is_empty_book_midpoint
+from app.utils.feed_market_quality import (
+    FEED_EXCLUSIVE_SUM_MIN,
+    book_has_a_buyer,
+    is_empty_book_midpoint,
+)
 from app.utils.futures_history_basis import (
     carried_endpoint,
     carry_forward_quotes,
@@ -2616,6 +2620,54 @@ def _leg_prices_an_empty_book(outcome) -> bool:
     )
 
 
+def _exact_score_field_nobody_prices(field: list[tuple]) -> bool:
+    """Is this exact-score card a handful of maker quotes rather than a forecast?
+
+    #9844. ``field`` is ``[(probability, yes_bid, yes_ask), ...]`` for every leg
+    the strip would serve from the card's market(s), scorelines and "Any Other
+    Score" alike.
+
+    THE READER. ``/sports`` at 390px, 2026-09-30 14:25Z: eight Championship
+    exact-score cards, each led by "2–2 9% · 3–3 8% · 2–5 6% · 4–4 6%", with no
+    1–0, 1–1 or 0–0 on any of them. Polymarket's own book for Wrexham v West
+    Brom (event 1106734) has 37 legs, every one bid at the 1¢ floor, and none
+    has traded. The writer rightly declines the 32 legs quoted 1¢/97¢ (#6676).
+    The five that survive are the legs whose ask happened to be 10–17¢, and the
+    same ask sits on the same scoreline in all eight matches. So the card
+    printed the midpoints of one market maker's quote and left out the likely
+    scores.
+
+    TWO CLAUSES, BOTH REQUIRED, and each one is an existing rule reused rather
+    than a new threshold:
+
+    1. The served legs do not add up to a field: their sum is under
+       ``FEED_EXCLUSIVE_SUM_MIN``, the floor this repo already treats as
+       definitional for mutually exclusive outcomes (#1574). One match's
+       scorelines are exactly that.
+    2. Nobody is buying any of them: no leg passes :func:`book_has_a_buyer` (a
+       bid above the 5¢ empty-book floor).
+
+    Measured over every open "Exact Score" market on 2026-09-30: both clauses
+    hold on 255 (the specimen class). Clause 1 alone would also take 8 partial
+    markets with real bids (Germany v Serbia: 16 legs, sum 0.72, six legs
+    bid-backed), which stay. Clause 2 alone would also take 49 markets whose
+    legs do add up, which is not this defect.
+
+    A leg with no book at all (both sides NULL) is a model or derived price and
+    has nothing for clause 2 to read, so a field holding one is left alone, the
+    same pass-through :func:`is_empty_book_midpoint` gives it. Read-side only
+    (gotcha #21): no stored price changes.
+    """
+    if not field:
+        return False
+    if any(bid is None and ask is None for _p, bid, ask in field):
+        return False
+    if any(book_has_a_buyer(bid) for _p, bid, _ask in field):
+        return False
+    total = sum(float(p) for p, _bid, _ask in field if p is not None)
+    return total < FEED_EXCLUSIVE_SUM_MIN
+
+
 def _market_has_priced_outcome(market: dict) -> bool:
     """Does this grouped-feed market carry a probability the card can print?
 
@@ -3017,6 +3069,9 @@ async def grouped_feed(
 
     market_dicts = []
     outcome_dicts = []
+    # #9844: each served leg's book, kept beside the dicts rather than in them
+    # because a market card ships its outcome dicts whole.
+    leg_books: dict[int, tuple] = {}
     for m in markets:
         if m.id in container_parent_ids:
             continue
@@ -3052,6 +3107,10 @@ async def grouped_feed(
             }
             m_dict["outcomes"].append(o_dict)
             outcome_dicts.append(o_dict)
+            leg_books[o.id] = (
+                getattr(o, "current_yes_bid", None),
+                getattr(o, "current_yes_ask", None),
+            )
         market_dicts.append(m_dict)
 
     stat_prop_groups = detect_stat_prop_groups(market_dicts)
@@ -3223,6 +3282,20 @@ async def grouped_feed(
             continue
         for o in outcomes:
             grouped_outcome_ids.add(o["id"])
+        # #9844: the card CONSUMES its market, whether it ships or not. Left
+        # ungrouped, the same scorelines came back lower in the strip as a
+        # plain market card (Wrexham and Birmingham each shown twice on
+        # 2026-09-30), and a withheld card would come back the same way.
+        scope_market_ids = {o["market_id"] for o in outcomes}
+        grouped_market_ids.update(scope_market_ids)
+        field = [
+            (o["probability"], *leg_books.get(o["id"], (None, None)))
+            for m in market_dicts
+            if m["id"] in scope_market_ids
+            for o in m["outcomes"]
+        ]
+        if _exact_score_field_nobody_prices(field):
+            continue
         feed_items.append({
             "type": "threshold",
             # UX-1052 item 2 — the discriminator the renderer reads. Kept
