@@ -19,7 +19,7 @@ from zoneinfo import ZoneInfo
 from typing import Annotated, Optional, Sequence
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from sqlalchemy import select, and_, or_, union, func, case, cast, any_, literal, Date, Integer, String, literal_column, text, true
+from sqlalchemy import select, and_, or_, union, func, case, cast, any_, literal, Date, Integer, String, literal_column, text, true, false
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, aliased
 from sqlalchemy.orm.attributes import set_committed_value
@@ -4855,10 +4855,66 @@ def _combine_search_vectors(*vectors):
     return combined
 
 
+def _has_unspaced_slash(column):
+    """#9735: TRUE when the name holds a slash with no space on either side.
+
+    Only that spelling parses as one token. `Bolelli / Vavassori` (Kalshi's)
+    already tokenises per player; splitting it again would count each player
+    twice and rank it 2.0 against the unspaced twin's 1.0 (measured).
+    """
+    return column.op("~")("[^[:space:]]/[^[:space:]]")
+
+
+def _slash_split_or_empty(column):
+    """#9735: the name with its slashes read as spaces, or '' when it has none.
+
+    Postgres's default parser reads an unspaced `Rojer/Winegar` as ONE `file`
+    token (measured on production 2026-09-30)::
+
+        to_tsvector('simple','Rojer/Winegar')       -> 'rojer/winegar':1
+        to_tsvector('simple','Bolelli / Vavassori') -> 'bolelli':1 'vavassori':2
+
+    so no word test and no rank can see either player of a doubles pair stored
+    that way (the StatPal/Polymarket spelling; Kalshi-minted rows are spaced).
+    This is the split copy those tests read BESIDE the unsplit name, never
+    instead of it: a reader who types `rojer/winegar` still needs the one token.
+
+    A name without an unspaced slash yields '' — an empty vector and a
+    guarded-out word test — so every other row ranks and matches exactly as
+    before, and only the unspaced-slash rows pay the second `to_tsvector`.
+    """
+    return case(
+        (_has_unspaced_slash(column), func.replace(column, "/", " ")),
+        else_="",
+    )
+
+
+def _slash_split_fts(column, term: str, expansion: str | None):
+    """#9735: `_build_expanded_fts` over the slash-split name, slash rows only.
+
+    A CASE, not an AND, so the guard is evaluated first by contract and a row
+    without an unspaced slash never pays the extra `to_tsvector`.
+    """
+    return case(
+        (
+            _has_unspaced_slash(column),
+            _build_expanded_fts(func.replace(column, "/", " "), term, expansion),
+        ),
+        else_=false(),
+    )
+
+
 def _event_search_vector():
     return _combine_search_vectors(
         _weighted_search_vector(Event.home_team_name, _SEARCH_EVENT_TEAM_WEIGHT),
         _weighted_search_vector(Event.away_team_name, _SEARCH_EVENT_TEAM_WEIGHT),
+        # #9735: `Rojer/Winegar` is one token above; this adds `rojer`/`winegar`.
+        _weighted_search_vector(
+            _slash_split_or_empty(Event.home_team_name), _SEARCH_EVENT_TEAM_WEIGHT
+        ),
+        _weighted_search_vector(
+            _slash_split_or_empty(Event.away_team_name), _SEARCH_EVENT_TEAM_WEIGHT
+        ),
     )
 
 
@@ -6058,6 +6114,14 @@ def _event_name_match(term: str, expansion: str | None):
     rows the test was never able to judge and changes no row it could. Read that
     helper for the live before/after — the shipped form answered `dodgers` with
     25 events and `dodgers and cubs` with zero.
+
+    #9735 added the two slash-split arms (`_slash_split_fts`). The parser reads
+    an unspaced doubles pair `Rojer/Winegar` as ONE token, so the word test threw
+    away every such row the ILIKE had found: `q=Winegar` served 0 games while
+    Rojer/Winegar was live, 93 rows in the ±10-day window (17 live). Like
+    LAT-P035's arm this only gives the test a reading it could not make; it is
+    still AND-ed behind the ILIKE, so it rechecks rows the trigram scan already
+    returned and adds no scan.
     """
     return and_(
         or_(
@@ -6068,6 +6132,8 @@ def _event_name_match(term: str, expansion: str | None):
             _term_has_no_lexemes(term),
             _build_expanded_fts(Event.home_team_name, term, expansion),
             _build_expanded_fts(Event.away_team_name, term, expansion),
+            _slash_split_fts(Event.home_team_name, term, expansion),
+            _slash_split_fts(Event.away_team_name, term, expansion),
         ),
     )
 
