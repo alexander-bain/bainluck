@@ -114,6 +114,7 @@
     "#4896 A game about to be played leads the refresh queue (real Postgres)",
     "#2927 containers migration round trip (real Postgres)",
     "#2927 container assembly writes and re-writes (real Postgres)",
+    "#9653 collection discovery offers only eligible published hubs (real Postgres)",
     "#4229 Kalshi senate backfill moves the stored row (real Postgres)",
     "#4229 Polymarket senate repair preserves the observation clock (real Postgres)",
     "#4253 a delisted Kalshi leg stops claiming 100% (real Postgres)",
