@@ -1278,6 +1278,7 @@ KALSHI_TICKER_TO_SPORT_KEY: dict[str, str] = {
     "kxcs2totalmaps": "esports",                # CS2 total maps
     "kxvalorantgame": "esports",
     "kxvalorantmap": "esports",                 # Valorant map winner
+    "kxvaloranttotalmaps": "esports",           # Valorant total maps (#9696)
     "kxdimayorgame": "soccer_other",             # Colombian Dimayor (NOT Dota 2)
     # Soccer
     "kxsoccergame": "soccer",
@@ -1439,7 +1440,7 @@ KALSHI_GAME_TICKER_PREFIXES: tuple[str, ...] = tuple(
 _LINK_RATE_UNSUPPORTED_LEAGUE_PREFIXES = frozenset({
     "kxlolgame", "kxlolgames", "kxlolmap", "kxloltotal", "kxloltotalmaps",
     "kxcs2game", "kxcs2games", "kxcs2map", "kxcs2mapwinner",
-    "kxcs2totalmaps", "kxvalorantgame", "kxvalorantmap",
+    "kxcs2totalmaps", "kxvalorantgame", "kxvalorantmap", "kxvaloranttotalmaps",
 })
 
 # Link-rate denominator prefixes are stricter than "game-shaped" tickers:
@@ -2341,6 +2342,7 @@ KALSHI_TICKER_TO_DISPLAY_LABEL: dict[str, str] = {
     "kxcs2totalmaps": "CS2",
     "kxvalorantgame": "Valorant",
     "kxvalorantmap": "Valorant",
+    "kxvaloranttotalmaps": "Valorant",
     "kxdimayorgame": "Colombian Dimayor",
 }
 
