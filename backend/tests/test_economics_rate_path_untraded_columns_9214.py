@@ -27,6 +27,7 @@ qualified for another reason; `test_the_reported_screen_reproduces_without_the_g
 is the strawman, pinning the exact cells the reader saw.
 """
 
+from contextlib import ExitStack
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -148,18 +149,29 @@ def _pool():
     return [_ladder(mid, month, rows) for mid, (month, rows) in {**HEALTHY, **UNTRADED}.items()]
 
 
-async def _columns(markets, gate=True):
+_REAL_CUMULATIVE_TO_DISCRETE = economics._cumulative_to_discrete
+
+
+def _cells_unfiltered(outcomes, max_buckets=8, usable=None):
+    return _REAL_CUMULATIVE_TO_DISCRETE(outcomes, max_buckets=max_buckets)
+
+
+async def _columns(markets, gate=True, cells=True):
+    """``gate=False`` removes this file's column gate; ``cells=False`` also
+    removes #9804's per-cell one, which blanks these same untraded rungs one
+    cell at a time — so the seed, which proves the specimens reach the card
+    with NOTHING refusing them, needs both off."""
     result_obj = MagicMock()
     result_obj.scalars.return_value.unique.return_value.all.return_value = list(markets)
     db = MagicMock()
     db.execute = AsyncMock(return_value=result_obj)
-    with patch("app.routes.economics.datetime") as dt:
+    with patch("app.routes.economics.datetime") as dt, ExitStack() as stack:
         dt.now.return_value = FIXED_NOW
-        if gate:
-            payload = await get_economics(db)
-        else:
-            with patch.object(economics, "_ladder_is_mostly_quoted", lambda _o: True):
-                payload = await get_economics(db)
+        if not gate:
+            stack.enter_context(patch.object(economics, "_ladder_is_mostly_quoted", lambda _o: True))
+        if not cells:
+            stack.enter_context(patch.object(economics, "_cumulative_to_discrete", _cells_unfiltered))
+        payload = await get_economics(db)
     return {c["market_id"]: c for c in payload["themes"]["fed"]["fomc_meetings"]}
 
 
@@ -170,7 +182,7 @@ def _cell(column, label):
 @pytest.mark.asyncio
 class TestTheSeedIsReal:
     async def test_every_specimen_reaches_the_card_without_the_gate(self):
-        cols = await _columns(_pool(), gate=False)
+        cols = await _columns(_pool(), gate=False, cells=False)
         assert set(cols) == set(HEALTHY) | set(UNTRADED), (
             "a seeded ladder no longer reaches the heatmap for another reason — "
             "every absence asserted below is vacuous until this passes"
@@ -178,7 +190,7 @@ class TestTheSeedIsReal:
 
     async def test_the_reported_screen_reproduces_without_the_gate(self):
         """Strawman: the exact cells the reader saw."""
-        cols = await _columns(_pool(), gate=False)
+        cols = await _columns(_pool(), gate=False, cells=False)
         assert _cell(cols[61461616], "3.25%") == 91.0
         assert _cell(cols[61461586], "3.25%") == 99.0
         assert _cell(cols[61461585], "3.25%") == 80.0
