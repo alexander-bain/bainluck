@@ -168,17 +168,30 @@ async def test_the_bears_game_sits_with_the_weeks_games(maker, search, typed):
     assert games == [HAWKS_GAME, BEARS_GAME, BULLS_GAME], games
 
 
-async def test_the_card_is_not_touched(maker, search, monkeypatch):
-    """The fix reads the lead TIER only: the card is what it was before."""
-    from app.routes import events as ev
-
+async def test_the_card_shows_the_bears_first(maker, search):
+    """#9941: a bare city cards one club per major league, football first — the
+    Bears lead, and Sky (WNBA) and Fire (MLS) give up their slots."""
     async with maker() as session:
         await _seed(session)
-    fixed = _teams(await search("chicago"))
+
+    assert _teams(await search("chicago")) == [
+        "Chicago Bears", "Chicago Cubs", "Chicago Bulls", "Chicago Blackhawks",
+        "Chicago White Sox",
+    ]
+
+
+async def test_with_the_city_alias_counted_the_card_loses_the_bears(maker, search, monkeypatch):
+    """#9941's strawman through the route: count the restated city alias again and
+    production's card comes back, no Bears — the Postgres `ts_rank_cd` arrival
+    order is what cuts them."""
+    from app.routes import events as ev
 
     monkeypatch.setattr(ev, "_alias_restates_name_prefix", lambda alias, name: False)
-    assert _teams(await search("chicago")) == fixed
-    assert fixed[0] == "Chicago Blackhawks"
+    async with maker() as session:
+        await _seed(session)
+
+    card = _teams(await search("chicago"))
+    assert "Chicago Bears" not in card and card[0] == "Chicago Blackhawks", card
 
 
 async def test_a_nickname_still_leads_its_own_club(maker, search):

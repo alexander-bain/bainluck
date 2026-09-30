@@ -3252,7 +3252,80 @@ def _team_card_keyed(
                 a for a in card["_aliases"]
                 if not _alias_restates_name_prefix(a, card["name"])
             ]
-    return rank_with_keys(query, [(_search_team_evidence(t, query), t) for t in cards])[:cap]
+        return rank_with_keys(query, [(_search_team_evidence(t, query), t) for t in cards])[:cap]
+    keyed = rank_with_keys(query, [(_search_team_evidence(t, query), t) for t in cards])
+    return _bare_city_card_order(keyed, cards, query)[:cap]
+
+
+#: #9941: the leagues a bare city's card takes one club from before any league
+#: takes a second — the marquee axiom's four (notice 27), football first.
+_BARE_CITY_CARD_LEAGUES: tuple[str, ...] = (
+    "americanfootball_nfl", "baseball_mlb", "basketball_nba", "icehockey_nhl",
+)
+
+
+def _bare_city_card_order(keyed: list, cards: list, query: str) -> list:
+    """#9941: a bare city's card takes one club per major league first.
+
+    `chicago` on production 2026-09-30 carded Blackhawks, Bulls, Cubs, Sky and
+    White Sox and no Bears: those five carry the alias `Chicago` (MC0) and the
+    Bears only `Bears` (MC1 on the name), so the five-slot cap kept whoever
+    held the alias — the row's history, not the reader's words (#9897 fixed
+    the games half; this is the card). `new york` had no Giants or Jets.
+
+    Armed only when the typed words are a city: the card's leader scores worse
+    once aliases that restate its name's first words are set aside
+    (`_alias_restates_name_prefix`), and the club that then leads is in one of
+    `_BARE_CITY_CARD_LEAGUES`. The clubs tied with it are re-ordered in rounds
+    (each league's first club, football to hockey, then each league's second),
+    and every other league's club in the tie follows in today's order; the rest
+    of the card keeps today's order and keys behind them. A nickname (`bulls`),
+    a school named like its state (`north carolina`, a college leads) and
+    `texas` (the Rangers alone) come back exactly as before. The tier carries its
+    stripped key, so `_search_bye_team_ids` still reads it as one club group.
+    """
+    if not keyed:
+        return keyed
+    from app.utils.search_match_class import rank_with_keys
+
+    stripped = rank_with_keys(query, [
+        (_search_team_evidence({
+            **card,
+            "_aliases": [
+                a for a in card["_aliases"]
+                if not _alias_restates_name_prefix(a, card["name"])
+            ],
+        }, query), card)
+        for card in cards
+    ])
+    leader_id = keyed[0][1]["id"]
+    leader_key = next((key for key, card in stripped if card["id"] == leader_id), None)
+    if (
+        not stripped
+        or leader_key is None
+        or leader_key == keyed[0][0]
+        or stripped[0][1]["sport_key"] not in _BARE_CITY_CARD_LEAGUES
+    ):
+        return keyed
+    tier_key = stripped[0][0]
+    tier = [card for key, card in stripped if key == tier_key]
+    rounds: dict[str, int] = {}
+    ordered = []
+    for arrival, card in enumerate(tier):
+        sport = card["sport_key"]
+        league = (
+            _BARE_CITY_CARD_LEAGUES.index(sport)
+            if sport in _BARE_CITY_CARD_LEAGUES else len(_BARE_CITY_CARD_LEAGUES)
+        )
+        nth = rounds.get(sport, 0)
+        rounds[sport] = nth + 1
+        major = league < len(_BARE_CITY_CARD_LEAGUES)
+        ordered.append(((0, nth, league) if major else (1, arrival, 0), card))
+    ordered.sort(key=lambda pair: pair[0])
+    tier_ids = {card["id"] for card in tier}
+    return [(tier_key, card) for _order, card in ordered] + [
+        (key, card) for key, card in keyed if card["id"] not in tier_ids
+    ]
 
 
 def _alias_restates_name_prefix(alias: str, name: str | None) -> bool:
