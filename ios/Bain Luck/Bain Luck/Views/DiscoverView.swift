@@ -524,7 +524,13 @@ struct DiscoverView: View {
         let canLearn = DiscoverGuestFeedbackGate.allowsFeedback(startedWith: startedWith, current: startedWith)
         if canLearn {
             var profile = interactionProfile ?? DiscoverInteractionProfile.load()
-            profile.record(category: itemCategory(item), action: action)
+            profile.record(
+                category: itemCategory(item),
+                action: action,
+                onSportsCard: DiscoverCategory.isSportsFeedback(item) { bundle in
+                    Self.eligibleBundleItems(bundle).first ?? bundle.items.first
+                }
+            )
             interactionProfile = profile
             // Only account feedback invalidates personalized ranking (#9644).
             profileVersion &+= 1

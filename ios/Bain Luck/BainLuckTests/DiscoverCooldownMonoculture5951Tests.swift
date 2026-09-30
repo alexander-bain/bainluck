@@ -64,10 +64,14 @@ final class DiscoverCooldownMonoculture5951Tests: XCTestCase {
     /// `ufc` and `f1` onto, so this page is his report in the app's own vocabulary
     /// rather than in the words of the bug report.
     private func alexsPage() throws -> [FeedItem] {
+        // #9648: the followed SPORTS in the original page (baseball 3, soccer 2,
+        // golf 2, hockey 1, tennis 1) are stood in for by non-sports categories
+        // of the same sizes — a sports penalty can no longer cool anything, so
+        // only a non-sports profile can still reproduce this mechanism.
         let census: [(String, Int)] = [
-            ("politics", 10), ("economics", 7), ("baseball", 3), ("tech", 3),
-            ("entertainment", 3), ("weather", 2), ("soccer", 2), ("golf", 2),
-            ("hockey", 1), ("tennis", 1),
+            ("politics", 10), ("economics", 7), ("science", 3), ("tech", 3),
+            ("entertainment", 3), ("weather", 2), ("crypto", 2), ("culture", 2),
+            ("finance", 1), ("health", 1),
             ("mma", 3), ("motorsports", 2), ("cycling", 1),
         ]
         var items: [FeedItem] = []
@@ -90,9 +94,9 @@ final class DiscoverCooldownMonoculture5951Tests: XCTestCase {
     private func alexsProfile() -> DiscoverInteractionProfile {
         DiscoverInteractionProfile.forTesting(
             scores: [
-                "politics": -4, "economics": -4, "baseball": -4, "tech": -4,
-                "entertainment": -4, "weather": -4, "soccer": -4, "golf": -4,
-                "hockey": -4, "tennis": -4,
+                "politics": -4, "economics": -4, "science": -4, "tech": -4,
+                "entertainment": -4, "weather": -4, "crypto": -4, "culture": -4,
+                "finance": -4, "health": -4,
             ],
             recordedAt: now
         )
