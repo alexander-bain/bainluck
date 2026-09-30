@@ -355,6 +355,7 @@ async def _relink_outside_market_league(
     from app.models import FuturesMarket, FuturesOutcome, Sport, Team
     from app.utils.market_team_sport import (
         POLYMARKET_SLUG_LEAGUE_PREFIXES,
+        POLYMARKET_SLUG_LEAGUE_SUFFIXES,
         link_crosses_league,
         market_league_sport_key,
     )
@@ -362,7 +363,8 @@ async def _relink_outside_market_league(
     from app.utils.venue_competition import POLYMARKET_EVENT_SLUG_KEY
 
     # A Polymarket market names a league only through its event slug (#9761), so
-    # only the rows a listed prefix claims are read — not every Polymarket link.
+    # only the rows a listed prefix or suffix claims are read — not every
+    # Polymarket link.
     slug = FuturesMarket.market_metadata[POLYMARKET_EVENT_SLUG_KEY].as_string()
     rows = (
         await session.execute(
@@ -382,10 +384,16 @@ async def _relink_outside_market_league(
                     FuturesMarket.source == "kalshi",
                     and_(
                         FuturesMarket.source == "polymarket",
-                        or_(*(
-                            slug.startswith(prefix, autoescape=True)
-                            for prefix in POLYMARKET_SLUG_LEAGUE_PREFIXES
-                        )),
+                        or_(
+                            *(
+                                slug.startswith(prefix, autoescape=True)
+                                for prefix in POLYMARKET_SLUG_LEAGUE_PREFIXES
+                            ),
+                            *(
+                                slug.endswith(suffix, autoescape=True)
+                                for suffix in POLYMARKET_SLUG_LEAGUE_SUFFIXES
+                            ),
+                        ),
                     ),
                 ),
                 FuturesMarket.status == "open",
