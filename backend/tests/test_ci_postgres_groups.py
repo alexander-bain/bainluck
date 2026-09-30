@@ -100,6 +100,7 @@ def test_disposable_consumers_keep_their_provisioner_on_the_same_runner():
           "test_a_venue_stamp_later_session_pg_9588.py",
           "test_espn_pass_survives_one_failed_statement_pg_8796.py",
           "test_espn_pass_releases_rows_pg_9049.py",
+          "test_settled_box_pass_survives_one_refused_box_pg_9713.py",
           "test_certain_postseason_playoff_pg_9602.py",
           "test_live_box_pass_survives_one_failed_write_pg_8913.py",
           "test_live_box_pass_reaches_every_fetchable_game_pg_9067.py"]),

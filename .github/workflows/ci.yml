@@ -5810,6 +5810,26 @@ jobs:
             exit 1
           }
 
+      - name: "#9713 one refused box does not discard the settled box-score pass (real Postgres)"
+        # The settled box-score pass wrote every finished game in the pass's one
+        # transaction with no per-game savepoint. Postgres refused one box (an
+        # ERA of INF serialised as Infinity), the transaction aborted, and every
+        # run settled nothing while that game led the 48-hour queue. Only
+        # Postgres aborts a transaction. Same database and fixture as #8796.
+        if: matrix.group == 'isolated'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_settled_box_pass_survives_one_refused_box_pg_9713.py \
+            -v -rs 2>&1 | tee /tmp/settledbox9713.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/settledbox9713.txt; then
+            echo "::error::#9713 settled box-score gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]2 passed," /tmp/settledbox9713.txt || {
+            echo "::error::#9713 settled box-score gate did not run both cases"
+            exit 1
+          }
+
       - name: "#8913 one game's failed write does not discard the live box-score pass (real Postgres)"
         # Each live game's box score is written inside the pass's one
         # transaction. A lost row lock on one game aborted it, the later games
