@@ -2991,21 +2991,53 @@ async def fetch_live_box_scores(session, stats):
     10 slots a round-robin over every live event instead of a fixed window on
     ten of them. It costs no additional ESPN calls: the limit and the 2-minute
     staleness rule are both unchanged.
+
+    #9067 — THE 10 SLOTS WENT TO ROWS THIS PASS CAN NEVER FETCH
+    ------------------------------------------------------------
+    The query picked 10 rows and the loop below then skipped the ones it would
+    not fetch: a sport ESPN has no summary path for, or a box that is not a
+    live box. Nothing was written to those rows, so they held the top of the
+    staleness order for good. Tennis is both: no ``ESPN_SPORT_MAPPING`` path, and
+    the ESPN tennis anchor stores ``{"tennis": {...}}`` with no top-level
+    ``fetched_at``, which sorts first as NULL. Measured 9/30 03:23Z: 29 of 32
+    live ESPN-linked rows were tennis, and the pass reached none of the other
+    three. Red Sox at Yankees (15319563) kept its 01:59Z line score (NYY 2)
+    until it finished 9–0 at 03:18Z. So the loop's rule is now also the
+    query's WHERE, and only a row the pass will ask ESPN about can hold a slot.
     """
     from app.services.espn_api import ESPNAPIService
-    from app.models.models import Event
+    from app.models.models import Event, Sport
     from app.tasks.config import ESPN_SPORT_MAPPING
+    from sqlalchemy import and_
     from sqlalchemy.orm import selectinload
     import json as _json_mod
     from sqlalchemy import text as _raw_text
 
     stale_cutoff = datetime.now(timezone.utc) - timedelta(minutes=2)
+    # Every writer stamps `fetched_at` with `datetime.isoformat()` in UTC, so the
+    # stored strings sort in time order as text. A cast could raise on one bad
+    # row and cost the whole pass.
+    fetched_at_text = Event.box_score_data["fetched_at"].astext
     live_box_result = await session.execute(
         select(Event)
         .options(selectinload(Event.sport))
         .where(
             Event.status == "live",
             Event.espn_id.isnot(None),
+            # #9067: the same two rules the loop below applies.
+            Event.sport_id.in_(
+                select(Sport.id).where(Sport.key.in_(list(ESPN_SPORT_MAPPING)))
+            ),
+            or_(
+                Event.box_score_data.is_(None),
+                and_(
+                    Event.box_score_data["live"].astext == "true",
+                    or_(
+                        fetched_at_text.is_(None),
+                        fetched_at_text < stale_cutoff.isoformat(),
+                    ),
+                ),
+            ),
         )
         .order_by(
             Event.box_score_data["fetched_at"].astext.asc().nullsfirst(),
