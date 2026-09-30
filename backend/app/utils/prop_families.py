@@ -223,6 +223,17 @@ _LABEL_OVERRIDES = {
     "ballon dor": "Ballon d'Or",
 }
 
+# The family key is sport-free on purpose (see `family_scope`), so a title
+# that only one sport uses is keyed by sport as well.  "championship game mvp"
+# holds the Super Bowl MVP AND the World Series MVP: the Dodgers and Red Sox
+# pages headed Ohtani 13% / Freeman 9% "Championship Game MVP", which is
+# football's word — baseball has no championship game (#9855).  A scope with
+# no entry here (or no sport at all) keeps the neutral override above.
+_SPORT_LABEL_OVERRIDES = {
+    ("baseball", "championship game mvp"): "World Series MVP",
+    ("football", "championship game mvp"): "Super Bowl MVP",
+}
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -795,7 +806,9 @@ _UPPERCASE_LABEL_WORDS = frozenset({
 })
 
 
-def _family_label(fk: str) -> str:
+def _family_label(fk: str, scope: str | None = None) -> str:
+    if (scope, fk) in _SPORT_LABEL_OVERRIDES:
+        return _SPORT_LABEL_OVERRIDES[(scope, fk)]
     if fk in _LABEL_OVERRIDES:
         return _LABEL_OVERRIDES[fk]
     return " ".join(
@@ -992,9 +1005,10 @@ def group_prop_families(markets: list[dict]) -> list[dict]:
                 # The emitted key carries the scope ONLY when a sport actually
                 # split this family, so it stays unique per card; the LABEL is
                 # always derived from the bare key, because a reader is owed
-                # "Defensive Player Of The Year", never "football:defensive…".
+                # "Defensive Player Of The Year", never "football:defensive…"
+                # — plus the sport, for a title only one sport uses (#9855).
                 "family_key": emitted_key,
-                "label": _family_label(fk),
+                "label": _family_label(fk, scope),
                 "sport": scope,
                 "entity_count": len(distinct),
                 "sources": sorted({s for r in merged for s in r.get("sources", [])}),
