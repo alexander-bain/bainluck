@@ -123,12 +123,15 @@ async def _seed(
     upcoming: bool = False,
     futures: str | None = "season",
     probability: float = 0.30,
+    outcome_name: str = CLUB,
 ) -> dict[int, str]:
     """Eight Dodgers finals, newest first as `final_1` .. `final_8`.
 
     `futures`: "season" = an open World Series market (no game) carrying the
     club's outcome; "game" = the same outcome on an `open` market tied to the
     newest final; None = no market at all. `upcoming` adds tomorrow's game.
+    `outcome_name` is the outcome's own name — the club by default; a player
+    anchored to the club is #9762's shape.
     """
     from app.models.models import Event, FuturesMarket, FuturesOutcome, Sport, Team
 
@@ -186,7 +189,7 @@ async def _seed(
             session.add(market)
             await session.flush()
             session.add(FuturesOutcome(
-                market_id=market.id, name=CLUB, team_id=club.id,
+                market_id=market.id, name=outcome_name, team_id=club.id,
                 current_probability=probability,
                 external_id=f"{market.external_id}:LAD",
             ))
@@ -287,3 +290,39 @@ async def test_control_a_sub_one_percent_outcome_is_not_a_live_question(
     _card_leads_with_the_club(payload)
     assert _labels(payload, ids) == ALL_FINALS
     assert payload["pagination"]["total_pages"] == 1
+
+
+# #9762 — `team_id` also anchors PLAYERS and mis-anchored rows. Read on
+# production 2026-09-30 07:57Z: `mets` and `orioles`, both out of the playoffs,
+# opened with 3 finals and "Page 1 of 3" because Carson Benge (ROY 30%), Nolan
+# McLean (Gold Glove 45%), Pete Alonso and an NFL "Baltimore" row carried their
+# `team_id`. The outcome's own name must match the typed term too.
+
+
+@pytest.mark.parametrize(
+    "outcome_name",
+    [
+        "Shohei Ohtani",  # a player anchored to the club (MVP board)
+        "Los Angeles records 400+ passing yards in a single game",  # a poison row
+    ],
+)
+async def test_control_an_outcome_that_does_not_name_the_club_arms_nothing_9762(
+    maker, search, outcome_name,
+):
+    """Priced well above the floor, open, not game-linked — and still not the club."""
+    ids = await _seed(maker, outcome_name=outcome_name, probability=0.45)
+    payload = await search(QUERY)
+    _card_leads_with_the_club(payload)
+    assert _labels(payload, ids) == ALL_FINALS, _labels(payload, ids)
+    assert payload["pagination"]["total_pages"] == 1
+
+
+async def test_the_club_outcome_under_its_venue_name_still_arms_9762(maker, search):
+    """The new clause is a whole-word match, so a board naming `... Dodgers` arms."""
+    from app.routes.events import _SEARCH_BYE_FINALS_CAP as CAP
+
+    ids = await _seed(maker, outcome_name="LA Dodgers")
+    payload = await search(QUERY)
+    _card_leads_with_the_club(payload)
+    assert _labels(payload, ids) == ALL_FINALS[:CAP], _labels(payload, ids)
+    assert payload["pagination"]["total_pages"] == 2

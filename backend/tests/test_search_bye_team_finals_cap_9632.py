@@ -62,7 +62,9 @@ def _sql(stmt) -> str:
 
 
 class TestTheProbe:
-    SQL = _sql(_search_bye_finals_probe([ev.Event.home_team_name == "Los Angeles Dodgers"], [10707, 861]))
+    SQL = _sql(_search_bye_finals_probe(
+        [ev.Event.home_team_name == "Los Angeles Dodgers"], [10707, 861], r"\mdodgers\M",
+    ))
 
     def test_it_is_one_statement_of_two_exists(self):
         assert self.SQL.count("EXISTS") == 2, self.SQL
@@ -77,6 +79,10 @@ class TestTheProbe:
         assert "futures_markets.status = 'open'" in self.SQL
         assert "futures_markets.event_id IS NULL" in self.SQL
         assert "futures_outcomes.current_probability >= 0.01" in self.SQL
+
+    def test_the_outcome_must_also_name_the_club_9762(self):
+        """#9762: `team_id` anchors players too — the outcome's own name must match."""
+        assert "futures_outcomes.name ~* " in self.SQL and "mdodgers" in self.SQL, self.SQL
 
 
 class TestTheHandlerWiring:
@@ -94,6 +100,12 @@ class TestTheHandlerWiring:
         """Every rescue arm fires on 0 and swaps `query`; the probe reads `event_conditions`."""
         taken = self.SRC.index("_primary_total_count = total_count")
         first_rescue = self.SRC.index("if total_count == 0 and not degraded")
-        probe = self.SRC.index("_search_bye_finals_probe(event_conditions, _bye_team_ids)")
+        probe = self.SRC.index("event_conditions, _bye_team_ids, _bye_pattern")
         assert taken < first_rescue < probe
         assert "_primary_total_count > _SEARCH_BYE_FINALS_CAP" in self.SRC
+
+    def test_an_unservable_term_never_probes_9762(self):
+        """No whole-word pattern ⇒ no team ids ⇒ the page stays uncapped."""
+        pattern = self.SRC.index("_bye_pattern = contender_word_pattern(_q_identity)")
+        gate = self.SRC.index("and _bye_pattern\n")
+        assert pattern < gate < self.SRC.index("if _bye_team_ids and time.monotonic()")

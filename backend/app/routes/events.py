@@ -173,6 +173,7 @@ from app.utils.search_headline_contender import (
     MIN_CONTENDER_PROBABILITY,
     MIN_CONTENDER_VOLUME,
     contender_patterns,
+    contender_word_pattern,
     on_page_contender_candidates,
     promote_headline_contenders,
     reserve_headline_slot,
@@ -3382,7 +3383,7 @@ def _search_bye_team_ids(team_rows, query: str) -> list[int]:
     })
 
 
-def _search_bye_finals_probe(event_conditions, team_ids: list[int]):
+def _search_bye_finals_probe(event_conditions, team_ids: list[int], pattern: str):
     """#9632: ONE statement — nothing left to play AND the club has live futures.
 
     True only when (a) no matched game is `live` or `scheduled` — a stale
@@ -3393,6 +3394,16 @@ def _search_bye_finals_probe(event_conditions, team_ids: list[int]):
     is excluded because Kalshi leaves settled game markets `open` (gotcha #33).
     Both arms are EXISTS, so the upcoming-game case (`chiefs`) stops at its
     first scheduled row.
+
+    #9762: "one of the club's outcomes" is TWO signals, not a `team_id`. The
+    column also anchors players and mis-anchored rows — `mets` on 2026-09-30,
+    out of the playoffs, was capped by Carson Benge (ROY 30%) and Nolan McLean
+    (Gold Glove 45%), `orioles` by Pete Alonso and an NFL "Baltimore" row,
+    while both clubs' own boards sat at Kalshi's 1¢ floor. So the outcome's own
+    name must also match the typed term as a whole word (`pattern`, from
+    `contender_word_pattern`), the same agreement
+    `_headline_contender_outcome_clause` requires: `Los Angeles Dodgers` passes
+    for `dodgers`, `Carson Benge` and `New York M` do not.
     """
     nothing_to_play = ~(
         select(Event.id)
@@ -3405,6 +3416,7 @@ def _search_bye_finals_probe(event_conditions, team_ids: list[int]):
         .join(FuturesMarket, FuturesMarket.id == FuturesOutcome.market_id)
         .where(
             FuturesOutcome.team_id.in_(team_ids),
+            FuturesOutcome.name.op("~*")(pattern),
             FuturesMarket.status == "open",
             FuturesMarket.event_id.is_(None),
             FuturesOutcome.current_probability >= 0.01,
@@ -10242,9 +10254,14 @@ async def search_events(
     # is cut, from the query alone, so page two computes the same answer and
     # starts where page one stopped. A shed probe leaves the page as it was.
     _bye_finals_capped = False
+    # #9762: an unservable term (no 3+ character word) cannot name the club's
+    # own outcome, so it leaves the page uncapped.
+    _bye_pattern = contender_word_pattern(_q_identity)
     _bye_team_ids = (
         _search_bye_team_ids(_early_team_rows, _q_identity)
-        if _early_team_rows and _primary_total_count > _SEARCH_BYE_FINALS_CAP
+        if _early_team_rows
+        and _bye_pattern
+        and _primary_total_count > _SEARCH_BYE_FINALS_CAP
         else []
     )
     if _bye_team_ids and time.monotonic() <= _deadline:
@@ -10252,7 +10269,9 @@ async def search_events(
         try:
             _bye_finals_capped = bool(
                 (await db.execute(
-                    _search_bye_finals_probe(event_conditions, _bye_team_ids)
+                    _search_bye_finals_probe(
+                        event_conditions, _bye_team_ids, _bye_pattern
+                    )
                 )).scalar()
             )
         except Exception as exc:  # noqa: BLE001
