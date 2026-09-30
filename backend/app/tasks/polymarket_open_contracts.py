@@ -189,6 +189,9 @@ class OpenContractAdmission:
     #: game socket). Price-only fan-out: the token is subscribed once, and each
     #: of its ticks is buffered on the owner AND on every mirror.
     asset_mirrors: dict[str, list[tuple[int, int]]] = field(default_factory=dict)
+    #: #9733 follow-on — leg → the other leg of its binary, both admitted
+    #: (``complement_pairs``). A price accepted for one also prices the other.
+    complement_of: dict[int, int] = field(default_factory=dict)
     counts: dict[str, int] = field(
         default_factory=lambda: {
             "markets": 0,
@@ -201,6 +204,7 @@ class OpenContractAdmission:
             "assets_duplicate": 0,
             "legs_mirrored": 0,
             "legs_mirrored_by_condition": 0,
+            "legs_complemented": 0,
         }
     )
 
@@ -392,6 +396,57 @@ def open_contract_asset_map(
                     admitted = True
             if admitted:
                 counts["markets_admitted"] += 1
+
+    out.complement_of = complement_pairs(
+        legs_by_market,
+        set(out.asset_to_outcome.values()) | set(out.mirrored_outcomes()),
+        graded,
+        excluded,
+    )
+    counts["legs_complemented"] = len(out.complement_of)
+    return out
+
+
+def complement_pairs(
+    legs_by_market: Mapping[int, list[tuple[int, str]]],
+    admitted: set[int],
+    graded: set[int],
+    excluded: set[int] = frozenset(),
+) -> dict[int, int]:
+    """``leg → other leg`` for every open market that is one binary contract.
+
+    A market qualifies only when it has exactly two legs, and they are token 0
+    and token 1 of the same condition (``contract_key``). Both legs must be
+    admitted to this arm and neither graded. Two tokens of one condition pay
+    out 1 between them, so either price fixes the other. That makes this a
+    structural test, not a guess from names.
+
+    #9733 follow-on. Each tick priced only its own token's leg. A leg whose
+    next quote was refused (a wide book) or never came kept its old number
+    while its sibling moved. Measured 2026-09-30 13:3xZ: 29 of 7,883 streamed
+    binaries stored a pair more than 10 points from 100. Specimens: George
+    Kittle 524.5+ receiving yards, market 61352683, served Yes 77% / No 10%
+    after a 20-share No sell at 0.10 (venue 76.5 / 23.5); HOOD $125 week
+    high, market 62403481, stored Yes 0.815 / No 0.55.
+
+    Anything else (a field board, a market on the game slate, a leg this arm
+    does not carry, a suffix naming no token) has no complement. Those legs
+    are priced exactly as before.
+    """
+    out: dict[int, int] = {}
+    for market_id, legs in legs_by_market.items():
+        if market_id in excluded or len(legs) != 2:
+            continue
+        (a, ext_a), (b, ext_b) = legs
+        key_a, key_b = contract_key(ext_a), contract_key(ext_b)
+        if key_a is None or key_b is None or key_a[0] != key_b[0]:
+            continue
+        if {key_a[1], key_b[1]} != {0, 1}:
+            continue
+        if a in graded or b in graded or a not in admitted or b not in admitted:
+            continue
+        out[a] = b
+        out[b] = a
     return out
 
 
@@ -400,6 +455,7 @@ def plan_flush_chunks(
     open_outcome_ids: "set[int] | frozenset[int]",
     chunk_rows: int = FLUSH_CHUNK_ROWS,
     open_chunk_limit: Optional[int] = OPEN_FLUSH_CHUNKS_PER_FLUSH,
+    complement_of: Optional[Mapping[int, int]] = None,
 ) -> list[list[int]]:
     """The flush's transactions: every linked row first, then open rows.
 
@@ -407,14 +463,44 @@ def plan_flush_chunks(
     written; open rows are capped at ``open_chunk_limit`` chunks (None = all,
     for the final drain). Rows past the cap are simply not planned — they stay
     in the buffer, keep their place at its head, and are planned next flush.
+
+    CERT-3868 repair (``9733-ATOMIC-COMPLEMENT-FLUSH``). ``complement_of``
+    (``complement_pairs``) ties the two legs of one binary together. When
+    both are buffered they are one unit: planned into the SAME chunk, at the
+    first leg's place, or deferred together. A chunk is never split between
+    them and the cap never admits one without the other. Before this, 999 rows
+    ahead of a pair put leg 1000 in the second chunk and deferred leg 1001, so
+    one side committed and was read while the other still held its old price.
+    A unit that would overflow the current chunk starts the next one.
     """
     size = max(1, int(chunk_rows))
-    linked: list[int] = []
-    opened: list[int] = []
-    for oid in outcome_ids:
-        (opened if oid in open_outcome_ids else linked).append(oid)
-    chunks = [linked[i:i + size] for i in range(0, len(linked), size)]
-    open_chunks = [opened[i:i + size] for i in range(0, len(opened), size)]
+    complement_of = complement_of or {}
+    order = list(outcome_ids)
+    buffered = set(order)
+    placed: set[int] = set()
+    linked: list[list[int]] = []
+    opened: list[list[int]] = []
+    for oid in order:
+        if oid in placed:
+            continue
+        unit = [oid]
+        other = complement_of.get(oid)
+        if other is not None and other in buffered and other not in placed:
+            unit.append(other)
+        placed.update(unit)
+        is_open = any(o in open_outcome_ids for o in unit)
+        (opened if is_open else linked).append(unit)
+
+    def pack(units: list[list[int]]) -> list[list[int]]:
+        packed: list[list[int]] = []
+        for unit in units:
+            if not packed or len(packed[-1]) + len(unit) > size:
+                packed.append([])
+            packed[-1].extend(unit)
+        return packed
+
+    chunks = pack(linked)
+    open_chunks = pack(opened)
     if open_chunk_limit is not None:
         open_chunks = open_chunks[: max(0, int(open_chunk_limit))]
     return chunks + open_chunks
