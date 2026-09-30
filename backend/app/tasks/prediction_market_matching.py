@@ -1947,7 +1947,9 @@ def _parse_venue_game_start(meta):
     """``venue_game_start`` out of one row's ``market_metadata``, or None.
 
     #9117: an MLB "time TBD" stamp comes back as its game day's stand-in
-    instant (:func:`_mlb_tbd_game_day`), never as a 3:33 AM first pitch.
+    instant (:func:`_mlb_tbd_game_day`), never as a 3:33 AM first pitch. A
+    WNBA placeholder (:func:`_wnba_tbd_game_day`) is returned as the venue gave
+    it: 17:00Z already IS 1 PM Eastern all season, so it is its own stand-in.
     """
     parsed = _parse_raw_venue_game_start(meta)
     if parsed is None:
@@ -2028,6 +2030,57 @@ def _mlb_tbd_game_day(meta, instant):
     return None
 
 
+#: WNBA's placeholder: a playoff game Polymarket lists before its tip-off is
+#: set carries ``startTime`` = its ``eventDate`` at exactly 17:00:00Z. Measured
+#: 2026-09-30 ~11:40Z on all four conditional games Gamma listed on 09-25
+#: (1081046-1081049, ``wnba-ind-las-2026-10-01`` et al.). Gamma re-times each
+#: one only once the league does, and until then #4965's ±3h guard refuses the
+#: real row: Fever @ Aces Game 3 (ESPN 401918022, 10-02T01:00Z, 8h from the
+#: stamp) had no Polymarket price for 79 passes after the series went 1-1, and
+#: the Game 2 legs sat refused from 09-25 to 09-27 the same way.
+#:
+#: 17:00Z is ALSO a real tip-off (1 PM Eastern: Minnesota @ Connecticut
+#: 2026-09-20, Phoenix @ Dallas 09-19), so unlike MLB's 3:33 AM it cannot mean
+#: "TBD" alone. Reading it as the Eastern DAY costs a real 17:00Z game nothing:
+#: its row is on that day, and one pair of WNBA teams never plays twice in a day.
+#: The slug's own date must equal the stamp's UTC date, which every placeholder
+#: satisfies and a stamp from another fixture does not. Only ``wnba-`` slugs:
+#: the league it was measured on.
+_WNBA_TBD_SLUG_PREFIX = "wnba-"
+_WNBA_TBD_UTC_CLOCK = (17, 0, 0)
+_WNBA_TBD_ZONE_NAME = "America/New_York"
+
+
+def _wnba_tbd_zone():
+    try:
+        from zoneinfo import ZoneInfo
+        return ZoneInfo(_WNBA_TBD_ZONE_NAME)
+    except Exception:  # pragma: no cover - no tzdata: never read a date-only stamp
+        return None
+
+
+_WNBA_TBD_ZONE = _wnba_tbd_zone()
+
+
+def _wnba_tbd_game_day(meta, instant):
+    """``(Eastern game date, Eastern UTC offset)`` for WNBA's placeholder stamp.
+
+    None for everything else: a non-WNBA slug, any other clock, a slug whose
+    date is not the stamp's, no tzdata.
+    """
+    if _WNBA_TBD_ZONE is None:
+        return None
+    slug = meta.get("polymarket_event_slug") if isinstance(meta, dict) else None
+    if not isinstance(slug, str) or not slug.startswith(_WNBA_TBD_SLUG_PREFIX):
+        return None
+    utc = instant.astimezone(timezone.utc)
+    if (utc.hour, utc.minute, utc.second, utc.microsecond) != (*_WNBA_TBD_UTC_CLOCK, 0):
+        return None
+    if slug[-10:] != utc.date().isoformat():
+        return None
+    return utc.date(), utc.astimezone(_WNBA_TBD_ZONE).utcoffset()
+
+
 def venue_game_day(market):
     """``(date, offset)`` when the venue gave only a DATE for this game. #9117.
 
@@ -2036,7 +2089,9 @@ def venue_game_day(market):
     """
     meta = getattr(market, "market_metadata", None)
     parsed = _parse_raw_venue_game_start(meta)
-    return None if parsed is None else _mlb_tbd_game_day(meta, parsed)
+    if parsed is None:
+        return None
+    return _mlb_tbd_game_day(meta, parsed) or _wnba_tbd_game_day(meta, parsed)
 
 
 def _venue_game_day_disagrees(market, commence) -> bool:
