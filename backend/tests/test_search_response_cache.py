@@ -1337,11 +1337,23 @@ def test_the_ttl_is_declared_once_and_is_the_whole_invalidation_contract():
 
     from app.routes import events
 
+    # #9947: the route no longer names the constant — its one write asks
+    # `search_response_ttl_seconds`, which returns it for every complete answer.
+    # A bare substring check here would now pass on the route's own COMMENT, so
+    # the claim is split: the route's write reads the helper
+    # (`test_search_thin_answer_ttl_9947.py` pins that positionally), and the
+    # helper hands a complete answer exactly this constant.
+    from app.utils.search_cache import search_response_ttl_seconds
+
     src = inspect.getsource(events.search_events)
-    assert "SEARCH_RESPONSE_TTL_SECONDS" in src, (
+    assert "search_response_ttl_seconds(" in src, (
         "the route hardcodes a TTL instead of reading the declared constant — "
         "the /typeahead 45->65s change had to be made in two places for exactly "
         "this reason, and the drift between them is a red test there"
+    )
+    assert (
+        search_response_ttl_seconds("merged", warmer_rebuild=False)
+        == SEARCH_RESPONSE_TTL_SECONDS
     )
 
 
