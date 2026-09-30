@@ -25625,6 +25625,9 @@ async def _build_game_markets(
     # change. Built from the plain list, before any commit boundary, so no ORM
     # attribute is read lazily here (gotcha #6).
     _ticker_by_market_id = {m.id: m.external_id for m in markets}
+    # #9849: the same plain-list pass for the venue's threshold label (#9383),
+    # read here for the same reason — no lazy ORM read after a commit boundary.
+    _threshold_label_by_market_id = {m.id: market_threshold_label(m) for m in markets}
 
     # #1735 — THE SUPPRESSED ROWS ARE EXACTLY THE ROWS OWED A RESULT.
     #
@@ -26169,6 +26172,28 @@ async def _build_game_markets(
         _ticker_by_market_id,
         protected_names=(event.home_team_name, event.away_team_name),
     )
+
+    # #9849 — THE DOOR #9383 MISSED. A single-leg Kalshi threshold market is
+    # stored as one `Yes` outcome and its question lives in
+    # `market_metadata.threshold_label`. Search, `/futures/{id}` and My Stuff
+    # print that label through `reader_outcome_name`; this route served the bare
+    # `Yes`, so `/events/15320289` read "1st Inning Total — Yes · Lost" directly
+    # above "a run scored in the first inning — Yes · Won". The market was
+    # "Over 1.5 runs in the 1st inning" and both were right. Applied LAST, after
+    # every filter and fold above has keyed on the stored name, and only to a
+    # row whose market carries a label — the helper replaces nothing but a bare
+    # `Yes`, so every other row is served exactly as before.
+    for _row in other_markets:
+        _label = _threshold_label_by_market_id.get(_row.get("_market_id"))
+        if _label:
+            _row["outcome_name"] = (
+                reader_outcome_name(
+                    _ticker_by_market_id.get(_row.get("_market_id")),
+                    _row.get("outcome_name"),
+                    _label,
+                )
+                or _row.get("outcome_name")
+            )
 
     response = {
         "event_id": event_id,
