@@ -92,6 +92,7 @@ from app.utils.period_window_grade import grade_period_window
 from app.utils.served_period_scores import served_period_scores
 from app.utils.final_score_margin import margin_verdict_from_final_score
 from app.utils.resolution_authority import authority_tier
+from app.utils.box_score_capture import BOX_SCORE_SOURCES, box_is_live_capture
 from app.utils.prop_window import prop_window_closed, prop_window_span
 from app.utils.event_rails import (
     live_first_order,
@@ -21540,12 +21541,25 @@ _SUPERLATIVE_NAME_RE = re.compile(r"\bmost\b")
 _BATTER_PITCHER_TWIN_STATS = {"strikeouts": "pitching strikeouts"}
 
 
+#: #9734 — the context for a finished event whose box is still a live-pass
+#: snapshot. Truthy, so it is not confused with "no box score" (None), and it
+#: carries none of the resolver helpers, so no path can read a stat from it.
+_LIVE_CAPTURE_CTX: dict = {"live_capture": True}
+
+
 def _build_prop_grade_context(event) -> Optional[dict]:
     """Build the per-event grading context (normalized box score + resolver
-    helpers) once. Returns None if the event has no usable box score data."""
+    helpers) once. Returns None if the event has no usable box score data.
+
+    #9734: a box the live pass wrote (``live: true``) is a snapshot of the game
+    mid-play, not its final line. It returns ``_LIVE_CAPTURE_CTX`` instead,
+    which grades nothing from the box and refuses the verdicts stored off it
+    (see `_grade_settled_prop`)."""
     box = getattr(event, "box_score_data", None)
     if not isinstance(box, dict):
         return None
+    if box_is_live_capture(box):
+        return _LIVE_CAPTURE_CTX
     # Production box scores key players by name under "players" (gotcha #37).
     raw_players = box.get("players", box)
     if not isinstance(raw_players, dict):
@@ -22308,6 +22322,18 @@ def _grade_settled_prop(event_finished, ctx, market, outcome, threshold, is_unde
         return res
 
     if ctx is None:
+        return _finish(result)
+    if ctx.get("live_capture"):
+        # #9734: the box is a mid-game snapshot, so it types no `hit` and no
+        # `actual`. A verdict the resolver STORED off that same box
+        # (`box_score`, `box_score_bound`) is the same mid-game read, so it is
+        # refused too: `is_winner` is withheld, which keeps
+        # `_build_props_script`'s is_winner fallback from printing it, and the
+        # venue fallback is skipped, because on such a row the only signal
+        # left would be the price. A venue's own settlement still grades.
+        if result["resolution_source"] in BOX_SCORE_SOURCES:
+            result["is_winner"] = None
+            return result
         return _finish(result)
     # #5097: the PLAYER is resolved before the stat key, because for the handful
     # of names that are true of a batter and a pitcher alike, which key to read
