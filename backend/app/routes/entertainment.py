@@ -20,6 +20,7 @@ from sqlalchemy.orm import selectinload
 from app.models import FuturesMarket
 from app.services import get_db
 from app.utils.hook_staleness import is_hook_stale
+from app.utils.ladder_headline import ladder_median_row
 from app.utils.ladder_monotonicity import cumulative_outcome_ladder
 from app.utils.cross_source_matching import (
     # #2427 — the deduping pair, not bare `clean_outcomes`: every row this file
@@ -299,6 +300,7 @@ def _market_row(
     top = priced[:max_outcomes]
     outcome_count = len(outcomes)
     return {
+        **_ladder_headline(market, priced),
         "q": market.name,
         # #6255 — `priced[0]`, not `outcomes[0]`. Both name the leader on every
         # ladder that has one priced rung above zero, but they part when every
@@ -385,6 +387,42 @@ def _market_row(
             )
             else market.hook_description
         ),
+    }
+
+
+def _ladder_headline(market: FuturesMarket, priced: list) -> dict:
+    """#9803 — the rung a ladder card quotes, when it is not the priced leader.
+
+    `priced` is sorted by price, so on a cumulative ladder `priced[0]` is the
+    LOOSEST rung: the answer that is nearly certain by construction. Production
+    2026-09-30, `/entertainment` Rotten Tomatoes cards at 390px:
+
+        Clayface · Rotten Tomatoes score        Above 45  95%   (median: Above 75  55.5%)
+        "Sense and Sensibility" RT Score?       60+       98%   (median: 75+  54%)
+
+    That was 10 of the 104 rows the page served. /weather (#9283) and the market
+    page (#9531) already quote the median rung through `ladder_median_row`. This
+    card links to that market page, so it asks the same helper, over the same
+    priced legs the card draws, rather than growing a second rule.
+
+    The result is served as `headline` ONLY when it differs from `priced[0]`.
+    Every other row carries `headline: None` and renders exactly as before.
+    `prob` stays the priced leader because `_is_interesting`, `_by_uncertainty`
+    and the hook gate all read it, and a display fix must not reorder the page.
+    """
+    median = ladder_median_row(
+        [{"name": o.name, "outcome": o} for o in priced],
+        question=market.name,
+        probability=lambda r: r["outcome"].current_probability,
+    )
+    if median is None or median["outcome"] is priced[0]:
+        return {"headline": None}
+    outcome = median["outcome"]
+    return {
+        "headline": {
+            "name": outcome.name,
+            "prob": round(float(outcome.current_probability) * 100, 1),
+        }
     }
 
 

@@ -1416,6 +1416,12 @@ function MarketFallback({ markets }: { markets: EntMarketRow[] }) {
 }
 
 function GenericMarketCard({ market }: { market: EntMarketRow }) {
+  // #9803: a ladder's priced leader is its loosest rung ("Above 45 · 95%");
+  // the served headline is the rung the market actually leans on.
+  const answer = market.headline ?? {
+    name: market.top_outcomes[0]?.name || "Yes",
+    prob: market.prob,
+  };
   return (
     <Link href={`/futures/${market.market_id}`}>
       <div className={s.card} style={{ padding: 14, height: "100%", display: "flex", flexDirection: "column", gap: 10 }}>
@@ -1461,11 +1467,11 @@ function GenericMarketCard({ market }: { market: EntMarketRow }) {
           }}
         >
           <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>
-            {market.top_outcomes[0]?.name || "Yes"}
+            {answer.name}
           </span>
-          <ProbPct value={market.prob} size={20} />
+          <ProbPct value={answer.prob} size={20} />
         </div>
-        <EntProbBar value={market.prob} height={4} />
+        <EntProbBar value={answer.prob} height={4} />
       </div>
     </Link>
   );

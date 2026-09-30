@@ -2395,6 +2395,8 @@ export interface EntMarketRow {
   hook: string | null;
   /** #9468: the legs are one cumulative ladder ("Before Dec 4", "Before Dec 5"…), served in rung order — not a race. */
   ladder?: boolean;
+  /** #9803: on a cumulative ladder, the tightest rung the market still calls likely — served only when it is not `top_outcomes[0]`. */
+  headline?: { name: string; prob: number } | null;
 }
 
 export interface EntThresholdGroup {
