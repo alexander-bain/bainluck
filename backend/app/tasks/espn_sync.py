@@ -6829,6 +6829,8 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
         # appearing is the deployment proof and a 0 is a reading.
         "replaced_player_holds": 0,
         "replaced_player_id_releases": 0,
+        # A hold/release rolled back to its own savepoint (#9797 follow-up).
+        "replaced_player_write_errors": 0,
     }
 
     # ═══ THE BOARD ═══
@@ -7161,42 +7163,66 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
                         receipt=receipt,
                         competition=by_id.get(event.espn_id),
                     )
-                    if gone is not None:
-                        event.status = EVENT_SUSPENDED
-                        stats["replaced_player_holds"] += 1
-                        logger.warning(
-                            "Tennis REPLACED PLAYER: event %s (%s v %s) suspended — "
-                            "ESPN %s no longer names %s",
-                            event.id, ours[0], ours[1], event.espn_id, gone,
-                        )
                     # AND IT GIVES THE ID BACK (#9797). ESPN kept the id for
                     # the lucky loser, so it now names a match we also hold,
                     # and while this row keeps it that match can never be
-                    # stamped. Same evidence as the hold; read AFTER it, so the
-                    # status it tests is the one the hold just wrote.
+                    # stamped. Same evidence as the hold; it tests the status
+                    # the hold is about to write.
                     released = released_espn_id(
-                        our_status=event.status,
+                        our_status=EVENT_SUSPENDED if gone is not None else event.status,
                         our_espn_id=event.espn_id,
                         ours=ours,
                         receipt=receipt,
                         competition=by_id.get(event.espn_id),
                     )
+                    if gone is None and released is None:
+                        continue
+                    # ONE ROW'S WRITE, ONE SAVEPOINT (#9797 follow-up). The
+                    # release is flushed now, so the replacement's stamp (this
+                    # pass or the next) finds no holder, and the unit of work
+                    # can never order its UPDATE ahead of this one. A flush that
+                    # fails outside a savepoint leaves the pass's ONE
+                    # transaction aborted, and the handler below would log it
+                    # and let every later row, and the final COMMIT, fail on it
+                    # (#8796). Both writes are made INSIDE the savepoint:
+                    # `begin_nested` flushes pending state before it opens, so a
+                    # status set above it would meet a lock outside it.
+                    # Rolled back, the row is expired, so it is read only
+                    # through the scalars copied here (gotcha #6).
+                    event_id, held_id = event.id, event.espn_id
+                    try:
+                        async with _step_savepoint(session):
+                            if gone is not None:
+                                event.status = EVENT_SUSPENDED
+                            if released is not None:
+                                event.espn_id = None
+                                # A whole new list, never an in-place append
+                                # (gotcha #4).
+                                event.event_tags = [
+                                    *(event.event_tags or []),
+                                    f"{ESPN_ID_RELEASED_TAG_PREFIX}{released}",
+                                ]
+                    except Exception as exc:  # noqa: BLE001 — this row, not the pass
+                        stats["replaced_player_write_errors"] += 1
+                        logger.warning(
+                            "Tennis REPLACED PLAYER: event %s (%s v %s) hold/release "
+                            "of espn_id %s rolled back, retried next pass: %s",
+                            event_id, ours[0], ours[1], held_id, exc,
+                        )
+                        continue
+                    if gone is not None:
+                        stats["replaced_player_holds"] += 1
+                        logger.warning(
+                            "Tennis REPLACED PLAYER: event %s (%s v %s) suspended — "
+                            "ESPN %s no longer names %s",
+                            event_id, ours[0], ours[1], held_id, gone,
+                        )
                     if released is not None:
-                        event.espn_id = None
-                        # A whole new list, never an in-place append (gotcha #4).
-                        event.event_tags = [
-                            *(event.event_tags or []),
-                            f"{ESPN_ID_RELEASED_TAG_PREFIX}{released}",
-                        ]
-                        # Flushed now, so the replacement's stamp (this pass or
-                        # the next) finds no holder, and the unit of work can
-                        # never order its UPDATE ahead of this one.
-                        await session.flush()
                         stats["replaced_player_id_releases"] += 1
                         logger.warning(
                             "Tennis REPLACED PLAYER: event %s (%s v %s) released "
                             "espn_id %s — ESPN now lists another pairing under it",
-                            event.id, ours[0], ours[1], released,
+                            event_id, ours[0], ours[1], released,
                         )
                     continue
 

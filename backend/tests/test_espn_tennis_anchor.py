@@ -12,6 +12,7 @@ those numbers, and in both directions: each pass links what it should and
 refuses what it must.
 """
 
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -835,6 +836,17 @@ class _Session:
         it.
         """
         return None
+
+    @asynccontextmanager
+    async def begin_nested(self):
+        """The SAVEPOINT the task opens around a replaced-player write (#9797).
+
+        Counted, not simulated: a fake cannot abort a transaction, so what the
+        savepoint buys is proven on a real engine, in
+        `integration/test_tennis_release_savepoint_pg_9797.py`.
+        """
+        self.savepoints = getattr(self, "savepoints", 0) + 1
+        yield self
 
     def _apply_update(self, statement):
         """Evaluate a conditional UPDATE's WHERE against the in-memory row."""
