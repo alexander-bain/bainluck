@@ -390,10 +390,15 @@ struct TotalPointsSpectrumView: View {
     /// cost of drift here is a card rendered as a bare heading.
     private enum ProjectionTense { case pregame, live, final }
 
+    /// #9708 — the served pace, only when it has standing against the header's
+    /// score (``LivePaceStanding``): never a scoreless 0, never an older score.
+    private var liveProjection: (projected: Double, scored: Int)? {
+        LivePaceStanding.projection(gameMarkets.pace, scoreboardHome: homeScore, scoreboardAway: awayScore)
+    }
+
     private var strip: ProjectionTense? {
         if isPre, canStillBeGraded { return .pregame }
-        if isLive, countsTheUnit, let pace = gameMarkets.pace,
-           pace.projectedTotal != nil, pace.totalScored != nil { return .live }
+        if isLive, countsTheUnit, liveProjection != nil { return .live }
         if isDone, actualTotal != nil { return .final }
         return nil
     }
@@ -410,10 +415,8 @@ struct TotalPointsSpectrumView: View {
         case .pregame:
             preGameStrip(ouLine: pregame ?? 0)
         case .live:
-            if let pace = gameMarkets.pace,
-               let paceTotal = pace.projectedTotal,
-               let scored = pace.totalScored {
-                liveStrip(pregameTotal: pregame, paceTotal: paceTotal, scored: scored)
+            if let live = liveProjection {
+                liveStrip(pregameTotal: pregame, paceTotal: live.projected, scored: live.scored)
             }
         case .final:
             if let actual = actualTotal { finalStrip(actual: actual) }
