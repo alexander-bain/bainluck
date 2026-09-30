@@ -402,9 +402,35 @@ export function startBadgeLabel(
   hasStarted: boolean,
   countdown: string | null | undefined,
   heldByServer: boolean = false,
+  playedBeforeClock: boolean = false,
 ): string {
   if (hasStarted && !heldByServer) return "Started";
+  // #9780 — games already on the board: the clock is when play RESUMES.
+  if (playedBeforeClock) return countdown ? `Resumes in ${countdown}` : "Paused";
   return countdown ? `Starts in ${countdown}` : "Pregame";
+}
+
+/**
+ * #9780 — AN INTERRUPTED MATCH: THE CLOCK SAYS LATER, THE BOARD SAYS PLAYED.
+ *
+ * Lehecka v Bergs (`/events/15320485`, 2026-09-30) played a set, 6-3, and was
+ * stopped; ESPN moved the rest of it to Oct 1 05:00Z. The row carried that
+ * future `commence_time` beside a linescore of `[[6, 3]]`, and the hero read
+ * "Starts in 14h 13m" with no score — a match a set in, announced as not begun.
+ *
+ * A game on the board is evidence the match has been played; a future clock on
+ * such a row can only be the resumption. Same "has it produced a game at all"
+ * test as `liveHeroGamesLine`: `[[0, 0]]` is not play. A finished match is
+ * never interrupted — it has a result.
+ */
+export function playedBeforeItsClock(input: {
+  hasStarted: boolean;
+  isFinished: boolean;
+  linescore?: { sets?: [number, number][] | null } | null;
+}): boolean {
+  if (input.hasStarted || input.isFinished) return false;
+  const sets = input.linescore?.sets ?? [];
+  return sets.some(([home, away]) => home > 0 || away > 0);
 }
 
 /**
