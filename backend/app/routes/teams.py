@@ -1103,6 +1103,33 @@ def _championship_path_stmt(team_id: int):
     )
 
 
+_TIER_LABELS = {1: "Championship", 2: "Conference", 4: "Division"}
+
+_AMERICAN_LEAGUE = re.compile(r"\b(?:(?i:american league)|AL)\b")
+_NATIONAL_LEAGUE = re.compile(r"\b(?:(?i:national league)|NL)\b")
+
+
+def _championship_tier_label(
+    tier: int, team_sport_key: str | None, market_name: str | None
+) -> str:
+    """The Championship Path step's name, in the sport's own words (#9816).
+
+    MLB has leagues and a pennant, not conferences: the Red Sox's tier-2 step is
+    "American League Champion" and printed "Conference 5%" on web and iPhone,
+    which both render the label verbatim. The league is read off the market's
+    own name ("American League Champion", "MLB: 2026 National League Champion");
+    a name that names neither league still says "Pennant", never "Conference".
+    """
+    if tier == 2 and team_sport_key == "baseball_mlb":
+        name = market_name or ""
+        if _AMERICAN_LEAGUE.search(name):
+            return "AL Pennant"
+        if _NATIONAL_LEAGUE.search(name):
+            return "NL Pennant"
+        return "Pennant"
+    return _TIER_LABELS.get(tier, "Other")
+
+
 async def _get_championship_path(
     team_id: int,
     db: AsyncSession,
@@ -1168,7 +1195,6 @@ async def _get_championship_path(
     )
     current_base = _season_base_year(current_season)
 
-    tier_labels = {1: "Championship", 2: "Conference", 4: "Division"}
     team_category = sport_key_llm_category(team_sport_key)
 
     # Collect all valid outcomes per tier, then pick the best per tier.
@@ -1270,7 +1296,7 @@ async def _get_championship_path(
 
         path.append({
             "tier": tier,
-            "label": tier_labels.get(tier, "Other"),
+            "label": _championship_tier_label(tier, team_sport_key, best_market.name),
             "market_name": best_market.name,
             "market_id": best_market.id,
             "probability": round(avg_prob, 4),
