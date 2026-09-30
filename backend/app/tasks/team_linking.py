@@ -385,6 +385,110 @@ async def _relink_outside_market_league(
             stats["outcomes_unlinked_outside_market_league"] += 1
 
 
+# Outcome names Phase 3c reads: two to four words (a name suffix included). No
+# letters in it, so case-insensitive `~*` selects exactly what `~` would.
+_GIVEN_NAME_SHAPE = r"^[^ ]+( [^ ]+){1,3}$"
+
+
+def _rests_on_given_name_city(name: str, team_name: str, alternate_names) -> bool:
+    """True when a stored link can only have come from a given name before the team's city (#9726).
+
+    False whenever any of the team's names still matches the outcome.
+    """
+    from app.utils.team_linking import _names_match, given_name_before_city
+
+    alts = [a for a in alternate_names if isinstance(a, str)] if isinstance(
+        alternate_names, list
+    ) else []
+    if not any(given_name_before_city(name, alias, team_name) for alias in alts):
+        return False
+    return not _names_match(name, team_name, alts)
+
+
+def _on_own_roster(name: str, roster) -> bool:
+    """True when the team's own roster lists the person (a Huskies player named Washington)."""
+    from app.utils.team_linking import match_outcome_to_roster
+
+    players = [
+        (p.get("name") if isinstance(p, dict) else p)
+        for p in (roster if isinstance(roster, list) else [])
+    ]
+    players = [p for p in players if isinstance(p, str) and len(p) >= 4]
+    return bool(players) and match_outcome_to_roster(name, {0: players}) == 0
+
+
+async def _unlink_given_name_city_alias(
+    session: AsyncSession, stats: dict, limit: int
+) -> None:
+    """Clear a stored link made by a surname that is a team's city (#9726).
+
+    Step 1 no longer binds "Parker Washington" to the Washington Huskies, but
+    Phase 2 only selects ``team_id IS NULL``, so the links it already wrote would
+    stay forever. Each open outcome whose link rests only on that shape, and whose
+    team's roster does not list the person, is set to NULL; Phase 2 then offers it
+    to the roster matcher (Darnell Washington reaches the Steelers) or leaves it
+    unlinked.
+    """
+    from app.models import FuturesMarket, FuturesOutcome, Team
+
+    rows = (
+        await session.execute(
+            select(FuturesOutcome.id, FuturesOutcome.name, FuturesOutcome.team_id)
+            .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
+            .where(
+                FuturesMarket.status == "open",
+                FuturesOutcome.team_id.is_not(None),
+                FuturesOutcome.name.op("~*")(_GIVEN_NAME_SHAPE),
+            )
+            .order_by(FuturesOutcome.id)
+        )
+    ).all()
+    if not rows:
+        return
+    teams = {
+        t.id: t
+        for t in (
+            await session.execute(
+                select(Team.id, Team.name, Team.alternate_names).where(
+                    Team.id.in_({r.team_id for r in rows})
+                )
+            )
+        ).all()
+    }
+    suspects = [
+        r
+        for r in rows
+        if r.team_id in teams
+        and _rests_on_given_name_city(
+            r.name, teams[r.team_id].name, teams[r.team_id].alternate_names
+        )
+    ]
+    if not suspects:
+        stats["links_on_given_name_city_alias"] = 0
+        return
+    rosters = dict(
+        (
+            await session.execute(
+                select(Team.id, Team.roster_players).where(
+                    Team.id.in_({r.team_id for r in suspects})
+                )
+            )
+        ).all()
+    )
+    doomed = [r.id for r in suspects if not _on_own_roster(r.name, rosters.get(r.team_id))]
+    stats["links_on_given_name_city_alias"] = len(doomed)
+    doomed = doomed[:limit]
+    if not doomed:
+        return
+
+    outcomes = (
+        await session.execute(select(FuturesOutcome).where(FuturesOutcome.id.in_(doomed)))
+    ).scalars().all()
+    for outcome in outcomes:
+        outcome.team_id = None
+        stats["outcomes_unlinked_given_name_city_alias"] += 1
+
+
 async def _relink_outside_market_conference(
     session: AsyncSession, stats: dict, limit: int
 ) -> None:
@@ -560,6 +664,7 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
         "outcomes_refused_outside_market_conference": 0,
         "outcomes_relinked_into_market_conference": 0,
         "outcomes_unlinked_outside_market_conference": 0,
+        "outcomes_unlinked_given_name_city_alias": 0,
         "markets_tiered": 0,
         "errors": [],
     }
@@ -859,6 +964,12 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
                 await _relink_outside_market_conference(session, stats, limit)
             except Exception as e:
                 stats["errors"].append(f"Market-conference relink: {str(e)}")
+
+            # --- Phase 3c: stored links on a surname that is a city (#9726) ---
+            try:
+                await _unlink_given_name_city_alias(session, stats, limit)
+            except Exception as e:
+                stats["errors"].append(f"Given-name city unlink: {str(e)}")
 
         # Outside the session:``get_task_session`` commits on the way out and
         # rolls back on an exception, so reaching here is the proof the batch
