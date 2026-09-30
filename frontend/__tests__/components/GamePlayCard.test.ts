@@ -127,7 +127,13 @@ describe("GamePlayCard settled state is not printed twice (#2815)", () => {
 describe("#3295 — the probability pair sums to 100", () => {
   /** The two rendered percents, in DOM order (home first, then away). */
   function percents(html: string): number[] {
-    return [...html.matchAll(/>(\d{1,3})%</g)].map((m) => Number(m[1]));
+    return [...html.matchAll(/>(?:&gt;|&lt;)?(\d{1,3})%</g)].map((m) => Number(m[1]));
+  }
+  /** The two sides exactly as printed, marker included (`>99%`, `<1%`). */
+  function printed(html: string): string[] {
+    return [...html.matchAll(/>((?:&gt;|&lt;)?\d{1,3}%)</g)].map((m) =>
+      m[1].replace("&gt;", ">").replace("&lt;", "<"),
+    );
   }
 
   it("prints 62/38, not 62/39, on the half-cent pair that was live", () => {
@@ -155,11 +161,19 @@ describe("#3295 — the probability pair sums to 100", () => {
   it("agrees with the hero, which rounds the same pair the same way", () => {
     // The two surfaces are a scroll apart. If they can round differently the
     // reader sees the disagreement, whatever either number is on its own.
+    // #9704 — "the same way" is the hero's WHOLE rule: the pair integers
+    // (`renderedDuelPercents`) AND the boundary marker (`sideParts`). Comparing
+    // integers alone passed while this card printed `100%` beside a `>99%` hero.
     const { renderedDuelPercents } = require("../../lib/renderedPercent");
-    for (const home of [0.615, 0.605, 0.5, 0.995, 0.005, 0.7834]) {
+    const { sideParts } = require("../../components/EventHeroProbabilityPair");
+    const hero = (prob: number, shown: number) => {
+      const { marker, digits } = sideParts(prob, shown);
+      return `${marker ?? ""}${digits}%`;
+    };
+    for (const home of [0.615, 0.605, 0.5, 0.995, 0.999, 0.005, 0.001, 0.7834]) {
       const html = render(makePoint({ homeProb: home, awayProb: 1 - home }));
       const [awayPct, homePct] = renderedDuelPercents(1 - home, home);
-      expect(percents(html)).toEqual([homePct, awayPct]);
+      expect(printed(html)).toEqual([hero(home, homePct), hero(1 - home, awayPct)]);
     }
   });
 
@@ -169,5 +183,46 @@ describe("#3295 — the probability pair sums to 100", () => {
   it("does not normalise a pair that is not a complement", () => {
     const html = render(makePoint({ homeProb: 0.7, awayProb: 0.2 }));
     expect(percents(html)).toEqual([70, 20]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #9704 — A LIVE BLOWOUT IS NOT A FINISHED GAME
+//
+// /events/15319563, Red Sox at Yankees, Bottom 8th, 9–0, served blend 0.999.
+// The hero read `>99% – <1%`; this readout, directly under the chart, read
+// `Yankees 100% — Red Sox 0%`. The pair integers were right (100/0 sum to 100);
+// the card printed them raw and skipped the boundary rule the hero runs.
+// ---------------------------------------------------------------------------
+
+describe("#9704 — rounding never prints a certainty the value is not on", () => {
+  function sides(html: string): string[] {
+    return [...html.matchAll(/>((?:&gt;|&lt;)?\d{1,3}%)</g)].map((m) =>
+      m[1].replace("&gt;", ">").replace("&lt;", "<"),
+    );
+  }
+
+  it("prints >99% / <1% for the live 0.999 blend that read 100% / 0%", () => {
+    const html = render(makePoint({ homeProb: 0.999, awayProb: 1 - 0.999 }));
+    expect(sides(html)).toEqual([">99%", "<1%"]);
+    expect(html).not.toMatch(/>100%</);
+    expect(html).not.toMatch(/>0%</);
+  });
+
+  it("marks the underdog side too when it is the home team", () => {
+    const html = render(makePoint({ homeProb: 0.002, awayProb: 0.998 }));
+    expect(sides(html)).toEqual(["<1%", ">99%"]);
+  });
+
+  // CONTROL — exact boundaries ARE the boundaries and print plainly.
+  it("still prints 100% / 0% for an exact 1 / 0", () => {
+    const html = render(makePoint({ homeProb: 1, awayProb: 0 }));
+    expect(sides(html)).toEqual(["100%", "0%"]);
+  });
+
+  // CONTROL — nowhere near a boundary, nothing changes.
+  it("leaves an ordinary pair bare", () => {
+    const html = render(makePoint({ homeProb: 0.62, awayProb: 0.38 }));
+    expect(sides(html)).toEqual(["62%", "38%"]);
   });
 });
