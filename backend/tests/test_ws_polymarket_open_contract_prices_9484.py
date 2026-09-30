@@ -186,13 +186,79 @@ class TestPairing:
             excluded_market_ids={5},
         )
         assert adm.asset_to_outcome == {"ok": 72, "fresh": 82, "other": 92}
+        # #9736: the taken and duplicate legs are not re-owned, but mirrored.
+        assert adm.asset_mirrors == {"taken": [(81, 8)], "ok": [(91, 9)]}
         c = adm.counts
         assert c["legs_graded"] == 1
         assert c["assets_already_streaming"] == 1
         assert c["assets_duplicate"] == 1
+        assert c["legs_mirrored"] == 2
         assert c["markets_on_game_slate"] == 1
         assert c["markets_without_tokens"] == 1
         assert c["markets"] == 5
+
+
+
+
+class TestSharedTokenFanOut:
+    """#9736. The NLDS board 60087232's Cubs leg and the standalone binary
+    61380842 name ONE Polymarket condition. One owner per token left the
+    board's leg at its pre-game 0.445 while the binary streamed 0.235 — Cubs
+    44% and 22% on one search page. Both legs are the same contract."""
+
+    BOARD = (60087232, None, None, {"601": "cubsYes", "602": "sdYes"})
+    BINARY = (61380842, ["cubsYes", "cubsNo"], None, None)
+    LEGS = [
+        (601, 60087232, "0x52f9", False), (602, 60087232, "0x77aa", False),
+        (611, 61380842, "0x52f9_yes", False), (612, 61380842, "0x52f9_no", False),
+    ]
+
+    @pytest.mark.parametrize("board_first", [True, False])
+    async def test_both_legs_take_the_token_whichever_market_comes_first(
+        self, board_first
+    ):
+        rows = [self.BOARD, self.BINARY] if board_first else [self.BINARY, self.BOARD]
+        adm = open_mod.open_contract_asset_map(rows, self.LEGS)
+
+        owner = adm.asset_to_outcome["cubsYes"]
+        mirrors = [oid for oid, _mid in adm.asset_mirrors["cubsYes"]]
+        assert sorted([owner, *mirrors]) == [601, 611]
+        # Subscribed once: the owner map still names each token one time.
+        assert sorted(adm.asset_to_outcome) == ["cubsNo", "cubsYes", "sdYes"]
+        assert adm.mirrored_outcomes() == (
+            {611: 61380842} if board_first else {601: 60087232}
+        )
+        assert adm.counts["legs_mirrored"] == 1
+
+    async def test_a_token_the_game_socket_carries_is_mirrored_not_resubscribed(
+        self,
+    ):
+        adm = open_mod.open_contract_asset_map(
+            [self.BOARD], self.LEGS[:2], taken_assets={"cubsYes"},
+        )
+        assert adm.asset_to_outcome == {"sdYes": 602}
+        assert adm.asset_mirrors == {"cubsYes": [(601, 60087232)]}
+        assert adm.counts["assets_already_streaming"] == 1
+
+    async def test_two_legs_of_one_market_naming_one_token_are_not_mirrored(self):
+        # A pairing defect inside one market, not a shared contract: the second
+        # leg is still dropped, never handed the first leg's price.
+        adm = open_mod.open_contract_asset_map(
+            [(9, None, None, {"91": "same", "92": "same"})],
+            [(91, 9, "0x1", False), (92, 9, "0x2", False)],
+        )
+        assert adm.asset_to_outcome == {"same": 91}
+        assert adm.asset_mirrors == {}
+        assert adm.counts["assets_duplicate"] == 1
+        assert adm.counts["legs_mirrored"] == 0
+
+    async def test_a_graded_mirror_leg_is_never_priced(self):
+        legs = [*self.LEGS[:1], (602, 60087232, "0x77aa", False),
+                (611, 61380842, "0x52f9_yes", True),
+                (612, 61380842, "0x52f9_no", False)]
+        adm = open_mod.open_contract_asset_map([self.BOARD, self.BINARY], legs)
+        assert adm.asset_to_outcome["cubsYes"] == 601
+        assert "cubsYes" not in adm.asset_mirrors
 
 
 # ---------------------------------------------------- 35,000 tokens ----
@@ -480,7 +546,7 @@ GAME_MARKET, GAME_OUTCOME, GAME_TOKEN, EVENT_ID = 5, 51, "555", 900
 OPEN = [(7, 71, "711"), (8, 81, "811"), (9, 91, "911")]
 
 
-def _database(tmp_path, fail_outcome=None):
+def _database(tmp_path, fail_outcome=None, extra=()):
     engine = create_engine(f"sqlite:///{tmp_path / 'ws.db'}")
     markets = Table(
         "futures_markets", MetaData(),
@@ -493,7 +559,9 @@ def _database(tmp_path, fail_outcome=None):
     markets.create(engine)
     FuturesOutcome.__table__.create(engine)
     with engine.begin() as conn:
-        for mid, oid, _tok in [(GAME_MARKET, GAME_OUTCOME, GAME_TOKEN), *OPEN]:
+        for mid, oid, _tok in [
+            (GAME_MARKET, GAME_OUTCOME, GAME_TOKEN), *OPEN, *extra,
+        ]:
             conn.execute(insert(markets).values(
                 id=mid, source="polymarket", external_id=f"0x{mid}",
                 name=f"market {mid}", status="open",
@@ -821,6 +889,61 @@ class TestTheConsumer:
         assert stats["open_contract_admission_error"] is True
         assert rig.subscribes == [[GAME_TOKEN]]
         assert _stored(engine, GAME_OUTCOME) == pytest.approx(0.42)
+
+    async def test_a_shared_token_prices_every_leg_that_names_it(
+        self, monkeypatch, tmp_path
+    ):
+        """#9736 THE SHIP. A board (market 10) whose leg 101 names the same
+        token as standalone market 7: one tick moves BOTH rows, announces BOTH
+        markets, and the token is still subscribed once."""
+        board = (10, 101, "711")
+        engine = _database(tmp_path, extra=[board])
+        rig = _Rig(
+            engine, GAME_SLATE,
+            (
+                [*OPEN_MARKET_ROWS, (10, None, None, {"101": "711"})],
+                [*OPEN_OUTCOME_ROWS, (101, 10, "0x10", False)],
+            ),
+            _frames_by_token({"711": [(0.0, _tick("711"))]}),
+        )
+        stats = await _drive(monkeypatch, rig)
+
+        assert stats["errors"] == 0
+        assert _stored(engine, 71) == pytest.approx(0.42)
+        assert _stored(engine, 101) == pytest.approx(0.42)
+        assert sorted(c for c, _f in rig.redis.published) == sorted(
+            [market_channel(7), market_channel(10)]
+        )
+        assert stats["open_contract_legs_mirrored"] == 1
+        assert stats["open_contract_prices_written"] == 2
+        assert sorted(["711", "811", "911"]) in rig.subscribes
+        assert len(rig.subscribes) == 2
+
+    async def test_a_game_socket_token_also_prices_an_open_leg_naming_it(
+        self, monkeypatch, tmp_path
+    ):
+        """The owner is the game slate's leg; the open board's leg that names
+        the same token is not subscribed again, yet moves on the game tick."""
+        board = (10, 101, GAME_TOKEN)
+        engine = _database(tmp_path, extra=[board])
+        rig = _Rig(
+            engine, GAME_SLATE,
+            (
+                [*OPEN_MARKET_ROWS, (10, None, None, {"101": GAME_TOKEN})],
+                [*OPEN_OUTCOME_ROWS, (101, 10, "0x10", False)],
+            ),
+            _frames_by_token({GAME_TOKEN: [(0.1, _tick(GAME_TOKEN))]}),
+        )
+        stats = await _drive(monkeypatch, rig)
+
+        assert _stored(engine, GAME_OUTCOME) == pytest.approx(0.42)
+        assert _stored(engine, 101) == pytest.approx(0.42)
+        # Only the game socket's own subscription names the game token.
+        assert [a for a in rig.subscribes if GAME_TOKEN in (a or [])] == [
+            [GAME_TOKEN]
+        ], rig.subscribes
+        assert market_channel(10) in [c for c, _f in rig.redis.published]
+        assert stats["open_contract_assets_already_streaming"] == 1
 
     async def test_the_undo_flag_leaves_the_game_socket_alone(
         self, monkeypatch, tmp_path

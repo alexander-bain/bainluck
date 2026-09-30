@@ -184,6 +184,11 @@ class OpenContractAdmission:
 
     asset_to_outcome: dict[str, int] = field(default_factory=dict)
     asset_to_market: dict[str, int] = field(default_factory=dict)
+    #: #9736 — token → ``(outcome_id, market_id)`` of every OTHER market's leg
+    #: that names a token already owned (by an earlier open market, or by the
+    #: game socket). Price-only fan-out: the token is subscribed once, and each
+    #: of its ticks is buffered on the owner AND on every mirror.
+    asset_mirrors: dict[str, list[tuple[int, int]]] = field(default_factory=dict)
     counts: dict[str, int] = field(
         default_factory=lambda: {
             "markets": 0,
@@ -194,8 +199,17 @@ class OpenContractAdmission:
             "legs_graded": 0,
             "assets_already_streaming": 0,
             "assets_duplicate": 0,
+            "legs_mirrored": 0,
         }
     )
+
+    def mirrored_outcomes(self) -> dict[int, int]:
+        """``outcome_id → market_id`` for every mirror leg."""
+        return {
+            oid: mid
+            for legs in self.asset_mirrors.values()
+            for oid, mid in legs
+        }
 
 
 def open_contract_asset_map(
@@ -216,9 +230,18 @@ def open_contract_asset_map(
       but cannot be paired one-to-one (a positional zip there would put one
       leg's price on another), ``markets_without_tokens`` when none are stored.
 
-    A token the game socket already carries (``taken_assets``), a market on the
-    game slate (``excluded_market_ids``) and a token a second market also names
-    are skipped and counted, so one token always has exactly one owner.
+    A market on the game slate (``excluded_market_ids``) is skipped and
+    counted. A token the game socket already carries (``taken_assets``) or a
+    second market also names is subscribed ONCE and never re-owned, but the
+    leg that names it is MIRRORED (``asset_mirrors``) so the token's ticks
+    reach it too. #9736: the NLDS board's Cubs leg and the standalone "Will
+    the Cubs advance" binary name one Polymarket condition; one owner meant
+    the board's leg sat at its pre-game price while the binary streamed. The
+    two legs are the same contract, so they carry the same price.
+
+    A mirror is only ever ANOTHER market's leg: two legs of one market naming
+    one token is a pairing defect, not a shared contract, and the second is
+    still dropped (``assets_duplicate``).
     """
     from app.tasks.polymarket_ws import legs_in_token_order
 
@@ -265,10 +288,23 @@ def open_contract_asset_map(
         for token, outcome_id in pairs:
             if outcome_id in graded:
                 counts["legs_graded"] += 1
-            elif token in taken:
-                counts["assets_already_streaming"] += 1
-            elif token in out.asset_to_outcome:
-                counts["assets_duplicate"] += 1
+            elif token in taken or token in out.asset_to_outcome:
+                shared_across_markets = (
+                    token in taken or out.asset_to_market[token] != market_id
+                )
+                counts[
+                    "assets_already_streaming" if token in taken
+                    else "assets_duplicate"
+                ] += 1
+                mirrors = out.asset_mirrors.setdefault(token, [])
+                if shared_across_markets and all(
+                    oid != outcome_id for oid, _mid in mirrors
+                ):
+                    mirrors.append((outcome_id, market_id))
+                    counts["legs_mirrored"] += 1
+                    admitted = True
+                if not mirrors:
+                    del out.asset_mirrors[token]
             else:
                 out.asset_to_outcome[token] = outcome_id
                 out.asset_to_market[token] = market_id
