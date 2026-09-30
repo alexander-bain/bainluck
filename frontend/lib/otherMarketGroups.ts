@@ -587,12 +587,32 @@ export function isScoringRaceMarket(marketName: string | null | undefined): bool
   return /\brace to\s+\d+(?:\.\d+)?\s+points?\b/i.test(marketName ?? "");
 }
 
+/**
+ * A total scoped to ONE PERIOD — `Philadelphia vs Atlanta: 1st Inning Total`,
+ * `Set 1 Total Games`, `Map 2 Total Rounds`. No market map draws these: the maps
+ * draw the game total and the sport's first half (`First 5 innings`, `1st half`),
+ * so `half` is deliberately absent here and `1st 5 Innings Total` does not match.
+ *
+ * #9849: `game-markets` now serves the threshold label ("Over 1.5 runs in the 1st
+ * inning") where it served a bare `Yes`. The word "over" then tripped the total
+ * clause below as if the runs map already showed that line, and the market left
+ * the page entirely — as its 2nd–8th inning siblings, labelled that way all
+ * along, always had.
+ */
+const PERIOD_TOTAL_MARKET =
+  /(?:^|:\s*)(?:\d+(?:st|nd|rd|th)?\s+)?(?:set|period|quarter|inning|frame|map|leg)(?:\s*\d+(?:st|nd|rd|th)?)?\s+total\b/i;
+
+export function isPeriodTotalMarket(marketName: string | null | undefined): boolean {
+  return PERIOD_TOTAL_MARKET.test((marketName ?? "").trim());
+}
+
 /** Rows already covered by the market maps / hero above this section. */
 export function isRedundantWithMarketMaps(m: OtherMarketRow): boolean {
   const lower = (m.market_name || "").toLowerCase();
   const outLower = (m.outcome_name || "").toLowerCase();
   if (lower.includes("spread") || lower.includes("handicap")) return true;
-  if (lower.includes("total") && (outLower.includes("over") || outLower.includes("under"))) return true;
+  if (lower.includes("total") && (outLower.includes("over") || outLower.includes("under"))
+      && !isPeriodTotalMarket(m.market_name)) return true;
   // `winner` was written for the moneyline. A PERIOD-scoped winner is a
   // different question with a different answer, and swallowing it is how the
   // page came to render the parent's un-sided `Set 1 Winner 74%` while hiding
@@ -696,6 +716,11 @@ export function findWinProbMarkets(markets: OtherMarketRow[] | undefined | null)
     // while its five siblings render, which is the worst of both: not a
     // consistent rule a reader could learn, just a gap.
     if (isScoringRaceMarket(name)) continue;
+    // #9849 — a one-period total (`…: 2nd Inning Total`, Over 0.5 at 0.99 / Over
+    // 1.5 at 0.01) sums to one by coincidence of its two lines, not because it is
+    // the moneyline. Without this its 3rd-inning sibling (0.01 / 0.01) renders
+    // and it does not.
+    if (isPeriodTotalMarket(name)) continue;
     // #8344 — a market whose name ASKS a question is never the hero's. On
     // `/events/15318167` "Will there be a run scored in the first inning?:
     // Chicago White Sox vs. Kansas City Royals" serves `Yes 0.505 / No 0.495`,
