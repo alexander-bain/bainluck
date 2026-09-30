@@ -292,6 +292,26 @@ describe("the invitation", () => {
     expect(zOf(overlay![1])).toBeGreaterThan(zOf(nav!));
   });
 
+  it("the sheet sits above the first-visit privacy card, so Google and Apple can be tapped (#9767)", () => {
+    // ConsentBanner is fixed near the bottom on a phone and is mounted after the
+    // page in the layout, so an equal z-index let it cover the sheet's sign-in
+    // buttons — measured on production at 390px: the taps hit the banner.
+    const zOf = (cls: string) => {
+      const m = cls.match(/(?:^|\s)z-(?:\[(\d+)\]|(\d+))(?=\s|$)/);
+      if (!m) throw new Error(`no z-index class in: ${cls}`);
+      return Number(m[1] ?? m[2]);
+    };
+    const html = renderToStaticMarkup(
+      <SignInToPersonalizeInvite open onClose={() => {}} onSignInGoogle={noop} onSignInApple={noop} />,
+    );
+    const overlay = html.match(/<div class="([^"]*)"[^>]*data-testid="discover-sign-in-invite"/);
+    expect(overlay).not.toBeNull();
+    const banner = readFileSync(join(__dirname, "../../components/Analytics/ConsentBanner.tsx"), "utf8")
+      .match(/className="(fixed bottom-[^"]*)"/)?.[1];
+    expect(banner).toBeDefined();
+    expect(zOf(overlay![1])).toBeGreaterThan(zOf(banner!));
+  });
+
   it("a cancelled or failed sign-in is absorbed and still closes the invitation", async () => {
     const onSettled = jest.fn();
     await expect(
