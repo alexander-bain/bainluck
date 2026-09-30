@@ -242,17 +242,73 @@ final class APinManagement9875Tests: XCTestCase {
         await m.togglePin(type: "event", id: 1)?.value
         XCTAssertTrue(m.isPinned(type: "event", id: 1))
     }
+    func testLimitWarningHasAccessibleDismissalAndKeepsDirectManagement() throws {
+        let m = PinManager(defaults: defaults)
+        for id in 1...6 { m.togglePin(type: "event", id: id) }
+        m.togglePin(type: "event", id: 7)
+        let warning = m.feedback!
+        XCTAssertEqual(warning.managementType, "event")
+        XCTAssertEqual(warning.managementAlertTitle, "Pin limit reached")
+        m.dismissFeedback(id: warning.id)
+        XCTAssertNil(m.feedback)
+        m.togglePin(type: "event", id: 7)
+        XCTAssertEqual(m.feedback?.managementType, "event", "a new limit tap still opens management")
+        let sourceRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Bain Luck")
+        let toast = try String(contentsOf: sourceRoot.appendingPathComponent("Components/PinFeedbackToast.swift"), encoding: .utf8)
+        XCTAssertTrue(toast.contains("pinManager.dismissFeedback(id: feedback.id)"))
+        XCTAssertTrue(toast.contains(".accessibilityLabel(\"Dismiss pin message\")"))
+        XCTAssertTrue(toast.contains("Button(\"Manage pins\")"))
+    }
+    func testDismissalCannotClearNewerFeedbackOrManagementDestination() {
+        let m = PinManager(defaults: defaults)
+        m.togglePin(type: "event", id: 1)
+        let oldID = m.feedback!.id
+        m.togglePin(type: "event", id: 2)
+        let newID = m.feedback!.id
+        m.dismissFeedback(id: oldID)
+        XCTAssertEqual(m.feedback?.id, newID)
+        m.presentManagement(type: "event")
+        let destinationID = m.managementPresentation?.id
+        m.dismissFeedback(id: newID)
+        XCTAssertEqual(m.managementPresentation?.id, destinationID)
+    }
+    func testUnknownPinCountShowsRefreshTitleRatherThanLimit() {
+        let m = PinManager(defaults: defaults)
+        bind(m, "A")
+        m.togglePin(type: "event", id: 1)
+        XCTAssertEqual(m.feedback?.managementAlertTitle, "Refresh saved pins")
+        XCTAssertEqual(m.feedback?.managementType, "event")
+        XCTAssertNotEqual(m.feedback?.managementAlertTitle, "Pin limit reached")
+    }
+    func testVisibleAndVoiceOverLabelsUseLoadedTitlesWithoutInternalIDs() {
+        for type in ["event", "future"] {
+            let pin = SavedPin(type: type, value: 15320964)
+            XCTAssertEqual(pin.displayTitle(for: .available(title: "Yankees at Red Sox")), "Yankees at Red Sox")
+            XCTAssertEqual(pin.removeLabel(for: .available(title: "Yankees at Red Sox")), "Remove Yankees at Red Sox")
+            let cases: [PinMetadata?] = [nil, .unavailable, .failed, .available(title: "  ")]
+            for metadata in cases {
+                XCTAssertFalse(pin.displayTitle(for: metadata).contains("15320964"))
+                XCTAssertFalse(pin.removeLabel(for: metadata).contains("15320964"))
+            }
+        }
+        XCTAssertEqual(SavedPin(type: "event", value: 1).displayTitle(for: .unavailable), "A saved game that's no longer listed")
+        XCTAssertEqual(SavedPin(type: "future", value: 1).displayTitle(for: .unavailable), "A saved market that's no longer listed")
+    }
     func testEntryAndModalActionDoNotDependOnSelectedTabOrFeedRows() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Bain Luck")
         let myStuff = try String(contentsOf: root.appendingPathComponent("Views/MyStuffView.swift"), encoding: .utf8)
         let button = try String(contentsOf: root.appendingPathComponent("Components/PinButton.swift"), encoding: .utf8)
         let list = try String(contentsOf: root.appendingPathComponent("Views/PinManagementView.swift"), encoding: .utf8)
         XCTAssertTrue(myStuff.contains("myStuffManagePins"))
-        XCTAssertFalse(myStuff.contains("private var pinnedItems"))
+        XCTAssertTrue(myStuff.contains("private var pinnedItems: [FeedItem]"), "pins in the feed keep their existing live cards")
+        XCTAssertTrue(myStuff.contains("feedSection(title: \"Pinned\""))
         XCTAssertTrue(button.contains("if isPresented, let feedback"))
         XCTAssertTrue(button.contains("Button(\"Manage pins\") { showPinManagement = true }"))
         XCTAssertTrue(list.contains("pinManager.savedPins.filter"))
         XCTAssertFalse(list.contains("vm.items"))
+        XCTAssertTrue(list.contains(".accessibilityLabel(pin.removeLabel(for: vm.metadata[pin]))"))
+        XCTAssertTrue(button.contains(".alert(managementAlertTitle,"))
+        XCTAssertTrue(button.contains("managementAlertTitle = feedback.managementAlertTitle"))
     }
 }
 

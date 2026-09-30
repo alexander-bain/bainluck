@@ -13,7 +13,23 @@ nonisolated struct SavedPin: Identifiable, Hashable, Sendable {
     let type: String
     let value: Int
     var id: String { "\(type):\(value)" }
-    var fallbackTitle: String { "Saved \(type == "event" ? "game" : "market") #\(value)" }
+    var fallbackTitle: String { "Saved \(type == "event" ? "game" : "market")" }
+
+    func displayTitle(for metadata: PinMetadata?) -> String {
+        switch metadata {
+        case .available(let title):
+            let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+            return title.isEmpty ? fallbackTitle : title
+        case .unavailable:
+            return "A saved \(type == "event" ? "game" : "market") that's no longer listed"
+        default:
+            return fallbackTitle
+        }
+    }
+
+    func removeLabel(for metadata: PinMetadata?) -> String {
+        "Remove \(displayTitle(for: metadata))"
+    }
 }
 
 nonisolated struct PinManagementRequest: Identifiable {

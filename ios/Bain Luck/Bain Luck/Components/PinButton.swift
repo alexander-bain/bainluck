@@ -9,9 +9,10 @@ struct PinButton: View {
     var compact: Bool = false
     @EnvironmentObject var pinManager: PinManager
     @Environment(\.isPresented) private var isPresented
-    @State private var showLimitAlert = false
+    @State private var showManagementAlert = false
     @State private var showPinManagement = false
-    @State private var limitMessage = ""
+    @State private var managementMessage = ""
+    @State private var managementAlertTitle = "Manage pins"
 
     private var pinned: Bool { pinManager.isPinned(type: type, id: id) }
     private var saving: Bool { pinManager.isSaving(type: type, id: id) }
@@ -27,8 +28,9 @@ struct PinButton: View {
             // button owns a local limit alert and a sheet above that detail.
             if isPresented, let feedback = pinManager.feedback,
                feedback.id != previousFeedbackID, feedback.managementType == type {
-                limitMessage = feedback.message
-                showLimitAlert = true
+                managementMessage = feedback.message
+                managementAlertTitle = feedback.managementAlertTitle
+                showManagementAlert = true
                 pinManager.feedback = nil
             }
         } label: {
@@ -46,17 +48,17 @@ struct PinButton: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .alert("Pin limit reached", isPresented: $showLimitAlert) {
+        .alert(managementAlertTitle, isPresented: $showManagementAlert) {
             Button("Manage pins") { showPinManagement = true }
             Button("Cancel", role: .cancel) { }
         } message: {
-            Text(limitMessage)
+            Text(managementMessage)
         }
         .sheet(isPresented: $showPinManagement) {
             PinManagementView(focusType: type).environmentObject(pinManager)
         }
         .onChange(of: pinManager.identityGeneration) { _, _ in
-            showLimitAlert = false
+            showManagementAlert = false
             showPinManagement = false
         }
         .accessibilityLabel(saving ? "Saving pin" : (pinned ? "Unpin" : "Pin"))

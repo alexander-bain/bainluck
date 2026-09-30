@@ -57,13 +57,13 @@ struct PinManagementView: View {
     private func pinRow(_ pin: SavedPin) -> some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
-                if case .available(let title) = vm.metadata[pin] {
+                if case .available = vm.metadata[pin] {
                     NavigationLink(value: pin.type == "event"
                                    ? Route.eventDetail(id: pin.value) : Route.futuresDetail(id: pin.value)) {
-                        Text(title).font(.body.weight(.medium))
+                        Text(pin.displayTitle(for: vm.metadata[pin])).font(.body.weight(.medium))
                     }
                 } else {
-                    Text(pin.fallbackTitle).font(.body.weight(.medium))
+                    Text(pin.displayTitle(for: vm.metadata[pin])).font(.body.weight(.medium))
                     switch vm.metadata[pin] {
                     case .unavailable:
                         Text("Details are no longer available. You can remove this pin.")
@@ -90,7 +90,7 @@ struct PinManagementView: View {
             }
             .buttonStyle(.bordered)
             .disabled(pinManager.isSaving(type: pin.type, id: pin.value))
-            .accessibilityLabel("Remove \(pin.fallbackTitle)")
+            .accessibilityLabel(pin.removeLabel(for: vm.metadata[pin]))
             .accessibilityIdentifier("removePin.\(pin.id)")
         }
         .accessibilityIdentifier("savedPin.\(pin.id)")

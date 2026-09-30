@@ -13,7 +13,8 @@ struct PinFeedbackToast: View {
 
     /// How long a settled outcome stays up. A pending save has no timer: its
     /// outcome replaces it. A warning is two lines and asks the reader to act,
-    /// so it stays longer than a confirmation.
+    /// so it stays longer than a confirmation. Management warnings stay until
+    /// Manage pins or their accessible close control is pressed.
     static func displaySeconds(for feedback: PinActionFeedback) -> Double? {
         if feedback.isPending || feedback.managementType != nil { return nil }
         return feedback.isWarning ? 4.0 : 2.5
@@ -44,6 +45,19 @@ struct PinFeedbackToast: View {
                                 .foregroundStyle(.white)
                                 .accessibilityIdentifier("pinLimitManagePins")
                         }
+                    }
+                    if feedback.managementType != nil {
+                        Button {
+                            pinManager.dismissFeedback(id: feedback.id)
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.white)
+                                .frame(width: 44, height: 44)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Dismiss pin message")
+                        .accessibilityIdentifier("pinMessageDismiss")
                     }
                 }
                 .padding(.horizontal, 14)

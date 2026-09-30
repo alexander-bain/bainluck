@@ -374,6 +374,18 @@ struct MyStuffView: View {
         }
     }
 
+    private var pinnedItems: [FeedItem] {
+        vm.items.filter { item in
+            if item.type == "event", let event = item.event {
+                return pinManager.pinnedEventIDs.contains(event.id)
+            } else if item.type == "futures", let futures = item.futures {
+                return pinManager.pinnedFuturesIDs.contains(futures.id)
+            }
+            return false
+        }
+    }
+
+
     private var teamFeedList: some View {
         List {
             // #6445: the same unfinished experience Discover's challenge card
@@ -420,6 +432,9 @@ struct MyStuffView: View {
                 }
             }
 
+            if !pinnedItems.isEmpty {
+                feedSection(title: "Pinned", systemImage: "bookmark.fill", imageColor: .orange, items: pinnedItems)
+            }
             if !vm.liveNow.isEmpty {
                 // live/048 — the header reads the bucket. See `EventState`.
                 feedSection(title: EventState.liveSectionTitle(hasSuspended: vm.liveNowHasSuspended), systemImage: "circle.fill", imageColor: .red, items: vm.liveNow)

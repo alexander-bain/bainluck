@@ -16,6 +16,7 @@ struct PinActionFeedback: Identifiable, Equatable {
     /// so "Saving…" never quietly disappears into nothing (#9495).
     var isPending: Bool = false
     var managementType: String? = nil
+    var managementAlertTitle: String = "Manage pins"
 }
 
 final class PinManager: ObservableObject {
@@ -45,6 +46,13 @@ final class PinManager: ObservableObject {
 
     func presentManagement(type: String? = nil) {
         managementPresentation = PinManagementRequest(focusType: type)
+        feedback = nil
+    }
+
+    /// Only the message being dismissed may clear; a newer message and an open
+    /// management destination are independent of this action.
+    func dismissFeedback(id: UUID) {
+        guard feedback?.id == id else { return }
         feedback = nil
     }
 
@@ -169,7 +177,7 @@ final class PinManager: ObservableObject {
             #endif
         } else {
             if usesAccountStorage, binding.userID != nil, loadState != .loaded {
-                feedback = PinActionFeedback(message: "Refresh your saved pins before adding another.", systemImage: "bookmark", isWarning: true, managementType: type)
+                feedback = PinActionFeedback(message: "Refresh your saved pins before adding another.", systemImage: "bookmark", isWarning: true, managementType: type, managementAlertTitle: "Refresh saved pins")
                 return nil
             }
             guard canPin(type: type) else {
@@ -180,7 +188,8 @@ final class PinManager: ObservableObject {
                     message: Self.limitMessage(type: type, count: savedPins.filter { $0.type == type }.count),
                     systemImage: "exclamationmark.triangle.fill",
                     isWarning: true,
-                    managementType: type
+                    managementType: type,
+                    managementAlertTitle: "Pin limit reached"
                 )
                 return nil
             }
