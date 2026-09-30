@@ -228,7 +228,9 @@ struct EventCardView: View {
                 commenceTime: event.commenceTime,
                 gameClock: event.espn?.gameClock,
                 period: event.espn?.period,
-                startIsTbd: event.startIsTbd == true
+                startIsTbd: event.startIsTbd == true,
+                // #5811 — served on `/api/feed`, so the card can say it.
+                venueClosedNoWinner: event.venueClosedNoWinner == true
             )
             if !isFinished, let ei = event.ei ?? event.pulse {
                 EIBadgeView(ei: ei, size: .sm)

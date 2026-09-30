@@ -1626,13 +1626,17 @@ struct EventDetailView: View {
             StatusBadge(
                 status: "suspended",
                 commenceTime: event.commenceTime,
-                venueSettled: event.venueSettled == true)
+                venueSettled: event.venueSettled == true,
+                // #5811 — both arms again, for the same reason as the flag
+                // above: each one claims the contest is unplayed.
+                venueClosedNoWinner: event.venueClosedNoWinner == true)
         } else {
             StatusBadge(
                 status: "scheduled",
                 commenceTime: event.commenceTime,
                 venueSettled: event.venueSettled == true,
-                startIsTbd: event.startIsTbd == true)
+                startIsTbd: event.startIsTbd == true,
+                venueClosedNoWinner: event.venueClosedNoWinner == true)
         }
     }
 

@@ -113,6 +113,9 @@ nonisolated struct SearchEvent: Decodable, Identifiable, Sendable {
     /// `.convertFromSnakeCase`, so naming them IS the decode.
     let heroProbability: Double?
     let heroProbabilityAway: Double?
+    /// #5811 — `venue_closed_no_winner`, served by `/api/events/search`;
+    /// present only when true. See `EventDetail.venueClosedNoWinner`.
+    let venueClosedNoWinner: Bool?
 
     /// The TEAM-PAGE rails' own probability pair, and the two orientation fields
     /// that come with them (`routes/teams.py::_format_event_brief`).

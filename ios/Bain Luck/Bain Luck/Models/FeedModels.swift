@@ -541,6 +541,11 @@ nonisolated struct FeedEventData: Decodable, Identifiable, Sendable {
     /// not select marquee finals" (the Sports feed is one), which reads as the
     /// ordinary window. Never coalesce an absent flag into the long one.
     let discoverMarqueeFinal: Bool?
+    /// #5811 — the venue CLOSED this contest with no winner (a draw, a no
+    /// contest, a split settlement), decoded from `venue_closed_no_winner`.
+    /// PRESENT ONLY WHEN TRUE: absent means "not established", never "still
+    /// going". Read it through ``EventState/showsVenueClosedNoWinner(_:venueSettled:venueClosedNoWinner:commenceTime:now:)``.
+    let venueClosedNoWinner: Bool?
 }
 
 /// What a card should draw in one participant's avatar slot, and how.

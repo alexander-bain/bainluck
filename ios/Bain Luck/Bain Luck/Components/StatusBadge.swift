@@ -24,6 +24,11 @@ struct StatusBadge: View {
     /// clock restated as a duration, and the row's date line already carries
     /// the one true part ("Sep 29 · TBD"). See ``countdownText(commenceTime:startIsTbd:now:)``.
     var startIsTbd: Bool = false
+    /// #5811 — the served `venue_closed_no_winner`, defaulted false like
+    /// `venueSettled`. Unlike that key it rides every door (`/api/feed`,
+    /// `/api/events/search` as well as `/api/events/{id}`), so the cards pass it
+    /// too. A graded winner outranks it: see ``EventState/showsVenueClosedNoWinner(_:venueSettled:venueClosedNoWinner:commenceTime:now:)``.
+    var venueClosedNoWinner: Bool = false
 
     /// #7019 — THE ONLY THING ON THIS VIEW THAT EVER CHANGES BY ITSELF.
     ///
@@ -112,6 +117,28 @@ struct StatusBadge: View {
             .padding(.vertical, 2)
             .background(Color.cardBackgroundDark)
             .clipShape(Capsule())
+        } else if EventState.showsVenueClosedNoWinner(
+            status, venueSettled: venueSettled, venueClosedNoWinner: venueClosedNoWinner,
+            commenceTime: commenceTime?.asDate) {
+            // #5811 — BELOW the venue-settled arm (a graded winner outranks
+            // it) and ABOVE the suspended one, for #6381's reason: the rows
+            // this key names are `suspended`, so an arm placed after that one
+            // would never see them and they would go on printing "No result
+            // reported" over a contest the venue has closed. Grey, in the
+            // settled voice: the question is answered, it just has no winner.
+            Text(EventState.venueClosedNoWinnerLabel)
+                .font(.caption2)
+                .fontWeight(.medium)
+                // ONE LINE, AT ITS OWN WIDTH — caught in the after-shot: the
+                // search row squeezed the chip and it broke at "· " into two
+                // stacked lines inside one capsule. The row's date gives way.
+                .lineLimit(1)
+                .fixedSize()
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Color.cardBackgroundDark)
+                .clipShape(Capsule())
         } else if EventState.isSuspendedAndStarted(status, commenceTime: commenceTime?.asDate) {
             // 🔴 #4021 — THE CLOCK IS PART OF THE TEST, and it has to be tested
             // HERE rather than left to callers. Three of this component's five

@@ -840,12 +840,12 @@ describe("#6381 — the hero stops denying a result the venue already gave us", 
     // Handing the flag to only one of them would fix 426 rows and leave 889.
     const code = read(DETAIL);
     expect(code).toMatch(
-      /StatusBadge\(\s*status: "suspended",\s*commenceTime: event\.commenceTime,\s*venueSettled: event\.venueSettled == true\)/,
+      /StatusBadge\(\s*status: "suspended",\s*commenceTime: event\.commenceTime,\s*venueSettled: event\.venueSettled == true(,\s*venueClosedNoWinner: event\.venueClosedNoWinner == true)?\)/,
     );
     // #8841 — the pregame arm also hands on `start_is_tbd`, AFTER the flag
     // this test is about; the served venue flag must still be passed verbatim.
     expect(code).toMatch(
-      /StatusBadge\(\s*status: "scheduled",\s*commenceTime: event\.commenceTime,\s*venueSettled: event\.venueSettled == true(,\s*startIsTbd: event\.startIsTbd == true)?\)/,
+      /StatusBadge\(\s*status: "scheduled",\s*commenceTime: event\.commenceTime,\s*venueSettled: event\.venueSettled == true(,\s*startIsTbd: event\.startIsTbd == true)?(,\s*venueClosedNoWinner: event\.venueClosedNoWinner == true)?\)/,
     );
   });
 
@@ -919,5 +919,74 @@ describe("#6381 — the hero stops denying a result the venue already gave us", 
       /Text\(Self\.noReadingsLine\(\s*status: status,\s*venueSettled: venueSettled,\s*commenceTime: commenceTime\?\.asDate\)\)/,
     );
     expect(read(DETAIL)).toMatch(/venueSettled: event\.venueSettled == true,\s*\n\s*homeTeamName: event\.homeTeam/);
+  });
+});
+
+/**
+ * #5811 — a contest the venue CLOSED with no winner reads "Ended · no winner"
+ * on the phone too, and files under Finished.
+ *
+ * Specimen: Erick Visconde v Ilias Bulaid (15320964, UFC, `suspended`), photographed
+ * on master 2026-09-30 under "Live & Paused" with "No result reported" on both the
+ * MMA page and the event hero (`artifacts/native-5811/`). Live's #9821 serves
+ * `venue_closed_no_winner: true`; the web half (#9828) already reads it.
+ * `BainLuckTests/VenueClosedNoWinner5811Tests.swift` proves the predicate, the
+ * decode and the bucket; these assertions prove the SwiftUI bodies are wired.
+ */
+describe("#5811 — the phone says a no-winner contest ended", () => {
+  const read = (rel: string) => stripComments(readFileSync(join(IOS_ROOT, rel), "utf8"));
+  const BADGE = "Components/StatusBadge.swift";
+
+  it("the label is the web constant, not a second literal", () => {
+    const web = /export const VENUE_CLOSED_NO_WINNER_LABEL = "([^"]+)"/.exec(
+      readFileSync(join(__dirname, "../../lib/eventState.ts"), "utf8"),
+    );
+    const swift = /static let venueClosedNoWinnerLabel = "([^"]+)"/.exec(
+      stripComments(readFileSync(CANONICAL, "utf8")),
+    );
+    expect(web).not.toBeNull();
+    expect(swift).not.toBeNull();
+    expect(swift![1]).toBe(web![1]);
+  });
+
+  it("the badge arm sits below the graded winner and above the suspended denial", () => {
+    const code = read(BADGE);
+    const venue = code.indexOf("} else if EventState.showsVenueSettledVerdict(");
+    const closed = code.indexOf("} else if EventState.showsVenueClosedNoWinner(");
+    const suspended = code.indexOf("} else if EventState.isSuspendedAndStarted(status,");
+    expect(venue).toBeGreaterThan(-1);
+    expect(closed).toBeGreaterThan(venue);
+    expect(suspended).toBeGreaterThan(closed);
+    expect(code).toMatch(/venueSettled: venueSettled, venueClosedNoWinner: venueClosedNoWinner/);
+    expect(code).toMatch(/Text\(EventState\.venueClosedNoWinnerLabel\)/);
+  });
+
+  it("every surface that has the key hands it to the badge", () => {
+    const detail = read("Views/EventDetailView.swift");
+    const passes = detail.match(/venueClosedNoWinner: event\.venueClosedNoWinner == true\)/g) ?? [];
+    expect(passes.length).toBe(2); // the hero's suspended AND pregame arms
+    expect(read("Components/EventCardView.swift")).toMatch(
+      /venueClosedNoWinner: event\.venueClosedNoWinner == true/,
+    );
+    expect(read("Views/SearchView.swift")).toMatch(
+      /venueClosedNoWinner: event\.venueClosedNoWinner == true\)/,
+    );
+    const discover = read("Components/DiscoverEventCard.swift");
+    expect(discover).toMatch(/EventState\.venueClosedNoWinnerLabel/);
+    expect(discover).toMatch(/closedNoWinner \? "ENDED" : "PAUSED"/);
+  });
+
+  it("no bucket reads the bare status any more", () => {
+    // One reading of a card for every section, or the ended fight sits under
+    // "Live & Paused" on one tab and "Finished" on another (#7112's shape).
+    const bare: string[] = [];
+    let routed = 0;
+    for (const path of swiftFiles(join(IOS_ROOT, "ViewModels"))) {
+      const code = stripComments(readFileSync(path, "utf8"));
+      if (/EventState\.section\(\$0\.event\?\.status\)/.test(code)) bare.push(path);
+      routed += (code.match(/EventState\.section\(of: \$0\.event/g) ?? []).length;
+    }
+    expect(bare).toEqual([]);
+    expect(routed).toBe(11);
   });
 });
