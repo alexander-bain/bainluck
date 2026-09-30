@@ -4576,6 +4576,10 @@ jobs:
             echo "::error::#9735 slash-doubles contract SKIPPED — the gate did not run"
             exit 1
           fi
+          if ! grep -qE "^=+ 7 passed" /tmp/slashdoubles.txt; then
+            echo "::error::#9735 slash-doubles contract did not run all 7 tests"
+            exit 1
+          fi
 
       - name: "#8427 'superbowl' typed as one word reaches the Super Bowl market (real Postgres)"
         # Alex's TestFlight build 20: `superbowl` / `nfl superbowl winner` served
