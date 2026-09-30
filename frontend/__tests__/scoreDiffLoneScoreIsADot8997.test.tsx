@@ -27,6 +27,7 @@ import { readFileSync } from "fs";
 import { join } from "path";
 
 import ScoreDifferentialChart from "@/components/ScoreDifferentialChart";
+import { computeSharedChartDomain } from "@/lib/eventKeyStats";
 
 jest.mock("recharts", () => {
   const actual = jest.requireActual("recharts");
@@ -47,19 +48,35 @@ const WIRE = JSON.parse(
 
 const ORANGE = "#f97316";
 
+/**
+ * The chart as `/events/[id]` mounts it: the page's shared domain (default
+ * range "Since Start"), bookmaker lines and ticks included. The first cut of
+ * this fix was proved WITHOUT the domain and shipped inert: the page's domain
+ * ends a minute or two after the final, the #7211 carry stretches the lone
+ * reading across those minutes, and a count taken after the carry read "line"
+ * on production. Rendering it the page's way is what reproduces that.
+ */
 function render(scoreHistory: unknown[]): string {
+  const wire = { ...WIRE, score_history: scoreHistory };
+  const domain = computeSharedChartDomain(wire, "live", WIRE.status, WIRE.commence_time, WIRE.sport);
   return renderToStaticMarkup(
     React.createElement(ScoreDifferentialChart, {
       history: WIRE.history,
       homeTeam: WIRE.home_team,
       awayTeam: WIRE.away_team,
       commenceTime: WIRE.commence_time,
+      bookmakerHistory: WIRE.bookmaker_history,
       scoreHistory,
       espnHistory: WIRE.espn_history,
       currentHomeScore: WIRE.home_score,
       currentAwayScore: WIRE.away_score,
       eventStatus: WIRE.status,
       sportKey: WIRE.sport,
+      chartStartTime: domain?.start,
+      chartEndTime: domain?.end,
+      sharedTicks: domain?.ticks,
+      chartLabelFormat: domain?.labelFormat,
+      externalTimeRange: "live",
     } as never)
   );
 }
@@ -81,6 +98,12 @@ const WITH_HALFTIME = render([
 ]);
 
 describe("#8997 — the fixture is the specimen and the render is a chart", () => {
+  it("the page's domain runs past the final, so the lone reading IS carried", () => {
+    // The production shape: without this the ship arm below is the inert
+    // first cut's proof over again.
+    expect(SPECIMEN).toMatch(/data-actual-tail-carried="[1-9]\d*"/);
+  });
+
   it("the captured payload holds exactly one score, the 78–77 final", () => {
     expect(WIRE.score_history).toHaveLength(1);
     expect(WIRE.score_history[0]).toMatchObject({ home_score: 78, away_score: 77 });
@@ -101,6 +124,14 @@ describe("#8997 — a lone captured score is a dot", () => {
   it("SHIP: the one-score final draws one orange dot and says so", () => {
     expect(SPECIMEN).toContain('data-actual-drawn-as="dot"');
     expect(orangeDots(SPECIMEN)).toHaveLength(1);
+  });
+
+  it("the dot sits on the observed reading, not on a carried minute", () => {
+    const path = SPECIMEN.match(new RegExp(`stroke="${ORANGE}"[^>]*d="M([\\d.]+),([\\d.]+)`));
+    expect(path).not.toBeNull();
+    const dot = orangeDots(SPECIMEN)[0];
+    expect(dot).toContain(`cx="${path![1]}"`);
+    expect(dot).toContain(`cy="${path![2]}"`);
   });
 
   it("CONTROL: two scores keep the step line and paint no dot", () => {
