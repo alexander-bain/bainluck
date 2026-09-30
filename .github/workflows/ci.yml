@@ -4706,6 +4706,7 @@ jobs:
         # The LAFC gate's shape, plus legs that are another club's moved (or a
         # college leg unlinked) before the fold, and the ship read back through the
         # #9617 league step: Kalshi's "Detroit" and "Portland" bind to the real club.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_6974_fold_nba_apply_restore_pg.py \

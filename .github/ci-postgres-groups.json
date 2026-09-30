@@ -154,6 +154,7 @@
     "#6974 MLS duplicate clubs — strip, fold, re-run and undo against real Postgres",
     "#6974 NHL duplicate clubs — strip, repoint, fold, re-run and undo against real Postgres",
     "#6974 LAFC duplicate club — repoint, bank-delete, fold, re-run and undo against real Postgres",
+    "#6974 NBA duplicate clubs — repoint, bank-delete, correct legs, fold, re-run and undo against real Postgres",
     "#2841 Chicago Fire v Vancouver — ESPN id, Kalshi market and label moved, re-run and undo against real Postgres",
     "#5576 venue-named competition — place, re-run and undo against real Postgres",
     "#7147 a settled ESPN final survives a real scores pass (real Postgres)",
