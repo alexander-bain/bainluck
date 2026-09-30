@@ -133,6 +133,92 @@ def with_complements(
     return priced
 
 
+def books_with_complements(
+    targets: list, bid: float, ask: float, complement_of: dict
+) -> list[tuple[int, float, float]]:
+    """``(leg, bid, ask)`` for each leg a book speaks for, then each complement.
+
+    #9934. ``with_complements``' twin for a book instead of a price: the other
+    leg of a proved binary is quoted ``1 - ask`` bid, ``1 - bid`` ask. A missing
+    bid (0) becomes an ask of 1.0, which ``book_refutes_price`` can never exceed.
+    """
+    judged = [(oid, bid, ask) for oid in targets]
+    named = set(targets)
+    for oid in targets:
+        other = complement_of.get(oid)
+        if other is not None and other not in named:
+            judged.append((other, round(1.0 - ask, 6), round(1.0 - bid, 6)))
+            named.add(other)
+    return judged
+
+
+async def withdraw_book_refuted_prices(session, books: dict) -> list:
+    """Withdraw each held price its leg's current wide book prices out (#9934).
+
+    WHAT A READER SAW. ``/events/15321782`` (PHI @ ATL, Wild Card G2, Top 10th,
+    PHI 4–3, 2026-09-30 21:06Z): the Polymarket series card read Braves 93 /
+    Phillies 8 while Kalshi read Atlanta 55. The Braves leg held 0.925 from a
+    trade at 20:29Z, when ATL led 3–1. By 21:08Z the Braves token's book was
+    0.28 bid / 0.91 ask: anyone could buy Braves at 91c, so 92.5 was no longer a
+    price. ``handle_price`` refuses a wide book's midpoint (#1578), which is
+    right, and that refusal was the only thing it did with the book.
+
+    THE RULE IS #9399's, ported to the socket. ``books`` is ``{leg: (bid, ask)}``
+    from the latest wide book per leg. Each stored ``current_probability`` is
+    asked ``book_refutes_price`` — #5121's predicate with its half-cent
+    tolerance and its empty-book carve-out — and a refuted one is withdrawn:
+    the two rendered columns go to NULL, ``price_changed_at`` moves (a price
+    going away is a move), ``last_updated`` does not (no price is fresher than
+    the one withdrawn), and a crowned or graded row is never touched. Each
+    UPDATE re-asserts the value it read. A price inside the book is kept: a
+    skip is still a skip.
+
+    Returns the withdrawn rows as ``(id, market_id, last_updated)``.
+    """
+    if not books:
+        return []
+    from sqlalchemy import select, update
+    from app.models.models import FuturesOutcome
+    from app.utils.kalshi_empty_book import book_refutes_price
+    from app.utils.price_change_stamp import price_changed_at_value
+
+    table = FuturesOutcome.__table__
+    rows = (
+        await session.execute(
+            select(table.c.id, table.c.current_probability).where(
+                table.c.id.in_(sorted(books)),
+                table.c.current_probability.isnot(None),
+                table.c.is_winner.isnot(True),
+                table.c.resolution_source.is_(None),
+            )
+        )
+    ).all()
+    withdrawn = []
+    for outcome_id, stored in rows:
+        bid, ask = books[outcome_id]
+        if not book_refutes_price(bid, ask, float(stored)):
+            continue
+        result = await session.execute(
+            update(table)
+            .where(
+                table.c.id == outcome_id,
+                table.c.current_probability == stored,
+                table.c.is_winner.isnot(True),
+                table.c.resolution_source.is_(None),
+            )
+            .values(
+                current_probability=None,
+                current_american_odds=None,
+                price_changed_at=price_changed_at_value(
+                    table.c.current_probability, table.c.price_changed_at, None
+                ),
+            )
+            .returning(table.c.id, table.c.market_id, table.c.last_updated)
+        )
+        withdrawn.extend(result.all())
+    return withdrawn
+
+
 def legs_in_token_order(pairs: list) -> list:
     """Order one market's ``(outcome_id, external_id)`` legs as its CLOB tokens are.
 
@@ -475,7 +561,8 @@ def _log_stats_line(stats: dict, ws_stats: dict, blend: dict) -> None:
         "Polymarket WS: %d prices, %d trades, %d resolutions, %d errors, "
         "%d msgs | coverage shards=%d/%d served=%d/%d wire=%d by_shard=%s "
         "| blend stamped=%d no_reading=%d throttled=%d errors=%d lock_skipped=%d "
-        "unobserved=%d stale=%d | trades refused below_min=%d outside_wide_book=%d",
+        "unobserved=%d stale=%d | trades refused below_min=%d outside_wide_book=%d "
+        "| held withdrawn=%d",
         stats["price_updates"], stats["trade_updates"],
         stats["resolutions"], stats["errors"],
         ws_stats.get("messages", 0),
@@ -496,6 +583,8 @@ def _log_stats_line(stats: dict, ws_stats: dict, blend: dict) -> None:
         # and, until this line, never emitted.
         stats.get("trades_below_min_order", 0),
         stats.get("trades_outside_wide_book", 0),
+        # #9934: held prices a wide book priced out, withdrawn.
+        stats.get("held_prices_withdrawn", 0),
     )
 
 
@@ -890,6 +979,9 @@ async def _run_polymarket_ws_consumer():
         # #9913: trades refused because they printed beyond the edge of a
         # book too wide to price (`trade_prints_outside_wide_book`).
         "trades_outside_wide_book": 0,
+        # #9934: held prices withdrawn because a wide book priced them out
+        # (`withdraw_book_refuted_prices`).
+        "held_prices_withdrawn": 0,
         "resolutions": 0,
         "errors": 0,
         # Q491: prices a failed flush put BACK on the buffer instead of dropping.
@@ -966,6 +1058,10 @@ async def _run_polymarket_ws_consumer():
     # a trade can be read against the book it hit. One entry per subscribed
     # token; rebuilt from the subscribe snapshot on every recycle.
     books_by_asset: dict[str, tuple] = {}
+    # #9934: leg → (bid, ask) of the latest wide book that speaks for it. The
+    # flush asks whether the held price survives it; a tight book for the leg
+    # clears the entry, since its midpoint is about to replace the price.
+    withdraw_buffer: dict[int, tuple] = {}
 
     async def write_chunk(chunk: dict[int, float]) -> bool:
         """One flush transaction: write, re-rank, commit, publish, un-buffer.
@@ -1087,49 +1183,97 @@ async def _run_polymarket_ws_consumer():
                     del price_buffer[outcome_id]
         return True
 
+    async def flush_withdrawals() -> list[int]:
+        """#9934: withdraw the held prices the latest wide books priced out.
+
+        Same bookkeeping as ``write_chunk``: an entry leaves the buffer only
+        after its transaction lands, and only if no newer book replaced it
+        meanwhile. Returns the withdrawn legs' ids.
+        """
+        async with buffer_lock:
+            books = dict(withdraw_buffer)
+        if not books:
+            return []
+        try:
+            async with get_task_session() as session:
+                rows = await withdraw_book_refuted_prices(session, books)
+                for row in rows:
+                    if row.last_updated is None:
+                        continue  # no observation stamp to push; REST serves it
+                    queue_market_change(
+                        session,
+                        market_id=row.market_id,
+                        source="polymarket",
+                        outcome_observed_at={row.id: row.last_updated},
+                    )
+                # #6598: a withdrawn leg leaves the field `rank` orders.
+                markets = sorted({row.market_id for row in rows})
+                if markets:
+                    stats["ranks_rederived"] += (
+                        await session.execute(rerank_market_fields_stmt(markets))
+                    ).rowcount
+        except Exception:
+            stats["errors"] += 1
+            logger.exception(
+                "Polymarket WS: withdrawal error (%d retained for retry)", len(books)
+            )
+            return []
+        await blend_refresher.publish_market_changes(session)
+        async with buffer_lock:
+            for oid, book in books.items():
+                if withdraw_buffer.get(oid) == book:
+                    del withdraw_buffer[oid]
+        stats["held_prices_withdrawn"] += len(rows)
+        return [row.id for row in rows]
+
     async def flush_prices(final=False):
         async with buffer_lock:
             batch = dict(price_buffer)
             batch_marks = {
                 oid: input_marks[oid] for oid in batch if oid in input_marks
             }
-        if not batch:
+        written: list[int] = []
+        if batch:
+            # #9484: every linked row, then a bounded number of open-contract
+            # chunks, oldest-dirty first (the buffer's insertion order). Open
+            # rows past the bound stay buffered and lead the next flush — none
+            # dropped. The FINAL drain has no successor flush, so it takes
+            # every row. CERT-3868: the two legs of a binary commit in one
+            # transaction or wait together — never one side read beside the
+            # other's old price.
+            chunks = plan_flush_chunks(
+                batch, open_outcome_ids, FLUSH_CHUNK_ROWS,
+                None if final else OPEN_FLUSH_CHUNKS_PER_FLUSH,
+                open_complement_of,
+            )
+            stats["open_contract_flush_deferred"] += len(batch) - sum(
+                len(c) for c in chunks
+            )
+            for chunk_ids in chunks:
+                if await write_chunk({oid: batch[oid] for oid in chunk_ids}):
+                    written.extend(chunk_ids)
+        # #9934: after the prices, so a held number is judged as it now stands.
+        withdrawn = await flush_withdrawals()
+        if not batch and not withdrawn:
             # #837 tail — a flush with no new prices still owes the stamps a row
             # lock deferred: those prices are already stored, so waiting for the
             # next venue tick would strand them on a quiet market. Free when
             # nothing is queued (no session is opened).
             await blend_refresher.refresh_pending()
             return
-        # #9484: every linked row, then a bounded number of open-contract
-        # chunks, oldest-dirty first (the buffer's insertion order). Open rows
-        # past the bound stay buffered and lead the next flush — none dropped.
-        # The FINAL drain has no successor flush, so it takes every row.
-        # CERT-3868: the two legs of a binary commit in one transaction or
-        # wait together — never one side read beside the other's old price.
-        chunks = plan_flush_chunks(
-            batch, open_outcome_ids, FLUSH_CHUNK_ROWS,
-            None if final else OPEN_FLUSH_CHUNKS_PER_FLUSH,
-            open_complement_of,
-        )
-        stats["open_contract_flush_deferred"] += len(batch) - sum(
-            len(c) for c in chunks
-        )
-        written: list[int] = []
-        for chunk_ids in chunks:
-            if await write_chunk({oid: batch[oid] for oid in chunk_ids}):
-                written.extend(chunk_ids)
-        if not written:
+        if not written and not withdrawn:
             return
 
         # Q460 — THE SHIP. Carry the freshly-flushed prices through to
         # `Event.win_probability_sources`, the JSONB the card actually renders.
         # #837 receipt: the revisions this flush committed ride into the
         # refresh that follows it, and only that one.
-        tail_receipts.stage(
-            [batch_marks[oid] for oid in written if oid in batch_marks]
-        )
+        if written:
+            tail_receipts.stage(
+                [batch_marks[oid] for oid in written if oid in batch_marks]
+            )
         await blend_refresher.refresh(
-            event_ids_for_outcomes(event_id_by_outcome, written)
+            event_ids_for_outcomes(event_id_by_outcome, written + withdrawn)
         )
 
     async def drain_prices():
@@ -1213,8 +1357,21 @@ async def _run_polymarket_ws_consumer():
         # phantom. Returning early leaves the existing value untouched; the
         # real-trade stream (handle_trade, below) is what moves an illiquid
         # market's price, which is correct.
+        #
+        # #9934: but the book is still evidence about the price we HOLD. A
+        # held number the wide book prices out is queued for withdrawal.
+        legs = books_with_complements(
+            _tick_targets(asset_id), bid_f, ask_f, open_complement_of
+        )
         if _poly_book_is_untradeable(bid_f, ask_f):
+            async with buffer_lock:
+                for outcome_id, leg_bid, leg_ask in legs:
+                    withdraw_buffer[outcome_id] = (leg_bid, leg_ask)
             return
+        if legs:
+            async with buffer_lock:
+                for outcome_id, _bid, _ask in legs:
+                    withdraw_buffer.pop(outcome_id, None)
 
         prob = (bid_f + ask_f) / 2
         if prob <= 0 or prob >= 1:
