@@ -16,6 +16,7 @@ from sqlalchemy import func, select, text
 from app.tasks.base import get_task_session
 from app.utils.feed_market_quality import (
     FEED_PHANTOM_MIN_SPREAD,
+    book_bounds_nothing,
     is_empty_book_midpoint,
     is_fabricated_midpoint,
 )
@@ -472,6 +473,40 @@ def _is_tradeable_opening(prob: Optional[float], has_trading: bool) -> bool:
     can never both open at 1.0.
     """
     return bool(has_trading) and prob is not None and 0.0 < prob < 1.0
+
+
+def _opening_book_is_empty(
+    best_bid: Optional[float],
+    best_ask: Optional[float],
+    last_trade_price: Optional[float],
+) -> bool:
+    """True when a leg's only opening evidence is a bid on a book that bounds nothing.
+
+    #9850. The decomposed sub-market writer counted ``best_bid > 0`` as trading, so a
+    1c bid on a 1c/99c listing book was enough to stamp Gamma's ``outcomePrices`` as
+    the opening. The resolver's two phantom predicates only catch that price when it
+    sits ON the book's midpoint, and Gamma's number can be a tick-instant off it:
+    market 63386735 (Trammell 1+ HR, listed 2026-09-30 06:16Z) stored 0.475 / 0.525
+    beside a 0.01 / 0.99 book with no trade, and "The script" led the event page with
+    "opened at 47% — it's 5% now", a move nobody made.
+
+    Where the price sits inside the book is irrelevant to an opening, so this asks
+    only the book question, through the shared :func:`book_bounds_nothing`. A missing
+    ask beside a bid is the widest quote on that side (the ``_poly_book_is_untradeable``
+    convention). A trade exempts, as it does in the parent-field writers' opening test:
+    somebody transacted.
+
+    Measured 2026-09-30 over 36h of decomposed legs: 12 of ~31,800 opening stamps
+    had this shape. Refusing leaves the opening NULL until a poll sees a book that
+    locates something or a trade (``opening_probability`` is COALESCE-first). The
+    CLOB-history backfill cannot fill it instead: both of its modes select only legs
+    with no snapshots, and a refused leg still writes its snapshot.
+    """
+    if last_trade_price is not None and last_trade_price > 0:
+        return False
+    if best_bid is None:
+        return False
+    return book_bounds_nothing(best_bid, 1.0 if best_ask is None else best_ask)
 
 
 def sub_market_metadata(
@@ -3069,7 +3104,23 @@ async def _process_event_batch(
                         # A price of exactly 0.0/1.0 is a settled/placeholder value, not a
                         # tradeable opening — stamping it produced the impossible
                         # both-sides=1.0 binaries (#137 opening artifact).
-                        sub_has_open = _is_tradeable_opening(prob, sub_has_trading)
+                        #
+                        # #9850: a 1c bid on a book that bounds nothing is not
+                        # trading for OPENING purposes. The current price, book
+                        # and snapshot still write; only the opening waits. One
+                        # evidence flag for both legs, so a pair is never
+                        # half-stamped.
+                        sub_opening_evidence = sub_has_trading
+                        if sub_has_trading and _opening_book_is_empty(
+                            market.best_bid,
+                            market.best_ask,
+                            market.last_trade_price,
+                        ):
+                            stats["opening_refused_empty_book"] = (
+                                stats.get("opening_refused_empty_book", 0) + 1
+                            )
+                            sub_opening_evidence = False
+                        sub_has_open = _is_tradeable_opening(prob, sub_opening_evidence)
 
                         # THE PAIR GATE. Both legs of one binary must come from the
                         # same normalised upstream pair and sum to ~1, or NEITHER
@@ -3271,7 +3322,7 @@ async def _process_event_batch(
                             # opening_probability when no snapshot exists) inherited the
                             # wrong side — the #137 poly-Under sign-flip class.
                             sub_under_has_open = _is_tradeable_opening(
-                                under_prob, sub_has_trading
+                                under_prob, sub_opening_evidence
                             ) and sub_pair_verdict == PAIR_OPENING_OK
                             # #2027: same refusal as the Over leg above —
                             # the settled book is not an opening.
