@@ -750,6 +750,34 @@ enum TeamShortName {
         // pair looks like, which is exactly why `short` did not: one rule that
         // exists in one function guards one caller.
         if isDoublesPair(name) { return shipped }
+        // #5634 — an esports organisation's crest is not its TYPE. The label
+        // keeps "G2 Esports" whole, but the badge read the last word and painted
+        // `ESP` — on the site's hero beside a Bigger Picture tile reading `G2`
+        // for the same team (/events/15319232, 2026-09-29). ux measured 158 of
+        // 925 production esports names painting a type word (`ESP` 103, `GAM`
+        // 40, `TEA` 13). The type words are dropped and the remainder takes
+        // this same rule, sport-free: "SK Gaming" is `SK`, "Team WE" `WE`.
+        //
+        // ONLY WHEN THE BADGE IS THE TYPE WORD: an initials badge that spells
+        // the org's own tag counts the type word as a letter ("Hanwha Life
+        // Esports" `HLE`, "Berlin International Gaming" `BIG`), and the ungated
+        // drop regressed 38 such names on the web.
+        //
+        // The browser's `teamCrestBadge` esports arm (PR #9695), with one
+        // deliberate difference: "is the badge the type word" compares the
+        // word's first three GLYPHS, because that is what `glyphs(ofLabel:)`
+        // paints here — "INTZ e-Sports" badges `ESP` on the phone where the
+        // browser's slice paints `E-S`. Both clients then land on `INT`.
+        if keepsWholeOrgName(sportKey: sportKey) {
+            let sportFree = abbreviation(name)
+            let words = name.split(whereSeparator: \.isWhitespace)
+            let isType = { (word: Substring) in esportsOrgSuffixes.contains(bareToken(word).lowercased()) }
+            let org = words.filter { !isType($0) }.joined(separator: " ")
+            let typeBadge = words.contains {
+                isType($0) && String($0.filter { $0.isLetter || $0.isNumber }.prefix(3)).uppercased() == sportFree
+            }
+            return typeBadge && !org.isEmpty ? abbreviation(org) : sportFree
+        }
         let distinctive = distinctiveTokens(name)
         guard distinctive.count >= 3 else { return shipped }
         // #4624 — a PERSON is badged by the rule that shipped before the fork,
@@ -1067,7 +1095,14 @@ enum TeamShortName {
         // The club rule is the wider net, and the net is the point.
         // #5634 — the proxy and the growth read `shortByRule`, so a country
         // kept whole as a LABEL moves no badge: both are as they were.
-        guard a == h || (derived && shortByRule(away) == shortByRule(home)) else { return (a, h) }
+        // #5634 — except under an esports key, where the shared tail is the
+        // TYPE word ("G2 Esports" v "Top Esports" both shorten to "Esports")
+        // and `abbreviation`'s esports arm has already badged each side by its
+        // organisation. Growing there re-lettered `G2`/`TOP` as `G2E`/`TOP` and
+        // "Hanwha Life Esports" as `LIF`. An exact badge collision still grows.
+        let proxyCollides = derived && !keepsWholeOrgName(sportKey: sportKey)
+            && shortByRule(away) == shortByRule(home)
+        guard a == h || proxyCollides else { return (a, h) }
         let widened = grown(away: away, home: home, byRule: true)
         return (glyphs(ofLabel: widened.away), glyphs(ofLabel: widened.home))
     }

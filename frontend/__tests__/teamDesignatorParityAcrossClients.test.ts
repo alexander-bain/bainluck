@@ -1034,3 +1034,26 @@ describe("#5634 — one esports org-suffix list, two clients", () => {
     expect(lastWord).toBeGreaterThan(org);
   });
 });
+
+describe("#5634 — the esports crest arm sits where the browser's does", () => {
+  // The browser's arm (PR #9695, `teamCrestBadge`) runs after the doubles
+  // branch and before the distinctive-token fork; its behaviour is executed in
+  // `teamCrestBadgeEsportsTypeWord5634.test.ts` and the iPhone's, specimen for
+  // specimen, in `TeamShortNameEsportsWholeOrg5634Tests.swift`. This pins the
+  // Swift ORDER, which neither behaviour suite can see.
+  it("the iPhone's abbreviation runs the arm after the doubles branch and before the fork", () => {
+    const fn = swiftCode.indexOf("static func abbreviation(_ name: String");
+    const doubles = swiftCode.indexOf("if isDoublesPair(name) { return shipped }", fn);
+    const org = swiftCode.indexOf("if keepsWholeOrgName(sportKey: sportKey) {", fn);
+    const fork = swiftCode.indexOf("let distinctive = distinctiveTokens(name)", fn);
+    expect(fn).toBeGreaterThan(-1);
+    expect(doubles).toBeGreaterThan(fn);
+    expect(org).toBeGreaterThan(doubles);
+    expect(fork).toBeGreaterThan(org);
+  });
+
+  it("the arm drops type words by the shared suffix set, sport-free", () => {
+    expect(swiftCode).toMatch(/esportsOrgSuffixes\.contains\(bareToken\(word\)\.lowercased\(\)\)/);
+    expect(swiftCode).toMatch(/typeBadge && !org\.isEmpty \? abbreviation\(org\) : sportFree/);
+  });
+});
