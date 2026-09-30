@@ -25,13 +25,24 @@
  * cannot empty the narrow query silently: `RelatedByTag` filters before it
  * slices, and a narrow query left with nothing falls back to the wide one.
  *
- * MLB only, because it is the only league whose two halves are named in market
- * titles this way and whose conference strings were measured. Another league is
- * one row in `LEAGUE_HALVES`, added when its names are read off production.
+ * MLB and NFL (#9809), the leagues whose two halves are named in market titles
+ * this way and whose conference strings were measured. Another league is one
+ * pair of rows in `LEAGUE_HALVES`, added when its names are read off production.
+ *
+ * #9809, NFL: `/events/14780550` Steelers @ Browns, both sides
+ * `standings.conference` = 'American Football Conference' (production 9/30),
+ * drew `NFC Championship Winner` and `NFC South: Total Wins` in a four-card
+ * rail. Cowboys @ Texans (NFC v AFC) is the cross-conference game that keeps
+ * every card. Titles name the halves as `AFC` / `NFC`.
+ *
+ * The OTHER half is looked up inside the same `league` only: an AFC game must
+ * not drop a title for containing `AL`, which is baseball's half, not football's.
  */
-const LEAGUE_HALVES: { conference: string; names: RegExp }[] = [
-  { conference: "American League", names: /\b(?:AL|ALCS|ALDS|American League)\b/ },
-  { conference: "National League", names: /\b(?:NL|NLCS|NLDS|National League)\b/ },
+const LEAGUE_HALVES: { league: string; conference: string; names: RegExp }[] = [
+  { league: "mlb", conference: "American League", names: /\b(?:AL|ALCS|ALDS|American League)\b/ },
+  { league: "mlb", conference: "National League", names: /\b(?:NL|NLCS|NLDS|National League)\b/ },
+  { league: "nfl", conference: "American Football Conference", names: /\b(?:AFC|American Football Conference)\b/ },
+  { league: "nfl", conference: "National Football Conference", names: /\b(?:NFC|National Football Conference)\b/ },
 ];
 
 /** The one league both sides play in, or `null` when there is not exactly one. */
@@ -54,5 +65,7 @@ export function namesOnlyTheOtherLeague(
   const ours = LEAGUE_HALVES.find((h) => h.conference === league);
   if (!ours) return false;
   if (ours.names.test(name)) return false;
-  return LEAGUE_HALVES.some((h) => h !== ours && h.names.test(name));
+  return LEAGUE_HALVES.some(
+    (h) => h !== ours && h.league === ours.league && h.names.test(name),
+  );
 }

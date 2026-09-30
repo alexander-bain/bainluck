@@ -360,7 +360,11 @@ export default function RelatedByTag({
           · {items.length}
         </span>
       </h3>
-      <div className="grid gap-2 sm:grid-cols-2" data-testid="related-by-tag-grid">
+      {/* #9808: `grid-cols-1` is `minmax(0,1fr)`. Without it a phone gets the
+          implicit `auto` track, which grows to the widest row's full text —
+          NFC West: Exact Order's four team names pushed every card to 399px
+          in a 366px section and the page scrolled sideways. */}
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2" data-testid="related-by-tag-grid">
         {items.map((item) => {
           if (item.type === "event") {
             const d = item.data as FeedEventData;
