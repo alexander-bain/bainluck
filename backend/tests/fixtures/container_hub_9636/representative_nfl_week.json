@@ -1,0 +1,328 @@
+{
+  "_representative": "REPRESENTATIVE FIXTURE for #9636/#9652 \u2014 built from test rows through the real card serializers; NOT production data. Regenerate with BL_WRITE_9636_FIXTURES=1 (see backend/tests/test_container_hydrated_reader_9636.py).",
+  "request": "GET /api/containers/nfl-2026-week-5",
+  "response": {
+    "assembled": true,
+    "children": [],
+    "container": {
+      "category": "sports",
+      "id": 70,
+      "kind": "season",
+      "name": "NFL 2026 \u00b7 Week 5",
+      "parent_container_id": null,
+      "slug": "nfl-2026-week-5",
+      "status": "live",
+      "window_end": "2026-10-08T17:00:00+00:00",
+      "window_start": "2026-10-01T17:00:00+00:00"
+    },
+    "edition": {
+      "kind": "nfl_week",
+      "league": "nfl",
+      "season": 2026,
+      "stage": "Regular Season",
+      "week": 5
+    },
+    "known_classes": [
+      "advancement",
+      "doubles",
+      "match_winner",
+      "prop",
+      "side_question",
+      "title",
+      "unclassified"
+    ],
+    "member_count": 5,
+    "reason": null,
+    "revision": 4,
+    "sections": [
+      {
+        "class": "match_winner",
+        "count": 4,
+        "members": [
+          {
+            "card": {
+              "away_score": 3,
+              "away_team": "Dallas Cowboys",
+              "commence_time": "2026-10-04T16:00:00+00:00",
+              "completed_at": null,
+              "external_id": "rep-502",
+              "highlight": {
+                "flags": {
+                  "favorite_switched": false,
+                  "has_lead_changes": false,
+                  "has_recent_momentum": false,
+                  "is_blowout": false,
+                  "is_close_matchup": false,
+                  "is_live": true,
+                  "is_recently_finished": false,
+                  "is_starting_soon": false,
+                  "is_upset": false,
+                  "is_volatile": false,
+                  "league_tier": 1,
+                  "probability_swing": "stable",
+                  "score_swing": "stable"
+                },
+                "label": "Live",
+                "reasons": [
+                  "live",
+                  "tier_1"
+                ],
+                "score": 50,
+                "should_feature": true
+              },
+              "home_score": 7,
+              "home_team": "Philadelphia Eagles",
+              "id": 502,
+              "sport": "americanfootball_nfl",
+              "sport_name": "NFL",
+              "start_is_tbd": false,
+              "started_without_result": false,
+              "status": "live"
+            },
+            "confidence": 1.0,
+            "container_id": 70,
+            "destination": {
+              "api": "/api/events/502",
+              "id": 502,
+              "kind": "event",
+              "web": "/events/502"
+            },
+            "id": 502,
+            "question_ids": [
+              9102
+            ],
+            "source": "statpal",
+            "type": "event"
+          },
+          {
+            "card": {
+              "away_score": null,
+              "away_team": "Kansas City Chiefs",
+              "commence_time": "2026-10-06T22:00:00+00:00",
+              "completed_at": null,
+              "external_id": "rep-501",
+              "highlight": {
+                "flags": {
+                  "favorite_switched": false,
+                  "has_lead_changes": false,
+                  "has_recent_momentum": false,
+                  "is_blowout": false,
+                  "is_close_matchup": false,
+                  "is_live": false,
+                  "is_recently_finished": false,
+                  "is_starting_soon": false,
+                  "is_upset": false,
+                  "is_volatile": false,
+                  "league_tier": 1,
+                  "probability_swing": "stable",
+                  "score_swing": "stable"
+                },
+                "label": null,
+                "reasons": [
+                  "tier_1"
+                ],
+                "score": 20,
+                "should_feature": false
+              },
+              "home_score": null,
+              "home_team": "Buffalo Bills",
+              "id": 501,
+              "sport": "americanfootball_nfl",
+              "sport_name": "NFL",
+              "start_is_tbd": false,
+              "started_without_result": false,
+              "status": "scheduled"
+            },
+            "confidence": 1.0,
+            "container_id": 70,
+            "destination": {
+              "api": "/api/events/501",
+              "id": 501,
+              "kind": "event",
+              "web": "/events/501"
+            },
+            "id": 501,
+            "question_ids": [
+              9101,
+              9103
+            ],
+            "source": "statpal",
+            "type": "event"
+          },
+          {
+            "card": {
+              "category": "sports",
+              "id": 9101,
+              "llm_sport_category": null,
+              "market_tier": 2,
+              "market_type_label": "Conference",
+              "name": "Chiefs at Bills: winner",
+              "outcome_count": 2,
+              "prices_updated_at": null,
+              "resolution_date": null,
+              "source": "kalshi",
+              "sport": "americanfootball_nfl",
+              "sport_name": "NFL",
+              "status": "open",
+              "top_outcomes": [
+                {
+                  "american_odds": null,
+                  "id": 91010,
+                  "is_winner": null,
+                  "movement": null,
+                  "name": "Buffalo Bills",
+                  "probability": 0.55,
+                  "rank": null,
+                  "resolution_source": null
+                },
+                {
+                  "american_odds": null,
+                  "id": 91011,
+                  "is_winner": null,
+                  "movement": null,
+                  "name": "Kansas City Chiefs",
+                  "probability": 0.45,
+                  "rank": null,
+                  "resolution_source": null
+                }
+              ],
+              "updated_at": null
+            },
+            "confidence": 1.0,
+            "container_id": 70,
+            "destination": {
+              "api": "/api/futures/9101",
+              "id": 9101,
+              "kind": "market",
+              "web": "/futures/9101"
+            },
+            "event_id": 501,
+            "id": 9101,
+            "source": "register",
+            "type": "market"
+          },
+          {
+            "card": {
+              "category": "sports",
+              "id": 9102,
+              "llm_sport_category": null,
+              "market_tier": 2,
+              "market_type_label": "Conference",
+              "name": "Cowboys at Eagles: winner",
+              "outcome_count": 2,
+              "prices_updated_at": null,
+              "resolution_date": null,
+              "source": "kalshi",
+              "sport": "americanfootball_nfl",
+              "sport_name": "NFL",
+              "status": "open",
+              "top_outcomes": [
+                {
+                  "american_odds": null,
+                  "id": 91020,
+                  "is_winner": null,
+                  "movement": null,
+                  "name": "Philadelphia Eagles",
+                  "probability": 0.62,
+                  "rank": null,
+                  "resolution_source": null
+                },
+                {
+                  "american_odds": null,
+                  "id": 91021,
+                  "is_winner": null,
+                  "movement": null,
+                  "name": "Dallas Cowboys",
+                  "probability": 0.38,
+                  "rank": null,
+                  "resolution_source": null
+                }
+              ],
+              "updated_at": null
+            },
+            "confidence": 1.0,
+            "container_id": 70,
+            "destination": {
+              "api": "/api/futures/9102",
+              "id": 9102,
+              "kind": "market",
+              "web": "/futures/9102"
+            },
+            "event_id": 502,
+            "id": 9102,
+            "source": "register",
+            "type": "market"
+          }
+        ]
+      },
+      {
+        "class": "prop",
+        "count": 1,
+        "members": [
+          {
+            "card": {
+              "category": "sports",
+              "id": 9103,
+              "llm_sport_category": null,
+              "market_tier": 2,
+              "market_type_label": "Conference",
+              "name": "Josh Allen: 2+ passing touchdowns?",
+              "outcome_count": 2,
+              "prices_updated_at": null,
+              "resolution_date": null,
+              "source": "kalshi",
+              "sport": "americanfootball_nfl",
+              "sport_name": "NFL",
+              "status": "open",
+              "top_outcomes": [
+                {
+                  "american_odds": null,
+                  "id": 91030,
+                  "is_winner": null,
+                  "movement": null,
+                  "name": "Yes",
+                  "probability": 0.6,
+                  "rank": null,
+                  "resolution_source": null
+                },
+                {
+                  "american_odds": null,
+                  "id": 91031,
+                  "is_winner": null,
+                  "movement": null,
+                  "name": "No",
+                  "probability": 0.4,
+                  "rank": null,
+                  "resolution_source": null
+                }
+              ],
+              "updated_at": null
+            },
+            "confidence": 0.9,
+            "container_id": 70,
+            "destination": {
+              "api": "/api/futures/9103",
+              "id": 9103,
+              "kind": "market",
+              "web": "/futures/9103"
+            },
+            "event_id": 501,
+            "id": 9103,
+            "source": "register",
+            "type": "market"
+          }
+        ]
+      }
+    ],
+    "slug": "nfl-2026-week-5",
+    "state": "published",
+    "withheld": [
+      {
+        "id": 599,
+        "reason": "row_missing",
+        "type": "event"
+      }
+    ],
+    "withheld_count": 1
+  }
+}
