@@ -1889,10 +1889,20 @@ function percentile(sorted: number[], q: number): number {
  *    is in range, which is what #3525 leaned on when it deleted the 50% line's
  *    own label: "the left axis already prints 50% on this exact line".
  *
+ * 5. Where a line ENDS is always on the plot (#9906). `mustShow` carries each
+ *    drawn series' last value, and the axis widens to hold it after rule 1b.
+ *    The end is one sample, so p98 treats it as noise, but it is the number
+ *    the trailing callout prints and, on a settled chart, the result. Read on
+ *    production 2026-09-30, `/events/15320754` (Bublik / Shang, venue-settled):
+ *    the axis was [30, 55] while the Kalshi line ended with a stroke to 100% and
+ *    the callout said `100%` at the top edge — rule 1b's contradiction, left
+ *    over because the core (≈34–45) is under half the full span. An early
+ *    spike (rule 1's case) is never an end, so it still does not set the scale.
+ *
  * A market that genuinely uses the range is UNCHANGED: 10%–90% snaps to
  * [0, 100] with ticks 0/25/50/75/100, byte for byte the old axis.
  */
-export function computeWinProbYAxis(values: number[]): WinProbYAxis {
+export function computeWinProbYAxis(values: number[], mustShow: number[] = []): WinProbYAxis {
   const finite = values.filter((v) => typeof v === "number" && Number.isFinite(v));
   if (finite.length < WIN_PROB_Y_MIN_SAMPLES) return FULL_WIN_PROB_Y_AXIS;
 
@@ -1909,6 +1919,13 @@ export function computeWinProbYAxis(values: number[]): WinProbYAxis {
   if (fullSpan > 0 && (hi - lo) / fullSpan >= WIN_PROB_Y_MIN_CORE_SHARE) {
     lo = fullLo;
     hi = fullHi;
+  }
+
+  // Rule 5 — a line's end is never cut off, whatever rule 1 made of it.
+  for (const v of mustShow) {
+    if (typeof v !== "number" || !Number.isFinite(v)) continue;
+    lo = Math.min(lo, v);
+    hi = Math.max(hi, v);
   }
 
   // Rule 2 — decided on the extremes, because one crossing print is one marker.

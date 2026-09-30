@@ -1724,15 +1724,23 @@ export default function OddsChart({
   // `filteredPeriodBoundaries` read (see its docstring). That is deliberate: a
   // series the chart draws but the axis did not size would be the one that runs
   // off the plot, which is the exact class of bug this is fixing.
+  //
+  // #9906: each series' LAST value is passed as `mustShow`, so the end of every
+  // drawn line — the callout's number, and a settled chart's result — is inside
+  // the axis even when the percentile zoom would treat it as an outlier.
   const { domain: yDomain, ticks: yTicks } = useMemo(() => {
     const values: number[] = [];
+    const lastByKey = new Map<string, number>();
     for (const point of chartData) {
       for (const key of plottedProbKeys) {
         const v = point[key];
-        if (typeof v === "number") values.push(v);
+        if (typeof v === "number") {
+          values.push(v);
+          lastByKey.set(key, v);
+        }
       }
     }
-    return computeWinProbYAxis(values);
+    return computeWinProbYAxis(values, [...lastByKey.values()]);
   }, [chartData, plottedProbKeys]);
 
   /**
