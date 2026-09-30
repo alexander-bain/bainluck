@@ -464,7 +464,8 @@ struct OddsChartView: View {
         }
         return TeamShortName.shortPair(
             away: away, home: home,
-            awayServed: awayTeamAbbrev, homeServed: homeTeamAbbrev
+            awayServed: awayTeamAbbrev, homeServed: homeTeamAbbrev,
+            sportKey: sportKey
         )
     }
     private var homeShort: String { axisLabels.home }
@@ -484,7 +485,8 @@ struct OddsChartView: View {
             awayServed: awayTeamAbbrev, homeServed: homeTeamAbbrev,
             fontSize: fontSize,
             awayRun: ChartGutter.nameRun(run: run, hasCrest: awayCrest),
-            homeRun: ChartGutter.nameRun(run: run, hasCrest: homeCrest)
+            homeRun: ChartGutter.nameRun(run: run, hasCrest: homeCrest),
+            sportKey: sportKey
         )
     }
 

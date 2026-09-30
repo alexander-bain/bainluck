@@ -68,6 +68,30 @@ final class TeamShortNameEuroleagueWholeClub5634Tests: XCTestCase {
         XCTAssertEqual(TeamShortName.short("Los Angeles Lakers", sportKey: "basketball_nba"), "Lakers")
     }
 
+    /// The native LOOK of `/events/15318709` (2026-09-30): the hero read
+    /// "FC Bayern München" and the Win Probability axis beneath it "MÜNCHEN" —
+    /// `ChartGutter.sideLabels` never received the sport key, which the
+    /// browser's `OddsChart.tsx` and `ScoreDifferentialChart.tsx` both pass.
+    func testTheChartGutterTakesTheSportKey() {
+        let away = "FC Bayern München", home = "Fenerbahce SK"
+        let shipped = ChartGutter.sideLabels(away: away, home: home, fontSize: 12,
+                                             awayRun: 10_000, homeRun: 10_000)
+        XCTAssertEqual(shipped.away, "München", "premise: without the key the axis reads the city")
+        let wide = ChartGutter.sideLabels(away: away, home: home, fontSize: 12,
+                                          awayRun: 10_000, homeRun: 10_000, sportKey: Self.euroleague)
+        XCTAssertEqual(wide.away, "Bayern München")
+        XCTAssertEqual(wide.home, "Fenerbahce SK")
+        let tight = ChartGutter.sideLabels(away: away, home: home, fontSize: 12,
+                                           awayRun: 1, homeRun: 1, sportKey: Self.euroleague)
+        let codes = TeamShortName.abbreviationPair(away: away, home: home, sportKey: Self.euroleague)
+        XCTAssertEqual(tight.away, codes.away)
+        XCTAssertEqual(tight.home, codes.home)
+        // A football axis too: "Union Berlin", never "Berlin".
+        let derby = ChartGutter.sideLabels(away: "Union Berlin", home: "1. FC Köln", fontSize: 12,
+                                           awayRun: 10_000, homeRun: 10_000, sportKey: "soccer_germany_bundesliga")
+        XCTAssertEqual(derby.away, "Union Berlin")
+    }
+
     /// ux's after-LOOK: the label changes, the crest does not (`MÜN` stays —
     /// withdrawn as a residual 2026-09-30 06:55Z; three-letter codes are city-based).
     func testTheCrestIsNotReLettered() {
