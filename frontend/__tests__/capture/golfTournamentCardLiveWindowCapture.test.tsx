@@ -175,6 +175,15 @@ const PRICE_ARM_ROW = "asia_masters_2026";
 const LIVE_BADGE_SPAN =
   /<span class="inline-flex items-center gap-1 text-\[11px\] font-semibold text-red-500 uppercase tracking-wide"><span class="w-\[7px\] h-\[7px\] rounded-full bg-red-500 animate-pulse"><\/span>LIVE<\/span>/g;
 
+// #9750 — the same row's chaser strip names two different entrants
+// "Challengers" side by side, the shared-surname defect #9750 fixes: each takes
+// its first initial. Named explicitly, and both sides asserted positively below,
+// for the same reason as the rows above.
+const CHASER_NAME_CELL =
+  /<div class="text-\[11px\] font-medium text-text-secondary truncate px-1">([^<]*)<\/div>/g;
+const chaserNames = (m: string) => Array.from(m.matchAll(CHASER_NAME_CELL), (x) => x[1]);
+const withoutChaserNames = (m: string) => m.replace(CHASER_NAME_CELL, "");
+
 const MOVEMENT_SPAN = /<span class=" text-(?:green|red)-600 font-semibold">[^<]*<\/span>/g;
 const withoutMovement = (m: string) => m.replace(MOVEMENT_SPAN, "");
 const movementSpans = (m: string) => m.match(MOVEMENT_SPAN) ?? [];
@@ -465,9 +474,13 @@ describe("UX-P180 · the windowless population is untouched", () => {
     expect(fixed.match(LIVE_BADGE_SPAN)).toBeNull();
     expect(fixed.match(EYEBROW_DATE_SPAN)).toHaveLength(1);
 
+    // #9750: the legacy strip is REQUIRED to still print the shared word twice.
+    expect(chaserNames(legacy)).toEqual(["Academy", "Challengers", "Challengers"]);
+    expect(chaserNames(fixed)).toEqual(["Academy", "N. Challengers", "K. Challengers"]);
+
     assertOnlyTheMovementUnitMoved(
-      fixed.replace(EYEBROW_DATE_SPAN, ""),
-      legacy.replace(LIVE_BADGE_SPAN, ""),
+      withoutChaserNames(fixed.replace(EYEBROW_DATE_SPAN, "")),
+      withoutChaserNames(legacy.replace(LIVE_BADGE_SPAN, "")),
     );
   });
 

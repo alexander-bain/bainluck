@@ -6,6 +6,7 @@ import { formatProbability } from "@/lib/api";
 import { formatMovementPoints, isRenderedMove } from "@/lib/probabilityDisplay";
 import { championRowIndex, isTournamentBeforeStart, isTournamentLive } from "@/lib/tournamentLive";
 import { normalizeCupSideName, resolveCupSideColors } from "@/lib/cupTeamSides";
+import { golfChaserLabels } from "@/lib/golfChaserLabels";
 import type { GolfTournament, GolfLeaderboardPlayer } from "@/lib/types";
 
 // L2-78 Item 2 — golf-default flip. FLIPPED TRUE in Queue #213: Alex ruled the
@@ -79,6 +80,9 @@ export default function TournamentCard({ tournament, leaderboard, href: hrefOver
   // Build leader + chasers from leaderboard (preferred) or golfers (fallback)
   const leader = _buildLeader(tournament, leaderboard);
   const chasers = _buildChasers(tournament, leaderboard);
+  // #9750 — surnames, unless two chasers share one ("A. Kim" / "H. Kim"), or a
+  // chaser shares the hero's ("Matt Fitzpatrick" above "A. Fitzpatrick").
+  const chaserLabels = golfChaserLabels(chasers.map((c) => c.name), leader?.name);
 
   return (
     <Link href={href} className="block">
@@ -186,7 +190,7 @@ export default function TournamentCard({ tournament, leaderboard, href: hrefOver
                   className={`flex-1 text-center py-1 ${i < chasers.length - 1 ? "border-r border-border-light" : ""}`}
                 >
                   <div className="text-[11px] font-medium text-text-secondary truncate px-1">
-                    {_lastName(c.name)}
+                    {chaserLabels[i]}
                   </div>
                   <div className="text-[15px] font-bold tabular-nums">
                     {c.winProb.toFixed(1)}%
@@ -468,11 +472,6 @@ function _currentRound(tournament: GolfTournament): string {
   const now = new Date();
   const daysDiff = Math.floor((now.getTime() - start.getTime()) / 86400000) + 1;
   return String(Math.min(Math.max(daysDiff, 1), 4));
-}
-
-function _lastName(name: string): string {
-  const parts = name.split(" ");
-  return parts.length > 1 ? parts[parts.length - 1] : name;
 }
 
 function _cleanPropLabel(marketName: string, tournamentName: string): string {
