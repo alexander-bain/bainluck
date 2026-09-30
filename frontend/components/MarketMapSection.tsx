@@ -1018,7 +1018,17 @@ export default function MarketMapSection({
        widens the rail's range. `actualTotal` already pushes the same 0, so the
        rail is unchanged either way, and leaving it keeps this diff to the one
        question it is answering. */
-    const projectedRaw = pace?.projected_total ?? null;
+    /* #9930: A RUN-FORWARD OF NO REMAINING TIME IS NOT A FORECAST EITHER.
+       The estimator caps elapsed time at the whole game, so from the end of
+       regulation `fraction_elapsed` is 1 and `projected_total` is the tally
+       itself. Production, `/events/15321782` at 21:02Z, Top 10th at 3 – 3:
+       `{total_scored: 6, projected_total: 6, fraction_elapsed: 1.0}` headlined
+       "Projected 6" — a total a tied baseball game cannot finish on. #6831's
+       posture on a third axis: the value has no standing once the clock it
+       divides by has run out. Refused on the evidence (`>= 1`), so a payload
+       that omits the fraction reads as it always did. */
+    const paceClockRanOut = pace != null && pace.fraction_elapsed >= 1;
+    const projectedRaw = paceClockRanOut ? null : pace?.projected_total ?? null;
     // #8922: see `heroProjectedTotal` at the top of this block.
     const projected =
       heroProjectedTotal ?? (projectedRaw != null && projectedRaw > 0 ? projectedRaw : null);
