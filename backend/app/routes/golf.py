@@ -2169,6 +2169,44 @@ async def _fetch_24h_snapshots(
     return {row.outcome_id: float(row.probability) for row in snap_result}
 
 
+#: #9766 — when a winner board's ~24h-ago COLUMN is not a field, it is not a basis.
+#: Kalshi's LOTTE Championship board (63115883) was listed 9/28 22:50Z and its first
+#: prints put 113 of 117 legs at 9%+ (09-29 02:49Z, column sum 14.76; still 10.57 at
+#: 05:51Z) before the book filled to ~1% a leg (sum 1.39). Three different golfers
+#: printed the same 0.13 → 0.12 → 0.091 at the same minutes. Subtracting that column
+#: gave five golfers who had not moved "▼8–9 pts" and the whole of /golf's Biggest
+#: movers. The untraded-mid rule cannot see it: no leg sits at 0.5.
+#:
+#: A column is refused when its legs' basis prices sum to MORE THAN A WHOLE FIELD
+#: (the module's one-winner bound, 1.5 — no subset of a one-winner field can) AND to
+#: more than twice what the SAME legs sum now. The first arm alone would refuse a field
+#: legitimately renormalized both days (1.6 → 1.7); the second alone would refuse a
+#: handful of longshots drifting 0.05 → 0.02. Measured on production 2026-09-30 08:25Z
+#: over the 32 open golf markets with a basis: every aggregated winner field reads a
+#: ratio of 1.51 or less (odds_api Masters, 1.628 over 1.078); LOTTE reads 7.6. The
+#: other boards over both bounds are round-leader and top-N markets, which never
+#: reach this path.
+MOVE_BASIS_FIELD_CEILING = 1.5
+MOVE_BASIS_RESHAPE_RATIO = 2.0
+
+
+def _basis_column_is_not_a_field(legs: list[tuple[float, float]]) -> bool:
+    """True when a winner board's ~24h-ago column cannot be the same field (#9766).
+
+    `legs` is `(current, basis)` — raw, unscaled — for every leg the caller will
+    aggregate that HAS a basis. A refused column makes the whole board undated for the
+    move, exactly as an absent basis does (#3013, #7179): its source drops out of the
+    blend's dated mean and cannot be called "today". Refused per board, never per leg:
+    one leg's opening print is indistinguishable from a real move; the column is not.
+    """
+    basis_sum = sum(basis for _, basis in legs)
+    current_sum = sum(current for current, _ in legs)
+    return (
+        basis_sum > MOVE_BASIS_FIELD_CEILING
+        and basis_sum > MOVE_BASIS_RESHAPE_RATIO * current_sum
+    )
+
+
 # An EMPTY ORDER BOOK: nobody is quoting either side, so the best bid sits at/below
 # the floor and the best ask at/above the ceiling. Its midpoint is ~0.5, and that 0.5
 # is an artifact of the emptiness — not a price anyone would trade at (gotcha #19:
@@ -3476,6 +3514,26 @@ async def get_golf(
                     prop_markets_list.append(prop)
                 continue
 
+            # #9766: a board whose ~24h-ago column is not a field has no basis. Read
+            # over the legs the loop below aggregates, so withheld offers weigh on
+            # neither side.
+            market_basis = prob_24h_ago
+            basis_legs = [
+                (float(o.current_probability), prob_24h_ago[o.id])
+                for o in market.outcomes
+                if o.current_probability is not None
+                and o.id in prob_24h_ago
+                and not _is_placeholder_price(o, source)
+            ]
+            if _basis_column_is_not_a_field(basis_legs):
+                market_basis = {}
+                logger.info(
+                    "Golf #9766: refused the 24h basis of '%s' (market %s): %d legs "
+                    "summed %.3f then, %.3f now",
+                    market.name, getattr(market, "id", None), len(basis_legs),
+                    sum(b for _, b in basis_legs), sum(c for c, _ in basis_legs),
+                )
+
             # Aggregate winner outcomes
             withheld = 0
             for outcome in market.outcomes:
@@ -3493,7 +3551,7 @@ async def get_golf(
                     withheld += 1
                     continue
                 _aggregate_golfer_outcome(
-                    outcome, source_label, golfer_data, prob_24h_ago,
+                    outcome, source_label, golfer_data, market_basis,
                     prob_scale=renorm_factor,
                 )
             if withheld:
