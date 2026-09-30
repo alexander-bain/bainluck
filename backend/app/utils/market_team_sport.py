@@ -106,6 +106,35 @@ _SERIES_LEAGUE_SUPPLEMENT: dict[str, str] = {
     "kxncaambuac": "basketball_ncaab",
 }
 
+# Every open NFL series the ticker maps did not carry on 2026-09-30 (#9761). With
+# no league, a player's pro leg bound to his old college's roster: the LSU page
+# listed Nussmeier's and Zavion Thomas's "Top Fantasy Rookie" odds, and about 500
+# open NFL legs sat on college teams (KXNFLMATCHUP 112, KXNFLWEEKHIGHSCORE 56).
+# Listed series by series, because ``KXNFLX…`` are Netflix series.
+_NFL_SUPPLEMENT_SERIES = (
+    "kxnfl60yardfgs", "kxnflallpro", "kxnflawardfin", "kxnflblowout", "kxnflboth",
+    "kxnflcareerpassyds", "kxnflcareerrecyds", "kxnflcareerrshyds", "kxnflcompete",
+    "kxnfldebut", "kxnfldivisionorder", "kxnfldivisionwins", "kxnfldivleastwins",
+    "kxnfldivmostwins", "kxnflendstreak", "kxnfleqbtts", "kxnflescalatorrec",
+    "kxnflescalatorrecyds", "kxnflescalatorrshyds", "kxnflexecoty", "kxnflffh2hseason",
+    "kxnflffhighscore", "kxnflffleader", "kxnflffleadertop", "kxnflffplayerhigh",
+    "kxnflffplayoffleader", "kxnflffseasontotal", "kxnflfirststart", "kxnflhalloffame",
+    "kxnflhighscore", "kxnflhkane", "kxnflladderrec", "kxnflladderrecyds",
+    "kxnflladderrshyds", "kxnfllasttolose", "kxnfllasttowin", "kxnfllongestfg",
+    "kxnfllongestplay", "kxnflmatchup", "kxnflnextcoachout", "kxnflnextint",
+    "kxnflnextteam", "kxnflpassatt", "kxnflpasscomp", "kxnflpassint", "kxnflpotm",
+    "kxnflprooty", "kxnflretire", "kxnflrole", "kxnflrotm", "kxnflrryds", "kxnflrshatt",
+    "kxnflseasonpasstds", "kxnflseasonpassyds", "kxnflseasonrec", "kxnflseasonrectd",
+    "kxnflseasonrecyds", "kxnflseasonrshtd", "kxnflseasonrshyds", "kxnflsellout",
+    "kxnflsfpracfield", "kxnflsfty", "kxnflstadium", "kxnflstageofelim", "kxnflsznrecord",
+    "kxnfltd", "kxnflteamdpts", "kxnflteampts", "kxnflteamsack",
+    "kxnflteamyds", "kxnfltie", "kxnflties", "kxnfltspec", "kxnflweekhighscore",
+    "kxnflworsttofirst", "kxnflwpmoty",
+    "kxranklistffdst", "kxranklistffk", "kxranklistffqb", "kxranklistffrb",
+    "kxranklistffte", "kxranklistffwr",
+)
+_SERIES_LEAGUE_SUPPLEMENT.update(dict.fromkeys(_NFL_SUPPLEMENT_SERIES, "americanfootball_nfl"))
+
 
 # Kalshi series the ticker maps DO answer, but with another league's key (#9663).
 # The futures map is a prefix map, so ``KXNCAAFFCS`` — the FCS national title —

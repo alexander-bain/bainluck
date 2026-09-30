@@ -158,7 +158,7 @@ OUTCOMES = [
     (2, 301, "Darnell Washington", HUSKIES[0]),   # cleared, then the roster: Steelers
     (3, 302, "Malik Washington", HUSKIES[0]),     # cleared, no roster answer: NULL
     (4, 302, "Jordan Washington", HUSKIES[0]),    # the Huskies' own roster: kept
-    (5, 303, "Washington D/ST", HUSKIES[0]),      # the Commanders' fantasy defense: cleared, NULL
+    (5, 303, "Washington D/ST", HUSKIES[0]),      # the Commanders' fantasy defense: NULL (Phase 3 since #9761)
     (6, 301, "Darnell Washington", STEELERS[0]),  # already right: kept
     (7, 302, "Matt Campbell", None),              # unlinked: Step 1 no longer binds it
 ]
@@ -223,8 +223,11 @@ def test_stored_surname_links_clear_and_the_roster_takes_over():
         links = _links(session)
 
     assert first["errors"] == [] and second["errors"] == []
-    assert first["links_on_given_name_city_alias"] == 4        # outcomes 1, 2, 3, 5
-    assert first["outcomes_unlinked_given_name_city_alias"] == 4
+    # #9761: KXNFLSEASONREC and KXRANKLISTFFDST name the NFL, so Phase 3 clears
+    # outcomes 1, 2 and 5 off the college first; Phase 3c then finds outcome 3.
+    assert first["outcomes_unlinked_outside_market_league"] == 3
+    assert first["links_on_given_name_city_alias"] == 1
+    assert first["outcomes_unlinked_given_name_city_alias"] == 1
     assert links == EXPECTED
     # A second run finds nothing left to clear and undoes nothing.
     assert second["links_on_given_name_city_alias"] == 0
