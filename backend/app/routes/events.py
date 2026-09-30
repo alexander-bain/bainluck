@@ -131,6 +131,7 @@ from app.utils.settled_price import priceless_leg_keeps_its_row
 from app.utils.settledness import market_assigned_settled
 from app.utils.venue_settlement import (
     VENUE_CLOSED_NO_WINNER_KEY,
+    names_completed_match as _names_completed_match,
     venue_settlement_is_askable,
 )
 from app.utils.venue_settlement_reader import (
@@ -20418,20 +20419,6 @@ def _match_winner_rank_beats(challenger, incumbent, blended_observed_at) -> bool
 
 #: A ``Completed Match`` leg at or above this is the venue saying "it was played".
 _COMPLETED_MATCH_YES_FLOOR = 0.99
-
-
-def _names_completed_match(market_name: Optional[str]) -> bool:
-    """Is this Polymarket's "was the match completed?" market? (#8874)
-
-    Judged on a whole colon segment, never a substring:
-    ``M25 Setubal, Main Draw: Completed Match: Alec Deckers vs Philip Henning``
-    carries it as its own segment, and a player whose name merely contains the
-    words cannot.
-    """
-    return any(
-        segment.strip().casefold() == "completed match"
-        for segment in (market_name or "").split(":")
-    )
 
 
 def _completed_match_says_played(rows: list) -> bool:
