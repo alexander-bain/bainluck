@@ -339,6 +339,10 @@ _VENUE_SCHOOL_NAMES: dict[str, str] = {
     "houston christian": "houston baptist",
     "university at albany": "albany",
     "central connecticut st.": "central connecticut",
+    # Kalshi writes the Hurricanes "Miami (FL)"; the row is "Miami Hurricanes".
+    # The RedHawks keep "(OH)" in their own name, so only Florida needs this —
+    # the entry #8980 made for game matching, here for the team page (#9920).
+    "miami (fl)": "miami hurricanes",
 }
 
 
