@@ -5254,10 +5254,19 @@ async def get_progression(
             sibling_markets.extend(ks_result.scalars().unique().all())
 
     # Method 2: Canonical key siblings
-    if len(sibling_markets) < 2 and market.canonical_market_key:
+    # #9746: a key whose sport or league segment is EMPTY ("soccer::championship:2026")
+    # names no competition, so `soccer::%:2026` is every league-less soccer market of
+    # the season — a Colombian halftime page rendered UEFA Nations League groups as its
+    # stages. A game-level market (event_id set) has no stages of its own either; its
+    # league's season futures are not its progression.
+    if (
+        len(sibling_markets) < 2
+        and market.canonical_market_key
+        and market.event_id is None
+    ):
         # Parse key: "sport:league:category:season" → find same sport:league:*:season
         parts = market.canonical_market_key.split(":")
-        if len(parts) >= 4:
+        if len(parts) >= 4 and parts[0] and parts[1]:
             sport_part, league_part = parts[0], parts[1]
             season_part = parts[-1]
             # Search for markets sharing sport:league:*:season
