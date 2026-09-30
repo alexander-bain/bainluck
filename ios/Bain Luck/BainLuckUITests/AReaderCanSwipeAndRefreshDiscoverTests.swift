@@ -120,9 +120,94 @@ final class AReaderCanSwipeAndRefreshDiscoverTests: XCTestCase {
 
     // MARK: - Swipe: one card
 
+    /// #9644: a guest's attempted swipe invites sign-in, keeps the same card,
+    /// and lets the reader dismiss the invitation and resume browsing.
+    func testAGuestHorizontalSwipeKeepsTheCardAndInvitesSignIn() throws {
+        try assertGuestFeedbackInvitesSignIn { _, card in card.swipeLeft() }
+    }
+
+    /// The long-press feedback entry point must use the same invitation gate.
+    func testAGuestLessLikeThisKeepsTheCardAndInvitesSignIn() throws {
+        try assertGuestFeedbackInvitesSignIn { app, card in
+            card.press(forDuration: 1)
+            let lessLikeThis = app.buttons["Less Like This"]
+            try XCTSkipUnless(
+                lessLikeThis.waitForExistence(timeout: 5),
+                "NOT WALKED: the first card has no Less like this context-menu action; a supported single card is required."
+            )
+            lessLikeThis.tap()
+        }
+    }
+
+    private func assertGuestFeedbackInvitesSignIn(
+        using action: (XCUIApplication, XCUIElement) throws -> Void
+    ) throws {
+        let app = UITestLaunch.launchApp()
+        let signedIn = try Self.isSignedInForFeedback(in: app)
+        try XCTSkipIf(
+            signedIn,
+            "NOT WALKED: guest feedback invitation requires a signed-out simulator; this one is signed in."
+        )
+        _ = try JourneyPrecondition.firstCard(in: app)
+        let cards = JourneyPrecondition.cards(in: app)
+        JourneyPrecondition.settle(cards)
+        let target = cards.firstMatch
+        let signature = Self.signature(of: target)
+        try XCTSkipIf(signature.isEmpty, "NOT WALKED: the first card has no identifying text.")
+
+        try action(app, target)
+
+        let signIn = app.buttons["Sign in with Apple"]
+        XCTAssertTrue(signIn.waitForExistence(timeout: 10), "Guest feedback did not present the existing sign-in invitation.")
+        XCTAssertTrue(signIn.isHittable, "The sign-in invitation exists but its auth controls are not reachable.")
+        XCTAssertTrue(app.buttons["Sign in with Google"].exists, "The existing Google sign-in option is missing.")
+
+        // Dismiss through the native sheet drag. No auth button is pressed:
+        // this run proves guest browsing, not a sign-in completion.
+        let header = app.navigationBars["My Stuff"]
+        let start = header.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.1))
+        let end = app.windows.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.9))
+        start.press(forDuration: 0.1, thenDragTo: end)
+        XCTAssertTrue(signIn.waitForNonExistence(timeout: 10), "The sign-in invitation could not be dismissed.")
+        JourneyPrecondition.settle(cards)
+
+        let retained = cards.allElementsBoundByIndex.first { Self.signature(of: $0) == signature }
+        XCTAssertNotNil(retained, "Rejected guest feedback removed the card instead of keeping it available.")
+        XCTAssertTrue(retained?.isHittable == true, "The retained guest card cannot be touched after invitation dismissal.")
+    }
+
+    /// Resolve auth through existing My Stuff UI without injecting a session or
+    /// attempting provider sign-in. Settings is offered for every authenticated
+    /// account, including one still awaiting onboarding. Shared with the
+    /// persistence journey so its guest skip names the actual missing setup.
+    static func isSignedInForFeedback(in app: XCUIApplication) throws -> Bool {
+        JourneyPrecondition.openTab("My Stuff", in: app)
+        let deadline = Date().addingTimeInterval(UITestLaunch.launchTimeout)
+        var signedIn: Bool?
+        while Date() < deadline {
+            if app.navigationBars["My Stuff"].buttons["Settings"].exists {
+                signedIn = true
+                break
+            }
+            if app.buttons["Sign in with Apple"].exists {
+                signedIn = false
+                break
+            }
+            Thread.sleep(forTimeInterval: 0.25)
+        }
+        guard let signedIn else {
+            XCTFail("My Stuff never resolved to either account Settings or guest sign-in controls; auth setup is unknown.")
+            throw XCTSkip("Auth UI did not resolve; no guest or authenticated feedback claim can be made.")
+        }
+        JourneyPrecondition.openTab("Discover", in: app)
+        return signedIn
+    }
+
     /// #1773's gesture, driven by a finger for the first time.
     ///
-    /// A left swipe on a card is a downrank and dismisses it. The dismissed card
+    /// A signed-in left swipe is a downrank and dismisses it. Guest swipes invite
+    /// sign-in instead (#9644), covered by the sibling guest journey above.
+    /// The dismissed card
     /// **cannot** be backfilled in the same sitting — `applyDismissFloor`'s
     /// `neverBackfill` excludes anything inside `backfillGraceWindow` — so "this
     /// card is gone" is a sound assertion here, and would not be on an aged
@@ -141,7 +226,11 @@ final class AReaderCanSwipeAndRefreshDiscoverTests: XCTestCase {
     /// `-launch_no_interaction_upload`.
     func testAHorizontalSwipeDismissesTheCardUnderTheFinger() throws {
         let app = UITestLaunch.launchApp()
-        JourneyPrecondition.tabBar(of: app)
+        let signedIn = try Self.isSignedInForFeedback(in: app)
+        try XCTSkipUnless(
+            signedIn,
+            "NOT WALKED: authenticated swipe dismissal requires a signed-in simulator; guest swipes invite sign-in (#9644)."
+        )
         _ = try JourneyPrecondition.firstCard(in: app)
 
         let cards = JourneyPrecondition.cards(in: app)

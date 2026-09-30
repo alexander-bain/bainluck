@@ -136,7 +136,7 @@ struct DiscoverView: View {
     // story-key suppression), the store is capped, and the feed floor below
     // backfills the least-recently-dismissed rather than let the visible feed
     // collapse to ~2 cards.
-    @State private var dismissedAt: [String: TimeInterval] = Self.loadDismissed()
+    @State private var dismissedAt: [String: TimeInterval] = [:]
 
     // Never let a SUBTRACTIVE client filter (dismiss, category cooldown) shrink
     // the rendered feed below this many cards when the API returned more
@@ -233,8 +233,10 @@ struct DiscoverView: View {
     @State private var scrollTarget: String? = nil
     @State private var dailyGuesses: Int = Self.loadDailyGuesses()
     @State private var showOnboarding = !UserDefaults.standard.bool(forKey: "discover_onboarded")
+    @State private var showFeedbackSignIn = false
+    @State private var guestFeedbackGate = DiscoverGuestFeedbackGate()
     @State private var resolutions: [Resolution] = []
-    @State private var interactionProfile = DiscoverInteractionProfile.load()
+    @State private var interactionProfile: DiscoverInteractionProfile?
     @State private var seenImpressions: Set<String> = []
     @State private var navigationPath = NavigationPath()
     @State private var showSwipeHint = !UserDefaults.standard.bool(forKey: "discover_swipe_hinted")
@@ -506,8 +508,8 @@ struct DiscoverView: View {
             let ranked = window.enumerated().sorted { lhs, rhs in
                 let leftItem = primaryItem(lhs.element)
                 let rightItem = primaryItem(rhs.element)
-                let leftScore = Double(leftItem?.score ?? 0) + (leftItem.map { interactionProfile.adjustment(for: itemCategory($0)) } ?? 0)
-                let rightScore = Double(rightItem?.score ?? 0) + (rightItem.map { interactionProfile.adjustment(for: itemCategory($0)) } ?? 0)
+                let leftScore = Double(leftItem?.score ?? 0) + (leftItem.flatMap { interactionProfile?.adjustment(for: itemCategory($0)) } ?? 0)
+                let rightScore = Double(rightItem?.score ?? 0) + (rightItem.flatMap { interactionProfile?.adjustment(for: itemCategory($0)) } ?? 0)
                 if abs(leftScore - rightScore) > 0.001 { return leftScore > rightScore }
                 return lhs.offset < rhs.offset
             }.map(\.element)
@@ -518,10 +520,15 @@ struct DiscoverView: View {
     }
 
     private func recordInteraction(for item: FeedItem, action: NativeDiscoverAction, source: String = "card") {
-        interactionProfile.record(category: itemCategory(item), action: action)
-        // The profile feeds category cooldown + personalization ranking, so a
-        // recorded interaction is a semantic input change — invalidate the memo.
-        profileVersion &+= 1
+        let startedWith = feedbackAuthState
+        let canLearn = DiscoverGuestFeedbackGate.allowsFeedback(startedWith: startedWith, current: startedWith)
+        if canLearn {
+            var profile = interactionProfile ?? DiscoverInteractionProfile.load()
+            profile.record(category: itemCategory(item), action: action)
+            interactionProfile = profile
+            // Only account feedback invalidates personalized ranking (#9644).
+            profileVersion &+= 1
+        }
         let actionName: String
         switch action {
         case .detailOpen: actionName = "open"
@@ -538,7 +545,9 @@ struct DiscoverView: View {
             category: itemCategory(item),
             source: source
         )
-        Task {
+        Task { @MainActor in
+            guard canLearn,
+                  DiscoverGuestFeedbackGate.allowsFeedback(startedWith: startedWith, current: feedbackAuthState) else { return }
             let event = DiscoverInteractionEvent(
                 action: actionName,
                 itemType: itemType(item),
@@ -566,6 +575,7 @@ struct DiscoverView: View {
     }
 
     private func recordChallengeAction(_ actionName: String) {
+        let startedWith = feedbackAuthState
         AnalyticsService.trackDiscoverCardAction(
             action: actionName,
             itemId: "daily_challenge",
@@ -573,7 +583,8 @@ struct DiscoverView: View {
             category: "challenge",
             source: "challenge"
         )
-        Task {
+        Task { @MainActor in
+            guard DiscoverGuestFeedbackGate.allowsFeedback(startedWith: startedWith, current: feedbackAuthState) else { return }
             let event = DiscoverInteractionEvent(
                 action: actionName,
                 itemType: "grid",
@@ -601,6 +612,7 @@ struct DiscoverView: View {
     }
 
     private func trackImpression(for grouped: DiscoverGroupedItem, rank: Int) {
+        let startedWith = feedbackAuthState
         guard let item = primaryItem(grouped) else { return }
         let impressionKey = "\(grouped.id)-\(rank)"
         guard !seenImpressions.contains(impressionKey) else { return }
@@ -634,7 +646,8 @@ struct DiscoverView: View {
                 score: item.score
             )
         )
-        Task {
+        Task { @MainActor in
+            guard DiscoverGuestFeedbackGate.allowsFeedback(startedWith: startedWith, current: feedbackAuthState) else { return }
             let event = DiscoverInteractionEvent(
                 action: "impression",
                 itemType: itemType(item),
@@ -708,7 +721,7 @@ struct DiscoverView: View {
             staleBase,
             dismissedAt: dismissedAt,
             now: Date().timeIntervalSince1970,
-            isCooled: { interactionProfile.suppresses(category: itemCategory($0)) }
+            isCooled: { interactionProfile?.suppresses(category: itemCategory($0)) ?? false }
         )
     }
 
@@ -974,7 +987,8 @@ struct DiscoverView: View {
                             recordInteraction(for: primary, action: .like, source: "swipe")
                         }
                         hideForSession(ids: Self.dismissKeys(forGroupOf: items))
-                    }
+                    },
+                    onRequiresSignIn: inviteSignInForFeedback
                 ) {
                     NativeGroupCard(title: title, items: items, kind: kind, theme: theme, navigationPath: $navigationPath)
                 }
@@ -994,7 +1008,8 @@ struct DiscoverView: View {
                         onSwipeRight: {
                             recordInteraction(for: item, action: .like, source: "swipe")
                             hideForSession(itemId(item))
-                        }
+                        },
+                        onRequiresSignIn: inviteSignInForFeedback
                     ) {
                         NativeGuessCard(data: f, onNextQuestion: { scrollToNextGuessGrouped(proxy: proxy, after: idx, in: pageGrouped) }, onGuessCompleted: { incrementDaily() })
                     }
@@ -1008,7 +1023,8 @@ struct DiscoverView: View {
                         onSwipeRight: {
                             recordInteraction(for: item, action: .like, source: "swipe")
                             hideForSession(itemId(item))
-                        }
+                        },
+                        onRequiresSignIn: inviteSignInForFeedback
                     ) {
                         NativeGuessCard(event: e, onNextQuestion: { scrollToNextGuessGrouped(proxy: proxy, after: idx, in: pageGrouped) }, onGuessCompleted: { incrementDaily() })
                     }
@@ -1021,7 +1037,8 @@ struct DiscoverView: View {
                         onSwipeRight: {
                             recordInteraction(for: item, action: .like, source: "swipe")
                             hideForSession(itemId(item))
-                        }
+                        },
+                        onRequiresSignIn: inviteSignInForFeedback
                     ) {
                         NativeEventDiscoverCard(event: e, feedContext: item.contextSummary ?? item.reason ?? item.headline, expandedContext: item.reason ?? item.headline, navigationPath: $navigationPath, onOpen: {
                             recordInteraction(for: item, action: .detailOpen, source: "card")
@@ -1045,7 +1062,8 @@ struct DiscoverView: View {
                         onSwipeRight: {
                             recordInteraction(for: item, action: .like, source: "swipe")
                             hideForSession(itemId(item))
-                        }
+                        },
+                        onRequiresSignIn: inviteSignInForFeedback
                     ) {
                         HeatMapCardView(data: f, navigationPath: $navigationPath, onOpen: {
                             recordInteraction(for: item, action: .detailOpen, source: "card")
@@ -1063,7 +1081,8 @@ struct DiscoverView: View {
                         onSwipeRight: {
                             recordInteraction(for: item, action: .like, source: "swipe")
                             hideForSession(itemId(item))
-                        }
+                        },
+                        onRequiresSignIn: inviteSignInForFeedback
                     ) {
                         DistributionCardView(data: f, navigationPath: $navigationPath, onOpen: {
                             recordInteraction(for: item, action: .detailOpen, source: "card")
@@ -1081,7 +1100,8 @@ struct DiscoverView: View {
                         onSwipeRight: {
                             recordInteraction(for: item, action: .like, source: "swipe")
                             hideForSession(itemId(item))
-                        }
+                        },
+                        onRequiresSignIn: inviteSignInForFeedback
                     ) {
                         ComparisonCardView(data: f, navigationPath: $navigationPath, onOpen: {
                             recordInteraction(for: item, action: .detailOpen, source: "card")
@@ -1097,7 +1117,8 @@ struct DiscoverView: View {
                         onSwipeRight: {
                             recordInteraction(for: item, action: .like, source: "swipe")
                             hideForSession(itemId(item))
-                        }
+                        },
+                        onRequiresSignIn: inviteSignInForFeedback
                     ) {
                         // #4265 — one caption chain with web (`feedContextSnippet`),
                         // and `""` counts as absent. `??` did not: the wire sends
@@ -1125,7 +1146,8 @@ struct DiscoverView: View {
                         onSwipeRight: {
                             recordInteraction(for: item, action: .like, source: "swipe")
                             hideForSession(itemId(item))
-                        }
+                        },
+                        onRequiresSignIn: inviteSignInForFeedback
                     ) {
                         NativeTournamentDiscoverCard(
                             data: t,
@@ -1147,7 +1169,8 @@ struct DiscoverView: View {
                         onSwipeRight: {
                             recordInteraction(for: item, action: .like, source: "swipe")
                             hideForSession(itemId(item))
-                        }
+                        },
+                        onRequiresSignIn: inviteSignInForFeedback
                     ) {
                         NativeConceptDiscoverCard(
                             data: c,
@@ -1898,6 +1921,24 @@ struct DiscoverView: View {
             WelcomeView()
                 .onDisappear { UserDefaults.standard.set(true, forKey: "discover_onboarded") }
         }
+        .sheet(isPresented: $showFeedbackSignIn) {
+            MyStuffView()
+        }
+        .onChange(of: feedbackAuthState, initial: true) { _, newState in
+            if case .signedIn = newState {
+                interactionProfile = DiscoverInteractionProfile.load()
+                dismissedAt = Self.loadDismissed()
+                showFeedbackSignIn = false
+            } else {
+                // Loading either legacy store can migrate it on disk. Delay
+                // those reads until resolved sign-in, and give guests no local
+                // profile or inherited account dismissals (#9644).
+                interactionProfile = nil
+                dismissedAt = [:]
+            }
+            profileVersion &+= 1
+            dismissVersion &+= 1
+        }
         .sheet(isPresented: $showChallenge) {
             NativeChallengeSheet(
                 items: challengeItems,
@@ -2146,6 +2187,9 @@ struct DiscoverView: View {
     }
 
     private func hideForSession(ids: [String]) {
+        // The context-menu path shares this store with swipe feedback. A guest
+        // must not persist rejects through either entry point (#9644).
+        guard case .signedIn = feedbackAuthState else { return }
         let now = Date().timeIntervalSince1970
         for id in ids { dismissedAt[id] = now }
         Self.saveDismissed(dismissedAt)
@@ -2180,6 +2224,19 @@ struct DiscoverView: View {
         if showSwipeHint {
             withAnimation { showSwipeHint = false }
             UserDefaults.standard.set(true, forKey: "discover_swipe_hinted")
+        }
+    }
+
+    private var feedbackAuthState: DiscoverGuestFeedbackGate.AuthState {
+        DiscoverGuestFeedbackGate.authState(
+            userId: authManager.user.map { String($0.id) },
+            isLoading: authManager.isLoading
+        )
+    }
+
+    private func inviteSignInForFeedback() {
+        if guestFeedbackGate.requestInvitation(current: feedbackAuthState) {
+            showFeedbackSignIn = true
         }
     }
 
@@ -2281,6 +2338,10 @@ struct DiscoverView: View {
                 recordInteraction(for: item, action: .share, source: "copy_link")
             },
             onLessLikeThis: {
+                guard case .signedIn = feedbackAuthState else {
+                    inviteSignInForFeedback()
+                    return
+                }
                 recordInteraction(for: item, action: .unlike, source: "context_menu")
                 hideForSession(itemId(item))
             }
@@ -3257,14 +3318,24 @@ struct NativeGuessCard: View {
 // MARK: - Swipe to Dismiss
 
 private struct SwipeToDismiss<Content: View>: View {
+    @EnvironmentObject private var authManager: AuthManager
     let onSwipeLeft: () -> Void
     let onSwipeRight: () -> Void
+    let onRequiresSignIn: () -> Void
     @ViewBuilder let content: () -> Content
     // #1773: the whole gesture is a pure, unit-tested state machine
     // (`DiscoverSwipeState`) so the axis latch and the post-commit reset are
     // provable without a device. See that type's doc comment for the two
     // defects this replaced.
     @State private var swipe = DiscoverSwipeState()
+    @State private var feedbackStartedWith: DiscoverGuestFeedbackGate.AuthState?
+
+    private var feedbackAuthState: DiscoverGuestFeedbackGate.AuthState {
+        DiscoverGuestFeedbackGate.authState(
+            userId: authManager.user.map { String($0.id) },
+            isLoading: authManager.isLoading
+        )
+    }
 
     /// Every dismissible Discover card answers to this, whatever kind it is.
     ///
@@ -3313,9 +3384,20 @@ private struct SwipeToDismiss<Content: View>: View {
             .simultaneousGesture(
                 DragGesture(minimumDistance: DiscoverSwipeState.minimumDistance)
                     .onChanged { v in
+                        if !swipe.axisLatched { feedbackStartedWith = feedbackAuthState }
                         swipe.change(width: v.translation.width, height: v.translation.height)
                     }
                     .onEnded { v in
+                        let startedWith = feedbackStartedWith ?? .resolving
+                        feedbackStartedWith = nil
+                        if swipe.commits(width: v.translation.width),
+                           !DiscoverGuestFeedbackGate.allowsFeedback(startedWith: startedWith, current: feedbackAuthState) {
+                            withAnimation(.spring(response: 0.3)) {
+                                swipe.settleAfterCommit()
+                            }
+                            onRequiresSignIn()
+                            return
+                        }
                         // Same predicate `end` uses, so the curve can never drift
                         // from the decision: fly-out on commit, spring on release.
                         let curve: Animation = swipe.commits(width: v.translation.width)
@@ -3326,7 +3408,11 @@ private struct SwipeToDismiss<Content: View>: View {
                         }
                         guard outcome != .none else { return }
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                            if outcome == .right { onSwipeRight() } else { onSwipeLeft() }
+                            if DiscoverGuestFeedbackGate.allowsFeedback(startedWith: startedWith, current: feedbackAuthState) {
+                                if outcome == .right { onSwipeRight() } else { onSwipeLeft() }
+                            } else {
+                                onRequiresSignIn()
+                            }
                             // Unconditional. If the row really left the feed this
                             // is a no-op on a dead view; if it came back via the
                             // feed-floor backfill or pull-to-refresh, this is the
