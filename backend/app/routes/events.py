@@ -201,9 +201,9 @@ from app.utils.search_intent import (
 )
 from app.utils.search_cache import (
     SEARCH_CACHE_HEADER,
-    SEARCH_RESPONSE_TTL_SECONDS,
     search_response_cache_enabled,
     search_response_cache_key,
+    search_response_ttl_seconds,
 )
 from app.utils.participant_images import participant_images_for_event
 from app.utils.search_collections import attach_search_collections
@@ -12960,9 +12960,17 @@ async def search_events(
             from app.tasks.redis_state import get_redis_client as _get_rc
 
             if search_response_cache_enabled():
+                # #9947: a reader's answer whose futures outcome arm did not merge
+                # carries the title matches ALONE — for a player, none of the
+                # boards they are priced on. It lives SEARCH_THIN_RESPONSE_TTL_
+                # SECONDS, not the SEARCH_RESPONSE_TTL_SECONDS ceiling, so a slow
+                # moment cannot pin it for three minutes.
                 _get_rc().setex(
                     _search_cache_key,
-                    SEARCH_RESPONSE_TTL_SECONDS,
+                    search_response_ttl_seconds(
+                        _futures_outcome_arm,
+                        warmer_rebuild=_force_search_cache_rebuild.get(),
+                    ),
                     json.dumps(_payload, default=str),
                 )
         except Exception:  # noqa: BLE001 — a cache write never breaks a response

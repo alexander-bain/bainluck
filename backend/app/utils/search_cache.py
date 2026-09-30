@@ -113,6 +113,54 @@ SEARCH_RESPONSE_TTL_SECONDS = 180
 #: on. ``middleware/latency.py`` already reads the sibling ``x-feed-cache``.
 SEARCH_CACHE_HEADER = "x-search-cache"
 
+#: #9947: how long a reader-built answer whose futures OUTCOME arm did not merge
+#: may live — the arm states ``shed`` and ``budget_exceeded`` (LAT-P271).
+#:
+#: Those answers are not ``degraded`` and must not become so: `f1 winner` and
+#: `f1 champion` blow the arm's 1,000 ms bound on EVERY read (production
+#: 2026-09-30 22:1xZ, ``?debug_timing=1``: futures 1,654 / 2,183 ms, both
+#: ``budget_exceeded``), so an uncacheable thin answer would hand their readers a
+#: 2-3 s build on every search. But for a PLAYER the outcome arm is the answer —
+#: every board the player is priced on reaches the page through a leg, not the
+#: title. `ohtani` has two title matches (the MLB The Show cover prop, "Cy Young
+#: and MVP Winner"), and right after the 22:00Z release of fe46e609 it served
+#: exactly those two, dropping World Series MVP (Ohtani 13%) and Championship
+#: Series MVP (Ohtani 7.15%, leads). Minutes later, on the same release, the arm
+#: read ``merged`` in 173 ms and the page carried both boards. The arm's bound is
+#: bimodal-safe for the slow query and NOT for a slow moment, and a 180 s write
+#: turned a slow moment into three minutes of a wrong answer for everyone.
+#:
+#: So the thin answer is still cached — a query that is ALWAYS thin keeps its
+#: cache — but only for long enough to absorb a burst, and never for the full
+#: freshness ceiling. This is a shorter life under the D81 ceiling, never a longer
+#: one. The warmer's rebuilds are exempt (see `search_response_ttl_seconds`).
+SEARCH_THIN_RESPONSE_TTL_SECONDS = 30
+
+#: The futures outcome-arm states that mean the page carries the name matches
+#: ALONE. ``not_reached`` is absent on purpose: it only occurs when the futures
+#: stage itself was shed, which already marks the answer ``degraded`` and keeps
+#: it out of the cache entirely.
+THIN_FUTURES_OUTCOME_ARM_STATES = frozenset({"shed", "budget_exceeded"})
+
+
+def search_response_ttl_seconds(futures_outcome_arm: str, *, warmer_rebuild: bool) -> int:
+    """The cache life of one ``/search`` answer about to be written.
+
+    The full :data:`SEARCH_RESPONSE_TTL_SECONDS` unless the futures outcome arm
+    did not merge (:data:`THIN_FUTURES_OUTCOME_ARM_STATES`) on a reader's request,
+    which gets :data:`SEARCH_THIN_RESPONSE_TTL_SECONDS`.
+
+    A warmer rebuild keeps the full TTL even when thin. The head is rebuilt on
+    every pass (~60 s), so a thin head answer is replaced by the next pass
+    whatever its TTL, and `search_head_warmer.residency_invariant()` needs each
+    entry to live one pass period plus the full rebuild budget (160 s): a 30 s
+    head entry would open the very hole D81 was ruled to close, for exactly the
+    head terms that are always thin.
+    """
+    if warmer_rebuild or futures_outcome_arm not in THIN_FUTURES_OUTCOME_ARM_STATES:
+        return SEARCH_RESPONSE_TTL_SECONDS
+    return SEARCH_THIN_RESPONSE_TTL_SECONDS
+
 #: Operator kill switch, mirroring ``FEED_INERT_PRINCIPAL_SHARE`` (ruling from
 #: LAT-P089: *an operator lever must be faster than a release when the failure
 #: mode is "the wrong person's answer"*).
