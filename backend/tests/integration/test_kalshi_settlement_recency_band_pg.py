@@ -517,6 +517,48 @@ def _corpus() -> list[tuple]:
             soon,
             [("leg-a", True, "all_losers"), ("leg-b", False, None)],
         ),
+        # ------------------------------------------------------------------
+        # #7000 band 6 — every leg a retraction, status still open.
+        # ------------------------------------------------------------------
+        #
+        # THE SPECIMEN, in the shape production held it on 2026-09-30.
+        # `KXMLBBESTRECORD-26`: finalized at Kalshi 09-28 with `-MIL` = `yes`;
+        # ours `open`, `resolution_date` 10-15, every leg `is_winner=false /
+        # ungradeable_result`. `future` (20 days) stands in for the 15 days the
+        # stored date was still ahead.
+        (
+            "retracted_specimen", "kalshi", "open", "R6A-26OCT15", None, future,
+            [
+                ("mil", False, "ungradeable_result"),
+                ("nyy", False, "ungradeable_result"),
+                ("lad", False, "ungradeable_result"),
+            ],
+        ),
+        # The padded-date shape (#7000's Venice Coppa Volpi: stored 2027,
+        # finalized 2026-09-12). A second member so the cursor has somewhere to
+        # walk, and so the band is not secretly keyed on a date.
+        (
+            "retracted_padded", "kalshi", "open", "R6B-27SEP13", None, years_out,
+            [("leg-a", False, "ungradeable_result"), ("leg-b", None, "ungradeable_result")],
+        ),
+        # NOT selected — one leg is not a retraction, so it is not the cohort.
+        # Pins the NOT EXISTS; without it the band is "every open Kalshi market
+        # with one retracted leg".
+        (
+            "retracted_one_live_leg", "kalshi", "open", "R6N-26OCT15", None, future,
+            [("leg-a", False, "ungradeable_result"), ("leg-b", None, None)],
+        ),
+        # NOT selected — not Kalshi; the grader asks Kalshi's event endpoint.
+        (
+            "retracted_polymarket", "polymarket", "open", "R6Z-26OCT15", None,
+            future,
+            [("leg-a", False, "ungradeable_result")],
+        ),
+        # NOT selected — a market row with no legs is not "every leg retracted".
+        (
+            "retracted_no_legs", "kalshi", "open", "R6E-26OCT15", None, future,
+            [],
+        ),
     ]
 
 
@@ -1811,3 +1853,150 @@ async def test_band_five_respects_its_own_budget_and_zero_means_zero(pg_engine):
 
     assert await _select_status_sync(pg_engine, limit=1) == everything[:1]
     assert await _select_status_sync(pg_engine, limit=0) == []
+
+
+# ---------------------------------------------------------------------------
+# #7000 — BAND 6, the fully retracted open markets, against the same server.
+#
+# The grader-side wiring is `tests/test_retracted_open_band_7000.py`. This
+# section is the WHERE clause: who gets asked. Production, 2026-09-30 08:4xZ:
+# 3,816 open Kalshi markets had every leg retracted and a `resolution_date` more
+# than two days out; 2,089 of them also sat outside `kalshi_resolution_sweep`'s
+# predicate, so no rail reached them. Seven MLB season races the venue finalized
+# on 09-28 were among them.
+# ---------------------------------------------------------------------------
+
+
+async def _select_retracted_open(engine, limit: int = 50, cursor: str = ""):
+    from app.tasks.backfill_winners import _select_kalshi_retracted_open_tickers
+
+    async with engine.connect() as conn:
+        return await _select_kalshi_retracted_open_tickers(conn, limit, cursor)
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_a_fully_retracted_open_market_is_selected(pg_engine):
+    """THE SHIP. The MLB best-record shape, and the padded-date shape."""
+    selected = await _select_retracted_open(pg_engine, limit=2000)
+
+    assert "R6A-26OCT15" in selected, (
+        "the MLB best-record shape — finalized at the venue, every leg retracted, "
+        "still open — must be reachable by some band"
+    )
+    assert "R6B-27SEP13" in selected
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_the_specimen_is_invisible_to_all_five_older_bands(pg_engine):
+    """The control without which the arm above proves nothing: if an older
+    band could already reach `R6A`, band 6 is vacuous. Budgets far exceed the
+    corpus, so a miss is the WHERE clause and never the limit."""
+    fresh, tail = await _select(pg_engine, limit=2000, cursor="")
+    early = await _select_early(pg_engine, limit=2000)
+    longdated = await _select_longdated(pg_engine, limit=2000)
+    status_sync = await _select_status_sync(pg_engine, limit=2000)
+
+    for band, rows, why in [
+        ("band 1", fresh, "requires resolved + a non-retracted ungraded leg"),
+        ("band 2", tail, "requires status='resolved'"),
+        ("band 3", early, "requires an authoritative leg"),
+        ("band 4", longdated, "requires an authoritative leg"),
+        ("band 5", status_sync, "requires an authoritative winner"),
+    ]:
+        assert "R6A-26OCT15" not in rows, f"{band} {why}"
+        assert "R6B-27SEP13" not in rows, f"{band} {why}"
+
+    assert fresh and tail and early and longdated and status_sync
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_band_six_is_disjoint_from_every_other_band(pg_engine):
+    """gotcha #34 — six bands, one cycle, additive budgets."""
+    fresh, tail = await _select(pg_engine, limit=2000, cursor="")
+    retracted = set(await _select_retracted_open(pg_engine, limit=2000))
+
+    for name, other in [
+        ("band 1", set(fresh)),
+        ("band 2", set(tail)),
+        ("band 3", set(await _select_early(pg_engine, limit=2000))),
+        ("band 4", set(await _select_longdated(pg_engine, limit=2000))),
+        ("band 5", set(await _select_status_sync(pg_engine, limit=2000))),
+    ]:
+        overlap = retracted & other
+        assert not overlap, f"band 6 overlaps {name} on {sorted(overlap)}"
+
+    assert retracted
+
+
+@needs_postgres
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "ticker,why",
+    [
+        (
+            "GGG-26SEP10",
+            "resolved and fully retracted — band 2's alphabetical walk owns it",
+        ),
+        (
+            "R6N-26OCT15",
+            "one leg is not a retraction, so it is not the cohort",
+        ),
+        ("R6E-26OCT15", "no legs at all is not 'every leg retracted'"),
+        ("R6Z-26OCT15", "Polymarket — the grader asks Kalshi's event endpoint"),
+        ("L4Y-28JAN01", "open with blank legs — nothing was ever read for it"),
+        ("L4A-28JAN01", "authoritative legs — band 4's work"),
+    ],
+)
+async def test_band_six_refuses_what_it_must(pg_engine, ticker, why):
+    selected = await _select_retracted_open(pg_engine, limit=2000)
+
+    assert ticker not in selected, why
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_dropping_the_status_clause_steals_band_twos_row(pg_engine):
+    """Strawman for `status <> 'resolved'`: without it the band re-asks about
+    the resolved retracted rows band 2 already walks."""
+    mutated = text("""
+        SELECT fm.external_id
+        FROM futures_markets fm
+        WHERE fm.source = 'kalshi'
+          AND fm.external_id > ''
+          AND EXISTS (SELECT 1 FROM futures_outcomes fo WHERE fo.market_id = fm.id)
+          AND NOT EXISTS (
+              SELECT 1 FROM futures_outcomes fo
+              WHERE fo.market_id = fm.id
+                AND COALESCE(fo.resolution_source, '') <> 'ungradeable_result'
+          )
+        GROUP BY fm.external_id
+        ORDER BY fm.external_id ASC
+        LIMIT 2000
+    """)
+    async with pg_engine.connect() as conn:
+        widened = [r[0] for r in (await conn.execute(mutated)).all()]
+
+    shipped = await _select_retracted_open(pg_engine, limit=2000)
+
+    assert "GGG-26SEP10" in widened, "the harness is not running this statement"
+    assert set(widened) - set(shipped) == {"GGG-26SEP10"}
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_band_six_cursor_walks_forward_and_wraps(pg_engine):
+    """A member leaves only when the venue settles it, and most never do this
+    month — so the walk must advance, and must run dry for the caller's wrap."""
+    everything = await _select_retracted_open(pg_engine, limit=2000)
+    assert everything == ["R6A-26OCT15", "R6B-27SEP13"]
+
+    page_one = await _select_retracted_open(pg_engine, limit=1, cursor="")
+    page_two = await _select_retracted_open(pg_engine, limit=1, cursor=page_one[-1])
+
+    assert page_one == ["R6A-26OCT15"]
+    assert page_two == ["R6B-27SEP13"]
+    assert await _select_retracted_open(pg_engine, cursor=everything[-1]) == []
+    assert await _select_retracted_open(pg_engine, limit=0) == []

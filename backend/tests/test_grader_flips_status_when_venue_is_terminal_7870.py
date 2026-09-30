@@ -239,6 +239,7 @@ async def _drive(
     early = [ticker] if via_band == "early" else []
     longdated = [ticker] if via_band == "longdated" else []
     status_sync = [ticker] if via_band == "status_sync" else []
+    retracted_open = [ticker] if via_band == "retracted_open" else []  # #7000
 
     async def _fake_select(session, limit_, cursor_, *, include_tail=True):
         calls["fresh"] = (limit_, cursor_)
@@ -256,6 +257,10 @@ async def _drive(
         calls["status_sync"] = (limit_, cursor_)
         return status_sync
 
+    async def _fake_retracted_open(session, limit_, cursor_):
+        calls["retracted_open"] = (limit_, cursor_)
+        return retracted_open
+
     session = _RecordingSession()
     venue = _FakeKalshi({ticker: event})
     rc = redis if redis is not None else _FakeRedis()
@@ -267,6 +272,9 @@ async def _drive(
     )
     monkeypatch.setattr(
         bw, "_select_kalshi_status_sync_tickers", _fake_status_sync
+    )
+    monkeypatch.setattr(
+        bw, "_select_kalshi_retracted_open_tickers", _fake_retracted_open
     )
     monkeypatch.setattr(bw, "get_task_session", _SessionCM(session))
     monkeypatch.setattr(
