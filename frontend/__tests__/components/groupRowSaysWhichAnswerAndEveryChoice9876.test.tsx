@@ -61,7 +61,8 @@ function itemFor(data: FeedFuturesData, caption: string): FeedItem {
 
 const text = (html: string, testid: string): string[] =>
   Array.from(html.matchAll(new RegExp(`data-testid="${testid}">(.*?)</(?:span|div)>`, "g")), (m) =>
-    m[1].replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").trim(),
+    // These elements hold plain text; a nested tag would end the match early and fail the equality.
+    m[1].replace(/&amp;/g, "&").trim(),
   );
 
 function row(data: FeedFuturesData, caption: string) {
