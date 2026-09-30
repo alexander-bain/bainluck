@@ -256,17 +256,23 @@ enum ChartGutter {
         homeServed: String? = nil,
         fontSize: CGFloat,
         awayRun: CGFloat,
-        homeRun: CGFloat
+        homeRun: CGFloat,
+        sportKey: String? = nil
     ) -> (away: String, home: String) {
+        // #5634 — the sport key reaches the pair rule, as the browser's charts
+        // pass it (`OddsChart.tsx`, `ScoreDifferentialChart.tsx`): without it a
+        // EuroLeague or football axis read "MÜNCHEN" under a "Bayern München" hero.
         let labels = TeamShortName.shortPair(
-            away: away, home: home, awayServed: awayServed, homeServed: homeServed
+            away: away, home: home, awayServed: awayServed, homeServed: homeServed,
+            sportKey: sportKey
         )
         guard nameWidth(labels.away, fontSize: fontSize) > awayRun
                 || nameWidth(labels.home, fontSize: fontSize) > homeRun else {
             return labels
         }
         return TeamShortName.abbreviationPair(
-            away: away, home: home, awayServed: awayServed, homeServed: homeServed
+            away: away, home: home, awayServed: awayServed, homeServed: homeServed,
+            sportKey: sportKey
         )
     }
 }

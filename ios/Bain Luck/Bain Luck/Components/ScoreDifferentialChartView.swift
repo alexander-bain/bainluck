@@ -63,7 +63,8 @@ struct ScoreDifferentialChartView: View {
             awayServed: awayTeamAbbrev, homeServed: homeTeamAbbrev,
             fontSize: fontSize,
             awayRun: ChartGutter.nameRun(run: run, hasCrest: awayCrest),
-            homeRun: ChartGutter.nameRun(run: run, hasCrest: homeCrest)
+            homeRun: ChartGutter.nameRun(run: run, hasCrest: homeCrest),
+            sportKey: sportKey
         )
     }
 
