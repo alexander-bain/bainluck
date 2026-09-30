@@ -1145,8 +1145,17 @@ export default function EventPage({ params }: EventPageProps) {
 
   // Shared chart domain (see eventKeyStats.ts)
   const sharedChartDomain = useMemo(
-    () => computeSharedChartDomain(historyData, chartTimeRange, event?.status, event?.commence_time, event?.sport || undefined),
-    [historyData, chartTimeRange, event?.commence_time, event?.status, event?.sport],
+    () =>
+      computeSharedChartDomain(
+        historyData,
+        chartTimeRange,
+        event?.status,
+        event?.commence_time,
+        event?.sport || undefined,
+        // #6158 — a late start opens "Since Start" at the observed first period.
+        periodBoundaries,
+      ),
+    [historyData, chartTimeRange, event?.commence_time, event?.status, event?.sport, periodBoundaries],
   );
 
   // ── #5720 — A RECORD IS NOT A SCORE, AND ON A STARTED GAME WITH NO SCORE A

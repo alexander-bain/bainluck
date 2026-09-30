@@ -29,6 +29,8 @@ import type { WinProbabilitySources } from "@/lib/probabilityEvidence";
 import { PROBABILITY_SOURCE_KEYS } from "@/lib/confidence";
 import { renderedComplementPercents, renderedDuelPercents, renderedPercent } from "@/lib/renderedPercent";
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
+import type { PeriodBoundary } from "@/lib/periodMarkers";
+import { observedPlayStartMs } from "@/lib/observedPlayStart";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -1394,6 +1396,8 @@ export function computeSharedChartDomain(
   eventStatus: string | undefined,
   commenceTime: string | undefined,
   sport: string | undefined,
+  /** #6158 — the page's `derivePeriodBoundaries` result; see `observedPlayStartMs`. */
+  periodBoundaries?: PeriodBoundary[] | null,
 ): SharedChartDomain | null {
   if (!historyData) return null;
 
@@ -1646,9 +1650,15 @@ export function computeSharedChartDomain(
   // then the honest full extent is the window, the same remedy as the floor and the inversion
   // backstop below.
   const commenceIsKickoff = historyData.commence_time_is_kickoff;
+  // #6158 — on a game that began late, open at the first OBSERVED opening period
+  // (less a short lead-in) instead of the scheduled hour. Only ever later than
+  // `commence_time`; `null` keeps the scheduled cut. See `observedPlayStartMs`.
+  const observedStartMs = observedPlayStartMs(commenceTime, periodBoundaries);
   const liveStart =
     gameStart && !isNaN(gameStart.getTime()) && commenceIsKickoff !== false
-      ? gameStart
+      ? observedStartMs !== null
+        ? new Date(observedStartMs)
+        : gameStart
       : allStart;
 
   // "All" mode: cap the start to at most 2 hours before commenceTime once a game

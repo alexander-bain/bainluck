@@ -50,6 +50,7 @@ import type {
   EventHistoryResponse,
 } from "@/lib/types";
 import type { PeriodBoundary } from "@/lib/periodMarkers";
+import { observedPlayStartMs } from "@/lib/observedPlayStart";
 import {
   attachScoringPlays,
   carriedStateDisclosure,
@@ -852,8 +853,17 @@ export default function OddsChart({
     // Kalshi-clocked fixture it is this line, not the parent, that cut 525 points down to 4.
     // A served `false` means `commenceTime` is the expected resolution hour, so there is no start
     // to cut at — draw the whole extent rather than a window the match was not played in.
+    // #6158 — the parent's domain opens a late start at the observed first period; this
+    // fallback (the fullscreen chart) must open at the same instant, or the two views of one
+    // chart disagree about when the game began.
+    const observedStartMs =
+      commenceTimeIsKickoff !== false ? observedPlayStartMs(commenceTime, periodBoundaries) : null;
     const commenceCut =
-      commenceTime && commenceTimeIsKickoff !== false ? parseISO(commenceTime) : null;
+      commenceTime && commenceTimeIsKickoff !== false
+        ? observedStartMs !== null
+          ? new Date(observedStartMs)
+          : parseISO(commenceTime)
+        : null;
     const fallback =
       timeRange === "all"
         ? null
@@ -882,6 +892,7 @@ export default function OddsChart({
     timeRange,
     commenceTime,
     commenceTimeIsKickoff,
+    periodBoundaries,
     history,
     espnHistory,
     aggregateLine,
