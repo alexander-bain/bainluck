@@ -40,6 +40,7 @@ import {
   isFinishedStatus,
   isSuspendedStatus,
   suspendedSummary,
+  venueSettledSummary,
 } from "@/lib/eventState";
 import { PREMATCH_SAID, prematchReading } from "@/lib/prematchReading";
 import { awayIsTheComplement } from "@/lib/drawPricedWinner";
@@ -503,6 +504,18 @@ function EventFeedCard({
     ? formatFinishedGameLabel(data.commence_time, Date.now(), "compact")
     : null;
 
+  // #5811 — THE CARD STOPS DENYING A RESULT ITS OWN PAYLOAD CARRIES, on the
+  // feed card too. `/sports` printed "No result reported · Sep 29" over
+  // Borando–Escuza (15320966) while `/events/15320966` read "Settled · Ian
+  // Escuza wins". `EventCard`'s #7070 decision, word for word: computed BESIDE
+  // `isSuspended`, never instead of it — the withheld chips and bar stay right
+  // about a match nothing is reporting on; only the sentence was wrong.
+  // `venueSettledSummary` is null on every row the venue has not graded and on
+  // every cached payload without the keys, so those cards are untouched.
+  const venueSettledSentence = isSuspended
+    ? venueSettledSummary(data.venue_settled, data.venue_settled_result)
+    : null;
+
   // ═══ ux/1041 (#2752): THE LIVE SCORE READS IN THE CARD'S OWN ORDER ═══
   //
   // Everything else on this card counts AWAY first — the two team rows below
@@ -656,7 +669,7 @@ function EventFeedCard({
     : displayAwayProb;
 
   return (
-    <Link href={`/events/${data.id}`} aria-label={`${data.away_team} at ${data.home_team}${isLive ? " - Live" : isFinished ? "- Final" : isSuspended ? ` - ${SUSPENDED_LABEL}` : ""}`} onClick={() => {
+    <Link href={`/events/${data.id}`} aria-label={`${data.away_team} at ${data.home_team}${isLive ? " - Live" : isFinished ? "- Final" : isSuspended ? ` - ${venueSettledSentence ?? SUSPENDED_LABEL}` : ""}`} onClick={() => {
       track('event_card_click', {
         event_id: data.id,
         sport: data.sport || 'unknown',
@@ -732,7 +745,10 @@ function EventFeedCard({
               and — live/048 — the suspended line, which is FIRST in the chain
               because every later arm would tell a lie about this row. */}
           {isSuspended ? (
-            <span className="text-[11px] text-text-muted font-medium text-right leading-tight max-w-[46%]">
+            <span
+              className="text-[11px] text-text-muted font-medium text-right leading-tight max-w-[46%]"
+              data-venue-settled={venueSettledSentence ? "true" : undefined}
+            >
               {/* #2786 asked exactly the right question — "what order does this
                   card use for its own scores?" — and read the answer off the one
                   element that was wrong. It matched the live branch immediately
@@ -743,7 +759,8 @@ function EventFeedCard({
                   live score, so the suspended line is away-home. Both arms still
                   render into THIS SLOT and still agree, which is what #2786 was
                   for — and its guard is what makes them move together. */}
-              {suspendedSummary(data.away_score, data.home_score, "away-home", authorityStoppageLabel(data.espn?.period))}
+              {venueSettledSentence ??
+                suspendedSummary(data.away_score, data.home_score, "away-home", authorityStoppageLabel(data.espn?.period))}
               {/* #6361 — the date, after the words and in the same slot, so the
                   card reads "…no result reported · Sep 13" rather than going
                   undated while its FINISHED sibling below is dated. */}

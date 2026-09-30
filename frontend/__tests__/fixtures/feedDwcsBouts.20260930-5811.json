@@ -1,0 +1,146 @@
+{
+  "_note": "#5811. feed_items: the two DWCS S10 W8 bouts exactly as GET /api/feed?mode=sports&limit=200 served them on production BEFORE live's #9728 released (keys absent). detail: venue_settled/venue_settled_result as GET /api/events/{id} served them in the same minute - the same shared reader #9728 attaches to the feed.",
+  "captured_at_utc": "2026-09-30T05:27:12Z",
+  "feed_items": [
+    {
+      "type": "event",
+      "score": 48,
+      "reason": "",
+      "headline": null,
+      "data": {
+        "id": 15320966,
+        "external_id": "9c9b0a1e31fc9d1f135dac4f2fe9c7ff",
+        "sport": "mma_mixed_martial_arts",
+        "sport_name": "MMA",
+        "home_team": "Ian Escuza",
+        "away_team": "Luca Borando",
+        "commence_time": "2026-09-29T23:40:00+00:00",
+        "start_is_tbd": false,
+        "status": "suspended",
+        "home_score": null,
+        "away_score": null,
+        "win_probability_sources": {
+          "betting_book_count": 2
+        },
+        "current_odds": {
+          "home_probability": 0.5285,
+          "away_probability": 0.4715,
+          "home_rendered_percent": 53,
+          "away_rendered_percent": 47
+        },
+        "hero_probability": 0.5285,
+        "hero_probability_away": 0.4715,
+        "hero_probability_source": "opening",
+        "opening_odds": {
+          "home_probability": 0.5285,
+          "away_probability": 0.4715,
+          "favorite": "home"
+        },
+        "prematch_odds": {
+          "home_probability": 0.5285,
+          "away_probability": 0.4715,
+          "home_rendered_percent": 53,
+          "away_rendered_percent": 47,
+          "source": "books"
+        },
+        "event_tags": [
+          "class:pro_major",
+          "gender:men",
+          "importance:regular_season",
+          "league:ufc",
+          "level:professional",
+          "signal:close_matchup",
+          "signal:very_close",
+          "sport:mma",
+          "tier:2"
+        ],
+        "temporal_badge": null,
+        "sport_label": "MMA",
+        "home_image_url": null,
+        "away_image_url": null,
+        "home_flag_url": null,
+        "away_flag_url": null,
+        "confidence_tier": "low",
+        "confidence_score": 0.1765,
+        "confidence_signals": {
+          "has_closing_line": false
+        }
+      }
+    },
+    {
+      "type": "event",
+      "score": 48,
+      "reason": "",
+      "headline": null,
+      "data": {
+        "id": 15320964,
+        "external_id": "024fddc413aed022f8da6c28fed6bbfb",
+        "sport": "mma_mixed_martial_arts",
+        "sport_name": "MMA",
+        "home_team": "Ilias Bulaid",
+        "away_team": "Erick Visconde",
+        "commence_time": "2026-09-29T23:15:00+00:00",
+        "start_is_tbd": false,
+        "status": "suspended",
+        "home_score": null,
+        "away_score": null,
+        "win_probability_sources": {
+          "betting_book_count": 1
+        },
+        "current_odds": {
+          "home_probability": 0.5134,
+          "away_probability": 0.4866,
+          "home_rendered_percent": 51,
+          "away_rendered_percent": 49
+        },
+        "hero_probability": 0.5134,
+        "hero_probability_away": 0.4866,
+        "hero_probability_source": "opening",
+        "opening_odds": {
+          "home_probability": 0.5134,
+          "away_probability": 0.4866,
+          "favorite": "even"
+        },
+        "prematch_odds": {
+          "home_probability": 0.5134,
+          "away_probability": 0.4866,
+          "home_rendered_percent": 51,
+          "away_rendered_percent": 49,
+          "source": "books"
+        },
+        "event_tags": [
+          "class:pro_major",
+          "gender:men",
+          "importance:regular_season",
+          "league:ufc",
+          "level:professional",
+          "signal:close_matchup",
+          "signal:very_close",
+          "sport:mma",
+          "tier:2"
+        ],
+        "temporal_badge": null,
+        "sport_label": "MMA",
+        "home_image_url": null,
+        "away_image_url": null,
+        "home_flag_url": null,
+        "away_flag_url": null,
+        "confidence_tier": "low",
+        "confidence_score": 0.1765,
+        "confidence_signals": {
+          "has_closing_line": false
+        }
+      }
+    }
+  ],
+  "detail": {
+    "15320966": {
+      "venue_settled": true,
+      "venue_settled_result": "Ian Escuza wins"
+    },
+    "15320964": {
+      "venue_settled": false,
+      "venue_settled_result": null
+    }
+  }
+}

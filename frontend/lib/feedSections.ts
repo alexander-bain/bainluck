@@ -100,6 +100,32 @@ export function countCards(items: FeedItem[]): number {
 }
 
 /**
+ * The section a feed GAME card files under — `eventSectionKey` with the card's
+ * own venue grade passed in (#5811, #7112's named second half).
+ *
+ * `/sports` printed "No result reported · Sep 29" under Live & Paused over
+ * Borando–Escuza (15320966) while its event page read "Settled · Ian Escuza
+ * wins". Once `/api/feed` carries `venue_settled` (#9728) the card says the
+ * sentence, and a row whose card names its winner is a result, not a paused
+ * match — so it files where results file. ONE function for the two feed
+ * callers (this module's sectioner and `/sports`' Finished partition in
+ * `lib/sports/finishedSection`), because two readings of one card is #7112.
+ *
+ * No `commence_time`, deliberately: passing it switches on `eventSectionKey`'s
+ * #3211 started-without-result rung for every feed card, a separate change
+ * that `startedWithoutResultIsNotUpcoming3211.test.ts` pins shut. Only the
+ * `suspended` arm moves; a card without the keys files exactly as before.
+ */
+export function feedEventSectionKey(
+  data: Pick<FeedEventData, "status" | "venue_settled" | "venue_settled_result">,
+): "live" | "finished" | "upcoming" {
+  return eventSectionKey(data.status, undefined, undefined, {
+    venue_settled: data.venue_settled,
+    venue_settled_result: data.venue_settled_result,
+  });
+}
+
+/**
  * Group feed items into visual sections: Live Now, Just Happened, Upcoming, Top Markets.
  * Shared between homepage and category pages.
  */
@@ -159,7 +185,9 @@ export function groupFeedIntoSections(items: FeedItem[]): FeedSection[] {
       // Stuff and three more on native, and `suspended` reached none of them:
       // every copy ended in an `else` that means "upcoming", so a match that
       // had already started was filed under games that have not.
-      const section = eventSectionKey(data.status);
+      // #5811 — and with the card's venue grade, so a match the card already
+      // names a winner for is not filed under Live & Paused.
+      const section = feedEventSectionKey(data);
       if (section === "live") {
         liveNow.push(item);
       } else if (section === "finished") {
