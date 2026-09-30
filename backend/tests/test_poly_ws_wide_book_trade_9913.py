@@ -153,3 +153,32 @@ class TestTradesThatStillPrice:
 )
 def test_trade_prints_outside_wide_book(prob, books, expected):
     assert trade_prints_outside_wide_book(prob, books) is expected
+
+
+def test_the_refusal_counts_reach_the_minute_line(caplog):
+    """A refusal counted and never emitted is invisible on production."""
+    import logging
+
+    from app.tasks.polymarket_ws import _log_stats_line
+
+    stats = {
+        "price_updates": 0, "trade_updates": 0, "resolutions": 0, "errors": 0,
+        "trades_below_min_order": 4, "trades_outside_wide_book": 7,
+    }
+    blend = {"stamped": 0, "no_reading": 0, "throttled": 0, "errors": 0}
+    with caplog.at_level(logging.INFO):
+        _log_stats_line(stats, {}, blend)
+    assert "trades refused below_min=4 outside_wide_book=7" in caplog.text
+
+
+def test_the_minute_line_survives_stats_without_the_counters(caplog):
+    """The shadow consumer shares the line: absent keys print 0, never raise."""
+    import logging
+
+    from app.tasks.polymarket_ws import _log_stats_line
+
+    stats = {"price_updates": 0, "trade_updates": 0, "resolutions": 0, "errors": 0}
+    blend = {"stamped": 0, "no_reading": 0, "throttled": 0, "errors": 0}
+    with caplog.at_level(logging.INFO):
+        _log_stats_line(stats, {}, blend)
+    assert "below_min=0 outside_wide_book=0" in caplog.text

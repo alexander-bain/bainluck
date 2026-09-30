@@ -475,7 +475,7 @@ def _log_stats_line(stats: dict, ws_stats: dict, blend: dict) -> None:
         "Polymarket WS: %d prices, %d trades, %d resolutions, %d errors, "
         "%d msgs | coverage shards=%d/%d served=%d/%d wire=%d by_shard=%s "
         "| blend stamped=%d no_reading=%d throttled=%d errors=%d lock_skipped=%d "
-        "unobserved=%d stale=%d",
+        "unobserved=%d stale=%d | trades refused below_min=%d outside_wide_book=%d",
         stats["price_updates"], stats["trade_updates"],
         stats["resolutions"], stats["errors"],
         ws_stats.get("messages", 0),
@@ -492,6 +492,10 @@ def _log_stats_line(stats: dict, ws_stats: dict, blend: dict) -> None:
         blend.get("unobserved_skipped", 0),
         # #8910: readings refused as older than the stored observation.
         blend.get("stale_readings_refused", 0),
+        # #9733 / #9913: trades that were not a price. Counted in the consumer
+        # and, until this line, never emitted.
+        stats.get("trades_below_min_order", 0),
+        stats.get("trades_outside_wide_book", 0),
     )
 
 
