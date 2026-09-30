@@ -651,6 +651,20 @@ export default function ScoreDifferentialChart({
         ? null
         : typeof points[points.length - 1]?.actualDiff === "number";
 
+    // #8997: how many categories the actual series has a value at once the
+    // carry has run — the points the `<Line>` below is actually handed. A
+    // step line through ONE point is a zero-length segment: the legend names
+    // "Actual Score Diff" and the plot shows a sliver at the edge. Measured on
+    // production 9/30, Dubai 78–77 Real Madrid (15292394): `score_history` is
+    // one row, the final, stamped at completed_at — the last category — so the
+    // carry has nothing to extend and the series is exactly one point. Counted
+    // here, after the carry and the prune, because an earlier lone reading is
+    // carried to the edge and draws as a real line; only what survives counts.
+    let actualPointsDrawn = 0;
+    for (const pt of points) {
+      if (typeof pt.actualDiff === "number") actualPointsDrawn += 1;
+    }
+
     // ── WHERE THIS CHART ACTUALLY HAS INK (CERT-1989, corrected by CERT-1995) ──
     //
     // Computed HERE — last, after the shared-domain prune above — because a
@@ -688,7 +702,7 @@ export default function ScoreDifferentialChart({
     const scoreSpan =
       scoreFrom === null ? null : { from: scoreFrom, to: scoreTo as number };
 
-    return { points, scoreSpan, actualTailCarried, actualReachesEdge };
+    return { points, scoreSpan, actualTailCarried, actualReachesEdge, actualPointsDrawn };
   }, [filteredHistory, filteredBookmakerHistory, filteredScoreHistory, filteredEspnHistory, chartStartTime, chartEndTime, pmSpreadData, impliedSpreadSources, periodBoundaries, hasProjectedScoreData, hasActualScoreData, labelFormat]);
 
   const chartData = chartBuild.points;
@@ -718,6 +732,10 @@ export default function ScoreDifferentialChart({
    */
   const actualTailCarried = chartBuild.actualTailCarried;
   const actualReachesEdge = chartBuild.actualReachesEdge;
+  /** #8997: one captured score (typically only the final) is drawn as a dot at
+   *  the time it was observed; two or more keep the step line. The journey we
+   *  did not capture is not invented. Mirrors native #9005. */
+  const actualDrawnAsDot = hasActualScoreData && chartBuild.actualPointsDrawn === 1;
 
   // Filter period boundaries, deduplicate close markers, alternate label positions
   const filteredPeriodBoundaries = useMemo(() => {
@@ -956,6 +974,11 @@ export default function ScoreDifferentialChart({
         hasActualScoreData && actualReachesEdge !== null
           ? String(actualReachesEdge)
           : undefined
+      }
+      /* #8997: how the actual series is drawn — "dot" for a lone captured
+         score, "line" for two or more. Absent when no actual series is drawn. */
+      data-actual-drawn-as={
+        hasActualScoreData ? (actualDrawnAsDot ? "dot" : "line") : undefined
       }
       data-projected-series={hasProjectedScoreData ? "true" : "false"}
       /* #6142, and the same reason verbatim: the implied-spread snapshot is a
@@ -1208,7 +1231,11 @@ export default function ScoreDifferentialChart({
                 name="Actual Score Diff"
                 stroke="#f97316"
                 strokeWidth={3}
-                dot={false}
+                dot={
+                  actualDrawnAsDot
+                    ? { r: 4, fill: "#f97316", stroke: "#f97316" }
+                    : false
+                }
                 activeDot={{ r: 5 }}
                 connectNulls
               />
