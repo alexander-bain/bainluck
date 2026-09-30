@@ -21,6 +21,8 @@ from app.utils import movement_pool, probability_to_american
 from app.utils.durable_venue_receipt import log_durable_venue_serve
 from app.utils.feed_market_quality import (
     FEED_EXCLUSIVE_SUM_MIN,
+    FEED_LOCKED_CERTAIN_HIGH,
+    FEED_LOCKED_CERTAIN_LOW,
     book_has_a_buyer,
     is_empty_book_midpoint,
 )
@@ -2700,6 +2702,44 @@ def _market_has_priced_outcome(market: dict) -> bool:
     return False
 
 
+def _market_is_decided(market: dict) -> bool:
+    """Has this grouped-feed market already answered its own question? (#9899)
+
+    Production, 2026-09-30 17:50Z, ``/sports`` at 390px: four of the strip's 20
+    cards asked something already over and printed it as live — "Completed
+    Match: Sedysheva vs Popovic" Yes >99%, "Set 1 Winner: Rozin vs
+    Schlagenhauf" Rozin >99% (set 1 played), "Arsenal WFC 1st Half O/U 3.5"
+    Under >99% (first half over). They filled the slots #9844 freed.
+
+    Decided = the leader prints at ``>99%`` AND every other printed leg sits at
+    a dead extreme too. The thresholds are #1004's (``FEED_LOCKED_CERTAIN_*``),
+    the rounding points where a card reads ">99%" / "<1%". The second clause
+    keeps independent binaries (gotcha #23: "which teams make the playoffs",
+    one leg at 99% beside legs at 60%) — those still hold a question.
+
+    NOT ``is_locked_near_certain``. Its mover and volume exemptions exist so
+    Discover keeps a market that just jumped to 99% on news; every in-play prop
+    above jumped to 99% in the last hour, so the exemption would keep exactly
+    the rows this refuses. Only legs the card prints vote
+    (``_market_has_priced_outcome``'s test); a market printing none is not
+    decided — that is #2710's rule, not this one.
+    """
+    printed = []
+    for outcome in market.get("outcomes") or ():
+        probability = outcome.get("probability")
+        if isinstance(probability, bool) or not isinstance(
+            probability, (int, float, Decimal)
+        ):
+            continue
+        printed.append(float(probability))
+    if not printed or max(printed) < FEED_LOCKED_CERTAIN_HIGH:
+        return False
+    return all(
+        p >= FEED_LOCKED_CERTAIN_HIGH or p <= FEED_LOCKED_CERTAIN_LOW
+        for p in printed
+    )
+
+
 async def _grouped_feed_container_parent_ids(db: AsyncSession, markets: list) -> set[int]:
     """Pool rows that are Polymarket game containers, which the strip withholds (#9466).
 
@@ -2880,7 +2920,11 @@ def select_ungrouped_markets(
     return [
         m
         for m in market_dicts
-        if m["id"] not in grouped_market_ids and _market_has_priced_outcome(m)
+        if m["id"] not in grouped_market_ids
+        and _market_has_priced_outcome(m)
+        # #9899: an answered question is dropped above the slice too, so its
+        # slot backfills from the pool like a priceless one's.
+        and not _market_is_decided(m)
     ][:limit]
 
 
@@ -3039,6 +3083,14 @@ async def grouped_feed(
 
     filters = [
         FuturesMarket.status.in_(["active", "open"]),
+        # #9899: a market past its own resolution date is over even while its
+        # status still reads open (the Arsenal WFC 1st-half total, 16:45Z,
+        # served at 17:50Z). The same clause every other list route in this
+        # file applies to its open markets.
+        or_(
+            FuturesMarket.resolution_date.is_(None),
+            FuturesMarket.resolution_date >= datetime.now(timezone.utc),
+        ),
     ]
     if category:
         filters.append(FuturesMarket.category == category)
