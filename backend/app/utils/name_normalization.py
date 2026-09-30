@@ -262,6 +262,72 @@ def college_state_query(q: str) -> str | None:
     return " ".join(rewritten)
 
 
+# #9859 — the city a reader abbreviates in front of a club. Production 2026-09-30
+# 15:4xZ, `/api/events/search`: `sf giants`, `la kings`, `ny rangers`, `kc royals`
+# and eight more served no team card (the dropdown offered each one), `sf giants`
+# led its games with San Francisco 49ers @ New York Giants, and `la angels`
+# carded the Clippers and the Galaxy. The game rails already expand `sf` per word;
+# the Teams gate is full-text over the WHOLE query, and `sf` is not a word of
+# "San Francisco Giants".
+#
+# LEADING only, and only in front of more words: the city comes first in a club's
+# name, and a bare `la` or `ny` is asking for more than one club. Added beside the
+# typed query, never substituted, so Kalshi's `LA Rams vs PHI Eagles` rows keep
+# the `la` they are found by.
+
+
+def city_abbreviation_query(q: str | None) -> str | None:
+    """`q` with a leading city abbreviation spelled out, or None (#9859).
+
+    ``"sf giants"`` -> ``"san francisco giants"``; ``"la"``, ``"giants sf"`` and
+    every query without the abbreviation -> None, and on that path the caller
+    builds exactly the SQL it builds today.
+    """
+    tokens = (q or "").split()
+    if len(tokens) < 2:
+        return None
+    city = _CITY_ABBREVIATIONS.get(tokens[0].lower())
+    if city is None:
+        return None
+    return " ".join([city, *tokens[1:]])
+
+
+def _city_words(text: str) -> list[str]:
+    return text.lower().replace(".", " ").split()
+
+
+#: city words -> every abbreviation of that city, longest city first so
+#: "Oklahoma City Thunder" is read as `oklahoma city` and never as `oklahoma`.
+_CITY_ABBREVIATIONS_BY_CITY: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = tuple(
+    sorted(
+        (
+            (tuple(_city_words(city)), tuple(a for a, c in _CITY_ABBREVIATIONS.items() if c == city))
+            for city in dict.fromkeys(_CITY_ABBREVIATIONS.values())
+        ),
+        key=lambda pair: -len(pair[0]),
+    )
+)
+
+
+def city_abbreviated_names(name: str | None) -> tuple[str, ...]:
+    """A club's own name with its city abbreviated, every way a reader types it (#9859).
+
+    ``"San Francisco Giants"`` -> ``("SF giants",)``; ``"St. Louis Cardinals"`` ->
+    ``("SL cardinals", "STL cardinals")``; ``"Oklahoma City Thunder"`` ->
+    ``("OKC thunder",)``. Empty when the name does not open with a city in the
+    table, or is only the city (`Washington`). Derived from the row's OWN name, so
+    the scorer ranks it on evidence it owns. Scoring evidence only, never shown:
+    the rest of the name comes back lowercased, periods dropped (`St.Louis`).
+    """
+    lowered = _city_words(name or "")
+    for city, abbreviations in _CITY_ABBREVIATIONS_BY_CITY:
+        if tuple(lowered[: len(city)]) != city:
+            continue
+        rest = " ".join(lowered[len(city):])
+        return tuple(f"{a.upper()} {rest}" for a in abbreviations) if rest else ()
+    return ()
+
+
 def diacritic_fold_query(q: str) -> str | None:
     """Rewrite a typed query into the spelling the venues store, or None (#6977).
 
