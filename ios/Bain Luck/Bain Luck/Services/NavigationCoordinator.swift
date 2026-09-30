@@ -87,6 +87,16 @@ final class NavigationCoordinator: ObservableObject {
             }
             return true
 
+        case "containers":
+            // #9652: a native entry while surface owners place #9653 cards.
+            // The producer deliberately serves `web: null`; do not claim an
+            // HTTPS page that does not exist. Edition/membership come from API.
+            guard url.scheme == "bainluck", pathComponents.count == 2,
+                  (try? ContainerHubService.path(for: pathComponents[1])) != nil else { return false }
+            let name = queryItems?.first(where: { $0.name == "name" })?.value
+            navigate(to: .containerHub(slug: pathComponents[1], name: name ?? "Collection"), tab: .leagues)
+            return true
+
         case "tournaments":
             // The US Open link. `bainluck.com/tournaments/<slug>` is a real web
             // page and `Route.tournamentHub` is a real screen that Browse and

@@ -1173,6 +1173,12 @@ actor APIClient {
 
     // MARK: - Tournament hubs
 
+    /// #9652: publication state/revision and cards come from one fresh read.
+    /// Never reuse a slug-only cached publication after a withdrawal.
+    func fetchContainerHub(slug: String) async throws -> ContainerHubResponse {
+        try await fetch(ContainerHubService.path(for: slug), requiresNetwork: true)
+    }
+
     /// Fetches a registered tournament hub (`us-open`, …) — the same payload the
     /// web hub page renders.
     ///
