@@ -4601,6 +4601,23 @@ jobs:
             exit 1
           fi
 
+      - name: "#9836 'ohio st' finds Ohio State, its game and both venues' markets (real Postgres)"
+        # PILLAR: MATCHING. SHIP: typing `ohio st`, `penn st` or `iowa st` and
+        # pressing Enter shows the team and its games, not only Kalshi's
+        # `Ohio St.` markets. The Teams gate is pure FTS and the game arms AND a
+        # word test onto the ILIKE, so only Postgres can show `st` failing to be
+        # a word of "Ohio State Buckeyes". Strawman on master fails 4 ship cases;
+        # removing either half of the fix alone fails 5-6.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_search_college_state_abbrev_pg_9836.py \
+            -v -rs 2>&1 | tee /tmp/collegestate.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/collegestate.txt; then
+            echo "::error::#9836 college St. contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#9735 one player of an unspaced doubles pair finds its match (real Postgres)"
         # PILLAR: DISCOVER. SHIP: searching a doubles player finds this week's
         # match. `q=Winegar` served 0 games while Rojer/Winegar was live: the
