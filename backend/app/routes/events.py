@@ -169,6 +169,8 @@ from app.utils.game_window import (
     game_state_window as _game_state_window,
 )
 from app.utils.name_normalization import (
+    city_abbreviated_names,
+    city_abbreviation_query,
     college_state_query,
     diacritic_fold_query,
     expand_search_terms,
@@ -3197,7 +3199,7 @@ def _team_card_keyed(team_rows, query: str) -> list:
         }
         for row in rows
     ]
-    return rank_with_keys(query, [(_search_team_evidence(t), t) for t in cards])[:5]
+    return rank_with_keys(query, [(_search_team_evidence(t, query), t) for t in cards])[:5]
 
 
 def _unify_school_st_spelling(cards: list) -> list:
@@ -3260,7 +3262,7 @@ def _split_terms_order_key(team_rows, query: str, expanded: list):
         return None
     from app.utils.search_match_class import MC1_ALL_TOKENS, match_class
 
-    lead_class = match_class(query, _search_team_evidence(keyed[0][1]))
+    lead_class = match_class(query, _search_team_evidence(keyed[0][1], query))
     if lead_class is None or lead_class > MC1_ALL_TOKENS:
         return None
 
@@ -6861,6 +6863,12 @@ def _build_team_search_filter(q: str):
     state_q = college_state_query(q)
     if state_q is not None:
         arms += [_fts_filter(column, state_q) for column in _team_ts_columns()]
+    # #9859: `sf giants` reaches the San Francisco Giants the same way — `sf` is
+    # not a word of the name, so `san francisco giants` rides beside the typed
+    # query. None for every query without a leading city abbreviation.
+    city_q = city_abbreviation_query(q)
+    if city_q is not None:
+        arms += [_fts_filter(column, city_q) for column in _team_ts_columns()]
     return or_(*arms)
 
 
@@ -36172,11 +36180,18 @@ def _search_concept_evidence(row: dict) -> "_SearchEvidence":
     )
 
 
-def _search_team_evidence(row: dict) -> "_SearchEvidence":
-    """Convert a `/search` team row into the `Evidence` the scorer scores."""
+def _search_team_evidence(row: dict, query: str | None = None) -> "_SearchEvidence":
+    """Convert a `/search` team row into the `Evidence` the scorer scores.
+
+    #9859: when the query opens with a city abbreviation (`sf giants`), the row
+    also owns its name with that city abbreviated (`SF giants`), so the club the
+    reader named leads the card and arms #9044's split-words key. Every other
+    query builds exactly the evidence it built before."""
     aliases: tuple[str, ...] = tuple(row.get("_aliases") or ())
     if row.get("abbreviation"):
         aliases = (*aliases, row["abbreviation"])
+    if city_abbreviation_query(query) is not None:
+        aliases = (*aliases, *city_abbreviated_names(row.get("name")))
     return _SearchEvidence(
         name=row.get("name") or "",
         aliases=aliases,
