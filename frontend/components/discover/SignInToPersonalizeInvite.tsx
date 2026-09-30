@@ -43,8 +43,11 @@ export default function SignInToPersonalizeInvite({
   if (!open) return null;
 
   return (
+    // z-[100], not z-50: on a phone the bottom nav is `fixed ... z-50` and comes
+    // later in the DOM, so at z-50 it painted over this sheet and swallowed the
+    // tap on "Not now" (browser journey, 390px). Same layer as MobileSearchOverlay.
     <div
-      className="fixed inset-0 z-50 bg-black/55 backdrop-blur-sm flex items-end sm:items-center justify-center p-4"
+      className="fixed inset-0 z-[100] bg-black/55 backdrop-blur-sm flex items-end sm:items-center justify-center p-4"
       onClick={onClose}
       data-testid="discover-sign-in-invite"
     >

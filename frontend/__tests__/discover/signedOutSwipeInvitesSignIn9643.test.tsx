@@ -270,6 +270,28 @@ describe("the invitation", () => {
     expect(html).toContain("Not now");
   });
 
+  it("the sheet sits above the phone's bottom nav, so 'Not now' can be tapped", () => {
+    // At 390px the invitation is a bottom sheet and BottomNav is a fixed bar over
+    // the same strip. Equal z-index let the nav (later in the DOM) cover the
+    // sheet's last button — found in the browser, where "Not now" was untappable.
+    const zOf = (cls: string) => {
+      const m = cls.match(/(?:^|\s)z-(?:\[(\d+)\]|(\d+))(?=\s|$)/);
+      if (!m) throw new Error(`no z-index class in: ${cls}`);
+      return Number(m[1] ?? m[2]);
+    };
+    const html = renderToStaticMarkup(
+      <SignInToPersonalizeInvite open onClose={() => {}} onSignInGoogle={noop} onSignInApple={noop} />,
+    );
+    const overlay = html.match(/<div class="([^"]*)"[^>]*data-testid="discover-sign-in-invite"/);
+    expect(overlay).not.toBeNull();
+    const nav = readFileSync(join(__dirname, "../../components/BottomNav.tsx"), "utf8")
+      .match(/aria-label="Mobile navigation"|className="(md:hidden fixed bottom-0[^"]*)"/g)
+      ?.map((s) => s.match(/className="([^"]*)"/)?.[1])
+      .find(Boolean);
+    expect(nav).toBeDefined();
+    expect(zOf(overlay![1])).toBeGreaterThan(zOf(nav!));
+  });
+
   it("a cancelled or failed sign-in is absorbed and still closes the invitation", async () => {
     const onSettled = jest.fn();
     await expect(
