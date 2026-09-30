@@ -10040,6 +10040,24 @@ async def _polymarket_group_sibling_event_id(session, market) -> Optional[int]:
     return sibling_event_id
 
 
+def matchup_names_one_competitor(team_a: str, team_b: str) -> bool:
+    """True when a parsed matchup's two sides are one competitor. Pure.
+
+    The #175 degenerate guard's question. `names_match` alone over-answers it:
+    its token-overlap stage scores `BetBoom Team` / `Team Yandex` at 0.5 on the
+    shared word "team", so the guard read two clubs as one fighter and minted
+    nothing (#9923 — `KXDOTA2GAME-26OCT010900BBTY`, and `Team Spirit` /
+    `Team Falcons` the same way). `shared_token_rivals` is the veto built for
+    exactly that shape: a shared word with a distinctive word on EACH side. A
+    real one-competitor matchup (`Saint-Denis` / `Saint-Denis`, `Jones` /
+    `Jon Jones`) has no distinctive word on at least one side, so it is never
+    vetoed and the guard still fires.
+    """
+    from app.utils.name_normalization import names_match, shared_token_rivals
+
+    return names_match(team_a, team_b) and not shared_token_rivals(team_a, team_b)
+
+
 async def _create_event_from_prediction_market(session, matchup, market, now):
     """
     Auto-create an Event when a game-level prediction market has no matching Event.
@@ -10211,7 +10229,7 @@ async def _create_event_from_prediction_market(session, matchup, market, now):
     # Saint-Denis". Recover the real opponent from the ticker+registry; if we
     # can't (honest unknown), create NO event rather than a duplicate-person one.
     from app.utils.name_normalization import names_match as _names_match
-    if team_a and (not team_b or _names_match(team_a, team_b)):
+    if team_a and (not team_b or matchup_names_one_competitor(team_a, team_b)):
         opponent = await _resolve_combat_opponent(
             session, market.external_id, team_a, sport_key
         )
