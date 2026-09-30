@@ -3189,7 +3189,9 @@ def _event_teamless_sport_order_key(team_categories: frozenset | None):
     return case((func.split_part(Sport.key, "_", 1).in_(sunk), 1), else_=0)
 
 
-def _team_card_keyed(team_rows, query: str) -> list:
+def _team_card_keyed(
+    team_rows, query: str, cap: int | None = 5, *, restated_aliases: bool = True
+) -> list:
     """The TEAMS card — at most five `(scorer key, row dict)` pairs, in card order.
 
     ONE definition, read by the card itself and by the games list's leader key
@@ -3210,6 +3212,12 @@ def _team_card_keyed(team_rows, query: str) -> list:
     basketball, other college — before the scorer sees them. Every non-college
     row reads 0, so no pro or soccer ordering moves, and the scorer's class,
     kind and prominence still lead: this only reorders rows it already tied.
+
+    #9897: `cap=None` returns the whole scored window in the same order — the
+    card is its first five. `restated_aliases=False` scores each row without the
+    aliases that only repeat the first words of its own name (the bare city
+    `Chicago` on `Chicago Bulls`, see `_alias_restates_name_prefix`). Only
+    #8738's lead TIER reads it either way; the card never does.
     """
     from app.utils.search_match_class import rank_with_keys
 
@@ -3238,7 +3246,32 @@ def _team_card_keyed(team_rows, query: str) -> list:
         }
         for row in rows
     ]
-    return rank_with_keys(query, [(_search_team_evidence(t, query), t) for t in cards])[:5]
+    if not restated_aliases:
+        for card in cards:
+            card["_aliases"] = [
+                a for a in card["_aliases"]
+                if not _alias_restates_name_prefix(a, card["name"])
+            ]
+    return rank_with_keys(query, [(_search_team_evidence(t, query), t) for t in cards])[:cap]
+
+
+def _alias_restates_name_prefix(alias: str, name: str | None) -> bool:
+    """#9897: the alias is the leading words of the row's own name, and shorter.
+
+    `Chicago` on `Chicago Bulls`, `Los Angeles` on `Los Angeles Kings`, `Texas`
+    on `Texas Rangers`. They came from the odds provider's city-only rows, which
+    the #6974 folds merged into the NBA/NHL/MLS clubs; NFL rows never had one
+    (`Chicago Bears` carries only `Bears`). Such an alias says nothing the name
+    does not, yet it scores MC0 for the bare city where the name scores MC1, so
+    it separates clubs by their row's history, not by what the reader typed.
+    A nickname (`Bulls`, `Lakers`) is a suffix, never a prefix, and stays.
+    """
+    alias_words = alias.lower().split()
+    name_words = (name or "").lower().split()
+    return (
+        0 < len(alias_words) < len(name_words)
+        and name_words[: len(alias_words)] == alias_words
+    )
 
 
 def _unify_school_st_spelling(cards: list) -> list:
@@ -3341,13 +3374,31 @@ def _team_card_lead_sport_keys(team_rows, query: str) -> frozenset | None:
     None — the caller then adds NO key and the compiled SQL is unchanged — when
     there is no card, or nothing to decide (every matched club's sport is a lead
     sport: `dodgers`; two clubs the scorer cannot separate share the lead).
+
+    #9897: a bare city names no one club. `chicago` on production 2026-09-30:
+    the card showed Blackhawks, Bulls, Cubs, Sky and White Sox — each row
+    carries the alias `Chicago` (MC0) — and no Bears, whose row carries only
+    `Bears` (MC1 on its name). The key then sank every Bears game, Jets @ Bears
+    this Sunday included, under Bulls games in late October; `los angeles` put
+    Rams @ Eagles 14th, under Lakers in November. So the tier is scored without
+    aliases that restate a name's own first words, and over the WHOLE window,
+    not the five-card cap (the Bears arrive seventh). The leader is still the
+    card's first row, and neither change can reach the card: its own order
+    reads the default arguments.
     """
-    keyed = _team_card_keyed(team_rows, query)
+    keyed = _team_card_keyed(team_rows, query, cap=None)
     if not keyed:
         return None
-    lead_key = keyed[0][0]
+    # The leader is the CARD's first row; the tier is every club the scorer
+    # cannot separate from it once aliases that restate a name's own first
+    # words are set aside (a bare city names no one club).
+    leader_id = keyed[0][1]["id"]
+    tier = _team_card_keyed(team_rows, query, cap=None, restated_aliases=False)
+    lead_key = next((key for key, card in tier if card["id"] == leader_id), None)
+    if lead_key is None:
+        lead_key, tier = keyed[0][0], keyed
     lead_names = {
-        (card.get("name") or "").lower() for key, card in keyed if key == lead_key
+        (card.get("name") or "").lower() for key, card in tier if key == lead_key
     }
     rows = _dedupe_prefix_duplicate_team_rows([
         row for row in team_rows if not _is_individual_sport(row.sport_key)
