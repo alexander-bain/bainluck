@@ -194,6 +194,16 @@ POLYMARKET_SLUG_LEAGUE_PREFIXES: dict[str, str] = {
     "pro-football-": "americanfootball_nfl",
 }
 
+# ...and suffixes. Polymarket's fantasy boards name the league at the END of the
+# slug (``top-12-rb-2026-27-nfl-season``), so the prefix never claimed them and
+# Notre Dame's page kept "Jeremiyah Love — Fantasy Football: 2026-27 Top 12
+# Scoring RBs" bound to the school. Every open ``-nfl-season`` slug on 2026-09-30
+# (14 slugs, 294 markets) was a fantasy board about NFL players; 4 legs sat on
+# college teams.
+POLYMARKET_SLUG_LEAGUE_SUFFIXES: dict[str, str] = {
+    "-nfl-season": "americanfootball_nfl",
+}
+
 
 def market_event_slug(market_metadata) -> str | None:
     """The Polymarket event slug a market row's metadata carries, else None."""
@@ -204,7 +214,7 @@ def market_event_slug(market_metadata) -> str | None:
 
 
 def _polymarket_slug_league(event_slug: str | None) -> str | None:
-    """The sport key a Polymarket event slug's prefix names, else None.
+    """The sport key a Polymarket event slug's prefix or suffix names, else None.
 
     Case-sensitive, like Phase 3's ``LIKE`` over the same key: Gamma's slugs are
     lower-case, and the two reads must select the same rows.
@@ -212,6 +222,9 @@ def _polymarket_slug_league(event_slug: str | None) -> str | None:
     slug = event_slug or ""
     for prefix, sport_key in POLYMARKET_SLUG_LEAGUE_PREFIXES.items():
         if slug.startswith(prefix):
+            return sport_key
+    for suffix, sport_key in POLYMARKET_SLUG_LEAGUE_SUFFIXES.items():
+        if slug.endswith(suffix):
             return sport_key
     return None
 

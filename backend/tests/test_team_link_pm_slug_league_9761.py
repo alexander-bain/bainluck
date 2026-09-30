@@ -192,3 +192,74 @@ async def test_without_the_slug_the_college_page_carries_the_pro_leg():
     with patch.object(teams_route, "market_event_slug", lambda _meta: None):
         path = await _path(LSU[0], "americanfootball_ncaaf", LSU_ROWS)
     assert path != [] and _ids(path) != [(1, COLLEGE_TITLE.id)], path
+
+
+# ── The fantasy boards: the league is the slug's SUFFIX ───────────────────────
+FANTASY_RB_SLUG = "top-12-rb-2026-27-nfl-season"
+
+
+def test_an_nfl_season_suffix_names_the_nfl():
+    assert market_league_sport_key("polymarket", "886149", FANTASY_RB_SLUG) == "americanfootball_nfl"
+    assert link_crosses_league("polymarket", "886149", "americanfootball_ncaaf", FANTASY_RB_SLUG)
+    assert not link_crosses_league("polymarket", "886149", "americanfootball_nfl", FANTASY_RB_SLUG)
+
+
+def test_the_suffix_is_a_suffix_not_a_substring():
+    for slug in ("nfl-season-win-totals-2026", "top-12-rb-nfl-season-2026-27", "top-12-rb-2026-27-NFL-SEASON"):
+        assert market_league_sport_key("polymarket", "1", slug) is None, slug
+
+
+# id, market_id, name, stored team_id
+FANTASY_OUTCOMES = [
+    (239016692, 1, "Jeremiyah Love", NOTRE_DAME[0]),  # production's link -> NULL
+    (239016693, 1, "Buffalo", BULLS[0]),              # a club name: -> the Bills
+    (95106402, 2, "CJ Carr", NOTRE_DAME[0]),          # draft board: stands
+]
+
+
+def _seed_fantasy(session: Session) -> None:
+    session.add_all([Sport(id=i, key=k, name=k, active=True) for i, k in SPORTS])
+    for tid, sid, name, aliases, roster in (LSU, NOTRE_DAME, BULLS, BILLS, CHIEFS):
+        session.add(Team(id=tid, sport_id=sid, name=name, alternate_names=aliases,
+                         roster_players=roster))
+    for mid, ext, name, slug in (
+        (1, "886149", "Fantasy Football: 2026-27 Top 12 Scoring RBs", FANTASY_RB_SLUG),
+        (2, "448882", "2027 Pro Football Draft: 1st Overall Pick", DRAFT_SLUG),
+    ):
+        session.add(FuturesMarket(
+            id=mid, source="polymarket", external_id=ext, name=name,
+            category="futures", llm_sport_category="football",
+            status="open", market_tier=5,
+            market_metadata={"polymarket_event_slug": slug, "polymarket_event_id": ext},
+        ))
+    session.flush()
+    for oid, mid, name, team_id in FANTASY_OUTCOMES:
+        session.add(FuturesOutcome(
+            id=oid, market_id=mid, external_id=f"o{oid}", name=name, team_id=team_id,
+        ))
+    session.commit()
+
+
+def test_the_fantasy_leg_leaves_notre_dame_and_stays_gone():
+    with Session(_make_engine()) as session:
+        _seed_fantasy(session)
+        first = _drain(session)
+        second = _drain(session)
+        links = _links(session)
+    assert first["errors"] == [] and second["errors"] == []
+    assert links == {239016692: None, 239016693: BILLS[0], 95106402: NOTRE_DAME[0]}
+    assert first["links_outside_market_league"] == 2
+    assert second["links_outside_market_league"] == 0
+
+
+def test_without_the_suffix_the_fantasy_leg_stays_on_notre_dame():
+    """STRAWMAN: with no suffix listed, Phase 3 never selects the fantasy board."""
+    with patch(
+        "app.utils.market_team_sport.POLYMARKET_SLUG_LEAGUE_SUFFIXES", {}
+    ), Session(_make_engine()) as session:
+        _seed_fantasy(session)
+        stats = _drain(session)
+        links = _links(session)
+    assert stats["errors"] == []
+    assert links[239016692] == NOTRE_DAME[0]
+    assert links[239016693] == BULLS[0]
