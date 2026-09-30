@@ -91,7 +91,7 @@ from app.utils.event_concept_cache import (
     with_availability,
     write_payload,
 )
-from app.utils.market_team_sport import link_crosses_gender
+from app.utils.market_team_sport import link_crosses_conference, link_crosses_gender
 from app.utils.prop_families import group_prop_families, resolve_family_key
 from app.utils.statement_timeout import is_statement_timeout
 
@@ -717,7 +717,7 @@ async def build_prop_families(
         return _payload([]), True
 
     side_loss = await _withhold_other_side(
-        db, by_market, side_inputs, _team_sport_id, _team_id
+        db, by_market, side_inputs, _team_sport_id, _team_id, _team_name
     )
     screen_loss = await _withhold_refused_prices(db, by_market, budget_ms, _t0, _team_id)
     payload = _payload(group_prop_families(list(by_market.values())))
@@ -746,6 +746,7 @@ async def _withhold_other_side(
     side_inputs: dict[int, tuple],
     team_sport_id: int | None,
     team_id: int,
+    team_name: str | None = None,
 ) -> str | None:
     """Drop every market that belongs to the other side of the team's sport (#9610).
 
@@ -755,6 +756,12 @@ async def _withhold_other_side(
     "Arsenal", so the team-name branches match every "Arsenal" market, and
     nothing here asked which side a market is for. #9593 fixed the same leak in
     ``_query_team_futures``. This asks the same rule, ``link_crosses_gender``.
+
+    #8072 (arm B): and every market whose Kalshi ticker names the other
+    conference. The A's roster has its own Max Muncy, so the roster branch
+    matched the Dodgers' Muncy's "NL MVP Winner?" (``KXMLBNLMVP-26``) and the
+    Athletics' MVP card printed it. The resolver already refuses that link
+    (``link_crosses_conference``); this asks the same rule.
 
     Returns a loss reason, or None. A team with no ``sport_id`` is not screened.
     A failed lookup FAILS OPEN (the page keeps today's rows) and says so in the
@@ -787,7 +794,9 @@ async def _withhold_other_side(
     for mid in list(by_market):
         name, sport_id, source, external_id = side_inputs[mid]
         market_sport_key = sport_keys.get(int(sport_id)) if sport_id is not None else None
-        if link_crosses_gender(name, team_sport_key, market_sport_key, source, external_id):
+        if link_crosses_gender(
+            name, team_sport_key, market_sport_key, source, external_id
+        ) or link_crosses_conference(source, external_id, team_sport_key, team_name):
             del by_market[mid]
     return None
 

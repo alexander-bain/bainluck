@@ -90,6 +90,9 @@ function setup(stored?: StoredConsent): Harness {
   const consent = require('@/lib/analytics/telemetryConsent') as Harness['consent'];
   const di = require('@/lib/discoverInteractions') as Harness['di'];
 
+  // Signed-in fixture: these tests isolate consent, not authentication.
+  di.setDiscoverLearningGate(() => true);
+
   // Hydrate the authority from the stored choice, the way AnalyticsProvider does.
   consent.initTelemetryConsent();
 

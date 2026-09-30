@@ -189,7 +189,10 @@ describe("#7165: what the hero's icon sat beside is NOT changed", () => {
     // card vocabulary that four other consumers of `isSuspended` depend on (#4015).
     const code = codeOnly(PAGE);
     expect(code).toContain('data-testid="event-hero-suspended"');
-    expect(code).toContain("hasNoReportedResult(event?.status, event?.commence_time)");
+    // #9634 — the call grew the served `started_without_result`; still ONE answer.
+    expect(code).toMatch(
+      /hasNoReportedResult\(\s*event\?\.status,\s*event\?\.commence_time,\s*undefined,\s*event\?\.started_without_result,?\s*\)/,
+    );
     expect(code).toContain("venueSettledSentence ??");
   });
 });

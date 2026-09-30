@@ -105,6 +105,7 @@ from app.utils.event_completion import (
     EVENT_SUSPENDED,
     SETTLED_STATUSES,
     is_retired_event_status,
+    served_commence_time,
     started_without_result,
 )
 from app.utils.current_odds_probability import current_odds_probability
@@ -1088,12 +1089,26 @@ def _is_over_match_cap(market, match_counts: dict, query_words: frozenset) -> bo
     `_SEARCH_MATCH_ROWS_CAP` rows are its highest-ranked ones. An over-cap row is
     SUNK, not dropped (`_sink_over_match_cap`): when nothing else answers the
     query it still fills the page.
+
+    #9724 — the fixture is also the GAME the row is linked to. `?q=braves` on
+    Wild Card day (production 2026-09-30 04:05Z) served 7 of its 10 market rows
+    from Phillies vs. Braves, and 6 of them named no fixture before a colon:
+    `Spread: Atlanta Braves (-1.5)`, `Atlanta Braves Team Total: O/U 3.5`,
+    `Will the game go to extra innings?: Philadelphia Phillies vs. Atlanta
+    Braves`. All six carry the game's `event_id`, and an open market that
+    carries one is a game's market (21,326 of 21,328 on production; the other
+    two are the Ryder Cup captains, one event of two rows), so the link is the
+    key the name could not give. A row counts against each key it has and is over once either is full.
+    The name's query test still disarms the cap for a row whose name has sides.
     """
     key = _search_match_key(market)
-    if key is None or _query_names_both_sides(key, query_words):
+    if key is not None and _query_names_both_sides(key, query_words):
         return False
-    match_counts[key] = match_counts.get(key, 0) + 1
-    return match_counts[key] > _SEARCH_MATCH_ROWS_CAP
+    event_id = getattr(market, "event_id", None)
+    keys = [k for k in (key, f"event:{event_id}" if event_id else None) if k]
+    for k in keys:
+        match_counts[k] = match_counts.get(k, 0) + 1
+    return any(match_counts[k] > _SEARCH_MATCH_ROWS_CAP for k in keys)
 
 
 def _sink_over_match_cap(markets: list, over_cap_ids: set) -> list:
@@ -3330,6 +3345,93 @@ def _settled_day_order_key(lead_keys: frozenset | None):
         (Event.status.in_(_SEARCH_SETTLED_STATUSES), eastern_day),
         else_=None,
     ).desc().nulls_last()
+
+
+#: #9632: how many finals page one keeps when a club has nothing left to play
+#: in the window but still has live futures. Three is "how did the last week
+#: go" at phone width; everything past it moves to page two, not away.
+_SEARCH_BYE_FINALS_CAP = 3
+
+
+def _search_bye_team_ids(team_rows, query: str) -> list[int]:
+    """#9632: every team row of the club the TEAMS card leads with, or [].
+
+    `dodgers` on production 2026-09-29, the first day of the postseason: the
+    Dodgers have a first-round bye, so every game in the window is a final and
+    page one opened with 23 of them — the World Series (30%) and NL pennant
+    (42%) rows sat ~5,500px down at phone width. The futures probe reads the
+    club's own outcomes by `team_id`, and a club carries one row per
+    competition (`Los Angeles Dodgers` mlb AND preseason), so the ids are
+    every row whose name is a lead-tier card name, the tier
+    `_team_card_lead_sport_keys` reads (one definition of "the" club). Unlike
+    that helper this is NOT disarmed when every row is a lead sport — that is
+    exactly the `dodgers` shape.
+    """
+    keyed = _team_card_keyed(team_rows, query)
+    if not keyed:
+        return []
+    lead_key = keyed[0][0]
+    lead_names = {
+        (card.get("name") or "").lower() for key, card in keyed if key == lead_key
+    }
+    return sorted({
+        row.id for row in team_rows
+        if not _is_individual_sport(row.sport_key)
+        and (getattr(row, "name", "") or "").lower() in lead_names
+    })
+
+
+def _search_bye_finals_probe(event_conditions, team_ids: list[int]):
+    """#9632: ONE statement — nothing left to play AND the club has live futures.
+
+    True only when (a) no matched game is `live` or `scheduled` — a stale
+    `scheduled` row counts as "something to play", which fails toward today's
+    page — and (b) an OPEN futures market not tied to a game carries one of the
+    club's outcomes at 1% or more. (b) is what separates `dodgers` (World
+    Series, pennant) from a club whose question is over; a game-linked market
+    is excluded because Kalshi leaves settled game markets `open` (gotcha #33).
+    Both arms are EXISTS, so the upcoming-game case (`chiefs`) stops at its
+    first scheduled row.
+    """
+    nothing_to_play = ~(
+        select(Event.id)
+        .join(Sport, Event.sport_id == Sport.id)
+        .where(*event_conditions, Event.status.in_(("live", "scheduled")))
+        .exists()
+    )
+    live_futures = (
+        select(FuturesOutcome.id)
+        .join(FuturesMarket, FuturesMarket.id == FuturesOutcome.market_id)
+        .where(
+            FuturesOutcome.team_id.in_(team_ids),
+            FuturesMarket.status == "open",
+            FuturesMarket.event_id.is_(None),
+            FuturesOutcome.current_probability >= 0.01,
+        )
+        .exists()
+    )
+    return select(and_(nothing_to_play, live_futures))
+
+
+def _search_games_page_window(page: int, per_page: int, capped: bool) -> tuple[int, int]:
+    """#9632: `(offset, limit)` of the games page. Uncapped: the plain window.
+
+    Capped, page one holds the first `_SEARCH_BYE_FINALS_CAP` rows and page two
+    starts at the row right after them, so every raw row is on exactly one page
+    — the same reachability rule #5513 set for the pager.
+    """
+    if not capped:
+        return (page - 1) * per_page, per_page
+    if page == 1:
+        return 0, _SEARCH_BYE_FINALS_CAP
+    return _SEARCH_BYE_FINALS_CAP + (page - 2) * per_page, per_page
+
+
+def _search_games_total_pages(raw_total: int, per_page: int, capped: bool) -> int:
+    """#9632: the page count `_search_games_page_window` partitions `raw_total` into."""
+    if not capped:
+        return (raw_total + per_page - 1) // per_page
+    return 1 + (raw_total - _SEARCH_BYE_FINALS_CAP + per_page - 1) // per_page
 
 
 def _todays_final_order_key(armed: bool, status_order, upcoming_order, now: datetime):
@@ -6241,6 +6343,58 @@ def _resolved_club_outcome_match(term: str, exp: str | None, club_words: list[st
         arms.append(FuturesOutcome.name.ilike(f"%{exp}%"))
     return FuturesMarket.id.in_(
         select(FuturesOutcome.market_id).where(or_(*arms))
+    )
+
+
+def _multi_term_outcome_match(expanded: list[tuple[str, str | None]]):
+    """#9646: the futures OUTCOME arm for a query of two or more terms.
+
+    Each term used to need SOME outcome of the market, each its own. `cy young`
+    therefore served five boards reached by one word here and the other there,
+    read on production 2026-09-29:
+
+        Presidential Election Winner 2028   Person CY      / Glenn Youngkin
+        NFL Championship Halftime Show      Miley Cyrus    / Young Thug
+        FCS National Championship Winner    Mercyhurst     / Youngstown St.
+        LOTTE Championship (x2)             Lucy Li        / Jin Young Ko
+
+    A term pg_trgm cannot serve (`_has_extractable_trigram` false: `cy`, `us`,
+    `f1`, `2.5`) is spelled inside nearly every tenth name, so on its own it
+    attests nothing, which is LAT-P010's single-term finding. It now counts only
+    in the SAME outcome as one of the query's longer terms. The longer terms
+    keep their own outcomes, so a board holding two names the reader typed
+    (`zelenskyy putin`, `falcons packers`) is still reached, and the short term
+    still FILTERS (LAT-P006: `us recession` must not admit "Euro area growth").
+
+    The cost, named: a short term found only in an outcome while its partner is
+    only in the market NAME no longer reaches through this arm (`award d'or` ->
+    "France Football Award 2026", whose `d'Or` and `Award` sit in different
+    outcomes). An OR onto the name would put an unservable `%cy%` subquery
+    under a top-level OR, the LAT-P006 plan that timed out.
+
+    Every term short, or every term long: unchanged.
+    """
+
+    def _some_outcome(term: str, exp: str | None):
+        return FuturesMarket.id.in_(
+            select(FuturesOutcome.market_id).where(
+                _build_expanded_ilike(FuturesOutcome.name, term, exp)
+            )
+        )
+
+    long_terms = [(t, e) for t, e in expanded if _has_extractable_trigram(t)]
+    short_terms = [(t, e) for t, e in expanded if not _has_extractable_trigram(t)]
+    if not long_terms or not short_terms:
+        return and_(*[_some_outcome(t, e) for t, e in expanded])
+    # The long-term ILIKE is AND-ed inside the one subquery, so the trigram
+    # index drives it and the short term is a recheck on the rows it returned.
+    anchored = select(FuturesOutcome.market_id).where(
+        or_(*[_build_expanded_ilike(FuturesOutcome.name, t, e) for t, e in long_terms]),
+        *[_build_expanded_ilike(FuturesOutcome.name, t, e) for t, e in short_terms],
+    )
+    return and_(
+        *[_some_outcome(t, e) for t, e in long_terms],
+        FuturesMarket.id.in_(anchored),
     )
 
 
@@ -9442,6 +9596,11 @@ async def search_events(
         sport_facets = None
         degraded.append("event_count")
     _mark("event_count")
+    # #9632: the count the primary predicate produced. Every rescue arm below
+    # fires only on 0 and replaces `query` wholesale, so the bye-finals probe
+    # (which reads `event_conditions`) is armed only when this number is the one
+    # the page will be cut from.
+    _primary_total_count = total_count
 
     # #5821 — THE PROVEN-DUPLICATE BRIDGE: a fold must never cost the reader a way in.
     #
@@ -9973,8 +10132,37 @@ async def search_events(
             fuzzy_corrected = None
 
     # Apply pagination
-    offset = (page - 1) * per_page
-    query = query.offset(offset).limit(per_page)
+    # #9632: a club with nothing left to play and live futures (`dodgers` on a
+    # postseason bye) keeps only its latest finals on page one, so the pennant
+    # rows are not buried under three weeks of results. Decided BEFORE the page
+    # is cut, from the query alone, so page two computes the same answer and
+    # starts where page one stopped. A shed probe leaves the page as it was.
+    _bye_finals_capped = False
+    _bye_team_ids = (
+        _search_bye_team_ids(_early_team_rows, _q_identity)
+        if _early_team_rows and _primary_total_count > _SEARCH_BYE_FINALS_CAP
+        else []
+    )
+    if _bye_team_ids and time.monotonic() <= _deadline:
+        _bye_savepoint = await db.begin_nested()
+        try:
+            _bye_finals_capped = bool(
+                (await db.execute(
+                    _search_bye_finals_probe(event_conditions, _bye_team_ids)
+                )).scalar()
+            )
+        except Exception as exc:  # noqa: BLE001
+            await _bye_savepoint.rollback()
+            if not _is_query_timeout(exc):
+                raise
+            logger.warning("search bye-finals probe timed out for %r", q)
+            await _apply_search_statement_timeout(db, _deadline)
+        else:
+            await _bye_savepoint.commit()
+    _mark("bye_finals_probe")
+
+    offset, _page_limit = _search_games_page_window(page, per_page, _bye_finals_capped)
+    query = query.offset(offset).limit(_page_limit)
 
     # Execute
     try:
@@ -10424,7 +10612,7 @@ async def search_events(
     # 🔴 AND THE PAGE COUNT IS NOT THE SAME QUESTION. `total_results` is a
     # sentence about the rows ("· 16 games"); `total_pages` is a claim about
     # what the NEXT button can still reach, and the two live in different
-    # spaces. `offset = (page - 1) * per_page` indexes the UNFOLDED result set
+    # spaces. The page window (`_search_games_page_window`) indexes the UNFOLDED result set
     # — folding after the limit is what keeps it there (see the fold stage
     # above) — so every page boundary is a raw-row boundary, and a page count
     # derived from the adjusted number can retire a page that still holds rows.
@@ -10470,7 +10658,7 @@ async def search_events(
     # on page one; the other five already satisfy `total_results == rendered`
     # and are untouched by this branch.
     _raw_total_count = total_count
-    total_pages = (_raw_total_count + per_page - 1) // per_page
+    total_pages = _search_games_total_pages(_raw_total_count, per_page, _bye_finals_capped)
     _page_duplicates_dropped = _fixture_duplicates_dropped + _twin_duplicates_dropped
     if _page_duplicates_dropped and total_pages <= 1:
         total_count = max(len(formatted_results), total_count - _page_duplicates_dropped)
@@ -10548,9 +10736,7 @@ async def search_events(
             for term, exp in expanded
         ]
         futures_name_ilike = and_(*futures_name_conditions)
-        futures_outcome_match = and_(
-            *[_outcome_id_match(term, exp) for term, exp in expanded]
-        )
+        futures_outcome_match = _multi_term_outcome_match(expanded)
     else:
         term, exp = expanded[0]
         futures_name_ilike = _futures_name_match_term(term, exp)
@@ -20702,6 +20888,7 @@ def _withhold_redundant_parent_futures(
     parent_ids: set,
     group_markets: list,
     legs_by_market: dict,
+    drawn_by_game_markets: frozenset = frozenset(),
 ) -> tuple[list, list]:
     """#4189 / #5273's verdict, at the second door (#8848).
 
@@ -20733,6 +20920,20 @@ def _withhold_redundant_parent_futures(
     Rows that speak for merged contributors (`contributor_market_ids`) are kept
     unless EVERY id behind them is a redundant parent — door one's rule for its
     merged rows — so a member's price never leaves with the container's.
+
+    🔴 A MEMBER THE #4646 FOLD TOOK STILL REACHED THE READER (#4646,
+    `/events/15320104`). The two doors run the same two passes in opposite
+    orders. Door one judges its parents BEFORE it folds duplicate winner cards
+    (#6799), so the match-winner child counts as served. This door folds the
+    fixture's winner first (:func:`_fold_event_match_winner_futures`), and that
+    fold is the only reason the child's row is gone: `/game-markets` draws it
+    as the labelled card. Measured 2026-09-29 16:00Z: parent `62829653`
+    (`field`) served one leg, "Mouilleron-Le-Captif (Doubles): Balshaw/Martineau
+    vs Harris/" at 60% under a 95% hero. That leg is a copy of child `62842567`
+    (`duel`), which the fold had taken, so no member survived and the parent
+    stayed. ``drawn_by_game_markets`` is the set of ids that fold removed. They
+    count as surviving; nothing else does, so a parent whose children were all
+    filtered away for any other reason still stays (CERT-2335/2340).
     """
     if not parent_ids or not group_markets:
         return home_futures, away_futures
@@ -20749,7 +20950,7 @@ def _withhold_redundant_parent_futures(
         if m.group_id and (m.market_type or "") in _DECOMPOSED_MEMBER_SHAPES:
             member_ids_by_group.setdefault(m.group_id, set()).add(m.id)
 
-    surviving_ids: set = set()
+    surviving_ids: set = set(drawn_by_game_markets)
     for row in list(home_futures) + list(away_futures):
         surviving_ids |= _futures_row_market_ids(row)
 
@@ -27540,6 +27741,9 @@ async def _build_related_futures(
     # as one labelled card. Drawn again here it becomes unlabelled chips split
     # across two columns. Folded BEFORE the merges, while every leg still carries
     # its own market's id.
+    pre_fold_market_ids = {
+        r.get("market_id") for r in list(home_futures) + list(away_futures)
+    }
     home_futures, away_futures = _fold_event_match_winner_futures(
         home_futures,
         away_futures,
@@ -27548,6 +27752,13 @@ async def _build_related_futures(
         event.home_team_name,
         event.away_team_name,
         headline_market_ids=_headline_winner_market_ids(event.win_probability_sources),
+    )
+    # #4646 / #8848 — what the fold just took is drawn by `/game-markets`, so the
+    # redundant-parent verdict below still counts it as having reached the reader.
+    folded_to_game_markets = frozenset(
+        pre_fold_market_ids
+        - {r.get("market_id") for r in list(home_futures) + list(away_futures)}
+        - {None}
     )
 
     # ── Cross-source deduplication ──────────────────────────────────
@@ -27702,6 +27913,7 @@ async def _build_related_futures(
             redundant_parent_ids,
             group_markets,
             parent_legs,
+            drawn_by_game_markets=folded_to_game_markets,
         )
 
     # ── Enrich matchup outcomes with team logos ───────────────────
@@ -32515,6 +32727,10 @@ def _format_event(
     # `started_without_result` can never be computed from two different
     # instants — see the note on that key.
     _served_now = datetime.now(timezone.utc)
+    _served_start = served_commence_time(
+        event.status, event.commence_time,
+        getattr(event, "win_probability_sources", None), _served_now,
+    )
 
     # Named once, used by both source blocks below. `is not None` and not `or`:
     # an event whose twins add nothing folds to `{}`, and `{} or x` would fall
@@ -32569,11 +32785,15 @@ def _format_event(
         else None,
         "home_team": event.home_team_name,
         "away_team": event.away_team_name,
-        "commence_time": event.commence_time.isoformat(),
+        # #9634: StatPal's start while a held row waits for its session; the
+        # stored start otherwise. See `served_commence_time`.
+        "commence_time": _served_start.isoformat(),
         # #8841: the venue listed the game before its start was announced and
         # `commence_time` is a placeholder — print the date, not the clock.
+        # Asked of the served start: a placeholder tag names the stored instant,
+        # and StatPal's start is not a placeholder.
         "start_is_tbd": start_is_tbd(
-            getattr(event, "event_tags", None), event.commence_time, event.status
+            getattr(event, "event_tags", None), _served_start, event.status
         ),
         # Emit completed_at so finished-event cards (My Stuff, etc.) have an
         # authoritative game-date fallback instead of showing a stale/future
@@ -33299,6 +33519,7 @@ from app.utils.outcome_display import (  # noqa: E402
     leader_pick_order as _leader_pick_order,
     drop_dominant_field_outcomes as _drop_dominant_field_outcomes,
     drop_incoherent_near_certain as _drop_incoherent_near_certain,
+    drop_incoherent_ladder_outcomes as _drop_incoherent_ladder_outcomes,
     drop_unbacked_legs as _drop_unbacked_legs,
 )
 from app.utils.futures_liveness import leg_is_graded  # noqa: E402  #8640
@@ -34298,6 +34519,18 @@ def _search_ladder_window(
     ]
     if any(o.id not in withheld_ids and o.current_probability is not None for o in live):
         ordered = live
+    # #9676. A rung priced against its own ladder is not evidence, and the feed
+    # has stripped it since #4610 — search drew it. `?q=fed rate`, 390px,
+    # 2026-09-29 19:10Z: 108626 printed `Above 4.50% 28% · Above 4.75% 76%` off
+    # 8¢/76¢ and 2¢/78¢ books. Same helper, same never-collapse rule, so the two
+    # surfaces cannot disagree about which rung is impossible. Withheld rungs
+    # read as unpriced: a price the card will not print cannot condemn one it will.
+    ordered = _drop_incoherent_ladder_outcomes(
+        ordered,
+        lambda o: o.name,
+        lambda o: None if o.id in withheld_ids else o.current_probability,
+        getattr(market, "name", None),
+    )
     priced = [
         index
         for index, o in enumerate(ordered)
@@ -34363,6 +34596,43 @@ def _search_query_matched_leg(market, board: list, top: list, query_terms, withh
     if not matched:
         return None
     return max(matched, key=lambda o: o.current_probability or 0)
+
+
+def _search_keep_settled_winners(real: list, limit: int, headline_tier) -> tuple[list, list]:
+    """#9675: the top ``limit`` of an already-sorted open multi-winner board,
+    with its graded winners guaranteed a row. Returns ``(top, kept_winners)``.
+
+    The winners go in a STABLE order — rank, then name, then id — because the
+    sort ahead of this ties them (every winner is 1.0, and on the specimen both
+    are rank 1), and a tie left to load order is what made the card show the
+    Dodgers in one read and the Brewers in the next.
+
+    One row stays with the best live leg while any exists: #8640's point is
+    that a result must not headline an open board, and a board with more
+    winners than rows would otherwise be all results. Everything else keeps its
+    sorted place — live legs, then the winners, then graded losers and
+    unpriced legs — so a board whose winners already fit is unchanged except
+    for the order among its tied winners.
+    """
+    winners = sorted(
+        (o for o in real if headline_tier(o) == 1 and getattr(o, "is_winner", None) is True),
+        key=lambda o: (
+            getattr(o, "rank", None) is None,
+            getattr(o, "rank", None) or 0,
+            o.name or "",
+            o.id or 0,
+        ),
+    )
+    if not winners:
+        return real[:limit], []
+    has_live = any(headline_tier(o) == 2 for o in real)
+    kept = winners[: max(limit - 1, 0) if has_live else limit]
+    kept_ids = {id(o) for o in kept}
+    rest = [o for o in real if id(o) not in kept_ids]
+    room = limit - len(kept)
+    live = [o for o in rest if headline_tier(o) == 2][:room]
+    tail = [o for o in rest if headline_tier(o) != 2][: room - len(live)]
+    return live + kept + tail, kept
 
 
 def _build_search_top_outcomes(
@@ -34518,11 +34788,31 @@ def _build_search_top_outcomes(
             reverse=True,
         )
         top = real[:limit]
+        # #9675: EVERY SETTLED WINNER OF A MULTI-WINNER BOARD STAYS ON THE CARD.
+        # `?q=braves` (2026-09-29) drew *Team to advance to NLDS* (60087232) as
+        # four live teams and `Milwaukee Brewers ✓ Won` — the Dodgers, graded a
+        # winner at 1.0 on the same board, had gone. The demotion above puts
+        # both winners in tier 1 behind four live legs; the five-row slice kept
+        # one, and with both at 1.0 and rank 1 WHICH one was arbitrary (the
+        # morning read showed the Dodgers and no Brewers). A card that names
+        # one of two teams through reads as if only that team is through.
+        winners: list = []
+        if _demote_graded:
+            top, winners = _search_keep_settled_winners(real, limit, _headline_tier)
         # #8842: a card recalled through an outcome name shows that outcome, in
         # the last row, when the probability cut left it out. Not on the ladder
         # window above: a threshold rung is never a player or a team.
         pinned = _search_query_matched_leg(market, real, top, query_terms, _withheld_ids)
         if pinned is not None:
+            # It displaces the last row that is not a kept winner, so searching
+            # for a live team cannot evict the result #9675 put back.
+            if len(top) >= limit:
+                kept = {id(o) for o in winners}
+                drop = next(
+                    (i for i in range(len(top) - 1, -1, -1) if id(top[i]) not in kept),
+                    len(top) - 1,
+                )
+                top = top[:drop] + top[drop + 1:]
             top = top[: limit - 1] + [pinned]
     # #6479, and it is the SAME rung a reader meets on the detail page. Search
     # ranks these boards by probability, so the truncated name is not buried in

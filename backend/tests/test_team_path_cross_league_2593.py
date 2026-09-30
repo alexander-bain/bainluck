@@ -102,9 +102,17 @@ CFB_FINALIST = _market(
     182, "College Football National Championship Qualifiers", "kalshi",
     "KXNCAAFFINALIST-27", tier=1, category="football",
 )
+# #9660 refuses a "Qualifiers" market by its NAME as well, so on its own the
+# finalist leg can no longer show that the league check is load-bearing. The
+# Huskies' title leg is refused by the league check alone.
+CFB_TITLE = _market(
+    183, "College Football National Championship Winner", "kalshi",
+    "KXNCAAF-27", tier=1, category="football",
+)
 COMMANDERS_ROWS = [
     (_outcome(10, 0.0068, COMMANDERS), SUPER_BOWL),
     (_outcome(11, 0.13, COMMANDERS), CFB_FINALIST),  # the Huskies' leg
+    (_outcome(12, 0.13, COMMANDERS), CFB_TITLE),  # and their title leg
 ]
 
 

@@ -10,6 +10,7 @@ distinguish same-city teams like Lakers vs Clippers.
 """
 
 import logging
+import re
 from typing import Optional
 
 from app.utils.name_normalization import normalize_name as _normalize_name  # noqa: F401 — re-exported
@@ -53,10 +54,48 @@ def _names_match(candidate: str, team_name: str, alt_names: Optional[list] = Non
         # Substring match (only if both strings are long enough to avoid
         # false positives like "LA" matching everything)
         if len(candidate_norm) >= 8 and len(name_norm) >= 8:
-            if candidate_norm in name_norm or name_norm in candidate_norm:
+            if candidate_norm in name_norm:
+                return True
+            if name_norm in candidate_norm and not given_name_before_city(
+                candidate, name, team_name
+            ):
                 return True
 
     return False
+
+
+# One given name as a market prints it: "Parker", "A'Mauri", "Ja'Marr", "P.J.".
+# An all-caps token ("UNC", "PIT") is an abbreviation, never a given name.
+_GIVEN_NAME = re.compile(
+    r"^(?:[A-Z][a-z]+(?:['-][A-Z]?[a-z]+)*|[A-Z]'[A-Z][a-z]+|(?:[A-Z]\.){1,3})$"
+)
+_NAME_SUFFIXES = frozenset({"jr", "jr.", "sr", "sr.", "ii", "iii", "iv"})
+
+
+def given_name_before_city(candidate: str, alias: str, team_name: str) -> bool:
+    """True when ``candidate`` is one given name and then the team's city alias (#9726).
+
+    The Washington Huskies carry the alias "Washington", and "washington" is a
+    substring of "parker washington", so the substring arm bound Parker, Darnell
+    and Mike Washington Jr.'s NFL props to a college team page (and Matt
+    Campbell to Campbell, Denzel Washington to the Wizards, "Georgia Southern"
+    to Southern University). A city alias names the club only when it leads the
+    outcome; one capitalised word in front of it makes it someone's surname, or
+    another school ("Western Michigan").
+
+    Only a CITY alias qualifies, i.e. a proper prefix of the team's name
+    ("Washington" of "Washington Huskies"). A nickname alias ("Steelers" in "PIT
+    Steelers D/ST") and a name that is all alias ("Athletics") are untouched.
+    """
+    alias_norm = _normalize_name(alias)
+    if not alias_norm or not _normalize_name(team_name).startswith(alias_norm + " "):
+        return False
+    tokens = candidate.split()
+    while tokens and tokens[-1].lower() in _NAME_SUFFIXES:
+        tokens.pop()
+    if len(tokens) < 2 or not _GIVEN_NAME.match(tokens[0]):
+        return False
+    return _normalize_name(" ".join(tokens[1:])) == alias_norm
 
 
 def _normalized_names(team: dict) -> list[str]:
@@ -168,13 +207,142 @@ def match_outcome_to_league_team(
 
     exact = {team_id for team_id, names in names_by_team.items() if candidate in names}
     if exact:
+        winner = _unique_unshadowed(exact)
+    else:
+        city = set()
+        for team in league_teams:
+            words = (_normalize_name(team["name"]) or "").split()
+            if any(len(words) > k and " ".join(words[:-k]) == candidate for k in (1, 2)):
+                city.add(team["id"])
+        winner = _unique_unshadowed(city)
+    if winner is not None:
+        return winner
+    winner = _match_league_team_by_city_initials(outcome_name, league_teams)
+    if winner is not None:
+        return winner
+    return _match_league_team_by_spelling(outcome_name, league_teams)
+
+
+def _match_league_team_by_city_initials(outcome_name: str, league_teams: list[dict]) -> Optional[int]:
+    """A two-club city written with the nickname's initials: "Los Angeles L" (#9617).
+
+    Kalshi's boards tell a shared city's clubs apart by one or two capitals:
+    "Los Angeles L" / "Los Angeles C" on KXNBA-27, "Chicago WS" on KXMLB-26,
+    "New York G" / "New York J" on KXSB-27. The strict arms cannot read that:
+    ``normalize_name`` strips a trailing " C" ("Los Angeles C" → "los angeles",
+    which names both LA clubs) and keeps " L" ("los angeles l" names nothing),
+    so the Lakers and the Clippers carried no Kalshi title odds at all.
+
+    The RAW last token must be one or two capitals; the rest must equal a team's
+    own name minus a one- or two-word nickname, and the capitals that nickname's
+    initials. Exactly one team, as in every arm. A team row whose own nickname is
+    a single capital is skipped: those are the #6974 fragment rows
+    ("Los Angeles C" beside the real Clippers), never the club a page shows.
+    """
+    tokens = (outcome_name or "").split()
+    if len(tokens) < 2:
+        return None
+    # Compared with a one- or two-word nickname's upper-case initials, so only
+    # one or two capitals can ever match ("Los Angeles l", "USC", "A&M" cannot).
+    initials = tokens[-1]
+    city = _normalize_name(" ".join(tokens[:-1]))
+    if not city:
+        return None
+
+    hits = set()
+    for team in league_teams:
+        words = (team.get("name") or "").split()
+        if not words or (len(words[-1]) == 1 and words[-1].isupper()):
+            continue
+        for k in (1, 2):
+            if (
+                len(words) > k
+                and "".join(w[0] for w in words[-k:]).upper() == initials
+                and _normalize_name(" ".join(words[:-k])) == city
+            ):
+                hits.add(team["id"])
+    return next(iter(hits)) if len(hits) == 1 else None
+
+
+# Venue names for a school that no spelling rule reaches (#9663), keyed on
+# `normalize_name` of the venue's outcome name. Each is the school our row names:
+# Houston Christian was Houston Baptist until 2022; Kalshi keeps the "St." on
+# Central Connecticut, whose row carries no "State".
+_VENUE_SCHOOL_NAMES: dict[str, str] = {
+    "tennessee-martin": "ut martin",
+    "houston christian": "houston baptist",
+    "university at albany": "albany",
+    "central connecticut st.": "central connecticut",
+}
+
+
+def _spelling_key(name: str) -> str:
+    """One spelling of a college name: "St." is "State", "&" is "and", a hyphen a space."""
+    from app.utils.name_normalization import normalize_team_name_for_matching
+
+    key = normalize_team_name_for_matching(name.replace("&", " and ").replace("-", " "))
+    return " ".join(key.split())
+
+
+def _match_league_team_by_spelling(outcome_name: str, league_teams: list[dict]) -> Optional[int]:
+    """The strict arms' fallback: the same school written the way a college feed writes it (#9663).
+
+    Kalshi's FCS title board names "Montana St.", "South Carolina St.", "William &
+    Mary", "Arkansas-Pine Bluff"; our rows say "Montana State Bobcats" (alias
+    "Montana St"), "South Carolina State Bulldogs", "William and Mary Tribe". Both
+    sides are compared through :func:`_spelling_key`, with the same two arms and
+    the same one-team rule as :func:`match_outcome_to_league_team`. Reached only
+    when those arms answer nothing, so no answer they give changes.
+
+    Two differences, both about "State" being its own school:
+
+    * a sibling whose name continues the candidate with "State" does not shadow
+      it — "Montana" is the Grizzlies although "Montana State" starts with it;
+    * a city form never drops a "State": "Idaho State Bengals" does not read as
+      "Idaho".
+
+    Any other continuation still shadows ("Miami" beside "Miami (OH)"), and a
+    sibling that merely contains the candidate no longer does ("Tennessee St."
+    beside "East Tennessee State").
+    """
+    raw = _normalize_name(outcome_name)
+    if not raw:
+        return None
+    candidate = _spelling_key(_VENUE_SCHOOL_NAMES.get(raw, raw))
+    if not candidate:
+        return None
+
+    keys_by_team = {
+        team["id"]: [
+            k for k in (_spelling_key(n) for n in [team["name"]] + (team.get("alternate_names") or []))
+            if k
+        ]
+        for team in league_teams
+    }
+
+    def _unique_unshadowed(hits: set) -> Optional[int]:
+        if len(hits) != 1:
+            return None
+        winner = next(iter(hits))
+        prefix = candidate + " "
+        for team_id, keys in keys_by_team.items():
+            if team_id == winner:
+                continue
+            for k in keys:
+                if k.startswith(prefix) and k[len(prefix):].split()[0] != "state":
+                    return None
+        return winner
+
+    exact = {team_id for team_id, keys in keys_by_team.items() if candidate in keys}
+    if exact:
         return _unique_unshadowed(exact)
 
     city = set()
     for team in league_teams:
-        words = (_normalize_name(team["name"]) or "").split()
-        if any(len(words) > k and " ".join(words[:-k]) == candidate for k in (1, 2)):
-            city.add(team["id"])
+        words = _spelling_key(team["name"]).split()
+        for k in (1, 2):
+            if len(words) > k and words[-k] != "state" and " ".join(words[:-k]) == candidate:
+                city.add(team["id"])
     return _unique_unshadowed(city)
 
 
@@ -203,6 +371,7 @@ def match_outcome_to_roster(
     if name_lower in ("yes", "no", "over", "under", "draw", "tie"):
         return None
 
+    matched: list[int] = []
     for team_id, players in team_rosters.items():
         for player in players:
             player_lower = _strip_diacritics(player.lower())
@@ -214,9 +383,35 @@ def match_outcome_to_roster(
             if " " not in player_lower:
                 continue
             if player_lower in name_lower:
-                return team_id
+                matched.append(team_id)
+                break
 
-    return None
+    if not matched:
+        return None
+    # #8072: two clubs can carry the same name — the Dodgers' and the Athletics'
+    # Max Muncy, the Rams' and the Eagles' Byron Young. Whichever roster came
+    # first won, so "NL MVP Winner? — Max Muncy" was linked to the Athletics.
+    # A name on two DIFFERENT clubs' rosters is no answer. Two rows for one club
+    # carry the same roster, so they still resolve to the first, as before.
+    first = _roster_key_set(team_rosters[matched[0]])
+    for other in matched[1:]:
+        if not _same_club_roster(first, _roster_key_set(team_rosters[other])):
+            return None
+    return matched[0]
+
+
+def _roster_key_set(players: list[str]) -> set[str]:
+    return {_strip_diacritics(p.lower()) for p in players}
+
+
+def _same_club_roster(a: set[str], b: set[str]) -> bool:
+    """Two team rows are one club's when they share more than half the smaller roster.
+
+    A namesake shares one player; two rows for one club share (nearly) all of them.
+    One shared player is never enough, however short the rosters.
+    """
+    shared = len(a & b)
+    return shared >= 2 and shared * 2 > min(len(a), len(b))
 
 
 # =============================================================================

@@ -12,8 +12,27 @@ import { getCategoryForLeague } from "@/lib/sportCategories";
  * that: its header asks "which of these is priced highest to list?" and a
  * single row cannot answer a comparison. One constant is what keeps the answer
  * from drifting apart again.
+ *
+ * #9642 — three, not five: Alex's selected Discover design (A, 9/29) seats three
+ * related questions at equal weight and puts the rest behind "All N questions".
+ * Three still answers a comparison, and it lets a group sit beside standalone
+ * cards on one phone screen instead of taking the whole screen.
  */
-export const BUNDLE_PEEK_COUNT = 5;
+export const BUNDLE_PEEK_COUNT = 3;
+
+/**
+ * How many rows a collapsed bundle of `memberCount` actually seats.
+ *
+ * The peek, except when exactly one member would be left behind it: then every
+ * member is seated and there is no footer. "All 4 questions" under three rows is
+ * a control that costs a row to reveal a row — the defect #7492 removed — and at
+ * five-seat peeks (before #9642) a four-member group never needed a tap, so
+ * dropping the peek to three must not make one start needing it. Groups of
+ * `BUNDLE_PEEK_COUNT + 2` or more still collapse to the compact three.
+ */
+export function bundleSeatCount(memberCount: number): number {
+  return memberCount <= BUNDLE_PEEK_COUNT + 1 ? memberCount : BUNDLE_PEEK_COUNT;
+}
 
 export const CATEGORY_GRADIENTS: Record<string, string> = {
   basketball: "linear-gradient(135deg, #7c2d12, #c2410c)",

@@ -1228,7 +1228,10 @@ export function FuturesCompactRow({ item, data }: { item: FeedItem; data: FeedFu
               reader cannot. Never printed over a `—` — there is no percentage
               there to qualify. */}
           <span className="flex flex-col items-end leading-none">
-            <span className="font-mono tabular-nums text-sm font-bold">
+            {/* #9642 — `text-base`, up from `text-sm`: in selected design A the
+                right-hand column of numbers is what a reader scans down a group,
+                so it is the largest type on the row. */}
+            <span className="font-mono tabular-nums text-base font-bold" data-testid="compact-row-percent">
               {leader.probability != null && leader.probability > 0 ? formatProbabilityPercent(leader.probability, { rendered: compactPercent }) : "—"}
             </span>
             {percentIsAmbiguous && leader.probability != null && leader.probability > 0 && (

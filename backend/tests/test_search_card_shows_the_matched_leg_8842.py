@@ -110,8 +110,15 @@ def test_the_card_does_not_grow():
     assert len(_card(_hr_leaders(), OHTANI)) == _SEARCH_LADDER_LIMIT
 
 
-def test_precondition_the_yankees_are_below_the_cut_without_the_query():
-    assert "New York Yankees" not in [r["name"] for r in _card(_postseason(), None)]
+def test_since_9675_a_settled_winner_is_on_the_card_without_the_query():
+    # This was the precondition "the Yankees are below the cut", and it was the
+    # #9675 defect in fixture form: a graded winner of a multi-winner board cut
+    # by the five-row slice. #9675 keeps every winner, so the Yankees are there
+    # unasked, and they are there as a kept result, not as a query match.
+    rows = _card(_postseason(), None)
+    yankees = [r for r in rows if r["name"] == "New York Yankees"]
+    assert len(yankees) == 1
+    assert not yankees[0].get("query_match")
 
 
 def test_a_settled_team_leg_is_pinned_with_its_result():

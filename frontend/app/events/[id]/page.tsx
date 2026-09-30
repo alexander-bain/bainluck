@@ -124,6 +124,7 @@ import {
   VENUE_SETTLED_DESCRIPTION,
   blendCaptionIsStale,
   hasNoReportedResult,
+  serverHeldPastKickoff,
   isFinishedStatus,
   startBadgeLabel,
   suspendedSummary,
@@ -515,7 +516,12 @@ export default function EventPage({ params }: EventPageProps) {
   // #4015 exists precisely so the hero badge, the games map (`noResultReported`)
   // and the projected-final suppression cannot answer this question three ways.
   const isSuspended =
-    hasNoReportedResult(event?.status, event?.commence_time) || liveClaimUnbacked;
+    hasNoReportedResult(
+      event?.status,
+      event?.commence_time,
+      undefined,
+      event?.started_without_result,
+    ) || liveClaimUnbacked;
 
   // #6381 — WHAT THAT STATE SAYS, when a source that carried this match's
   // markets has already graded it. Null on every other row, so the badge keeps the sentence
@@ -1026,8 +1032,11 @@ export default function EventPage({ params }: EventPageProps) {
         // #4571 — the event row's own clock, so the helper can date the score by
         // the arm that supplied it rather than by its neighbouring timestamp.
         event?.score_observed_at,
+        // #925 — the header's own inning, for a live game whose history rows
+        // never named one. Live only: a finished row's period is its result.
+        event?.status === "live" ? event?.espn ?? null : null,
       ),
-    [historyData, event?.home_score, event?.away_score, event?.score_observed_at],
+    [historyData, event?.home_score, event?.away_score, event?.score_observed_at, event?.status, event?.espn],
   );
 
   // Best-known scores. #5521 — the comment that stood here said *"prefer latest
@@ -2107,7 +2116,17 @@ export default function EventPage({ params }: EventPageProps) {
                       still printing "Pregame" over a "Since Start" chart. The
                       two-hour hole this falls into, and why the grace is not
                       the thing to widen, are in `startBadgeLabel`. */}
-                  {startBadgeLabel(hasStarted, gameCountdown)}
+                  {startBadgeLabel(
+                    hasStarted,
+                    gameCountdown,
+                    // #9634 — held by the server: "Pregame", not "Started".
+                    serverHeldPastKickoff(
+                      event?.status,
+                      event?.commence_time,
+                      undefined,
+                      event?.started_without_result,
+                    ),
+                  )}
                 </span>
               </span>
             )}
@@ -2988,7 +3007,7 @@ export default function EventPage({ params }: EventPageProps) {
       )}
 
       {/* Game Markets — Player Props + Matchups + Special Markets */}
-      {gameMarkets && (gameMarkets.player_props.length > 0 || (gameMarkets.matchups?.length ?? 0) > 0 || (gameMarkets.other?.length ?? 0) >= 3) && (
+      {gameMarkets && (gameMarkets.player_props.length > 0 || (gameMarkets.matchups?.length ?? 0) > 0 || (gameMarkets.other?.length ?? 0) >= SPECIAL_MARKETS_MIN_WIRE_ROWS) && (
         <div className="space-y-3">
 
           {/* UX-P055: #1722's actual crash site. This is the one boundary that

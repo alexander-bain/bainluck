@@ -987,6 +987,33 @@ _NOT_A_TITLE_QUESTION: tuple[str, ...] = (
     "halftime",  # entertainment markets carrying a football tier
     "leave their conference",  # realignment, not winning the conference (#2593)
     "will host",  # a host-city question ("Who will host the 2031 Pro Football Championship?")
+    # #9660: the NBA's in-season Cup is a title, but not THE title. Kalshi's "2026 Pro
+    # Basketball Cup Champion" was the Knicks' and Thunder's "Championship" hero
+    # (10%, 26.5%). Worded so "Stanley Cup" — the NHL title itself — never matches.
+    "basketball cup",
+    "nba cup",
+    # A pairing of two finalists ("CAR Hurricanes vs ANA Ducks" on "2026-27 Stanley
+    # Cup Final Matchup") and a playoff seed ("Pro Football Playoffs: AFC #3 Seed")
+    # are not one team winning its title or conference.
+    "matchup",
+    " seed",
+    # Reaching a stage is not winning it: "NFL Conference Championship Qualifiers",
+    # "Team to advance to AFC Championship", "NCAA Football: Team to Make National
+    # Championship" and "Pro Football: Team to Make Postseason" sat at tiers 1, 2
+    # and 4 and would print as "Championship", "Conference" or "Division".
+    "qualif",
+    "advance to",
+    "to make ",
+    "undefeated",  # "Pro Football Teams to go Undefeated in their Division" at tier 4
+    # Awards that sit at tier 1/2 and printed as the hero: "MLB: NL Platinum Glove
+    # Winner" was the Giants' "Championship" (0.3%), "AFC Defensive Player of the
+    # Month" the Steelers' "Conference".
+    "of the month",
+    "glove",
+    "outstanding dh",
+    "hank aaron",
+    "cy young",
+    "mvp",
 )
 
 
@@ -994,6 +1021,26 @@ def _answers_its_tier(market_name: str | None) -> bool:
     """False when a market's question is not the one its tier would label it with."""
     lowered = (market_name or "").lower()
     return not any(fragment in lowered for fragment in _NOT_A_TITLE_QUESTION)
+
+
+# A conference's title filed at tier 1 (#9660). Kalshi's college conference boards
+# ("College Football Sun Belt Championship Winner", KXNCAAFSBELT) and regular-season
+# titles ("Big Ten Regular Season Champion") carry tier 1, and the path labels tier
+# 1 "Championship" — a Sun Belt school's national title read off its conference
+# board. Measured on the 2026-09-29 replay: once the matchup and qualifier legs
+# that had been making those tiers disagree were refused, 24 college pages would
+# have printed a conference board as their "Championship". Withheld, not
+# relabelled — the tier is upstream's claim and it is the wrong one.
+_CONFERENCE_NAME = re.compile(
+    r"\b(?:conference|sec|acc|aac|mac|big ten|big 12|big east|sun belt|"
+    r"mountain west|pac-12|regular season)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_a_conference_title_at_tier_one(market_tier: int | None, market_name: str | None) -> bool:
+    """True when a tier-1 ("Championship") market is a conference's title."""
+    return market_tier == 1 and bool(_CONFERENCE_NAME.search(market_name or ""))
 
 
 # The averaging below assumes every candidate in a tier is the SAME question
@@ -1087,6 +1134,11 @@ async def _get_championship_path(
          National Championship's "Washington" leg sat among the Commanders'
          title candidates. Read off the market's venue id — Kalshi series,
          Odds API outright key (:func:`link_crosses_league`).
+      7. A conference's title filed at tier 1 (#9660) — it would print as the
+         "Championship" (:func:`_is_a_conference_title_at_tier_one`).
+
+    The future-season cutoff is the year the league's current season ENDS
+    (#9660): "2027 Pro Basketball Champion" is the 2026-27 title.
 
     Averages probabilities when multiple sources provide markets at the same
     tier, and stamps each entry with the season it describes. A tier whose
@@ -1098,10 +1150,15 @@ async def _get_championship_path(
 
     result = await db.execute(_championship_path_stmt(team_id))
 
-    # Current-season cutoff: the maximum year that counts as "this season".
-    # For a 2025-26 season the cutoff is 2026; a market referencing 2027 is
-    # future-season and should be excluded.
-    max_year = now.year
+    # Current-season cutoff: the maximum year that counts as "this season" — the
+    # year the league's current season ENDS (#9660). For the 2026-27 NBA season
+    # the cutoff is 2027, so "2027 Pro Basketball Champion" is this season's title
+    # and "2028 …" is next season's. `now.year` dropped every title market of a
+    # season that crosses the new year (NBA, NHL, NFL) and left the in-season Cup
+    # as the only tier-1 survivor. Unmodelled leagues keep the calendar year.
+    max_year = (
+        season_windows.season_end_year(league_slug, now) if league_slug else None
+    ) or now.year
 
     # Current-season base year for prior-season exclusion (e.g. a settled 2025-26
     # market must not show up once the 2026-27 season's markets are the truth).
@@ -1126,6 +1183,8 @@ async def _get_championship_path(
         # with (#1752) — a qualification or award market rendered as "Win
         # Division" / "Win Championship" is a claim the team never made.
         if not _answers_its_tier(market.name):
+            continue
+        if _is_a_conference_title_at_tier_one(market.market_tier, market.name):
             continue
 
         # #2593: another sport's market linked to this team by city name.
@@ -1215,9 +1274,13 @@ async def _get_championship_path(
             "probability": round(avg_prob, 4),
             "rank": best_outcome.rank,
             "movement": float(best_outcome.probability_change_24h) if best_outcome.probability_change_24h else None,
-            # Season this number describes (Queue #242 Item 1) — prefer the
-            # market's own season, fall back to the league's current season.
-            "season": _extract_championship_season(best_market) or current_season,
+            # Season this number describes (Queue #242 Item 1). Every market that
+            # reached here passed both the prior- and future-season filters, so it
+            # prices the league's current season; its own string is only another
+            # spelling of it ("2027" on Kalshi, "2026-27" on Polymarket), and mixed
+            # spellings blank the page's season chip (#9660). The market's own
+            # season is the fallback for a league with no modelled season.
+            "season": current_season or _extract_championship_season(best_market),
         })
 
     return path

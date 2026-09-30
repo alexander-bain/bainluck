@@ -286,7 +286,7 @@ class TestTheBehaviouralGateExistsAndIsWiredIntoCi:
         workflow = yaml.safe_load(
             (self._repo() / ".github/workflows/ci.yml").read_text()
         )
-        steps = workflow["jobs"]["search-recall"]["steps"]
+        steps = workflow["jobs"]["database-integration"]["steps"]
         mine = [
             s for s in steps
             if "tests/integration/test_typeahead_next_fixture_pg.py" in (s.get("run") or "")

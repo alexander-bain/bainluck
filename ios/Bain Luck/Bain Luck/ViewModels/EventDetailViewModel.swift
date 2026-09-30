@@ -95,6 +95,16 @@ final class EventDetailViewModel: ObservableObject {
     /// certify that both price payloads recovered.
     @Published private(set) var pricePairRefreshFailed = false
 
+    /// #9657 — the one re-ask of a failed pair, on `pricePairRetryDelay`.
+    /// Non-nil from the failure until a pair or a pushed price recovers it, so
+    /// nothing else needs to own the retry. `pricePairFailures` counts
+    /// consecutive failed pairs.
+    private var pricePairRetryTask: Task<Void, Never>?
+    private var pricePairFailures = 0
+    /// Bumped whenever a pushed price is accepted, so a pair read can tell a
+    /// newer push landed while it was in flight.
+    private var acceptedPushCount = 0
+
     var liveUpdateStatus: LiveUpdateStatus {
         if pricePairRefreshFailed && EventPriceStreaming.isEligible(event?.status) { return .interrupted }
         return LiveUpdateStatus.decide(status: event?.status, delivering: streamDelivering,
@@ -249,6 +259,10 @@ final class EventDetailViewModel: ObservableObject {
 
         // Unblock the page — render with whatever secondary data is already available
         loading = false
+        // #9657: a page returning with a pair still failed (`stopRefresh`
+        // cancelled its retry) re-arms it. A load is not the pair, so it never
+        // clears the failure itself.
+        if pricePairRefreshFailed, pricePairRetryTask == nil { schedulePricePairRetry() }
         configureAutoRefresh()
 
         // Await secondary fetches — only update if successful AND non-empty
@@ -431,6 +445,7 @@ final class EventDetailViewModel: ObservableObject {
         let client = self.client
         let id = eventId
         let requestedGeneration = streamRefetchGeneration
+        let pushesAtRequest = acceptedPushCount
         async let detailRead = client.fetchFreshEvent(id: id)
         async let historyRead = client.fetchFreshEventHistory(id: id, hours: 168)
         do {
@@ -477,15 +492,63 @@ final class EventDetailViewModel: ObservableObject {
             configureAutoRefresh()
         } catch {
             guard !Task.isCancelled else { return }
-            // A retired connection's failure cannot darken its successor.
-            if requestedGeneration == nil || requestedGeneration == deliveryGeneration {
+            // A retired connection's failure cannot darken its successor, and
+            // #9657: nor can a read overtaken by a newer accepted push — that
+            // push already put a price on the page later than this read asked.
+            if requestedGeneration == nil || requestedGeneration == deliveryGeneration,
+               acceptedPushCount == pushesAtRequest {
                 pricePairRefreshFailed = true
+                pricePairFailures += 1
                 streamHasPushedPrice = false
                 configureAutoRefresh()
             }
             logger.error("Price-pair read failed for \(self.eventId): \(error)")
         }
+        rearmPricePairRetry()
         requestChartRevisionRefreshIfNeeded()
+    }
+
+    /// #9657 — after every completed pair read: recovered clears the retry,
+    /// still failed schedules the next re-ask on the backoff. Also run when a
+    /// read ends without a verdict (a retired connection's), so a page still
+    /// marked failed is never left with nobody asking again.
+    @MainActor
+    private func rearmPricePairRetry() {
+        pricePairRetryTask?.cancel()
+        pricePairRetryTask = nil
+        guard pricePairRefreshFailed else {
+            pricePairFailures = 0
+            return
+        }
+        schedulePricePairRetry()
+    }
+
+    @MainActor
+    private func schedulePricePairRetry() {
+        let delay = EventRefreshPlan.pricePairRetryDelay(afterFailures: max(1, pricePairFailures))
+        let pause = sleep
+        pricePairRetryTask = Task { @MainActor [weak self] in
+            await pause(delay)
+            guard !Task.isCancelled, let self, self.pricePairRefreshFailed else { return }
+            // A page that left the priced states (a final) stops asking; the
+            // next `load()` re-arms if it ever returns.
+            guard EventPriceStreaming.isEligible(self.event?.status) else {
+                self.pricePairRetryTask = nil
+                return
+            }
+            // Through the coalescing reader, so a frame-triggered read already
+            // in flight absorbs this one instead of stacking a second pair.
+            self.requestRevisionRefetch()
+        }
+    }
+
+    /// A pushed price newer than anything held proves delivery on its own.
+    @MainActor
+    private func acceptPushedPrice() {
+        acceptedPushCount += 1
+        guard pricePairRefreshFailed else { return }
+        pricePairRefreshFailed = false
+        rearmPricePairRetry()
     }
 
     @MainActor
@@ -559,11 +622,9 @@ final class EventDetailViewModel: ObservableObject {
                 guard !Task.isCancelled, let self else { return }
                 slot += 1
                 if self.pricePairRefreshFailed {
-                    // Keep the game clock moving while the existing reader
-                    // retries the incomplete authoritative price pair.
+                    // Keep the game clock moving; the pair itself is re-asked
+                    // by `pricePairRetryTask` alone (#9657), not on this slot.
                     await self.rereadGameState()
-                    guard !Task.isCancelled else { return }
-                    self.requestRevisionRefetch()
                 } else if slot < slots {
                     await self.rereadGameState()
                 } else {
@@ -583,6 +644,8 @@ final class EventDetailViewModel: ObservableObject {
         revisionRefetchTask?.cancel()
         revisionRefetchTask = nil
         revisionRefetchPending = false
+        pricePairRetryTask?.cancel()
+        pricePairRetryTask = nil
         // Cleared with the task it describes. Leaving it set would have
         // `currentRefreshPlan` name a cadence nothing is running at, and the
         // idempotence check above read a stale plan on the way back in.
@@ -747,7 +810,7 @@ final class EventDetailViewModel: ObservableObject {
             // The hero now shows a pushed price — the only thing the page's
             // stream dot may claim (#8320).
             streamHasPushedPrice = true
-            if acceptedNewPrice { pricePairRefreshFailed = false }
+            if acceptedNewPrice { acceptPushedPrice() }
             // #9056 — measured against the last LOAD, not the last frame, so a
             // play priced in over several small frames still counts as one move.
             if let base = probabilityAtLastLoad, abs(p - base) >= EventRefreshPlan.scoreCatchUpMove {

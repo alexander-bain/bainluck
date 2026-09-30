@@ -64,7 +64,7 @@ MUTATIONS: list[tuple[str, str, str, str, str]] = [
                 UserFavorite.user_id == user.id if user else False
             )
         )""",
-        "test_anonymous_principal_issues_exactly_four_round_trips",
+        "test_anonymous_principal_issues_exactly_two_round_trips",
     ),
     (
         "M2",
@@ -118,9 +118,9 @@ MUTATIONS: list[tuple[str, str, str, str, str]] = [
         "M8",
         "re-introduce ONE provably-empty round trip on the anonymous path — the "
         "regression this guard exists to catch, in its most likely future form",
-        "    # Recent Discover behaviour",
+        '    # #9645 / #9236 (Alex, 2026-09-29): "No preference is learned without',
         """    await db.execute(select(UserPin).where(False))
-    # Recent Discover behaviour""",
+    # #9645 / #9236 (Alex, 2026-09-29): "No preference is learned without""",
         "test_no_statement_is_ever_gated_on_a_constant_false",
     ),
 ]

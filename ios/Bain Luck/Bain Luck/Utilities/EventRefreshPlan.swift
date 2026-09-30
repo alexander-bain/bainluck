@@ -85,6 +85,22 @@ nonisolated enum EventRefreshPlan: Equatable {
     /// the first poll after the play can be served the score from before it.
     static let scoreCatchUpWindow: TimeInterval = 90
 
+    /// #9657 — how long a page waits before asking again for a price pair
+    /// (detail + history) that just failed, by consecutive failure.
+    ///
+    /// Before this the only re-ask was the next poll slot: 30 s live, 60–300 s
+    /// before play. Build 32 held "Update interrupted" 91 s on a live tennis page
+    /// with the stream up — three 30 s slots. The first re-asks come quickly so a
+    /// brief failure clears in seconds; the schedule then settles at
+    /// `livePollInterval`, never faster than a live page with no stream, so a
+    /// failing server is not asked harder than it already was.
+    static let pricePairRetryDelays: [TimeInterval] = [2, 4, 8, 16]
+
+    static func pricePairRetryDelay(afterFailures failures: Int) -> TimeInterval {
+        guard failures >= 1, failures <= pricePairRetryDelays.count else { return livePollInterval }
+        return pricePairRetryDelays[failures - 1]
+    }
+
     /// Kick-off is close (or overdue) and the status has not flipped yet. This
     /// is the window the reader is actually sitting in the page for.
     static let imminentPollInterval: TimeInterval = 60

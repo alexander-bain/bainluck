@@ -50,7 +50,7 @@ const bundles = await page.evaluate(() => {
   const buttons = [...document.querySelectorAll('button')];
   for (const b of buttons) {
     const t = (b.textContent || '').trim();
-    if (!/^(Expand|Show all \d+|Show \d+ more)$/.test(t)) continue;
+    if (!/^(Expand|Show all \d+|All \d+ questions|Show \d+ more)$/.test(t)) continue;
     const card = b.closest('div.rounded-2xl');
     if (!card) continue;
     const header = card.querySelector('button');

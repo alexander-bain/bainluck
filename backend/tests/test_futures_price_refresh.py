@@ -223,6 +223,11 @@ class TestSelectionPredicate:
             # #9220: the twelfth. The Series card arm is an identity arm like
             # in-play, so the same 45-minute re-price of a retired market.
             "task._SERIES_CARD_CANDIDATE_SQL": fpr._SERIES_CARD_CANDIDATE_SQL.text,
+            # #9543 / CERT-3817: the thirteenth. The threshold-label arm is an
+            # identity arm too; a liveness clause that skipped it would fetch
+            # (and re-price) a retired market on every rotation.
+            "task._THRESHOLD_LABEL_CANDIDATE_SQL":
+                fpr._THRESHOLD_LABEL_CANDIDATE_SQL.text,
         }
         for name, sql in askers.items():
             assert shared in _normalise(sql), f"{name} does not compose LIVE_MARKET_SQL"
@@ -268,7 +273,10 @@ class TestSelectionPredicate:
         #
         # 11 -> 12 for #9220's Series card arm (`_SERIES_CARD_CANDIDATE_SQL`),
         # enrolled above before this moved.
-        enrolled = 12
+        #
+        # 12 -> 13 for #9543's threshold-label arm
+        # (`_THRESHOLD_LABEL_CANDIDATE_SQL`), enrolled above before this moved.
+        enrolled = 13
         # SITES THAT ARE NOT ASKERS, ACCOUNTED SEPARATELY RATHER THAN FOLDED IN.
         # An asker is a statement that selects live markets; the dictionary
         # enrols those by name. Two interpolation sites are neither:
@@ -309,13 +317,14 @@ class TestSelectionPredicate:
         # interpolation and the module carries the result. Assert on the source:
         # there is no module-level constant to read for this one.
         assert "{LIVE_MARKET_SQL}" in _MODULE_SRC
-        assert _MODULE_SRC.count("{LIVE_MARKET_SQL}") == 9, (
+        assert _MODULE_SRC.count("{LIVE_MARKET_SQL}") == 10, (
             "all THREE pool branches (#5781 added liquid_pool), the by-id "
             "selector, the reachability census, #4253's reach arm "
             "(_KALSHI_UNREACHED_FROZEN_SQL), #8718's in-play arm "
             "(_IN_PLAY_CANDIDATE_SQL), #4983's condition-twin lookup "
-            "(CONDITION_TWIN_MARKETS_SQL) and #9220's Series card arm "
-            "(_SERIES_CARD_CANDIDATE_SQL)"
+            "(CONDITION_TWIN_MARKETS_SQL), #9220's Series card arm "
+            "(_SERIES_CARD_CANDIDATE_SQL) and #9543's threshold-label arm "
+            "(_THRESHOLD_LABEL_CANDIDATE_SQL)"
         )
         # #3315: the census now composes the whole ELIGIBLE POOL, not just the
         # liveness clause. A census that kept the liveness bounds but not the

@@ -2910,9 +2910,25 @@ def extract_game_date_from_ticker(external_id: str) -> Optional[datetime]:
 # which is exactly why `extract_game_date_from_ticker` never fell for these ids
 # and the team-code extractor did. Measured over the same 7,869 linked markets:
 # 1,904 bogus non-Kalshi parses removed, **0 Kalshi tickers parse differently**.
+#
+# #9696: the TEAM code may begin with a DIGIT. `9Z` is 9z Globant, `1WIN`,
+# `100T`, `99DREV`, `4IKI`, `1SK` (1. FC Slovácko) — Kalshi writes the club's
+# own short name, and the old `[A-Za-z]` first character refused all of them,
+# so `KXLOLGAME-26SEP2917009ZEST` had NO game id: its series anchored as a lone
+# `market`, its map markets minted a second row an hour away, and search listed
+# one match twice (`15319091` + `15319219`). Measured on production 2026-09-29
+# over 21 days: ~140 Kalshi markets in 21 families carry such a code, almost
+# all esports. The id is still read verbatim out of the ticker — the whole run
+# from the date to the next hyphen — so the only change is that these tickers
+# get one; the token still needs a letter somewhere, a hyphen boundary and a
+# real month (the #3198 discipline above). `_KALSHI_GAME_TEAMS_RE` below is
+# deliberately NOT widened: where the team code starts is ambiguous after a
+# digit (`...0435HEIF` is HHMM+`HEIF` or a day+`35HEIF`), and its one reader
+# keeps a market whose code it cannot parse.
 _KALSHI_TICKER_MONTH = r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)"
 _KALSHI_GAME_ID_RE = re.compile(
-    rf"(?:^|-)(\d{{2}}{_KALSHI_TICKER_MONTH}\d{{1,2}}(?:\d{{4}})?[A-Za-z][A-Za-z0-9]*)",
+    rf"(?:^|-)(\d{{2}}{_KALSHI_TICKER_MONTH}\d{{1,2}}(?:\d{{4}})?"
+    r"[A-Za-z0-9]*[A-Za-z][A-Za-z0-9]*)",
     re.IGNORECASE,
 )
 # Same token, capturing the TEAM-code portion only (date + optional HHMM stripped).

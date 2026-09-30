@@ -169,11 +169,14 @@ JAN_2027_LEGS = [
 def test_unquoted_rungs_do_not_push_the_answer_off_the_card():
     """🔴 THE REPAIR, on production's own rows. The first window kept unquoted
     rungs in their slots and served `4.50 — · 4.75 — · 5.00 — · 5.25 13% · 5.50 —`:
-    one number and no rung above even. Over priced rungs it shows both sides."""
+    one number and no rung above even. Over priced rungs it shows both sides.
+
+    #9676: `Above 6.00%` 15.5% over `Above 5.25%` 13% is a rung its own ladder
+    contradicts, so the window no longer draws it and reaches one rung lower."""
     market = _market(JAN_2027_LEGS, name="Fed funds rate after Jan 2027 meeting?")
     out = _build_search_top_outcomes(market)
     assert _names(out) == [
-        "Above 3.75%", "Above 4.00%", "Above 4.25%", "Above 5.25%", "Above 6.00%",
+        "Above 3.50%", "Above 3.75%", "Above 4.00%", "Above 4.25%", "Above 5.25%",
     ]
     assert all(o["probability"] is not None for o in out)
 
@@ -181,7 +184,8 @@ def test_unquoted_rungs_do_not_push_the_answer_off_the_card():
 def test_the_typeahead_row_of_the_same_ladder_straddles_even():
     market = _market(JAN_2027_LEGS, name="Fed funds rate after Jan 2027 meeting?")
     out = _build_search_top_outcomes(market, limit=3, lean=True)
-    assert _names(out) == ["Above 4.25%", "Above 5.25%", "Above 6.00%"]
+    # #9676: the contradicted `Above 6.00%` is not drawn; the printed pair is unchanged.
+    assert _names(out) == ["Above 4.25%", "Above 5.25%"]
     assert _printed_pair(out) == [("Above 4.25%", 0.64), ("Above 5.25%", 0.13)]
 
 

@@ -38,6 +38,7 @@ TWO CONTRACTS THIS MODULE NOW HOLDS (lane1/045, Alex ruling 2026-09-01):
 
 import asyncio
 import logging
+import math
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
@@ -1861,6 +1862,16 @@ class ESPNAPIService:
         - Compound stats: "10-22" or "13/22" (made-attempts) → 10.0 / 13.0
         - Percentages: ".455" → 0.455
         - Dashes/empty: "--" or "" → None
+        - Non-finite: "INF", "NaN" → None (#9713)
+
+        #9713: ESPN prints a pitcher's ERA as "INF" when he has allowed an
+        earned run without recording an out, and ``float("INF")`` accepts it.
+        ``json.dumps`` then writes ``Infinity``, which is not JSON, and Postgres
+        refuses the whole box. Red Sox at Yankees (15319563) lost every box write
+        from 01:59Z on 9/30. The live pass kept a 2-run line score through a 9–0
+        final, and the settled pass, which has no per-game savepoint, lost its
+        whole transaction on that game every minute. A stat with no finite value
+        is dropped like a dash.
         """
         if not value_str or value_str.strip() in ("--", "-", ""):
             return None
@@ -1879,14 +1890,16 @@ class ESPNAPIService:
                 parts = value_str.split(sep)
                 if len(parts) == 2:
                     try:
-                        return float(parts[0])
+                        made = float(parts[0])
                     except ValueError:
                         return None
+                    return made if math.isfinite(made) else None
 
         try:
-            return float(value_str)
+            value = float(value_str)
         except ValueError:
             return None
+        return value if math.isfinite(value) else None
 
     def _parse_scoring_plays(self, summary_data: dict) -> list[dict]:
         """Parse scoring plays from ESPN summary response.

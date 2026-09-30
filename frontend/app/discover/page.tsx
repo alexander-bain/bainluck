@@ -22,6 +22,7 @@ import {
   readDiscoverInteractionProfile,
   recordDiscoverInteraction,
   sendDiscoverInteraction,
+  setDiscoverLearningGate,
   type DiscoverProfile,
 } from "@/lib/discoverInteractions";
 import { SHAPE_UNSHAPED } from "@/lib/marketShape";
@@ -54,6 +55,8 @@ import { applyLocalPersonalization, recordEditionScores, runManualRefresh } from
 import { spaceBySport } from "@/lib/discover/spacedOrder";
 import { feedItemHasRenderableContent, collectSuppressedEnvelopes, feedItemCanBeGuessed } from "@/components/discover/utils";
 import FirstRunOrientation from "@/components/discover/FirstRunOrientation";
+import SignInToPersonalizeInvite from "@/components/discover/SignInToPersonalizeInvite";
+import { DiscoverFeedbackAttemptContext, decideDiscoverFeedbackAttempt, resolveDiscoverLearning } from "@/lib/discoverFeedbackGate";
 import {
   areGamesUnlocked,
   isFirstRunAnonymous,
@@ -482,7 +485,33 @@ export default function DiscoverPage() {
   // never served the shared feed — the backend keys authenticated requests to
   // `u:<id>` regardless of x-session-id — but passing `authenticated` here keeps
   // the client decision honest.
-  const { user } = useAuthContext();
+  const { user, isLoading: authLoading, isAuthenticated, isAuthAvailable, signInWithGoogle, signInWithApple } = useAuthContext();
+
+  // #9643 — only a signed-in reader teaches Discover. Read through a ref so the
+  // card callbacks stay stable and always see the CURRENT auth state: a sign-out
+  // must stop learning on the very next swipe, and a refused guest swipe is
+  // dropped, never replayed after sign-in.
+  const learningState = resolveDiscoverLearning({ isLoading: authLoading, isAuthenticated, uid: user?.uid });
+  const learningStateRef = useRef(learningState);
+  learningStateRef.current = learningState;
+  const [signInInviteOpen, setSignInInviteOpen] = useState(false);
+  const closeSignInInvite = useCallback(() => setSignInInviteOpen(false), []);
+  const handleFeedbackAttempt = useCallback((): boolean => {
+    const decision = decideDiscoverFeedbackAttempt(learningStateRef.current);
+    if (decision.invite) setSignInInviteOpen(true);
+    return decision.proceed;
+  }, []);
+  // Signing in (from the invitation or the header) closes the invitation; the
+  // swipe that opened it stays unrecorded.
+  useEffect(() => {
+    if (learningState === "learn") setSignInInviteOpen(false);
+  }, [learningState]);
+  // The same rule at the writers: impressions, taps, shares, expands and bundle
+  // likes all score the profile, so nothing but `learn` may write or queue one.
+  useEffect(() => {
+    setDiscoverLearningGate(() => learningStateRef.current === "learn");
+    return () => setDiscoverLearningGate(null);
+  }, []);
 
   // L2-242 / C133 — only the PROVEN first request of a fresh, signed-out,
   // zero-interaction visitor may reuse the shared `anon` warm feed. Flips false
@@ -993,6 +1022,9 @@ export default function DiscoverPage() {
   }, []);
 
   const handleDismiss = useCallback((itemId: string) => {
+    // #9643 — the card already asked `handleFeedbackAttempt`; this is the page's
+    // own write, so it checks again rather than trusting every caller to.
+    if (learningStateRef.current !== "learn") return;
     // L2-242 — a dismiss is seen/dismiss evidence: never share the warm feed on
     // a later request this mount (the durable dismiss set also proves this on
     // reload).
@@ -1432,12 +1464,21 @@ export default function DiscoverPage() {
         />
       )}
 
+      <SignInToPersonalizeInvite
+        // No sign-in configured ⇒ nothing to offer; the swipe is still refused.
+        open={signInInviteOpen && isAuthAvailable !== false}
+        onClose={closeSignInInvite}
+        onSignInGoogle={signInWithGoogle}
+        onSignInApple={signInWithApple}
+      />
+
       {/* Feed — responsive: 1 col mobile, 2 col tablet, 3 col desktop.
           #8254: width classes here are the HEADER's, character for character (see the note on it).
           The extra width becomes WIDER cards, not more of them — four columns in 1520px are ~368px
           each against ~300px before, which is the "comfortably readable" half of the ask. A fifth
           column at this width would take them back down to ~291px, narrower than the defect, so
           the column ladder is deliberately untouched. */}
+      <DiscoverFeedbackAttemptContext.Provider value={handleFeedbackAttempt}>
       <main className="max-w-content mx-auto px-4 py-4">
         {isLoading && <DiscoverSkeletonGrid />}
 
@@ -1570,6 +1611,7 @@ export default function DiscoverPage() {
                       onDismiss={handleLessLike}
                       showProbabilityHint={isFirstPosition && isFirstRunAnon}
                       pinFor={pinForFutures}
+                      onFeedbackAttempt={handleFeedbackAttempt}
                     />
                   )}
                 </FeedItemShell>
@@ -1610,6 +1652,7 @@ export default function DiscoverPage() {
           </div>
         )}
       </main>
+      </DiscoverFeedbackAttemptContext.Provider>
     </div>
     </ErrorBoundary>
   );
