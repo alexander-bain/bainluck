@@ -700,6 +700,33 @@ export function teamCrestBadge(
   if (isDoublesPair(full)) {
     return teamShortName(full).replace(/[^\p{L}\p{N}]/gu, "").slice(0, 3).toUpperCase();
   }
+  // #5634 — an esports organisation's crest is not its TYPE. The label keeps
+  // "G2 Esports" whole, but the badge read the last word and painted `ESP`:
+  // /events/15319232, 390px, 2026-09-29, hero crest `ESP` beside a Bigger
+  // Picture tile reading `G2` for the same team. Over all 925 esports names of
+  // 60 days of production `events`, 158 painted a type word (`ESP` 103, `GAM`
+  // 40, `TEA` 13, `E-S` 2) — a crest naming a hundred organisations at once.
+  // The type words are dropped and the remainder takes this same rule,
+  // sport-free: "SK Gaming" is `SK`, "Top Esports" `TOP`, "Team WE" `WE`.
+  //
+  // ONLY WHEN THE BADGE IS THE TYPE WORD. Dropping the type words from every
+  // name that carries one moved 191 badges, and 38 of them got worse: an
+  // initials badge that spells the org's own tag counts the type word as one
+  // letter ("Hanwha Life Esports" `HLE` -> `LIF`, "Berlin International
+  // Gaming" `BIG` -> `INT`). So the badge the rule already paints stands unless
+  // it is the leading glyphs of a type word in the name. A name with no type
+  // word keeps its badge to the character ("Paper Rex" is still `REX`).
+  if (keepsWholeOrgName(sportKey)) {
+    const words = full.split(/\s+/);
+    const isType = (word: string) => ESPORTS_ORG_SUFFIXES.has(alphanumeric(word).toLowerCase());
+    const shipped = teamCrestBadge(full);
+    const org = words.filter(word => !isType(word)).join(" ");
+    const typeBadge = words.some(
+      word => isType(word) && word.slice(0, 3).toUpperCase() === shipped,
+    );
+    if (typeBadge && org) return teamCrestBadge(org);
+    return shipped;
+  }
   // Hyphen splits like a space so that "Paris Saint-Germain" and "Paris Saint
   // Germain" — both live on production the same afternoon — agree.
   const distinctive = full
