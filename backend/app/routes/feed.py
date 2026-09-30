@@ -6283,6 +6283,7 @@ async def _attach_feed_venue_settlement(db, feed_items: list, now: datetime) -> 
     """
     from types import SimpleNamespace
 
+    from app.utils.venue_settlement import VENUE_CLOSED_NO_WINNER_KEY
     from app.utils.venue_settlement_reader import attach_venue_settlement
 
     cards_by_id: dict[int, list[dict]] = {}
@@ -6338,6 +6339,8 @@ async def _attach_feed_venue_settlement(db, feed_items: list, now: datetime) -> 
         for data in cards_by_id.get(int(brief["id"]), []):
             data["venue_settled"] = brief["venue_settled"]
             data["venue_settled_result"] = brief.get("venue_settled_result")
+            if brief.get(VENUE_CLOSED_NO_WINNER_KEY) is True:
+                data[VENUE_CLOSED_NO_WINNER_KEY] = True
 
 
 def _utc(dt: datetime | None) -> datetime | None:

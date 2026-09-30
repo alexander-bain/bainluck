@@ -50,6 +50,7 @@ import re
 from typing import Iterable, Optional, Sequence
 
 from app.utils.event_completion import EVENT_SUSPENDED
+from app.utils.kalshi_resolution_window import VENUE_VOIDED_METADATA_KEY
 
 #: The only ``futures_outcomes.resolution_source`` this module will read a
 #: result out of: the venue stated the settlement itself.
@@ -626,3 +627,55 @@ def settlement_from_graded_rows(
     if not result:
         return dict(NO_VENUE_GRADE)
     return {"venue_settled": True, "venue_settled_result": result}
+
+
+#: #5811: the served key for "the venue closed this event and named no winner".
+#: Its own key, never a value of ``venue_settled_result``: the pair above is
+#: co-true (#7702) and winner-only, and every current reader of it keeps that
+#: contract. Present only when ``True`` — an absent key is "not established",
+#: the same absent-vs-False refusal the reader makes for the pair.
+VENUE_CLOSED_NO_WINNER_KEY = "venue_closed_no_winner"
+
+
+def venue_closed_without_winner(
+    market_metadatas: Sequence[Optional[dict]], has_any_winner: bool
+) -> bool:
+    """Did the venue settle EVERY market on this event and grade none? (#5811)
+
+    ``/sports`` filed Visconde v Bulaid (``15320964``, ``suspended``) under Live
+    & Paused as "No result reported" for days after Kalshi finalised both legs
+    ``result: "scalar"`` — closed, no winner (a draw, a no contest, a
+    cancellation). #7035's capture had already stamped all six of its markets
+    ``venue_voided``; no surface served it, so the card got the same input as a
+    fight still in progress. This is the rule that serves it.
+
+    The same fact :func:`~app.tasks.espn_sync._row_markets_all_venue_voided`
+    and :func:`~app.utils.event_completion.venue_voided_row_is_retirable` act
+    on 72 h later, read the same way, so the card and the retirement cannot
+    disagree about which rows the venue voided:
+
+    * 🔴 EVERY market, and the empty case is False. ``all([])`` is True and
+      would call a legless event voided. One market the capture has not
+      answered — or answered with ``venue_void_checked_at`` (the venue named a
+      result) — and this is a row mid-way through being asked about, not a
+      void: 4 voided to 10 graded on #7035's venue sample.
+    * ``is True``, never truthiness. The capture writes a JSON boolean; a
+      string, a ``1`` or the negative stamp's timestamp are truthy and none of
+      them is this fact.
+    * ``has_any_winner`` refuses. A winner written against the event — from any
+      source, not only the venue grade the pair reads — contradicts "no result
+      was reported", and when two facts disagree this declines rather than
+      picks.
+
+    Pure: the caller supplies both inputs, so a guard can state each refusal as
+    a counter-example rather than a WHERE clause.
+    """
+    if has_any_winner is not False:
+        return False
+    if not market_metadatas:
+        return False
+    return all(
+        isinstance(metadata, dict)
+        and metadata.get(VENUE_VOIDED_METADATA_KEY) is True
+        for metadata in market_metadatas
+    )
