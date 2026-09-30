@@ -47,6 +47,34 @@ def _token_index(ext: str) -> Optional[int]:
     return None
 
 
+#: #9733. The smallest order Polymarket accepts on a market is 5 shares
+#: (Gamma ``orderMinSize``), so a trade smaller than that can only be the
+#: leftover of an order someone else mostly filled. On the tape of market
+#: 61380825 ("Yankees advance to the ALCS", condition ``0x8bd936dd…``, read
+#: 2026-09-30) every trade at an absurd price was such a leftover — No 0.38 × 2
+#: (the one that set No = Yes = 0.38 and printed "No 38%" on search), No 0.29
+#: × 0.5, No 0.04 × 1.77, Yes 0.48 × 0.87 — while the trades at the market's
+#: real price were 3.3 shares and up.
+MIN_PRICE_SETTING_TRADE_SHARES = 5.0
+
+
+def trade_sets_a_price(msg: dict) -> bool:
+    """False for a ``last_trade_price`` smaller than the venue's smallest order.
+
+    Such a leftover is a real execution but not a price: nobody could have
+    placed an order at that size, so its price tells a reader nothing about
+    the market. A frame that states no size, or a size that is not a number, is
+    let through exactly as before — this rule refuses only what it can read.
+    """
+    size = msg.get("size")
+    if size is None:
+        return True
+    try:
+        return float(size) >= MIN_PRICE_SETTING_TRADE_SHARES
+    except (TypeError, ValueError):
+        return True
+
+
 def legs_in_token_order(pairs: list) -> list:
     """Order one market's ``(outcome_id, external_id)`` legs as its CLOB tokens are.
 
@@ -789,6 +817,9 @@ async def _run_polymarket_ws_consumer():
         "moneyline_legs_subscribed": len(outcome_yes_token),
         "price_updates": 0,
         "trade_updates": 0,
+        # #9733: trades refused because they were smaller than the smallest
+        # order the venue accepts (`trade_sets_a_price`).
+        "trades_below_min_order": 0,
         "resolutions": 0,
         "errors": 0,
         # Q491: prices a failed flush put BACK on the buffer instead of dropping.
@@ -1154,6 +1185,12 @@ async def _run_polymarket_ws_consumer():
         if outcome_id is None:
             outcome_id = open_asset_to_outcome.get(asset_id)
         if outcome_id is None:
+            return
+
+        # #9733: a leftover smaller than any order the venue accepts is not a
+        # price. Counted, so a refusal is a number and not an absence.
+        if not trade_sets_a_price(msg):
+            stats["trades_below_min_order"] += 1
             return
 
         async with buffer_lock:
