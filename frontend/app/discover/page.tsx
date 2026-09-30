@@ -23,6 +23,10 @@ import {
   recordDiscoverInteraction,
   sendDiscoverInteraction,
   setDiscoverLearningGate,
+  setDiscoverLearningIdentity,
+  isSportsDiscoverCategory,
+  getDiscoverDismissedStorageKey,
+  dropPendingDiscoverInteractions,
   type DiscoverProfile,
 } from "@/lib/discoverInteractions";
 import { SHAPE_UNSHAPED } from "@/lib/marketShape";
@@ -70,7 +74,6 @@ import { CHALLENGE_SURFACES_ENABLED } from "@/lib/launchSurfaces";
 import { useDiscoverPriceStream } from "@/hooks/useDiscoverPriceStream";
 import { groupedLeaves, priceKey } from "@/lib/discover/priceRefresh";
 
-const DISMISSED_KEY = "discover_dismissed";
 const PAGE_SIZE = 20;
 const DISMISS_TTL_MS = 6 * 60 * 60 * 1000;
 const MAX_LOCAL_DISMISSES = 40;
@@ -81,6 +84,8 @@ const CATEGORY_COOLDOWN_SCORE = -3;
 function getDismissed(): Set<string> {
   if (typeof window === "undefined") return new Set();
   try {
+    const DISMISSED_KEY = getDiscoverDismissedStorageKey();
+    if (!DISMISSED_KEY) return new Set();
     const raw = localStorage.getItem(DISMISSED_KEY);
     if (!raw) return new Set();
 
@@ -101,7 +106,6 @@ function getDismissed(): Set<string> {
     localStorage.setItem(DISMISSED_KEY, JSON.stringify({ items: fresh }));
     return new Set(fresh.map((entry: { id: string }) => entry.id));
   } catch {
-    localStorage.removeItem(DISMISSED_KEY);
     return new Set();
   }
 }
@@ -109,6 +113,8 @@ function getDismissed(): Set<string> {
 function saveDismissed(items: Set<string>) {
   if (typeof window === "undefined") return;
   try {
+    const DISMISSED_KEY = getDiscoverDismissedStorageKey();
+    if (!DISMISSED_KEY) return;
     const now = Date.now();
     const existingRaw = localStorage.getItem(DISMISSED_KEY);
     const existing = existingRaw ? JSON.parse(existingRaw) : {};
@@ -176,6 +182,7 @@ function getSuppressedCategories(profile: DiscoverProfile | null): Set<string> {
   if (!profile?.categories) return suppressed;
 
   for (const [category, bucket] of Object.entries(profile.categories)) {
+    if (isSportsDiscoverCategory(category)) continue;
     if (
       bucket.dismisses >= CATEGORY_COOLDOWN_DISMISSES &&
       bucket.score <= CATEGORY_COOLDOWN_SCORE &&
@@ -485,7 +492,7 @@ export default function DiscoverPage() {
   // never served the shared feed — the backend keys authenticated requests to
   // `u:<id>` regardless of x-session-id — but passing `authenticated` here keeps
   // the client decision honest.
-  const { user, isLoading: authLoading, isAuthenticated, isAuthAvailable, signInWithGoogle, signInWithApple } = useAuthContext();
+  const { user, isLoading: authLoading, isAuthenticated, isAuthAvailable, signInWithGoogle, signInWithApple, getToken } = useAuthContext();
 
   // #9643 — only a signed-in reader teaches Discover. Read through a ref so the
   // card callbacks stay stable and always see the CURRENT auth state: a sign-out
@@ -494,6 +501,8 @@ export default function DiscoverPage() {
   const learningState = resolveDiscoverLearning({ isLoading: authLoading, isAuthenticated, uid: user?.uid });
   const learningStateRef = useRef(learningState);
   learningStateRef.current = learningState;
+  const learningAuthRef = useRef({ uid: user?.uid ?? null, getToken });
+  learningAuthRef.current = { uid: user?.uid ?? null, getToken };
   const [signInInviteOpen, setSignInInviteOpen] = useState(false);
   const closeSignInInvite = useCallback(() => setSignInInviteOpen(false), []);
   const handleFeedbackAttempt = useCallback((): boolean => {
@@ -510,6 +519,10 @@ export default function DiscoverPage() {
   // likes all score the profile, so nothing but `learn` may write or queue one.
   useEffect(() => {
     setDiscoverLearningGate(() => learningStateRef.current === "learn");
+    setDiscoverLearningIdentity({
+      getUid: () => learningAuthRef.current.uid,
+      getToken: () => learningAuthRef.current.getToken(),
+    });
     return () => setDiscoverLearningGate(null);
   }, []);
 
@@ -520,6 +533,9 @@ export default function DiscoverPage() {
   const sharedAnonEligibleRef = useRef(true);
 
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
+  const [dismissedOwner, setDismissedOwner] = useState<string | null>(null);
+  const dismissedOwnerRef = useRef(dismissedOwner);
+  dismissedOwnerRef.current = dismissedOwner;
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   // #8176 — whether the infinite-scroll sentinel is inside the observer's band
   // right now. A LEVEL, deliberately: the advance that reads it must be
@@ -588,6 +604,7 @@ export default function DiscoverPage() {
 
   useEffect(() => {
     setDismissed(getDismissed());
+    setDismissedOwner(learningAuthRef.current.uid);
     const profile = readDiscoverInteractionProfile();
     setInteractionProfile(profile);
     setOrderingProfile(profile);
@@ -602,6 +619,17 @@ export default function DiscoverPage() {
     const stored = localStorage.getItem(`daily_guesses_${today}`);
     if (stored) setDailyGuesses(parseInt(stored, 10));
   }, []);
+
+  // A new account opens its own local edition. Unowned legacy storage stays
+  // intact, but cannot be attributed to an arbitrary reader on this device.
+  useEffect(() => {
+    dropPendingDiscoverInteractions();
+    const profile = readDiscoverInteractionProfile();
+    setInteractionProfile(profile);
+    setOrderingProfile(profile);
+    setDismissed(getDismissed());
+    setDismissedOwner(learningAuthRef.current.uid);
+  }, [learningState, user?.uid]);
 
   useEffect(() => {
     const refreshProfile = () => {
@@ -1033,10 +1061,12 @@ export default function DiscoverPage() {
     // any subsequent card open, so this reflects the FINAL action, not "a
     // dismiss happened at some point".
     lastActionWasDismissRef.current = true;
-    // Persist local dismissals so anonymous users do not see the same card
-    // again after refresh while the server downrank catches up.
+    // Persist this reader's exact dismissals across refreshes.
+    const uid = learningAuthRef.current.uid;
+    const reuseDismissals = dismissedOwnerRef.current === uid;
+    setDismissedOwner(uid);
     setDismissed((prev) => {
-      const next = new Set([...prev, itemId]);
+      const next = new Set([...(reuseDismissals ? prev : []), itemId]);
       saveDismissed(next);
       return next;
     });
@@ -1101,19 +1131,23 @@ export default function DiscoverPage() {
     // fetching when this shortens a page, so it can never leave a blank tab.
     const renderable = unique.filter((item) => feedItemHasRenderableContent(item));
     const fresh = renderable.filter((item) => !isStale(item));
-    const dismissFiltered = fresh.filter((item) => !dismissed.has(getItemId(item)));
+    const currentUid = learningState === "learn" ? user?.uid : null;
+    const activeDismissed = currentUid && dismissedOwner === currentUid ? dismissed : new Set<string>();
+    const dismissFiltered = fresh.filter((item) => !activeDismissed.has(getItemId(item)));
     const filtered = dismissFiltered.length >= MIN_ITEMS_AFTER_LOCAL_DISMISS
       || fresh.length < MIN_ITEMS_AFTER_LOCAL_DISMISS
       ? dismissFiltered
       : fresh;
-    const suppressedCategories = getSuppressedCategories(interactionProfile);
+    const activeProfile = currentUid && interactionProfile?.owner_uid === currentUid ? interactionProfile : null;
+    const activeOrderingProfile = currentUid && orderingProfile?.owner_uid === currentUid ? orderingProfile : null;
+    const suppressedCategories = getSuppressedCategories(activeProfile);
     const cooldownFiltered = suppressedCategories.size
       ? filtered.filter((item) => !suppressedCategories.has(getItemCategory(item).toLowerCase()))
       : filtered;
     const cooldownSafe = cooldownFiltered.length > 0 ? cooldownFiltered : filtered;
     const grouped = groupRelatedMarkets(spaceBySport(cooldownSafe, getItemCategory));
     return spaceBySport(
-      applyLocalPersonalization(grouped, orderingProfile, (groupedItem) => {
+      applyLocalPersonalization(grouped, activeOrderingProfile, (groupedItem) => {
         const item = groupedItem.type === "single" ? groupedItem.item : groupedItem.items?.[0];
         if (!item) return null;
         return {
@@ -1123,7 +1157,7 @@ export default function DiscoverPage() {
       }),
       getGroupedCategory,
     );
-  }, [page1Items, allItems, dismissed, interactionProfile, orderingProfile]);
+  }, [page1Items, allItems, dismissed, dismissedOwner, interactionProfile, orderingProfile, learningState, user?.uid]);
 
   // L2-215 Item 1 — suppression telemetry. Count the empty predictive envelopes
   // dropped by the fail-closed filter, by card type + machine reason, with NO

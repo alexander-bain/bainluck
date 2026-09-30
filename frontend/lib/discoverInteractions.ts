@@ -67,11 +67,14 @@ export interface ProfileBucket {
   dismisses: number;
   shares: number;
   last_interaction_at: string;
+  /** Sports negatives no longer contribute to this category score. */
+  sports_negative_scope_version?: 2;
 }
 
 export interface DiscoverProfile {
   categories: Record<string, ProfileBucket>;
   updated_at: string;
+  owner_uid?: string;
 }
 
 const PROFILE_KEY = "discover_interaction_profile_v1";
@@ -109,6 +112,33 @@ const ACTION_WEIGHTS: Record<DiscoverAction, number> = {
 
 function normalizeCategory(category: string | null | undefined): string {
   return (category || "other").toLowerCase();
+}
+
+// Mirrors #9645's sports feedback vocabulary, including event sport-key roots.
+const SPORTS_FEEDBACK_CATEGORIES = new Set([
+  "sports", "basketball", "football", "americanfootball", "baseball", "hockey",
+  "icehockey", "soccer", "golf", "tennis", "mma", "boxing", "cricket", "rugby",
+  "motorsports", "esports", "lacrosse", "wrestling", "olympics", "cycling",
+  "rodeo", "pickleball", "aussierules", "motorsport", "rugbyleague", "rugbyunion",
+]);
+
+export function isSportsDiscoverCategory(category: string): boolean {
+  return SPORTS_FEEDBACK_CATEGORIES.has(normalizeCategory(category).trim().split("_")[0]);
+}
+
+function sportsPositiveBucket(bucket: ProfileBucket): ProfileBucket {
+  if (bucket.sports_negative_scope_version === 2) return bucket;
+  // Legacy scores mixed positive/negative weights and clamped at -10. Adding
+  // dismisses back cannot recover those clipped positives, and unlike/dismiss
+  // shared one counter with different weights. Recover the known positives
+  // from their counters; retain any greater positive score (e.g. expands).
+  const knownPositive = bucket.impressions * 0.05 + bucket.clicks * 1.5
+    + bucket.likes * 2 + bucket.shares * 3;
+  return {
+    ...bucket,
+    score: clamp(Math.max(0, bucket.score, knownPositive), 0, 30),
+    sports_negative_scope_version: 2,
+  };
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -259,9 +289,44 @@ function emptyBucket(now: string): ProfileBucket {
  * registers its auth gate, and pending timers can fire after page unmount.
  */
 let learningGate: (() => boolean) | null = null;
+interface DiscoverLearningIdentity {
+  getUid: () => string | null;
+  getToken: () => Promise<string | null>;
+}
+let learningIdentity: DiscoverLearningIdentity | null = null;
+let pendingUid: string | null = null;
+let learningGeneration = 0;
 
-export function setDiscoverLearningGate(gate: (() => boolean) | null): void {
+function currentLearningUid(): string | null {
+  if (!mayLearnFromDiscoverInteraction()) return null;
+  try { return learningIdentity?.getUid() || null; } catch { return null; }
+}
+
+function profileStorageKey(): string | null {
+  if (!mayLearnFromDiscoverInteraction()) return null;
+  if (!learningIdentity) return PROFILE_KEY; // existing non-page callers/test seam
+  const uid = currentLearningUid();
+  return uid ? `${PROFILE_KEY}:${encodeURIComponent(uid)}` : null;
+}
+
+/** Exact dismissals stay separate from category learning, scoped to the reader. */
+export function getDiscoverDismissedStorageKey(): string | null {
+  const uid = currentLearningUid();
+  return uid ? `discover_dismissed:${encodeURIComponent(uid)}` : null;
+}
+
+export function setDiscoverLearningGate(
+  gate: (() => boolean) | null,
+  identity: DiscoverLearningIdentity | null = null,
+): void {
+  dropPendingDiscoverInteractions();
   learningGate = gate;
+  learningIdentity = identity;
+}
+
+export function setDiscoverLearningIdentity(identity: DiscoverLearningIdentity): void {
+  dropPendingDiscoverInteractions();
+  learningIdentity = identity;
 }
 
 function mayLearnFromDiscoverInteraction(): boolean {
@@ -279,12 +344,20 @@ export function recordDiscoverInteraction(category: string, action: DiscoverActi
 
   try {
     const now = new Date().toISOString();
-    const raw = localStorage.getItem(PROFILE_KEY);
+    const storageKey = profileStorageKey();
+    if (!storageKey) return;
+    const raw = localStorage.getItem(storageKey);
     const profile: DiscoverProfile = raw
       ? JSON.parse(raw)
       : { categories: {}, updated_at: now };
+    if (learningIdentity && profile.owner_uid && profile.owner_uid !== currentLearningUid()) return;
     const key = normalizeCategory(category);
-    const bucket = profile.categories[key] || emptyBucket(now);
+    const sports = isSportsDiscoverCategory(key);
+    // Exact item/story dismissal is still recorded by the page and sent to the
+    // server. It must not teach less of a sport, either team, or a region.
+    if (sports && (action === "dismiss" || action === "unlike")) return;
+    const savedBucket = profile.categories[key] || emptyBucket(now);
+    const bucket = sports ? sportsPositiveBucket(savedBucket) : savedBucket;
 
     bucket.score = Math.max(-10, Math.min(30, bucket.score + ACTION_WEIGHTS[action]));
     bucket.last_interaction_at = now;
@@ -296,7 +369,9 @@ export function recordDiscoverInteraction(category: string, action: DiscoverActi
 
     profile.categories[key] = bucket;
     profile.updated_at = now;
-    localStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
+    const uid = currentLearningUid();
+    if (uid) profile.owner_uid = uid;
+    localStorage.setItem(storageKey, JSON.stringify(profile));
     if (action !== "impression") {
       window.dispatchEvent(new CustomEvent("discover-profile-updated"));
     }
@@ -362,6 +437,8 @@ let unloadHooked = false;
 /** Drop everything queued. Used on revoke and after a send. */
 export function dropPendingDiscoverInteractions(): void {
   pending = [];
+  pendingUid = null;
+  learningGeneration += 1;
   if (flushTimer !== null) {
     clearTimeout(flushTimer);
     flushTimer = null;
@@ -391,7 +468,11 @@ export function flushDiscoverInteractions(): void {
     flushTimer = null;
   }
   const batch = pending;
+  const batchUid = pendingUid;
+  const identity = learningIdentity;
+  const generation = learningGeneration;
   pending = [];
+  pendingUid = null;
   if (batch.length === 0) return;
 
   // #9643 — re-read at flush for the same reason consent is: a reader who signs
@@ -410,12 +491,31 @@ export function flushDiscoverInteractions(): void {
     };
     if (sessionId) headers["x-session-id"] = sessionId;
 
-    void fetch(`${API_URL}/api/feed/interactions`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ interactions: batch, provenance: "user" }),
-      keepalive: true,
-    }).catch(() => {});
+    const send = (token?: string) => {
+      if (!mayLearnFromDiscoverInteraction() || generation !== learningGeneration) return;
+      if (identity && (identity !== learningIdentity || !batchUid || currentLearningUid() !== batchUid)) return;
+      if (!mayCaptureDiscoverInteraction(getTelemetryConsent())) return;
+      if (token) headers.Authorization = `Bearer ${token}`;
+      void fetch(`${API_URL}/api/feed/interactions`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ interactions: batch, provenance: "user" }),
+        keepalive: true,
+      }).catch(() => {});
+    };
+    if (identity) {
+      // A missing token is a refused authenticated interaction, never an
+      // anonymous fallback. Recheck identity after token retrieval resolves.
+      let tokenTimer: ReturnType<typeof setTimeout> | undefined;
+      void Promise.race([
+        identity.getToken(),
+        new Promise<null>((resolve) => { tokenTimer = setTimeout(() => resolve(null), 5000); }),
+      ]).then((token) => { if (token) send(token); }).catch(() => {}).finally(() => {
+        if (tokenTimer !== undefined) clearTimeout(tokenTimer);
+      });
+    } else {
+      send();
+    }
   } catch {
     // First-party interaction capture should never affect the feed.
   }
@@ -449,6 +549,10 @@ export function sendDiscoverInteraction(
   if (!mayLearnFromDiscoverInteraction()) return;
 
   try {
+    const uid = currentLearningUid();
+    if (learningIdentity && !uid) return;
+    if (pending.length && pendingUid !== uid) dropPendingDiscoverInteractions();
+    pendingUid = uid;
     pending.push({
       action,
       item_type: analytics.content_type,
@@ -488,10 +592,17 @@ export function readDiscoverInteractionProfile(): DiscoverProfile | null {
   if (typeof window === "undefined") return null;
 
   try {
-    const raw = localStorage.getItem(PROFILE_KEY);
+    const storageKey = profileStorageKey();
+    if (!storageKey) return null;
+    const raw = localStorage.getItem(storageKey);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as DiscoverProfile;
-    return parsed && parsed.categories ? parsed : null;
+    if (!parsed?.categories) return null;
+    if (learningIdentity && parsed.owner_uid !== currentLearningUid()) return null;
+    for (const [category, bucket] of Object.entries(parsed.categories)) {
+      if (isSportsDiscoverCategory(category)) parsed.categories[category] = sportsPositiveBucket(bucket);
+    }
+    return parsed;
   } catch {
     return null;
   }
@@ -501,10 +612,14 @@ export function getDiscoverCategoryAdjustment(
   profile: DiscoverProfile | null,
   category: string
 ): number {
-  const bucket = profile?.categories[normalizeCategory(category)];
-  if (!bucket) return 0;
+  // An edition snapshot from the old account must not rank the new reader.
+  if (learningIdentity && (!currentLearningUid() || profile?.owner_uid !== currentLearningUid())) return 0;
+  const savedBucket = profile?.categories[normalizeCategory(category)];
+  if (!savedBucket) return 0;
+  const sports = isSportsDiscoverCategory(category);
+  const bucket = sports ? sportsPositiveBucket(savedBucket) : savedBucket;
 
-  const engagement = bucket.clicks + bucket.likes * 1.5 + bucket.shares * 2 + bucket.dismisses;
+  const engagement = bucket.clicks + bucket.likes * 1.5 + bucket.shares * 2 + (sports ? 0 : bucket.dismisses);
   if (engagement < 2) return 0;
 
   return clamp(bucket.score, -8, 12);
