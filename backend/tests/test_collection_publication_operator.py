@@ -5,9 +5,12 @@ or new production completeness. Existing real-PG correction gates own the latter
 """
 
 import copy
+import builtins
 import json
+import sys
 from dataclasses import replace
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pytest
 
@@ -453,3 +456,78 @@ def test_no_implicit_local_database_fallback(monkeypatch, capsys):
     assert (
         receipt["status"] == "refused" and "explicitly configured" in receipt["error"]
     )
+
+
+@pytest.mark.parametrize("app_name", [None, "bainluck"])
+def test_apply_refuses_outside_named_app_before_database_import(
+    app_name, monkeypatch, capsys
+):
+    monkeypatch.setenv("DATABASE_URL", "configured-but-must-not-connect")
+    if app_name is None:
+        monkeypatch.delenv("HEROKU_APP_NAME", raising=False)
+    else:
+        monkeypatch.setenv("HEROKU_APP_NAME", app_name)
+    original_import = builtins.__import__
+
+    def guarded_import(name, *args, **kwargs):
+        if name == "app.services.database":
+            pytest.fail("refused apply initialized a database")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    code = operator.main(
+        [
+            "--container-id",
+            "101",
+            "--slug",
+            "nfl-2026-week-5",
+            "--operation",
+            "publish",
+            "--apply",
+            "--expected-revision",
+            "7",
+            "--actor",
+            "authority",
+            "--reason",
+            "reviewed hub",
+            "--evidence",
+            '{"review":"receipt-9916"}',
+        ]
+    )
+    receipt = json.loads(capsys.readouterr().out)
+    assert code == 2 and receipt["status"] == "refused"
+    assert receipt["committed"] is False and "bainluck-heavy" in receipt["error"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "apply,app_name",
+    [
+        (True, "bainluck-heavy"),
+        (False, None),
+        (False, "bainluck"),
+        (False, "bainluck-heavy"),
+    ],
+)
+async def test_configured_apply_on_named_app_and_preview_anywhere_dispatch(
+    apply, app_name, monkeypatch
+):
+    monkeypatch.setenv("DATABASE_URL", "configured-test-database")
+    if app_name is None:
+        monkeypatch.delenv("HEROKU_APP_NAME", raising=False)
+    else:
+        monkeypatch.setenv("HEROKU_APP_NAME", app_name)
+    session_factory = object()
+    monkeypatch.setitem(
+        sys.modules,
+        "app.services.database",
+        SimpleNamespace(async_session_maker=session_factory),
+    )
+    options = apply_options() if apply else operator.Options(container_id=101)
+
+    async def dispatched(got_options, got_factory):
+        assert got_options == options and got_factory is session_factory
+        return {"status": "dispatched"}, 0
+
+    monkeypatch.setattr(operator, "run", dispatched)
+    assert await operator._run_configured(options) == ({"status": "dispatched"}, 0)

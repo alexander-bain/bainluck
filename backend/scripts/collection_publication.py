@@ -369,6 +369,10 @@ async def run(options: Options, session_factory) -> tuple[dict, int]:
 
 
 async def _run_configured(options: Options) -> tuple[dict, int]:
+    if options.apply and os.environ.get("HEROKU_APP_NAME") != "bainluck-heavy":
+        raise OperatorRefused(
+            "apply requires HEROKU_APP_NAME=bainluck-heavy; attended invocation only"
+        )
     if not os.environ.get("DATABASE_URL", "").strip():
         raise OperatorRefused("DATABASE_URL must be explicitly configured")
     from app.services.database import async_session_maker

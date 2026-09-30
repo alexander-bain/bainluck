@@ -40,14 +40,18 @@ When no publication operation is requested, an empty target can be previewed
 with `publish_eligible=false`. Withdrawal never rebuilds or erases membership.
 
 Only after the separately authorized named operation, the owner supplies every
-write field explicitly and saves the resulting JSON receipt:
+write field explicitly. Apply refuses unless `HEROKU_APP_NAME=bainluck-heavy`,
+before importing the database module or opening a connection. Preview remains
+allowed anywhere with explicitly configured `DATABASE_URL`. Use an attended
+`heroku run:detached -a bainluck-heavy` invocation (gotcha 48), then save the JSON
+receipt from that named detached dyno's logs:
 
 ```sh
-python3 scripts/collection_publication.py \
+heroku run:detached -a bainluck-heavy -- python3 scripts/collection_publication.py \
   --container-id "$REVIEWED_ID" --slug "$REVIEWED_SLUG" \
   --operation publish --apply --expected-revision "$REVIEWED_REVISION" \
   --actor "$OPERATOR" --reason "$APPROVED_REASON" \
-  --evidence "$REVIEWED_EVIDENCE_JSON" > "$PUBLICATION_RECEIPT"
+  --evidence "$REVIEWED_EVIDENCE_JSON"
 ```
 
 `REVIEWED_EVIDENCE_JSON` is a nonempty JSON object naming the actual review and
