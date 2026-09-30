@@ -2265,6 +2265,22 @@ jobs:
             exit 1
           fi
 
+      - name: "#9865 'world series' leads with baseball's boards, not a Dota 2 namesake (real Postgres)"
+        # PILLAR: DISCOVER. SHIP: typing `world series` in the search dropdown
+        # during the MLB postseason lists the World Series markets above the Dota
+        # 2 "EPL World Series" group-stage matches. Real Postgres because the claim
+        # is that the ROUTE hands the reranker the sport and nothing later re-sorts
+        # the pool; the in-rig strawman proves the order is the fix's doing.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_typeahead_world_series_sport_pg_9865.py \
+            -v -s -rs 2>&1 | tee /tmp/typeahead_world_series_9865.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/typeahead_world_series_9865.txt; then
+            echo "::error::#9865 world series sport control SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: typeahead keeps the resolved team's own game in the four (real Postgres, #9435)
         # `giants` served the New York Giants card over four Yomiuri/Lotte Giants
         # games: the Giants' game was row 8 of the soonest-first fetch, so the
