@@ -1854,8 +1854,37 @@ export interface FeedBundleData {
   entities?: string[];
 }
 
+// #9653 / #9905: a published NFL-week or MLB-postseason hub the feed placed
+// before its strongest member (`backend/app/services/container_discovery.py`
+// `collection_card`). Every field is optional because the client admits the
+// card only after checking it — see `lib/discover/collectionFeed.ts`.
+export interface FeedCollectionData {
+  type?: "collection";
+  id?: number;
+  slug?: string;
+  name?: string;
+  state?: string;
+  revision?: number | null;
+  edition?: {
+    kind?: string;
+    league?: string;
+    season?: number;
+    stage?: string | null;
+    week?: number | null;
+  } | null;
+  game_count?: number;
+  question_count?: number;
+  matched_event_ids?: number[];
+  destination?: {
+    kind?: string;
+    slug?: string;
+    web?: string | null;
+    api?: string;
+  } | null;
+}
+
 export interface FeedItem {
-  type: "event" | "futures" | "tournament" | "bundle" | "concept";
+  type: "event" | "futures" | "tournament" | "bundle" | "concept" | "collection";
   score: number;
   reason: string;
   headline: string | null;
@@ -1865,7 +1894,8 @@ export interface FeedItem {
     | FeedFuturesData
     | FeedTournamentData
     | FeedBundleData
-    | FeedConceptData;
+    | FeedConceptData
+    | FeedCollectionData;
   // Personalization fields (only present when authenticated + score was adjusted)
   personalized?: boolean;
   base_score?: number;
