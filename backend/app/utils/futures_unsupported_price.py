@@ -195,6 +195,7 @@ __all__ = [
     "price_is_unlocated_in_broken_field",
     "price_is_unsupported",
     "price_refuted_by_live_book",
+    "print_is_unanchored_during_live_play",
     "snapshot_price_is_unsupported",
     "trade_print_refuted_by_own_book",
     "unsupported_legs_above_the_supported_head",
@@ -1748,3 +1749,82 @@ def snapshot_price_is_unsupported(
     return trade_print_refuted_by_own_book(
         bookmaker, resolution_source, probability, yes_bid, yes_ask, last_price
     )
+
+
+#: The spread at which the Kalshi writer stops taking a midpoint and falls back
+#: to the last trade — ``app.tasks.kalshi._KALSHI_TIGHT_SPREAD_MAX``, rule 1 of
+#: ``_kalshi_yes_probability``. Copied rather than imported (a Celery task module
+#: has no place on the serve path) and bound to it by
+#: ``tests/test_live_play_unanchored_print_9938.py``.
+LIVE_PLAY_WIDE_BOOK_SPREAD = 0.50
+
+
+def print_is_unanchored_during_live_play(
+    source: Optional[str],
+    resolution_source: Optional[str],
+    probability: Optional[float],
+    yes_bid: Optional[float],
+    yes_ask: Optional[float],
+) -> bool:
+    """True when a Kalshi leg's price is a trade its own live book does not anchor (#9938).
+
+    ASKED ONLY WHILE THE GAME THE PAGE IS ABOUT IS BEING PLAYED. The caller decides
+    that; this function knows nothing about games.
+
+    WHAT A READER SAW, production 2026-09-30. ``/events/15321782`` (PHI @ ATL, Wild
+    Card Game 2, Bottom 10th, PHI 4–3, hero ATL 18%): the Series card printed
+    **"ATL wins 2-0 52%"**. Stored ATL 2-0 was 0.72 on a 0.01 / 0.81 book, a print
+    from 20:59Z while Atlanta still led. Then on ``/events/15321836`` (CWS @ HOU,
+    live, CWS 4–3) the same card read CWS 2-0 76% · CWS 2-1 24% · HOU 2-1 1% while
+    Kalshi's own Series Winner on the same rail priced Houston at 21.5%. HOU 2-1 is
+    Houston's only way through. Every live leg on that board stores bid 0.00: the
+    numbers are prints on books nobody bids into.
+
+    WHY NO SIBLING RULE REACHES IT. Rule 2 of the writer keeps a real trade on a wide
+    book, and :func:`book_refutes_price` withdraws it only once the book moves PAST
+    it. Here 0.72 sits inside 0.01 / 0.81 and 0.81 inside 0.00 / 0.99, so neither
+    the writers nor the book arm can refuse them. :func:`price_is_unlocated_in_broken_field`
+    needs two legs above a half, and :func:`leg_has_no_live_support` treats any
+    traded leg as supported. #7059 rightly declines a recency test for futures in
+    general: a July print on a heavyweight belt is still the venue's number in
+    September. During play it is not. The game the market depends on changes the
+    answer between pitches, and a print from before the last lead change is a
+    memory of another game state.
+
+    THE RULE. The book is at least :data:`LIVE_PLAY_WIDE_BOOK_SPREAD` wide (the
+    writer could not take a midpoint), and the price sits on neither of the two
+    things such a book still states right now:
+
+    * a standing BID (``bid > 0``, price at the bid within half a cent). Somebody
+      will pay that now, and a lone bid grades almost perfectly
+      (``kalshi_empty_book``'s measured asymmetry);
+    * a trusted longshot ASK (``ask <= ASK_ONLY_TRUSTED_MAX``, price at the ask),
+      which is the writer's rule 3: a current offer, not a memory.
+
+    A narrow book is never touched, whatever its bid. 0.00 / 0.009 locates its
+    0.1% leg to within a cent. Replayed over the live CWS @ HOU rail at 23:10Z:
+    58 priced Kalshi legs, 4 withheld (Series Exact Score's three live legs and
+    Series Total Games), each a print inside a book of 54–99¢. The Series Winner
+    card (tight books) and every 1% leg anchored to a 1¢ bid keep their numbers.
+
+    WITHHELD, NEVER REWRITTEN (gotcha #21), and read-side only. The leg keeps its
+    name and returns the moment the book tightens or a trade lands on it. Kalshi
+    only (gotcha #19), never a row carrying a verdict, and an unrecorded bid or ask
+    answers False.
+    """
+    if (source or "").strip().lower() != KALSHI_BOOKMAKER:
+        return False
+    if row_carries_a_verdict(resolution_source):
+        return False
+    if probability is None or yes_bid is None or yes_ask is None:
+        return False
+    price, bid, ask = float(probability), max(float(yes_bid), 0.0), float(yes_ask)
+    if not 0 < price < 1 or ask <= 0:
+        return False
+    if round(ask - bid, 4) < LIVE_PLAY_WIDE_BOOK_SPREAD:
+        return False
+    if bid > 0 and abs(price - bid) <= BOOK_REFUTES_PRICE_EPSILON:
+        return False
+    if ask <= ASK_ONLY_TRUSTED_MAX and abs(price - ask) <= BOOK_REFUTES_PRICE_EPSILON:
+        return False
+    return True

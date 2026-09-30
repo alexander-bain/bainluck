@@ -27173,7 +27173,9 @@ def _squeeze_exclusive_series_outcomes(
     ]
 
 
-async def _related_futures_withheld_ids(db: AsyncSession, market_ids) -> set[int]:
+async def _related_futures_withheld_ids(
+    db: AsyncSession, market_ids, *, live_play: bool = False
+) -> set[int]:
     """The outcome ids each market's OWN page refuses to price (#9008).
 
     WHAT A READER SAW, 2026-09-27 01:4xZ. `/events/15315689`'s Bigger Picture
@@ -27195,8 +27197,17 @@ async def _related_futures_withheld_ids(db: AsyncSession, market_ids) -> set[int
     Fails open for each market, loudly (gotcha #42, and the direction search's
     `_search_withheld_price_outcome_ids` gives): a board that raises keeps its
     prices, and the other boards are still refused.
+
+    #9938 — `live_play` adds the one refusal a market's own page cannot make,
+    because only this rail knows the game it depends on is being played: a
+    Kalshi print its live book does not anchor
+    (`print_is_unanchored_during_live_play`). "ATL wins 2-0 52%" in the Bottom
+    10th with Atlanta 18% to win the game it needed was that print.
     """
     from app.routes.league_futures import _page_withheld_outcome_ids
+    from app.utils.futures_unsupported_price import (
+        print_is_unanchored_during_live_play,
+    )
 
     ids = sorted({int(m) for m in market_ids if m is not None})
     if not ids:
@@ -27212,6 +27223,18 @@ async def _related_futures_withheld_ids(db: AsyncSession, market_ids) -> set[int
     for board in boards:
         try:
             withheld |= await _page_withheld_outcome_ids(db, board)
+            if live_play:
+                withheld |= {
+                    o.id
+                    for o in board.outcomes
+                    if print_is_unanchored_during_live_play(
+                        board.source,
+                        o.resolution_source,
+                        o.current_probability,
+                        o.current_yes_bid,
+                        o.current_yes_ask,
+                    )
+                }
         except Exception:  # noqa: BLE001 - one board never un-refuses the rest
             logger.warning(
                 "related futures: could not evaluate the price refusal for market %s; "
@@ -28369,7 +28392,9 @@ async def _build_related_futures(
     # the cross-source merge: the merge keeps the entry with the most bookmakers,
     # so a refused Kalshi leg could otherwise beat a priced Polymarket copy of the
     # same answer, and `relevance_score` above was scored off the refused number.
-    rail_withheld = await _related_futures_withheld_ids(db, row_markets.keys())
+    rail_withheld = await _related_futures_withheld_ids(
+        db, row_markets.keys(), live_play=event.status == "live"
+    )
     if rail_withheld:
         home_futures = [f for f in home_futures if f["outcome_id"] not in rail_withheld]
         away_futures = [f for f in away_futures if f["outcome_id"] not in rail_withheld]
@@ -28643,7 +28668,9 @@ async def _build_related_futures(
         series_outcomes = series_outcomes_result.scalars().all()
         # #9008 — the series card is a whole board, so a refused leg stays on it,
         # named, with its price keys present and null (the clients test `!== null`).
-        series_withheld = await _related_futures_withheld_ids(db, series_market_ids)
+        series_withheld = await _related_futures_withheld_ids(
+            db, series_market_ids, live_play=event.status == "live"
+        )
         # Imported here, not at the top: `league_futures` imports this module.
         from app.routes.league_futures import _field_has_a_winner, _outcome_is_settled
 
