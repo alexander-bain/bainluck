@@ -4702,6 +4702,20 @@ jobs:
             exit 1
           fi
 
+      - name: "#6974 NBA duplicate clubs — repoint, bank-delete, correct legs, fold, re-run and undo against real Postgres"
+        # The LAFC gate's shape, plus legs that are another club's moved (or a
+        # college leg unlinked) before the fold, and the ship read back through the
+        # #9617 league step: Kalshi's "Detroit" and "Portland" bind to the real club.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_repair_6974_fold_nba_apply_restore_pg.py \
+            -v -rs 2>&1 | tee /tmp/fold6974nba.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/fold6974nba.txt; then
+            echo "::error::#6974 NBA fold apply/restore gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#2841 Chicago Fire v Vancouver — ESPN id, Kalshi market and label moved, re-run and undo against real Postgres"
         # One pinned pair: ESPN 761660 moved inside the real partial unique index,
         # the market re-pointed with its immutable link-change row, and the ship read

@@ -539,6 +539,12 @@ COVERED = (
     # corrections, fold and `--restore` against a real server. `sports.active`
     # is the Python-side default the seed names.
     "test_repair_6974_fold_lafc_apply_restore_pg.py",
+    # #6974 (NBA residual). Seeds `sports`, `teams`, `events`, `entities`,
+    # `team_identity_mapping` and `futures_outcomes` by raw INSERT to drive the
+    # NBA fold's leg corrections, mapping corrections, fold and `--restore`
+    # against a real server. `sports.active` is the Python-side default the
+    # seed names.
+    "test_repair_6974_fold_nba_apply_restore_pg.py",
     # #5576. Seeds `sports`, `teams`, `team_identity_mapping`, `events` and
     # `futures_markets` by raw INSERT, in a private schema, to drive the
     # venue-named-competition repair's apply, re-run and `--restore`.
