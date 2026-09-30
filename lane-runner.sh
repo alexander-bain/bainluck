@@ -546,13 +546,23 @@ idle_announce () {
 # Count queued directives exactly the way the take loop globs for them, so the
 # two can never disagree about whether a lane has work.
 #
-# A DEFERRED DIRECTIVE IS STILL QUEUED, and that is the point: it keeps its `.md`
-# name, so restock guard 1 below sees the lane as having work and does not write
-# a fresh directive on top of it. Renaming deferred files out of this glob would
-# have re-created the empty session #6409 exists to stop.
+# Deferred directives stay queued with their `.md` names. Service restocks still
+# wait for them; build lanes may select real Ready work while only future checks
+# wait. Neither path consumes a deferred directive or launches an empty session.
 inbox_queued () { ls "$1"/*.md 2>/dev/null | grep -vc '\.consumed-' ; }
 inbox_running () { ls "$1"/*.md.running 2>/dev/null | wc -l | tr -d ' ' ; }
 inbox_restocks () { ls "$1"/RESTOCK-*.md "$1"/RESTOCK-*.md.running 2>/dev/null | wc -l | tr -d ' ' ; }
+
+# Same due predicate as the take loop, including malformed stamps being loud
+# and runnable. Keep filenames with spaces intact and preserve the idle due time.
+inbox_has_due () {
+  local F
+  while IFS= read -r F; do
+    [ -n "$F" ] || continue
+    directive_is_due "$F" "$2" && return 0
+  done < <(ls -tr "$1"/*.md 2>/dev/null | grep -v '\.consumed-')
+  return 1
+}
 
 # ─── STALE .running REAPER (integrator/205, 2026-09-05) ──────────────────────
 # THE BUG THIS EXISTS FOR. The runner takes `Q` -> `Q.running` and, when the
@@ -672,11 +682,15 @@ RESTOCK_QUIET=0
 rs_say () { [ "$RESTOCK_QUIET" -eq 0 ] && echo "$@"; return 0; }
 
 maybe_restock () {
-  local L="$1" INBOX PROG NOW LAST STAMP F LASTF READY_ISSUE READY_RC
+  local L="$1" INBOX PROG NOW LAST STAMP F LASTF READY_ISSUE READY_RC QUEUED
   INBOX="$HANDOFF/runner-inbox/$L"
   [ -d "$INBOX" ] || { rs_say "[restock:$L] no inbox at $INBOX — nothing to do"; return 1; }
 
-  [ "$(inbox_queued "$INBOX")" -eq 0 ]   || { rs_say "[restock:$L] inbox has queued work — no restock"; return 1; }
+  QUEUED=$(inbox_queued "$INBOX")
+  if [ "$QUEUED" -gt 0 ] && inbox_has_due "$INBOX" "$L"; then
+    rs_say "[restock:$L] inbox has queued work — no restock"
+    return 1
+  fi
   [ "$(inbox_running "$INBOX")" -eq 0 ]  || { rs_say "[restock:$L] a directive is .running — no restock"; return 1; }
   [ "$(inbox_restocks "$INBOX")" -eq 0 ] || { rs_say "[restock:$L] a RESTOCK is already pending — no restock"; return 1; }
 
@@ -687,6 +701,8 @@ maybe_restock () {
   else
     READY_RC=$?
     [ "$READY_RC" -eq 1 ] || { rs_say "[restock:$L] lane policy unavailable — no model launched"; return 1; }
+    # Future service missions continue to block speculative program restocks.
+    [ "$QUEUED" -eq 0 ] || { rs_say "[restock:$L] inbox has queued work — no restock"; return 1; }
     PROG=$(lane_program "$L") || {
       rs_say "[restock:$L] NO PROGRAM FILE — service lane left idle. Add a line to"
       rs_say "[restock:$L]   $HANDOFF/lane-program-map.txt   (format: '$L <file-in-handoff>')"
@@ -740,7 +756,7 @@ maybe_restock () {
   fi
   restock_text "$L" "$PROG" "$READY_ISSUE" > "$F"
   echo "$NOW" > "$LASTF"
-  echo "[restock:$L] inbox empty — wrote $(basename "$F") (program: $PROG)"
+  echo "[restock:$L] no due assignment — wrote $(basename "$F") (program: $PROG)"
   return 0
 }
 
