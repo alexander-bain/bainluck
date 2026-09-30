@@ -178,7 +178,51 @@ def match_outcome_to_league_team(
         winner = _unique_unshadowed(city)
     if winner is not None:
         return winner
+    winner = _match_league_team_by_city_initials(outcome_name, league_teams)
+    if winner is not None:
+        return winner
     return _match_league_team_by_spelling(outcome_name, league_teams)
+
+
+def _match_league_team_by_city_initials(outcome_name: str, league_teams: list[dict]) -> Optional[int]:
+    """A two-club city written with the nickname's initials: "Los Angeles L" (#9617).
+
+    Kalshi's boards tell a shared city's clubs apart by one or two capitals:
+    "Los Angeles L" / "Los Angeles C" on KXNBA-27, "Chicago WS" on KXMLB-26,
+    "New York G" / "New York J" on KXSB-27. The strict arms cannot read that:
+    ``normalize_name`` strips a trailing " C" ("Los Angeles C" → "los angeles",
+    which names both LA clubs) and keeps " L" ("los angeles l" names nothing),
+    so the Lakers and the Clippers carried no Kalshi title odds at all.
+
+    The RAW last token must be one or two capitals; the rest must equal a team's
+    own name minus a one- or two-word nickname, and the capitals that nickname's
+    initials. Exactly one team, as in every arm. A team row whose own nickname is
+    a single capital is skipped: those are the #6974 fragment rows
+    ("Los Angeles C" beside the real Clippers), never the club a page shows.
+    """
+    tokens = (outcome_name or "").split()
+    if len(tokens) < 2:
+        return None
+    # Compared with a one- or two-word nickname's upper-case initials, so only
+    # one or two capitals can ever match ("Los Angeles l", "USC", "A&M" cannot).
+    initials = tokens[-1]
+    city = _normalize_name(" ".join(tokens[:-1]))
+    if not city:
+        return None
+
+    hits = set()
+    for team in league_teams:
+        words = (team.get("name") or "").split()
+        if not words or (len(words[-1]) == 1 and words[-1].isupper()):
+            continue
+        for k in (1, 2):
+            if (
+                len(words) > k
+                and "".join(w[0] for w in words[-k:]).upper() == initials
+                and _normalize_name(" ".join(words[:-k])) == city
+            ):
+                hits.add(team["id"])
+    return next(iter(hits)) if len(hits) == 1 else None
 
 
 # Venue names for a school that no spelling rule reaches (#9663), keyed on
