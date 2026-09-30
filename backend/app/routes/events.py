@@ -168,7 +168,11 @@ from app.utils.game_window import (
     filter_state_bearing_rows as _filter_state_bearing_rows,
     game_state_window as _game_state_window,
 )
-from app.utils.name_normalization import diacritic_fold_query, expand_search_terms
+from app.utils.name_normalization import (
+    college_state_query,
+    diacritic_fold_query,
+    expand_search_terms,
+)
 from app.config.team_aliases import (
     curated_team_aliases,
     expand_club_short_forms,
@@ -6849,6 +6853,13 @@ def _build_team_search_filter(q: str):
     folded_q = diacritic_fold_query(q)
     if folded_q is not None:
         arms += [_fts_filter(column, folded_q) for column in _team_ts_columns()]
+    # #9836: `ohio st` reaches Ohio State the same way — `st` is not a word of
+    # the name, so the rewritten `ohio state` rides beside the typed query. The
+    # same additive, whole-lexeme shape as the fold above, None for every query
+    # without a non-leading `st`.
+    state_q = college_state_query(q)
+    if state_q is not None:
+        arms += [_fts_filter(column, state_q) for column in _team_ts_columns()]
     return or_(*arms)
 
 

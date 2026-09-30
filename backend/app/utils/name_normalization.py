@@ -192,7 +192,7 @@ def expand_search_terms(terms: list[str]) -> list[tuple[str, str | None]]:
     `app/config/diacritic_search_folds.py` for the corpus and the measurement.
     """
     result: list[tuple[str, str | None]] = []
-    for term in terms:
+    for index, term in enumerate(terms):
         lower = term.lower()
         expansion = (
             _CITY_ABBREVIATIONS.get(lower)
@@ -210,9 +210,56 @@ def expand_search_terms(terms: list[str]) -> list[tuple[str, str | None]]:
             # serve fold never saw the pair. LAST, so `turkiye` keeps its
             # diacritic fold to `türkiye`.
             or nation_spelling(term)
+            # #9836: `ohio st` also asks for `state`. LAST, and only after a
+            # first word — see `college_state_query`.
+            or college_state_expansion(index, lower)
         )
         result.append((term, expansion))
     return result
+
+
+# #9836 — the `St.` a reader types for `State`. Production 2026-09-30 13:4xZ,
+# `/api/events/search`: `ohio st`, `penn st` and `iowa st` served no team and no
+# game, only Kalshi's `Ohio St.` markets, while `ohio state` served the team and
+# 11 games (and none of Kalshi's `Ohio St.` markets). Both the Teams gate and the
+# game arms require every typed word to be a WHOLE word of the name, and `st` is
+# not a word of "Ohio State Buckeyes". `michigan st` worked only because some
+# source stores that school as "Michigan St".
+#
+# The expansion is ADDED, never substituted: `st` keeps reaching Kalshi's
+# `Ohio St.` rows and `state` reaches the team and its games. A LEADING `st` is
+# Saint (`st louis`, `st johns`) and is left alone, the rule
+# `normalize_team_name_for_matching` already applies. An interior one
+# (`mount st marys`) also asks for `state`, which is harmless because every other
+# word must still match.
+_STATE_ABBREVIATION_TOKENS = frozenset({"st", "st."})
+
+
+def college_state_expansion(index: int, lower: str) -> str | None:
+    """`"state"` for a `st`/`st.` that is not the query's first word, else None (#9836)."""
+    if index > 0 and lower in _STATE_ABBREVIATION_TOKENS:
+        return "state"
+    return None
+
+
+def college_state_query(q: str) -> str | None:
+    """`q` with every non-leading `st`/`st.` spelled `state`, or None (#9836).
+
+    ``"ohio st"`` -> ``"ohio state"``; ``"st louis"`` -> None. The Teams gate is
+    full-text over the WHOLE query, not per-term pairs, so like
+    :func:`diacritic_fold_query` the expansion reaches it as a rewritten query
+    that the gate ORs beside the typed one. None is every query without the
+    abbreviation, and on that path the caller builds exactly the SQL it builds
+    today.
+    """
+    tokens = q.split()
+    rewritten = [
+        college_state_expansion(index, token.lower()) or token
+        for index, token in enumerate(tokens)
+    ]
+    if rewritten == tokens:
+        return None
+    return " ".join(rewritten)
 
 
 def diacritic_fold_query(q: str) -> str | None:
