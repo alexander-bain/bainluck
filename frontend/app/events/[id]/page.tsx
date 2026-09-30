@@ -3306,7 +3306,11 @@ export default function EventPage({ params }: EventPageProps) {
           rail the two sides lets cards that name one of them sort ahead of the
           rest. A preference, not a filter: the same cards in the same number,
           so no page loses the section the way an #8093-style narrowing would
-          have. */}
+          have.
+
+          #9799: the one filter it does apply — a card naming only the other
+          league (AL awards beside Cubs @ Padres) — keys on both sides'
+          conferences, so an interleague game keeps every card. */}
       {(() => {
         const rail = relatedRailQuery(event.sport, event.event_tags);
         return rail ? (
@@ -3320,6 +3324,10 @@ export default function EventPage({ params }: EventPageProps) {
               title={rail.title}
               fallbackTitle={rail.fallbackTitle}
               preferNames={participantNames(event.away_team, event.home_team)}
+              conferences={[
+                event.away_team_data?.standings?.conference,
+                event.home_team_data?.standings?.conference,
+              ]}
             />
           </SectionErrorBoundary>
         ) : null;
