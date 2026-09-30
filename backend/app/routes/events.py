@@ -35358,6 +35358,29 @@ def _build_search_top_outcomes(
     if window is not None:
         top = window
     else:
+        # #9904: A PRICED BOARD DRAWS ONLY THE ROWS IT HAS A NUMBER FOR. The
+        # sort below reads NULL as 0, so on a board with fewer priced legs than
+        # rows the tail filled with unpriced ones: `?q=ohtani` drew *MLB
+        # Championship Series MVP Winner* as `Judge 18%` and four ranked dashes.
+        # A dash with a rank implies an order nobody priced. Discover's cards
+        # dropped the same tail in #6505.
+        #
+        # We get here only with at least one priced leg (#6327 returned above).
+        # If that leaves ONE leg, it is served alone: a lone number is a
+        # proposition (#5516 precondition 2), and #6327's
+        # `test_one_priced_rung_among_fifteen_nulls_keeps_the_card` rules that
+        # the thinnest real market keeps its card. Not withdrawn here.
+        # A graded leg stays whatever its price, because it prints a result
+        # (#9675); the #8842 pinned leg is always priced. Withheld legs are NOT
+        # dropped: #6993 ruled that a refused leg on a short ladder stays,
+        # nulled. `is not None`, as #6327: a stored `0.0` is a price (#6195).
+        real = [
+            o for o in real
+            if o.current_probability is not None
+            or leg_is_graded(
+                getattr(o, "is_winner", None), getattr(o, "resolution_source", None)
+            )
+        ]
         real.sort(
             key=lambda o: (
                 _headline_tier(o),
