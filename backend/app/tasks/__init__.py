@@ -7103,9 +7103,58 @@ celery_app.conf.beat_schedule = {
         "kwargs": {"dry_run": False},
         "options": {"queue": "background"},
     },
-    "sync-rosters-daily": {
+    # Roster sync — one entry per sport (#5184). A single all-sports run is
+    # ~536 ESPN team fetches at ~1s each against the task's 270s soft limit; it
+    # timed out every day and rolled back every roster it had fetched. Daily
+    # from 10:00 UTC (moved from 7 AM to avoid the snapshot collapse tasks),
+    # staggered so each sport gets its own budget. Must cover ROSTER_SPORTS.
+    "sync-rosters-nba": {
         "task": "app.tasks.sync_rosters",
-        "schedule": crontab(minute=0, hour=10),  # Daily at 10:00 AM UTC — moved from 7 AM to avoid contention with snapshot collapse tasks
+        "schedule": crontab(minute=0, hour=10),
+        "kwargs": {"sport_key": "basketball_nba"},
+        "options": {"queue": "background"},
+    },
+    "sync-rosters-nfl": {
+        "task": "app.tasks.sync_rosters",
+        "schedule": crontab(minute=5, hour=10),
+        "kwargs": {"sport_key": "americanfootball_nfl"},
+        "options": {"queue": "background"},
+    },
+    "sync-rosters-nhl": {
+        "task": "app.tasks.sync_rosters",
+        "schedule": crontab(minute=20, hour=10),
+        "kwargs": {"sport_key": "icehockey_nhl"},
+        "options": {"queue": "background"},
+    },
+    "sync-rosters-mlb": {
+        "task": "app.tasks.sync_rosters",
+        "schedule": crontab(minute=25, hour=10),
+        "kwargs": {"sport_key": "baseball_mlb"},
+        "options": {"queue": "background"},
+    },
+    "sync-rosters-ncaab": {
+        "task": "app.tasks.sync_rosters",
+        "schedule": crontab(minute=45, hour=10),
+        "kwargs": {"sport_key": "basketball_ncaab"},
+        "options": {"queue": "background"},
+    },
+    "sync-rosters-ncaaf": {
+        "task": "app.tasks.sync_rosters",
+        "schedule": crontab(minute=50, hour=10),
+        "kwargs": {"sport_key": "americanfootball_ncaaf"},
+        "options": {"queue": "background"},
+    },
+    "sync-rosters-wnba": {
+        "task": "app.tasks.sync_rosters",
+        "schedule": crontab(minute=55, hour=10),
+        "kwargs": {"sport_key": "basketball_wnba"},
+        "options": {"queue": "background"},
+    },
+    "sync-rosters-mls": {
+        "task": "app.tasks.sync_rosters",
+        "schedule": crontab(minute=57, hour=10),
+        "kwargs": {"sport_key": "soccer_usa_mls"},
+        "options": {"queue": "background"},
     },
     # StatPal schedule sync — one per major sport to avoid timeout
     # (soccer returns thousands of global fixtures and overwhelms a single run)
