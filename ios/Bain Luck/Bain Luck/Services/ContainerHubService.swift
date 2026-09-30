@@ -1,6 +1,6 @@
 import Foundation
 
-protocol ContainerHubLoading: Sendable {
+nonisolated protocol ContainerHubLoading: Sendable {
     nonisolated func load(slug: String) async throws -> ContainerHubResponse
 }
 

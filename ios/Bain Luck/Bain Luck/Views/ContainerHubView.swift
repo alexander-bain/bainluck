@@ -143,7 +143,7 @@ struct ContainerHubView: View {
                     } else {
                         // This existing compact card omits missing prices rather
                         // than the Discover hero's current `nil -> 0%` treatment.
-                        FuturesCardView(futures: feed, reason: nil)
+                        FuturesCardView(futures: feed)
                         if search.topOutcomes?.isEmpty != false {
                             Text("Prices aren't available right now.").font(.caption).foregroundStyle(DS.textSecondary)
                         } else if search.topOutcomes?.contains(where: { $0.probability == nil }) == true {
