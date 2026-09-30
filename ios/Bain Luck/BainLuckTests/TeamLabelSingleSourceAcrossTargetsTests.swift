@@ -228,13 +228,17 @@ final class TeamLabelSingleSourceAcrossTargetsTests: XCTestCase {
     // MARK: - The allowlist must expire
 
     func testTheAllowlistDoesNotRot() throws {
-        let sources = try swiftSources()
+        // This check has an explicit scope; the whole-tree guards above
+        // still detect new offenders and prove cross-target coverage.
+        let root = projectRoot
         for path in knownOutstanding {
-            let file = try XCTUnwrap(
-                sources.first { $0.0 == path },
-                "allowlisted file \(path) no longer exists — delete its entry"
-            )
-            let stillBroken = file.1
+            let file = root.appendingPathComponent(path)
+            guard FileManager.default.fileExists(atPath: file.path) else {
+                XCTFail("allowlisted file \(path) no longer exists — delete its entry")
+                continue
+            }
+            let contents = try String(contentsOf: file, encoding: .utf8)
+            let stillBroken = contents
                 .split(separator: "\n", omittingEmptySubsequences: false)
                 .contains { shortensATeamName(String($0)) }
             XCTAssertTrue(
