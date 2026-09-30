@@ -307,7 +307,7 @@ def _without_the_combat_fold():
     """
     return patch(
         "app.utils.event_twin_fold._merge_combat_claim_bouts",
-        new=lambda clusters: clusters,
+        new=lambda clusters, **_: clusters,
     )
 
 
