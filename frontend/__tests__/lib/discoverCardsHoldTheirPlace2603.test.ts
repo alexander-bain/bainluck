@@ -109,7 +109,11 @@ describe("#2603 — the Discover page ranks by the edition snapshot, not live in
 
   it("passes the ordering snapshot, never the live profile, to the personalization pass", () => {
     const call = src.match(/applyLocalPersonalization\(\s*grouped,\s*(\w+)/);
-    expect(call?.[1]).toBe("orderingProfile");
+    expect(call?.[1]).toBe("activeOrderingProfile");
+    // #9647 gates the snapshot by account owner; it is still the ORDERING
+    // snapshot, never the live interactionProfile.
+    expect(src).toMatch(/const activeOrderingProfile = [^;\n]*\? orderingProfile : null;/);
+    expect(src).not.toMatch(/const activeOrderingProfile = [^;\n]*interactionProfile/);
   });
 
   it("ranks by the edition score map", () => {
