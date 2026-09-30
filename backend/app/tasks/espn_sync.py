@@ -6629,6 +6629,7 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
         carried_start,
         generic_sport_keys,
         pick_contest_canonical,
+        replaced_player,
         with_held_competitions,
         authority_write,
         games_line_write,
@@ -6637,6 +6638,7 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
         state_contradiction,
     )
     from app.utils.espn_id_stamp import STAMPED, stamp_espn_id_if_unheld
+    from app.utils.event_completion import EVENT_SUSPENDED
     from app.utils.live_state_write import write_row_if_unmoved
     from app.services.anchor_channel import DUPLICATE_TAG_PREFIX
     from app.tasks.tennis_twin_sweep import (
@@ -6692,6 +6694,10 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
         "contradictions": {},
         "row_errors": 0,
         "stamp_refused": 0,
+        # #8288: anchored rows taken off LIVE/scheduled because their own ESPN
+        # competition replaced one of our players. Eagerly zeroed, so the key
+        # appearing is the deployment proof and a 0 is a reading.
+        "replaced_player_holds": 0,
     }
 
     # ═══ THE BOARD ═══
@@ -7009,6 +7015,28 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
                             "Tennis anchor REFUSED event %s (%s v %s): %s — not in draw: %s",
                             event.id, ours[0], ours[1], reason,
                             ", ".join(receipt["absent_players"]),
+                        )
+                    # A WITHDRAWAL IS A STATE, NOT ONLY A FINDING (#8288). When
+                    # the row's OWN competition now names somebody else in one
+                    # slot, the match we hold will not be played. `suspended`
+                    # stops it reading LIVE and makes no claim that anybody won;
+                    # `authority_may_settle` still admits it, so a real result
+                    # can still land on it. The refusal above stands: the
+                    # competition's id and result stay off this row.
+                    gone = replaced_player(
+                        our_status=event.status,
+                        our_espn_id=event.espn_id,
+                        ours=ours,
+                        receipt=receipt,
+                        competition=by_id.get(event.espn_id),
+                    )
+                    if gone is not None:
+                        event.status = EVENT_SUSPENDED
+                        stats["replaced_player_holds"] += 1
+                        logger.warning(
+                            "Tennis REPLACED PLAYER: event %s (%s v %s) suspended — "
+                            "ESPN %s no longer names %s",
+                            event.id, ours[0], ours[1], event.espn_id, gone,
                         )
                     continue
 
