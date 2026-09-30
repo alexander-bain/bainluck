@@ -136,7 +136,7 @@ struct DiscoverView: View {
     // story-key suppression), the store is capped, and the feed floor below
     // backfills the least-recently-dismissed rather than let the visible feed
     // collapse to ~2 cards.
-    @State private var dismissedAt: [String: TimeInterval] = Self.loadDismissed()
+    @State private var dismissedAt: [String: TimeInterval] = [:]
 
     // Never let a SUBTRACTIVE client filter (dismiss, category cooldown) shrink
     // the rendered feed below this many cards when the API returned more
@@ -236,7 +236,7 @@ struct DiscoverView: View {
     @State private var showFeedbackSignIn = false
     @State private var guestFeedbackGate = DiscoverGuestFeedbackGate()
     @State private var resolutions: [Resolution] = []
-    @State private var interactionProfile = DiscoverInteractionProfile.load()
+    @State private var interactionProfile: DiscoverInteractionProfile?
     @State private var seenImpressions: Set<String> = []
     @State private var navigationPath = NavigationPath()
     @State private var showSwipeHint = !UserDefaults.standard.bool(forKey: "discover_swipe_hinted")
@@ -508,8 +508,8 @@ struct DiscoverView: View {
             let ranked = window.enumerated().sorted { lhs, rhs in
                 let leftItem = primaryItem(lhs.element)
                 let rightItem = primaryItem(rhs.element)
-                let leftScore = Double(leftItem?.score ?? 0) + (leftItem.map { interactionProfile.adjustment(for: itemCategory($0)) } ?? 0)
-                let rightScore = Double(rightItem?.score ?? 0) + (rightItem.map { interactionProfile.adjustment(for: itemCategory($0)) } ?? 0)
+                let leftScore = Double(leftItem?.score ?? 0) + (leftItem.flatMap { interactionProfile?.adjustment(for: itemCategory($0)) } ?? 0)
+                let rightScore = Double(rightItem?.score ?? 0) + (rightItem.flatMap { interactionProfile?.adjustment(for: itemCategory($0)) } ?? 0)
                 if abs(leftScore - rightScore) > 0.001 { return leftScore > rightScore }
                 return lhs.offset < rhs.offset
             }.map(\.element)
@@ -523,7 +523,9 @@ struct DiscoverView: View {
         let startedWith = feedbackAuthState
         let canLearn = DiscoverGuestFeedbackGate.allowsFeedback(startedWith: startedWith, current: startedWith)
         if canLearn {
-            interactionProfile.record(category: itemCategory(item), action: action)
+            var profile = interactionProfile ?? DiscoverInteractionProfile.load()
+            profile.record(category: itemCategory(item), action: action)
+            interactionProfile = profile
             // Only account feedback invalidates personalized ranking (#9644).
             profileVersion &+= 1
         }
@@ -719,7 +721,7 @@ struct DiscoverView: View {
             staleBase,
             dismissedAt: dismissedAt,
             now: Date().timeIntervalSince1970,
-            isCooled: { interactionProfile.suppresses(category: itemCategory($0)) }
+            isCooled: { interactionProfile?.suppresses(category: itemCategory($0)) ?? false }
         )
     }
 
@@ -1922,8 +1924,20 @@ struct DiscoverView: View {
         .sheet(isPresented: $showFeedbackSignIn) {
             MyStuffView()
         }
-        .onChange(of: feedbackAuthState) { _, newState in
-            if case .signedIn = newState { showFeedbackSignIn = false }
+        .onChange(of: feedbackAuthState, initial: true) { _, newState in
+            if case .signedIn = newState {
+                interactionProfile = DiscoverInteractionProfile.load()
+                dismissedAt = Self.loadDismissed()
+                showFeedbackSignIn = false
+            } else {
+                // Loading either legacy store can migrate it on disk. Delay
+                // those reads until resolved sign-in, and give guests no local
+                // profile or inherited account dismissals (#9644).
+                interactionProfile = nil
+                dismissedAt = [:]
+            }
+            profileVersion &+= 1
+            dismissVersion &+= 1
         }
         .sheet(isPresented: $showChallenge) {
             NativeChallengeSheet(
