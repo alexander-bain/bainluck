@@ -241,6 +241,8 @@ def match_outcome_to_league_team(
     exact = {team_id for team_id, names in names_by_team.items() if candidate in names}
     if exact:
         winner = _unique_unshadowed(exact)
+        if winner is None and len(exact) > 1:
+            winner = _own_name_over_aliases(outcome_name, league_teams)
     else:
         city = set()
         for team in league_teams:
@@ -254,6 +256,37 @@ def match_outcome_to_league_team(
     if winner is not None:
         return winner
     return _match_league_team_by_spelling(outcome_name, league_teams)
+
+
+def _own_name_over_aliases(outcome_name: str, league_teams: list[dict]) -> Optional[int]:
+    """The club whose own NAME is the outcome, when other rows only alias it (#9802).
+
+    Five NHL clubs have a second, city-only row that lists the full name as an
+    alias (115 "Toronto Maple Leafs" and 12715 "Toronto" → ["Toronto Maple Leafs"]),
+    so the exact arm hit two rows and Kalshi's Stanley Cup, conference and playoff
+    legs for them never linked. The row named for the club wins over a row that
+    merely lists it; so does an alias that is another school's name (#8353's
+    Akron row listing "Michigan Wolverines").
+
+    Names are compared by the twin fold's key — the one the team page uses to
+    join a club's rows (#7929) — so "St Louis Blues" 3705 is one club with 571
+    and the page reaches whichever row is bound; the lowest id is taken. Refused
+    when the outcome is a shortening of any other team's NAME.
+    """
+    from app.utils.event_twin_fold import team_name_fold_key
+
+    key = team_name_fold_key(outcome_name or "")
+    if not key:
+        return None
+    own = {t["id"] for t in league_teams if team_name_fold_key(t["name"] or "") == key}
+    if not own:
+        return None
+    if any(
+        t["id"] not in own and key in team_name_fold_key(t["name"] or "")
+        for t in league_teams
+    ):
+        return None
+    return min(own)
 
 
 def _match_league_team_by_city_initials(outcome_name: str, league_teams: list[dict]) -> Optional[int]:
