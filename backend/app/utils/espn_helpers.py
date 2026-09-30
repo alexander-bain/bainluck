@@ -2902,6 +2902,7 @@ async def fetch_completed_box_scores(session, stats):
                 now_str = datetime.now(timezone.utc).isoformat()
                 had_live_box = event.box_score_data is not None
 
+                settled_over_live = False
                 if box_score or scoring_plays:
                     bsd = {
                         "source": "espn",
@@ -2916,38 +2917,38 @@ async def fetch_completed_box_scores(session, stats):
                         bsd["away_period_scores"] = scores.get(
                             "away_period_scores", []
                         )
-                    await session.execute(
-                        _raw_text("UPDATE events SET box_score_data = cast(:bsd AS jsonb) WHERE id = :eid"),
-                        {"bsd": _json_mod.dumps(bsd), "eid": event.id},
-                    )
-                    event.box_score_data = bsd
-                    stats["box_scores_fetched"] = stats.get("box_scores_fetched", 0) + 1
-                    if had_live_box:
-                        stats["box_scores_settled_over_live"] = (
-                            stats.get("box_scores_settled_over_live", 0) + 1
-                        )
+                    settled_over_live = had_live_box
                 elif had_live_box:
                     # #8970: ESPN answered with nothing for a game we already
                     # hold a live box for. That box is the best we have, so it
                     # is kept — only the live stamp goes, or this row would be
                     # re-asked every minute for 48 hours.
                     bsd = {**event.box_score_data, "live": False}
-                    await session.execute(
-                        _raw_text("UPDATE events SET box_score_data = cast(:bsd AS jsonb) WHERE id = :eid"),
-                        {"bsd": _json_mod.dumps(bsd), "eid": event.id},
-                    )
-                    event.box_score_data = bsd
                 else:
-                    err_bsd = {
+                    bsd = {
                         "source": "espn",
                         "error": "not_available",
                         "fetched_at": now_str,
                     }
+                # #9713: each game's write in its own SAVEPOINT, as the live
+                # pass does (#8913). On Postgres a refused statement aborts the
+                # transaction, the except below swallowed it, and every later
+                # game and the step's savepoint went with it: one box Postgres
+                # would not take (15319563, 9/30) cost every settled box in the
+                # 48-hour window, every minute, while it stayed at the head of
+                # the queue.
+                async with session.begin_nested():
                     await session.execute(
                         _raw_text("UPDATE events SET box_score_data = cast(:bsd AS jsonb) WHERE id = :eid"),
-                        {"bsd": _json_mod.dumps(err_bsd), "eid": event.id},
+                        {"bsd": _json_mod.dumps(bsd), "eid": event.id},
                     )
-                    event.box_score_data = err_bsd
+                event.box_score_data = bsd
+                if box_score or scoring_plays:
+                    stats["box_scores_fetched"] = stats.get("box_scores_fetched", 0) + 1
+                if settled_over_live:
+                    stats["box_scores_settled_over_live"] = (
+                        stats.get("box_scores_settled_over_live", 0) + 1
+                    )
             except Exception as e:
                 logger.error(f"Box score fetch error for event {event.id}: {e}")
     finally:
