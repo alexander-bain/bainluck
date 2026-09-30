@@ -24,6 +24,16 @@ import Foundation
 /// `cooldownTTL`, the same 14-day window the dismiss store uses — and
 /// `DiscoverView.filteredItems` floors what it may remove.
 ///
+/// **A sports negative teaches nothing broader than the card (#9648).** A
+/// left-swipe on Yankees v Orioles says "not this game", not "less baseball":
+/// a two-team card cannot say which side the reader dislikes, and five swiped
+/// MLB games were cooling baseball down under a reader who opened every Red
+/// Sox game. So a negative on a sports card writes no category score, and a
+/// negative sports score already on disk reads as neutral. The exact card
+/// stays dismissed (`DiscoverView.hideForSession`) and the server scopes the
+/// same swipe to the card and its story (#9645). Positive sports signals and
+/// every non-sports category are unchanged.
+///
 /// `now` is injected everywhere for deterministic tests (gotcha #44).
 struct DiscoverInteractionProfile {
     /// One recorded action's effect on a category's score.
@@ -84,8 +94,9 @@ struct DiscoverInteractionProfile {
     /// The category's score as of `now`, decayed. Returns 0 for an unknown
     /// category and for any entry whose window has fully elapsed.
     func score(for category: String, now: Date = Date()) -> Double {
-        guard let entry = entries[category.lowercased()] else { return 0 }
-        return Self.decayed(entry, now: now)
+        let key = category.lowercased()
+        guard let entry = entries[key] else { return 0 }
+        return Self.effective(Self.decayed(entry, now: now), key: key)
     }
 
     /// Ranking nudge. Unchanged from the pre-#1221 rule apart from reading the
@@ -114,8 +125,14 @@ struct DiscoverInteractionProfile {
 
     // MARK: - Writing
 
-    mutating func record(category: String, action: Action, now: Date = Date()) {
+    /// - Parameter onSportsCard: whether the card was a sports card
+    ///   (`DiscoverCategory.isSportsFeedback`). Needed beside the category
+    ///   because a game whose sport-key root is not in the category set is
+    ///   still a game.
+    mutating func record(category: String, action: Action, onSportsCard: Bool = false, now: Date = Date()) {
         let key = category.lowercased()
+        // #9648: a sports negative is exact — the card, never the category.
+        if action.weight < 0, onSportsCard || Self.isSportsKey(key) { return }
         // Decay first, then apply — otherwise a score that should have expired
         // gets a fresh timestamp at its old magnitude and never ages out.
         let base = score(for: key, now: now)
@@ -127,6 +144,19 @@ struct DiscoverInteractionProfile {
     mutating func reset() {
         entries = [:]
         save()
+    }
+
+    // MARK: - Sports negatives (#9648)
+
+    private static func isSportsKey(_ key: String) -> Bool {
+        DiscoverCategory.sportsFeedbackCategories.contains(key)
+    }
+
+    /// A stored score as the profile may act on it. A negative sports score can
+    /// only have been written before #9648 — this is what retires it, on every
+    /// read, with no migration to run twice or half-run. Positives pass through.
+    private static func effective(_ score: Double, key: String) -> Double {
+        isSportsKey(key) ? max(0, score) : score
     }
 
     // MARK: - Decay
@@ -151,9 +181,9 @@ struct DiscoverInteractionProfile {
             for (key, value) in raw {
                 guard let score = value["score"], let at = value["at"] else { continue }
                 let entry = Entry(score: score, updatedAt: at)
-                // Drop entries that have already decayed to nothing rather than
-                // carrying dead weight forward forever.
-                if decayed(entry, now: now) != 0 { entries[key] = entry }
+                // Drop entries that have already decayed to nothing — or that
+                // #9648 retired — rather than carrying dead weight forward forever.
+                if effective(decayed(entry, now: now), key: key) != 0 { entries[key] = entry }
             }
             return DiscoverInteractionProfile(entries: entries)
         }
@@ -162,7 +192,9 @@ struct DiscoverInteractionProfile {
         // suppressing their category for the life of the install.
         if let legacy = UserDefaults.standard.dictionary(forKey: legacyStorageKey) as? [String: Double] {
             let stamp = now.timeIntervalSince1970
-            let entries = legacy.mapValues { Entry(score: $0, updatedAt: stamp) }
+            let entries = legacy
+                .filter { effective($0.value, key: $0.key) != 0 }
+                .mapValues { Entry(score: $0, updatedAt: stamp) }
             UserDefaults.standard.removeObject(forKey: legacyStorageKey)
             var migrated = DiscoverInteractionProfile(entries: entries)
             migrated.save()

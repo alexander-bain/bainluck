@@ -1,3 +1,5 @@
+import { parseFoldRevision } from "./foldRevision";
+import { isQuoteStreamStatus } from "./eventQuoteStream";
 /**
  * Extracted helpers for the event detail page (events/[id]/page.tsx).
  *
@@ -25,7 +27,7 @@ import {
 } from "@/lib/probabilityEvidence";
 import type { WinProbabilitySources } from "@/lib/probabilityEvidence";
 import { PROBABILITY_SOURCE_KEYS } from "@/lib/confidence";
-import { renderedDuelPercents, renderedPercent } from "@/lib/renderedPercent";
+import { renderedComplementPercents, renderedDuelPercents, renderedPercent } from "@/lib/renderedPercent";
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 
 // ---------------------------------------------------------------------------
@@ -810,7 +812,7 @@ export function chartAxisPercents(axisValue: number): {
   // treating the other as its complement. Making that reconstruction explicit is
   // what lets the hero's rule decide the anchor; a non-finite axis value falls
   // out as a non-complement pair and yields the nulls documented above.
-  const [away, home] = renderedDuelPercents(1 - homeProb, homeProb);
+  const [away, home] = renderedComplementPercents(homeProb);
   if (home === null || away === null) {
     return { home: null, away: null, homeLabel: null, awayLabel: null };
   }
@@ -1000,6 +1002,12 @@ export function resolveProbability(
   let probSourceLabel: string | null = null;
   const openingHomeProb = opening?.home_probability ?? null;
   const openingAwayProb = opening?.away_probability ?? null;
+  const heroBooks = event.hero_sportsbook_count;
+  const scheduledBooks = typeof heroBooks === "number" && event.hero_probability_source === "blend"
+    ? heroBooks : (odds?.bookmaker_count ?? 0);
+  const scheduledCaption = scheduledBooks > 0
+    ? `${scheduledBooks} sportsbook${scheduledBooks !== 1 ? "s" : ""}`
+    : odds?.source === "aggregate" ? "Aggregate" : null;
   // #2085 — set by the branch that reads `odds`, so `withRenderedPercents` can
   // tell whether the served pair describes the pair being returned. A later
   // branch that OVERRIDES the pair must clear it; that is the whole reason this
@@ -1021,7 +1029,13 @@ export function resolveProbability(
       awayProb = odds?.away_probability ?? null;
       fromCurrentOdds = true;
     }
-  } else if (isLive) {
+  } else if (isLive || (!withheld && isQuoteStreamStatus(event.status) &&
+      event.hero_probability_source === "blend" && typeof event.hero_probability === "number" &&
+      (!noReportedResult || parseFoldRevision(event.blend_fold_revision) !== null ||
+        (Number.isFinite(Date.parse(event.hero_probability_observed_at ?? "")) &&
+         (!lastChartPoint || Date.parse(event.hero_probability_observed_at!) >= Date.parse(lastChartPoint.timestamp)))))) {
+    // A quote can move before kickoff or during a suspension. Sports labels
+    // still use isLive; the authoritative blend supplies the number.
     // Live: THE BLEND IS THE HERO (L2-163 Item 2b, Alex ruling). The chart draws
     // the aggregated Bain Luck line (historyData.aggregate_line); the hero must
     // read the SAME number so a lagged sportsbook consensus never contradicts the
@@ -1070,24 +1084,26 @@ export function resolveProbability(
       // rather than adding a sentence explaining it. The number still shows;
       // only the claim about its currency goes, and the grey age badge above
       // is already saying how old it is.
-      probSourceLabel = blendIsStale
-        ? "Bain Luck blend"
-        : "Live · Bain Luck blend";
+      probSourceLabel = !isLive && !noReportedResult
+        ? scheduledCaption
+        : blendIsStale || !isLive ? "Bain Luck blend" : "Live · Bain Luck blend";
       // 🔴 #2085 — `fromCurrentOdds` stays FALSE here on purpose. This pair is
       // the BLEND (`hero_probability` / `hero_probability_away`), which the
       // backend derives as `round(1 - agg, 6)` and serves with no rendered
       // percents of its own. `current_odds` is a different, lagging pair.
-      return withRenderedPercents(
-        {
-          homeProb,
-          awayProb,
-          probSourceLabel,
-          openingHomeProb,
-          openingAwayProb,
-        },
+      const resolved = withRenderedPercents(
+        { homeProb, awayProb, probSourceLabel, openingHomeProb, openingAwayProb },
         odds,
         false,
       );
+      // The live blend and chart carry one value. Decide only its DISPLAY pair
+      // together; SSE/history raw complements must not change the printed tie.
+      // Preserve independently served pairs and an explicitly withheld side.
+      if (awayProb === 1 - homeProb || awayProb === Number((1 - homeProb).toFixed(6))) {
+        const [awayPct, homePct] = renderedComplementPercents(homeProb);
+        return { ...resolved, homePct, awayPct };
+      }
+      return resolved;
     }
 
     // No blend yet — show current odds, cross-checked against history
@@ -1175,6 +1191,30 @@ export function resolveProbability(
     // Gated on there BEING a usable chart point: with no series to fall back to,
     // a stale `current_odds` still beats an empty hero, so such an event keeps
     // exactly the behaviour it has today.
+  } else if (
+    event.hero_probability_source === "opening" &&
+    typeof event.hero_probability === "number"
+  ) {
+    // #9470 — THE SERVER SAYS NOBODY HAS QUOTED THIS SINCE THE LINE WAS POSTED,
+    // so the caption says so. `resolve_hero` serves `opening` when no source
+    // stands behind a current number; the branch below ignored the word and
+    // captioned `current_odds` by its row count. Measured on production
+    // 2026-09-28, /events/14780556 (Packers v Bears, Oct 11): `hero_probability`
+    // 0.5996 `opening`, `current_odds` the same 0.5996 captured 09-13 15:10Z,
+    // printed "60% – 40% · 2 sportsbooks" fifteen days after both books pulled
+    // the line. 24 of 28 week-6/7 NFL games carry the same shape.
+    //
+    // The pair is read from the hero, not `current_odds`, so the caption and the
+    // number cannot come apart: an event whose 1–2 books ARE still quoting is
+    // also `opening` (ruling 051 drops a consensus under 3), and "Opening line"
+    // beside that fresh row would be the same lie reversed. The card already
+    // prints `hero_probability`, so this also keeps card == hero (UX-P003).
+    homeProb = event.hero_probability;
+    awayProb =
+      typeof event.hero_probability_away === "number"
+        ? event.hero_probability_away
+        : 1 - event.hero_probability;
+    probSourceLabel = "Opening line";
   } else {
     // Scheduled: current betting consensus
     homeProb = odds?.home_probability ?? null;
@@ -1185,16 +1225,7 @@ export function resolveProbability(
     // Kalshi-only 13% read "4 sportsbooks" (Clemson v Miami, /events/14870012).
     // The server knows which books the blend admitted (`hero_sportsbook_count`,
     // 0 = none); absent means unknown, and the row count stands as before.
-    const heroBooks = event.hero_sportsbook_count;
-    const count =
-      typeof heroBooks === "number" && event.hero_probability_source === "blend"
-        ? heroBooks
-        : (odds?.bookmaker_count ?? 0);
-    if (count > 0) {
-      probSourceLabel = `${count} sportsbook${count !== 1 ? "s" : ""}`;
-    } else if (homeProb !== null && odds?.source === "aggregate") {
-      probSourceLabel = "Aggregate";
-    }
+    if (homeProb !== null) probSourceLabel = scheduledCaption;
   }
 
   // Fallback: use win_prob_history (ESPN/stat_model/Kalshi)
@@ -1500,7 +1531,15 @@ export function computeSharedChartDomain(
         if (!isNaN(t)) bettingTs.push(t);
       }
       if (bettingTs.length > 0) {
-        const lastBetting = Math.max(...bettingTs);
+        // #9205 — THE 10-MINUTE EXTENSION OBEYS THE SAME CEILING AS #8709's.
+        // A sportsbook quote stamped after `completed_at` is not game time.
+        // /events/14781702 (Commanders 33–31 Seahawks): ESPN's last reading
+        // 20:27:00Z, `completed_at` 20:27:41Z, and a 20:35:00Z sportsbook row
+        // written after the final — inside the cap, so both charts ran to
+        // 1:35 PM for a 1:27 PM final, a flat 100% tail on Win Probability.
+        // With no `completed_at` the filter keeps every quote (today's rule).
+        const extendableTs = isNaN(caMs) ? bettingTs : bettingTs.filter((t) => t <= caMs);
+        const lastBetting = extendableTs.length > 0 ? Math.max(...extendableTs) : -Infinity;
         if (lastBetting > lastGameEnd && lastBetting - lastGameEnd <= MAX_EXTENSION_MS) {
           endMs = lastBetting;
         } else if (
@@ -1850,10 +1889,20 @@ function percentile(sorted: number[], q: number): number {
  *    is in range, which is what #3525 leaned on when it deleted the 50% line's
  *    own label: "the left axis already prints 50% on this exact line".
  *
+ * 5. Where a line ENDS is always on the plot (#9906). `mustShow` carries each
+ *    drawn series' last value, and the axis widens to hold it after rule 1b.
+ *    The end is one sample, so p98 treats it as noise, but it is the number
+ *    the trailing callout prints and, on a settled chart, the result. Read on
+ *    production 2026-09-30, `/events/15320754` (Bublik / Shang, venue-settled):
+ *    the axis was [30, 55] while the Kalshi line ended with a stroke to 100% and
+ *    the callout said `100%` at the top edge — rule 1b's contradiction, left
+ *    over because the core (≈34–45) is under half the full span. An early
+ *    spike (rule 1's case) is never an end, so it still does not set the scale.
+ *
  * A market that genuinely uses the range is UNCHANGED: 10%–90% snaps to
  * [0, 100] with ticks 0/25/50/75/100, byte for byte the old axis.
  */
-export function computeWinProbYAxis(values: number[]): WinProbYAxis {
+export function computeWinProbYAxis(values: number[], mustShow: number[] = []): WinProbYAxis {
   const finite = values.filter((v) => typeof v === "number" && Number.isFinite(v));
   if (finite.length < WIN_PROB_Y_MIN_SAMPLES) return FULL_WIN_PROB_Y_AXIS;
 
@@ -1870,6 +1919,13 @@ export function computeWinProbYAxis(values: number[]): WinProbYAxis {
   if (fullSpan > 0 && (hi - lo) / fullSpan >= WIN_PROB_Y_MIN_CORE_SHARE) {
     lo = fullLo;
     hi = fullHi;
+  }
+
+  // Rule 5 — a line's end is never cut off, whatever rule 1 made of it.
+  for (const v of mustShow) {
+    if (typeof v !== "number" || !Number.isFinite(v)) continue;
+    lo = Math.min(lo, v);
+    hi = Math.max(hi, v);
   }
 
   // Rule 2 — decided on the extremes, because one crossing print is one marker.
@@ -2150,6 +2206,12 @@ export function computeLastChartPoint(
    * simply gets `scoreStamp: null` on the event-row arm.
    */
   eventScoreObservedAt?: string | null,
+  /**
+   * #925 — the LIVE event row's `espn.period` / `espn.game_clock`, i.e. what the
+   * header prints. Read only when no history row has ever carried a period or a
+   * clock. The caller passes it for a live event only; omitted, nothing changes.
+   */
+  eventLiveState?: { period?: string | null; game_clock?: string | null } | null,
 ): ActiveChartPoint | null {
   if (!historyData) return null;
 
@@ -2372,8 +2434,25 @@ export function computeLastChartPoint(
     }
     return { value: null, at: null, carried: false };
   };
-  const periodReading = newestEspnField((row) => row.period?.toString() ?? null);
-  const clockReading = newestEspnField((row) => row.game_clock ?? null);
+  let periodReading = newestEspnField((row) => row.period?.toString() ?? null);
+  let clockReading = newestEspnField((row) => row.game_clock ?? null);
+
+  // #925, second arm — NO ROW EVER NAMED THE INNING, BUT THE HEADER DID.
+  // `/events/15320300` (Astros v White Sox, MLB, live, 2026-09-29 21:26Z): all
+  // six `espn_history` rows carried `period: null` (the MLB win-prob rows name
+  // no inning), so the carry above had nothing to carry and the readout read
+  // "—" under a header reading "Top 1st" from `event.espn.period`. The event
+  // row is overwritten in place, so it is current — but it is not the reading
+  // AT this point's timestamp, so it is marked approximate ("~Top 1st") and
+  // left undated: the row stamps no observation time for its period. Only
+  // when history holds neither field, so an event clock never sits beside a
+  // history period it did not observe.
+  if (periodReading.value == null && clockReading.value == null && eventLiveState) {
+    const p = eventLiveState.period?.toString() || null;
+    const c = eventLiveState.game_clock || null;
+    if (p) periodReading = { value: p, at: null, carried: true };
+    if (c) clockReading = { value: c, at: null, carried: true };
+  }
 
   // #8967 — THE RESTING PLAY MUST BE THE PLAY THAT PRODUCED THE SCORE BESIDE IT.
   //

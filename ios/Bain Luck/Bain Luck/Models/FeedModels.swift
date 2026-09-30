@@ -145,18 +145,21 @@ nonisolated struct DiscoverInteractionEvent: Encodable, Sendable {
 nonisolated struct FeedBundle: Decodable, Sendable {
     let id: String
     let title: String
+    /// Existing backend context; absent on older cached bundles.
+    let sharedQuestion: String?
     let items: [FeedItem]
     let kind: String?
     let comparisonTheme: String?
 
     enum CodingKeys: String, CodingKey {
-        case id, title, items, kind, comparisonTheme
+        case id, title, sharedQuestion, items, kind, comparisonTheme
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
         title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
+        sharedQuestion = try c.decodeIfPresent(String.self, forKey: .sharedQuestion)
         items = try c.decodeIfPresent([FeedItem].self, forKey: .items) ?? []
         kind = try c.decodeIfPresent(String.self, forKey: .kind)
         comparisonTheme = try c.decodeIfPresent(String.self, forKey: .comparisonTheme)
@@ -165,9 +168,10 @@ nonisolated struct FeedBundle: Decodable, Sendable {
     /// Memberwise init so a sanitized bundle can be rebuilt with a lifecycle-
     /// admitted child list while preserving identity, title, kind, and comparison
     /// theme (C29 P2 — see `withItems`).
-    init(id: String, title: String, items: [FeedItem], kind: String?, comparisonTheme: String?) {
+    init(id: String, title: String, items: [FeedItem], kind: String?, comparisonTheme: String?, sharedQuestion: String? = nil) {
         self.id = id
         self.title = title
+        self.sharedQuestion = sharedQuestion
         self.items = items
         self.kind = kind
         self.comparisonTheme = comparisonTheme
@@ -179,7 +183,7 @@ nonisolated struct FeedBundle: Decodable, Sendable {
     /// every consumer derives its primary/category from the first ELIGIBLE child,
     /// never a stale raw first child.
     func withItems(_ newItems: [FeedItem]) -> FeedBundle {
-        FeedBundle(id: id, title: title, items: newItems, kind: kind, comparisonTheme: comparisonTheme)
+        FeedBundle(id: id, title: title, items: newItems, kind: kind, comparisonTheme: comparisonTheme, sharedQuestion: sharedQuestion)
     }
 }
 
@@ -196,6 +200,8 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
     let tournament: FeedTournamentData?
     let concept: FeedConceptData?
     let bundle: FeedBundle?
+    /// Optional #9653 producer card in the ordinary data envelope.
+    let collection: ContainerHubCollection?
 
     // Personalization fields
     let personalized: Bool?
@@ -215,6 +221,7 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
         // than the headline-composed fallback below, which would collide for two
         // bundles sharing a title.
         if let b = bundle { return "bundle-\(b.id)" }
+        if let c = collection { return "collection-\(c.slug)" }
         return [
             "feed",
             type,
@@ -253,7 +260,16 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
         multiplier = try c.decodeIfPresent(Double.self, forKey: .multiplier)
         personalizationReasons = try c.decodeIfPresent([String].self, forKey: .personalizationReasons)
 
-        if type == "event" {
+        // Optional/malformed collection data never prevents siblings decoding.
+        collection = type == "collection" ? (try? c.decodeIfPresent(ContainerHubCollection.self, forKey: .data)) : nil
+
+        if type == "collection" {
+            event = nil
+            futures = nil
+            tournament = nil
+            concept = nil
+            bundle = nil
+        } else if type == "event" {
             event = try c.decodeIfPresent(FeedEventData.self, forKey: .data)
             futures = nil
             tournament = nil
@@ -326,7 +342,8 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
         personalized: Bool?,
         baseScore: Double?,
         multiplier: Double?,
-        personalizationReasons: [String]?
+        personalizationReasons: [String]?,
+        collection: ContainerHubCollection? = nil
     ) {
         self.type = type
         self.score = score
@@ -338,6 +355,7 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
         self.tournament = tournament
         self.concept = concept
         self.bundle = bundle
+        self.collection = collection
         self.personalized = personalized
         self.baseScore = baseScore
         self.multiplier = multiplier
@@ -363,7 +381,8 @@ nonisolated struct FeedItem: Decodable, Identifiable, Sendable {
             personalized: personalized,
             baseScore: baseScore,
             multiplier: multiplier,
-            personalizationReasons: personalizationReasons
+            personalizationReasons: personalizationReasons,
+            collection: collection
         )
     }
 }
@@ -493,6 +512,9 @@ nonisolated struct FeedEventData: Decodable, Identifiable, Sendable {
     let status: String?
     let homeScore: Int?
     let awayScore: Int?
+    let blendFoldRevision: ServedFoldRevision?
+    let heroProbabilitySource: String?
+    let heroProbabilityObservedAt: String?
     let currentOdds: CurrentOdds?
     let openingOdds: OpeningOdds?
     /// #8622 — see `PrematchOdds`. Read through `PrematchReading.resolve`.
@@ -538,6 +560,11 @@ nonisolated struct FeedEventData: Decodable, Identifiable, Sendable {
     /// not select marquee finals" (the Sports feed is one), which reads as the
     /// ordinary window. Never coalesce an absent flag into the long one.
     let discoverMarqueeFinal: Bool?
+    /// #5811 — the venue CLOSED this contest with no winner (a draw, a no
+    /// contest, a split settlement), decoded from `venue_closed_no_winner`.
+    /// PRESENT ONLY WHEN TRUE: absent means "not established", never "still
+    /// going". Read it through ``EventState/showsVenueClosedNoWinner(_:venueSettled:venueClosedNoWinner:commenceTime:now:)``.
+    let venueClosedNoWinner: Bool?
 }
 
 /// What a card should draw in one participant's avatar slot, and how.
@@ -577,6 +604,8 @@ extension FeedEventData {
 /// Futures-market payload embedded inside a futures-type feed card.
 nonisolated struct FeedFuturesData: Decodable, Identifiable, Sendable {
     let id: Int
+    /// Fresh leaf identity; older cached feed bodies may omit it.
+    var externalId: String? = nil
     let name: String
     let sport: String?
     let sportName: String?
@@ -627,6 +656,8 @@ nonisolated struct FeedFuturesData: Decodable, Identifiable, Sendable {
     /// `price_observed_at` via the decoder's `.convertFromSnakeCase`; rendered by
     /// `PriceAgeMarkView`, dated by `SourceAge`.
     let priceObservedAt: String?
+    /// Complete raw-leg vector, including outcomes outside the displayed leaders.
+    var outcomeObservedAt: [String: String?]? = nil
     /// #2088: why this card's two printed percents do not total 100, decided once
     /// on the server (`graded_card.card_sum_reason`) and served by both futures
     /// serializers. Rendered as a sentence by `cardSumExplanation` (`CardSum.swift`).
@@ -754,8 +785,15 @@ nonisolated struct FeedFuturesOutcome: Decodable, Identifiable, Sendable {
     let id: Int
     let name: String
     let probability: Double?
+    let priceObservedAt: String?
     let rank: Int?
     let movement: Double?
+
+    init(id: Int, name: String, probability: Double?, rank: Int?, movement: Double?, priceObservedAt: String? = nil) {
+        self.id = id; self.name = name; self.probability = probability
+        self.rank = rank; self.movement = movement; self.priceObservedAt = priceObservedAt
+    }
+
 }
 
 // MARK: - Feed Lifecycle (shared terminal-state semantics)

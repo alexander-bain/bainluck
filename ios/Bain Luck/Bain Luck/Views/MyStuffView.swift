@@ -13,6 +13,7 @@ struct MyStuffView: View {
     @State private var predictionStats: PredictionStats?
     @State private var path = NavigationPath()
     @State private var showOnboarding = false
+    @State private var showPinManagement = false
     /// Width available to the iPad card grid, in points. 0 until the first
     /// geometry pass resolves, which `DiscoverMasonry.columnCount` reads as one
     /// column (#3709).
@@ -44,15 +45,29 @@ struct MyStuffView: View {
 
     var body: some View {
         NavigationStack(path: $path) {
-            Group {
-                if authManager.isLoading {
-                    ProgressView()
-                } else if !authManager.isAuthenticated {
-                    signInView
-                } else if authManager.user?.onboardingCompleted != true {
-                    onboardingPromptView
-                } else {
-                    teamFeedView
+            VStack(spacing: 0) {
+                Button {
+                    showPinManagement = true
+                } label: {
+                    HStack {
+                        Label("Manage pins", systemImage: "bookmark.fill")
+                        Spacer()
+                        Text("\(pinManager.savedPins.count)")
+                        Image(systemName: "chevron.right")
+                    }
+                    .padding()
+                }
+                .accessibilityIdentifier("myStuffManagePins")
+                Group {
+                    if authManager.isLoading {
+                        ProgressView()
+                    } else if !authManager.isAuthenticated {
+                        signInView
+                    } else if authManager.user?.onboardingCompleted != true {
+                        onboardingPromptView
+                    } else {
+                        teamFeedView
+                    }
                 }
             }
             .navigationTitle("My Stuff")
@@ -81,6 +96,9 @@ struct MyStuffView: View {
                 }
             }
             .navigationDestination(for: Route.self) { RouteDestination(route: $0) }
+        }
+        .sheet(isPresented: $showPinManagement) {
+            PinManagementView().environmentObject(pinManager)
         }
         .onAppear {
             AnalyticsService.trackScreen(name: "my_stuff", type: "my_stuff")

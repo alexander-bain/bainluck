@@ -3,6 +3,7 @@
 import { probColor, weatherProbability, type EventMarket } from "./data";
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import { SourceBadge } from "./SourceBadge";
+import MarketLink from "./MarketLink";
 
 export default function HurricaneTracker({ items }: { items: EventMarket[] }) {
   // Every number this card prints is a market price out of `items`. It used to
@@ -66,8 +67,10 @@ export default function HurricaneTracker({ items }: { items: EventMarket[] }) {
       {/* Market rows */}
       <div className="flex flex-col" style={{ gap: 0 }}>
         {marketRows.map((item: EventMarket, i: number) => (
-          <div
+          // Each row opens its market when the route names one (#9478).
+          <MarketLink
             key={i}
+            marketId={item.market_id}
             className="grid items-center"
             style={{
               gridTemplateColumns: "1fr auto auto",
@@ -154,7 +157,7 @@ export default function HurricaneTracker({ items }: { items: EventMarket[] }) {
                 rendered: item.prob,
               })}
             </span>
-          </div>
+          </MarketLink>
         ))}
       </div>
     </div>

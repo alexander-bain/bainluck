@@ -66,9 +66,12 @@ export function UpcomingGameCard({
   // (the last-word rule naming a city or a shared nickname); it needs a rule
   // change in `teamShortName`, not a call-site change here, and making it here
   // would put a third naming rule on the page.
+  // #5634 — the sport opens the football whole-name rule: "Union Berlin" on
+  // `/sport/soccer/.../team/union-berlin`, where this bar read "Berlin".
   const { home: teamShort, away: opponentShort } = teamShortNames(
     { name: teamName },
-    { name: opponent }
+    { name: opponent },
+    game.sport_key,
   );
 
   const teamScore = game.is_home ? game.home_score : game.away_score;

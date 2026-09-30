@@ -17,8 +17,18 @@
 import type { GameMarketsResponse } from "@/lib/api";
 import { buildMarketSection, type MarketSectionOptions } from "@/lib/otherMarketGroups";
 
-/** The event page mounts Additional Markets only at this many `other` rows. */
-export const SPECIAL_MARKETS_MIN_WIRE_ROWS = 3;
+/**
+ * The event page mounts Additional Markets at this many `other` rows.
+ *
+ * #9633: this was 3, a count of WIRE ROWS, while one yes/no question is two
+ * rows. `/events/15320530` (Tomic v Sun) served exactly one extra market, Set 1
+ * Winner, and the page drew no section for it. #5540 had already dropped
+ * `buildMarketSection`'s own floor for this case; the page gate never followed.
+ * Any row is enough now: the builder decides what it draws, and
+ * `SpecialEventMarkets` returns null when that is nothing (the hero's own
+ * moneyline, a market-map rung).
+ */
+export const SPECIAL_MARKETS_MIN_WIRE_ROWS = 1;
 
 export function specialMarketsDrawnIds(
   gameMarkets: Pick<GameMarketsResponse, "other" | "home_team" | "away_team"> | null | undefined,

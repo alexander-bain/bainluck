@@ -1,6 +1,7 @@
 import { type EventMarket, probColor, weatherProbability } from "./data";
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import { SourceBadge } from "./SourceBadge";
+import MarketLink from "./MarketLink";
 
 interface EventListProps {
   title: string;
@@ -54,8 +55,11 @@ export default function EventList({ title, sub, icon, items, accent }: EventList
       {/* Item rows */}
       <div className="flex flex-col" style={{ gap: 0 }}>
         {items.map((item, i) => (
-          <div
+          // Each row opens its market when the route names one (#9478).
+          <MarketLink
             key={i}
+            marketId={item.market_id}
+            className="block"
             style={{
               borderTop: i > 0 ? "1px solid var(--surface-border)" : undefined,
               padding: "10px 0",
@@ -139,7 +143,7 @@ export default function EventList({ title, sub, icon, items, accent }: EventList
                 </span>
               </div>
             </div>
-          </div>
+          </MarketLink>
         ))}
       </div>
     </div>

@@ -268,7 +268,9 @@ class TestTheSharedCallersDoNotMove:
     @pytest.mark.parametrize(
         "labels",
         [
-            ["Above 0.1%", "Above 0.2%", "Above 0.3%", "Above 0.5%"],
+            # A one-decimal ladder 0.1 apart ("Above 0.1%", "Above 0.2%", ...)
+            # is a print grid and is relabelled on purpose by #9558 — asserted
+            # in test_economics_cpi_print_grid_labels_9558.py. 0.2 apart it is not:
             ["Above -0.4%", "Above -0.2%", "Above 0.0%", "Above 0.2%"],
             ["Above 3%", "Above 4%", "Above 9.5%"],
             ["Above $100", "Above $105", "Above $110"],

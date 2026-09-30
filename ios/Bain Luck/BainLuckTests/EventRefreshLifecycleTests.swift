@@ -346,7 +346,7 @@ final class EventRefreshLifecycleTests: XCTestCase {
         EventDetailViewModel(
             eventId: 4242,
             client: client,
-            makeStreamHandle: handle.map { h in { _ in h } },
+            makeStreamHandle: { _ in handle ?? FakeHandle() },
             now: { [anchor] in anchor.timeIntervalSince1970 },
             sleep: { [ticker] seconds in await ticker.sleep(seconds) }
         )

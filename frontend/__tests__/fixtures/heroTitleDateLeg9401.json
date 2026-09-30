@@ -1,0 +1,787 @@
+{
+ "_source": "GET https://api.bainluck.com/api/feed?limit=60, 2026-09-28 ~16:05Z, edition 9f854eb85a59d150, items[5] verbatim",
+ "middle_east": {
+  "type": "bundle",
+  "score": 95.0,
+  "reason": "Where is the Middle East conflict heading?",
+  "headline": "Middle East",
+  "data": {
+   "id": "theme:story:middle_east_conflict:61318328-3484764-113397-60517165-60634731-2162377",
+   "title": "Middle East",
+   "kind": "theme",
+   "story_key": "story:middle_east_conflict",
+   "shared_question": "Where is the Middle East conflict heading?",
+   "item_count": 6,
+   "member_ids": [
+    61318328,
+    3484764,
+    113397,
+    60517165,
+    60634731,
+    2162377
+   ],
+   "items": [
+    {
+     "type": "futures",
+     "score": 95,
+     "reason": "US x Iran ceasefire continues through October 31: 56% chance, down 17.5 points since Sep 17",
+     "headline": "Down 17.5 points since Sep 17",
+     "context_summary": "56% chance, down 17.5 points since Sep 17",
+     "data": {
+      "id": 61318328,
+      "name": "US x Iran ceasefire continues through October 31?",
+      "sport": null,
+      "sport_name": null,
+      "llm_sport_category": "geopolitics",
+      "source": "polymarket",
+      "source_count": 1,
+      "sources": [
+       "polymarket"
+      ],
+      "market_tier": 2,
+      "market_type": "container_member",
+      "status": "open",
+      "resolution_date": "2026-10-31T23:59:00+00:00",
+      "price_observed_at": "2026-09-28T15:50:22+00:00",
+      "top_outcomes": [
+       {
+        "id": 230832789,
+        "name": "Yes",
+        "probability": 0.555,
+        "rank": 1,
+        "movement": null,
+        "rendered_percent": 56
+       },
+       {
+        "id": 230832790,
+        "name": "No",
+        "probability": 0.445,
+        "rank": 2,
+        "movement": null,
+        "rendered_percent": 44
+       }
+      ],
+      "card_sum_reason": null,
+      "outcome_count": 2,
+      "canonical_market_key": null,
+      "group_id": "polymarket:1038648",
+      "group_type": "polymarket_sub_market",
+      "discover_card": {
+       "suggested_format": "binary_probability",
+       "bundle_candidate": false,
+       "comparison_theme": null,
+       "threshold_points": [],
+       "ladder_treatment_refused": false,
+       "field_is_a_race": true,
+       "distribution_outcomes": [
+        {
+         "label": "Yes",
+         "probability": 0.555,
+         "movement": null
+        },
+        {
+         "label": "No",
+         "probability": 0.445,
+         "movement": null
+        }
+       ],
+       "remaining_outcome_count": 0,
+       "qa_signals": [],
+       "public_source_disagreement": false,
+       "reasons": []
+      },
+      "image_url": "https://images.pexels.com/photos/36592263/pexels-photo-36592263.jpeg?auto=compress&cs=tinysrgb&h=650&w=940",
+      "image_width": 859,
+      "image_height": 650,
+      "hook_description": null,
+      "temporal_badge": null,
+      "confidence_tier": "low",
+      "confidence_score": 0.3529,
+      "confidence_signals": {
+       "has_closing_line": false
+      },
+      "discover_llm": {
+       "topic": "geopolitics",
+       "subtopic": "ceasefire",
+       "archetype": "other",
+       "audience_scope": "mainstream",
+       "salience_score": 4,
+       "junk_flags": [],
+       "comparison_axes": []
+      },
+      "market_tags": [
+       "category:game_prop",
+       "market_status:open",
+       "source:polymarket",
+       "tier:2"
+      ]
+     }
+    },
+    {
+     "type": "futures",
+     "score": 93,
+     "reason": "",
+     "headline": null,
+     "context_summary": "",
+     "data": {
+      "id": 3484764,
+      "name": "Iran leadership change?",
+      "sport": null,
+      "sport_name": null,
+      "llm_sport_category": "politics",
+      "source": "polymarket",
+      "source_count": 1,
+      "sources": [
+       "polymarket"
+      ],
+      "market_tier": 2,
+      "market_type": "field",
+      "status": "open",
+      "resolution_date": "2027-07-01T03:59:00+00:00",
+      "price_observed_at": "2026-09-28T15:29:12+00:00",
+      "top_outcomes": [
+       {
+        "id": 185792231,
+        "name": "June 30, 2027",
+        "probability": 0.225,
+        "rank": 1,
+        "movement": null,
+        "rendered_percent": 23
+       },
+       {
+        "id": 20532981,
+        "name": "December 31",
+        "probability": 0.105,
+        "rank": 2,
+        "movement": null,
+        "rendered_percent": 11
+       },
+       {
+        "id": 230878690,
+        "name": "November 30",
+        "probability": 0.055,
+        "rank": 3,
+        "movement": null,
+        "rendered_percent": 6
+       }
+      ],
+      "card_sum_reason": null,
+      "outcome_count": 14,
+      "canonical_market_key": null,
+      "group_id": "polymarket:255195",
+      "group_type": "polymarket_event",
+      "discover_card": {
+       "suggested_format": "threshold_heatmap",
+       "bundle_candidate": false,
+       "comparison_theme": null,
+       "threshold_points": [
+        {
+         "source": "date_bucket",
+         "label": "September 30",
+         "value": 20260930,
+         "unit": "date",
+         "direction": "before",
+         "probability": 0.0035,
+         "movement": null
+        },
+        {
+         "source": "date_bucket",
+         "label": "October 31",
+         "value": 20261031,
+         "unit": "date",
+         "direction": "before",
+         "probability": 0.0215,
+         "movement": null
+        },
+        {
+         "source": "date_bucket",
+         "label": "November 30",
+         "value": 20261130,
+         "unit": "date",
+         "direction": "before",
+         "probability": 0.055,
+         "movement": null
+        },
+        {
+         "source": "date_bucket",
+         "label": "December 31",
+         "value": 20261231,
+         "unit": "date",
+         "direction": "before",
+         "probability": 0.105,
+         "movement": null
+        },
+        {
+         "source": "date_bucket",
+         "label": "June 30, 2027",
+         "value": 20270630,
+         "unit": "date",
+         "direction": "before",
+         "probability": 0.225,
+         "movement": null
+        }
+       ],
+       "ladder_treatment_refused": false,
+       "field_is_a_race": true,
+       "distribution_outcomes": [
+        {
+         "label": "June 30, 2027",
+         "probability": 0.225,
+         "movement": null
+        },
+        {
+         "label": "December 31",
+         "probability": 0.105,
+         "movement": null
+        },
+        {
+         "label": "November 30",
+         "probability": 0.055,
+         "movement": null
+        },
+        {
+         "label": "October 31",
+         "probability": 0.0215,
+         "movement": null
+        },
+        {
+         "label": "September 30",
+         "probability": 0.0035,
+         "movement": null
+        }
+       ],
+       "remaining_outcome_count": 0,
+       "qa_signals": [],
+       "public_source_disagreement": false,
+       "reasons": [
+        "threshold_values"
+       ]
+      },
+      "image_url": "https://images.pexels.com/photos/36167546/pexels-photo-36167546.jpeg?auto=compress&cs=tinysrgb&h=350",
+      "image_width": 525,
+      "image_height": 350,
+      "hook_description": null,
+      "temporal_badge": null,
+      "confidence_tier": "low",
+      "confidence_score": 0.3529,
+      "confidence_signals": {
+       "has_closing_line": false
+      },
+      "market_tags": [
+       "category:conference",
+       "market_status:open",
+       "source:polymarket",
+       "sport:politics",
+       "tier:2"
+      ]
+     }
+    },
+    {
+     "type": "futures",
+     "score": 90,
+     "reason": "Prime Minister of Israel after the next election resolves within a month, Gadi Eizenkot leads at 52%",
+     "headline": "Gadi Eizenkot leads; resolves within a month",
+     "context_summary": "Gadi Eizenkot leads at 52%; resolves within a month",
+     "data": {
+      "id": 113397,
+      "name": "Prime Minister of Israel after the next election?",
+      "sport": null,
+      "sport_name": null,
+      "llm_sport_category": "politics",
+      "source": "polymarket",
+      "source_count": 2,
+      "sources": [
+       "kalshi",
+       "polymarket"
+      ],
+      "market_tier": 2,
+      "market_type": "field",
+      "status": "open",
+      "resolution_date": "2026-10-27T23:59:00+00:00",
+      "price_observed_at": "2026-09-28T15:50:17+00:00",
+      "top_outcomes": [
+       {
+        "id": 1629438,
+        "name": "Gadi Eizenkot",
+        "probability": 0.5155,
+        "rank": 1,
+        "movement": null,
+        "rendered_percent": 52
+       },
+       {
+        "id": 1629436,
+        "name": "Benjamin Netanyahu",
+        "probability": 0.295,
+        "rank": 2,
+        "movement": null,
+        "rendered_percent": 30
+       },
+       {
+        "id": 1629437,
+        "name": "Naftali Bennett",
+        "probability": 0.125,
+        "rank": 3,
+        "movement": null,
+        "rendered_percent": 13
+       }
+      ],
+      "card_sum_reason": null,
+      "outcome_count": 28,
+      "canonical_market_key": "politics:US:championship:2026",
+      "group_id": "polymarket:81557",
+      "group_type": "negrisk",
+      "discover_card": {
+       "suggested_format": "outcome_distribution",
+       "bundle_candidate": false,
+       "comparison_theme": null,
+       "threshold_points": [],
+       "ladder_treatment_refused": false,
+       "field_is_a_race": true,
+       "distribution_outcomes": [
+        {
+         "label": "Gadi Eizenkot",
+         "probability": 0.5155,
+         "movement": null
+        },
+        {
+         "label": "Benjamin Netanyahu",
+         "probability": 0.295,
+         "movement": null
+        },
+        {
+         "label": "Naftali Bennett",
+         "probability": 0.125,
+         "movement": null
+        },
+        {
+         "label": "Avigdor Lieberman",
+         "probability": 0.0265,
+         "movement": null
+        },
+        {
+         "label": "Ofer Winter",
+         "probability": 0.013,
+         "movement": null
+        },
+        {
+         "label": "Itamar Ben Gvir",
+         "probability": 0.0055,
+         "movement": null
+        },
+        {
+         "label": "Yossi Cohen",
+         "probability": 0.0025,
+         "movement": null
+        },
+        {
+         "label": "Yair Golan",
+         "probability": 0.0025,
+         "movement": null
+        }
+       ],
+       "remaining_outcome_count": 12,
+       "qa_signals": [
+        "multi_source_consistency_check"
+       ],
+       "public_source_disagreement": false,
+       "reasons": [
+        "multi_outcome_distribution"
+       ]
+      },
+      "image_url": "https://images.pexels.com/photos/34530717/pexels-photo-34530717.jpeg?auto=compress&cs=tinysrgb&h=350",
+      "image_width": 525,
+      "image_height": 350,
+      "hook_description": null,
+      "temporal_badge": null,
+      "confidence_tier": "high",
+      "confidence_score": 0.8235,
+      "confidence_signals": {
+       "has_closing_line": false
+      },
+      "discover_llm": {
+       "topic": "politics",
+       "subtopic": "elections",
+       "archetype": "other",
+       "audience_scope": "mainstream",
+       "salience_score": 4,
+       "junk_flags": [],
+       "comparison_axes": []
+      },
+      "market_tags": [
+       "category:conference",
+       "market_status:open",
+       "source:polymarket",
+       "sport:politics",
+       "tier:2"
+      ]
+     }
+    },
+    {
+     "type": "futures",
+     "score": 81,
+     "reason": "Will Iran target Iraq resolving within a week",
+     "headline": "Will Iran target Iraq resolving soon",
+     "context_summary": "Resolves within a week",
+     "data": {
+      "id": 60517165,
+      "name": "Will Iran target Iraq?",
+      "sport": null,
+      "sport_name": null,
+      "llm_sport_category": "geopolitics",
+      "source": "polymarket",
+      "source_count": 1,
+      "sources": [
+       "polymarket"
+      ],
+      "market_tier": 2,
+      "market_type": "field",
+      "status": "open",
+      "resolution_date": "2026-09-30T20:59:00+00:00",
+      "price_observed_at": "2026-09-28T15:50:21+00:00",
+      "top_outcomes": [
+       {
+        "id": 236810224,
+        "name": "October 31",
+        "probability": 0.645,
+        "rank": 1,
+        "movement": null,
+        "rendered_percent": 65
+       },
+       {
+        "id": 236810225,
+        "name": "September 30",
+        "probability": 0.395,
+        "rank": 2,
+        "movement": null,
+        "rendered_percent": 40
+       }
+      ],
+      "card_sum_reason": "independent_prices",
+      "outcome_count": 3,
+      "canonical_market_key": null,
+      "group_id": "polymarket:989777",
+      "group_type": "polymarket_event",
+      "discover_card": {
+       "suggested_format": "threshold_heatmap",
+       "bundle_candidate": false,
+       "comparison_theme": null,
+       "threshold_points": [
+        {
+         "source": "date_bucket",
+         "label": "September 30",
+         "value": 20000930,
+         "unit": "date",
+         "direction": "before",
+         "probability": 0.395,
+         "movement": null
+        },
+        {
+         "source": "date_bucket",
+         "label": "October 31",
+         "value": 20001031,
+         "unit": "date",
+         "direction": "before",
+         "probability": 0.645,
+         "movement": null
+        }
+       ],
+       "ladder_treatment_refused": false,
+       "field_is_a_race": false,
+       "distribution_outcomes": [
+        {
+         "label": "October 31",
+         "probability": 0.645,
+         "movement": null
+        },
+        {
+         "label": "September 30",
+         "probability": 0.395,
+         "movement": null
+        }
+       ],
+       "remaining_outcome_count": 0,
+       "qa_signals": [],
+       "public_source_disagreement": false,
+       "reasons": [
+        "threshold_values"
+       ]
+      },
+      "image_url": null,
+      "image_width": null,
+      "image_height": null,
+      "hook_description": null,
+      "temporal_badge": null,
+      "confidence_tier": "low",
+      "confidence_score": 0.3529,
+      "confidence_signals": {
+       "has_closing_line": false
+      },
+      "market_tags": [
+       "category:conference",
+       "market_status:open",
+       "source:polymarket",
+       "tier:2"
+      ]
+     }
+    },
+    {
+     "type": "futures",
+     "score": 81,
+     "reason": "Will Iran target an Arab country by September 30, 2026 resolving within a week",
+     "headline": "Will Iran target an Arab country by September 30, 2026 resolving soon",
+     "context_summary": "Resolves within a week",
+     "data": {
+      "id": 60634731,
+      "name": "Will Iran target an Arab country by September 30, 2026?",
+      "sport": null,
+      "sport_name": null,
+      "llm_sport_category": "geopolitics",
+      "source": "polymarket",
+      "source_count": 1,
+      "sources": [
+       "polymarket"
+      ],
+      "market_tier": 2,
+      "market_type": "field",
+      "status": "open",
+      "resolution_date": "2026-09-30T20:59:00+00:00",
+      "price_observed_at": "2026-09-28T15:50:21+00:00",
+      "top_outcomes": [
+       {
+        "id": 226929896,
+        "name": "October 31",
+        "probability": 0.635,
+        "rank": 1,
+        "movement": null,
+        "rendered_percent": 64
+       },
+       {
+        "id": 226829198,
+        "name": "September 30",
+        "probability": 0.285,
+        "rank": 2,
+        "movement": null,
+        "rendered_percent": 29
+       }
+      ],
+      "card_sum_reason": "independent_prices",
+      "outcome_count": 5,
+      "canonical_market_key": null,
+      "group_id": "polymarket:995996",
+      "group_type": "polymarket_sub_market",
+      "discover_card": {
+       "suggested_format": "threshold_heatmap",
+       "bundle_candidate": false,
+       "comparison_theme": null,
+       "threshold_points": [
+        {
+         "source": "date_bucket",
+         "label": "September 30",
+         "value": 20000930,
+         "unit": "date",
+         "direction": "before",
+         "probability": 0.285,
+         "movement": null
+        },
+        {
+         "source": "date_bucket",
+         "label": "October 31",
+         "value": 20001031,
+         "unit": "date",
+         "direction": "before",
+         "probability": 0.635,
+         "movement": null
+        }
+       ],
+       "ladder_treatment_refused": false,
+       "field_is_a_race": true,
+       "distribution_outcomes": [
+        {
+         "label": "October 31",
+         "probability": 0.635,
+         "movement": null
+        },
+        {
+         "label": "September 30",
+         "probability": 0.285,
+         "movement": null
+        }
+       ],
+       "remaining_outcome_count": 0,
+       "qa_signals": [],
+       "public_source_disagreement": false,
+       "reasons": [
+        "threshold_values"
+       ]
+      },
+      "image_url": null,
+      "image_width": null,
+      "image_height": null,
+      "hook_description": null,
+      "temporal_badge": null,
+      "confidence_tier": "low",
+      "confidence_score": 0.3529,
+      "confidence_signals": {
+       "has_closing_line": false
+      },
+      "market_tags": [
+       "category:game_prop",
+       "market_status:open",
+       "source:polymarket",
+       "tier:2"
+      ]
+     }
+    },
+    {
+     "type": "futures",
+     "score": 81,
+     "reason": "Mojtaba Khamenei (87%) leads Iran leader end of 2026?",
+     "headline": "Mojtaba Khamenei leads at 87%",
+     "context_summary": "Mojtaba Khamenei leads at 87%",
+     "data": {
+      "id": 2162377,
+      "name": "Iran leader end of 2026?",
+      "sport": null,
+      "sport_name": null,
+      "llm_sport_category": "geopolitics",
+      "source": "polymarket",
+      "source_count": 1,
+      "sources": [
+       "polymarket"
+      ],
+      "market_tier": 2,
+      "market_type": "field",
+      "status": "open",
+      "resolution_date": "2026-12-31T00:00:00+00:00",
+      "price_observed_at": "2026-09-28T15:29:09+00:00",
+      "top_outcomes": [
+       {
+        "id": 12531520,
+        "name": "Mojtaba Khamenei",
+        "probability": 0.8745,
+        "rank": 1,
+        "movement": null,
+        "rendered_percent": 87
+       },
+       {
+        "id": 12531508,
+        "name": "No Head of State",
+        "probability": 0.0475,
+        "rank": 2,
+        "movement": null,
+        "rendered_percent": 5
+       },
+       {
+        "id": 12531507,
+        "name": "Reza Pahlavi",
+        "probability": 0.0245,
+        "rank": 3,
+        "movement": null,
+        "rendered_percent": 2
+       }
+      ],
+      "card_sum_reason": null,
+      "outcome_count": 123,
+      "canonical_market_key": null,
+      "group_id": "polymarket:237598",
+      "group_type": "negrisk",
+      "discover_card": {
+       "suggested_format": "outcome_distribution",
+       "bundle_candidate": false,
+       "comparison_theme": null,
+       "threshold_points": [],
+       "ladder_treatment_refused": false,
+       "field_is_a_race": true,
+       "distribution_outcomes": [
+        {
+         "label": "Mojtaba Khamenei",
+         "probability": 0.8745,
+         "movement": null
+        },
+        {
+         "label": "No Head of State",
+         "probability": 0.0475,
+         "movement": null
+        },
+        {
+         "label": "Reza Pahlavi",
+         "probability": 0.0245,
+         "movement": null
+        },
+        {
+         "label": "Mahmoud Ahmadinejad",
+         "probability": 0.0125,
+         "movement": null
+        },
+        {
+         "label": "Alireza Arafi",
+         "probability": 0.0075,
+         "movement": null
+        },
+        {
+         "label": "Mohammad Pakpour",
+         "probability": 0.006,
+         "movement": null
+        },
+        {
+         "label": "Hassan Rouhani",
+         "probability": 0.0055,
+         "movement": null
+        },
+        {
+         "label": "Masoud Pezeshkian",
+         "probability": 0.0045,
+         "movement": null
+        }
+       ],
+       "remaining_outcome_count": 115,
+       "qa_signals": [],
+       "public_source_disagreement": false,
+       "reasons": [
+        "multi_outcome_distribution"
+       ]
+      },
+      "image_url": "https://images.pexels.com/photos/11860837/pexels-photo-11860837.jpeg?auto=compress&cs=tinysrgb&h=350",
+      "image_width": 525,
+      "image_height": 350,
+      "hook_description": null,
+      "temporal_badge": null,
+      "confidence_tier": "moderate",
+      "confidence_score": 0.6471,
+      "confidence_signals": {
+       "has_closing_line": false
+      },
+      "market_tags": [
+       "category:conference",
+       "market_status:open",
+       "source:polymarket",
+       "tier:2"
+      ]
+     }
+    }
+   ],
+   "debug_bundles": {
+    "grouped_by": "story_key",
+    "story_key": "story:middle_east_conflict",
+    "title_source": "authored",
+    "question_source": "authored",
+    "member_ids": [
+     61318328,
+     3484764,
+     113397,
+     60517165,
+     60634731,
+     2162377
+    ],
+    "member_names": [
+     "US x Iran ceasefire continues through October 31?",
+     "Iran leadership change?",
+     "Prime Minister of Israel after the next election?",
+     "Will Iran target Iraq?",
+     "Will Iran target an Arab country by September 30, 2026?",
+     "Iran leader end of 2026?"
+    ]
+   }
+  }
+ }
+}

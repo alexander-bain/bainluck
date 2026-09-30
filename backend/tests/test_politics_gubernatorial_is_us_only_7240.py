@@ -172,10 +172,11 @@ def test_unshaped_us_governor_titles_are_untouched(name):
         # `nominee` (presidential) is matched before `governor`, so this Texas
         # race has never been in the Gubernatorial section.
         ("Texas Democratic Governor nominee?", "presidential"),
-        # Both keywords here are plural — `\bgovernor\b` does not match
-        # "governorships" and `\bmidterm\b` does not match "midterms" — so
-        # nothing claims it.
-        ("Who will hold more governorships after the midterms?", "other"),
+        # Both keywords here are plural, and until #9193 neither list read the
+        # plural, so nothing claimed it ("other"). #9193 measured the widening
+        # over every open politics row and made both plural-aware, with the
+        # governor arm tried first: it is a governor question.
+        ("Who will hold more governorships after the midterms?", "gubernatorial"),
     ],
 )
 def test_titles_this_rule_says_nothing_about_keep_their_prior_theme(name, unchanged_theme):

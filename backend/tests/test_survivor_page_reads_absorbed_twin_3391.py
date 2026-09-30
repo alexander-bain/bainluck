@@ -370,7 +370,8 @@ class TestTheRoutesAreWired:
         src = inspect.getsource(get_event)
         assert "absorbed = await serve_fold_absorbed_rows(db, event)" in src
         assert "folded_series_event_ids(db, event_id, absorbed)" in src
-        assert "folded_probability_sources(db, event, absorbed)" in src
+        # #9051: the route reads the fold with its revision vector.
+        assert "folded_probability_sources_with_revision(db, event, absorbed)" in src
         assert "db, event, event_sport_key, absorbed" in src
 
     def test_the_history_route(self):
@@ -379,7 +380,8 @@ class TestTheRoutesAreWired:
         src = inspect.getsource(get_event_odds_history)
         assert "absorbed = await serve_fold_absorbed_rows(db, event)" in src
         assert "folded_series_event_ids(db, event_id, absorbed)" in src
-        assert "folded_probability_sources(db, event, absorbed)" in src
+        # #9051: the route reads the fold with its revision vector.
+        assert "folded_probability_sources_with_revision(db, event, absorbed)" in src
 
     def test_the_game_markets_builder(self):
         from app.routes.events import _build_game_markets

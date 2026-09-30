@@ -5,7 +5,7 @@ import type { FuturesOutcomeHistory } from "@/lib/types";
 import { axisTimeFormat, formatAxisTime } from "@/lib/chartAxisTimeLabel";
 import { chartYTicks } from "@/lib/chartCeiling";
 import { canZoomSeries, computeZoomBound, resolveYAxisMax } from "@/lib/chartZoom";
-import { anchorScrollLeft, edgeOverflowFor } from "@/lib/chartScroll";
+import { anchorScrollLeft, edgeOverflowFor, seriesMovementMarks } from "@/lib/chartScroll";
 import { priceCadenceNote } from "@/lib/priceCadenceCopy";
 import { seriesFreshness } from "@/lib/seriesFreshness";
 import { chartSeriesPath } from "@/lib/chartSeriesPath";
@@ -28,6 +28,13 @@ import {
 const DEFAULT_COLORS = SERIES_COLORS;
 const GOLD_COLORS = SERIES_COLORS_GOLD;
 const GREEN_COLORS = SERIES_COLORS_GREEN;
+
+// The plot frame, in viewBox units. Module-level so the scroll anchor (#9867)
+// positions movement on exactly the x axis the lines are drawn on.
+const FULL_CHART_WIDTH = 800;
+const MINI_CHART_WIDTH = 400;
+const FULL_PADDING = { top: 20, right: 20, bottom: 40, left: 50 };
+const MINI_PADDING = { top: 4, right: 4, bottom: 4, left: 4 };
 
 interface FuturesChartProps {
   historyData: FuturesOutcomeHistory[];
@@ -247,7 +254,15 @@ export function FuturesChart({
     // edge, not ahead of the right one. `settled` is in the deps because the
     // page can hydrate before resolution is known, and a chart that anchored
     // while it still believed itself live must re-anchor when it learns.
-    el.scrollLeft = anchorScrollLeft(el, { settled });
+    // #9867: and "behind" is wherever its lines moved — see `anchorScrollLeft`.
+    const movement = settled
+      ? seriesMovementMarks(displayedOutcomes, {
+          width: FULL_CHART_WIDTH,
+          left: FULL_PADDING.left,
+          right: FULL_PADDING.right,
+        })
+      : undefined;
+    el.scrollLeft = anchorScrollLeft(el, { settled, movement });
     syncEdgeOverflow();
     // A rotate or resize changes clientWidth, and with it whether either edge
     // still has plot behind it.
@@ -325,11 +340,9 @@ export function FuturesChart({
   const isZoomed = canZoom && zoomed;
   maxProb = resolveYAxisMax({ dataMax, fixedYAxis, zoomed, allowZoom, mini, fieldCeiling });
 
-  const chartWidth = mini ? 400 : 800;
+  const chartWidth = mini ? MINI_CHART_WIDTH : FULL_CHART_WIDTH;
   const effectiveHeight = height ?? (mini ? 80 : 200);
-  const padding = mini
-    ? { top: 4, right: 4, bottom: 4, left: 4 }
-    : { top: 20, right: 20, bottom: 40, left: 50 };
+  const padding = mini ? MINI_PADDING : FULL_PADDING;
   const innerWidth = chartWidth - padding.left - padding.right;
   const innerHeight = effectiveHeight - padding.top - padding.bottom;
 

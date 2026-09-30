@@ -467,3 +467,14 @@ export function renderedLeaderPercent(
   if (index < 0) return null;
   return renderedCardPercents(printed.map((o) => o.probability))[index] ?? null;
 }
+
+/**
+ * #9321: labels for a chart/blend carrying one probability and its complement.
+ * Reconstruct the opposite side AFTER scaling, as the scalar contract does.
+ * Bare `1 - .445` is .5549999999999999 and prints 55 instead of the server's
+ * .555 -> 56. This changes display operands only, never the observed value.
+ * Independent served pairs must keep using renderedDuelPercents.
+ */
+export function renderedComplementPercents(home: number): Array<number | null> {
+  return renderedDuelPercents((1000 - home * 1000) / 1000, home);
+}

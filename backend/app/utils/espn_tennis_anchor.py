@@ -392,6 +392,138 @@ def anchor_receipt(
     }
 
 
+#: The statuses a replaced-player hold takes a row out of (#8288). A settled row
+#: is never touched: it already stopped claiming the match is to come or under
+#: way, and un-settling it is the authority's job, not a refusal's.
+REPLACED_PLAYER_HOLD_FROM = frozenset({"live", "scheduled"})
+
+
+def replaced_player(
+    *,
+    our_status: Any,
+    our_espn_id: Any,
+    ours: list[str],
+    receipt: dict[str, Any],
+    competition: Optional[dict[str, Any]],
+) -> Optional[str]:
+    """The player ESPN took out of THIS row's own competition, or ``None``. (#8288)
+
+    ═══ A WITHDRAWAL UNDER THE SAME COMPETITION ID ═══
+
+    When a player withdraws before play, ESPN fills the slot with a lucky loser
+    and keeps the competition id. Measured 2026-09-30: ``15320690`` Marcinko v
+    Frech held ``espn_id 184289`` and read LIVE from 02:00Z with no score, while
+    ``184289`` had become Frech v Jacquemot and Kalshi had halted both legs. The
+    anchor pass refuses the row, correctly, as ``no-candidate`` (writing
+    Jacquemot's result onto it would invent one), and until now it stopped
+    there. Nothing else says the match will not be played, so the row sat LIVE
+    until the wall-clock net retired it hours later.
+
+    Every clause has to hold, and each one fails closed:
+
+    * the row is still ``live`` or ``scheduled``;
+    * the row holds an ESPN id and ``competition`` is THAT id, read on this
+      pass. The id was stamped when both our players were in it, so it is the
+      row's own record of the fixture, not a lookalike found by searching;
+    * the receipt refused as ``no-candidate`` with exactly ONE absent player,
+      so that player is missing from the whole tournament window, not just
+      from this competition;
+    * the competition still has two real, named players (no placeholder, no
+      half-read pairing); and
+    * our other player is in it and the absent one is not.
+
+    A spelling drift cannot pass: it would have to break ``names_agree`` for
+    one name only, on a pairing that name already matched when it was stamped.
+    """
+    if our_status not in REPLACED_PLAYER_HOLD_FROM:
+        return None
+    return _replaced_in_own_competition(
+        our_espn_id=our_espn_id, ours=ours, receipt=receipt,
+        competition=competition,
+    )
+
+
+#: The tag a withdrawn row carries once it gives its ESPN id back (#9797). The
+#: suffix is the id it held, so the release is readable off the row and a
+#: restore needs nothing but the row itself.
+ESPN_ID_RELEASED_TAG_PREFIX = "provenance:espn-id-released:"
+
+
+def released_espn_id(
+    *,
+    our_status: Any,
+    our_espn_id: Any,
+    ours: list[str],
+    receipt: dict[str, Any],
+    competition: Optional[dict[str, Any]],
+) -> Optional[str]:
+    """The ESPN id a withdrawn row must give back, or ``None``. (#9797)
+
+    ═══ THE HOLD STOPPED THE ROW; THE ID STILL BLOCKED THE MATCH ═══
+
+    :func:`replaced_player` takes a withdrawn match off the schedule and, on
+    purpose, leaves its ``espn_id`` alone. But ESPN keeps the competition id for
+    the lucky loser, so that id now names a DIFFERENT match, one we also hold.
+    ``stamp_espn_id_if_unheld`` refuses that match every pass while the
+    withdrawn row keeps the id, so the authority never reaches the row that is
+    actually going to be played. Measured 2026-09-30 10:4xZ: all four rows the
+    #8288 hold had suspended still held their competition's id. ``15320486``
+    Musetti v Fery held ``183485``, which ESPN lists as Fery v Faria at
+    ``02:00Z``, and our Fery v Faria row (``15322144``) printed a start twelve
+    hours late with no anchor to correct it.
+
+    The evidence is exactly the hold's, minus the status clause, so it can never
+    release an id the hold would not have acted on. Status matters only one
+    way: a SETTLED row keeps its id. Its result was written through that id, and
+    un-anchoring a finished match is a question about the result, not about a
+    draw change. ``suspended`` is released, because that is where the hold
+    leaves the row, and a pass that runs after the hold must still be able to
+    release it.
+    """
+    if our_status in SETTLED_STATUSES:
+        return None
+    if _replaced_in_own_competition(
+        our_espn_id=our_espn_id, ours=ours, receipt=receipt,
+        competition=competition,
+    ) is None:
+        return None
+    return str(our_espn_id)
+
+
+def _replaced_in_own_competition(
+    *,
+    our_espn_id: Any,
+    ours: list[str],
+    receipt: dict[str, Any],
+    competition: Optional[dict[str, Any]],
+) -> Optional[str]:
+    """The evidence :func:`replaced_player` and :func:`released_espn_id` share.
+
+    Every clause but the status one, which is where the two rules differ.
+    """
+    if not our_espn_id or competition is None:
+        return None
+    if str(competition.get("espn_competition_id")) != str(our_espn_id):
+        return None
+    if receipt.get("reason") != REJECT_NO_CANDIDATE:
+        return None
+    absent_players = receipt.get("absent_players") or []
+    if len(absent_players) != 1 or len(ours) != 2 or not all(ours):
+        return None
+    if not anchorable_competitions([competition]):
+        return None
+    absent = absent_players[0]
+    if absent not in ours:
+        return None
+    present = ours[1] if ours[0] == absent else ours[0]
+    theirs = competition["players"]
+    if any(names_agree(absent, name) for name in theirs):
+        return None
+    if sum(1 for name in theirs if names_agree(present, name)) != 1:
+        return None
+    return absent
+
+
 #: ESPN slate state -> the ``events.status`` it authorises. ``in_progress``
 #: already has lane1/054's ``play_refutes_upcoming`` folded into it upstream in
 #: ``scoreboard_competitions``, so a match ESPN calls ``pre`` while scoring its
@@ -457,16 +589,13 @@ def state_contradiction(
         espn_state == "upcoming"
         and our_status == "live"
         and competition is not None
-        and now is not None
-        and not competition.get("start_is_tbd")
+        and espn_clock_says_not_started(competition, now)
     ):
-        espn_start = parse_espn_moment(competition.get("date"))
-        if espn_start is not None and espn_start > now:
-            # WE SAY LIVE, ESPN SAYS IT STARTS LATER. Reported only on a real
-            # future start — an `upcoming` whose clock has passed is a
-            # scoreboard that has not caught up, and calling that a
-            # contradiction would make the needle cry wolf every session.
-            return "in-play-but-not-started"
+        # WE SAY LIVE, ESPN SAYS IT STARTS LATER — a real start or a TBD day
+        # still ahead (#9756). An `upcoming` whose clock has passed is a
+        # scoreboard that has not caught up, and calling that a contradiction
+        # would make the needle cry wolf every session.
+        return "in-play-but-not-started"
     return None
 
 
@@ -499,6 +628,37 @@ def parse_espn_moment(value: Any) -> Optional[Any]:
     except ValueError:
         return None
     return moment if moment.tzinfo is not None else None
+
+
+def espn_clock_says_not_started(competition: dict[str, Any], now: Any) -> bool:
+    """Does an ``upcoming`` competition's own clock put play after ``now``?
+
+    The one question the demotion, the hold stamp and the contradiction needle
+    all ask, answered once so the three cannot drift apart.
+
+    ═══ A TBD PLACEHOLDER IS NOT A START, BUT IT IS STILL A DAY (#9756) ═══
+
+    ESPN writes an unscheduled fixture at midnight ET of the day it is listed
+    for (``2026-10-01T04:00Z`` = "some time on Oct 1"). That instant must never
+    be *written* as a start (#3829/#4344, the ``commence_time`` guard below),
+    but while it is still in the FUTURE it says something true: ESPN has put
+    the match on a later day, not today's court. Reading it as silence left
+    17 China/Japan Open rows (Alcaraz v Michelsen, 15320475) badged LIVE from
+    02:00Z 9/30 on an Odds API session stamp, while their ESPN anchors all read
+    ``STATUS_SCHEDULED``, TBD, Oct 1. No demotion and no marker meant the 60s
+    clock promoter had nothing to honour.
+
+    The one shape where this is early is an Asian or Oceanian day session, which
+    can begin a few hours before midnight ET of its local date (Beijing 11:00 is
+    03:00Z, an hour before the placeholder). ESPN itself is the backstop there:
+    the moment it reports play, the competition arrives ``in_progress`` (its own
+    state, or games on its board via ``play_refutes_upcoming``), which promotes
+    the row and retracts the hold in the same pass. A placeholder already in the
+    PAST says nothing and is still ignored: the day has begun, and a fixture
+    ESPN never timed may be on court.
+    """
+    espn_start = parse_espn_moment(competition.get("date"))
+    return espn_start is not None and now is not None and espn_start > now
 
 
 def authority_write(
@@ -555,6 +715,9 @@ def authority_write(
       Measured 2026-09-02T22:22Z: ESPN had 11 US Open singles in play and we
       called 14 live — one already decided, and two (Wu Yibing v Duckworth,
       Navone v Berrettini) both scheduled for 23:00Z with no games on the board.
+      A **TBD placeholder still in the future** counts too (#9756): it is not a
+      start, but it is the day ESPN lists the match for, and that day has not
+      arrived — see :func:`espn_clock_says_not_started`.
     * An unknown ``state`` writes nothing at all (gotcha #53).
 
     ``win_probability_sources`` carries the #5324 authority marker so the write
@@ -635,16 +798,10 @@ def authority_write(
                 changes["win_probability_sources"] = _cleared
     elif state == "upcoming":
         # NOT YET PLAYED, AND ESPN SAYS SO WITH A CLOCK RATHER THAN A SILENCE.
-        # Only a real (non-TBD) start still in the future counts; see the
-        # docstring. A row cannot be live, or complete, before it begins.
-        espn_start = parse_espn_moment(competition.get("date"))
-        not_started = (
-            not competition.get("start_is_tbd")
-            and espn_start is not None
-            and now is not None
-            and espn_start > now
-        )
-        if not_started:
+        # A real start still in the future counts, and so does a TBD day still
+        # in the future (#9756, `espn_clock_says_not_started`). A row cannot
+        # be live, or complete, before it begins.
+        if espn_clock_says_not_started(competition, now):
             if our_status == "live":
                 changes["status"] = "scheduled"
             if our_completed_at is not None:
@@ -1485,8 +1642,276 @@ def anchorable_sport_keys(
     match does not become correct by acquiring an authority id — it becomes a
     violation of the invariant with an id on it.
     """
-    on_board = board_tournaments(competitions)
+    named = named_board_tournaments(sport_keys, competitions)
     return [
         key for key in sport_keys
-        if (token := tournament_token(key)) is not None and token in on_board
+        if (token := tournament_token(key)) is not None and token in named
     ]
+
+
+def named_board_tournaments(
+    sport_keys: Iterable[str], competitions: Iterable[dict[str, Any]]
+) -> dict[str, str]:
+    """Our bucket's token -> the board tournament it names. Pure. #9563.
+
+    ═══ WHY EQUALITY WAS NOT ENOUGH ═══
+
+    ESPN prints a tournament under its sponsored title and the Odds API keys it
+    by the plain one. ``"US Open"`` and ``"China Open"`` fold to exactly what
+    ``tennis_atp_us_open``/``tennis_atp_china_open`` fold to, but on 2026-09-29
+    ESPN's Tokyo event was ``"Kinoshita Group Japan Open Tennis Championships"``
+    — ``kinoshitagroupjapanopentennischampionships``, never equal to
+    ``japanopen``. So ``tennis_atp_japan_open`` named nothing on the board, its
+    twelve rows never entered the pass, and the #9465 contest that labels a late
+    tournament row onto the tour-week holder never saw them: Alcaraz v Michelsen
+    printed a sportsbooks-only card in search while Kalshi and Polymarket sat on
+    the ESPN-anchored row.
+
+    So a bucket also names a board tournament whose token CONTAINS its own —
+    the sponsor goes in front and "Tennis Championships" behind, and the plain
+    name survives in the middle.
+
+    ═══ AND WHAT IT REFUSES ═══
+
+    Containment is looser than equality, so it only ever answers uniquely:
+
+    * an exact match always wins, and is never displaced by a containing one;
+    * a token contained in TWO board tournaments names neither;
+    * a board tournament contained-matched by two DIFFERENT tokens is named by
+      neither of them (the same token from both tours — ``tennis_atp_x`` and
+      ``tennis_wta_x`` — is one token, as it always was).
+
+    The pair key and :func:`within_tournament_window` still decide every match
+    inside the tournament; this only decides which bucket's rows are read.
+    """
+    on_board = board_tournaments(competitions)
+    tokens = {t for t in (tournament_token(k) for k in sport_keys) if t}
+    named: dict[str, str] = {}
+    contained: dict[str, str] = {}
+    for token in tokens:
+        if token in on_board:
+            named[token] = token
+            continue
+        hosts = [b for b in on_board if token in b]
+        if len(hosts) == 1:
+            contained[token] = hosts[0]
+    exact_hosts = set(named.values())
+    host_counts: dict[str, int] = {}
+    for host in contained.values():
+        host_counts[host] = host_counts.get(host, 0) + 1
+    for token, host in contained.items():
+        if host not in exact_hosts and host_counts[host] == 1:
+            named[token] = host
+    return named
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# THE TOUR WEEK (#2774): tournaments on the board that no bucket of ours names
+# ════════════════════════════════════════════════════════════════════════════
+#
+# WHAT A READER SAW, 2026-09-28 13:20Z. The Tokyo and Beijing week — Alcaraz v
+# Michelsen, Borges v Djokovic, Badosa v Kasatkina and ~40 more — each printed
+# as TWO cards: Kalshi's row on the tour rail (`tennis_wta`, "Today 10:00 PM",
+# 64/36) and Polymarket's in search (`tennis_other`, "Tomorrow 8:00 PM", 66/34).
+# ESPN lists every one of them (Japan Open `5-2026`, China Open `959-2026`).
+#
+# WHY NOTHING REACHED THEM. `anchorable_sport_keys` scopes the anchor to the
+# buckets that name a tournament, and we hold no `tennis_*_japan_open` or
+# `tennis_*_china_open` bucket — so the whole tour outside the Odds API's list
+# was never anchored, and the twin sweep refuses every pair as "neither
+# tournament-keyed". Its docstring deferred the generic buckets to a twin
+# cleanup that reads `espn_id` collisions, and these rows have no `espn_id`.
+#
+# WHAT THE TOURNAMENT SCOPE WAS PROTECTING, AND WHY IT STILL HOLDS. Anchored
+# wide, a `tennis_atp` row contests its `tennis_atp_us_open` twin and the
+# at-most-one rule anchors neither. That contest cannot happen here: this pass
+# reads ONLY the competitions of tournaments no bucket names, so a tournament
+# row never has a competition to contest. A competition a tournament-keyed row
+# still claims is refused outright, the old way.
+#
+# AND THE CONTEST THAT REMAINS IS RESOLVED, NOT REFUSED. Two generic rows
+# claiming one ESPN competition are one match written twice (measured over the
+# ±7-day window on the specimen day: 214 competitions claimed, 91 by more than
+# one row, 0 by a tournament row). Refusing leaves the reader two cards
+# forever. So ONE row takes the id and the others take the reversible
+# `provenance:duplicate-of:` label that every surface already folds — markets
+# (`folded_event_ids`), chart and probability sources
+# (`folded_probability_sources`). The id goes on one row only, so
+# `merge-duplicate-events` (which deletes the loser of a pair SHARING a provider
+# id) is never armed. Ruling 048's direction is kept: the kept row is the
+# id-anchored one, and nothing is absorbed, deleted or re-pointed.
+
+#: The generic buckets' read window. Narrower than the tournament pass's 21
+#: days because the generic buckets are ~15x larger and the board only carries
+#: the current week's tournaments; ±7 days covers a draw's first round to its
+#: final with a day either side.
+GENERIC_ANCHOR_WINDOW_DAYS = 7
+
+#: Why a contested competition was left alone. Each is a sentence to act on.
+CONTEST_TOURNAMENT_CLAIMANT = "tournament-bucket-claimant"
+CONTEST_FOREIGN_ESPN_ID = "claimant-holds-another-espn-id"
+CONTEST_SETTLED_GHOST = "non-canonical-claimant-carries-a-result"
+
+
+def bucketless_competitions(
+    sport_keys: Iterable[str], competitions: Iterable[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """The competitions of every board tournament NO bucket of ours names.
+
+    The complement of :func:`anchorable_sport_keys`: a tournament is either
+    anchored through its own bucket or through the generic buckets, never both,
+    so the two passes cannot claim one competition from two sides.
+    """
+    competitions = list(competitions)
+    named = set(named_board_tournaments(sport_keys, competitions).values())
+    return [
+        c for c in competitions
+        if (token := _fold_token(c.get("event_name"))) and token not in named
+    ]
+
+
+def with_held_competitions(
+    bucketless: list[dict[str, Any]],
+    competitions: Iterable[dict[str, Any]],
+    held_ids: Iterable[Any],
+) -> list[dict[str, Any]]:
+    """The generic pass's competitions: the bucketless ones, plus every board
+    competition whose id a generic row ALREADY holds. Pure. #9465.
+
+    :func:`bucketless_competitions` assumes a tournament stays bucketless for
+    the week. It does not: the Odds API opened ``tennis_atp_china_open`` at
+    18:07Z on 2026-09-28, the day after the tour-week pass had put ESPN's id for
+    Borges v Djokovic (183455) on Kalshi's ``tennis_atp`` row. From then on the
+    competition was no longer bucketless, so the holder fell out of the generic
+    pass (no more ESPN writes), the new tournament row's stamp was refused
+    because the id was held, and the reader got two cards with two numbers.
+
+    Keeping a held competition in the generic set lets the holder keep its
+    authority writes and puts the late tournament row into the same contest,
+    where :func:`pick_contest_canonical`'s rule 1 keeps the holder.
+    """
+    out = list(bucketless)
+    seen = {c.get("espn_competition_id") for c in out}
+    held = {str(h) for h in held_ids if h is not None}
+    for c in competitions:
+        comp_id = c.get("espn_competition_id")
+        if comp_id is not None and str(comp_id) in held and comp_id not in seen:
+            out.append(c)
+            seen.add(comp_id)
+    return out
+
+
+def generic_sport_keys(sport_keys: Iterable[str]) -> list[str]:
+    """``tennis_atp``, ``tennis_wta``, ``tennis_other`` — the buckets naming no event."""
+    return [
+        k for k in sport_keys
+        if isinstance(k, str) and k.startswith("tennis") and tournament_token(k) is None
+    ]
+
+
+def pick_contest_canonical(
+    comp_id: str, claimants: list[dict[str, Any]]
+) -> tuple[Optional[int], list[int], Optional[str]]:
+    """One ESPN competition, several of our rows: which keeps the card? Pure.
+
+    ``claimants`` carry ``event_id``, ``sport_key``, ``espn_id`` and
+    ``has_result``, and optionally ``tournament_keyed`` for a row whose key the
+    caller did not read (the tournament pass selects rows, not keys). Returns
+    ``(canonical_id, ghost_ids, refusal)`` —
+    ``refusal`` is set, and the other two empty, when the contest is not ours
+    to decide.
+
+    The order, and why each rule is there:
+
+    1. A row that already holds THIS competition's id is the canonical. The
+       choice is made once and every later pass re-reads it from the id, so the
+       card never flips between rows from one beat to the next.
+    2. A tour-keyed row (``tennis_atp``/``tennis_wta``) beats ``tennis_other``:
+       the tour rail lists only its own key, so keeping the ``tennis_other``
+       copy would take the match off the WTA page it is on today.
+    3. The lowest id, the row minted first — stable, and it is not a guess
+       about quality: the fold carries every ghost's markets and sources onto
+       whichever row wins, so nothing a reader sees depends on this tiebreak.
+
+    Refused, never guessed:
+
+    * a tournament-keyed claimant — that pair belongs to the tournament pass
+      and the twin sweep, which already have a rule for it — UNLESS exactly one
+      claimant holds this competition's id and that holder is generic (#9465).
+      That is a tournament bucket that opened after the tour-week pass had
+      already chosen the holder. Rule 1 still decides it: the holder keeps the
+      card and the late tournament row is labelled. Neither older rule can:
+      the stamp is refused because the id is held, and the twin sweep refuses
+      because the bare row now carries a provider id;
+    * a claimant holding a DIFFERENT ESPN id — our rows disagree with ESPN
+      about identity, and a label would bury the disagreement;
+    * a non-canonical claimant carrying a final score — the twin sweep's
+      finding that a ghost never carries one (0/172) is what makes the label
+      safe; a scored ghost means the premise does not hold for this pair.
+    """
+    def _tournament(c: dict[str, Any]) -> bool:
+        return bool(c.get("tournament_keyed") or tournament_token(c.get("sport_key")))
+
+    held = [c for c in claimants if c.get("espn_id")]
+    if any(_tournament(c) for c in claimants):
+        late_bucket = (
+            len(held) == 1
+            and str(held[0]["espn_id"]) == str(comp_id)
+            and not _tournament(held[0])
+        )
+        if not late_bucket:
+            return None, [], CONTEST_TOURNAMENT_CLAIMANT
+    if any(str(c["espn_id"]) != str(comp_id) for c in held):
+        return None, [], CONTEST_FOREIGN_ESPN_ID
+    ranked = sorted(
+        claimants,
+        key=lambda c: (
+            not c.get("espn_id"),
+            c.get("sport_key") == "tennis_other",
+            c["event_id"],
+        ),
+    )
+    canonical, ghosts = ranked[0], ranked[1:]
+    if any(g.get("has_result") for g in ghosts):
+        return None, [], CONTEST_SETTLED_GHOST
+    return canonical["event_id"], [g["event_id"] for g in ghosts], None
+
+
+def carried_start(
+    canonical: dict[str, Any],
+    ghosts: Iterable[dict[str, Any]],
+    *,
+    may_set: Any = provider_may_set_start,
+) -> Optional[tuple[Any, str]]:
+    """The ghost's start the canonical should wear, or ``None``. Pure.
+
+    WHY. The tour-keyed row the contest keeps is almost always Kalshi's, and a
+    Kalshi tennis start is a DATE — ``05:00:00Z`` on the day, 694 of 694 in the
+    specimen window. Its Polymarket ghost carries the venue's real start
+    (Alcaraz v Michelsen: ``2026-09-30T01:00Z``, 10am in Tokyo, against Kalshi's
+    ``2026-09-29T05:00Z``), and ESPN's own date is its midnight-ET placeholder
+    until the order of play is out, so the authority write cannot fix it.
+    Keeping the row without the start would print one card at the wrong time.
+
+    The judgement is the registry's, not this function's: a ghost's start is
+    carried only when ``commence_time_write_authorized`` lets that ghost's
+    source overwrite the canonical's — ``polymarket_venue`` over ``kalshi`` is
+    ``polymarket_venue_corrects_a_kalshi_expiration`` — and never between two
+    rows of the SAME source, where the registry's same-record-revision licence
+    would let one listing's copy overrule another's. Ghosts that disagree
+    among themselves carry nothing; that is a choice, and this declines it.
+    """
+    offers = {
+        (g.get("commence_time"), g.get("commence_time_source"))
+        for g in ghosts
+        if g.get("commence_time") is not None
+        and g.get("commence_time_source")
+        and g.get("commence_time_source") != canonical.get("commence_time_source")
+        and may_set(canonical.get("commence_time_source"), g["commence_time_source"])
+    }
+    if len(offers) != 1:
+        return None
+    (start, source), = offers
+    if start == canonical.get("commence_time"):
+        return None
+    return start, source

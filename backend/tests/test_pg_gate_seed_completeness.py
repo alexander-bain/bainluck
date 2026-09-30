@@ -156,6 +156,9 @@ COVERED = (
     #     that let either default would make the foreign-market control
     #     indistinguishable from the subject.
     "test_venue_void_retirement_pg.py",
+    # #9444. Seeds `futures_markets` and `futures_outcomes` by raw INSERT; drops
+    # and recreates the schema like the #9404 gate.
+    "test_typeahead_same_question_fold_9444_pg.py",
     "test_link_tennis_already_linked_pg.py",
     "test_link_tennis_statpal_real_postgres.py",
     # #5024. Seeds `sports`, `events`, `futures_markets` and `futures_outcomes`
@@ -188,6 +191,9 @@ COVERED = (
     # named, as in #6215's seed.
     "test_foreign_espn_id_apply_cas_9017_pg.py",
     "test_polymarket_resolved_candidate_sql_pg.py",
+    # #9394. Seeds `futures_markets` and `futures_outcomes` by raw INSERT into a
+    # private schema and drives the real Gamma winner rail over them.
+    "test_price_crowned_pm_winner_venue_regrade_9394_pg.py",
     # #7021. Seeds ten `events` rows by raw INSERT into a PRIVATE schema to run
     # the twin drain's own candidate SELECT. The gate builds a narrow `events`
     # rather than `Base.metadata.create_all`, because the question it asks is
@@ -214,6 +220,10 @@ COVERED = (
     # (search_path pinned per pooled connection, since the repair under test
     # commits). Carries every NOT NULL column so the rows are real-shaped.
     "test_dangling_duplicate_tag_8308_pg.py",
+    # #9187 follow-up (CERT-3662 9187-CAS-ANCHOR-SCORE-AT-WRITE). Seeds `events`
+    # by raw INSERT into a narrow table in a private schema; every NOT NULL
+    # column is supplied so the ghost row is real-shaped.
+    "test_ghost_label_refuses_a_row_that_changed_9187_pg.py",
     # #7345. Seeds narrow `events` + `futures_markets` tables by raw INSERT in a
     # private schema; kick-offs are dated from the server's `now()` because the
     # verdict carries `commence_time < :now`.
@@ -317,6 +327,18 @@ COVERED = (
     # `futures_outcomes` by raw INSERT; drops and recreates the schema like the
     # final-seven gate above.
     "test_typeahead_team_query_cross_sport_5082_pg.py",
+    # #5082 (event half). Seeds `sports`, `teams` and `events` by raw INSERT;
+    # drops and recreates the schema like its futures sibling above.
+    "test_typeahead_team_query_other_sport_events_5082_pg.py",
+    # #9404. Seeds `futures_markets` and `futures_outcomes` by raw INSERT; drops
+    # and recreates the schema like the #5082 gate above.
+    "test_typeahead_one_question_one_row_9404_pg.py",
+    # #9865. Seeds `futures_markets` and `futures_outcomes` by raw INSERT; drops
+    # and recreates the schema like the #9404 gate above.
+    "test_typeahead_world_series_sport_pg_9865.py",
+    # #9439. Seeds `futures_markets` and `futures_outcomes` by raw INSERT; drops
+    # and recreates the schema like the #9404 gate above.
+    "test_search_one_award_race_one_row_9439_pg.py",
     # #5779. Seeds `sports` and `events` by raw INSERT, including rows whose
     # `statpal_fixture_id` is deliberately NULL — the NOT-NULL arm is what keeps
     # a future column with a client-side default from making that seed illegal
@@ -407,6 +429,9 @@ COVERED = (
     # specimen filtered for THAT reason makes the refusal assertion pass with the
     # fix reverted. That one is held by the gate's own anti-vacuity test.
     "test_grid_untaken_offer_8220_pg.py",
+    # #8192. Seeds a Kalshi and a Polymarket champion market plus snapshots by
+    # raw INSERT; `reading_count` and the market NOT NULLs are spelled out.
+    "test_grid_polymarket_unbacked_8192_pg.py",
     # #7829 part 1. The Miami identity gate on the same grid route. Seeds
     # `sports`, `teams`, `futures_markets` and `futures_outcomes` by raw INSERT
     # (the `teams.abbreviation` column is the anchor under test, so the seed
@@ -520,6 +545,12 @@ COVERED = (
     # corrections, fold and `--restore` against a real server. `sports.active`
     # is the Python-side default the seed names.
     "test_repair_6974_fold_lafc_apply_restore_pg.py",
+    # #6974 (NBA residual). Seeds `sports`, `teams`, `events`, `entities`,
+    # `team_identity_mapping` and `futures_outcomes` by raw INSERT to drive the
+    # NBA fold's leg corrections, mapping corrections, fold and `--restore`
+    # against a real server. `sports.active` is the Python-side default the
+    # seed names.
+    "test_repair_6974_fold_nba_apply_restore_pg.py",
     # #5576. Seeds `sports`, `teams`, `team_identity_mapping`, `events` and
     # `futures_markets` by raw INSERT, in a private schema, to drive the
     # venue-named-competition repair's apply, re-run and `--restore`.
@@ -531,6 +562,22 @@ COVERED = (
     # one-pair fold's ESPN move, market re-point, label and `--restore`.
     # `sports.active` is the Python-side default the seed names.
     "test_repair_2841_chifire_van_fold_apply_restore_pg.py",
+    # #8636 (volleyball as Nations League soccer). Seeds `sports`, `events` and
+    # `futures_markets` by raw INSERT, in a private schema, to drive the
+    # venue-contradicted-rows repair's retire / relabel, re-run and
+    # `--restore`. `sports.active` is the Python-side default the seed names.
+    "test_repair_8636_venue_contradicted_rows_pg.py",
+    # #8100 (the Phoenix in the catch-all). Seeds `sports`, `teams` and `events`
+    # by raw INSERT, in a private schema, to drive the placement repair's
+    # select, bank, apply, mid-run refusal and `--restore`. `sports.active` is
+    # the Python-side default the seed names.
+    "test_repair_8100_phoenix_placement_apply_restore_pg.py",
+    # #9850 (Trammell's seeded opening). Seeds `futures_markets` and
+    # `futures_outcomes` by raw INSERT, in a private schema, to drive the
+    # seeded-opening repair's clear, re-run, `--restore` and refusals.
+    # `futures_markets.mutually_exclusive` is the Python-side default the seed
+    # names.
+    "test_repair_9850_trammell_seeded_opening_pg.py",
 )
 
 INTEGRATION_DIR = Path(__file__).parent / "integration"
@@ -770,7 +817,7 @@ def test_every_real_postgres_gate_is_wired_into_ci():
     one DISCOVERS instead.
     """
     workflow = yaml.safe_load(CI_WORKFLOW.read_text())
-    job = workflow["jobs"]["search-recall"]
+    job = workflow["jobs"]["database-integration"]
     invoked = "\n".join(s.get("run") or "" for s in job["steps"])
 
     unwired = sorted(
@@ -796,7 +843,7 @@ def test_the_never_wired_allowlist_has_not_grown_stale():
     """
     workflow = yaml.safe_load(CI_WORKFLOW.read_text())
     invoked = "\n".join(
-        s.get("run") or "" for s in workflow["jobs"]["search-recall"]["steps"]
+        s.get("run") or "" for s in workflow["jobs"]["database-integration"]["steps"]
     )
     stale = sorted(
         name
@@ -828,7 +875,7 @@ def test_every_search_recall_step_that_runs_something_has_a_name():
     )
     anonymous = [
         step
-        for step in workflow["jobs"]["search-recall"]["steps"]
+        for step in workflow["jobs"]["database-integration"]["steps"]
         if "run" in step and not step.get("name")
     ]
     assert not anonymous, (

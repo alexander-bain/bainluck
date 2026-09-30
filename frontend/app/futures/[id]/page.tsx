@@ -4,6 +4,7 @@ import { useState, useMemo, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import useSWR from "swr";
+import { useFuturesDetailStream } from "@/hooks/useFuturesDetailStream";
 import {
   fetchFuturesMarket,
   fetchFuturesHistory,
@@ -75,9 +76,11 @@ import { resolveShape, SHAPE_QUANTITY } from "@/lib/marketShape";
 import {
   buildOutcomeLadderRungs,
   buildSettledOutcomeLadderRungs,
+  ladderInclusionRanks,
   ladderNeedsWideLabels,
   ladderOrderFor,
   thresholdLadderTitles,
+  tieGroupRanks,
 } from "@/lib/futuresLadder";
 import { buildAmbientPoints } from "@/lib/futuresAmbient";
 import { formatResolvesLabel } from "@/lib/gameTimeLabel";
@@ -158,7 +161,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   } = useSWR(
     isValidId ? ["futures-market", marketId] : null,
     () => fetchFuturesMarket(marketId),
-    { refreshInterval: 60000, keepPreviousData: true, revalidateOnFocus: false }
+    { refreshInterval: 0, keepPreviousData: true, revalidateOnFocus: false, revalidateOnReconnect: false }
   );
 
   // #7545 — the history window is a RUNG THE READER CAN SEE AND MOVE, not a
@@ -204,6 +207,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     data: historyData,
     error: historyError,
     isLoading: historyLoading,
+    mutate: refreshHistory,
   } = useSWR(
     market ? ["futures-history", marketId, historyHours] : null,
     () => fetchFuturesHistory(marketId, historyHours),
@@ -213,8 +217,13 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     // a wide "All" fetch (1.18 MB on /futures/1) leaves them looking at an empty
     // slot for the whole request. Keyed by hours, so the return trip to an
     // already-loaded rung is served from cache with no flash at all.
-    { keepPreviousData: true }
+    { keepPreviousData: true, revalidateOnFocus: false, revalidateOnReconnect: false }
   );
+  useFuturesDetailStream({
+    marketId, market, history: historyData, historyHours,
+    setMarket: next => refreshMarket(next, { revalidate: false }),
+    setHistory: next => refreshHistory(next, { revalidate: false }),
+  });
   const historyOutcomes = Array.isArray(historyData?.outcomes)
     ? historyData.outcomes
     : [];
@@ -413,6 +422,20 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   // price is routinely not the highest on the board — so without this the section
   // headed "Final Results" led with a loser. `market.status`, never `is_winner`
   // alone: a stray flag must not make a live market claim a result.
+  // #9574 — tied rungs keep the ladder's order. Cumulative markets only
+  // (`ladderOrderFor`): a disjoint set has no nesting to break a tie with.
+  const tieRanks = useMemo(
+    () =>
+      market?.outcomes && ladderOrderFor(market.mutually_exclusive) === "cumulative"
+        ? ladderInclusionRanks(market.outcomes)
+        : null,
+    [market?.outcomes, market?.mutually_exclusive],
+  );
+  // …and so do their rank badges (see `tieGroupRanks`).
+  const tieBadgeRanks = useMemo(
+    () => tieGroupRanks(market?.outcomes ?? [], tieRanks),
+    [market?.outcomes, tieRanks],
+  );
   const sortedOutcomes = useMemo(() => {
     if (!market?.outcomes) return [];
     return sortFuturesOutcomes(
@@ -420,8 +443,9 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
       sortField,
       sortDirection,
       market.status === "resolved",
+      tieRanks,
     );
-  }, [market?.outcomes, market?.status, sortField, sortDirection]);
+  }, [market?.outcomes, market?.status, tieRanks, sortField, sortDirection]);
 
   // #2831: a two-outcome market prints both sides of one question, so the pair is
   // decided ONCE — here, over `market.outcomes` — and looked up per row by id.
@@ -1429,8 +1453,12 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           {displayedOutcomes.map((outcome, index) => (
             <OutcomeRow
               key={outcome.id}
-              outcome={outcome}
-              rank={outcome.rank ?? index + 1}
+              outcome={
+                tieBadgeRanks.has(outcome)
+                  ? { ...outcome, rank_change_24h: null }
+                  : outcome
+              }
+              rank={tieBadgeRanks.get(outcome) ?? outcome.rank ?? index + 1}
               isLeader={outcome.id === leader?.id}
               isSelected={selectedOutcomes.has(outcome.id)}
               onToggleSelect={() => toggleOutcomeSelection(outcome.id)}

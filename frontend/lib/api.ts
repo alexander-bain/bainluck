@@ -3,6 +3,7 @@
  */
 
 import type { EntityAvailability, EntityTier } from "@/lib/entityPageChrome";
+import type { DiscoverPriceCards } from "@/lib/discover/priceRefresh";
 import type { TournamentPayload } from "@/lib/tournament";
 import type {
   EventsResponse,
@@ -181,6 +182,8 @@ async function apiFetch<T>(
   endpoint: string,
   options?: RequestInit & {
     timeoutMs?: number;
+    /** Stream owners pace their reads and pass 0 to avoid hidden retry bursts. */
+    maxRetries?: number;
     /**
      * Optional observability hook (L2-189). When provided, it is invoked with
      * the raw `Response` (before the body is parsed) and a small meta object,
@@ -202,7 +205,7 @@ async function apiFetch<T>(
   }
 
   const timeoutMs = options?.timeoutMs ?? 20000;
-  const maxRetries = 2;
+  const maxRetries = Math.max(0, Math.min(2, Math.floor(options?.maxRetries ?? 2)));
 
   // An externally-supplied signal (e.g. SearchBar's typeahead AbortController)
   // must cancel the in-flight fetch AND stop the retry loop. It is separate
@@ -382,12 +385,14 @@ export async function fetchEvents(params?: {
   sport?: string;
   status?: string;
   days?: number;
+  past_days?: number;
 }): Promise<EventsResponse> {
   const searchParams = new URLSearchParams();
 
   if (params?.sport) searchParams.set("sport", params.sport);
   if (params?.status) searchParams.set("status", params.status);
   if (params?.days) searchParams.set("days", params.days.toString());
+  if (params?.past_days !== undefined) searchParams.set("past_days", params.past_days.toString());
 
   const query = searchParams.toString();
   return apiFetch<EventsResponse>(`/api/events${query ? `?${query}` : ""}`);
@@ -442,7 +447,8 @@ async function claimEventBooted<T>(endpoint: string): Promise<T | null> {
  * flight, issued at HTML parse time. `fetchEventsByIds` calls this in a loop and is unaffected — the
  * claim is keyed on the exact URL, so at most the one booted id can match, and only once.
  */
-export async function fetchEvent(id: number): Promise<EventDetailResponse> {
+export async function fetchEvent(id: number, fresh = false): Promise<EventDetailResponse> {
+  if (fresh) return apiFetch<EventDetailResponse>(`/api/events/${id}?fresh=true`, { cache: "no-store" });
   const endpoint = `/api/events/${id}`;
   const booted = await claimEventBooted<EventDetailResponse>(endpoint);
   if (booted) return booted;
@@ -475,9 +481,11 @@ export async function fetchEventHistory(
    * parameter whose job is to drop data fails open. Callers that need the pre-kickoff half (the
    * chart's "All" range) pass nothing.
    */
-  range?: "since_start"
+  range?: "since_start",
+  fresh = false
 ): Promise<EventHistoryResponse> {
   const endpoint = `/api/events/${id}/history?hours=${hours}${range ? `&range=${range}` : ""}`;
+  if (fresh) return apiFetch<EventHistoryResponse>(`${endpoint}&fresh=true`, { cache: "no-store" });
   // LAT-P219: only the event page's own window (`EVENT_BOOT_HISTORY_HOURS`) is ever parked, so a
   // caller asking for a different `hours` simply finds no matching entry and falls through.
   const booted = await claimEventBooted<EventHistoryResponse>(endpoint);
@@ -548,6 +556,16 @@ export interface TypeaheadSuggestion {
   status?: string;
   sport?: string;
   commence_time?: string;
+  // #9226: a finished event row's result, present only when the served status
+  // is completed/closed and both sides were reported (live rows never carry it).
+  home_score?: number;
+  away_score?: number;
+  // #9550: the venue's grade of a match we hold as `suspended` — the pair the
+  // event detail route serves, so the dropdown says what the page says.
+  venue_settled?: boolean | null;
+  venue_settled_result?: string | null;
+  // #5811 @see Event.venue_closed_no_winner
+  venue_closed_no_winner?: boolean;
   // Event concept fields (#999 L2-65: tournament pages)
   event_key?: string;
   // Hub fields (L2-88: competition-hub landing shortcut)
@@ -925,8 +943,9 @@ export async function fetchFuturesMarkets(params?: {
 /**
  * Fetch a single futures market by ID
  */
-export async function fetchFuturesMarket(id: number): Promise<FuturesMarketDetailResponse> {
-  return apiFetch<FuturesMarketDetailResponse>(`/api/futures/${id}`);
+export async function fetchFuturesMarket(id: number, options?: { fresh?: boolean; signal?: AbortSignal }): Promise<FuturesMarketDetailResponse> {
+  return apiFetch<FuturesMarketDetailResponse>(`/api/futures/${id}${options?.fresh ? "?fresh=true" : ""}`,
+    options?.fresh ? { cache: "no-store", maxRetries: 0, signal: options.signal } : undefined);
 }
 
 /**
@@ -1002,7 +1021,8 @@ export async function fetchFuturesHistory(
   hours = 168,
   outcomeId?: number,
   topN?: number,
-  champion?: string
+  champion?: string,
+  options?: { fresh?: boolean; signal?: AbortSignal }
 ): Promise<FuturesHistoryResponse> {
   const params = new URLSearchParams();
   params.set("hours", hours.toString());
@@ -1011,9 +1031,11 @@ export async function fetchFuturesHistory(
   // #232: settled winner-field champion name so /history resolves the winner's
   // evolution line to 1.0 (odds_api winner fields never carry an is_winner grade).
   if (champion) params.set("champion", champion);
+  if (options?.fresh) params.set("fresh", "true");
 
   return apiFetch<FuturesHistoryResponse>(
-    `/api/futures/${marketId}/history?${params.toString()}`
+    `/api/futures/${marketId}/history?${params.toString()}`,
+    options?.fresh ? { cache: "no-store", maxRetries: 0, signal: options.signal } : undefined
   );
 }
 
@@ -1347,6 +1369,14 @@ export interface LineMovement {
 // ============================================================================
 // Unified Feed API
 // ============================================================================
+
+/** Exact painted leaves; the stream dispatcher owns pacing, retries and abort. */
+export async function fetchDiscoverPriceCards(eventIds: number[], marketIds: number[], signal?: AbortSignal): Promise<DiscoverPriceCards> {
+  const query = new URLSearchParams({ event_ids: eventIds.join(','), market_ids: marketIds.join(',') });
+  return apiFetch<DiscoverPriceCards>(`/api/feed/price-cards?${query}`, {
+    signal, cache: 'no-store', maxRetries: 0,
+  });
+}
 
 /**
  * Fetch the unified feed of interesting events and futures
@@ -1964,6 +1994,8 @@ export interface LeagueGameBrief {
   // @see Event.venue_settled for what the result string is and is not.
   venue_settled?: boolean;
   venue_settled_result?: string | null;
+  // #5811 @see Event.venue_closed_no_winner
+  venue_closed_no_winner?: boolean;
   // ── #8515 ── the provider's doubleheader flag + game number, same names as
   // `TeamGameBrief` and `Event`. @see Event.doubleheader
   doubleheader?: boolean | null;
@@ -2265,6 +2297,13 @@ export interface PoliticsMarketRow {
   market_id: number;
   top_outcomes: { name: string; prob: number }[];
   outcome_count: number;
+  // Rungs `/futures/{id}` shows beyond `top_outcomes` (#9109). Absent on a
+  // payload built before it shipped.
+  more_count?: number;
+  // #9474: `false` = the legs can all be true (a deadline or threshold ladder,
+  // a pick-several list), so no leg is "the leader". Absent/null on an older
+  // payload or an unstamped row.
+  mutually_exclusive?: boolean | null;
 }
 
 export interface PoliticsCandidate {
@@ -2358,6 +2397,10 @@ export interface EntMarketRow {
   resolution_date: string | null;
   image_url: string | null;
   hook: string | null;
+  /** #9468: the legs are one cumulative ladder ("Before Dec 4", "Before Dec 5"…), served in rung order — not a race. */
+  ladder?: boolean;
+  /** #9803: on a cumulative ladder, the tightest rung the market still calls likely — served only when it is not `top_outcomes[0]`. */
+  headline?: { name: string; prob: number } | null;
 }
 
 export interface EntThresholdGroup {

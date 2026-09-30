@@ -309,8 +309,11 @@ struct TotalPointsSpectrumView: View {
                             }
                         }
                         .frame(height: 8)
-                        Text("\(Int((centerProb * 100).rounded()))%")
+                        // #9392 — the same clamp as the rungs below.
+                        Text(MarketMapRail.rungPercentText(centerProb))
                             .font(.caption.monospacedDigit().weight(.bold))
+                            .lineLimit(1)
+                            .fixedSize()
                     }
                 }
             }
@@ -387,10 +390,15 @@ struct TotalPointsSpectrumView: View {
     /// cost of drift here is a card rendered as a bare heading.
     private enum ProjectionTense { case pregame, live, final }
 
+    /// #9708 — the served pace, only when it has standing against the header's
+    /// score (``LivePaceStanding``): never a scoreless 0, never an older score.
+    private var liveProjection: (projected: Double, scored: Int)? {
+        LivePaceStanding.projection(gameMarkets.pace, scoreboardHome: homeScore, scoreboardAway: awayScore)
+    }
+
     private var strip: ProjectionTense? {
         if isPre, canStillBeGraded { return .pregame }
-        if isLive, countsTheUnit, let pace = gameMarkets.pace,
-           pace.projectedTotal != nil, pace.totalScored != nil { return .live }
+        if isLive, countsTheUnit, liveProjection != nil { return .live }
         if isDone, actualTotal != nil { return .final }
         return nil
     }
@@ -407,10 +415,8 @@ struct TotalPointsSpectrumView: View {
         case .pregame:
             preGameStrip(ouLine: pregame ?? 0)
         case .live:
-            if let pace = gameMarkets.pace,
-               let paceTotal = pace.projectedTotal,
-               let scored = pace.totalScored {
-                liveStrip(pregameTotal: pregame, paceTotal: paceTotal, scored: scored)
+            if let live = liveProjection {
+                liveStrip(pregameTotal: pregame, paceTotal: live.projected, scored: live.scored)
             }
         case .final:
             if let actual = actualTotal { finalStrip(actual: actual) }
@@ -627,6 +633,21 @@ struct TotalPointsSpectrumView: View {
     /// holds the bar at more than twice this column.
     static let captionColumnWidth: CGFloat = 64
 
+    /// The ungraded rung's number, as statics for the same reason as the caption
+    /// above: the test that sizes its column measures THIS font.
+    static let percentFont = Font.system(size: 11).monospacedDigit().weight(.semibold)
+
+    /// How much room the ungraded rung's number gets.
+    ///
+    /// #9392. It was a bare `.frame(width: 32)` with no `lineLimit`, which
+    /// nothing had measured — and `100%` does not fit it at 11 pt, so the live
+    /// Maldives @ Kyrgyz Republic page (`15317879`, 2026-09-28) printed `100`
+    /// with the `%` wrapped onto a second line. The number is now `>99%` (the
+    /// app's rule), which is no narrower. `TotalsRungPrintsTheHerosClamp9392Tests
+    /// .testThePercentColumnHoldsEveryRungNumber` lays out every shape
+    /// `rungPercentText` returns in `percentFont` and fails if one wants more.
+    static let percentColumnWidth: CGFloat = 38
+
     /// One rung of the ladder.
     ///
     /// #3850. A settled rung and an unsettled rung say different things, and the
@@ -750,9 +771,14 @@ struct TotalPointsSpectrumView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 4))
                         .frame(width: 50)
                 } else {
-                    Text("\(Int((prob * 100).rounded()))%")
-                        .font(.system(size: 11).monospacedDigit().weight(.semibold))
-                        .frame(width: 32, alignment: .trailing)
+                    // #9392 — `>99%` like the hero, on ONE line. The old bare
+                    // 32 pt frame had no `lineLimit` and held neither `100%`
+                    // nor `>99%` at this size: the live Maldives page printed
+                    // `100` with the `%` wrapped under it.
+                    Text(MarketMapRail.rungPercentText(prob))
+                        .font(Self.percentFont)
+                        .lineLimit(1)
+                        .frame(width: Self.percentColumnWidth, alignment: .trailing)
                 }
             }
             .padding(.vertical, 8)

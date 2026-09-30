@@ -87,6 +87,10 @@ const REIMPLEMENTATION_TELLS: Array<[string, RegExp]> = [
  */
 const NOT_PERIOD_PARSERS = new Map([
   [
+    join(IOS_ROOT, "Utilities/TeamDivisionRace.swift"),
+    "classifies MARKET NAMES to preserve distinct halftime-performance season futures when filtering duplicate title questions — never labels a game period",
+  ],
+  [
     join(IOS_ROOT, "Components/SpecialEventMarketsView.swift"),
     "classifies MARKET NAMES ('halftime result', 'overtime') into prop groups — never labels a period",
   ],

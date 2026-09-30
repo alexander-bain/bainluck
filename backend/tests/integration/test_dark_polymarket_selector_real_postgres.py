@@ -1075,3 +1075,119 @@ class TestTheSunkPostStartArmAgainstRealPostgres:
         ids = await _seed_post_start(pg_session)
         rows = await _select_post_start(pg_session, max_rows=1)
         assert [r.id for r in rows] == [ids["forty_hours_in"]]
+
+
+# ── #9605: the starved arm against real Postgres ─────────────────────────────
+#
+# `tests/test_polymarket_sunk_starved_arm_9605.py` drives the pass with a
+# selector that ANSWERS. This executes `_SUNK_POLY_STARVED_SQL` itself: the
+# 24h staleness bound SEPARATELY from the six-hour resolution floor, the
+# imminent horizon, and the oldest-stamp order with never-stamped rows first.
+# Three rows come back IN ORDER and eight must not, each excluded for a
+# different reason. The one that matters most is `read_twenty_hours_ago`: stale
+# under the shared six hours, so the imminent arm owns it, and the starved arm
+# must leave it there — the two arms overlap only by dedupe.
+
+async def _seed_starved(session):
+    from app.models.models import FuturesMarket
+
+    now = datetime.now(UTC)
+
+    def _market(external_id, *, read_ago, resolves_in=timedelta(days=6),
+                status="open", source="polymarket"):
+        m = FuturesMarket(
+            source=source,
+            external_id=external_id,
+            name="Team to advance to NLDS",
+            category="championship",
+            market_tier=5,
+            status=status,
+            resolution_date=now + resolves_in if resolves_in is not None else None,
+            volume_updated_at=now - read_ago if read_ago is not None else None,
+            llm_sport_category="baseball",
+        )
+        session.add(m)
+        return m
+
+    rows = {
+        # picked — minted newest-stamp first, so the ids ascend the wrong way
+        # and only `ORDER BY fm.volume_updated_at NULLS FIRST` returns them right.
+        "read_thirty_hours_ago": _market("956270", read_ago=timedelta(hours=30),
+                                         resolves_in=timedelta(days=3)),
+        # The specimen's shape: Gamma 956263, last stamped 09-21, resolving 10-05.
+        "read_eight_days_ago": _market("956263", read_ago=timedelta(days=8)),
+        "never_stamped": _market("956271", read_ago=None, resolves_in=timedelta(days=10)),
+        # skipped, one clause each
+        "read_twenty_hours_ago": _market("956272", read_ago=timedelta(hours=20)),
+        "beyond_the_horizon": _market("956273", read_ago=timedelta(days=8),
+                                      resolves_in=timedelta(days=20)),
+        "resolution_behind_the_floor": _market("956274", read_ago=timedelta(days=8),
+                                               resolves_in=-timedelta(hours=8)),
+        "no_resolution_date": _market("956275", read_ago=timedelta(days=8),
+                                      resolves_in=None),
+        "resolved": _market("956276", read_ago=timedelta(days=8), status="resolved"),
+        "condition_id_keyed": _market("0x9605dead", read_ago=timedelta(days=8)),
+        "refused": _market("956277", read_ago=timedelta(days=8)),
+        "kalshi": _market("KXMLBNLDS-26", read_ago=timedelta(days=8), source="kalshi"),
+    }
+    await session.commit()
+    return {k: m.id for k, m in rows.items()}
+
+
+async def _select_starved(session, refused=("956277",), **over):
+    from app.tasks.polymarket import (
+        SUNK_POLY_IMMINENT_DAYS,
+        SUNK_POLY_STALE_HOURS,
+        SUNK_POLY_STARVED_STALE_HOURS,
+        _SUNK_POLY_STARVED_MAX,
+        _SUNK_POLY_STARVED_SQL,
+    )
+
+    params = {
+        "stale_hours": SUNK_POLY_STALE_HOURS,
+        "horizon_days": SUNK_POLY_IMMINENT_DAYS,
+        "starved_stale_hours": SUNK_POLY_STARVED_STALE_HOURS,
+        "refused": list(refused),
+        "max_rows": _SUNK_POLY_STARVED_MAX,
+        **over,
+    }
+    return (await session.execute(_SUNK_POLY_STARVED_SQL, params)).fetchall()
+
+
+class TestTheSunkStarvedArmAgainstRealPostgres:
+    async def test_it_picks_the_starved_rows_oldest_stamp_first_and_nothing_else(self, pg_session):
+        ids = await _seed_starved(pg_session)
+        rows = await _select_starved(pg_session)
+        assert [r.id for r in rows] == [
+            ids["never_stamped"], ids["read_eight_days_ago"], ids["read_thirty_hours_ago"],
+        ], (
+            "three rows in stamp order, never-stamped first; eight excluded for "
+            "eight different reasons; any other answer means one clause is not "
+            "doing its job"
+        )
+
+    async def test_the_row_carries_what_the_pass_reads_off_it(self, pg_session):
+        await _seed_starved(pg_session)
+        rows = await _select_starved(pg_session)
+        assert [str(r.external_id) for r in rows] == ["956271", "956263", "956270"]
+
+    async def test_a_row_the_imminent_arm_still_reaches_is_left_to_it(self, pg_session):
+        # Bound to :starved_stale_hours, not the shared :stale_hours. Under the
+        # shared six hours the twenty-hour row would qualify here too.
+        ids = await _seed_starved(pg_session)
+        assert ids["read_twenty_hours_ago"] not in {r.id for r in await _select_starved(pg_session)}
+        loose = await _select_starved(pg_session, starved_stale_hours=6)
+        assert ids["read_twenty_hours_ago"] in {r.id for r in loose}
+
+    async def test_the_resolution_floor_is_the_shared_six_hours_not_the_24(self, pg_session):
+        # Widening the floor readmits the row whose resolution is 8h behind us:
+        # proof the floor is bound to :stale_hours and nothing else.
+        ids = await _seed_starved(pg_session)
+        wide = await _select_starved(pg_session, stale_hours=12)
+        assert ids["resolution_behind_the_floor"] in {r.id for r in wide}
+        assert ids["read_twenty_hours_ago"] not in {r.id for r in wide}
+
+    async def test_the_limit_keeps_the_oldest(self, pg_session):
+        ids = await _seed_starved(pg_session)
+        rows = await _select_starved(pg_session, max_rows=1)
+        assert [r.id for r in rows] == [ids["never_stamped"]]

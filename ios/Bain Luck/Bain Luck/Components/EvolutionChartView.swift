@@ -135,17 +135,27 @@ enum EvolutionOutcomeColour {
     /// Pinned by test, because this list is now load-bearing in a second way: it
     /// is what a FLOORED outcome falls onto, so editing it silently repaints
     /// clubs that do have a stored colour, not just the ones that do not.
+    ///
+    /// **The ORDER is the reader-visible part (#9380).** The chart selects the
+    /// top three by default, so slots 0–2 are the three lines nearly every
+    /// uncoloured board (politics, economics, culture) opens on. This list used
+    /// to run red, blue, indigo — `#005eb8` and `#1d4ed8` are ~15° of hue apart,
+    /// so Brazil's Lula (#2) and Cury (#3) drew as one blue twice. The same ten
+    /// hexes, reordered so the first five are distinct hue families: nothing is
+    /// repainted into a colour this palette did not already have, the leader
+    /// stays red, and the AA floor below is untouched. The near-twins (dark red,
+    /// indigo, sky) now sit in slots 7–9, which only a ten-line selection reaches.
     static let paletteHexes: [String] = [
         "#c41e3a", // red (leader)
         "#005eb8", // blue
-        "#1d4ed8", // indigo
-        "#0e7490", // teal
-        "#b91c1c", // dark red
-        "#0369a1", // sky
+        "#065f46", // emerald
         "#92400e", // amber
         "#4338ca", // violet
         "#be185d", // pink
-        "#065f46", // emerald
+        "#0e7490", // teal
+        "#b91c1c", // dark red
+        "#1d4ed8", // indigo
+        "#0369a1", // sky
     ]
 
     /// The palette slot for a display position, wrapping past the tenth.
@@ -188,8 +198,10 @@ struct EvolutionChartView: View {
     var height: CGFloat = 280
     var tournamentStart: String?
     var tournamentEnd: String?
+    var refreshToken: Int = 0
 
     @State private var data: ProbabilityTimelineResponse?
+    @State private var requestGeneration = 0
     @State private var loading = true
     @State private var error: String?
     @State private var errorIsRetryable = false
@@ -333,12 +345,13 @@ struct EvolutionChartView: View {
                 }
             }
         }
-        .task {
-            if hasTournamentDates, let start = parsedTournamentStart, start <= Date() {
+        .task(id: refreshToken) {
+            if data == nil, hasTournamentDates, let start = parsedTournamentStart, start <= Date() {
                 selectedRange = .tournament
             }
             await loadData()
         }
+        .onDisappear { requestGeneration += 1 }
     }
 
     // MARK: - Empty State
@@ -386,6 +399,8 @@ struct EvolutionChartView: View {
     // MARK: - Load Data
 
     private func loadData() async {
+        requestGeneration += 1
+        let generation = requestGeneration
         loading = data == nil
         errorIsRetryable = false
         do {
@@ -409,6 +424,7 @@ struct EvolutionChartView: View {
             let result = try await APIClient.shared.fetchProbabilityTimeline(
                 marketId: marketId, top: 50, hours: fetchHours
             )
+            guard !Task.isCancelled, generation == requestGeneration else { return }
             data = result
             requestedHours = fetchHours
             if selectedNames.isEmpty {
@@ -417,8 +433,21 @@ struct EvolutionChartView: View {
             error = nil
             loading = false
         } catch let apiError as APIError {
+            guard !Task.isCancelled, generation == requestGeneration else { return }
             if apiError.isCancellation {
                 // Task cancelled (e.g. view disappeared) — don't show error
+                return
+            }
+            if let seconds = FuturesPriceReadCooldown.timelineRetrySeconds(for: apiError) {
+                self.error = "Prices are temporarily unavailable. Trying again shortly."
+                errorIsRetryable = true
+                loading = false
+                // A successful detail must not strand its chart after the last
+                // invalidation. Retry transport failures boundedly; respect a
+                // server cooldown when the response provides one.
+                try? await Task.sleep(nanoseconds: UInt64(min(seconds, 86_400) * 1_000_000_000))
+                guard !Task.isCancelled, generation == requestGeneration else { return }
+                await loadData()
                 return
             }
             switch apiError {
@@ -443,6 +472,7 @@ struct EvolutionChartView: View {
             }
             loading = false
         } catch {
+            guard !Task.isCancelled, generation == requestGeneration else { return }
             self.error = "Failed to load timeline"
             errorIsRetryable = true
             loading = false
@@ -490,6 +520,14 @@ struct EvolutionChartView: View {
     /// turn off.
     private var fieldSupportsCombinedLine: Bool {
         EvolutionCombinedLinePolicy.fieldIsOneQuestion(servedOutcomes: data?.outcomes ?? [])
+    }
+
+    /// How many lines this chart can draw at all: the served field without `Field`,
+    /// BEFORE the reader's `Top N` chip truncates it (#9140). Deciding the controls
+    /// off `displayedOutcomes` instead would let a chip hide itself — pick Top 5 on a
+    /// twelve-row board and the group would see five rows and vanish with it.
+    private var drawableOutcomeCount: Int {
+        (data?.outcomes ?? []).filter { $0.name != "Field" }.count
     }
 
     private var displayedNames: [String] { displayedOutcomes.map(\.name) }
@@ -919,7 +957,9 @@ struct EvolutionChartView: View {
             availableRanges: availableRanges,
             selectedRange: $selectedRange,
             showCombinedProbability: $showCombinedProbability,
-            sumAvailable: fieldSupportsCombinedLine,
+            sumAvailable: fieldSupportsCombinedLine
+                && EvolutionControlBar.sumHasSomethingToAdd(drawableOutcomes: drawableOutcomeCount),
+            topAvailable: EvolutionControlBar.topHasSomethingToCut(drawableOutcomes: drawableOutcomeCount),
             topFilter: $topFilter,
             seasonWord: EvolutionRangeVocabulary.seasonWord(
                 sportCategory: data?.sportCategory,
@@ -1580,6 +1620,10 @@ struct EvolutionControlBar: View {
     /// measure the widest vocabulary — keeps measuring the bar WITH the `Sum` chip,
     /// which is the wide case and therefore the one worth pinning.
     var sumAvailable: Bool = true
+    /// Whether the `Top N` group can change anything on this market (#9140).
+    /// Defaulted `true` for the same reason as `sumAvailable`: the layout tests
+    /// measure the widest bar, and that is the bar with every group in it.
+    var topAvailable: Bool = true
     @Binding var topFilter: Int
     /// What the widest chip is called for THIS market (#7077). Defaulted so the
     /// bar still composes on its own — every caller that shows a real market
@@ -1671,10 +1715,36 @@ struct EvolutionControlBar: View {
         }
     }
 
+    /// The `Top N` choices, smallest first.
+    static let topChoices = [5, 10, 20]
+
+    /// #9140 — a control that changes nothing is absent, like `sumToggle`.
+    ///
+    /// On a one-outcome Yes/No market (Discover's most common futures shape,
+    /// /futures/112894) the bar offered `Sum` and `Top 5/10/20` and all four did
+    /// nothing: `EvolutionCombinedLinePolicy.combinedProbability` refuses a
+    /// selection of one, and no chip can cut a board already smaller than it.
+    /// Both are counts of DRAWABLE rows (served, minus `Field`), never of the rows
+    /// the current chip left on screen.
+    static func sumHasSomethingToAdd(drawableOutcomes: Int) -> Bool {
+        drawableOutcomes >= 2
+    }
+
+    static func topHasSomethingToCut(drawableOutcomes: Int) -> Bool {
+        drawableOutcomes > topChoices[0]
+    }
+
     @ViewBuilder
     func topGroup(chipPadding: CGFloat, wraps: Bool = false) -> some View {
+        if topAvailable {
+            topChips(chipPadding: chipPadding, wraps: wraps)
+        }
+    }
+
+    @ViewBuilder
+    private func topChips(chipPadding: CGFloat, wraps: Bool) -> some View {
         ChipStrip(wraps: wraps) {
-            ForEach([5, 10, 20], id: \.self) { n in
+            ForEach(Self.topChoices, id: \.self) { n in
                 Button {
                     topFilter = n
                 } label: {

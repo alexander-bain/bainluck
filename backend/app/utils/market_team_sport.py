@@ -23,7 +23,19 @@ refuses only when BOTH sides say which sport they are and the two disagree:
 
 from __future__ import annotations
 
-from app.utils.sport_keys import NON_SPORT_LLM_CATEGORIES, SPORT_PREFIX_TO_LLM_CATEGORY
+import re
+
+from app.utils.sport_keys import (
+    NON_SPORT_LLM_CATEGORIES,
+    SPORT_LEAGUE_MAP,
+    SPORT_PREFIX_TO_LLM_CATEGORY,
+    competition_gender,
+    get_sport_key_from_ticker,
+    league_family_identity,
+    sport_family_key,
+)
+from app.utils.static_divisions import lookup_division
+from app.utils.venue_competition import POLYMARKET_EVENT_SLUG_KEY
 
 # Team sport-key prefixes `SPORT_PREFIX_TO_LLM_CATEGORY` does not carry — the
 # same three `routes/events.py` translates for #7355 (rugbyleague 31 teams,
@@ -60,3 +72,392 @@ def link_crosses_sport(market_category: str | None, team_category: str | None) -
     if not claims_a_sport(market_category) or not team_category:
         return False
     return market_category.strip().lower() != team_category
+
+
+# Sports where a team row plays in exactly ONE league, so a market of another
+# league cannot be the team's own title question. Soccer is left out on purpose:
+# a club's own path can hold a cup or a continental competition beside its
+# league (measured 2026-09-27: 0 of the soccer links below disagree today, so
+# leaving it out costs nothing and keeps a Champions League row from being
+# refused the day one is linked). Tennis, golf and motorsport players are not
+# league-scoped the same way either.
+_ONE_LEAGUE_TEAM_CATEGORIES = frozenset({"basketball", "football", "baseball", "hockey"})
+
+
+# Kalshi series the ticker maps do not carry, each a single league, that sit in
+# team championship paths. Read-side only: adding them to
+# `KALSHI_FUTURES_TICKER_TO_SPORT_KEY` would also reclassify these markets at
+# ingest, which is a different change with a different review. Without them the
+# check UNMASKS wrong rows: a path tier that was being withheld because a mapped
+# wrong-league candidate disagreed with an unmapped one clears, and the unmapped
+# one prints — measured on the 2026-09-27 replay, "Pro Football Teams to go
+# Undefeated in their Division" on the Houston and Buffalo college football
+# pages, "United Athletic Conference Men's Tournament Champion" on Tarleton
+# State's women's page, "Men's Championship Game Qualifiers" on Baylor's.
+_SERIES_LEAGUE_SUPPLEMENT: dict[str, str] = {
+    "kxnflseed": "americanfootball_nfl",
+    "kxnfl1seed": "americanfootball_nfl",
+    "kxnfldivundefeated": "americanfootball_nfl",
+    "kxnflroundqual": "americanfootball_nfl",
+    "kxsbhost": "americanfootball_nfl",
+    "kxmarmad": "basketball_ncaab",
+    "kxmarmadround": "basketball_ncaab",
+    "kxwmarmad": "basketball_wncaab",
+    "kxwmarmadround": "basketball_wncaab",
+    "kxncaambuac": "basketball_ncaab",
+}
+
+# Every open NFL series the ticker maps did not carry on 2026-09-30 (#9761). With
+# no league, a player's pro leg bound to his old college's roster: the LSU page
+# listed Nussmeier's and Zavion Thomas's "Top Fantasy Rookie" odds, and about 500
+# open NFL legs sat on college teams (KXNFLMATCHUP 112, KXNFLWEEKHIGHSCORE 56).
+# Listed series by series, because ``KXNFLX…`` are Netflix series.
+_NFL_SUPPLEMENT_SERIES = (
+    "kxnfl60yardfgs", "kxnflallpro", "kxnflawardfin", "kxnflblowout", "kxnflboth",
+    "kxnflcareerpassyds", "kxnflcareerrecyds", "kxnflcareerrshyds", "kxnflcompete",
+    "kxnfldebut", "kxnfldivisionorder", "kxnfldivisionwins", "kxnfldivleastwins",
+    "kxnfldivmostwins", "kxnflendstreak", "kxnfleqbtts", "kxnflescalatorrec",
+    "kxnflescalatorrecyds", "kxnflescalatorrshyds", "kxnflexecoty", "kxnflffh2hseason",
+    "kxnflffhighscore", "kxnflffleader", "kxnflffleadertop", "kxnflffplayerhigh",
+    "kxnflffplayoffleader", "kxnflffseasontotal", "kxnflfirststart", "kxnflhalloffame",
+    "kxnflhighscore", "kxnflhkane", "kxnflladderrec", "kxnflladderrecyds",
+    "kxnflladderrshyds", "kxnfllasttolose", "kxnfllasttowin", "kxnfllongestfg",
+    "kxnfllongestplay", "kxnflmatchup", "kxnflnextcoachout", "kxnflnextint",
+    "kxnflnextteam", "kxnflpassatt", "kxnflpasscomp", "kxnflpassint", "kxnflpotm",
+    "kxnflprooty", "kxnflretire", "kxnflrole", "kxnflrotm", "kxnflrryds", "kxnflrshatt",
+    "kxnflseasonpasstds", "kxnflseasonpassyds", "kxnflseasonrec", "kxnflseasonrectd",
+    "kxnflseasonrecyds", "kxnflseasonrshtd", "kxnflseasonrshyds", "kxnflsellout",
+    "kxnflsfpracfield", "kxnflsfty", "kxnflstadium", "kxnflstageofelim", "kxnflsznrecord",
+    "kxnfltd", "kxnflteamdpts", "kxnflteampts", "kxnflteamsack",
+    "kxnflteamyds", "kxnfltie", "kxnflties", "kxnfltspec", "kxnflweekhighscore",
+    "kxnflworsttofirst", "kxnflwpmoty",
+    "kxranklistffdst", "kxranklistffk", "kxranklistffqb", "kxranklistffrb",
+    "kxranklistffte", "kxranklistffwr",
+)
+_SERIES_LEAGUE_SUPPLEMENT.update(dict.fromkeys(_NFL_SUPPLEMENT_SERIES, "americanfootball_nfl"))
+
+
+# Kalshi series the ticker maps DO answer, but with another league's key (#9663).
+# The futures map is a prefix map, so ``KXNCAAFFCS`` — the FCS national title —
+# resolves through ``kxncaaf`` to FBS; the league check then sees no crossing and
+# the board's legs sat on FBS schools by name: "San Diego" on San Diego State,
+# "South Carolina St." on the Gamecocks, "Eastern Washington" on the Huskies (68
+# linked on 2026-09-29, every one on an FBS row). Read-side only, like the
+# supplement: reclassifying the market at ingest is a different change. Matched
+# on the exact series, so KXNCAAFFINALIST and KXNCAAFFIRSTTDTEAM stay FBS.
+_SERIES_LEAGUE_OVERRIDE: dict[str, str] = {
+    "kxncaaffcs": "americanfootball_ncaaf_fcs",
+}
+
+
+def _series_league_override(external_id: str | None) -> str | None:
+    """A sport key :data:`_SERIES_LEAGUE_OVERRIDE` declares over the ticker maps' answer."""
+    series = (external_id or "").split("-", 1)[0].lower()
+    return _SERIES_LEAGUE_OVERRIDE.get(series)
+
+
+def _series_league_supplement(external_id: str | None) -> str | None:
+    """A sport key for a series only :data:`_SERIES_LEAGUE_SUPPLEMENT` declares.
+
+    Matched on the SERIES (the ticker up to its first ``-``) exactly, never as a
+    loose prefix: ``KXMARMAD`` and ``KXMARMADROUND`` are each listed, because
+    a bare ``startswith("kxnfl")`` would also claim a series that merely shares
+    the stem (Netflix trades as ``NFLX``).
+    """
+    series = (external_id or "").split("-", 1)[0].lower()
+    return _SERIES_LEAGUE_SUPPLEMENT.get(series)
+
+
+# The Odds API names an outright by its league's sport key plus the question:
+# ``basketball_ncaab_championship_winner``, ``americanfootball_nfl_super_bowl_winner``.
+_ODDS_API_OUTRIGHT_SUFFIXES = ("_championship_winner", "_super_bowl_winner")
+
+
+def _odds_api_outright_league(external_id: str | None) -> str | None:
+    """The league sport key an Odds API outright id carries, when it is a known league."""
+    ext = (external_id or "").lower()
+    for suffix in _ODDS_API_OUTRIGHT_SUFFIXES:
+        if ext.endswith(suffix):
+            base = ext[: -len(suffix)]
+            return base if base in SPORT_LEAGUE_MAP else None
+    return None
+
+
+# Polymarket event-slug prefixes that name one league (#9761, notice 40: the
+# venue's own structure, never a title match). A Polymarket id is a bare number,
+# so without this the market named no league: "Pro Football: 2026-27 AP Defensive
+# Rookie of the Year Winner — Mansoor Delane" sat on the LSU page, and Jeremiyah
+# Love's four NFL props on Notre Dame's. Every open ``pro-football-`` slug on
+# 2026-09-30 was an NFL question; the draft boards are ``2027-pro-football-draft-…``,
+# which this prefix does not claim, and they rightly stay on the college.
+POLYMARKET_SLUG_LEAGUE_PREFIXES: dict[str, str] = {
+    "pro-football-": "americanfootball_nfl",
+}
+
+# ...and suffixes. Polymarket's fantasy boards name the league at the END of the
+# slug (``top-12-rb-2026-27-nfl-season``), so the prefix never claimed them and
+# Notre Dame's page kept "Jeremiyah Love — Fantasy Football: 2026-27 Top 12
+# Scoring RBs" bound to the school. Every open ``-nfl-season`` slug on 2026-09-30
+# (14 slugs, 294 markets) was a fantasy board about NFL players; 4 legs sat on
+# college teams.
+POLYMARKET_SLUG_LEAGUE_SUFFIXES: dict[str, str] = {
+    "-nfl-season": "americanfootball_nfl",
+}
+
+
+def market_event_slug(market_metadata) -> str | None:
+    """The Polymarket event slug a market row's metadata carries, else None."""
+    if not isinstance(market_metadata, dict):
+        return None
+    slug = market_metadata.get(POLYMARKET_EVENT_SLUG_KEY)
+    return slug if isinstance(slug, str) else None
+
+
+def _polymarket_slug_league(event_slug: str | None) -> str | None:
+    """The sport key a Polymarket event slug's prefix or suffix names, else None.
+
+    Case-sensitive, like Phase 3's ``LIKE`` over the same key: Gamma's slugs are
+    lower-case, and the two reads must select the same rows.
+    """
+    slug = event_slug or ""
+    for prefix, sport_key in POLYMARKET_SLUG_LEAGUE_PREFIXES.items():
+        if slug.startswith(prefix):
+            return sport_key
+    for suffix, sport_key in POLYMARKET_SLUG_LEAGUE_SUFFIXES.items():
+        if slug.endswith(suffix):
+            return sport_key
+    return None
+
+
+def _market_league_sport_key(
+    source: str | None, external_id: str | None, event_slug: str | None = None
+) -> str | None:
+    """The sport key of the league a market's own venue id names; None when it names none."""
+    venue = (source or "").lower()
+    if venue == "kalshi":
+        return (
+            _series_league_override(external_id)
+            or get_sport_key_from_ticker(external_id or "")
+            or _series_league_supplement(external_id)
+        )
+    if venue == "odds_api":
+        return _odds_api_outright_league(external_id)
+    if venue == "polymarket":
+        return _polymarket_slug_league(event_slug)
+    return None
+
+
+def market_league_sport_key(
+    source: str | None, external_id: str | None, event_slug: str | None = None
+) -> str | None:
+    """The league a market's own venue id names, for a writer that binds inside it (#5119).
+
+    The same read :func:`link_crosses_league` refuses on, so the team linker's
+    rebind target and the championship path's refusal can never disagree.
+    ``event_slug`` is the Polymarket event slug (:func:`market_event_slug`).
+    """
+    return _market_league_sport_key(source, external_id, event_slug)
+
+
+def link_crosses_league(
+    market_source: str | None,
+    market_external_id: str | None,
+    team_sport_key: str | None,
+    event_slug: str | None = None,
+) -> bool:
+    """True when a market's own venue id names a different league than the team's.
+
+    :func:`link_crosses_sport` cannot see a wrong LEAGUE inside one sport: both
+    sides of "West Coast Conference Men's Tournament Champion — Seattle" (Seattle
+    U) linked to the Seattle Storm say ``basketball``, so the WNBA team's page
+    printed "Win Conference 20%". The same city-name linking put the College
+    Football National Championship's "Washington" leg on the Commanders, the
+    NFC Championship's "Carolina" leg on the North Carolina Tar Heels and the
+    NEC men's tournament's "Central Connecticut St." on the Connecticut Sun —
+    102 open tier-1/2/4 Kalshi links on 2026-09-27, every one sampled wrong.
+
+    The market's league is read off its venue's own id (D55: an explicit key,
+    never a name) — a Kalshi SERIES through the ticker → sport-key maps, an Odds
+    API outright through the sport key it is named with, a Polymarket market
+    through its event slug's prefix (#9761) — the team's off its sport key, and
+    both are compared as :func:`league_family_identity` (season variants and tour
+    tournaments collapse onto their league). Refuses only when:
+
+    * the venue id names a league — an unmapped Kalshi series, a Polymarket slug
+      no listed prefix claims (or none passed) or an unknown Odds API key is no
+      claim;
+    * the team plays a one-league sport (:data:`_ONE_LEAGUE_TEAM_CATEGORIES`);
+    * both leagues are known and differ.
+    """
+    if not team_sport_key:
+        return False
+    if sport_key_llm_category(team_sport_key) not in _ONE_LEAGUE_TEAM_CATEGORIES:
+        return False
+    market_sport_key = _market_league_sport_key(market_source, market_external_id, event_slug)
+    if not market_sport_key:
+        return False
+    return league_family_identity(market_sport_key) != league_family_identity(team_sport_key)
+
+
+# Kalshi series whose SERIES ticker names one half of a league (#8072). Explicit,
+# never a prefix rule: ``KXMLBAL`` is also the head of any future ``KXMLBALL…``.
+_MLB_CONFERENCE_SERIES_TAILS = (
+    "", "CPOTY", "CSMVP", "CSQUAL", "CY", "HAARON", "MOTY", "MVP", "RELOTY", "ROTY",
+)
+_NFL_CONFERENCE_SERIES_TAILS = ("CHAMP", "EAST", "NORTH", "SOUTH", "WEST")
+_CONFERENCE_NAMES = {
+    "AL": "American League",
+    "NL": "National League",
+    "AFC": "American Football Conference",
+    "NFC": "National Football Conference",
+}
+_KALSHI_CONFERENCE_SERIES: dict[str, tuple[str, str]] = {
+    **{
+        f"KXMLB{conf}{tail}": ("baseball_mlb", conf)
+        for conf in ("AL", "NL")
+        for tail in _MLB_CONFERENCE_SERIES_TAILS
+    },
+    **{
+        f"KXNFL{conf}{tail}": ("americanfootball_nfl", conf)
+        for conf in ("AFC", "NFC")
+        for tail in _NFL_CONFERENCE_SERIES_TAILS
+    },
+}
+# Series that span both halves and name the half in the EVENT segment:
+# ``KXMLBAWARDFIN-26NLMVP``, ``KXMLBGG-26NL3B``, ``KXNFLPOTM-SEP26NFCDEFENSE``.
+_KALSHI_CONFERENCE_EVENT_SERIES: dict[str, tuple[str, re.Pattern[str]]] = {
+    **{
+        series: ("baseball_mlb", re.compile(r"^\d{2}(AL|NL)"))
+        for series in ("KXMLBAWARDFIN", "KXMLBGG", "KXMLBSS")
+    },
+    **{
+        series: ("americanfootball_nfl", re.compile(r"(AFC|NFC)"))
+        for series in (
+            "KXNFLPOTM", "KXNFLSEED", "KXNFL1SEED", "KXNFLDIVISIONORDER", "KXNFLDIVISIONWINS",
+        )
+    },
+}
+
+
+def market_conference(
+    source: str | None, external_id: str | None
+) -> tuple[str, str] | None:
+    """``(league sport key, conference)`` a Kalshi market's own ticker names, else None (#8072).
+
+    The conference is in the live-standings vocabulary ``static_divisions`` serves
+    ("National League", "American Football Conference"), so the two compare as-is.
+    """
+    if (source or "").lower() != "kalshi" or not external_id:
+        return None
+    series, _, event = external_id.upper().partition("-")
+    if series in _KALSHI_CONFERENCE_SERIES:
+        league, conf = _KALSHI_CONFERENCE_SERIES[series]
+        return league, _CONFERENCE_NAMES[conf]
+    spec = _KALSHI_CONFERENCE_EVENT_SERIES.get(series)
+    if spec:
+        league, pattern = spec
+        match = pattern.search(event.partition("-")[0])
+        if match:
+            return league, _CONFERENCE_NAMES[match.group(1)]
+    return None
+
+
+def link_crosses_conference(
+    market_source: str | None,
+    market_external_id: str | None,
+    team_sport_key: str | None,
+    team_name: str | None,
+) -> bool:
+    """True when a market's ticker names one conference and the team plays in the other.
+
+    :func:`link_crosses_league` stops at the league: "NL MVP Winner? — Max Muncy"
+    on the Athletics is baseball on an MLB club, so it passed, and the Athletics'
+    page listed the Dodgers' Max Muncy's National League MVP and Hank Aaron odds.
+    Two clubs carry a Max Muncy, and roster order picked the wrong one.
+
+    Refuses only when the ticker names a conference (:func:`market_conference`),
+    the team is in that ticker's league, and ``static_divisions`` places the team
+    in the other conference. Anything unknown is no claim.
+    """
+    named = market_conference(market_source, market_external_id)
+    if not named or not team_sport_key or not team_name:
+        return False
+    league, conference = named
+    if league_family_identity(team_sport_key) != league_family_identity(league):
+        return False
+    team_conference, _ = lookup_division(league, team_name)
+    return bool(team_conference) and team_conference != conference
+
+
+# A market name that says it is women's play. Word-bounded, so "Men's" never
+# reads as "Women's" and "WTA" never fires inside another word. The league
+# abbreviations are the women's competitions whose names carry no "women":
+# WNBA, the women's college game (WNCAA…), NWSL, the WSL, UWCL, AFLW, NRLW, WTA,
+# LPGA, and Kalshi's "(W)" suffix ("College Basketball (W): …").
+_WOMENS_MARKET_NAME = re.compile(
+    r"\bwomen\b|\bwomen'?s\b|\bwnba\b|\bwncaa\w*|\bnwsl\b|\bwsl\b|\buwcl\b"
+    r"|\baflw\b|\bnrlw\b|\bwta\b|\blpga\b|\(w\)",
+    re.IGNORECASE,
+)
+
+# Families where one market can hold both sides ("Who will win a Grand Slam in
+# 2027?" lists Sabalenka beside Sinner), so an unmarked name is no claim.
+_MIXED_FIELD_FAMILIES = frozenset({"tennis", "golf"})
+
+
+def market_names_womens_play(
+    market_name: str | None,
+    market_sport_key: str | None = None,
+    market_source: str | None = None,
+    market_external_id: str | None = None,
+) -> bool:
+    """Whether a market says it is a women's competition.
+
+    By its name, its sport key, or the league its venue id names. The venue id
+    matters for Kalshi's "Caitlin Clark's Next Team" (``KXWNBANEXTTEAM``), whose
+    name carries no marker.
+    """
+    if _WOMENS_MARKET_NAME.search(market_name or ""):
+        return True
+    if competition_gender(market_sport_key) == "women":
+        return True
+    venue_key = _market_league_sport_key(market_source, market_external_id)
+    return competition_gender(venue_key) == "women"
+
+
+def link_crosses_gender(
+    market_name: str | None,
+    team_sport_key: str | None,
+    market_sport_key: str | None = None,
+    market_source: str | None = None,
+    market_external_id: str | None = None,
+) -> bool:
+    """True when a market of one side is linked to a team of the other (#9593).
+
+    :func:`link_crosses_sport` cannot see it: Arsenal and Arsenal Women are both
+    ``soccer``, so every soccer "Arsenal" leg reached both pages. The women's
+    page printed "Championship 59%", which was Kalshi's men's English Premier
+    League Champion. The men's page listed the UEFA Women's Champions League
+    Winner. The WNCAAB rows carry "Men's Round of 16 Qualifiers" and "NCAAB
+    Championship Winner" by stored link.
+
+    * A men's team refuses a market that names women's play.
+    * A women's team refuses a market that does NOT. In a team sport a
+      competition is gendered, and the unmarked name is the men's one
+      (English Premier League Champion, NCAAB Championship Winner, Final KenPom
+      Ratings; every unmarked market stored on a WNCAAB row on 2026-09-29 was
+      a men's one). Tennis and golf are exempt (:data:`_MIXED_FIELD_FAMILIES`),
+      because an unmarked market there can be a mixed field.
+    * A team whose key cannot say its side (a catch-all, or no key) never refuses.
+    """
+    team_gender = competition_gender(team_sport_key)
+    if team_gender is None:
+        return False
+    womens_market = market_names_womens_play(
+        market_name, market_sport_key, market_source, market_external_id
+    )
+    if team_gender == "men":
+        return womens_market
+    if womens_market:
+        return False
+    return sport_family_key(team_sport_key) not in _MIXED_FIELD_FAMILIES

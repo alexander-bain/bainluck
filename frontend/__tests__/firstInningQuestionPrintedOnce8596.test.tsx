@@ -111,9 +111,12 @@ describe("#8596 buildMarketSection reports the markets it draws", () => {
     expect(buildMarketSection(WIRE.slice(0, 2), { homeTeam: HOME, awayTeam: AWAY }).drawnMarketIds).toEqual([]);
   });
 
-  it("follows the page's mount gate: under the wire floor Additional Markets is not mounted, so it draws nothing", () => {
-    expect(SPECIAL_MARKETS_MIN_WIRE_ROWS).toBe(3);
-    expect(specialMarketsDrawnIds({ ...GAME_MARKETS, other: WIRE.slice(2) })).toEqual([]);
+  it("follows the page's mount gate: with no rows Additional Markets is not mounted, so it draws nothing", () => {
+    // #9633: the floor was 3 wire rows, so a lone question (2 rows) was never
+    // mounted. Now it is, and Bigger Picture must stand down for it too.
+    expect(SPECIAL_MARKETS_MIN_WIRE_ROWS).toBe(1);
+    expect(specialMarketsDrawnIds({ ...GAME_MARKETS, other: [] })).toEqual([]);
+    expect(specialMarketsDrawnIds({ ...GAME_MARKETS, other: WIRE.slice(2) })).toEqual([QUESTION_ID]);
     expect(specialMarketsDrawnIds(GAME_MARKETS)).toEqual([QUESTION_ID]);
     expect(specialMarketsDrawnIds(null)).toEqual([]);
   });

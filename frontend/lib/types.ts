@@ -369,6 +369,18 @@ export interface Event {
   venue_settled?: boolean;
   /** @see Event.venue_settled */
   venue_settled_result?: string | null;
+  /** #5811 — present (and `true`) only when the venue closed this scoreless
+   *  row with no winner. Read through `venueSettledSummary` only. */
+  venue_closed_no_winner?: boolean;
+  /**
+   * #9634 — the server's answer to "has this `scheduled` row's clock run out
+   * with nothing reported?" (`event_completion.started_without_result`). It
+   * knows what the clock cannot: an ESPN "not started" stamp (#9195) and a
+   * StatPal later-session hold (#9613). Served by `/api/events/{id}` and the
+   * `/api/events` list; ABSENT on the feed, search and league envelopes, where
+   * `lib/eventState` falls back to the clock. Pass it to `hasNoReportedResult`.
+   */
+  started_without_result?: boolean | null;
   /**
    * #8515 — the provider's own doubleheader flag and 1-based game number (MLB
    * Stats API `doubleHeader` / `gameNumber`), under the names
@@ -475,6 +487,13 @@ export interface EventDetailResponse extends Event {
    * payload from before the contract. See `lib/blendObservationClock.ts`.
    */
   hero_probability_observed_at?: string | null;
+  /**
+   * #9051: `{ "<row id>": rev }` for every row the fold behind `hero_probability`
+   * read (cached with it); `rev` follows each row's commit order. Held frames and
+   * history edges are ordered against it by commit order, not by price clock.
+   * Absent/malformed: no claim. See `lib/foldRevision.ts`.
+   */
+  blend_fold_revision?: Record<string, number> | null;
   bookmaker_odds?: BookmakerOddsDetail[];
   ei?: EIData;
   /** @deprecated Use `ei` instead */
@@ -646,6 +665,12 @@ export interface EventHistoryResponse {
    * from before the contract.
    */
   blend_edge_observed_at?: string | null;
+  /**
+   * #9051: the `blend_fold_revision` of the fold snapshot the pinned edge comes
+   * from — the same vector the detail hero carries, so the two order by commit.
+   * Absent/malformed: no claim. See `lib/foldRevision.ts`.
+   */
+  blend_edge_fold_revision?: Record<string, number> | null;
   /**
    * #6948: true iff the backend ACTUALLY removed points before kick-off, i.e. iff a second request
    * without `range=since_start` would answer with more. `false` on every payload served without the
@@ -1173,6 +1198,8 @@ export interface FuturesHistoryPoint {
 }
 
 export interface FuturesOutcomeHistory {
+  /** Presentation metadata from canonical detail; never a verdict on historical points. */
+  current_price_available?: boolean;
   outcome_id: number;
   name: string;
   history: FuturesHistoryPoint[];
@@ -1478,6 +1505,19 @@ export interface FeedEventData {
   status: EventStatus;
   home_score: number | null;
   away_score: number | null;
+  /**
+   * #5811 — the venue already graded this scoreless row. Same keys, same
+   * shared reader and same three states (absent / `false` / `true`) as
+   * `Event.venue_settled`; `/api/feed` attaches them since live's #9728.
+   * OPTIONAL: a cached feed page can predate that deploy, and absent reads as
+   * "never asked" — the card stays exactly as it was.
+   * @see Event.venue_settled — read through `venueSettledSummary` only.
+   */
+  venue_settled?: boolean;
+  /** @see Event.venue_settled_result */
+  venue_settled_result?: string | null;
+  /** @see Event.venue_closed_no_winner */
+  venue_closed_no_winner?: boolean;
   current_odds?: {
     home_probability: number | null;
     away_probability: number | null;
@@ -1707,6 +1747,13 @@ export interface FeedTournamentData {
   // result-first ("what happened") framing instead of the live/upcoming one.
   is_marquee?: boolean;
   marquee_whathit?: boolean;
+  /**
+   * #9212 — who won, once ESPN calls the tournament final; null until then
+   * (live's serve half, PR #9235). Spelled as this payload's own golfer row
+   * spells the player, so a card finds the row by name; a cup side may be ESPN's
+   * word ("USA"). Optional: a payload built before that half carries no key.
+   */
+  champion?: string | null;
 }
 
 // Event-concept feed card (#999 B3 / L2-84) — a tournament/card (UFC 329, …)
@@ -1807,8 +1854,37 @@ export interface FeedBundleData {
   entities?: string[];
 }
 
+// #9653 / #9905: a published NFL-week or MLB-postseason hub the feed placed
+// before its strongest member (`backend/app/services/container_discovery.py`
+// `collection_card`). Every field is optional because the client admits the
+// card only after checking it — see `lib/discover/collectionFeed.ts`.
+export interface FeedCollectionData {
+  type?: "collection";
+  id?: number;
+  slug?: string;
+  name?: string;
+  state?: string;
+  revision?: number | null;
+  edition?: {
+    kind?: string;
+    league?: string;
+    season?: number;
+    stage?: string | null;
+    week?: number | null;
+  } | null;
+  game_count?: number;
+  question_count?: number;
+  matched_event_ids?: number[];
+  destination?: {
+    kind?: string;
+    slug?: string;
+    web?: string | null;
+    api?: string;
+  } | null;
+}
+
 export interface FeedItem {
-  type: "event" | "futures" | "tournament" | "bundle" | "concept";
+  type: "event" | "futures" | "tournament" | "bundle" | "concept" | "collection";
   score: number;
   reason: string;
   headline: string | null;
@@ -1818,7 +1894,8 @@ export interface FeedItem {
     | FeedFuturesData
     | FeedTournamentData
     | FeedBundleData
-    | FeedConceptData;
+    | FeedConceptData
+    | FeedCollectionData;
   // Personalization fields (only present when authenticated + score was adjusted)
   personalized?: boolean;
   base_score?: number;
@@ -2033,6 +2110,8 @@ export interface GolfTournament {
   market_sources?: string[];
   golfers: GolfGolfer[];
   prop_markets?: GolfPropMarket[];
+  /** #9212 — see `FeedTournamentData.champion`. */
+  champion?: string | null;
   /**
    * Content address of the win probabilities THIS payload publishes for this
    * tournament (UX-P271). Opaque to the client: it is handed back to
@@ -2089,6 +2168,8 @@ export interface GolfCurrentEvent {
   leader_probability: number | null;
   top_golfers?: GolfGolfer[];
   market_ids?: number[];
+  /** Aligned with `market_ids` (served by `_build_current_event`). */
+  market_names?: string[];
 }
 
 export interface GolfResponse {

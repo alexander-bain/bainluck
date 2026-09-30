@@ -131,12 +131,20 @@ def _seeded_session(window, refill, teams):
             calls["team_recall"] += 1
             result.all.return_value = list(teams)
             return result
-        if "futures_markets" not in sql or "SELECT" not in sql.upper() or "~*" in sql:
+        if "futures_markets" not in sql or "SELECT" not in sql.upper():
             return result
-        rows = window
+        # #9609: the refill is read by its OFFSET before the `~*` refusal. A
+        # finished club word (`kings` + Los Angeles Kings) puts a whole-word `~*`
+        # outcome arm INSIDE the refill's UNION, and refusing on `~*` first
+        # dropped the refill silently — `refill` never counted, the page never
+        # filled. Other `~*` reads (the team-outcome round-up) stay refused.
         if "OFFSET" in sql.upper():
             calls["refill"] += 1
             rows = refill
+        elif "~*" in sql:
+            return result
+        else:
+            rows = window
         result.scalars.return_value.unique.return_value.all.return_value = list(rows)
         result.scalars.return_value.all.return_value = list(rows)
         return result

@@ -38,6 +38,7 @@ TWO CONTRACTS THIS MODULE NOW HOLDS (lane1/045, Alex ruling 2026-09-01):
 
 import asyncio
 import logging
+import math
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
@@ -78,6 +79,10 @@ ESPN_FULL_SLATE_GROUPS: dict[str, str] = {
 from app.utils.sport_keys import (  # noqa: E402
     ESPN_GROUP_SCOPED_BOARDS,
     SPORT_LEAGUE_MAP,
+)
+from app.utils.postseason_series import (  # noqa: E402
+    PlayoffSeries,
+    parse_playoff_series,
 )
 
 #: Which identity served a request. Recorded and logged on change so an
@@ -371,6 +376,18 @@ class ESPNEvent:
     # moves) but is no announcement here, so it can never vouch that a start
     # already on the row is real. Read by `espn_start_time.espn_announced_start`.
     time_announced: bool = False
+    # #9020 / CERT-3657: set by `update_event_fields_from_espn` when this
+    # reading's clock and period outran the wall clock and were refused from the
+    # row. Not ESPN's — OUR verdict on it, carried on the reading so the same
+    # pass's history writers (`write_espn_win_probability`, the stat model)
+    # refuse the same position instead of charting it as the newest state.
+    # Re-assigned on every update call, so a reading processed twice is judged
+    # afresh each time.
+    position_outran_wall: bool = False
+    # #9216: which game of its series this is and how the series stands, read
+    # off `competitions[0].notes` + `.series`. None for anything that is not a
+    # playoff series. Read by `app.utils.postseason_series.certain_to_be_played`.
+    playoff_series: Optional[PlayoffSeries] = None
 
 
 def _espn_time_valid_flag(competition: dict, event_data: dict):
@@ -513,6 +530,70 @@ def espn_stopped_without_result(status_type: dict) -> bool:
         return False
     state = str(status_type.get("state") or "").strip().lower()
     return state == "post" and status_type.get("completed") is not True
+
+
+def espn_not_started_state(status_type: dict) -> bool:
+    """``True`` when ESPN's own ``state`` says this competition has NOT begun.
+
+    **WHY THE NAME WAS NOT ENOUGH (#5324, delayed start).** `_parse_event`
+    translated exactly one not-started name, ``STATUS_SCHEDULED``, and every
+    other name fell through to its raw lowercase form. The whole not-started
+    machinery — the pre-game filler refusal, the filler withdrawal, the
+    authority demotion and the promoter's hold — keys on ``"scheduled"``, so a
+    game ESPN delayed BEFORE its first pitch reached none of it. Measured on
+    production 2026-09-27 17:28Z (notice 26 — ESPN's own board):
+
+        401817103 BAL @ NYY  STATUS_RAIN_DELAY  state=pre  id=17
+                             detail 'Rain Delay', displayClock '0:00', 0-0
+        ours 15319530        status 'live', period 'Rain Delay', clock '0:00', 0-0
+        MLB 823490           'Delayed Start' (Preview, reason Rain)
+
+    The clock promoted the row at its listed 17:05Z start, the live pass copied
+    the board's filler onto it, and search read ``● LIVE`` Yankees 0 Orioles 0
+    for a game nobody had started.
+
+    **``state`` IS THE CLOSED FIELD**, the reason `espn_terminal_state` and
+    `espn_stopped_without_result` read it: ``pre``/``in``/``post`` is ESPN's own
+    three-valued answer, so a pre-game name nobody has written down yet
+    (``STATUS_DELAYED`` published as ``pre``, a TBD) is covered without a list.
+
+    **What it deliberately does NOT catch: ``STATUS_DELAYED`` as ``state="in"``**
+    — ESPN publishes that both before a ball is bowled and mid-game, and it stays
+    the raw ``status_delayed`` that every not-started predicate is silent on.
+    Nothing ``pre`` carries a result, and a non-zero board score still lands
+    through `update_event_fields_from_espn`'s safety valve, so a board that says
+    ``pre`` with play on it is not blanked.
+    """
+    if not isinstance(status_type, dict):
+        return False
+    return str(status_type.get("state") or "").strip().lower() == "pre"
+
+
+def espn_golf_champion(event: dict) -> Optional[str]:
+    """Who won a finished ESPN golf event, or None (#9212).
+
+    Only ``STATUS_FINAL`` has a champion. A suspended, cancelled or unfinished
+    event has none, whatever its leaderboard order says.
+
+    ESPN marks ``winner: true`` on a team event's winning side (Presidents Cup:
+    USA) and marks no one on a stroke-play board, where the final ``order`` is
+    the finishing position (FedEx Open de France 2026-09-27: Matt Fitzpatrick
+    ``order`` 1 at -20). A playoff is settled by the time ESPN says final, so its
+    winner is ``order`` 1 too. Exactly one competitor must answer; two, or none,
+    is None rather than a pick.
+    """
+    status_type = (event.get("status") or {}).get("type") or {}
+    if status_type.get("name") != "STATUS_FINAL":
+        return None
+    competitions = event.get("competitions") or [{}]
+    competitors = [c for c in ((competitions[0] or {}).get("competitors") or []) if isinstance(c, dict)]
+    flagged = [c for c in competitors if c.get("winner") is True]
+    pick = flagged or [c for c in competitors if c.get("order") == 1]
+    if len(pick) != 1:
+        return None
+    who = pick[0].get("athlete") or pick[0].get("team") or {}
+    name = (who.get("displayName") or "").strip()
+    return name or None
 
 
 class ESPNAPIService:
@@ -880,7 +961,9 @@ class ESPNAPIService:
 
         Golf has no teams or scores, so `get_scoreboard`'s ESPNEvent shape does not
         fit it. Each dict carries ``name``, ``start`` / ``end`` (ESPN's ISO stamps),
-        ``state`` (`pre` / `in` / `post`) and ``status`` (e.g. `STATUS_IN_PROGRESS`).
+        ``state`` (`pre` / `in` / `post`), ``status`` (e.g. `STATUS_IN_PROGRESS`) and
+        ``champion`` (#9212: who won a `STATUS_FINAL` event, else None — see
+        :func:`espn_golf_champion`).
 
         Returns ``[]`` for an empty board and ``None`` when ESPN did not answer: an
         absent tournament proves nothing (#7450).
@@ -901,6 +984,7 @@ class ESPNAPIService:
                 "end": e.get("endDate"),
                 "state": status_type.get("state"),
                 "status": status_type.get("name"),
+                "champion": espn_golf_champion(e),
             })
         return events
 
@@ -1051,6 +1135,10 @@ class ESPNAPIService:
                 status = "in"
             elif status_name == "status_final":
                 status = "post"
+            elif espn_not_started_state(status_type):
+                # #5324 (delayed start): ESPN's own `pre` under a name other
+                # than STATUS_SCHEDULED — STATUS_RAIN_DELAY before first pitch.
+                status = "scheduled"
             else:
                 status = espn_terminal_state(status_type) or status_name
 
@@ -1111,6 +1199,13 @@ class ESPNAPIService:
             if isinstance(season_type_raw, int):
                 season_type_val = season_type_raw
 
+            # #9216: its own guard — a series object ESPN reshapes must cost the
+            # series reading, never the event (gotcha #42).
+            try:
+                playoff_series = parse_playoff_series(competition)
+            except Exception:  # noqa: BLE001
+                playoff_series = None
+
             return ESPNEvent(
                 espn_id=str(event_data.get("id")),
                 name=event_data.get("name"),
@@ -1131,6 +1226,7 @@ class ESPNAPIService:
                 stopped_without_result=espn_stopped_without_result(status_type),
                 time_valid=espn_time_valid(competition, event_data),
                 time_announced=espn_time_announced(competition, event_data),
+                playoff_series=playoff_series,
             )
         except Exception as e:
             logger.error(f"Error parsing ESPN event: {e}")
@@ -1766,6 +1862,16 @@ class ESPNAPIService:
         - Compound stats: "10-22" or "13/22" (made-attempts) → 10.0 / 13.0
         - Percentages: ".455" → 0.455
         - Dashes/empty: "--" or "" → None
+        - Non-finite: "INF", "NaN" → None (#9713)
+
+        #9713: ESPN prints a pitcher's ERA as "INF" when he has allowed an
+        earned run without recording an out, and ``float("INF")`` accepts it.
+        ``json.dumps`` then writes ``Infinity``, which is not JSON, and Postgres
+        refuses the whole box. Red Sox at Yankees (15319563) lost every box write
+        from 01:59Z on 9/30. The live pass kept a 2-run line score through a 9–0
+        final, and the settled pass, which has no per-game savepoint, lost its
+        whole transaction on that game every minute. A stat with no finite value
+        is dropped like a dash.
         """
         if not value_str or value_str.strip() in ("--", "-", ""):
             return None
@@ -1784,14 +1890,16 @@ class ESPNAPIService:
                 parts = value_str.split(sep)
                 if len(parts) == 2:
                     try:
-                        return float(parts[0])
+                        made = float(parts[0])
                     except ValueError:
                         return None
+                    return made if math.isfinite(made) else None
 
         try:
-            return float(value_str)
+            value = float(value_str)
         except ValueError:
             return None
+        return value if math.isfinite(value) else None
 
     def _parse_scoring_plays(self, summary_data: dict) -> list[dict]:
         """Parse scoring plays from ESPN summary response.

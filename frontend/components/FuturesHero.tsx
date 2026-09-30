@@ -1,5 +1,6 @@
 "use client";
 
+import { formatProbabilityPercent, probabilityParts } from "@/lib/probabilityDisplay";
 import { renderedPercent } from "@/lib/renderedPercent";
 
 interface FuturesHeroProps {
@@ -65,6 +66,13 @@ export function FuturesHero({
       : rendered != null && Number.isFinite(rendered)
         ? rendered
         : renderedPercent(probability);
+  // #9576 — the numeral printed `pct` bare, so a still-trading 0.995 read
+  // `100%` in the hero while its own All Outcomes row and the /weather card that
+  // links here both read `>99%` (`/futures/59699693`, Hurricane Polo). The row
+  // integer is still the one printed; the boundary rule runs on the PROBABILITY
+  // (`probabilityParts`, the rule the rows and the event hero use), and the
+  // marker is its own span so the 64px numeral keeps its digits-only testid.
+  const parts = probability == null ? null : probabilityParts(probability, { rendered: pct });
   const movementUp = movement != null && movement > 0;
   // Resolved markets show the final result, not a live movement pill.
   const movementStr =
@@ -120,7 +128,7 @@ export function FuturesHero({
           </div>
           {/* Upset note (pure copy, no new data): a low last price before winning. */}
           {resolvedWon && pct != null && pct < 25 && (
-            <p className="text-[13px] text-text-secondary mt-1.5">Markets gave this just {pct}%.</p>
+            <p className="text-[13px] text-text-secondary mt-1.5">Markets gave this just {formatProbabilityPercent(probability as number, { rendered: pct })}.</p>
           )}
         </div>
       )}
@@ -162,7 +170,12 @@ export function FuturesHero({
                 <AmbientHistory points={sparklinePoints} />
                 <div className="absolute inset-x-0 bottom-1 flex items-end justify-between gap-3">
                   <div className="shrink-0 flex items-baseline gap-[1px] font-mono font-bold tracking-[-0.045em] text-text-primary leading-none">
-                    <span data-testid="hero-percent" className="text-[64px]">{pct}</span>
+                    {parts?.marker && (
+                      <span data-testid="hero-percent-marker" className="text-[28px] mr-0.5">
+                        {parts.marker}
+                      </span>
+                    )}
+                    <span data-testid="hero-percent" className="text-[64px]">{parts?.digits ?? pct}</span>
                     <span className="text-[28px]">%</span>
                   </div>
                   {movementStr && (
@@ -202,7 +215,12 @@ export function FuturesHero({
             <div className="flex items-end justify-between mb-3">
               <div>
                 <div className="flex items-baseline gap-[1px] font-mono font-bold tracking-[-0.045em] text-text-primary leading-none">
-                  <span data-testid="hero-percent" className="text-[64px]">{pct}</span>
+                  {parts?.marker && (
+                    <span data-testid="hero-percent-marker" className="text-[28px] mr-0.5">
+                      {parts.marker}
+                    </span>
+                  )}
+                  <span data-testid="hero-percent" className="text-[64px]">{parts?.digits ?? pct}</span>
                   <span className="text-[28px]">%</span>
                 </div>
                 <div className="flex items-center gap-2 mt-2 flex-wrap">

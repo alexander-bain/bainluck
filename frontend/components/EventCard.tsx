@@ -394,7 +394,13 @@ export default function EventCard({
   // matches that reached no rail at all would, on reaching one, have rendered
   // "Sep 1 5:00 PM" — the upcoming-branch fall-through `lib/eventState.ts`
   // opens by naming as the quieter lie.
-  const isSuspended = hasNoReportedResult(event.status, event.commence_time);
+  // #9634: the served `started_without_result` outranks the clock when present.
+  const isSuspended = hasNoReportedResult(
+    event.status,
+    event.commence_time,
+    undefined,
+    event.started_without_result,
+  );
 
   // #7070 — THE CARD STOPS DENYING A RESULT ITS OWN PAYLOAD CARRIES.
   //
@@ -415,7 +421,7 @@ export default function EventCard({
   // including every row on a payload that does not carry the keys at all, which
   // today is every `/api/events` list row — so those cards are untouched.
   const venueSettledSentence = isSuspended
-    ? venueSettledSummary(event.venue_settled, event.venue_settled_result)
+    ? venueSettledSummary(event.venue_settled, event.venue_settled_result, event.venue_closed_no_winner)
     : null;
 
   // #2882 — NEITHER side has a number. This is #3459's rule reaching the league
@@ -588,10 +594,23 @@ export default function EventCard({
   // Short team names for compact display. UX-1065 (#2936): the last word alone
   // renders "Town" for Ipswich Town and "FC" for both sides of an FC-vs-FC
   // fixture, so the pair is decided together in `lib/teamShortName.ts`.
+  // #5634 — with the sport, a football club keeps its name: the finished score
+  // strip reads "UNION BERLIN", not "BERLIN".
   const { home: homeShort, away: awayShort } = teamShortNames(
     { name: event.home_team, abbreviation: event.home_team_data?.abbreviation },
     { name: event.away_team, abbreviation: event.away_team_data?.abbreviation },
+    event.sport,
   );
+
+  // #9398 — the footer's divider and padding are drawn only when something sits
+  // under them. An upcoming card with no sportsbook projection and no broadcast
+  // (Leafs–Canadiens on /sports/icehockey_nhl, 9/28) otherwise ended in a rule
+  // and an empty ~40px strip, which reads as something that failed to load.
+  // These are the footer's own three branches plus its broadcast, restated.
+  const footerHasLead =
+    (!isLive && !!projectedScore) ||
+    (isLive && !!opening && openedHomePct !== null && (openedAwayWithheld || openedAwayPct !== null));
+  const showFooter = !isFinished && !isSuspended && (footerHasLead || !!event.espn?.broadcast);
 
   return (
     // UX-P083 (#1860) / UX-P154: the stable hook the browser rail counts and the
@@ -1005,8 +1024,9 @@ export default function EventCard({
 
           {/* Footer — contextual info (hide for finished games, and for
               suspended ones: "Proj 6-4" is a pregame promise and the match is
-              stopped, not upcoming — CERT-792). */}
-          {!isFinished && !isSuspended && (
+              stopped, not upcoming — CERT-792). Absent entirely when it would
+              hold nothing (#9398). */}
+          {showFooter && (
             <div className="mt-2.5 pt-2 border-t border-surface-border/50 flex justify-between items-center text-micro">
               {/* UX-P074: `!= null`, not `!== null`. An ABSENT key answered the
                   strict test with `undefined !== null` → true, and the card then
@@ -1030,7 +1050,7 @@ export default function EventCard({
                 <span className="text-text-muted">
                   Opened{" "}
                   <span className="font-mono text-text-secondary">
-                    {teamShortNames({ name: event.home_team }, { name: event.away_team }).home} {openedHomePct}%
+                    {teamShortNames({ name: event.home_team }, { name: event.away_team }, event.sport).home} {openedHomePct}%
                   </span>
                 </span>
               ) : isLive && opening && openedHomePct !== null && openedAwayPct !== null ? (

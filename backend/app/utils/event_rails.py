@@ -42,12 +42,17 @@ sweep a matrix and no anchor can rot (gotcha #44).
 
 from datetime import timedelta, timezone
 
-from sqlalchemy import and_, case, literal, or_, select
+from sqlalchemy import and_, case, func, literal, not_, or_, select
 
 from app.models.models import Event, Sport
 from app.utils.event_completion import (
+    AUTHORITY_NOT_STARTED_HORIZON,
+    AUTHORITY_NOT_STARTED_TTL,
+    ESPN_NOT_STARTED_KEY,
     EVENT_SUSPENDED,
     RECENT_RAIL_STATUSES,
+    STATPAL_LATER_SESSION_HORIZON,
+    STATPAL_LATER_SESSION_KEY,
     UPCOMING_GRACE,
 )
 from app.utils.kalshi_occurrence_start import (
@@ -357,6 +362,64 @@ def _before_rail_floor(now):
     )
 
 
+def authority_not_started_rows(now):
+    """The authority said within the TTL that this row has not begun. #9195.
+
+    The SQL half of :func:`~app.utils.event_completion.authority_not_started_fresh`
+    plus the :data:`~app.utils.event_completion.AUTHORITY_NOT_STARTED_HORIZON`
+    bound that :func:`~app.utils.event_completion.started_without_result` applies
+    beside it — the same claim, so a card's label and its rail agree.
+
+    The stamp is compared as TEXT against ISO bounds built here, never CAST: a
+    cast of one malformed value would fail the whole rail query, where a text
+    comparison just declines that row (the Python half's fail-closed reading).
+    The writer stamps ``datetime.now(timezone.utc).isoformat()``, so the bounds
+    are rendered in the same UTC ``+00:00`` form. ``COALESCE`` makes an absent
+    stamp FALSE rather than NULL, because callers negate this.
+    """
+    utc_now = now.astimezone(timezone.utc)
+    stamp = func.coalesce(
+        Event.win_probability_sources[ESPN_NOT_STARTED_KEY].astext, ""
+    )
+    return and_(
+        Event.commence_time >= now - AUTHORITY_NOT_STARTED_HORIZON,
+        stamp >= (utc_now - AUTHORITY_NOT_STARTED_TTL).isoformat(),
+        stamp <= utc_now.isoformat(),
+    )
+
+
+def statpal_later_session_rows(now):
+    """The row carries a live #9588 StatPal later-session hold. #9613.
+
+    The SQL half of
+    :func:`~app.utils.event_completion.statpal_later_session_pending`, compared
+    as TEXT for :func:`authority_not_started_rows`' reason: the writer stores
+    UTC ``isoformat`` (``statpal_later_session_value``), the bounds are rendered
+    the same way, and a malformed value declines its row instead of failing the
+    query. ``COALESCE`` makes an absent stamp FALSE, because callers negate this.
+    """
+    utc_now = now.astimezone(timezone.utc)
+    stamp = func.coalesce(
+        Event.win_probability_sources[STATPAL_LATER_SESSION_KEY].astext, ""
+    )
+    return and_(
+        Event.commence_time >= now - STATPAL_LATER_SESSION_HORIZON,
+        stamp > utc_now.isoformat(),
+        stamp <= (utc_now + STATPAL_LATER_SESSION_HORIZON).isoformat(),
+    )
+
+
+def not_started_hold_rows(now):
+    """A source we trust says this row has not begun, whatever its clock says.
+
+    The two statements :func:`~app.utils.event_completion.started_without_result`
+    lets outrank the clock: ESPN's fresh "not started" (#9195) and StatPal's
+    later session (#9613). One name so the no-result rail and the upcoming rail
+    decline and admit the same rows.
+    """
+    return or_(authority_not_started_rows(now), statpal_later_session_rows(now))
+
+
 def started_without_result_rows(now):
     """``scheduled`` and its own kickoff is more than the grace behind us. #3211.
 
@@ -382,6 +445,10 @@ def started_without_result_rows(now):
     return and_(
         Event.status == "scheduled",
         _before_rail_floor(now),
+        # #9195: a game the authority still lists as not begun is late, not
+        # result-less (the Python half says why). #9613: so is a match StatPal
+        # puts in a later session.
+        not_(not_started_hold_rows(now)),
     )
 
 
@@ -428,6 +495,14 @@ def upcoming_rail_condition(now):
         and_(
             Event.status == "scheduled",
             _at_or_after_rail_floor(now),
+        ),
+        # #9195: the rows `started_without_result_rows` now declines. Without
+        # this arm a delayed game past the floor would sit on NO rail — the
+        # #3211 hole — so the two predicates stay jointly exhaustive.
+        and_(
+            Event.status == "scheduled",
+            _before_rail_floor(now),
+            not_started_hold_rows(now),
         ),
     )
 

@@ -60,6 +60,7 @@ actor APIClient {
 
     /// In-memory response cache with TTL
     private var responseCache: [String: CacheEntry] = [:]
+    private var freshMarketRetryAt: Date?
 
     private struct CacheEntry {
         let data: Data
@@ -312,11 +313,12 @@ actor APIClient {
         KeychainHelper.load(key: sessionTokenKeychainKey) != nil
     }
 
-    private init() {
+    /// Session injection keeps transport/cache behavior testable without real network calls.
+    init(session suppliedSession: URLSession? = nil) {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 30
         config.timeoutIntervalForResource = 60
-        session = URLSession(configuration: config)
+        session = suppliedSession ?? URLSession(configuration: config)
 
         decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
@@ -328,8 +330,16 @@ actor APIClient {
         _ path: String,
         query: [String: String] = [:],
         cacheTTL: TimeInterval? = nil,
+        requiresNetwork: Bool = false,
+        revalidationQuery: [String: String] = [:],
         trace: (@Sendable (RequestTrace) -> Void)? = nil
     ) async throws -> sending T {
+        let freshMarketRead = requiresNetwork && revalidationQuery["fresh"] == "true"
+            && path.hasPrefix("/api/futures/")
+        if freshMarketRead, let until = freshMarketRetryAt, until > Date() {
+            let seconds = max(1, Int(ceil(until.timeIntervalSinceNow)))
+            throw APIError.httpError(statusCode: 429, body: "{\"retry_after\":\(seconds)}")
+        }
         // Check cache
         let cacheKey: String?
         if let ttl = cacheTTL {
@@ -339,7 +349,7 @@ actor APIClient {
             let key = Self.responseCacheKey(
                 principal: currentFeedIdentity(), path: path, query: query)
             cacheKey = key
-            if let entry = responseCache[key],
+            if !requiresNetwork, let entry = responseCache[key],
                Date().timeIntervalSince(entry.timestamp) < ttl {
                 let decodeStart = Date()
                 let value = try decoder.decode(T.self, from: entry.data)
@@ -356,12 +366,22 @@ actor APIClient {
         }
 
         var components = URLComponents(string: baseURL + path)
-        if !query.isEmpty {
-            components?.queryItems = query.map { URLQueryItem(name: $0.key, value: $0.value) }
+        // Revalidation changes freshness, not resource identity. Refill the
+        // canonical cache entry so an ordinary read retains the new response.
+        let requestQuery = query.merging(revalidationQuery) { _, fresh in fresh }
+        if !requestQuery.isEmpty {
+            components?.queryItems = requestQuery.map { URLQueryItem(name: $0.key, value: $0.value) }
         }
         guard let url = components?.url else { throw APIError.invalidURL }
 
         var request = URLRequest(url: url)
+        if requiresNetwork {
+            // A newer stream revision makes the on-device TTL/URLCache entry
+            // unsuitable. Standard HTTP revalidation is requested too; this is
+            // NOT a promise to bypass an application cache inside the server.
+            request.cachePolicy = .reloadIgnoringLocalCacheData
+            request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+        }
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue(sessionId, forHTTPHeaderField: "x-session-id")
 
@@ -385,7 +405,11 @@ actor APIClient {
 
         if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
             let body = String(data: data, encoding: .utf8)
-            throw APIError.httpError(statusCode: http.statusCode, body: body)
+            let error = APIError.httpError(statusCode: http.statusCode, body: body)
+            if freshMarketRead, let seconds = FuturesPriceReadCooldown.seconds(for: error) {
+                freshMarketRetryAt = Date().addingTimeInterval(seconds)
+            }
+            throw error
         }
         let http = response as? HTTPURLResponse
 
@@ -856,6 +880,13 @@ actor APIClient {
         return try await fetch("/api/events/\(id)", cacheTTL: 15)
     }
 
+    /// Revision-triggered rereads leave the device and refresh its normal cache.
+    /// The caller still validates server revisions before adopting the response.
+    func fetchFreshEvent(id: Int) async throws -> EventDetail {
+        try await fetch("/api/events/\(id)", cacheTTL: 15, requiresNetwork: true,
+                        revalidationQuery: ["fresh": "true"])
+    }
+
     /// Fetches cached line movement analysis and explanation for an event.
     func fetchLineMovement(eventId: Int) async throws -> LineMovementResponse {
         return try await fetch("/api/events/\(eventId)/line-movement", cacheTTL: 900)
@@ -866,6 +897,11 @@ actor APIClient {
     /// Fetches win-probability history for an event over the requested trailing window.
     func fetchEventHistory(id: Int, hours: Int = 24) async throws -> EventHistoryResponse {
         return try await fetch("/api/events/\(id)/history", query: ["hours": "\(hours)"], cacheTTL: 60)
+    }
+
+    func fetchFreshEventHistory(id: Int, hours: Int) async throws -> EventHistoryResponse {
+        try await fetch("/api/events/\(id)/history", query: ["hours": "\(hours)"],
+                        cacheTTL: 60, requiresNetwork: true, revalidationQuery: ["fresh": "true"])
     }
 
     // MARK: - Related Futures
@@ -887,6 +923,12 @@ actor APIClient {
     /// Fetches linked prediction markets, props, spreads, and totals for an event.
     func fetchGameMarkets(eventId: Int) async throws -> GameMarketsResponse {
         return try await fetch("/api/events/\(eventId)/game-markets", cacheTTL: 60)
+    }
+
+    /// Stream invalidations must read the authoritative full projection.
+    func fetchFreshGameMarkets(eventId: Int) async throws -> GameMarketsResponse {
+        try await fetch("/api/events/\(eventId)/game-markets", requiresNetwork: true,
+                        revalidationQuery: ["fresh": "true"])
     }
 
     // MARK: - Search
@@ -917,11 +959,19 @@ actor APIClient {
         return try await fetch("/api/teams/\(slug)")
     }
 
+    /// Fresh projections of already-painted cards. No editorial feed-cache read.
+    func fetchDiscoverPriceCards(eventIds: [Int], marketIds: [Int]) async throws -> DiscoverPriceCards {
+        return try await fetch("/api/feed/price-cards", query: [
+            "event_ids": eventIds.map(String.init).joined(separator: ","),
+            "market_ids": marketIds.map(String.init).joined(separator: ",")
+        ], requiresNetwork: true)
+    }
+
     // MARK: - Futures Detail
 
     /// Fetches a futures market detail page by backend market ID.
     func fetchFuturesDetail(id: Int) async throws -> FuturesMarketDetail {
-        return try await fetch("/api/futures/\(id)")
+        return try await fetch("/api/futures/\(id)", requiresNetwork: true, revalidationQuery: ["fresh": "true"])
     }
 
     /// Fetches outcome probability history for a futures market.
@@ -929,7 +979,7 @@ actor APIClient {
         return try await fetch("/api/futures/\(marketId)/probability-timeline", query: [
             "top": "\(top)",
             "hours": "\(hours)",
-        ])
+        ], requiresNetwork: true, revalidationQuery: ["fresh": "true"])
     }
 
     // MARK: - EI Rankings
@@ -1122,6 +1172,18 @@ actor APIClient {
     }
 
     // MARK: - Tournament hubs
+
+    /// #9652: publication state/revision and cards come from one fresh read.
+    /// Never reuse a slug-only cached publication after a withdrawal.
+    func fetchContainerHub(slug: String) async throws -> ContainerHubResponse {
+        try await fetch(ContainerHubService.path(for: slug), requiresNetwork: true)
+    }
+
+    /// #9653: optional Browse discovery always revalidates publication/flags.
+    /// No local TTL or last-good fallback may restore a revoked entry.
+    func fetchContainerDiscovery(_ request: ContainerDiscoveryRequest) async throws -> ContainerDiscoveryResponse {
+        try await fetch(ContainerDiscoveryRequest.path, query: request.query, requiresNetwork: true)
+    }
 
     /// Fetches a registered tournament hub (`us-open`, …) — the same payload the
     /// web hub page renders.

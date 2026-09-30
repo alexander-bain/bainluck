@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState, useEffect, useRef } from "react";
-import { SOURCES, tempColorC, toC, tomorrowDateStrUpper } from "./data";
+import { SOURCES, sharedDayLabel, tempColorC, toC } from "./data";
 import { pluralize } from "./temperatureMapHeader";
 import type { CityData } from "./data";
 
@@ -49,6 +49,7 @@ function resolveCollisions(cities: CityData[], minDist: number): ResolvedCity[] 
 export default function MapCanvas({ cities, selected, hover, onHover, onSelect }: MapCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [isNarrow, setIsNarrow] = useState(false);
+  const dayLabel = sharedDayLabel(cities);
 
   useEffect(() => {
     const check = () => {
@@ -77,7 +78,7 @@ export default function MapCanvas({ cities, selected, hover, onHover, onSelect }
       >
         <TempLegend />
         <span className="font-mono" style={{ fontSize: 11, color: "var(--text-muted)" }}>
-          HIGH &middot; {tomorrowDateStrUpper()}
+          HIGH{dayLabel ? <> &middot; {dayLabel.toUpperCase()}</> : null}
         </span>
       </div>
 

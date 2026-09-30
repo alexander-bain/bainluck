@@ -566,7 +566,8 @@ class TestEveryConceptCallSiteIsRouted:
         assert src.count("_search_rank_candidates(") == 1
         assert "_team_card_keyed(_team_result_rows, _q_identity)" in src
         assert (
-            "rank_with_keys(query, [(_search_team_evidence(t), t) for t in cards])"
+            # #9859: the query reaches the evidence (a leading city abbreviation).
+            "rank_with_keys(query, [(_search_team_evidence(t, query), t) for t in cards])"
             in inspect.getsource(_team_card_keyed)
         )
 

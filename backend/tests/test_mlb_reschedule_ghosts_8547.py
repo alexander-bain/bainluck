@@ -320,6 +320,9 @@ class _FakeSession:
             if not self.noop:
                 self.tagged.add(params["eid"])
             return _Result(rowcount=0 if self.noop else 1)
+        if sql.startswith("SELECT id, espn_id, home_score, away_score, status"):
+            self.calls.append("state")
+            return _Result([r for r in self.rows if r.id in params["ids"]])
         if sql.startswith("SELECT id FROM events"):
             self.calls.append("verify")
             return _Result([_Id(i) for i in params["ids"] if i in self.tagged])
@@ -347,7 +350,7 @@ def _run(monkeypatch, *, rows=None, boards=None, apply=True, fold_live=True, **k
     async def _fake_session():
         yield session
 
-    async def _boards_for(_days):
+    async def _boards_for(_days, _sport_key=sweep.SPORT_KEY):
         return boards if boards is not None else _boards()
 
     async def _no_sleep(_s):

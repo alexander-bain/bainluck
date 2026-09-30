@@ -55,6 +55,10 @@ class FuturesMarketData(BaseModel):
     market_name: str  # e.g., "NBA Championship Winner"
     bookmaker: str  # e.g., "draftkings"
     outcomes: list[FuturesOutcomeData]
+    # Raw provider identity belongs to these quotes, not the rolling sport key.
+    # Missing/malformed identity must not prevent an otherwise usable price.
+    event_id: Optional[str] = None
+    event_commence_time: Optional[str] = None
 
 
 class OddsAPIService(BaseAPIClient):
@@ -430,6 +434,9 @@ class OddsAPIService(BaseAPIClient):
                             market_name=event.get("sport_title", sport_key),
                             bookmaker=bookmaker["key"],
                             outcomes=outcomes,
+                            event_id=event.get("id") if isinstance(event.get("id"), str) else None,
+                            event_commence_time=(event.get("commence_time")
+                                if isinstance(event.get("commence_time"), str) else None),
                         ))
 
         return markets

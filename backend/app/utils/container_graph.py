@@ -129,6 +129,34 @@ EDGE_SOURCES: Final[FrozenSet[str]] = frozenset(
 )
 
 # --------------------------------------------------------------------------
+# corrections and publication (#9651, the narrow #5344 contract)
+# --------------------------------------------------------------------------
+
+#: Whether readers may see a container. ``unpublished`` is the DEFAULT and the
+#: fail-closed state: assembly never publishes, so a hub reaches readers only
+#: by a named decision. ``withdrawn`` is a correction, not a deletion — the
+#: container and its URL stay, and a reader is told it was withdrawn rather
+#: than shown a 404 that reads as "never existed" (gotcha #53).
+PUBLICATION_STATES: Final[FrozenSet[str]] = frozenset(
+    {"unpublished", "published", "withdrawn"}
+)
+
+#: The correction ledger's two scopes. ``member`` subtracts one member from one
+#: container; ``publication`` moves the container's own state.
+CORRECTION_SCOPES: Final[FrozenSet[str]] = frozenset({"member", "publication"})
+
+#: Which actions each scope admits. A pair rule, so it is a map rather than two
+#: sets a writer could mix up. **No member action ADDS a member**: ``readmit``
+#: lifts a withdrawal and the next assembly pass re-admits the member only if
+#: its evidence still proves it. A correction that could write an edge would be
+#: a curated list with extra steps.
+CORRECTION_ACTIONS: Final[dict] = {
+    "member": frozenset({"withdraw", "readmit"}),
+    "publication": frozenset({"publish", "withdraw"}),
+}
+
+
+# --------------------------------------------------------------------------
 # event_participants
 # --------------------------------------------------------------------------
 
@@ -268,6 +296,21 @@ def validate_edge_kind_and_class(kind: str, edge_class) -> tuple:
             f"not on kind={kind!r}"
         )
     return kind, edge_class
+
+
+def validate_publication_state(value: str) -> str:
+    return _require(value, PUBLICATION_STATES, "publication_state")
+
+
+def validate_correction(scope: str, action: str) -> tuple:
+    """Validate a correction's ``scope``/``action`` pair together.
+
+    ``withdraw`` is legal in both scopes and means different things in each,
+    which is exactly why the pair is checked and not the action alone.
+    """
+    _require(scope, CORRECTION_SCOPES, "scope")
+    _require(action, CORRECTION_ACTIONS[scope], f"action (scope={scope!r})")
+    return scope, action
 
 
 def validate_confidence(value) -> float:

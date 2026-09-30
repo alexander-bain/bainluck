@@ -267,6 +267,17 @@ class TestChainContract:
             # the live pass keeps the last word on first-page membership. Its
             # tick is outside its gate, per the convention above.
             "futures_first_page_cap",
+            # #9602: the series kickoff order swaps only same-matchup upcoming
+            # games among their own slots. BEFORE #9489's pass, which keeps
+            # served order inside its groups, so a series it touches stays in
+            # kickoff order. Its tick is outside its gate, per the convention.
+            "series_kickoff_order",
+            # #9489: the imminent-marquee upcoming lead reorders only the
+            # upcoming-game slots the three passes above have settled, so it
+            # runs AFTER them; BEFORE the hoist, so the live pass keeps the last
+            # word and vacates the later-starting games this moved behind
+            # tonight's. Its tick is outside its gate, per the convention above.
+            "imminent_marquee_upcoming",
             "live_first_page",
         ], (
             "get_feed's per-stage timings are built from these callbacks; "

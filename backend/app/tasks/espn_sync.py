@@ -28,6 +28,7 @@ from app.utils.event_completion import (
 )
 from app.utils.start_time_authority import provider_may_set_start
 from app.utils.team_binding_invariant import accept_team_binding
+from app.utils.espn_team_spelling import apply_espn_respelling
 from app.utils.name_normalization import (
     token_overlap_score as _team_name_match_score,
     names_match as _canonical_names_match,
@@ -932,6 +933,26 @@ async def _sync_espn_live_events():
                 await widen_espn.close()
 
             # ── Second pass: scheduled events (team pre-population) ─
+            # #9143: today's dated board for any sport whose undated board has
+            # not rolled for one of its own id-anchored rows. Rows are free here
+            # (`_release_rows` above), so the fetch holds nothing.
+            dated_espn = ESPNAPIService()
+
+            async def _fetch_scheduled_dated(sport_key: str, board_day: str):
+                return await dated_espn.get_scoreboard(sport_key, date=board_day)
+
+            scheduled_dated_boards: dict = {}
+            try:
+                async with _step_savepoint(session):  # #8796
+                    scheduled_dated_boards = await _prefetch_scheduled_dated_boards(
+                        session, scheduled_sport_keys, espn_data, full_slate_boards,
+                        _fetch_scheduled_dated, datetime.now(timezone.utc), stats,
+                    )
+            except Exception as e:
+                stats["errors"].append(f"scheduled_dated_boards: {str(e)}")
+            finally:
+                await dated_espn.close()
+
             for sport_key in scheduled_sport_keys:
                 if sport_key not in ESPN_SPORT_MAPPING:
                     continue
@@ -939,7 +960,7 @@ async def _sync_espn_live_events():
                 # decision was taken once, before either loop.
                 if _failover.espn_reading(espn_data, sport_key) != _failover.FIXTURES:
                     continue
-                espn_events = scheduled_board_for(
+                espn_events = scheduled_dated_boards.get(sport_key) or scheduled_board_for(
                     sport_key, espn_data[sport_key], full_slate_boards
                 )
                 try:
@@ -2974,6 +2995,10 @@ async def _process_live_sport(
         stats[f"match_{match_method}"] = stats.get(f"match_{match_method}", 0) + 1
         changed = False
 
+        # #9482: a spelling-only difference takes ESPN's name first, so the
+        # side resolves (and #1918 binds) to ESPN's id-anchored team row.
+        apply_espn_respelling(event, ee, team_cache, stats, source="espn_live")
+
         # Upsert team records with ESPN data (colors, logos)
         home_team = await upsert_team_fn(session, event.home_team_name, ee.home_team, event.sport_id, team_cache, stats)
         away_team = await upsert_team_fn(session, event.away_team_name, ee.away_team, event.sport_id, team_cache, stats)
@@ -3243,6 +3268,103 @@ def scheduled_board_for(sport_key, featured_board, full_slate_boards) -> list:
     full = full_slate_boards.get(sport_key)
     return full if full else featured_board
 
+
+def scheduled_dated_board_day(board, scheduled_rows, now) -> Optional[str]:
+    """The board day the pre-game pass must ask ESPN for by date, or None (#9143).
+
+    ESPN's undated board lags its own rollover: at 13:08Z on 2026-09-27 the MLB
+    board still read ``day=2026-09-26``, so Mets @ Nationals (ESPN 401817106,
+    first pitch 17:05Z) was absent from it, and the pre-game pass — the only
+    rail allowed to revise an ``espn``-stamped start — could not reach the row
+    that still said 19:05Z. The odds poll read the right time off the dated
+    board and was refused, correctly, as a lower-ranked claimant.
+
+    So: when a scheduled row's OWN ``espn_id`` is missing from the board and the
+    row is filed under TODAY's board day, the board has not rolled for it, and
+    today's dated board is asked. Rows on later days are not: the undated board
+    never lists them anyway, and asking for them would be a fetch per row-day on
+    every pass. ``scheduled_rows`` is ``(espn_id, commence_time)`` pairs.
+    """
+    today = espn_board_date(now)
+    on_board = {ee.espn_id for ee in board if getattr(ee, "espn_id", None)}
+    for espn_id, commence in scheduled_rows:
+        if not espn_id or commence is None or espn_id in on_board:
+            continue
+        if espn_board_date(commence) == today:
+            return today
+    return None
+
+
+def with_dated_board(board, dated_board) -> list:
+    """``board`` plus every game of ``dated_board`` it does not already carry.
+
+    Only ever ADDS: a game on both keeps the board's copy, so this can move a
+    row only where the undated board had nothing to say about it.
+    """
+    on_board = {ee.espn_id for ee in board if getattr(ee, "espn_id", None)}
+    extra = [
+        ee for ee in dated_board or []
+        if not getattr(ee, "espn_id", None) or ee.espn_id not in on_board
+    ]
+    return list(board) + extra
+
+
+async def _prefetch_scheduled_dated_boards(
+    session, sport_keys, espn_data, full_slate_boards, fetch_dated, now, stats,
+) -> dict:
+    """``{sport_key: widened board}`` for the pre-game pass (#9143).
+
+    Runs BEFORE that pass touches a row (#9049: no ESPN call while a row is
+    held), with one read for every sport. A sport absent from the result keeps
+    the board it always had. At most one dated fetch per sport per run, and
+    only while the undated board is behind the day.
+    """
+    keys = [
+        k for k in sport_keys
+        if k in ESPN_SPORT_MAPPING
+        and _failover.espn_reading(espn_data, k) == _failover.FIXTURES
+    ]
+    if not keys:
+        return {}
+    rows = (
+        await session.execute(
+            select(Sport.key, Event.espn_id, Event.commence_time)
+            .join(Sport, Event.sport_id == Sport.id)
+            .where(
+                Sport.key.in_(keys),
+                Event.status == "scheduled",
+                Event.espn_id.isnot(None),
+                Event.commence_time >= now - timedelta(days=1),
+                Event.commence_time < now + timedelta(days=2),
+            )
+        )
+    ).all()
+    by_sport: dict = {}
+    for key, espn_id, commence in rows:
+        by_sport.setdefault(key, []).append((espn_id, commence))
+
+    widened: dict = {}
+    for key in keys:
+        base = scheduled_board_for(key, espn_data[key], full_slate_boards)
+        day = scheduled_dated_board_day(base, by_sport.get(key, []), now)
+        if day is None:
+            continue
+        try:
+            dated = await fetch_dated(key, day)
+        except Exception as e:
+            stats["errors"].append(f"scheduled_dated_board_{key}_{day}: {str(e)}")
+            continue
+        if dated is None:
+            stats["scheduled_dated_board_dark"] = (
+                stats.get("scheduled_dated_board_dark", 0) + 1
+            )
+            continue
+        stats["scheduled_dated_board_fetches"] = (
+            stats.get("scheduled_dated_board_fetches", 0) + 1
+        )
+        widened[key] = with_dated_board(base, dated)
+    return widened
+
 def espn_abbreviation_corresponds(abbreviation, *names) -> bool:
     """True when an ESPN abbreviation can be derived from the club's own name.
 
@@ -3368,8 +3490,8 @@ def espn_aliases_to_store(team_name, existing, matched_espn, *, match_was_exact,
     it answer to them in search and — on the next pass, when the borrowed name
     exact-matches — in this very lookup (#8353: Akron Zips carried "Michigan
     Wolverines" and "Eastern Michigan Eagles"; twelve women's-basketball rows
-    carried "West Virginia Mountaineers"). The crest may still come from a fuzzy
-    hit on a row that has none (#4750's rule is about overwriting); a name never.
+    carried "West Virginia Mountaineers"). The crest has its own bar,
+    ``espn_media_may_be_written``; a name is never lent by a fuzzy hit.
     """
     if matched_espn is None or not (match_was_exact or repointed_from):
         return None
@@ -3385,6 +3507,43 @@ def espn_aliases_to_store(team_name, existing, matched_espn, *, match_was_exact,
     return list(alt_names) if alt_names else None
 
 
+def fuzzy_hit_is_identical(checked_name, team_name, best_score, best_ids):
+    """A token-overlap hit that is the row's own name in other spelling.
+
+    Score 1.0 (same words once "St"/"LA" expand), from exactly one ESPN club,
+    on the row's OWN name, and that name has at least two words. An alias is
+    not enough: "C Arkansas" drops its one-letter token and scores 1.0 against
+    ESPN's "Arkansas" (#9127, Central Arkansas re-wearing the Razorbacks crest).
+    """
+    if checked_name != team_name or best_score < 1.0 or len(best_ids) != 1:
+        return False
+    return len(_normalize_name_canonical(team_name).split()) >= 2
+
+
+def espn_media_may_be_written(*, had_media, match_was_exact, repointed_from, fuzzy_identical):
+    """Whether the logo backfill may write a crest and colours from this match.
+
+    An exact name, the stored id, or a repoint may. A token-overlap hit may
+    only fill a row that has no crest, and only when the two names are the
+    same words (score 1.0, "Texas St Bobcats" / "Texas State Bobcats") and no
+    other ESPN club scores the same. A partial score names a club that shares
+    words with ours, not ours: ``/teams?limit=100`` lists under a third of
+    Division I, so an unlisted school's best hit is a listed school with the
+    same mascot (#9127: Delaware St and Alabama St Hornets both wore
+    Sacramento State's crest at 0.67; Central Arkansas, cleared by #8353,
+    wore Arkansas's again within three days). An empty crest renders as the
+    team's initials; another school's crest renders as that school.
+
+    A row that already has a crest is only in this pass because its
+    abbreviation is missing, and a token score never overwrites it (#4750).
+    """
+    if match_was_exact or repointed_from:
+        return True
+    if had_media:
+        return False
+    return bool(fuzzy_identical)
+
+
 async def _backfill_team_logos():
     """Async implementation of backfill_team_logos."""
     from app.services.espn_api import ESPNAPIService, SPORT_LEAGUE_MAP
@@ -3398,6 +3557,7 @@ async def _backfill_team_logos():
         "espn_anchors_repointed": 0,
         "espn_name_collisions_resolved": 0,
         "espn_name_collisions_refused": 0,
+        "fuzzy_media_refused": 0,
         "errors": [],
     }
 
@@ -3476,6 +3636,7 @@ async def _backfill_team_logos():
                     for team in teams_by_sport.get(sport_key, []):
                         matched_espn = None
                         match_was_exact = False
+                        fuzzy_identical = False
                         repointed_from = None
                         had_media = bool(team.logo_url_small)
 
@@ -3505,22 +3666,33 @@ async def _backfill_team_logos():
                                 # Token-overlap scoring (replaces substring matching)
                                 best_score = 0.0
                                 best_et = None
+                                best_ids = set()
                                 for espn_name, et in espn_by_name.items():
                                     score = _team_name_match_score(name, espn_name)
                                     if score > best_score:
                                         best_score = score
                                         best_et = et
+                                        best_ids = {et.espn_id}
+                                    elif score and score == best_score:
+                                        best_ids.add(et.espn_id)
                                 if best_score > 0.5:
                                     matched_espn = best_et
                                     match_was_exact = False
+                                    fuzzy_identical = fuzzy_hit_is_identical(
+                                        name,
+                                        team.name,
+                                        best_score,
+                                        best_ids,
+                                    )
                                     break
 
-                        # A row that already carries a crest is only in this
-                        # pass because its abbreviation is missing. A token
-                        # score of 0.51 must never overwrite media that is
-                        # already right (#4750's class) — an exact name, the
-                        # stored id, or a repoint, or nothing at all.
-                        if had_media and not (match_was_exact or repointed_from):
+                        if matched_espn is not None and not espn_media_may_be_written(
+                            had_media=had_media,
+                            match_was_exact=match_was_exact,
+                            repointed_from=repointed_from,
+                            fuzzy_identical=fuzzy_identical,
+                        ):
+                            stats["fuzzy_media_refused"] += 1
                             continue
 
                         if matched_espn and matched_espn.logo_url:
@@ -4471,6 +4643,229 @@ def _is_bogus_future_settled(status, commence_time, home_score, away_score, now)
 SUSPENDED_RESUME_WINDOW = timedelta(hours=48)
 
 
+async def _statpal_later_session_starts(session, events) -> dict:
+    """StatPal's recorded start for each row StatPal's schedule may hold. #9588.
+
+    One read, and only when a row is a candidate (a venue-stamped start, a
+    StatPal id, no play). A pass with none runs no query. Returns
+    ``{event_id: statpal_start}`` for the candidates whose current fixture has
+    a recorded start. The decision itself is
+    :func:`~app.utils.event_completion.statpal_names_a_later_session`.
+    """
+    from sqlalchemy import text as _sql_text
+
+    from app.utils.espn_helpers import play_evidence
+    from app.utils.event_completion import (
+        STATPAL_SCHEDULED_START_SQL,
+        statpal_schedule_candidate,
+        statpal_start_from_anchors,
+    )
+
+    # `getattr` because this runs over every live row the staleness arm loads,
+    # and a row that does not carry a field is not a candidate.
+    candidates = {
+        event.id: getattr(event, "statpal_fixture_id", None)
+        for event in events
+        if statpal_schedule_candidate(
+            getattr(event, "commence_time_source", None),
+            getattr(event, "statpal_fixture_id", None),
+            play_evidence(
+                getattr(event, "home_score", None),
+                getattr(event, "away_score", None),
+                getattr(event, "period", None),
+                getattr(event, "game_clock", None),
+            ),
+        )
+    }
+    if not candidates:
+        return {}
+    by_event: dict = {}
+    for row in (await session.execute(
+        _sql_text(STATPAL_SCHEDULED_START_SQL),
+        {"event_ids": list(candidates)},
+    )).all():
+        by_event.setdefault(row.event_id, []).append(row)
+    starts = {}
+    for event_id, fixture_id in candidates.items():
+        start = statpal_start_from_anchors(by_event.get(event_id, ()), fixture_id)
+        if start is not None:
+            starts[event_id] = start
+    return starts
+
+
+def _statpal_sessions_reached(events, statpal_starts, now) -> set:
+    """The rows whose StatPal session has begun, so the clock now runs. #9613.
+
+    The same clock-free predicate as the hold
+    (:func:`~app.utils.event_completion.statpal_later_session_clock`), read
+    after StatPal's start instead of before it.
+    """
+    from app.utils.espn_helpers import play_evidence
+    from app.utils.event_completion import statpal_later_session_clock
+
+    reached = set()
+    for event in events:
+        if event.id not in statpal_starts:
+            continue
+        start = statpal_later_session_clock(
+            event.commence_time_source,
+            event.statpal_fixture_id,
+            play_evidence(
+                event.home_score, event.away_score, event.period, event.game_clock
+            ),
+            event.commence_time,
+            statpal_starts[event.id],
+        )
+        if start is not None and start <= now:
+            reached.add(event.id)
+    return reached
+
+
+def _record_statpal_later_sessions(events, statpal_starts, now, stats) -> set:
+    """Decide the #9588 hold for each row and record it ON the row. #9613.
+
+    Returns the ids held. The decision is
+    :func:`~app.utils.event_completion.statpal_names_a_later_session`, taken
+    once here so the promoter and the stamp cannot disagree. A held row gets
+    StatPal's start under ``STATPAL_LATER_SESSION_KEY`` so the serve path and
+    the rails, which never read the anchor, stop calling it "started without a
+    result"; a row no longer held loses the key. Plain ORM assignment of a new
+    dict, as the rest of this task writes (gotcha #4/#5), and only when the
+    value changes, so a held row costs one write, not one per pass.
+    """
+    from app.utils.espn_helpers import play_evidence
+    from app.utils.event_completion import (
+        clear_statpal_later_session,
+        stamp_statpal_later_session,
+        statpal_names_a_later_session,
+    )
+
+    stats["statpal_later_session_stamped"] = 0
+    stats["statpal_later_session_cleared"] = 0
+    held = set()
+    for event in events:
+        sources = event.win_probability_sources
+        if event.id in statpal_starts and statpal_names_a_later_session(
+            event.commence_time_source,
+            event.statpal_fixture_id,
+            play_evidence(
+                event.home_score, event.away_score, event.period, event.game_clock
+            ),
+            event.commence_time,
+            statpal_starts[event.id],
+            now,
+        ):
+            held.add(event.id)
+            updated = stamp_statpal_later_session(sources, statpal_starts[event.id])
+            if updated is not sources:
+                event.win_probability_sources = updated
+                stats["statpal_later_session_stamped"] += 1
+            continue
+        updated = clear_statpal_later_session(sources)
+        if updated is not sources:
+            event.win_probability_sources = updated
+            stats["statpal_later_session_cleared"] += 1
+    return held
+
+
+#: Which of the held rows the venue may already have ended: any resolved market
+#: on the event. Runs only when a row is held, so a pass with none never issues
+#: it. Rung 2 writes ``suspended`` on a venue settlement, so a suspended row can
+#: carry an ending the other two doors never see.
+HELD_SUSPENDED_RESOLVED_SQL = """
+    SELECT DISTINCT fm.event_id AS statpal_held_resolved_id
+      FROM futures_markets fm
+     WHERE fm.event_id = ANY(:event_ids)
+       AND fm.status = 'resolved'
+"""
+
+
+async def _return_held_suspended_rows(session, suspended_events, now, stats) -> set:
+    """``suspended → scheduled`` for a row StatPal puts in a later session. #9588.
+
+    The hold's third door. ``scheduled → live`` holds a row and the live arm
+    demotes one, but a row the staleness arm already suspended stayed
+    suspended, and every surface reads that as "No result reported".
+
+    MEASURED, production 2026-09-30 14:06Z. The seven Beijing doubles rows
+    15320752–59 were released at 02:00Z 9/30, the start their StatPal anchors
+    recorded at link time. No source reported play, so they were suspended
+    about 2.5h later. StatPal's own feed by then had six of them on 10/1 and
+    10/2 (``2638138`` 03:00Z, ``2638143`` 06:00Z, the other four 02:00Z 10/2),
+    and ESPN agreed. All seven read "No result reported" for matches not yet
+    played.
+
+    ``suspended_events`` is the ``suspended → live`` door's own read, which
+    reaches this band (see its query), so this arm adds no read of its own
+    unless a row is actually held. The decision is the same predicate as the
+    other two doors
+    (:func:`~app.utils.event_completion.statpal_names_a_later_session`: a venue
+    stamp, a StatPal id, no play, StatPal's start ahead and inside the band),
+    so the three cannot trade a row. The row gets the hold's stamp as the
+    demoted live row does, and ``scheduled → live`` revisits it from then on.
+
+    Two refusals the other doors do not need, because a suspended row can
+    carry an ending they cannot: a ``completed_at`` (a game-end time) and any
+    resolved market (:data:`HELD_SUSPENDED_RESOLVED_SQL`). Either keeps the row
+    where it is. Returns the ids moved.
+    """
+    from app.utils.espn_helpers import play_evidence
+    from app.utils.event_completion import (
+        stamp_statpal_later_session,
+        statpal_names_a_later_session,
+    )
+
+    stats["unsuspended_statpal_later_session"] = 0
+    # `getattr`: this runs over every row the door reads, and a row that does
+    # not carry a field is not a candidate.
+    unfinished = [
+        e for e in suspended_events if getattr(e, "completed_at", None) is None
+    ]
+    starts = await _statpal_later_session_starts(session, unfinished)
+    held = [
+        e for e in unfinished
+        if e.id in starts and statpal_names_a_later_session(
+            e.commence_time_source,
+            e.statpal_fixture_id,
+            play_evidence(e.home_score, e.away_score, e.period, e.game_clock),
+            e.commence_time,
+            starts[e.id],
+            now,
+        )
+    ]
+    if not held:
+        return set()
+
+    resolved = {
+        row.statpal_held_resolved_id
+        for row in (await session.execute(
+            text(HELD_SUSPENDED_RESOLVED_SQL),
+            {"event_ids": [e.id for e in held]},
+        )).all()
+    }
+    returned = set()
+    for event in held:
+        if event.id in resolved:
+            continue
+        event.status = "scheduled"
+        stamped = stamp_statpal_later_session(
+            event.win_probability_sources, starts[event.id]
+        )
+        if stamped is not event.win_probability_sources:
+            event.win_probability_sources = stamped
+        returned.add(event.id)
+        logger.info(
+            "#9588 returned event %s (%s vs %s) from suspended to scheduled: "
+            "StatPal fixture %s starts %s, after the venue stamp %s, and "
+            "nothing has reported play.",
+            event.id, event.home_team_name, event.away_team_name,
+            event.statpal_fixture_id, starts[event.id].isoformat(),
+            event.commence_time.isoformat(),
+        )
+    stats["unsuspended_statpal_later_session"] = len(returned)
+    return returned
+
+
 async def _transition_event_statuses_impl() -> dict:
     """Transition event statuses based on commence_time (zero API calls).
 
@@ -4556,13 +4951,30 @@ async def _transition_event_statuses_impl() -> dict:
 
         # --- scheduled → live ---
         # Find events that have started but are still marked "scheduled"
+        from app.utils.event_completion import (
+            STATPAL_LATER_SESSION_HORIZON,
+            STATPAL_LATER_SESSION_KEY,
+        )
+
         started_result = await session.execute(
             select(Event)
             .where(
                 Event.status == "scheduled",
                 Event.commence_time <= now,
-                # Only within the last 24h to avoid touching ancient events
-                Event.commence_time >= now - timedelta(hours=24),
+                or_(
+                    # Only within the last 24h to avoid touching ancient events
+                    Event.commence_time >= now - timedelta(hours=24),
+                    # #9613: a row this task holds for a later StatPal session
+                    # is not ancient. It is revisited for the whole band, so
+                    # its stamp is maintained for as long as the readers
+                    # honour it, and it is promoted at StatPal's start.
+                    and_(
+                        Event.commence_time >= now - STATPAL_LATER_SESSION_HORIZON,
+                        Event.win_probability_sources.has_key(
+                            STATPAL_LATER_SESSION_KEY
+                        ),
+                    ),
+                ),
             )
         )
         started_events = started_result.scalars().all()
@@ -4653,6 +5065,23 @@ async def _transition_event_statuses_impl() -> dict:
                 for r in sighting_rows
             }
 
+        # #9588: A VENUE STAMP DOES NOT START A MATCH OUR SCHEDULE PUTS LATER.
+        #
+        # The fourth hold. Seven Beijing doubles rows went LIVE at 05:00Z 9/29
+        # on Kalshi's expiry stamp while their own StatPal anchor had them at
+        # the next day's session. One read, for candidates only.
+        stats["held_statpal_later_session"] = 0
+        statpal_starts = await _statpal_later_session_starts(session, started_events)
+        statpal_held_ids = _record_statpal_later_sessions(
+            started_events, statpal_starts, now, stats
+        )
+        stats["cleared_statpal_outside_window"] = 0
+        stats["statpal_released_session_stamped"] = 0
+        statpal_released_ids = _statpal_sessions_reached(
+            started_events, statpal_starts, now
+        )
+        from app.utils.event_completion import stamp_statpal_released_session
+
         for event in started_events:
             if not commence_time_is_a_reported_start(event.commence_time_source):
                 stats["held_derived_start"] += 1
@@ -4690,8 +5119,33 @@ async def _transition_event_statuses_impl() -> dict:
             ):
                 stats["held_withdrawn_listing"] += 1
                 continue
+            if event.id in statpal_held_ids:
+                stats["held_statpal_later_session"] += 1
+                continue
+            # #9613: a row older than the 24h window is here only because it
+            # carried the hold. StatPal's start arriving releases it onto the
+            # clock like any row; a hold lost any other way (the anchor moved,
+            # play on the row, a better source rewrote the start) only drops
+            # the stamp, which `_record_statpal_later_sessions` just did.
+            if event.commence_time < now - timedelta(
+                hours=24
+            ) and event.id not in statpal_released_ids:
+                stats["cleared_statpal_outside_window"] += 1
+                continue
             event.status = "live"
             stats["scheduled_to_live"] += 1
+            # #9613, CERT-3811: the receipt that StatPal's start released this
+            # row, so its clock survives the first score or period StatPal
+            # writes (which ends the hold's own predicate).
+            if event.id in statpal_released_ids:
+                _released = stamp_statpal_released_session(
+                    event.win_probability_sources,
+                    statpal_starts[event.id],
+                    event.statpal_fixture_id,
+                )
+                if _released is not event.win_probability_sources:
+                    event.win_probability_sources = _released
+                    stats["statpal_released_session_stamped"] += 1
 
         # --- live → suspended, ON THE VENUE'S WORD (rung 2 of §R) ---
         #
@@ -4836,6 +5290,7 @@ async def _transition_event_statuses_impl() -> dict:
         # narrower bound exists for, and the whole rule would read as correct
         # while suspending nothing. Queue 067's lesson, one function over: a
         # guard is not wired by being correct.
+
         min_max_hours = min(
             min(SPORT_MAX_DURATIONS.values()), min(UNOBSERVED_MAX_HOURS.values())
         )
@@ -4851,6 +5306,104 @@ async def _transition_event_statuses_impl() -> dict:
             )
         )
         live_events = live_result.scalars().all()
+
+        # #9588, the other half of the fourth hold: a row the clock promoted
+        # before the hold existed, or before its StatPal link landed, goes back
+        # to `scheduled` while StatPal's session is still ahead. This happens
+        # before the staleness arm, which would otherwise suspend a match
+        # nobody has played yet. The same predicate as the hold, so the two
+        # arms cannot trade a row.
+        stats["demoted_statpal_later_session"] = 0
+        statpal_clock_starts: dict = {}
+        if live_events:
+            from app.utils.espn_helpers import play_evidence as _play_evidence
+            from app.utils.event_completion import (
+                stamp_statpal_later_session as _stamp_later_session,
+            )
+            from app.utils.event_completion import (
+                statpal_names_a_later_session as _later_session,
+            )
+
+            live_statpal_starts = await _statpal_later_session_starts(
+                session, live_events
+            )
+            demoted_ids = set()
+            for event in live_events:
+                if event.id in live_statpal_starts and _later_session(
+                    event.commence_time_source,
+                    event.statpal_fixture_id,
+                    _play_evidence(
+                        event.home_score, event.away_score, event.period, event.game_clock
+                    ),
+                    event.commence_time,
+                    live_statpal_starts[event.id],
+                    now,
+                ):
+                    event.status = "scheduled"
+                    demoted_ids.add(event.id)
+                    # #9613: carry the hold's reason with the row, as the
+                    # scheduled arm does, so the demoted row does not read
+                    # "No result reported" until the next pass.
+                    _stamped = _stamp_later_session(
+                        event.win_probability_sources, live_statpal_starts[event.id]
+                    )
+                    if _stamped is not event.win_probability_sources:
+                        event.win_probability_sources = _stamped
+            if demoted_ids:
+                stats["demoted_statpal_later_session"] = len(demoted_ids)
+                live_events = [e for e in live_events if e.id not in demoted_ids]
+
+            # #9613: a row held for StatPal's session starts its clock there.
+            # The hold released it at 02:00Z; measured from the 05:00Z venue
+            # stamp the day before it would already be 21h "past its start"
+            # and the arm below would suspend it on the pass that promoted it.
+            #
+            # CERT-3811: StatPal's first score or period makes the row no longer
+            # a hold candidate, so the clock above goes quiet exactly when the
+            # match is being played. Before play the clock is written to the row
+            # as a receipt; after it, the receipt is the clock.
+            from app.utils.event_completion import (
+                stamp_statpal_released_session as _stamp_released,
+            )
+            from app.utils.event_completion import (
+                statpal_later_session_clock as _later_session_clock,
+            )
+            from app.utils.event_completion import (
+                statpal_released_session_clock as _released_clock,
+            )
+
+            stats.setdefault("statpal_released_session_stamped", 0)
+            for event in live_events:
+                _clock = None
+                if event.id in live_statpal_starts:
+                    _clock = _later_session_clock(
+                        event.commence_time_source,
+                        event.statpal_fixture_id,
+                        _play_evidence(
+                            event.home_score, event.away_score, event.period, event.game_clock
+                        ),
+                        event.commence_time,
+                        live_statpal_starts[event.id],
+                    )
+                if _clock is not None:
+                    _released = _stamp_released(
+                        event.win_probability_sources, _clock, event.statpal_fixture_id
+                    )
+                    if _released is not event.win_probability_sources:
+                        event.win_probability_sources = _released
+                        stats["statpal_released_session_stamped"] += 1
+                else:
+                    # `getattr`: this runs over every live row, and a row that
+                    # does not carry a field carries no receipt.
+                    _clock = _released_clock(
+                        getattr(event, "win_probability_sources", None),
+                        getattr(event, "commence_time_source", None),
+                        getattr(event, "statpal_fixture_id", None),
+                        getattr(event, "commence_time", None),
+                        now,
+                    )
+                if _clock is not None:
+                    statpal_clock_starts[event.id] = _clock
 
         # The guard this docstring has always promised but never implemented.
         # A wall-clock timeout is not evidence a game is over — long games (extra
@@ -4924,7 +5477,9 @@ async def _transition_event_statuses_impl() -> dict:
             )
             bound_hours = wall_clock_bound_hours(sport_key, max_hours, never_observed)
 
-            hours_since_start = (now - event.commence_time).total_seconds() / 3600
+            hours_since_start = (
+                now - statpal_clock_starts.get(event.id, event.commence_time)
+            ).total_seconds() / 3600
             if hours_since_start > bound_hours + 0.5:
                 last_snap = last_snaps.get(event.id)
                 if game_may_still_be_running(last_snap, now):
@@ -4988,6 +5543,8 @@ async def _transition_event_statuses_impl() -> dict:
         # It is deliberately the SAME predicate and the SAME venue-price
         # exclusion, so a Kalshi tick cannot resume a match any more than it
         # could hold one.
+        from app.utils.event_completion import VENUE_STAMP_COMMENCE_SOURCES
+
         suspended_result = await session.execute(
             select(Event).where(
                 Event.status == EVENT_SUSPENDED,
@@ -5004,10 +5561,35 @@ async def _transition_event_statuses_impl() -> dict:
                 # The bound only limits the NON-authority path. An anchored row
                 # — every US Open match, since lane1/057 — is reached by
                 # `espn_helpers` directly off its espn_id with no window at all.
-                Event.commence_time >= now - SUSPENDED_RESUME_WINDOW,
+                or_(
+                    Event.commence_time >= now - SUSPENDED_RESUME_WINDOW,
+                    # #9588: a venue-stamped StatPal row is read for the hold's
+                    # whole band, so the arm below can return it to
+                    # `scheduled` while its StatPal session is still ahead.
+                    # Only the return reaches these; the resume keeps 48h.
+                    and_(
+                        Event.commence_time >= now - STATPAL_LATER_SESSION_HORIZON,
+                        Event.statpal_fixture_id.isnot(None),
+                        Event.commence_time_source.in_(
+                            sorted(VENUE_STAMP_COMMENCE_SOURCES)
+                        ),
+                    ),
+                ),
             )
         )
         suspended_events = suspended_result.scalars().all()
+
+        # #9588: a suspended row StatPal puts in a later session is a match
+        # nobody has played yet. It goes back to `scheduled` and never reaches
+        # the resume loop below, which keeps its own 48h window.
+        returned_ids = await _return_held_suspended_rows(
+            session, suspended_events, now, stats
+        )
+        suspended_events = [
+            e for e in suspended_events
+            if e.id not in returned_ids
+            and e.commence_time >= now - SUSPENDED_RESUME_WINDOW
+        ]
 
         if suspended_events:
             resume_snaps = {
@@ -6261,6 +6843,11 @@ TENNIS_ANCHOR_WINDOW_DAYS = 21
 #: `tennis_other`, and the per-tournament keys below them.
 TENNIS_SPORT_KEY_PREFIX = "tennis"
 
+#: Row cap for the generic-bucket read (#2774). The ±7-day window held 2,077
+#: tennis rows of every bucket on 2026-09-28; the cap sits above that so a
+#: normal week is read whole, and ordering by kickoff drops the oldest first.
+GENERIC_ANCHOR_LIMIT = 3000
+
 
 async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) -> dict:
     """Anchor tennis events to ESPN competitions, then let ESPN write their state.
@@ -6288,9 +6875,18 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
     """
     from app.services import espn_tennis
     from app.utils.espn_tennis_anchor import (
+        GENERIC_ANCHOR_WINDOW_DAYS,
         anchor_receipt,
         anchorable_sport_keys,
         authority_score_write,
+        bucketless_competitions,
+        carried_start,
+        generic_sport_keys,
+        pick_contest_canonical,
+        ESPN_ID_RELEASED_TAG_PREFIX,
+        released_espn_id,
+        replaced_player,
+        with_held_competitions,
         authority_write,
         games_line_write,
         result_refuted_by_format,
@@ -6298,7 +6894,16 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
         state_contradiction,
     )
     from app.utils.espn_id_stamp import STAMPED, stamp_espn_id_if_unheld
+    from app.utils.event_completion import EVENT_SUSPENDED
     from app.utils.live_state_write import write_row_if_unmoved
+    from app.services.anchor_channel import DUPLICATE_TAG_PREFIX
+    from app.tasks.tennis_twin_sweep import (
+        ensure_backup as ensure_twin_backup,
+        fold_is_live,
+        tagged_now as twin_tagged_now,
+        write_tags as write_twin_tags,
+    )
+    from app.utils.tennis_twin_pairs import TwinTag
     import asyncio as _asyncio
 
     stats: dict = {
@@ -6345,6 +6950,13 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
         "contradictions": {},
         "row_errors": 0,
         "stamp_refused": 0,
+        # #8288: anchored rows taken off LIVE/scheduled because their own ESPN
+        # competition replaced one of our players. Eagerly zeroed, so the key
+        # appearing is the deployment proof and a 0 is a reading.
+        "replaced_player_holds": 0,
+        "replaced_player_id_releases": 0,
+        # A hold/release rolled back to its own savepoint (#9797 follow-up).
+        "replaced_player_write_errors": 0,
     }
 
     # ═══ THE BOARD ═══
@@ -6394,11 +7006,28 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
         key_rows = await session.execute(
             select(Sport.key).where(Sport.key.like(f"{TENNIS_SPORT_KEY_PREFIX}%"))
         )
-        wanted_keys = anchorable_sport_keys(
-            [k for (k,) in key_rows.all()], competitions
-        )
+        all_keys = [k for (k,) in key_rows.all()]
+        wanted_keys = anchorable_sport_keys(all_keys, competitions)
         stats["sport_keys"] = wanted_keys
-        if not wanted_keys:
+        # THE TOUR WEEK (#2774): the board's tournaments that no bucket names
+        # are anchored through the generic buckets instead — see
+        # `bucketless_competitions`. Its competitions are disjoint from every
+        # tournament bucket's, so the two populations cannot contest — except
+        # a competition a generic row already HOLDS, which stays generic after
+        # its tournament gets a bucket (#9465, `with_held_competitions`).
+        generic_competitions = bucketless_competitions(all_keys, competitions)
+        stats["generic_competitions"] = len(generic_competitions)
+        stats["generic_held_competitions"] = 0
+        stats["labelled_rows_skipped"] = 0
+        stats["generic_events_considered"] = 0
+        stats["generic_contests_resolved"] = 0
+        stats["generic_contests_refused"] = {}
+        stats["ghost_tags_planned"] = 0
+        stats["ghost_tags_written"] = 0
+        stats["ghost_tags_confirmed"] = 0
+        stats["ghost_tags_failed"] = []
+        stats["ghost_tags_withheld_fold_dark"] = 0
+        if not wanted_keys and not generic_competitions:
             # The board carries a tournament we hold no bucket for. Not an
             # error, and not something to widen our way out of.
             logger.info(
@@ -6407,21 +7036,78 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
             )
             return {"status": "no_matching_bucket", **stats}
 
-        result = await session.execute(
-            select(Event)
-            .join(Sport, Sport.id == Event.sport_id)
-            .where(
-                Sport.key.in_(wanted_keys),
-                Event.commence_time.isnot(None),
-                Event.commence_time >= window_start,
-                Event.commence_time <= window_end,
-                Event.home_team_name.isnot(None),
-                Event.away_team_name.isnot(None),
+        events: list = []
+        if wanted_keys:
+            result = await session.execute(
+                select(Event)
+                .join(Sport, Sport.id == Event.sport_id)
+                .where(
+                    Sport.key.in_(wanted_keys),
+                    Event.commence_time.isnot(None),
+                    Event.commence_time >= window_start,
+                    Event.commence_time <= window_end,
+                    Event.home_team_name.isnot(None),
+                    Event.away_team_name.isnot(None),
+                )
+                .order_by(Event.commence_time.desc())
+                .limit(limit)
             )
-            .order_by(Event.commence_time.desc())
-            .limit(limit)
+            events = list(result.scalars().all())
+        stats["events_considered"] = len(events)
+
+        # The generic population. A row already labelled somebody's duplicate
+        # is left out entirely: it has a canonical, and re-deciding it here
+        # would be this pass arbitrating against the sweep that labelled it.
+        generic_ids: set[int] = set()
+        generic_keys: dict[int, str] = {}
+        # With no bucketless tournament on the board, only the rows that already
+        # HOLD an id are read (#9465): they are the only generic rows that can
+        # still be one of this board's matches, and the read stays small.
+        generic_filters = (
+            [] if generic_competitions else [Event.espn_id.isnot(None)]
         )
-        events = result.scalars().all()
+        if generic_competitions or wanted_keys:
+            generic_start = now - timedelta(days=GENERIC_ANCHOR_WINDOW_DAYS)
+            generic_end = now + timedelta(days=GENERIC_ANCHOR_WINDOW_DAYS)
+            generic_result = await session.execute(
+                select(Event, Sport.key)
+                .join(Sport, Sport.id == Event.sport_id)
+                .where(
+                    Sport.key.in_(generic_sport_keys(all_keys)),
+                    Event.commence_time.isnot(None),
+                    Event.commence_time >= generic_start,
+                    Event.commence_time <= generic_end,
+                    Event.home_team_name.isnot(None),
+                    Event.away_team_name.isnot(None),
+                    Event.status.notin_(("voided", "merged")),
+                    *generic_filters,
+                )
+                .order_by(Event.commence_time.desc())
+                .limit(GENERIC_ANCHOR_LIMIT)
+            )
+            generic_rows = []
+            for event, sport_key in generic_result.all():
+                if any(
+                    isinstance(t, str) and t.startswith(DUPLICATE_TAG_PREFIX)
+                    for t in (event.event_tags or [])
+                ):
+                    continue
+                generic_rows.append((event, sport_key))
+            bucketless_count = len(generic_competitions)
+            generic_competitions = with_held_competitions(
+                generic_competitions,
+                competitions,
+                [event.espn_id for event, _ in generic_rows],
+            )
+            stats["generic_held_competitions"] = (
+                len(generic_competitions) - bucketless_count
+            )
+            if generic_competitions:
+                for event, sport_key in generic_rows:
+                    generic_ids.add(event.id)
+                    generic_keys[event.id] = sport_key
+                    events.append(event)
+            stats["generic_events_considered"] = len(generic_ids)
         stats["events_considered"] = len(events)
 
         # ═══ PHASE 1: RECEIPTS FOR EVERY ROW, WRITES FOR NONE ═══
@@ -6432,6 +7118,16 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
         receipts: dict[int, dict] = {}
         claimants: dict[str, list[int]] = {}
         for event in events:
+            if event.id not in generic_ids and any(
+                isinstance(t, str) and t.startswith(DUPLICATE_TAG_PREFIX)
+                for t in (event.event_tags or [])
+            ):
+                # A tournament row already labelled somebody's duplicate
+                # (#9465) never claims again: it has its canonical, and
+                # re-claiming would re-open the contest the label settled —
+                # and a contest that refuses anchors NOBODY, holder included.
+                stats["labelled_rows_skipped"] += 1
+                continue
             try:
                 # `our_commence_time` is the TOURNAMENT discriminator, and it is
                 # load-bearing: the unordered pair is a key within a draw and
@@ -6442,7 +7138,7 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
                 # copying the US Open's state onto a Cincinnati row.
                 receipt = anchor_receipt(
                     [event.home_team_name, event.away_team_name],
-                    competitions,
+                    generic_competitions if event.id in generic_ids else competitions,
                     our_commence_time=event.commence_time,
                 )
             except Exception as exc:  # noqa: BLE001
@@ -6479,11 +7175,66 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
         stats["contested_competitions"] = len(contested)
         stats["contested_events"] = sum(len(ids) for ids in contested.values())
         stats["contested_detail"] = {c: ids for c, ids in list(contested.items())[:50]}
+
+        # ═══ THE TOUR-WEEK CONTEST IS RESOLVED (#2774) ═══
+        #
+        # A competition claimed only by generic rows is one match written
+        # twice: one row keeps the card and takes the id, the rest are labelled
+        # its duplicates after the writes below — see `pick_contest_canonical`.
+        # Anything else contested keeps the rule above and anchors nobody.
+        by_event = {e.id: e for e in events}
+        resolved: dict[str, tuple[int, list[int]]] = {}
+        # canonical id -> (start, source) its ghost's venue gave, applied only
+        # once the canonical holds the id — see `carried_start`.
+        carried: dict[int, tuple] = {}
+        stats["start_carried_from_ghost"] = 0
+
+        def _start_view(row):
+            return {
+                "commence_time": row.commence_time,
+                "commence_time_source": row.commence_time_source,
+            }
         for comp, ids in contested.items():
-            logger.warning(
-                "Tennis anchor CONTESTED: ESPN %s claimed by events %s — none anchored",
-                comp, ids,
+            if not any(i in generic_ids for i in ids):
+                logger.warning(
+                    "Tennis anchor CONTESTED: ESPN %s claimed by events %s — none anchored",
+                    comp, ids,
+                )
+                continue
+            # A tournament row contesting a generic one is refused by
+            # `pick_contest_canonical` unless the generic row already holds this
+            # competition's id (#9465) — the old refusal is its default.
+            canonical_id, ghost_ids, refusal = pick_contest_canonical(
+                comp,
+                [
+                    {
+                        "event_id": i,
+                        "sport_key": generic_keys.get(i),
+                        "tournament_keyed": i not in generic_ids,
+                        "espn_id": by_event[i].espn_id,
+                        "has_result": by_event[i].home_score is not None
+                        and by_event[i].away_score is not None,
+                    }
+                    for i in ids
+                ],
             )
+            if refusal:
+                stats["generic_contests_refused"][refusal] = (
+                    stats["generic_contests_refused"].get(refusal, 0) + 1
+                )
+                logger.warning(
+                    "Tennis anchor CONTEST REFUSED: ESPN %s events %s — %s",
+                    comp, ids, refusal,
+                )
+                continue
+            resolved[comp] = (canonical_id, ghost_ids)
+            start = carried_start(
+                _start_view(by_event[canonical_id]),
+                [_start_view(by_event[g]) for g in ghost_ids],
+            )
+            if start is not None:
+                carried[canonical_id] = start
+        stats["generic_contests_resolved"] = len(resolved)
 
         # ═══ PHASE 2: THE WRITES ═══
         #
@@ -6492,6 +7243,9 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
         # population THIS pass selected, and the twin of a US Open row lives in
         # `tennis_atp`, which this pass deliberately does not query.
         claimed_ids: set = set()
+        # Rows that hold their competition's id at the end of this pass — the
+        # only canonicals whose ghosts may be labelled below.
+        anchored_ids: set[int] = set()
         for event in events:
             try:
                 receipt = receipts.get(event.id)
@@ -6503,8 +7257,10 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
                 if comp_id is not None and len(claimants.get(comp_id, [])) > 1:
                     # Contested — see the block above. Not counted as a refusal:
                     # the matcher did its job, and the defect is that two of our
-                    # rows are one match.
-                    continue
+                    # rows are one match. A resolved tour-week contest lets its
+                    # canonical through; its ghosts are labelled after the pass.
+                    if resolved.get(comp_id, (None,))[0] != event.id:
+                        continue
 
                 if comp_id is None:
                     reason = receipt["reason"]
@@ -6518,6 +7274,81 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
                             "Tennis anchor REFUSED event %s (%s v %s): %s — not in draw: %s",
                             event.id, ours[0], ours[1], reason,
                             ", ".join(receipt["absent_players"]),
+                        )
+                    # A WITHDRAWAL IS A STATE, NOT ONLY A FINDING (#8288). When
+                    # the row's OWN competition now names somebody else in one
+                    # slot, the match we hold will not be played. `suspended`
+                    # stops it reading LIVE and makes no claim that anybody won;
+                    # `authority_may_settle` still admits it, so a real result
+                    # can still land on it. The refusal above stands: the
+                    # competition's id and result stay off this row.
+                    gone = replaced_player(
+                        our_status=event.status,
+                        our_espn_id=event.espn_id,
+                        ours=ours,
+                        receipt=receipt,
+                        competition=by_id.get(event.espn_id),
+                    )
+                    # AND IT GIVES THE ID BACK (#9797). ESPN kept the id for
+                    # the lucky loser, so it now names a match we also hold,
+                    # and while this row keeps it that match can never be
+                    # stamped. Same evidence as the hold; it tests the status
+                    # the hold is about to write.
+                    released = released_espn_id(
+                        our_status=EVENT_SUSPENDED if gone is not None else event.status,
+                        our_espn_id=event.espn_id,
+                        ours=ours,
+                        receipt=receipt,
+                        competition=by_id.get(event.espn_id),
+                    )
+                    if gone is None and released is None:
+                        continue
+                    # ONE ROW'S WRITE, ONE SAVEPOINT (#9797 follow-up). The
+                    # release is flushed now, so the replacement's stamp (this
+                    # pass or the next) finds no holder, and the unit of work
+                    # can never order its UPDATE ahead of this one. A flush that
+                    # fails outside a savepoint leaves the pass's ONE
+                    # transaction aborted, and the handler below would log it
+                    # and let every later row, and the final COMMIT, fail on it
+                    # (#8796). Both writes are made INSIDE the savepoint:
+                    # `begin_nested` flushes pending state before it opens, so a
+                    # status set above it would meet a lock outside it.
+                    # Rolled back, the row is expired, so it is read only
+                    # through the scalars copied here (gotcha #6).
+                    event_id, held_id = event.id, event.espn_id
+                    try:
+                        async with _step_savepoint(session):
+                            if gone is not None:
+                                event.status = EVENT_SUSPENDED
+                            if released is not None:
+                                event.espn_id = None
+                                # A whole new list, never an in-place append
+                                # (gotcha #4).
+                                event.event_tags = [
+                                    *(event.event_tags or []),
+                                    f"{ESPN_ID_RELEASED_TAG_PREFIX}{released}",
+                                ]
+                    except Exception as exc:  # noqa: BLE001 — this row, not the pass
+                        stats["replaced_player_write_errors"] += 1
+                        logger.warning(
+                            "Tennis REPLACED PLAYER: event %s (%s v %s) hold/release "
+                            "of espn_id %s rolled back, retried next pass: %s",
+                            event_id, ours[0], ours[1], held_id, exc,
+                        )
+                        continue
+                    if gone is not None:
+                        stats["replaced_player_holds"] += 1
+                        logger.warning(
+                            "Tennis REPLACED PLAYER: event %s (%s v %s) suspended — "
+                            "ESPN %s no longer names %s",
+                            event_id, ours[0], ours[1], held_id, gone,
+                        )
+                    if released is not None:
+                        stats["replaced_player_id_releases"] += 1
+                        logger.warning(
+                            "Tennis REPLACED PLAYER: event %s (%s v %s) released "
+                            "espn_id %s — ESPN now lists another pairing under it",
+                            event_id, ours[0], ours[1], released,
                         )
                     continue
 
@@ -6551,6 +7382,12 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
                         event.id, ours[0], ours[1], comp_id, method,
                     )
 
+                anchored_ids.add(event.id)
+                if event.id in carried:
+                    # Before the authority write, so a precise ESPN start
+                    # still gets its say over the venue's.
+                    event.commence_time, event.commence_time_source = carried[event.id]
+                    stats["start_carried_from_ghost"] += 1
                 competition = by_id[comp_id]
 
                 # REPORTED BEFORE IT IS REPAIRED. The contradiction is counted
@@ -6784,6 +7621,54 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
                 logger.warning("Tennis ESPN sync: event %s failed: %s", event.id, exc)
 
         await session.commit()
+
+    # ═══ THE LABELS (#2774) — only after the canonical's id is ON DISK ═══
+    #
+    # A ghost is labelled only when its canonical left the pass holding the
+    # competition's id (`anchored_ids`, set after the stamp or the
+    # already-anchored read, and committed just above). A refused stamp leaves
+    # both cards up — the status quo — rather than hiding a row behind a
+    # canonical ESPN never reached.
+    ghost_tags = [
+        TwinTag(ghost_id, canonical_id, f"tour-week contest, ESPN {comp}")
+        for comp, (canonical_id, ghost_ids) in resolved.items()
+        if canonical_id in anchored_ids
+        for ghost_id in ghost_ids
+    ]
+    stats["ghost_tags_planned"] = len(ghost_tags)
+    if ghost_tags and not fold_is_live():
+        # The twin sweep's deploy-order guard: an unplayed ghost is often the
+        # row holding the prices, so a label with no fold behind it removes the
+        # only priced card instead of the duplicate one.
+        stats["ghost_tags_withheld_fold_dark"] = len(ghost_tags)
+        ghost_tags = []
+    if ghost_tags:
+        from sqlalchemy import text as _text
+
+        async with get_task_session() as tag_session:
+            current = {
+                row.id: row.tags_text
+                for row in (
+                    await tag_session.execute(
+                        _text(
+                            "SELECT id, CAST(COALESCE(event_tags, '[]'::jsonb) AS text) "
+                            "AS tags_text FROM events WHERE id = ANY(:ids)"
+                        ),
+                        {"ids": [t.ghost_id for t in ghost_tags]},
+                    )
+                ).all()
+            }
+            todo = [
+                t for t in ghost_tags
+                if DUPLICATE_TAG_PREFIX not in current.get(t.ghost_id, "")
+            ]
+            await ensure_twin_backup(tag_session, todo, current)
+            written, failed = await write_twin_tags(tag_session, todo, progress_every=0)
+            stats["ghost_tags_written"] = written
+            stats["ghost_tags_failed"] = failed
+            stats["ghost_tags_confirmed"] = len(
+                await twin_tagged_now(tag_session, [t.ghost_id for t in ghost_tags])
+            )
 
     logger.info(
         "Tennis ESPN sync: %d events, %d anchored (%d already), %d refused, "

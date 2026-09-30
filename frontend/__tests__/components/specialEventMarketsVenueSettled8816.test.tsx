@@ -91,6 +91,7 @@ describe("#8816 a suspended match the venue graded", () => {
     const page = readFileSync(path.join(__dirname, "../../app/events/[id]/page.tsx"), "utf8");
     const call = page.slice(page.indexOf("<SpecialEventMarkets"), page.indexOf("/>", page.indexOf("<SpecialEventMarkets")));
     expect(call).toContain("eventStatus={event.status}");
-    expect(call).toContain("venueSettled={venueSettledSentence !== null}");
+    // #9798 narrowed it: a void is not a grade, so it never arrives as settled.
+    expect(call).toContain("venueSettled={venueSettledSentence !== null && !venueVoided}");
   });
 });

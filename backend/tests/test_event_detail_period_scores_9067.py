@@ -32,6 +32,12 @@ ADDS_UP = [
     (27, 20, [7, 3, 17, 0], [10, 10, 0, 0], "15315948 at 05:27Z, Q4 in progress"),
     (2, 4, [0, 0, 0, 0, 0, 0, 0, 1, 1], [0, 0, 0, 0, 0, 1, 3, 0, 0], "9 innings"),
     (4, 1, [1, None, 2], [0, 1, 0], "a hole the venue left blank carries the rest"),
+    # #9067 home one short: the bottom half the home side never batted (rows
+    # read 2026-09-28). 13 of the last 27 MLB finals are this shape.
+    (7, 3, [0, 1, 2, 0, 0, 3, 0, 1], [0, 0, 0, 0, 0, 1, 0, 2, 0], "15319526 SEA 7-3 no bottom 9th"),
+    (3, 2, [1, 0, 0, 0, 1, 0, 0, 1], [0, 0, 1, 0, 0, 1, 0, 0, 0], "15319671 KC 3-2 run in the 8th"),
+    (8, 4, [0, 1, 0, 1, 2, 0, 4, 0], [0, 0, 0, 0, 0, 4, 0, 0, 0], "15318890 SEA 8-4 native's X"),
+    (1, 2, [0, 1, 0], [1, 0, 0, 1], "live, top of the 4th"),
 ]
 
 DOES_NOT_ADD_UP = [
@@ -41,6 +47,8 @@ DOES_NOT_ADD_UP = [
     (34, 27, [7, 3, 17, 0], [10, 10, 0, 0], "15315948 box behind the scoreboard"),
     (27, 20, [10, 10, 0, 0], [7, 3, 17, 0], "arrays swapped against our sides"),
     (3, 1, [3, None, 2], [0, 1, 0], "recorded periods exceed the score"),
+    (7, 3, [0, 1, 2, 0, 0, 3, 0], [0, 0, 0, 0, 0, 1, 0, 2, 0], "home one short, box froze a run short"),
+    (7, 4, [0, 1, 2, 0, 0, 3, 0, 1], [0, 0, 0, 0, 0, 1, 0, 2, 0], "home one short, away froze behind"),
 ]
 
 
@@ -69,7 +77,10 @@ def test_a_line_score_that_does_not_add_up_is_withheld(home, away, hp, ap, label
         ({"home_period_scores": [1], "away_period_scores": [0]}, None, 0),
         ({"home_period_scores": [1], "away_period_scores": [0]}, 1, None),
         ({"home_period_scores": [], "away_period_scores": []}, 0, 0),
+        # Home LONGER than away has no baseball reading; two short is not a half-inning.
         ({"home_period_scores": [1, 0], "away_period_scores": [0]}, 1, 0),
+        ({"home_period_scores": [1], "away_period_scores": [0, 0, 0]}, 1, 0),
+        ({"home_period_scores": [], "away_period_scores": [0]}, 0, 0),
         ({"home_period_scores": [1, "0"], "away_period_scores": [0, 0]}, 1, 0),
         ({"home_period_scores": [True], "away_period_scores": [0]}, 1, 0),
         ({"home_period_scores": [1.0], "away_period_scores": [0]}, 1, 0),
@@ -154,3 +165,12 @@ async def test_a_box_behind_the_scoreboard_serves_players_and_no_line_score():
     assert "home_period_scores" not in served
     assert "away_period_scores" not in served
     assert served["players"][0]["name"] == "Haynes King"
+
+
+@pytest.mark.asyncio
+async def test_a_home_win_with_no_bottom_ninth_is_served_verbatim():
+    """15319526 (SEA 7 – LAA 3): home 8 innings, away 9 — baseball's normal final."""
+    hp, ap = [0, 1, 2, 0, 0, 3, 0, 1], [0, 0, 0, 0, 0, 1, 0, 2, 0]
+    served = (await _payload(_event(7, 3, hp, ap, status="completed")))["box_score_data"]
+    assert served["home_period_scores"] == hp
+    assert served["away_period_scores"] == ap

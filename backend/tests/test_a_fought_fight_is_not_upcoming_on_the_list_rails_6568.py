@@ -294,6 +294,23 @@ async def _search_payload(rows, q="orobio", **db_kwargs):
         )
 
 
+def _without_the_combat_fold():
+    """Hold #7993's combat pass out, so a test watches THIS correction alone.
+
+    Once corrected, the ghost sits 24 h from its anchored twin, and #7993's pass
+    (`_merge_combat_claim_bouts`) folds an id-less bout claim onto the one
+    anchored bout naming the same two fighters inside 36 h. That is the page
+    this file's screenshot asked for, one fight on one card, and it is pinned by
+    `test_the_corrected_ghost_folds_onto_its_twin_so_the_fight_is_one_card`.
+    The tests that read the GHOST's own served date need the ghost present, so
+    they run with that one pass held out and every other fold stage live.
+    """
+    return patch(
+        "app.utils.event_twin_fold._merge_combat_claim_bouts",
+        new=lambda clusters, **_: clusters,
+    )
+
+
 def _rows(payload):
     """The two routes name their list differently — `events` vs `results`."""
     return payload["events"] if "events" in payload else payload["results"]
@@ -359,7 +376,8 @@ def test_the_specimen_really_does_carry_the_defect_before_the_route_runs():
 @pytest.mark.asyncio
 async def test_search_stops_dating_a_september_3_fight_september_17():
     """The card Alex would see. `q=Orobio` stops promising "Tomorrow"."""
-    payload = await _search_payload([_ghost(), _twin()], markets=_ghost_market())
+    with _without_the_combat_fold():
+        payload = await _search_payload([_ghost(), _twin()], markets=_ghost_market())
 
     assert _served_at(payload, GHOST) == CONTEST_DATE, (
         "search is still serving the contract's expiration instant as a "
@@ -374,7 +392,8 @@ async def test_the_corrected_search_row_says_where_its_date_came_from():
     — is what `event_twin_fold.is_kalshi_date_only` reads as "a DATE and no
     kick-off hour", which is exactly the claim this correction is entitled to.
     """
-    payload = await _search_payload([_ghost(), _twin()], markets=_ghost_market())
+    with _without_the_combat_fold():
+        payload = await _search_payload([_ghost(), _twin()], markets=_ghost_market())
     row = _row(payload, GHOST)
 
     source = row.get("commence_time_source") or getattr(
@@ -407,14 +426,40 @@ async def test_search_answers_with_the_fight_rather_than_with_silence():
     real and was fought. Withholding it would answer the question with silence
     in order to avoid answering it wrongly — so both cards survive, and the
     correction's whole effect is on the date.
+
+    #7993: the correction alone still suppresses nothing, so this runs with the
+    combat fold held out. With the fold live the fight is still answered, on
+    the twin's card (next test).
     """
-    payload = await _search_payload([_ghost(), _twin()], markets=_ghost_market())
+    with _without_the_combat_fold():
+        payload = await _search_payload([_ghost(), _twin()], markets=_ghost_market())
 
     served = {r["id"] for r in _rows(payload)}
     assert served == {GHOST, TWIN}, (
         f"search dropped a row it used to serve: {served}. The correction "
         "re-dates, it does not suppress."
     )
+
+
+@pytest.mark.asyncio
+async def test_the_corrected_ghost_folds_onto_its_twin_so_the_fight_is_one_card():
+    """#7993: the screenshot's "2 results · 2 games" becomes one fight, one card.
+
+    Corrected to Sep 3 00:00Z, the id-less Kalshi ghost sits 24 h from the
+    anchored Odds API twin, inside the combat pass's 36 h. The twin survives,
+    since it carries the provider id and the real reading, so the reader gets the
+    fight once with its pre-match number.
+
+    The control is the same page with no correction. The ghost then stays on
+    Sep 17, thirteen days from the twin, and both cards remain. That is why
+    `test_the_correction_runs_before_the_fold_on_both_rails` matters here too.
+    """
+    payload = await _search_payload([_ghost(), _twin()], markets=_ghost_market())
+    uncorrected = await _search_payload([_ghost(), _twin()], markets=[])
+
+    assert {r["id"] for r in _rows(payload)} == {TWIN}
+    assert _served_at(payload, TWIN) == TWIN_TIME
+    assert {r["id"] for r in _rows(uncorrected)} == {GHOST, TWIN}
 
 
 @pytest.mark.asyncio

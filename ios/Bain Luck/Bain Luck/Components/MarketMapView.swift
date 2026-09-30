@@ -188,6 +188,14 @@ struct MarketMapView: View {
     private var scoredPace: GameMarketPace? {
         vocab.scoreboardCountsTheUnit ? gameMarkets.pace : nil
     }
+    /// #9708 — the live ACTUAL + PROJECTED pair draws only on a pace with
+    /// standing against the header's score (``LivePaceStanding``): a scoreless
+    /// 0 projects nothing, and a pace from an older score would put an ACTUAL
+    /// on this rail that the header above it contradicts. Both readers (the
+    /// markers and the empty-chrome predicate) take it from here.
+    private var liveProjection: (projected: Double, scored: Int)? {
+        LivePaceStanding.projection(scoredPace, scoreboardHome: homeScore, scoreboardAway: awayScore)
+    }
 
     /// The sentence a suppressed map owes the reader, once the match is under
     /// way and the missing tile would otherwise be conspicuous.
@@ -451,12 +459,13 @@ struct MarketMapView: View {
         // for `1 − P(home)` every time the home team is the underdog, and on a
         // three-way market that figure is the away side's chances PLUS the
         // draw's. A draw-priced sport names home, favourite or not.
-        let headline: String = {
-            guard let side = DrawPricedWinner.headlineSide(
+        let headline = Self.marginHeadline(
+            isDone: isDone,
+            side: DrawPricedWinner.headlineSide(
                 away: awayWinProb, home: homeWinProb, sport: sportKey
-            ) else { return "" }
-            return "\(side.isHome ? hAbbr : aAbbr) \(Int((side.probability * 100).rounded()))%"
-        }()
+            ),
+            homeAbbr: hAbbr, awayAbbr: aAbbr
+        )
 
         // Markers
         var markers: [MapMarker] = []
@@ -602,7 +611,7 @@ struct MarketMapView: View {
             isDone: isDone,
             hasScoreboardTotal: scoreboardIsComparable
                 && scoredHomeScore != nil && scoredAwayScore != nil,
-            hasProjectedTotal: scoreboardIsComparable && scoredPace?.projectedTotal != nil
+            hasProjectedTotal: scoreboardIsComparable && liveProjection != nil
         )
     }
 
@@ -713,7 +722,7 @@ struct MarketMapView: View {
             if scoreboardIsComparable,
                let homeScoreValue = scoredHomeScore,
                let awayScoreValue = scoredAwayScore,
-               let pace = scoredPace, let proj = pace.projectedTotal {
+               let proj = liveProjection?.projected {
                 let totalScore = homeScoreValue + awayScoreValue
                 markers.append(MapMarker(id: "actual", value: Double(totalScore), type: .actual, label: "ACTUAL", displayValue: "\(totalScore)"))
                 markers.append(MapMarker(id: "proj", value: proj, type: .proj, label: "PROJECTED", displayValue: "\(Int(proj.rounded()))"))
@@ -1342,7 +1351,8 @@ struct MarketMapView: View {
                             Text(MarketMapRail.totalLadderResultLabel(result))
                                 .foregroundStyle(Self.ladderResultColor(result))
                         } else {
-                            Text("\(Int((entry.prob * 100).rounded()))%")
+                            // #9392 — `>99%` like the hero, not `100%`.
+                            Text(MarketMapRail.rungPercentText(entry.prob))
                         }
                     }
                     .font(.system(size: 10, weight: .black, design: .monospaced))
@@ -1393,6 +1403,28 @@ struct MarketMapView: View {
     static func closestToEvenMargin(_ parsed: [SpreadRungs.Rung]) -> Double? {
         guard !parsed.isEmpty else { return nil }
         return parsed.min(by: { abs($0.probability - 0.5) < abs($1.probability - 0.5) })!.margin
+    }
+
+    /// The full-game margin card's header (#9336, the iPhone twin of web
+    /// #6359 + #6853).
+    ///
+    /// A settled card prints NO header. It used to print the last live quote:
+    /// Texans @ Colts (`/events/14782154`, FINAL 17–19) read `IND 93%`, which was
+    /// `current_odds` captured 50 s before the final whistle, over the card's
+    /// own `FINAL · IND by 2` tile and a graded `HIT` rung. On a draw it named
+    /// home at an in-play price. The result is already on the card twice, so a
+    /// header would only be a second voice.
+    ///
+    /// An open card goes through `formatProbability`, so a live 0.999 reads
+    /// `>99%` like the hero above it and not `100%`.
+    static func marginHeadline(
+        isDone: Bool,
+        side: (isHome: Bool, probability: Double)?,
+        homeAbbr: String,
+        awayAbbr: String
+    ) -> String {
+        guard !isDone, let side else { return "" }
+        return "\(side.isHome ? homeAbbr : awayAbbr) \(formatProbability(side.probability))"
     }
 
     /// A margin card's projection value (#8721, the iPhone twin of web PR

@@ -419,6 +419,45 @@ def scheduled_rank_columns(marquee_sport_keys=()):
     return marquee_rank.label("marquee_rank"), scheduled_time.label("scheduled_time")
 
 
+def suspended_anchor_rank():
+    """0 for a SUSPENDED row a provider knows by id, 1 for everything else. #5602.
+
+    ── WHY `commence_time DESC` ALONE CUT THE GRADED FIGHT ──
+
+    The suspended tier is a flood with a flood's shape (see :data:`TIER_QUOTAS`),
+    and nearly all of it is id-less. Production 2026-09-30 07:5xZ: 467 suspended
+    rows in the 24h window, and 16 of them carry an `espn_id` or an
+    `external_id`. The other 451 (310 tennis, 62 esports, 57 soccer) are claims
+    whose only source went dark. Under a quota of 50 ranked newest-first, an
+    id-less claim three hours newer than its anchored twin was admitted and the
+    twin was cut. Escuza v Borando: the Kalshi claim `15319837` (02:40Z, 46 rows
+    ahead of it) made the pool and the Odds API row `15320966` (23:40Z, 94 ahead)
+    did not. So the twin fold (`_merge_combat_claim_bouts`, #7993), which would
+    have kept the anchored row and its "Ian Escuza wins", never saw the pair, and
+    `/sports` printed "No result reported". With `?sport=mma` the pool is small,
+    both rows are admitted, and the same feed serves the graded card. That is the
+    control that puts the fault here and not in the fold.
+
+    THE KEY IS THE FOLD'S OWN ANCHOR TEST, `espn_id` OR `external_id`
+    (`event_twin_fold._group_is_id_anchored`), so the pool admits the row the fold
+    would elect. It is not a richness guess: ruling 048 makes the id-anchored row
+    the one the event page, the chart and the settlement path can reach, and a
+    claim with no id could only ever have been created.
+
+    It leads the suspended tier's ordering, ahead of `commence_time DESC`, which
+    still orders each half. On today's population the 16 anchored rows take 16 of
+    the 50 slots and the flood keeps the other 34, newest first. The key is the
+    constant 1 outside the suspended tier and `row_number` only compares rows
+    inside one partition, so the live, recent and scheduled tiers cannot see it
+    vary. That inertness is structural, like :func:`scheduled_rank_columns`.
+    """
+    is_suspended = status_tier_expr() == TIER_SUSPENDED
+    anchored = or_(Event.espn_id.isnot(None), Event.external_id.isnot(None))
+    return case((and_(is_suspended, anchored), 0), else_=1).label(
+        "suspended_anchor_rank"
+    )
+
+
 def _collapsed_subquery(where_clauses, name: str, marquee_sport_keys=()):
     """The duplicate-collapse pass, shared by both callers.
 
@@ -461,6 +500,7 @@ def _collapsed_subquery(where_clauses, name: str, marquee_sport_keys=()):
             Event.commence_time.label("commence_time"),
             marquee_rank,
             scheduled_time,
+            suspended_anchor_rank(),
             func.row_number()
             .over(partition_by=dedup_partition, order_by=survivor_order())
             .label("dup_rn"),
@@ -549,8 +589,10 @@ def event_candidate_ids(where_clauses, marquee_sport_keys=()) -> Select:
                 # #6690 — the first two keys are inert outside the scheduled
                 # tier by construction (see `scheduled_rank_columns`), so the
                 # live/recent/suspended tiers rank on `commence_time DESC`
-                # exactly as they did before.
+                # exactly as they did before. #5602's key is inert outside
+                # the suspended tier the same way (`suspended_anchor_rank`).
                 order_by=[
+                    collapsed.c.suspended_anchor_rank.asc(),
                     collapsed.c.marquee_rank.asc(),
                     collapsed.c.scheduled_time.asc().nulls_last(),
                     collapsed.c.commence_time.desc(),

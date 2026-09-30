@@ -949,3 +949,111 @@ describe("#5634 — one two-word nickname list, two clients", () => {
     expect(swiftWalk).toBeGreaterThan(swiftList);
   });
 });
+
+/**
+ * #5634 — the multi-word COUNTRY list is one list with two spellings: the
+ * browser's `MULTI_WORD_COUNTRIES` (ux, PR #9180) and the iPhone's
+ * `multiWordCountries` (native, PR #9183). A country kept whole on one client
+ * and cut to its last word on the other is "Czech Republic" on the site and
+ * "Republic" on the phone for the same fixture.
+ */
+const swiftCountries = tokensInLiteral(
+  swiftSource,
+  /static let multiWordCountries\s*:\s*Set<String>\s*=/,
+);
+const webCountries = tokensInLiteral(
+  webSource,
+  /export const MULTI_WORD_COUNTRIES\s*:\s*ReadonlySet<string>\s*=/,
+);
+
+describe("#5634 — one multi-word country list, two clients", () => {
+  it("both country sets were actually found and read", () => {
+    expect(swiftCountries.length).toBeGreaterThanOrEqual(60);
+    expect(webCountries.length).toBeGreaterThanOrEqual(60);
+    expect(swiftCountries).toContain("czech republic");
+    expect(webCountries).toContain("czech republic");
+    expect(new Set(swiftCountries).size).toBe(swiftCountries.length);
+    expect(new Set(webCountries).size).toBe(webCountries.length);
+  });
+
+  it("the two country sets are identical", () => {
+    const swift = new Set(swiftCountries);
+    const web = new Set(webCountries);
+    expect([...web].filter((t) => !swift.has(t))).toEqual([]);
+    expect([...swift].filter((t) => !web.has(t))).toEqual([]);
+  });
+
+  it("both clients read the list before any shortening rule", () => {
+    // The browser's half is executed; the iPhone's is read out of source.
+    expect(teamShortName("Czech Republic")).toBe("Czech Republic");
+    expect(swiftCode).toMatch(
+      /static func short\(_ name: String, sportKey: String\? = nil\) -> String \{\s*if isMultiWordCountry\(name\) \{ return name \}\s*return shortByRule\(name, sportKey: sportKey\)/,
+    );
+  });
+});
+
+/**
+ * #5634 — the esports organisation-type suffixes are one list with two
+ * spellings: the browser's `ESPORTS_ORG_SUFFIXES` (ux, PR #9682) and the
+ * iPhone's `esportsOrgSuffixes`. A suffix on one client and not the other is
+ * "Fukuoka SoftBank Hawks Gaming" on the site and "Gaming" on the phone.
+ */
+const swiftOrgSuffixes = tokensInLiteral(
+  swiftSource,
+  /static let esportsOrgSuffixes\s*:\s*Set<String>\s*=/,
+);
+const webOrgSuffixes = tokensInLiteral(
+  webSource,
+  /const ESPORTS_ORG_SUFFIXES\s*:\s*ReadonlySet<string>\s*=\s*new Set\(/,
+);
+
+describe("#5634 — one esports org-suffix list, two clients", () => {
+  it("both suffix sets were actually found and read", () => {
+    expect(swiftOrgSuffixes).toContain("esports");
+    expect(webOrgSuffixes).toContain("esports");
+    expect(new Set(swiftOrgSuffixes).size).toBe(swiftOrgSuffixes.length);
+    expect(new Set(webOrgSuffixes).size).toBe(webOrgSuffixes.length);
+  });
+
+  it("the two suffix sets are identical", () => {
+    const swift = new Set(swiftOrgSuffixes);
+    const web = new Set(webOrgSuffixes);
+    expect([...web].filter((t) => !swift.has(t))).toEqual([]);
+    expect([...swift].filter((t) => !web.has(t))).toEqual([]);
+  });
+
+  it("both clients gate the rule on the esports key, below football and above the last-word rule", () => {
+    // The browser's half is executed; the iPhone's is read out of source.
+    expect(teamShortName("G2 Esports", null, "esports_lol")).toBe("G2 Esports");
+    expect(swiftCode).toMatch(/return sport == "esports"/);
+    const football = swiftCode.indexOf("if keepsWholeClubName(sportKey: sportKey) {");
+    const org = swiftCode.indexOf("if keepsWholeOrgName(sportKey: sportKey) {");
+    const lastWord = swiftCode.indexOf("if isNonDistinctiveToken(last)");
+    expect(football).toBeGreaterThan(-1);
+    expect(org).toBeGreaterThan(football);
+    expect(lastWord).toBeGreaterThan(org);
+  });
+});
+
+describe("#5634 — the esports crest arm sits where the browser's does", () => {
+  // The browser's arm (PR #9695, `teamCrestBadge`) runs after the doubles
+  // branch and before the distinctive-token fork; its behaviour is executed in
+  // `teamCrestBadgeEsportsTypeWord5634.test.ts` and the iPhone's, specimen for
+  // specimen, in `TeamShortNameEsportsWholeOrg5634Tests.swift`. This pins the
+  // Swift ORDER, which neither behaviour suite can see.
+  it("the iPhone's abbreviation runs the arm after the doubles branch and before the fork", () => {
+    const fn = swiftCode.indexOf("static func abbreviation(_ name: String");
+    const doubles = swiftCode.indexOf("if isDoublesPair(name) { return shipped }", fn);
+    const org = swiftCode.indexOf("if keepsWholeOrgName(sportKey: sportKey) {", fn);
+    const fork = swiftCode.indexOf("let distinctive = distinctiveTokens(name)", fn);
+    expect(fn).toBeGreaterThan(-1);
+    expect(doubles).toBeGreaterThan(fn);
+    expect(org).toBeGreaterThan(doubles);
+    expect(fork).toBeGreaterThan(org);
+  });
+
+  it("the arm drops type words by the shared suffix set, sport-free", () => {
+    expect(swiftCode).toMatch(/esportsOrgSuffixes\.contains\(bareToken\(word\)\.lowercased\(\)\)/);
+    expect(swiftCode).toMatch(/typeBadge && !org\.isEmpty \? abbreviation\(org\) : sportFree/);
+  });
+});

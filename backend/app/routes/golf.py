@@ -179,8 +179,27 @@ _GOLF_STRONG_SIGNAL_RE = re.compile(
 # `KXPGAAWARDS` (the Producers Guild film awards) shares the `KXPGA` prefix and is
 # NOT excluded here: `_NON_GOLF_RE` already refuses it on "pga award"/"motion
 # picture" several lines earlier, so it never reaches corroboration.
+#
+# #6243: `dpwt` is the same tour abbreviated. Kalshi writes the DP World Tour
+# placement series as `KXDPWTTOP5-…`/`KXDPWTTOP10-…` ("Fedex Open De France: Top 5
+# Finishers"), and without it those failed this gate on the bare word "Open".
 _KALSHI_GOLF_TICKER_RE = re.compile(
-    r"^kx(?:pga|lpga|dpworldtour|kornferry|kftour|liv|champtour|golf|prescup|rydercup)",
+    r"^kx(?:pga|lpga|dpworldtour|dpwt|kornferry|kftour|liv|champtour|golf|prescup|rydercup)",
+    re.I,
+)
+
+# #6243 — a TOURNAMENT QUESTION. The venue's golf ticker above is only read by the
+# generic-word gate, which runs for a name `_GOLF_SIGNAL_RE` already accepted. A
+# regular tour event is named "<Sponsor> Championship", which carries no golf word
+# at all, so "Alfred Dunhill Links Championship Winner" (`KXDPWORLDTOUR-ALDLC26`, the
+# traded field for the week's tournament) was refused before its ticker was ever
+# read, and the golf hub's Win Probability chart had only DataGolf's one-snapshot
+# model to draw. A no-signal name is admitted when the ticker declares golf AND the
+# name asks one of the questions a golf tournament is asked. Both are required:
+# Kalshi's Presidents Cup series (`KXPRESCUPMATCH`) writes "Singles: A vs B", which
+# is golf but no tournament of its own, and must stay out of the tournament list.
+_GOLF_TOURNAMENT_QUESTION_RE = re.compile(
+    r"\bwinner\s*$|\bround\s+\d+\s+leader\b|\btop\s+\d+\s+finishers?\b",
     re.I,
 )
 
@@ -257,6 +276,10 @@ def _is_golf_market(market) -> bool:
     # (e.g., movie/show names) which don't trigger the blocklist but also
     # have no golf-related terms.
     if not _GOLF_SIGNAL_RE.search(name):
+        # #6243: the venue declared golf in the ticker and the name is a
+        # tournament question — see `_GOLF_TOURNAMENT_QUESTION_RE`.
+        if _KALSHI_GOLF_TICKER_RE.search(external_id) and _GOLF_TOURNAMENT_QUESTION_RE.search(name):
+            return True
         logger.debug("Golf filter: rejected '%s' (source=%s) — no golf signal", name, source)
         return False
 
@@ -1191,6 +1214,26 @@ _GOLF_SCHEDULE_TTL = 3600  # 1 hour
 _SCHEDULE_TOURS = ("pga", "euro", "liv")
 
 
+def _display_venue(course: str | None) -> str:
+    """#9341: DataGolf lists a multi-course venue joined by a bare ';'
+    ("Old Course St. Andrews;Carnoustie;Kingsbarns Golf Links"), and every card
+    printed it verbatim. Split, drop repeats (compared without a trailing
+    "(Par NN)": "Royal Johannesburg East Course (Par 70)" is the same course, while
+    Torrey Pines' "(South Course)" and "(North Course)" are two), and join with ', '."""
+    seen: set[str] = set()
+    parts: list[str] = []
+    for raw in (course or "").split(";"):
+        part = raw.strip()
+        if not part:
+            continue
+        key = re.sub(r"\s*\(par\s*\d+\)\s*$", "", part, flags=re.I).casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        parts.append(part)
+    return ", ".join(parts)
+
+
 def _schedule_key(event_name: str) -> str:
     """The schedule's stable key for a tournament name.
 
@@ -1221,7 +1264,9 @@ async def _get_golf_schedule() -> list[dict]:
     except Exception as e:  # noqa: BLE001 — the overlay must never cost the schedule
         logger.warning("ESPN golf scoreboard overlay failed: %s", e)
         return schedule
-    return _overlay_espn_in_progress(schedule, espn_by_tour)
+    return _overlay_espn_champion(
+        _overlay_espn_in_progress(schedule, espn_by_tour), espn_by_tour,
+    )
 
 
 # ESPN league slug -> the schedule's `tour`. ESPN's DP World board is `eur`.
@@ -1315,6 +1360,64 @@ def _overlay_espn_in_progress(
     return out
 
 
+def _overlay_espn_champion(
+    schedule: list[dict], espn_by_tour: dict[str, list[dict]],
+) -> list[dict]:
+    """Carry ESPN's champion onto the schedule entry of a tournament it calls final.
+
+    #9212: a finished tournament had no finished state anywhere in the golf
+    payload. DataGolf's schedule still read `upcoming` for the FedEx Open de
+    France at 23:4xZ on its final day (#7450: that status never moves), and the
+    only other evidence of an ending was a price — Polymarket's winner at 1.0,
+    which the /sports card printed as "100.0% · Leader" under a pulsing LIVE.
+    The venues' own grades came too late or too early to use: Kalshi's winner
+    rows went `resolved` at 14:15Z with no winner (#2644's close-time class),
+    Polymarket graded Fitzpatrick at 23:38Z, two hours after ESPN's final, and
+    our DataGolf winner market was graded off the round-3 leaderboard at 02:15Z,
+    before the final round was played. ESPN's `STATUS_FINAL` is the authority.
+
+    Matched exactly as `_overlay_espn_in_progress` matches (tour, schedule key,
+    ESPN's start inside the entry's dates), and it writes ``champion`` ONLY. It
+    deliberately leaves ``status`` alone: `completed` is what
+    `_filter_stale_tournaments` drops, and dropping the card is the opposite of
+    what a reader needs the evening a tournament ends — its result.
+
+    Returns a new list and never mutates an entry (the hour-long schedule cache).
+    """
+    out: list[dict] = []
+    for entry in schedule:
+        for event in espn_by_tour.get(entry.get("tour")) or []:
+            champion = event.get("champion")
+            if (
+                champion
+                and event.get("status") == "STATUS_FINAL"
+                and _schedule_key(event.get("name") or "") == entry.get("key")
+                and _espn_event_inside_schedule_dates(event, entry)
+            ):
+                entry = {**entry, "champion": champion}
+                break
+        out.append(entry)
+    return out
+
+
+def _name_champion_as_the_card_does(t: dict) -> None:
+    """Spell ``champion`` the way this card spells that golfer (#9212).
+
+    ESPN says "Matt Fitzpatrick"; the card's field row says "Matthew Fitzpatrick"
+    (`_match_key` folds the alias). A client matching the champion to a row by
+    name needs the card's spelling. No row matches (a team side ESPN abbreviates,
+    a golfer the card does not list) ⇒ ESPN's own name stands.
+    """
+    champion = t.get("champion")
+    if not champion:
+        return
+    key = _match_key(champion)
+    for g in t.get("_all_golfers") or t.get("golfers") or []:
+        if g.get("name") and _match_key(g["name"]) == key:
+            t["champion"] = g["name"]
+            return
+
+
 async def _get_datagolf_schedule() -> list[dict]:
     """Fetch the PGA, DP World and LIV schedules from DataGolf (1-hour cache).
 
@@ -1358,7 +1461,7 @@ async def _get_datagolf_schedule() -> list[dict]:
                     "key": key,
                     "start_date": f"{t.start_date}T00:00:00+00:00" if t.start_date else None,
                     "end_date": f"{t.end_date}T00:00:00+00:00" if t.end_date else None,
-                    "venue": t.course or "",
+                    "venue": _display_venue(t.course),
                     "location": t.location or "",
                     "status": t.status or "",
                     "round": str(t.current_round) if t.current_round else "",
@@ -1485,6 +1588,14 @@ _NAME_ALIASES: dict[str, str] = {
     "cam": "cameron",
     # "si" omitted — conflicts with Korean names (Si Woo Kim)
     "sepp": "josef",
+}
+
+
+# #9752: one golfer, two names across venues — a legal name and the name she
+# plays under, which no first-name alias rule can derive. Keyed and valued in
+# `_match_key` form (after the given-name join).
+_GOLFER_FULL_NAME_ALIASES: dict[str, str] = {
+    "atthaya thitikul": "jeeno thitikul",
 }
 
 
@@ -1765,8 +1876,15 @@ def _match_key(name: str) -> str:
     # Expand first-name aliases for cross-source dedup
     if parts and parts[0] in _NAME_ALIASES:
         parts[0] = _NAME_ALIASES[parts[0]]
+    # #9752: a given name written in two parts is one token. Polymarket writes
+    # "Hyo-Joo Kim" (the hyphen strip above already gives "hyojoo kim") while
+    # Kalshi writes "Hyo Joo Kim", so the same golfer got two rows and the
+    # merged LOTTE card would have listed her twice. Only equal-after-joining
+    # names become equal, so every pair that matched before still matches.
+    if len(parts) >= 3:
+        parts = ["".join(parts[:-1]), parts[-1]]
     clean = " ".join(parts)
-    return clean
+    return _GOLFER_FULL_NAME_ALIASES.get(clean, clean)
 
 
 def _normalize_tournament(
@@ -1843,6 +1961,123 @@ def _normalize_tournament(
         return key
 
     return "other"
+
+
+# #9752: words that cannot tell one event from another. A fold core made only of
+# these ("championship", "open_womens") never folds anything.
+_FOLD_GENERIC_TOKENS = frozenset({
+    "lpga", "women", "womens", "ladies", "championship", "open", "classic",
+    "invitational", "tournament", "tour", "golf", "the", "of", "at", "and",
+})
+# Two groups of one tournament resolve on neighbouring days. Kalshi's per-round
+# markets resolve two weeks after the final round, so the window compares each
+# group's EARLIEST resolution.
+_FOLD_RESOLUTION_WINDOW = timedelta(days=14)
+
+
+def _fold_core(tourn_key: str) -> str:
+    """The key with its sponsor tail and `_womens` suffix removed.
+
+    The sponsor strip is the served slug's own (`_SPONSOR_SUFFIX_RE`), so two keys
+    with the same core are two cards that already share one URL.
+    """
+    base = tourn_key.removesuffix("_womens").replace("_", " ")
+    return _slug_tournament(_SPONSOR_SUFFIX_RE.sub("", base))
+
+
+def _fold_market_tour(market) -> str | None:
+    """The tour one market declares, for the fold only.
+
+    `_declared_tour` plus the Kalshi series ticker, which it deliberately does not
+    read for LPGA (it gates men's-major claims). `KXLPGATOUR-…` is the only place
+    Kalshi's LOTTE markets say LPGA.
+    """
+    declared = _declared_tour(market.name or "", market.external_id)
+    if declared:
+        return declared
+    if getattr(market, "source", None) == "kalshi":
+        return _kalshi_series_tour([market.external_id])
+    return None
+
+
+def _group_declared_tours(tourn_markets: list) -> set[str]:
+    return {tour for m in tourn_markets if (tour := _fold_market_tour(m))}
+
+
+def _earliest_resolution(tourn_markets: list):
+    dates = [m.resolution_date for m in tourn_markets if m.resolution_date]
+    return min(dates) if dates else None
+
+
+def _fold_sponsor_split_tournaments(
+    tournament_markets: dict[str, list],
+) -> tuple[dict[str, list], dict[str, str]]:
+    """Fold one tournament that two venues titled differently onto one key. #9752.
+
+    Kalshi lists "LOTTE Championship presented by Hoakalei" and says LPGA only in
+    its ticker (`KXLPGATOUR-…`); Polymarket lists "LPGA: LOTTE Championship". The
+    grouping keyed them `lotte_championship_presented_by_hoakalei` and
+    `lotte_championship_womens`, and /sports showed two cards for one event with
+    two different favourites. PGA events are folded by the DataGolf schedule
+    (Priority 2 strips the sponsor); LPGA is deliberately not on that schedule
+    (see `_fill_dates_from_espn_lpga_calendar`), so nothing folded it.
+
+    A group folds onto another only when ALL of these hold:
+
+    * same core — the key minus its sponsor tail and `_womens` suffix — and the
+      core names something beyond generic words;
+    * no tour contradiction — the markets' declared tours (ticker, DataGolf id,
+      name prefix) agree or are absent;
+    * gender agrees — a group without the `_womens` suffix joins a women's group
+      only if its own markets declare the LPGA, so a men's event never folds
+      into a women's event of the same name;
+    * dates agree — both groups carry resolution dates and the earliest ones are
+      within `_FOLD_RESOLUTION_WINDOW`. A group with no date at all never folds:
+      the same name is exactly what last year's edition shares with this one, so
+      without a date there is no evidence the two groups are the same week.
+
+    The surviving key prefers the `_womens` form, then the shortest, then the
+    alphabetically first, so the choice does not depend on market order. Returns
+    the folded mapping and `{folded_away_key: surviving_key}` for callers that
+    route by key afterwards (h2h).
+    """
+    by_core: dict[str, list[str]] = defaultdict(list)
+    for key in tournament_markets:
+        if key.startswith("other_") or key == "other":
+            continue
+        core = _fold_core(key)
+        if not core or not (set(core.split("_")) - _FOLD_GENERIC_TOKENS):
+            continue
+        by_core[core].append(key)
+
+    aliases: dict[str, str] = {}
+    for keys in by_core.values():
+        if len(keys) < 2:
+            continue
+        keys = sorted(keys, key=lambda k: (not k.endswith("_womens"), len(k), k))
+        survivor = keys[0]
+        for other in keys[1:]:
+            survivor_markets = tournament_markets[survivor]
+            other_markets = tournament_markets[other]
+            other_tours = _group_declared_tours(other_markets)
+            if len(_group_declared_tours(survivor_markets) | other_tours) > 1:
+                continue
+            if survivor.endswith("_womens") != other.endswith("_womens"):
+                mens_side = other_tours if survivor.endswith("_womens") else _group_declared_tours(survivor_markets)
+                if mens_side != {"lpga"}:
+                    continue
+            a = _earliest_resolution(survivor_markets)
+            b = _earliest_resolution(other_markets)
+            if a is None or b is None or abs(a - b) > _FOLD_RESOLUTION_WINDOW:
+                continue
+            survivor_markets.extend(other_markets)
+            aliases[other] = survivor
+
+    if not aliases:
+        return tournament_markets, {}
+    folded = {k: v for k, v in tournament_markets.items() if k not in aliases}
+    logger.info("Golf fold (#9752): %s", ", ".join(f"{k} -> {v}" for k, v in sorted(aliases.items())))
+    return folded, aliases
 
 
 def _is_h2h_matchup(market) -> bool:
@@ -1932,6 +2167,44 @@ async def _fetch_24h_snapshots(
         },
     )
     return {row.outcome_id: float(row.probability) for row in snap_result}
+
+
+#: #9766 — when a winner board's ~24h-ago COLUMN is not a field, it is not a basis.
+#: Kalshi's LOTTE Championship board (63115883) was listed 9/28 22:50Z and its first
+#: prints put 113 of 117 legs at 9%+ (09-29 02:49Z, column sum 14.76; still 10.57 at
+#: 05:51Z) before the book filled to ~1% a leg (sum 1.39). Three different golfers
+#: printed the same 0.13 → 0.12 → 0.091 at the same minutes. Subtracting that column
+#: gave five golfers who had not moved "▼8–9 pts" and the whole of /golf's Biggest
+#: movers. The untraded-mid rule cannot see it: no leg sits at 0.5.
+#:
+#: A column is refused when its legs' basis prices sum to MORE THAN A WHOLE FIELD
+#: (the module's one-winner bound, 1.5 — no subset of a one-winner field can) AND to
+#: more than twice what the SAME legs sum now. The first arm alone would refuse a field
+#: legitimately renormalized both days (1.6 → 1.7); the second alone would refuse a
+#: handful of longshots drifting 0.05 → 0.02. Measured on production 2026-09-30 08:25Z
+#: over the 32 open golf markets with a basis: every aggregated winner field reads a
+#: ratio of 1.51 or less (odds_api Masters, 1.628 over 1.078); LOTTE reads 7.6. The
+#: other boards over both bounds are round-leader and top-N markets, which never
+#: reach this path.
+MOVE_BASIS_FIELD_CEILING = 1.5
+MOVE_BASIS_RESHAPE_RATIO = 2.0
+
+
+def _basis_column_is_not_a_field(legs: list[tuple[float, float]]) -> bool:
+    """True when a winner board's ~24h-ago column cannot be the same field (#9766).
+
+    `legs` is `(current, basis)` — raw, unscaled — for every leg the caller will
+    aggregate that HAS a basis. A refused column makes the whole board undated for the
+    move, exactly as an absent basis does (#3013, #7179): its source drops out of the
+    blend's dated mean and cannot be called "today". Refused per board, never per leg:
+    one leg's opening print is indistinguishable from a real move; the column is not.
+    """
+    basis_sum = sum(basis for _, basis in legs)
+    current_sum = sum(current for current, _ in legs)
+    return (
+        basis_sum > MOVE_BASIS_FIELD_CEILING
+        and basis_sum > MOVE_BASIS_RESHAPE_RATIO * current_sum
+    )
 
 
 # An EMPTY ORDER BOOK: nobody is quoting either side, so the best bid sits at/below
@@ -2686,6 +2959,9 @@ def _enrich_with_schedule(
             t["venue"] = sched.get("venue") or t.get("venue") or None
             t["location"] = sched.get("location") or None
             t["schedule_status"] = sched.get("status") or None
+            # #9212: ESPN's champion for a tournament it calls final.
+            t["champion"] = sched.get("champion") or None
+            _name_champion_as_the_card_does(t)
             if sched.get("start_date"):
                 t["start_date"] = sched["start_date"]
             if sched.get("end_date"):
@@ -2825,7 +3101,7 @@ def _lpga_name_tokens(text: str) -> set[str]:
 
 
 def _fill_dates_from_espn_lpga_calendar(
-    tournaments: list[dict], calendar: list[dict],
+    tournaments: list[dict], calendar: list[dict], now: datetime | None = None,
 ) -> None:
     """Give a dateless women's card its dates from ESPN's LPGA calendar. #8591.
 
@@ -2842,14 +3118,31 @@ def _fill_dates_from_espn_lpga_calendar(
        a card onto a new key (and a new URL) or cross a men's event.
 
     `resolution_date` and `commence_time` stay as they were, as in #8139.
+
+    #9596 — two ways a real LPGA card missed its row, both on the LOTTE
+    Championship (played Oct 1-4, 2026), which `/sports` then called LIVE on price
+    movement two days before round 1:
+
+    * **The card is LPGA by its tour, not only by its name.** "LOTTE Championship
+      presented by Hoakalei" carries no women's word, so `is_womens` reads False,
+      while `_classify_tour` already filed it `lpga` off its Kalshi ticker.
+    * **A market served now opened no later than now.** A Kalshi `commence_time`
+      is often the market's CLOSE (gotcha #14): LOTTE's read 2026-10-18, the same
+      as its resolution, which put the window's floor two weeks after round 1.
+      With `now` given, a commence in the future is capped at today.
     """
+    today = now.date() if now else None
     for t in tournaments:
-        if t.get("start_date") or t.get("end_date") or not t.get("is_womens"):
+        if t.get("start_date") or t.get("end_date"):
+            continue
+        if not (t.get("is_womens") or t.get("tour") == "lpga"):
             continue
         wanted = _lpga_name_tokens((t.get("key") or "").replace("_", " ")) - _LPGA_GENERIC_TOKENS
         if not wanted:
             continue
         opened = _as_utc_date(t.get("commence_time"))
+        if opened is not None and today is not None and opened > today:
+            opened = today
         resolves = _as_utc_date(t.get("resolution_date"))
         if opened is None and resolves is None:
             continue
@@ -3098,6 +3391,7 @@ async def get_golf(
             if _WOMENS_RE.search(market.name):
                 tournament_key = tournament_key + "_womens"
             tournament_markets[tournament_key].append(market)
+    tournament_markets, folded_key_aliases = _fold_sponsor_split_tournaments(tournament_markets)
 
     # Build tournament entries with cross-source aggregation
     tournaments = []
@@ -3188,12 +3482,57 @@ async def get_golf(
             if renorm_factor is None:
                 continue
 
+            # #9357: the full-field sum above is the GATE (it refuses non-exclusive
+            # and participation fields) and stays exactly as it was. The SCALE is not:
+            # a field that passed as one-winner is rescaled by the sum of the legs this
+            # loop will actually aggregate. Kalshi's Dunhill Links Winner carried 21
+            # bid legs (sum 0.636) under 133 withheld ask-only offers (full sum 6.861),
+            # so 1/6.861 printed Fleetwood's traded 12.5% as 1.8%. Bounded both ways:
+            # the result is never below the old factor and never above 1.0, so no leg
+            # is ever lifted past its own quote (CERT-450's concern is inflation, and
+            # survivors at or under 1.5 are used as-is, as every other field is).
+            if renorm_factor < 1.0:
+                aggregated_prob_sum = sum(
+                    float(o.current_probability)
+                    for o in market.outcomes
+                    if o.current_probability is not None
+                    and not _is_placeholder_price(o, source)
+                )
+                traded_factor = _golf_winner_renorm_factor(
+                    market.name,
+                    len(market.outcomes),
+                    aggregated_prob_sum,
+                    mutually_exclusive=getattr(market, "mutually_exclusive", None),
+                )
+                if traded_factor is not None:
+                    renorm_factor = min(1.0, max(renorm_factor, traded_factor))
+
             # Non-winner markets go to props
             if _NON_WINNER_MARKET_RE.search(market.name):
                 prop = _extract_prop_market(market, source_label)
                 if prop:
                     prop_markets_list.append(prop)
                 continue
+
+            # #9766: a board whose ~24h-ago column is not a field has no basis. Read
+            # over the legs the loop below aggregates, so withheld offers weigh on
+            # neither side.
+            market_basis = prob_24h_ago
+            basis_legs = [
+                (float(o.current_probability), prob_24h_ago[o.id])
+                for o in market.outcomes
+                if o.current_probability is not None
+                and o.id in prob_24h_ago
+                and not _is_placeholder_price(o, source)
+            ]
+            if _basis_column_is_not_a_field(basis_legs):
+                market_basis = {}
+                logger.info(
+                    "Golf #9766: refused the 24h basis of '%s' (market %s): %d legs "
+                    "summed %.3f then, %.3f now",
+                    market.name, getattr(market, "id", None), len(basis_legs),
+                    sum(b for _, b in basis_legs), sum(c for c, _ in basis_legs),
+                )
 
             # Aggregate winner outcomes
             withheld = 0
@@ -3202,18 +3541,17 @@ async def get_golf(
                     continue
                 # Skip placeholder prices before any renormalization — an untraded
                 # Kalshi mid, any source's empty book (UX-P070), or a price that is
-                # merely this outcome's own unaccepted ask (CERT-450). Note that
-                # `renorm_factor` was computed over the FULL priced field above, so a
-                # thinned field's survivors are scaled by the whole field's sum and
-                # can only come out understated. That is deliberate: renormalizing to
-                # the survivors instead would turn four identical 10% offers into
-                # four identical 25% "forecasts" — the same non-information wearing a
-                # more confident number.
+                # merely this outcome's own unaccepted ask (CERT-450). The scale
+                # applied here comes from the survivors' own sum (#9357, above), but
+                # only ever downward: survivors summing <= 1.5 are used as-is, so
+                # four 10% quotes stay four 10% quotes and never become four 25%
+                # "forecasts". Scaling by the FULL field's sum, as this used to, let
+                # withheld offers deflate every real quote beside them.
                 if _is_placeholder_price(outcome, source):
                     withheld += 1
                     continue
                 _aggregate_golfer_outcome(
-                    outcome, source_label, golfer_data, prob_24h_ago,
+                    outcome, source_label, golfer_data, market_basis,
                     prob_scale=renorm_factor,
                 )
             if withheld:
@@ -3260,6 +3598,7 @@ async def get_golf(
         tourn_key = _route_h2h_to_tournament(
             market, golfer_to_tournaments, tourn_by_commence, schedule,
         )
+        tourn_key = folded_key_aliases.get(tourn_key, tourn_key)
         if not tourn_key:
             h2h_unrouted += 1
             continue
@@ -3306,9 +3645,12 @@ async def get_golf(
     # allowed to be the reason a finished row survives.
     _fill_dates_from_calendar(tournaments, now)
     # #8591 — same point, same reason: ESPN dates the LPGA cards DataGolf cannot.
-    if any(t.get("is_womens") and not (t.get("start_date") or t.get("end_date")) for t in tournaments):
+    if any(
+        (t.get("is_womens") or t.get("tour") == "lpga") and not (t.get("start_date") or t.get("end_date"))
+        for t in tournaments
+    ):
         try:
-            _fill_dates_from_espn_lpga_calendar(tournaments, await _get_espn_lpga_calendar())
+            _fill_dates_from_espn_lpga_calendar(tournaments, await _get_espn_lpga_calendar(), now)
         except Exception as e:  # noqa: BLE001 — a dark ESPN must never cost the listing
             logger.warning("ESPN LPGA calendar fill failed: %s", e)
 

@@ -68,6 +68,10 @@
  * asserting the opposite of the section the same page renders one module over.
  * "The same partition" is a claim about the ARGUMENTS as much as the function.
  *
+ * #9265 — so the call now goes through `leagueSectionKey`, the one function
+ * `buildLeagueSections` uses, which also hands the ladder the row's stoppage
+ * label: a called-off game is Finished on the page and skipped here.
+ *
  * ═══ NO CLOCK READ INSIDE A LOOP ═══
  *
  * `now` is a PARAMETER with a `Date.now()` default (gotcha #44: offset from a
@@ -79,7 +83,7 @@
  */
 
 import type { Event } from "@/lib/types";
-import { eventSectionKey } from "@/lib/eventState";
+import { leagueSectionKey } from "@/lib/sports/leagueSections";
 
 /**
  * The window the page asks for first, and the only one an in-season league
@@ -87,6 +91,15 @@ import { eventSectionKey } from "@/lib/eventState";
  * this fix does not touch the working case.
  */
 export const LEAGUE_WINDOW_DAYS = 14;
+
+/** Keep the weekly football slate after Sunday (#3246).
+ * The API anchors this at UTC midnight. Other sports retain their current
+ * window: widening dense leagues needs pagination so past games cannot
+ * consume the shared 200-row limit ahead of upcoming fixtures.
+ */
+export function leagueResultsDays(sportKey: string): number {
+  return sportKey === "americanfootball_nfl" || sportKey === "americanfootball_ncaaf" ? 7 : 1;
+}
 
 /**
  * How soon a league's next game has to be for the fixed window to be believed.
@@ -137,12 +150,9 @@ export function needsWiderHorizon(
     // the partition the page renders. A venue-graded row is Finished there, so
     // it is skipped here, and a league whose only "live" rows are matches that
     // have already been played can no longer look like it is playing.
-    const section = eventSectionKey(
-      event.status,
-      event.commence_time,
-      now,
-      event,
-    );
+    // #9265 — through `leagueSectionKey`, so a called-off game is skipped
+    // here exactly as it is filed there.
+    const section = leagueSectionKey(event, now);
     if (section === "finished") continue;
 
     // Live (and suspended, which the shared ladder files as live) means the

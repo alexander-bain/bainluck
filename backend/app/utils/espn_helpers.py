@@ -16,7 +16,14 @@ from sqlalchemy import or_, select, update as _sql_update
 from app.utils.event_completion import authority_may_settle, play_resumes
 # #5390: the period-string predicate lives in a leaf module, so this is a
 # plain module-level import rather than five function-local ones dodging a cycle.
-from app.utils.game_state import _sanitize_period, live_write_would_revert
+from app.utils.game_state import (
+    WALL_CLOCK_SLACK_SECONDS,
+    _sanitize_period,
+    clock_outruns_wall_time,
+    game_seconds_elapsed_at_least,
+    live_write_would_revert,
+    regulation_period_seconds_at_least,
+)
 from app.utils.live_state_write import write_live_state_if_unmoved
 from app.utils.start_time_authority import provider_may_set_start
 from app.utils.espn_start_time import espn_announced_start, espn_start_time
@@ -47,6 +54,7 @@ from app.utils.game_pairing import (
 # own door since the guard shipped; the two doors in THIS module write the same
 # column from the same `upsert_team` and were never routed through it (#4883).
 from app.utils.team_binding_invariant import accept_team_binding
+from app.utils.espn_team_spelling import apply_espn_respelling
 
 logger = logging.getLogger(__name__)
 
@@ -307,11 +315,13 @@ def espn_pregame_filler(
 # past that the clock wins again and the row promotes normally. A test asserts
 # this constant against the beat's own cadence rather than against a literal,
 # because two records of one capability drift.
-ESPN_NOT_STARTED_KEY = "espn_not_started_at"
-_ESPN_LIVE_BEAT_SECONDS = 60
-_AUTHORITY_NOT_STARTED_MISSED_PASSES = 15
-AUTHORITY_NOT_STARTED_TTL = timedelta(
-    seconds=_ESPN_LIVE_BEAT_SECONDS * _AUTHORITY_NOT_STARTED_MISSED_PASSES
+# #9195: the key, the TTL and its derivation live in `event_completion` now (the
+# rail predicates read the stamp too, and this module imports that one); the two
+# public names are re-exported unchanged.
+from app.utils.event_completion import (  # noqa: E402
+    AUTHORITY_NOT_STARTED_TTL,
+    ESPN_NOT_STARTED_KEY,
+    authority_not_started_fresh,
 )
 
 
@@ -372,21 +382,9 @@ def authority_not_started_holds(
     """
     if play_evidence(home_score, away_score, period, game_clock):
         return False
-
-    raw = (sources or {}).get(ESPN_NOT_STARTED_KEY)
-    if not isinstance(raw, str):
-        return False
-    try:
-        stamped = datetime.fromisoformat(raw)
-    except (ValueError, TypeError):
-        return False
-    if stamped.tzinfo is None:
-        stamped = stamped.replace(tzinfo=timezone.utc)
-    age = now - stamped
-    if age < timedelta(0):
-        # A stamp from the future is a clock fault, not an authority statement.
-        return False
-    return age <= ttl
+    # A stamp from the future is a clock fault, not an authority statement; the
+    # shared reader refuses it (and every other unreadable value).
+    return authority_not_started_fresh(sources, now, ttl)
 
 
 # ───────────────────────────────────────────────────────────────────────────
@@ -1416,6 +1414,94 @@ async def espn_confirms_start_placeholder(session, event, ee, stats) -> bool:
     return True
 
 
+#: How many of an event's newest `espn_snapshots` rows the #9020 anchor read
+#: walks. One row a minute while live, so two hours: a position the row has held
+#: longer than that cannot be outrun by any reading, whatever the anchor says.
+_POSITION_ANCHOR_LOOKBACK = 120
+#: The longest regulation period in `regulation_period_seconds_at_least`'s table,
+#: used for the no-query pre-check: if even this cannot make a reading outrun
+#: the slack, no sport can, and the writer asks the database nothing.
+_LONGEST_REGULATION_PERIOD_SECONDS = 1200
+
+
+async def row_position_first_seen_at(session, event_id, period):
+    """When ESPN's board FIRST showed ``period`` in its latest run of it, or None.
+
+    #9020. The row's `period` string (``'12:41 - 4th Quarter'``, ``'End of 3rd
+    Quarter'``) is ESPN's own `status.type.detail`, and `espn_snapshots` appends
+    ESPN's reading once a minute while a game is live, so the newest run of
+    snapshots carrying that exact string says since when the game has stood
+    there. The EARLIEST of that run is the anchor, not the latest: a board that
+    sat on one reading for five minutes and then caught up has had five minutes
+    of wall time to cover, and must not be refused for it.
+
+    None — no evidence — when no snapshot in the look-back carries the string
+    (StatPal wrote the position, or ESPN published no win probability that pass).
+    """
+    from app.models.models import ESPNSnapshot
+
+    rows = (
+        await session.execute(
+            select(ESPNSnapshot.captured_at, ESPNSnapshot.period)
+            .where(ESPNSnapshot.event_id == event_id)
+            .order_by(ESPNSnapshot.captured_at.desc())
+            .limit(_POSITION_ANCHOR_LOOKBACK)
+        )
+    ).all()
+    first_seen = None
+    for captured_at, snap_period in rows:
+        if snap_period == period:
+            first_seen = captured_at
+        elif first_seen is not None:
+            break
+    if first_seen is not None and first_seen.tzinfo is None:
+        first_seen = first_seen.replace(tzinfo=timezone.utc)
+    return first_seen
+
+
+async def _espn_reading_outruns_wall_time(
+    session, event, observed_period, observed_clock, new_period, new_clock,
+):
+    """#9020: is ESPN's reading further into the game than time allows?
+
+    Asks the database only when a reading could possibly outrun the slack at the
+    longest regulation length we carry; an ordinary minute-to-minute reading
+    never reaches the first query.
+    """
+    most = game_seconds_elapsed_at_least(
+        observed_period, observed_clock, new_period, new_clock,
+        period_seconds=_LONGEST_REGULATION_PERIOD_SECONDS,
+    )
+    if most is None or most <= WALL_CLOCK_SLACK_SECONDS:
+        return False
+    event_id = getattr(event, "id", None)
+    if event_id is None:
+        return False
+    from app.models.models import Sport
+
+    sport_key = None
+    sport_id = getattr(event, "sport_id", None)
+    if sport_id is not None:
+        sport_key = (
+            await session.execute(select(Sport.key).where(Sport.id == sport_id))
+        ).scalar_one_or_none()
+    period_seconds = regulation_period_seconds_at_least(sport_key)
+    elapsed = game_seconds_elapsed_at_least(
+        observed_period, observed_clock, new_period, new_clock,
+        period_seconds=period_seconds,
+    )
+    if elapsed is None or elapsed <= WALL_CLOCK_SLACK_SECONDS:
+        return False
+    anchor = await row_position_first_seen_at(session, event_id, observed_period)
+    if anchor is None:
+        return False
+    wall_seconds = (datetime.now(timezone.utc) - anchor).total_seconds()
+    return clock_outruns_wall_time(
+        observed_period, observed_clock, new_period, new_clock, wall_seconds,
+        period_seconds=period_seconds,
+    )
+
+
 async def update_event_fields_from_espn(
     session, event, ee, claimed_espn_ids, stats, *, allow_unstarted: bool = False
 ):
@@ -1433,6 +1519,8 @@ async def update_event_fields_from_espn(
 
     # #7338, BEFORE the first read of `ee`: an id-anchored match proves the
     # fixture, not which side is which. Everything below copies by ESPN's slot.
+    # The caller's reading is kept: the #9020 verdict below is recorded on it.
+    _supplied_ee = ee
     ee = orient_espn_event_to_row(event, ee, stats)
 
     changed = False
@@ -1547,6 +1635,41 @@ async def update_event_fields_from_espn(
             stats.get("live_state_reversions_refused", 0) + 1
         )
 
+    # ── #9020: a game clock can stop; it cannot run faster than time ─────────
+    #
+    # ESPN publishes a rollover reading at quarter changes — the new quarter's
+    # label over the old quarter's clock (`'4:38 - 4th Quarter'` two minutes
+    # after `'End of 3rd Quarter'`). Taken onto the row it is a position no real
+    # reading can reach, so every correct reading after it looks "earlier" and
+    # the guard above refuses it: the hero sat on Q4 1:27 while the chart said
+    # ~9:51. Only the CLOCK and PERIOD are withheld; scores keep their own rule
+    # (#9039), because a touchdown on the same board is still a touchdown.
+    _clock_outruns_wall = False
+    if not _live_state_is_stale and _new_period:
+        _clock_outruns_wall = await _espn_reading_outruns_wall_time(
+            session, event, _observed_period, _observed_clock, _new_period, ee.clock,
+        )
+    if _clock_outruns_wall:
+        logger.info(
+            "#9020: refused a clock that outruns the wall clock on event %s — "
+            "row is at %r/%r, ESPN offered %r/%r",
+            event.id, _observed_period, _observed_clock, _new_period, ee.clock,
+        )
+        stats["live_clock_outran_wall_refused"] = (
+            stats.get("live_clock_outran_wall_refused", 0) + 1
+        )
+    # CERT-3657: the row is not the only reader of this reading. The same pass
+    # appends it to `espn_snapshots` and `win_prob_snapshots.game_state`, which
+    # `/history` serves and the readout under the hero picks its newest clock
+    # from — so the verdict rides on the reading to those writers, or the page
+    # shows the refused clock beside the row's. Assigned on BOTH objects (the
+    # oriented copy and the caller's) and on every call, refusal or not.
+    for _reading in {id(_supplied_ee): _supplied_ee, id(ee): ee}.values():
+        try:
+            _reading.position_outran_wall = _clock_outruns_wall
+        except AttributeError:  # pragma: no cover - a frozen/slotted double
+            pass
+
     # ── #8247: `allow_unstarted` GRANTS SETTLING, AND IT GRANTS NOTHING ELSE ──
     #
     # #5501 widened the deep-straggler arm to reach `scheduled` rows and passes
@@ -1646,6 +1769,7 @@ async def update_event_fields_from_espn(
         ee.clock
         and event.game_clock != ee.clock
         and not _live_state_is_stale
+        and not _clock_outruns_wall
         and not _withhold_live_state
     ):
         _live_values["game_clock"] = ee.clock
@@ -1674,6 +1798,7 @@ async def update_event_fields_from_espn(
         if (
             event.period != _new_period
             and not _live_state_is_stale
+            and not _clock_outruns_wall
             and not _withhold_live_state
         ):
             _live_values["period"] = _new_period
@@ -2062,6 +2187,22 @@ async def write_espn_win_probability(session, event, ee, match_method, claimed_e
     # plain append (no dedup) and post-final cycles would stamp new espnHistory
     # points at `now`, extending the chart past the real final. The live-captured
     # ESPNSnapshots already cover the game through its end.
+    # #9020 / CERT-3657: a position the row refused as outrunning the wall
+    # clock is not recorded as ESPN's newest one either. `/history` serves both
+    # tables below and the readout takes its clock from the newest snapshot
+    # that HAS one, so a withheld (None) clock and period leave it on the last
+    # admitted position — the row's — while probability and score still land.
+    # The #9020 anchor read (`row_position_first_seen_at`) skips these rows,
+    # so the row's run keeps its first-seen time and the next real reading is
+    # judged against it.
+    _position_refused = bool(getattr(ee, "position_outran_wall", False))
+    _snap_clock = None if _position_refused else ee.clock
+    _snap_period = None if _position_refused else _sanitize_period(ee.status_detail)
+    if _position_refused:
+        stats["espn_history_position_withheld"] = (
+            stats.get("espn_history_position_withheld", 0) + 1
+        )
+
     if not is_completed:
         snapshot = ESPNSnapshot(
             event_id=event.id,
@@ -2069,10 +2210,10 @@ async def write_espn_win_probability(session, event, ee, match_method, claimed_e
             away_win_probability=1.0 - ee.home_win_probability if ee.home_win_probability else None,
             home_score=ee.home_score,
             away_score=ee.away_score,
-            game_clock=ee.clock,
+            game_clock=_snap_clock,
             # #5390: a snapshot's period is served back out (events.py `snap.period`),
             # so a pre-game date is as wrong here as it is on the event row.
-            period=_sanitize_period(ee.status_detail),
+            period=_snap_period,
         )
         session.add(snapshot)
         stats["snapshots_created"] = stats.get("snapshots_created", 0) + 1
@@ -2090,8 +2231,11 @@ async def write_espn_win_probability(session, event, ee, match_method, claimed_e
                 home_win_probability=ee.home_win_probability,
                 away_win_probability=1.0 - ee.home_win_probability if ee.home_win_probability else None,
                 game_state={
-                    "clock": ee.clock,
-                    "period": _sanitize_period(ee.status_detail) or (str(ee.period) if ee.period else None),
+                    "clock": _snap_clock,
+                    "period": (
+                        None if _position_refused
+                        else _snap_period or (str(ee.period) if ee.period else None)
+                    ),
                     "home_score": ee.home_score,
                     "away_score": ee.away_score,
                 },
@@ -2129,6 +2273,39 @@ async def retire_priorless_stat_model(session, event, *, mirror_orm: bool) -> bo
     return True
 
 
+#: #9521: clock sports whose `parse_game_clock` prices a period boundary
+#: ("Halftime", "End of 1st Quarter", "End of 2nd Period") from a "0:00" clock.
+_BREAK_CLOCK_SPORT_PREFIXES = (
+    "americanfootball_", "football_", "basketball_", "icehockey_", "hockey_",
+)
+
+
+#: #9521: ESPN's own names for a live game stopped at a period boundary.
+#: `_parse_event` maps only STATUS_IN_PROGRESS to "in", so a real break arrives
+#: under these, never as "in" — measured 2026-09-30 00:15Z, MTL @ TOR:
+#: `STATUS_END_PERIOD`, displayClock "0:00", "End of 1st Period".
+_ESPN_BREAK_STATUSES = frozenset({"status_halftime", "status_end_period"})
+
+
+def _break_clock(ee, sport_key: str) -> str | None:
+    """"0:00" when a live reading sits at a known break, else None.
+
+    A break is ESPN saying so (`_ESPN_BREAK_STATUSES`), or an "in" reading
+    with no clock whose detail is Halftime / "End of ...". Either way the
+    position is the period boundary, whatever clock rides along.
+    """
+    if not sport_key.startswith(_BREAK_CLOCK_SPORT_PREFIXES):
+        return None
+    if ee.status in _ESPN_BREAK_STATUSES:
+        return "0:00"
+    if ee.status != "in" or ee.clock:
+        return None
+    detail = (_sanitize_period(ee.status_detail) or "").strip().lower()
+    if detail == "halftime" or detail.startswith("end of "):
+        return "0:00"
+    return None
+
+
 async def compute_and_write_stat_model(session, event, ee, sport_key, stats):
     """Compute statistical model win probability for live games and write snapshot.
 
@@ -2141,10 +2318,18 @@ async def compute_and_write_stat_model(session, event, ee, sport_key, stats):
     # specimen read `stat_model` 0.0762 for a team up 7 in the 4th.
     ee = orient_espn_event_to_row(event, ee)
 
-    has_game_progress = ee.clock or sport_key.startswith("baseball_")
-    if ee.status != "in" or ee.home_score is None or ee.away_score is None or not has_game_progress:
+    # #9521: at a break ESPN sends no clock, and skipping the reading left the
+    # one priced before the last score of the half on the row for the whole
+    # break (MNF: 80.7% Bears at 10–7, every market ~42%). A break's position
+    # is known without a clock — Halftime and "End of Nth ..." sit at a period
+    # boundary — so price it there. ESPN names a real break with its own
+    # status (Halftime, End of Period), not "in"; that is a live reading too.
+    break_clock = _break_clock(ee, sport_key)
+    is_live = ee.status == "in" or break_clock is not None
+    has_game_progress = ee.clock or break_clock or sport_key.startswith("baseball_")
+    if not is_live or ee.home_score is None or ee.away_score is None or not has_game_progress:
         # Track missing data for live games
-        if ee.status == "in":
+        if is_live:
             if ee.home_score is None or ee.away_score is None:
                 stats["stat_model_no_score"] = stats.get("stat_model_no_score", 0) + 1
             elif not ee.clock:
@@ -2198,11 +2383,23 @@ async def compute_and_write_stat_model(session, event, ee, sport_key, stats):
             period_str = _sanitize_period(ee.status_detail)
             if ee.period and not period_str:
                 period_str = str(ee.period)
+            model_clock = break_clock or ee.clock
+            # #9020 / CERT-3657: the row refused this reading's position as
+            # outrunning the wall clock. The model is priced at the position
+            # the row DID admit (with this pass's score, which has its own
+            # rule), and its `game_state` says so — never at the refused clock,
+            # which would chart as the newest state beside the row's.
+            if getattr(ee, "position_outran_wall", False):
+                period_str = getattr(event, "period", None)
+                model_clock = getattr(event, "game_clock", None)
+                stats["stat_model_position_from_row"] = (
+                    stats.get("stat_model_position_from_row", 0) + 1
+                )
 
             stat_wp = compute_statistical_win_prob(
                 home_score=ee.home_score,
                 away_score=ee.away_score,
-                clock=ee.clock,
+                clock=model_clock,
                 period=period_str,
                 sport_key=sport_key,
                 pregame_spread=pregame_spread,
@@ -2230,7 +2427,7 @@ async def compute_and_write_stat_model(session, event, ee, sport_key, stats):
                     home_win_probability=round(stat_wp, 4),
                     away_win_probability=round(1.0 - stat_wp, 4),
                     game_state={
-                        "clock": ee.clock,
+                        "clock": model_clock,
                         "period": period_str,
                         "home_score": ee.home_score,
                         "away_score": ee.away_score,
@@ -2519,6 +2716,9 @@ async def sync_scheduled_events(session, sport_key, espn_events, stats):
             continue
 
         ee = matched_espn
+        # #9482: a spelling-only difference takes ESPN's name first, so the
+        # side resolves (and #1918 binds) to ESPN's id-anchored team row.
+        apply_espn_respelling(event, ee, sched_team_cache, stats, source="espn_scheduled")
         home_team = await upsert_team(session, event.home_team_name, ee.home_team, event.sport_id, sched_team_cache, stats)
         away_team = await upsert_team(session, event.away_team_name, ee.away_team, event.sport_id, sched_team_cache, stats)
         # #1918/#4883. Same column, same resolver and the same OVERWRITE shape as
@@ -2702,6 +2902,7 @@ async def fetch_completed_box_scores(session, stats):
                 now_str = datetime.now(timezone.utc).isoformat()
                 had_live_box = event.box_score_data is not None
 
+                settled_over_live = False
                 if box_score or scoring_plays:
                     bsd = {
                         "source": "espn",
@@ -2716,38 +2917,38 @@ async def fetch_completed_box_scores(session, stats):
                         bsd["away_period_scores"] = scores.get(
                             "away_period_scores", []
                         )
-                    await session.execute(
-                        _raw_text("UPDATE events SET box_score_data = cast(:bsd AS jsonb) WHERE id = :eid"),
-                        {"bsd": _json_mod.dumps(bsd), "eid": event.id},
-                    )
-                    event.box_score_data = bsd
-                    stats["box_scores_fetched"] = stats.get("box_scores_fetched", 0) + 1
-                    if had_live_box:
-                        stats["box_scores_settled_over_live"] = (
-                            stats.get("box_scores_settled_over_live", 0) + 1
-                        )
+                    settled_over_live = had_live_box
                 elif had_live_box:
                     # #8970: ESPN answered with nothing for a game we already
                     # hold a live box for. That box is the best we have, so it
                     # is kept — only the live stamp goes, or this row would be
                     # re-asked every minute for 48 hours.
                     bsd = {**event.box_score_data, "live": False}
-                    await session.execute(
-                        _raw_text("UPDATE events SET box_score_data = cast(:bsd AS jsonb) WHERE id = :eid"),
-                        {"bsd": _json_mod.dumps(bsd), "eid": event.id},
-                    )
-                    event.box_score_data = bsd
                 else:
-                    err_bsd = {
+                    bsd = {
                         "source": "espn",
                         "error": "not_available",
                         "fetched_at": now_str,
                     }
+                # #9713: each game's write in its own SAVEPOINT, as the live
+                # pass does (#8913). On Postgres a refused statement aborts the
+                # transaction, the except below swallowed it, and every later
+                # game and the step's savepoint went with it: one box Postgres
+                # would not take (15319563, 9/30) cost every settled box in the
+                # 48-hour window, every minute, while it stayed at the head of
+                # the queue.
+                async with session.begin_nested():
                     await session.execute(
                         _raw_text("UPDATE events SET box_score_data = cast(:bsd AS jsonb) WHERE id = :eid"),
-                        {"bsd": _json_mod.dumps(err_bsd), "eid": event.id},
+                        {"bsd": _json_mod.dumps(bsd), "eid": event.id},
                     )
-                    event.box_score_data = err_bsd
+                event.box_score_data = bsd
+                if box_score or scoring_plays:
+                    stats["box_scores_fetched"] = stats.get("box_scores_fetched", 0) + 1
+                if settled_over_live:
+                    stats["box_scores_settled_over_live"] = (
+                        stats.get("box_scores_settled_over_live", 0) + 1
+                    )
             except Exception as e:
                 logger.error(f"Box score fetch error for event {event.id}: {e}")
     finally:
@@ -2791,21 +2992,53 @@ async def fetch_live_box_scores(session, stats):
     10 slots a round-robin over every live event instead of a fixed window on
     ten of them. It costs no additional ESPN calls: the limit and the 2-minute
     staleness rule are both unchanged.
+
+    #9067 — THE 10 SLOTS WENT TO ROWS THIS PASS CAN NEVER FETCH
+    ------------------------------------------------------------
+    The query picked 10 rows and the loop below then skipped the ones it would
+    not fetch: a sport ESPN has no summary path for, or a box that is not a
+    live box. Nothing was written to those rows, so they held the top of the
+    staleness order for good. Tennis is both: no ``ESPN_SPORT_MAPPING`` path, and
+    the ESPN tennis anchor stores ``{"tennis": {...}}`` with no top-level
+    ``fetched_at``, which sorts first as NULL. Measured 9/30 03:23Z: 29 of 32
+    live ESPN-linked rows were tennis, and the pass reached none of the other
+    three. Red Sox at Yankees (15319563) kept its 01:59Z line score (NYY 2)
+    until it finished 9–0 at 03:18Z. So the loop's rule is now also the
+    query's WHERE, and only a row the pass will ask ESPN about can hold a slot.
     """
     from app.services.espn_api import ESPNAPIService
-    from app.models.models import Event
+    from app.models.models import Event, Sport
     from app.tasks.config import ESPN_SPORT_MAPPING
+    from sqlalchemy import and_
     from sqlalchemy.orm import selectinload
     import json as _json_mod
     from sqlalchemy import text as _raw_text
 
     stale_cutoff = datetime.now(timezone.utc) - timedelta(minutes=2)
+    # Every writer stamps `fetched_at` with `datetime.isoformat()` in UTC, so the
+    # stored strings sort in time order as text. A cast could raise on one bad
+    # row and cost the whole pass.
+    fetched_at_text = Event.box_score_data["fetched_at"].astext
     live_box_result = await session.execute(
         select(Event)
         .options(selectinload(Event.sport))
         .where(
             Event.status == "live",
             Event.espn_id.isnot(None),
+            # #9067: the same two rules the loop below applies.
+            Event.sport_id.in_(
+                select(Sport.id).where(Sport.key.in_(list(ESPN_SPORT_MAPPING)))
+            ),
+            or_(
+                Event.box_score_data.is_(None),
+                and_(
+                    Event.box_score_data["live"].astext == "true",
+                    or_(
+                        fetched_at_text.is_(None),
+                        fetched_at_text < stale_cutoff.isoformat(),
+                    ),
+                ),
+            ),
         )
         .order_by(
             Event.box_score_data["fetched_at"].astext.asc().nullsfirst(),
@@ -2884,12 +3117,21 @@ async def fetch_live_box_scores(session, stats):
     finally:
         await live_espn.close()
 
+    # #8913: each game's write in its own SAVEPOINT. The except below swallows
+    # a failure, and on Postgres a failed statement aborts the transaction:
+    # measured 9/26, a lost row lock (after a 40P01 elsewhere) made every later
+    # game raise InFailedSQLTransactionError, and the step's own savepoint
+    # (#8796) then rolled back the box scores already written this pass. Rolled
+    # back to here, a failed write costs its own game. The ORM copy is set only
+    # after the write survived, so a rolled-back game keeps its old in-memory
+    # box score as well as its old stored one.
     for ev, bsd in to_write:
         try:
-            await session.execute(
-                _raw_text("UPDATE events SET box_score_data = cast(:bsd AS jsonb) WHERE id = :eid"),
-                {"bsd": _json_mod.dumps(bsd), "eid": ev.id},
-            )
+            async with session.begin_nested():
+                await session.execute(
+                    _raw_text("UPDATE events SET box_score_data = cast(:bsd AS jsonb) WHERE id = :eid"),
+                    {"bsd": _json_mod.dumps(bsd), "eid": ev.id},
+                )
             ev.box_score_data = bsd
             stats["live_box_scores_fetched"] = (
                 stats.get("live_box_scores_fetched", 0) + 1

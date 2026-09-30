@@ -662,9 +662,11 @@ class TestResolveMarketProbability:
         assert _resolve_market_probability(m) == 0.08
 
     def test_empty_prices_with_reasonable_ask(self):
-        """Empty outcomePrices, no bid/trade, ask < 0.99 should use ask."""
+        """Empty outcomePrices, no bid/trade, ask < 0.99: skipped (#9157, gotcha #19).
+
+        Used to publish the ask; a lone ask is an upper bound, not a price."""
         m = self._make_market(best_ask=0.50)
-        assert _resolve_market_probability(m) == 0.50
+        assert _resolve_market_probability(m) is None
 
     def test_placeholder_market_skipped(self):
         """Placeholder market (empty prices, bid=0, ask=1, trade=0) returns None.
@@ -717,14 +719,14 @@ class TestResolveMarketProbability:
         assert _resolve_market_probability(m) is None
 
     def test_bid_zero_ask_reasonable(self):
-        """Bid=0, ask reasonable (<0.99): use ask as last resort."""
+        """Bid=0, ask reasonable (<0.99): skipped, no ask-only last resort (#9157)."""
         m = self._make_market(
             outcome_prices=[],
             best_bid=0.0,
             best_ask=0.30,
             last_trade_price=0.0,
         )
-        assert _resolve_market_probability(m) == 0.30
+        assert _resolve_market_probability(m) is None
 
     def test_real_low_probability_market(self):
         """A real long-shot market (1%) with valid pricing should work."""

@@ -14,13 +14,22 @@ from app.utils.event_rails import (
 from app.utils.event_twin_fold import fold_twin_events, team_name_fold_key
 from app.utils.aggregation import compute_aggregate_probability
 from app.utils.lifecycle import served_event_status
-from app.utils.market_team_sport import link_crosses_sport, sport_key_llm_category
+from app.utils.market_team_sport import (
+    link_crosses_league,
+    link_crosses_sport,
+    market_event_slug,
+    sport_key_llm_category,
+)
 from app.utils.start_placeholder import start_is_tbd
 from app.utils.season_variant_team import (
     choose_parent_league_row,
     wants_parent_league_row,
 )
-from app.utils.sport_keys import league_family_identity, sport_display_name
+from app.utils.sport_keys import (
+    league_family_identity,
+    same_sport_same_gender,
+    sport_display_name,
+)
 from app.utils.standings_shape import public_standings
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -303,15 +312,24 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
     # not a league (#1798/#4945: every MLB club has a preseason row too), and a
     # tennis player registered under `tennis_atp_us_open` must keep their
     # `tennis_atp` matches.
-    team_family = league_family_identity(getattr(team.sport, "key", None))
+    team_sport_key = getattr(team.sport, "key", None)
+    team_family = league_family_identity(team_sport_key)
     family_sport_ids: list[int] = []
-    if team_family is not None:
-        family_sport_ids = [
+    # #9581: the sports a NAME match may come from at all — see the name arm.
+    # Read off the same one query as the family list; `None` = no constraint.
+    name_arm_sport_ids: list[int] | None = None
+    if team_sport_key:
+        all_sports = (await db.execute(select(Sport.id, Sport.key))).all()
+        if team_family is not None:
+            family_sport_ids = [
+                sport_id
+                for sport_id, sport_key in all_sports
+                if league_family_identity(sport_key) == team_family
+            ]
+        name_arm_sport_ids = [
             sport_id
-            for sport_id, sport_key in (
-                await db.execute(select(Sport.id, Sport.key))
-            ).all()
-            if league_family_identity(sport_key) == team_family
+            for sport_id, sport_key in all_sports
+            if same_sport_same_gender(team_sport_key, sport_key)
         ]
 
     club_ids, club_names = await _club_row_identity(db, team, family_sport_ids)
@@ -340,6 +358,19 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
                     Event.sport_id.in_(family_sport_ids),
                 ),
             )
+
+    # A BOUND ROW STILL HAS TO BE THIS SPORT AND THIS SIDE (#9581). The guard
+    # above only tests unbound rows, so a row bound to ANY team passed on the
+    # name alone: `/team/alabama-crimson-tide` (WNCAAB) listed Alabama's
+    # football schedule, and Arsenal's men's and women's pages each listed the
+    # other's fixtures (15316358 Arsenal v HB Køge, UWCL women, on the EPL
+    # club). The bound arm exists for a SIBLING competition — an EPL match
+    # bound to the EPL "Arsenal" row reaching the club whose page row sits
+    # under `soccer_england_efl_cup` — and `same_sport_same_gender` keeps
+    # exactly that. The id arms are untouched: a row bound to one of this
+    # club's own rows is its game whatever the key says.
+    if name_arm_sport_ids is not None:
+        name_arm = and_(name_arm, Event.sport_id.in_(name_arm_sport_ids))
 
     base_event_filter = or_(
         Event.home_team_id.in_(club_id_list),
@@ -521,8 +552,26 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
     _ftime: dict = {}
     try:
         from app.routes.user import _query_team_futures
+        # #9219: the club's rows, not only the URL's row — the same set the
+        # games rails use (#7929), so a spelling the page reaches for games it
+        # also reaches for futures. Narrowed to the team's OWN sport row: the
+        # games set spans the league family, and a preseason row (19692 carries
+        # no crest and no colour) would otherwise be its own cluster in the
+        # futures collapse and could claim a leg with a blank badge.
+        futures_team_ids = [team.id]
+        if len(club_id_list) > 1:
+            futures_team_ids = sorted(
+                (
+                    await db.execute(
+                        select(Team.id).where(
+                            Team.id.in_(club_id_list),
+                            Team.sport_id == team.sport_id,
+                        )
+                    )
+                ).scalars().all()
+            ) or [team.id]
         futures_data = await _query_team_futures(
-            [team.id], db, limit=30, timings=_ftime if debug_timing else None
+            futures_team_ids, db, limit=30, timings=_ftime if debug_timing else None
         )
         futures_items = futures_data.get("items", [])
     except Exception:
@@ -937,6 +986,35 @@ _NOT_A_TITLE_QUESTION: tuple[str, ...] = (
     "playoff qualifier",  # qualifying for the playoffs is not winning a title
     "of the year",  # awards are tier 3's question, not a championship
     "halftime",  # entertainment markets carrying a football tier
+    "leave their conference",  # realignment, not winning the conference (#2593)
+    "will host",  # a host-city question ("Who will host the 2031 Pro Football Championship?")
+    # #9660: the NBA's in-season Cup is a title, but not THE title. Kalshi's "2026 Pro
+    # Basketball Cup Champion" was the Knicks' and Thunder's "Championship" hero
+    # (10%, 26.5%). Worded so "Stanley Cup" — the NHL title itself — never matches.
+    "basketball cup",
+    "nba cup",
+    # A pairing of two finalists ("CAR Hurricanes vs ANA Ducks" on "2026-27 Stanley
+    # Cup Final Matchup") and a playoff seed ("Pro Football Playoffs: AFC #3 Seed")
+    # are not one team winning its title or conference.
+    "matchup",
+    " seed",
+    # Reaching a stage is not winning it: "NFL Conference Championship Qualifiers",
+    # "Team to advance to AFC Championship", "NCAA Football: Team to Make National
+    # Championship" and "Pro Football: Team to Make Postseason" sat at tiers 1, 2
+    # and 4 and would print as "Championship", "Conference" or "Division".
+    "qualif",
+    "advance to",
+    "to make ",
+    "undefeated",  # "Pro Football Teams to go Undefeated in their Division" at tier 4
+    # Awards that sit at tier 1/2 and printed as the hero: "MLB: NL Platinum Glove
+    # Winner" was the Giants' "Championship" (0.3%), "AFC Defensive Player of the
+    # Month" the Steelers' "Conference".
+    "of the month",
+    "glove",
+    "outstanding dh",
+    "hank aaron",
+    "cy young",
+    "mvp",
 )
 
 
@@ -944,6 +1022,26 @@ def _answers_its_tier(market_name: str | None) -> bool:
     """False when a market's question is not the one its tier would label it with."""
     lowered = (market_name or "").lower()
     return not any(fragment in lowered for fragment in _NOT_A_TITLE_QUESTION)
+
+
+# A conference's title filed at tier 1 (#9660). Kalshi's college conference boards
+# ("College Football Sun Belt Championship Winner", KXNCAAFSBELT) and regular-season
+# titles ("Big Ten Regular Season Champion") carry tier 1, and the path labels tier
+# 1 "Championship" — a Sun Belt school's national title read off its conference
+# board. Measured on the 2026-09-29 replay: once the matchup and qualifier legs
+# that had been making those tiers disagree were refused, 24 college pages would
+# have printed a conference board as their "Championship". Withheld, not
+# relabelled — the tier is upstream's claim and it is the wrong one.
+_CONFERENCE_NAME = re.compile(
+    r"\b(?:conference|sec|acc|aac|mac|big ten|big 12|big east|sun belt|"
+    r"mountain west|pac-12|regular season)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_a_conference_title_at_tier_one(market_tier: int | None, market_name: str | None) -> bool:
+    """True when a tier-1 ("Championship") market is a conference's title."""
+    return market_tier == 1 and bool(_CONFERENCE_NAME.search(market_name or ""))
 
 
 # The averaging below assumes every candidate in a tier is the SAME question
@@ -1005,6 +1103,33 @@ def _championship_path_stmt(team_id: int):
     )
 
 
+_TIER_LABELS = {1: "Championship", 2: "Conference", 4: "Division"}
+
+_AMERICAN_LEAGUE = re.compile(r"\b(?:(?i:american league)|AL)\b")
+_NATIONAL_LEAGUE = re.compile(r"\b(?:(?i:national league)|NL)\b")
+
+
+def _championship_tier_label(
+    tier: int, team_sport_key: str | None, market_name: str | None
+) -> str:
+    """The Championship Path step's name, in the sport's own words (#9816).
+
+    MLB has leagues and a pennant, not conferences: the Red Sox's tier-2 step is
+    "American League Champion" and printed "Conference 5%" on web and iPhone,
+    which both render the label verbatim. The league is read off the market's
+    own name ("American League Champion", "MLB: 2026 National League Champion");
+    a name that names neither league still says "Pennant", never "Conference".
+    """
+    if tier == 2 and team_sport_key == "baseball_mlb":
+        name = market_name or ""
+        if _AMERICAN_LEAGUE.search(name):
+            return "AL Pennant"
+        if _NATIONAL_LEAGUE.search(name):
+            return "NL Pennant"
+        return "Pennant"
+    return _TIER_LABELS.get(tier, "Other")
+
+
 async def _get_championship_path(
     team_id: int,
     db: AsyncSession,
@@ -1031,6 +1156,17 @@ async def _get_championship_path(
          PGA Championship price. Refused only when the market claims a sport
          and ``team_sport_key`` names a different one; a caller that passes no
          sport key gets the old behaviour.
+      6. Markets of another LEAGUE of the same sport (#2593) — "West Coast
+         Conference Men's Tournament Champion"'s Seattle U leg printed "Win
+         Conference 20%" on the WNBA's Storm, and the College Football
+         National Championship's "Washington" leg sat among the Commanders'
+         title candidates. Read off the market's venue id — Kalshi series,
+         Odds API outright key (:func:`link_crosses_league`).
+      7. A conference's title filed at tier 1 (#9660) — it would print as the
+         "Championship" (:func:`_is_a_conference_title_at_tier_one`).
+
+    The future-season cutoff is the year the league's current season ENDS
+    (#9660): "2027 Pro Basketball Champion" is the 2026-27 title.
 
     Averages probabilities when multiple sources provide markets at the same
     tier, and stamps each entry with the season it describes. A tier whose
@@ -1042,10 +1178,15 @@ async def _get_championship_path(
 
     result = await db.execute(_championship_path_stmt(team_id))
 
-    # Current-season cutoff: the maximum year that counts as "this season".
-    # For a 2025-26 season the cutoff is 2026; a market referencing 2027 is
-    # future-season and should be excluded.
-    max_year = now.year
+    # Current-season cutoff: the maximum year that counts as "this season" — the
+    # year the league's current season ENDS (#9660). For the 2026-27 NBA season
+    # the cutoff is 2027, so "2027 Pro Basketball Champion" is this season's title
+    # and "2028 …" is next season's. `now.year` dropped every title market of a
+    # season that crosses the new year (NBA, NHL, NFL) and left the in-season Cup
+    # as the only tier-1 survivor. Unmodelled leagues keep the calendar year.
+    max_year = (
+        season_windows.season_end_year(league_slug, now) if league_slug else None
+    ) or now.year
 
     # Current-season base year for prior-season exclusion (e.g. a settled 2025-26
     # market must not show up once the 2026-27 season's markets are the truth).
@@ -1054,7 +1195,6 @@ async def _get_championship_path(
     )
     current_base = _season_base_year(current_season)
 
-    tier_labels = {1: "Championship", 2: "Conference", 4: "Division"}
     team_category = sport_key_llm_category(team_sport_key)
 
     # Collect all valid outcomes per tier, then pick the best per tier.
@@ -1071,9 +1211,20 @@ async def _get_championship_path(
         # Division" / "Win Championship" is a claim the team never made.
         if not _answers_its_tier(market.name):
             continue
+        if _is_a_conference_title_at_tier_one(market.market_tier, market.name):
+            continue
 
         # #2593: another sport's market linked to this team by city name.
         if link_crosses_sport(getattr(market, "llm_sport_category", None), team_category):
+            continue
+        # ...and another LEAGUE of the same sport (a college tournament's Seattle U
+        # leg on the WNBA's Storm), read off the market's own venue id.
+        if link_crosses_league(
+            getattr(market, "source", None),
+            getattr(market, "external_id", None),
+            team_sport_key,
+            market_event_slug(getattr(market, "market_metadata", None)),
+        ):
             continue
 
         # Skip prior-season markets: the market's own season predates the current
@@ -1145,15 +1296,19 @@ async def _get_championship_path(
 
         path.append({
             "tier": tier,
-            "label": tier_labels.get(tier, "Other"),
+            "label": _championship_tier_label(tier, team_sport_key, best_market.name),
             "market_name": best_market.name,
             "market_id": best_market.id,
             "probability": round(avg_prob, 4),
             "rank": best_outcome.rank,
             "movement": float(best_outcome.probability_change_24h) if best_outcome.probability_change_24h else None,
-            # Season this number describes (Queue #242 Item 1) — prefer the
-            # market's own season, fall back to the league's current season.
-            "season": _extract_championship_season(best_market) or current_season,
+            # Season this number describes (Queue #242 Item 1). Every market that
+            # reached here passed both the prior- and future-season filters, so it
+            # prices the league's current season; its own string is only another
+            # spelling of it ("2027" on Kalshi, "2026-27" on Polymarket), and mixed
+            # spellings blank the page's season chip (#9660). The market's own
+            # season is the fallback for a league with no modelled season.
+            "season": current_season or _extract_championship_season(best_market),
         })
 
     return path

@@ -45,6 +45,13 @@ _BASEBALL_HALF_ALIASES = {
     "end": "End",
 }
 _NON_BASEBALL_PERIODS = {"1h", "2h", "ht", "halftime", "1st half", "2nd half"}
+#: The twin of `AUTHORITY_STOPPAGE_WORDS` in `frontend/lib/gameTimeLabel.ts`
+#: (#8810): the words ESPN writes into `period` on a game called off.
+_AUTHORITY_STOPPAGE_WORDS = {
+    "postponed": "Postponed",
+    "canceled": "Canceled",
+    "cancelled": "Canceled",
+}
 
 
 def _ordinal_inning(value: str) -> str | None:
@@ -98,6 +105,15 @@ def normalize_live_game_state(
     """Return display-safe ``(period, game_clock)`` for API payloads."""
     if not sport_key or not sport_key.startswith("baseball"):
         return period, game_clock
+
+    # #9208: ESPN's stoppage word is not an inning, and baseball kept only
+    # innings — so a called-off game served no period, and the web's
+    # `authorityStoppageLabel` (#8810) printed "No result reported" over a
+    # "Start" line for Orioles @ Yankees 15319530, stored `Postponed`. The same
+    # exact words the web allowlists; ESPN's "0:00" filler clock stays dropped.
+    stoppage = _AUTHORITY_STOPPAGE_WORDS.get(str(period or "").strip().lower())
+    if stoppage:
+        return stoppage, None
 
     inning_label = _baseball_inning_label(period) or _baseball_inning_label(game_clock)
     return inning_label, None
@@ -162,12 +178,22 @@ def normalize_live_game_state(
 # above is how narrowly it is scoped. Three fences, and the first is the one
 # that matters:
 #
-#   * IT APPLIES ONLY WHERE THE LABEL NAMES A SPAN, never where it names an
-#     instant — see `_position_names_a_span`. A clocked tie (`5:21 - 4th
-#     Quarter` against itself) is two feeds agreeing on the second and
-#     disagreeing on the score, which IS a correction and still lands at once; a
-#     lagging clocked feed lags in its clock, so the rule above has it already.
-#     An inning tie agrees on nothing finer than "somewhere in this half-inning".
+#   * IT NEVER APPLIES TO THE AUTHORITY — see `_authority_is_correcting_itself`.
+#     A feed cannot lag behind itself, so ESPN taking a point back at a tie is a
+#     correction and lands at once.
+#   * (#6056, 2026-09-27: this fence USED to read "only where the label names a
+#     SPAN", on the premise that a lagging clocked feed lags in its clock too.
+#     Football refutes it. The clock STOPS at every score, so the lagging feed's
+#     clock catches up to the scoring instant while its scoreboard is still one
+#     play behind: `10:43 - 3rd Quarter` against itself, 24–10 stored, 17–10
+#     offered. MEASURED on the 2026-09-27 NFL slate: 26 served score reversions
+#     across 10 games, 25 of them written between ESPN passes — StatPal — each
+#     restoring the PREVIOUS score at a stopped clock or at `Halftime`; the 26th
+#     was ESPN's own payload. So a clocked tie now takes the tie-break too, from
+#     a secondary feed, and a correction from one waits for the clock to move.)
+#     The two ladders must still agree on KIND — both spans or both instants — so
+#     a rank COLLISION (`'Top 1st'` and `'End of 5th Period'` both place at
+#     `(5.0, 0.0)`) is never read as a tie.
 #   * It refuses only while the position is UNCHANGED. The instant the game
 #     moves to the next inning-state the incoming position is strictly later,
 #     the first rule accepts it, and the lower score lands. So a genuine
@@ -178,10 +204,12 @@ def normalize_live_game_state(
 #     on either side is no evidence and leaves today's behaviour untouched. A
 #     tie whose score RISES, or holds, still lands.
 #
-# What it buys: within one half-inning a run cannot un-score itself. What it
-# costs: a downward correction taken mid-inning waits for the inning-state to
-# turn. On a feed that publishes a corrected score every 30 seconds, that is a
-# bounded wait for a right answer against an unbounded flicker of wrong ones.
+# What it buys: within one half-inning a run cannot un-score itself, and at a
+# stopped football clock a touchdown cannot leave the page. What it costs: a
+# downward correction from a SECONDARY feed waits for the inning-state to turn
+# or the clock to run. On a feed that publishes a corrected score every 30
+# seconds, that is a bounded wait for a right answer against an unbounded
+# flicker of wrong ones.
 #
 # ── IT ONLY REFUSES WHAT IT CAN PROVE, AND IT CANNOT DEADLOCK ──
 #
@@ -225,6 +253,8 @@ _COUNTDOWN_PERIOD_RE = re.compile(
 _END_OF_PERIOD_RE = re.compile(
     r"\bend\s+of\s+(\d{1,2})(?:st|nd|rd|th)\s+(?:quarter|period)\b", re.IGNORECASE
 )
+
+_HALFTIME_RE = re.compile(r"^half[- ]?time$", re.IGNORECASE)
 
 #: `'OT'`, `'2OT'`, `'Overtime'` — measured on NFL rows as `'10:00 - OT'`. Ranked
 #: after regulation for every sport that uses the label (4 quarters, 3 hockey
@@ -388,6 +418,15 @@ def live_progress_position(
     if end_of:
         return (float(end_of.group(1)), 0.0)
 
+    # #6056: the break after the second period, i.e. `End of 2nd Quarter`.
+    # Unplaceable before 2026-09-27, which left the guard blind for the whole
+    # break — 6 of that day's 26 NFL reversions landed there. Only the whole
+    # label: it is the one both writers store (ESPN's `status_detail`,
+    # StatPal's `status` with an empty timer), and a sport played in halves has
+    # no other placeable label for it to be ordered against.
+    if _HALFTIME_RE.match(text):
+        return (2.0, 0.0)
+
     inning_state = _INNING_STATE_RE.search(text)
     if inning_state:
         inning = int(inning_state.group(2))
@@ -434,27 +473,14 @@ def _as_score(value: object) -> int | None:
 def _position_names_a_span(period: str | None) -> bool:
     """Does this label name a STRETCH of game time rather than an instant?
 
-    This is the whole reason the #6251 tie-break is not a general rule, and the
-    distinction is the one the existing behaviour already turns on:
-
-    * `'5:21 - 4th Quarter'` locates an observation to the SECOND. Two feeds
-      that tie there genuinely agree about the moment and disagree about the
-      score, which is what a correction looks like — and a feed that were merely
-      lagging would be lagging in its clock too, so the position rule has
-      already caught it. Those ties must keep landing immediately
-      (`test_schedule_sync_accepts_a_same_position_correction`).
-    * `'Top 8th'` locates it to a half-inning, which is minutes wide. A tie
-      there is not evidence of simultaneity; it is the absence of any evidence
-      at all, and it is the window the lagging feed lives in.
-
-    So only the inning ladder qualifies. `'End of 3rd Quarter'` is deliberately
-    excluded even though it also carries a `0.0` elapsed: that is a real instant
-    the game passes through once, not a span.
-
-    Requiring BOTH sides to satisfy this also keeps the tie-break off a rank
-    COLLISION rather than a real tie — `'Top 1st'` and `'End of 5th Period'`
-    both place at `(5.0, 0.0)`, because the inning ladder and the period ladder
-    share a number line they never share a row on.
+    `'Top 8th'` locates an observation to a half-inning, minutes wide;
+    `'5:21 - 4th Quarter'` and `'End of 3rd Quarter'` locate it to an instant.
+    Both kinds of tie now take the #6251 tie-break (#6056, 2026-09-27 — the
+    module note says why the instant exemption fell), so this no longer decides
+    WHETHER a tie is broken. It decides whether two positions are on the same
+    ladder at all: `'Top 1st'` and `'End of 5th Period'` both place at
+    `(5.0, 0.0)`, because the inning ladder and the period ladder share a number
+    line they never share a row on, and that COLLISION is not a tie.
     """
     if not period:
         return False
@@ -584,11 +610,11 @@ def _authority_is_correcting_itself(incoming_is_authority: bool) -> bool:
 
     ── SCOPE ──
 
-    Baseball-only in effect, without a sport check anywhere: the caller reaches
-    this line only at a tie on a position that `_position_names_a_span` accepts,
-    and the inning ladder is the only such position. A clocked tie never gets
-    here. The strictly-earlier rule is above this and is not exempted — an
-    authority observation from a genuinely earlier inning is still refused,
+    Since #6056 (2026-09-27) the caller reaches this line at ANY tie — a
+    clocked instant as well as an inning — so this is also what lets ESPN take
+    back a point at a stopped football clock. The same argument holds there: a
+    feed cannot lag behind itself. The strictly-earlier rule is above this and
+    is not exempted — an authority observation from a genuinely earlier inning is still refused,
     which is the one case where accepting it is provably wrong.
 
     THE SAMPLE IS THIN AND SAYING SO IS PART OF THE CLAIM. `espn_snapshots` is a
@@ -616,11 +642,10 @@ def live_write_would_revert(
 
     ``True`` when both sides are locatable AND the incoming one is strictly
     earlier — the one case where accepting the write is guaranteed to move the
-    served state backwards in front of a reader — or, at a tie on a position
-    that names a SPAN of game time rather than an instant, when the four scores
-    are all readable and the incoming one takes a run off a side (#6251; the
-    module note says why a clockless label needs a second discriminator, and why
-    scoping it this narrowly is not the monotonic clamp that was rejected).
+    served state backwards in front of a reader — or, at a position tie, when
+    the four scores are all readable and the incoming one takes a run or a
+    point off a side (#6251 for innings, #6056 for a stopped clock; the module
+    note says why that is not the monotonic clamp that was rejected).
 
     Every other case is ``False``: this function's job is to refuse proven
     reversions, not to gatekeep live updates. The four score arguments are
@@ -648,11 +673,9 @@ def live_write_would_revert(
             incoming_home_score,
             incoming_away_score,
         )
-    if (
-        incoming == stored
-        and _position_names_a_span(stored_period)
-        and _position_names_a_span(incoming_period)
-    ):
+    if incoming == stored and _position_names_a_span(
+        stored_period
+    ) == _position_names_a_span(incoming_period):
         if _authority_is_correcting_itself(incoming_is_authority):
             return False
         return _score_would_regress(
@@ -662,3 +685,142 @@ def live_write_would_revert(
             incoming_away_score,
         )
     return False
+
+
+#: The shortest regulation period any countdown sport we carry plays (WNBA and
+#: FIBA quarters are ten minutes; NFL/NCAAF quarters are fifteen, NBA twelve,
+#: hockey periods twenty). Used ONLY to bound game time elapsed across a period
+#: boundary from BELOW, so a sport with longer periods is never over-refused —
+#: its real elapsed time is at least this much.
+_MIN_REGULATION_PERIOD_SECONDS = 600
+#: How far a new reading may outrun the wall clock before it is refused. Covers
+#: ESPN's scoreboard serving a reading a little stale on one pass and fresh on
+#: the next, and the anchor being stamped at transaction start rather than at
+#: fetch time. A real rollover reading outruns by five minutes or more (below).
+WALL_CLOCK_SLACK_SECONDS = 90
+#: Where the sport IS known, its regulation period length tightens the bound.
+#: Prefix-keyed on `Sport.key`; anything unlisted falls back to the floor above.
+_REGULATION_PERIOD_SECONDS_BY_SPORT_PREFIX = (
+    ("americanfootball_", 900),
+    ("basketball_nba", 720),
+    ("icehockey_", 1200),
+)
+
+
+def regulation_period_seconds_at_least(sport_key: str | None) -> int:
+    """The shortest regulation period ``sport_key`` can be playing, in seconds."""
+    key = str(sport_key or "")
+    for prefix, seconds in _REGULATION_PERIOD_SECONDS_BY_SPORT_PREFIX:
+        if key.startswith(prefix):
+            return seconds
+    return _MIN_REGULATION_PERIOD_SECONDS
+
+
+def _countdown_regulation_position(
+    period: str | None, game_clock: str | None
+) -> tuple[int, float] | None:
+    """``(period_number, seconds_remaining)`` for a regulation countdown reading.
+
+    ``None`` for anything else — innings, overtime, halftime, a terminal label,
+    or a reading with no clock — which the caller treats as no evidence.
+    Overtime is excluded on purpose: its length varies by sport and competition
+    (NFL regular-season 10:00, college football no running clock at all), so no
+    lower bound on its elapsed time is safe to state.
+    """
+    if not period:
+        return None
+    text = str(period).strip()
+    if not text or _TERMINAL_LABEL_RE.search(text) or _OVERTIME_RE.search(text):
+        return None
+    end_of = _END_OF_PERIOD_RE.search(text)
+    if end_of:
+        return (int(end_of.group(1)), 0.0)
+    countdown = _COUNTDOWN_PERIOD_RE.search(text)
+    if not countdown:
+        return None
+    remaining = _clock_remaining_seconds(text, game_clock)
+    if remaining is None:
+        return None
+    return (int(countdown.group(1)), float(remaining))
+
+
+def game_seconds_elapsed_at_least(
+    stored_period: str | None,
+    stored_clock: str | None,
+    incoming_period: str | None,
+    incoming_clock: str | None,
+    *,
+    period_seconds: int = _MIN_REGULATION_PERIOD_SECONDS,
+) -> float | None:
+    """A LOWER bound on game time that passed between two countdown readings.
+
+    ``None`` unless both readings are regulation countdown positions and the
+    incoming one is strictly later. Within one period the answer is exact
+    (``stored_remaining - incoming_remaining``). Across a boundary the stored
+    period must run out, every period in between must be played, and the new
+    one must have run down to its clock — the last two are counted at
+    ``period_seconds``, which defaults to the shortest regulation length any
+    sport plays, so the bound holds for all of them without knowing which sport
+    this is (`regulation_period_seconds_at_least` tightens it when the sport is
+    known).
+    """
+    stored = _countdown_regulation_position(stored_period, stored_clock)
+    incoming = _countdown_regulation_position(incoming_period, incoming_clock)
+    if stored is None or incoming is None:
+        return None
+    (s_period, s_remaining), (i_period, i_remaining) = stored, incoming
+    if i_period == s_period:
+        elapsed = s_remaining - i_remaining
+        return elapsed if elapsed > 0 else None
+    if i_period < s_period:
+        return None
+    return (
+        s_remaining
+        + (i_period - s_period - 1) * period_seconds
+        + max(0.0, period_seconds - i_remaining)
+    )
+
+
+def clock_outruns_wall_time(
+    stored_period: str | None,
+    stored_clock: str | None,
+    incoming_period: str | None,
+    incoming_clock: str | None,
+    wall_seconds: float | None,
+    *,
+    period_seconds: int = _MIN_REGULATION_PERIOD_SECONDS,
+) -> bool:
+    """Would accepting this reading make the game clock run faster than time?
+
+    #9020. A game clock can stop; it cannot run faster than the wall clock. So
+    if the row has stood at its position since ``wall_seconds`` ago, an incoming
+    reading that places the game more than that much game time later (plus
+    `WALL_CLOCK_SLACK_SECONDS`) is not a real reading of this game. ESPN
+    publishes exactly that at quarter rollovers — the new quarter's label with
+    the old quarter's clock:
+
+        SMU 15316003, espn_snapshots:
+          03:29:32  End of 3rd Quarter
+          03:30:32  End of 3rd Quarter
+          03:31:32  4:38 - 4th Quarter   <- 10:22 of game clock in 2 wall minutes
+          03:32:32  4:38 - 4th Quarter
+          03:33:32  14:59 - 4th Quarter  <- the real one
+
+    Once the row takes such a reading, every correct reading after it sits
+    "earlier in the game" and the #6056 guard refuses it; the clock sticks until
+    a score or the real clock passes under the bad value. Oregon at USC showed a
+    reader Q4 1:27 on the hero and Q4 ~9:51 on the chart, one minute apart.
+
+    ``False`` whenever anything is unknown — an unplaceable reading, a backwards
+    reading (the #6056 guard's business, not this one's), or no anchor time.
+    This refuses only what is physically impossible; it is not a clamp.
+    """
+    if wall_seconds is None:
+        return False
+    elapsed = game_seconds_elapsed_at_least(
+        stored_period, stored_clock, incoming_period, incoming_clock,
+        period_seconds=period_seconds,
+    )
+    if elapsed is None:
+        return False
+    return elapsed > max(0.0, float(wall_seconds)) + WALL_CLOCK_SLACK_SECONDS

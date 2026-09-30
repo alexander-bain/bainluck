@@ -119,7 +119,7 @@ function eventStatus(event: EventDetailResponse): string {
   // every row the venue has not settled.
   if (noReportedResult(event)) {
     return (
-      venueSettledSummary(event.venue_settled, event.venue_settled_result) ??
+      venueSettledSummary(event.venue_settled, event.venue_settled_result, event.venue_closed_no_winner) ??
       suspendedSummary(event.away_score, event.home_score, "away-home", authorityStoppageLabel(event.espn?.period))
     );
   }

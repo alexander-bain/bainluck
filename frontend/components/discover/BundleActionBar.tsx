@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { trackEvent } from "@/lib/analytics";
 import { getDiscoverItemAnalytics, recordDiscoverInteraction, sendDiscoverInteraction } from "@/lib/discoverInteractions";
+import { useDiscoverFeedbackAttempt } from "@/lib/discoverFeedbackGate";
 import { heroOutcome } from "@/lib/discover/heroOutcome";
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import { renderedLeaderPercent } from "@/lib/renderedPercent";
@@ -52,6 +53,9 @@ interface BundleActionBarProps {
  */
 export function BundleActionBar({ items, title, sharedQuestion, storyKey, positionIndex }: BundleActionBarProps) {
   const [liked, setLiked] = useState(false);
+  // #9643 — a bundle like is preference feedback, same as a card's: a refused
+  // attempt leaves the button unliked and the page opens the sign-in invitation.
+  const feedbackAttempt = useDiscoverFeedbackAttempt();
   const primary = items[0];
   if (!primary) return null;
 
@@ -90,6 +94,7 @@ export function BundleActionBar({ items, title, sharedQuestion, storyKey, positi
       <ActionBar
         liked={liked}
         setLiked={(next) => {
+          if (feedbackAttempt && !feedbackAttempt()) return;
           setLiked(next);
           track(next ? "like" : "unlike");
         }}
@@ -110,7 +115,7 @@ function bundleShareMember(member: FeedItem): BundleShareMember {
     return { name: member.headline || "Market", leaderLabel: null, percent: null };
   }
   const data = member.data as FeedFuturesData;
-  const leader = heroOutcome(data.top_outcomes);
+  const leader = heroOutcome(data.top_outcomes, data.name);
   const prob = leader?.probability;
   // `> 0` and not just non-null: the row itself renders an em dash for a zero
   // (FuturesCard.tsx, `FuturesCompactRow`), and an em dash is not a share sentence.

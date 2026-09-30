@@ -191,12 +191,16 @@ MUTANTS: list[tuple[str, Path, str, str, str, str]] = [
     (
         "outcome-arm-word-tested",
         EVENTS,
-        """        return FuturesMarket.id.in_(
+        # The `def` line is load-bearing: #9646's `_some_outcome` carries this same
+        # body, so without it the anchor matches twice and scores UNAPPLIED.
+        """    def _outcome_id_match(term, exp):
+        return FuturesMarket.id.in_(
             select(FuturesOutcome.market_id).where(
                 _build_expanded_ilike(FuturesOutcome.name, term, exp)
             )
         )""",
-        """        return FuturesMarket.id.in_(
+        """    def _outcome_id_match(term, exp):
+        return FuturesMarket.id.in_(
             select(FuturesOutcome.market_id).where(
                 and_(
                     _build_expanded_ilike(FuturesOutcome.name, term, exp),

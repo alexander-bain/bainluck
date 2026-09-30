@@ -19,6 +19,8 @@ enum Route: Hashable {
     case golfTournament(slug: String, name: String)
     /// A registered tournament hub — `/api/tournaments/{slug}`. **Tennis draws.**
     case tournamentHub(slug: String, name: String)
+    /// A published NFL week/season or MLB postseason (`/api/containers/{slug}`).
+    case containerHub(slug: String, name: String)
     /// One fight card — `/api/event/{key}`, the endpoint the web's
     /// `/event/<domain>/<slug>` page reads (#6667). `key` is the canonical
     /// `event:<domain>:<slug>` exactly as the feed served it.
@@ -64,6 +66,7 @@ struct RouteDestination: View {
                 GolfTournamentView(slug: slug, displayName: name)
             }
         case .tournamentHub(let slug, let name): TournamentHubView(slug: slug, displayName: name)
+        case .containerHub(let slug, let name): ContainerHubView(slug: slug, displayName: name)
         case .conceptCard(let key, let name): ConceptCardView(key: key, displayName: name)
         case .futuresList: FuturesListView()
         case .teamDetail(let slug): TeamDetailView(slug: slug)

@@ -29,10 +29,8 @@
 #     Drained means asleep until the next hour, not a re-count. (lane4-runner's
 #     v1 defect was the mirror of this: it treated every non-terminal block as
 #     pending and fired a session every 60s — 190 sessions in 24h, measured.)
-#   * Every mission carries its own cadence, and the ones with an end date stop
-#     asking on that date. M-R-USOPEN through 9/13 is the live case: without the
-#     guard, 9/14 is a bucket that can never drain and the bus spins forever on
-#     a tournament that is over.
+#   * Only the three missions retained by the launch-week amendment run.
+#     Suspended or expired missions cannot keep an otherwise drained bucket open.
 #   * A bucket gets at most MAX_TRIES sessions. If codex banks nothing three
 #     times running, the hour is abandoned with a loud line rather than retried
 #     until the heat death of the laptop. A missing hour is cheap; a wedged bus
@@ -49,40 +47,27 @@ cd "$HOME/bainluck" || exit 1
 # never sets it.
 H="${BUS_HANDOFF:-.claude/handoff}"
 Q="$H/CODEX-QUEUE.md"
-LEDGER="$H/ARTIFACT-M-R-AUTHORITY-LEDGER.md"
 LOG_DIR="$H/runner-logs"; mkdir -p "$LOG_DIR"
 STATE="$H/.bus-runner-attempts"
 
 [ -f "$Q" ] || { echo "[bus] missing $Q — nothing to run"; exit 1; }
 
 MAX_TRIES="${BUS_MAX_TRIES:-3}"        # sessions per bucket before abandoning the hour
-USOPEN_THROUGH="${BUS_USOPEN_THROUGH:-20260913}"   # M-R-USOPEN's own end date
-
-# The bucketed M-R missions, in CODEX-QUEUE.md's own order. Each banks
-# ARTIFACT-M-R-<NAME>-<YYYYMMDD-HH>.md. M-R-AUTHORITY is deliberately NOT here:
-# it is daily and appends to a LEDGER instead of a bucket file, so it has its own
-# test below. Adding a mission to the set = adding its name to this list.
-MISSIONS="NEEDLES PRECERT DEFECTS CLAIMS STRANDED BOARD USOPEN ATTACH CHARTS FRESH"
+# CODEX-QUEUE.md's LAUNCH-WEEK MODE amendment suspends every other recurring
+# mission, including daily AUTHORITY. Submission does not silently restage them.
+# PILLAR: TRUTH. SHIP: review shipped changes promptly without crowding out fixes.
+MISSIONS="FRESH CLAIMS THRU-BASELINE"
 
 bucket ()     { date -u +%Y%m%d-%H; }
-bucket_day () { date -u +%Y%m%d; }
-today_iso ()  { date -u +%Y-%m-%d; }
 
 # Which of this hour's artifacts are absent? Prints one mission name per line.
 # This is the whole gate: present artifact == mission done for the bucket.
 missing () {
   local B="$1" M
   for M in $MISSIONS; do
-    # M-R-USOPEN is scoped to the tournament. Past its end date it is not
-    # missing, it is over — otherwise every bucket from 9/14 on is undrainable.
-    if [ "$M" = USOPEN ] && [ "$(bucket_day)" -gt "$USOPEN_THROUGH" ]; then continue; fi
     [ -f "$H/ARTIFACT-M-R-$M-$B.md" ] || echo "$M"
   done
-  # M-R-AUTHORITY: once per day, at the first bucket at/after 14Z (its brief).
-  # Done-test is a day heading in the append-only ledger, not a bucket file.
-  if [ "$(date -u +%H)" -ge 14 ] && ! grep -q "^## $(today_iso)" "$LEDGER" 2>/dev/null; then
-    echo "AUTHORITY"
-  fi
+
 }
 
 # Attempts are tracked per bucket so the count resets on its own every hour and
@@ -111,16 +96,18 @@ $WANT
 
 Their briefs are in .claude/handoff/CODEX-QUEUE.md — locate each with
 \`grep -n 'M-R-<NAME>' .claude/handoff/CODEX-QUEUE.md\` and read the slice. READ BUDGET: bounded
-reads only, never read CODEX-QUEUE.md whole (it is ~149k chars); keep startup reads under 20k.
+reads only, never read CODEX-QUEUE.md whole; keep startup reads under 20k.
+Read its LAUNCH-WEEK MODE amendment before the older mission briefs. FRESH and CLAIMS
+retain their briefs; THRU-BASELINE uses the M-20260910-THRU-BASELINE brief ONLY for
+health + curve generated_at + heavy app commit. All other recurring missions remain
+suspended. Preserve the FRESH amendment excluding discover_marquee_final cards.
 
 Bank each one as .claude/handoff/ARTIFACT-M-R-<NAME>-$B.md — that exact filename is what marks
 the mission done for this hour, so a mission you actually ran must always end with its file
 written, and a mission you did NOT run must NOT get one. A short honest artifact beats a long
 guess: if something is UNMEASURABLE, write the artifact and say UNMEASURABLE and why. If a
 mission's correct answer is one line ("no staged subjects"), that one line IS the artifact.
-M-R-AUTHORITY is the exception: it appends one row per sport under a "## $(today_iso)" heading in
-.claude/handoff/ARTIFACT-M-R-AUTHORITY-LEDGER.md (append-only) instead of a bucket file, and it
-reads GET /api/admin/statpal/authority-agreement rather than re-deriving verdicts.
+
 
 Do not run missions outside the list above. Do not invent a finer bucket. Do not file a delta
 artifact because something moved. When every mission in the list has its artifact, you are done —
@@ -133,7 +120,7 @@ there — say "review").
 EOF
 }
 
-echo "[bus] measurement bus up. missions: $MISSIONS (+AUTHORITY daily ≥14Z)"
+echo "[bus] measurement bus up. missions: $MISSIONS"
 echo "[bus] artifacts: $H/ARTIFACT-M-R-<NAME>-<bucket>.md   logs: $LOG_DIR/"
 
 # Notice 38's hourly BOARD lint gets one more line (Fable-5 → desk, 9/10 07:25 PT).

@@ -232,9 +232,12 @@ class TestFeaturedNamesItsOutcome:
 
         body = (await client.get("/api/weather/events")).json()
 
+        # #9283: the card quotes the ladder's median — the tightest rung still
+        # >= 50% — not its loosest. "94% Category 1 or above" was true and told
+        # the reader almost nothing; Category 3 or above at 72% is the forecast.
         assert len(body["hurricane"]) == 1
-        assert body["hurricane"][0]["prob"] == 94
-        assert body["hurricane"][0]["leader"] == "Category 1 or above"
+        assert body["hurricane"][0]["prob"] == 72
+        assert body["hurricane"][0]["leader"] == "Category 3 or above"
 
     async def test_a_cumulative_ladder_tied_at_the_top_names_one_of_them(
         self, client, mock_db
@@ -245,20 +248,20 @@ class TestFeaturedNamesItsOutcome:
         or above" at 95.0 BOTH — a genuine tie for first, live on 2026-08-30.
         Cumulative ladders do this whenever the lower rungs are already certain.
 
-        Which name is printed is therefore decided by row order, not by price.
-        That is arbitrary, but it is not WRONG: at a tie both statements are
-        true at the same number, and either is strictly more informative than
-        the bare 95% that shipped before. What must not happen is the name and
-        the number coming from different rows — that is `_highest_prob`'s tie
-        rule, mirrored, and asserted in `TestTheNamedLeaderIsThePrintedNumber`.
+        Until #9283 the printed name was decided by row order. It is now decided
+        by the ladder: at a tie both statements are true at the same number, and
+        the TIGHTER rung is the more informative one, so it wins whichever row
+        comes first (Category 1 is listed first here on purpose). What must not
+        happen is the name and the number coming from different rows —
+        asserted in `TestTheNamedLeaderIsThePrintedNumber`.
         """
         _serve(mock_db, [
             _market(
                 market_id=59600002,
                 name="Hurricane Marie category?",
                 outcomes=[
-                    _outcome("Category 2 or above", 0.95, outcome_id=66),
                     _outcome("Category 1 or above", 0.95, outcome_id=67),
+                    _outcome("Category 2 or above", 0.95, outcome_id=66),
                 ],
             )
         ])
@@ -266,7 +269,7 @@ class TestFeaturedNamesItsOutcome:
         row = (await client.get("/api/weather/events")).json()["hurricane"][0]
 
         assert row["prob"] == 95
-        assert row["leader"] == "Category 2 or above", "first of the tie"
+        assert row["leader"] == "Category 2 or above", "tightest of the tie"
 
     async def test_a_one_character_leader_is_still_named(self, client, mock_db):
         """The question-echo refusal must not eat a digit out of a year.
@@ -619,7 +622,9 @@ class TestNothingElseChanged:
         assert item["q"] == _RAIN_TITLE
         assert item["prob"] == 78
         assert item["src"] == "kalshi"
-        assert item["tag"] == "Daily rain"
+        # /wildcards stamps its own framing (#3134): its admission is a
+        # substring match the title classifier cannot see.
+        assert item["tag"] == ("Wild card" if endpoint == "wildcards" else "Daily rain")
         assert item["closes"] == (now + timedelta(days=2)).strftime(
             "%a, %b %d"
         ).replace(" 0", " ")

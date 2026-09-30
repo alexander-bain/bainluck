@@ -5,9 +5,10 @@ import { probColor, weatherProbability, type ClimateMarket } from "./data";
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import { fetchClimate } from "@/lib/weatherApi";
 import { SourceBadge } from "./SourceBadge";
+import MarketLink from "./MarketLink";
 
 const COLUMNS: { scale: ClimateMarket["scale"]; label: string; kicker: string }[] = [
-  { scale: "2026", label: "2026", kicker: "This year" },
+  { scale: "2026", label: "2026", kicker: "Next 12 months" },
   { scale: "2030", label: "2030", kicker: "End of decade" },
   { scale: "2050", label: "2050", kicker: "Mid-century" },
 ];
@@ -67,7 +68,8 @@ function ClimateColumn({
           const color = probColor(item.prob);
 
           return (
-            <div key={i}>
+            // Each row opens its market when the route names one (#9478).
+            <MarketLink key={i} marketId={item.market_id} className="block">
               {/* Question */}
               <div
                 style={{
@@ -124,9 +126,29 @@ function ClimateColumn({
                 </span>
               </div>
 
-              {/* Source */}
-              <SourceBadge src={item.src} />
-            </div>
+              {/* Source, then which outcome the percentage prices (#9289).
+                  "EV market share in 2030? — 84%" is 84% of "Above 10%";
+                  without the name the number answers nothing. Omitted when
+                  the question answers itself. Wraps rather than truncates,
+                  as in EventList (#3147). */}
+              <div className="flex items-center flex-wrap" style={{ gap: 6 }}>
+                <span style={{ display: "inline-flex", flexShrink: 0 }}>
+                  <SourceBadge src={item.src} />
+                </span>
+                {item.leader ? (
+                  <span
+                    data-testid="climate-leader"
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 600,
+                      color: "var(--text-secondary)",
+                    }}
+                  >
+                    {item.leader}
+                  </span>
+                ) : null}
+              </div>
+            </MarketLink>
           );
         })}
       </div>

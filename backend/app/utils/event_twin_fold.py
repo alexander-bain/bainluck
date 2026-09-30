@@ -151,7 +151,9 @@ number on them.
 
 from __future__ import annotations
 
+import bisect
 import logging
+import math
 import re
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -165,8 +167,10 @@ from app.utils.kalshi_occurrence_start import (
 )
 from app.utils.name_normalization import nation_spelling, strip_diacritics
 from app.utils.proven_duplicates import merge_opening_line
+from app.utils.search_fixture_dedup import FIXTURE_TIME_WINDOW_HOURS
 from app.utils.soccer_team_matching import club_alias_tokens, soccer_pair_matches
 from app.utils.sport_keys import is_season_variant, league_identity
+from app.utils.venue_club_spellings import VENUE_CLUB_SPELLINGS
 
 logger = logging.getLogger(__name__)
 
@@ -266,15 +270,34 @@ def _settled_on_one_scoreline(left: list, right: list) -> bool:
     return len(scores) == 1 and len(espn_ids) <= 1
 
 
+def _squash_spelling(name: str) -> str:
+    return _NON_ALNUM.sub("", strip_diacritics(name).lower())
+
+
+#: #8100: a venue's whole-name spelling, squashed, onto ours squashed. Applied
+#: to the WHOLE squashed name only, so it can never rewrite part of a name.
+_VENUE_SQUASHED: dict[str, str] = {
+    _squash_spelling(venue): _squash_spelling(ours)
+    for venue, ours in VENUE_CLUB_SPELLINGS.items()
+}
+
+
 def _squash(name: Optional[str]) -> str:
     """Alphanumeric-only, lowercase, diacritic-free form of a team name.
 
     "St. Louis Cardinals" and "St.Louis Cardinals" both become
     "stlouiscardinals"; "Atlético Madrid" becomes "atleticomadrid".
+
+    #8100: and a venue's whole-name spelling of a club named in
+    :data:`~app.utils.venue_club_spellings.VENUE_CLUB_SPELLINGS` squashes to
+    ours: Polymarket's "South East Melbourne Phoenix" is "semelbournephoenix",
+    like the Odds API's "S.E. Melbourne Phoenix". Only a whole name in that
+    table moves; every other name squashes exactly as before.
     """
     if not name:
         return ""
-    return _NON_ALNUM.sub("", strip_diacritics(name).lower())
+    squashed = _squash_spelling(name)
+    return _VENUE_SQUASHED.get(squashed, squashed)
 
 
 team_name_fold_key = _squash
@@ -756,6 +779,19 @@ def fold_twin_events(events: Iterable[Any]) -> FoldResult:
     except Exception:  # noqa: BLE001 — gotcha #42; the league-keyed groups stand
         logger.exception("twin fold: catch-all league merge failed; serving groups")
 
+    # #7993 — last, on whole clusters, for the same reason the catch-all pass is:
+    # it only ever UNIONS what the passes above built, so an `mma_other` claim the
+    # catch-all pass could not reach is still a cluster this one can place.
+    # #7993 residual — the reversed, priced claims this pass admits carry their
+    # numbers turned round to the anchor's corners, keyed on the Python object
+    # like `keep` below. Only `_elect` reads it.
+    corner_flips: dict[int, "_CornerFlip"] = {}
+    try:
+        grouped = _merge_combat_claim_bouts(grouped, corner_flips=corner_flips)
+    except Exception:  # noqa: BLE001 — gotcha #42; the clusters above stand
+        logger.exception("twin fold: combat claim merge failed; serving groups")
+        corner_flips = {}
+
     # Keyed on the PYTHON object, not on `.id`: the fold must survive a caller
     # that hands it two hydrated rows carrying the same primary key, and must
     # never keep a row merely because a sibling elected the same id.
@@ -768,7 +804,7 @@ def fold_twin_events(events: Iterable[Any]) -> FoldResult:
             continue
 
         try:
-            _elect(members, keep, result)
+            _elect(members, keep, result, corner_flips)
         except Exception:  # noqa: BLE001 — one group's failure keeps its rows
             logger.warning(
                 "twin fold: election failed for %s; all rows kept",
@@ -940,10 +976,11 @@ def _variant_group_is_collapsible(members: list) -> bool:
 
 
 #: #5821 — the statuses the SEASON-VARIANT pass may see in a pair it folds under
-#: :func:`_live_variant_pair_is_licensed`. `live` joins the set there and nowhere
-#: else: the two #8100 passes still read :data:`_VARIANT_COLLAPSIBLE_STATUSES`,
-#: because their asymmetry (anchored vs id-less) says nothing about which row
-#: carries the faster score. An unknown status stays refused everywhere.
+#: :func:`_live_variant_pair_is_licensed`, and (#8100 live residual) the statuses
+#: the anchored-claim KICKOFF pass may see in a pair it folds under
+#: :func:`_live_anchored_claim_pair_is_licensed`. The anchored-claim NAME pass
+#: still reads :data:`_VARIANT_COLLAPSIBLE_STATUSES`. An unknown status stays
+#: refused everywhere.
 _VARIANT_LIVE_LICENSED_STATUSES: frozenset = _VARIANT_COLLAPSIBLE_STATUSES | {"live"}
 
 
@@ -952,6 +989,28 @@ def _variant_group_status_is_known(members: list) -> bool:
     return all(
         str(getattr(member, "status", "") or "").strip().lower()
         in _VARIANT_LIVE_LICENSED_STATUSES
+        for member in members
+    )
+
+
+#: #8100 suspended residual — the statuses the anchored-claim KICKOFF pass may
+#: see, and ONLY that pass. `suspended` is where every scoreless NPB row ends
+#: (#5711: 20 of 20 past Seibu games on `/api/events/search?q=Seibu Lions`,
+#: 2026-09-27 13:5xZ, none reaching `completed`), so a pair licensed while live
+#: split again the moment the game ended and stayed two cards for good. It is
+#: not collapsible: it goes through :func:`_live_anchored_claim_pair_is_licensed`
+#: exactly like `live`, so a claim holding a score still stays two cards. The
+#: season-variant pass keeps :data:`_VARIANT_LIVE_LICENSED_STATUSES`.
+_ANCHORED_CLAIM_LICENSED_STATUSES: frozenset = _VARIANT_LIVE_LICENSED_STATUSES | {
+    "suspended"
+}
+
+
+def _anchored_claim_group_status_is_known(members: list) -> bool:
+    """True when every row's status is one the anchored-claim pass can reason about."""
+    return all(
+        str(getattr(member, "status", "") or "").strip().lower()
+        in _ANCHORED_CLAIM_LICENSED_STATUSES
         for member in members
     )
 
@@ -1000,6 +1059,33 @@ def _live_variant_pair_is_licensed(
     (`icehockey_nhl_preseason`, Odds API, 59%), two live cards for one game.
     """
     return parent_espn is True and variant_espn is False
+
+
+def _live_anchored_claim_pair_is_licensed(claim_members: list) -> bool:
+    """May an anchored/id-less pair with a LIVE row in it fold? #8100 residual.
+
+    The live refusal exists because a fold elects ONE score, and electing the
+    stale copy shows a wrong score as the only score. That needs a score on the
+    side that could LOSE the election. Here that side is readable: it is the
+    id-less claim. It has no provider id, so no score feed can key to it. If it
+    holds no score, the only score on the card is the anchored row's.
+    :func:`twin_identity_rank` then elects the anchored row either way: rung 1
+    when it holds a score, rung 2 (a provider id) when neither does. Nothing is
+    lost. A claim that DOES hold a score is a copy nothing here can rank for
+    freshness, and the pair stays two cards, as before.
+
+    Production 2026-09-27 11:38Z, `/search?q=Seibu Lions`: Rakuten @ Seibu
+    `15316168` (Polymarket-born, id-less, 09:00Z, Seibu 90%) beside `15319558`
+    (Odds API, `external_id` set, 09:03Z, Seibu 87%). Two LIVE cards with two
+    answers for one game, neither row holding a score. The same pair folded
+    while it was scheduled and would fold again once completed, so the only
+    window it split in was the one a reader looks at.
+    """
+    return all(
+        getattr(member, "home_score", None) is None
+        and getattr(member, "away_score", None) is None
+        for member in claim_members
+    )
 
 
 def _group_has_season_variant(members: list) -> Optional[bool]:
@@ -1363,12 +1449,14 @@ def _anchored_claim_clusters(
     Three refusals, and each leaves both rows standing — two cards, today's
     behaviour — rather than risking one card holding two games:
 
-    * :func:`_variant_group_is_collapsible` — a LIVE row is not folded. Measured
-      inert on this pass's population today (all 15 asymmetric pairs are
-      `scheduled`, `completed` or `closed`), and kept because the reason the
-      sibling pass gives is about this pass's own hazard: while a game is live the
-      asymmetry this can read is outranked by one it cannot, which row's score is
-      current, and electing the stale copy shows a wrong score as the only score.
+    * a LIVE or SUSPENDED row folds only under
+      :func:`_live_anchored_claim_pair_is_licensed` — the id-less claim holds no
+      score. An unknown status is refused outright
+      (:func:`_anchored_claim_group_status_is_known`). AMENDED 2026-09-27: this
+      used to refuse every live pair, which was inert on the 15 measured pairs
+      (none was live when read) and split Rakuten @ Seibu into two live cards on
+      production for as long as the game ran. AMENDED again the same day: that
+      pair then went `suspended` (where NPB rows end, #5711) and split again.
     * the asymmetry itself, which is the licence.
     * :func:`_objectively_different_games` — and this one is ARMED rather than
       decorative, which is the control #8100 said it could not find. One of the 15
@@ -1383,10 +1471,16 @@ def _anchored_claim_clusters(
     anchored = {}
     for key in bucket_keys:
         members = groups[key]
+        # A group with a live row is still a CANDIDATE; whether the pair may
+        # fold is decided in `same_fixture` by the live licence.
         collapsible[key] = _variant_group_is_collapsible(members)
         anchored[key] = _group_is_id_anchored(members)
 
-    eligible = [key for key in bucket_keys if collapsible[key]]
+    eligible = [
+        key
+        for key in bucket_keys
+        if _anchored_claim_group_status_is_known(groups[key])
+    ]
     if len(eligible) < 2:
         return []
 
@@ -1400,7 +1494,14 @@ def _anchored_claim_clusters(
         # already built, orientation kept. Equality, not a subset rule.
         if left[1] != right[1] or left[2] != right[2]:
             return False
-        return not _objectively_different_games(groups[left], groups[right])
+        if _objectively_different_games(groups[left], groups[right]):
+            return False
+        if collapsible[left] and collapsible[right]:
+            return True
+        # A live row is in the pair: fold only when the id-less claim holds no
+        # score, so the election cannot drop the current one.
+        claim = right if anchored[left] else left
+        return _live_anchored_claim_pair_is_licensed(groups[claim])
 
     ordered = sorted(eligible, key=lambda k: k[3])
     parent = {key: key for key in ordered}
@@ -1828,6 +1929,38 @@ def _anchored_claim_name_clusters(
 
 _CATCHALL_SUFFIX = "_other"
 
+CATCHALL_SHADOW_KICKOFF_DRIFT = timedelta(minutes=90)
+"""How far a venue's own id-less catch-all row may sit from the league row it is. #9686.
+
+ONE bound, asked in two places about one question — "is this Polymarket shadow
+that scheduled game?": the matcher's catch-all shadow arm (#7904), which moves
+the shadow's markets onto the league row, and the catch-all fold below, which
+joins the shadow once it carries nothing. Both used to ask it at the venue's
+minute, and on NHL opening night Polymarket does not list the minute:
+
+    Gamma 994277 Islanders vs. Rangers       00:00Z  ESPN 401892452  23:30Z  30 min
+    Gamma 994283 Golden Knights vs. Kraken   01:40Z  ESPN 401892454  01:00Z  40 min
+
+(the other 20 of the 22 opening-fortnight shadows sit at ESPN's exact minute,
+read 2026-09-29 21:2xZ). So the Rangers' home opener would have been two cards:
+the NHL row with no Polymarket, and `OTHER HOCKEY · Rangers v Islanders` at
+8:00 PM ET with it.
+
+WHY 90 AND NOT THE SPECIMEN. The bound sits between the 40-minute reading and
+the nearest thing that is NOT one game: two real games between the same pair.
+A traditional doubleheader starts game two about 30 minutes after game one ENDS
+(the #8547 Orioles–Yankees pair was exactly 3.0h apart) and a split one hours
+later; nothing starts one pair twice inside 90 minutes. It is also the same 90
+minutes `_PM_VENUE_NAMES_ANOTHER_GAME` already calls "not a timing wobble" from
+the other side. And it is never the only guard: the matcher still needs EXACTLY
+ONE covered-league row in the window, and the fold still needs both clubs named,
+the provenance asymmetry and a single claimant.
+
+NOT SOCCER. Soccer's catch-all rows carry the 30-minute re-mint class #5918
+refuses on purpose (see :data:`SOCCER_KICKOFF_DRIFT`), so a soccer shadow keeps
+its measured five minutes and this bound never reaches it.
+"""
+
 
 def _catchall_sport_prefix(sport_key: Optional[str]) -> Optional[str]:
     """The SPORT behind a `*_other` catch-all key, or ``None`` for a real league.
@@ -1985,6 +2118,16 @@ def _catchall_claim_names_league_row(
     the fold unions the catch-all's venue prices onto the survivor, and those
     are home/away numbers. Every other clause here still holds, and the league
     side's id may be StatPal's (:func:`_group_carries_schedule_id`).
+
+    #7904, THE REVERSED SHADOW. Polymarket's minter reads "Sharks vs. Blues" as
+    home-first, so 4 of the 10 Oct 8 NHL shadows sit the wrong way round against
+    ESPN (`Blues @ Sharks` beside `San Jose Sharks @ St Louis Blues`). A reversed
+    catch-all folds only when its group carries NO oriented reading
+    (:func:`_group_carries_oriented_readings`, #9304): no venue key, no opening
+    line. The matcher's catch-all shadow arm moves the shadow's markets onto the
+    league row first, where they are oriented by outcome name, so an unpriced
+    shadow is exactly the state it leaves behind. A priced reversed shadow still
+    stays two cards.
     """
     if not (
         _variant_group_is_collapsible(catchall)
@@ -1996,7 +2139,10 @@ def _catchall_claim_names_league_row(
     same_away = identity[0] == league_identity[0]
     same_home = identity[1] == league_identity[1]
     if same_away and same_home:
-        return False
+        # At the same minute the exact-identity pass owns this pair. At another
+        # minute — only ever an empty shadow asked across
+        # CATCHALL_SHADOW_KICKOFF_DRIFT (#9686) — nothing else can reach it.
+        return identity[2] != league_identity[2]
     both_differ = not same_away and not same_home
     if both_differ and not (league_key and _both_sides_may_differ(league_key)):
         return False
@@ -2010,12 +2156,26 @@ def _catchall_claim_names_league_row(
         # side of the league row: the orientation is never swapped, because the
         # fold unions the catch-all's venue prices onto the survivor by home and
         # away, and a reversed pairing would hand a reader the other club's %.
-        return _one_club_named_twice(
+        if _one_club_named_twice(
             getattr(member, "away_team_name", None),
             getattr(league_row, "away_team_name", None),
         ) and _one_club_named_twice(
             getattr(member, "home_team_name", None),
             getattr(league_row, "home_team_name", None),
+        ):
+            return True
+        # ...unless the catch-all carries nothing to union. Once its markets
+        # have moved to the league row (the matcher's catch-all shadow arm), a
+        # reversed shadow holds no home/away number, so nothing lands on the
+        # wrong club — #9304's rule for reversed bouts, applied here.
+        if _group_carries_oriented_readings(catchall):
+            return False
+        return _one_club_named_twice(
+            getattr(member, "away_team_name", None),
+            getattr(league_row, "home_team_name", None),
+        ) and _one_club_named_twice(
+            getattr(member, "home_team_name", None),
+            getattr(league_row, "away_team_name", None),
         )
     disputed = "home_team_name" if same_away else "away_team_name"
     return _one_club_named_twice(
@@ -2043,6 +2203,13 @@ def _catchall_name_variant_merges(
     byte-equal squashed names to :func:`soccer_pair_matches`, the same predicate
     `_merge_soccer_name_variants` has used within a league since #5918.
 
+    #9686 — ONE EXCEPTION TO "THE MINUTE". A non-soccer catch-all cluster that
+    carries NOTHING (:func:`_group_carries_oriented_readings` false — the state
+    the matcher's shadow arm leaves behind once it has moved the markets off) is
+    asked across :data:`CATCHALL_SHADOW_KICKOFF_DRIFT` instead, because its
+    minute is only the venue's listing. Every other clause below still decides,
+    and both ambiguity refusals now also cover two league rows in that window.
+
     Three refusals, each of which leaves both rows standing (two cards, today's
     behaviour) rather than guessing:
 
@@ -2065,6 +2232,18 @@ def _catchall_name_variant_merges(
         )
     if not league_by_minute:
         return []
+    league_minutes = sorted(league_by_minute)
+
+    def minutes_to_ask(index: int, minute, prefix: str) -> list:
+        # #9686: an EMPTY non-soccer shadow is asked across
+        # CATCHALL_SHADOW_KICKOFF_DRIFT, because its minute is the venue's
+        # listing and nothing it holds can land on a club. Everyone else keeps
+        # the exact minute. Bisected: this runs on the `/api/feed` hot path.
+        if prefix == "soccer" or _group_carries_oriented_readings(clusters[index]):
+            return [minute]
+        lo = bisect.bisect_left(league_minutes, minute - CATCHALL_SHADOW_KICKOFF_DRIFT)
+        hi = bisect.bisect_right(league_minutes, minute + CATCHALL_SHADOW_KICKOFF_DRIFT)
+        return league_minutes[lo:hi]
 
     def names(index: int) -> tuple:
         rep = _group_representative(clusters[index])
@@ -2085,8 +2264,13 @@ def _catchall_name_variant_merges(
                 # `None` is a real league; `""` is a bare `_other` key naming no
                 # sport, and `startswith("")` would admit every league there is.
                 continue
-            for target, target_key, target_identity in league_by_minute.get(
-                identity[2], ()
+            for target, target_key, target_identity in (
+                entry
+                for minute in minutes_to_ask(index, identity[2], prefix)
+                # `.get`: the exact minute of a soccer or priced cluster may hold
+                # no league row, which is zero candidates — never a KeyError
+                # that the caller's fail-open turns into "no pass for anyone".
+                for entry in league_by_minute.get(minute, ())
             ):
                 if target == index or not target_key.startswith(prefix):
                     continue
@@ -2512,10 +2696,54 @@ def _pair_matches_after_nation_spelling(left: tuple, right: tuple) -> bool:
     """
     spelled_left = tuple(nation_spelling(name) or name for name in left)
     spelled_right = tuple(nation_spelling(name) or name for name in right)
-    if spelled_left == tuple(left) and spelled_right == tuple(right):
-        # No country in either pair is one the feeds spell two ways. Most pairs.
+    if (spelled_left != tuple(left) or spelled_right != tuple(right)) and (
+        soccer_pair_matches(spelled_left, spelled_right)
+    ):
+        return True
+    return _pair_matches_after_city_exonym(left, right)
+
+
+#: A city the feeds write in English on one side and in its own language on the
+#: other, English -> native, matched as a whole word. #9233: the Odds API and
+#: ESPN write `Bayern Munich` (119 name slots in production 2026-09-28),
+#: Polymarket writes `FC Bayern München` (80), and the Bundesliga page served
+#: Augsburg v Bayern Munich (15313587) and FC Augsburg v FC Bayern München
+#: (15319675), 10-10 13:30Z, as two cards at 11% and 10%.
+#:
+#: The same word splits the city's other club — `Munich 1860` / `1860 Munich`
+#: against `TSV 1860 München` — and joins no two clubs: after the rewrite
+#: `bayern` and `tsv 1860` are still not a subset of each other, and
+#: `Red Bull Munich` keeps its `red bull`.
+#:
+#: Fold-local for the reason the two retries above are: `soccer_pair_matches`
+#: also decides the StatPal anchors `stamp_v1_statpal_fixtures` WRITES, and
+#: there the new join would turn a single-row stamp into a two-row refusal
+#: whenever a Polymarket row sits in the same league.
+_CITY_EXONYMS: dict[str, str] = {"munich": "Munchen"}
+_CITY_EXONYM_WORD = re.compile(
+    r"\b(" + "|".join(map(re.escape, _CITY_EXONYMS)) + r")\b", re.IGNORECASE
+)
+
+
+def _native_city_spelling(name: Optional[str]) -> Optional[str]:
+    """`Bayern Munich` -> `Bayern Munchen`. Anything else comes back unchanged."""
+    if not name:
+        return name
+    return _CITY_EXONYM_WORD.sub(lambda m: _CITY_EXONYMS[m.group(1).lower()], name)
+
+
+def _pair_matches_after_city_exonym(left: tuple, right: tuple) -> bool:
+    """:func:`soccer_pair_matches`, retried once with each city in its own language.
+
+    Asked last, only after every stricter question said no, so nothing that
+    folds today can stop folding.
+    """
+    native_left = tuple(_native_city_spelling(name) for name in left)
+    native_right = tuple(_native_city_spelling(name) for name in right)
+    if native_left == tuple(left) and native_right == tuple(right):
+        # No name in either pair carries one of the cities. Most pairs.
         return False
-    return soccer_pair_matches(spelled_left, spelled_right)
+    return soccer_pair_matches(native_left, native_right)
 
 
 @lru_cache(maxsize=4096)
@@ -2808,6 +3036,348 @@ def _name_clusters(bucket_keys: list[tuple], groups: dict[tuple, list]) -> list[
     return out
 
 
+#: #7993 — the sports whose events are one fighter against one fighter, and the
+#: only keys :func:`_merge_combat_claim_bouts` reads. Tennis and golf share the
+#: 1-on-1 shape but not the population: tennis has its own twin machinery
+#: (`tennis_twin_pairs`, #8587) and doubles rows, and golf rows are fields.
+_COMBAT_SPORT_PREFIXES: tuple[str, ...] = ("mma_", "boxing_")
+
+COMBAT_CLAIM_BOUT_WINDOW = timedelta(hours=FIXTURE_TIME_WINDOW_HOURS)
+"""How far an id-less bout claim may sit from the anchored bout it names. #7993.
+
+It is `search_fixture_dedup.FIXTURE_TIME_WINDOW_HOURS` and imported rather than
+retyped, because it is that module's licence restated: in a 1-on-1 sport "the
+same two participants within 36h" IS one fixture. Two fighters do not meet
+twice inside a day and a half, so this bound is not a clock fitted to a gap. It
+is the distance inside which a second meeting cannot exist.
+
+The population it is for, production 2026-09-28 02:1xZ, the Oct 3 UFC card.
+Polymarket minted every bout at the card's 21:00Z, and the Odds API lists each
+bout at its own slot: 3.0 h (Pulyaev–Pinas, Green–Ribovics, Walker–Parkin,
+McGhee–Sopaj, dos Anjos–Hernandez) and 4.0 h (Kopylov–Gautier). The window
+leaves room for a claim whose date is a day off, the shape #6710 records for a
+Polymarket row.
+"""
+
+#: Generational suffixes a provider may append to one fighter's name and not
+#: another. They are dropped so the surname is the family name ("Jacoby", not "jr").
+_FIGHTER_NAME_SUFFIXES = frozenset({"jr", "sr", "ii", "iii", "iv"})
+
+
+def _fighter_identity(name: Optional[str]) -> Optional[tuple[str, str]]:
+    """`(surname, first initial)` for one fighter, or ``None`` if unreadable.
+
+    The initial is ``""`` for a surname-only name (Kalshi's `Vettori v Naurdiev`).
+    Diacritic-free and lowercased, like :func:`_squash`, but kept as words: the
+    surname is the LAST word, which is the word the surname-only rows carry
+    (`Rafael dos Anjos` → `anjos`, and Kalshi writes `Anjos`).
+    """
+    if not name:
+        return None
+    words = [
+        word
+        for word in _NON_ALNUM.split(strip_diacritics(str(name)).lower())
+        if word
+    ]
+    while len(words) > 1 and words[-1] in _FIGHTER_NAME_SUFFIXES:
+        words.pop()
+    if not words:
+        return None
+    initial = words[0][0] if len(words) > 1 else ""
+    return (words[-1], initial)
+
+
+def _same_fighter(left: tuple[str, str], right: tuple[str, str]) -> bool:
+    """One surname, and one initial whenever both names have one.
+
+    `Mick Parkin` / `Michael Parkin` and `Alexander Hernandez` / `Alex Hernandez`
+    agree. `Anjos` agrees with `Rafael Dos Anjos` because it has no initial to
+    disagree with. `Wang Cong` never agrees with `Cong Wang`: two surnames, and
+    two cards is the safe direction.
+    """
+    if left[0] != right[0]:
+        return False
+    return not left[1] or not right[1] or left[1] == right[1]
+
+
+def _bout_identities(event: Any) -> Optional[tuple]:
+    home = _fighter_identity(getattr(event, "home_team_name", None))
+    away = _fighter_identity(getattr(event, "away_team_name", None))
+    if home is None or away is None:
+        return None
+    return (home, away)
+
+
+def _same_bout(left: tuple, right: tuple) -> bool:
+    """Both fighters, in either corner. Providers disagree on who is "home"."""
+    return _same_corners(left, right) or (
+        _same_fighter(left[0], right[1]) and _same_fighter(left[1], right[0])
+    )
+
+
+def _same_corners(left: tuple, right: tuple) -> bool:
+    """Both fighters, each in the SAME corner on both rows (#9304)."""
+    return _same_fighter(left[0], right[0]) and _same_fighter(left[1], right[1])
+
+
+def _anchor_is_elected(claim_members: list, anchor_members: list) -> bool:
+    """Will :func:`_elect` keep an ANCHOR row, so the claim's rows are the losers?
+
+    On a reversed pair only the losers' numbers are copied, so a claim with no
+    number is harmless only while it loses (#9304). A claim that would win —
+    rung 1, a visible score — would take the anchor's prices the other way
+    round instead, so that pair is refused too.
+    """
+    return max(twin_identity_rank(m) for m in anchor_members) > max(
+        twin_identity_rank(m) for m in claim_members
+    )
+
+
+def _group_carries_oriented_readings(members: list) -> bool:
+    """Does any row carry a number that reads as the HOME fighter's chance? (#9304)
+
+    Every venue value in `win_probability_sources` and the opening line are
+    home-oriented, and the union copies them verbatim (:func:`_elect`). On a pair
+    cornered the other way round, a copied number lands on the other fighter.
+    """
+    for member in members:
+        if getattr(member, "win_probability_sources", None):
+            return True
+        if getattr(member, "opening_home_probability", None) is not None:
+            return True
+        if getattr(member, "opening_away_probability", None) is not None:
+            return True
+    return False
+
+
+def _combat_sport(members: list) -> Optional[str]:
+    """`mma` or `boxing` when every row of the cluster is on that sport's keys."""
+    sports = set()
+    for member in members:
+        key = loaded_sport_key(member) or ""
+        if not key.startswith(_COMBAT_SPORT_PREFIXES):
+            return None
+        sports.add(key.split("_", 1)[0])
+    return sports.pop() if len(sports) == 1 else None
+
+
+#: The keys a stored venue reading may carry for :func:`_flipped_reading` to turn
+#: it round (#7993 residual). `value` and `observed_value` are the home fighter's
+#: chance; the other three say where and when it was read and hold for either
+#: corner. Measured over every mma/boxing row of the last 120 days on production,
+#: 2026-09-30 17:1xZ: these five are the only keys a `kalshi`, `polymarket` or
+#: `betting` object carries. A key outside this set is a shape nobody has
+#: checked, so the reading is refused rather than guessed at.
+_FLIPPABLE_READING_KEYS = frozenset(
+    {"value", "observed_value", "updated_at", "eligibility", "observed_basis"}
+)
+_ORIENTED_READING_KEYS = ("value", "observed_value")
+
+
+def _flipped_chance(raw: Any) -> Optional[float]:
+    """``1 - raw`` for a finite probability, else ``None``."""
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return None
+    if not math.isfinite(raw) or not 0.0 <= raw <= 1.0:
+        return None
+    return round(1.0 - float(raw), 10)
+
+
+def _flipped_reading(name: str, reading: Any) -> tuple[bool, Any]:
+    """One stored venue entry read from the OTHER corner. ``(ok, reading)``.
+
+    A bare number or a `value`/`observed_value` pair is the home fighter's
+    chance, so the other corner's is its complement. Both halves of the pair
+    turn together, which keeps `observed_value == value` and so keeps the
+    observation basis bound to the value it dates (`stored_observation_basis`).
+    A `*_count` entry is a count of sources, not a chance, and is kept as is.
+    Anything else is refused.
+    """
+    if name.endswith("_count"):
+        return True, reading
+    if not isinstance(reading, dict):
+        flipped = _flipped_chance(reading)
+        return (flipped is not None), flipped
+    if not reading.keys() <= _FLIPPABLE_READING_KEYS or "value" not in reading:
+        return False, None
+    out = dict(reading)
+    for key in _ORIENTED_READING_KEYS:
+        if key in reading:
+            flipped = _flipped_chance(reading[key])
+            if flipped is None:
+                return False, None
+            out[key] = flipped
+    return True, out
+
+
+@dataclass(frozen=True)
+class _CornerFlip:
+    """A reversed claim row's numbers, read from the anchor's corners."""
+
+    sources: Optional[dict]
+    opening_home: Any
+    opening_away: Any
+
+
+def _corner_flip(member: Any) -> Optional[_CornerFlip]:
+    """The row's readings turned round, or ``None`` if any cannot be."""
+    sources = getattr(member, "win_probability_sources", None)
+    flipped: Optional[dict] = None
+    if sources:
+        if not isinstance(sources, dict):
+            return None
+        flipped = {}
+        for name, reading in sources.items():
+            ok, turned = _flipped_reading(str(name), reading)
+            if not ok:
+                return None
+            flipped[name] = turned
+    return _CornerFlip(
+        sources=flipped,
+        opening_home=getattr(member, "opening_away_probability", None),
+        opening_away=getattr(member, "opening_home_probability", None),
+    )
+
+
+def _merge_combat_claim_bouts(
+    clusters: list[list], corner_flips: Optional[dict] = None
+) -> list[list]:
+    """Fold an id-less bout claim onto the one anchored bout it names. #7993.
+
+    THE SHAPE, ON PRODUCTION 2026-09-28 02:1xZ. Six bouts of the Oct 3 UFC card
+    were two cards each on `/api/events/search`. One card was the Polymarket-born
+    row: no provider id, every bout at the card's 21:00Z, and on three of them the
+    Kalshi price. The other was the Odds API row with its `external_id`, the
+    bout's own slot and the sportsbook price. `Kopylov` served `15315711` (Roman
+    Kopylov v Ateba Gautier, 21:00Z, Kalshi) above `15318681` (Ateba Gautier v
+    Roman Kopylov, 01:00Z, sportsbooks).
+
+    WHY NOTHING ELSE REACHES IT. The within-league passes above cap the clock at
+    minutes (:data:`ANCHORED_CLAIM_KICKOFF_DRIFT`) and keep orientation, and these
+    pairs are hours apart and, in half of them, cornered the other way round.
+    `search_fixture_dedup` has the right clock for a 1-on-1 sport, but it can only
+    DROP a row that another row dominates. Two equally named priced rows dominate
+    neither way, and an empty claim that spells a first name differently (`Mick`
+    / `Michael` Parkin, `Alexander` / `Alex` Hernandez, `Bernardo` / `Benardo`
+    Sopaj) fails its whole-name suffix test. When it does drop a row it drops
+    that row's venue with it. This pass unions venues through :func:`_elect`.
+
+    THE LICENCE IS TWO THINGS THIS MODULE AND ITS SIBLING ALREADY STATE:
+
+    * the PROVENANCE asymmetry of #8100 (:func:`_merge_anchored_claim_kickoffs`,
+      ruling 048 read forward). The claim cluster holds no provider id and no
+      StatPal fixture id. The target holds a provider id. Two anchored bouts, or
+      two claims, are never joined here.
+    * the 1-on-1 clock of `search_fixture_dedup` (:data:`COMBAT_CLAIM_BOUT_WINDOW`):
+      the same two fighters inside 36 h are one bout.
+
+    FOUR REFUSALS, each leaving two cards, which is today's page:
+
+    * more than ONE anchored bout matches the claim. Nothing here picks between
+      two anchors (the Odds API re-mint of #7993's first half is exactly two);
+    * :func:`_objectively_different_games`: two `espn_id`s or two scorelines;
+    * a live or suspended row, unless the claim holds no score
+      (:func:`_live_anchored_claim_pair_is_licensed`), and any unknown status;
+    * #9304: the corners are reversed and the claim would be the row KEPT
+      (:func:`_anchor_is_elected` false), or it carries a reading
+      :func:`_corner_flip` cannot turn round. The union copies home-oriented
+      numbers, so after this pass first went live Kalshi's 0.335 for Roman
+      Kopylov (claim 15315711, Gautier @ Kopylov) read as Ateba Gautier's
+      chance on 15318681, beside the sportsbooks' 0.6425 for Gautier.
+
+    A REVERSED CLAIM THAT LOSES IS TURNED ROUND, NOT REFUSED (#7993 residual,
+    production 2026-09-30 17:05Z). Refusing it left Kopylov–Gautier and
+    Pulyaev–Pinas on `/sports/mma_mixed_martial_arts` twice each, at 2:00 PM and
+    5:15 PM, one card per venue. The claim's numbers are the other fighter's
+    complement, so each is recorded in ``corner_flips`` as ``1 - p`` (the
+    opening line's two halves swapped), and :func:`_elect` copies that instead
+    of the stored value. Kalshi's 0.345 for Kopylov lands on 15318681 as 0.655
+    for Gautier, beside the sportsbooks' 0.6506. Only a LOSING claim is turned:
+    a claim that would be kept keeps its own corners, and the anchor's numbers
+    are never flipped, so the refusal above stands for it.
+
+    Nothing is written. Both rows stay in `events`, and when the event graph
+    joins them this pass stops finding pairs.
+    """
+    anchors: list[int] = []
+    claims: list[int] = []
+    sports: dict[int, str] = {}
+    bouts: dict[int, list] = {}
+    for index, members in enumerate(clusters):
+        sport = _combat_sport(members)
+        if sport is None or not _anchored_claim_group_status_is_known(members):
+            continue
+        identities = [_bout_identities(member) for member in members]
+        if any(identity is None for identity in identities):
+            continue
+        sports[index] = sport
+        bouts[index] = identities
+        if _group_is_id_anchored(members):
+            anchors.append(index)
+        elif not _group_carries_schedule_id(members):
+            claims.append(index)
+
+    if not anchors or not claims:
+        return clusters
+
+    def within_window(left: list, right: list) -> bool:
+        return all(
+            abs(a.commence_time - b.commence_time) <= COMBAT_CLAIM_BOUT_WINDOW
+            for a in left
+            for b in right
+        )
+
+    def same_bout(claim: int, anchor: int) -> bool:
+        if sports[claim] != sports[anchor]:
+            return False
+        if not all(
+            _same_bout(c, a) for c in bouts[claim] for a in bouts[anchor]
+        ):
+            return False
+        return within_window(clusters[claim], clusters[anchor])
+
+    merged_into: dict[int, int] = {}
+    for claim in claims:
+        matches = [anchor for anchor in anchors if same_bout(claim, anchor)]
+        if len(matches) != 1:
+            continue
+        anchor = matches[0]
+        claim_members, anchor_members = clusters[claim], clusters[anchor]
+        if _objectively_different_games(claim_members, anchor_members):
+            continue
+        flips: dict[int, _CornerFlip] = {}
+        if not all(
+            _same_corners(c, a) for c in bouts[claim] for a in bouts[anchor]
+        ):
+            if not _anchor_is_elected(claim_members, anchor_members):
+                continue
+            if _group_carries_oriented_readings(claim_members):
+                turned = [_corner_flip(member) for member in claim_members]
+                if corner_flips is None or any(t is None for t in turned):
+                    continue
+                flips = {
+                    id(member): flip
+                    for member, flip in zip(claim_members, turned)
+                }
+        if not (
+            _variant_group_is_collapsible(claim_members)
+            and _variant_group_is_collapsible(anchor_members)
+        ) and not _live_anchored_claim_pair_is_licensed(claim_members):
+            continue
+        merged_into[claim] = anchor
+        if flips:
+            corner_flips.update(flips)
+
+    if not merged_into:
+        return clusters
+
+    out: dict[int, list] = {}
+    for index, members in enumerate(clusters):
+        target = merged_into.get(index, index)
+        out.setdefault(target, []).extend(members)
+    return list(out.values())
+
+
 def _set_served_value(event: Any, column: str, value: Any) -> None:
     """Place a served reading on a row without making it a pending write.
 
@@ -2828,10 +3398,25 @@ def _set_served_value(event: Any, column: str, value: Any) -> None:
     setattr(event, column, value)
 
 
-def _elect(members: list, keep: set, result: "FoldResult") -> None:
-    """Pick the survivor for one group and union the losers' venues onto it."""
+def _elect(
+    members: list,
+    keep: set,
+    result: "FoldResult",
+    corner_flips: Optional[dict] = None,
+) -> None:
+    """Pick the survivor for one group and union the losers' venues onto it.
+
+    A loser in ``corner_flips`` (a reversed bout claim, #7993) contributes its
+    numbers read from the survivor's corners, never its stored ones.
+    """
     ranked = sorted(members, key=twin_identity_rank, reverse=True)
     survivor, losers = ranked[0], ranked[1:]
+    flips = corner_flips or {}
+    if id(survivor) in flips:
+        # `_merge_combat_claim_bouts` flips only a claim it proved would LOSE.
+        # A flipped row elected here means that proof no longer holds, and its
+        # turned numbers must not meet unturned ones: keep every row.
+        raise ValueError("twin fold: a corner-flipped claim was elected")
     keep.add(id(survivor))
     result.dropped_ids.extend(loser.id for loser in losers)
     # #5532 — recorded HERE, the one place the pair is still in hand. The fold
@@ -2844,19 +3429,28 @@ def _elect(members: list, keep: set, result: "FoldResult") -> None:
     merged = dict(getattr(survivor, "win_probability_sources", None) or {})
     added = False
     for loser in losers:
-        for name, reading in (
-            getattr(loser, "win_probability_sources", None) or {}
-        ).items():
+        flip = flips.get(id(loser))
+        loser_sources = (
+            flip.sources
+            if flip is not None
+            else getattr(loser, "win_probability_sources", None)
+        )
+        for name, reading in (loser_sources or {}).items():
             if name not in merged:
                 merged[name] = reading
                 added = True
     if added:
         result.merged_sources[survivor.id] = merged
 
-    _carry_opening_line(survivor, losers, result)
+    _carry_opening_line(survivor, losers, result, flips)
 
 
-def _carry_opening_line(survivor: Any, losers: list, result: "FoldResult") -> None:
+def _carry_opening_line(
+    survivor: Any,
+    losers: list,
+    result: "FoldResult",
+    corner_flips: Optional[dict] = None,
+) -> None:
     """Give the survivor the pre-match line only an absorbed row held. #5853.
 
     🔴 WITHOUT THIS, THIS FOLD DELETES A NUMBER, AND IT WAS DOING SO ON
@@ -2897,18 +3491,23 @@ def _carry_opening_line(survivor: Any, losers: list, result: "FoldResult") -> No
     """
     if not losers:
         return
+    flips = corner_flips or {}
+
+    def _line(loser: Any) -> tuple:
+        flip = flips.get(id(loser))
+        if flip is not None:
+            return (loser.id, flip.opening_home, flip.opening_away)
+        return (
+            loser.id,
+            getattr(loser, "opening_home_probability", None),
+            getattr(loser, "opening_away_probability", None),
+        )
+
     own_home = getattr(survivor, "opening_home_probability", None)
     home, away = merge_opening_line(
         own_home,
         getattr(survivor, "opening_away_probability", None),
-        [
-            (
-                loser.id,
-                getattr(loser, "opening_home_probability", None),
-                getattr(loser, "opening_away_probability", None),
-            )
-            for loser in losers
-        ],
+        [_line(loser) for loser in losers],
     )
     if home is own_home:
         return

@@ -410,6 +410,8 @@ def test_both_callers_still_build_their_span_the_same_way():
 
     for source in (
         inspect.getsource(event_combat.list_card_concepts),
-        inspect.getsource(event_combat.CombatEventAdapter._folded_card_tokens),
+        # #8263: the page's fold body moved into `_card_token_roots`, which
+        # `_folded_card_tokens` delegates to; the builder is pinned where it is.
+        inspect.getsource(event_combat.CombatEventAdapter._card_token_roots),
     ):
         assert "card_span_by_token(" in source

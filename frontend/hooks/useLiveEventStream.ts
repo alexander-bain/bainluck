@@ -11,10 +11,10 @@ import {
 } from '@/lib/liveStreamController';
 
 /**
- * live/034 S2 — subscribe to a LIVE event's SSE push.
+ * Subscribe to an eligible event's quote stream, independently of game phase.
  *
- * Ruling (RULINGS-BATCH-2026-08-30, LIVE UPDATES): push for LIVE events only;
- * non-live keeps polling.
+ * #9509: live, scheduled and suspended pages may subscribe; the server
+ * checks actual contract eligibility. Refused connections retain polling.
  *
  * The number in the database is already live — `worker-ws` flushes prices every
  * 2s and the blend is stamped at most once per event per 5s. What was not live

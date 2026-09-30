@@ -1,0 +1,16 @@
+{
+  "at": "2026-09-29T04:48:24.683991+00:00",
+  "base": "92d37f9b6a6263fecb178587fa0fc0fedf77e933",
+  "verdict": "SOURCE PASS",
+  "files": [
+    {
+      "path": "backend/app/utils/final_game_winner_quote.py",
+      "sha256": "0f7aefc569b5df4f9a5c7d157a935453f97a5561e85a06eceece54dbf17665fa"
+    },
+    {
+      "path": "backend/tests/test_final_game_winner_quote.py",
+      "sha256": "6edeb1da09b1c2a02abec06fc900a77cf3ad1d609125e323abdabdb6462a29de"
+    }
+  ],
+  "review": "Explicit contract closure is recorded after positive market/source/proven event mapping checks and before missing outcome recognition. Closed IDs only fence same contract; empty/partial open contracts stay unknown. Quoting still requires full semantic/side/price guards. Existing helper settledness with [] avoids lazy ORM outcome reads. Two parameterized empty/partial regression controls read; author running exact tests."
+}

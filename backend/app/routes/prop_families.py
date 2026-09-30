@@ -58,6 +58,7 @@ post-deploy first-touch read on this endpoint is the falsifier.
 """
 
 import logging
+import re
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -68,7 +69,7 @@ from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models import Team, FuturesMarket, FuturesOutcome
+from app.models import Team, FuturesMarket, FuturesOutcome, Sport
 from app.routes.futures import withheld_price_outcome_ids_for_markets
 from app.services import get_db
 from app.utils.event_concept_cache import (
@@ -91,7 +92,15 @@ from app.utils.event_concept_cache import (
     with_availability,
     write_payload,
 )
+from app.utils.market_team_sport import (
+    link_crosses_conference,
+    link_crosses_gender,
+    link_crosses_league,
+    market_event_slug,
+    sport_key_llm_category,
+)
 from app.utils.prop_families import group_prop_families, resolve_family_key
+from app.utils.sport_keys import league_family_identity
 from app.utils.statement_timeout import is_statement_timeout
 
 logger = logging.getLogger(__name__)
@@ -175,6 +184,30 @@ _BRANCH_MARKET_ROSTER = "market_roster"
 #: completion path treats it exactly like a branch: `branch_deferred:` is an IOU
 #: the unbudgeted rebuild pays, `branch_timeout:` is a real expiry.
 _BRANCH_PRICE_SCREEN = "price_screen"
+
+#: #9610: the side screen, also a step after the fetch branches. It reports a
+#: failure through `branch_timeout:` like the price screen, and it never defers.
+_BRANCH_SIDE_SCREEN = "side_screen"
+
+#: #9761 residue: a market whose own QUESTION names the NFL season. Polymarket's
+#: player rushing-yards boards carry a slug that names no league
+#: (``jeremiyah-love-rushing-yards-2026-27``) and no ``sport_id``, so
+#: ``link_crosses_league`` has nothing to read; the question does: "Will
+#: Jeremiyah Love have 899.5+ rushing yards in the 2026-27 NFL regular season?"
+#: (61355765, and Jadarian Price's 61352844), matched on Notre Dame by roster
+#: name. Read only as a refusal on a football team outside the NFL, never to
+#: attach anything (notice 40: a title alone is not membership).
+_NFL_SEASON_IN_NAME = re.compile(r"\bNFL\s+(?:regular\s+)?season\b", re.IGNORECASE)
+_NFL_LEAGUE_FAMILY = league_family_identity("americanfootball_nfl")
+
+
+def _name_crosses_into_nfl(name: str | None, team_sport_key: str | None) -> bool:
+    """True when a market's name names the NFL season and the team is football outside it."""
+    if not team_sport_key or not _NFL_SEASON_IN_NAME.search(name or ""):
+        return False
+    if sport_key_llm_category(team_sport_key) != "football":
+        return False
+    return league_family_identity(team_sport_key) != _NFL_LEAGUE_FAMILY
 
 
 def _escape_like(s: str) -> str:
@@ -571,6 +604,7 @@ async def build_prop_families(
     _team_id = int(team.id)
     _team_name = team.name
     _team_slug = getattr(team, "slug", None)
+    _team_sport_id = getattr(team, "sport_id", None)
 
     def _payload(families: list) -> dict:
         out = {
@@ -595,6 +629,9 @@ async def build_prop_families(
     # a 503. LAT-P145: it is now set per branch, so the expiry ends ITS OWN branch
     # and nothing else.
     by_market: dict[int, dict] = {}
+    # market id -> (name, sport_id, source, external_id): the side screen's
+    # inputs (#9610), kept off the entry so they never reach the payload.
+    side_inputs: dict[int, tuple] = {}
     _seen_oids: set[int] = set()
     lost: list[str] = []
     deferred: list[str] = []
@@ -680,6 +717,12 @@ async def build_prop_families(
                     "outcomes": [],
                 }
                 by_market[market.id] = entry
+                side_inputs[market.id] = (
+                    market.name,
+                    getattr(market, "sport_id", None),
+                    market.source,
+                    getattr(market, "external_id", None),
+                )
             prob = (
                 float(outcome.current_probability)
                 if outcome.current_probability is not None else None
@@ -701,10 +744,14 @@ async def build_prop_families(
     if len(lost) + len(deferred) == len(branches):
         return _payload([]), True
 
+    side_loss = await _withhold_other_side(
+        db, by_market, side_inputs, _team_sport_id, _team_id, _team_name
+    )
     screen_loss = await _withhold_refused_prices(db, by_market, budget_ms, _t0, _team_id)
     payload = _payload(group_prop_families(list(by_market.values())))
-    if screen_loss:
-        note_build_loss(payload, screen_loss, LOSS_PARTIAL)
+    for _loss in (side_loss, screen_loss):
+        if _loss:
+            note_build_loss(payload, _loss, LOSS_PARTIAL)
     for _name in lost:
         # LOSS_PARTIAL, not LOSS_DEGRADED: the headline answer — this team's own
         # futures, via the FK branch — survived; what is missing is real content
@@ -719,6 +766,84 @@ async def build_prop_families(
         # reason that is expected and benign.
         note_build_loss(payload, f"{_REASON_DEFERRED}{_name}", LOSS_PARTIAL)
     return payload, False
+
+
+async def _withhold_other_side(
+    db: AsyncSession,
+    by_market: dict[int, dict],
+    side_inputs: dict[int, tuple],
+    team_sport_id: int | None,
+    team_id: int,
+    team_name: str | None = None,
+) -> str | None:
+    """Drop every market that belongs to the other side of the team's sport (#9610).
+
+    WHAT A READER SAW. Arsenal Women's page carried a "To Score" prop race of
+    seven men's Arsenal fixtures ("Arsenal FC vs Coventry City: First Team",
+    Kalshi ``KXEPLFTTS-26AUG21ARSCOV``). Arsenal Women's ``teams.name`` is
+    "Arsenal", so the team-name branches match every "Arsenal" market, and
+    nothing here asked which side a market is for. #9593 fixed the same leak in
+    ``_query_team_futures``. This asks the same rule, ``link_crosses_gender``.
+
+    #8072 (arm B): and every market whose Kalshi ticker names the other
+    conference. The A's roster has its own Max Muncy, so the roster branch
+    matched the Dodgers' Muncy's "NL MVP Winner?" (``KXMLBNLMVP-26``) and the
+    Athletics' MVP card printed it. The resolver already refuses that link
+    (``link_crosses_conference``); this asks the same rule.
+
+    #9761: and every market whose venue id names another LEAGUE of the team's
+    sport. Notre Dame's roster still lists Jeremiyah Love, Jadarian Price and
+    Malachi Fields, so the roster branch matched Kalshi's NFL rookie board
+    (``KXNFLOROTY-27``) and the page printed an "Offensive Rookie Of The Year"
+    race after the linker had unbound every leg. ``link_crosses_league`` is the
+    linker's own refusal (Kalshi series, Polymarket event slug). Where the venue
+    id names no league, a market whose question names the NFL season is refused
+    on a football team outside the NFL (``_name_crosses_into_nfl``).
+
+    Returns a loss reason, or None. A team with no ``sport_id`` is not screened.
+    A failed lookup FAILS OPEN (the page keeps today's rows) and says so in the
+    envelope, like the price screen.
+    """
+    if team_sport_id is None or not by_market:
+        return None
+    sport_ids = {int(team_sport_id)} | {
+        int(inputs[1]) for inputs in side_inputs.values() if inputs[1] is not None
+    }
+    try:
+        rows = (
+            await db.execute(
+                select(Sport.id, Sport.key).where(Sport.id.in_(sorted(sport_ids)))
+            )
+        ).all()
+        sport_keys = {int(sid): key for sid, key in rows}
+    except Exception:  # noqa: BLE001 — contained; the page keeps today's rows
+        try:
+            await db.rollback()
+        except Exception:
+            logger.warning(
+                "prop-families: rollback after side screen failed for team %s",
+                team_id, exc_info=True,
+            )
+        logger.exception("prop-families: side screen FAILED for team %s", team_id)
+        return f"{_REASON_TIMEOUT}{_BRANCH_SIDE_SCREEN}"
+
+    team_sport_key = sport_keys.get(int(team_sport_id))
+    for mid in list(by_market):
+        name, sport_id, source, external_id = side_inputs[mid]
+        market_sport_key = sport_keys.get(int(sport_id)) if sport_id is not None else None
+        if (
+            link_crosses_gender(name, team_sport_key, market_sport_key, source, external_id)
+            or link_crosses_conference(source, external_id, team_sport_key, team_name)
+            or link_crosses_league(
+                source,
+                external_id,
+                team_sport_key,
+                market_event_slug(by_market[mid].get("market_metadata")),
+            )
+            or _name_crosses_into_nfl(name, team_sport_key)
+        ):
+            del by_market[mid]
+    return None
 
 
 async def _withhold_refused_prices(

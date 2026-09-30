@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { fetchFuturesHistory } from "@/lib/api";
-import type { TeamFutureItem } from "@/lib/api";
+import type { ChampionshipPathEntry, TeamFutureItem } from "@/lib/api";
 import type { FuturesOutcomeHistory } from "@/lib/types";
 import { pickJourneyFuture } from "@/lib/teamSeasonJourney";
 import { journeyRangeLabel } from "@/lib/teamSeason";
@@ -24,16 +24,23 @@ const SEASON_HOURS = 24 * 180;
 
 export function TeamSeasonJourney({
   futures,
+  championshipPath,
   teamColor,
   season,
 }: {
   futures: TeamFutureItem[];
+  // The page's championship path — the journey charts the hero's own market
+  // when it has one (#9569), so chart and headline answer one question.
+  championshipPath?: ChampionshipPathEntry[] | null;
   teamColor: string | null;
   // Season string (e.g. "2026-27") from the team payload (#242) — prefixes the
   // header range label. Absent/null for leagues without a modeled season.
   season?: string | null;
 }) {
-  const pick = useMemo(() => pickJourneyFuture(futures), [futures]);
+  const pick = useMemo(
+    () => pickJourneyFuture(futures, championshipPath),
+    [futures, championshipPath],
+  );
   const [outcome, setOutcome] = useState<FuturesOutcomeHistory | null>(null);
   const [loaded, setLoaded] = useState(false);
 
@@ -76,7 +83,8 @@ export function TeamSeasonJourney({
     ? new Map<number, string>([[outcome.outcome_id, teamColor]])
     : undefined;
   // #7710 — the journey's current number obeys the boundary rule too. It is the
-  // SAME market as the page headline (both come from `pickJourneyFuture`), so a
+  // SAME market as the page headline (the path's market and number when the page
+  // has a path, #9569; `pickJourneyFuture`'s fallback when it does not), so a
   // bare round here would have printed `0%` a few hundred pixels under a
   // headline printing `<1%` for one probability. The chart's Y axis is a scale,
   // not a claim about an outcome, and is deliberately left alone.

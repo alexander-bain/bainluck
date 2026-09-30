@@ -1,33 +1,70 @@
 import Foundation
 
-/// When a Discover group card shows every one of its rows.
-///
-/// #7074. Alex, on build 15's UFC futures group: "it started out only showing
-/// one and asked me to click to see more, where it then only revealed two more.
-/// If the total number that would be shown is only three, then we should just
-/// show them all." The same note on the Awards card two slots above it.
-///
-/// Lifted out of `NativeGroupCard`'s `@ViewBuilder` for the reason
-/// `DiscoverMasonry` and `DailyChallengeLayout` were: a raster can show you that
-/// a card has one row instead of three, and it cannot tell you which of the two
-/// conditions in the body decided that. The body asked `expanded` to choose the
-/// rows and `!expanded` to choose whether to draw the button — two conditions
-/// that must always agree, which is a card with three rows and a "Show 2 more"
-/// underneath as soon as someone edits one of them. One expression answers both
-/// now, and it is a function so a test can call it.
+/// Selected Discover A (#9642): seat related questions together without
+/// hiding a lone fourth member or making every standalone market a group.
 enum DiscoverGroupRows {
+    static let showsEveryRowUpTo = 4
+    static let collapsedSeatCount = 3
 
-    /// A group this size or smaller is drawn whole and offers no button.
-    ///
-    /// Three because three is what Alex met and what fits: the button earns its
-    /// row when it is standing in for a list, not when it is standing in for two
-    /// rows. Larger groups keep the expansion control — this raises the floor,
-    /// it does not remove it.
-    static let showsEveryRowUpTo = 3
-
-    /// Whether every row of a group of `itemCount` is on screen: because the
-    /// group is small enough to be drawn whole, or because the reader opened it.
     static func showsEveryRow(itemCount: Int, expanded: Bool) -> Bool {
         expanded || itemCount <= showsEveryRowUpTo
+    }
+
+    static func visibleCount(itemCount: Int, expanded: Bool) -> Int {
+        let count = max(0, itemCount)
+        return showsEveryRow(itemCount: count, expanded: expanded) ? count : collapsedSeatCount
+    }
+
+    /// Even a short theme group can open full member cards. Short comparison
+    /// groups already show all their rows and need no extra control.
+    static func canExpand(itemCount: Int, kind: String?) -> Bool {
+        itemCount > 0 && (kind != "comparison" || itemCount > showsEveryRowUpTo)
+    }
+
+    static func footerTitle(itemCount: Int, kind: String?, expanded: Bool) -> String? {
+        guard !expanded, canExpand(itemCount: itemCount, kind: kind) else { return nil }
+        return itemCount > showsEveryRowUpTo ? "All \(itemCount) questions" : "Expand"
+    }
+
+    /// Reuse the card's existing date/threshold rule, never the maximum price.
+    static func markedRung(in points: [FeedDiscoverThresholdPoint]) -> FeedDiscoverThresholdPoint? {
+        let priced = points.filter { $0.probability != nil }
+            .sorted { ($0.value ?? 0) < ($1.value ?? 0) }
+        return heatMapBetterThanEvenRung(priced)
+    }
+
+    struct CompactSummary: Equatable {
+        let label: String?
+        let probability: Double?
+        let movement: Double?
+    }
+
+    enum FullCardStyle: Equatable { case heatmap, distribution, comparison, futures }
+
+    /// The same existing-card eligibility as a standalone Discover member.
+    static func fullCardStyle(for data: FeedFuturesData) -> FullCardStyle {
+        if data.discoverCard?.suggestedFormat == "threshold_heatmap",
+           (data.discoverCard?.thresholdPoints ?? []).filter({ $0.probability != nil }).count >= 2 { return .heatmap }
+        if data.discoverCard?.suggestedFormat == "outcome_distribution",
+           (data.discoverCard?.distributionOutcomes ?? []).filter({ $0.probability != nil }).count >= 4 { return .distribution }
+        if data.discoverCard?.suggestedFormat == "cross_source_comparison"
+            || (data.topOutcomes?.count ?? 0) >= 4 { return .comparison }
+        return .futures
+    }
+
+    static func compactSummary(for data: FeedFuturesData) -> CompactSummary {
+        let points = (data.discoverCard?.thresholdPoints ?? []).filter { $0.probability != nil }
+        if fullCardStyle(for: data) == .heatmap,
+           let rung = markedRung(in: points) {
+            let matching = data.topOutcomes?.first {
+                $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                    == rung.label.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            }
+            return CompactSummary(label: rung.label, probability: rung.probability, movement: matching?.movement)
+        }
+        // Ordinary and all-below-even cards retain their served leader; missing
+        // probability stays missing rather than turning into a fabricated zero.
+        let leader = data.topOutcomes?.first
+        return CompactSummary(label: leader?.name, probability: leader?.probability, movement: leader?.movement)
     }
 }

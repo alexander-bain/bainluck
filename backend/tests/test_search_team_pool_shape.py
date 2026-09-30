@@ -63,7 +63,13 @@ def test_the_fetch_is_wider_than_the_pool_the_scorer_sees():
 
 def test_the_pool_is_no_longer_ordered_alphabetically_first():
     block = _team_pool_block()
-    assert ".order_by(team_prominence_order" in block, (
+    # #9272 may prefix a curated-nickname key, which is `[]` — no key at all —
+    # for every query without a nickname, so prominence still leads those.
+    assert re.search(
+        r"\.order_by\(\s*(\*_team_nickname_team_order\(_ta_team_nickname_rows\),\s*)?"
+        r"team_prominence_order",
+        block,
+    ), (
         "the pool's ORDER BY no longer leads with prominence — "
         f"got: {block!r}"
     )

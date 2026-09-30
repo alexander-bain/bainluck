@@ -120,14 +120,16 @@ async def _sync_espn_rosters(session, Team, sport_id: int, sport_key: str) -> di
 
     espn = get_espn_service()
 
-    # Get all teams with ESPN IDs for this sport
+    # Get all teams with ESPN IDs for this sport. Copied to plain tuples: the
+    # loop commits per team (#5184), and a rollback would expire live ORM rows
+    # (gotcha #6).
     result = await session.execute(
         select(Team).where(
             Team.sport_id == sport_id,
             Team.espn_id.isnot(None),
         )
     )
-    teams = result.scalars().all()
+    teams = [(t.id, t.name, t.espn_id) for t in result.scalars().all()]
 
     if not teams:
         logger.warning(f"  {sport_key}: no teams with espn_id found")
@@ -145,8 +147,8 @@ async def _sync_espn_rosters(session, Team, sport_id: int, sport_key: str) -> di
     authority_dark = 0
     total_player_names = 0
 
-    for team in teams:
-        roster = await espn.get_team_roster(sport_key, team.espn_id)
+    for team_id, team_name, espn_id in teams:
+        roster = await espn.get_team_roster(sport_key, espn_id)
 
         if roster is None:
             # AUTHORITY DARK (lane1/045). The branch below CLEARS the stored
@@ -155,7 +157,7 @@ async def _sync_espn_rosters(session, Team, sport_id: int, sport_key: str) -> di
             # saying the team has no players — keep what we have.
             authority_dark += 1
             logger.warning(
-                f"  {team.name}: ESPN authority dark — stored roster kept"
+                f"  {team_name}: ESPN authority dark — stored roster kept"
             )
             continue
 
@@ -163,11 +165,12 @@ async def _sync_espn_rosters(session, Team, sport_id: int, sport_key: str) -> di
             # Write empty list to clear stale data
             await session.execute(
                 update(Team)
-                .where(Team.id == team.id)
+                .where(Team.id == team_id)
                 .values(roster_players=[])
             )
+            await session.commit()
             empty_rosters += 1
-            logger.debug(f"  {team.name}: empty roster from ESPN")
+            logger.debug(f"  {team_name}: empty roster from ESPN")
             continue
 
         # Extract player names with ASCII variants + metadata
@@ -200,14 +203,18 @@ async def _sync_espn_rosters(session, Team, sport_id: int, sport_key: str) -> di
 
         await session.execute(
             update(Team)
-            .where(Team.id == team.id)
+            .where(Team.id == team_id)
             .values(roster_players=all_entries)
         )
+        # #5184: commit per team. The whole run used to be one transaction, so
+        # the task's time limit rolled back every roster it had fetched — 536
+        # teams at ~1s each against a 270s budget meant no roster was written
+        # for months. A per-team commit keeps whatever a cut-short run reached.
+        await session.commit()
         updated += 1
         total_player_names += len(all_entries)
-
-        # Rate limit between roster fetches
-        await asyncio.sleep(0.3)
+        # No extra sleep here: ESPNAPIService._get already waits its
+        # rate_limit_delay after every request.
 
     logger.info(
         f"  {sport_key}: updated {updated}/{len(teams)} teams, "

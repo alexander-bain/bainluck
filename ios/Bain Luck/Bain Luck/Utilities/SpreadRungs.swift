@@ -467,7 +467,7 @@ enum SpreadRungs {
     private static func fromNamedOutcome(_ leg: Leg, home: String, away: String, unit: String?) -> Rung? {
         guard !namesARange(leg.outcomeName) else { return nil }
         guard let side = side(of: leg.outcomeName, home: home, away: away) else { return nil }
-        guard let threshold = leg.threshold ?? lastNumber(in: leg.outcomeName) else { return nil }
+        guard let threshold = lineInOutcome(leg.outcomeName) ?? leg.threshold else { return nil }
         return Rung(
             margin: side == .home ? threshold : -threshold,
             probability: leg.probability ?? 0.5,
@@ -535,8 +535,32 @@ enum SpreadRungs {
         )
     }
 
-    private static func lastNumber(in text: String) -> Double? {
-        guard let re = try? NSRegularExpression(pattern: #"(\d+\.?\d*)"#) else { return nil }
+    // MARK: - The line is in the outcome, not in `threshold` (#9121)
+
+    /// The cover line an outcome states, or nil where it states none.
+    ///
+    /// **What a reader saw.** iPhone, `/events/15315795` (Cruz Azul 3-3
+    /// Toluca): the 1st-half margin band sat at "Azul by 1" and the 2nd-half one
+    /// at 2, while every half market asked "by more than 1.5". The server fills
+    /// `threshold` with the FIRST number in the name, and in Kalshi's half
+    /// wording that is the period, not the line:
+    ///
+    /// ```
+    /// Cruz Azul wins the 1H by more than 1.5 goals   threshold 1.0
+    /// Toluca wins the 2H by more than 1.5 goals      threshold 2.0
+    /// ```
+    ///
+    /// Web never had this: `parseSpreadOutcome` reads the last number in the
+    /// outcome text and never looks at `threshold`. So the text wins here too,
+    /// and `threshold` is only the fallback for an outcome that states no line
+    /// at all. The producer bug is #9121's own; this does not wait on it.
+    ///
+    /// A period ordinal — `1H`, `2nd`, `3Q`, `1P` — is not a line, so it is
+    /// skipped. Otherwise `"Lakers -4.5 (1st Half)"` reads as 1, which is this
+    /// same defect coming in through the text instead of the served field.
+    static func lineInOutcome(_ text: String) -> Double? {
+        let pattern = #"(\d+(?:\.\d+)?)(?![\d.]|\s*(?:h|st|nd|rd|th|q|p)\b)"#
+        guard let re = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return nil }
         let range = NSRange(text.startIndex..., in: text)
         guard let last = re.matches(in: text, range: range).last,
               let r = Range(last.range(at: 1), in: text)

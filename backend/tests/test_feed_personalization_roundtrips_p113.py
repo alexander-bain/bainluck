@@ -121,19 +121,24 @@ async def _load(session, user, session_id=_SESSION_ID):
 
 
 @pytest.mark.asyncio
-async def test_anonymous_principal_issues_exactly_four_round_trips():
-    """7 -> 4. The number is asserted exactly, not as an upper bound.
+async def test_anonymous_principal_issues_exactly_two_round_trips():
+    """7 -> 4 -> 2. The number is asserted exactly, not as an upper bound.
 
     An upper bound (``<= 7``) would stay green through the exact regression
     this exists to catch. If a legitimate new query is added, this number moves
     in a visible commit with an argument attached — which is the point.
+
+    4 -> 2 is #9645 (Alex, 2026-09-29: no preference is learned without
+    sign-in). The category and feature rollups are the LEARNING reads, so a
+    session-only principal no longer asks them; the recent-items read (exact
+    dismissal + seen hygiene) and `user_seen_markets` remain.
     """
     session, statements = _counting_session()
 
     await _load(session, None)
 
-    assert len(statements) == 4, (
-        "an anonymous Discover open must issue exactly 4 DB round trips; "
+    assert len(statements) == 2, (
+        "an anonymous Discover open must issue exactly 2 DB round trips; "
         f"got {len(statements)}:\n" + "\n".join(f"  - {s[:120]}" for s in statements)
     )
 

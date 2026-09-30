@@ -87,6 +87,7 @@ def carry_forward_quotes(
     raw_by_time: Mapping[datetime, Mapping[str, Mapping[int, float]]],
     *,
     do_not_carry: frozenset | set = frozenset(),
+    carry_until: Mapping[int, datetime] | None = None,
 ) -> dict[datetime, dict[str, dict[int, float]]]:
     """Complete each book's column at each instant from that book's last quotes (#8296).
 
@@ -125,6 +126,17 @@ def carry_forward_quotes(
       its grade backwards would squeeze a finalist to certainty before the final
       was played. Such a leg keeps exactly today's behaviour: present at its own
       rows, absent between them.
+    * **A cleared leg is carried only until it was cleared** (``carry_until``,
+      #9765). "No row means unchanged" is false for a price that went AWAY: a
+      writer that clears a leg (DataGolf's withdrawal null-out) writes no row,
+      so the carry kept the leg alive at its last quote forever. On the Alfred
+      Dunhill Links board (62904927) DataGolf had dropped 63 of 231 golfers,
+      their last quotes summed to 0.5876, and the chart divided every line by
+      1.587 under a hero dividing by 1.000 — Fitzpatrick 10% above, 6.6% below.
+      The stamp is the leg's own ``price_changed_at``, which the clearing write
+      advances (measured: 19:09:06Z on all 63, one poll after their last
+      confirmed read). A leg that was never observed again after that instant
+      stands where the hero stands it: outside the field.
     """
     completed: dict[datetime, dict[str, dict[int, float]]] = {}
     last: dict[str, dict[int, float]] = {}
@@ -139,6 +151,11 @@ def carry_forward_quotes(
                 key: value
                 for key, value in standing.items()
                 if key not in do_not_carry
+                and (
+                    carry_until is None
+                    or key not in carry_until
+                    or captured_at <= carry_until[key]
+                )
             }
             filled.update(column)
             standing.update(column)

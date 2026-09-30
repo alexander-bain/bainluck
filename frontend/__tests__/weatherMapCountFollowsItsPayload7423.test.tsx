@@ -5,7 +5,7 @@
  * ═══ WHAT A READER SAW, production 2026-09-20 at 1280 ═══
  *
  *   GLOBAL TEMPERATURE MAP
- *   42 cities. Tomorrow's high, as a probability distribution.
+ *   42 cities. Daily high, as a probability distribution.
  *   Polymarket & Kalshi · 336 markets
  *
  * `336` was `allCities.length * 8` — a literal typed into the component. One
@@ -211,7 +211,7 @@ describe("#7423 · a search narrows the header with the map", () => {
 
   test("filtering to one city reads '1 city' and '1 market', not '3'", () => {
     const { title, meta, scope } = temperatureMapHeader(THREE, "Seattle");
-    expect(title).toBe("1 city. Tomorrow's high, as a probability distribution.");
+    expect(title).toBe("1 city. Daily high, as a probability distribution.");
     expect(meta).toBe("Polymarket · 1 market");
     expect(scope).toBe("1 of 3 cities");
   });
@@ -245,7 +245,7 @@ describe("#7423 · a search narrows the header with the map", () => {
   test("a query matching nothing says so rather than falling back to everything", () => {
     const { cities, title, meta, scope } = temperatureMapHeader(THREE, "Reykjavik");
     expect(cities).toEqual([]);
-    expect(title).toBe("0 cities. Tomorrow's high, as a probability distribution.");
+    expect(title).toBe("0 cities. Daily high, as a probability distribution.");
     expect(meta).toBe("0 markets");
     expect(scope).toBe("0 of 3 cities");
   });
@@ -275,7 +275,7 @@ describe("#7423 · TemperatureMap renders the derived mark", () => {
     swrPayload = THREE;
     const seen = visibleText(renderToStaticMarkup(<TemperatureMap />));
 
-    expect(seen).toContain("3 cities. Tomorrow's high, as a probability distribution.");
+    expect(seen).toContain("3 cities. Daily high, as a probability distribution.");
     expect(seen).toContain("Polymarket · 3 markets");
     // The three strings the card shipped with, none of which was a reading:
     expect(seen).not.toContain("24 markets");
@@ -286,7 +286,7 @@ describe("#7423 · TemperatureMap renders the derived mark", () => {
   test("the header count and the map footer's count agree on one screen", () => {
     swrPayload = TWO;
     const seen = visibleText(renderToStaticMarkup(<TemperatureMap />));
-    expect(seen).toContain("2 cities. Tomorrow's high");
+    expect(seen).toContain("2 cities. Daily high");
     expect(seen).toContain("2 cities shown");
   });
 
@@ -296,7 +296,7 @@ describe("#7423 · TemperatureMap renders the derived mark", () => {
     // second count above it. This is the shape that pins both.
     swrPayload = [city("nyc", "New York", 3)];
     const seen = visibleText(renderToStaticMarkup(<TemperatureMap />));
-    expect(seen).toContain("1 city. Tomorrow's high");
+    expect(seen).toContain("1 city. Daily high");
     expect(seen).toContain("Polymarket · 1 market");
     expect(seen).toContain("1 city shown");
     expect(seen).not.toContain("1 cities");
@@ -320,7 +320,7 @@ describe("#7423 · TemperatureMap renders the derived mark", () => {
       // "No live temperature markets right now". What may not appear is a
       // COUNT of them, which is the claim these states cannot substantiate.
       expect(seen).not.toMatch(/\d+ markets?\b/);
-      expect(seen).toContain("Tomorrow's high, as a probability distribution.");
+      expect(seen).toContain("Daily high, as a probability distribution.");
     }
   });
 });

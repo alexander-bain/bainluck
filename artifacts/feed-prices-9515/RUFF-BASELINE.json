@@ -1,0 +1,66 @@
+{
+  "unchanged": true,
+  "count": 13,
+  "existing_findings": [
+    {
+      "code": "F401",
+      "message": "`hashlib` imported but unused",
+      "count": 1
+    },
+    {
+      "code": "F401",
+      "message": "`sqlalchemy.exists` imported but unused",
+      "count": 1
+    },
+    {
+      "code": "F401",
+      "message": "`app.models.FuturesOutcome` imported but unused",
+      "count": 1
+    },
+    {
+      "code": "F401",
+      "message": "`app.utils.should_highlight` imported but unused",
+      "count": 1
+    },
+    {
+      "code": "F401",
+      "message": "`app.utils.feed_cache.FEED_RESPONSE_STALE_TTL_SECONDS` imported but unused",
+      "count": 1
+    },
+    {
+      "code": "F401",
+      "message": "`app.utils.eval_promote.APPLIED_DECISIONS` imported but unused",
+      "count": 1
+    },
+    {
+      "code": "F401",
+      "message": "`app.utils.labeling_queue.review_key_for_feed_item` imported but unused",
+      "count": 1
+    },
+    {
+      "code": "F841",
+      "message": "Local variable `discover_config` is assigned to but never used",
+      "count": 1
+    },
+    {
+      "code": "E402",
+      "message": "Module level import not at top of file",
+      "count": 2
+    },
+    {
+      "code": "F401",
+      "message": "`app.utils.market_staleness.infer_market_real_world_end` imported but unused",
+      "count": 1
+    },
+    {
+      "code": "F841",
+      "message": "Local variable `i_reasons` is assigned to but never used",
+      "count": 1
+    },
+    {
+      "code": "F821",
+      "message": "Undefined name `leader_opening`",
+      "count": 1
+    }
+  ]
+}

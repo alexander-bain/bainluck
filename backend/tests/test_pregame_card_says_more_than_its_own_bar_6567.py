@@ -171,6 +171,49 @@ def test_a_three_column_record_is_a_record():
     )
 
 
+@pytest.mark.parametrize(
+    "away,home",
+    [
+        ("0-0", "0-0"),
+        ("0-0-0", "0-0-0"),
+        ("1-0", "0-0"),
+        ("0-0-0", "2-1-0"),
+    ],
+)
+def test_a_season_nobody_has_played_is_not_a_record_9351(away, home):
+    """#9351: `FLA 0-0 · CAR 0-0` in the card's blue pill reads as a live 0-0.
+
+    A zero-game record says nothing about the team, so it is an unknown, and
+    both-or-neither means one unplayed side keeps the bucket label for the card.
+    """
+    assert (
+        pregame_records_caption(
+            away_label="FLA", away_record=away, home_label="CAR", home_record=home
+        )
+        is None
+    )
+    items = [_card(away=("FLA", away), home=("CAR", home))]
+    apply_pregame_record_caption(items)
+    assert items[0]["headline"] == PREGAME_CLOSE_MATCHUP_LABEL
+
+
+@pytest.mark.parametrize(
+    "away,home,expected",
+    [
+        ("1-0", "0-1", "FLA 1-0 · CAR 0-1"),
+        ("0-0-1", "1-0-0", "FLA 0-0-1 · CAR 1-0-0"),
+    ],
+)
+def test_one_game_played_is_a_record_and_still_prints_9351(away, home, expected):
+    """Control for #9351: the zero guard drops only the all-zero record."""
+    assert (
+        pregame_records_caption(
+            away_label="FLA", away_record=away, home_label="CAR", home_record=home
+        )
+        == expected
+    )
+
+
 # ── Everything this pass must not touch ──────────────────────────────────────
 
 

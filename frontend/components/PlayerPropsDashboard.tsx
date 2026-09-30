@@ -84,27 +84,34 @@ function StatBox({
             <div className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">{stat.type}</div>
             <SourceDot count={stat.sources} />
           </div>
-          <div className="flex items-baseline gap-2 mb-1">
-            <div className="font-mono tabular-nums text-2xl font-bold" style={{ color: accentColor }}>
-              {/*
-                UX-P106. This slot was `didHit ? "✓" : "—"` — a GLYPH pair
-                stating the verdict a second time, two lines above the badge
-                that states it in words. That is a settled vocabulary too, and
-                the worse half of it is the miss branch: an em dash means "no
-                number" everywhere else on this page, and here it meant MISSED.
-                Reading a placeholder as a verdict is #1638's exact class.
+          {/*
+            UX-P106. This slot was `didHit ? "✓" : "—"` — a GLYPH pair
+            stating the verdict a second time, two lines above the badge
+            that states it in words. That is a settled vocabulary too, and
+            the worse half of it is the miss branch: an em dash means "no
+            number" everywhere else on this page, and here it meant MISSED.
+            Reading a placeholder as a verdict is #1638's exact class.
 
-                This slot's job is the ACTUAL number. When there isn't one it
-                says so, in both directions; the verdict is stated once, below,
-                in the site's one settled vocabulary. Nothing is lost — the tile
-                still colours by `accentColor` and still carries the badge.
-              */}
-              {gradeActual != null ? gradeActual : "—"}
+            This slot's job is the ACTUAL number. The verdict is stated once,
+            below, in the site's one settled vocabulary.
+
+            #9461: with no number, the row is not drawn at all. It used to
+            print "—" here — at text-2xl, in `accentColor` — plus "of 1",
+            so a venue-graded anytime-TD tile (51 of 51 on /events/14780548
+            carry `actual: null`) read as a big red dash "of 1": the
+            placeholder painted in the verdict's colour, which is the exact
+            misreading this note forbids, and a count the tile never gives.
+          */}
+          {gradeActual != null && (
+            <div data-testid="prop-tile-actual" className="flex items-baseline gap-2 mb-1">
+              <div className="font-mono tabular-nums text-2xl font-bold" style={{ color: accentColor }}>
+                {gradeActual}
+              </div>
+              {firstLine != null && (
+                <div className="font-mono tabular-nums text-xs text-text-muted">of {firstLine}</div>
+              )}
             </div>
-            {firstLine != null && (
-              <div className="font-mono tabular-nums text-xs text-text-muted">of {firstLine}</div>
-            )}
-          </div>
+          )}
           <div className="flex items-center gap-2">
             {/* UX-P040: a verdict only when the backend stated one. A grade that
                 carries an `actual` but no hit/miss shows the number and stops —
@@ -121,6 +128,46 @@ function StatBox({
             {firstLine != null && (
               <span className="text-xs text-text-muted font-mono tabular-nums">needed {firstLine}+</span>
             )}
+          </div>
+        </div>
+      );
+    }
+
+    // #9454: a split ladder (HIT at 2+, MISS at 2.5+) gets no single badge, but
+    // it is not ungraded. Both rungs are the backend's typed verdicts.
+    const split = grade.reason === "conflicting_rung_verdicts" ? stat.settledLadder ?? null : null;
+    if (split) {
+      return (
+        <div className="border border-surface-border rounded-lg p-2.5 bg-surface-card" data-settled-ladder="split">
+          <div className="flex items-center justify-between mb-1">
+            <div className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">{stat.type}</div>
+            <SourceDot count={stat.sources} />
+          </div>
+          {/* #9461: no count, no number row — the two verdicts below carry it. */}
+          {split.actual != null && (
+            <div data-testid="prop-tile-actual" className="font-mono tabular-nums text-2xl font-bold text-text-primary mb-1">
+              {split.actual}
+            </div>
+          )}
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span className="flex items-center gap-1.5">
+              <span
+                className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded"
+                style={{ background: `${accent}22`, color: accent }}
+              >
+                {propVerdictLabel(true)}
+              </span>
+              <span className="text-xs text-text-muted font-mono tabular-nums">{split.cleared}+</span>
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span
+                className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded"
+                style={{ background: "rgba(239,68,68,0.15)", color: "#EF4444" }}
+              >
+                {propVerdictLabel(false)}
+              </span>
+              <span className="text-xs text-text-muted font-mono tabular-nums">{split.missed}+</span>
+            </span>
           </div>
         </div>
       );
@@ -461,8 +508,9 @@ export default function PlayerPropsDashboard({
   // blanket "grading unavailable" subtitle.
   // UX-P040 (#1638): this asked `serverIsWinner != null` too, so a game with zero
   // published grades advertised "Final · graded results" over a grid of red MISSes.
+  // #9454: a split card (HIT 2+, MISS 2.5+) is graded too, by typed rung verdicts.
   const anyGraded = players.some((p) =>
-    p.stats.some((s) => s.grade != null && isGraded(s.grade)),
+    p.stats.some((s) => (s.grade != null && isGraded(s.grade)) || s.settledLadder != null),
   );
   // L2-52: source-name attribution removed (blend-only).
 

@@ -204,6 +204,31 @@ def season_string(league: str, now: datetime | None = None) -> str | None:
     return None
 
 
+def season_end_year(league: str, now: datetime | None = None) -> int | None:
+    """The calendar year in which the season :func:`season_string` names ENDS.
+
+    #9660. A title market is named for the year its final is played — "2027 Pro
+    Basketball Champion", "Pro Football: 2027 Champion", "2026-27 Stanley Cup
+    Finals Winner" all price the season being played in the autumn of 2026 — so
+    "is this market next season's?" has to be asked against this year, never
+    against ``now.year``. A league whose regular-season band wraps the new year
+    (NBA, NHL, and the NFL, which labels its season by the starting year) ends a
+    year after it starts; a calendar-year league (MLB) ends in the year it names.
+    None for unknown/continuous leagues.
+    """
+    slug = (league or "").strip().lower()
+    season = season_string(slug, now)
+    if not season:
+        return None
+    base = int(season[:4])
+    band = next(
+        ((start, end) for phase, start, end in _LEAGUE_BANDS.get(slug, []) if phase == "in_season"),
+        None,
+    )
+    wraps = band is not None and band[0] > band[1]
+    return base + 1 if wraps else base
+
+
 def season_descriptor(league: str, now: datetime | None = None) -> dict:
     """The Season entity's first read shape: league × year × phase, plus a short
     human ``label`` ("2025-26 · Playoffs"). Every team-page number can attach this

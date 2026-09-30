@@ -184,51 +184,19 @@ struct ChampionshipPathView: View {
     ) -> some View {
         let displayStages = stages ?? team.stages
         return VStack(alignment: .leading, spacing: 12) {
-            // Team header with logo, name, record, conference
-            HStack(spacing: 8) {
-                if let logoUrl = team.logoUrl, let url = URL(string: logoUrl) {
-                    AsyncImage(url: url) { phase in
-                        switch phase {
-                        case .success(let image):
-                            image.resizable().scaledToFit()
-                        default:
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(color.opacity(0.15))
-                                .overlay(
-                                    Text(TeamShortName.abbreviation(team.shortName ?? team.name))
-                                        .font(.system(size: 12, weight: .bold))
-                                        .foregroundStyle(color)
-                                )
-                        }
-                    }
-                    .frame(width: 40, height: 40)
-                } else {
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(color.opacity(0.15))
-                        .frame(width: 40, height: 40)
-                        .overlay(
-                            Text(TeamShortName.abbreviation(team.shortName ?? team.name))
-                                .font(.system(size: 12, weight: .bold))
-                                .foregroundStyle(color)
-                        )
+            // Team header with logo, name, record, conference. #4395 — beside
+            // the logo wherever the name fits on one line; otherwise the name
+            // drops under the logo and takes the card's whole width, because
+            // beside a 40 pt logo at the accessibility sizes a three-letter code
+            // broke mid-word ("CH" / "W").
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    teamLogo(team: team, color: color)
+                    teamNameBlock(team: team)
                 }
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(team.shortName ?? team.name)
-                        .font(.subheadline)
-                        .fontWeight(.bold)
-                    HStack(spacing: 4) {
-                        if let record = team.record {
-                            Text(record)
-                                .font(.system(size: 10))
-                                .foregroundStyle(.secondary)
-                        }
-                        if let conf = team.conference {
-                            Text("· \(conf)")
-                                .font(.system(size: 10))
-                                .foregroundStyle(.secondary)
-                        }
-                    }
+                VStack(alignment: .leading, spacing: 8) {
+                    teamLogo(team: team, color: color)
+                    teamNameBlock(team: team)
                 }
             }
 
@@ -253,6 +221,63 @@ struct ChampionshipPathView: View {
             RoundedRectangle(cornerRadius: 12)
                 .stroke(Color.barTrack.opacity(0.5), lineWidth: 0.5)
         )
+    }
+
+    @ViewBuilder
+    private func teamLogo(team: TeamProgressionData, color: Color) -> some View {
+        if let logoUrl = team.logoUrl, let url = URL(string: logoUrl) {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let image):
+                    image.resizable().scaledToFit()
+                default:
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(color.opacity(0.15))
+                        .overlay(
+                            Text(TeamShortName.abbreviation(team.shortName ?? team.name))
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundStyle(color)
+                        )
+                }
+            }
+            .frame(width: 40, height: 40)
+        } else {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(color.opacity(0.15))
+                .frame(width: 40, height: 40)
+                .overlay(
+                    Text(TeamShortName.abbreviation(team.shortName ?? team.name))
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(color)
+                )
+        }
+    }
+
+    /// The header's `ViewThatFits` judges each arm by its IDEAL width, so only
+    /// the name may count: the record and conference already wrap at the
+    /// default size, so they report no ideal width of their own and wrap into
+    /// whatever the name leaves — counting them would drop every header under
+    /// its logo. Under the logo the name wraps at its own height.
+    private func teamNameBlock(team: TeamProgressionData) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(team.shortName ?? team.name)
+                .font(.subheadline)
+                .fontWeight(.bold)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 4) {
+                if let record = team.record {
+                    Text(record)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+                if let conf = team.conference {
+                    Text("· \(conf)")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(idealWidth: 0, maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     /// One stage, in whichever of the two shapes its card has room for.
@@ -303,6 +328,9 @@ struct ChampionshipPathView: View {
         Text(stage.label)
             .font(.caption)
             .foregroundStyle(.secondary)
+            // #4395 — the label's height is its own wrapped height, never what
+            // the card has left: squeezed, "World Series" drew as `World…`.
+            .fixedSize(horizontal: false, vertical: true)
             .background(
                 NaturalWidthProbe(column: \.label) {
                     Text(stage.label).font(.caption)

@@ -119,6 +119,23 @@ _STANDALONE_AWARDS: list[tuple[str, str]] = [
     ("championship game mvp", "championship game mvp"),
     ("championship mvp", "championship game mvp"),
     ("world series mvp", "championship game mvp"),
+    # The All-Star Game MVP is a one-night award too, and it has its own
+    # family: it fell through to the bare "mvp" keyword and put Kalshi's
+    # resolved "All-Star Game MVP Winner" (Cody Bellinger, July) in the
+    # Yankees' season-MVP card as "✓ Won 100%" beside Judge at 34% (#9769).
+    ("all-star game mvp", "all-star game mvp"),
+    ("all star game mvp", "all-star game mvp"),
+    ("all-star mvp", "all-star game mvp"),
+    ("all star mvp", "all-star game mvp"),
+    # Series MVPs are not the season award either.  Kalshi's "Pro Baseball
+    # Championship Series MVP Winner" is the World Series MVP (ticker
+    # KXMLBWSMVP); "championship mvp" above misses it on the word "series", so
+    # it keyed to "mvp" and headed the Yankees' season-MVP card as "Aaron Judge
+    # 34%" while his AL MVP price was 1% (#9769).  The league series get their
+    # own cards: an ALCS MVP is neither the season award nor the World Series.
+    ("championship series mvp", "championship game mvp"),
+    ("alcs mvp", "alcs mvp"),
+    ("nlcs mvp", "nlcs mvp"),
     # The award spelled out.  Without it "MLS: 2026 Most Valuable Player",
     # "PLL: 2026 Jim Brown Most Valuable Player" and "WBC: Most Valuable
     # Player" are not family-shaped AT ALL (#6630) — they key to None and
@@ -198,9 +215,23 @@ _LABEL_OVERRIDES = {
     "mvp": "MVP",
     "finals mvp": "Finals MVP",
     "championship game mvp": "Championship Game MVP",
+    "all-star game mvp": "All-Star Game MVP",
+    "alcs mvp": "ALCS MVP",
+    "nlcs mvp": "NLCS MVP",
     "cy young": "Cy Young",
     "heisman": "Heisman",
     "ballon dor": "Ballon d'Or",
+}
+
+# The family key is sport-free on purpose (see `family_scope`), so a title
+# that only one sport uses is keyed by sport as well.  "championship game mvp"
+# holds the Super Bowl MVP AND the World Series MVP: the Dodgers and Red Sox
+# pages headed Ohtani 13% / Freeman 9% "Championship Game MVP", which is
+# football's word — baseball has no championship game (#9855).  A scope with
+# no entry here (or no sport at all) keeps the neutral override above.
+_SPORT_LABEL_OVERRIDES = {
+    ("baseball", "championship game mvp"): "World Series MVP",
+    ("football", "championship game mvp"): "Super Bowl MVP",
 }
 
 
@@ -575,6 +606,14 @@ def _rows_for_market(market: dict, fk: str) -> list[dict]:
     if entity_from_name:
         prob, top_outcome, winner = _market_row_prob(outcomes)
         settled, result = _settled_status(market, winner)
+        if fk == "next team" and settled and winner is None:
+            # #6622: the team page reaches a player's Next Team market through
+            # this team's own leg, so a closed question with no winner among
+            # the legs it holds went somewhere else (Bobrovsky → Toronto on the
+            # Kraken page) or was withdrawn (Polymarket archived Quinn Hughes).
+            # Neither is this team's story; the row printed "No result" beside
+            # the leg's last price. A leg that won keeps its row.
+            return []
         row = _make_row(
             entity=entity_from_name, market_id=market_id, outcome_id=None,
             probability=prob, source=source, group_id=group_id, market=market,
@@ -757,11 +796,23 @@ def _collapse_cross_source(rows: list[dict]) -> list[dict]:
     return [_merge_rows(grp) for grp in groups.values()]
 
 
-def _family_label(fk: str) -> str:
+# Words the label prints in capitals.  The family key is lower-cased, so a
+# league code that survives into it ("al reliever of the year") came out of
+# ``capitalize`` as the NAME "Al" — "Al Reliever Of The Year" on every AL/NL
+# award card of every MLB team page (#9769).
+_UPPERCASE_LABEL_WORDS = frozenset({
+    "mvp", "roy", "dpoy",
+    "al", "nl", "ap", "nba", "wnba", "nfl", "afc", "nfc", "mlb", "nhl", "mls",
+})
+
+
+def _family_label(fk: str, scope: str | None = None) -> str:
+    if (scope, fk) in _SPORT_LABEL_OVERRIDES:
+        return _SPORT_LABEL_OVERRIDES[(scope, fk)]
     if fk in _LABEL_OVERRIDES:
         return _LABEL_OVERRIDES[fk]
     return " ".join(
-        w.upper() if w in ("mvp", "roy", "dpoy") else w.capitalize()
+        w.upper() if w in _UPPERCASE_LABEL_WORDS else w.capitalize()
         for w in fk.split()
     )
 
@@ -954,9 +1005,10 @@ def group_prop_families(markets: list[dict]) -> list[dict]:
                 # The emitted key carries the scope ONLY when a sport actually
                 # split this family, so it stays unique per card; the LABEL is
                 # always derived from the bare key, because a reader is owed
-                # "Defensive Player Of The Year", never "football:defensive…".
+                # "Defensive Player Of The Year", never "football:defensive…"
+                # — plus the sport, for a title only one sport uses (#9855).
                 "family_key": emitted_key,
-                "label": _family_label(fk),
+                "label": _family_label(fk, scope),
                 "sport": scope,
                 "entity_count": len(distinct),
                 "sources": sorted({s for r in merged for s in r.get("sources", [])}),

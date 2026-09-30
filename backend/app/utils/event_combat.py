@@ -788,6 +788,110 @@ def fold_venue_scoped_tokens(rosters: dict[str, list]) -> dict[str, str]:
     return survivor
 
 
+#: `events.commence_time_source` values whose clock is a real FIGHT START, and so
+#: may be carried onto another card by :func:`rekey_bouts_onto_ticker_cards`.
+#: An allowlist: ``kalshi`` is a close stamp (gotcha #14), and a row with no
+#: recorded source keeps the card it has.
+_SCHEDULE_CLOCK_SOURCES = frozenset({"odds_api"})
+
+
+def rekey_bouts_onto_ticker_cards(
+    event_bouts: dict[str, list], ticker_rosters: dict[str, list]
+) -> dict[str, list]:
+    """Move a schedule bout onto the ADJACENT-day ticker card that lists it. #8263.
+
+    `_list_event_bouts` keys a schedule row by its UTC date, and a US fight night
+    does not respect one. The Odds API holds "Floyd Scholfield vs Lucas Bahdi" at
+    03:00Z Oct 11 — 11pm ET on Oct 10, the night Kalshi's
+    ``KXBOXING-26OCT10SCHOFIBAHDI`` names. The row keyed ``26oct11`` and joined
+    Takuma Inoue's card in Japan (08:00-11:00Z Oct 11), so on 2026-09-27
+    `/event/boxing/26oct11` listed the fight at 84/16 while `/event/boxing/26oct10`
+    headlined it at 85/14: one fight, two nights, two numbers. The rollover fold
+    cannot help — five hours separate the two groups, and a US night is not a
+    Japanese afternoon.
+
+    The ticker's date is the card's LOCAL date (gotcha #14 — it is the one date on
+    the row that is not a close stamp), so the ticker card is where the bout
+    belongs. The evidence is the one :func:`fold_venue_scoped_tokens` uses: a
+    SHARED BOUT, both fighters, under :func:`bouts_are_one_fight` with the
+    abbreviation arm off. A bout cannot be on two cards; two nights a day apart
+    are the only way one fight is priced on both.
+
+    Refused, and the bout keeps its own token:
+
+    * the bout's OWN token has a ticker fight naming it — it is already home;
+    * the matching ticker card is not an ADJACENT day — a rematch months later
+      is a different fight with the same two names;
+    * BOTH neighbours list it — no evidence picks one;
+    * a venue-SCOPED token (``26sep26ufcfightnight``) — ``ticker_rosters`` is
+      bare Kalshi tokens only; the scoped join is #7959's, on its own rule;
+    * a bout whose clock is not the schedule's
+      (:data:`_SCHEDULE_CLOCK_SOURCES`). #7993's rows are minted from Kalshi and
+      carry its CLOSE stamp; that function refuses to re-key them onto their
+      market's card because the stamp would date the real card, and this one
+      honours that. The move is safe only for a row whose time is a fight start.
+
+    Pure serve-time grouping. No row moves, nothing is absorbed (ruling 048):
+    the two rows stay two rows, and only the card they are listed under changes.
+    The return is a new dict with each list re-sorted by :func:`bout_order_key`,
+    or ``event_bouts`` itself when nothing moves.
+    """
+    from datetime import timedelta
+
+    keys_by_date: dict[object, tuple[str, list]] = {}
+    for token, names in ticker_rosters.items():
+        if token_scope(token):
+            continue
+        day = token_date(token)
+        if day is None:
+            continue
+        keys = [k for k in (bout_roster_key(n) for n in names) if k]
+        if keys:
+            keys_by_date[day] = (token, keys)
+    if not keys_by_date:
+        return event_bouts
+
+    def _lists(token: str, key) -> bool:
+        entry = keys_by_date.get(token_date(token))
+        return bool(entry) and any(bouts_are_one_fight(key, k) for k in entry[1])
+
+    moves: dict[int, str] = {}
+    for token, group in event_bouts.items():
+        day = token_date(token)
+        if day is None or token_scope(token):
+            continue
+        neighbours = [
+            keys_by_date[d][0]
+            for d in (day - timedelta(days=1), day + timedelta(days=1))
+            if d in keys_by_date
+        ]
+        if not neighbours:
+            continue
+        for bout in group:
+            if getattr(bout, "commence_time_source", None) not in (
+                _SCHEDULE_CLOCK_SOURCES
+            ):
+                continue
+            key = bout_roster_key(
+                f"{bout.home_team_name or ''} vs {bout.away_team_name or ''}"
+            )
+            if key is None or _lists(token, key):
+                continue
+            homes = [n for n in neighbours if _lists(n, key)]
+            if len(homes) == 1:
+                moves[id(bout)] = homes[0]
+
+    if not moves:
+        return event_bouts
+    out: dict[str, list] = {}
+    for token, group in event_bouts.items():
+        for bout in group:
+            out.setdefault(moves.get(id(bout), token), []).append(bout)
+    for group in out.values():
+        group.sort(key=bout_order_key)
+    return out
+
+
 def venue_bout_is_priced(name: str | None, outcome_names) -> bool:
     """Are these two outcomes the two FIGHTERS this bout's title names?
 
@@ -1720,13 +1824,27 @@ def card_bouts_are_priced_on_another_card(
     onto their market's card: their clock is Kalshi's close stamp, and letting it
     date the real card moves "Sat, Sep 26" to "Sun, Sep 27" on the rail (the
     date is rendered in UTC).
+
+    #8263: and the other card must be within a DAY of this one. #7993's shape
+    is a close stamp one UTC day late; a ticker dated weeks away is not that
+    shape. On 2026-09-27 Kalshi listed Takuma Inoue's Oct 11 card under
+    ``KXBOXING-26SEP27…`` tickers, and this test called the real card a phantom
+    the moment its one market-less bout left it.
     """
     rows = list(bouts or [])
     if not rows:
         return False
+    card_days = [d for d in (token_date(t) for t in card_tokens) if d is not None]
     for b in rows:
         tokens = ticker_tokens_by_event.get(getattr(b, "id", None)) or set()
         if not tokens or tokens & set(card_tokens):
+            return False
+        if not any(
+            abs((d - c).days) <= 1
+            for d in (token_date(t) for t in tokens)
+            if d is not None
+            for c in card_days
+        ):
             return False
     return True
 
@@ -2179,6 +2297,17 @@ async def list_card_concepts(
     _rollover = fold_rollover_tokens(_spans)
     cards, event_bouts = _apply_token_fold(cards, event_bouts, _rollover)
 
+    # #8263: a schedule bout keyed by its UTC date joins the adjacent-day ticker
+    # card that lists it. AFTER both folds, so a card they already made whole is
+    # never split by moving part of it; the page applies the same re-key.
+    event_bouts = rekey_bouts_onto_ticker_cards(
+        event_bouts,
+        {
+            t: [f["name"] for f in c["fights"] if not f["venue"]]
+            for t, c in cards.items()
+        },
+    )
+
     # #7993: the ticker card each events-only row is priced on, resolved through
     # the same rollover fold so it names a card that survives. Read only for
     # tokens no venue lists — the one branch the predicate may judge.
@@ -2493,12 +2622,29 @@ class CombatEventAdapter:
         self.cfg = cfg
         self.domain = cfg.domain
 
-    def _folded_card_tokens(self, target: str, markets, bouts_by_token) -> set[str]:
+    def _folded_card_tokens(
+        self, target: str, markets, bouts_by_token, roots=None
+    ) -> set[str]:
         """Every date-token that belongs to the card the slug names.
 
         One token in the ordinary case; two when the card crossed midnight UTC
         (#1712 shape 1). Either half of a folded card resolves to the whole of
-        it, so the pre-fold link keeps working.
+        it, so the pre-fold link keeps working. ``roots`` is a precomputed
+        :meth:`_card_token_roots` for a caller that needs the whole map too.
+        """
+        if roots is None:
+            roots = self._card_token_roots(markets, bouts_by_token)
+        root = roots.get(target, target)
+        tokens = {t for t, r in roots.items() if r == root}
+        tokens.add(target)
+        return tokens
+
+    def _card_token_roots(self, markets, bouts_by_token) -> dict[str, str]:
+        """``{token: surviving token}`` over every token the two folds see.
+
+        The whole map behind :meth:`_folded_card_tokens`, which #8263's re-key
+        needs too: it moves a bout between two SURVIVING cards, exactly as
+        `list_card_concepts` does after its folds.
         """
         # The feed lister and this page MUST fold identically (see the caller's
         # note), so both build their spans through the one helper — including
@@ -2554,14 +2700,10 @@ class CombatEventAdapter:
             joined = venue_survivor.get(token, token)
             return rollover.get(joined, joined)
 
-        root = _root(target)
-        tokens = {
-            t
+        return {
+            t: _root(t)
             for t in set(venue_survivor) | set(rollover) | set(bouts_by_token)
-            if _root(t) == root
         }
-        tokens.add(target)
-        return tokens
 
     async def build_event(self, slug: str, db: AsyncSession) -> dict | None:
         from datetime import datetime, timezone
@@ -2608,7 +2750,11 @@ class CombatEventAdapter:
         # fights and the page behind it would answer with the 6 that happened
         # before midnight; a stale link to the spillover token resolves onto the
         # whole card instead of half of it.
-        card_tokens = self._folded_card_tokens(target, markets, bouts_by_token)
+        _roots = self._card_token_roots(markets, bouts_by_token)
+        _root = _roots.get(target, target)
+        card_tokens = self._folded_card_tokens(
+            target, markets, bouts_by_token, roots=_roots
+        )
 
         # Collect this card's Kalshi FIGHTS: ticker date-token on the card AND
         # two-sided.
@@ -2629,10 +2775,19 @@ class CombatEventAdapter:
                 # can be priced; the card still lists the bout either way.
                 venue_bouts.append(m)
 
-        bouts = sorted(
-            (b for t in card_tokens for b in bouts_by_token.get(t, [])),
-            key=bout_order_key,
-        )
+        # #8263: the lister's re-key, on the same surviving cards and the same
+        # ticker rows, so a bout the feed files under the ticker's card is on
+        # that card's page — and off the page of the card it no longer joins.
+        _folded_bouts: dict[str, list] = {}
+        for t, group in bouts_by_token.items():
+            _folded_bouts.setdefault(_roots.get(t, t), []).extend(group)
+        _ticker_rosters: dict[str, list] = {}
+        for m in markets:
+            _t = card_token(cfg, m.external_id)
+            if _t is not None:
+                _ticker_rosters.setdefault(_roots.get(_t, _t), []).append(m.name)
+        _folded_bouts = rekey_bouts_onto_ticker_cards(_folded_bouts, _ticker_rosters)
+        bouts = sorted(_folded_bouts.get(_root, []), key=bout_order_key)
 
         if not fights:
             # No Kalshi markets for this card — resolve from the schedule alone.

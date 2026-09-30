@@ -577,6 +577,46 @@ def doubles_side_keys(name: object) -> Optional[tuple[TennisKey, TennisKey]]:
     return (first, second)
 
 
+#: Surname particles one venue may drop from the FRONT of a doubles side (#9789).
+#: Deliberately short: ``le``, ``la`` and ``do`` are left out because each is
+#: also a whole surname on the tour (``Le``, ``Do``), and the rule below would
+#: then read a second family name as a particle.
+SURNAME_PARTICLES = frozenset(
+    {"van", "von", "de", "der", "den", "del", "della", "da", "das", "dos", "di", "du"}
+    | {"des", "ter", "ten"}
+)
+
+
+def _doubles_surnames_agree(a: str, b: str) -> bool:
+    """Equal, or one is the other with a run of particles written in front of it.
+
+    ``van assche`` and ``assche`` agree; ``van assche`` and ``de assche`` do not:
+    both carry a particle and they differ, so that is two surnames, not one
+    spelling dropped. Only a LEADING run is stripped, only from one side, and
+    what is left must hold a real (non-particle) token, so ``van der`` cannot
+    reach ``der``.
+    """
+    if a == b:
+        return True
+    long, short = sorted((a.split(), b.split()), key=len, reverse=True)
+    extra = long[: len(long) - len(short)]
+    return (
+        bool(short)
+        and long[len(extra) :] == short
+        and all(t in SURNAME_PARTICLES for t in extra)
+        and any(t not in SURNAME_PARTICLES for t in short)
+    )
+
+
+def _doubles_keys_agree(ours: TennisKey, theirs: TennisKey) -> bool:
+    """:func:`keys_agree` with a dropped particle forgiven, for doubles only."""
+    if not _doubles_surnames_agree(ours[0], theirs[0]):
+        return False
+    if ours[1] is None or theirs[1] is None:
+        return True
+    return ours[1] == theirs[1]
+
+
 def doubles_teams_agree(ours: object, theirs: object) -> bool:
     """Are these two doubles names the same TEAM?
 
@@ -614,12 +654,26 @@ def doubles_teams_agree(ours: object, theirs: object) -> bool:
     refuses as AMBIGUOUS naming the two. That is the loud failure this module is
     biased toward, and it is the correct reading: the two rows are a twin
     (#2878, D39/#2693), and stamping either one buries it.
+
+    ═══ A DROPPED PARTICLE IS ONE SURNAME (#9789) ═══
+
+    Polymarket writes ``Tabilo/Assche``; StatPal and Kalshi write ``Tabilo/ van
+    Assche``. Whole-surname equality read those as two players, so the Tokyo
+    match never got its StatPal id and stayed two rows. The comparison is
+    therefore :func:`_doubles_keys_agree`: the same rule as `keys_agree`, but
+    it forgives a run of :data:`SURNAME_PARTICLES` written in front of the
+    surname on one side only. #4617 keeps a multi-token surname whole, and it
+    still does: ``van assche`` cannot reach ``de assche``, and a bare particle
+    cannot reach anything. It is doubles-only because a doubles join already
+    requires all four players to agree inside the time window. The singles
+    join has no such second check, and no singles specimen needs it yet.
     """
     a, b = doubles_side_keys(ours), doubles_side_keys(theirs)
     if a is None or b is None:
         return False
-    straight = keys_agree(a[0], b[0]) and keys_agree(a[1], b[1])
-    crossed = keys_agree(a[0], b[1]) and keys_agree(a[1], b[0])
+    agree = _doubles_keys_agree
+    straight = agree(a[0], b[0]) and agree(a[1], b[1])
+    crossed = agree(a[0], b[1]) and agree(a[1], b[0])
     return straight or crossed
 
 

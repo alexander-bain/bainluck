@@ -12,6 +12,7 @@ PING heartbeat every 8 seconds to keep connection alive.
 import asyncio
 import json
 import logging
+import random
 from typing import Any, Callable, Optional
 
 logger = logging.getLogger(__name__)
@@ -89,6 +90,81 @@ MAX_ASSETS_PER_CONNECTION = 500
 # fleet-wide multiple in hand, never to clear a single observation.
 MAX_MESSAGE_BYTES = 8 * 1024 * 1024
 
+#: Messages `websockets` may hold received-but-unread per connection. Its own
+#: default, stated so the per-shard memory bound is written down rather than
+#: inherited: the worst case one connection can hold is this many messages of
+#: up to MAX_MESSAGE_BYTES plus the one being assembled. A client that runs many
+#: shards (#9484's open-contract arm) passes a smaller number.
+DEFAULT_MAX_QUEUE_MESSAGES = 16
+
+# #9484 — RECONNECT SAFEGUARDS, because one client may now hold ~70 connections
+# and every one of them used to reconnect the instant its socket closed. Three
+# holes, all in `_run_one`, all harmless at 7 shards and a storm at 70:
+#
+#   * A CLEAN close (the venue ends the socket without an error) fell straight
+#     back into `connect` with no sleep at all, so a venue that closed on
+#     subscribe was re-dialled in a tight loop.
+#   * The backoff was reset to its floor the moment a handshake succeeded, so a
+#     socket that connected and dropped every second never backed off.
+#   * Every retry slept the same deterministic delay, so shards that dropped
+#     together re-dialled together.
+#
+# So the backoff resets only once a connection has lasted
+# STABLE_CONNECTION_SECONDS, a clean close sleeps at least CLEAN_CLOSE_FLOOR,
+# and every sleep is jittered. None of these waits applies while a socket is
+# up — they only space out re-dials.
+INITIAL_BACKOFF_SECONDS = 1.0
+MAX_BACKOFF_SECONDS = 60.0
+STABLE_CONNECTION_SECONDS = 60.0
+CLEAN_CLOSE_FLOOR_SECONDS = 1.0
+
+#: How long a handshake permit (see `PolymarketWebSocket(max_concurrent_
+#: handshakes=...)`) is held after the subscribe is sent, waiting for the
+#: venue's first frame — the initial book dump. Released as soon as that frame
+#: has been received and parsed, so concurrent dumps are bounded by the permit
+#: count; the timeout only frees the permit of a shard whose books are silent.
+HANDSHAKE_PERMIT_HOLD_SECONDS = 10.0
+
+
+def _jittered(delay: float) -> float:
+    """``delay`` scaled into [delay/2, delay], so siblings do not re-dial in step."""
+    return delay * (0.5 + random.random() / 2)
+
+
+class _HandshakePermit:
+    """One shard's hold on the client's handshake gate. Release is idempotent.
+
+    Held from before `connect` until the venue's first frame (or the hold
+    timeout), never for the life of the subscription: the gate bounds how many
+    shards are dialling and receiving their initial dump at once, not how many
+    stay subscribed.
+    """
+
+    def __init__(self, gate: Optional[asyncio.Semaphore]):
+        self._gate = gate
+        self._held = False
+        self._timer: Optional[asyncio.TimerHandle] = None
+
+    async def acquire(self) -> None:
+        if self._gate is not None:
+            await self._gate.acquire()
+            self._held = True
+
+    def release_after(self, seconds: float) -> None:
+        if self._held and self._timer is None:
+            self._timer = asyncio.get_running_loop().call_later(
+                seconds, self.release
+            )
+
+    def release(self) -> None:
+        if self._timer is not None:
+            self._timer.cancel()
+            self._timer = None
+        if self._held:
+            self._held = False
+            self._gate.release()
+
+
 # How long a shard must have been connected before a silent one is worth
 # mentioning. Long enough that an ordinary quiet stretch is not the reason.
 COVERAGE_GRACE_SECONDS = 120
@@ -126,6 +202,54 @@ def _assets_in(message: Any) -> set[str]:
                 if isinstance(change, dict) and change.get("asset_id"):
                     found.add(change["asset_id"])
     return found
+
+
+def _snapshot_quotes(message: Any) -> list[dict]:
+    """A ``best_bid_ask``-shaped quote for every book in a snapshot frame.
+
+    #9733. The venue answers a subscribe with the current book of every asset
+    it serves (a LIST of ``event_type: book`` entries; a lone ``book`` dict is
+    the same thing). This client used to discard it, so only a CHANGE moved a
+    leg: a quiet book that moved while we were disconnected (every recycle) or
+    before the leg was admitted stayed frozen until it moved again. Kittle
+    524.5+ receiving yards, market 61352683, read Yes 77% / No 10% for hours
+    while the venue's book sat at 0.80/0.87 and 0.13/0.20.
+
+    Top of book is read by value, never by position: the venue lists bids
+    ascending and asks descending, so ``[-1]`` happens to be best today and
+    ``[0]`` is the worst quote on each side. A side with no quote gets no
+    field, and the price handler refuses a half-empty book as it always has.
+    """
+    out: list[dict] = []
+    for entry in message if isinstance(message, list) else [message]:
+        if not isinstance(entry, dict):
+            continue
+        asset_id = entry.get("asset_id") or entry.get("assetId")
+        if not asset_id:
+            continue
+        best: dict[str, Optional[float]] = {}
+        for side, pick in (("bids", max), ("asks", min)):
+            prices = []
+            for level in entry.get(side) or []:
+                try:
+                    prices.append(float(level["price"]))
+                except (KeyError, TypeError, ValueError):
+                    continue
+            best[side] = pick(prices) if prices else None
+        if best["bids"] is None or best["asks"] is None:
+            continue
+        out.append(
+            {
+                "event_type": "best_bid_ask",
+                "asset_id": asset_id,
+                "market": entry.get("market"),
+                "best_bid": str(best["bids"]),
+                "best_ask": str(best["asks"]),
+                "timestamp": entry.get("timestamp"),
+                "book_snapshot": True,
+            }
+        )
+    return out
 
 
 def _evenly_spaced(items: list[str], limit: int) -> list[str]:
@@ -239,9 +363,25 @@ class PolymarketWebSocket:
         await ws.run(asset_ids=["token1", "token2"])
     """
 
-    def __init__(self):
+    def __init__(
+        self,
+        max_concurrent_handshakes: Optional[int] = None,
+        max_queue: int = DEFAULT_MAX_QUEUE_MESSAGES,
+        price_book_snapshots: bool = False,
+    ):
         self._message_count = 0
+        # #9733: hand each book in a snapshot frame to `on_price` as a quote.
+        # Off by default, so the game socket and the shadow consumer keep
+        # their behaviour; the open-contract client turns it on.
+        self._price_book_snapshots = price_book_snapshots
+        self._book_snapshot_quotes = 0
         self._reconnect_count = 0
+        # #9484: None keeps every shard free to dial at once (the game slate's
+        # handful). A client with many shards bounds how many dial and take
+        # their initial dump concurrently; see `_HandshakePermit`.
+        self._max_concurrent_handshakes = max_concurrent_handshakes
+        self._handshake_gate: Optional[asyncio.Semaphore] = None
+        self._max_queue = max_queue
 
         # #837 coverage: what we asked the venue for, against what it has
         # actually sent us. Per shard, because the silent-fraction signature is
@@ -296,6 +436,12 @@ class PolymarketWebSocket:
         self._shard_wire = {i: set() for i in range(len(shards))}
         self._shards_connected = set()
         self._shard_connected_at = {}
+        # Built here, inside the running loop, and fresh per run.
+        self._handshake_gate = (
+            asyncio.Semaphore(max(1, int(self._max_concurrent_handshakes)))
+            if self._max_concurrent_handshakes
+            else None
+        )
 
         if asset_ids and len(shards) > 1:
             logger.info(
@@ -414,11 +560,14 @@ class PolymarketWebSocket:
         """One connection: subscribe, stream, reconnect. The original loop."""
         import websockets
 
-        backoff = 1.0
-        max_backoff = 60.0
+        backoff = INITIAL_BACKOFF_SECONDS
+        loop = asyncio.get_running_loop()
 
         while True:
+            permit = _HandshakePermit(self._handshake_gate)
+            connected_at: Optional[float] = None
             try:
+                await permit.acquire()
                 async with websockets.connect(
                     WS_URL,
                     ping_interval=None,
@@ -426,9 +575,11 @@ class PolymarketWebSocket:
                     # The initial dump for a full shard is one message over the
                     # library's 1 MiB default; see MAX_MESSAGE_BYTES.
                     max_size=MAX_MESSAGE_BYTES,
+                    max_queue=self._max_queue,
                 ) as ws:
+                    connected_at = loop.time()
                     self._shards_connected.add(shard)
-                    self._shard_connected_at[shard] = asyncio.get_running_loop().time()
+                    self._shard_connected_at[shard] = connected_at
                     if self._reconnect_count > 0:
                         logger.info(
                             "Polymarket WS shard %d reconnected (attempt %d)",
@@ -438,7 +589,6 @@ class PolymarketWebSocket:
                     else:
                         logger.info("Polymarket WS shard %d connected", shard)
                     self._reconnect_count += 1
-                    backoff = 1.0
 
                     frame = _subscribe_frame(asset_ids)
                     await ws.send(frame)
@@ -448,6 +598,9 @@ class PolymarketWebSocket:
                         f"{len(asset_ids)} assets" if asset_ids else "all",
                         len(frame.encode("utf-8")),
                     )
+                    # #9484: the permit rides until the initial dump lands (the
+                    # first frame, below) or this timeout, whichever is first.
+                    permit.release_after(HANDSHAKE_PERMIT_HOLD_SECONDS)
 
                     # Heartbeat task
                     async def heartbeat():
@@ -470,6 +623,10 @@ class PolymarketWebSocket:
                                 data = json.loads(raw)
                             except (json.JSONDecodeError, TypeError):
                                 continue
+                            finally:
+                                # First frame received and parsed — the dump is
+                                # no longer in flight. Idempotent after that.
+                                permit.release()
 
                             # #837 coverage is counted HERE — on the wire, above
                             # every skip and before any event_type or handler
@@ -493,11 +650,19 @@ class PolymarketWebSocket:
                                     on_wire
                                 )
 
-                            if isinstance(data, list):
-                                # book snapshot — skip for now
-                                continue
+                            event_type = (
+                                "book"
+                                if isinstance(data, list)
+                                else data.get("event_type", "")
+                            )
 
-                            event_type = data.get("event_type", "")
+                            if event_type == "book":
+                                # #9733: the venue's current book. Priced only
+                                # by a client that asked for it; skipped by
+                                # every other, as before.
+                                if self._price_book_snapshots and self.on_price:
+                                    await self._price_snapshot(data)
+                                continue
 
                             if event_type == "best_bid_ask" and self.on_price:
                                 try:
@@ -554,14 +719,31 @@ class PolymarketWebSocket:
 
             except Exception as e:
                 self._mark_shard_down(shard)
-                logger.warning(
-                    "Polymarket WS disconnected (%s: %s), reconnecting in %.0fs",
-                    type(e).__name__,
-                    str(e)[:100],
-                    backoff,
-                )
-                await asyncio.sleep(backoff)
-                backoff = min(backoff * 2, max_backoff)
+                reason = f"{type(e).__name__}: {str(e)[:100]}"
+                floor = 0.0
+            else:
+                # #9484: a CLEAN close used to re-dial with no sleep at all.
+                reason = "closed cleanly"
+                floor = CLEAN_CLOSE_FLOOR_SECONDS
+            finally:
+                permit.release()
+
+            # #9484: only a connection that held earns the backoff its reset;
+            # one that drops straight after its handshake keeps backing off.
+            if (
+                connected_at is not None
+                and loop.time() - connected_at >= STABLE_CONNECTION_SECONDS
+            ):
+                backoff = INITIAL_BACKOFF_SECONDS
+            delay = _jittered(max(backoff, floor))
+            logger.warning(
+                "Polymarket WS shard %d disconnected (%s), reconnecting in %.1fs",
+                shard,
+                reason,
+                delay,
+            )
+            await asyncio.sleep(delay)
+            backoff = min(backoff * 2, MAX_BACKOFF_SECONDS)
 
     @property
     def is_connected(self) -> bool:
@@ -661,6 +843,17 @@ class PolymarketWebSocket:
             sample[shard] = _evenly_spaced(unserved, limit)
         return sample
 
+    async def _price_snapshot(self, data: Any) -> None:
+        """Each book in a snapshot frame, through `on_price` like a quote."""
+        for quote in _snapshot_quotes(data):
+            self._book_snapshot_quotes += 1
+            try:
+                result = self.on_price(quote)
+                if asyncio.iscoroutine(result):
+                    await result
+            except Exception:
+                logger.exception("Polymarket book snapshot price handler error")
+
     @property
     def stats(self) -> dict:
         served = {i: len(s) for i, s in self._served_by_shard().items()}
@@ -701,4 +894,6 @@ class PolymarketWebSocket:
             # to intersect against.
             "assets_on_wire": sum(on_wire.values()),
             "on_wire_by_shard": on_wire,
+            # #9733: books from snapshot frames handed to `on_price`.
+            "book_snapshot_quotes": self._book_snapshot_quotes,
         }

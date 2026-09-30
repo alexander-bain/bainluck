@@ -5,8 +5,9 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import useSWR from "swr";
-import { fetchEvent, fetchEventHistory, fetchGameMarkets, fetchTeamProgression, fetchEventTournament, formatProbability } from "@/lib/api";
-import type { EventTournamentResponse, TeamProgressionResponse } from "@/lib/types";
+import { useGameMarketsStream } from "@/hooks/useGameMarketsStream";
+import { fetchEvent, fetchEventHistory, fetchTeamProgression, fetchEventTournament, formatProbability } from "@/lib/api";
+import type { EventDetailResponse, EventTournamentResponse, TeamProgressionResponse } from "@/lib/types";
 import { EVENT_BOOT_HISTORY_HOURS } from "@/lib/event/detailBoot";
 import {
   EVENT_SLOW_LOAD_NOTICE_MS,
@@ -22,11 +23,13 @@ import { withoutEventOwnMoneyline } from "@/lib/eventOwnMoneyline";
 import { eventPageProjectedPair } from "@/lib/projectedFinalPair";
 import { teamTextColor } from "@/lib/teamColors";
 import { useLiveEventStream, type LiveFrame } from "@/hooks/useLiveEventStream";
-import { fetchEventWithLiveFrame } from "@/lib/reconcileEventPoll";
-import { appendHeroObservation, mergeLiveChartHistory } from "@/lib/liveChartHistory";
+import { fetchEventWithLiveFrame, keepNewerHeldHeadline } from "@/lib/reconcileEventPoll";
+import { appendHeroObservation, mergeLiveChartHistory, quoteChartFrames } from "@/lib/liveChartHistory";
+import { canSubscribeEventQuotes, quotePairCoversTrigger } from "@/lib/eventQuoteStream";
 import FreshnessChip from "@/components/event/FreshnessChip";
 import {
   applyLiveFrame,
+  frameInvalidatesFoldedBlend,
   eventFeedIsStalled,
   makeEventRefreshInterval,
   pageLiveClaimIsUnbacked,
@@ -41,6 +44,7 @@ import {
   liveHeroGamesLine,
 } from "@/lib/eventOutcome";
 import SettledOutcomeHero from "@/components/event/SettledOutcomeHero";
+import FinalGameWinnerQuote from "@/components/event/FinalGameWinnerQuote";
 const ChartSkeleton = () => <div className="animate-pulse h-48 bg-surface-card rounded-xl" />;
 const OddsChart = dynamic(() => import("@/components/OddsChart"), { ssr: false, loading: ChartSkeleton });
 const ScoreDifferentialChart = dynamic(() => import("@/components/ScoreDifferentialChart"), { ssr: false, loading: ChartSkeleton });
@@ -120,10 +124,13 @@ import {
   VENUE_SETTLED_DESCRIPTION,
   blendCaptionIsStale,
   hasNoReportedResult,
+  serverHeldPastKickoff,
   isFinishedStatus,
+  playedBeforeItsClock,
   startBadgeLabel,
   suspendedSummary,
   venueSettledSummary,
+  isVenueVoided,
   authorityStoppageDescription,
   scoresShowPlay,
 } from "@/lib/eventState";
@@ -137,9 +144,12 @@ import { confidenceFromSources, countProbabilitySources } from "@/lib/confidence
 import { pinChartEdgeToHero } from "@/lib/chartEdgePin";
 import {
   adoptNewerBlendEdge,
+  edgeInvalidatesHeldBlend,
   servedBlendEdgeObservation,
   type BlendEdgeObservation,
 } from "@/lib/blendObservationClock";
+import { createFoldedRefetchScheduler, takeFreshRead } from "@/lib/foldedRefetchScheduler";
+import { chartRevisionRefreshKey } from "@/lib/chartRevisionRefresh";
 import {
   SPORT_KEY_TO_LEAGUE_PATH,
   hasAnyWinProbData,
@@ -181,6 +191,8 @@ function heroCrestImage(
 }
 
 const LIVE_REFRESH_INTERVAL = 32000; // Match backend LIVE_POLL_INTERVAL (32s)
+/** #9051: floor between detail refetches a folded hero asks for on refused frames. */
+const FOLDED_FRAME_REFETCH_MS = 1000;
 const SCHEDULED_REFRESH_INTERVAL = 120000;
 
 export default function EventPage({ params }: EventPageProps) {
@@ -223,9 +235,16 @@ export default function EventPage({ params }: EventPageProps) {
   // live/034 S2 — see the `refreshInterval` note below. Declared here because
   // the SWR config closes over it and the hook that sets it needs `event`.
   const streamConnectedRef = useRef(false);
+  // Consume refresh intent in the fetcher, so deduped SWR requests retain it.
+  // Ordinary interval reads continue using the shared server cache.
+  const freshNextEventReadRef = useRef(false);
+  const freshNextHistoryReadRef = useRef(false);
   const latestLiveFrameRef = useRef<LiveFrame | null>(null);
   // #8749: the served history's pinned edge, for the poll reconcile below.
   const latestBlendEdgeRef = useRef<BlendEdgeObservation | null>(null);
+  // #9051: the headline the page holds (written after the hook), for the poll
+  // reconcile and the refuse-and-refetch checks below.
+  const heldEventRef = useRef<EventDetailResponse | undefined>(undefined);
 
   // #7621 — ONE callback for the life of the mount, and that is the whole fix.
   //
@@ -258,9 +277,10 @@ export default function EventPage({ params }: EventPageProps) {
   } = useSWR(
     ["event", eventId],
     () => fetchEventWithLiveFrame(
-      () => fetchEvent(eventId),
+      () => fetchEvent(eventId, takeFreshRead(freshNextEventReadRef)),
       () => latestLiveFrameRef.current,
       () => latestBlendEdgeRef.current,
+      () => heldEventRef.current,
     ),
     {
       // live/034 S2 — when the SSE stream is delivering, the 32s poll stands
@@ -290,6 +310,28 @@ export default function EventPage({ params }: EventPageProps) {
       onSuccess: () => setLastRefresh(Date.now()),
     }
   );
+  // #9051: a ref, so the push effect does not re-run — and re-apply its frame —
+  // on every cache write.
+  heldEventRef.current = event;
+  // #9051: "this held blend cannot be ordered, read detail again" — rate-limited,
+  // with a trailing refetch so a burst's last request is never lost.
+  // Through a ref: `refreshEvent` is bound to this page's key, which changes
+  // when a client-side navigation reuses the component for another event.
+  const pairedQuoteReadRef = useRef<(() => Promise<unknown>) | null>(null);
+  const quoteTriggerRef = useRef<LiveFrame | null>(null);
+  const quoteEventIdRef = useRef(eventId);
+  if (quoteEventIdRef.current !== eventId) quoteTriggerRef.current = null;
+  quoteEventIdRef.current = eventId;
+  const refreshEventRef = useRef(refreshEvent);
+  refreshEventRef.current = refreshEvent;
+  const [foldedRefetch] = useState(() => createFoldedRefetchScheduler(
+    () => {
+      if (quoteTriggerRef.current && pairedQuoteReadRef.current) return pairedQuoteReadRef.current();
+      freshNextEventReadRef.current = true;
+      return refreshEventRef.current();
+    }, FOLDED_FRAME_REFETCH_MS,
+  ));
+  useEffect(() => () => foldedRefetch.cancel(), [foldedRefetch]);
 
   // ── Q050: this url named a duplicate, so correct the url ─────────────────
   //
@@ -340,13 +382,14 @@ export default function EventPage({ params }: EventPageProps) {
   const refreshInterval = isLive ? LIVE_REFRESH_INTERVAL : SCHEDULED_REFRESH_INTERVAL;
 
   // ── live/034 S2 — SSE push ────────────────────────────────────────────────
-  // Live events only, per the ruling; everything else keeps polling. The number
+  // Quote delivery is independent of the sports badge. The number
   // in the database was already live (worker-ws flushes every 2s, the blend is
   // stamped at most once per event per 5s) — it was the 32s poll that made it
   // look stale on screen.
+  const quoteEligible = canSubscribeEventQuotes(event);
   const { frame: liveFrame, connected: streamConnected, chartPoints } = useLiveEventStream(
     eventId,
-    isLive,
+    quoteEligible,
   );
   streamConnectedRef.current = streamConnected;
 
@@ -355,8 +398,29 @@ export default function EventPage({ params }: EventPageProps) {
   // writes, so the hero, the sources rail and every other consumer stay
   // consistent and nothing downstream needs to know push exists.
   useEffect(() => {
-    if (!liveFrame || liveFrame.event_id !== eventId
-        || liveFrame.p === null || liveFrame.p === undefined) return;
+    if (!liveFrame || liveFrame.event_id !== eventId) return;
+    // #9051: a FOLDED hero (canonical + twins) refuses a raw-row frame, which
+    // would otherwise hold it until the stream-connected 120s poll. The frame
+    // still says the blend moved: refetch the folded detail — and write nothing
+    // this tick, because swr drops a fetch that a later mutation (even a no-op
+    // `applyLiveFrame` returning `prev`) post-dates. See the scheduler.
+    const held = heldEventRef.current;
+    if (held && canSubscribeEventQuotes(held) && (
+      liveFrame.p === null || held.hero_probability_source !== "blend" ||
+      (liveFrame.status && liveFrame.status !== held.status) ||
+      (held.status !== "live" && frameInvalidatesFoldedBlend(held, liveFrame))
+    )) {
+      quoteTriggerRef.current = liveFrame;
+      foldedRefetch.request();
+      return;
+    }
+    if (frameInvalidatesFoldedBlend(heldEventRef.current, liveFrame)) {
+      foldedRefetch.request();
+      return;
+    }
+    // #9294: contributor notifications invalidate the fold without carrying
+    // an adoptable price. Never install one as a price or replay it on a poll.
+    if (liveFrame.p === null || liveFrame.p === undefined) return;
     latestLiveFrameRef.current = liveFrame;
     const frame = { ...liveFrame, p: liveFrame.p };
     refreshEvent(
@@ -369,7 +433,7 @@ export default function EventPage({ params }: EventPageProps) {
       { revalidate: false },
     );
     setLastRefresh(Date.now());
-  }, [liveFrame, refreshEvent, eventId]);
+  }, [liveFrame, refreshEvent, eventId, foldedRefetch]);
 
   // The freshest write across all sources — what the age stamp counts from.
   // MAX, not the pushed frame's own stamp: the hero is a blend, and its age is
@@ -454,7 +518,12 @@ export default function EventPage({ params }: EventPageProps) {
   // #4015 exists precisely so the hero badge, the games map (`noResultReported`)
   // and the projected-final suppression cannot answer this question three ways.
   const isSuspended =
-    hasNoReportedResult(event?.status, event?.commence_time) || liveClaimUnbacked;
+    hasNoReportedResult(
+      event?.status,
+      event?.commence_time,
+      undefined,
+      event?.started_without_result,
+    ) || liveClaimUnbacked;
 
   // #6381 — WHAT THAT STATE SAYS, when a source that carried this match's
   // markets has already graded it. Null on every other row, so the badge keeps the sentence
@@ -468,8 +537,20 @@ export default function EventPage({ params }: EventPageProps) {
   // Only the words were wrong. The page keeps its ONE `hasNoReportedResult`
   // answer (#4015) and gains one string derived from it.
   const venueSettledSentence = isSuspended
-    ? venueSettledSummary(event?.venue_settled, event?.venue_settled_result)
+    ? venueSettledSummary(
+        event?.venue_settled,
+        event?.venue_settled_result,
+        event?.venue_closed_no_winner,
+      )
     : null;
+
+  // #9798 — and whether that close was a VOID. Not `venueSettledSentence !==
+  // null`: the sentence is the same honest pill for both, but the market rows
+  // under it mean opposite things. A void pays every leg at the void price
+  // (`is_winner=false` on both sides, 0.5), so the settled reading printed
+  // "Lost" beside both players and the 0.5 read as a coin-flip price. The
+  // Additional Markets section says "Void" instead, and the maps stand down.
+  const venueVoided = isVenueVoided(event?.venue_settled, event?.venue_closed_no_winner);
 
   // #8810 — and the AUTHORITY'S word, when it reported the match stopped before
   // it could be played ("Postponed"). Same shape as #6381: beside `isSuspended`,
@@ -673,6 +754,8 @@ export default function EventPage({ params }: EventPageProps) {
      page's setter. Keying on the resulting RANGE rather than on the tap is what
      makes all three one code path. */
   const [fullHistoryRequested, setFullHistoryRequested] = useState(false);
+  const quoteHistoryRangeRef = useRef(fullHistoryRequested);
+  quoteHistoryRangeRef.current = fullHistoryRequested;
 
   const {
     data: servedHistory,
@@ -689,7 +772,8 @@ export default function EventPage({ params }: EventPageProps) {
       fetchEventHistory(
         eventId,
         EVENT_BOOT_HISTORY_HOURS,
-        historyRangeParam(fullHistoryRequested)
+        historyRangeParam(fullHistoryRequested),
+        takeFreshRead(freshNextHistoryReadRef)
       ),
     {
       refreshInterval: isLive ? LIVE_REFRESH_INTERVAL : SCHEDULED_REFRESH_INTERVAL,
@@ -709,17 +793,56 @@ export default function EventPage({ params }: EventPageProps) {
   // for detail/history responses served by different workers.
   const historyData = useMemo(
     () => {
-      const pushed = mergeLiveChartHistory(servedHistory, isLive ? chartPoints : []);
+      const pushed = mergeLiveChartHistory(servedHistory, quoteEligible ? quoteChartFrames(chartPoints, event) : []);
       // A push is an observation at its own time, not permission to rewrite
       // the previous poll's endpoint with today's hero value (#920).
       const joined = pushed !== servedHistory ? pushed : pinChartEdgeToHero(servedHistory, event);
       // #8749: and so is the blend a detail refresh delivered — when it is
       // newer than the line's edge, the line gets it at its own clock, so the
       // headline never moves alone.
-      return isLive ? appendHeroObservation(joined, event, servedHistory) : joined;
+      return quoteEligible ? appendHeroObservation(joined, event, servedHistory) : joined;
     },
-    [servedHistory, event, isLive, chartPoints],
+    [servedHistory, event, quoteEligible, chartPoints],
   );
+
+  // A newer membership revision may carry an older surviving quote. Keep the
+  // real chart observations and ask history for its current-state endpoint;
+  // never give that quote a made-up timestamp or refetch for ordinary pushes.
+  const refreshHistoryRef = useRef(refreshHistory);
+  refreshHistoryRef.current = refreshHistory;
+  // Read BOTH authoritative halves before leaving an opening/nonblend label.
+  // The scheduler keeps one trailing request when another invalidation lands.
+  pairedQuoteReadRef.current = async () => {
+    const readingEventId = eventId;
+    const trigger = quoteTriggerRef.current;
+    const [detail, history] = await Promise.all([
+      fetchEvent(readingEventId, true),
+      fetchEventHistory(readingEventId, EVENT_BOOT_HISTORY_HOURS,
+        historyRangeParam(fullHistoryRequested), true),
+    ]);
+    if (quoteEventIdRef.current !== readingEventId || quoteHistoryRangeRef.current !== fullHistoryRequested ||
+        !quotePairCoversTrigger(detail, history, readingEventId, quoteTriggerRef.current?.rev)) return;
+    await Promise.all([
+      refreshHistoryRef.current(history, { revalidate: false }),
+      refreshEventRef.current(keepNewerHeldHeadline(detail, heldEventRef.current), { revalidate: false }),
+    ]);
+    if (quoteTriggerRef.current === trigger) quoteTriggerRef.current = null;
+    setLastRefresh(Date.now());
+  };
+
+  const [foldedHistoryRefetch] = useState(() => createFoldedRefetchScheduler(
+    () => { freshNextHistoryReadRef.current = true; return refreshHistoryRef.current(); }, FOLDED_FRAME_REFETCH_MS,
+  ));
+  useEffect(() => () => foldedHistoryRefetch.cancel(), [foldedHistoryRefetch]);
+  const requestedChartRevisionRef = useRef<string | null>(null);
+  useEffect(() => {
+    const revision = chartRevisionRefreshKey(event, servedHistory, historyData);
+    if (revision === null) return;
+    const key = `${eventId}:${fullHistoryRequested}:${revision}`;
+    if (requestedChartRevisionRef.current === key) return;
+    requestedChartRevisionRef.current = key;
+    foldedHistoryRefetch.request();
+  }, [event, servedHistory, historyData, eventId, fullHistoryRequested, foldedHistoryRefetch]);
 
   // #8749 / #837: the other direction. A history response whose pinned edge
   // was OBSERVED after the headline's blend (PR #8758's clocks — never the
@@ -729,8 +852,15 @@ export default function EventPage({ params }: EventPageProps) {
     const edge = servedBlendEdgeObservation(servedHistory);
     latestBlendEdgeRef.current = edge;
     if (!edge) return;
+    // #9051: an edge from a fold the held one cannot be ordered against (a twin
+    // joined or left) is refused; only a fresh detail read can settle it, so ask
+    // for one and write nothing this tick (same swr hazard as the push effect).
+    if (edgeInvalidatesHeldBlend(heldEventRef.current, edge)) {
+      foldedRefetch.request();
+      return;
+    }
     refreshEvent((prev) => adoptNewerBlendEdge(prev, edge), { revalidate: false });
-  }, [servedHistory, refreshEvent]);
+  }, [servedHistory, refreshEvent, foldedRefetch]);
 
   /* #8066: the chart's blend line must be the BACKEND's blend, and after #920
      `historyData.aggregate_line` can no longer answer that — it holds the
@@ -877,11 +1007,7 @@ export default function EventPage({ params }: EventPageProps) {
   };
 
   // Game-level markets (totals spectrum, player props)
-  const { data: servedGameMarkets } = useSWR(
-    ["game-markets", eventId],
-    () => fetchGameMarkets(eventId),
-    { refreshInterval: isLive ? LIVE_REFRESH_INTERVAL : SCHEDULED_REFRESH_INTERVAL }
-  );
+  const { data: servedGameMarkets } = useGameMarketsStream(eventId, event?.id ?? eventId);
 
   // #7064: the hero already answers the game's own moneyline, so the props body must not answer it
   // again — it was arriving once PER VENUE, so the page showed the same question two more times,
@@ -920,8 +1046,11 @@ export default function EventPage({ params }: EventPageProps) {
         // #4571 — the event row's own clock, so the helper can date the score by
         // the arm that supplied it rather than by its neighbouring timestamp.
         event?.score_observed_at,
+        // #925 — the header's own inning, for a live game whose history rows
+        // never named one. Live only: a finished row's period is its result.
+        event?.status === "live" ? event?.espn ?? null : null,
       ),
-    [historyData, event?.home_score, event?.away_score, event?.score_observed_at],
+    [historyData, event?.home_score, event?.away_score, event?.score_observed_at, event?.status, event?.espn],
   );
 
   // Best-known scores. #5521 — the comment that stood here said *"prefer latest
@@ -1501,10 +1630,17 @@ export default function EventPage({ params }: EventPageProps) {
   // counterpart of `settledOutcome.resultLine` above. Every rule it follows
   // (home-first, why not `orientLinescore`, why it refuses a finished match)
   // is stated on the helper, beside the settled one it mirrors.
+  // #9780: a set already played under a future clock is an interrupted match —
+  // the badge says "Resumes in", and the games it has produced are shown.
+  const playedBeforeClock = playedBeforeItsClock({
+    hasStarted,
+    isFinished,
+    linescore: event.linescore,
+  });
   const liveGamesLine = liveHeroGamesLine({
     isFinished,
     isLive,
-    hasStarted,
+    hasStarted: hasStarted || playedBeforeClock,
     linescore: event.linescore,
   });
 
@@ -1652,6 +1788,7 @@ export default function EventPage({ params }: EventPageProps) {
       updatedAt={heroStamp.stamp}
       oldestFact={heroStamp.fact}
       connected={streamConnected}
+      showLiveLabel={isLive}
       // #5459 — the hero below reads "No result reported" on a pinned page.
       // Without this the badge would pulse a green `live · 20s ago` beside it,
       // whose stamp really is that fresh.
@@ -2000,7 +2137,18 @@ export default function EventPage({ params }: EventPageProps) {
                       still printing "Pregame" over a "Since Start" chart. The
                       two-hour hole this falls into, and why the grace is not
                       the thing to widen, are in `startBadgeLabel`. */}
-                  {startBadgeLabel(hasStarted, gameCountdown)}
+                  {startBadgeLabel(
+                    hasStarted,
+                    gameCountdown,
+                    // #9634 — held by the server: "Pregame", not "Started".
+                    serverHeldPastKickoff(
+                      event?.status,
+                      event?.commence_time,
+                      undefined,
+                      event?.started_without_result,
+                    ),
+                    playedBeforeClock,
+                  )}
                 </span>
               </span>
             )}
@@ -2177,6 +2325,8 @@ export default function EventPage({ params }: EventPageProps) {
                   winnerPregamePercent={settledPregame?.percent ?? null}
                   winnerPregameSource={settledPregame?.source ?? null}
                   winnerPregameLabel={settledPregame?.label ?? null}
+                  loserPregameProb={settledPregame?.loserProbability ?? null}
+                  loserPregamePercent={settledPregame?.loserPercent ?? null}
                 />
               ) : (
               // #2085: the two sides are ONE decision — see
@@ -2665,6 +2815,13 @@ export default function EventPage({ params }: EventPageProps) {
                  the other three rules about painting ESPN's clock and holds
                  this one too. See the prop's own note. */
               sportKey={event.sport || undefined}
+              /* #9441 — a finished soccer page rested on `—`: its history has
+                 no period, so only the final score can say the game is over. */
+              restingFinalScore={
+                isFinished && event.home_score != null && event.away_score != null
+                  ? { home: event.home_score, away: event.away_score }
+                  : null
+              }
             />
           ) : null}
         </div>
@@ -2810,17 +2967,23 @@ export default function EventPage({ params }: EventPageProps) {
                second reading of the same payload. `/events/15304382` held a
                fresh 2-1 games line and no game-total market, so the note sent
                the reader to a card that was not on the page. */
-            totalsMapPresent={totalsMapRenders(gameMarkets, event.status)}
+            totalsMapPresent={!venueVoided && totalsMapRenders(gameMarkets, event.status)}
             pmSpreadData={historyData?.pm_spread_data}
           />
         </div>
         </SectionErrorBoundary>
       )}
 
+      <FinalGameWinnerQuote quote={servedGameMarkets?.open_winner_quote}
+        eventId={event.id} finished={isFinished} closedIds={servedGameMarkets?.closed_winner_market_ids} />
+
       {/* Market Map cards — Margin Map + Total Map */}
       {/* #3240: the mount condition is shared with `totalsMapRenders` above, so
           the note's idea of what is on the page and the page cannot diverge. */}
-      {gameMarkets && marketMapSectionMounts(gameMarkets) && (
+      {/* #9798: not on a voided match. Every rung there is the void payout
+          (`Over 21.5 · 50%` on a match nobody played), and notice 34's remedy
+          for a number we cannot show honestly is the empty space. */}
+      {gameMarkets && !venueVoided && marketMapSectionMounts(gameMarkets) && (
         <SectionErrorBoundary label="The market maps" resetKey={gameMarkets}>
         <MarketMapSection
           gameMarkets={gameMarkets}
@@ -2869,7 +3032,7 @@ export default function EventPage({ params }: EventPageProps) {
       )}
 
       {/* Game Markets — Player Props + Matchups + Special Markets */}
-      {gameMarkets && (gameMarkets.player_props.length > 0 || (gameMarkets.matchups?.length ?? 0) > 0 || (gameMarkets.other?.length ?? 0) >= 3) && (
+      {gameMarkets && (gameMarkets.player_props.length > 0 || (gameMarkets.matchups?.length ?? 0) > 0 || (gameMarkets.other?.length ?? 0) >= SPECIAL_MARKETS_MIN_WIRE_ROWS) && (
         <div className="space-y-3">
 
           {/* UX-P055: #1722's actual crash site. This is the one boundary that
@@ -2972,7 +3135,10 @@ export default function EventPage({ params }: EventPageProps) {
                 eventStatus={event.status}
                 // #8816 — the page's ONE settled answer again (#6438's slot, the
                 // header pill): a graded `suspended` match freezes its props too.
-                venueSettled={venueSettledSentence !== null}
+                // #9798: a VOIDED one does not — its legs carry the void payout,
+                // not grades — so it goes in as `voided` and never as settled.
+                venueSettled={venueSettledSentence !== null && !venueVoided}
+                voided={venueVoided}
                 completedSets={completedSetsForTennis(event.sport, gameMarkets)}
                 decidedSetsWinner={decidedSetsWinnerFor(event.sport, gameMarkets)}
                 setsWon={tennisSetsWonFor(event.sport, gameMarkets)}
@@ -3168,7 +3334,11 @@ export default function EventPage({ params }: EventPageProps) {
           rail the two sides lets cards that name one of them sort ahead of the
           rest. A preference, not a filter: the same cards in the same number,
           so no page loses the section the way an #8093-style narrowing would
-          have. */}
+          have.
+
+          #9799: the one filter it does apply — a card naming only the other
+          league (AL awards beside Cubs @ Padres) — keys on both sides'
+          conferences, so an interleague game keeps every card. */}
       {(() => {
         const rail = relatedRailQuery(event.sport, event.event_tags);
         return rail ? (
@@ -3182,6 +3352,10 @@ export default function EventPage({ params }: EventPageProps) {
               title={rail.title}
               fallbackTitle={rail.fallbackTitle}
               preferNames={participantNames(event.away_team, event.home_team)}
+              conferences={[
+                event.away_team_data?.standings?.conference,
+                event.home_team_data?.standings?.conference,
+              ]}
             />
           </SectionErrorBoundary>
         ) : null;

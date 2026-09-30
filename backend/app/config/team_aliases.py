@@ -33,9 +33,66 @@ CURATED_TEAM_ALIASES: dict[tuple[str, str], list[str]] = {
     # Dolphins, Tonbridge Angels FC, an Anaheim Angels naming bill (politics) and
     # a basketball Astros. Refused: `friars` — production already sends it to the
     # Providence Friars, whose actual name it is.
-    ("americanfootball_nfl", "Miami Dolphins"): ["phins"],
+    # #9263 — `fins`, measured 2026-09-28 02:1xZ. Before: `fins` served Finland,
+    # Finnentrop/Bamenohl and five Finland soccer games — no Dolphins at all,
+    # because `fins` is not spelled inside `Dolphins` the way `phins` is.
+    ("americanfootball_nfl", "Miami Dolphins"): ["phins", "fins"],
     ("baseball_mlb", "Houston Astros"): ["stros"],
     ("baseball_mlb", "Los Angeles Angels"): ["halos"],
+    # #9263 — `dubs`, measured on production 2026-09-28 02:1xZ. Before: `dubs`
+    # served Dubai Basketball and Shelbourne Dublin, 0 Warriors games. `Warriors`
+    # names exactly ONE basketball_nba club over 120 days of events. Open markets
+    # in the futures arm's category (`basketball`): 4/6 are Golden State's, the
+    # other two Shinshu Brave Warriors (Japan's B.League). Kept: today `dubs`
+    # reaches 0 Warriors rows and the literal `warriors` leads its markets with a
+    # South African rugby side and Honor of Kings esports, so 4/6 is the best
+    # answer the query has had. Refused in the same pass: `avs` (#8685 — AVS
+    # Futebol), `celts` (Celtic FC are "the Celts" too), `bolts`.
+    ("basketball_nba", "Golden State Warriors"): ["dubs"],
+    # #9263 — `avs`, measured on production 2026-09-30 10:2xZ. Before: the TEAMS
+    # card held only AVS Futebol SAD and the markets list one Taça de Portugal
+    # market; 0 of the 37 open `hockey` markets naming `Avalanche` (every one is
+    # Colorado's — all 30 non-"Colorado" titles pair it with an NHL club).
+    # `Avalanche` names exactly ONE icehockey_nhl club over 120 days of events.
+    # Refused twice before (#8685, #9263 r1) under the two-franchise rule, which
+    # does not reach it: that rule protects a club that would LOSE the word, and
+    # AVS Futebol keeps it — `avs` is its own name, matched by the card's full text
+    # and the plain rails, and every arm here is additive. It stays on the card,
+    # second. `caps`/`cavs`/`canes`/`bolts`/`wolves` are in neither club's name,
+    # so they stay refused.
+    ("icehockey_nhl", "Colorado Avalanche"): ["avs"],
+    # #7386 — `riders`, a nickname spelled INSIDE a longer token of the name
+    # (Rough*riders*), which no WHERE clause can separate from `nets` inside
+    # "Hornets" (#7381). Measured on production 2026-09-30 11:5xZ. Before: `riders`
+    # carded Kolkata and Trinbago Knight Riders and Rider Broncs and served 0
+    # games, while `roughriders` served Friday's Stampeders–Roughriders game.
+    # `Roughriders` names exactly ONE americanfootball_cfl club over 120 days of
+    # events (15); the Knight Riders (cricket) and the RailRiders (MiLB) sit
+    # outside the scope and keep the word, which is in their own names. No
+    # futures arm: `riders` is inside its token, so the substring skip applies.
+    # Refused in the same pass, each already another club's word: `9ers`
+    # (Charlotte 49ers — the San Francisco 49ers hold it, and a second claimant
+    # would make it contested and cost them their game arm), `blue jays`
+    # (Creighton — Toronto's name), `oil` (Purdue — the Edmonton Oilers are "the
+    # Oil"; Purdue's own `boilers` already cards Purdue).
+    ("americanfootball_cfl", "Saskatchewan Roughriders"): ["riders"],
+    # #9272 — four MLB nicknames, measured on production 2026-09-28 02:5xZ.
+    # Before: `o's` served O Elvas CAD, O'Higgins and a boxing bout, `a's` and
+    # `rox` served nothing at all, and `m's` served four "A&M" schools and Texas
+    # A&M football. Each last-word token names exactly ONE baseball_mlb club over
+    # 120 days of events (Orioles 115, Athletics 113, Mariners 107, Rockies 110);
+    # Central Coast Mariners (A-League) and the NCAA/other-league "Athletics" rows
+    # sit outside the scope. Open baseball markets: Orioles 9/9 Baltimore's, the
+    # other three have none open. Both apostrophes, because a phone keyboard types
+    # the curly one. The apostrophe forms are why the TEAMS card needed
+    # `team_nickname_team_rows` too: under the English text config `a's` reduces
+    # to no lexeme at all and `m's` to `m`, so no row can match them by FTS — the
+    # Athletics row already held `A's` and still carded nothing.
+    # Refused: `chisox` (token `Sox` is the Red Sox too), `os` (Os Marialvas).
+    ("baseball_mlb", "Baltimore Orioles"): ["o's", "o\u2019s"],
+    ("baseball_mlb", "Athletics"): ["a's", "a\u2019s"],
+    ("baseball_mlb", "Seattle Mariners"): ["m's", "m\u2019s"],
+    ("baseball_mlb", "Colorado Rockies"): ["rox"],
     # #8685 — eleven more nicknames fans type, each measured on production
     # 2026-09-25 before it was added. Every open market in the franchise's sport
     # whose name holds the canonical token was read, and every one of them is the
@@ -293,3 +350,109 @@ def team_nickname_event_expansions() -> dict[str, tuple[str, str]]:
                 continue  # see `_alias_claim_counts` — refused, not guessed
             expansions[alias.lower()] = (token, sport_key)
     return expansions
+
+
+def team_nickname_team_rows() -> dict[str, tuple[str, str]]:
+    """`alias -> (sport_key, canonical team name)` for the TEAMS card (#9272).
+
+    The fourth consumer of the map, and the one that lets a nickname reach the
+    team row without waiting on `alternate_names`. The Teams card's recall is
+    full-text over the row's name, abbreviation and aliases, so it can only find
+    a nickname some row stores — which is why every earlier ship here carried a
+    pinned repair script — and for an apostrophe nickname not even that works:
+    `a's` reduces to no lexeme under the English config, so the Athletics row
+    holding `A's` was carded for nothing (production 2026-09-28). The route
+    recalls the named row by its (sport, name) key instead, the same key the map
+    is written in.
+
+    Contested aliases are refused exactly as in the siblings (`_alias_claim_counts`):
+    naming one row for them would be a guess.
+    """
+    contested = _alias_claim_counts()
+    rows: dict[str, tuple[str, str]] = {}
+    for (sport_key, team_name), aliases in CURATED_TEAM_ALIASES.items():
+        for alias in aliases:
+            if contested.get(alias.lower(), 0) > 1:
+                continue
+            rows[alias.lower()] = (sport_key, team_name)
+    return rows
+
+
+def curated_team_aliases(sport_key: str | None, team_name: str | None) -> tuple[str, ...]:
+    """The curated aliases of one team row, for the Teams card's ranking evidence.
+
+    What `backfill_curated_team_aliases.py --apply` would have written into the
+    row's `alternate_names`, read straight from the map, so a row recalled by
+    `team_nickname_team_rows` is scored on the word the reader typed (#9272).
+    Contested aliases are included on purpose: a row owning an alias is true per
+    row, which is why the backfill writes them too.
+    """
+    return tuple(CURATED_TEAM_ALIASES.get((sport_key or "", team_name or ""), ()))
+
+
+# #9834 — club SHORT FORMS: what a reader types that shares no usable word with the
+# club's name. Measured on production 2026-09-30 ~13:30Z, `/api/events/search`:
+#
+#     query          teams               games   markets
+#     man utd        0                   0       0
+#     man u          0                   0       7   (row 1: a Le Mans Europa League market)
+#     man united     Manchester United   7       0
+#     man city       Manchester City     7       0
+#     bvb            0                   0       0
+#
+# while `manchester united`, `manchester city` and `borussia dortmund` each serve
+# the team, their games and 10 markets. None of the five short forms appears in any
+# open market name or any game of the last 30 days (0/0/0), so nothing is lost by
+# answering them with the full name.
+#
+# WHY NOT `CURATED_TEAM_ALIASES`. Every consumer of that map looks up ONE term, and
+# its market and game arms expand to the LAST word of the club's name, sport-scoped.
+# For these clubs that word is `United` or `City`, which dozens of soccer clubs
+# share, so a sport scope cannot separate them. And the map is keyed per
+# (sport, name): Manchester United plays EPL, Champions League and FA Cup games under
+# three sport keys, and an alias claimed by three entries is contested and refused
+# (`_alias_claim_counts`). A short form stands for the club's WHOLE name in every
+# competition, so the honest rewrite is the query itself: `man utd` is answered
+# exactly as `manchester united` is.
+#
+# Keep entries UNAMBIGUOUS and measured, like the map above. `spurs` is not here: it
+# is the San Antonio Spurs as much as Tottenham, and both cards already show.
+CLUB_QUERY_SHORT_FORMS: dict[tuple[str, ...], str] = {
+    ("man", "utd"): "Manchester United",
+    ("man", "united"): "Manchester United",
+    ("man", "u"): "Manchester United",
+    ("man", "city"): "Manchester City",
+    ("bvb",): "Borussia Dortmund",
+}
+
+_SHORT_FORM_MAX_WIDTH = max(len(key) for key in CLUB_QUERY_SHORT_FORMS)
+
+
+def expand_club_short_forms(query: str) -> str:
+    """`query` with every club short form replaced by the club's full name (#9834).
+
+    Whole words only, matched case-insensitively over a CONTIGUOUS span, longest
+    span first, with the surrounding words kept: `man utd today` -> `Manchester
+    United today`. `manu`, `man` alone and `batman u` are untouched, because a
+    short form is a whole-word phrase and not a substring.
+
+    Returns `query` itself — the same string, whitespace and all — when nothing
+    matches, which is every query but these few. Pure, so the guards pin it.
+    """
+    words = query.split()
+    lowered = [word.lower() for word in words]
+    out: list[str] = []
+    changed = False
+    index = 0
+    while index < len(words):
+        for width in range(min(_SHORT_FORM_MAX_WIDTH, len(words) - index), 0, -1):
+            club = CLUB_QUERY_SHORT_FORMS.get(tuple(lowered[index : index + width]))
+            if club is not None:
+                out.extend(club.split())
+                index += width
+                changed = True
+                break
+        else:
+            out.append(words[index])
+            index += 1
+    return " ".join(out) if changed else query

@@ -58,9 +58,11 @@ from app.services.anchor_channel import (
 from app.utils.espn_helpers import commence_correction_inverts_completion
 from app.utils.espn_id_stamp import espn_id_holder
 from app.utils.event_completion import (
+    KALSHI_TICKER_TIME_COMMENCE_SOURCE,
     POLYMARKET_VENUE_COMMENCE_SOURCE,
     settlement_is_a_staleness_artifact,
 )
+from app.utils.game_pairing import Pairing, pair_verdict
 from app.utils.kalshi_occurrence_start import KALSHI_OCCURRENCE_TIMED_SOURCES
 from app.utils.name_normalization import names_match
 from app.utils.provider_anchor_keys import SCALAR_DERIVED_ID_COLUMNS
@@ -70,6 +72,10 @@ logger = logging.getLogger(__name__)
 # Source priority for field updates (higher index = higher priority)
 _SOURCE_PRIORITY = {
     "kalshi": 0,
+    # #9827: the HHMM instant a Kalshi esports ticker names. The same authority
+    # as `kalshi` (same venue, same row), so the same rank: a schedule source
+    # still corrects it, and it never corrects one.
+    "kalshi_ticker_time": 0,
     "polymarket": 0,
     # #6073. The SAME authority as `polymarket` — same provider, same row — and
     # ranked identically on purpose. The string differs only to record which of
@@ -185,6 +191,37 @@ def polymarket_venue_corrects_a_kalshi_expiration(
     )
 
 
+def kalshi_ticker_time_corrects_a_kalshi_expiration(
+    current_source: Optional[str], incoming_source: Optional[str],
+) -> bool:
+    """Is a Kalshi esports ticker's HHMM replacing Kalshi's own expiration? (#9827)
+
+    ONE venue, TWO fields, and one of them is the wrong field to have read —
+    #6073's shape on the Kalshi side. ``kalshi``/``kalshi_occurrence`` is
+    ``occurrence_datetime``, the expected EXPIRATION; ``kalshi_ticker_time`` is
+    the start the same market's ticker names. Specimen, event 15321207 (CS2,
+    Passion Academy v Revenge): stored 14:30Z ``kalshi``,
+    ``KXCS2GAME-26OCT010630PSNAREV`` names 10:30Z, Polymarket's fixture 10:30Z.
+    Both rank 0, so the tie rule froze the expiration in place on every one of
+    the rows minted before #9827's mint arm, and nothing re-dated them.
+
+    **DIRECTIONAL**, like the two Polymarket clauses above: the ticker's start
+    may replace the expiration, and a ``kalshi`` claim can never come back over
+    ``kalshi_ticker_time`` (the tie rule still refuses it). Not a rank bump —
+    that would stop a schedule source correcting it. ``kalshi_ticker`` (a DATE at
+    midnight) is absent on purpose, as it is from #8722's clause.
+
+    The PAIRING and the DIRECTION of the move are not this predicate's to vouch
+    for: Phase 1.5's :func:`kalshi_esports_ticker_redate` moves a row only
+    EARLIER, inside the esports window, when every esports ticker on the row
+    names the one instant, and after ``phase15_link_is_valid_for_redate``.
+    """
+    return (
+        incoming_source == KALSHI_TICKER_TIME_COMMENCE_SOURCE
+        and current_source in KALSHI_OCCURRENCE_TIMED_SOURCES
+    )
+
+
 def commence_time_write_authorized(
     current_source: Optional[str],
     incoming_source: Optional[str],
@@ -264,6 +301,8 @@ def commence_time_write_authorized(
         return (True, "revision: polymarket's fixture instant over its listing stamp")
     if polymarket_venue_corrects_a_kalshi_expiration(current_source, incoming_source):
         return (True, "correction: polymarket's fixture instant over kalshi's expiration")
+    if kalshi_ticker_time_corrects_a_kalshi_expiration(current_source, incoming_source):
+        return (True, "correction: kalshi's ticker start over kalshi's expiration")
     return (
         False,
         f"priority: {incoming_source or '<none>'}({incoming}) does not outrank "
@@ -463,6 +502,15 @@ class EventIdentity:
     # — midnight Eastern), good for matching and for minting a row, never for
     # overwriting the clock of a row that already has one.
     commence_time_is_placeholder: bool = False
+    # #9216: Step 3 may bind this claim ONLY to a row that could be this very
+    # game — within ``SAME_GAME_MAX_SEPARATION`` of its start (the doubleheader
+    # bound, 12h) and holding no DIFFERENT id for the claim's own provider.
+    # Without it, the ±28h window hands a Game 2 claim the Game 1 row a day
+    # earlier whenever Game 2 has no row yet — the case a pass that creates
+    # games days ahead exists for — and ESPN's rank would move Game 1's start
+    # onto Game 2's. No match then means CREATE. Default False: every existing
+    # caller keeps the matcher it has.
+    same_game_only: bool = False
 
 
 async def find_or_create_event(
@@ -669,6 +717,7 @@ async def _find_existing(
         identity.home_team_name, identity.away_team_name,
         identity.commence_time,
         claim=identity.claim,
+        same_game_only=identity.same_game_only,
     )
     if matches:
         return matches[0], list(matches[1:])
@@ -932,6 +981,7 @@ async def _structured_matches(
     commence_time: datetime,
     *,
     claim: EventClaim,
+    same_game_only: bool = False,
 ) -> list[Event]:
     """Step 3: Find events by sport + date + team names — ID-ANCHORED CLAIMS ONLY.
 
@@ -1014,12 +1064,38 @@ async def _structured_matches(
                 names_match(away_team, candidate.home_team_name)):
             matched = True
 
+        if matched and same_game_only and not _could_be_this_game(
+            candidate, commence_time, claim
+        ):
+            matched = False
+
         if matched:
             time_diff = abs((commence_time - candidate.commence_time).total_seconds())
             matches.append((time_diff, candidate))
 
     matches.sort(key=lambda x: x[0])
     return [candidate for _, candidate in matches]
+
+
+def _could_be_this_game(
+    candidate: Event, commence_time: datetime, claim: EventClaim
+) -> bool:
+    """``EventIdentity.same_game_only``'s test for one name-matched row (#9216).
+
+    Two refusals, each a fact the provider or the calendar already states:
+
+    * **Another game of this provider's.** The row holds a different id for the
+      claim's source. The provider distinguishes the two, which is
+      ``_proven_duplicates`` clause 3 and the argument in
+      ``ODDS_LISTING_IS_NOT_A_DEREFERENCE``.
+    * **Another day.** ``pair_verdict`` is not SAME — farther than the
+      doubleheader bound. Consecutive games of a series sit ~24h apart, inside
+      the matcher's 28h window. UNKNOWN (no time on the row) refuses too.
+    """
+    held = _claim_id_value(candidate, claim.source)
+    if held is not None and held != claim.source_id:
+        return False
+    return pair_verdict(candidate.commence_time, commence_time) is Pairing.SAME
 
 
 #: How far apart two rows may sit and still be the SAME fixture written twice.

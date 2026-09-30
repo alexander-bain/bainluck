@@ -264,6 +264,23 @@ final class OddsChartViewModel: ObservableObject {
         pointsMemo = (historyGeneration, liveFrames, points)
         return points
     }
+    private var enrichedMemo: (generation: Int, liveFrames: [LiveBlendPoint], points: [ChartDataPoint])?
+    /// Nonpublishing seam for the actual render-path regression test. It is nil
+    /// in the app and never schedules rendering or runs on a recurring timer.
+    var onPlotBuild: (() -> Void)?
+    private(set) var enrichmentBuildCount = 0
+
+    func enrichedChartPoints(liveFrames: [LiveBlendPoint]) -> [ChartDataPoint] {
+        guard let history else { return [] }
+        if let memo = enrichedMemo, memo.generation == historyGeneration, memo.liveFrames == liveFrames {
+            return memo.points
+        }
+        let points = OddsChartView.enrichWithGameState(chartPoints(liveFrames: liveFrames), history: history)
+        enrichmentBuildCount += 1
+        enrichedMemo = (historyGeneration, liveFrames, points)
+        return points
+    }
+
     @Published var loading = true
     @Published var error: String?
 
@@ -348,6 +365,11 @@ struct OddsChartView: View {
     /// fullscreen chart, which covers the page's toolbar and so carries the
     /// page's one freshness status itself (#8320).
     var refreshStreaming: Bool = false
+    var liveUpdateStatus: LiveUpdateStatus = .hidden
+    var priceActivity: LivePriceActivity?
+    /// #9436 — the hero's current home number, for the dot at the live edge.
+    /// Nil off a live page.
+    var liveEdge: LiveEdgeReading?
     /// Shared domain from parent — ensures OddsChart and ScoreDiffChart have identical x-axes
     var forcedDomain: ClosedRange<Date>?
     /// Blends pushed to the page since it opened (#920), drawn as the live end
@@ -366,24 +388,22 @@ struct OddsChartView: View {
     /// the top of the chart is — which is whenever there is a chart to press.
     /// The page builds it (it owns the resting last-point), the chart places it
     /// and hands it the scrubbed moment (#8651: `showing(_:)`).
+    ///
+    /// #9517 — the inline chart no longer draws it AT REST. Alex's rage shake
+    /// #162 (Bears–Eagles MNF, build 31) circled that row and the hero: "Q2
+    /// 6:14 · 7 – 0 · Bears 61% — Eagles 39%" under a hero saying the same.
+    /// Under a finger it floats over the plot (`inlineScrubCard`), so the plot
+    /// still never moves. Fullscreen covers the hero and keeps its resting row.
     var readout: GamePlayCardView?
     /// #8481 — the page's one All / Since Start choice, which this chart's
     /// picker writes and the Score Differential chart below also reads. It was a
     /// `@Published` on this chart's own view model, which is why All could widen
     /// the line here and nowhere else.
     @Binding var selectedRange: OddsTimeRange
-    /// The scrubbed moment the readout prints (#925).
-    ///
-    /// #8651 — the chart's own state, not a binding to the page's. As page
-    /// state every scrub step rebuilt the whole event page and then this chart
-    /// a second time; measured on 14781697, two page rebuilds and two extra
-    /// chart passes per scrub. The readout is drawn inside this chart, so
-    /// nothing above it needs the value.
-    @State private var selectedPlayPoint: GamePlayPoint?
+    /// Only the crosshair/readout observe selection. A reference held in State
+    /// does not subscribe this data-plot owner to finger movement (#8651).
+    @State private var selection: OddsChartSelection
     @StateObject private var vm: OddsChartViewModel
-    @State private var selectedDate: Date?
-    /// #925 — which touches on the plot are a scrub. See `ChartScrubState.scrubs`.
-    @State private var scrub = ChartScrubState()
     @State private var isFullscreen = false
     /// The drawn plot area's width, reported by each chart's own overlay. The
     /// x-axis needs it to know whether its labels clear each other (#3269); 0
@@ -450,7 +470,8 @@ struct OddsChartView: View {
         }
         return TeamShortName.shortPair(
             away: away, home: home,
-            awayServed: awayTeamAbbrev, homeServed: homeTeamAbbrev
+            awayServed: awayTeamAbbrev, homeServed: homeTeamAbbrev,
+            sportKey: sportKey
         )
     }
     private var homeShort: String { axisLabels.home }
@@ -470,7 +491,8 @@ struct OddsChartView: View {
             awayServed: awayTeamAbbrev, homeServed: homeTeamAbbrev,
             fontSize: fontSize,
             awayRun: ChartGutter.nameRun(run: run, hasCrest: awayCrest),
-            homeRun: ChartGutter.nameRun(run: run, hasCrest: homeCrest)
+            homeRun: ChartGutter.nameRun(run: run, hasCrest: homeCrest),
+            sportKey: sportKey
         )
     }
 
@@ -482,12 +504,17 @@ struct OddsChartView: View {
          homeTeamAbbrev: String? = nil, awayTeamAbbrev: String? = nil,
          sportKey: String? = nil,
          refreshStreaming: Bool = false,
+         liveUpdateStatus: LiveUpdateStatus = .hidden,
+         priceActivity: LivePriceActivity? = nil,
+         liveEdge: LiveEdgeReading? = nil,
          forcedDomain: ClosedRange<Date>? = nil,
          pageAxisPlotWidth: CGFloat = 0,
          selectedRange: Binding<OddsTimeRange> = .constant(.sinceStart),
          preloadedHistory: EventHistoryResponse? = nil,
          liveFrames: [LiveBlendPoint] = [],
-         readout: GamePlayCardView? = nil) {
+         readout: GamePlayCardView? = nil,
+         model: OddsChartViewModel? = nil,
+         selection: OddsChartSelection? = nil) {
         self.eventId = eventId
         self.teamColors = teamColors
         self.commenceTime = commenceTime
@@ -501,13 +528,17 @@ struct OddsChartView: View {
         self.awayTeamAbbrev = awayTeamAbbrev
         self.sportKey = sportKey
         self.refreshStreaming = refreshStreaming
+        self.liveUpdateStatus = liveUpdateStatus
+        self.priceActivity = priceActivity
+        self.liveEdge = liveEdge
         self.forcedDomain = forcedDomain
         self.pageAxisPlotWidth = pageAxisPlotWidth
         self.liveFrames = liveFrames
         self.preloadedHistory = preloadedHistory
         self.readout = readout
         _selectedRange = selectedRange
-        _vm = StateObject(wrappedValue: OddsChartViewModel(eventId: eventId, preloaded: preloadedHistory))
+        _selection = State(initialValue: selection ?? OddsChartSelection())
+        _vm = StateObject(wrappedValue: model ?? OddsChartViewModel(eventId: eventId, preloaded: preloadedHistory))
     }
 
     /// #3410 — whether the payload holds a single reading, anywhere.
@@ -630,6 +661,8 @@ struct OddsChartView: View {
             // Re-asserting it here reset the reader's choice on every appear,
             // and wrote a range the score chart below could not see.
             await vm.load()
+            // #9185 — the LOOK rig's way into the cover it cannot tap open.
+            if LaunchRig.opensChartFullscreen() { isFullscreen = true }
         }
         // #920. The page re-polls every 120 s and hands the result down; until
         // this existed, every one of those payloads was dropped on the floor by
@@ -706,8 +739,7 @@ struct OddsChartView: View {
                     .foregroundStyle(.secondary)
                     .frame(height: chartHeight)
             } else if let history = vm.history {
-                let allPoints = buildDataPoints(history)
-                let enrichedPoints = Self.enrichWithGameState(allPoints, history: history)
+                let enrichedPoints = vm.enrichedChartPoints(liveFrames: liveFrames)
                 let dataPoints = filterPoints(enrichedPoints)
                 let periodMarkers = extractPeriodMarkers(history, filteredPoints: dataPoints)
                 let moments = Self.chartMoments(from: history.moments, points: dataPoints)
@@ -726,7 +758,7 @@ struct OddsChartView: View {
                         .frame(maxWidth: .infinity)
                         .frame(height: chartHeight)
                 } else {
-                    if let readout { readout.resting(on: Self.restingPlayPoint(in: dataPoints, sportKey: sportKey)).showing(selectedPlayPoint) }
+                    // #9517 — no readout row here at rest: the hero above says it.
                     // Chart with vertical team labels alongside Y-axis
                     HStack(spacing: 0) {
                         // Vertical team labels on left (#2903 — the run is stated so
@@ -770,10 +802,12 @@ struct OddsChartView: View {
 
                         chartView(dataPoints: dataPoints, sources: history.winProbSources ?? [:],
                                   periodMarkers: periodMarkers, moments: moments,
-                                  plotWidth: $inlinePlotWidth, sharesPageAxis: true)
-                            .onChange(of: selectedDate) { _, newDate in
-                                updateSelectedPoint(date: newDate, dataPoints: dataPoints, history: history)
-                            }
+                                  plotWidth: $inlinePlotWidth, sharesPageAxis: true,
+                                  pageGaveCard: readout != nil,
+                                  floatingCard: Self.inlineScrubCard(
+                                    page: readout, homeTeam: homeTeamName, awayTeam: awayTeamName,
+                                    colors: teamColors, homeLogo: homeTeamLogo, awayLogo: awayTeamLogo,
+                                    finished: EventState.isFinished(status)))
                     }
                     .frame(height: chartHeight)
 
@@ -815,8 +849,7 @@ struct OddsChartView: View {
         NavigationView {
             Group {
                 if let history = vm.history {
-                    let allPoints = buildDataPoints(history)
-                    let enrichedPoints = Self.enrichWithGameState(allPoints, history: history)
+                    let enrichedPoints = vm.enrichedChartPoints(liveFrames: liveFrames)
                     let dataPoints = filterPoints(enrichedPoints)
                     let periodMarkers = extractPeriodMarkers(history, filteredPoints: dataPoints)
                     let moments = Self.chartMoments(from: history.moments, points: dataPoints)
@@ -857,7 +890,19 @@ struct OddsChartView: View {
                             }
                             // #925 — fullscreen covers the page, and the page
                             // was the only place a scrub could be read.
-                            if let readout { readout.resting(on: Self.restingPlayPoint(in: dataPoints, sportKey: sportKey)).showing(selectedPlayPoint) }
+                            // #9185 — and the only place a NUMBER could be read:
+                            // the page hands a readout over only once the game
+                            // has a scoring play, so a 0–0 game opened fullscreen
+                            // printed no probability at all (Patriots at Jaguars,
+                            // 14782706, NE 42% → 39% in the first quarter).
+                            if let card = Self.fullscreenReadout(
+                                page: readout, homeTeam: homeTeamName, awayTeam: awayTeamName,
+                                colors: teamColors, homeLogo: homeTeamLogo, awayLogo: awayTeamLogo) {
+                                OddsChartSelectionReadout(selection: selection,
+                                                          readout: card.finished(EventState.isFinished(status)),
+                                                          dataPoints: dataPoints,
+                                                          sportKey: sportKey, pageGaveCard: readout != nil)
+                            }
                             HStack(spacing: 0) {
                                 // #2903 — fullscreen has no fixed chart height, so the
                                 // run is measured rather than assumed.
@@ -903,7 +948,8 @@ struct OddsChartView: View {
 
                                 chartView(dataPoints: dataPoints, sources: history.winProbSources ?? [:],
                                           periodMarkers: periodMarkers, moments: moments,
-                                          plotWidth: $fullscreenPlotWidth, sharesPageAxis: false)
+                                          plotWidth: $fullscreenPlotWidth, sharesPageAxis: false,
+                                          pageGaveCard: readout != nil)
                             }
                             legendView(dataPoints: dataPoints, sources: history.winProbSources ?? [:])
                             momentCaption(moments)
@@ -912,28 +958,71 @@ struct OddsChartView: View {
                     }
                 }
             }
+            // #9274 — status is text, not a navigation action. A toolbar slot
+            // compresses its words into a glass circle on iOS. Reserve readable
+            // content space below navigation without covering the chart/readout.
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if EventPriceStreaming.isEligible(status) && liveUpdateStatus != .hidden {
+                    LiveUpdateStatusView(status: liveUpdateStatus)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal)
+                        .padding(.vertical, 8)
+                }
+            }
             .navigationTitle("Win Probability")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar {
-                // #8320 — fullscreen covers the page toolbar, so the page's one
-                // status travels with it: the stream dot when pushed, nothing
-                // otherwise. There is no refresh button here to draw.
-                if status == "live" && refreshStreaming {
-                    ToolbarItem(placement: .cancellationAction) {
-                        LivePushDot(diameter: 22)
-                    }
-                }
+                // #9185 — a word, not a grey `xmark` in a glass circle: Alex
+                // read that circle as a control that did nothing.
                 ToolbarItem(placement: .confirmationAction) {
-                    Button { isFullscreen = false } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundStyle(.secondary)
-                    }
+                    Button("Done") { isFullscreen = false }
+                        .accessibilityHint("Closes the fullscreen chart")
                 }
             }
         }
+    }
+
+    /// #9185 — the fullscreen chart's readout, which always exists when both
+    /// teams are named and always prints both sides' chances. The page's card
+    /// is used when it gave one (it carries the page's logos and last point);
+    /// otherwise the chart builds the same card from what it already holds.
+    static func fullscreenReadout(
+        page: GamePlayCardView?,
+        homeTeam: String?,
+        awayTeam: String?,
+        colors: (away: Color, home: Color)?,
+        homeLogo: String?,
+        awayLogo: String?
+    ) -> GamePlayCardView? {
+        if let page { return page.pinningProbabilities() }
+        guard let homeTeam, let awayTeam else { return nil }
+        return GamePlayCardView(
+            homeTeam: homeTeam,
+            awayTeam: awayTeam,
+            homeTeamColor: colors?.home ?? .blue,
+            awayTeamColor: colors?.away ?? .red,
+            homeTeamLogo: homeLogo,
+            awayTeamLogo: awayLogo,
+            lastPoint: nil
+        ).pinningProbabilities()
+    }
+
+    /// #8651 — the inline chart's scrub tooltip: the fullscreen chart's card,
+    /// floating. #9517 — the page's card too, when it gave one: that card no
+    /// longer rests above the plot, so this is the only place a scrub reads.
+    static func inlineScrubCard(
+        page: GamePlayCardView?,
+        homeTeam: String?,
+        awayTeam: String?,
+        colors: (away: Color, home: Color)?,
+        homeLogo: String?,
+        awayLogo: String?,
+        finished: Bool
+    ) -> GamePlayCardView? {
+        fullscreenReadout(page: page, homeTeam: homeTeam, awayTeam: awayTeam, colors: colors,
+                          homeLogo: homeLogo, awayLogo: awayLogo)?.finished(finished).floating()
     }
 
     // MARK: - Time Range Picker
@@ -1151,38 +1240,18 @@ struct OddsChartView: View {
             }
         }
 
-        // Supplement with win_prob_history game_state (stat_model, espn sources have period/inning)
-        if let wpHistory = history.winProbHistory {
-            for (_, points) in wpHistory {
-                let sorted = points
-                    .compactMap { point -> (period: String, date: Date)? in
-                        guard let gs = point.gameState,
-                              let date = point.timestamp.asDate else { return nil }
-                        if let period = gs.period, !period.isEmpty {
-                            return (period, date)
-                        }
-                        if let inning = gs.inning, inning > 0 {
-                            return ("Top \(inning)", date)
-                        }
-                        return nil
-                    }
-                    .sorted { $0.date < $1.date }
-
-                var previous: Date?
-                for point in sorted {
-                    let label = normalizePeriodLabel(point.period)
-                    guard !label.isEmpty else { continue }
-                    if !seenLabels.contains(label) {
-                        seenLabels.insert(label)
-                        firstSeen.append((label, point.date))
-                        provenance[label] = PeriodProvenance(
-                            source: PeriodProvenance.clientSourceWinProbHistory,
-                            precision: PeriodProvenance.clientPrecisionFirstSeen,
-                            notBefore: previous)
-                    }
-                    previous = point.date
-                }
-            }
+        // Supplement with win_prob_history game_state (stat_model, espn sources
+        // have period/inning): each label ESPN did not already place goes at the
+        // earliest time any source saw it — never whichever source a Dictionary
+        // yields first, which moved chips between two opens of one game (#8509).
+        for sighting in WinProbPeriodSightings.earliest(in: history.winProbHistory, sportKey: sportKey)
+        where !seenLabels.contains(sighting.label) {
+            seenLabels.insert(sighting.label)
+            firstSeen.append((sighting.label, sighting.date))
+            provenance[sighting.label] = PeriodProvenance(
+                source: PeriodProvenance.clientSourceWinProbHistory,
+                precision: PeriodProvenance.clientPrecisionFirstSeen,
+                notBefore: sighting.notBefore)
         }
 
         // #3348 — the served `period_markers`, read for the first time.
@@ -1368,19 +1437,14 @@ struct OddsChartView: View {
         dataPoints: [ChartDataPoint],
         sources: [String: WinProbSourceInfo],
         visibleMarkers: [PeriodMarker],
-        moments: [ChartMoment]
+        moments: [ChartMoment],
+        liveSplit: LiveEdgeSplit? = nil
     ) -> some ChartContent {
+        let _ = vm.onPlotBuild?()
         // 50% reference line (single 0–100 axis: even is 0.5)
         RuleMark(y: .value("Even", 0.5))
             .lineStyle(StrokeStyle(lineWidth: 0.5, dash: [4, 4]))
             .foregroundStyle(.gray.opacity(0.4))
-
-        // Selection indicator
-        if let selectedDate {
-            RuleMark(x: .value("Selected", selectedDate))
-                .lineStyle(StrokeStyle(lineWidth: 1.0))
-                .foregroundStyle(.primary.opacity(0.4))
-        }
 
         // Data lines. When the backend blend exists it is the ONLY default line
         // ("the blend is the product" — one number per question); source detail
@@ -1397,7 +1461,11 @@ struct OddsChartView: View {
             // the identifier leaves the hole empty, which is what we actually
             // know. This is the same no-invention rule as `.interpolationMethod`
             // below, applied at the scale where it was still being broken.
-            let segments = Self.observationSegments(points, gameStart: gameStartDate)
+            // #9436 — on a live edge the newest vertex is drawn by the
+            // overlay (`LiveChartEdgeMarker`), so its dot can glide without
+            // animating this plot.
+            let split = liveSplit?.source == source ? liveSplit : nil
+            let segments = split?.segments ?? Self.observationSegments(points, gameStart: gameStartDate)
             ForEach(Array(segments.enumerated()), id: \.offset) { index, segment in
                 ForEach(segment) { point in
                     LineMark(
@@ -1416,7 +1484,7 @@ struct OddsChartView: View {
                 // A run of one is a real observation that no `LineMark` can
                 // draw (it needs two points to join), so it would silently
                 // vanish — losing data to a fix meant to stop losing data.
-                if segment.count == 1, let only = segment.first {
+                if segment.count == 1, index != split?.continuedRun, let only = segment.first {
                     PointMark(
                         x: .value("Time", only.date),
                         y: .value("Win probability", only.probability)
@@ -1477,7 +1545,8 @@ struct OddsChartView: View {
     /// sheet does neither, and its 800pt axis stays its own.
     private func chartView(dataPoints: [ChartDataPoint], sources: [String: WinProbSourceInfo],
                            periodMarkers: [PeriodMarker], moments: [ChartMoment],
-                           plotWidth: Binding<CGFloat>, sharesPageAxis: Bool) -> some View {
+                           plotWidth: Binding<CGFloat>, sharesPageAxis: Bool,
+                           pageGaveCard: Bool, floatingCard: GamePlayCardView? = nil) -> some View {
         // Filter period markers to visible data range
         let visibleMarkers: [PeriodMarker]
         if let minDate = dataPoints.map(\.date).min(),
@@ -1503,16 +1572,14 @@ struct OddsChartView: View {
                 own: plotWidth.wrappedValue,
                 pageNarrowest: sharesPageAxis ? pageAxisPlotWidth : 0))
         let ticks = Self.xAxisTicks(for: domain, plan: plan)
+        let liveSplit = liveEdgeSplit(dataPoints: dataPoints, domain: domain)
 
         return Chart {
             chartContent(dataPoints: dataPoints, sources: sources,
-                         visibleMarkers: visibleMarkers, moments: moments)
+                         visibleMarkers: visibleMarkers, moments: moments,
+                         liveSplit: liveSplit)
         }
         .chartYScale(domain: yMin...yMax)
-        .accessibilityLabel(Text("Win probability over time"))
-        .accessibilityValue(Text(Self.accessibilityValue(
-            dataPoints: dataPoints, selectedDate: selectedDate,
-            homeShort: homeShort, awayShort: awayShort, moments: moments)))
         .chartXScale(domain: domain)
         // Period marker labels positioned inside chart via overlay.
         //
@@ -1554,6 +1621,35 @@ struct OddsChartView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 4))
                         .position(x: plotFrame.minX + placement.centerX, y: 10)
                 }
+                if let liveSplit, let liveEdge {
+                    LiveChartEdgeMarker(
+                        selection: selection, proxy: proxy, plotFrame: plotFrame,
+                        tail: liveSplit.tail, label: "\(homeShort) \(liveEdge.homeLabel)",
+                        rising: priceActivity?.homeDelta.map { $0 > 0 },
+                        lineColor: colorForSource(liveSplit.source, sources: sources),
+                        lineStyle: strokeStyleForSource(liveSplit.source, sources: sources),
+                        activity: priceActivity, pulseColor: teamColors?.home ?? .accentColor)
+                        .accessibilityHidden(true)
+                } else if let latest = Self.latestPrimaryPoint(in: dataPoints),
+                          let x = proxy.position(forX: latest.date),
+                          let y = proxy.position(forY: latest.probability),
+                          x >= 0, x <= plotFrame.width, y >= 0, y <= plotFrame.height {
+                    // No line proven to carry the hero's number: the unlabelled
+                    // one-shot ring the chart had before #9436, unchanged.
+                    LiveChartEndpointFeedback(selection: selection, activity: priceActivity,
+                                              probability: latest.probability,
+                                              isLive: EventPriceStreaming.isEligible(status) && liveUpdateStatus != .interrupted,
+                                              color: teamColors?.home ?? .accentColor)
+                        .position(x: plotFrame.minX + x, y: plotFrame.minY + y)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
+                OddsChartSelectionOverlay(selection: selection, proxy: proxy, plotFrame: plotFrame,
+                                          dataPoints: dataPoints, homeShort: homeShort,
+                                          awayShort: awayShort, moments: moments,
+                                          pageGaveCard: pageGaveCard,
+                                          gameFinished: EventState.isFinished(status),
+                                          sportKey: sportKey, floatingCard: floatingCard)
                 // #925 — the scrub. `chartXSelection` lost the touch to the
                 // page's scroll the moment a thumb drifted vertically (Alex's
                 // build-20 recording, 14781697). The futures chart solved the
@@ -1567,24 +1663,16 @@ struct OddsChartView: View {
                 ChartScrubSurface(
                     holdToScrub: ChartScrubSurface.gameChartHold,
                     onChange: { location, translation in
-                        scrub.change(width: translation.width, height: translation.height)
-                        guard scrub.scrubs else {
-                            // Undecided, or latched vertical: the reader may
-                            // be scrolling. Nothing is selected, so the
-                            // readout keeps its resting moment.
-                            selectedDate = nil
-                            return
-                        }
-                        selectedDate = Self.scrubbedDate(atX: location.x, plotFrame: plotFrame, proxy: proxy)
+                        selection.change(
+                            date: Self.scrubbedDate(atX: location.x, plotFrame: plotFrame, proxy: proxy),
+                            translation: translation)
                     },
                     onHold: { location in
-                        scrub.hold()
-                        selectedDate = Self.scrubbedDate(atX: location.x, plotFrame: plotFrame, proxy: proxy)
+                        selection.hold(date: Self.scrubbedDate(atX: location.x, plotFrame: plotFrame, proxy: proxy))
                     },
-                    holdsTheScrollStill: { scrub.scrubs },
+                    holdsTheScrollStill: { selection.holdsTheScrollStill },
                     onEnd: {
-                        scrub.end()
-                        selectedDate = nil
+                        selection.end()
                     }
                 )
                 .frame(width: geo.size.width, height: geo.size.height)
@@ -1617,7 +1705,7 @@ struct OddsChartView: View {
         #if os(macOS)
         // A trackpad scroll never contended for the touch (see
         // `ChartScrubSurface`), so the Mac keeps the built-in selection.
-        .chartXSelection(value: $selectedDate)
+        .chartXSelection(value: Binding(get: { selection.date }, set: { selection.select($0) }))
         #endif
     }
 
@@ -1632,6 +1720,31 @@ struct OddsChartView: View {
     /// Chart-space `x` → plot-space `x`, inside `0...plotFrame.width`.
     static func clampedPlotX(_ x: CGFloat, plotFrame: CGRect) -> CGFloat {
         min(max(x - plotFrame.minX, 0), max(plotFrame.width, 0))
+    }
+
+    /// #9436 — the live edge the overlay draws, or nil to draw the plot whole.
+    ///
+    /// Only while the stream is live and uninterrupted, and only on the drawn
+    /// series PROVEN to carry the hero's accepted value (`edgeVertex`: the
+    /// blend line, or on a single-venue page the venue line the adopted frame
+    /// extended): a dot labelled with the hero's number must sit on the point
+    /// that number is, on the line that number belongs to. Both ends inside
+    /// the x-domain, as the old endpoint ring required, so the overlay never
+    /// draws where the plot would not.
+    private func liveEdgeSplit(dataPoints: [ChartDataPoint], domain: ClosedRange<Date>) -> LiveEdgeSplit? {
+        guard let liveEdge, EventPriceStreaming.isEligible(status), liveUpdateStatus != .interrupted,
+              let newest = LiveChartEdgeMarkerPlan.edgeVertex(
+                in: dataPoints, visible: Self.defaultVisibleSources(in: dataPoints),
+                reading: liveEdge, latestFrame: liveFrames.last)
+        else { return nil }
+        let edgeSource = newest.source
+        let points = dataPoints.filter { $0.source == edgeSource }
+        guard let split = LiveChartEdgeMarkerPlan.split(
+            segments: Self.observationSegments(points, gameStart: gameStartDate),
+            newest: newest, source: edgeSource),
+              domain.contains(split.tail.to.date),
+              split.tail.from.map({ domain.contains($0.date) }) ?? true else { return nil }
+        return split
     }
 
     // MARK: - Moment Caption
@@ -2207,9 +2320,14 @@ struct OddsChartView: View {
     /// Nearest REAL observed snapshot on the primary line to a scrub date. Never
     /// interpolates — returns an actual captured point (or nil for an empty line).
     static func nearestSnapshot(to date: Date, in points: [ChartDataPoint]) -> ChartDataPoint? {
-        let primary = primarySource(in: points)
-        return points
-            .filter { $0.source == primary }
+        nearestSnapshot(to: date, in: points, source: primarySource(in: points))
+    }
+
+    /// The same, on a named series — the fullscreen card's own line when there is
+    /// no primary one (#9185, `readoutSource`).
+    static func nearestSnapshot(to date: Date, in points: [ChartDataPoint], source: String) -> ChartDataPoint? {
+        points
+            .filter { $0.source == source }
             .min { abs($0.date.timeIntervalSince(date)) < abs($1.date.timeIntervalSince(date)) }
     }
 
@@ -2320,9 +2438,12 @@ struct OddsChartView: View {
     /// serves its terminal 0% at 03:38 after a 1% at the same minute, and
     /// `max(by:)` returns the FIRST of equal elements.
     static func latestPrimaryPoint(in points: [ChartDataPoint]) -> ChartDataPoint? {
-        let primary = primarySource(in: points)
+        latestPoint(in: points, source: primarySource(in: points))
+    }
+
+    static func latestPoint(in points: [ChartDataPoint], source: String) -> ChartDataPoint? {
         var latest: ChartDataPoint?
-        for point in points where point.source == primary {
+        for point in points where point.source == source {
             if let l = latest, point.date < l.date { continue }
             latest = point
         }
@@ -2331,11 +2452,18 @@ struct OddsChartView: View {
 
     /// Human/VoiceOver read-out for a snapshot, in the SAME probability basis as
     /// the plotted line and axis labels (home %, away %, plus real game state).
+    /// The percents are the readout card's — its point (`playPoint`) through its
+    /// labels (`GamePlayCardView.printedLabels`) — so VoiceOver says ">99%" where
+    /// the card prints it (a bare integer spoke a live 0.996 as "100%", #9015's
+    /// class) and speaks no away number where the card withholds one (#5271).
     static func selectionReadout(for point: ChartDataPoint, homeShort: String, awayShort: String,
-                                 moment: ChartMoment? = nil) -> String {
-        let homePct = Int((point.probability * 100).rounded())
-        let awayPct = 100 - homePct
-        var parts = ["\(homeShort) \(homePct)%", "\(awayShort) \(awayPct)%"]
+                                 moment: ChartMoment? = nil, gameFinished: Bool = false,
+                                 sportKey: String? = nil) -> String {
+        let play = playPoint(for: point, sportKey: sportKey)
+        let printed = GamePlayCardView.printedLabels(home: play.homeProb, away: play.awayProb,
+                                                     gameFinished: gameFinished)
+        var parts = ["\(homeShort) \(printed.home)"]
+        if let away = printed.away { parts.append("\(awayShort) \(away)") }
         if let hs = point.homeScore, let a = point.awayScore { parts.append("score \(hs)–\(a)") }
         if let period = point.period, !period.isEmpty { parts.append(period) }
         if let clock = point.clock, !clock.isEmpty { parts.append(clock) }
@@ -2348,20 +2476,28 @@ struct OddsChartView: View {
 
     /// Accessibility value for the chart: the scrubbed snapshot when one is
     /// selected, else the latest primary snapshot. Always the 0–100 basis.
+    /// #9185 — on the series the readout card reads (`readoutSource`), so the
+    /// fullscreen chart's lone venue line is spoken as it is printed; before,
+    /// VoiceOver said "No probability data" under a card showing 67% – 33%.
     static func accessibilityValue(dataPoints: [ChartDataPoint], selectedDate: Date?,
                                    homeShort: String, awayShort: String,
-                                   moments: [ChartMoment] = []) -> String {
+                                   moments: [ChartMoment] = [],
+                                   pageGaveCard: Bool = true,
+                                   gameFinished: Bool = false,
+                                   sportKey: String? = nil) -> String {
+        let source = readoutSource(in: dataPoints, pageGaveCard: pageGaveCard)
+            ?? primarySource(in: dataPoints)
         let point: ChartDataPoint?
         var moment: ChartMoment?
         if let selectedDate {
-            point = nearestSnapshot(to: selectedDate, in: dataPoints)
+            point = nearestSnapshot(to: selectedDate, in: dataPoints, source: source)
             moment = nearestMoment(to: selectedDate, in: moments)
         } else {
-            point = latestPrimaryPoint(in: dataPoints)
+            point = latestPoint(in: dataPoints, source: source)
         }
         guard let point else { return "No probability data" }
         return selectionReadout(for: point, homeShort: homeShort, awayShort: awayShort,
-                                moment: moment)
+                                moment: moment, gameFinished: gameFinished, sportKey: sportKey)
     }
 
     // MARK: - Game State Enrichment
@@ -2548,16 +2684,6 @@ struct OddsChartView: View {
         return pointDate.timeIntervalSince(observedAt) >= carriedStateApproximateAfterSeconds
     }
 
-    /// Update the selected play point binding based on chart selection.
-    private func updateSelectedPoint(date: Date?, dataPoints: [ChartDataPoint], history: EventHistoryResponse) {
-        guard let date, let nearest = Self.nearestSnapshot(to: date, in: dataPoints) else {
-            selectedPlayPoint = nil
-            return
-        }
-
-        selectedPlayPoint = Self.playPoint(for: nearest, sportKey: sportKey)
-    }
-
     /// One chart point as the readout prints it — the scrubbed moment and the
     /// resting one (#8652) are the same read of the same kind of point.
     static func playPoint(for point: ChartDataPoint, sportKey: String?) -> GamePlayPoint {
@@ -2592,6 +2718,33 @@ struct OddsChartView: View {
     /// page's point stands then.
     static func restingPlayPoint(in points: [ChartDataPoint], sportKey: String?) -> GamePlayPoint? {
         latestPrimaryPoint(in: points).map { playPoint(for: $0, sportKey: sportKey) }
+    }
+
+    /// #9185 — where the FULLSCREEN card rests when it is the chart's own card
+    /// (the page gave none, so there is no page point for #8652's nil to keep).
+    /// The primary line's end first; failing that, the chart's ONE drawn line:
+    /// DPR Korea v Spain (15318006) drew a lone Polymarket line and printed no
+    /// number, because `primarySource` names a series the payload does not
+    /// carry. Two or more unblended lines still rest on nothing — picking one
+    /// venue's number is the comparison "the blend is the product" rules out.
+    static func fullscreenRestingPoint(in points: [ChartDataPoint], sportKey: String?,
+                                       pageGaveCard: Bool) -> GamePlayPoint? {
+        guard let source = readoutSource(in: points, pageGaveCard: pageGaveCard) else { return nil }
+        return latestPoint(in: points, source: source).map { playPoint(for: $0, sportKey: sportKey) }
+    }
+
+    /// #9185 — the ONE series a readout card reads, resting AND scrubbing. The
+    /// resting number used to fall back to a lone venue line while the scrub
+    /// still looked up only the primary one, so on 15318006 the crosshair moved
+    /// and the number stayed on the latest print. The primary line when it is
+    /// drawn; the chart's one line only for the fullscreen chart's own card;
+    /// otherwise nothing.
+    static func readoutSource(in points: [ChartDataPoint], pageGaveCard: Bool) -> String? {
+        let primary = primarySource(in: points)
+        if points.contains(where: { $0.source == primary }) { return primary }
+        guard !pageGaveCard else { return nil }
+        let drawn = defaultVisibleSources(in: points)
+        return drawn.count == 1 ? drawn.first : nil
     }
 
     // MARK: - Source Styling

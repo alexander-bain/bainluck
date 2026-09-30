@@ -161,8 +161,9 @@ describe("#6438 — the page hands over its own settled answer, not a second rea
   });
 
   it("still derives that sentence through the shared helper", () => {
-    expect(source).toContain(
-      "venueSettledSummary(event?.venue_settled, event?.venue_settled_result)",
+    // #5811 added the third key; the helper is still the one derivation.
+    expect(source).toMatch(
+      /venueSettledSummary\(\s*event\?\.venue_settled,\s*event\?\.venue_settled_result,\s*event\?\.venue_closed_no_winner,?\s*\)/,
     );
   });
 });

@@ -21,7 +21,17 @@ So a pair is served only when each side's recorded periods sum to that side's
 served score. A hole cannot be summed, so with a hole the recorded periods may
 not EXCEED the score (the hole can carry the rest). Anything else — lengths that
 differ, a non-integer entry, a missing score — is withheld, and the client keeps
-its fallback. A side whose arrays are swapped against ours sums to the other
+its fallback.
+
+ONE length difference is a shape, not a disagreement: home ONE period short of
+away. That is baseball's normal box whenever the home side does not bat in an
+inning — a home win with no bottom 9th (stored home 8 / away 9), or any top of an
+inning while live. Measured 2026-09-28: 13 of the last 27 MLB finals were that
+shape, and withholding them sent the phone to its snapshot fallback, which put
+KC's 8th-inning run in the 9th on 15319671. The phone draws the missing cell as
+the scoreboard's ``X`` (native, ``testBaseballsUnneededBottomNinthIsX``). The
+sum checks are unchanged. Home LONGER than away has no such reading and stays
+withheld. A side whose arrays are swapped against ours sums to the other
 side's score and is withheld by the same check, unless the two scores are equal.
 
 The last entry of a live array is the period in progress: a running score, never
@@ -55,7 +65,8 @@ def served_period_scores(
     away = box.get("away_period_scores")
     if not isinstance(home, list) or not isinstance(away, list):
         return None
-    if not home or len(home) != len(away):
+    # Home one short of away is the unplayed bottom half (see module doc).
+    if not home or len(home) not in (len(away), len(away) - 1):
         return None
     if not all(_is_period(p) for p in home + away):
         return None

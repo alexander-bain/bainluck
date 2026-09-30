@@ -1,0 +1,12 @@
+# Web event quote consumer — #9509, child #9484
+
+Pillar: TRUTH. Ship: supported scheduled/upcoming and suspended event pages receive genuine hero/source/chart updates without refresh or false sporting LIVE status. Specimens: Bears–Eagles14780549 and suspended Dickerson15320435.
+
+Codex root owns the scoped child; implementation review_recovered_source_bars. UX owns released390px held-page proof. Backend route dependency #9501/PR9507; producer #9499. This is event-page increment only; standalone markets, props, Discover and final-with-open-contract remain separate.
+
+Phase eligibility now controls transport and probability/chart reconciliation while sports status/countdown/range/score behavior stays sports-specific. Server remains authoritative for market eligibility and may refuse; polling survives. Opening/nonblend and null contributor notifications request a fresh detail/history pair, cover the triggering contributor revision (extra fold members permitted), and never apply a raw price under an opening label. Existing coalesced trailing scheduler, explicit unknown clocks, fold ordering, source metadata and terminal protections remain. The real hero resolver consumes qualified nonlive blends; age activity omits sporting live wording. Raw folded-frame prices cannot leak into the plot, and a delayed older revision with later clock cannot outrun an accepted headline.
+
+Ruling133Tier2 display/client read-only change: independent recover_source_bars source PASS and binding in this directory.144 focused/adjacent Jest tests PASS; frontend build PASS; typecheck66 matches baseline; backend startup4 PASS; whitespace PASS. No backend/native mutation, production write/capture/deploy/merge/Apple action. HostedCI, merge gate, Integrator composition/release and UX held-page after-check are pending until separate receipts.
+
+## Corrective CI handback
+Hosted full frontend suite exposed legacy missing-buffer mocks, scheduled caption changes and outdated opening/structural tests. Corrected source and guards, preserving one coalesced scheduler and legacy live-fold path. Independent corrective three-file SOURCE PASS recorded. Full local suite now18211PASS/7skipped (1224suitesPASS/2skipped); buildPASS; typecheck66PASS. Existing startup4PASS remains valid (no backend edits). New hostedCI required. REPAIR-DELTA.sha256 binds corrective source with the same hashes independently reviewed in local JSON.

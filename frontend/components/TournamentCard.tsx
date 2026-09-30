@@ -4,8 +4,9 @@ import Link from "next/link";
 import { tournamentEventKey, eventPath } from "@/lib/eventKey";
 import { formatProbability } from "@/lib/api";
 import { formatMovementPoints, isRenderedMove } from "@/lib/probabilityDisplay";
-import { isTournamentLive } from "@/lib/tournamentLive";
-import { resolveCupSideColors } from "@/lib/cupTeamSides";
+import { championRowIndex, isTournamentBeforeStart, isTournamentLive } from "@/lib/tournamentLive";
+import { normalizeCupSideName, resolveCupSideColors } from "@/lib/cupTeamSides";
+import { golfChaserLabels } from "@/lib/golfChaserLabels";
 import type { GolfTournament, GolfLeaderboardPlayer } from "@/lib/types";
 
 // L2-78 Item 2 — golf-default flip. FLIPPED TRUE in Queue #213: Alex ruled the
@@ -65,13 +66,23 @@ export default function TournamentCard({ tournament, leaderboard, href: hrefOver
 
   // Determine live status. A just-settled WHAT-HIT card is never "live" (even if
   // residual 24h movement lingers) — it leads with the champion, not a pulse.
-  const isLive = !whatHit && _isLive(tournament);
+  // #9212: nor is any tournament the server has named a champion for. Before
+  // this, only calendar marquees had a finished state, so the FedEx Open de
+  // France read "● LIVE · 100.0% Matthew Fitzpatrick · Leader" hours after he won.
+  const decided = whatHit || !!tournament.champion;
+  const isLive = !decided && _isLive(tournament);
+  // #9378 — before the first day the rank-1 row is the price favourite, not the
+  // top of a leaderboard that does not exist yet.
+  const heroCaption = decided ? "Champion" : !isLive && isTournamentBeforeStart(tournament) ? "Favorite" : "Leader";
   const tourLabel = tournament.tour_label || tournament.tour?.toUpperCase() || "Golf";
   const eyebrowDate = _eyebrowDate(tournament);
 
   // Build leader + chasers from leaderboard (preferred) or golfers (fallback)
   const leader = _buildLeader(tournament, leaderboard);
   const chasers = _buildChasers(tournament, leaderboard);
+  // #9750 — surnames, unless two chasers share one ("A. Kim" / "H. Kim"), or a
+  // chaser shares the hero's ("Matt Fitzpatrick" above "A. Fitzpatrick").
+  const chaserLabels = golfChaserLabels(chasers.map((c) => c.name), leader?.name);
 
   return (
     <Link href={href} className="block">
@@ -82,7 +93,7 @@ export default function TournamentCard({ tournament, leaderboard, href: hrefOver
             <div>
               <div className="text-[11px] font-medium text-text-secondary flex items-center gap-1.5">
                 <span>⛳ {tourLabel}</span>
-                {whatHit && (
+                {decided && (
                   <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-accent-brand uppercase tracking-wide">
                     <span aria-hidden>🏁</span>
                     Final
@@ -96,7 +107,7 @@ export default function TournamentCard({ tournament, leaderboard, href: hrefOver
                       : "LIVE"}
                   </span>
                 )}
-                {!isLive && !whatHit && eyebrowDate && (
+                {!isLive && !decided && eyebrowDate && (
                   <span className="text-text-tertiary">
                     {eyebrowDate}
                   </span>
@@ -112,24 +123,29 @@ export default function TournamentCard({ tournament, leaderboard, href: hrefOver
           {/* Hero probability — leader */}
           {leader && (
             <div className="flex items-center gap-3 py-2.5 px-3 bg-surface-secondary rounded-lg mb-2.5">
-              <div className="text-[28px] font-extrabold tabular-nums tracking-tight">
-                {leader.winProb.toFixed(1)}
-                <span className="text-base font-semibold">%</span>
-              </div>
+              {/* #9212 — null when the champion has no row of its own: the card
+                  names the winner rather than print the price leader's number
+                  beside someone else's name. */}
+              {leader.winProb != null && (
+                <div className="text-[28px] font-extrabold tabular-nums tracking-tight">
+                  {leader.winProb.toFixed(1)}
+                  <span className="text-base font-semibold">%</span>
+                </div>
+              )}
               <div>
                 <div className="flex items-center gap-1.5">
                   <span className="text-sm font-semibold">{leader.name}</span>
-                  {whatHit && (
+                  {decided && (
                     <span className="bg-accent-brand/15 text-accent-brand px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide flex-shrink-0">
                       Won
                     </span>
                   )}
                 </div>
                 <div className="text-xs text-text-secondary">
-                  {whatHit ? "Champion" : "Leader"}
+                  {heroCaption}
                   {leader.score && <> · {leader.score}</>}
                   {/* No live "% today" movement once settled — the result is fixed. */}
-                  {!whatHit && leader.hole && <> · {leader.hole}</>}
+                  {!decided && leader.hole && <> · {leader.hole}</>}
                   {/* #5623 — `movement` is a probability DELTA, so `* 100` is
                       percentage POINTS and this line called them `%`. A leader who
                       went 37.8% -> 47.8% read "+10.0%", which a reader takes as a
@@ -155,7 +171,7 @@ export default function TournamentCard({ tournament, leaderboard, href: hrefOver
                       old `: ""`. The old empty branch worked only because
                       `(m * 100).toFixed(1)` carried its own minus; with an absolute
                       helper it would render a fall as a rise wearing red. */}
-                  {!whatHit && leader.movement != null && isRenderedMove(leader.movement) && (
+                  {!decided && leader.movement != null && isRenderedMove(leader.movement) && (
                     <span className={leader.movement > 0 ? " text-green-600 font-semibold" : " text-red-600 font-semibold"}>
                       {" "}{leader.movement > 0 ? "+" : "-"}{formatMovementPoints(leader.movement)} pts today
                     </span>
@@ -174,7 +190,7 @@ export default function TournamentCard({ tournament, leaderboard, href: hrefOver
                   className={`flex-1 text-center py-1 ${i < chasers.length - 1 ? "border-r border-border-light" : ""}`}
                 >
                   <div className="text-[11px] font-medium text-text-secondary truncate px-1">
-                    {_lastName(c.name)}
+                    {chaserLabels[i]}
                   </div>
                   <div className="text-[15px] font-bold tabular-nums">
                     {c.winProb.toFixed(1)}%
@@ -224,6 +240,14 @@ export default function TournamentCard({ tournament, leaderboard, href: hrefOver
 function CupCard({ tournament, href }: { tournament: GolfTournament; href: string }) {
   const isLive = _isLive(tournament);
   const [teamA, teamB] = tournament.golfers;
+  // #9212 — the winning side, once ESPN calls the cup final. ESPN writes the side
+  // as "USA" where the rows say "Team USA", so sides are compared in the folded
+  // spelling the colour map already uses. Neither side matches ⇒ "Final" with no
+  // side crowned, rather than a guess.
+  const champion = normalizeCupSideName(tournament.champion);
+  const decided = !!tournament.champion;
+  const wonA = !!champion && normalizeCupSideName(teamA.name) === champion;
+  const wonB = !!champion && normalizeCupSideName(teamB.name) === champion;
   const probA = teamA.probability * 100;
   const probB = teamB.probability * 100;
 
@@ -244,13 +268,19 @@ function CupCard({ tournament, href }: { tournament: GolfTournament; href: strin
           <div className="mb-3">
             <div className="text-[11px] font-medium text-text-secondary flex items-center gap-1.5">
               <span>⛳ Cup</span>
+              {decided && (
+                <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-accent-brand uppercase tracking-wide">
+                  <span aria-hidden>🏁</span>
+                  Final
+                </span>
+              )}
               {isLive && (
                 <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-red-500 uppercase tracking-wide">
                   <span className="w-[7px] h-[7px] rounded-full bg-red-500 animate-pulse" />
                   LIVE
                 </span>
               )}
-              {!isLive && eyebrowDate && (
+              {!isLive && !decided && eyebrowDate && (
                 <span className="text-text-tertiary">
                   {eyebrowDate}
                 </span>
@@ -266,7 +296,10 @@ function CupCard({ tournament, href }: { tournament: GolfTournament; href: strin
           <div className="flex items-center gap-3 mb-1">
             {/* Team A (left) */}
             <div className="flex-1 text-left">
-              <div className={`text-xs font-semibold ${colorA.text}`}>{teamA.name}</div>
+              <div className={`text-xs font-semibold ${colorA.text}`}>
+                {teamA.name}
+                {wonA && <span className="ml-1.5 bg-accent-brand/15 text-accent-brand px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide">Won</span>}
+              </div>
               <div className="text-[22px] font-extrabold tabular-nums tracking-tight">
                 {probA.toFixed(1)}<span className="text-sm font-semibold">%</span>
               </div>
@@ -277,7 +310,10 @@ function CupCard({ tournament, href }: { tournament: GolfTournament; href: strin
 
             {/* Team B (right) */}
             <div className="flex-1 text-right">
-              <div className={`text-xs font-semibold ${colorB.text}`}>{teamB.name}</div>
+              <div className={`text-xs font-semibold ${colorB.text}`}>
+                {wonB && <span className="mr-1.5 bg-accent-brand/15 text-accent-brand px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide">Won</span>}
+                {teamB.name}
+              </div>
               <div className="text-[22px] font-extrabold tabular-nums tracking-tight">
                 {probB.toFixed(1)}<span className="text-sm font-semibold">%</span>
               </div>
@@ -331,7 +367,10 @@ interface CardGolfer {
   movement?: number | null;
 }
 
-function _buildLeader(tournament: GolfTournament, leaderboard?: GolfLeaderboardPlayer[]): CardGolfer | null {
+/** The hero row. #9212: `winProb` is null for a champion with no row of its own. */
+type HeroGolfer = Omit<CardGolfer, "winProb"> & { winProb: number | null };
+
+function _buildLeader(tournament: GolfTournament, leaderboard?: GolfLeaderboardPlayer[]): HeroGolfer | null {
   if (leaderboard?.length) {
     const lb = leaderboard[0];
     return {
@@ -368,6 +407,15 @@ function _buildLeader(tournament: GolfTournament, leaderboard?: GolfLeaderboardP
       movement: lb.win_prob_change == null ? null : lb.win_prob_change / 100,
     };
   }
+  // #9212 — once the server names a champion, the hero is the champion's own
+  // row, not whoever the prices rank first (a playoff loser can still lead a
+  // stale price). No row of the champion's own ⇒ the name alone.
+  if (tournament.champion) {
+    const i = championRowIndex(tournament.golfers, tournament.champion);
+    if (i < 0) return { name: tournament.champion, winProb: null };
+    const c = tournament.golfers[i];
+    return { name: c.name, winProb: c.probability * 100, movement: c.movement_24h };
+  }
   const g = tournament.golfers[0];
   if (!g) return null;
   return {
@@ -386,10 +434,18 @@ function _buildChasers(tournament: GolfTournament, leaderboard?: GolfLeaderboard
       hole: lb.thru && lb.thru !== "F" ? `H${lb.thru}` : (lb.thru === "F" ? "F" : undefined),
     }));
   }
-  return tournament.golfers.slice(1, 5).map((g) => ({
-    name: g.name,
-    winProb: g.probability * 100,
-  }));
+  // #9212 — the chasers are everyone but the hero, so with a champion they are
+  // the rows other than the champion's (all rows when it has none).
+  const heroIndex = tournament.champion
+    ? championRowIndex(tournament.golfers, tournament.champion)
+    : 0;
+  return tournament.golfers
+    .filter((_, i) => i !== heroIndex)
+    .slice(0, 4)
+    .map((g) => ({
+      name: g.name,
+      winProb: g.probability * 100,
+    }));
 }
 
 function _isCupEvent(tournament: GolfTournament): boolean {
@@ -416,11 +472,6 @@ function _currentRound(tournament: GolfTournament): string {
   const now = new Date();
   const daysDiff = Math.floor((now.getTime() - start.getTime()) / 86400000) + 1;
   return String(Math.min(Math.max(daysDiff, 1), 4));
-}
-
-function _lastName(name: string): string {
-  const parts = name.split(" ");
-  return parts.length > 1 ? parts[parts.length - 1] : name;
 }
 
 function _cleanPropLabel(marketName: string, tournamentName: string): string {

@@ -19,7 +19,13 @@ from app.models import FuturesMarket, FuturesOutcome, FuturesOddsSnapshot, Sport
 from app.services import get_db, OddsAPIService
 from app.utils import movement_pool, probability_to_american
 from app.utils.durable_venue_receipt import log_durable_venue_serve
-from app.utils.feed_market_quality import is_empty_book_midpoint
+from app.utils.feed_market_quality import (
+    FEED_EXCLUSIVE_SUM_MIN,
+    FEED_LOCKED_CERTAIN_HIGH,
+    FEED_LOCKED_CERTAIN_LOW,
+    book_has_a_buyer,
+    is_empty_book_midpoint,
+)
 from app.utils.futures_history_basis import (
     carried_endpoint,
     carry_forward_quotes,
@@ -47,7 +53,7 @@ from app.utils.futures_unsupported_price import (
     snapshot_price_is_unsupported,
     unsupported_legs_above_the_supported_head,
 )
-from app.utils.game_market_club_names import repair_field_outcome_name
+from app.utils.series_card_labels import market_threshold_label, reader_outcome_name
 from app.utils.hook_staleness import hook_names_unpriced_outcome, is_hook_stale
 from app.utils.leader_order import leader_first_outcomes
 from app.utils.market_display_name import clean_market_display_name
@@ -2616,6 +2622,54 @@ def _leg_prices_an_empty_book(outcome) -> bool:
     )
 
 
+def _exact_score_field_nobody_prices(field: list[tuple]) -> bool:
+    """Is this exact-score card a handful of maker quotes rather than a forecast?
+
+    #9844. ``field`` is ``[(probability, yes_bid, yes_ask), ...]`` for every leg
+    the strip would serve from the card's market(s), scorelines and "Any Other
+    Score" alike.
+
+    THE READER. ``/sports`` at 390px, 2026-09-30 14:25Z: eight Championship
+    exact-score cards, each led by "2–2 9% · 3–3 8% · 2–5 6% · 4–4 6%", with no
+    1–0, 1–1 or 0–0 on any of them. Polymarket's own book for Wrexham v West
+    Brom (event 1106734) has 37 legs, every one bid at the 1¢ floor, and none
+    has traded. The writer rightly declines the 32 legs quoted 1¢/97¢ (#6676).
+    The five that survive are the legs whose ask happened to be 10–17¢, and the
+    same ask sits on the same scoreline in all eight matches. So the card
+    printed the midpoints of one market maker's quote and left out the likely
+    scores.
+
+    TWO CLAUSES, BOTH REQUIRED, and each one is an existing rule reused rather
+    than a new threshold:
+
+    1. The served legs do not add up to a field: their sum is under
+       ``FEED_EXCLUSIVE_SUM_MIN``, the floor this repo already treats as
+       definitional for mutually exclusive outcomes (#1574). One match's
+       scorelines are exactly that.
+    2. Nobody is buying any of them: no leg passes :func:`book_has_a_buyer` (a
+       bid above the 5¢ empty-book floor).
+
+    Measured over every open "Exact Score" market on 2026-09-30: both clauses
+    hold on 255 (the specimen class). Clause 1 alone would also take 8 partial
+    markets with real bids (Germany v Serbia: 16 legs, sum 0.72, six legs
+    bid-backed), which stay. Clause 2 alone would also take 49 markets whose
+    legs do add up, which is not this defect.
+
+    A leg with no book at all (both sides NULL) is a model or derived price and
+    has nothing for clause 2 to read, so a field holding one is left alone, the
+    same pass-through :func:`is_empty_book_midpoint` gives it. Read-side only
+    (gotcha #21): no stored price changes.
+    """
+    if not field:
+        return False
+    if any(bid is None and ask is None for _p, bid, ask in field):
+        return False
+    if any(book_has_a_buyer(bid) for _p, bid, _ask in field):
+        return False
+    total = sum(float(p) for p, _bid, _ask in field if p is not None)
+    return total < FEED_EXCLUSIVE_SUM_MIN
+
+
 def _market_has_priced_outcome(market: dict) -> bool:
     """Does this grouped-feed market carry a probability the card can print?
 
@@ -2646,6 +2700,98 @@ def _market_has_priced_outcome(market: dict) -> bool:
         if isinstance(probability, (int, float, Decimal)):
             return True
     return False
+
+
+def _market_is_decided(market: dict) -> bool:
+    """Has this grouped-feed market already answered its own question? (#9899)
+
+    Production, 2026-09-30 17:50Z, ``/sports`` at 390px: four of the strip's 20
+    cards asked something already over and printed it as live — "Completed
+    Match: Sedysheva vs Popovic" Yes >99%, "Set 1 Winner: Rozin vs
+    Schlagenhauf" Rozin >99% (set 1 played), "Arsenal WFC 1st Half O/U 3.5"
+    Under >99% (first half over). They filled the slots #9844 freed.
+
+    Decided = the leader prints at ``>99%`` AND every other printed leg sits at
+    a dead extreme too. The thresholds are #1004's (``FEED_LOCKED_CERTAIN_*``),
+    the rounding points where a card reads ">99%" / "<1%". The second clause
+    keeps independent binaries (gotcha #23: "which teams make the playoffs",
+    one leg at 99% beside legs at 60%) — those still hold a question.
+
+    NOT ``is_locked_near_certain``. Its mover and volume exemptions exist so
+    Discover keeps a market that just jumped to 99% on news; every in-play prop
+    above jumped to 99% in the last hour, so the exemption would keep exactly
+    the rows this refuses. Only legs the card prints vote
+    (``_market_has_priced_outcome``'s test); a market printing none is not
+    decided — that is #2710's rule, not this one.
+    """
+    printed = []
+    for outcome in market.get("outcomes") or ():
+        probability = outcome.get("probability")
+        if isinstance(probability, bool) or not isinstance(
+            probability, (int, float, Decimal)
+        ):
+            continue
+        printed.append(float(probability))
+    if not printed or max(printed) < FEED_LOCKED_CERTAIN_HIGH:
+        return False
+    return all(
+        p >= FEED_LOCKED_CERTAIN_HIGH or p <= FEED_LOCKED_CERTAIN_LOW
+        for p in printed
+    )
+
+
+async def _grouped_feed_container_parent_ids(db: AsyncSession, markets: list) -> set[int]:
+    """Pool rows that are Polymarket game containers, which the strip withholds (#9466).
+
+    Production, 2026-09-28 21:20Z, ``/sports`` at 390px: five Jingshan doubles
+    cards led with **"Completed Match 98%"**, ranked above the team. Each was the
+    match's Polymarket event row (``62786044``, ``polymarket:1091311``): its
+    "outcomes" are its sub-markets' lead legs keyed by ``condition_id``, and every
+    sub-market is already its own row on the group. Search (#8375),
+    ``/game-markets`` and ``/related-futures`` (#8848) withhold that parent; this
+    is the same verdict, asked with search's own helpers so the surfaces cannot
+    drift apart.
+
+    Only EVENT-LINKED, non-exclusive rows are candidates, #8375's linked arm. The
+    unlinked leg-copy boards are legitimate questions ("What will the announcers
+    say…"), and search tells them apart by sibling names, a second read the strip
+    does not need for the population measured (all 6 of 6 were linked).
+
+    One indexed read (``uq_futures_source_external``), issued only when a candidate
+    exists, under a SAVEPOINT because the caller still holds the pool's ORM rows.
+    FAILS OPEN: an error serves the strip as it was before this pass.
+    """
+    from app.routes.events import (
+        _search_container_parent_candidates,
+        _search_container_parents_among,
+    )
+
+    # The helper applies both arms (non-exclusive, event-linked); this pre-filter
+    # only keeps it from reading a column the thin fixtures do not carry.
+    candidates = _search_container_parent_candidates(
+        [m for m in markets if getattr(m, "mutually_exclusive", None) is False]
+    )
+    if not candidates:
+        return set()
+    leg_ids = set().union(*(legs for _, legs in candidates.values()))
+    savepoint = await db.begin_nested()
+    try:
+        rows = (
+            await db.execute(
+                select(
+                    FuturesMarket.id, FuturesMarket.group_id, FuturesMarket.external_id
+                ).where(
+                    FuturesMarket.source == "polymarket",
+                    FuturesMarket.external_id.in_(leg_ids),
+                )
+            )
+        ).all()
+    except Exception:  # noqa: BLE001
+        await savepoint.rollback()
+        logger.warning("grouped-feed container read failed; serving unfiltered", exc_info=True)
+        return set()
+    await savepoint.commit()
+    return _search_container_parents_among(candidates, rows)
 
 
 #: A container group is only worth a round trip once it is actually flooding the
@@ -2774,7 +2920,11 @@ def select_ungrouped_markets(
     return [
         m
         for m in market_dicts
-        if m["id"] not in grouped_market_ids and _market_has_priced_outcome(m)
+        if m["id"] not in grouped_market_ids
+        and _market_has_priced_outcome(m)
+        # #9899: an answered question is dropped above the slice too, so its
+        # slot backfills from the pool like a priceless one's.
+        and not _market_is_decided(m)
     ][:limit]
 
 
@@ -2933,6 +3083,14 @@ async def grouped_feed(
 
     filters = [
         FuturesMarket.status.in_(["active", "open"]),
+        # #9899: a market past its own resolution date is over even while its
+        # status still reads open (the Arsenal WFC 1st-half total, 16:45Z,
+        # served at 17:50Z). The same clause every other list route in this
+        # file applies to its open markets.
+        or_(
+            FuturesMarket.resolution_date.is_(None),
+            FuturesMarket.resolution_date >= datetime.now(timezone.utc),
+        ),
     ]
     if category:
         filters.append(FuturesMarket.category == category)
@@ -2958,10 +3116,17 @@ async def grouped_feed(
     )
     result = await db.execute(stmt)
     markets = result.scalars().unique().all()
+    # #9466: a game container's legs are copies of its own sub-markets.
+    container_parent_ids = await _grouped_feed_container_parent_ids(db, markets)
 
     market_dicts = []
     outcome_dicts = []
+    # #9844: each served leg's book, kept beside the dicts rather than in them
+    # because a market card ships its outcome dicts whole.
+    leg_books: dict[int, tuple] = {}
     for m in markets:
+        if m.id in container_parent_ids:
+            continue
         m_dict = {
             "id": m.id,
             "name": m.name,
@@ -2994,6 +3159,10 @@ async def grouped_feed(
             }
             m_dict["outcomes"].append(o_dict)
             outcome_dicts.append(o_dict)
+            leg_books[o.id] = (
+                getattr(o, "current_yes_bid", None),
+                getattr(o, "current_yes_ask", None),
+            )
         market_dicts.append(m_dict)
 
     stat_prop_groups = detect_stat_prop_groups(market_dicts)
@@ -3165,6 +3334,20 @@ async def grouped_feed(
             continue
         for o in outcomes:
             grouped_outcome_ids.add(o["id"])
+        # #9844: the card CONSUMES its market, whether it ships or not. Left
+        # ungrouped, the same scorelines came back lower in the strip as a
+        # plain market card (Wrexham and Birmingham each shown twice on
+        # 2026-09-30), and a withheld card would come back the same way.
+        scope_market_ids = {o["market_id"] for o in outcomes}
+        grouped_market_ids.update(scope_market_ids)
+        field = [
+            (o["probability"], *leg_books.get(o["id"], (None, None)))
+            for m in market_dicts
+            if m["id"] in scope_market_ids
+            for o in m["outcomes"]
+        ]
+        if _exact_score_field_nobody_prices(field):
+            continue
         feed_items.append({
             "type": "threshold",
             # UX-1052 item 2 — the discriminator the renderer reads. Kept
@@ -5196,10 +5379,19 @@ async def get_progression(
             sibling_markets.extend(ks_result.scalars().unique().all())
 
     # Method 2: Canonical key siblings
-    if len(sibling_markets) < 2 and market.canonical_market_key:
+    # #9746: a key whose sport or league segment is EMPTY ("soccer::championship:2026")
+    # names no competition, so `soccer::%:2026` is every league-less soccer market of
+    # the season — a Colombian halftime page rendered UEFA Nations League groups as its
+    # stages. A game-level market (event_id set) has no stages of its own either; its
+    # league's season futures are not its progression.
+    if (
+        len(sibling_markets) < 2
+        and market.canonical_market_key
+        and market.event_id is None
+    ):
         # Parse key: "sport:league:category:season" → find same sport:league:*:season
         parts = market.canonical_market_key.split(":")
-        if len(parts) >= 4:
+        if len(parts) >= 4 and parts[0] and parts[1]:
             sport_part, league_part = parts[0], parts[1]
             season_part = parts[-1]
             # Search for markets sharing sport:league:*:season
@@ -7647,7 +7839,10 @@ async def get_futures_history(
         o.id: (
             _leg_side_label(leg_sides[o.external_id], o.name)
             if o.external_id in leg_sides
-            else repair_field_outcome_name(o.external_id, o.name) or o.name
+            else reader_outcome_name(
+                o.external_id, o.name, market_threshold_label(market)
+            )
+            or o.name
         )
         for o in charted_outcomes
     }
@@ -7697,8 +7892,25 @@ async def get_futures_history(
     # number from the hero above it (KBO 59698965: 7 of 10 legs, sum 0.89, printed
     # raw under a hero squeezed by 1.268). Graded legs are not carried — see the
     # helper for why neither their last price nor their grade may be.
+    # #9765 — A CLEARED PRICE IS NOT AN UNCHANGED ONE. A leg the writer has since
+    # nulled (DataGolf dropped 63 golfers off the Dunhill Links board) wrote no row
+    # when it went away, so the carry kept it alive and the chart divided by 1.587
+    # under a hero dividing by 1.000. It is carried up to the instant it was
+    # cleared and no further; with no stamp to bound it, not at all.
+    _cleared_until: dict[int, datetime] = {}
+    _never_carried = set(_settled_grades)
+    for _o in market.outcomes:
+        if _o.current_probability is not None or _o.id in _never_carried:
+            continue
+        _stamp = getattr(_o, "price_changed_at", None)
+        if _stamp is None:
+            _never_carried.add(_o.id)
+        else:
+            _cleared_until[_o.id] = _stamp
     devigged = devigged_consensus_by_time(
-        carry_forward_quotes(raw_by_time, do_not_carry=set(_settled_grades)),
+        carry_forward_quotes(
+            raw_by_time, do_not_carry=_never_carried, carry_until=_cleared_until
+        ),
         mutually_exclusive=getattr(market, "mutually_exclusive", True),
         field_complete=_field_complete,
     )
@@ -8398,7 +8610,10 @@ def _format_market_detail(
             "name": (
                 _leg_side_label(leg_sides[o.external_id], o.name)
                 if leg_sides and o.external_id in leg_sides
-                else repair_field_outcome_name(o.external_id, o.name) or o.name
+                else reader_outcome_name(
+                    o.external_id, o.name, market_threshold_label(market)
+                )
+                or o.name
             ),
             "probability": float(o.current_probability) if o.current_probability is not None else None,
             "american_odds": o.current_american_odds,
@@ -9246,6 +9461,13 @@ def _format_market_detail(
         ]
         if len(served_leads) == 1:
             lead_outcome_id = served_leads[0]
+    # #9531: a cumulative ladder leads with the rung the `/weather` card quotes
+    # (#9283), not its loosest one. Set only when that rung is not already the
+    # price leader, so a board whose hero is right serves null as before.
+    if lead_outcome_id is None and market.status != "resolved":
+        from app.utils.ladder_headline import ladder_headline_outcome_id
+
+        lead_outcome_id = ladder_headline_outcome_id(outcomes, market.name)
 
     # B7 (L2-91): the up-link mesh. Resolve this market's event-concept key
     # (`event:<domain>:<slug>`, richer per-event page) and its competition hub slug
@@ -9319,8 +9541,9 @@ def _format_market_detail(
         "outcomes": outcomes,
         "outcome_count": len(outcomes),
         # #8892: on a game container, the outcome a hero should lead with — the
-        # match winner — rather than whichever leg is priced highest. Always
-        # present; null everywhere else, so absence means an old build.
+        # match winner — rather than whichever leg is priced highest. #9531: on
+        # a cumulative ladder, its median rung when that is not the leader.
+        # Always present; null everywhere else, so absence means an old build.
         "lead_outcome_id": lead_outcome_id,
         # #5539: true when this field's openings were refused as incoherent, so a
         # probe can tell a withheld opening from one that never existed. Always

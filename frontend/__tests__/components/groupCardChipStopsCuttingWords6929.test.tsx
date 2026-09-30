@@ -147,7 +147,9 @@ function render(kind: string, title: string): string {
  * number or on the fix's own classes, so a guard cannot pass by finding itself.
  */
 function chipClass(html: string): string {
-  const m = html.match(/class="([^"]*bg-lime-600\/15[^"]*)"/);
+  // #9642: the filled chip became design A's eyebrow (shared `BundleHeader`), so
+  // the category colour pair is no longer on it; the eyebrow's own testid is.
+  const m = html.match(/data-testid="bundle-eyebrow" class="([^"]*)"/);
   expect(m).not.toBeNull();
   return m![1];
 }
@@ -210,7 +212,7 @@ describe("#6929 a group card's category chip stays inside its card", () => {
     expect(isConstrained(SHIPPED_CHIP)).toBe(false);
     expect(/\bwhitespace-nowrap\b/.test(SHIPPED_CHIP)).toBe(true);
     // And the locator finds it, so a green run above is a real read and not a miss.
-    expect(chipClass(`<span class="${SHIPPED_CHIP}">x</span>`)).toBe(SHIPPED_CHIP);
+    expect(chipClass(`<span data-testid="bundle-eyebrow" class="${SHIPPED_CHIP}">x</span>`)).toBe(SHIPPED_CHIP);
   });
 
   it("CONTROL: the premise is intact — the card shell still clips its overflow", () => {

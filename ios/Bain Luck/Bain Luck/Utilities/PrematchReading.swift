@@ -34,9 +34,15 @@ nonisolated struct PrematchReading: Equatable, Sendable {
     /// the start, so it is "Pre-match".
     var captionWord: String { isServed ? "Pre-match" : "Opened" }
 
+    /// Whether `awayProbability` is `1 − home` rather than a price the market
+    /// gave the away side. On a two-way board the two are the same number; on
+    /// a board that prices a draw the complement carries the draw too.
+    let awayIsComplement: Bool
+
     static func resolve(prematch: PrematchOdds?, opening: OpeningOdds?) -> PrematchReading? {
         if let served = prematch, let home = usable(served.homeProbability) {
-            let away = usable(served.awayProbability) ?? 1 - home
+            let servedAway = usable(served.awayProbability)
+            let away = servedAway ?? 1 - home
             return PrematchReading(
                 awayProbability: away,
                 homeProbability: home,
@@ -47,18 +53,39 @@ nonisolated struct PrematchReading: Equatable, Sendable {
                     servedHome: served.homeRenderedPercent
                 ),
                 source: served.source ?? booksSource,
-                isServed: true
+                isServed: true,
+                awayIsComplement: servedAway == nil
             )
         }
         guard let home = usable(opening?.homeProbability) else { return nil }
-        let away = usable(opening?.awayProbability) ?? 1 - home
+        let openingAway = usable(opening?.awayProbability)
+        let away = openingAway ?? 1 - home
         return PrematchReading(
             awayProbability: away,
             homeProbability: home,
             percents: renderedDuelPercents(away: away, home: home),
             source: booksSource,
-            isServed: false
+            isServed: false,
+            awayIsComplement: openingAway == nil
         )
+    }
+
+    /// #9490 — whether the side that won was the market's underdog: priced
+    /// BELOW the side it beat, on this same reading.
+    ///
+    /// The card used a fixed cut on the winner alone (`< 0.4`), which is only
+    /// the right question on a two-way board, where the pair sums to one. On a
+    /// board that prices a draw, 39.5% can be the favourite: Turkey 32.5% v
+    /// Italy 39.5% (event 15304745) and the phone would have painted a home
+    /// win at those prices as an upset. A draw or no result names no winner,
+    /// and a draw-priced board whose away number is only the complement cannot
+    /// answer, so both say false.
+    func winnerWasUnderdog(homeWon: Bool, awayWon: Bool, pricesADraw: Bool) -> Bool {
+        guard homeWon != awayWon else { return false }
+        if pricesADraw && awayIsComplement { return false }
+        return homeWon
+            ? homeProbability < awayProbability
+            : awayProbability < homeProbability
     }
 
     /// Rejects the endpoints as well as the out-of-range, as the web does: a

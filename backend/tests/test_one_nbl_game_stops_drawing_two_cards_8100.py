@@ -234,26 +234,153 @@ def test_one_row_carrying_a_score_the_other_lacks_is_not_evidence():
     assert len(result.events) == 1
 
 
-def test_a_live_pair_is_left_as_two_cards():
-    """While a game is live the asymmetry this pass can read is outranked by one
-    it cannot: which row's score is current. Electing the stale copy shows a
-    wrong score as the ONLY score, which is worse than showing the game twice."""
+def test_a_live_pair_whose_claim_holds_a_score_is_left_as_two_cards():
+    """🔴 THE ARMED LIVE CLAUSE. While a game is live, a score on the id-less
+    claim is a copy nothing here can rank for freshness. The election's rung 1
+    would keep it over a scoreless anchored row, so a fold could show a stale
+    score as the ONLY score, which is worse than showing the game twice."""
     claim, anchored = _perth_pair()
     claim.status = anchored.status = "live"
+    claim.home_score, claim.away_score = 40, 38
 
     result = fold_twin_events([claim, anchored])
 
     assert len(result.events) == 2
 
 
-def test_one_live_row_is_enough_to_refuse_the_pair():
-    """The refusal is per GROUP, not per pair-of-statuses."""
+def test_a_live_pair_whose_claim_holds_no_score_folds():
+    """#8100 live residual — the ship. Production 2026-09-27 11:38Z,
+    `/search?q=Seibu Lions`: Rakuten @ Seibu `15316168` (id-less, 90%) beside
+    `15319558` (Odds API, 87%), two LIVE cards for one game, neither holding a
+    score. The id-less claim has no provider id, so no score feed keys to it; if
+    it holds no score there is none to lose, and the anchored row survives."""
+    claim, anchored = _perth_pair()
+    claim.status = anchored.status = "live"
+
+    result = fold_twin_events([claim, anchored])
+
+    assert len(result.events) == 1
+    assert result.events[0].id == 15316489, "the anchored row survives"
+    assert result.merged_sources[15316489] == {"polymarket": 0.41}
+
+
+def test_a_live_pair_keeps_the_anchored_rows_score():
+    """The licence's claim: when only the anchored row holds a score, that
+    score is the one on the card."""
+    claim, anchored = _perth_pair()
+    claim.status = anchored.status = "live"
+    anchored.home_score, anchored.away_score = 51, 47
+
+    result = fold_twin_events([claim, anchored])
+
+    assert len(result.events) == 1
+    survivor = result.events[0]
+    assert survivor.id == 15316489
+    assert (survivor.home_score, survivor.away_score) == (51, 47)
+
+
+def test_one_live_row_is_licensed_like_two():
+    """A pair where only the anchored row has gone live (the claim still reads
+    `scheduled`) is the same question and gets the same answer."""
+    claim, anchored = _perth_pair()
+    anchored.status = "live"
+
+    assert len(fold_twin_events([claim, anchored]).events) == 1
+
+    claim.home_score, claim.away_score = 0, 2
+    claim.status = "live"
+    anchored.status = "scheduled"
+    assert len(fold_twin_events([claim, anchored]).events) == 2
+
+
+def test_half_a_score_on_the_claim_is_still_a_score():
+    """Either column counts. A feed that has written one side and not yet the
+    other is mid-update, and that is exactly the copy that can be stale."""
+    for column in ("home_score", "away_score"):
+        claim, anchored = _perth_pair()
+        claim.status = anchored.status = "live"
+        setattr(claim, column, 3)
+
+        assert len(fold_twin_events([claim, anchored]).events) == 2, column
+
+
+def test_the_live_licence_does_not_touch_a_settled_pair():
+    """Outside the live window nothing changes: a completed pair whose claim
+    alone holds the score folds exactly as it did before, and rung 1 keeps
+    that score."""
+    claim, anchored = _perth_pair()
+    claim.status = anchored.status = "completed"
+    claim.home_score, claim.away_score = 88, 80
+
+    result = fold_twin_events([claim, anchored])
+
+    assert len(result.events) == 1
+    assert (result.events[0].home_score, result.events[0].away_score) == (88, 80)
+
+
+def test_an_unknown_status_still_refuses_the_pair():
+    """The licence admits `live` and nothing else. A status this module has
+    never reasoned about stays two cards."""
     claim, anchored = _perth_pair()
     anchored.status = "in_progress"
 
     result = fold_twin_events([claim, anchored])
 
     assert len(result.events) == 2
+
+
+def test_a_suspended_pair_whose_claim_holds_no_score_folds():
+    """#8100 suspended residual. Production 2026-09-27 13:5xZ,
+    `/api/events/search?q=Seibu Lions`: the SAME Rakuten @ Seibu pair
+    (`15316168` id-less, `15319558` Odds API) both read `suspended` after the
+    game, no score on either — where every past NPB row ends (#5711). The live
+    licence folded it during the game; without this it split again the moment
+    the game ended and stayed two cards in search for good."""
+    claim, anchored = _perth_pair()
+    claim.status = anchored.status = "suspended"
+
+    result = fold_twin_events([claim, anchored])
+
+    assert len(result.events) == 1
+    assert result.events[0].id == 15316489, "the anchored row survives"
+    assert result.merged_sources[15316489] == {"polymarket": 0.41}
+
+
+def test_a_suspended_pair_whose_claim_holds_a_score_is_left_as_two_cards():
+    """`suspended` is licensed like `live`, never as collapsible: a score on the
+    claim is still a copy nothing here can rank, so the pair stays two."""
+    for column in ("home_score", "away_score"):
+        claim, anchored = _perth_pair()
+        claim.status = anchored.status = "suspended"
+        setattr(claim, column, 4)
+
+        assert len(fold_twin_events([claim, anchored]).events) == 2, column
+
+
+def test_one_suspended_row_beside_a_settled_one_gets_the_same_answer():
+    """A claim still `scheduled` beside a `suspended` anchored row (or the
+    reverse) is the same question."""
+    claim, anchored = _perth_pair()
+    anchored.status = "suspended"
+    assert len(fold_twin_events([claim, anchored]).events) == 1
+
+    claim, anchored = _perth_pair()
+    claim.status = "suspended"
+    anchored.status = "completed"
+    anchored.home_score, anchored.away_score = 3, 1
+    result = fold_twin_events([claim, anchored])
+    assert len(result.events) == 1
+    assert (result.events[0].home_score, result.events[0].away_score) == (3, 1)
+
+
+def test_suspended_is_admitted_by_the_anchored_claim_pass_only():
+    """The season-variant pass (#5821) and the anchored-claim NAME pass read
+    their own status sets and do not learn `suspended` from this change."""
+    from app.utils import event_twin_fold as fold
+
+    assert "suspended" in fold._ANCHORED_CLAIM_LICENSED_STATUSES
+    assert "suspended" not in fold._VARIANT_LIVE_LICENSED_STATUSES
+    assert "suspended" not in fold._VARIANT_COLLAPSIBLE_STATUSES
 
 
 def test_a_pair_past_the_bound_stays_two_cards():

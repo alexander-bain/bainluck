@@ -325,6 +325,47 @@ def is_contender_outcome(probability, volume, *, team_anchored: bool = False) ->
     return probability >= MIN_CONTENDER_PROBABILITY
 
 
+def on_page_contender_candidates(page: list, is_name_match) -> list:
+    """Ids of page rows that could be a headline contender and are not at row 0.
+
+    #9587. `/search`'s lane fires only when every page row is a name match, so
+    a contender that reached the page ON ITS OWN made the gate false and kept
+    the reranker's slot. Measured on production 2026-09-29, the first day of
+    MLB's postseason: `q=cubs` served `MLB World Series Champion 2026` at row 7
+    of 10 behind six game props, while `q=yankees` — whose page did NOT hold
+    the market — had it promoted to row 0. Present meant buried; absent meant
+    first.
+
+    These ids are CANDIDATES, not verdicts: the caller runs the lane's own SQL
+    restricted to them, so the whole-word outcome match, the probability floor
+    and the team anchor are decided in one place for both arms. This function
+    only applies the two clauses a page row can answer by itself — tier 1 and
+    the volume floor — plus "outcome-only" (a name match is already ranked by
+    name, #2579's rule), so that the lane runs only when there is something it
+    could hoist.
+
+    Row 0 is excluded: a contender already first has nowhere to go, and
+    running the lane for it would be a query that cannot change the page.
+    """
+    ids = []
+    for index, market in enumerate(page):
+        if index == 0:
+            continue
+        if getattr(market, "market_tier", None) != HEADLINE_MARKET_TIER:
+            continue
+        volume = getattr(market, "volume", None)
+        try:
+            if volume is None or float(volume) < MIN_CONTENDER_VOLUME:
+                continue
+        except (TypeError, ValueError):
+            continue
+        market_id = getattr(market, "id", None)
+        if market_id is None or is_name_match(market):
+            continue
+        ids.append(market_id)
+    return ids
+
+
 def promote_headline_contenders(
     page: list,
     contenders: list,
@@ -368,11 +409,11 @@ def promote_headline_contenders(
     holds") is therefore still true, and now the function's first sentence —
     contenders end up at the FRONT — is true as well.
 
-    This is inert for `/search` BY CONSTRUCTION rather than by measurement: its
-    lane only fires when every row of the shipped page is a name match, and a
-    contender is outcome-only by the caller's own filter, so a contender that
-    is already on that page makes the gate false and the lane never runs. The
-    hoist branch is therefore unreachable from `/search`.
+    `/search` reaches the hoist branch since #9587. Its lane used to fire only
+    when every row of the shipped page was a name match, so a contender already
+    on the page made the gate false and kept its reranked slot (`cubs`: the
+    World Series market at row 7). The route now also runs the lane restricted
+    to `on_page_contender_candidates`, and this branch is what moves the row.
 
     Rows already on the page are reconciled by identity and, when `dedup_key`
     is given, a DIFFERENT market sharing the page's dedup key is still skipped

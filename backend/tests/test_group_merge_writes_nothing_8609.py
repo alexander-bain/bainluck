@@ -120,7 +120,9 @@ def test_the_next_query_after_grouping_does_not_raise(session):
 
 def test_the_view_still_carries_the_merged_outcome_set(session):
     (rep,) = group_markets_by_group_id(_load(session))
-    assert sorted(o.name for o in rep.outcomes) == ["45%", "↑ 40%", "↑ 45%"]
+    # The sub-market's "45%" is the parent's "↑ 45%" leg (same external_id), so
+    # it is not merged as a second rung (test_group_merge_parent_legs_9458.py).
+    assert sorted(o.name for o in rep.outcomes) == ["↑ 40%", "↑ 45%"]
 
 
 def test_the_session_holds_nothing_to_write(session):

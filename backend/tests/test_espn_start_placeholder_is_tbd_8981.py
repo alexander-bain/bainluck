@@ -310,7 +310,7 @@ def _wire(monkeypatch, *, rows, boards):
 
 
 def _db_row(event_id, espn_id, commence, tags=None, sport="americanfootball_ncaaf"):
-    return (event_id, sport, espn_id, commence, tags or [])
+    return (event_id, sport, espn_id, commence, tags or [], "espn", None, None)
 
 
 @pytest.mark.asyncio

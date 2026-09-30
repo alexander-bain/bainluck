@@ -352,7 +352,7 @@ Team rosters are synced daily using ESPN's roster endpoints and MLB Stats API fo
 **Task:** `backend/app/tasks/roster_sync.py` (`_sync_rosters`)
 - Uses ESPN `/teams/{id}/roster` endpoint for NBA, NFL, NHL, NCAAB, NCAAF, WNBA, MLS, EPL
 - Uses MLB Stats API for baseball
-- Beat schedule: daily at 7:00 AM UTC (`sync-rosters-daily`)
+- Beat schedule: daily from 10:00 UTC, one `sync-rosters-<sport>` run per sport with a per-team commit (#5184 — the single all-sports run could never finish inside its time limit)
 - Stores deduplicated, sorted player name list on `Team.roster_players` JSONB column
 
 **Admin endpoints:**

@@ -220,6 +220,10 @@ class _Session:
     async def rollback(self):
         pass
 
+    async def begin_nested(self):
+        # #9460: the poll opens a SAVEPOINT per event at its first write.
+        return _Savepoint()
+
     async def flush(self):
         pass
 
@@ -228,6 +232,16 @@ class _Session:
 
     def add(self, *a, **kw):
         pass
+
+
+class _Savepoint:
+    is_active = True
+
+    async def commit(self):
+        self.is_active = False
+
+    async def rollback(self):
+        self.is_active = False
 
     def expunge_all(self):
         pass

@@ -491,6 +491,7 @@ class TestGetGameMarketsFormatting:
                 # `false` (gotcha #33's default-false trap).
                 "is_winner": None,
                 "resolution_source": None,
+                "contributor_outcome_ids": [201],
                 "_market_id": 101,
                 "_external_id": "KXNBA2HTOTAL-26MAY17BOSNYK",
             }
@@ -548,6 +549,7 @@ class TestGetGameMarketsFormatting:
                 # #2089 — ungraded row, so no verdict (see the note above).
                 "is_winner": None,
                 "resolution_source": None,
+                "contributor_outcome_ids": [202],
                 # #4189 — row-level provenance, so the container-parent
                 # suppression can be decided against the payload instead of a
                 # bucket. `totals` has carried `_market_id`/`_external_id` since
@@ -733,6 +735,7 @@ class TestGetGameMarketsFormatting:
                 # #2089 — ungraded row, so no verdict (see the note above).
                 "is_winner": None,
                 "resolution_source": None,
+                "contributor_outcome_ids": [203],
                 # #4189 — see the note on the sibling assertion above.
                 "_market_id": market.id,
             }

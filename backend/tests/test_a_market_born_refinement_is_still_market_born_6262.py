@@ -293,9 +293,12 @@ def test_no_fourth_commence_source_constant_decides_this_by_omission_6262():
         for name, value in found.items()
         if name not in _RULED_NOT_MARKET_BORN
     }
-    assert len(unruled) == 3, (
+    # #9827 was the second new entry: `KALSHI_TICKER_TIME_COMMENCE_SOURCE`, the
+    # HHMM instant a Kalshi esports ticker names. Ruled IN — a venue's word,
+    # rank 0 beside `kalshi`, added to all three MARKET_BORN sets.
+    assert len(unruled) == 4, (
         f"event_completion declares {sorted(found)}, of which {sorted(unruled)} "
-        "are unruled — the scan expected the three market-provider time fields. "
+        "are unruled — the scan expected the four market-provider time fields. "
         "A new *_COMMENCE_SOURCE constant must be ruled into or out of "
         "MARKET_BORN_COMMENCE_SOURCES by hand."
     )

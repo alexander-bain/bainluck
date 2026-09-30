@@ -1399,6 +1399,31 @@ def suspend_venue_ended_events():
 
 
 @celery_app.task(
+    name="app.tasks.refresh_polymarket_fixture_starts",
+    soft_time_limit=120,
+    time_limit=150,
+)
+def refresh_polymarket_fixture_starts():
+    """#9418: keep a near-kickoff Polymarket match on the venue's current start.
+
+    The Polymarket twin of `refresh_dated_fixture_starts`. The hourly poll pages
+    Gamma newest-listing-first to the offset-2000 cap, so a match listed the day
+    before stops being re-read hours before it is played, and a later start the
+    venue publishes that morning never reaches the #6073 re-date. Angelini v
+    Johns kept its 12:35Z listing start against the venue's 13:50Z, and the
+    unobserved-tennis clock suspended it mid-third-set. One Gamma call per 100
+    ids. Mechanism: `app/utils/polymarket_fixture_start.py`.
+    """
+    from app.tasks.polymarket_fixture_start_refresh import (
+        _refresh_polymarket_fixture_starts,
+    )
+
+    return _tracked_run(
+        "refresh_polymarket_fixture_starts", _refresh_polymarket_fixture_starts()
+    )
+
+
+@celery_app.task(
     name="app.tasks.refresh_dated_fixture_starts",
     soft_time_limit=240,
     time_limit=300,
@@ -4986,6 +5011,11 @@ def mark_espn_start_placeholders(self, apply=True):
     false`` at the row's own minute. An explicit ``true`` clears the mark. See
     ``tasks/espn_start_placeholders``.
 
+    #8841: a row whose stored start carries a placeholder mark (ESPN's or
+    StatPal's) takes ESPN's announced start once the board says ``timeValid:
+    true`` on the same Eastern date — the Wild Card rows sat on StatPal's
+    20:00Z with the first pitch public.
+
     `apply=False` plans and writes nothing."""
     from app.tasks.espn_start_placeholders import (
         _run_mark_espn_start_placeholders,
@@ -4993,6 +5023,29 @@ def mark_espn_start_placeholders(self, apply=True):
     return _tracked_run(
         "mark_espn_start_placeholders",
         _run_mark_espn_start_placeholders(apply=apply),
+    )
+
+
+@celery_app.task(bind=True, soft_time_limit=240, time_limit=270,
+                 name="app.tasks.create_certain_postseason_games")
+def create_certain_postseason_games(self, apply=True):
+    """A postseason game that must be played gets its row when ESPN schedules it (#9216).
+
+    Braves–Phillies and Astros–White Sox Wild Card Game 2 had Kalshi prices and
+    no row: our ESPN passes read only today's board and the Odds API lists a
+    Game 2 only after Game 1. Reads ESPN's next 3 dated boards for the MLB, NBA,
+    WNBA and NHL playoffs (at most 12 reads) and claims, as ESPN, only the games
+    the series arithmetic says must be played — never an "If Necessary" game
+    until it is certain. Attaches to a same-game row we hold, else creates. See
+    ``tasks/espn_certain_postseason``.
+
+    `apply=False` plans and writes nothing."""
+    from app.tasks.espn_certain_postseason import (
+        _run_create_certain_postseason_games,
+    )
+    return _tracked_run(
+        "create_certain_postseason_games",
+        _run_create_certain_postseason_games(apply=apply),
     )
 
 
@@ -5524,6 +5577,35 @@ def mlb_reschedule_ghost_sweep_task(self, apply: bool = True,
             apply=apply,
             lookback=DEFAULT_LOOKBACK_DAYS if lookback is None else lookback,
             lookahead=DEFAULT_LOOKAHEAD_DAYS if lookahead is None else lookahead,
+        ),
+    )
+
+
+@celery_app.task(bind=True, soft_time_limit=300, time_limit=360,
+                 name="app.tasks.nhl_adjacent_day_ghost_sweep")
+def nhl_adjacent_day_ghost_sweep_task(self, apply: bool = True,
+                                      lookback: int | None = None,
+                                      lookahead: int | None = None):
+    """#9187 — the MLB reschedule-ghost pass run for the NHL with its
+    adjacent-day arm on: a row with no ESPN id, one ET day off a game ESPN
+    lists once, on a day ESPN lists no game for the pair (the Odds API's
+    phantom Chicago @ Vegas), is labelled a duplicate of the real game.
+    Same label, fold guard, D51 backup and undo as the MLB pass.
+    """
+    from app.tasks.mlb_reschedule_ghost_sweep import (
+        DEFAULT_LOOKAHEAD_DAYS,
+        DEFAULT_LOOKBACK_DAYS,
+        NHL_SPORT_KEY,
+        run_mlb_reschedule_ghost_sweep,
+    )
+
+    return _tracked_run(
+        "nhl_adjacent_day_ghost_sweep",
+        run_mlb_reschedule_ghost_sweep(
+            apply=apply,
+            lookback=DEFAULT_LOOKBACK_DAYS if lookback is None else lookback,
+            lookahead=DEFAULT_LOOKAHEAD_DAYS if lookahead is None else lookahead,
+            sport_key=NHL_SPORT_KEY,
         ),
     )
 
@@ -6685,6 +6767,16 @@ celery_app.conf.beat_schedule = {
         "schedule": crontab(minute="*/5"),
         "options": {"queue": "heavy"},
     },
+    # #9418. Every 5 minutes, offset from the sibling above: a start the venue
+    # moves on the morning has to reach the row before the row goes live on the
+    # old one, and before the unobserved-tennis clock (start + 3.5h) suspends a
+    # match that began late. Cheap for the same reason — one indexed read and one
+    # Gamma call per 100 ids over the Polymarket-dated rows inside a day.
+    "refresh-polymarket-fixture-starts": {
+        "task": "app.tasks.refresh_polymarket_fixture_starts",
+        "schedule": crontab(minute="2-59/5"),
+        "options": {"queue": "heavy"},
+    },
     # UX-P139. Every 10 minutes, and it is cheap because the register bounds
     # it: ~11 Gamma calls for the whole US Open. The hourly scan above cannot
     # reach these markets reliably (offset-2000 cap + rotating cursor), and the
@@ -6933,6 +7025,16 @@ celery_app.conf.beat_schedule = {
         "kwargs": {"apply": True},
         "options": {"queue": "background"},
     },
+    # #9187 — the same pass for the NHL, adjacent-day arm on (the Odds API's
+    # phantom second Chicago @ Vegas). HOURLY at :56, clear of the MLB pass at
+    # :52 so the two never read ESPN at once. APPLY under D51; same undo:
+    # `scripts/restore_8547_mlb_reschedule_ghost_tags.py --apply`.
+    "nhl-adjacent-day-ghost-sweep": {
+        "task": "app.tasks.nhl_adjacent_day_ghost_sweep",
+        "schedule": crontab(minute="56"),
+        "kwargs": {"apply": True},
+        "options": {"queue": "background"},
+    },
     # #5821 — the container-split fold. Undo:
     # `scripts/restore_5821_container_twin_tags.py --apply`.
     #
@@ -7001,9 +7103,58 @@ celery_app.conf.beat_schedule = {
         "kwargs": {"dry_run": False},
         "options": {"queue": "background"},
     },
-    "sync-rosters-daily": {
+    # Roster sync — one entry per sport (#5184). A single all-sports run is
+    # ~536 ESPN team fetches at ~1s each against the task's 270s soft limit; it
+    # timed out every day and rolled back every roster it had fetched. Daily
+    # from 10:00 UTC (moved from 7 AM to avoid the snapshot collapse tasks),
+    # staggered so each sport gets its own budget. Must cover ROSTER_SPORTS.
+    "sync-rosters-nba": {
         "task": "app.tasks.sync_rosters",
-        "schedule": crontab(minute=0, hour=10),  # Daily at 10:00 AM UTC — moved from 7 AM to avoid contention with snapshot collapse tasks
+        "schedule": crontab(minute=0, hour=10),
+        "kwargs": {"sport_key": "basketball_nba"},
+        "options": {"queue": "background"},
+    },
+    "sync-rosters-nfl": {
+        "task": "app.tasks.sync_rosters",
+        "schedule": crontab(minute=5, hour=10),
+        "kwargs": {"sport_key": "americanfootball_nfl"},
+        "options": {"queue": "background"},
+    },
+    "sync-rosters-nhl": {
+        "task": "app.tasks.sync_rosters",
+        "schedule": crontab(minute=20, hour=10),
+        "kwargs": {"sport_key": "icehockey_nhl"},
+        "options": {"queue": "background"},
+    },
+    "sync-rosters-mlb": {
+        "task": "app.tasks.sync_rosters",
+        "schedule": crontab(minute=25, hour=10),
+        "kwargs": {"sport_key": "baseball_mlb"},
+        "options": {"queue": "background"},
+    },
+    "sync-rosters-ncaab": {
+        "task": "app.tasks.sync_rosters",
+        "schedule": crontab(minute=45, hour=10),
+        "kwargs": {"sport_key": "basketball_ncaab"},
+        "options": {"queue": "background"},
+    },
+    "sync-rosters-ncaaf": {
+        "task": "app.tasks.sync_rosters",
+        "schedule": crontab(minute=50, hour=10),
+        "kwargs": {"sport_key": "americanfootball_ncaaf"},
+        "options": {"queue": "background"},
+    },
+    "sync-rosters-wnba": {
+        "task": "app.tasks.sync_rosters",
+        "schedule": crontab(minute=55, hour=10),
+        "kwargs": {"sport_key": "basketball_wnba"},
+        "options": {"queue": "background"},
+    },
+    "sync-rosters-mls": {
+        "task": "app.tasks.sync_rosters",
+        "schedule": crontab(minute=57, hour=10),
+        "kwargs": {"sport_key": "soccer_usa_mls"},
+        "options": {"queue": "background"},
     },
     # StatPal schedule sync — one per major sport to avoid timeout
     # (soccer returns thousands of global fixtures and overwhelms a single run)
@@ -7880,6 +8031,15 @@ celery_app.conf.beat_schedule = {
         # reads plus one bounded candidate query.
         "task": "app.tasks.mark_espn_start_placeholders",
         "schedule": crontab(minute=29),
+        "options": {"queue": "background"},
+    },
+    "create-certain-postseason-games-hourly": {
+        # #9216. :11 was free in the 2026-09-27 census (:29 went to #8981 the
+        # same day) and sits nine minutes before the :20 prediction-market
+        # matcher, so a Kalshi game market attaches within the half hour after
+        # its row is made. At most 12 ESPN board reads.
+        "task": "app.tasks.create_certain_postseason_games",
+        "schedule": crontab(minute=11),
         "options": {"queue": "background"},
     },
     "stamp-soccer-statpal-fixtures-hourly": {

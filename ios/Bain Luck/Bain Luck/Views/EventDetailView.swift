@@ -15,12 +15,15 @@ private struct SourceRowWidthKey: PreferenceKey {
 // MARK: - View
 
 struct EventDetailView: View {
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var marketPageVisible = false
     let eventId: Int
     @StateObject private var vm: EventDetailViewModel
     /// Closed for every reader. Starts open only when the LOOK rig asks
     /// (`-launch_expand_sections`), which is the only way this list can be
     /// photographed — the rig cannot tap a chevron. See `LaunchRig`.
     @State private var showSources = LaunchRig.expandsCollapsedSections()
+    @State private var showProbabilityDetails = false
     /// The width of a row in the sources disclosure, reported by the
     /// `GeometryReader` behind the whole panel, so both lists inside it can size
     /// their label column against the room the row actually has rather than a
@@ -74,12 +77,25 @@ struct EventDetailView: View {
     /// both edges at once and the team names collapse to `Cle m…`.
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
-    init(eventId: Int) {
+    init(eventId: Int, viewModel: EventDetailViewModel? = nil) {
         self.eventId = eventId
-        _vm = StateObject(wrappedValue: EventDetailViewModel(eventId: eventId))
+        _vm = StateObject(wrappedValue: viewModel ?? EventDetailViewModel(eventId: eventId))
     }
 
     private var isLive: Bool { vm.event?.status == "live" }
+    /// #9436 — what the hero's whole-string change reads: the pair the chart's
+    /// live-edge label also prints (`LivePriceActivity.displayedLabels`), which
+    /// is exactly the pair the hero draws; moving only while live.
+    private func heroValue(away: Bool) -> String {
+        guard let event = vm.event else { return "" }
+        let labels = LivePriceActivity.displayedLabels(in: event)
+        return (away ? labels.away : labels.home) ?? ""
+    }
+    private func heroRising(away: Bool) -> Bool? {
+        (away ? vm.priceActivity?.awayDelta : vm.priceActivity?.homeDelta).map { $0 > 0 }
+    }
+    private var priceStreamingEligible: Bool { EventPriceStreaming.isEligible(vm.event?.status) }
+    private var heroMoves: Bool { priceStreamingEligible && vm.liveUpdateStatus != .interrupted }
     /// #4002 — this page kept a PRIVATE COPY of a vocabulary `EventState`
     /// already owns, and `suspended` (live/048) matched none of its arms. So
     /// the hero drew no badge, no score, a grey `Proj. 3-2` where the score
@@ -239,13 +255,16 @@ struct EventDetailView: View {
                     navTitleView
                 }
                 #endif
-                // #8320 — the page's ONE freshness status, and the manual
-                // refresh it has always been. Live only: no other page polls.
+                // Delivery status sits beside Win Probability, where the fan is
+                // reading prices. Keep the manual refresh independently reachable.
                 if isLive {
                     ToolbarItem(placement: .cancellationAction) {
                         Button { Task { await vm.load() } } label: {
-                            refreshStatus
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 13, weight: .medium))
+                                .frame(width: 22, height: 22)
                         }
+                        .accessibilityLabel("Refresh now")
                     }
                 }
                 ToolbarItem(placement: .confirmationAction) {
@@ -268,13 +287,19 @@ struct EventDetailView: View {
                 }
             }
             .task {
+                marketPageVisible = true
+                vm.setMarketPageVisible(scenePhase == .active)
                 await vm.load()
                 AnalyticsService.trackEventDetailView(eventId: eventId, sport: vm.event?.sport)
             }
             .refreshable {
                 await vm.load()
             }
+            .onChange(of: scenePhase) { _, phase in
+                vm.setMarketPageVisible(marketPageVisible && phase == .active)
+            }
             .onDisappear {
+                marketPageVisible = false
                 vm.stopRefresh()
             }
     }
@@ -300,6 +325,13 @@ struct EventDetailView: View {
                                     heroBottom: proxy.frame(in: .named(Self.scrollSpace)).maxY,
                                     viewportTop: scrollViewportTop))
                         })
+                    if let gameMarkets = vm.gameMarkets,
+                       let quote = gameMarkets.openWinnerQuote {
+                        FinalGameWinnerQuoteView(
+                            quote: quote, eventId: event.id, eventStatus: event.status,
+                            closedMarketIds: Set(gameMarkets.closedWinnerMarketIds ?? [])
+                        )
+                    }
                     VStack(spacing: 0) {
                         OddsChartView(eventId: event.id, teamColors: teamColors(event),
                                      commenceTime: event.commenceTime, status: event.status,
@@ -317,6 +349,11 @@ struct EventDetailView: View {
                                      // fullscreen dot cannot claim a push the
                                      // toolbar does not.
                                      refreshStreaming: refreshIndicator == .streaming,
+                                     liveUpdateStatus: vm.liveUpdateStatus,
+                                     priceActivity: vm.priceActivity,
+                                     // #9436 — the hero's own number, for the
+                                     // dot on the end of the line.
+                                     liveEdge: LiveEdgeReading.current(in: event),
                                      forcedDomain: sharedChartDomain,
                                      pageAxisPlotWidth: pageAxisPlotWidth,
                                      selectedRange: $chartRange,
@@ -581,6 +618,8 @@ struct EventDetailView: View {
             || !(gm.periodMarkets ?? []).isEmpty
             || !(gm.playerProps ?? []).isEmpty
             || !(gm.other ?? []).isEmpty
+            || gm.openWinnerQuote?.isPresentable(eventId: gm.eventId, eventStatus: gm.status,
+                                                closedMarketIds: Set(gm.closedWinnerMarketIds ?? [])) == true
     }
 
     /// #3821 — the copy is tensed by ``EventState/noGameMarketsLine(status:)``.
@@ -658,6 +697,53 @@ struct EventDetailView: View {
             home: event.homeTeam,
             away: event.awayTeam
         )
+    }
+
+    private func movementCaption(_ event: EventDetail) -> String? {
+        guard let delta = vm.priceActivity?.homeDelta, delta != 0 else { return nil }
+        let names = TeamShortName.shortPair(away: event.awayTeam, home: event.homeTeam,
+                                            sportKey: event.sport)
+        return "\(names.home) \(delta > 0 ? "↑" : "↓")\(abs(delta)) \(abs(delta) == 1 ? "pt" : "pts")"
+    }
+
+    /// One visible delivery status directly beside the probabilities, including
+    /// accepted receipts whose rounded percentage does not move. Detail age stays disclosed.
+    private func probabilityDetails(confidenceTier: String?) -> some View {
+        Button { showProbabilityDetails.toggle() } label: {
+            VStack(spacing: 4) {
+                HStack(spacing: 6) {
+                    Text("Win Probability")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    SignalBarsView(tier: confidenceTier)
+                }
+                VisibleLivePriceStatusView(status: vm.liveUpdateStatus,
+                    sequence: vm.priceActivity?.sequence ?? 0,
+                    receivedAt: vm.priceActivity?.receivedAt)
+            }
+            .frame(maxWidth: dynamicTypeSize.isAccessibilitySize ? nil : Self.verdictSlotWidth, minHeight: 44)
+            .fixedSize(horizontal: false, vertical: true)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Probability confidence and update details. " +
+            (priceStreamingEligible ? LivePriceReceiptCue.accessibilityText(status: vm.liveUpdateStatus,
+                receivedAt: vm.priceActivity?.receivedAt) : ""))
+        .accessibilityHint("Shows connection status and when the last price update reached this phone")
+        // #9408 — open BELOW the button (on iOS, `.top` measured below; the
+        // default nil picked above, under the nav bar with 144pt to spare, and at
+        // Alex's XXXL text the content overflowed both edges). The reveal
+        // scrolls if even the lower space runs out.
+        .popover(isPresented: $showProbabilityDetails, arrowEdge: .top) {
+            FreshnessRevealView(status: vm.liveUpdateStatus,
+                lastReceivedAt: vm.priceActivity?.receivedAt, confidenceTier: confidenceTier)
+                // idealWidth: the popover sizes from the IDEAL size; with only a
+                // max it measured the text unwrapped and came out 144pt tall.
+                .frame(idealWidth: 300, maxWidth: 300)
+                #if os(iOS)
+                .presentationCompactAdaptation(.popover)
+                #endif
+        }
     }
 
     // MARK: - Chart Header Bar (v2: title + freshness)
@@ -820,6 +906,8 @@ struct EventDetailView: View {
             commenceTime: event.commenceTime?.asDate,
             projectedHome: event.currentOdds?.projectedHomeScore,
             projectedAway: event.currentOdds?.projectedAwayScore,
+            ladderHome: vm.history?.pmSpreadData?.projectedFinal?.homeScore,
+            ladderAway: vm.history?.pmSpreadData?.projectedFinal?.awayScore,
             hasScore: hasScore)
     }
 
@@ -832,19 +920,54 @@ struct EventDetailView: View {
     /// Score Differential chart (`SportVocab.sportsbookSpreadIsAMargin`), and ux
     /// ruled withhold rather than print the total: a total alone does not say
     /// who wins, and the hero still carries the percentages.
+    ///
+    /// #9496 — BEFORE THE OFF, THE LADDERS ANSWER WHERE THE SPORTSBOOKS CANNOT.
+    /// `ladderHome`/`ladderAway` are `/history`'s `pm_spread_data.projected_final`
+    /// (Kalshi/Polymarket spread and total ladders, solved and source-checked
+    /// server-side). Web's `eventPageProjectedPair` rule, ported: pre-game the
+    /// sportsbooks' pair wins wherever it is a margin — it is the pair the search
+    /// card prints (#9034) — and the ladders' pair is used only where it is not.
+    /// A ladder margin is read off six thresholds either side of even, not one
+    /// pinned ±1.5 point, so #8617's run-line objection does not reach it; web
+    /// already prints it on baseball. Once the game is underway this stays the
+    /// sportsbooks' pair, as before.
+    ///
+    /// Whichever pair is chosen then passes web's hero gates: the sport must
+    /// score in the unit the pair is in (tennis quotes games, not sets), both
+    /// halves must be positive, and a sport that cannot end level never prints a
+    /// level final (#8156) — Red Sox–Yankees' `3.2 – 3.0` rounds to `3-3` and
+    /// is withheld. Notice 34: the space is left empty, not explained.
     static func projectionText(
         sport: String?, status: String?, commenceTime: Date?,
-        projectedHome: Double?, projectedAway: Double?, hasScore: Bool,
+        projectedHome: Double?, projectedAway: Double?,
+        ladderHome: Double? = nil, ladderAway: Double? = nil,
+        hasScore: Bool,
         now: Date = Date()
     ) -> String? {
         let vocab = SportVocab.forSport(sport)
-        guard vocab.sportsbookSpreadIsAMargin,
-              let phs = projectedHome, let pas = projectedAway,
-              showsProjection(
+        guard showsProjection(
                 status: status, commenceTime: commenceTime,
                 hasScore: hasScore, now: now) else { return nil }
-        let pair = "\(Int(pas.rounded()))-\(Int(phs.rounded()))"
-        return "Proj. \(vocab.scoreboardCountsTheUnit ? pair : vocab.withUnit(pair))"
+        let underway = status == "live"
+            || EventState.hasStarted(commenceTime: commenceTime, now: now)
+        let pair: (home: Double, away: Double)
+        if vocab.sportsbookSpreadIsAMargin,
+           let phs = projectedHome, let pas = projectedAway, phs >= 0, pas >= 0 {
+            pair = (phs, pas)
+        } else if !underway,
+                  // web's `hasDerivedSpread`: declared, and scored in its unit
+                  vocab.scoreboardCountsTheUnit, !vocab.unit.isEmpty,
+                  let lhs = ladderHome, let las = ladderAway {
+            pair = (lhs, las)
+        } else {
+            return nil
+        }
+        // Raw halves above zero, as web asks — a soccer `0.4` still prints `0`.
+        let home = Int(pair.home.rounded()), away = Int(pair.away.rounded())
+        guard pair.home > 0, pair.away > 0,
+              vocab.canEndInATie || home != away else { return nil }
+        let text = "\(away)-\(home)"
+        return "Proj. \(vocab.scoreboardCountsTheUnit ? text : vocab.withUnit(text))"
     }
 
     /// The opening line, named, for Game Info on a live game (#8320). The hero's
@@ -1173,9 +1296,12 @@ struct EventDetailView: View {
                             EmptyView()
                         }
                     } else if let odds = event.currentOdds,
+                              // #9470 — an `opening` hero prints the server's
+                              // pair and is named as an opening line.
+                              case let shown = OpeningLineHero.resolve(odds, for: event),
                               let pair = DrawPricedWinner.printablePair(
-                                away: odds.awayProbability,
-                                home: odds.homeProbability,
+                                away: shown.awayProbability,
+                                home: shown.homeProbability,
                                 sport: event.sport) {
                         let home = pair.home
                         let oddsFontSize: CGFloat = sizeClass == .regular ? 36 : 28
@@ -1191,20 +1317,28 @@ struct EventDetailView: View {
                             // derived home re-opens the same 101 from the other side,
                             // and an older deploy can carry one field and not the
                             // other, so the pair falls back whole.
-                            let duelFallback = renderedDuelPercents(away: away, home: home)
-                            let bothServed = odds.awayRenderedPercent != nil && odds.homeRenderedPercent != nil
-                            let awayPct = bothServed ? odds.awayRenderedPercent : duelFallback[0]
-                            let homePct = bothServed ? odds.homeRenderedPercent : duelFallback[1]
+                            let duelFallback = complementDisplayPercents(away: away, home: home)
+                            let bothServed = shown.awayRenderedPercent != nil && shown.homeRenderedPercent != nil
+                            let awayPct = bothServed ? shown.awayRenderedPercent : duelFallback[0]
+                            let homePct = bothServed ? shown.homeRenderedPercent : duelFallback[1]
                             HStack(spacing: 8) {
                                 Text(formatProbability(away, renderedPercent: awayPct))
+                                    .acceptedValueChange(heroValue(away: true), rising: heroRising(away: true), animates: heroMoves)
                                     .font(.system(size: oddsFontSize, weight: .black, design: .rounded).monospacedDigit())
                                     .foregroundStyle(colors.away)
+                                    .livePriceChangeFeedback(sequence: vm.priceActivity?.sequence ?? 0,
+                                                             valueChanged: vm.priceActivity.map { $0.previousAwayLabel != $0.awayLabel } ?? false,
+                                                             color: colors.away, isEnabled: priceStreamingEligible && vm.liveUpdateStatus != .interrupted)
                                 Text("\u{2013}")
                                     .font(.title3)
                                     .foregroundStyle(.secondary.opacity(0.4))
                                 Text(formatProbability(home, renderedPercent: homePct))
+                                    .acceptedValueChange(heroValue(away: false), rising: heroRising(away: false), animates: heroMoves)
                                     .font(.system(size: oddsFontSize, weight: .black, design: .rounded).monospacedDigit())
                                     .foregroundStyle(colors.home)
+                                    .livePriceChangeFeedback(sequence: vm.priceActivity?.sequence ?? 0,
+                                                             valueChanged: vm.priceActivity.map { $0.previousHomeLabel != $0.homeLabel } ?? false,
+                                                             color: colors.home, isEnabled: priceStreamingEligible && vm.liveUpdateStatus != .interrupted)
                             }
                         } else {
                             // #5271 — a draw-priced sport. There is one price
@@ -1237,8 +1371,12 @@ struct EventDetailView: View {
                                     .foregroundStyle(colors.home)
                                     .lineLimit(1)
                                 Text(formatProbability(home))
+                                    .acceptedValueChange(heroValue(away: false), rising: heroRising(away: false), animates: heroMoves)
                                     .font(.system(size: oddsFontSize, weight: .black, design: .rounded).monospacedDigit())
                                     .foregroundStyle(colors.home)
+                                    .livePriceChangeFeedback(sequence: vm.priceActivity?.sequence ?? 0,
+                                                             valueChanged: vm.priceActivity.map { $0.previousHomeLabel != $0.homeLabel } ?? false,
+                                                             color: colors.home, isEnabled: priceStreamingEligible && vm.liveUpdateStatus != .interrupted)
                             }
                         }
                         // Trend indicator (change since opening).
@@ -1276,10 +1414,10 @@ struct EventDetailView: View {
                         // directly below draws the whole move, and Game Info
                         // carries the opening line it started from.
                         if carriesContext, let caption = SinceOpenCaption.caption(
-                            away: odds.awayProbability,
-                            home: odds.homeProbability,
-                            servedAwayPercent: odds.awayRenderedPercent,
-                            servedHomePercent: odds.homeRenderedPercent,
+                            away: shown.awayProbability,
+                            home: shown.homeProbability,
+                            servedAwayPercent: shown.awayRenderedPercent,
+                            servedHomePercent: shown.homeRenderedPercent,
                             openingAway: event.openingOdds?.awayProbability,
                             openingHome: event.openingOdds?.homeProbability,
                             sport: event.sport,
@@ -1290,7 +1428,9 @@ struct EventDetailView: View {
                                 away: event.awayTeam, home: event.homeTeam,
                                 sportKey: event.sport
                             )
-                        ) {
+                        ),
+                           // #9470 — an opening line has no "since open".
+                           !shown.isOpeningLine {
                             Text(caption.text)
                                 .font(.system(size: 10, weight: .medium))
                                 .foregroundStyle(caption.isHome ? colors.home : colors.away)
@@ -1298,15 +1438,29 @@ struct EventDetailView: View {
                         // #490: hero confidence signal (1-3 bars), computed
                         // client-side from the win-prob source count + whether the
                         // line moved off open. Mirrors the web hero (lib/confidence.ts).
-                        HStack(spacing: 6) {
-                            Text("Win Probability")
-                                .font(.caption2)
+                        let confidenceTier = Confidence.fromSources(
+                            sourceCount: event.winProbabilitySources?.count,
+                            hasMovement: event.openingOdds?.homeProbability
+                                .map { abs(home - $0) > 0.001 } ?? false
+                        )?.rawValue
+                        if shown.isOpeningLine {
+                            // #9470 — where the line opened, not a forecast:
+                            // no confidence bars, no delivery status (the page
+                            // is pre-game, so there is no stream to report).
+                            Text(OpeningLineHero.caption)
+                                .font(.caption)
                                 .foregroundStyle(.secondary)
-                            SignalBarsView(tier: Confidence.fromSources(
-                                sourceCount: event.winProbabilitySources?.count,
-                                hasMovement: event.openingOdds?.homeProbability
-                                    .map { abs(home - $0) > 0.001 } ?? false
-                            )?.rawValue)
+                                .frame(minHeight: 44)
+                        } else {
+                            probabilityDetails(confidenceTier: confidenceTier)
+                        }
+                        // #9500 — any streamable status moves the hero, but an
+                        // opening line (#9470) still reports no delivery.
+                        if priceStreamingEligible && !shown.isOpeningLine {
+                            LivePriceMovementCaption(sequence: vm.priceActivity?.sequence ?? 0,
+                                                     text: movementCaption(event),
+                                                     color: colors.home,
+                                                     isEnabled: priceStreamingEligible && vm.liveUpdateStatus != .interrupted)
                         }
                         // #8320 — #3313's live sparkline was drawn here, and it
                         // is gone: it was a thumbnail of the full chart one card
@@ -1316,6 +1470,7 @@ struct EventDetailView: View {
                             .font(.title2)
                             .fontWeight(.medium)
                             .foregroundStyle(.secondary)
+                        if priceStreamingEligible { probabilityDetails(confidenceTier: nil) }
                     }
                     // Projected final score.
                     //
@@ -1471,13 +1626,17 @@ struct EventDetailView: View {
             StatusBadge(
                 status: "suspended",
                 commenceTime: event.commenceTime,
-                venueSettled: event.venueSettled == true)
+                venueSettled: event.venueSettled == true,
+                // #5811 — both arms again, for the same reason as the flag
+                // above: each one claims the contest is unplayed.
+                venueClosedNoWinner: event.venueClosedNoWinner == true)
         } else {
             StatusBadge(
                 status: "scheduled",
                 commenceTime: event.commenceTime,
                 venueSettled: event.venueSettled == true,
-                startIsTbd: event.startIsTbd == true)
+                startIsTbd: event.startIsTbd == true,
+                venueClosedNoWinner: event.venueClosedNoWinner == true)
         }
     }
 
@@ -1749,7 +1908,8 @@ struct EventDetailView: View {
         probabilities: (away: Double?, home: Double),
         colors: (away: Color, home: Color),
         columns: EventSourceLabelColumn.Columns,
-        ageMark: PriceAgeMarkView? = nil
+        ageMark: PriceAgeMarkView? = nil,
+        complementaryAway: Bool = false
     ) -> some View {
         let labelText = VStack(alignment: .leading, spacing: 1) {
             Text(label)
@@ -1765,7 +1925,7 @@ struct EventDetailView: View {
             case .inline:
                 HStack(spacing: EventSourceLabelColumn.interColumnSpacing) {
                     labelText
-                    probabilityBarAndNumbers(probabilities, colors: colors, columns: columns)
+                    probabilityBarAndNumbers(probabilities, colors: colors, columns: columns, complementaryAway: complementaryAway)
                 }
             case .stacked:
                 VStack(
@@ -1775,7 +1935,8 @@ struct EventDetailView: View {
                     labelText
                     HStack(spacing: EventSourceLabelColumn.interColumnSpacing) {
                         probabilityBarAndNumbers(
-                            probabilities, colors: colors, columns: columns)
+                            probabilities, colors: colors, columns: columns,
+                            complementaryAway: complementaryAway)
                     }
                 }
             }
@@ -1793,7 +1954,8 @@ struct EventDetailView: View {
     private func probabilityBarAndNumbers(
         _ probabilities: (away: Double?, home: Double),
         colors: (away: Color, home: Color),
-        columns: EventSourceLabelColumn.Columns
+        columns: EventSourceLabelColumn.Columns,
+        complementaryAway: Bool
     ) -> some View {
         // #5271 — a withheld away side still has a BAR, because the bar's two
         // segments are a partition and the remainder is a true quantity: it is
@@ -1817,7 +1979,8 @@ struct EventDetailView: View {
         // Sportsbooks row reading `3% 97%`. The bar above is unaffected — it
         // partitions the true doubles, not the printed integers.
         let printed = duelProbabilityStrings(
-            away: probabilities.away, home: probabilities.home)
+            away: probabilities.away, home: probabilities.home,
+            complementaryAway: complementaryAway)
         Text(printed.away)
             .font(.caption2.monospacedDigit())
             .frame(width: columns.numeric, alignment: .trailing)
@@ -1862,7 +2025,8 @@ struct EventDetailView: View {
             labels: entries.map(\.label),
             values: entries.flatMap { entry -> [String] in
                 let printed = duelProbabilityStrings(
-                    away: printable(entry)?.away, home: entry.homeProbability)
+                    away: printable(entry)?.away, home: entry.homeProbability,
+                    complementaryAway: true)
                 return [printed.away, printed.home]
             },
             availableWidth: sourceRowWidth,
@@ -1877,7 +2041,7 @@ struct EventDetailView: View {
                         home: entry.homeProbability
                     ),
                     colors: colors,
-                    columns: columns)
+                    columns: columns, complementaryAway: true)
             }
         }
         .padding(.vertical, 8)
@@ -2198,7 +2362,9 @@ struct EventDetailView: View {
         let lastEspn = espn?.last
 
         // Get probability from the best available source
-        let wpHistory = history.winProbHistory?.values.flatMap { $0 }
+        // Sorted by source so a tie on the latest time resolves the same way on
+        // every open, not by Dictionary order (#8509).
+        let wpHistory = history.winProbHistory?.sorted { $0.key < $1.key }.flatMap(\.value)
         let lastWp = wpHistory?.max(by: {
             ($0.timestamp.asDate ?? .distantPast) < ($1.timestamp.asDate ?? .distantPast)
         })
@@ -2260,40 +2426,12 @@ struct EventDetailView: View {
             pushedPrice: vm.streamHasPushedPrice)
     }
 
-    /// #8320 — ONE freshness status for the page, in the toolbar.
-    ///
-    /// Alex, rage shake #150 on White Sox–Royals: "overcrowded and clowny". The
-    /// live page carried the same claim three times — this ring, a second ring
-    /// beside the chart title, and a green "Live" dot on the chart — plus the
-    /// hero's inning chip. A number counting to the next poll is the page's
-    /// plumbing, not something a fan reads, so the count is gone everywhere;
-    /// the poll itself (`EventRefreshPlan`) and pull-to-refresh are unchanged.
-    ///
-    /// The two live arms are drawn so they cannot be mistaken for each other:
-    /// the green dot only while the stream is DELIVERING (not merely connected
-    /// — see `EventDetailViewModel.streamDelivering`), and otherwise a plain
-    /// refresh glyph, which says what the button does and nothing about how
-    /// fresh the number is. Neither animates.
-    @ViewBuilder
-    private var refreshStatus: some View {
-        switch refreshIndicator {
-        case .hidden:
-            EmptyView()
-        case .streaming:
-            LivePushDot(diameter: 22)
-        case .polling:
-            Image(systemName: "arrow.clockwise")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.secondary)
-                .frame(width: 22, height: 22)
-                .accessibilityLabel("Refresh")
-        }
-    }
+    // Delivery status is plain text under the title; manual refresh is a
+    // separate control. The compatibility helper below still feeds older charts.
 
-    /// A refresh status is honest ONLY when the page really refreshes — which
-    /// the VM does for live events only. Scheduled/completed pages perform no
-    /// periodic reload, so they carry no status at all (C43 P2).
-    static func showsRefreshStatus(status: String?) -> Bool { status == "live" }
+    /// Quote delivery and fallback are visible for the same eligible phases
+    /// the VM connects; sports LIVE labels still use the actual game status.
+    static func showsRefreshStatus(status: String?) -> Bool { EventPriceStreaming.isEligible(status) }
 
     /// What the refresh control is entitled to say.
     ///
@@ -2429,83 +2567,28 @@ private struct GameSegmentsView: View {
                 //
                 // Retuned to 44 + 9×22 + 26 with 4pt gaps = 338pt, so a regulation
                 // nine-inning game fits the NARROWEST supported phone with room
-                // spare, and a 10th inning (364pt) still fits. Extras beyond that
-                // scroll — and the indicator is now ON, so the overflow announces
-                // itself instead of silently truncating the most important column.
-                // 22pt holds a two-digit monospaced caption ("12" ≈ 14pt).
-                ScrollView(.horizontal, showsIndicators: true) {
-                    Grid(alignment: .trailing, horizontalSpacing: 4, verticalSpacing: 8) {
-                        GridRow {
-                            // #3977 — the spacer above the team badges. It carries
-                            // the same floor as the badge and declares the column
-                            // leading-aligned, so two badges of unequal ink still
-                            // start their dots at the same x.
-                            Text("")
-                                .frame(
-                                    minWidth: GameSegmentTeamBadge.minimumWidthPoints,
-                                    alignment: .leading)
-                                .gridColumnAlignment(.leading)
-                            ForEach(breakdown.segments) { segment in
-                                Text(segment.label)
-                                    .font(.caption2.weight(.semibold))
-                                    .foregroundStyle(.secondary)
-                                    .frame(minWidth: 22)
-                            }
-                            Text("T")
-                                .font(.caption2.weight(.bold))
-                                .foregroundStyle(.primary)
-                                .frame(minWidth: 26)
-                                // A hairline gutter so the total reads as a separate
-                                // quantity from the last inning rather than a 10th.
-                                .padding(.leading, 6)
-                        }
-
-                        segmentRow(
-                            team: awayShort,
-                            color: awayTeamColor,
-                            cells: breakdown.segments.map(\.away),
-                            total: breakdown.awayTotal
-                        )
-                        segmentRow(
-                            team: homeShort,
-                            color: homeTeamColor,
-                            cells: breakdown.segments.map(\.home),
-                            total: breakdown.homeTotal
-                        )
-                    }
-                    .padding(.vertical, 2)
-                }
+                // spare, and a 10th inning (364pt) still fits. 22pt holds a
+                // two-digit monospaced caption ("12" ≈ 14pt).
+                //
+                // #4089 — past that (extras, or the accessibility text sizes) the
+                // team names and the total stay pinned and only the periods
+                // scroll; the whole row used to scroll, so `T` was the first
+                // thing off screen. The layout lives on `GameSegmentsTable`.
+                GameSegmentsTable(
+                    columns: breakdown.segments.map {
+                        LineScoreColumn(label: $0.label, away: $0.away, home: $0.home)
+                    },
+                    awayBadge: awayShort,
+                    homeBadge: homeShort,
+                    awayColor: awayTeamColor,
+                    homeColor: homeTeamColor,
+                    awayTotal: breakdown.awayTotal,
+                    homeTotal: breakdown.homeTotal
+                )
             }
             .padding()
             .background(Color.cardBackground)
             .clipShape(RoundedRectangle(cornerRadius: 12))
-        }
-    }
-
-    private func segmentRow(team: String, color: Color, cells: [LineScoreCell], total: Int) -> some View {
-        GridRow {
-            // UX-P090: 54 -> 44, matching the header row above. See the geometry
-            // note there — the two must move together or the columns shear.
-            // #3977 moved both to a FLOOR and put the badge in its own type so a
-            // camera can measure it; the reasoning lives on `GameSegmentTeamBadge`.
-            GameSegmentTeamBadge(team: team, color: color)
-
-            ForEach(Array(cells.enumerated()), id: \.offset) { _, cell in
-                // `·` for an inning we never observed. Printing `0` there would
-                // assert nobody scored, which we do not know (#1831). A period
-                // still to come is blank and baseball's unneeded half is `X`
-                // (#9067) — neither is a gap, so neither is dimmed as one.
-                Text(cell.text)
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(cell == .unknown ? .tertiary : .secondary)
-                    .frame(minWidth: 22)
-            }
-
-            Text("\(total)")
-                .font(.caption.weight(.bold).monospacedDigit())
-                .foregroundStyle(.primary)
-                .frame(minWidth: 26)
-                .padding(.leading, 6)
         }
     }
 }
@@ -2575,6 +2658,45 @@ private struct SegmentBreakdown {
 
         guard let espnHistory = history?.espnHistory else { return nil }
 
+        // #4961 — baseball reads each row's half-inning, so a run scored after an
+        // inning's last polled row is not credited to the next inning.
+        let isBaseball = (sportKey?.lowercased() ?? "").hasPrefix("baseball_")
+        if isBaseball {
+            let polled = espnHistory
+                .compactMap { point -> (Date, HalfInningLineScore.Snapshot)? in
+                    guard let period = point.period,
+                          let homeScore = point.homeScore,
+                          let awayScore = point.awayScore,
+                          let date = point.timestamp.asDate else { return nil }
+                    return (date, .init(period: period, homeScore: homeScore, awayScore: awayScore))
+                }
+                .sorted { $0.0 < $1.0 }
+                .map(\.1)
+            if let rows = HalfInningLineScore.rows(
+                polled, isFinished: isFinished,
+                homeFinal: finalHomeScore, awayFinal: finalAwayScore
+            ) {
+                guard let squared = StoredLineScore.squared(
+                    home: rows.home, away: rows.away,
+                    homeTotal: finalHomeScore, awayTotal: finalAwayScore,
+                    lastObserved: rows.lastObserved
+                ) else { return nil }
+                let segments = squared.home.indices.map {
+                    GameSegment(label: String($0 + 1), home: squared.home[$0], away: squared.away[$0])
+                }
+                let resolvedHome = finalHomeScore ?? polled.last?.homeScore ?? 0
+                let resolvedAway = finalAwayScore ?? polled.last?.awayScore ?? 0
+                guard segments.contains(where: { $0.home.points != nil || $0.away.points != nil }),
+                      resolvedHome + resolvedAway > 0
+                else { return nil }
+                self.segments = segments
+                self.homeTotal = resolvedHome
+                self.awayTotal = resolvedAway
+                self.hasUnknownSegments = segments.contains { $0.home == .unknown || $0.away == .unknown }
+                return
+            }
+        }
+
         let cumulativeByPeriod = espnHistory
             .compactMap { point -> CumulativeSegment? in
                 guard let rawPeriod = point.period,
@@ -2611,7 +2733,6 @@ private struct SegmentBreakdown {
         // rather than "whatever the poller saw". Every other sport keeps the
         // observed-labels behaviour unchanged — this change is scoped to the
         // sport whose card was wrong.
-        let isBaseball = (sportKey?.lowercased() ?? "").hasPrefix("baseball_")
         let renderedLabels: [String]
         if isBaseball {
             let observed = orderedLabels.compactMap(Int.init)
@@ -2666,6 +2787,18 @@ private struct SegmentBreakdown {
         // the hero. Fall back to the last cumulative we actually observed.
         let resolvedHome = finalHomeScore ?? lastObserved?.homeScore ?? 0
         let resolvedAway = finalAwayScore ?? lastObserved?.awayScore ?? 0
+
+        // #9067 — and the segments may not add up to something those totals
+        // disagree with (`StoredLineScore.squared`).
+        guard let squared = StoredLineScore.squared(
+            home: segments.map(\.home), away: segments.map(\.away),
+            homeTotal: finalHomeScore, awayTotal: finalAwayScore,
+            lastObserved: renderedLabels.lastIndex { latestByLabel[$0] != nil } ?? -1
+        ) else { return nil }
+        segments = segments.indices.map {
+            GameSegment(label: segments[$0].label, home: squared.home[$0], away: squared.away[$0])
+        }
+        sawUnknown = sawUnknown || squared.home.contains(.unknown) || squared.away.contains(.unknown)
 
         // A ladder in which nothing is knowable is a row of dots — it tells the
         // reader nothing and occupies the space where a scoreboard should be.

@@ -65,6 +65,10 @@ from app.utils.futures_liveness import (  # noqa: E402  # #2222, then #5896
 from app.utils.kalshi_series_selection import (  # noqa: E402
     discovery_dead_series,
 )
+from app.utils.kalshi_threshold_label import (  # noqa: E402  # #9383
+    THRESHOLD_LABEL_KEY,
+    single_leg_threshold_label,
+)
 
 
 def _is_kalshi_game_ticker(event_ticker: str) -> Optional[str]:
@@ -448,6 +452,14 @@ def kalshi_outcome_names(event_title, markets) -> dict[str, str]:
     collided group is re-derived, and only from a candidate that resolves the
     whole group distinctly. If nothing does, the ladder's answer stands — a
     duplicate name is still better than a fabricated one.
+
+    #9173: a WITHDRAWN leg (``_is_withdrawn_leg``) is not a sibling, so it never
+    joins a collision group. Kalshi withdrew ``KXMIFEPRISTONEMAIL-26-27`` and
+    re-listed it as ``…-27JAN``; both carry ``yes_sub_title='Before 2027'``, the
+    group resolved on the ticker rung, and the one live leg read ``27JAN`` in
+    the hero, the legend and the movement caption. #4356 read the same shape
+    (a withdrawn ``LARNONE`` beside a live ``NONE``) and ruled that separating
+    them "would have invented a distinction the venue explicitly denies".
     """
     markets = list(markets)
     names = {
@@ -456,6 +468,8 @@ def kalshi_outcome_names(event_title, markets) -> dict[str, str]:
 
     collided: dict[str, list] = {}
     for m in markets:
+        if _is_withdrawn_leg(getattr(m, "status", None)):
+            continue
         collided.setdefault(names[m.ticker], []).append(m)
 
     for group in collided.values():
@@ -1153,6 +1167,43 @@ def _venue_topic(
     return None
 
 
+#: #9460 — how many per-event failures one beat logs at WARNING. The first names
+#: the statement that failed; past a handful, a log line per event is just noise.
+_LOGGED_EVENT_ERRORS = 5
+
+
+async def _recover_event_savepoint(session, event_sp, *, sql_failed: bool) -> None:
+    """Leave the session usable after one event's caught failure (#9460).
+
+    ``event_sp`` is the SAVEPOINT the event opened at its first write, or
+    ``None`` if it failed before writing anything.
+
+    * A SQL failure rolls back to the savepoint. On Postgres the failed
+      statement has aborted the transaction, and without this every later event
+      in the beat raises at once (measured 9/28: 6,253 of them).
+    * A non-SQL failure (HTTP, ``ValueError``, ``KeyError``) leaves the
+      transaction healthy, so the savepoint is RELEASED and the event keeps what
+      it had already written, which is what it did before this savepoint existed.
+    * A SQL failure with no savepoint can only be cleared by rolling back the
+      whole transaction. That costs the uncommitted batch, but the rest of the
+      beat still runs. So does a savepoint that cannot be resolved.
+    """
+    try:
+        if event_sp is not None and event_sp.is_active:
+            if sql_failed:
+                await event_sp.rollback()
+            else:
+                await event_sp.commit()
+            return
+    except SQLAlchemyError:
+        logger.warning("poll_kalshi: event savepoint could not be resolved; "
+                       "rolling back the batch", exc_info=True)
+        await session.rollback()
+        return
+    if sql_failed:
+        await session.rollback()
+
+
 def _partition_new_events_first(events, existing_tickers):
     """#995: split fetched Kalshi events so ones whose ``event_ticker`` is NOT
     already in the DB (``existing_tickers``) come first.
@@ -1165,6 +1216,65 @@ def _partition_new_events_first(events, existing_tickers):
     new_events = [e for e in events if e.event_ticker not in existing_tickers]
     existing_events = [e for e in events if e.event_ticker in existing_tickers]
     return new_events, existing_events
+
+
+def _least_recently_polled_first(existing_events, last_polled):
+    """#9543: upsert the existing events this poll wrote LONGEST ago first.
+
+    ``last_polled`` maps ``event_ticker`` → the row's ``volume_updated_at``,
+    which for a Kalshi row only this poll writes, so it is "when the discovery
+    poll last reached this row". A row with no stamp sorts first.
+
+    The loop breaks on a deadline every beat, and it used to walk the existing
+    partition in the venue's listing order — the same order every beat — so the
+    SAME tail was cut off every beat and never reached. Measured on the scan
+    report 2026-09-29: three straight beats `starved`, 9,436–17,579 existing
+    events unreached per beat; 60481264 (Pokemon Up/Down) unwritten since
+    06:57Z 9/28, so #9383's threshold label never reached it. Oldest-first
+    turns the cut into a rotation: each beat's unreached rows are the next
+    beat's first. Prices do not ride on this order — tier-1 futures have their
+    own hourly refresh (#2199) and live prices the websocket and live poll.
+    Stable: ties keep their listing order."""
+    _never = datetime.min.replace(tzinfo=timezone.utc)
+
+    def _age_key(event):
+        stamp = last_polled.get(event.event_ticker)
+        if stamp is None:
+            return _never
+        if stamp.tzinfo is None:
+            stamp = stamp.replace(tzinfo=timezone.utc)
+        return stamp
+
+    return sorted(existing_events, key=_age_key)
+
+
+def _settled_rows_last(events, resolved_tickers):
+    """#9543: an event whose row is already ``resolved`` AND whose fetched
+    markets are all terminal goes behind everything else.
+
+    Rewriting such a row writes back the status it already has. The floor
+    series' fetch returns months of settled games (KXMLBGAME from July,
+    KXLOLGAME, KXATPMATCH…), and oldest-first ordering put them at the front:
+    measured on the first two beats after heavy v116 (10:45Z and 12:47Z,
+    2026-09-29), 6,685 of 7,361 rewrites were settled floor rows, only 140
+    open non-floor rows were reached, and 60481264 was still unreached.
+
+    Both sides must agree. A ``resolved`` row the venue lists as active (#8586:
+    closed on the start date, then reopened) keeps its place, because that
+    rewrite turns the row back to ``open``. An event with no fetched markets is
+    not terminal (``all_terminal([])`` is False), so it is never demoted here.
+    The loop skips it anyway. Stable within both groups."""
+    if not resolved_tickers:
+        return events
+    live, settled = [], []
+    for e in events:
+        if e.event_ticker in resolved_tickers and all_terminal(
+            m.status for m in (e.markets or [])
+        ):
+            settled.append(e)
+        else:
+            live.append(e)
+    return live + settled
 
 
 def _floor_series_first(events):
@@ -1320,6 +1430,8 @@ async def _poll_kalshi_markets():
         # placeholder write is not reached at all". Its first non-zero read in
         # production is the honest proof this shipped.
         "unpriced_outcomes_recorded": 0,
+        # #9173: legs the venue withdrew (#4356), neither priced nor created.
+        "withdrawn_legs_skipped": 0,
         "errors": [],
         "by_category": {},
         "crypto_skipped": 0,
@@ -1559,19 +1671,32 @@ async def _poll_kalshi_markets():
             # not a free lunch some other channel picks up.
             fetched_tickers = [e.event_ticker for e in events if e.event_ticker]
             existing_tickers: set = set()
+            # #9543: when this poll last reached each existing row.
+            last_polled: dict = {}
+            # #9543: rows already resolved, for `_settled_rows_last`.
+            resolved_tickers: set = set()
             if fetched_tickers:
                 _rows = await session.execute(
                     text(
-                        "SELECT external_id FROM futures_markets "
+                        "SELECT external_id, volume_updated_at, status "
+                        "FROM futures_markets "
                         "WHERE source='kalshi' AND external_id = ANY(:tks)"
                     ),
                     {"tks": fetched_tickers},
                 )
-                existing_tickers = {r[0] for r in _rows}
+                for _ext_id, _polled_at, _row_status in _rows:
+                    existing_tickers.add(_ext_id)
+                    last_polled[_ext_id] = _polled_at
+                    if _row_status == "resolved":
+                        resolved_tickers.add(_ext_id)
             new_events, existing_events = _partition_new_events_first(
                 events, existing_tickers
             )
+            existing_events = _least_recently_polled_first(
+                existing_events, last_polled
+            )
             events = _floor_series_first(new_events + existing_events)
+            events = _settled_rows_last(events, resolved_tickers)
             stats["new_events_fetched"] = len(new_events)
             stats["existing_events_fetched"] = len(existing_events)
             if new_events:
@@ -1602,6 +1727,8 @@ async def _poll_kalshi_markets():
                         time.monotonic() - _task_started,
                     )
                     break
+                # #9460: this event's SAVEPOINT, opened at its first write.
+                _event_sp = None
                 try:
                     # Each Kalshi event can have multiple markets
                     # For multivariate events, we create one FuturesMarket per event
@@ -1784,6 +1911,12 @@ async def _poll_kalshi_markets():
                         kalshi_metadata["competition"] = event.competition
                     if len(event.markets) > 1:
                         kalshi_metadata["market_count"] = len(event.markets)
+                    # #9383: a lone threshold leg keeps its stored name `Yes`
+                    # (29 consumers key on it); the question's number rides
+                    # here and the served-name sites print it instead.
+                    _threshold = single_leg_threshold_label(event.markets)
+                    if _threshold:
+                        kalshi_metadata[THRESHOLD_LABEL_KEY] = _threshold
 
                     # Aggregate volume across all markets in this event
                     total_volume = sum(m.volume or 0 for m in event.markets) or None
@@ -1937,6 +2070,15 @@ async def _poll_kalshi_markets():
                         .returning(FuturesMarket.id)
                     )
 
+                    # #9460: every write this event makes runs inside its own
+                    # SAVEPOINT. The per-event `except` below swallows a failure,
+                    # and on Postgres a failed statement aborts the transaction:
+                    # measured 9/28 20:51Z, one failed event made the other 6,253
+                    # events of the beat raise at once. Nothing more was committed
+                    # after that, and every existing market (processed after the
+                    # new ones) went unrefreshed. Rolled back to here, a failed
+                    # event costs only itself.
+                    _event_sp = await session.begin_nested()
                     result = await session.execute(market_stmt)
                     futures_market_id = result.scalar_one()
                     stats["events_processed"] += 1
@@ -1955,6 +2097,17 @@ async def _poll_kalshi_markets():
                     outcome_names = kalshi_outcome_names(event.title, event.markets)
                     for market in event.markets:
                         outcome_name = outcome_names[market.ticker]
+
+                        # #9173, #4356's rule on this path. `status="open"`
+                        # filters EVENTS, not their nested legs, so a leg the
+                        # venue withdrew arrives here beside its re-listing. It
+                        # is neither priced nor born as a placeholder; it stays
+                        # in `all_tickers` below, so a price we already hold
+                        # for it is cleared by the null-out block (which still
+                        # protects a graded row).
+                        if _is_withdrawn_leg(market.status):
+                            stats["withdrawn_legs_skipped"] += 1
+                            continue
 
                         # Calculate probability from bid/ask midpoint or last price.
                         # The spread guard lives in _kalshi_yes_probability so it is
@@ -2304,6 +2457,7 @@ async def _poll_kalshi_markets():
                         stats["ranks_rederived"] = (
                             stats.get("ranks_rederived", 0) + _reranked
                         )
+                    await _event_sp.commit()
 
                 except SoftTimeLimitExceeded:
                     # #150: the soft limit fired DURING this event's processing.
@@ -2324,7 +2478,19 @@ async def _poll_kalshi_markets():
                     )
                     break
                 except (httpx.HTTPError, ValueError, KeyError, SQLAlchemyError) as e:
-                    stats["errors"].append(f"{event.event_ticker}: {str(e)}")
+                    await _recover_event_savepoint(
+                        session, _event_sp, sql_failed=isinstance(e, SQLAlchemyError)
+                    )
+                    # #9460: the list rides the task result; a SQLAlchemy message
+                    # carries the whole statement and its params, so bound it.
+                    stats["errors"].append(f"{event.event_ticker}: {str(e)[:300]}")
+                    if len(stats["errors"]) <= _LOGGED_EVENT_ERRORS:
+                        # These were never logged, so a beat could lose 6,253
+                        # events without saying one word about why (#9460).
+                        logger.warning(
+                            "poll_kalshi: event %s failed (%s): %s",
+                            event.event_ticker, type(e).__name__, str(e)[:300],
+                        )
                     continue
 
                 # Persist progress incrementally so a SIGKILL/timeout never wipes
@@ -6991,6 +7157,11 @@ async def _create_settled_market(
     metadata = {"kalshi_event_ticker": event.event_ticker, "gap_created": True}
     if event.title:
         metadata["event_title"] = event.title
+    # #9383: same label as the poller, so a settled threshold row reads
+    # "Over 2.5 maps — won", not "Yes — won".
+    _threshold = single_leg_threshold_label(event.markets)
+    if _threshold:
+        metadata[THRESHOLD_LABEL_KEY] = _threshold
 
     market_stmt = (
         pg_insert(FuturesMarket)

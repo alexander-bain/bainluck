@@ -119,6 +119,9 @@ NOT_AN_EVENT_STAMP = {
     ("app/tasks/espn_sync.py", "_backfill_team_logos"): "Team.espn_id",
     ("app/tasks/espn_sync.py", "_cleanup_bad_espn_matches._clear_espn_data"):
         "Team.espn_id, and a CLEAR",
+    ("app/tasks/espn_sync.py", "_sync_tennis_from_espn"):
+        "CLEAR — a withdrawn tennis row releases its id (#9797); its stamps "
+        "in the same function go through `stamp_espn_id_if_unheld`",
     ("app/utils/espn_helpers.py", "upsert_team"): "Team.espn_id",
     ("app/routes/source_intelligence.py", "cleanup_oscillation"):
         "CLEAR — writing NULL manufactures no identity",

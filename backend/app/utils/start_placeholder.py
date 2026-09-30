@@ -31,6 +31,7 @@ from __future__ import annotations
 import re
 from datetime import datetime, timezone
 from typing import Any, Iterable, Optional
+from zoneinfo import ZoneInfo
 
 #: StatPal sports whose `week[]` bucket carries placeholder clocks. MLB only —
 #: see the module note for why NBA/NHL cannot use the on-the-hour test.
@@ -45,6 +46,11 @@ START_PLACEHOLDER_TAG_PREFIX = "provenance:start-placeholder:statpal:"
 #: second use of StatPal's: each provider's writer rewrites only its own prefix,
 #: so StatPal's schedule pass can never erase ESPN's mark or the reverse.
 ESPN_START_PLACEHOLDER_TAG_PREFIX = "provenance:start-placeholder:espn:"
+
+#: The calendar a US fixture's date is kept in: ESPN dates its boards in
+#: Eastern time, and a placeholder names the right Eastern DATE even when its
+#: clock is a stand-in.
+EASTERN = ZoneInfo("America/New_York")
 
 _ON_THE_HOUR_RE = re.compile(r"^\s*\d{1,2}:00\s*$")
 _TAG_INSTANT_FORMAT = "%Y-%m-%dT%H:%MZ"
@@ -185,6 +191,47 @@ def desired_espn_start_placeholder_tags(
     if _utc_minute(espn_date) != _utc_minute(commence_time):
         return []
     return [espn_start_placeholder_tag(espn_date)]
+
+
+def announced_start_over_placeholder(
+    *,
+    event_tags: Any,
+    commence_time: Optional[datetime],
+    status: Optional[str],
+    time_announced: bool,
+    espn_status: Optional[str],
+    espn_date: Optional[datetime],
+) -> Optional[datetime]:
+    """The start ESPN announced for a row still on a marked placeholder, or None.
+
+    The write the marks were waiting for (#8841). Red Sox @ Yankees Wild Card
+    Game 1 (row 15319563) held StatPal's ``20:00Z`` placeholder and its mark
+    after ESPN (401907924) and MLB (849851) both posted ``00:00Z`` — 5:00 PM PT
+    — so the card read "Sep 29 · TBD" with the time public. The one rail that
+    fills in an announced time (#3023) takes only a midnight-Eastern stand-in on
+    an ESPN-anchored row, and StatPal's stand-in is neither.
+
+    Every clause is required, and each is a way the move could be more than
+    "fill in the announced time":
+
+    * the row is TBD by our own record — a placeholder mark for the very
+      instant it carries (:func:`start_is_tbd`), so no real start is replaced;
+    * ESPN said ``timeValid: true`` in so many words, for a game not started;
+    * ESPN's start is a different minute on the **same Eastern date** — a move
+      to another day is a re-date, which stays with the attended rail.
+    """
+    if not start_is_tbd(event_tags, commence_time, status):
+        return None
+    if not time_announced or espn_status != "scheduled" or espn_date is None:
+        return None
+    if espn_date.tzinfo is None:
+        espn_date = espn_date.replace(tzinfo=timezone.utc)
+    if _utc_minute(espn_date) == _utc_minute(commence_time):
+        return None
+    ours = _utc_minute(commence_time).astimezone(EASTERN).date()
+    if espn_date.astimezone(EASTERN).date() != ours:
+        return None
+    return espn_date
 
 
 def desired_start_placeholder_tags(

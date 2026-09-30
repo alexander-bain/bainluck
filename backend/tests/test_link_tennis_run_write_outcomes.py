@@ -127,8 +127,24 @@ class RecordingSession:
     response shape, not an absence).
     """
 
-    def __init__(self, *, candidates, holders, update_rowcount=1, measured=None):
+    def __init__(
+        self,
+        *,
+        candidates,
+        holders,
+        update_rowcount=1,
+        measured=None,
+        refresh_rowcount=0,
+        refresh_raises=None,
+    ):
         self._candidates = candidates
+        # #9588. The refresh's `IS DISTINCT FROM` is the server's to decide, so
+        # the answer is the test's to state: 0 = the stored start already agreed
+        # (the default, so a test about something else sees a pass that wrote
+        # nothing), 1 = it had moved.
+        self._refresh_rowcount = refresh_rowcount
+        self._refresh_raises = refresh_raises
+        self.refreshes: list[dict] = []
         # The agreement population, asked for separately from the write pool and
         # answered separately here. Defaulting it to the write pool would have
         # hidden the very thing the separate query exists for — `CANDIDATES`
@@ -176,6 +192,11 @@ class RecordingSession:
         if sql == task.MEASUREMENT_ROWS:
             self.measurement_windows.append(dict(params or {}))
             return FakeResult(self._measured)
+        if sql == task.REFRESH_STATPAL_START:
+            self.refreshes.append(dict(params or {}))
+            if self._refresh_raises is not None:
+                raise self._refresh_raises
+            return FakeResult(rowcount=self._refresh_rowcount)
         if sql == task.SET_FIXTURE_ID:
             self.updates.append(dict(params or {}))
             return FakeResult(rowcount=self._update_rowcount)
@@ -206,6 +227,10 @@ def drive(monkeypatch):
         update_rowcount=1,
         raises=None,
         measured=None,
+        refresh_rowcount=0,
+        refresh_raises=None,
+        fixture=None,
+        apply=True,
     ):
         if candidates is None:
             candidates = [
@@ -223,7 +248,10 @@ def drive(monkeypatch):
             holders=holders,
             update_rowcount=update_rowcount,
             measured=measured,
+            refresh_rowcount=refresh_rowcount,
+            refresh_raises=refresh_raises,
         )
+        session.anchor_contexts = []
 
         @asynccontextmanager
         async def _session():
@@ -234,27 +262,30 @@ def drive(monkeypatch):
         monkeypatch.setattr(task_base, "get_task_session", _session)
 
         service = SimpleNamespace(
-            get_live_fixtures=lambda sport: _fixtures_for(sport),
+            get_live_fixtures=lambda sport: _fixtures_for(sport, fixture),
             get_schedule_fixtures=lambda sport, offset: _empty(),
             close=_empty_none,
         )
         monkeypatch.setattr(task, "get_statpal_service", lambda: service)
 
         async def _record_anchor(*args, **kwargs):
+            session.anchor_contexts.append(kwargs.get("claim_context"))
             if raises is not None:
                 raise raises
             return SimpleNamespace(outcome=outcome)
 
         monkeypatch.setattr(task, "record_anchor", _record_anchor)
 
-        summary = await task._run_link_tennis_statpal_fixtures(now=START)
+        summary = await task._run_link_tennis_statpal_fixtures(
+            apply=apply, now=START
+        )
         return summary, session
 
     return _drive
 
 
-async def _fixtures_for(sport):
-    return [_fixture()]
+async def _fixtures_for(sport, fixture=None):
+    return [fixture or _fixture()]
 
 
 async def _empty():
@@ -792,3 +823,140 @@ class TestASuccessfulEmptyReadStillMeasuresOurSide:
         for row in summary["agreements"].values():
             assert row["read"] == "READ-FAILED"
             assert "identity" not in row
+
+
+class TestAnAlreadyLinkedFixtureKeepsItsStartCurrent:
+    """#9588. The anchor's `statpal_start_time` followed StatPal, not link time.
+
+    MEASURED, production 2026-09-30 14:06Z: seven Beijing doubles anchors still
+    read the 02:00Z 9/30 session placeholder `_link_one` wrote, while StatPal had
+    moved them to 10-01 and 10-02. The `event_completion` later-session hold
+    released on the stale value and all eight rows went `suspended`, reading "No
+    result reported". Every pass after the first read those fixtures, found them
+    PAIRED, and `continue`d without touching the start.
+    """
+
+    PAIRED = [(FIXTURE_ID, EVENT_ID, "tennis_atp_us_open", f"tennis:{FIXTURE_ID}")]
+    MOVED = datetime(2026, 9, 5, 3, 0, tzinfo=timezone.utc)
+
+    def _moved_fixture(self, start=MOVED):
+        fixture = _fixture()
+        fixture.start_time = start
+        return fixture
+
+    async def test_a_moved_start_is_written_to_the_exact_anchor_and_committed(
+        self, drive
+    ):
+        summary, session = await drive(
+            anchor_channel.WROTE,
+            candidates=[],
+            holders=self.PAIRED,
+            fixture=self._moved_fixture(),
+            refresh_rowcount=1,
+        )
+
+        assert session.refreshes == [
+            {
+                "start_time": self.MOVED.isoformat(),
+                "seen_at": START.isoformat(),
+                "source": "statpal",
+                "source_id": f"tennis:{FIXTURE_ID}",
+                "id_kind": "game",
+                "event_id": EVENT_ID,
+                "fixture_id": FIXTURE_ID,
+            }
+        ]
+        assert session.commits == 1
+        assert session.updates == [], "the column is not rewritten, only the start"
+        assert summary["already_linked"] == 1
+        assert summary["start_refreshed"] == 1
+        (receipt,) = summary["start_refreshed_receipts"]
+        assert receipt["event_id"] == EVENT_ID
+        assert receipt["statpal_id"] == FIXTURE_ID
+
+    async def test_an_unchanged_start_commits_nothing(self, drive):
+        """The server answers 0 rows: still a pass that wrote nothing."""
+        summary, session = await drive(
+            anchor_channel.WROTE,
+            candidates=[],
+            holders=self.PAIRED,
+            refresh_rowcount=0,
+        )
+
+        assert len(session.refreshes) == 1
+        assert session.commits == 0
+        assert summary["start_refreshed"] == 0
+        assert summary["already_linked"] == 1
+
+    @pytest.mark.parametrize(
+        "holders",
+        [
+            [(FIXTURE_ID, EVENT_ID, "tennis_atp_us_open", None)],
+            [(FIXTURE_ID, 999, "baseball_mlb", None)],
+            [
+                (FIXTURE_ID, 301, "tennis_atp_us_open", f"tennis:{FIXTURE_ID}"),
+                (FIXTURE_ID, 302, "tennis_atp_us_open", None),
+            ],
+        ],
+        ids=["half_link", "foreign_sport", "multiple_holders"],
+    )
+    async def test_only_a_paired_prior_is_refreshed(self, drive, holders):
+        """No anchor of ours to refresh, and repairing one is not ours (D35)."""
+        summary, session = await drive(
+            anchor_channel.WROTE,
+            candidates=[],
+            holders=holders,
+            fixture=self._moved_fixture(),
+            refresh_rowcount=1,
+        )
+
+        assert session.refreshes == []
+        assert session.commits == 0
+        assert summary["start_refreshed"] == 0
+
+    async def test_the_dark_arm_refreshes_nothing(self, drive):
+        _, session = await drive(
+            anchor_channel.WROTE,
+            candidates=[],
+            holders=self.PAIRED,
+            fixture=self._moved_fixture(),
+            refresh_rowcount=1,
+            apply=False,
+        )
+
+        assert session.refreshes == []
+        assert session.commits == 0
+
+    async def test_a_fixture_with_no_start_never_blanks_the_one_we_hold(self, drive):
+        _, session = await drive(
+            anchor_channel.WROTE,
+            candidates=[],
+            holders=self.PAIRED,
+            fixture=self._moved_fixture(start=None),
+            refresh_rowcount=1,
+        )
+
+        assert session.refreshes == []
+
+    async def test_a_failing_refresh_rolls_back_and_the_pass_goes_on(self, drive):
+        """Gotcha #42: the link is still a link, and the run still returns."""
+        summary, session = await drive(
+            anchor_channel.WROTE,
+            candidates=[],
+            holders=self.PAIRED,
+            fixture=self._moved_fixture(),
+            refresh_raises=RuntimeError("boom"),
+        )
+
+        assert session.rollbacks == 1
+        assert session.commits == 0
+        assert summary["already_linked"] == 1
+        assert summary["start_refreshed"] == 0
+
+    async def test_a_first_link_stamps_when_the_start_was_seen(self, drive):
+        """The same pair the refresh keeps current, written at link time too."""
+        _, session = await drive(anchor_channel.WROTE)
+
+        (ctx,) = session.anchor_contexts
+        assert ctx["statpal_start_time"] == START.isoformat()
+        assert ctx["statpal_start_seen_at"] == START.isoformat()

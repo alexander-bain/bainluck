@@ -69,14 +69,19 @@ from __future__ import annotations
 import logging
 from typing import Iterable, Sequence
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.models.models import FuturesMarket, FuturesOutcome
 from app.utils.event_completion import started_without_result
 from app.utils.lifecycle import served_event_status
+from app.utils.resolution_authority import AUTHORITATIVE_SOURCES
 from app.utils.venue_settlement import (
+    VENUE_CLOSED_NO_WINNER_KEY,
     VENUE_SETTLEMENT_SOURCE,
+    names_completed_match,
     settlement_from_graded_rows,
+    venue_closed_without_winner,
+    venue_declared_not_completed,
 )
 
 logger = logging.getLogger(__name__)
@@ -171,7 +176,7 @@ async def venue_settlements_for_events(db, events: Sequence) -> dict[int, dict]:
             (market_name, market_external_id, outcome_name)
         )
 
-    return {
+    settlements = {
         event_id: settlement_from_graded_rows(
             graded_by_event.get(event_id, []),
             getattr(event, "home_team_name", None),
@@ -179,6 +184,134 @@ async def venue_settlements_for_events(db, events: Sequence) -> dict[int, dict]:
         )
         for event_id, event in by_id.items()
     }
+    await mark_venue_closed_no_winner(db, settlements)
+    return settlements
+
+
+async def venue_voided_event_ids(db, event_ids: Iterable[int]) -> set[int]:
+    """The ids among ``event_ids`` the venue closed with no winner (#5811, #8288).
+
+    One statement for the batch: every market on each event with its metadata,
+    its source and name, whether any of its outcomes carries a winner, and the
+    two Completed Match reads; then either arm, per event:
+
+    * :func:`~app.utils.venue_settlement.venue_closed_without_winner` (#5811) —
+      every market ``venue_voided``, nothing graded. Its inputs are exactly
+      what they were before #8288: every market's metadata and ANY winner,
+      the Completed Match market included.
+    * :func:`~app.utils.venue_settlement.venue_declared_not_completed` (#8288)
+      — Polymarket's Completed Match graded **No** by the venue, and no winner
+      on any other market.
+
+    The void stamp is read in Python for the reason
+    ``kalshi_resolution_window.VENUE_VOIDED_METADATA_KEY`` records — ``->>`` is
+    Postgres-only and yields the STRING ``'true'``.
+
+    🔴 AN EMPTY SET ON A FAILED READ, which every caller turns into an ABSENT
+    key. A read that cannot answer never tells a card the venue closed its
+    event.
+
+    The winner test is ANY ``is_winner IS TRUE``, not :func:`venue_grade_filters`:
+    the question is whether anything contradicts "no result was reported", and
+    a winner from any source does.
+    """
+    ids = sorted({int(i) for i in event_ids if i is not None})
+    if not ids:
+        return set()
+
+    def _leg(*where):
+        return (
+            select(FuturesOutcome.id)
+            .where(FuturesOutcome.market_id == FuturesMarket.id, *where)
+            .exists()
+        )
+
+    has_winner = _leg(FuturesOutcome.is_winner.is_(True))
+    no_graded_by_venue = _leg(
+        func.lower(FuturesOutcome.name) == "no",
+        FuturesOutcome.is_winner.is_(True),
+        FuturesOutcome.resolution_source.in_(sorted(AUTHORITATIVE_SOURCES)),
+    )
+    yes_is_winner = _leg(
+        func.lower(FuturesOutcome.name) == "yes",
+        FuturesOutcome.is_winner.is_(True),
+    )
+    try:
+        rows = (
+            await db.execute(
+                select(
+                    FuturesMarket.event_id,
+                    FuturesMarket.market_metadata,
+                    has_winner,
+                    FuturesMarket.source,
+                    FuturesMarket.name,
+                    no_graded_by_venue,
+                    yes_is_winner,
+                ).where(FuturesMarket.event_id.in_(ids))
+            )
+        ).all()
+        metadata_by_event: dict[int, list] = {}
+        winner_by_event: dict[int, bool] = {}
+        completed_match_by_event: dict[int, list] = {}
+        other_winner_by_event: dict[int, bool] = {}
+        for (
+            event_id,
+            metadata,
+            market_has_winner,
+            source,
+            name,
+            market_no_graded,
+            market_yes_winner,
+        ) in rows:
+            event_id = int(event_id)
+            metadata_by_event.setdefault(event_id, []).append(metadata)
+            winner_by_event[event_id] = winner_by_event.get(event_id, False) or bool(
+                market_has_winner
+            )
+            other_winner_by_event.setdefault(event_id, False)
+            if source == "polymarket" and names_completed_match(name):
+                completed_match_by_event.setdefault(event_id, []).append(
+                    (bool(market_no_graded), bool(market_yes_winner))
+                )
+            elif market_has_winner:
+                other_winner_by_event[event_id] = True
+    except Exception:
+        logger.exception(
+            "venue void read failed for %d event(s); no card is told its venue "
+            "closed it",
+            len(ids),
+        )
+        return set()
+
+    return {
+        event_id
+        for event_id, metadatas in metadata_by_event.items()
+        if venue_closed_without_winner(metadatas, winner_by_event[event_id])
+        or venue_declared_not_completed(
+            completed_match_by_event.get(event_id, []),
+            other_winner_by_event[event_id],
+        )
+    }
+
+
+async def mark_venue_closed_no_winner(db, settlements: dict[int, dict]) -> None:
+    """Add ``venue_closed_no_winner: True`` to the settlements it holds (#5811).
+
+    Asked only of events the pair left unsettled — a named winner is the
+    richer answer and a void cannot sit beside it — so an event the venue
+    graded issues no second statement. Mutates in place; the pair is never
+    touched, so every current reader of ``venue_settled`` /
+    ``venue_settled_result`` is byte-identical.
+    """
+    unsettled = [
+        event_id
+        for event_id, settlement in settlements.items()
+        if settlement is not None and not settlement.get("venue_settled")
+    ]
+    if not unsettled:
+        return
+    for event_id in await venue_voided_event_ids(db, unsettled):
+        settlements[event_id][VENUE_CLOSED_NO_WINNER_KEY] = True
 
 
 def askable_briefs(
@@ -283,6 +416,7 @@ async def attach_venue_settlement(db, events: Sequence, briefs: list[dict], now)
             ),
             getattr(event, "commence_time", None),
             now,
+            getattr(event, "win_probability_sources", None),
         )
         for event_id, event in by_id.items()
     }

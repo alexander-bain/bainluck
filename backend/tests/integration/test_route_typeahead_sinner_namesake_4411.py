@@ -89,7 +89,7 @@ ESPORTS_A = "Saint Sinners at Spirit Academy"
 ESPORTS_B = "NIP at Sinners"
 #: The player's own match. Completed, inside the 30-day floor, so the or-last
 #: arm can reach it once its trigger is right.
-JANNIK = "Miomir Kecmanovic at Jannik Sinner"
+JANNIK = "Miomir Kecmanovic v Jannik Sinner"  # #9522: 1-on-1 reads " v "
 
 
 def _event(*, eid, home, away, status, commence, sport="esports"):

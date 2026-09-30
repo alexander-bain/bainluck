@@ -85,8 +85,10 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
         "the teams bucket is no longer ranked — raw FTS order ships",
         # #8765: the card is built in ONE place, `_team_card_keyed`, read by the
         # card and by the games list's leader key. Its last line is the ranking.
-        "    return rank_with_keys(query, [(_search_team_evidence(t), t) for t in cards])[:5]\n",
-        "    return [(None, t) for t in cards][:5]\n",
+        # #9859: the evidence also reads the typed query (city abbreviations).
+        # #9897: the cap is a parameter (5 for the card, None for the lead tier).
+        "    return rank_with_keys(query, [(_search_team_evidence(t, query), t) for t in cards])[:cap]\n",
+        "    return [(None, t) for t in cards][:cap]\n",
     ),
     (
         "M8",

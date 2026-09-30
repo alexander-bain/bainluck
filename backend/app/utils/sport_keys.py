@@ -49,6 +49,9 @@ SPORT_LEAGUE_MAP: dict[str, tuple[str, str]] = {
     # kick off together, which is why `select_authorized_espn_candidate` takes
     # `is_distinct_match`.
     "soccer_england_league2": ("soccer", "eng.4"),
+    # #9267: same as #8675 — without it a live Liga MX game serves `live` with
+    # no minute and no half, and hears full time only from the Odds API poll.
+    "soccer_mexico_ligamx": ("soccer", "mex.1"),
     # Golf
     "golf_pga": ("golf", "pga"),
     "golf_lpga": ("golf", "lpga"),
@@ -199,6 +202,7 @@ ESPN_SPORT_MAPPING: dict[str, str] = {
     "soccer_italy_serie_a": "soccer/ita.1",
     "soccer_france_ligue_one": "soccer/fra.1",
     "soccer_england_league2": "soccer/eng.4",  # #8810
+    "soccer_mexico_ligamx": "soccer/mex.1",  # #9267
     # Lacrosse
     "lacrosse_ncaa": "lacrosse/mens-college-lacrosse",
     "lacrosse_pll": "lacrosse/pll",
@@ -1274,6 +1278,14 @@ KALSHI_TICKER_TO_SPORT_KEY: dict[str, str] = {
     "kxcs2totalmaps": "esports",                # CS2 total maps
     "kxvalorantgame": "esports",
     "kxvalorantmap": "esports",                 # Valorant map winner
+    "kxvaloranttotalmaps": "esports",           # Valorant total maps (#9696)
+    # #9823: Dota 2's GAME legs get a row from their Kalshi listing like their
+    # three siblings above. Only the explicit game prefixes are armed; the bare
+    # `kxdota2` below stays classification-only (The International futures and
+    # the rest of the family), and longest-prefix-wins keeps the two apart.
+    "kxdota2game": "esports",                   # Dota 2 match winner
+    "kxdota2map": "esports",                    # Dota 2 map winner
+    "kxdota2totalmaps": "esports",              # Dota 2 total maps
     "kxdimayorgame": "soccer_other",             # Colombian Dimayor (NOT Dota 2)
     # Soccer
     "kxsoccergame": "soccer",
@@ -1371,7 +1383,7 @@ KALSHI_TICKER_TO_SPORT_KEY: dict[str, str] = {
     # KXCODEAI / KXCODINGMODEL are AI, not Call of Duty (#8497): carved out in
     # KALSHI_TICKER_PREFIXES_NOT_A_SPORT, not here.
     "kxcod": "esports",                       # Call of Duty (kxcodgame, kxcodmap)
-    "kxdota2": "esports",                     # Dota 2 (kxdota2game, kxdota2map)
+    "kxdota2": "esports",                     # Dota 2 family; its game legs are armed above (#9823)
     "kxr6": "esports",                        # Rainbow Six (kxr6game, kxr6map)
     "kxow": "esports",                        # Overwatch (kxowgame)
     # Asian baseball
@@ -1435,7 +1447,8 @@ KALSHI_GAME_TICKER_PREFIXES: tuple[str, ...] = tuple(
 _LINK_RATE_UNSUPPORTED_LEAGUE_PREFIXES = frozenset({
     "kxlolgame", "kxlolgames", "kxlolmap", "kxloltotal", "kxloltotalmaps",
     "kxcs2game", "kxcs2games", "kxcs2map", "kxcs2mapwinner",
-    "kxcs2totalmaps", "kxvalorantgame", "kxvalorantmap",
+    "kxcs2totalmaps", "kxvalorantgame", "kxvalorantmap", "kxvaloranttotalmaps",
+    "kxdota2game", "kxdota2map", "kxdota2totalmaps",
 })
 
 # Link-rate denominator prefixes are stricter than "game-shaped" tickers:
@@ -2337,6 +2350,10 @@ KALSHI_TICKER_TO_DISPLAY_LABEL: dict[str, str] = {
     "kxcs2totalmaps": "CS2",
     "kxvalorantgame": "Valorant",
     "kxvalorantmap": "Valorant",
+    "kxvaloranttotalmaps": "Valorant",
+    "kxdota2game": "Dota 2",
+    "kxdota2map": "Dota 2",
+    "kxdota2totalmaps": "Dota 2",
     "kxdimayorgame": "Colombian Dimayor",
 }
 
@@ -3190,6 +3207,64 @@ def sport_family_key(sport_key: Optional[str]) -> Optional[str]:
     if key.endswith(_SPORT_CATCH_ALL_SUFFIX):
         return key[: -len(_SPORT_CATCH_ALL_SUFFIX)] or None
     return key.split("_", 1)[0] or None
+
+
+#: Women's competitions whose key carries no ``_women`` marker. A substring
+#: test alone reads the WNBA, the women's college game, AFLW and NRLW as men's
+#: leagues, and every one of them shares team names with its men's twin (#9581).
+_WOMENS_COMPETITION_KEYS: frozenset[str] = frozenset(
+    {
+        "basketball_wnba",
+        "basketball_wncaab",
+        "aussierules_aflw",
+        "rugbyleague_nrlw",
+    }
+)
+
+
+def competition_gender(sport_key: Optional[str]) -> Optional[str]:
+    """``"women"``, ``"men"``, or ``None`` when the key cannot say. Pure.
+
+    ``None`` is for a missing key and for a catch-all (``soccer_other``), which
+    holds both. A caller EXCLUDING on gender treats ``None`` as compatible with
+    either side: a wrong exclusion costs a club a real game, a wrong admission
+    costs what the page already showed.
+
+    ``tennis_wta`` and its tournament keys are women's play. A tour key is a
+    prefix family (:data:`TOUR_LEAGUES_INCLUDING_TOURNAMENTS`), so the test is a
+    prefix too.
+    """
+    key = (sport_key or "").strip().lower()
+    if not key or key.endswith(_SPORT_CATCH_ALL_SUFFIX):
+        return None
+    if (
+        key in _WOMENS_COMPETITION_KEYS
+        or "_women" in key
+        or key == "tennis_wta"
+        or key.startswith("tennis_wta_")
+    ):
+        return "women"
+    return "men"
+
+
+def same_sport_same_gender(a: Optional[str], b: Optional[str]) -> bool:
+    """Could a row under key ``b`` be play of a team registered under key ``a``?
+
+    The question a NAME match has to pass before a team page may claim the row
+    (#9581): same sport (:func:`sport_family_key`) and no gender contradiction
+    (:func:`competition_gender`). An unknown key on either side answers True —
+    this gate only ever removes rows, so it fails open.
+
+    Family equality is widened by a prefix test in either direction, so
+    ``rugby_other`` (family ``rugby``) still reaches a ``rugbyleague_nrl`` club.
+    """
+    fa, fb = sport_family_key(a), sport_family_key(b)
+    if fa is None or fb is None:
+        return True
+    if not (fa == fb or fa.startswith(fb) or fb.startswith(fa)):
+        return False
+    ga, gb = competition_gender(a), competition_gender(b)
+    return ga is None or gb is None or ga == gb
 
 
 def _sport_family_word(sport_key: str) -> str:

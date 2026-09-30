@@ -247,10 +247,13 @@ describe("#7065 · the card and the section it is filed under cannot disagree", 
       live: true,
     },
     {
-      label: "Asia Masters — no window, price signal says live",
+      // #9596 — was `live: true`. A price move is not a date of play: with no
+      // window and no in-progress status, neither the badge nor the section
+      // claims LIVE. They still agree, which is what this table asserts.
+      label: "Asia Masters — no window, price moving, not known to be live (#9596)",
       data: toFeedData(ASIA),
       now: DURING_BILTMORE,
-      live: true,
+      live: false,
     },
     {
       label: "Biltmore BEFORE its window opens",
@@ -361,21 +364,38 @@ describe("#7065 · the extracted decider is the pre-fix one, arm for arm", () =>
     "2026-09-25T12:00:00Z",
   ];
 
-  it("agrees with the pre-fix body on every tournament at every clock", () => {
+  // #9596 split this assertion (notice 50: the legacy body above is never
+  // refreshed). The decider now disagrees with it on exactly ONE arm — no
+  // window, not in progress, a price moving — and only in the direction
+  // LIVE → not live. Everywhere else it is still the pre-fix body.
+  const onlyThePriceArm = (t: GolfTournament | FeedTournamentData) =>
+    !(t.start_date && t.end_date) &&
+    t.schedule_status !== "in-progress" &&
+    t.golfers.some((g) => g.movement_24h !== null && Math.abs(g.movement_24h as number) >= 0.01);
+
+  it("agrees with the pre-fix body on every tournament at every clock, except the price arm", () => {
     const population = [BILTMORE, ...SERVED.tournaments.map(toFeedData)];
     let disagreements = 0;
+    let priceArmRetired = 0;
     let liveVerdicts = 0;
     for (const now of CLOCKS) {
       at(now, () => {
         for (const t of population) {
           const before = legacyIsLive(t);
           const after = isTournamentLive(t);
-          if (before !== after) disagreements += 1;
+          if (onlyThePriceArm(t)) {
+            expect(before).toBe(true);
+            expect(after).toBe(false);
+            priceArmRetired += 1;
+          } else if (before !== after) disagreements += 1;
           if (after) liveVerdicts += 1;
         }
       });
     }
     expect(disagreements).toBe(0);
+    // The population must actually carry a price-arm tournament (ASIA), or the
+    // split above never ran.
+    expect(priceArmRetired).toBeGreaterThan(0);
     // A predicate that answered `false` everywhere would also disagree zero
     // times with itself, so the population has to actually exercise both.
     expect(liveVerdicts).toBeGreaterThan(0);

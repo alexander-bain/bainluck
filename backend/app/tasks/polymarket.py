@@ -16,6 +16,7 @@ from sqlalchemy import func, select, text
 from app.tasks.base import get_task_session
 from app.utils.feed_market_quality import (
     FEED_PHANTOM_MIN_SPREAD,
+    book_bounds_nothing,
     is_empty_book_midpoint,
     is_fabricated_midpoint,
 )
@@ -299,6 +300,17 @@ _TAG_TO_CATEGORY: dict[str, str] = {
     # `championship` + 401 `game_prop` rows), and it has no key in
     # `LLM_CATEGORY_TO_SPORT_PREFIX`, so it labels the card and opens no rail.
     "chess": "chess",
+    # #8636 follow-up 2: the venue tags every volleyball event `Volleyball`
+    # (Gamma 2026-09-27: `vbeuro-ita2-slo4-2026-09-17` tags [Sports, Games,
+    # Volleyball, Volleyball European Championship]) and this key was absent,
+    # so the parent fell through to the `sports` catch-all and its children
+    # were guessed from the country names. 55 volleyball fixtures since July
+    # became events of OURS on `soccer_other`, `baseball_other`,
+    # `americanfootball_other` and `basketball_other` — five of them in the
+    # UEFA Nations League, where `/search?q=italy` printed Italy v Slovenia as a
+    # soccer game. Like `chess`, `volleyball` has no key in
+    # `LLM_CATEGORY_TO_SPORT_PREFIX`, so it labels the card and mints nothing.
+    "volleyball": "volleyball",
     "cycling": "other",
     "swimming": "olympics",
     "track and field": "olympics",
@@ -444,6 +456,9 @@ _SPORT_CATEGORIES = {
     # #8507, for the same reason as the two above: a `Chess` tag must yield
     # ("championship", "chess"), which is what the resolved chess rows carry.
     "chess",
+    # #8636, the same reason again: a `Volleyball` tag yields
+    # ("championship", "volleyball"), never a sport name in `category`.
+    "volleyball",
 }
 
 
@@ -458,6 +473,40 @@ def _is_tradeable_opening(prob: Optional[float], has_trading: bool) -> bool:
     can never both open at 1.0.
     """
     return bool(has_trading) and prob is not None and 0.0 < prob < 1.0
+
+
+def _opening_book_is_empty(
+    best_bid: Optional[float],
+    best_ask: Optional[float],
+    last_trade_price: Optional[float],
+) -> bool:
+    """True when a leg's only opening evidence is a bid on a book that bounds nothing.
+
+    #9850. The decomposed sub-market writer counted ``best_bid > 0`` as trading, so a
+    1c bid on a 1c/99c listing book was enough to stamp Gamma's ``outcomePrices`` as
+    the opening. The resolver's two phantom predicates only catch that price when it
+    sits ON the book's midpoint, and Gamma's number can be a tick-instant off it:
+    market 63386735 (Trammell 1+ HR, listed 2026-09-30 06:16Z) stored 0.475 / 0.525
+    beside a 0.01 / 0.99 book with no trade, and "The script" led the event page with
+    "opened at 47% — it's 5% now", a move nobody made.
+
+    Where the price sits inside the book is irrelevant to an opening, so this asks
+    only the book question, through the shared :func:`book_bounds_nothing`. A missing
+    ask beside a bid is the widest quote on that side (the ``_poly_book_is_untradeable``
+    convention). A trade exempts, as it does in the parent-field writers' opening test:
+    somebody transacted.
+
+    Measured 2026-09-30 over 36h of decomposed legs: 12 of ~31,800 opening stamps
+    had this shape. Refusing leaves the opening NULL until a poll sees a book that
+    locates something or a trade (``opening_probability`` is COALESCE-first). The
+    CLOB-history backfill cannot fill it instead: both of its modes select only legs
+    with no snapshots, and a refused leg still writes its snapshot.
+    """
+    if last_trade_price is not None and last_trade_price > 0:
+        return False
+    if best_bid is None:
+        return False
+    return book_bounds_nothing(best_bid, 1.0 if best_ask is None else best_ask)
 
 
 def sub_market_metadata(
@@ -971,6 +1020,7 @@ async def _poll_polymarket_markets():
         "outcomes_updated": 0,
         "snapshots_created": 0,
         "legs_retired": 0,  # #4000: prices withdrawn because the venue quotes none
+        "legs_withdrawn_book_refuted": 0,  # #9399: stored prices the current book prices out
         # #2027: seeded at zero so a quiet poll and a poll that never asked
         # read differently. The refusal is the ship; the count is how anyone
         # tells that it happened without opening the database.
@@ -3054,7 +3104,23 @@ async def _process_event_batch(
                         # A price of exactly 0.0/1.0 is a settled/placeholder value, not a
                         # tradeable opening — stamping it produced the impossible
                         # both-sides=1.0 binaries (#137 opening artifact).
-                        sub_has_open = _is_tradeable_opening(prob, sub_has_trading)
+                        #
+                        # #9850: a 1c bid on a book that bounds nothing is not
+                        # trading for OPENING purposes. The current price, book
+                        # and snapshot still write; only the opening waits. One
+                        # evidence flag for both legs, so a pair is never
+                        # half-stamped.
+                        sub_opening_evidence = sub_has_trading
+                        if sub_has_trading and _opening_book_is_empty(
+                            market.best_bid,
+                            market.best_ask,
+                            market.last_trade_price,
+                        ):
+                            stats["opening_refused_empty_book"] = (
+                                stats.get("opening_refused_empty_book", 0) + 1
+                            )
+                            sub_opening_evidence = False
+                        sub_has_open = _is_tradeable_opening(prob, sub_opening_evidence)
 
                         # THE PAIR GATE. Both legs of one binary must come from the
                         # same normalised upstream pair and sum to ~1, or NEITHER
@@ -3256,7 +3322,7 @@ async def _process_event_batch(
                             # opening_probability when no snapshot exists) inherited the
                             # wrong side — the #137 poly-Under sign-flip class.
                             sub_under_has_open = _is_tradeable_opening(
-                                under_prob, sub_has_trading
+                                under_prob, sub_opening_evidence
                             ) and sub_pair_verdict == PAIR_OPENING_OK
                             # #2027: same refusal as the Over leg above —
                             # the settled book is not an opening.
@@ -3590,6 +3656,22 @@ async def _process_event_batch(
                         "Polymarket event %s (%s): withdrew our price on %d leg(s) "
                         "the venue quotes no price for (#4000)",
                         event.id, (event.title or "")[:80], retired,
+                    )
+
+                # #9399: and which legs it REFUSED to price while the venue was
+                # quoting them. The skip keeps the old number; withdraw it when
+                # this pass's book prices it out — see `_refused_leg_books`.
+                withdrawn = await _withdraw_book_refuted_legs(
+                    session, futures_market_id, _refused_leg_books(event)
+                )
+                if withdrawn:
+                    stats["legs_withdrawn_book_refuted"] = (
+                        stats.get("legs_withdrawn_book_refuted", 0) + withdrawn
+                    )
+                    logger.info(
+                        "Polymarket event %s (%s): withdrew %d stored price(s) the "
+                        "venue's current book prices out (#9399)",
+                        event.id, (event.title or "")[:80], withdrawn,
                     )
 
                 # #6598: the ranks written above were derived against THIS
@@ -4253,6 +4335,49 @@ _SUNK_POLY_UNLINKED_GAME_SQL = text(
 )
 _SUNK_POLY_UNLINKED_GAME_MAX = 200
 
+#: #9572: the CHILDLESS game arm — sunk linked game parents whose group holds no
+#: child row at all, soonest kick-off first, read right after the head arm.
+#:
+#: A childless game parent is the worst case this pass exists for: its game has
+#: no Polymarket number anywhere, because a parent is only a group anchor and
+#: the moneyline is a CHILD, which only the poll's writer mints. The head arm
+#: reaches it only in turn. Measured 2026-09-29 08:10Z: 4,000 stale linked
+#: parents in the window, the head at its 100 limit, 1,221 of them kicking off
+#: before Rams @ Eagles (parent 59552330, Gamma 909441). So 11 of 16 NFL Week 5
+#: games (Oct 4-6) served sportsbooks + Kalshi only while the venue priced
+#: every one (909441: 328 markets, 78 priced, moneyline 61.5/38.5), and an
+#: Oct 4 game would get its children about a day before kickoff. Their last
+#: write was 09-20, the poll's newest-2,000 window having left them behind.
+#:
+#: The group test is the child's own `group_type`, the same one the poll's
+#: link sweep keys on (`LINK_SUB_MARKETS_SQL`), and it counts a child of ANY
+#: status: a minted child means the writer reached the game, which is all this
+#: arm is for. `polymarket_event` only — a negrisk or single-market parent
+#: prices itself. 850 rows matched, the NFL specimens at positions 303-429, so
+#: 100 a pass reaches them on the fourth; a row read leaves for
+#: `SUNK_POLY_STALE_HOURS` like every other arm, minted or not. EXPLAIN ANALYZE
+#: 0.9 s (events window bitmap → event_id index → group_id index anti-join).
+_SUNK_POLY_CHILDLESS_GAME_SQL = text(
+    "SELECT s.id, s.external_id FROM (SELECT fm.id, fm.external_id, fm.event_id, fm.group_id"
+    + _SUNK_POLY_WHERE
+    + """
+       AND fm.group_type = 'polymarket_event'
+    ) s
+      JOIN events e ON e.id = s.event_id
+     WHERE """
+    + _LINKED_POLY_EVENT_WINDOW
+    + """
+       AND NOT EXISTS (
+             SELECT 1 FROM futures_markets c
+              WHERE c.group_id = s.group_id
+                AND c.group_type = 'polymarket_sub_market'
+           )
+     ORDER BY e.commence_time, s.id
+     LIMIT :max_rows
+    """
+)
+_SUNK_POLY_CHILDLESS_GAME_MAX = 100
+
 #: #7930: the POST-START arm — game parents whose own `venue_game_start` is
 #: behind us (inside two days), linked or not, oldest start first.
 #:
@@ -4304,6 +4429,42 @@ _SUNK_POLY_ROTATE_SQL = text(
             OR fm.resolution_date > NOW() + make_interval(days => :horizon_days))
        AND fm.id > :cursor
      ORDER BY fm.id
+     LIMIT :max_rows
+    """
+)
+
+#: #9605: the STARVED arm — imminent rows no pass has read for a day, oldest
+#: stamp first.
+#:
+#: The rotate arm above hands a row to the imminent arm the moment it enters
+#: the horizon, and the imminent arm reads 300 a pass soonest-resolving first
+#: from a pool that sits at its limit. A row it reads leaves for six hours and
+#: comes back to the same head, so the pass cycles the soonest ~1,800 rows and
+#: never reaches the rest of the window: a partition whose one side is capped
+#: leaves the rows past the cap in NO arm. Measured on production 2026-09-29
+#: 11:30Z: 4,745 stale imminent rows, 2,140 of them untouched for 48h, and every
+#: one of those resolves more than three days out. The specimen: Polymarket
+#: "Team to advance to NLDS" / "…ALDS" (Gamma 956263 / 956262, rows 60087232 /
+#: 60087233, resolving 10-05) were last stamped 09-21 16:30Z, seven hours
+#: before 10-05 minus 14 days moved them out of the rotate arm, with 1,970
+#: imminent rows ahead. Search answered "Braves 71% to reach the NLDS" on game
+#: day against a venue quoting 56.5.
+#:
+#: Oldest stamp first inside the imminent window (gotcha #41: an order AND a
+#: floor — the floor is `_SUNK_POLY_WHERE`'s resolution bound). The 24h
+#: staleness is four missed imminent cycles, so a row the imminent arm still
+#: reaches never qualifies; the two arms overlap only by dedupe. 3,455 rows
+#: matched at 11:35Z with the specimens at 504/505, so 200 a pass (10 Gamma
+#: calls) reaches them on the third pass and drains the backlog in ~17.
+SUNK_POLY_STARVED_STALE_HOURS = 24
+_SUNK_POLY_STARVED_MAX = 200
+
+_SUNK_POLY_STARVED_SQL = text(
+    "SELECT fm.id, fm.external_id"
+    + _sunk_poly_where("starved_stale_hours")
+    + """
+       AND fm.resolution_date <= NOW() + make_interval(days => :horizon_days)
+     ORDER BY fm.volume_updated_at NULLS FIRST, fm.id
      LIMIT :max_rows
     """
 )
@@ -4456,11 +4617,14 @@ async def _recover_sunk_polymarket_events(deadline_s: float | None = None) -> di
     stats: dict = {
         "head_selected": 0,
         "unlinked_game_selected": 0,  # #8373
+        "childless_game_selected": 0,  # #9572
         "post_start_selected": 0,  # #7930
         "head_pool_at_limit": False,
         "imminent_selected": 0,
         "rotate_selected": 0,
         "imminent_pool_at_limit": False,
+        "starved_selected": 0,  # #9605
+        "starved_pool_at_limit": False,
         "batches_read": 0,
         "batches_unreadable": 0,
         "events_reached": 0,
@@ -4568,14 +4732,40 @@ async def _recover_sunk_polymarket_events(deadline_s: float | None = None) -> di
                 },
             )
         ).fetchall()
+        # #9572: executed last for the same reason as the head (the arms above
+        # keep their order); its ids go right after the head's below.
+        childless_game = (
+            await session.execute(
+                _SUNK_POLY_CHILDLESS_GAME_SQL,
+                {**head_params, "max_rows": _SUNK_POLY_CHILDLESS_GAME_MAX},
+            )
+        ).fetchall()
+        # #9605: executed last so every arm above keeps its order; its ids go
+        # after the imminent arm's and before the rotate arm's below.
+        starved = (
+            await session.execute(
+                _SUNK_POLY_STARVED_SQL,
+                {
+                    **base,
+                    "starved_stale_hours": SUNK_POLY_STARVED_STALE_HOURS,
+                    "max_rows": _SUNK_POLY_STARVED_MAX,
+                },
+            )
+        ).fetchall()
         # Plain scalars before any commit (gotcha #6).
         head_ids = [str(r.external_id) for r in head]
+        childless_game_ids = [str(r.external_id) for r in childless_game]
         unlinked_game_ids = [str(r.external_id) for r in unlinked_game]
         post_start_ids = [str(r.external_id) for r in post_start]
         imminent_ids = [str(r.external_id) for r in imminent]
+        starved_ids = [str(r.external_id) for r in starved]
         rotate_pairs = [(int(r.id), str(r.external_id)) for r in rotate]
 
     stats["head_selected"] = len(head_ids)
+    stats["childless_game_selected"] = len(childless_game_ids)
+    stats["childless_game_pool_at_limit"] = (
+        len(childless_game_ids) >= _SUNK_POLY_CHILDLESS_GAME_MAX
+    )
     stats["unlinked_game_selected"] = len(unlinked_game_ids)
     stats["unlinked_game_pool_at_limit"] = (
         len(unlinked_game_ids) >= _SUNK_POLY_UNLINKED_GAME_MAX
@@ -4586,11 +4776,14 @@ async def _recover_sunk_polymarket_events(deadline_s: float | None = None) -> di
     stats["imminent_selected"] = len(imminent_ids)
     stats["rotate_selected"] = len(rotate_pairs)
     stats["imminent_pool_at_limit"] = len(imminent_ids) >= _SUNK_POLY_IMMINENT_MAX
+    stats["starved_selected"] = len(starved_ids)
+    stats["starved_pool_at_limit"] = len(starved_ids) >= _SUNK_POLY_STARVED_MAX
     stats["cursor_wrapped"] = wrapped
 
     if (
-        not head_ids and not unlinked_game_ids and not post_start_ids
-        and not imminent_ids and not rotate_pairs
+        not head_ids and not childless_game_ids and not unlinked_game_ids
+        and not post_start_ids
+        and not imminent_ids and not starved_ids and not rotate_pairs
     ):
         # Gotcha #53: say which question returned nothing.
         stats["terminal"] = "no_sunk_open_events"
@@ -4601,12 +4794,17 @@ async def _recover_sunk_polymarket_events(deadline_s: float | None = None) -> di
     # rotate cursor from there: `max()` below would jump the cursor over every
     # rotate row between it and the last one actually read.
     # #8373: the same holds for an unlinked-game row, and (#7930) a post-start one.
-    head_set = set(head_ids) | set(unlinked_game_ids) | set(post_start_ids)
+    # #9572: and a childless-game one.
+    head_set = (
+        set(head_ids) | set(childless_game_ids) | set(unlinked_game_ids)
+        | set(post_start_ids)
+    )
     rotate_id_by_ext = {ext: mid for mid, ext in rotate_pairs if ext not in head_set}
     seen: set[str] = set()
     work: list[str] = []
     for ext in (
-        head_ids + unlinked_game_ids + post_start_ids + imminent_ids
+        head_ids + childless_game_ids + unlinked_game_ids + post_start_ids
+        + imminent_ids + starved_ids
         + [ext for _mid, ext in rotate_pairs]
     ):
         if ext not in seen:  # one Gamma id, one write — never twice in a pass
@@ -5230,6 +5428,111 @@ async def _retire_unpriced_legs(session, futures_market_id: int, external_ids) -
     return int(result.rowcount or 0)
 
 
+def _refused_leg_books(event) -> dict[str, tuple]:
+    """``{condition_id: (bid, ask)}`` for negRisk legs the resolver REFUSED this pass (#9399).
+
+    The third thing a pass learns about a leg it does not write. A leg with a price
+    is written; a leg with no price and no book is retired (#4000); a leg the venue
+    IS quoting whose every price we refuse — a fabricated midpoint AND a last trade
+    its own book prices out (#7548) — used to be a plain skip, and the skip kept a
+    number the current book contradicts. Hurricane Nolo (62233677) served
+    "Category 5 92%" for five hours while Gamma quoted that leg 0.09/0.32 and put
+    Category 4 at 0.785; our row still held its 10:50Z 0.92 beside its 10:50Z book,
+    so no serve-time gate could see the refutation.
+
+    This returns the fresh book for those legs so the writer can ask the one
+    question the skip never asked: does what we already store survive it? Same
+    scope as :func:`_unpriced_leg_external_ids` (negRisk multi-market only), and the
+    same skip condition as :func:`_parent_outcome_data`, so a leg is here exactly
+    when that function dropped it. A leg with no book at all is not here — it has
+    nothing to refute with, and it is ``_unpriced_leg_external_ids``' subject.
+    """
+    if not (event.neg_risk and len(event.markets) > 1):
+        return {}
+    books: dict[str, tuple] = {}
+    for market in event.markets:
+        if not market.condition_id:
+            continue
+        priced = _resolve_market_probability(market) or 0
+        if priced > 0:
+            continue  # priced this pass; the upsert already rewrote the row
+        if market.best_bid is None and market.best_ask is None:
+            continue
+        books[market.condition_id] = (market.best_bid, market.best_ask)
+    return books
+
+
+async def _withdraw_book_refuted_legs(session, futures_market_id: int, books) -> int:
+    """Withdraw a stored price the leg's CURRENT book prices out (#9399). Returns the count.
+
+    ``books`` is :func:`_refused_leg_books`' output. For each leg, the stored
+    ``current_probability`` is tested against this pass's bid/ask with
+    ``book_refutes_price`` — #5121's shipped predicate, with its half-cent tolerance
+    and its empty-book carve-out (an ask of 1.0 cannot be exceeded), the same rule
+    the resolver just used to refuse the trade. A stored number the book does not
+    refute is left alone: a skip is still a skip, and a price inside the current
+    book is still a supported one.
+
+    Field set and exemptions are :func:`_retire_unpriced_legs`' — the two rendered
+    columns only; never ``opening_probability``, never ``last_updated`` (no price is
+    fresher than the one we withdrew), never a crowned leg — plus ungraded only
+    (``resolution_source IS NULL``), because a graded row's number is a settlement,
+    not a quote. Each UPDATE re-asserts the value it read, so a price another writer
+    stored in between is never withdrawn on a stale read.
+    """
+    if not books:
+        return 0
+    from sqlalchemy import select, update
+    from app.models import FuturesOutcome
+    from app.utils.price_change_stamp import price_changed_at_value
+
+    rows = (
+        await session.execute(
+            select(
+                FuturesOutcome.id,
+                FuturesOutcome.external_id,
+                FuturesOutcome.current_probability,
+            ).where(
+                FuturesOutcome.market_id == futures_market_id,
+                FuturesOutcome.external_id.in_(list(books)),
+                FuturesOutcome.current_probability.isnot(None),
+                FuturesOutcome.is_winner.isnot(True),
+                FuturesOutcome.resolution_source.is_(None),
+            )
+        )
+    ).fetchall()
+    withdrawn = 0
+    for outcome_id, external_id, stored in rows:
+        bid, ask = books[external_id]
+        if not book_refutes_price(
+            None if bid is None else float(bid),
+            None if ask is None else float(ask),
+            float(stored),
+        ):
+            continue
+        result = await session.execute(
+            update(FuturesOutcome)
+            .where(
+                FuturesOutcome.id == outcome_id,
+                FuturesOutcome.current_probability == stored,
+                FuturesOutcome.is_winner.isnot(True),
+                FuturesOutcome.resolution_source.is_(None),
+            )
+            .values(
+                current_probability=None,
+                current_american_odds=None,
+                # A price going away IS a move (the helper's own docstring).
+                price_changed_at=price_changed_at_value(
+                    FuturesOutcome.current_probability,
+                    FuturesOutcome.price_changed_at,
+                    None,
+                ),
+            )
+        )
+        withdrawn += int(result.rowcount or 0)
+    return withdrawn
+
+
 def _last_trade_survives_own_book(market) -> float | None:
     """The leg's last trade, or ``None`` when its OWN live book prices it out (#7548).
 
@@ -5275,7 +5578,9 @@ def _last_trade_survives_own_book(market) -> float | None:
     caller writes nothing for the leg on this pass, the row keeps its last
     supported number, and the chart shows an honest gap at that stamp. It does NOT
     fall through to the ask-only fallback — that would print one side of the same
-    wide book this file already refuses to average.
+    wide book this file already refuses to average. (#9399: unless that last
+    supported number is itself priced out by the current book — then the writer
+    withdraws it, see :func:`_withdraw_book_refuted_legs`.)
     """
     last = market.last_trade_price
     if last is None or not (0 < float(last) < 1):
@@ -5525,8 +5830,9 @@ def _resolve_market_probability_with_source(market) -> tuple[float | None, str |
       - bestBid = 0 or None
       - bestAsk = 1 (max spread, no real market-making)
       - lastTradePrice = 0 or None
-    Without this filter, the ask-only fallback or the raw 1.0 price would
-    set prob = 1.0 (100%), making placeholders look like favorites.
+    Without this filter, the raw 1.0 price would set prob = 1.0 (100%), making
+    placeholders look like favorites. (The ask-only fallback this also guarded
+    against is gone since #9157 — see the end of this function.)
     """
     # Reject known placeholder markets before examining prices
     if _is_placeholder_outcome(market):
@@ -5675,13 +5981,21 @@ def _resolve_market_probability_with_source(market) -> tuple[float | None, str |
             return None, None
         return market.last_trade_price, "last_trade_price"
 
-    # Ask-only fallback: reject if ask >= 0.99 (placeholder/no real market)
-    if (market.best_ask is not None
-            and market.best_ask > 0
-            and market.best_ask < 0.99):
-        return market.best_ask, "best_ask"
-
-    # No reliable price — skip this market
+    # #9157: NO ASK-ONLY FALLBACK. Reaching here means no usable outcomePrice, no
+    # bid and no trade — gotcha #19's "no trade and no bid → skip", which the
+    # 2-minute live poll already obeys. This branch used to publish the lone ask
+    # instead, and an ask with nobody bidding is an upper bound, not a price:
+    #
+    #   * /futures/62289535 (Presidents Cup 2026: Points Leader) printed 20 of 21
+    #     golfers at 19% — a field summing to ~380% — from legs Gamma read as
+    #     `outcomePrices ["0","1"]`, `bestBid null`, `bestAsk 0.19`, no trade.
+    #     All twenty resolved NO; the venue's own displayed price was 0.
+    #   * /events/15313655 printed a Correct Score card at 47% on every score line
+    #     from the same shape on 30 legs, at most one of which can win.
+    #
+    # Same judgement the Kalshi side reached on the same book shape
+    # (`kalshi_empty_book.is_lone_ask_in_exclusive_field`: stored mean 0.369 vs
+    # realized 6.2%). A refusal is a SKIP like every other one in this resolver.
     return None, None
 
 

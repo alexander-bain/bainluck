@@ -55,6 +55,7 @@ _SESSION_ID = "keyed-dismissal-session-5951"
 #: The specimen, verbatim from the production row Alex wrote.
 _F1_KEY = "event:f1:spanish-grand-prix-winner"
 _VUELTA_KEY = "event:cycling:vuelta-2026"
+_OSCARS_KEY = "event:oscars:best-picture-2027"
 
 
 def _card(key: str, card_type: str = "concept") -> dict:
@@ -148,17 +149,23 @@ def _recent_items_session(recent_rows):
     return session, seen_statements
 
 
-async def _load(recent_rows):
+async def _load(recent_rows, user=None):
     from app.routes.feed import _load_personalization_context
 
     session, statements = _recent_items_session(recent_rows)
     ctx = await _load_personalization_context(
-        session, None, session_id=_SESSION_ID, config=None
+        session, user, session_id=_SESSION_ID, config=None
     )
     return ctx, statements
 
 
-def _row(item_type, item_id, action="unlike", name="Spanish Grand Prix Winner"):
+def _row(
+    item_type,
+    item_id,
+    action="unlike",
+    name="Spanish Grand Prix Winner",
+    category="motorsports",
+):
     """One grouped recent-items row, in the loader's own column order."""
     return (
         item_type,
@@ -166,7 +173,7 @@ def _row(item_type, item_id, action="unlike", name="Spanish Grand Prix Winner"):
         action,
         datetime.now(timezone.utc) - timedelta(minutes=5),
         name,
-        "motorsports",
+        category,
     )
 
 
@@ -262,13 +269,39 @@ async def test_a_keyed_swipe_also_reaches_the_by_name_suppression():
     families, and "Spanish Grand Prix Winner" is not one), so a story-key
     assertion here would be pinning a coincidence of this name rather than the
     repair. The token set is what these rows actually contribute.
+
+    Signed in since #9645: the resemblance penalty is a learned preference and
+    is written only for a signed-in reader. The EXACT keyed suppression every
+    other test here drives stays on the anonymous session.
+
+    Non-sports since CERT-3826: a sports negative carries no resemblance set at
+    all, so Alex's F1 specimen can no longer testify here. A keyed awards card
+    walks the same parse-don't-skip path; the F1 card below is the paired arm.
     """
-    ctx, _ = await _load([_row("concept", _F1_KEY)])
+    from types import SimpleNamespace
+
+    ctx, _ = await _load(
+        [
+            _row(
+                "concept",
+                _OSCARS_KEY,
+                name="Oscars Best Picture Winner",
+                category="entertainment",
+            )
+        ],
+        user=SimpleNamespace(id=5951),
+    )
 
     assert ctx.recent_dismissed_feature_token_sets, (
         "a keyed swipe must still feed the by-name suppression it used to skip"
     )
-    assert "term:prix" in set().union(*ctx.recent_dismissed_feature_token_sets)
+    assert "term:picture" in set().union(*ctx.recent_dismissed_feature_token_sets)
+
+    # Paired arm (#9645): the keyed F1 swipe is still hidden exactly, and
+    # teaches no resemblance.
+    f1_ctx, _ = await _load([_row("concept", _F1_KEY)], user=SimpleNamespace(id=5951))
+    assert _F1_KEY in f1_ctx.recent_dismissed_keys
+    assert f1_ctx.recent_dismissed_feature_token_sets == []
 
 
 # ---------------------------------------------------------------------------

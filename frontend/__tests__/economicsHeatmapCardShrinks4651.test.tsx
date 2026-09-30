@@ -70,6 +70,7 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { Card } from "@/components/economics/atoms";
+import { heatmapMinWidth } from "@/lib/fedRatePath";
 
 const PAGE_PATH = join(__dirname, "..", "app", "economics", "page.tsx");
 const PAGE = readFileSync(PAGE_PATH, "utf8");
@@ -134,9 +135,14 @@ describe("#4651 · FedHeatmap still needs its card to be allowed to shrink", () 
     // on its own and `min-w-0` below is merely harmless — but the fix would no
     // longer be load-bearing, and whoever removed it deserves to be told that
     // by a red test rather than to discover it on a phone.
-    const min = BODY.match(/minWidth:\s*(\d+)/);
+    //
+    // #9856: the minimum now scales with the column count (heatmapMinWidth),
+    // so a three-meeting path fits a phone. A long path still does not — six
+    // meetings floor well past 390 — so the card's `min-w-0` stays
+    // load-bearing, and this precondition is read through the helper.
+    const min = BODY.match(/minWidth:\s*heatmapMinWidth\(meetings\.length\)/);
     expect(min).not.toBeNull();
-    expect(Number(min![1])).toBeGreaterThan(390); // wider than the phone we ship to
+    expect(heatmapMinWidth(6)).toBeGreaterThan(390); // wider than the phone we ship to
 
     // …and it is INSIDE the scroller, not beside it. Order in the source is
     // the cheap proxy for nesting here, and it is exact: one scroller, one

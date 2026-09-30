@@ -349,7 +349,7 @@ class _WindowHarness(_RunHarness):
     async def run(self, monkeypatch):
         outer = self
 
-        async def _fetch(service, external_id, *, windows=None):
+        async def _fetch(service, external_id, *, windows=None, **_kw):
             outer.log.append(f"fetch:{external_id}")
             if windows is not None and outer.filled is not None:
                 windows[external_id] = outer.filled

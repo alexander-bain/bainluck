@@ -1294,7 +1294,7 @@ class TestTheRealPostgresRailExists:
             "skips, and pytest exits 0 on an all-skipped run, so CI stays green "
             "while nothing is checked"
         )
-        return jobs["search-recall"]
+        return jobs["database-integration"]
 
     def test_the_job_still_provides_a_real_postgres(self):
         job = self._job()
@@ -1555,19 +1555,21 @@ class TestEventsBucketRequiresWordAboutness:
         # the letters "fed", so a bare substring count reads the expansion as the
         # term and the replacement bug passes unnoticed. Both traps were found by
         # the mutation run, one of them after a first fix that only looked right.
+        # The FTS half reads each column twice since #9735 — as stored and
+        # slash-split (`Rojer/Winegar` is one token as stored) — so 4 arms.
         halves = (
-            (ilike_half, "ILIKE", "'%%fed%%'", "'%%federal reserve%%'"),
-            ("to_tsvector" + fts_half, "FTS", "'fed'", "'federal reserve'"),
+            (ilike_half, "ILIKE", "'%%fed%%'", "'%%federal reserve%%'", 2),
+            ("to_tsvector" + fts_half, "FTS", "'fed'", "'federal reserve'", 4),
         )
-        for half, name, term_tok, exp_tok in halves:
-            assert half.count(exp_tok) == 2, (
-                f"the expansion reaches {half.count(exp_tok)} of the two columns "
+        for half, name, term_tok, exp_tok, arms in halves:
+            assert half.count(exp_tok) == arms, (
+                f"the expansion reaches {half.count(exp_tok)} of the {arms} arms "
                 f"on the {name} half — an expansion that widens only one half "
                 "ANDs itself away to nothing"
             )
-            assert half.count(term_tok) == 2, (
+            assert half.count(term_tok) == arms, (
                 f"the ORIGINAL term appears {half.count(term_tok)} of the expected "
-                f"2 times on the {name} half. That is LAT-P033's exact bug "
+                f"{arms} times on the {name} half. That is LAT-P033's exact bug "
                 "(`exp if exp else term`) arriving on a new surface."
             )
 
@@ -1592,10 +1594,20 @@ class TestEventsBucketRequiresWordAboutness:
         the reason the truncation loss (`yank` -> Yankees) is acceptable here. If
         typeahead ever adopts this rule too, that argument is void."""
         ta = _strip_comments(_source_of(events_route.typeahead_search))
-        assert "_build_expanded_ilike(Event.home_team_name" in ta, (
+        # #9306: the arm goes through `_build_round_word_ilike`, which is
+        # `_build_expanded_ilike` for every term but the four finished round
+        # words. Both halves are pinned, so substring recall cannot leak away
+        # through the helper either.
+        assert "_build_round_word_ilike(Event.home_team_name" in ta, (
             "typeahead lost its substring recall; the events-bucket word rule is "
             "no longer safe, because nothing serves partial typing"
         )
+        helper = _strip_comments(_source_of(events_route._build_round_word_ilike))
+        assert "if term.lower() not in _TEAM_PREFIX_REFUSED_TOKENS:" in helper
+        assert "return _build_expanded_ilike(column, term, expansion)" in helper
+        assert events_route._TEAM_PREFIX_REFUSED_TOKENS == frozenset(
+            {"alcs", "alds", "nlcs", "nlds"}
+        ), "the whole-word carve-out must stay a closed list of round words"
         assert "_event_name_match" not in ta
 
 

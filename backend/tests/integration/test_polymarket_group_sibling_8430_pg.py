@@ -4,9 +4,12 @@
 every way it can be wrong is invisible to a session double: dropping the
 `group_id` equality links a child to ANOTHER Polymarket event's row; dropping
 the `group_type` scope lets a linked neg-risk parent container answer for a
-game; `DISTINCT … LIMIT 2` + `len != 1` is what refuses a group whose children
-disagree; `id != market.id` stops a row finding itself; and the venue-fixture
-guard (#4965) is a second query against `events.commence_time`. The unit half,
+game; `GROUP BY event_id` + its sibling COUNT is how a group already split over
+several accepted rows picks the one to join (#9338 follow-up); `id !=
+market.id` stops a row finding itself; the
+venue-fixture guard (#4965) is a second query against `events.commence_time`;
+and #9338's join of a clock-refused row reads that row's three provider-id
+columns and its status — every one of them a column a double cannot see. The unit half,
 and the reader-visible specimen (Boyer v Gorzny, 14 rows), live in
 `tests/test_polymarket_group_sibling_8430.py`.
 
@@ -30,12 +33,35 @@ DB_URL = os.environ.get("SEARCH_TEST_DATABASE_URL")
 GROUP = "polymarket:1067623"
 #: A second group whose one linked child sits on a DIFFERENT event.
 OTHER_GROUP = "polymarket:8430002"
-#: A group whose children disagree about which event they are on.
+#: A group already split over two accepted rows, one sibling each (#9338
+#: follow-up: before, refused — so the child minted a third row).
 SPLIT_GROUP = "polymarket:8430003"
 #: A group where only the PARENT container is linked.
 PARENT_ONLY_GROUP = "polymarket:8430004"
-#: A group whose one linked child sits on a row dated far from the venue fixture.
+#: A group whose one linked child sits on an ANCHORED row (ESPN id) dated far
+#: from the venue fixture — a schedule provider reported that clock.
 STALE_GROUP = "polymarket:8430005"
+#: #9338 — the same stale clock on an UNANCHORED, open row (Kalshi's estimate,
+#: or the day before a move): the child joins its siblings.
+OPEN_UNANCHORED_STALE_GROUP = "polymarket:9338001"
+#: #9338 — #8430's own specimen shape: unanchored, stale AND withdrawn.
+SUSPENDED_STALE_GROUP = "polymarket:9338002"
+#: #9338 — anchored by only `external_id` / only `statpal_fixture_id`.
+EXTERNAL_ANCHORED_STALE_GROUP = "polymarket:9338003"
+STATPAL_ANCHORED_STALE_GROUP = "polymarket:9338004"
+#: #9338 — Van de Zandschulp v Royer: siblings on a clock-refused row AND on
+#: the row the first new child minted at the venue's minute.
+MINTED_BESIDE_GROUP = "polymarket:9338005"
+#: #9338 — siblings on two rows the guard refuses: nothing to pick.
+TWO_REFUSED_GROUP = "polymarket:9338006"
+#: #9338 follow-up — Cretu v Rocha (group 1088321): a clock-refused row plus
+#: accepted twins; the NEWER twin holds more siblings.
+CRETU_GROUP = "polymarket:9338007"
+#: #9338 follow-up — an older, busier id-less twin beside an anchored one.
+ANCHORED_PICK_GROUP = "polymarket:9338008"
+#: #9338 follow-up — an older, busier, anchored but SUSPENDED twin beside an
+#: open id-less one.
+OPEN_PICK_GROUP = "polymarket:9338009"
 
 VENUE_START = datetime(2026, 9, 24, 17, 0, tzinfo=timezone.utc)
 SEEDED_SPORT = "tennis_other_8430"
@@ -92,12 +118,51 @@ class TestTheLookupOnRealPostgres:
         probe = _Market(id=ids["probe_id"], group_id="polymarket:8430999")
         assert await pmm._polymarket_group_sibling_event_id(session, probe) is None
 
-    async def test_two_distinct_events_in_one_group_is_not_guessed(self, seeded):
+    async def test_a_group_split_over_two_accepted_rows_joins_the_oldest(
+        self, seeded
+    ):
+        """#9338 follow-up. Both rows pass the guard, both open, id-less, one
+        sibling each: the tie goes to the oldest id. Before, this refused and
+        the child minted a third row beside them."""
         session, ids = seeded
         probe = _Market(id=ids["probe_id"], group_id=SPLIT_GROUP)
-        assert await pmm._polymarket_group_sibling_event_id(session, probe) is None, (
-            "the group's children disagree about their event and the lookup "
-            "picked one"
+        assert (
+            await pmm._polymarket_group_sibling_event_id(session, probe)
+            == ids["event"]
+        ), "a child of an already-split group minted instead of joining"
+
+    async def test_the_cretu_shape_joins_the_twin_holding_more_siblings(
+        self, seeded
+    ):
+        """Production, 12:36Z 2026-09-28: a suspended row a day off the venue
+        clock plus accepted twins; the two new lines each minted. The refused
+        row is never the answer, and among the twins the busier one wins over
+        the older one."""
+        session, ids = seeded
+        probe = _Market(id=ids["probe_id"], group_id=CRETU_GROUP)
+        assert (
+            await pmm._polymarket_group_sibling_event_id(session, probe)
+            == ids["cretu_busy_twin"]
+        )
+
+    async def test_an_anchored_accepted_row_wins_over_a_busier_idless_one(
+        self, seeded
+    ):
+        session, ids = seeded
+        probe = _Market(id=ids["probe_id"], group_id=ANCHORED_PICK_GROUP)
+        assert (
+            await pmm._polymarket_group_sibling_event_id(session, probe)
+            == ids["anchored_pick_event"]
+        )
+
+    async def test_an_open_accepted_row_wins_over_a_closed_anchored_one(
+        self, seeded
+    ):
+        session, ids = seeded
+        probe = _Market(id=ids["probe_id"], group_id=OPEN_PICK_GROUP)
+        assert (
+            await pmm._polymarket_group_sibling_event_id(session, probe)
+            == ids["open_pick_event"]
         )
 
     async def test_a_linked_parent_container_is_not_a_sibling_child(self, seeded):
@@ -110,14 +175,54 @@ class TestTheLookupOnRealPostgres:
         own = _Market(id=ids["linked_child"])
         assert await pmm._polymarket_group_sibling_event_id(session, own) is None
 
+    @pytest.mark.parametrize(
+        "group_id",
+        [
+            STALE_GROUP,
+            EXTERNAL_ANCHORED_STALE_GROUP,
+            STATPAL_ANCHORED_STALE_GROUP,
+            SUSPENDED_STALE_GROUP,
+        ],
+    )
     async def test_a_sibling_row_the_fixture_guard_refuses_is_not_linked(
+        self, seeded, group_id
+    ):
+        """The linked child sits on a row dated a day before the venue fixture.
+        The matched path refuses that row (#4965), and the sibling path refuses
+        it too when a schedule provider reported the clock (any one of the three
+        id columns), or the row is withdrawn — the pre-postponement shape
+        15317735 had (#8430). #9338 joins only an open, unanchored row."""
+        session, ids = seeded
+        probe = _Market(id=ids["probe_id"], group_id=group_id)
+        assert await pmm._polymarket_group_sibling_event_id(session, probe) is None
+
+    async def test_an_open_unanchored_sibling_row_is_joined_despite_its_clock(
         self, seeded
     ):
-        """STALE_GROUP's linked child sits on a row dated a day before the venue
-        fixture — the pre-postponement shape 15317735 had. The matched path
-        refuses that row (#4965); the sibling path must refuse it too."""
+        """#9338, the Sonego / Echargui shape: the row's clock is only another
+        venue's guess, and the venue's own event id says this is the match."""
         session, ids = seeded
-        probe = _Market(id=ids["probe_id"], group_id=STALE_GROUP)
+        probe = _Market(id=ids["probe_id"], group_id=OPEN_UNANCHORED_STALE_GROUP)
+        assert (
+            await pmm._polymarket_group_sibling_event_id(session, probe)
+            == ids["open_unanchored_stale_event"]
+        ), "a child minted beside the unanchored row its own siblings sit on"
+
+    async def test_of_several_sibling_rows_the_one_the_guard_accepts_is_joined(
+        self, seeded
+    ):
+        """#9338, Van de Zandschulp v Royer: one stray row must not make every
+        later child mint. Before, `len(held) != 1` refused and each minted."""
+        session, ids = seeded
+        probe = _Market(id=ids["probe_id"], group_id=MINTED_BESIDE_GROUP)
+        assert (
+            await pmm._polymarket_group_sibling_event_id(session, probe)
+            == ids["minted_beside_event"]
+        )
+
+    async def test_two_refused_sibling_rows_leave_nothing_to_pick(self, seeded):
+        session, ids = seeded
+        probe = _Market(id=ids["probe_id"], group_id=TWO_REFUSED_GROUP)
         assert await pmm._polymarket_group_sibling_event_id(session, probe) is None
 
     async def test_the_same_stale_row_is_found_when_the_venue_agrees(self, seeded):
@@ -133,6 +238,89 @@ class TestTheLookupOnRealPostgres:
             await pmm._polymarket_group_sibling_event_id(session, probe)
             == ids["stale_event"]
         )
+
+
+@pytest.mark.skipif(
+    not DB_URL,
+    reason=(
+        "set SEARCH_TEST_DATABASE_URL to run the real-Postgres #9450 group "
+        "prop join gate (CI job `search-recall` provides one)"
+    ),
+)
+@pytest.mark.asyncio
+class TestANotGameLevelChildJoinsItsGroupsRowOnRealPostgres:
+    """#9450, the whole attempt: the real classifier, resolver, commit and
+    receipt, read back from the table. Harris v Galarneau's match market sat
+    unlinked beside the O/U line that created its row (production, 2026-09-28)."""
+
+    async def _child(self, session, group_id):
+        from sqlalchemy import text
+
+        return (
+            await session.execute(
+                text(
+                    "INSERT INTO futures_markets (source, external_id, name, "
+                    "category, mutually_exclusive, group_id, group_type, "
+                    "event_id, status, market_metadata) VALUES "
+                    "('polymarket', :x, :nm, 'game_prop', TRUE, :g, "
+                    "'polymarket_sub_market', NULL, 'open', CAST(:md AS jsonb)) "
+                    "RETURNING id"
+                ),
+                {
+                    "x": f"0x9450{group_id[-4:]}",
+                    "nm": f"{SEEDED_NAME_PREFIX} Jingshan: Lloyd Harris vs "
+                    "Alexis Galarneau",
+                    "g": group_id,
+                    "md": '{"venue_game_start": "%s"}' % VENUE_START.isoformat(),
+                },
+            )
+        ).scalar()
+
+    async def _attempt(self, session, market_id):
+        from sqlalchemy import text
+
+        from app.utils import match_receipts as _receipts
+
+        await session.commit()
+        market = await pmm._load_market_row(session, market_id)
+        stats = {
+            "markets_scanned": 0, "newly_linked": 0,
+            "funnel": {"not_game_level": 0, "sample_not_game_level": [], "linked": 0},
+        }
+        queue, receipts = [], []
+        await pmm._attempt_market(
+            session, market, stats, VENUE_START, queue, lambda: 600.0,
+            receipts, _receipts.PHASE_PASS2_GENERAL,
+        )
+        await session.rollback()  # only a committed link survives this
+        stored = (
+            await session.execute(
+                text("SELECT event_id FROM futures_markets WHERE id = :i"),
+                {"i": market_id},
+            )
+        ).scalar()
+        return stored, receipts[0], queue
+
+    async def test_the_match_market_is_stored_on_its_groups_row(self, seeded):
+        session, ids = seeded
+        child = await self._child(session, GROUP)
+
+        stored, receipt, queue = await self._attempt(session, child)
+
+        assert stored == ids["event"], "the match market stayed unlinked"
+        assert receipt.linked_event_id == ids["event"]
+        assert receipt.detail.get("how") == "group_sibling_link"
+        assert queue == [(child, ids["event"])]
+
+    async def test_a_group_holding_no_row_leaves_it_unlinked(self, seeded):
+        session, ids = seeded
+        child = await self._child(session, "polymarket:9450002")
+
+        stored, receipt, queue = await self._attempt(session, child)
+
+        assert stored is None
+        assert receipt.reject_reason == "not_game_level"
+        assert queue == []
 
 
 @pytest.fixture
@@ -191,15 +379,24 @@ async def seeded():
             )
         ).scalar()
 
-        async def _event(start):
+        async def _event(
+            start, *, status="scheduled", espn_id=None, external_id=None,
+            statpal_fixture_id=None,
+        ):
             return (
                 await session.execute(
                     text(
                         "INSERT INTO events (sport_id, home_team_name, "
-                        "away_team_name, commence_time, status) "
-                        "VALUES (:sp, :h, 'Gorzny', :s, 'scheduled') RETURNING id"
+                        "away_team_name, commence_time, status, espn_id, "
+                        "external_id, statpal_fixture_id) "
+                        "VALUES (:sp, :h, 'Gorzny', :s, :st, :espn, :ext, :sf) "
+                        "RETURNING id"
                     ),
-                    {"sp": sport_id, "h": SEEDED_HOME, "s": start},
+                    {
+                        "sp": sport_id, "h": SEEDED_HOME, "s": start,
+                        "st": status, "espn": espn_id, "ext": external_id,
+                        "sf": statpal_fixture_id,
+                    },
                 )
             ).scalar()
 
@@ -231,7 +428,30 @@ async def seeded():
 
         event = await _event(VENUE_START)
         other_event = await _event(VENUE_START + timedelta(hours=1))
-        stale_event = await _event(VENUE_START - timedelta(days=1))
+        stale = VENUE_START - timedelta(days=1)
+        stale_event = await _event(stale, espn_id="9338espn")
+        open_unanchored_stale_event = await _event(stale)
+        suspended_stale_event = await _event(stale, status="suspended")
+        external_stale_event = await _event(stale, external_id="9338ext")
+        statpal_stale_event = await _event(stale, statpal_fixture_id="9338sp")
+        # Kalshi's estimate: 3.5h before the venue's minute, open, no id.
+        estimated_event = await _event(
+            VENUE_START - timedelta(hours=3, minutes=30), status="live"
+        )
+        minted_beside_event = await _event(VENUE_START)
+        other_refused_event = await _event(
+            VENUE_START + timedelta(hours=5), status="live"
+        )
+        # Created in id order: every "older" row below has the lower id.
+        cretu_refused = await _event(stale, status="suspended")
+        cretu_old_twin = await _event(VENUE_START)
+        cretu_busy_twin = await _event(VENUE_START)
+        anchored_pick_idless = await _event(VENUE_START)
+        anchored_pick_event = await _event(VENUE_START, espn_id="9338pick")
+        open_pick_closed = await _event(
+            VENUE_START, status="suspended", statpal_fixture_id="9338closed"
+        )
+        open_pick_event = await _event(VENUE_START)
 
         linked_child = await _market(GROUP, event)
         await _market(GROUP, None)  # an unlinked sibling must not answer NULL
@@ -240,11 +460,36 @@ async def seeded():
         await _market(SPLIT_GROUP, other_event)
         await _market(PARENT_ONLY_GROUP, event, group_type="polymarket_event")
         await _market(STALE_GROUP, stale_event)
+        await _market(OPEN_UNANCHORED_STALE_GROUP, open_unanchored_stale_event)
+        await _market(SUSPENDED_STALE_GROUP, suspended_stale_event)
+        await _market(EXTERNAL_ANCHORED_STALE_GROUP, external_stale_event)
+        await _market(STATPAL_ANCHORED_STALE_GROUP, statpal_stale_event)
+        await _market(MINTED_BESIDE_GROUP, estimated_event)
+        await _market(MINTED_BESIDE_GROUP, minted_beside_event)
+        await _market(TWO_REFUSED_GROUP, estimated_event)
+        await _market(TWO_REFUSED_GROUP, other_refused_event)
+        await _market(CRETU_GROUP, cretu_refused)
+        await _market(CRETU_GROUP, cretu_refused)
+        await _market(CRETU_GROUP, cretu_refused)
+        await _market(CRETU_GROUP, cretu_old_twin)
+        await _market(CRETU_GROUP, cretu_busy_twin)
+        await _market(CRETU_GROUP, cretu_busy_twin)
+        await _market(ANCHORED_PICK_GROUP, anchored_pick_idless)
+        await _market(ANCHORED_PICK_GROUP, anchored_pick_idless)
+        await _market(ANCHORED_PICK_GROUP, anchored_pick_event)
+        await _market(OPEN_PICK_GROUP, open_pick_closed)
+        await _market(OPEN_PICK_GROUP, open_pick_closed)
+        await _market(OPEN_PICK_GROUP, open_pick_event)
         await session.commit()
 
         ids = {
             "event": event,
             "stale_event": stale_event,
+            "open_unanchored_stale_event": open_unanchored_stale_event,
+            "minted_beside_event": minted_beside_event,
+            "cretu_busy_twin": cretu_busy_twin,
+            "anchored_pick_event": anchored_pick_event,
+            "open_pick_event": open_pick_event,
             "linked_child": linked_child,
             # An id no seeded row carries, so `id != market.id` is not what
             # decides any probe but the self-probe.

@@ -12,7 +12,8 @@ those numbers, and in both directions: each pass links what it should and
 refuses what it must.
 """
 
-from datetime import datetime, timezone
+from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -362,6 +363,58 @@ class TestNameComparators:
         assert names_agree("Bu Yunchaokete", "Yunchaokete Bu") is True
         assert names_agree("Francisco Cerundolo", "Juan Manuel Cerundolo") is False
 
+    @pytest.mark.parametrize("lone,full", [
+        ("Wu", "Ru Xi Wu"),
+        ("Ma", "Ma Yexin"),
+        ("Li", "Li Tu"),
+        ("Bu", "Bu Yunchaokete"),
+        ("Ye", "Ye Qiuyu"),
+    ])
+    def test_a_two_letter_surname_given_alone_agrees_with_its_full_name(self, lone, full):
+        """#2774: Kalshi writes a surname only, and these are whole surnames
+        that can never reach `SUBSTANTIAL_TOKEN_CHARS`. Before, each refused
+        `no-candidate` and the Asia swing kept a suspended second card."""
+        assert names_agree(lone, full) is True
+        assert names_agree(full, lone) is True
+
+    @pytest.mark.parametrize("a,b", [
+        # The prefix rule covers `martin` with `ma`; the lone-surname anchor is
+        # exact equality, so it must not.
+        ("Ma", "Martin Landaluce"),
+        # A two-letter token shared INSIDE two longer names is not a surname —
+        # coverage passes here (`ma` prefixes `mark`), so only the whole-name
+        # condition refuses it.
+        ("Wu Ma", "Wu Mark"),
+        ("De Schepper", "De Minaur"),
+        # One letter stays a wildcard and stays refused.
+        ("O", "Christopher O'Connell"),
+        # The sweep's one false pair still disagrees.
+        ("Christopher O'Connell", "Oleksandra Oliynykova"),
+        # A different two-letter surname.
+        ("Wu", "Xu Yifan"),
+    ])
+    def test_the_lone_surname_anchor_is_exact_and_whole(self, a, b):
+        assert names_agree(a, b) is False
+        assert names_agree(b, a) is False
+
+    def test_okamura_v_wu_anchors_through_the_two_letter_surname(self):
+        """The production specimen, 2026-09-28: Kalshi row 15320029
+        `Okamura` v `Wu` refused `no-candidate` (absent `Wu`) against ESPN
+        184182 `Ru Xi Wu` v `Kyoka Okamura`, so its Polymarket twin took the id
+        alone and the Kalshi row stayed on the page as a suspended ghost."""
+        board = scoreboard_competitions([_payload([
+            _competition("184182", ["Ru Xi Wu", "Kyoka Okamura"],
+                         date="2026-09-29T04:30Z"),
+            _competition("184100", ["Wu Yibing", "Rinky Hijikata"],
+                         date="2026-09-29T04:30Z"),
+        ], event_name="Jingshan Tennis Open")])
+        receipt = anchor_receipt(
+            ["Okamura", "Wu"], board,
+            our_commence_time=datetime(2026, 9, 28, 5, 0, tzinfo=timezone.utc),
+        )
+        assert receipt["espn_competition_id"] == "184182"
+        assert receipt["method"] == MATCH_NAMES_AGREE
+
     def test_pairing_matches_demands_two_real_names_on_both_sides(self):
         assert pairing_matches(["A One", "B Two"], ["B Two", "A One"]) is True
         assert pairing_matches(["A One", ""], ["B Two", "A One"]) is False
@@ -668,7 +721,7 @@ class _Event:
     def __init__(self, id, home, away, status, commence_time, completed_at=None,
                  espn_id=None, home_score=None, away_score=None,
                  box_score_data=None, win_probability_sources=None,
-                 commence_time_source=None):
+                 commence_time_source=None, event_tags=None):
         self.id = id
         self.home_team_name = home
         self.away_team_name = away
@@ -701,6 +754,9 @@ class _Event:
         # column it is. That is exactly how it presented: seven tests in this
         # file went red with "fixture drifted", none of them naming the field.
         self.commence_time_source = commence_time_source
+        # lane1 #2774: the generic-bucket read skips a row already labelled a
+        # duplicate, so it reads this before any per-row `try` begins.
+        self.event_tags = event_tags
 
 
 class _Result:
@@ -780,6 +836,17 @@ class _Session:
         it.
         """
         return None
+
+    @asynccontextmanager
+    async def begin_nested(self):
+        """The SAVEPOINT the task opens around a replaced-player write (#9797).
+
+        Counted, not simulated: a fake cannot abort a transaction, so what the
+        savepoint buys is proven on a real engine, in
+        `integration/test_tennis_release_savepoint_pg_9797.py`.
+        """
+        self.savepoints = getattr(self, "savepoints", 0) + 1
+        yield self
 
     def _apply_update(self, statement):
         """Evaluate a conditional UPDATE's WHERE against the in-memory row."""
@@ -1159,7 +1226,14 @@ class TestTennisSyncTask:
         assert event.completed_at is not None
         assert event.espn_id is None
 
-    async def test_a_board_with_no_matching_bucket_writes_nothing(self, monkeypatch):
+    async def test_a_board_with_no_matching_bucket_reads_the_generic_buckets(
+        self, monkeypatch
+    ):
+        """#2774 changed this contract ON PURPOSE. A board tournament no bucket
+        names used to end the pass (`no_matching_bucket`) — which is how the
+        whole tour outside the Odds API's list went unanchored. It now reads
+        the generic buckets for it; with none of ours in the window, it writes
+        nothing and says so."""
         from app.tasks.espn_sync import _sync_tennis_from_espn
 
         _install(
@@ -1171,7 +1245,11 @@ class TestTennisSyncTask:
             events=[],
         )
         stats = await _sync_tennis_from_espn()
-        assert stats["status"] == "no_matching_bucket"
+        assert stats["status"] == "ok"
+        assert stats["generic_competitions"] == 1
+        assert stats["generic_events_considered"] == 0
+        assert stats["anchored"] == 0
+        assert stats["ghost_tags_planned"] == 0
 
     async def test_one_bad_row_never_costs_the_pass_its_siblings(self, monkeypatch):
         """gotcha #42."""
@@ -1279,11 +1357,23 @@ class TestNotStartedIsAStatementNotASilence:
         )
         assert "status" not in changes
 
-    def test_a_tbd_placeholder_never_demotes(self):
-        """04:00Z is midnight in Flushing Meadows, not a start."""
+    def test_a_FUTURE_tbd_placeholder_demotes(self):
+        """04:00Z is midnight in Flushing Meadows, not a start, but it IS the day
+        ESPN lists the match for, and at 22:22Z on 9/2 that day is tomorrow
+        (#9756). Reversed from the 9/2 reading, which took "not a start" to mean
+        "says nothing" and left 17 China/Japan Open rows LIVE a day early."""
         changes = authority_write(
             our_status="live", our_completed_at=None, our_commence_time=None,
             competition=self._upcoming("2026-09-03T04:00Z", tbd=True), now=self.NOW,
+        )
+        assert changes["status"] == "scheduled"
+
+    def test_a_PAST_tbd_placeholder_never_demotes(self):
+        """THE CONTROL for the reversal above: the listed day has begun, and a
+        fixture ESPN never gave a time may be on court. Silence, as before."""
+        changes = authority_write(
+            our_status="live", our_completed_at=None, our_commence_time=None,
+            competition=self._upcoming("2026-09-02T04:00Z", tbd=True), now=self.NOW,
         )
         assert "status" not in changes
 
@@ -1314,6 +1404,20 @@ class TestNotStartedIsAStatementNotASilence:
 
     def test_without_a_clock_the_class_is_not_judged(self):
         assert state_contradiction("live", None, "upcoming") is None
+
+    def test_a_FUTURE_tbd_day_is_counted_as_the_contradiction_it_is(self):
+        """#9756: the needle and the repair ask one question, so 17 LIVE rows
+        on a tomorrow TBD are counted before they are fixed."""
+        assert state_contradiction(
+            "live", None, "upcoming",
+            competition=self._upcoming("2026-09-03T04:00Z", tbd=True), now=self.NOW,
+        ) == "in-play-but-not-started"
+
+    def test_and_a_PAST_tbd_day_is_not(self):
+        assert state_contradiction(
+            "live", None, "upcoming",
+            competition=self._upcoming("2026-09-02T04:00Z", tbd=True), now=self.NOW,
+        ) is None
 
 
 class TestTheInPlayLineIsStampedByTheTask:
@@ -1569,17 +1673,84 @@ class TestTennisCarriesTheAuthorityHold:
         assert "win_probability_sources" not in changes
         assert "status" not in changes
 
-    def test_a_TBD_start_is_not_a_statement_and_writes_no_hold(self):
-        """Midnight ET is ESPN's stand-in for "some time that day"."""
+    def test_a_FUTURE_TBD_day_IS_a_statement_and_writes_the_hold(self):
+        """Midnight ET is ESPN's stand-in for "some time that day" — and when
+        that day is tomorrow, the match is not on court today (#9756).
+
+        Without the stamp the demotion buys one minute: the clock promoter
+        re-promotes at the next 60s beat. So the hold is asserted through the
+        promoter's OWN reader, not by the key's presence alone.
+        """
+        from app.utils.espn_helpers import authority_not_started_holds
+
+        now = _utc("2026-09-13T18:05:00+00:00")
         changes = authority_write(
             our_status="live", our_completed_at=None,
             our_commence_time=_utc("2026-09-13T18:00:00+00:00"),
             competition={"state": "upcoming", "date": "2026-09-14T04:00Z",
                          "start_is_tbd": True},
+            now=now,
+            our_sources={}, our_home_score=0, our_away_score=0,
+        )
+        assert changes["status"] == "scheduled"
+        assert authority_not_started_holds(
+            changes["win_probability_sources"], now + timedelta(minutes=1),
+            home_score=0, away_score=0, period=None, game_clock=None,
+        ) is True
+        # The placeholder is still never written as a start (#3829/#4344).
+        assert "commence_time" not in changes
+
+    def test_a_PAST_TBD_day_writes_no_hold(self):
+        """The listed day has begun; an untimed fixture may be on court."""
+        changes = authority_write(
+            our_status="live", our_completed_at=None,
+            our_commence_time=_utc("2026-09-13T18:00:00+00:00"),
+            competition={"state": "upcoming", "date": "2026-09-13T04:00Z",
+                         "start_is_tbd": True},
             now=_utc("2026-09-13T18:05:00+00:00"),
             our_sources={}, our_home_score=0, our_away_score=0,
         )
         assert "win_probability_sources" not in changes
+        assert "status" not in changes
+
+    def test_the_ALCARAZ_specimen_9756(self):
+        """Production 2026-09-30T07:0xZ: event 15320475 (Alcaraz v Michelsen,
+        anchored `espn_id` 183497) read LIVE from 02:00Z on an Odds API stamp
+        while ESPN said STATUS_SCHEDULED, TBD, 2026-10-01T04:00Z."""
+        from app.utils.espn_helpers import authority_not_started_holds
+
+        now = _utc("2026-09-30T07:05:00+00:00")
+        changes = authority_write(
+            our_status="live", our_completed_at=None,
+            our_commence_time=_utc("2026-09-30T02:00:00+00:00"),
+            our_commence_time_source="odds_api",
+            competition={"state": "upcoming", "date": "2026-10-01T04:00Z",
+                         "start_is_tbd": True},
+            now=now,
+            our_sources={"kalshi": {"probability": 0.83}},
+            our_home_score=None, our_away_score=None,
+        )
+        assert changes["status"] == "scheduled"
+        assert changes["win_probability_sources"]["kalshi"] == {"probability": 0.83}
+        assert authority_not_started_holds(
+            changes["win_probability_sources"], now + timedelta(minutes=1),
+        ) is True
+        assert "commence_time" not in changes
+
+    def test_ESPN_reporting_play_still_wins_over_a_future_TBD_day(self):
+        """The backstop for an Asian day session that begins before midnight ET
+        of its local date: ESPN's own `in_progress` promotes and retracts the
+        hold, whatever the placeholder says."""
+        changes = authority_write(
+            our_status="scheduled", our_completed_at=None,
+            our_commence_time=_utc("2026-09-30T02:00:00+00:00"),
+            competition={"state": "in_progress", "date": "2026-10-01T04:00Z",
+                         "start_is_tbd": True},
+            now=_utc("2026-10-01T02:30:00+00:00"),
+            our_sources={"espn_not_started_at": "2026-10-01T02:29:00+00:00"},
+        )
+        assert changes["status"] == "live"
+        assert "espn_not_started_at" not in changes["win_probability_sources"]
 
     def test_an_ordinary_playing_row_issues_no_pointless_write(self):
         """`clear_authority_not_started` returns the ORIGINAL when there is

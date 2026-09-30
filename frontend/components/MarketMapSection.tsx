@@ -34,6 +34,7 @@ import {
   ladderQuotesALine,
   settledLadderQuotesALine,
   probabilitiesQuoteALine,
+  probabilitiesQuoteASettledLine,
   TOTAL_MAP_HALVES,
 } from "@/lib/marketMapUtils";
 import { formatProbability } from "@/lib/api";
@@ -1281,7 +1282,17 @@ export default function MarketMapSection({
       // #2441: same declared reach as the full-game rail above.
       const maxM = vocab.marginRange;
       const density = buildDensityFromSpreads(parsed, -maxM, maxM, 12);
-      const bandDrawsShape = densityDrawsShape(density, MARGIN_ACCENT);
+      const halfProbabilities = parsed.map((p) => p.probability);
+      // #9318: the band is a forecast too, so on a finished game it answers to
+      // the Pre-game tile's settled count below (#9315), not to colour alone.
+      // Settlement prices draw a shape: settled `/events/15316429` (1H 0-0)
+      // built its band off Polymarket spreads graded 1.0 and Kalshi's leftover
+      // 0.16, shaded LEO by 1 darkest over `FINAL Tied`, captioned it "1st half
+      // margin distribution" and moved the graded ladder behind a tap. The
+      // half totals card two cards down printed "Four lines settled" inline.
+      const bandDrawsShape =
+        (!isDone || probabilitiesQuoteASettledLine(halfProbabilities)) &&
+        densityDrawsShape(density, MARGIN_ACCENT);
 
       // Ladder: sort sequentially along number line (away big → tie → home big)
       const allSorted = [...parsed].sort((a, b) => {
@@ -1390,10 +1401,18 @@ export default function MarketMapSection({
       // `closest50` whatever its price: a dense ladder always has a rung near 50%.
       const halfRungIsAProjection =
         vocab.sportsbookSpreadIsAMargin || (!playHasStarted && closest50.probability >= 0.5);
-      if (
-        halfRungIsAProjection &&
-        (!playHasStarted || probabilitiesQuoteALine(parsed.map((p) => p.probability)))
-      ) {
+      // #9315: and once the GAME is over, #5502's count — the half totals
+      // card's rule, reached through the same call. Settlement leaves one
+      // mid-priced leftover behind: settled `/events/15316429` (León 2-1
+      // Juárez, 1H 0-0) served Kalshi "Leon wins the 1H by more than 1.5" at
+      // 0.16 beside Juárez's 0.02, the only rung in the band, and the card
+      // printed `PRE-GAME LEO by 1.5+` over `FINAL Tied`. The live arm keeps
+      // one rung (#7639): a half finished inside a game still in play is
+      // #5502's quoting-ladder case, not its settled one.
+      const halfLadderQuotesALine = isDone
+        ? probabilitiesQuoteASettledLine(halfProbabilities)
+        : probabilitiesQuoteALine(halfProbabilities);
+      if (halfRungIsAProjection && (!playHasStarted || halfLadderQuotesALine)) {
         halfMarkers.push({
           key: "proj",
           // #5206: the half maps already made this exact distinction for a
@@ -1637,7 +1656,14 @@ export default function MarketMapSection({
       // The band this card actually paints is `effectiveDensity`, not the
       // `density` computed above off the un-widened range — ask the one that
       // renders.
-      const bandDrawsShape = densityDrawsShape(effectiveDensity, TOTAL_ACCENT);
+      // #9325: and on a finished game it answers to the Pre-game tile's settled
+      // count, as the half margin band does since #9318. Settled
+      // `/events/15316429` (2H 3 goals) served only graded 1.0/0.0 rows — game,
+      // team and corners totals disagreeing — which shaded 3 darkest under
+      // "2nd half goals distribution" with no Pre-game tile beside it and the
+      // graded ladder behind a tap. Live keeps `quotesALine`, already true here.
+      const bandDrawsShape =
+        quotesAPreGameLine && densityDrawsShape(effectiveDensity, TOTAL_ACCENT);
       const effectiveMid = String(Math.round((effectiveMin + effectiveMax) / 2));
 
       const headlineVal = isDone ? "" : `O/U ${Math.round(ouLine.threshold)}`;

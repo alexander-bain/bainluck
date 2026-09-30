@@ -9,7 +9,9 @@ import { marketEventKey, eventPath } from "@/lib/eventKey";
 import { printsAPercent } from "@/lib/discover/leaderOrder";
 import { boardRowRanks, futuresBoardRemainderLabel, futuresDistributionBoard } from "@/lib/discover/futuresBoard";
 import { heroOutcome } from "@/lib/discover/heroOutcome";
-import { answerIsBareQuantity, captionIsAboutAnotherLeg, rowAnswerLabel } from "@/lib/discover/rowAnswerLabel";
+import type { HeroCandidate } from "@/lib/discover/heroOutcome";
+import { answerIsBareQuantity, answerIsNegative, captionIsAboutAnotherLeg, captionRepeatsAnswer, rowAnswerLabel } from "@/lib/discover/rowAnswerLabel";
+import { titleNamedChoices } from "@/lib/discover/titleNamedChoices";
 import { buildHeroSrcSet, HERO_IMAGE_SIZES } from "@/lib/discover/heroSrcSet";
 import { formatProbabilityPercent, formatMovementPointsLikeSentence, movementPoints } from "@/lib/probabilityDisplay";
 import { renderedLeaderPercent } from "@/lib/renderedPercent";
@@ -99,6 +101,14 @@ interface FuturesCardProps extends CardActionCallbacks {
   pin?: ActionBarProps["pin"];
 }
 
+/** Assigned results only. Expired dates and extreme quotes are still forecasts. */
+function assignedFuturesResult(data: FeedFuturesData): string | null {
+  const winner = data.winner?.trim();
+  const terminal = data.resolved === true || !!winner ||
+    ["closed", "resolved", "settled", "finalized", "final"].includes((data.status ?? "").toLowerCase());
+  return terminal ? winner || "Resolved" : null;
+}
+
 export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, showProbabilityHint, onDetailClick, onShare, onContextExpand, onContextCollapse, pin }: FuturesCardProps) {
   const [showContext, setShowContext] = useState(false);
   const [showHeatmapContext, setShowHeatmapContext] = useState(false);
@@ -131,7 +141,7 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
   // under the title, so `Will "Onslaught" score at least 80?` headlined 88%
   // when the answer was 12%. `heroOutcome` returns the served headline
   // unchanged for every card that is not an explicit negation pair.
-  const leader = heroOutcome(data.top_outcomes);
+  const leader = heroOutcome(data.top_outcomes, data.name);
   const prob = leader?.probability ?? null;
   const resolveText = resolvesLabel(data.resolution_date);
   // #7872 — the caption is told what this card's eyebrow already says, so it
@@ -158,83 +168,47 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
   // else stays on the futures market page.
   const conceptKey = marketEventKey(data);
   const detailHref = conceptKey ? eventPath(conceptKey) : `/futures/${data.id}`;
+  const cue = forYouCue(item);
+  const result = assignedFuturesResult(data);
+  if (result) {
+    return (
+      <article className="relative overflow-hidden rounded-[10px] border border-surface-border bg-surface-card p-4 shadow-md" aria-label={`${data.name} — resolved`} data-card-format="resolved">
+        <DismissBtn onDismiss={onDismiss} />
+        {cue && <div className="mb-2"><ForYouChip cue={cue} /></div>}
+        <div className={`text-[10px] font-semibold uppercase tracking-[0.04em] text-text-muted ${dismissCornerPad(onDismiss)}`}>Resolved</div>
+        <Link href={detailHref} onClick={onDetailClick} className="block group mt-2">
+          <h3 className="text-[15px] font-semibold leading-snug text-text-primary group-hover:text-accent-brand transition-colors">{data.name}</h3>
+        </Link>
+        {data.winner?.trim() && <p className="mt-3 text-lg font-semibold text-text-primary" data-testid="futures-assigned-result">{result}</p>}
+        <ActionBar liked={liked} setLiked={setLiked} shareUrl={buildDiscoverShareUrl(detailHref, "futures", data.id)}
+          shareTitle={data.name} shareText={`${data.name} — ${data.winner?.trim() ? `resolved: ${result}` : "resolved"} on Bain Luck.`}
+          contentType="futures" itemId={data.id} onShare={onShare} pin={pin} priceObservedAt={null} priceStatus={data.status} />
+      </article>
+    );
+  }
   const shareUrl = buildDiscoverShareUrl(detailHref, "futures", data.id);
   const leaderProbability = prob != null ? formatShareProbability(prob) : null;
   const shareText = leader && leaderProbability
     ? `${leader.name} is at ${leaderProbability} in ${data.name} on Bain Luck.`
     : `Track ${data.name} on Bain Luck.`;
-  // #6505 — A ROW THE CARD CANNOT PUT A NUMBER ON IS NOT A ROW.
-  //
-  // Measured on production `/api/feed?limit=200`, 2026-09-16 07:2xZ, over the 123
-  // futures cards served: FIVE draw a board whose rows print `—` where the
-  // percentage goes, and on two of them three of the four rows are dashes.
-  // The worst is "Velo Point of Sale Growth in September" (market 59699855, idx
-  // 49, DOM-read at 390px): a nine-rung threshold ladder where eight rungs have
-  // `current_probability = NULL` in the row itself, so the reader gets
-  //
-  //     Above 175 — · Above 190 — · Above 200 — · Above 210 — · Above 220 —
-  //     Above 230 — · Above 240 73% · Above 250 —
-  //
-  // — eight rows of blank, one number. The dash is not a disclosure a reader can
-  // use (notice 34: if a number cannot be shown honestly, leave the space empty;
-  // do not fill it and then explain it), and `leaderFirstSlice` already states
-  // the half of this rule that was written down — "an unpriced row is never the
-  // leader". It is never a ROW either.
-  //
-  // The cut is made here rather than in the payload deliberately: the serializer
-  // keeps serving every outcome (`distribution_outcomes` and `threshold_points`
-  // are read by `discover_bundles` for the bundle measure key, which is a feed
-  // composition decision and not this card's to make). What changes is only what
-  // is drawn.
-  const allHeatmapRows = buildHeatmapRows(data);
-  const heatmapRows = allHeatmapRows.filter((row) => printsAPercent(row.probability));
-  // The `>= 2` bar below asks "is there a ladder here at all". It was written
-  // against rungs that all carry prices, and applied to a ladder whose other
-  // rungs are unpriced it deletes the field a second time — CERT-2456's argument
-  // exactly, one branch over. The hero it falls to is measurably worse for THIS
-  // shape: the composer refuses to name a threshold rung as a subject (#4640
-  // `_no_leader_subject`), so the Velo card's served caption is "Resolves within
-  // a month" and the hero prints a bare `73%` with nothing saying 73% of WHAT.
-  //
-  // So the bar bends ONLY where this ship's own drop is what took the card under
-  // it: a market that simply has one rung is the shape the bar was written for
-  // and keeps it. Stated as "it cleared the bar before the drop and not after",
-  // not as "something was dropped", so no card that renders correctly today
-  // changes shape.
-  const heatmapMinRows =
-    allHeatmapRows.length >= 2 && heatmapRows.length < 2 ? 1 : 2;
+  const heatmapCells = heatmapShownCells(data);
   // UX-P248 / CERT-678 repair — computed ONCE, above the variant fork, because
   // the fork is the defect. The first version of this ship read `forYouCue(item)`
   // inline at the single place it remembered to render, and this component has
-  // FOUR `<article>` roots: threshold heatmap, outcome-distribution leaderboard,
+  // FIVE `<article>` roots: assigned result, threshold heatmap, outcome-distribution leaderboard,
   // Variant B and Variant A. Three of them returned before the call site was
   // reached, so the same reader saw the cue or did not depending on which shape
   // the feed picked for the market. Hoisting it does not by itself fix that —
   // `forYouCueRenderPaths.test.tsx` does, by asserting every article root prints
   // it — but it removes the reason the omission was easy to make.
-  const cue = forYouCue(item);
   // Queue 309 Item 4 — no dollar volume on a feed card. Standing rule,
   // docs/design-system.md: "Dollar volume as social proof is banned too"
   // (ruling 2026-07-30). Volume still does its job in ranking and gating; it
   // stops being printed as money. `SignalBars` remains the confidence signal.
 
-  if (data.discover_card?.suggested_format === "threshold_heatmap" && heatmapRows.length >= heatmapMinRows) {
-    const shownCells = heatmapRows.slice(0, 8);
-    const above50 = shownCells.filter((r) => (r.probability ?? 0) >= 0.5);
-    // #8647 — the caption names the MOST SPECIFIC rung the market still calls
-    // better than even, and which end of `above50` that is depends on the axis.
-    // On a comparator ladder ("Above 52 / Above 58 / Above 64") chances fall as
-    // the rungs climb, so it is the last one. On a date ladder the rungs are
-    // cumulative "before this date" questions and chances RISE, so the last one
-    // is the loosest — production printed "More likely than not: Before Feb 1,
-    // 2027" on an Anthropic-IPO ladder reading 6% by Nov 1 and 56% by Dec 1, and
-    // Feb 1 was only the last of the eight rungs the card draws. The earliest
-    // rung over even is the answer. An exclusive date ladder ("Before 2027 /
-    // 2027 / 2029 or later") has at most one rung over even, so it reads the same.
-    const betterThanEvenRung =
-      above50.length === 0 ? null
-      : ladderKind(shownCells) === "date" ? above50[0]
-      : above50[above50.length - 1];
+  if (heatmapCells) {
+    const shownCells = heatmapCells;
+    const { betterThanEvenRung, leaderCell } = ladderMarks(shownCells);
     const lastAbove50Label = betterThanEvenRung?.label ?? null;
     // #7457 — whether the confidence glyph will actually DRAW, not whether the
     // payload carried a string. `SignalBars` returns null for a tier it doesn't
@@ -244,29 +218,6 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
     // #8836 — a ladder whose drawn rungs run past the served date says nothing
     // about when it resolves, rather than naming one rung's close as the card's.
     const heatmapResolveText = dateRungRunsPastResolution(shownCells, data.resolution_date) ? "" : resolveText;
-    // UX-1052 item 4 — the leader is the highest-probability rung, marked in
-    // place. On a date ladder the rows are chronological, so "the answer" is
-    // not the top row and had nothing pointing at it.
-    // #8647 — on a date ladder the highest rung is the latest date, the loosest
-    // question, so the mark goes where the caption points.
-    // #8788 — an at-least ladder ("Above 3.97 / Above 3.98 / …", "6.8+") is
-    // the same axis turned round: every rung contains the next, so the tallest
-    // bar is the loosest question. Production marked "Above 3.9850 — 91%" on
-    // Tennessee gas prices while the caption named "Above 4.0100", two rows
-    // called out for one answer. Where a rung clears even the mark goes where
-    // the caption points, as #8647 does for dates. Where none does, the highest
-    // rung stays the mark on every ladder: that is Alex's UX-1052 design
-    // ("the leader marked"), not this fix's call to reverse.
-    const leaderCell =
-      (ladderKind(shownCells) === "date" || atLeastLadder(shownCells)) && betterThanEvenRung
-        ? betterThanEvenRung
-        : shownCells.reduce<HeatmapRow | null>(
-            (best, r) =>
-              r.probability == null ? best
-              : best == null || r.probability > (best.probability ?? -1) ? r
-              : best,
-            null,
-          );
     const leaderCellKey = leaderCell?.key ?? null;
     // UX-1052 item 4 — the share text gets the same treatment as the card.
     // Alex on the old one: "Before 2027 is at 15% in When will Apple…" — it
@@ -699,6 +650,10 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
   // served 0 over a live 0.003 prints `<1%` and not `0%`. That composition lives
   // in `formatProbabilityPercent`; passing `{ rendered }` does not opt out of it.
   const pctDisplay = prob != null ? formatProbabilityPercent(prob, { rendered: heroPercent }) : null;
+  // #9876 — "Will AOC announce a run for Senate or President …?" headlined
+  // 48% over "Senate" and printed President nowhere. The other choice the
+  // title offers rides the leader's name line with its own served number.
+  const heroNameLine = leader ? withOtherChoices(leader.name, data, leader) : null;
   // #8151 — the caption stops saying the hero's number back to it.
   //
   // THIS LINE'S POSITION IS THE GATE. Only the two roots below (variant B at the
@@ -795,7 +750,7 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
               A/B split and "61% · Democratic Party" on the other. Same string,
               same `heroOutcome` pick, so the two halves cannot disagree. */}
           {pctDisplay && leader && (
-            <div className="-mt-1.5 mb-3 text-[12px] font-medium text-text-secondary line-clamp-1" data-testid="futures-hero-outcome">{leader.name}</div>
+            <div className="-mt-1.5 mb-3 text-[12px] font-medium text-text-secondary line-clamp-1" data-testid="futures-hero-outcome">{heroNameLine}</div>
           )}
 
           {prob != null && (
@@ -912,7 +867,7 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
                 <span className={`font-mono font-bold text-[13px] pb-1 whitespace-nowrap ${movementUp ? "text-emerald-400" : "text-red-400"}`} title={movementTitle} aria-label={movementTitle}>{movementStr}</span>
               )}
             </div>
-            <div className="text-[12px] font-medium text-white/85 mt-0.5 line-clamp-1">{leader.name}</div>
+            <div className="text-[12px] font-medium text-white/85 mt-0.5 line-clamp-1" data-testid="futures-hero-outcome">{heroNameLine}</div>
             {/* Queue 309 Item 2 — this hero sits on a photo scrim, so it uses the
                 same white/opacity treatment as the leader name above rather than
                 a surface token. */}
@@ -1086,6 +1041,122 @@ function buildHeatmapRows(data: FeedFuturesData): HeatmapRow[] {
   return Array.from(byLabel.values()).sort((a, b) => a.sortValue - b.sortValue);
 }
 
+/**
+ * The rungs the threshold-heatmap card draws, or `null` when the market takes
+ * another shape. #9642 — lifted out of `FuturesCard` so `FuturesCompactRow`
+ * reads the SAME ladder: a group row and the card it expands into must not
+ * disagree about which rungs exist.
+ */
+function heatmapShownCells(data: FeedFuturesData): HeatmapRow[] | null {
+  // #6505 — A ROW THE CARD CANNOT PUT A NUMBER ON IS NOT A ROW.
+  //
+  // Measured on production `/api/feed?limit=200`, 2026-09-16 07:2xZ, over the 123
+  // futures cards served: FIVE draw a board whose rows print `—` where the
+  // percentage goes, and on two of them three of the four rows are dashes.
+  // The worst is "Velo Point of Sale Growth in September" (market 59699855, idx
+  // 49, DOM-read at 390px): a nine-rung threshold ladder where eight rungs have
+  // `current_probability = NULL` in the row itself, so the reader gets
+  //
+  //     Above 175 — · Above 190 — · Above 200 — · Above 210 — · Above 220 —
+  //     Above 230 — · Above 240 73% · Above 250 —
+  //
+  // — eight rows of blank, one number. The dash is not a disclosure a reader can
+  // use (notice 34: if a number cannot be shown honestly, leave the space empty;
+  // do not fill it and then explain it), and `leaderFirstSlice` already states
+  // the half of this rule that was written down — "an unpriced row is never the
+  // leader". It is never a ROW either.
+  //
+  // The cut is made here rather than in the payload deliberately: the serializer
+  // keeps serving every outcome (`distribution_outcomes` and `threshold_points`
+  // are read by `discover_bundles` for the bundle measure key, which is a feed
+  // composition decision and not this card's to make). What changes is only what
+  // is drawn.
+  const allHeatmapRows = buildHeatmapRows(data);
+  const heatmapRows = allHeatmapRows.filter((row) => printsAPercent(row.probability));
+  // The `>= 2` bar below asks "is there a ladder here at all". It was written
+  // against rungs that all carry prices, and applied to a ladder whose other
+  // rungs are unpriced it deletes the field a second time — CERT-2456's argument
+  // exactly, one branch over. The hero it falls to is measurably worse for THIS
+  // shape: the composer refuses to name a threshold rung as a subject (#4640
+  // `_no_leader_subject`), so the Velo card's served caption is "Resolves within
+  // a month" and the hero prints a bare `73%` with nothing saying 73% of WHAT.
+  //
+  // So the bar bends ONLY where this ship's own drop is what took the card under
+  // it: a market that simply has one rung is the shape the bar was written for
+  // and keeps it. Stated as "it cleared the bar before the drop and not after",
+  // not as "something was dropped", so no card that renders correctly today
+  // changes shape.
+  const heatmapMinRows =
+    allHeatmapRows.length >= 2 && heatmapRows.length < 2 ? 1 : 2;
+  if (data.discover_card?.suggested_format !== "threshold_heatmap" || heatmapRows.length < heatmapMinRows) {
+    return null;
+  }
+  return heatmapRows.slice(0, 8);
+}
+
+/**
+ * Which rung a drawn ladder names as its answer — the caption's rung and the
+ * marked rung. `ruleRung` is the mark ONLY where the #8647/#8788 ladder rule
+ * chose it (a date or at-least ladder with a rung over even); elsewhere it is
+ * `null` and the mark is the plain highest rung.
+ *
+ * #9642 — shared with `FuturesCompactRow`. Production, 390px, 2026-09-30 ~13:00Z,
+ * the IPOS group on page one: the collapsed row read "Anthropic IPO? · December
+ * 31, 2026 · 83%" while the card it expands into marked "November 30, 2026 —
+ * 60%" under "More likely than not: November 30, 2026", and so did the page
+ * the row opens. The row took `heroOutcome`, the highest rung, which on a
+ * cumulative ladder is the loosest question — the defect #8647 removed from the
+ * card and never from its compact twin.
+ */
+function ladderMarks(shownCells: HeatmapRow[]): {
+  betterThanEvenRung: HeatmapRow | null;
+  ruleRung: HeatmapRow | null;
+  leaderCell: HeatmapRow | null;
+} {
+  const above50 = shownCells.filter((r) => (r.probability ?? 0) >= 0.5);
+  // #8647 — the caption names the MOST SPECIFIC rung the market still calls
+  // better than even, and which end of `above50` that is depends on the axis.
+  // On a comparator ladder ("Above 52 / Above 58 / Above 64") chances fall as
+  // the rungs climb, so it is the last one. On a date ladder the rungs are
+  // cumulative "before this date" questions and chances RISE, so the last one
+  // is the loosest — production printed "More likely than not: Before Feb 1,
+  // 2027" on an Anthropic-IPO ladder reading 6% by Nov 1 and 56% by Dec 1, and
+  // Feb 1 was only the last of the eight rungs the card draws. The earliest
+  // rung over even is the answer. An exclusive date ladder ("Before 2027 /
+  // 2027 / 2029 or later") has at most one rung over even, so it reads the same.
+  const betterThanEvenRung =
+    above50.length === 0 ? null
+    : ladderKind(shownCells) === "date" ? above50[0]
+    : above50[above50.length - 1];
+  // UX-1052 item 4 — the leader is the highest-probability rung, marked in
+  // place. On a date ladder the rows are chronological, so "the answer" is
+  // not the top row and had nothing pointing at it.
+  // #8647 — on a date ladder the highest rung is the latest date, the loosest
+  // question, so the mark goes where the caption points.
+  // #8788 — an at-least ladder ("Above 3.97 / Above 3.98 / …", "6.8+") is
+  // the same axis turned round: every rung contains the next, so the tallest
+  // bar is the loosest question. Production marked "Above 3.9850 — 91%" on
+  // Tennessee gas prices while the caption named "Above 4.0100", two rows
+  // called out for one answer. Where a rung clears even the mark goes where
+  // the caption points, as #8647 does for dates. Where none does, the highest
+  // rung stays the mark on every ladder: that is Alex's UX-1052 design
+  // ("the leader marked"), not this fix's call to reverse.
+  const ruleRung =
+    (ladderKind(shownCells) === "date" || atLeastLadder(shownCells)) && betterThanEvenRung
+      ? betterThanEvenRung
+      : null;
+  const leaderCell =
+    ruleRung ??
+    shownCells.reduce<HeatmapRow | null>(
+      (best, r) =>
+        r.probability == null ? best
+        : best == null || r.probability > (best.probability ?? -1) ? r
+        : best,
+      null,
+    );
+  return { betterThanEvenRung, ruleRung, leaderCell };
+}
+
 function formatComparisonTheme(theme: string | null | undefined): string {
   switch (theme) {
     case "ipo_valuation":
@@ -1105,13 +1176,57 @@ function formatComparisonTheme(theme: string | null | undefined): string {
   }
 }
 
+/**
+ * #9876 — the choices a title offers besides the hero, each with its own served
+ * percent ("President 41%"), or `[]`. Read through `renderedLeaderPercent` so
+ * the number is the one the market's own card and page print for that outcome.
+ */
+function otherChoiceTexts(
+  data: FeedFuturesData,
+  hero: HeroCandidate | null | undefined,
+): string[] {
+  return titleNamedChoices(data.name, data.top_outcomes, hero).map((o) => {
+    // `titleNamedChoices` returns only priced choices, so the `?? 0` never runs.
+    const pct = formatProbabilityPercent(o.probability ?? 0, {
+      rendered: renderedLeaderPercent(data.top_outcomes, o),
+    });
+    return `${o.name} ${pct}`;
+  });
+}
+
+/** `name`, followed by any other choice the title offers: "Senate · President 41%". */
+function withOtherChoices(
+  name: string,
+  data: FeedFuturesData,
+  hero: HeroCandidate | null | undefined,
+): string {
+  return [name, ...otherChoiceTexts(data, hero)].join(" · ");
+}
+
 // ── Compact row used by GroupCard ──
 
 export function FuturesCompactRow({ item, data }: { item: FeedItem; data: FeedFuturesData }) {
   // UX-P238 — same headline decision as the full card. This row prints the
   // percent beside `data.name` with no outcome label at all, so an inverted
   // hero is even less recoverable here than on the card it expands into.
-  const leader = heroOutcome(data.top_outcomes);
+  // #9642 — except where the card is a ladder whose answer the #8647/#8788 rule
+  // picks: the row then prints the card's marked rung, not the highest one. The
+  // served outcome of that name is used when there is one, so its movement and
+  // server-rendered percent come with it; a rung outside the top three is read
+  // off the ladder, exactly as the card prints it. A pick `heroOutcome` made on
+  // purpose — the leg the title names (#9401), the negated pair (UX-P238) — is
+  // an answer to the question as asked and still wins; only its default, the
+  // served first outcome, gives way.
+  const hero = heroOutcome(data.top_outcomes, data.name);
+  const heatmapCells = heatmapShownCells(data);
+  const ladderRung = heatmapCells ? ladderMarks(heatmapCells).ruleRung : null;
+  const leader = ladderRung && hero === data.top_outcomes[0]
+    ? data.top_outcomes.find((o) => o.name.trim().toLowerCase() === ladderRung.key) ?? {
+        name: ladderRung.label,
+        probability: ladderRung.probability,
+        movement: ladderRung.movement,
+      }
+    : hero;
   // UX-P162 — the same market's headline, so a group row and the full card it
   // expands into cannot print two different numbers for one question. `GroupCard`
   // and `ThemeBundleCard` render this row for markets that ALSO appear as their
@@ -1126,7 +1241,13 @@ export function FuturesCompactRow({ item, data }: { item: FeedItem; data: FeedFu
   // 25bps leads at 56%" do not print their outcome twice. The full
   // `FuturesCard` has printed `leader.name` under its hero all along; this row
   // is its small twin and now says the same thing. Measurement: the module.
-  const answerLabel = rowAnswerLabel(leader, context);
+  // #9876 — a title that offers a choice ("Senate or President") prints the
+  // other choice beside the answer, with its own number. The answer is then
+  // always named, so the reader can tell which choice the column's number is.
+  const otherChoices = otherChoiceTexts(data, leader);
+  const answerLabel = otherChoices.length > 0 && leader?.name?.trim()
+    ? leader.name.trim()
+    : rowAnswerLabel(leader, context);
   // #7331 — and the label #4396 added collapses when the answer is itself a
   // quantity: `Core CPI YoY - September 2026 · 2.4% · Resolves within a month`
   // with `41%` in this column printed two percentages and said which was which
@@ -1141,10 +1262,35 @@ export function FuturesCompactRow({ item, data }: { item: FeedItem; data: FeedFu
   // neither. The row draws one number, so the half that cannot be read is the
   // sentence about the leg it does not draw; the answer stays, because saying
   // which outcome the percentage is for is what this line is for.
-  const rowCaption = captionIsAboutAnotherLeg(context, answerLabel, data.top_outcomes) ? "" : context;
+  //
+  // #9876 — and a caption that only repeats an answer the row now prints in
+  // bold goes too. That covers a negative answer ("No IPO before January 2027
+  // leads at 85%" under **No IPO before January 2027**) and a choice line
+  // ("Senate leads at 48%…" under **Senate** · President 41%). The full card
+  // this row opens still carries the caption.
+  const captionRepeatsBoldAnswer =
+    answerLabel != null &&
+    (answerIsNegative(answerLabel) || otherChoices.length > 0) &&
+    captionRepeatsAnswer(context, answerLabel);
+  const rowCaption =
+    captionRepeatsBoldAnswer || captionIsAboutAnotherLeg(context, answerLabel, data.top_outcomes) ? "" : context;
   const rowCue = forYouCue(item);
   const conceptKey = marketEventKey(data);
   const detailHref = conceptKey ? eventPath(conceptKey) : `/futures/${data.id}`;
+  const result = assignedFuturesResult(data);
+  if (result) {
+    return (
+      <Link href={detailHref} className="flex items-center gap-3 group" aria-label={`${data.name} — resolved`}>
+        <div className="flex-1 min-w-0">
+          <div className="text-sm font-semibold line-clamp-2 group-hover:text-accent-brand transition-colors">{data.name}</div>
+          <div className="text-xs text-text-secondary mt-0.5" data-testid="compact-row-assigned-result">
+            {data.winner?.trim() ? `Resolved · ${result}` : "Resolved"}
+          </div>
+          {rowCue && <div className="mt-1"><ForYouChip cue={rowCue} /></div>}
+        </div>
+      </Link>
+    );
+  }
   return (
     <Link href={detailHref} className="flex items-center gap-3 group">
       <div className="flex-1 min-w-0">
@@ -1166,6 +1312,11 @@ export function FuturesCompactRow({ item, data }: { item: FeedItem; data: FeedFu
         {(answerLabel || rowCaption) && (
           <div className="text-xs mt-0.5 line-clamp-2" data-testid="compact-row-caption">
             {answerLabel && <span className="font-semibold text-text-secondary" data-testid="compact-row-answer">{answerLabel}</span>}
+            {answerLabel && otherChoices.map((choice) => (
+              <span key={choice} className="text-text-secondary" data-testid="compact-row-other-choice">
+                <span className="text-text-muted"> · </span>{choice}
+              </span>
+            ))}
             {answerLabel && rowCaption && <span className="text-text-muted"> · </span>}
             {rowCaption && <span className="text-text-muted">{rowCaption}</span>}
           </div>
@@ -1189,7 +1340,10 @@ export function FuturesCompactRow({ item, data }: { item: FeedItem; data: FeedFu
               reader cannot. Never printed over a `—` — there is no percentage
               there to qualify. */}
           <span className="flex flex-col items-end leading-none">
-            <span className="font-mono tabular-nums text-sm font-bold">
+            {/* #9642 — `text-base`, up from `text-sm`: in selected design A the
+                right-hand column of numbers is what a reader scans down a group,
+                so it is the largest type on the row. */}
+            <span className="font-mono tabular-nums text-base font-bold" data-testid="compact-row-percent">
               {leader.probability != null && leader.probability > 0 ? formatProbabilityPercent(leader.probability, { rendered: compactPercent }) : "—"}
             </span>
             {percentIsAmbiguous && leader.probability != null && leader.probability > 0 && (

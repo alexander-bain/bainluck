@@ -19,10 +19,10 @@ import XCTest
 /// hero's chip. A countdown to the next poll is plumbing, not something a fan
 /// reads (Codex brief: "No countdown in default reader UI").
 ///
-/// After: the toolbar carries the page's ONE status — the push dot while the
-/// stream delivers, a plain refresh glyph while polled — and the chart title
-/// carries none. Fullscreen covers the toolbar, so it repeats the push dot and
-/// nothing else.
+/// The page carries one delivery status beside the hero probability. Manual
+/// refresh remains in the toolbar; fullscreen carries its own status because
+/// it covers the hero. Mounted page tests in VisibleLivePriceStatusTests prove
+/// the status is readable without opening the disclosure.
 ///
 /// These are source scans because the routing lives in `View` bodies no test
 /// can instantiate headlessly; comments are stripped first so this fix's own
@@ -56,14 +56,14 @@ final class ALiveEventPageSaysItsFreshnessOnce8320Tests: XCTestCase {
 
     /// Anti-vacuity: if these fail, every scan below is about the wrong file.
     func testTheScansCanSeeTheFilesTheyAreAbout() throws {
-        XCTAssertTrue(try pageCode().contains("structEventDetailView:View{"))
+        XCTAssertTrue(try code("Views", "EventDetailView.swift").contains("structEventDetailView:View{"))
         XCTAssertTrue(try chartCode().contains("structOddsChartView:View{"))
     }
 
     // MARK: - No countdown on the page
 
     func testNeitherFileCountsDownToAPoll() throws {
-        for (name, source) in [("EventDetailView", try pageCode()), ("OddsChartView", try chartCode())] {
+        for (name, source) in [("EventDetailView", try code("Views", "EventDetailView.swift")), ("OddsChartView", try chartCode())] {
             XCTAssertFalse(source.contains("refreshCountdown"),
                            "\(name) is carrying a refresh countdown again (#8320)")
             XCTAssertFalse(source.contains("\"Nextupdate"),
@@ -77,32 +77,25 @@ final class ALiveEventPageSaysItsFreshnessOnce8320Tests: XCTestCase {
     /// re-renders twice a second while nothing changed is manufacturing ticks
     /// (the brief: "never manufacture animation/ticks while unchanged").
     func testThePageRunsNoHalfSecondTimer() throws {
-        XCTAssertFalse(try pageCode().contains("Timer.scheduledTimer(withTimeInterval:0.5"))
+        XCTAssertFalse(try code("Views", "EventDetailView.swift").contains("Timer.scheduledTimer(withTimeInterval:0.5"))
     }
 
-    // MARK: - One status, in the toolbar
+    // MARK: - One status, beside probability
 
-    func testTheToolbarButtonCarriesTheOneStatus() throws {
-        let page = try pageCode()
-        XCTAssertTrue(
-            page.contains("Button{Task{awaitvm.load()}}label:{refreshStatus}"),
-            "the toolbar's manual-refresh button no longer carries the page's status")
-        XCTAssertEqual(
-            occurrences(of: "LivePushDot(", in: page), 1,
-            "EventDetailView draws the push dot somewhere other than its one status")
+    func testReadableStatusAndManualRefreshAreSeparate() throws {
+        let page = try code("Views", "EventDetailView.swift")
+        XCTAssertEqual(occurrences(of: "VisibleLivePriceStatusView(status:vm.liveUpdateStatus", in: page), 1)
+        XCTAssertEqual(occurrences(of: "LiveUpdateStatusView(status:vm.liveUpdateStatus)", in: page), 0)
+        XCTAssertTrue(page.contains(".accessibilityLabel(\"Refreshnow\")"))
+        XCTAssertTrue(page.contains("Button{Task{awaitvm.load()}}label:{Image(systemName:\"arrow.clockwise\")"))
+        XCTAssertEqual(occurrences(of: "LivePushDot(", in: page), 0)
     }
 
-    /// The fallback arm is not the push arm: a stream that is reconnecting or
-    /// never delivered must not read as one that is pushing.
-    func testThePolledArmIsNotAGreenDot() throws {
-        let page = try pageCode()
-        guard let polling = page.range(of: "case.polling:") else {
-            return XCTFail("refreshStatus lost its polling arm")
-        }
-        let arm = String(page[polling.upperBound...].prefix(200))
-        XCTAssertTrue(arm.contains("Image(systemName:\"arrow.clockwise\")"), arm)
-        XCTAssertFalse(arm.contains("LivePushDot"), arm)
-        XCTAssertFalse(arm.contains("#10B981"), "the polled arm is painted the push green")
+    func testOnlyProvenDeliveryGetsAGreenMarker() throws {
+        let status = try code("Components", "LiveUpdateStatusView.swift")
+        XCTAssertTrue(status.contains("ifstatus==.live{Circle().fill(.green)"))
+        XCTAssertFalse(status.contains("Timer"))
+        XCTAssertFalse(status.contains("repeatForever"))
     }
 
     // MARK: - The chart title carries none of it
@@ -123,11 +116,19 @@ final class ALiveEventPageSaysItsFreshnessOnce8320Tests: XCTestCase {
     /// chart scan that only bans things would pass on a fullscreen view that
     /// silently lost the status. Pin the one it keeps, and that it is gated on
     /// a delivering stream.
-    func testFullscreenKeepsThePushDotAndOnlyWhenPushed() throws {
+    func testFullscreenKeepsTheSameReadableStatusAsThePage() throws {
         let chart = try chartCode()
-        XCTAssertEqual(occurrences(of: "LivePushDot(", in: chart), 1)
-        XCTAssertTrue(chart.contains("ifstatus==\"live\"&&refreshStreaming{"
-                                     + "ToolbarItem(placement:.cancellationAction){LivePushDot(diameter:22)}}"))
+        XCTAssertEqual(occurrences(of: "LivePushDot(", in: chart), 0)
+        XCTAssertTrue(chart.contains(".safeAreaInset(edge:.top,spacing:0){ifEventPriceStreaming.isEligible(status)&&liveUpdateStatus != .hidden{LiveUpdateStatusView(status:liveUpdateStatus)".replacingOccurrences(of: " ", with: "")))
+        XCTAssertFalse(chart.contains("ToolbarItem(placement:.cancellationAction)"),
+                       "Readonly fullscreen status must not be squeezed into a navigation action")
+        XCTAssertTrue(try code("Views", "EventDetailView.swift").contains("liveUpdateStatus:vm.liveUpdateStatus"))
+        for phase in ["scheduled", "live", "suspended"] {
+            XCTAssertEqual(LiveUpdateStatus.decide(status: phase, delivering: true,
+                acceptedUpdate: false, refreshFailed: false), .awaitingUpdate)
+        }
+        XCTAssertEqual(LiveUpdateStatus.decide(status: "completed", delivering: true,
+            acceptedUpdate: true, refreshFailed: false), .hidden)
     }
 
     /// The Final chip is a settled-state label, not a freshness claim, and

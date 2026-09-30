@@ -3,12 +3,19 @@ import Combine
 
 private enum DiscoverGroupedItem: Identifiable {
     case single(FeedItem)
-    case group(title: String, items: [FeedItem], kind: String? = nil, theme: String? = nil)
+    case group(title: String, items: [FeedItem], kind: String? = nil, theme: String? = nil, sharedQuestion: String? = nil)
+
+    var priceCards: [FeedItem] {
+        switch self {
+        case .single(let item): return [item]
+        case .group(_, let items, _, _, _): return items
+        }
+    }
 
     var id: String {
         switch self {
         case .single(let item): return item.id
-        case .group(let title, _, let kind, let theme): return "group-\(kind ?? "related")-\(theme ?? title)"
+        case .group(let title, _, let kind, let theme, _): return "group-\(kind ?? "related")-\(theme ?? title)"
         }
     }
 }
@@ -101,6 +108,8 @@ enum NativeDiscoverDebugState {
 
 struct DiscoverView: View {
     @StateObject private var vm = DiscoverViewModel()
+    @Environment(\.scenePhase) private var priceScenePhase
+    @State private var priceViewVisible = false
     @EnvironmentObject private var authManager: AuthManager
     @EnvironmentObject private var navCoordinator: NavigationCoordinator
     @State private var visibleCount = 20
@@ -127,7 +136,7 @@ struct DiscoverView: View {
     // story-key suppression), the store is capped, and the feed floor below
     // backfills the least-recently-dismissed rather than let the visible feed
     // collapse to ~2 cards.
-    @State private var dismissedAt: [String: TimeInterval] = Self.loadDismissed()
+    @State private var dismissedAt: [String: TimeInterval] = [:]
 
     // Never let a SUBTRACTIVE client filter (dismiss, category cooldown) shrink
     // the rendered feed below this many cards when the API returned more
@@ -224,8 +233,10 @@ struct DiscoverView: View {
     @State private var scrollTarget: String? = nil
     @State private var dailyGuesses: Int = Self.loadDailyGuesses()
     @State private var showOnboarding = !UserDefaults.standard.bool(forKey: "discover_onboarded")
+    @State private var showFeedbackSignIn = false
+    @State private var guestFeedbackGate = DiscoverGuestFeedbackGate()
     @State private var resolutions: [Resolution] = []
-    @State private var interactionProfile = DiscoverInteractionProfile.load()
+    @State private var interactionProfile: DiscoverInteractionProfile?
     @State private var seenImpressions: Set<String> = []
     @State private var navigationPath = NavigationPath()
     @State private var showSwipeHint = !UserDefaults.standard.bool(forKey: "discover_swipe_hinted")
@@ -334,7 +345,7 @@ struct DiscoverView: View {
         // pure classifier. `filteredItems` sanitizes bundles up front, so this is
         // normally already the first child; the explicit admit keeps the
         // derivation correct for any caller that passes a raw bundle.
-        DiscoverCategory.of(item) { bundle in
+        DiscoverCollectionFeed.category(of: item) { bundle in
             Self.eligibleBundleItems(bundle).first ?? bundle.items.first
         }
     }
@@ -343,7 +354,7 @@ struct DiscoverView: View {
     /// key. Uses the SAME eligibility-gated bundle resolver as `itemCategory`, so
     /// a bundle's family and its category always describe the same child.
     private func itemFamily(_ item: FeedItem) -> String {
-        DiscoverCategory.family(item) { bundle in
+        DiscoverCollectionFeed.family(of: item) { bundle in
             Self.eligibleBundleItems(bundle).first ?? bundle.items.first
         }
     }
@@ -437,6 +448,7 @@ struct DiscoverView: View {
         if let t = item.tournament { return "tournament-\(t.key)" }
         if let c = item.concept { return "concept-\(c.key)" }
         if let b = item.bundle { return "bundle-\(b.id)" }
+        if let c = item.collection { return "collection-\(c.slug)" }
         return UUID().uuidString
     }
 
@@ -464,6 +476,7 @@ struct DiscoverView: View {
         if let t = item.tournament { return t.key }
         if let c = item.concept { return c.key }
         if let b = item.bundle { return b.id }
+        if let c = item.collection { return c.slug }
         return item.id
     }
 
@@ -473,13 +486,14 @@ struct DiscoverView: View {
         if let t = item.tournament { return t.name }
         if let c = item.concept { return c.name }
         if let b = item.bundle { return b.title }
+        if let c = item.collection { return c.name }
         return nil
     }
 
     private func primaryItem(_ grouped: DiscoverGroupedItem) -> FeedItem? {
         switch grouped {
         case .single(let item): return item
-        case .group(_, let items, _, _): return items.first
+        case .group(_, let items, _, _, _): return items.first
         }
     }
 
@@ -497,8 +511,8 @@ struct DiscoverView: View {
             let ranked = window.enumerated().sorted { lhs, rhs in
                 let leftItem = primaryItem(lhs.element)
                 let rightItem = primaryItem(rhs.element)
-                let leftScore = Double(leftItem?.score ?? 0) + (leftItem.map { interactionProfile.adjustment(for: itemCategory($0)) } ?? 0)
-                let rightScore = Double(rightItem?.score ?? 0) + (rightItem.map { interactionProfile.adjustment(for: itemCategory($0)) } ?? 0)
+                let leftScore = Double(leftItem?.score ?? 0) + (leftItem.flatMap { interactionProfile?.adjustment(for: itemCategory($0)) } ?? 0)
+                let rightScore = Double(rightItem?.score ?? 0) + (rightItem.flatMap { interactionProfile?.adjustment(for: itemCategory($0)) } ?? 0)
                 if abs(leftScore - rightScore) > 0.001 { return leftScore > rightScore }
                 return lhs.offset < rhs.offset
             }.map(\.element)
@@ -509,10 +523,21 @@ struct DiscoverView: View {
     }
 
     private func recordInteraction(for item: FeedItem, action: NativeDiscoverAction, source: String = "card") {
-        interactionProfile.record(category: itemCategory(item), action: action)
-        // The profile feeds category cooldown + personalization ranking, so a
-        // recorded interaction is a semantic input change — invalidate the memo.
-        profileVersion &+= 1
+        let startedWith = feedbackAuthState
+        let canLearn = DiscoverGuestFeedbackGate.allowsFeedback(startedWith: startedWith, current: startedWith)
+        if canLearn {
+            var profile = interactionProfile ?? DiscoverInteractionProfile.load()
+            profile.record(
+                category: itemCategory(item),
+                action: action,
+                onSportsCard: DiscoverCollectionFeed.isSportsFeedback(item) { bundle in
+                    Self.eligibleBundleItems(bundle).first ?? bundle.items.first
+                }
+            )
+            interactionProfile = profile
+            // Only account feedback invalidates personalized ranking (#9644).
+            profileVersion &+= 1
+        }
         let actionName: String
         switch action {
         case .detailOpen: actionName = "open"
@@ -529,7 +554,9 @@ struct DiscoverView: View {
             category: itemCategory(item),
             source: source
         )
-        Task {
+        Task { @MainActor in
+            guard canLearn,
+                  DiscoverGuestFeedbackGate.allowsFeedback(startedWith: startedWith, current: feedbackAuthState) else { return }
             let event = DiscoverInteractionEvent(
                 action: actionName,
                 itemType: itemType(item),
@@ -557,6 +584,7 @@ struct DiscoverView: View {
     }
 
     private func recordChallengeAction(_ actionName: String) {
+        let startedWith = feedbackAuthState
         AnalyticsService.trackDiscoverCardAction(
             action: actionName,
             itemId: "daily_challenge",
@@ -564,7 +592,8 @@ struct DiscoverView: View {
             category: "challenge",
             source: "challenge"
         )
-        Task {
+        Task { @MainActor in
+            guard DiscoverGuestFeedbackGate.allowsFeedback(startedWith: startedWith, current: feedbackAuthState) else { return }
             let event = DiscoverInteractionEvent(
                 action: actionName,
                 itemType: "grid",
@@ -592,6 +621,7 @@ struct DiscoverView: View {
     }
 
     private func trackImpression(for grouped: DiscoverGroupedItem, rank: Int) {
+        let startedWith = feedbackAuthState
         guard let item = primaryItem(grouped) else { return }
         let impressionKey = "\(grouped.id)-\(rank)"
         guard !seenImpressions.contains(impressionKey) else { return }
@@ -625,7 +655,8 @@ struct DiscoverView: View {
                 score: item.score
             )
         )
-        Task {
+        Task { @MainActor in
+            guard DiscoverGuestFeedbackGate.allowsFeedback(startedWith: startedWith, current: feedbackAuthState) else { return }
             let event = DiscoverInteractionEvent(
                 action: "impression",
                 itemType: itemType(item),
@@ -699,7 +730,7 @@ struct DiscoverView: View {
             staleBase,
             dismissedAt: dismissedAt,
             now: Date().timeIntervalSince1970,
-            isCooled: { interactionProfile.suppresses(category: itemCategory($0)) }
+            isCooled: { interactionProfile?.suppresses(category: itemCategory($0)) ?? false }
         )
     }
 
@@ -944,7 +975,7 @@ struct DiscoverView: View {
         let isGuessSlot = ReleaseSurfaces.insertsInlineGuessSlot(at: idx)
         Group {
             switch gi {
-            case .group(let title, let items, let kind, let theme):
+            case .group(let title, let items, let kind, let theme, let sharedQuestion):
                 // #1773: group cards were the largest of three
                 // archetypes rendered with NO swipe wrapper at all
                 // (group / tournament / concept — 10 of 30 cards on
@@ -965,12 +996,30 @@ struct DiscoverView: View {
                             recordInteraction(for: primary, action: .like, source: "swipe")
                         }
                         hideForSession(ids: Self.dismissKeys(forGroupOf: items))
-                    }
+                    },
+                    onRequiresSignIn: inviteSignInForFeedback
                 ) {
-                    NativeGroupCard(title: title, items: items, kind: kind, theme: theme, navigationPath: $navigationPath)
+                    NativeGroupCard(title: title, items: items, kind: kind, theme: theme, sharedQuestion: sharedQuestion, navigationPath: $navigationPath)
                 }
             case .single(let item):
-                if isGuessSlot, item.type == "futures", let f = item.futures,
+                if item.type == "collection", let entry = DiscoverCollectionFeed.entry(for: item.collection) {
+                    SwipeToDismiss(
+                        onSwipeLeft: {
+                            recordInteraction(for: item, action: .unlike, source: "swipe")
+                            hideForSession(itemId(item))
+                        },
+                        onSwipeRight: {
+                            recordInteraction(for: item, action: .like, source: "swipe")
+                            hideForSession(itemId(item))
+                        },
+                        onRequiresSignIn: inviteSignInForFeedback
+                    ) {
+                        DiscoverCollectionCard(entry: entry, navigationPath: $navigationPath, onOpen: {
+                            recordInteraction(for: item, action: .detailOpen, source: "card")
+                        })
+                    }
+                    .contextMenu { discoverCardMenu(item) }
+                } else if isGuessSlot, item.type == "futures", let f = item.futures,
                    f.discoverCard?.suggestedFormat != "threshold_heatmap",
                    f.discoverCard?.suggestedFormat != "outcome_distribution",
                    f.discoverCard?.suggestedFormat != "cross_source_comparison",
@@ -985,7 +1034,8 @@ struct DiscoverView: View {
                         onSwipeRight: {
                             recordInteraction(for: item, action: .like, source: "swipe")
                             hideForSession(itemId(item))
-                        }
+                        },
+                        onRequiresSignIn: inviteSignInForFeedback
                     ) {
                         NativeGuessCard(data: f, onNextQuestion: { scrollToNextGuessGrouped(proxy: proxy, after: idx, in: pageGrouped) }, onGuessCompleted: { incrementDaily() })
                     }
@@ -999,7 +1049,8 @@ struct DiscoverView: View {
                         onSwipeRight: {
                             recordInteraction(for: item, action: .like, source: "swipe")
                             hideForSession(itemId(item))
-                        }
+                        },
+                        onRequiresSignIn: inviteSignInForFeedback
                     ) {
                         NativeGuessCard(event: e, onNextQuestion: { scrollToNextGuessGrouped(proxy: proxy, after: idx, in: pageGrouped) }, onGuessCompleted: { incrementDaily() })
                     }
@@ -1012,7 +1063,8 @@ struct DiscoverView: View {
                         onSwipeRight: {
                             recordInteraction(for: item, action: .like, source: "swipe")
                             hideForSession(itemId(item))
-                        }
+                        },
+                        onRequiresSignIn: inviteSignInForFeedback
                     ) {
                         NativeEventDiscoverCard(event: e, feedContext: item.contextSummary ?? item.reason ?? item.headline, expandedContext: item.reason ?? item.headline, navigationPath: $navigationPath, onOpen: {
                             recordInteraction(for: item, action: .detailOpen, source: "card")
@@ -1036,7 +1088,8 @@ struct DiscoverView: View {
                         onSwipeRight: {
                             recordInteraction(for: item, action: .like, source: "swipe")
                             hideForSession(itemId(item))
-                        }
+                        },
+                        onRequiresSignIn: inviteSignInForFeedback
                     ) {
                         HeatMapCardView(data: f, navigationPath: $navigationPath, onOpen: {
                             recordInteraction(for: item, action: .detailOpen, source: "card")
@@ -1054,7 +1107,8 @@ struct DiscoverView: View {
                         onSwipeRight: {
                             recordInteraction(for: item, action: .like, source: "swipe")
                             hideForSession(itemId(item))
-                        }
+                        },
+                        onRequiresSignIn: inviteSignInForFeedback
                     ) {
                         DistributionCardView(data: f, navigationPath: $navigationPath, onOpen: {
                             recordInteraction(for: item, action: .detailOpen, source: "card")
@@ -1072,7 +1126,8 @@ struct DiscoverView: View {
                         onSwipeRight: {
                             recordInteraction(for: item, action: .like, source: "swipe")
                             hideForSession(itemId(item))
-                        }
+                        },
+                        onRequiresSignIn: inviteSignInForFeedback
                     ) {
                         ComparisonCardView(data: f, navigationPath: $navigationPath, onOpen: {
                             recordInteraction(for: item, action: .detailOpen, source: "card")
@@ -1088,7 +1143,8 @@ struct DiscoverView: View {
                         onSwipeRight: {
                             recordInteraction(for: item, action: .like, source: "swipe")
                             hideForSession(itemId(item))
-                        }
+                        },
+                        onRequiresSignIn: inviteSignInForFeedback
                     ) {
                         // #4265 — one caption chain with web (`feedContextSnippet`),
                         // and `""` counts as absent. `??` did not: the wire sends
@@ -1116,7 +1172,8 @@ struct DiscoverView: View {
                         onSwipeRight: {
                             recordInteraction(for: item, action: .like, source: "swipe")
                             hideForSession(itemId(item))
-                        }
+                        },
+                        onRequiresSignIn: inviteSignInForFeedback
                     ) {
                         NativeTournamentDiscoverCard(
                             data: t,
@@ -1138,7 +1195,8 @@ struct DiscoverView: View {
                         onSwipeRight: {
                             recordInteraction(for: item, action: .like, source: "swipe")
                             hideForSession(itemId(item))
-                        }
+                        },
+                        onRequiresSignIn: inviteSignInForFeedback
                     ) {
                         NativeConceptDiscoverCard(
                             data: c,
@@ -1155,7 +1213,15 @@ struct DiscoverView: View {
             }
         }
         .id(gi.id)
+        .onDisappear { vm.setPriceCardsVisible(owner: gi.id, cards: [], visible: false) }
+        .onChange(of: DiscoverPriceRefresh.leaves(gi.priceCards).map(\.id)) { _, _ in
+            vm.updateVisiblePriceCards(owner: gi.id, cards: gi.priceCards)
+        }
         .onAppear {
+            switch gi {
+            case .single(let item): vm.setPriceCardsVisible(owner: gi.id, cards: [item], visible: true)
+            case .group(_, let members, _, _, _): vm.setPriceCardsVisible(owner: gi.id, cards: members, visible: true)
+            }
             // The first eligible card actually on screen → the
             // true first-render milestone, once per generation
             // (L2-206 Item 3 / L2-212 Item 2). Acknowledgement is
@@ -1303,7 +1369,8 @@ struct DiscoverView: View {
                     title: bundle.title,
                     items: eligibleChildren,
                     kind: bundle.kind,
-                    theme: bundle.comparisonTheme
+                    theme: bundle.comparisonTheme,
+                    sharedQuestion: bundle.sharedQuestion
                 ))
                 continue
             }
@@ -1328,7 +1395,7 @@ struct DiscoverView: View {
     }
 
     private func groupItemCount(_ item: DiscoverGroupedItem) -> Int {
-        if case .group(_, let items, _, _) = item { return items.count }
+        if case .group(_, let items, _, _, _) = item { return items.count }
         return 1
     }
 
@@ -1345,7 +1412,7 @@ struct DiscoverView: View {
         var result = items
         while result.count < Self.groupExpansionFloor {
             let expandable = result.enumerated().filter { entry in
-                if case .group(_, let its, let kind, _) = entry.element {
+                if case .group(_, let its, let kind, _, _) = entry.element {
                     return kind == nil && its.count >= 2
                 }
                 return false
@@ -1353,7 +1420,7 @@ struct DiscoverView: View {
             guard let target = expandable.max(by: { groupItemCount($0.element) < groupItemCount($1.element) }) else {
                 break
             }
-            if case .group(_, let its, _, _) = result[target.offset] {
+            if case .group(_, let its, _, _, _) = result[target.offset] {
                 result.replaceSubrange(target.offset...target.offset, with: its.map { DiscoverGroupedItem.single($0) })
             } else {
                 break
@@ -1806,7 +1873,14 @@ struct DiscoverView: View {
                 }
             }
         }
-        .onAppear { AnalyticsService.trackScreen(name: "discover", type: "discover") }
+        .onAppear {
+            AnalyticsService.trackScreen(name: "discover", type: "discover")
+            priceViewVisible = true
+            vm.setPriceDeliveryActive(priceScenePhase == .active)
+        }
+        .onChange(of: priceScenePhase) { _, phase in
+            vm.setPriceDeliveryActive(priceViewVisible && phase == .active)
+        }
         .task {
             if vm.items.isEmpty {
                 // 🔴 ARM THE FELT-NUMBER RAIL HERE, on tab activation with an
@@ -1831,6 +1905,8 @@ struct DiscoverView: View {
             }
         }
         .onDisappear {
+            priceViewVisible = false
+            vm.setPriceDeliveryActive(false)
             // The reader left. Stands the deadline down, and reports a screen they
             // actually waited on and never saw a card in.
             ScreenTimingSession.disarmScreen(surface: ScreenTimingSurface.discover)
@@ -1871,6 +1947,24 @@ struct DiscoverView: View {
         .sheet(isPresented: $showOnboarding) {
             WelcomeView()
                 .onDisappear { UserDefaults.standard.set(true, forKey: "discover_onboarded") }
+        }
+        .sheet(isPresented: $showFeedbackSignIn) {
+            MyStuffView()
+        }
+        .onChange(of: feedbackAuthState, initial: true) { _, newState in
+            if case .signedIn = newState {
+                interactionProfile = DiscoverInteractionProfile.load()
+                dismissedAt = Self.loadDismissed()
+                showFeedbackSignIn = false
+            } else {
+                // Loading either legacy store can migrate it on disk. Delay
+                // those reads until resolved sign-in, and give guests no local
+                // profile or inherited account dismissals (#9644).
+                interactionProfile = nil
+                dismissedAt = [:]
+            }
+            profileVersion &+= 1
+            dismissVersion &+= 1
         }
         .sheet(isPresented: $showChallenge) {
             NativeChallengeSheet(
@@ -2120,6 +2214,9 @@ struct DiscoverView: View {
     }
 
     private func hideForSession(ids: [String]) {
+        // The context-menu path shares this store with swipe feedback. A guest
+        // must not persist rejects through either entry point (#9644).
+        guard case .signedIn = feedbackAuthState else { return }
         let now = Date().timeIntervalSince1970
         for id in ids { dismissedAt[id] = now }
         Self.saveDismissed(dismissedAt)
@@ -2154,6 +2251,19 @@ struct DiscoverView: View {
         if showSwipeHint {
             withAnimation { showSwipeHint = false }
             UserDefaults.standard.set(true, forKey: "discover_swipe_hinted")
+        }
+    }
+
+    private var feedbackAuthState: DiscoverGuestFeedbackGate.AuthState {
+        DiscoverGuestFeedbackGate.authState(
+            userId: authManager.user.map { String($0.id) },
+            isLoading: authManager.isLoading
+        )
+    }
+
+    private func inviteSignInForFeedback() {
+        if guestFeedbackGate.requestInvitation(current: feedbackAuthState) {
+            showFeedbackSignIn = true
         }
     }
 
@@ -2255,6 +2365,10 @@ struct DiscoverView: View {
                 recordInteraction(for: item, action: .share, source: "copy_link")
             },
             onLessLikeThis: {
+                guard case .signedIn = feedbackAuthState else {
+                    inviteSignInForFeedback()
+                    return
+                }
                 recordInteraction(for: item, action: .unlike, source: "context_menu")
                 hideForSession(itemId(item))
             }
@@ -2320,111 +2434,155 @@ private struct NativeGroupCard: View {
     let items: [FeedItem]
     var kind: String? = nil
     var theme: String? = nil
-    /// Threaded through to the rows so they can navigate from a tap gesture
-    /// rather than a `NavigationLink` (#7074) — the same binding the event and
-    /// futures cards already take.
+    var sharedQuestion: String? = nil
     @Binding var navigationPath: NavigationPath
     @State private var expanded = false
-
-    /// Whether every row is on screen: because the group is small enough to be
-    /// drawn whole, or because the reader opened it (#7074). The rule, and the
-    /// reason it is ONE expression rather than two agreeing conditions, is in
-    /// `DiscoverGroupRows`.
-    private var showsAllRows: Bool {
-        DiscoverGroupRows.showsEveryRow(itemCount: items.count, expanded: expanded)
-    }
 
     private var category: String {
         items.first?.futures?.llmSportCategory?.lowercased() ?? ""
     }
 
-    private var gradient: (Color, Color) {
-        sportCategoryGradients[category] ?? sportDefaultGradient
+    private var canExpand: Bool {
+        DiscoverGroupRows.canExpand(itemCount: items.count, kind: kind)
     }
 
     var body: some View {
         VStack(spacing: 0) {
             Button { withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() } } label: {
-                HStack(spacing: 8) {
-                    Text(title)
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(.white)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Text("\(items.count)")
-                        .font(.system(size: 10, weight: .heavy).monospacedDigit())
-                        .foregroundStyle(.white.opacity(0.7))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(.white.opacity(0.15), in: Capsule())
-                    Spacer()
-                    Image(systemName: "chevron.down")
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(.white.opacity(0.7))
-                        .rotationEffect(.degrees(expanded ? 180 : 0))
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 6) {
+                            Text(FuturesHero.emoji(for: category)).accessibilityHidden(true)
+                            Text(title.uppercased())
+                                .font(.caption2.weight(.bold))
+                                .tracking(0.8)
+                                .foregroundStyle(DS.textSecondary)
+                                .lineLimit(2)
+                                .fixedSize(horizontal: false, vertical: true)
+                            if sharedQuestion?.isEmpty != false {
+                                Text("\(items.count)")
+                                    .font(.caption2)
+                                    .foregroundStyle(DS.textMuted)
+                            }
+                        }
+                        if let sharedQuestion, !sharedQuestion.isEmpty {
+                            Text(sharedQuestion)
+                                .font(.headline.weight(.bold))
+                                .foregroundStyle(DS.textPrimary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    if canExpand {
+                        Image(systemName: "chevron.down")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(DS.textMuted)
+                            .rotationEffect(.degrees(expanded ? 180 : 0))
+                    }
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 11)
-                .background(
-                    LinearGradient(
-                        colors: [gradient.0, gradient.1],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    )
-                )
+                .padding(14)
             }
             .buttonStyle(.plain)
+            .disabled(!canExpand)
+            .accessibilityValue(canExpand ? (expanded ? "Expanded" : "Collapsed") : "")
 
-            if kind == "comparison" {
-                NativeComparisonBundleRows(
-                    items: expanded ? Array(items.prefix(6)) : Array(items.prefix(3)),
-                    theme: theme
-                )
-                .padding(.horizontal, 12)
-                .padding(.vertical, 9)
-            } else {
-                if let primary = items.first, let f = primary.futures {
-                    NativeCompactFuturesRow(data: f, navigationPath: $navigationPath)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
+            Divider()
+            if expanded && kind != "comparison" {
+                // The already-hydrated members reuse their ordinary full cards,
+                // including their existing destination, imagery and live prices.
+                VStack(spacing: 12) {
+                    ForEach(items, id: \.id) { item in fullCard(item) }
                 }
-
-                if showsAllRows {
-                    ForEach(items.dropFirst(), id: \.id) { item in
-                        if let f = item.futures {
-                            Divider().padding(.horizontal, 12)
-                            NativeCompactFuturesRow(data: f, navigationPath: $navigationPath)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 8)
+                .padding(12)
+                .background(DS.surface)
+            } else {
+                ForEach(Array(items.prefix(DiscoverGroupRows.visibleCount(itemCount: items.count, expanded: expanded))), id: \.id) { item in
+                    if let data = item.futures {
+                        compactRow(data)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 12)
+                        if item.id != items.prefix(DiscoverGroupRows.visibleCount(itemCount: items.count, expanded: expanded)).last?.id {
+                            Divider().padding(.horizontal, 14)
                         }
                     }
                 }
             }
 
-            if !expanded && items.count > 3 && kind == "comparison" {
+            if let footer = DiscoverGroupRows.footerTitle(itemCount: items.count, kind: kind, expanded: expanded) {
+                Divider()
                 Button { withAnimation { expanded = true } } label: {
-                    Text("Compare \(items.count - 3) more")
+                    Text(footer)
                         .font(.caption.weight(.medium))
-                        .foregroundStyle(.blue)
+                        .foregroundStyle(DS.blue)
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
-                }
-                .buttonStyle(.plain)
-            } else if !showsAllRows && items.count > 1 && kind != "comparison" {
-                Button { withAnimation { expanded = true } } label: {
-                    Text("Show \(items.count - 1) more")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.blue)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
+                        .padding(.vertical, 10)
                 }
                 .buttonStyle(.plain)
             }
         }
-        .background(Color.cardBackground)
+        .background(DS.cardBg)
         .clipShape(RoundedRectangle(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.barTrack.opacity(0.55), lineWidth: 0.5))
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(DS.border, lineWidth: 0.5))
         .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 3)
+    }
+
+    private func compactRow(_ data: FeedFuturesData) -> some View {
+        let summary = DiscoverGroupRows.compactSummary(for: data)
+        return HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(data.name)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(DS.textPrimary)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let label = summary.label {
+                    Text(label)
+                        .font(.caption)
+                        .foregroundStyle(DS.textSecondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            if let probability = summary.probability {
+                VStack(alignment: .trailing, spacing: 4) {
+                    Text(formatProbability(probability))
+                        .font(.title2.weight(.bold).monospacedDigit())
+                        .foregroundStyle(DS.textPrimary)
+                    MovementBadge(movement: summary.movement)
+                }
+                .frame(minWidth: 58, alignment: .trailing)
+                .layoutPriority(1)
+            }
+        }
+        .contentShape(Rectangle())
+        // Keep the existing tap gesture: a NavigationLink here turns a swipe
+        // into navigation on touch-up (#7074).
+        .onTapGesture { navigationPath.append(Route.futuresDetail(id: data.id)) }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityIdentifier(NativeCompactFuturesRow.rowIdentifier)
+    }
+
+    @ViewBuilder
+    private func fullCard(_ item: FeedItem) -> some View {
+        if let data = item.futures {
+            switch DiscoverGroupRows.fullCardStyle(for: data) {
+            case .heatmap:
+                HeatMapCardView(data: data, navigationPath: $navigationPath)
+            case .distribution:
+                DistributionCardView(data: data, navigationPath: $navigationPath)
+            case .comparison:
+                ComparisonCardView(data: data, navigationPath: $navigationPath)
+            case .futures:
+                NativeFuturesDiscoverCard(
+                    data: data,
+                    feedContext: DiscoverCaption.feedCaption(contextSummary: item.contextSummary, headline: item.headline, reason: item.reason, hookDescription: data.hookDescription),
+                    expandedContext: DiscoverCaption.firstMeaningful([data.hookDescription, item.reason, item.headline]),
+                    navigationPath: $navigationPath
+                )
+            }
+        }
     }
 }
 
@@ -2457,7 +2615,10 @@ private struct NativeIPOComparisonRow: View {
     }
 
     private var likely: FeedDiscoverThresholdPoint? {
-        points.max { ($0.probability ?? -1) < ($1.probability ?? -1) } ?? points.first
+        if data.discoverCard?.suggestedFormat == "threshold_heatmap",
+           let rung = DiscoverGroupRows.markedRung(in: points) { return rung }
+        // Exclusive valuation buckets retain their most-probable outcome.
+        return points.max { ($0.probability ?? -1) < ($1.probability ?? -1) } ?? points.first
     }
 
     private var highEnd: FeedDiscoverThresholdPoint? {
@@ -3231,14 +3392,24 @@ struct NativeGuessCard: View {
 // MARK: - Swipe to Dismiss
 
 private struct SwipeToDismiss<Content: View>: View {
+    @EnvironmentObject private var authManager: AuthManager
     let onSwipeLeft: () -> Void
     let onSwipeRight: () -> Void
+    let onRequiresSignIn: () -> Void
     @ViewBuilder let content: () -> Content
     // #1773: the whole gesture is a pure, unit-tested state machine
     // (`DiscoverSwipeState`) so the axis latch and the post-commit reset are
     // provable without a device. See that type's doc comment for the two
     // defects this replaced.
     @State private var swipe = DiscoverSwipeState()
+    @State private var feedbackStartedWith: DiscoverGuestFeedbackGate.AuthState?
+
+    private var feedbackAuthState: DiscoverGuestFeedbackGate.AuthState {
+        DiscoverGuestFeedbackGate.authState(
+            userId: authManager.user.map { String($0.id) },
+            isLoading: authManager.isLoading
+        )
+    }
 
     /// Every dismissible Discover card answers to this, whatever kind it is.
     ///
@@ -3287,9 +3458,20 @@ private struct SwipeToDismiss<Content: View>: View {
             .simultaneousGesture(
                 DragGesture(minimumDistance: DiscoverSwipeState.minimumDistance)
                     .onChanged { v in
+                        if !swipe.axisLatched { feedbackStartedWith = feedbackAuthState }
                         swipe.change(width: v.translation.width, height: v.translation.height)
                     }
                     .onEnded { v in
+                        let startedWith = feedbackStartedWith ?? .resolving
+                        feedbackStartedWith = nil
+                        if swipe.commits(width: v.translation.width),
+                           !DiscoverGuestFeedbackGate.allowsFeedback(startedWith: startedWith, current: feedbackAuthState) {
+                            withAnimation(.spring(response: 0.3)) {
+                                swipe.settleAfterCommit()
+                            }
+                            onRequiresSignIn()
+                            return
+                        }
                         // Same predicate `end` uses, so the curve can never drift
                         // from the decision: fly-out on commit, spring on release.
                         let curve: Animation = swipe.commits(width: v.translation.width)
@@ -3300,7 +3482,11 @@ private struct SwipeToDismiss<Content: View>: View {
                         }
                         guard outcome != .none else { return }
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                            if outcome == .right { onSwipeRight() } else { onSwipeLeft() }
+                            if DiscoverGuestFeedbackGate.allowsFeedback(startedWith: startedWith, current: feedbackAuthState) {
+                                if outcome == .right { onSwipeRight() } else { onSwipeLeft() }
+                            } else {
+                                onRequiresSignIn()
+                            }
                             // Unconditional. If the row really left the feed this
                             // is a no-op on a dead view; if it came back via the
                             // feed-floor backfill or pull-to-refresh, this is the

@@ -177,7 +177,17 @@ POLL_STAMP_COUNTS = {
     #     that meant something different from its own parent would be a second
     #     reading of one column, which is the disease #2024 is about.
     "app/tasks/polymarket.py": 9,
-    "app/tasks/futures.py": 2,
+    # #9387: the outcome conflict arm still stamps EVERY returned quote,
+    # including unchanged prices, but uses the same Python poll clock as its
+    # provider anchor and the existing ORM arm instead of transaction-start
+    # func.now(). This census counts SQL now() sites, hence 2 -> 1.
+    # READ_SIDE_CONSUMERS rechecked: playoff cutoff, omission/expiry gates and
+    # price_evidence still see a current poll-touch, not a price-change stamp;
+    # the Oscars max fold and sampler fallback retain their interpretation.
+    # test_futures_quote_identity_9387 drives the real poll with an unchanged
+    # existing price and asserts its stamp advances to the anchor clock; it
+    # also pins both INSERT/ON CONFLICT clock values at the SQL boundary.
+    "app/tasks/futures.py": 1,
     # #2199: the price refresher. A FOURTH writer, and the census is why it had
     # to declare itself — it exists precisely because the three above cannot
     # reach every market they are assumed to cover.
@@ -611,7 +621,11 @@ PRICE_CHANGE_STAMPERS = {
     # answered, the price IS the answer, so that arm re-stamps against the
     # terminal 1.0/0.0 — through the shared helper, for the reason above.
     "app/tasks/kalshi.py": 6,
-    "app/tasks/polymarket.py": 3,
+    # 3 -> 4 (#9399): `_withdraw_book_refuted_legs`' CLEAR of a stored price the
+    # leg's current book prices out. Stamped with `None` as the new price through
+    # the shared helper, exactly as #4356's withdrawn-leg clear in `kalshi.py` —
+    # a price going away IS a change.
+    "app/tasks/polymarket.py": 4,
     "app/tasks/futures.py": 1,
     # #5246 / CERT-2637: `_backfill_kalshi_winners`' Core update. It is one of
     # the LIVE Kalshi settlement graders — the first version of #5246 patched
@@ -638,7 +652,14 @@ PRICE_CHANGE_STAMPERS = {
     # to it. Here the reverse is true — the move forty lines up stamps — so an
     # unstamped clear would be the single unstamped write in the file. Both
     # choices follow one principle: within a file, the column means one thing.
-    "app/tasks/futures_price_refresh.py": 2,
+    # 2 -> 3 (#9220): the GRADE of a leg the venue settled on a still-open board
+    # (a finalized series leg beside live siblings). A resolution write that
+    # carries the terminal 1.0/0.0 beside the verdict, like #5246's two in
+    # `kalshi.py` above — a settled price is still a price MOVE, so it stamps
+    # through the shared helper. Its `last_updated` stamp sits in a block that
+    # spells `resolution_source`, so `POLL_STAMP_COUNTS` is unchanged and none of
+    # the audited `last_updated` readers sees a new poll touch-stamp.
+    "app/tasks/futures_price_refresh.py": 3,
     # Q460: the WebSocket consumers, now routed through the shared helper like
     # every other price writer. They are the FASTEST-moving writers of this
     # column — sub-second, versus the polls' 120s — so they are also the ones

@@ -2805,17 +2805,17 @@ async def unlink_prediction_market(
     old_event_id = market.event_id
     snapshots_deleted = 0
 
-    # Delete orphaned win_prob_snapshots for the old event
+    # Delete only the rows THIS market wrote on the old event (#9504/#9584).
+    # The source-wide delete this replaces erased every other market's line
+    # too: unlinking a W15 leg parked on Tomic v Sun would have taken Tomic's
+    # own Polymarket chart with it.
     if old_event_id:
-        from sqlalchemy import delete as sql_delete
-        from app.models.models import WinProbSnapshot
-        del_result = await db.execute(
-            sql_delete(WinProbSnapshot).where(
-                WinProbSnapshot.event_id == old_event_id,
-                WinProbSnapshot.source == market.source,
-            )
+        from app.tasks.prediction_market_matching import (
+            _delete_departing_market_snapshots,
         )
-        snapshots_deleted = del_result.rowcount
+        snapshots_deleted = await _delete_departing_market_snapshots(
+            db, old_event_id, market.source, [market.id],
+        )
 
     market_row = {
         "id": market.id, "source": market.source,

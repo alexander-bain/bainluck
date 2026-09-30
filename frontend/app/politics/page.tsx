@@ -793,6 +793,16 @@ function MultiCard({
 }) {
   const leader = market.top_outcomes?.[0];
   if (!leader) return null;
+  // #9109: the server counts the rungs the page behind this card shows and the
+  // card does not. `outcome_count - 3` counted passed deadlines the page drops
+  // ("+9 more" over two rows); it is only the fallback for an older payload.
+  const moreCount = market.more_count ?? market.outcome_count - 3;
+  // #9474: "Leader" is a claim that the rows compete for one win. On a ladder
+  // ("Before Jan 3, 2027" ⊃ "Before Dec 12, 2026"; "At least 1" ⊃ "At least 2")
+  // the top row is the loosest rung by construction, and on a pick-several
+  // list every row can come true — 57 of 68 cards on 2026-09-28 were one of
+  // those and all 57 said "Leader". The word goes; the row stays.
+  const namesALeader = market.mutually_exclusive !== false;
 
   return (
     <Link href={`/futures/${market.market_id}`}>
@@ -808,7 +818,7 @@ function MultiCard({
             }}
           >
             <SourceBadge source={market.src} />
-            {market.outcome_count > 3 && (
+            {moreCount > 0 && (
               <span
                 style={{
                   marginLeft: "auto",
@@ -816,7 +826,7 @@ function MultiCard({
                   fontSize: 10,
                 }}
               >
-                +{market.outcome_count - 3} more
+                +{moreCount} more
               </span>
             )}
           </div>
@@ -833,37 +843,47 @@ function MultiCard({
             {market.q}
           </h3>
 
+          {/* #9474 follow-up: a pick-several row's name can be a whole case
+              caption ("Bird v. Iowa Migrant Movement for Justice"); with no gap
+              it ran into the number as "…for Justice39%". The name wraps, the
+              number keeps its width. */}
           <div
             style={{
               display: "flex",
               alignItems: "baseline",
               justifyContent: "space-between",
+              gap: 12,
             }}
           >
-            <div style={{ display: "flex", flexDirection: "column" }}>
-              <span
-                style={{
-                  fontSize: 11,
-                  color: "var(--text-muted)",
-                  fontWeight: 600,
-                  letterSpacing: "0.04em",
-                  textTransform: "uppercase",
-                }}
-              >
-                Leader
-              </span>
+            <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
+              {namesALeader && (
+                <span
+                  style={{
+                    fontSize: 11,
+                    color: "var(--text-muted)",
+                    fontWeight: 600,
+                    letterSpacing: "0.04em",
+                    textTransform: "uppercase",
+                  }}
+                >
+                  Leader
+                </span>
+              )}
               <span
                 style={{
                   fontSize: 14,
                   fontWeight: 600,
                   color: "var(--text-primary)",
-                  marginTop: 2,
+                  marginTop: namesALeader ? 2 : 0,
                 }}
               >
                 {leader.name}
               </span>
             </div>
-            <span className={s.probNum} style={{ fontSize: 28, color: "var(--text-primary)" }}>
+            <span
+              className={s.probNum}
+              style={{ fontSize: 28, color: "var(--text-primary)", flexShrink: 0 }}
+            >
               {Math.round(leader.prob)}%
             </span>
           </div>

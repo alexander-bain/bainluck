@@ -1939,6 +1939,36 @@ _MARKET_TYPE_PATTERNS: list[tuple["re.Pattern[str]", str]] = [
 ]
 
 
+# #9113: a player's destination market ("Steph Curry's Next Team", "Erling
+# Haaland: Next Club", "NBA: Steph Curry Next Team", "Where will Cristiano
+# Ronaldo go next?", "Max Verstappen's Next F1 Team") names no competition, so it fell through to the
+# "championship" default and 80+ open ones shared their sport's catch-all key
+# with the title race. The key then lied three ways: LAFC's team page read
+# Neymar-to-LAFC as CHAMPIONSHIP 1%; Discover scored Kalshi-only "Steph Curry's
+# Next Team" `multi_source` because a Polymarket row sat under
+# `basketball::championship:2026`; and every player's market folded into every
+# other's as one "question". Each player is his own question, so the type
+# carries the player. "Next Team to Score" is a game prop — hence `(?!\s+to\b)`.
+_PLAYER_DESTINATION_RES = (
+    re.compile(
+        r"^(?:[^:]*:\s*)?(?P<who>[^:]+?)(?:['’]s?)?\s*:?\s+next\s+(?:f1\s+)?(?:club|team)\b(?!\s+to\b)",
+        re.I,
+    ),
+    re.compile(r"\bwhere\s+will\s+(?P<who>.+?)\s+go\s+next\b", re.I),
+)
+
+
+def detect_player_destination(name: str) -> Optional[str]:
+    """``next_team_<player>`` for a player-destination market, else None."""
+    for pattern in _PLAYER_DESTINATION_RES:
+        match = pattern.search(name or "")
+        if match:
+            who = re.sub(r"[^a-z0-9]+", "_", match.group("who").casefold()).strip("_")
+            if who:
+                return f"next_team_{who}"
+    return None
+
+
 def detect_market_type(name: str) -> str:
     """
     Detect a normalized market type from the market name.
@@ -1950,6 +1980,9 @@ def detect_market_type(name: str) -> str:
     Returns:
         Normalized type string (e.g., "al_cy_young", "mvp", "championship")
     """
+    destination = detect_player_destination(name)
+    if destination:
+        return destination
     for pattern, market_type in _MARKET_TYPE_PATTERNS:
         if pattern.search(name):
             return market_type

@@ -403,6 +403,9 @@ class _FakeSession:
         self.writes.append(stmt)
         return _FakeResult([])
 
+    async def commit(self):
+        pass
+
 
 class _FakeTeamRow:
     def __init__(self, tid, espn_id, name):

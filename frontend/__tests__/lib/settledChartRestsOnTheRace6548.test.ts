@@ -144,8 +144,9 @@ describe("#6548 — FuturesChart passes its settledness to the anchor", () => {
     .replace(/^\s*\/\/.*$/gm, "");
 
   test("the anchor call is handed `settled`, not just the element", () => {
+    // #9867 added `movement` beside it; `settled` is still what switches rules.
     expect(CODE).toMatch(
-      /el\.scrollLeft\s*=\s*anchorScrollLeft\(\s*el\s*,\s*\{\s*settled\s*\}\s*\)/,
+      /el\.scrollLeft\s*=\s*anchorScrollLeft\(\s*el\s*,\s*\{\s*settled\s*,\s*movement\s*\}\s*\)/,
     );
   });
 

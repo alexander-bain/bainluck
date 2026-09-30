@@ -92,10 +92,11 @@ class _Session:
 
         if isinstance(statement, Update):
             self.updates.append(statement)
+            returned = {"polymarket": {"value": 0.405, "updated_at": FORGED_STAMP}}
             return SimpleNamespace(
-                scalar_one_or_none=lambda: {
-                    "polymarket": {"value": 0.405, "updated_at": FORGED_STAMP}
-                }
+                scalar_one_or_none=lambda: returned,
+                # The stamp's `RETURNING` bag + revision (#9051).
+                first=lambda: (returned, None),
             )
         if hasattr(statement, "text"):  # SET lock_timeout
             return SimpleNamespace()

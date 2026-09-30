@@ -20,9 +20,12 @@ from app.models.models import (
     FuturesMarket, FuturesOutcome, TeamIdentityMapping,
 )
 from app.services.database import get_db, get_db_rw
-from app.utils.game_market_club_names import repair_field_outcome_name
+from app.utils.series_card_labels import market_threshold_label, reader_outcome_name
 from app.utils.market_team_sport import (
+    link_crosses_gender as _link_crosses_gender,
+    link_crosses_league as _link_crosses_league,
     link_crosses_sport as _link_crosses_sport,
+    market_event_slug as _market_event_slug,
     sport_key_llm_category as _sport_key_llm_category,
 )
 from app.utils.name_normalization import names_match as _names_match
@@ -1387,8 +1390,11 @@ async def _query_team_futures(
     teams: dict[int, Team] = {}
     # team_id → sport category (e.g., "hockey", "baseball")
     team_sport_categories: dict[int, str] = {}
+    # team_id → sport key, for the side test (#9593)
+    team_sport_keys: dict[int, str] = {}
     for t, sport_key in result.all():
         teams[t.id] = t
+        team_sport_keys[t.id] = sport_key
         cat = _sport_key_llm_category(sport_key)
         if cat:
             team_sport_categories[t.id] = cat
@@ -1408,6 +1414,7 @@ async def _query_team_futures(
     # id_to_canonical maps EVERY loaded team id (dup + canonical) → the canonical id
     # so the team_id FK match, matched_team, and teams_list all dedup.
     id_to_canonical: dict[int, int] = {tid: tid for tid in teams}
+    loaded_teams: dict[int, Team] = dict(teams)
     if len(teams) > 1:
         # One query for identity-mapping row counts across all loaded team ids.
         tim_counts: dict[int, int] = {}
@@ -1472,22 +1479,43 @@ async def _query_team_futures(
         for _tid, _cat in team_sport_categories.items():
             remapped_cats[id_to_canonical.get(_tid, _tid)] = _cat
         team_sport_categories = remapped_cats
+        # The collapse never crosses sport_id, so a cluster shares one key.
+        team_sport_keys = {
+            id_to_canonical.get(_tid, _tid): _key
+            for _tid, _key in team_sport_keys.items()
+        }
 
     # Build ILIKE patterns from FULL team names only — no alternate_names,
     # no short suffixes.  This prevents "Bears" (from "Brown Bears") from
     # matching "Chicago Bears" or "Eagles" matching "Philadelphia Eagles".
+    #
+    # #9219 — EVERY MEMBER'S SPELLING, NOT ONLY THE CANONICAL'S. The patterns
+    # used to be built after the collapse, from the one row that won it. The
+    # Canadiens are 568 "Montreal Canadiens" and 3706 "Montréal Canadiens", tied
+    # on mappings and name length, so whichever won, the other spelling was
+    # never searched: the page served 3 of the club's markets while the
+    # division, playoff-round and title legs, all named "Montreal Canadiens",
+    # sat unread. A dupe row's full name is the same club's full name, so it
+    # is searched too and a hit resolves to the canonical.
     team_patterns: list[str] = []
     seen_lower: set[str] = set()
+    member_names: dict[int, list[str]] = {}
     # Build roster player name → team ID map (for Python-side matching)
     player_to_team_id: dict[str, int] = {}
 
-    for t in teams.values():
-        if t.name:
-            escaped = _escape_like(t.name.strip())
-            if escaped.lower() not in seen_lower:
-                seen_lower.add(escaped.lower())
-                team_patterns.append(escaped)
+    for member_id, member in loaded_teams.items():
+        canonical_id = id_to_canonical.get(member_id, member_id)
+        if canonical_id not in teams or not member.name:
+            continue
+        names = member_names.setdefault(canonical_id, [])
+        if member.name not in names:
+            names.append(member.name)
+        escaped = _escape_like(member.name.strip())
+        if escaped.lower() not in seen_lower:
+            seen_lower.add(escaped.lower())
+            team_patterns.append(escaped)
 
+    for t in teams.values():
         # Collect roster player names for Python-side matching (not SQL ILIKE)
         roster = t.roster_players
         if roster and isinstance(roster, list):
@@ -1629,9 +1657,38 @@ async def _query_team_futures(
         # sport; a non-sport market keeps its link (utils/market_team_sport.py).
         # A refused link falls through to the name/roster branches, which run
         # their own sport check.
+        # #9593 — NOR IS IT GENDER-SCOPED, and neither is a name. Arsenal and
+        # Arsenal Women are both `soccer`, so every soccer "Arsenal" leg reached
+        # both pages: the women's hero printed "Championship 59%" (the men's
+        # English Premier League Champion) and the men's page listed the UEFA
+        # Women's Champions League Winner. Every branch below asks
+        # `_crosses_side` before it claims a team.
+        # #9761 — NOR IS A SPORT CATEGORY A LEAGUE. NFL and college football are
+        # both `football`, so a player still on a college roster carried his NFL
+        # props onto the school: LSU listed Mansoor Delane's "Pro Football: AP
+        # Defensive Rookie of the Year" after the linker had unbound the leg, and
+        # Notre Dame the NFL rookie board by Jeremiyah Love's name. The league
+        # the market's own venue id names (Kalshi series, Polymarket event slug)
+        # is the championship path's refusal and the linker's; it joins the side
+        # test here, so every branch asks it.
+        def _crosses_side(team_id: int) -> bool:
+            return _link_crosses_gender(
+                market.name,
+                team_sport_keys.get(team_id),
+                market_sport_key,
+                getattr(market, "source", None),
+                getattr(market, "external_id", None),
+            ) or _link_crosses_league(
+                getattr(market, "source", None),
+                getattr(market, "external_id", None),
+                team_sport_keys.get(team_id),
+                _market_event_slug(getattr(market, "market_metadata", None)),
+            )
+
         canonical_id = id_to_canonical.get(outcome.team_id) if outcome.team_id else None
-        if canonical_id and _link_crosses_sport(
-            market_sport_cat, team_sport_categories.get(canonical_id)
+        if canonical_id and (
+            _link_crosses_sport(market_sport_cat, team_sport_categories.get(canonical_id))
+            or _crosses_side(canonical_id)
         ):
             canonical_id = None
         if canonical_id and canonical_id in teams:
@@ -1646,12 +1703,17 @@ async def _query_team_futures(
         # "Bears" (from "Brown Bears") matching "Chicago Bears".
         outcome_name = outcome.name or ""
         for t in teams.values():
-            if _strict_team_name_matches(t.name, outcome_name):
+            if any(
+                _strict_team_name_matches(nm, outcome_name)
+                for nm in member_names.get(t.id, [t.name or ""])
+            ):
                 # BR53: verify sport compatibility for name matches
                 if market_sport_cat:
                     team_cat = team_sport_categories.get(t.id)
                     if team_cat and team_cat != market_sport_cat:
                         continue  # sport mismatch — try next team
+                if _crosses_side(t.id):
+                    continue  # the other side's market (#9593)
                 return {
                     "id": t.id,
                     "name": t.name,
@@ -1669,6 +1731,8 @@ async def _query_team_futures(
                         team_cat = team_sport_categories.get(t.id)
                         if team_cat and team_cat != market_sport_cat:
                             continue  # sport mismatch — try next player
+                    if _crosses_side(t.id):
+                        continue  # the other side's market (#9593)
                     return {
                         "id": t.id,
                         "name": t.name,
@@ -1785,7 +1849,9 @@ async def _query_team_futures(
             # (`James Cook III`, `Pat Surtain II`), whose trailing capitals look
             # identical but whose ticker leg is a player code, not a team code.
             # A short name is visibly short; a wrong one is not.
-            "outcome_name": repair_field_outcome_name(outcome.external_id, outcome.name)
+            "outcome_name": reader_outcome_name(
+                outcome.external_id, outcome.name, market_threshold_label(market)
+            )
             or outcome.name,
             "market_id": market.id,
             "market_name": market.name,

@@ -13,17 +13,20 @@ Runs after Kalshi (:45) and Polymarket (:15) polling to pick up fresh data.
 import logging
 import re
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
 from types import SimpleNamespace
 from typing import Optional
 
-from sqlalchemy import select, or_, and_, func, delete, case, update, text, bindparam, String
-from sqlalchemy.orm import joinedload
+from sqlalchemy import select, or_, and_, func, delete, case, cast, update, text, bindparam, String
+from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.orm import defer, joinedload
+from sqlalchemy.sql.functions import FunctionElement
 from sqlalchemy.orm.attributes import set_committed_value
 
 from app.tasks.base import get_task_session
 from app.utils.event_completion import (
+    KALSHI_TICKER_TIME_COMMENCE_SOURCE,
     POLYMARKET_VENUE_COMMENCE_SOURCE,
     RETIRED_STATUSES,
     TICKER_DERIVED_COMMENCE_SOURCE,
@@ -40,7 +43,12 @@ from app.utils.kalshi_occurrence_start import (
     KALSHI_OCCURRENCE_TIMED_SOURCES,
     kalshi_game_scale_commence,
 )
+from app.utils.event_twin_fold import (  # #7904/#9686, the catch-all shadow arm
+    CATCHALL_SHADOW_KICKOFF_DRIFT,
+    _catchall_sport_prefix,
+)
 from app.utils.futures_liveness import KALSHI_BOOK_SILENT_SQL
+from app.utils.venue_club_spellings import venue_spellings_of  # #8100
 from app.utils.polymarket_empty_book import (  # #9083, the pregame pin's book guard
     POLYMARKET_BOOKMAKER,
     is_empty_polymarket_book,
@@ -55,6 +63,7 @@ from app.utils.prediction_market_matching import (
     get_sport_prefix_from_ticker,
     _TICKER_TO_SPORT_PREFIX,
     extract_matchup,
+    esports_winner_matchup_name,
     extract_matchup_with_ticker_fallback,
     matchup_for_link_search,
     extract_teams_from_ticker,
@@ -67,6 +76,9 @@ from app.utils.prediction_market_matching import (
     is_combat_fight_ticker,
     is_kalshi_match_segment_ticker,
     _fuzzy_team_match,
+    _names_both_sides,
+    _doubles_pair_match,
+    pair_shape,
     _expand_team_search_terms,
     _SPORT_CATEGORY_TO_KEY_PREFIX,
     auto_create_sport_key_from_category,
@@ -75,6 +87,7 @@ from app.utils.prediction_market_matching import (
 )
 from app.utils.live_blend import (
     MarketOutcomes as _LiveBlendGroup,
+    admissible_as_blend_speaker,
     admissible_speakers_are_all_settled,
     admissible_speakers_are_settled_without_result,
     admissible_speakers_are_unobserved_since_kickoff,
@@ -84,7 +97,11 @@ from app.utils.live_blend import (
     has_proven_home_orientation,
     select_primary_market as _select_primary_market,
 )
-from app.utils.venue_competition import venue_named_league, venue_refuses_placement
+from app.utils.venue_competition import (
+    venue_named_league,
+    venue_named_sport_family,
+    venue_refuses_placement,
+)
 from app.utils import match_receipts as _receipts
 from app.utils import matcher_pass_runs as _pass_runs
 from app.utils.match_receipts import (
@@ -104,7 +121,7 @@ _PREGAME_MARK_LEAD_MINUTES = 15
 
 
 def _pregame_pin_outcome_probs(
-    market_source, outcomes, fresh_books=None
+    market_source, outcomes, fresh_books=None, unpriced_reads=None
 ) -> tuple[dict, int]:
     """The per-outcome numbers a pregame pin may hold, and how many legs it refused.
 
@@ -129,17 +146,31 @@ def _pregame_pin_outcome_probs(
     leg this poll did not read is judged on its stored columns, the only
     evidence there is.
 
+    READ BUT NOT PRICED (after-check RED, 2026-09-27 14:04Z). ``unpriced_reads``
+    holds the legs this poll read and then declined to price: no trade and no
+    bid, a price outside (0, 1), or a phantom midpoint. Such a leg's
+    ``current_probability`` is whatever an older poll wrote, so it is left out
+    whatever its book says. The specimen: market 61230222 ("CF Sant Rafel
+    (-2.5)") was pinned at 0.495 at 13:51Z from a row last priced 2026-09-17,
+    with 0.01/0.99 stored. The poll's read had no bid and no trade, so the
+    poller declined it, and its fresh book was not empty by the tick rule, so
+    the check above let the ten-day-old number through.
+
     Scope follows the rule's own: Polymarket only (CERT-2508's reason, the
     predicate is venue policy), and a leg with no recorded book is not refused.
     """
     refuse_empty = market_source == POLYMARKET_BOOKMAKER
     fresh_books = fresh_books or {}
+    unpriced_reads = unpriced_reads or set()
     probs: dict = {}
     refused = 0
     for o in outcomes:
         if o.current_probability is None:
             continue
         if refuse_empty:
+            if o.id in unpriced_reads:
+                refused += 1
+                continue
             if o.id in fresh_books:
                 bid, ask = fresh_books[o.id]
             else:
@@ -442,6 +473,13 @@ class _LinkedMarketRef:
     # why `_phase2b_completed_catchup`'s site says True explicitly rather than
     # leaving it to a default.
     event_has_result: bool | None = None
+    # #9348. `admissible_as_blend_speaker` now reads the venue's own label out
+    # of `market_metadata['content_understanding_v1']`; without it this copy
+    # abstains and the matcher would re-admit, every 15 minutes, the Completed
+    # Match novelty the live poll refuses. A plain JSON dict, not ORM state, so
+    # it survives the per-group rollbacks this class exists for. Excluded from
+    # hash/eq: a dict is unhashable, and identity is the scalars above.
+    market_metadata: dict | None = field(default=None, hash=False, compare=False)
 
     @property
     def id(self) -> int:
@@ -614,6 +652,7 @@ WRONG_GAME_PREFIXES = frozenset({
     "kxcs2game", "kxcs2map", "kxcs2mapwinner",
     "kxlolgame", "kxlolmap",
     "kxvalorantgame", "kxvalorantmap",
+    "kxdota2game", "kxdota2map",  # #9823
 })
 
 
@@ -740,7 +779,7 @@ _EVENT_DATE_MAX_DIFF_DAYS = 2
 # the gap, admits the whole near cluster, and still refuses the 489+ beyond
 # ±60h tournament-dump population that WRONG_GAME_PREFIXES exists to catch.
 # The date-only rule is UNCHANGED for esports (>=2 Eastern days).
-_ESPORTS_TICKER_PREFIXES = ("kxcs2", "kxlol", "kxvalorant")
+_ESPORTS_TICKER_PREFIXES = ("kxcs2", "kxlol", "kxvalorant", "kxdota2")  # kxdota2: #9823
 _ESPORTS_EVENT_DATE_MAX_DIFF_HOURS = 12
 
 try:  # pragma: no cover - exercised implicitly; only the absence path is dead
@@ -898,6 +937,7 @@ def _sport_key_is_odds_api_covered(sport_key: str | None) -> bool:
 
 async def covered_league_for_matchup(
     session, team_a, team_b, *, unambiguous_only: bool = False,
+    within_sport: Optional[str] = None,
 ) -> str | None:
     """The covered league BOTH sides of this matchup play in, or None. #5544.
 
@@ -1036,6 +1076,14 @@ async def covered_league_for_matchup(
         k for k in shared
         if is_season_variant(k) and league_identity(k) not in parent_leagues
     }
+    if within_sport:
+        # #7904: the caller already knows the SPORT — the row it is leaving is
+        # the venue's own `<sport>_other` mint — so only that sport's leagues
+        # can be the answer. "Bruins" and "Utah" both field an NHL club and
+        # three college programs; inside `icehockey` they field one league.
+        # This narrows `shared` and never widens it: a pair outside the sport
+        # still resolves to nothing.
+        shared = {k for k in shared if k.startswith(f"{within_sport}_")}
     if unambiguous_only and len(shared) != 1:
         return None
     return sorted(shared)[0] if shared else None
@@ -1083,6 +1131,10 @@ async def leagues_by_side_for_matchup(
         known = {(name or "").lower()}
         if isinstance(alternates, list):
             known |= {str(a).lower() for a in alternates if a}
+        # #8100: Polymarket's "South East Melbourne Phoenix" is teams 2919
+        # "S.E. Melbourne Phoenix". Without this the Phoenix alone of the ten
+        # NBL clubs was placed in `basketball_other`, beside its league row.
+        known |= venue_spellings_of(name)
         for index, side in enumerate(lowered):
             if side in known:
                 leagues_by_side[index].add(league)
@@ -1375,6 +1427,7 @@ MARKET_BORN_COMMENCE_SOURCES = (
     "kalshi",
     "kalshi_ticker",
     "kalshi_occurrence",
+    "kalshi_ticker_time",  # #9827: a Kalshi esports ticker's HHMM instant
     "polymarket",
     "polymarket_venue",
 )
@@ -1903,7 +1956,9 @@ def _parse_venue_game_start(meta):
     """``venue_game_start`` out of one row's ``market_metadata``, or None.
 
     #9117: an MLB "time TBD" stamp comes back as its game day's stand-in
-    instant (:func:`_mlb_tbd_game_day`), never as a 3:33 AM first pitch.
+    instant (:func:`_mlb_tbd_game_day`), never as a 3:33 AM first pitch. A
+    WNBA placeholder (:func:`_wnba_tbd_game_day`) is returned as the venue gave
+    it: 17:00Z already IS 1 PM Eastern all season, so it is its own stand-in.
     """
     parsed = _parse_raw_venue_game_start(meta)
     if parsed is None:
@@ -1984,6 +2039,57 @@ def _mlb_tbd_game_day(meta, instant):
     return None
 
 
+#: WNBA's placeholder: a playoff game Polymarket lists before its tip-off is
+#: set carries ``startTime`` = its ``eventDate`` at exactly 17:00:00Z. Measured
+#: 2026-09-30 ~11:40Z on all four conditional games Gamma listed on 09-25
+#: (1081046-1081049, ``wnba-ind-las-2026-10-01`` et al.). Gamma re-times each
+#: one only once the league does, and until then #4965's ±3h guard refuses the
+#: real row: Fever @ Aces Game 3 (ESPN 401918022, 10-02T01:00Z, 8h from the
+#: stamp) had no Polymarket price for 79 passes after the series went 1-1, and
+#: the Game 2 legs sat refused from 09-25 to 09-27 the same way.
+#:
+#: 17:00Z is ALSO a real tip-off (1 PM Eastern: Minnesota @ Connecticut
+#: 2026-09-20, Phoenix @ Dallas 09-19), so unlike MLB's 3:33 AM it cannot mean
+#: "TBD" alone. Reading it as the Eastern DAY costs a real 17:00Z game nothing:
+#: its row is on that day, and one pair of WNBA teams never plays twice in a day.
+#: The slug's own date must equal the stamp's UTC date, which every placeholder
+#: satisfies and a stamp from another fixture does not. Only ``wnba-`` slugs:
+#: the league it was measured on.
+_WNBA_TBD_SLUG_PREFIX = "wnba-"
+_WNBA_TBD_UTC_CLOCK = (17, 0, 0)
+_WNBA_TBD_ZONE_NAME = "America/New_York"
+
+
+def _wnba_tbd_zone():
+    try:
+        from zoneinfo import ZoneInfo
+        return ZoneInfo(_WNBA_TBD_ZONE_NAME)
+    except Exception:  # pragma: no cover - no tzdata: never read a date-only stamp
+        return None
+
+
+_WNBA_TBD_ZONE = _wnba_tbd_zone()
+
+
+def _wnba_tbd_game_day(meta, instant):
+    """``(Eastern game date, Eastern UTC offset)`` for WNBA's placeholder stamp.
+
+    None for everything else: a non-WNBA slug, any other clock, a slug whose
+    date is not the stamp's, no tzdata.
+    """
+    if _WNBA_TBD_ZONE is None:
+        return None
+    slug = meta.get("polymarket_event_slug") if isinstance(meta, dict) else None
+    if not isinstance(slug, str) or not slug.startswith(_WNBA_TBD_SLUG_PREFIX):
+        return None
+    utc = instant.astimezone(timezone.utc)
+    if (utc.hour, utc.minute, utc.second, utc.microsecond) != (*_WNBA_TBD_UTC_CLOCK, 0):
+        return None
+    if slug[-10:] != utc.date().isoformat():
+        return None
+    return utc.date(), utc.astimezone(_WNBA_TBD_ZONE).utcoffset()
+
+
 def venue_game_day(market):
     """``(date, offset)`` when the venue gave only a DATE for this game. #9117.
 
@@ -1992,7 +2098,9 @@ def venue_game_day(market):
     """
     meta = getattr(market, "market_metadata", None)
     parsed = _parse_raw_venue_game_start(meta)
-    return None if parsed is None else _mlb_tbd_game_day(meta, parsed)
+    if parsed is None:
+        return None
+    return _mlb_tbd_game_day(meta, parsed) or _wnba_tbd_game_day(meta, parsed)
 
 
 def _venue_game_day_disagrees(market, commence) -> bool:
@@ -2007,6 +2115,26 @@ def _venue_game_day_disagrees(market, commence) -> bool:
     game_date, offset = day
     ec = commence if commence.tzinfo else commence.replace(tzinfo=timezone.utc)
     return (ec.astimezone(timezone.utc) + offset).date() != game_date
+
+
+def _venue_fixture_disagrees(market, commence) -> bool:
+    """Would #4965's fixture guard refuse a row starting at ``commence``? Pure.
+
+    The guard's whole decision, minus the DB read of the event's start, so the
+    scorer can ask it BEFORE ranking (#9427). A day-only stamp is judged by day
+    (#9117); a real instant by ±``_PM_FIXTURE_MAX_DIFF_HOURS``. Fails OPEN when
+    either side is missing, exactly as the guard does, and for every source
+    but Polymarket, which is the only one the guard judges (#8373's gate).
+    """
+    if getattr(market, "source", None) != "polymarket":
+        return False
+    if venue_game_day(market) is not None:
+        return _venue_game_day_disagrees(market, commence)
+    fixture = venue_game_start(market)
+    if fixture is None or not isinstance(commence, datetime):
+        return False
+    ec = commence if commence.tzinfo else commence.replace(tzinfo=timezone.utc)
+    return abs((fixture - ec).total_seconds()) / 3600 > _PM_FIXTURE_MAX_DIFF_HOURS
 
 
 async def _check_polymarket_fixture_reason(session, event_id: int, market):
@@ -2050,8 +2178,10 @@ async def _check_polymarket_fixture_reason(session, event_id: int, market):
             )
             return _REFUSAL_VENUE_FIXTURE
         return None
-    diff_hours = abs((fixture - ec).total_seconds()) / 3600
-    if diff_hours > _PM_FIXTURE_MAX_DIFF_HOURS:
+    # The scorer pre-filters on this same predicate (#9427), so the row it
+    # offers is never one this line refuses.
+    if _venue_fixture_disagrees(market, ec):
+        diff_hours = abs((fixture - ec).total_seconds()) / 3600
         logger.warning(
             "Venue-fixture linkage blocked (#4965): polymarket %s (fixture=%s) "
             "would link to event %d (commence=%s) — %.1fh apart, so these are "
@@ -2063,13 +2193,268 @@ async def _check_polymarket_fixture_reason(session, event_id: int, market):
     return None
 
 
+async def _event_sport_key(session, event) -> Optional[str]:
+    """``sports.key`` of ``event``'s sport, or ``None`` when it has none."""
+    if not getattr(event, "sport_id", None):
+        return None
+    from app.models.models import Sport as _Sport
+    return (await session.execute(
+        select(_Sport.key).where(_Sport.id == event.sport_id)
+    )).scalar_one_or_none()
+
+
+def _is_polymarket_catchall_shadow(event) -> bool:
+    """Is this row one Polymarket minted for itself, carrying no schedule id? #7904.
+
+    THE SHIP: NHL opening week shows each game once, as its NHL card. Polymarket
+    names NHL clubs by nickname, so its venue ingest filed a row per game in
+    ``icehockey_other`` weeks before StatPal or ESPN scheduled it (29 upcoming on
+    2026-09-28, Oct 5 → Oct 25). When the league row arrives the serve-time fold
+    joins the two only in the SAME orientation, because it copies home/away
+    numbers; the minter reads "Sharks vs. Blues" home-first, and 4 of the 10
+    Oct 8 shadows sit reversed against ESPN (`Blues @ Sharks` beside ESPN's
+    SJ @ STL row 15169788). Those stay two cards, each holding one venue.
+
+    The shadow's own link never reaches the finder: the venue instant agrees
+    with the row (the re-date made it so), so ``_venue_instant_disowns_link``
+    says no. This names that row so the caller can ask the #5544 finder the
+    question directly — which ONE real covered-league row sits at the venue's
+    minute. Moving the market there orients it by outcome name (measured on
+    2026-09-28: reversed shadow 15304618 → 15168042 served Polymarket 0.625
+    beside Kalshi 0.64). The shadow is left standing for #1946's drain; with no
+    markets and no blend key it folds either way round.
+
+    Every clause is the row's own provenance, never a name:
+
+    * minted on the venue's clock (``commence_time_source`` is Polymarket's);
+    * no provider id of any kind — no ``external_id``, ``espn_id`` or
+      ``statpal_fixture_id``. A row somebody scheduled is never a shadow;
+    * ``scheduled``. A live row's score question outranks a card count, and a
+      finished or retired row belongs to other arms.
+
+    The ``*_other`` sport key is the caller's check (it needs a query).
+    """
+    return (
+        _is_polymarket_venue_mint(event)
+        and getattr(event, "status", None) == "scheduled"
+    )
+
+
+def _is_polymarket_venue_mint(event) -> bool:
+    """The provenance half of :func:`_is_polymarket_catchall_shadow`, any status. #7904.
+
+    Venue clock, no provider id of any kind. The RETIRED arm needs this without
+    the ``scheduled`` clause: #5532's arm voided the NHL preseason shadows while
+    their Gamma listing stamp looked past, and their markets stayed on the voided
+    row. Such a row still says which SPORT the game is, which is all the retired
+    arm borrows from it (see its call site).
+    """
+    return (
+        getattr(event, "commence_time_source", None) == POLYMARKET_VENUE_COMMENCE_SOURCE
+        and getattr(event, "external_id", None) is None
+        and getattr(event, "espn_id", None) is None
+        and getattr(event, "statpal_fixture_id", None) is None
+    )
+
+
+#: The registry's provenance tag for a row Kalshi's own market minted (#2020).
+_KALSHI_MINT_TAG = "provenance:source:kalshi"
+
+
+def _is_kalshi_self_mint(event) -> bool:
+    """Is this row one a Kalshi market minted for itself, carrying no schedule id? #6720.
+
+    THE SHIP: a soccer match's page carries Kalshi's price. When a Kalshi game
+    market finds no row, ruling 048 mints one from the market's own label and
+    Kalshi's close time (+3h in soccer). Every later Kalshi market of that game
+    then sits on the mint, and the real fixture — scheduled by the sportsbooks,
+    ESPN or StatPal — shows no Kalshi at all (Leganés v Castellón 2026-09-28:
+    4 Kalshi markets on 15318965, 0 on 15316746).
+
+    This is the Kalshi twin of :func:`_is_polymarket_venue_mint`, and it exists
+    because the arm that used to revalidate market-born rows reads
+    ``external_id LIKE 'pm_%'`` — a shape the registry has not written since
+    2026-08-17 (production: 0 such rows created in 120 days), so it is dead.
+
+    Every clause is the row's own provenance, never a name: the registry's
+    Kalshi source tag, and no provider id of any kind (``external_id``,
+    ``espn_id``, ``statpal_fixture_id``). A row somebody scheduled never
+    qualifies, whoever minted it.
+    """
+    tags = getattr(event, "event_tags", None) or []
+    return (
+        _KALSHI_MINT_TAG in tags
+        and getattr(event, "external_id", None) is None
+        and getattr(event, "espn_id", None) is None
+        and getattr(event, "statpal_fixture_id", None) is None
+    )
+
+
+def _kalshi_tennis_listing_window(game_date):
+    """Where a Kalshi tennis ticker's match can be played: ``(lo, hi)``. #9624.
+
+    A Kalshi tennis ticker's date is the day the DRAW was listed, not the day of
+    play (:func:`is_kalshi_match_segment_ticker`). Measured on the specimen,
+    2026-09-29: ``KXATPDOUBLES-26SEP28BOLVAVMOCWAT`` is Tokyo Round of 16
+    doubles, and the match is scheduled 2026-10-01 01:00Z — 73h after its
+    ticker's date, so the date-only window (−6h/+30h) ends two days short.
+
+    The far bound is :data:`~app.utils.tennis_twin_pairs.MAX_TWIN_SEPARATION`,
+    measured on the same relation (a draw-date ghost against its played match:
+    median 25h, p90 67h, 96h keeps 170/172). The near bound is the date-only
+    window's own −6h. Play never precedes the draw.
+    """
+    from app.utils.tennis_twin_pairs import MAX_TWIN_SEPARATION
+
+    return game_date - timedelta(hours=6), game_date + MAX_TWIN_SEPARATION
+
+
+def _doubles_pairs_on_opposite_sides(team_a, team_b, home, away) -> bool:
+    """Both of a doubles market's pairs name the row's two DIFFERENT pairs. #9624.
+
+    :func:`_doubles_pair_match` is the one-to-one partner test (#8722), stricter
+    than :func:`_fuzzy_team_match`'s containment: every partner of one pair must
+    land inside exactly one partner of the other. A side that is not exactly two
+    partners fails it, so a singles row never passes.
+    """
+    return (
+        (_doubles_pair_match(team_a, home) and _doubles_pair_match(team_b, away))
+        or (_doubles_pair_match(team_a, away) and _doubles_pair_match(team_b, home))
+    )
+
+
+async def _kalshi_self_mint_real_fixture(
+    session, matchup, market, linked_event, *, mint_sport_key=None,
+):
+    """The ONE scheduled row a Kalshi market on its own mint belongs to, or None. #6720.
+
+    The #5544 finder cannot answer this: it needs the ticker's HHMM, and soccer
+    and MMA tickers carry a date only (``KXLALIGA2GAME-26SEP28LEGCAS``). The
+    scorer cannot either — it prefers the mint, whose names ARE the market's.
+    So this asks the narrow question directly, failing closed at every step:
+
+      1. a Kalshi market with a ticker date and two named sides;
+      2. candidates in the mint's OWN sport, inside the window the forward path
+         searches for that ticker (±3h of an HHMM, else −6h/+30h of the date);
+      3. each candidate carries a schedule id (``external_id``, ``espn_id`` or
+         ``statpal_fixture_id``) and is not retired — never another mint;
+      4. both sides pass :func:`_fuzzy_team_match` (accent-folded), in either
+         orientation, and EXACTLY ONE row qualifies. Zero: the schedule has not
+         carried the game yet, and the next pass asks again. Two: a twin pair or
+         a doubleheader, which is #1946's to tell apart, not this pass's.
+
+    THE TENNIS ARM (#9624), doubles only — ``mint_sport_key`` is ``tennis*``.
+    Seven Tokyo doubles matches were each stored twice on 2026-09-29: the
+    Kalshi mint (``tennis_atp``, dated its ticker's listing day, ``suspended``,
+    "No result reported · Sep 28") and the StatPal row (``tennis_other``, the
+    real Oct 1 01:00Z), each holding one venue's price. Three steps differ:
+
+      * step 2's sport is the mint's own OR the ``tennis_other`` bucket — the
+        forward path's own carve-out (:func:`_is_cross_sport_link`), so ATP
+        never reaches WTA — and the window is
+        :func:`_kalshi_tennis_listing_window`, because the ticker names the draw
+        day, not the day of play;
+      * step 4 is :func:`_doubles_pairs_on_opposite_sides`, the one-to-one
+        partner test, never a surname containment;
+      * a singles market is not this arm's. Singles mints are folded by the
+        twin sweeps (``tennis_twin_pairs``, the #5821 container sweep) and a
+        surname-only name test was never measured here (#9584's "Sun v Sun").
+
+    Ruling 048 is untouched: no event absorbs another and the mint is left
+    standing. Only the market's pointer moves, onto the row the forward path
+    would have chosen had it existed first, and the caller routes it through the
+    same duplicate-linkage guard the forward path uses.
+    """
+    from app.models.models import Event, Sport
+
+    if getattr(market, "source", None) != "kalshi" or not matchup.team_b:
+        return None
+    game_date = extract_game_date_from_ticker(getattr(market, "external_id", None))
+    if game_date is None or not getattr(linked_event, "sport_id", None):
+        return None
+    tennis = _sport_family(mint_sport_key) == "tennis"
+    if tennis:
+        if pair_shape(matchup.team_a, matchup.team_b) is not True:
+            return None  # singles — see "THE TENNIS ARM" above
+        lo, hi = _kalshi_tennis_listing_window(game_date)
+        sport_clause = Sport.key.like("tennis%")
+    else:
+        start = ticker_start_utc(game_date)
+        if start is not None:
+            lo, hi = start - timedelta(hours=3), start + timedelta(hours=3)
+        else:
+            lo, hi = game_date - timedelta(hours=6), game_date + timedelta(hours=30)
+        sport_clause = Event.sport_id == linked_event.sport_id
+
+    candidates = (await session.execute(
+        select(
+            Event.id, Event.sport_id, Event.home_team_name, Event.away_team_name,
+            Sport.key.label("sport_key"),
+        )
+        .join(Sport, Sport.id == Event.sport_id)
+        .where(
+            sport_clause,
+            Event.id != linked_event.id,
+            Event.commence_time >= lo,
+            Event.commence_time <= hi,
+            Event.status.notin_(sorted(RETIRED_STATUSES)),
+            or_(
+                Event.external_id.isnot(None),
+                Event.espn_id.isnot(None),
+                Event.statpal_fixture_id.isnot(None),
+            ),
+        )
+    )).all()
+    if tennis:
+        confirmed = [
+            row for row in candidates
+            if not _is_cross_sport_link(
+                mint_sport_key, row.sport_key, allow_unclassified_bucket=False,
+            )
+            and _doubles_pairs_on_opposite_sides(
+                matchup.team_a, matchup.team_b,
+                row.home_team_name, row.away_team_name,
+            )
+        ]
+    else:
+        confirmed = [
+            row for row in candidates
+            if _names_both_sides(
+                matchup.team_a, matchup.team_b,
+                row.home_team_name, row.away_team_name,
+            )
+        ]
+    if len(confirmed) != 1:
+        if confirmed:
+            logger.info(
+                "Kalshi self-mint relink declined for %s: %d scheduled rows %s "
+                "name the game — ambiguous, leaving it on event %d",
+                market.external_id, len(confirmed),
+                [row.id for row in confirmed], linked_event.id,
+            )
+        return None
+    row = confirmed[0]
+    logger.info(
+        "Kalshi self-mint relink (%s): %s is scheduled event %d — moving it "
+        "off its own mint %d",
+        "#9624 tennis" if tennis else "#6720",
+        market.external_id, row.id, linked_event.id,
+    )
+    return {"event_id": row.id, "sport_id": row.sport_id}
+
+
 async def _venue_confirmed_covered_fixture(
     session, matchup, market, linked_event, *,
     window: Optional[timedelta] = None,
     exclude_retired: bool = False,
     allow_kalshi_ticker: bool = False,
+    within_sport: Optional[str] = None,
 ):
     """The real covered-league fixture this market's OWN venue instant names. #5544.
+
+    ``within_sport`` (#7904): the catch-all shadow arm passes the sport of the
+    `<sport>_other` row the market sits on, and the resolver keeps only that
+    sport's leagues. Every other caller leaves it None.
 
     ``allow_kalshi_ticker`` (#8547): the venue-instant relink alone also asks
     this of a Kalshi game ticker. The instant is the ticker's HHMM
@@ -2162,6 +2547,7 @@ async def _venue_confirmed_covered_fixture(
         # See the resolver's docstring for the measured AFL/AFLW pair.
         league = await covered_league_for_matchup(
             session, matchup.team_a, matchup.team_b, unambiguous_only=True,
+            within_sport=within_sport,
         )
     if league is None:
         return None
@@ -2198,12 +2584,9 @@ async def _venue_confirmed_covered_fixture(
     # definition of "same club" that could drift from the one above it.
     confirmed = [
         row for row in candidates
-        if (
-            _fuzzy_team_match(matchup.team_a, row.home_team_name)
-            or _fuzzy_team_match(matchup.team_a, row.away_team_name)
-        ) and (
-            _fuzzy_team_match(matchup.team_b, row.home_team_name)
-            or _fuzzy_team_match(matchup.team_b, row.away_team_name)
+        if _names_both_sides(
+            matchup.team_a, matchup.team_b,
+            row.home_team_name, row.away_team_name,
         )
     ]
     if len(confirmed) == 2 and not is_kalshi:
@@ -2402,7 +2785,8 @@ async def _split_pair_by_venue_home(market, pair):
 
 
 async def _check_duplicate_kalshi_linkage_reason(
-    session, event_id: int, market, ticker_game_date,
+    session, event_id: int, market, ticker_game_date, *,
+    tennis_listing_date: bool = False,
 ) -> str | None:
     """Why linking this Kalshi market to ``event_id`` must be refused, if it must.
 
@@ -2427,6 +2811,11 @@ async def _check_duplicate_kalshi_linkage_reason(
       (b) pre-existing — this market's ticker date vs an EXISTING SIBLING Kalshi
           market's ticker date on the same event. Still scoped to game/map
           WINNER prefixes on both sides, unchanged.
+
+    ``tennis_listing_date`` (#9624) is passed by Phase 1.5's tennis self-mint
+    arm only. For a Kalshi tennis segment ticker it swaps arm (a)'s date-only
+    rule for :func:`_kalshi_tennis_listing_window` — the window that arm
+    searched. Every other caller leaves it False.
     """
     from app.models.models import FuturesMarket
 
@@ -2449,7 +2838,32 @@ async def _check_duplicate_kalshi_linkage_reason(
     td = ticker_game_date or extract_game_date_from_ticker(market.external_id)
     if td is not None and not _is_combat_kalshi_prefix(prefix):
         event_commence = await _event_commence_time(session, event_id)
-        if _ticker_date_conflicts_with_event(
+        if (
+            tennis_listing_date
+            and event_commence is not None
+            and is_kalshi_match_segment_ticker(market.external_id)
+        ):
+            # #9624: the tennis self-mint arm's move. Arm (a) still runs, on
+            # the window that arm searched — the ticker names the DRAW day, so
+            # the date-only rule's 2 Eastern days refused the Tokyo doubles'
+            # Oct 1 match for its own Sep 28 ticker.
+            lo, hi = _kalshi_tennis_listing_window(td)
+            ec = (
+                event_commence if event_commence.tzinfo
+                else event_commence.replace(tzinfo=timezone.utc)
+            )
+            ref_lo, ref_hi = (
+                b if b.tzinfo else b.replace(tzinfo=timezone.utc) for b in (lo, hi)
+            )
+            if not ref_lo <= ec <= ref_hi:
+                logger.warning(
+                    "Event-date linkage blocked (#9624): tennis %s ticker=%s "
+                    "would link to event %d (commence=%s) — outside the "
+                    "listing-date window",
+                    market.external_id, td.isoformat(), event_id, ec.isoformat(),
+                )
+                return _REFUSAL_EVENT_DATE
+        elif _ticker_date_conflicts_with_event(
             td, event_commence, prefix,
         ) and not await _kalshi_postponed_game_carries(
             session, market.external_id, td, event_id,
@@ -2596,6 +3010,26 @@ def auto_create_commence_time(market, fallback):
     ticker_time = extract_game_date_from_ticker(getattr(market, "external_id", None))
     if ticker_time is None:
         return fallback, None
+    # #9827: an esports ticker's HHMM is the START, and the fallback is not.
+    # Kalshi's `commence_time` for these series is `occurrence_datetime`, the
+    # expected expiration: 404 of the Kalshi esports rows minted in the 10 days
+    # to 2026-09-30 sat exactly +4.00h after their ticker's instant, none at 0,
+    # and Polymarket's own fixture instant agreed with the TICKER. The ±12h
+    # esports window (`_ESPORTS_EVENT_DATE_MAX_DIFF_HOURS`) never refutes 4h,
+    # so the narrow rule that follows kept every one of them. Esports family only (the measured population),
+    # and only a ticker that carries a time of day — `ticker_start_utc` is the
+    # one Eastern→UTC conversion and returns None for a date-only ticker.
+    if getattr(market, "source", None) == "kalshi":
+        prefix = _kalshi_prefix(getattr(market, "external_id", None))
+        start = ticker_start_utc(ticker_time)
+        if (
+            start is not None
+            and prefix
+            and prefix.startswith(_ESPORTS_TICKER_PREFIXES)
+        ):
+            if fallback == start:
+                return fallback, None
+            return start, KALSHI_TICKER_TIME_COMMENCE_SOURCE
     if not auto_create_self_refutes(market, fallback):
         return fallback, None  # already coherent — change nothing
     return ticker_time, TICKER_DERIVED_COMMENCE_SOURCE
@@ -2898,6 +3332,44 @@ async def _prune_orphaned_blend_source(
     return changed
 
 
+async def _delete_departing_market_snapshots(
+    session, event_id: int, source: str, market_ids
+) -> int:
+    """Delete the win-prob rows the DEPARTING markets wrote on ``event_id``, and
+    nothing else. #9504.
+
+    Phase 1.5 used to delete every ``source`` row on the event when it moved one
+    market off it. An event holds several markets of one source — a soccer
+    match's Polymarket moneyline beside its Exact Score / Halftime Result books —
+    so unlinking one derivative erased the match line's whole history, and the
+    derivative was re-linked and unlinked again every cycle (684 unlinks over 65
+    events in 24h; SC Braga v Sporting CP drew sportsbooks only).
+
+    Every row is attributable: each writer stamps ``game_state.market_id``
+    (78,625 of 78,625 Polymarket rows in the 48h to 2026-09-29 02:35Z). A row
+    with NO stamp cannot be attributed to a staying market either, so it goes
+    with the departing one — the old delete's behaviour, kept for exactly the
+    rows it was right about.
+    """
+    from app.models.models import WinProbSnapshot
+
+    ids = sorted({str(int(m)) for m in market_ids if m is not None})
+    if not ids:
+        return 0
+    # Compared as text: `->>` is text on Postgres, and the explicit cast keeps
+    # an integer-typed JSON read (SQLite's rail) from silently matching nothing.
+    stamped = WinProbSnapshot.game_state["market_id"].astext
+    stamped = cast(stamped, String)
+    result = await session.execute(
+        delete(WinProbSnapshot).where(
+            WinProbSnapshot.event_id == event_id,
+            WinProbSnapshot.source == source,
+            or_(stamped.in_(ids), stamped.is_(None)),
+        )
+    )
+    return result.rowcount or 0
+
+
 async def _cleanup_orphaned_blend_sources(session, time_remaining_fn=None, limit: int = 2000) -> int:
     """Backfill/clean EXISTING phantom PM source keys — events carrying a
     kalshi/polymarket key in win_probability_sources with no linked market of
@@ -3095,9 +3567,12 @@ _KALSHI_TICKER_LIKE_PATTERNS = [f"{prefix}%" for prefix in _KALSHI_GAME_TICKER_P
 async def _try_link_market(
     session, market, matchup, matched_event, stats: dict,
     ticker_game_date, now: datetime, polymarket_backfill_queue: list,
-    *, receipt=None,
+    *, receipt=None, allow_create: bool = True,
 ) -> None:
     """Link a matched market to its event, or auto-create an event if needed.
+
+    ``allow_create=False`` (#9494) keeps the link and drops the auto-create:
+    no match, or a refused one, ends as ``auto_create_declined``.
 
     ``receipt`` (#2705) is write-only: the outcome of this call is the outcome
     the receipt records. Note that this is where the two REFUSALS live —
@@ -3184,6 +3659,13 @@ async def _try_link_market(
         return
 
     # No existing event — try auto-creating
+    if not allow_create:
+        stats["funnel"]["no_event_found"] += 1
+        if receipt is not None:
+            receipt.detail["auto_create"] = "declined"
+            if receipt.reject_reason is None:
+                receipt.reject(_receipts.REJECT_AUTO_CREATE_DECLINED)
+        return
     if matchup and matchup.team_b:
         auto_event = await _create_event_from_prediction_market(
             session, matchup, market, now,
@@ -3713,27 +4195,145 @@ async def _attempt_market(
         )
 
 
+async def _join_polymarket_group_row(
+    session, market, receipt: MatchReceipt, stats: dict,
+    polymarket_backfill_queue: list,
+) -> bool:
+    """Attach a not-game-level Polymarket child to the row its group already holds.
+
+    #9450. Polymarket sends one game as a group of children
+    (``polymarket_sub_market``): the match market ("Jingshan: Lloyd Harris vs
+    Alexis Galarneau"), set winners, spreads and handicaps are all classified
+    ``game_prop``, so this pass refuses every one of them as not game level.
+    They were only ever attached by the MATCHED branch of `_try_link_market`,
+    which sweeps the whole group onto the event it matched. The auto-create
+    branch — a new row, #5821's container link, #8430's group-sibling link —
+    moves only the child that arrived. So when a match's first game-level
+    child was an O/U line that created the row, its match market stayed
+    unlinked for good and the page served no probability. Production,
+    2026-09-28: 28 upcoming tennis matches, Harris v Galarneau among them.
+
+    The answer is `_polymarket_group_sibling_event_id`, the resolver the create
+    path already trusts: the venue's own event id says these children are one
+    game, the #4965 fixture guard vets the row, and a group split over several
+    rows goes to its preferred one. It runs on every attempt, so a match market
+    listed after its row was created joins on the next cycle rather than never.
+
+    Returns False — the caller's refusal, unchanged — when there is no row.
+    """
+    event_id = await _polymarket_group_sibling_event_id(session, market)
+    if event_id is None:
+        return False
+    market_id = int(market.id)
+    market.event_id = event_id
+    _set_market_sport_fields(market, {"event_id": event_id})
+    stats["newly_linked"] += 1
+    stats["funnel"]["linked"] += 1
+    stats["funnel"].setdefault("group_prop_joins", 0)
+    stats["funnel"]["group_prop_joins"] += 1
+    logger.info(
+        "Linking Polymarket child '%s' to event %d (#9450) — not game level on "
+        "its own, but its group %s already sits there",
+        market.name, event_id, market.group_id,
+    )
+    # Durable before claimed (CERT-771 / CERT-774), as in `_try_link_market`.
+    await session.commit()
+    polymarket_backfill_queue.append((market_id, event_id))
+    receipt.link(event_id, how="group_sibling_link")
+    return True
+
+
+def _venue_moneyline_match_name(market) -> Optional[str]:
+    """The ``A vs B`` behind a venue-labelled tennis moneyline's title, or None.
+
+    #9494. Polymarket titles a Challenger or ITF match with the bare city as its
+    label: "Curitiba: Ryan Dickerson vs Jose Pereira", "M15 Ann Arbor, MI: …",
+    "W35 Reims: …". `_CATEGORY_PREFIX_RE` strips a tournament it can name
+    ("China Open:", "Porto 2 (Doubles):"), and a city is a list with no end, so
+    these read as not game level. A bigger group still reached its row, because
+    an O/U sibling ("A vs. B: Total Sets O/U 2.5") IS game level: it linked the
+    row, and #9450 pulled the match market onto it. A Challenger group often
+    carries the moneyline and nothing else. Nothing links it, so the match's
+    page runs on Kalshi alone. Production, 2026-09-28: Dickerson v Pereira
+    (event 15320435), plus 20 more upcoming matches with a row to join.
+
+    The label is only stripped when two independent signals agree (standing
+    notice 40): Gamma's own ``sportsMarketType`` says this market prices who
+    wins the match (`is_full_contest_winner_type`, exact match), and what
+    follows the one colon is a bare matchup on its own. A prop label never gets
+    through. "Set 1 Winner:", "Set Handicap:" and "Completed Match:" all carry
+    their own Gamma types, and a title with a second colon is refused outright.
+    An absent label (~21% of markets) answers None, the refusal as before.
+
+    #9827: esports, the same two signals and the same join-only contract.
+    Polymarket titles every esports match winner "<Game>: A vs B (BOn) -
+    <Tournament>", which is not game level either; the title is read by
+    `esports_winner_matchup_name`, anchored on #2947's `(BOn)` marker and
+    refusing every derivative tail. Measured on production 2026-09-30, over
+    14 days of esports titles, it refuses every derivative Gamma type
+    (child_moneyline, totals, map_handicap, round/kill props) on its own; the
+    `moneyline` gate is the second, independent signal.
+    """
+    if getattr(market, "source", None) != "polymarket":
+        return None
+    sport = getattr(market, "llm_sport_category", None)
+    if sport not in ("tennis", "esports"):
+        return None
+    from app.services.polymarket_api import is_full_contest_winner_type
+    from app.utils.content_understanding import understanding_from_metadata
+
+    understanding = understanding_from_metadata(
+        getattr(market, "market_metadata", None)
+    )
+    if not understanding or not is_full_contest_winner_type(
+        understanding.get("venue_type")
+    ):
+        return None
+    if sport == "esports":
+        return esports_winner_matchup_name(market.name or "")
+    label, colon, rest = (market.name or "").partition(":")
+    rest = rest.strip()
+    if not colon or not label.strip() or not rest or ":" in rest:
+        return None
+    if not is_game_level_market(rest, market.category):
+        return None
+    return rest
+
+
 async def _run_one_attempt(
     session, market, receipt: MatchReceipt, stats: dict, now: datetime,
     polymarket_backfill_queue: list, _time_remaining,
 ) -> None:
     """The attempt itself: classify, parse, search, link. May raise."""
+    match_name = market.name
+    # #9494: a venue-labelled moneyline read through its city label may JOIN a
+    # row that already exists, and never mints one. Its title alone would have
+    # created nothing, and a row minted from a full name beside Kalshi's
+    # surname row would be two rows for one game.
+    join_only = False
     if not is_game_level_market(
         market.name, market.category,
         external_id=market.external_id,
     ):
-        stats["funnel"]["not_game_level"] += 1
-        if len(stats["funnel"]["sample_not_game_level"]) < 10:
-            stats["funnel"]["sample_not_game_level"].append(
-                {"source": market.source, "name": market.name,
-                 "external_id": market.external_id}
-            )
-        if not _receipt_parent_or_not_game_level(market, receipt):
-            receipt.reject(_receipts.REJECT_NOT_GAME_LEVEL, category=market.category)
-        return
+        if await _join_polymarket_group_row(
+            session, market, receipt, stats, polymarket_backfill_queue,
+        ):
+            return
+        match_name = _venue_moneyline_match_name(market)
+        if match_name is None:
+            stats["funnel"]["not_game_level"] += 1
+            if len(stats["funnel"]["sample_not_game_level"]) < 10:
+                stats["funnel"]["sample_not_game_level"].append(
+                    {"source": market.source, "name": market.name,
+                     "external_id": market.external_id}
+                )
+            if not _receipt_parent_or_not_game_level(market, receipt):
+                receipt.reject(_receipts.REJECT_NOT_GAME_LEVEL, category=market.category)
+            return
+        join_only = True
 
     matchup = extract_matchup_with_ticker_fallback(
-        market.name, external_id=market.external_id,
+        match_name, external_id=market.external_id,
     )
     if not matchup:
         stats["funnel"]["no_matchup_extracted"] += 1
@@ -3753,7 +4353,7 @@ async def _run_one_attempt(
     # cleaned, which is the half `is_derivative_market_name`'s own docstring
     # promised ("may link to a fixture we already hold") and never had.
     matched_event = await _find_matching_event(
-        session, matchup_for_link_search(matchup, market.name), market, now,
+        session, matchup_for_link_search(matchup, match_name), market, now,
         game_date_override=game_date,
         receipt=receipt,
         probe_allowed=_time_remaining() > _PROBE_MIN_SECONDS_REMAINING,
@@ -3762,8 +4362,11 @@ async def _run_one_attempt(
     await _try_link_market(
         session, market, matchup, matched_event, stats,
         game_date, now, polymarket_backfill_queue,
-        receipt=receipt,
+        receipt=receipt, **({"allow_create": False} if join_only else {}),
     )
+    if join_only and receipt.outcome == _receipts.OUTCOME_LINKED:
+        stats["funnel"].setdefault("venue_moneyline_joins", 0)
+        stats["funnel"]["venue_moneyline_joins"] += 1
 
 
 async def _phase1_pass3_backlog_scan(
@@ -4587,16 +5190,22 @@ def _phase15_eligible_where():
 
 
 def _market_sport_prefix(market) -> Optional[str]:
-    """The sport family a market claims, ticker first then stored LLM tag.
+    """The sport family a market claims: ticker, then Polymarket slug, then LLM tag.
 
     Ticker beats the stored tag on purpose: the tag is what the LLM guessed at
     ingest and it is wrong on exactly the rows this matters for (#3478 measured
-    419 of 1,066 cup rows tagged something other than soccer).
+    419 of 1,066 cup rows tagged something other than soccer). A Polymarket
+    market has no ticker, so its game slug's league code stands in (#9434:
+    every Arizona Cardinals NFL game is tagged ``baseball``).
     """
     market_sport = (
         get_sport_prefix_from_ticker(market.external_id)
         if market.external_id else None
     )
+    if not market_sport:
+        market_sport = venue_named_sport_family(
+            getattr(market, "market_metadata", None)
+        )
     if not market_sport and market.llm_sport_category:
         market_sport = _SPORT_CATEGORY_TO_KEY_PREFIX.get(market.llm_sport_category)
     return market_sport
@@ -4685,6 +5294,73 @@ def _is_cross_sport_link(
     ) and event_sport_key == f"{family}_other":
         return False  # the unclassified bucket of our OWN sport (#3605)
     return True
+
+
+def _tennis_link_players_agree(
+    event_sport_key: Optional[str],
+    team_a: Optional[str],
+    team_b: Optional[str],
+    home: Optional[str],
+    away: Optional[str],
+) -> bool:
+    """Do a market's two players name a tennis row's two players? Pure. #9472.
+
+    Phase 1.5's name test is ``_fuzzy_team_match``, whose containment floor is 4
+    characters and whose acronym arm refuses a bare 3-letter surname on purpose
+    ("Gea" must not reach "Arthur Gea" in a TEAM-shaped comparison). A tennis
+    row stored by surname alone (`Van de Zandschulp v Cui`, Kalshi's shape, or
+    Polymarket's own `Kakenova vs. Pan` lines against `Albina Kakenova v Jiayue
+    Pan`) therefore read as "mislinked" whenever one player's surname was <=3
+    letters: 50+ correct links broken in the 4 days to 2026-09-28, each re-joined
+    by the group path and broken again, or moved with the whole group onto a new
+    row (Lys v Sun, Gao v Udvardy, Cerundolo v Bu).
+
+    ``tennis_twin_pairs.players_agree`` is the tennis comparator: surname equal
+    and whole, initials compatible, doubles only against doubles. BOTH players
+    must agree, straight or swapped. This only ever KEEPS a link; the forward
+    path and every other sport are untouched.
+    """
+    if not (event_sport_key or "").startswith("tennis"):
+        return False
+    from app.utils.tennis_twin_pairs import players_agree  # refuses an empty name
+
+    straight = players_agree(team_a, home) and players_agree(team_b, away)
+    swapped = players_agree(team_a, away) and players_agree(team_b, home)
+    return straight or swapped
+
+
+def _tennis_raw_name_players_agree(
+    event_sport_key: Optional[str],
+    market_name: Optional[str],
+    home: Optional[str],
+    away: Optional[str],
+) -> bool:
+    """:func:`_tennis_link_players_agree` over a RAW market name. Pure. #9472.
+
+    Phase 1.5's re-date link check asks ``_fuzzy_team_match`` of the raw name, so
+    a row stored by a <=3-letter surname (`Tomic v Sun`, `Kozlov v Kim`) refused
+    every Polymarket leg as ``teams_absent`` and kept its Kalshi close-time start:
+    3 of 260 Challenger rows read LIVE hours early on 2026-09-29 (15320530 Tomic v
+    Sun, live since 03:00Z against a venue start of 07:35Z).
+
+    The raw name needs splitting first, and the prefix is the hard part: the
+    grammar returns ``None`` for "Jingshan: Bernard Tomic vs Fajing Sun" (it knows
+    "China Open:", not every Challenger town). ``bare_matchup_sides`` reads the
+    moneyline's one "Tournament: " prefix; ``extract_matchup`` reads the
+    surname-only prop lines ("Tomic vs. Sun: Match O/U 22.5"). Anything neither
+    can split stays refused.
+    """
+    if not (event_sport_key or "").startswith("tennis"):
+        return False
+    from app.utils.matchup_sides import bare_matchup_sides
+
+    sides = bare_matchup_sides(market_name)
+    if sides is None:
+        matchup = extract_matchup(market_name or "")
+        if matchup is None:
+            return False
+        sides = (matchup.team_a, matchup.team_b)
+    return _tennis_link_players_agree(event_sport_key, sides[0], sides[1], home, away)
 
 
 # --- Resolved-row cross-sport sweep (#3478 / CERT-2102) ---------------------
@@ -4931,6 +5607,71 @@ def _phase15_rows_by_id_query(market_ids):
     )
 
 
+#: #9827 rung 2 (CERT-3864) — the esports ticker re-date arm's own slice.
+#:
+#: The rows are the ones #9827's mint arm cannot reach: minted BEFORE it, from
+#: Kalshi's expected expiration, and already linked, so no mint or link phase
+#: ever sees them again (every one selects ``event_id IS NULL``). Neither the
+#: fresh slice nor the rotation can be trusted to hold them before the match —
+#: the #8547 measurement above is why — so the arm selects its own: every
+#: near-term link of a Kalshi esports ticker on a ``scheduled`` row whose start
+#: is still Kalshi's expiration, filtered by :func:`kalshi_esports_ticker_redate`
+#: itself (called verbatim, never restated in SQL). About ninety events
+#: (~two markets each) on 2026-09-30, and the class drains: a corrected row
+#: leaves the probe's own ``commence_time_source`` band.
+_PHASE15_ESPORTS_TICKER_SLICE = 200
+_PHASE15_ESPORTS_TICKER_LOOKBACK = timedelta(hours=6)
+_PHASE15_ESPORTS_TICKER_LOOKAHEAD = timedelta(days=4)
+
+
+def _phase15_esports_ticker_probe_query(now: datetime):
+    """``(market id, external_id, commence_time, commence_time_source, status)``
+    of every eligible Kalshi esports link to a scheduled row still stamped with
+    Kalshi's expiration, starting inside the window."""
+    from app.models.models import FuturesMarket, Event
+
+    return (
+        select(
+            FuturesMarket.id,
+            FuturesMarket.external_id,
+            Event.commence_time,
+            Event.commence_time_source,
+            Event.status,
+        )
+        .join(Event, FuturesMarket.event_id == Event.id)
+        .where(
+            *_phase15_eligible_where(),
+            FuturesMarket.source == "kalshi",
+            or_(*[
+                FuturesMarket.external_id.ilike(f"{prefix}%")
+                for prefix in _ESPORTS_TICKER_PREFIXES
+            ]),
+            Event.status == "scheduled",
+            Event.commence_time_source.in_(sorted(KALSHI_OCCURRENCE_TIMED_SOURCES)),
+            Event.commence_time >= now - _PHASE15_ESPORTS_TICKER_LOOKBACK,
+            Event.commence_time <= now + _PHASE15_ESPORTS_TICKER_LOOKAHEAD,
+        )
+    )
+
+
+def _phase15_esports_ticker_candidate_ids(
+    probe_rows, limit: int = _PHASE15_ESPORTS_TICKER_SLICE,
+) -> list[int]:
+    """The probe rows :func:`kalshi_esports_ticker_redate` would re-date,
+    soonest first. Pure, and asks the arm's own predicate, so the slice can
+    never disagree with the arm about which links it examines."""
+    claimed = []
+    for market_id, external_id, commence, source, status in probe_rows:
+        market = SimpleNamespace(source="kalshi", external_id=external_id)
+        event = SimpleNamespace(
+            commence_time=commence, commence_time_source=source, status=status,
+        )
+        if kalshi_esports_ticker_redate(market, event) is not None:
+            claimed.append((_as_utc(commence), market_id))
+    claimed.sort(key=lambda pair: (pair[0], pair[1]))
+    return [market_id for _commence, market_id in claimed[:limit]]
+
+
 #: How far an event's recorded start must sit from the venue's own fixture
 #: instant before Phase 1.5 rewrites it. NOT a "close enough" tolerance — it is
 #: the floor under a no-op write. Gamma reports whole minutes and the measured
@@ -4982,8 +5723,25 @@ async def polymarket_group_venue_start(session, market, cache=None):
 
     The instant is a property of the Gamma EVENT, identical on every row of the
     group, so reading it group-wide is not a widening — it is reading the value
-    where the venue actually put it. Own row first (cheapest, and the forward
-    path stamps children now), parent second.
+    where the venue actually put it.
+
+    PARENT FIRST, own row second (#9338 follow-up, production 2026-09-28). The
+    ingest rewrites the parent's stamp on EVERY pass over the Gamma event, but
+    it skips a child whose price does not resolve (``prob is None or prob <= 0``
+    in ``tasks.polymarket``), so an untraded leg keeps the stamp it was born
+    with. When Gamma re-dates the match, the parent moves and those children do
+    not — and an own-row-first read handed the redate the STALE instant, which
+    equals the event's stale start, so nothing moved:
+
+        polymarket:1088321  Cretu v Rocha  parent 09-29 09:00Z  child 62805358 09-28 09:00Z
+                            event 15320016 09-28 09:00Z polymarket_venue, LIVE, no score
+
+    Ten tennis rows read that way on 2026-09-28 10:4xZ, LIVE or about to be, for
+    matches the venue had moved later. The parent can never be the staler of the
+    two (it is written before the children, in the same pass, unconditionally),
+    so it wins whenever it carries a stamp; the child's own stamp is the answer
+    only for a group whose parent has none (a single-market event, or a parent
+    ingested before #4965).
 
     ``cache`` is a caller-owned dict keyed by ``group_id``, so a six-child group
     costs one query per pass rather than six. A ``None`` answer is cached too:
@@ -4991,13 +5749,12 @@ async def polymarket_group_venue_start(session, market, cache=None):
     sibling is the same query with the same answer.
     """
     own = venue_game_start(market)
-    if own is not None:
-        return own
     group_id = getattr(market, "group_id", None)
     if not group_id or getattr(market, "source", None) != "polymarket":
-        return None
+        return own
     if cache is not None and group_id in cache:
-        return cache[group_id]
+        parent = cache[group_id]
+        return parent if parent is not None else own
 
     from app.models.models import FuturesMarket as _FuturesMarket
 
@@ -5017,7 +5774,7 @@ async def polymarket_group_venue_start(session, market, cache=None):
             break
     if cache is not None:
         cache[group_id] = parent_start
-    return parent_start
+    return parent_start if parent_start is not None else own
 
 
 def polymarket_venue_redate(market, event, fixture=None) -> Optional[datetime]:
@@ -5104,6 +5861,99 @@ def polymarket_venue_redate(market, event, fixture=None) -> Optional[datetime]:
     ):
         return None
     return fixture
+
+
+def kalshi_esports_ticker_redate(market, event) -> Optional[datetime]:
+    """The ticker's start for an ALREADY-LINKED Kalshi esports row, or None. #9827.
+
+    CERT-3864's required repair (`9827-EXISTING-ESPORTS-ROW-RETIME`). #9827's
+    mint arm dates a NEW esports row at its ticker's HHMM; the rows minted
+    before it — ``/events/15321207`` and ~90 others on 2026-09-30 — keep
+    Kalshi's ``occurrence_datetime``, the expected expiration, four hours after
+    the start. Nothing re-dates them (a linked market never re-enters the
+    registry), and #4965's ±3h fixture guard then refuses Polymarket's match
+    winner on every one of them, so the page stays late AND Kalshi-only.
+
+    Pure: no DB, no clock. Every condition is necessary:
+
+    1. **A Kalshi esports-family ticker carrying a time of day** — the mint
+       arm's own population (``_ESPORTS_TICKER_PREFIXES``, and
+       :func:`ticker_start_utc`, the one Eastern→UTC conversion, which answers
+       None for a date-only ticker).
+    2. **The row's start is Kalshi's expiration** —
+       ``KALSHI_OCCURRENCE_TIMED_SOURCES``. A schedule source, a Polymarket
+       fixture, or a row this arm already corrected (``kalshi_ticker_time``) is
+       left alone, so the arm writes each row at most once and never flaps.
+    3. **The row is ``scheduled``** — nothing has been reported on it.
+    4. **The move is EARLIER, by more than a minute and at most the esports
+       window** (``_ESPORTS_EVENT_DATE_MAX_DIFF_HOURS``). The expiration sits
+       after the match by construction (#8722's argument), so a ticker LATER
+       than it is not this correction; and a gap wider than the window the link
+       guard accepted is a question about the pairing, not the date.
+
+    NECESSARY, NOT SUFFICIENT, exactly as :func:`polymarket_venue_redate`: the
+    caller asks ``phase15_link_is_valid_for_redate`` and
+    :func:`kalshi_esports_ticker_redate_is_unambiguous` before writing.
+    """
+    if getattr(market, "source", None) != "kalshi":
+        return None
+    external_id = getattr(market, "external_id", None)
+    if not _kalshi_prefix(external_id).startswith(_ESPORTS_TICKER_PREFIXES):
+        return None
+    if getattr(event, "commence_time_source", None) not in KALSHI_OCCURRENCE_TIMED_SOURCES:
+        return None
+    if getattr(event, "status", None) != "scheduled":
+        return None
+    start = ticker_start_utc(extract_game_date_from_ticker(external_id))
+    current = _as_utc(getattr(event, "commence_time", None))
+    if start is None or not isinstance(current, datetime):
+        return None
+    drift = current - start
+    if drift < _PM_VENUE_REDATE_MIN_DRIFT:
+        return None
+    if drift > timedelta(hours=_ESPORTS_EVENT_DATE_MAX_DIFF_HOURS):
+        return None
+    return start
+
+
+async def kalshi_esports_ticker_redate_is_unambiguous(
+    session, event, start,
+) -> tuple[bool, str]:
+    """Does every venue instant on ``event`` agree with ``start``? #9827.
+
+    The ambiguity bound. One row, one match, one start: every Kalshi esports
+    ticker linked to it must name the same instant (the game leg and its map
+    legs share one token), and a linked Polymarket market's own fixture instant
+    must not name another game (:data:`_PM_VENUE_NAMES_ANOTHER_GAME`). Either
+    disagreement means two matches are sharing a row, and re-dating it would
+    pick one of them — refused, never guessed. A market with no instant is no
+    signal.
+    """
+    from app.models.models import FuturesMarket as _FuturesMarket
+
+    siblings = (
+        await session.execute(
+            select(_FuturesMarket).where(
+                _FuturesMarket.event_id == event.id,
+                _FuturesMarket.source.in_(["kalshi", "polymarket"]),
+                _FuturesMarket.status == "open",
+            )
+        )
+    ).scalars().all()
+    for sibling in siblings:
+        if sibling.source == "kalshi":
+            if not _kalshi_prefix(sibling.external_id).startswith(
+                _ESPORTS_TICKER_PREFIXES
+            ):
+                continue
+            other = ticker_start_utc(extract_game_date_from_ticker(sibling.external_id))
+            if other is not None and other != start:
+                return False, "tickers_disagree"
+        else:
+            fixture = venue_game_start(sibling)
+            if fixture is not None and abs(fixture - start) >= _PM_VENUE_NAMES_ANOTHER_GAME:
+                return False, "venue_disagrees"
+    return True, "ok"
 
 
 def _as_utc(value):
@@ -5444,7 +6294,13 @@ async def phase15_link_is_valid_for_redate(session, market, event) -> tuple[bool
     if not home or not away or not name:
         return False, "unnamed"
     if not (_fuzzy_team_match(name, home) and _fuzzy_team_match(name, away)):
-        return False, "teams_absent"
+        # #9472: the raw test cannot read a <=3-letter surname stored alone
+        # (`Tomic v Sun`); on a tennis row, ask the tennis comparator of the
+        # name's two sides before refusing.
+        if not _tennis_raw_name_players_agree(
+            await _event_sport_key(session, event), name, home, away,
+        ):
+            return False, "teams_absent"
 
     market_sport = _market_sport_prefix(market)
     if market_sport and getattr(event, "sport_id", None):
@@ -5458,6 +6314,75 @@ async def phase15_link_is_valid_for_redate(session, market, event) -> tuple[bool
         if _is_cross_sport_link(market_sport, event_sport_key):
             return False, "cross_sport"
     return True, "ok"
+
+
+async def _phase15_kalshi_esports_ticker_redate(
+    session, market, linked_event, stats: dict,
+) -> None:
+    """Re-date ``linked_event`` from its Kalshi esports ticker. #9827 rung 2.
+
+    :func:`kalshi_esports_ticker_redate` decides, the link and the ambiguity
+    bound are asked next, and the write rides #6073's rail unchanged: the one
+    authority door, the freshness read, :func:`authorized_commence_time_write`
+    (the #46 guard, once), and the compare-and-write whose WHERE re-asserts the
+    row the decision read. Every refusal is counted under its own name.
+    """
+    start = kalshi_esports_ticker_redate(market, linked_event)
+    if start is None:
+        return
+    funnel = stats["funnel"]
+
+    def _count(key):
+        funnel.setdefault(key, 0)
+        funnel[key] += 1
+
+    ok, why = await phase15_link_is_valid_for_redate(session, market, linked_event)
+    if ok:
+        ok, why = await kalshi_esports_ticker_redate_is_unambiguous(
+            session, linked_event, start,
+        )
+    if not ok:
+        _count(f"phase15_kalshi_esports_ticker_refused_{why}")
+        logger.info(
+            "Not re-dating event %d from Kalshi %s — %s (#9827)",
+            linked_event.id, market.external_id, why,
+        )
+        return
+
+    from app.services.event_registry import (
+        authorized_commence_time_write,
+        commence_time_write_authorized,
+    )
+
+    authorized, _why = commence_time_write_authorized(
+        linked_event.commence_time_source, KALSHI_TICKER_TIME_COMMENCE_SOURCE,
+    )
+    if not authorized:
+        _count("phase15_kalshi_esports_ticker_refused_authority")
+        return
+    unmoved, observed = await phase15_event_row_is_unmoved(session, linked_event)
+    if not unmoved:
+        _count("phase15_kalshi_esports_ticker_refused_row_moved")
+        return
+    was = linked_event.commence_time
+    outcome, writes = authorized_commence_time_write(
+        linked_event, start, KALSHI_TICKER_TIME_COMMENCE_SOURCE,
+    )
+    if outcome == "refused_inversion":
+        _count("phase15_kalshi_esports_ticker_refused_inversion")
+        return
+    wrote = await _phase15_redate_write_or_shout(
+        session, linked_event, writes, observed, stats,
+    )
+    if wrote:
+        _count(f"phase15_kalshi_esports_ticker_{outcome}")
+        logger.info(
+            "Re-dated event %d from Kalshi %s: %s -> %s (expected expiration -> "
+            "ticker start, #9827)",
+            linked_event.id, market.external_id, was, start,
+        )
+    elif wrote is False:
+        _count("phase15_kalshi_esports_ticker_lost_race")
 
 
 async def _phase15_revalidate(
@@ -5480,8 +6405,8 @@ async def _phase15_revalidate(
     """
     # FuturesMarket and Event are no longer imported here: #2325 moved every
     # Phase 1.5 query into the module-level `_phase15_*` helpers, which import
-    # the models themselves. Only WinProbSnapshot is still read in this body.
-    from app.models.models import WinProbSnapshot
+    # the models themselves. #9504 moved the last one, WinProbSnapshot, into
+    # `_delete_departing_market_snapshots`.
 
     stats["funnel"].setdefault("stale_relinked", 0)
     stats["funnel"].setdefault("mislink_fixed", 0)
@@ -5575,6 +6500,20 @@ async def _phase15_revalidate(
     stats["funnel"]["phase15_venue_instant_probed"] = len(venue_probe)
     stats["funnel"]["phase15_venue_instant_candidates"] = len(venue_rows)
 
+    # #9827 rung 2: the esports ticker re-date arm's own rows — see
+    # `_PHASE15_ESPORTS_TICKER_SLICE`.
+    esports_probe = (
+        await session.execute(_phase15_esports_ticker_probe_query(now))
+    ).all()
+    esports_ids = _phase15_esports_ticker_candidate_ids(esports_probe)
+    esports_rows: list = []
+    if esports_ids:
+        esports_rows = (
+            await session.execute(_phase15_rows_by_id_query(esports_ids))
+        ).all()
+    stats["funnel"]["phase15_esports_ticker_probed"] = len(esports_probe)
+    stats["funnel"]["phase15_esports_ticker_candidates"] = len(esports_rows)
+
     fresh_rows = (await session.execute(_phase15_fresh_query())).all()
     rotation_rows = (
         await session.execute(_phase15_rotation_query(shards, shard_index))
@@ -5586,7 +6525,8 @@ async def _phase15_revalidate(
     all_linked_rows = list(resolved_rows)
     _seen_market_ids = {market.id for market, _ in resolved_rows}
     for market, linked_event in (
-        list(venue_rows) + list(fresh_rows) + list(rotation_rows)
+        list(venue_rows) + list(esports_rows)
+        + list(fresh_rows) + list(rotation_rows)
     ):
         if market.id not in _seen_market_ids:
             _seen_market_ids.add(market.id)
@@ -5759,6 +6699,15 @@ async def _phase15_revalidate(
                             linked_event.id,
                         )
 
+            # #9827 rung 2 (CERT-3864): an esports row minted before #9827's
+            # mint arm still wears Kalshi's expected expiration, four hours
+            # late, and #4965's fixture guard refuses Polymarket's winner on it.
+            # Above the gates for #6073's reason: the correction needs no
+            # matchup and no game-level read.
+            await _phase15_kalshi_esports_ticker_redate(
+                session, market, linked_event, stats,
+            )
+
             if not is_game_level_market(
                 market.name, market.category, external_id=market.external_id,
             ):
@@ -5809,21 +6758,41 @@ async def _phase15_revalidate(
                     stats["funnel"]["shadowed_futures_unlinked"] += 1
                 continue
 
-            matchup = extract_matchup_with_ticker_fallback(
-                market.name, external_id=market.external_id,
+            # #9504: the SEARCH copy, the one the forward path links with
+            # (#6134). Raw, a derivative's team_b is "Sporting CP - Exact
+            # Score", which no event row carries, so this pass called the link
+            # the forward path had just made "mislinked", unlinked it, and the
+            # next cycle linked it again — 684 unlinks over 65 events in a day.
+            # Every use below is a comparison or a search; nothing here mints.
+            matchup = matchup_for_link_search(
+                extract_matchup_with_ticker_fallback(
+                    market.name, external_id=market.external_id,
+                ),
+                market.name,
             )
             if not matchup or not matchup.team_b:
                 continue
 
-            a_matches = (
-                _fuzzy_team_match(matchup.team_a, linked_event.home_team_name)
-                or _fuzzy_team_match(matchup.team_a, linked_event.away_team_name)
+            # #9584: on opposite sides — "Sun vs. Sun" is not Tomic v Sun.
+            teams_match = _names_both_sides(
+                matchup.team_a, matchup.team_b,
+                linked_event.home_team_name, linked_event.away_team_name,
             )
-            b_matches = (
-                _fuzzy_team_match(matchup.team_b, linked_event.home_team_name)
-                or _fuzzy_team_match(matchup.team_b, linked_event.away_team_name)
-            )
-            teams_match = a_matches and b_matches
+            if not teams_match:
+                # #9472: `_fuzzy_team_match` cannot read a surname of <=3
+                # letters stored alone (`Cui` v `Jie Cui`), so a correct tennis
+                # link was broken here every cycle. On a tennis row, ask the
+                # tennis name comparator before calling the link wrong.
+                # (A local key: `event_sport_key` is assigned further down and
+                # would still hold the PREVIOUS market's value here.)
+                _names_sport_key = await _event_sport_key(session, linked_event)
+                teams_match = _tennis_link_players_agree(
+                    _names_sport_key, matchup.team_a, matchup.team_b,
+                    linked_event.home_team_name, linked_event.away_team_name,
+                )
+                if teams_match:
+                    stats["funnel"].setdefault("phase15_tennis_names_kept", 0)
+                    stats["funnel"]["phase15_tennis_names_kept"] += 1
             is_finished = linked_event.status in ("completed", "closed")
             is_auto_created = (
                 linked_event.external_id
@@ -5835,6 +6804,7 @@ async def _phase15_revalidate(
             # treat it as a mislink even if team names match. This catches
             # cases like baseball "Royals" linked to cricket "Rajasthan Royals".
             sport_mismatch = False
+            event_sport_key = None
             market_sport = _market_sport_prefix(market)
             if market_sport and linked_event.sport_id:
                 from app.models.models import Sport as _Sport
@@ -5870,24 +6840,83 @@ async def _phase15_revalidate(
             # Destination via the #5544 finder only (never the scorer), retired
             # rows excluded; zero or two candidates leave the link alone.
             venue_named_row = None
+            catchall_shadow_named = False
+            kalshi_self_mint_named = False
+            kalshi_self_mint_tennis = False
             if (
                 teams_match and not is_finished and not is_auto_created
                 and not sport_mismatch and not is_retired
             ):
-                if not _venue_instant_disowns_link(market, linked_event):
-                    continue
-                venue_named_row = await _venue_confirmed_covered_fixture(
-                    session, matchup, market, linked_event,
-                    window=_PM_VENUE_SAME_GAME, exclude_retired=True,
-                    allow_kalshi_ticker=True,
-                )
+                if market.source == "polymarket" and _is_polymarket_catchall_shadow(
+                    linked_event
+                ):
+                    # #7904: the market sits on the row Polymarket minted for it
+                    # in the catch-all bucket, and the venue instant agrees with
+                    # that row, so the arm below would leave it. Ask the #5544
+                    # finder instead: exactly one real covered-league row near
+                    # the venue's minute is the game. See the helper's docstring.
+                    # #9686: "near" is CATCHALL_SHADOW_KICKOFF_DRIFT, not the
+                    # 15-minute `_PM_VENUE_SAME_GAME` — Gamma listed Islanders–
+                    # Rangers 30 min and Golden Knights–Kraken 40 min off ESPN.
+                    # Soccer keeps 15 (the fold's bound never reaches soccer).
+                    if event_sport_key is None:
+                        event_sport_key = await _event_sport_key(session, linked_event)
+                    shadow_sport = _catchall_sport_prefix(event_sport_key)
+                    if shadow_sport:
+                        venue_named_row = await _venue_confirmed_covered_fixture(
+                            session, matchup, market, linked_event,
+                            window=(
+                                _PM_VENUE_SAME_GAME if shadow_sport == "soccer"
+                                else CATCHALL_SHADOW_KICKOFF_DRIFT
+                            ),
+                            exclude_retired=True,
+                            within_sport=shadow_sport,
+                        )
+                        if venue_named_row is None:
+                            stats["funnel"].setdefault(
+                                "phase15_catchall_shadow_left_alone", 0
+                            )
+                            stats["funnel"]["phase15_catchall_shadow_left_alone"] += 1
+                            continue
+                        catchall_shadow_named = True
+                        stats["funnel"].setdefault("phase15_catchall_shadow_named", 0)
+                        stats["funnel"]["phase15_catchall_shadow_named"] += 1
+                elif market.source == "kalshi" and _is_kalshi_self_mint(linked_event):
+                    # #6720: the market sits on the row it minted for itself,
+                    # and a scheduled row for the game may have arrived since.
+                    # #9624: a tennis mint asks the finder's doubles-only arm —
+                    # a singles mint is still left to `tennis_twin_pairs` and
+                    # the #2774 contest path (see the finder's docstring).
+                    if event_sport_key is None:
+                        event_sport_key = await _event_sport_key(session, linked_event)
+                    venue_named_row = await _kalshi_self_mint_real_fixture(
+                        session, matchup, market, linked_event,
+                        mint_sport_key=event_sport_key,
+                    )
+                    if venue_named_row is not None:
+                        kalshi_self_mint_named = True
+                        kalshi_self_mint_tennis = (
+                            _sport_family(event_sport_key) == "tennis"
+                        )
+                        stats["funnel"].setdefault("phase15_kalshi_self_mint_named", 0)
+                        stats["funnel"]["phase15_kalshi_self_mint_named"] += 1
                 if venue_named_row is None:
-                    stats["funnel"].setdefault("phase15_venue_instant_left_alone", 0)
-                    stats["funnel"]["phase15_venue_instant_left_alone"] += 1
-                    continue
+                    if not _venue_instant_disowns_link(market, linked_event):
+                        continue
+                    venue_named_row = await _venue_confirmed_covered_fixture(
+                        session, matchup, market, linked_event,
+                        window=_PM_VENUE_SAME_GAME, exclude_retired=True,
+                        allow_kalshi_ticker=True,
+                    )
+                    if venue_named_row is None:
+                        stats["funnel"].setdefault("phase15_venue_instant_left_alone", 0)
+                        stats["funnel"]["phase15_venue_instant_left_alone"] += 1
+                        continue
 
             reason = (
-                "venue_instant" if venue_named_row is not None
+                "catchall_shadow" if catchall_shadow_named
+                else "kalshi_self_mint" if kalshi_self_mint_named
+                else "venue_instant" if venue_named_row is not None
                 else "auto_created" if is_auto_created
                 else "cross_sport" if sport_mismatch
                 else "mislinked" if not teams_match
@@ -5912,9 +6941,29 @@ async def _phase15_revalidate(
                 # two — unless the venue's home/away marker picks one of the
                 # two (#8396). No answer leaves the link where it is: nothing below
                 # unlinks a retired link whose teams match.
+                # #7904: a VOIDED Polymarket shadow in `<sport>_other` still
+                # names the sport, and without it the resolver refuses every
+                # pair whose nicknames also field a college or NFL side —
+                # "Panthers", "Hurricanes", "Flyers", "Ducks", "Sharks". Measured
+                # 2026-09-28 11:50Z: 14 markets on four voided `icehockey_other`
+                # rows left alone, so Hurricanes–Panthers (Sep 29), Sharks–
+                # Panthers, Flyers–Hurricanes and Ducks–Panthers served no
+                # Polymarket on their NHL pages. Narrowing never widens: a pair
+                # the sport does not field still resolves to nothing.
+                retired_sport = None
+                if market.source == "polymarket" and _is_polymarket_venue_mint(
+                    linked_event
+                ):
+                    if event_sport_key is None:
+                        event_sport_key = await _event_sport_key(session, linked_event)
+                    retired_sport = _catchall_sport_prefix(event_sport_key)
                 better_match = await _venue_confirmed_covered_fixture(
                     session, matchup, market, linked_event,
+                    within_sport=retired_sport,
                 )
+                if better_match and retired_sport:
+                    stats["funnel"].setdefault("phase15_retired_shadow_relinked", 0)
+                    stats["funnel"]["phase15_retired_shadow_relinked"] += 1
                 if better_match:
                     stats["funnel"].setdefault("phase15_retired_venue_relinked", 0)
                     stats["funnel"]["phase15_retired_venue_relinked"] += 1
@@ -5979,6 +7028,7 @@ async def _phase15_revalidate(
             if better_match and better_match["event_id"] != linked_event.id:
                 refusal = await _check_duplicate_kalshi_linkage_reason(
                     session, better_match["event_id"], market, ticker_game_date,
+                    tennis_listing_date=kalshi_self_mint_tennis,
                 )
                 if refusal:
                     relink_blocked = True
@@ -5995,13 +7045,24 @@ async def _phase15_revalidate(
                     linked_event.id, better_match["event_id"],
                 )
                 if is_auto_created or not teams_match or sport_mismatch:
-                    del_result = await session.execute(
-                        delete(WinProbSnapshot).where(
-                            WinProbSnapshot.event_id == linked_event.id,
-                            WinProbSnapshot.source == market.source,
+                    # #9504: only the rows of what MOVES — this market and, for
+                    # a Polymarket group, the siblings the group-follow UPDATE
+                    # below carries with it. A market of the same source that
+                    # stays on the event keeps its curve.
+                    departing_ids = [market.id]
+                    if market.group_id and market.source == "polymarket":
+                        from sqlalchemy import text as _text
+                        departing_ids += list((await session.execute(_text("""
+                            SELECT id FROM futures_markets
+                            WHERE group_id = :gid
+                              AND group_type = 'polymarket_sub_market'
+                              AND event_id = :old
+                        """), {"gid": market.group_id, "old": linked_event.id})).scalars())
+                    stats["orphaned_snapshots_deleted"] += (
+                        await _delete_departing_market_snapshots(
+                            session, linked_event.id, market.source, departing_ids,
                         )
                     )
-                    stats["orphaned_snapshots_deleted"] += del_result.rowcount
                 market.event_id = better_match["event_id"]
                 _set_market_sport_fields(market, better_match)
                 _record_link_change(
@@ -6055,8 +7116,12 @@ async def _phase15_revalidate(
                     stats["funnel"].setdefault("auto_created_relinked", 0)
                     stats["funnel"]["auto_created_relinked"] += 1
                 elif venue_named_row is not None:
-                    stats["funnel"].setdefault("phase15_venue_instant_relinked", 0)
-                    stats["funnel"]["phase15_venue_instant_relinked"] += 1
+                    relinked_key = (
+                        "phase15_kalshi_self_mint_relinked" if kalshi_self_mint_named
+                        else "phase15_venue_instant_relinked"
+                    )
+                    stats["funnel"].setdefault(relinked_key, 0)
+                    stats["funnel"][relinked_key] += 1
                     # #8547: the row the market LEFT must stop blending it. A
                     # same-teams move keeps the row's curve (no snapshot delete),
                     # but its `kalshi`/`polymarket` key named this market; with no
@@ -6102,13 +7167,13 @@ async def _phase15_revalidate(
                     "Unlinking %s '%s' from mismatched event %d — no better match (reason=%s)",
                     market.source, market.name, linked_event.id, reason,
                 )
-                del_result = await session.execute(
-                    delete(WinProbSnapshot).where(
-                        WinProbSnapshot.event_id == linked_event.id,
-                        WinProbSnapshot.source == market.source,
+                # #9504: this market's rows only — a sibling of the same source
+                # (the match line beside a derivative book) keeps its curve.
+                stats["orphaned_snapshots_deleted"] += (
+                    await _delete_departing_market_snapshots(
+                        session, linked_event.id, market.source, [market.id],
                     )
                 )
-                stats["orphaned_snapshots_deleted"] += del_result.rowcount
                 _unlinked_event_id = linked_event.id
                 market.event_id = None
                 _record_link_change(
@@ -6236,6 +7301,7 @@ async def _lock_current_retirement_group(session, event_id, source, *, settled_o
             home_team_name=current.home_team_name,
             away_team_name=current.away_team_name, status=market.status,
             event_has_result=current.completed_at is not None,
+            market_metadata=getattr(market, "market_metadata", None),  # #9348
         ) for market in markets
     ]
     return current, _blend_group_for_refs(refs, outcomes_by_market)
@@ -6732,6 +7798,7 @@ async def _phase2b_completed_catchup(session, now, stats, time_remaining_fn) -> 
                     home_team_name=home_name,
                     away_team_name=away_name,
                     status=market_row.status,
+                    market_metadata=getattr(market_row, "market_metadata", None),  # #9348
                     # #5820 ABSTAINS HERE, ON PURPOSE. This scan's candidate
                     # predicate is `e.status IN ('completed','closed')` — every
                     # event it touches is a finished game whose blend key is
@@ -7016,6 +8083,7 @@ async def _phase2c_decide_page(
                 home_team_name=home_name,
                 away_team_name=away_name,
                 status=market_row.status,
+                market_metadata=getattr(market_row, "market_metadata", None),  # #9348
                 # The screen's own predicate, restated as evidence: every row
                 # on this page came back because `completed_at IS NULL`.
                 event_has_result=False,
@@ -7205,6 +8273,7 @@ async def _match_prediction_markets(limit: int = 500):
                 home_team_name=event.home_team_name,
                 away_team_name=event.away_team_name,
                 status=market.status,
+                market_metadata=getattr(market, "market_metadata", None),  # #9348
                 # #5820. Measured from the row that is already joined here, so
                 # the clause costs no query. False is the armed state and it is
                 # the honest reading of this join: a scheduled or live event
@@ -7596,6 +8665,20 @@ async def _find_matching_event(
             pattern = f"%{_escape_like(search_term)}%"
             ilike_conditions.append(Event.home_team_name.ilike(pattern))
             ilike_conditions.append(Event.away_team_name.ilike(pattern))
+    # #6720: the ILIKE above is accent-SENSITIVE and Kalshi writes every club in
+    # ASCII, so "%Leganes%" never reached our "Leganés" and the market minted a
+    # second row for the game (production 2026-09-25: KXLALIGA2GAME-26SEP28LEGCAS
+    # searched a window holding 15316746 "Leganés v CD Castellón" and recorded
+    # `windowed_candidates: 0`). Only the WINDOWED pass gets the folded arms: the
+    # commence_time bound keeps the scan on the time index (production EXPLAIN
+    # ANALYZE 4.7 ms). Retrieval only — `_score_candidates` already folds
+    # accents, so what is ACCEPTED is unchanged.
+    windowed_conditions = ilike_conditions + [
+        condition
+        for team in teams_to_search
+        for search_term in _expand_team_search_terms(team)
+        for condition in _folded_name_contains_conditions(search_term)
+    ]
 
     # Also restrict: don't match events that started more than 6 hours ago
     # (unless they're still live)
@@ -7636,14 +8719,22 @@ async def _find_matching_event(
     # (rightly) refused, so it never linked: Saturday's Cubs @ Red Sox (Gamma
     # 1053345, venue 09-26T23:15Z) was offered 15316415 (09-25T17:05Z, 30.2h
     # apart) over its own 15316408. Score from the venue's own game instant —
-    # the same stamp the guard judges the link by. Scoring only; the windows
-    # below are unchanged, and a market with no stamp scores exactly as before.
+    # the same stamp the guard judges the link by. A market with no stamp
+    # scores exactly as before.
     if (
         scoring_ref is None
         and getattr(market, "source", None) == "polymarket"
     ):
         scoring_ref = venue_game_start(market)
-    reference_time = ticker_start or game_date_override or market.commence_time or now
+    # #9427: and the WINDOW is centred there too. `commence_time` is the listing
+    # stamp, so ±48h of it can end before the game starts: Wild Card Game 2
+    # (Gamma 1097831, listed 09-28T13:00Z, venue 09-30T18:00Z) searched up to
+    # 09-30T13:00Z, found only Game 1, and #4965 refused that — 8 passes, never
+    # linked, while its own row 15320701 sat 5h past the window. The guard
+    # judges by this stamp, so nothing outside ±48h of it could link anyway.
+    # For every other market `scoring_ref` is the ticker/override instant
+    # above, or None — the old reference, unchanged.
+    reference_time = scoring_ref or market.commence_time or now
     if game_date_override:
         if ticker_start is not None:
             time_start = reference_time - timedelta(hours=3)
@@ -7667,7 +8758,7 @@ async def _find_matching_event(
         select(Event)
         .options(joinedload(Event.sport))
         .where(
-            or_(*ilike_conditions),
+            or_(*windowed_conditions),
             Event.commence_time.between(time_start, time_end),
             or_(
                 Event.status.in_(["scheduled", "live"]),
@@ -7787,6 +8878,56 @@ def fold_team_name(value: str | None) -> str:
 # never invent one.
 _FOLD_FROM = "àáâãäåāçćčèéêëēěìíîïīñńòóôõöōùúûüūýÿšž"
 _FOLD_TO = "".join(fold_team_name(ch) for ch in _FOLD_FROM)
+
+
+def _folded_name_contains_conditions(search_term: str) -> list:
+    """``home``/``away`` contain ``search_term`` with accents folded on BOTH sides. #6720.
+
+    The same fold as #8440's prefix test, as a containment test: the stored
+    column through ``translate`` and the term through :func:`fold_team_name`, so
+    "Leganes" reaches "Leganés" and "Atlético" reaches "Atletico". Empty for a
+    term that folds to nothing.
+    """
+    from app.models.models import Event
+
+    folded = fold_team_name(search_term)
+    if not folded:
+        return []
+    pattern = f"%{_escape_like(folded)}%"
+    return [
+        _FoldedName(column).like(pattern)
+        for column in (Event.home_team_name, Event.away_team_name)
+    ]
+
+
+class _FoldedName(FunctionElement):
+    """``translate(lower(col), _FOLD_FROM, _FOLD_TO)`` on Postgres. #6720.
+
+    Postgres gets exactly the #8440 expression. SQLite has no ``translate``, yet
+    the windowed search is replayed on SQLite by the golden-set gate and by every
+    rail that drives the real ``_find_matching_event``, so there it renders as a
+    bare ``lower(col)``: the arm matches what the ILIKE beside it already does,
+    and those replays see the pre-#6720 retrieval unchanged. (The same map as
+    chained ``replace`` calls overflows SQLite's parser stack past ~30 levels.)
+    The fold itself is proven only by the real-Postgres gate,
+    ``tests/integration/test_pm_venue_name_extension_8440_pg.py``.
+    """
+
+    type = String()
+    name = "folded_name"
+    inherit_cache = True
+
+
+@compiles(_FoldedName)
+def _folded_name_default(element, compiler, **kw):
+    (column,) = element.clauses
+    return compiler.process(func.translate(func.lower(column), _FOLD_FROM, _FOLD_TO), **kw)
+
+
+@compiles(_FoldedName, "sqlite")
+def _folded_name_sqlite(element, compiler, **kw):
+    (column,) = element.clauses
+    return compiler.process(func.lower(column), **kw)
 
 
 def _stored_name_is_word_prefix_of(venue_name: str, column):
@@ -8149,11 +9290,12 @@ def _score_candidates(
     best_score = -1
 
     for event in candidates:
-        # #9117: when the venue named only a DAY, a row on another day is a
+        # #9117 / #9427: a row #4965's fixture guard would refuse is a
         # different game however it scores. The guard refuses it after the
         # fact, and the +8 for an Odds API id (32h of proximity) let Game 1's
-        # row outscore Game 2's own StatPal row, so Game 2 never linked.
-        if _venue_game_day_disagrees(market, event.commence_time):
+        # row outscore Game 2's own row, so Game 2 never linked — first for a
+        # day-only stamp (#9117), then for a real first pitch (#9427).
+        if _venue_fixture_disagrees(market, event.commence_time):
             _trace(event, _receipts.REJECT_OUTSIDE_TIME_WINDOW)
             continue
 
@@ -8163,18 +9305,15 @@ def _score_candidates(
         # matching "Georgia Southern Eagles vs South Florida Bulls"
         # (Pistons ≠ Georgia Southern Eagles).
         if matchup.team_b:
-            a_matches = (
-                _fuzzy_team_match(matchup.team_a, event.home_team_name)
-                or _fuzzy_team_match(matchup.team_a, event.away_team_name)
-            )
-            b_matches = (
-                _fuzzy_team_match(matchup.team_b, event.home_team_name)
-                or _fuzzy_team_match(matchup.team_b, event.away_team_name)
-            )
-            if not (a_matches and b_matches):
+            # #9584: and on OPPOSITE sides. Both halves of "Sun vs. Sun"
+            # (Yingqun Sun v Junlu Sun) match the one `Sun` of Tomic v Sun.
+            if not _names_both_sides(
+                matchup.team_a, matchup.team_b,
+                event.home_team_name, event.away_team_name,
+            ):
                 # Coverage is what separates a rejected candidate from a row
                 # the ILIKE happened to return on one shared token — and it is
-                # measured INDEPENDENTLY of a_matches/b_matches, which are the
+                # measured INDEPENDENTLY of the side test above, which is the
                 # verdict being explained. "CLE Browns vs JAC Jaguars" against
                 # Jacksonville Jaguars / Cleveland Browns fails both halves here
                 # and covers both sides; that is a name-gate bug of ours, not an
@@ -8639,6 +9778,93 @@ async def _polymarket_container_sibling_event_id(session, market) -> Optional[in
 #: game container. Only these share a fixture by construction; see below.
 _POLYMARKET_SUB_MARKET_GROUP_TYPE = "polymarket_sub_market"
 
+#: #9338 — how many distinct sibling rows the lookup reads. Production's worst
+#: group held 5 (Polymarket 1092862, Van de Zandschulp v Royer, 2026-09-28); a
+#: group AT the cap may hold more than we saw, so it is refused, never guessed.
+_GROUP_SIBLING_HELD_CAP = 16
+
+#: #9338 — the only states a clock-refused sibling row may be joined in. A
+#: withdrawn (`suspended`) or finished row is where #8430's own specimen sat
+#: (15317735, the pre-postponement Boyer row); a child is never parked there.
+_GROUP_SIBLING_OPEN_STATUSES = ("scheduled", "live")
+
+
+def _market_name_sides(name: Optional[str]) -> Optional[tuple[str, str]]:
+    """The two sides a Polymarket child's title names, or None. Pure. #9600.
+
+    The venue-labelled moneyline ("Mouilleron-Le-Captif: Billy Harris vs Felix
+    Balshaw") reads through ``bare_matchup_sides``; the prop lines ("Harris vs.
+    Balshaw: Match O/U 22.5") through ``extract_matchup``. Handicap titles
+    ("Set Handicap: A (-1.5) vs B (+1.5)") read as neither and say nothing.
+    """
+    from app.utils.matchup_sides import bare_matchup_sides
+
+    sides = bare_matchup_sides(name)
+    if sides is not None:
+        return sides[0], sides[1]
+    matchup = extract_matchup(name or "")
+    if matchup is None or not matchup.team_b:
+        return None
+    return matchup.team_a, matchup.team_b
+
+
+def _group_pair_shape(names) -> Optional[bool]:
+    """True: a doubles group. False: singles. None: its titles don't say. Pure. #9600.
+
+    Only a title whose two sides agree on a shape votes, and the group has a
+    shape only when every vote agrees.
+    """
+    shapes = set()
+    for name in names:
+        sides = _market_name_sides(name)
+        if sides is None:
+            continue
+        shape = pair_shape(*sides)
+        if shape is not None:
+            shapes.add(shape)
+    return shapes.pop() if len(shapes) == 1 else None
+
+
+async def _held_rows_of_the_groups_shape(session, market, group_id, held):
+    """``held`` without the rows whose sides are the other shape from the group. #9600.
+
+    A row names a shape only when both of its sides agree (a slash on one side
+    is a club, "Bodø/Glimt"), and a group only when its titles agree, so a
+    group or row that says nothing keeps every row it had.
+    """
+    from app.models.models import Event, FuturesMarket
+
+    names = [market.name] + list((
+        await session.execute(
+            select(FuturesMarket.name).where(
+                FuturesMarket.source == "polymarket",
+                FuturesMarket.group_id == group_id,
+                FuturesMarket.id != market.id,
+            )
+        )
+    ).scalars())
+    group_shape = _group_pair_shape(names)
+    if group_shape is None:
+        return held
+    rows = (
+        await session.execute(
+            select(Event.id, Event.home_team_name, Event.away_team_name)
+            .where(Event.id.in_(held))
+        )
+    ).all()
+    other_shape = {
+        row.id for row in rows
+        if pair_shape(row.home_team_name, row.away_team_name) not in (None, group_shape)
+    }
+    if other_shape:
+        logger.info(
+            "Not joining Polymarket child %s to event(s) %s (#9600) — group %s "
+            "names a %s match and the row names the other shape",
+            market.external_id, sorted(other_shape), group_id,
+            "doubles" if group_shape else "singles",
+        )
+    return [event_id for event_id in held if event_id not in other_shape]
+
 
 async def _polymarket_group_sibling_event_id(session, market) -> Optional[int]:
     """The event another child of this market's OWN Polymarket event already holds.
@@ -8669,6 +9895,37 @@ async def _polymarket_group_sibling_event_id(session, market) -> Optional[int]:
     Returns ``None`` — today's CREATE — when the group holds no linked child, or
     holds more than one distinct event (the venue's structure disagrees with ours
     and picking one would be a guess), or the fixture guard refuses.
+
+    #9338 narrows the last two, because each of them MINTED — and a mint is the
+    one outcome that can never be right for a child whose own event is already
+    on a row. Read on production 2026-09-28: when Polymarket listed four new O/U
+    lines for Van de Zandschulp v Royer (group 1092862), its six siblings sat on
+    Kalshi's row 15319968, stamped with Kalshi's ESTIMATED start 05:00Z against
+    the venue's 08:30Z. The guard refused it (3.5h), the first child minted, the
+    group then spanned two rows, ``len(held) != 1`` refused the rest, and every
+    later child minted too: five rows in twelve seconds. Tennis only, over 7
+    days: 18 of 1,132 groups split, 48 extra rows; every other sport 0.
+
+    (a) Several sibling rows: the ONE the fixture guard accepts is the answer.
+        When two or more are accepted, the group was already split before the
+        child arrived, and refusing mints yet another row beside them — Cretu v
+        Rocha (group 1088321) went from three rows to five at 12:36Z on
+        2026-09-28, the release after (a) shipped, because its siblings sat on
+        two accepted twins. Every accepted row is the venue's one match, so
+        the child joins the preferred of them: an open row (``scheduled``/
+        ``live``) before a closed one, an anchored row (a provider id) before
+        an id-less one, the row holding more siblings, then the oldest id. The
+        pick is deterministic, so every later line lands on the same row and
+        the group stops growing.
+    (b) Exactly one sibling row, refused ONLY on the clock: join it when it
+        carries no provider id (``espn_id``, ``external_id``,
+        ``statpal_fixture_id`` all NULL) and is ``scheduled``/``live``. An
+        unanchored row's start is itself another venue's guess — Kalshi's
+        estimate (Sonego row 03:30Z vs venue 07:15Z), or the day before a move
+        (Echargui v Dzumhur, 09-28 vs 09-29) — while the venue's own event id
+        says this child and its siblings are one match. An anchored row's clock
+        was reported by a schedule provider, so its refusal stands; and a
+        withdrawn or finished row is not joined whatever it carries.
     """
     if market.source != "polymarket":
         return None
@@ -8680,10 +9937,11 @@ async def _polymarket_group_sibling_event_id(session, market) -> Optional[int]:
 
     from app.models.models import FuturesMarket
 
-    held = (
-        (
+    siblings_on = {
+        event_id: siblings
+        for event_id, siblings in (
             await session.execute(
-                select(FuturesMarket.event_id)
+                select(FuturesMarket.event_id, func.count(FuturesMarket.id))
                 .where(
                     FuturesMarket.source == "polymarket",
                     FuturesMarket.group_id == group_id,
@@ -8691,19 +9949,94 @@ async def _polymarket_group_sibling_event_id(session, market) -> Optional[int]:
                     FuturesMarket.event_id.isnot(None),
                     FuturesMarket.id != market.id,
                 )
-                .distinct()
-                .limit(2)
+                .group_by(FuturesMarket.event_id)
+                .limit(_GROUP_SIBLING_HELD_CAP)
             )
+        ).all()
+    }
+    held = list(siblings_on)
+    if not held or len(held) >= _GROUP_SIBLING_HELD_CAP:
+        return None
+
+    from app.models.models import Event
+
+    # #9600: the venue's id says the children are one match; it does not say
+    # the ROW they sit on is that match. A singles group swept onto a doubles
+    # row by the name gate stayed there through this join, however often
+    # Phase 1.5 unlinked its legs. A row of the other shape is never the answer.
+    held = await _held_rows_of_the_groups_shape(session, market, group_id, held)
+    if not held:
+        return None
+
+    # (a) #9338: the guard picks among several rows; it no longer vetoes them all.
+    accepted = [
+        event_id
+        for event_id in held
+        if not await _check_polymarket_fixture_reason(session, event_id, market)
+    ]
+    if len(accepted) == 1:
+        return accepted[0]
+    if accepted:
+        rows = (
+            await session.execute(
+                select(
+                    Event.id,
+                    Event.espn_id,
+                    Event.external_id,
+                    Event.statpal_fixture_id,
+                    Event.status,
+                ).where(Event.id.in_(accepted))
+            )
+        ).all()
+        if not rows:
+            return None
+        preferred = min(
+            rows,
+            key=lambda r: (
+                r.status not in _GROUP_SIBLING_OPEN_STATUSES,
+                r.espn_id is None
+                and r.external_id is None
+                and r.statpal_fixture_id is None,
+                -siblings_on[r.id],
+                r.id,
+            ),
         )
-        .scalars()
-        .all()
-    )
+        logger.info(
+            "Joining Polymarket child %s to event %d (#9338) — its group %s is "
+            "already split over %d rows the fixture guard accepts; not minting "
+            "another",
+            market.external_id, preferred.id, group_id, len(accepted),
+        )
+        return preferred.id
     if len(held) != 1:
         return None
 
+    # (b) #9338: one row, refused on the clock alone.
     sibling_event_id = held[0]
-    if await _check_polymarket_fixture_reason(session, sibling_event_id, market):
+
+    row = (
+        await session.execute(
+            select(
+                Event.espn_id,
+                Event.external_id,
+                Event.statpal_fixture_id,
+                Event.status,
+            ).where(Event.id == sibling_event_id)
+        )
+    ).first()
+    if row is None:
         return None
+    espn_id, external_id, statpal_fixture_id, status = row
+    if espn_id is not None or external_id is not None or statpal_fixture_id is not None:
+        return None
+    if status not in _GROUP_SIBLING_OPEN_STATUSES:
+        return None
+    logger.info(
+        "Joining Polymarket child %s to unanchored event %d (#9338) — its "
+        "siblings in group %s sit there; the fixture guard refused only the "
+        "row's clock, which no schedule provider reported",
+        market.external_id, sibling_event_id, group_id,
+    )
     return sibling_event_id
 
 
@@ -9637,6 +10970,22 @@ async def _load_live_poll_population(session, now) -> _LivePollPopulation:
             .nullsfirst(),
             FuturesMarket.id.asc(),
         )
+        # #9047: THE EVENT'S BOX SCORE STAYS IN THE DATABASE. The join hands
+        # back the event once PER MARKET — 8,081 rows on 129 events at
+        # 2026-09-27 19:05Z — and the asyncpg dialect json-decodes every JSONB
+        # value on every row at fetch time, before the identity map collapses
+        # the duplicates. `box_score_data` was 35 MB of that text per read,
+        # ~114 MB of dicts held at once, in a child on a 1 GB dyno that ran
+        # over quota during the NFL slate with this task in flight at 17 of 18
+        # R14s. Nothing on the beat's path reads it. `raiseload` so a future
+        # reader fails loudly by name instead of lazy-loading inside the async
+        # session.
+        #
+        # `win_probability_sources` (7 MB) is NOT deferred, though the beat's
+        # own code only orders on it in SQL: `_check_and_fix_inversion` calls
+        # `session.get(Event, ...)`, which returns THIS identity-mapped row, and
+        # reads the attribute off it. A deferred column there would raise.
+        .options(defer(Event.box_score_data, raiseload=True))
     )
     rows = list(result.all())
 
@@ -9784,6 +11133,17 @@ async def _poll_live_prediction_market_prices():
     # the row. The pregame pin judges emptiness from this dict when the leg was
     # read this poll, and from the stored columns only when it was not.
     polymarket_fresh_books: dict[int, tuple[Optional[float], Optional[float]]] = {}
+    # #9083 (after-check RED 2026-09-27 14:04Z): the Polymarket legs this poll
+    # read and then declined to price (no trade and no bid, a price outside
+    # (0, 1), a phantom midpoint). Their row still holds an older poll's price,
+    # which the pin must not take as this poll's consensus.
+    polymarket_unpriced_reads: set[int] = set()
+    # CERT-3652: the legs cleared from the set above since the last durable
+    # boundary. A clear is only as real as the price write it stands for; if
+    # the snapshot INSERT or the commit fails, `_recover` rolls the row back to
+    # the older price and puts these legs back, so the pin cannot take the
+    # restored number as this poll's.
+    polymarket_cleared_since_commit: set[int] = set()
 
     now = datetime.now(timezone.utc)
 
@@ -10041,6 +11401,7 @@ async def _poll_live_prediction_market_prices():
             await session.commit()
             stats["commits"] += 1
             committed_counts.update({k: stats[k] for k in _durable_counters})
+            polymarket_cleared_since_commit.clear()
 
         async def _recover(label: str, exc: Exception) -> None:
             """Record one item's failure and hand the pass back a usable session.
@@ -10057,6 +11418,10 @@ async def _poll_live_prediction_market_prices():
             # counted them go with it, back to the last durable boundary.
             for _counter in _durable_counters:
                 stats[_counter] = committed_counts[_counter]
+            # CERT-3652: the rollback restores each such leg's older price, so
+            # the leg is unpriced again.
+            polymarket_unpriced_reads.update(polymarket_cleared_since_commit)
+            polymarket_cleared_since_commit.clear()
             if "deadlock" in str(exc).lower():
                 stats["deadlocks"] += 1
             stats["errors"].append(f"{label}: {str(exc)[:100]}")
@@ -10466,6 +11831,11 @@ async def _poll_live_prediction_market_prices():
                                 None if _fresh_bid is None else float(_fresh_bid),
                                 None if _fresh_ask is None else float(_fresh_ask),
                             )
+                            # Cleared below only where this read's price is
+                            # written; every `continue` between leaves it set,
+                            # and `_recover` re-adds it if that write is rolled
+                            # back (CERT-3652).
+                            polymarket_unpriced_reads.add(outcome.id)
 
                             # Determine the correct price for this outcome.
                             #
@@ -10616,6 +11986,8 @@ async def _poll_live_prediction_market_prices():
 
                             # Update outcome probability
                             outcome.current_probability = prob
+                            polymarket_unpriced_reads.discard(outcome.id)
+                            polymarket_cleared_since_commit.add(outcome.id)
                             american = probability_to_american(prob) if 0 < prob < 1 else None
                             outcome.current_american_odds = american
 
@@ -10973,6 +12345,7 @@ async def _poll_live_prediction_market_prices():
                 market.source,
                 pop.outcomes_by_market.get(market_id, []),
                 polymarket_fresh_books,
+                polymarket_unpriced_reads,
             )
             stats["pregame_mark_empty_book_legs_refused"] += _empty_legs
             if not outcome_probs:
@@ -11172,6 +12545,17 @@ async def _backfill_polymarket_win_prob_history(
             return stats
         if market.source != "polymarket":
             stats["errors"].append("not a polymarket market")
+            return stats
+        # #9417. This runs for EVERY newly linked Polymarket market, and it
+        # used to ask no admission rule: `SC Braga vs. Sporting CP - Halftime
+        # Result` resolved its "SC Braga" outcome and wrote the halftime-lead
+        # history as the match line (0.225 between match prices of 0.27 on
+        # 15317139); 59k such rows in September. It asks the rule the live poll
+        # and the matcher ask, so the chart hears only what the blend may hear.
+        # No outcomes, kickoff or result are passed: those clauses judge a LIVE
+        # reading and abstain here, exactly as for `event_chart_backfill`.
+        if not admissible_as_blend_speaker(market, is_primary=False):
+            stats["errors"].append("not admissible as a blend speaker")
             return stats
 
         # Extract matchup and find moneyline outcome

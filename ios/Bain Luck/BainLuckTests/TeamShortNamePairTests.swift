@@ -424,7 +424,9 @@ final class TeamShortNamePairTests: XCTestCase {
         ("BOJONG", "Diamant Esports", ("BOJONG", "Esports"), ("BOJ", "ESP")),
         ("Shunsuke Mitsui", "Petr Bar Biryukov", ("Mitsui", "Biryukov"), ("MIT", "PBB")),
         ("FC Madalena", "SC Barreiro", ("Madalena", "Barreiro"), ("MAD", "BAR")),
-        ("Cape Verde", "What will the announcers say during Uruguay", ("Verde", "Uruguay"), ("VER", "WWT")),
+        // #5634 — a multi-word country is kept whole as a LABEL ("Verde" named
+        // nobody); its badge stays `VER`.
+        ("Cape Verde", "What will the announcers say during Uruguay", ("Cape Verde", "Uruguay"), ("VER", "WWT")),
         ("Rzhevska Anna", "Dronova Uliana", ("Anna", "Uliana"), ("ANN", "ULI")),
         ("Daniel Marcos", "Magomed Magomedov", ("Marcos", "Magomedov"), ("MAR", "MAG")),
         ("Yasmine Mansouri", "Martha Matoula", ("Mansouri", "Matoula"), ("MAN", "MAT")),

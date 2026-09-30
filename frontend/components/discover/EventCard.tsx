@@ -25,6 +25,7 @@ import {
 import { PREMATCH_SAID, prematchReading } from "@/lib/prematchReading";
 import { probabilityBarPair } from "@/lib/probabilityBarPair";
 import { awayIsTheComplement } from "@/lib/drawPricedWinner";
+import { crestNeedsPlate } from "@/lib/discover/crestPlate";
 
 /**
  * This card's bar is painted at full opacity — no `opacity` style on either
@@ -149,6 +150,10 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
   // none falls back to a light team-colour tint below, where the white-card
   // chip skin is still the readable one.
   const heroGradient = CATEGORY_GRADIENTS[sportCat];
+  // #9133 — a green club's crest on the green football hero gets a light disc;
+  // see `crestNeedsPlate` for the measured threshold.
+  const awayCrestPlate = crestNeedsPlate(data.away_team_data?.primary_color, heroGradient);
+  const homeCrestPlate = crestNeedsPlate(data.home_team_data?.primary_color, heroGradient);
   const heroChipSkin = heroGradient ? HERO_CHIP_ON_DARK : `${catStyle.bg} ${catStyle.text}`;
   // #2621 (ux half) — THE CHIP NAMES A COMPETITION, NOT A KEY FRAGMENT.
   //
@@ -271,12 +276,12 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
         </div>
 
         <div className="flex flex-col items-center gap-2">
-          {data.away_team_data?.logo_small ? <img src={data.away_team_data.logo_small} alt="" aria-hidden="true" className="w-16 h-16 object-contain drop-shadow-lg" /> : <div className="w-16 h-16 rounded-xl grid place-items-center text-white font-black text-lg" style={{ background: awayColor }}>{discoverCrestBadge(data.away_team, data.sport)}</div>}
+          {data.away_team_data?.logo_small ? (awayCrestPlate ? <div data-crest-plate="away" className="w-16 h-16 rounded-full bg-white/90 shadow-lg grid place-items-center"><img src={data.away_team_data.logo_small} alt="" aria-hidden="true" className="w-12 h-12 object-contain" /></div> : <img src={data.away_team_data.logo_small} alt="" aria-hidden="true" className="w-16 h-16 object-contain drop-shadow-lg" />) : <div className="w-16 h-16 rounded-xl grid place-items-center text-white font-black text-lg" style={{ background: awayColor }}>{discoverCrestBadge(data.away_team, data.sport)}</div>}
           {(isLive || isDone || isSuspended) && data.away_score != null && <span className="text-2xl font-black tabular-nums text-white drop-shadow">{data.away_score}</span>}
         </div>
         <span className="text-white/70 text-sm font-semibold">{timeLabel}</span>
         <div className="flex flex-col items-center gap-2">
-          {data.home_team_data?.logo_small ? <img src={data.home_team_data.logo_small} alt="" aria-hidden="true" className="w-16 h-16 object-contain drop-shadow-lg" /> : <div className="w-16 h-16 rounded-xl grid place-items-center text-white font-black text-lg" style={{ background: homeColor }}>{discoverCrestBadge(data.home_team, data.sport)}</div>}
+          {data.home_team_data?.logo_small ? (homeCrestPlate ? <div data-crest-plate="home" className="w-16 h-16 rounded-full bg-white/90 shadow-lg grid place-items-center"><img src={data.home_team_data.logo_small} alt="" aria-hidden="true" className="w-12 h-12 object-contain" /></div> : <img src={data.home_team_data.logo_small} alt="" aria-hidden="true" className="w-16 h-16 object-contain drop-shadow-lg" />) : <div className="w-16 h-16 rounded-xl grid place-items-center text-white font-black text-lg" style={{ background: homeColor }}>{discoverCrestBadge(data.home_team, data.sport)}</div>}
           {(isLive || isDone || isSuspended) && data.home_score != null && <span className="text-2xl font-black tabular-nums text-white drop-shadow">{data.home_score}</span>}
         </div>
       </div>
@@ -412,6 +417,7 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
                   const pair = teamShortNames(
                     { name: data.home_team },
                     { name: data.away_team },
+                    data.sport,
                   );
                   return data.home_score > data.away_score ? pair.home : pair.away;
                 })()} won

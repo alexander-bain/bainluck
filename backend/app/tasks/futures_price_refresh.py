@@ -73,6 +73,29 @@ whose stored date is still the backstop (the resolution sweep's own
 date is never how this task decides a market is over). See
 :func:`_kalshi_window_to_write`.
 
+AND THE THRESHOLD LABEL, FROM THE SAME PAYLOAD (#9543). A one-market Kalshi
+threshold event keeps its stored outcome name ``Yes`` and the venue's own leg
+label ("Above $1237.81") rides in ``market_metadata.threshold_label`` (#9383),
+which the served-name sites print instead. Only the discovery poll wrote it, and
+the poll's main scan has not wrapped its cursor in 14 runs. Measured
+2026-09-30 03:3xZ: of 1,046 open single-``Yes`` Kalshi rows with no label, the
+poll rewrote **28** in 24 h while **382** took a fresh price snapshot, and
+``/futures/61461638`` (Colombia wage growth, ``KXCOWAGE-2027``) still read
+"Yes" on a row this task priced at 00:55Z. It now runs the poll's own
+:func:`app.utils.kalshi_threshold_label.single_leg_threshold_label` over the
+parsed event it already holds and writes a non-empty result that differs from
+the stored one. It only ever ADDS or corrects a label, never removes one: a
+``None`` here means "not a threshold leg" or "unreadable", and the poll's
+wholesale ``market_metadata`` rewrite stays the only path that drops one. See
+:data:`_KALSHI_THRESHOLD_LABEL_WRITE_SQL`.
+
+A write only reaches rows the task selects, and CERT-3817 showed that most
+unlabelled rows were never selected: ``/futures/60481264`` (tier 2, volume
+5,170) fails every value and identity arm. So an unlabelled one-``Yes`` Kalshi
+row is its own identity arm (:data:`_THRESHOLD_LABEL_CANDIDATE_SQL`). It is
+capped at :data:`THRESHOLD_LABEL_PER_RUN` per run and rotated through its own
+marker, which reaches the whole measured population inside a day.
+
 THREE ARMS, BECAUSE THERE ARE THREE KINDS OF WORTH REFRESHING
 --------------------------------------------------------------
 The sweep selects on **value** (volume above a floor at any tier, or tier 1
@@ -205,6 +228,10 @@ from app.utils.futures_liveness import (
 )
 from app.utils.futures_rank import rerank_market_field_stmt  # #6598 / CERT-3182
 from app.utils.kalshi_resolution_window import derive_resolution_window  # #8871
+from app.utils.kalshi_threshold_label import (  # #9543
+    THRESHOLD_LABEL_KEY,
+    single_leg_threshold_label,
+)
 from app.utils.polymarket_settlement_scan import GAMMA_EVENT_ID_EXPR
 
 logger = logging.getLogger(__name__)
@@ -478,6 +505,54 @@ IN_PLAY_GRACE_HOURS = 36
 #: identity arm (taken before the budget) into an unbounded one.
 IN_PLAY_LIMIT = 200
 
+#: #9220 — the playoff SERIES markets a game page's Series card renders
+#: (``routes/events.py`` "Pass 3": tier 5, ``event_id`` NULL, found by name).
+#: They fail every value test above — measured 2026-09-27 22:30Z, all 18 open
+#: rows (12 WNBA, 6 MLB wildcard) carried volume 8-1,519, no liquidity, tier 5
+#: — so their only writer was the discovery poll. That poll cannot reach them:
+#: ``SERIES`` is a heavy token, so series discovery declines them, they are not
+#: on the rescue list, and the main scan stops at ``max_pages`` behind its
+#: deadline every beat (16,067 existing events unreached on the 20:45Z beat).
+#: Every ``KXWNBASERIES*`` row last wrote 2026-09-26 05:02Z, and the Liberty-Lynx
+#: page printed Minnesota 76% to win the series (Kalshi 45%) and 44% to sweep a
+#: series New York had already taken a game of.
+#:
+#: Selected by ticker FAMILY rather than by the page's name match, because the
+#: name match needs a game's two team names and this task has no game. The
+#: family is anchored on the league and the dash so ``KXTOPSERIESNFLX`` and
+#: ``KXNASCARCUPSERIES`` stay out; NBA and NHL are named before their playoffs
+#: start so the first round does not repeat this.
+SERIES_CARD_TICKER_RE = r"^KX(WNBA|NBA|NHL|MLB)SERIES(GAMES|SCORE)?-"
+
+#: A ceiling, not a fence, for the reason :data:`IN_PLAY_LIMIT` is one: 18 open
+#: today, and an NBA + NHL first round together is 16 series x 3 families = 48.
+SERIES_CARD_LIMIT = 150
+
+#: #9543 / CERT-3817 — Kalshi rows stored as one ``Yes`` outcome with no
+#: ``threshold_label``. The label is only readable off the venue's event, and
+#: the value arms cannot reach most of them: ``/futures/60481264``
+#: (``KXPOKEMON-26SEPCELULTPR``, tier 2, volume 5,170) is outside the floor,
+#: the register, page one, the in-play calendar and the series families, so
+#: it printed "Yes" with its last snapshot two days old. Measured on
+#: production 2026-09-30 03:5xZ: **963** live rows in this shape, both named
+#: specimens among them, 0.9 s to select.
+#:
+#: Rotated through its OWN attempt marker (:func:`_label_attempt_key`), not
+#: the price marker: most of the population is plain binaries the helper
+#: correctly refuses, which never leave, and a day-long price marker on a row
+#: the class arm also prices would stretch its 6 h clock to a day. Sizing: a
+#: row is retried after :data:`THRESHOLD_LABEL_RETRY_HOURS`, and
+#: ``PER_RUN x RETRY_HOURS`` = 1,200 >= 963 hourly beats' worth, so every row
+#: in the population is read inside 20 h — the "within one day" #9543 promises.
+#: Wall cost: 60 x ~0.35 s = ~21 s against the 420 s loop budget.
+THRESHOLD_LABEL_PER_RUN = 60
+THRESHOLD_LABEL_RETRY_HOURS = 20
+
+#: A ceiling, not a fence: ~3x the measured population. The run reports
+#: ``threshold_label_pool_capped`` when it binds, because a capped pool is the
+#: one way this arm could stop reaching the tail in silence.
+THRESHOLD_LABEL_SCAN_LIMIT = 3000
+
 #: Markets refreshed per run, PER SOURCE, because the two sources cost 20x
 #: different amounts per market and one shared cap over two unequally-priced
 #: populations does not bound cost — it silently decides which source gets swept.
@@ -681,6 +756,15 @@ _ATTEMPT_KEY_PREFIX = "bainluck:futures_price_refresh:attempted:"
 
 def _attempt_key(market_id: int) -> str:
     return f"{_ATTEMPT_KEY_PREFIX}{market_id}"
+
+
+#: #9543. The threshold-label arm's rotation marker, a separate namespace so a
+#: 20 h label retry can never veto a price refresh on its own clock.
+_LABEL_ATTEMPT_KEY_PREFIX = "bainluck:futures_price_refresh:label_attempted:"
+
+
+def _label_attempt_key(market_id: int) -> str:
+    return f"{_LABEL_ATTEMPT_KEY_PREFIX}{market_id}"
 
 
 # --- selection ---------------------------------------------------------------
@@ -915,6 +999,63 @@ _IN_PLAY_CANDIDATE_SQL = text(
 )
 
 
+#: #9220 — the Series card's markets, stale for longer than
+#: :data:`IN_PLAY_REFRESH_MINUTES`. They share the in-play clock because they
+#: ARE in play: a series price moves with every game of the series, and the
+#: identity attempt marker is already sized off that window. The liveness
+#: bounds are the shared ones, verbatim.
+_SERIES_CARD_CANDIDATE_SQL = text(
+    f"""
+    SELECT fm.id, fm.source, fm.external_id, fm.volume,
+           {_POLY_EVENT_ID_SQL},
+           fm.market_metadata->>'{VENUE_SETTLED_KEY}' AS venue_settled_since
+      FROM futures_markets fm
+     WHERE {LIVE_MARKET_SQL}
+       AND fm.source = 'kalshi'
+       AND fm.external_id ~ :series_ticker_re
+       AND NOT EXISTS (
+             SELECT 1
+               FROM futures_outcomes fo
+               JOIN futures_odds_snapshots s ON s.outcome_id = fo.id
+              WHERE fo.market_id = fm.id
+                AND s.captured_at > NOW() - make_interval(mins => :stale_minutes)
+           )
+     ORDER BY fm.resolution_date, fm.id
+     LIMIT :series_card_limit
+    """
+)
+
+
+#: #9543 / CERT-3817 — live Kalshi rows whose only outcome is ``Yes`` and that
+#: carry no ``threshold_label``. No staleness bound: a row another writer
+#: priced an hour ago still prints "Yes", and the label, not the price, is
+#: what this arm is for. ``->>`` reads SQL NULL, JSON ``null`` and a missing
+#: key alike as NULL. The one-``Yes`` shape is the stored half of the helper's
+#: "one market" rule; whether it is a THRESHOLD is only answerable by the venue,
+#: which is why the arm rotates rather than converging to empty.
+_THRESHOLD_LABEL_CANDIDATE_SQL = text(
+    f"""
+    SELECT fm.id, fm.source, fm.external_id, fm.volume,
+           {_POLY_EVENT_ID_SQL},
+           fm.market_metadata->>'{VENUE_SETTLED_KEY}' AS venue_settled_since
+      FROM futures_markets fm
+     WHERE {LIVE_MARKET_SQL}
+       AND fm.source = 'kalshi'
+       AND (fm.market_metadata ->> '{THRESHOLD_LABEL_KEY}') IS NULL
+       AND EXISTS (
+             SELECT 1 FROM futures_outcomes fo_y
+              WHERE fo_y.market_id = fm.id AND fo_y.name = 'Yes'
+           )
+       AND NOT EXISTS (
+             SELECT 1 FROM futures_outcomes fo_o
+              WHERE fo_o.market_id = fm.id AND fo_o.name <> 'Yes'
+           )
+     ORDER BY fm.id
+     LIMIT :threshold_label_limit
+    """
+)
+
+
 #: The arm a candidate came in on. ``class`` is the value sweep; the other two
 #: are identity arms. Kept as a NAME rather than as a pair of booleans because
 #: three of the run's decisions read it and each wants a different grouping:
@@ -926,6 +1067,8 @@ _ARM_CLASS = "class"
 _ARM_REGISTERED = "registered"
 _ARM_SERVED = "served"
 _ARM_IN_PLAY = "in_play"
+_ARM_SERIES_CARD = "series_card"
+_ARM_THRESHOLD_LABEL = "threshold_label"  # #9543
 
 
 def _rows_to_markets(rows, *, arm: str) -> list[dict]:
@@ -1145,6 +1288,35 @@ async def _scan_in_play_candidates(
     return _rows_to_markets(rows, arm=_ARM_IN_PLAY)
 
 
+async def _scan_series_card_candidates(
+    session, *, stale_minutes: int, limit: int = SERIES_CARD_LIMIT
+) -> list[dict]:
+    """Stale playoff-series markets a game page's Series card renders (#9220)."""
+    rows = (
+        await session.execute(
+            _SERIES_CARD_CANDIDATE_SQL,
+            {
+                "stale_minutes": stale_minutes,
+                "series_ticker_re": SERIES_CARD_TICKER_RE,
+                "series_card_limit": limit,
+            },
+        )
+    ).fetchall()
+    return _rows_to_markets(rows, arm=_ARM_SERIES_CARD)
+
+
+async def _scan_threshold_label_candidates(
+    session, *, limit: int = THRESHOLD_LABEL_SCAN_LIMIT
+) -> list[dict]:
+    """Live one-``Yes`` Kalshi rows with no threshold label yet (#9543)."""
+    rows = (
+        await session.execute(
+            _THRESHOLD_LABEL_CANDIDATE_SQL, {"threshold_label_limit": limit}
+        )
+    ).fetchall()
+    return _rows_to_markets(rows, arm=_ARM_THRESHOLD_LABEL)
+
+
 #: How many served ids this task CAN price. The unreachable count is derived
 #: from it by subtraction, and the subtraction is the point.
 #:
@@ -1197,13 +1369,17 @@ def _load_attempt_skips(market_ids: list[int]) -> set[int]:
     async task. A Redis outage degrades this to "no rotation", which is strictly
     better than not running.
     """
+    return _markers_present(market_ids, _attempt_key)
+
+
+def _markers_present(market_ids: list[int], key) -> set[int]:
     if not market_ids:
         return set()
     try:
         from app.tasks.redis_state import get_redis_client
 
         rc = get_redis_client(socket_timeout=2.0, socket_connect_timeout=2.0)
-        values = rc.mget([_attempt_key(mid) for mid in market_ids])
+        values = rc.mget([key(mid) for mid in market_ids])
     except Exception:
         return set()
     return {mid for mid, val in zip(market_ids, values) if val}
@@ -1216,6 +1392,10 @@ def _mark_attempted(market_ids: list[int], ttl_seconds: int) -> None:
     the queue on every single run and starve the tail behind it — the same
     fixed-point failure the volume ordering above avoids.
     """
+    _set_markers(market_ids, ttl_seconds, _attempt_key)
+
+
+def _set_markers(market_ids: list[int], ttl_seconds: int, key) -> None:
     if not market_ids:
         return
     try:
@@ -1224,10 +1404,24 @@ def _mark_attempted(market_ids: list[int], ttl_seconds: int) -> None:
         rc = get_redis_client(socket_timeout=2.0, socket_connect_timeout=2.0)
         pipe = rc.pipeline()
         for mid in market_ids:
-            pipe.setex(_attempt_key(mid), ttl_seconds, "1")
+            pipe.setex(key(mid), ttl_seconds, "1")
         pipe.execute()
     except Exception:
         pass
+
+
+def _load_label_attempt_skips(market_ids: list[int]) -> set[int]:
+    """#9543. Rows the threshold-label arm read inside its retry window.
+
+    Same best-effort contract as :func:`_load_attempt_skips`: a Redis outage
+    means no rotation this beat, and the per-run cap still bounds the cost.
+    """
+    return _markers_present(market_ids, _label_attempt_key)
+
+
+def _mark_label_attempted(market_ids: list[int]) -> None:
+    """#9543. Rotate the threshold-label arm: skip these for the retry window."""
+    _set_markers(market_ids, THRESHOLD_LABEL_RETRY_HOURS * 3600, _label_attempt_key)
 
 
 # --- writing -----------------------------------------------------------------
@@ -1314,6 +1508,8 @@ async def _write_prices(
     from app.utils.market_staleness import OBSERVATION_LAG_DAYS  # #7582
     from app.utils.odds_math import probability_to_american
     from app.utils.price_change_stamp import price_changed_at_value
+    from app.utils.resolution_authority import OVERWRITABLE_WINNER_SOURCES  # #9220
+    from app.utils.settled_price import SETTLED_SOURCE, settled_price_values  # #9220
     from sqlalchemy import case, func, or_, update as sa_update
 
     if not priced:
@@ -1386,7 +1582,13 @@ async def _write_prices(
     # them under the same three id conventions as a priced item — a Polymarket
     # decomposed pair would otherwise clear its yes leg and leave the no leg.
     unpriced: list[dict] = []
+    #: #9220. A mixed Kalshi event's legs the venue has SETTLED, each carrying
+    #: its verdict. Graded below, never priced.
+    answered: list[dict] = []
     for item in priced:
+        if item.get("venue_answered"):
+            answered.append(item)
+            continue
         if item.get("venue_quotes_no_price"):
             unpriced.append(item)
             continue
@@ -1694,6 +1896,64 @@ async def _write_prices(
                     "legs_cleared_venue_unpriced", 0
                 ) + (cleared.rowcount or 0)
 
+    # ── #9220: grade the legs the venue settled on a board that is still open ─
+    #
+    # The venue's `result` is a positive statement — the opposite case to the
+    # clear above, which waits a week because silence is not evidence — so this
+    # is NOT gated on `written` and has no lag. It is a GRADE, written the way
+    # every Kalshi grader writes one: `api_settlement` plus the terminal price in
+    # the same statement (`settled_price`, #5246: "a settlement writer is a
+    # population, not a place"), so the grade and the number a reader sees
+    # cannot disagree.
+    #
+    # Overwrites only an ungraded row or a guess-rung source — the graders' own
+    # guard, imported rather than re-listed. `existing` already excludes a
+    # crowned or `api_settlement` leg; the WHERE restates the grade half because
+    # a settlement feed may land between that SELECT and this UPDATE.
+    #
+    # NO SNAPSHOT ROW: a settlement is not an observed price, and the graders
+    # write none. `calibration_probability` and `opening_probability` are not in
+    # the SET, so the curve's inputs are untouched — measured 2026-09-28, none of
+    # the 71 legs this reaches carried a `calibration_probability`.
+    #
+    # `venue_won` None — a scalar or unreadable settlement — is left exactly as
+    # it was and counted (#1852: an absence is never recorded as a loss).
+    for item in answered:
+        won = item.get("venue_won")
+        if won is None:
+            stats["answered_legs_ungradeable"] = stats.get(
+                "answered_legs_ungradeable", 0
+            ) + 1
+            continue
+        for outcome_id, _side in _legs(item):
+            settled = settled_price_values(won)
+            graded = await session.execute(
+                sa_update(FuturesOutcome)
+                .where(
+                    FuturesOutcome.id == outcome_id,
+                    or_(
+                        FuturesOutcome.resolution_source.is_(None),
+                        FuturesOutcome.resolution_source.in_(
+                            OVERWRITABLE_WINNER_SOURCES
+                        ),
+                    ),
+                )
+                .values(
+                    is_winner=won,
+                    resolution_source=SETTLED_SOURCE,
+                    last_updated=func.now(),
+                    price_changed_at=price_changed_at_value(
+                        FuturesOutcome.current_probability,
+                        FuturesOutcome.price_changed_at,
+                        settled["current_probability"],
+                    ),
+                    **settled,
+                )
+            )
+            stats["answered_legs_graded"] = stats.get(
+                "answered_legs_graded", 0
+            ) + (graded.rowcount or 0)
+
     return written
 
 
@@ -1785,6 +2045,39 @@ _KALSHI_WINDOW_WRITE_SQL = text(
 )
 
 
+# --- the threshold label, off the same payload (#9543) ----------------------
+
+#: #9543. The venue's leg label for a one-market threshold event, merged into
+#: ``market_metadata`` under the key the poll writes (#9383).
+#:
+#: A MERGE (``||``), not an assignment: every other key on the row is the
+#: poll's and this statement must leave them byte-identical. The ``CASE`` is
+#: for the two non-object shapes a row can hold: SQL NULL (``NULL || x`` is
+#: NULL) and JSON ``null``, which is what the ORM stores for a Python ``None``
+#: and which ``COALESCE`` passes straight through, so ``null || x`` built the
+#: ARRAY ``[null, {...}]`` on the Postgres gate. Either becomes ``{}`` first.
+#: ``IS DISTINCT FROM`` makes the healthy case zero row writes.
+#: No ``status`` fence, unlike the window: a label is the venue's wording, not a
+#: state, and the fetch only fills it from a book the venue still lists. No
+#: ``status`` and no grade in the SET, and no path that removes the key.
+_KALSHI_THRESHOLD_LABEL_WRITE_SQL = text(
+    f"""
+    UPDATE futures_markets
+       SET market_metadata = CASE
+                                 WHEN jsonb_typeof(market_metadata) = 'object'
+                                 THEN market_metadata
+                                 ELSE '{{}}'::jsonb
+                             END
+                             || jsonb_build_object('{THRESHOLD_LABEL_KEY}',
+                                                   CAST(:label AS text))
+     WHERE id = :mid
+       AND source = 'kalshi'
+       AND (market_metadata ->> '{THRESHOLD_LABEL_KEY}')
+           IS DISTINCT FROM CAST(:label AS text)
+    """
+)
+
+
 def _kalshi_window_to_write(
     external_id: Optional[str], markets, now: datetime
 ) -> Optional[tuple[datetime, Optional[datetime]]]:
@@ -1826,7 +2119,11 @@ def _kalshi_window_to_write(
 
 
 async def _fetch_kalshi_prices(
-    service, external_id: str, *, windows: Optional[dict] = None
+    service,
+    external_id: str,
+    *,
+    windows: Optional[dict] = None,
+    labels: Optional[dict] = None,
 ):
     """Prices for one Kalshi event ticker.
 
@@ -1870,6 +2167,11 @@ async def _fetch_kalshi_prices(
     written only on the list return: a settled or unreadable event has no
     window this task may act on.
 
+    ``labels``, when passed, is filled with ``{external_id: label}`` for a
+    one-market threshold event (#9543), under the same list-return rule. A
+    ``None`` from the helper is simply not entered: nothing downstream may
+    read "no label this pass" as "remove the label".
+
     🔴 WHAT (2) COSTS A READER, measured on production 2026-09-12 22:2xZ. Of the
     24 events kicking off in the future whose stored Kalshi blend leg sat at
     <=2% or >=98%, a venue read of all 24 tickers split them cleanly:
@@ -1896,6 +2198,10 @@ async def _fetch_kalshi_prices(
     but a series event can hold both, so the answered markets are skipped
     individually and the rest are priced — the per-leg care CERT-751 already
     forced on the Polymarket resolved-status sweep, for the same reason.
+    Skipped as PRICES, not dropped: since #9220 each answered leg rides the list
+    flagged ``venue_answered`` with the venue's verdict in ``venue_won``, and
+    `_write_prices` grades it, because no grader reaches a leg whose event is
+    still open.
 
     Two deliberate reuses rather than reimplementations:
 
@@ -1911,6 +2217,7 @@ async def _fetch_kalshi_prices(
       from its input rather than the helper taught a new refusal.
     """
     from app.tasks.kalshi import _kalshi_yes_probability
+    from app.utils.kalshi_market_status import gradeable_winner  # #9220
 
     raw = await service.get_event(external_id, with_nested_markets=True)
     if not raw:
@@ -1939,6 +2246,20 @@ async def _fetch_kalshi_prices(
                 external_id, exc,
             )
 
+    # #9543. Same payload, same rule: a failed label costs this read its label,
+    # never its prices or its date.
+    if labels is not None:
+        try:
+            label = single_leg_threshold_label(event.markets)
+        except Exception as exc:  # noqa: BLE001 — see the comment above
+            logger.warning(
+                "futures_price_refresh: no threshold label for %s: %s",
+                external_id, exc,
+            )
+        else:
+            if label:
+                labels[external_id] = label
+
     # #7747. Keyed by ticker off the RAW list, because the parsed object's own
     # `volume_24h` cannot answer this question — see `venue_volume_24h`. Built
     # once per event rather than searched per market so this stays linear.
@@ -1954,12 +2275,43 @@ async def _fetch_kalshi_prices(
     #: prices first, and the clear is defined as a thing that happens after a
     #: pass has priced what it could.
     unpriced: list[dict] = []
+    #: #9220. The mixed event's answered legs, carried to the writer with the
+    #: venue's verdict — see the note at the append.
+    answered: list[dict] = []
     for market in event.markets:
         if not market.ticker:
             continue
         if venue_answered(market.result):
             # A mixed event's answered leg. Its quote is a settlement artifact,
-            # not a price — see the docstring.
+            # not a price — see the docstring — so it is never priced.
+            #
+            # #9220 — BUT DROPPING IT LEFT THE PRE-SETTLEMENT PRICE STANDING. The
+            # note below says an answered leg's price "is a RESULT, which settled
+            # means settled keeps on the page". That holds only once something
+            # has GRADED it, and nothing does while the event is open: every
+            # Kalshi grader reads `status="settled"` EVENTS, or markets we already
+            # hold `resolved`, and a series with one leg finalized is neither.
+            # Measured 2026-09-28 00:1xZ: New York won Game 1 of a best-of-3 and
+            # Kalshi finalized `KXWNBASERIESSCORE-26NYMINR1-MIN20` NO, while
+            # /events/15318132 led its Series card with "MIN wins 2-0 43.5%", the
+            # 09-26 05:02Z price, because this `continue` never let the writer
+            # see the leg. Across the 166 open Kalshi boards this task priced in
+            # the last two hours, 71 legs on 13 boards were in that state —
+            # eliminated Chengdu players at 29-48%, settled NFL/NCAAF win-count
+            # rungs, both WNBA sweep legs. The venue's verdict is on this
+            # payload; carrying it costs nothing.
+            #
+            # `gradeable_winner` is three-state and its None (a scalar or
+            # unreadable settlement) is carried as None: the writer grades
+            # nothing it cannot read (#1852).
+            answered.append(
+                {
+                    "external_id": market.ticker,
+                    "probability": None,
+                    "venue_answered": True,
+                    "venue_won": gradeable_winner(market.status, market.result),
+                }
+            )
             continue
         prob = _kalshi_yes_probability(
             market.yes_bid, market.yes_ask, market.last_price
@@ -2018,7 +2370,7 @@ async def _fetch_kalshi_prices(
                 "volume_24h": volume_by_ticker.get(market.ticker),
             }
         )
-    return priced + unpriced
+    return priced + unpriced + answered
 
 
 #: Which outcomes of a market may be re-priced by a poll — the settled refusal,
@@ -2768,7 +3120,10 @@ def _venue_quotes_this_leg(market) -> bool:
 
 
 async def _fetch_polymarket_prices(
-    service, event_ids: list[str], stats: dict | None = None
+    service,
+    event_ids: list[str],
+    stats: dict | None = None,
+    refuted_out: dict | None = None,
 ) -> tuple[dict, dict]:
     """Prices for a batch of Polymarket event ids, keyed by event id.
 
@@ -2776,6 +3131,12 @@ async def _fetch_polymarket_prices(
     is either a list of priced items or :data:`VENUE_SETTLED`; a value in the
     second is the condition ids this pass was SERVED and the venue quotes no
     price for (#4000) — see :func:`_retire_unpriced_legs` below.
+
+    ``refuted_out``, when given, is filled per priced event with
+    ``polymarket._refused_leg_books`` — the fresh book of every leg this pass
+    REFUSED to price while the venue quoted it (#9399), so the writer can
+    withdraw a stored price that book prices out. An out-parameter rather than a
+    third return value so every existing caller keeps its two-tuple.
 
     THE SECOND DICT EXISTS BECAUSE ``continue`` THROWS AWAY A FACT WE WERE TOLD.
     The per-leg refusal below drops an unpriced leg from the write set, which is
@@ -2817,6 +3178,7 @@ async def _fetch_polymarket_prices(
     # my own change by blunting a guard that is still doing its job — the pin is
     # brittle about formatting, but it is right about the rule.
     from app.tasks.polymarket import _unpriced_leg_external_ids
+    from app.tasks.polymarket import _refused_leg_books  # #9399
     from app.utils.winner_field_coherence import field_is_incoherent
 
     raw_events = await service.get_events_by_ids(event_ids)
@@ -2919,6 +3281,8 @@ async def _fetch_polymarket_prices(
         # retires nothing, which is stricter than the discovery poll's placement
         # and deliberately so.
         unpriced_out[str(event.id)] = _unpriced_leg_external_ids(event)
+        if refuted_out is not None:
+            refuted_out[str(event.id)] = _refused_leg_books(event)
     return out, unpriced_out
 
 
@@ -2934,6 +3298,7 @@ async def _refresh_stale_futures_prices(
     registered_refresh_minutes: int = REGISTERED_REFRESH_MINUTES,
     served_refresh_minutes: int = SERVED_REFRESH_MINUTES,
     in_play_refresh_minutes: int = IN_PLAY_REFRESH_MINUTES,
+    threshold_label_per_run: int = THRESHOLD_LABEL_PER_RUN,
 ) -> dict:
     """Refresh prices for stale high-value open futures markets. See module docstring."""
     from app.tasks.base import get_task_session
@@ -2968,6 +3333,10 @@ async def _refresh_stale_futures_prices(
         # a clean success on every pass while retiring nothing, and a stat that
         # only appears when it fires cannot tell that apart from a quiet cohort.
         "legs_retired": 0,
+        # #9399. Stored prices withdrawn because the leg's CURRENT book prices
+        # them out while every price the venue offered this pass was refused.
+        # Unconditional for the reason `legs_retired` is.
+        "legs_withdrawn_book_refuted": 0,
         # #6598 / CERT-3182. Rows whose `rank` this pass corrected. Reported
         # unconditionally for the reason `legs_retired` is: the wiring is a
         # no-op on a field the poll already had right, so "zero" and "the call
@@ -2979,6 +3348,10 @@ async def _refresh_stale_futures_prices(
         # `ranks_rederived` is: the healthy case writes nothing, so "zero" and
         # "never asked" are the two states it exists to separate.
         "resolution_windows_rederived": 0,
+        # #9543. Kalshi one-market threshold rows whose venue leg label this
+        # pass added or corrected. Unconditional, including as zero, for the
+        # same reason as the two counters above.
+        "threshold_labels_written": 0,
         # #5869. THE LEG THIS PASS DECLINED TO PRICE — the third outcome, and the
         # one the summary could not express. `legs_retired` says "the venue quotes
         # nothing, so we withdrew ours"; `markets_priced` says "we wrote". A leg
@@ -3128,6 +3501,19 @@ async def _refresh_stale_futures_prices(
         "in_play_candidates": 0,
         "in_play_attempted": 0,
         "in_play_priced": 0,
+        # #9220: the Series card's playoff-series markets, same attribution rule.
+        "series_card_candidates": 0,
+        "series_card_attempted": 0,
+        "series_card_priced": 0,
+        # #9543 / CERT-3817: the threshold-label arm. `pool` is every live
+        # one-`Yes` Kalshi row with no label (capped at the scan ceiling, and
+        # `pool_capped` says when that bound bit); `candidates` is the slice this
+        # run took after rotation; the label writes themselves are
+        # `threshold_labels_written`, shared with the other arms' reads.
+        "threshold_label_pool": 0,
+        "threshold_label_pool_capped": False,
+        "threshold_label_candidates": 0,
+        "threshold_label_attempted": 0,
         # Served ids this task structurally cannot refresh: an `odds_api` row
         # (LIVE_MARKET_SQL is Kalshi/Polymarket only) or a market the liveness
         # bounds retired. Counted so a page-one card that stays wrong has a
@@ -3201,6 +3587,9 @@ async def _refresh_stale_futures_prices(
         in_play_scan = await _scan_in_play_candidates(
             session, stale_minutes=in_play_refresh_minutes
         )
+        series_card_scan = await _scan_series_card_candidates(
+            session, stale_minutes=in_play_refresh_minutes
+        )
         class_scan = await _scan_candidates(
             session,
             volume_floor=volume_floor,
@@ -3230,10 +3619,38 @@ async def _refresh_stale_futures_prices(
         # for the same reason as above — the 6h attempt TTL would undo it.
         in_play_scan = [m for m in in_play_scan if m["id"] not in priority_ids]
         priority_ids |= {m["id"] for m in in_play_scan}
+        # #9220: the Series card ranks after in-play, same rule — a row already
+        # attributed keeps its arm, and a series market that is ALSO a class
+        # candidate keeps the identity classification.
+        series_card_scan = [m for m in series_card_scan if m["id"] not in priority_ids]
+        priority_ids |= {m["id"] for m in series_card_scan}
+        # #9543 / CERT-3817: the threshold-label arm ranks LAST among the
+        # identity arms, and it also yields to a stale class row — that row is
+        # fetched by the class pass, which writes the label off the same read,
+        # and taking it here would swap its 6h marker for a rotation slot. What
+        # is left is rotated through the arm's own marker and capped per run.
+        threshold_label_pool = await _scan_threshold_label_candidates(session)
+        stats["threshold_label_pool"] = len(threshold_label_pool)
+        stats["threshold_label_pool_capped"] = (
+            len(threshold_label_pool) >= THRESHOLD_LABEL_SCAN_LIMIT
+        )
+        class_ids = {m["id"] for m in class_scan}
+        threshold_label_pool = [
+            m
+            for m in threshold_label_pool
+            if m["id"] not in priority_ids and m["id"] not in class_ids
+        ]
+        label_skips = _load_label_attempt_skips([m["id"] for m in threshold_label_pool])
+        threshold_label_scan = [
+            m for m in threshold_label_pool if m["id"] not in label_skips
+        ][: max(0, threshold_label_per_run)]
+        priority_ids |= {m["id"] for m in threshold_label_scan}
         scan = (
             served_scan
             + registered_scan
             + in_play_scan
+            + series_card_scan
+            + threshold_label_scan
             + [m for m in class_scan if m["id"] not in priority_ids]
         )
 
@@ -3241,6 +3658,8 @@ async def _refresh_stale_futures_prices(
         stats["registered_candidates"] = len(registered_scan)
         stats["served_candidates"] = len(served_scan)
         stats["in_play_candidates"] = len(in_play_scan)
+        stats["series_card_candidates"] = len(series_card_scan)
+        stats["threshold_label_candidates"] = len(threshold_label_scan)
 
         skip_ids = _load_attempt_skips([m["id"] for m in scan])
         eligible = [m for m in scan if m["id"] not in skip_ids]
@@ -3274,7 +3693,8 @@ async def _refresh_stale_futures_prices(
             # opposite states, so they get different terminals.
             stats["terminal"] = "complete" if not scan else "no_work"
             stats["reason"] = (
-                "no stale valuable, registered, served or in-play markets"
+                "no stale valuable, registered, served, in-play or series-card "
+                "markets and no unlabelled threshold rows"
                 if not scan
                 else "every stale market was attempted inside the current window"
             )
@@ -3294,6 +3714,9 @@ async def _refresh_stale_futures_prices(
 
         attempted_ids: list[int] = []
         priority_attempted_ids: list[int] = []
+        # #9543: the label arm's attempts take the arm's own 20h marker, never
+        # the 45-minute identity one — see `_mark_label_attempted`.
+        label_attempted_ids: list[int] = []
 
         def _note_attempt(market: dict) -> None:
             stats["markets_attempted"] += 1
@@ -3303,7 +3726,12 @@ async def _refresh_stale_futures_prices(
                 stats["served_attempted"] += 1
             if market["arm"] == _ARM_IN_PLAY:
                 stats["in_play_attempted"] += 1
-            if market["priority"]:
+            if market["arm"] == _ARM_SERIES_CARD:
+                stats["series_card_attempted"] += 1
+            if market["arm"] == _ARM_THRESHOLD_LABEL:
+                stats["threshold_label_attempted"] += 1
+                label_attempted_ids.append(market["id"])
+            elif market["priority"]:
                 priority_attempted_ids.append(market["id"])
             else:
                 attempted_ids.append(market["id"])
@@ -3312,6 +3740,7 @@ async def _refresh_stale_futures_prices(
         if poly_markets:
             from app.services.polymarket_api import PolymarketAPIService
             from app.tasks.polymarket import _retire_unpriced_legs
+            from app.tasks.polymarket import _withdraw_book_refuted_legs  # #9399
 
             poly_service = PolymarketAPIService()
             try:
@@ -3345,9 +3774,15 @@ async def _refresh_stale_futures_prices(
                         stats["polymarket_wall_hit"] = True
                         break
                     chunk = ids[i : i + POLYMARKET_ID_BATCH]
+                    refuted_by_event: dict = {}
                     try:
                         priced_by_event, unpriced_by_event = (
-                            await _fetch_polymarket_prices(poly_service, chunk, stats)
+                            await _fetch_polymarket_prices(
+                                poly_service,
+                                chunk,
+                                stats,
+                                refuted_out=refuted_by_event,
+                            )
                         )
                     except Exception as exc:  # one bad batch must not wipe the run
                         stats["errors"].append(f"polymarket batch {i}: {exc}")
@@ -3384,6 +3819,15 @@ async def _refresh_stale_futures_prices(
                                     market["id"],
                                     unpriced_by_event.get(event_id) or [],
                                 )
+                                # #9399: a leg this pass refused to price keeps
+                                # its old number; withdraw it when this pass's
+                                # book prices it out. After the write, like the
+                                # retirement, and before the re-rank.
+                                withdrawn = await _withdraw_book_refuted_legs(
+                                    session,
+                                    market["id"],
+                                    refuted_by_event.get(event_id) or {},
+                                )
                                 # #6598 / CERT-3182, and LAST for the reason
                                 # `_retire_unpriced_legs` runs after the write:
                                 # the field is only knowable once both have
@@ -3405,6 +3849,17 @@ async def _refresh_stale_futures_prices(
                             if _reranked:
                                 stats["ranks_rederived"] = (
                                     stats.get("ranks_rederived", 0) + _reranked
+                                )
+                            if withdrawn:
+                                stats["legs_withdrawn_book_refuted"] = (
+                                    stats.get("legs_withdrawn_book_refuted", 0)
+                                    + withdrawn
+                                )
+                                logger.info(
+                                    "futures_price_refresh: market %s — withdrew "
+                                    "%d stored price(s) the venue's current book "
+                                    "prices out (#9399)",
+                                    market["id"], withdrawn,
                                 )
                             if retired:
                                 stats["legs_retired"] = (
@@ -3480,6 +3935,8 @@ async def _refresh_stale_futures_prices(
             # #8871. One dict for the pass, filled by the fetch from the payload
             # it already read and consumed after the price commit below.
             windows: dict = {}
+            # #9543. Filled the same way, consumed after the window write.
+            labels: dict = {}
             for market in kalshi_markets:
                 if time.monotonic() - started > _TIME_BUDGET_S:
                     stats["budget_hit"] = True
@@ -3487,7 +3944,10 @@ async def _refresh_stale_futures_prices(
                 _note_attempt(market)
                 try:
                     priced = await _fetch_kalshi_prices(
-                        kalshi_service, market["external_id"], windows=windows
+                        kalshi_service,
+                        market["external_id"],
+                        windows=windows,
+                        labels=labels,
                     )
                 except Exception as exc:
                     stats["errors"].append(f"kalshi {market['external_id']}: {exc}")
@@ -3602,6 +4062,8 @@ async def _refresh_stale_futures_prices(
                         stats["served_priced"] += 1
                     if market["arm"] == _ARM_IN_PLAY:
                         stats["in_play_priced"] += 1
+                    if market["arm"] == _ARM_SERIES_CARD:
+                        stats["series_card_priced"] += 1
                     await _clear_if_stamped(session, market, stats)
                 else:
                     stats["unpriceable"] += 1
@@ -3637,6 +4099,28 @@ async def _refresh_stale_futures_prices(
                                 market["id"], market["external_id"],
                                 window[0].isoformat(),
                             )
+
+                # #9543, in its OWN transaction for the #8871 reason: a label
+                # is independent of both the price and the date, so a failed
+                # label write must not roll back either (gotcha #42).
+                label = labels.get(market["external_id"])
+                if label:
+                    try:
+                        _labelled = (
+                            await session.execute(
+                                _KALSHI_THRESHOLD_LABEL_WRITE_SQL,
+                                {"mid": market["id"], "label": label},
+                            )
+                        ).rowcount
+                        await session.commit()
+                    except Exception as exc:
+                        await session.rollback()
+                        stats["errors"].append(
+                            f"kalshi label {market['external_id']}: {exc}"
+                        )
+                    else:
+                        if _labelled:
+                            stats["threshold_labels_written"] += _labelled
 
                 # #4253, AFTER the write on purpose. The event read above
                 # proves the venue is reachable and this market is live, so
@@ -3693,6 +4177,7 @@ async def _refresh_stale_futures_prices(
             )
             * 60,
         )
+        _mark_label_attempted(label_attempted_ids)
 
         # Measure what is LEFT, so the run reports the invariant's state and not
         # just its own throughput. This is the number the guard reads, so it

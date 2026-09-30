@@ -706,6 +706,19 @@ enum MarketMapRail {
         }
     }
 
+    /// The number an **ungraded** totals rung prints — both ladders on the event
+    /// page (the margin/goals map and the Projected scoring spectrum) read it.
+    ///
+    /// #9392. Both built it inline as `Int((p * 100).rounded())`, so a line the
+    /// venue was still trading at **0.9955** printed **100%** under a hero that
+    /// said **>99%** (`15317879`, Maldives @ Kyrgyz Republic, live, 2026-09-28).
+    /// `formatProbability` is where the app keeps the `<1%` / `>99%` rule, and the
+    /// margin card's own header already went through it (`marginHeadline`); the
+    /// rungs under that header never did.
+    static func rungPercentText(_ probability: Double) -> String {
+        formatProbability(probability)
+    }
+
     /// The caption an **ungraded** rung prints, beside the percentage it is the
     /// tense of — the other half of ``totalLadderResultLabel(_:)`` above, which
     /// is what a rung says once it *can* be graded.

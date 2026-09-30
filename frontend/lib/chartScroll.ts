@@ -64,9 +64,119 @@ export function maxScrollLeft(
  */
 export function anchorScrollLeft(
   metrics: Pick<ScrollMetrics, "scrollWidth" | "clientWidth">,
-  opts?: { settled?: boolean },
+  opts?: { settled?: boolean; movement?: readonly MovementMark[] },
 ): number {
-  return opts?.settled ? 0 : maxScrollLeft(metrics);
+  if (!opts?.settled) return maxScrollLeft(metrics);
+  // #9867: "the race is behind the left edge" was a property of #6548's
+  // specimen, not of settled boards. `/futures/60770199` (a halftime result)
+  // has one reading on Sep 17, six empty days, then its whole race Sep 23–25 —
+  // resting on the left showed the empty gap and hid the winner's climb to
+  // 100% behind the RIGHT edge. So a settled chart rests where its lines
+  // actually moved; with nothing to go on it falls back to #6548's left edge.
+  const max = maxScrollLeft(metrics);
+  if (max === 0 || !opts.movement) return 0;
+  const start = restingWindowStart(opts.movement, metrics.clientWidth / metrics.scrollWidth);
+  return Math.min(max, Math.max(0, start * metrics.scrollWidth));
+}
+
+/**
+ * One unit of movement on the plot: `weight` is a line's |Δprobability|
+ * between two consecutive readings, placed at the later reading's
+ * horizontal position `at`, as a fraction (0–1) of the full plot width.
+ */
+export interface MovementMark {
+  at: number;
+  weight: number;
+}
+
+/**
+ * #9867 — where a window `windowFraction` wide (a fraction of the full plot
+ * width) should start so it holds the most movement. It is then CENTRED on the
+ * span of the marks it holds, so the race does not sit hard against an edge
+ * with the end-of-domain date label clipped beside it. Returns 0 (#6548's left
+ * edge) when there is no movement, or when the window holds the whole plot.
+ */
+export function restingWindowStart(
+  marks: readonly MovementMark[],
+  windowFraction: number,
+): number {
+  const room = 1 - windowFraction;
+  if (!(room > 0)) return 0;
+  const sorted = marks
+    .filter((m) => m.weight > 0 && Number.isFinite(m.at))
+    .slice()
+    .sort((a, b) => a.at - b.at);
+  if (sorted.length === 0) return 0;
+
+  const prefix = [0];
+  for (const m of sorted) prefix.push(prefix[prefix.length - 1] + m.weight);
+  // First index whose `at` is > x (upper) or >= x (lower).
+  const bound = (x: number, upper: boolean) => {
+    let lo = 0;
+    let hi = sorted.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (upper ? sorted[mid].at <= x : sorted[mid].at < x) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
+  };
+  const clamp = (s: number) => Math.min(room, Math.max(0, s));
+
+  // The best window always has a mark on one of its edges (or sits at an end
+  // of the plot), so those are the only starts worth trying. Ties keep the
+  // leftmost — #6548's preference when the evidence does not choose.
+  const candidates = [0, room];
+  for (const m of sorted) candidates.push(clamp(m.at), clamp(m.at - windowFraction));
+  candidates.sort((a, b) => a - b);
+
+  let best = { start: 0, mass: -1, first: 0, last: 0 };
+  for (const s of candidates) {
+    const first = bound(s, false);
+    const last = bound(s + windowFraction, true);
+    const mass = prefix[last] - prefix[first];
+    if (mass > best.mass + 1e-12) best = { start: s, mass, first, last };
+  }
+  if (best.mass <= 0 || best.last <= best.first) return 0;
+
+  const spanMid = (sorted[best.first].at + sorted[best.last - 1].at) / 2;
+  return clamp(spanMid - windowFraction / 2);
+}
+
+/**
+ * #9867 — the movement marks for a set of drawn series, positioned on a plot
+ * whose x axis runs `minTime`→`maxTime` across `[left, width - right]` of a
+ * `width`-unit frame (the chart's viewBox and padding).
+ */
+export function seriesMovementMarks(
+  series: readonly { history: readonly { timestamp: string; probability: number | null }[] }[],
+  frame: { width: number; left: number; right: number },
+): MovementMark[] {
+  let minTime = Infinity;
+  let maxTime = -Infinity;
+  const parsed = series.map((s) =>
+    s.history
+      .filter((p) => p.probability !== null)
+      .map((p) => ({ t: new Date(p.timestamp).getTime(), p: p.probability as number }))
+      .filter((p) => Number.isFinite(p.t))
+      .sort((a, b) => a.t - b.t),
+  );
+  for (const pts of parsed) {
+    for (const { t } of pts) {
+      if (t < minTime) minTime = t;
+      if (t > maxTime) maxTime = t;
+    }
+  }
+  if (!(maxTime > minTime)) return [];
+  const inner = frame.width - frame.left - frame.right;
+  const marks: MovementMark[] = [];
+  for (const pts of parsed) {
+    for (let i = 1; i < pts.length; i++) {
+      const x = frame.left + ((pts[i].t - minTime) / (maxTime - minTime)) * inner;
+      marks.push({ at: x / frame.width, weight: Math.abs(pts[i].p - pts[i - 1].p) });
+    }
+  }
+  return marks;
 }
 
 /**

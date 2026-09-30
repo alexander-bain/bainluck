@@ -48,6 +48,7 @@ import {
 } from "@/lib/propFamily";
 import { propResultLabel, SETTLED_NO_GRADE_LABEL } from "@/lib/propGrade";
 import { gradedPairDecision } from "@/lib/gradedPropPair";
+import { propLabelDisplay } from "@/lib/playerPropsGrouping";
 import {
   renderedPercent,
   renderedOutcomeRowPercents,
@@ -665,6 +666,39 @@ const WHAT_HIT_FAMILIES = 6;
 const WHAT_HIT_FAMILY_ROWS = 3;
 
 /**
+ * #9914 — THE DIVERGENCE's section-level fold for families that moved nothing.
+ *
+ * UX-P036 folds a family's unchanged rows inside that family, which leaves the
+ * family header standing over its own "N unchanged" drawer whenever NONE of its
+ * rows moved. On a live Wild Card game (PHI @ ATL, `/events/15321782`, 390px,
+ * 2026-09-30 19:11Z) that was about 41 headers in a row, each carrying only
+ * "▸ 2 unchanged": roughly 4,000px, five phone screens, of nothing before
+ * Bigger Picture, and some were mixed in among the movers. The section's claim
+ * is movement, so those families leave the list and go behind ONE disclosure at
+ * its foot. Inside it, each renders with its header and rows, and none is
+ * dropped (gotcha #43).
+ *
+ * Two or more, because one wholly unchanged family already costs one disclosure.
+ * Moving it would change nothing but its position, so that page renders as before.
+ */
+const UNCHANGED_FAMILIES_FOLD = 2;
+const UNCHANGED_PROPS_LABEL = "Unchanged props";
+
+/**
+ * The row prints no movement, read the way its badge is (#5296 / #5408). A
+ * complement pair's own decision wins; any other row asks `isUnchanged`. A
+ * markless pair (`move == null`) makes no claim, so it is never unchanged.
+ * One definition for the family drawer and the section fold (#9914).
+ */
+function rowDidNotMove(
+  item: PropMark,
+  divergencePairs: ReadonlyMap<PropMark["key"], DivergencePair>,
+): boolean {
+  const pair = divergencePairs.get(item.key);
+  return pair?.move != null ? pair.move === 0 : isUnchanged(item);
+}
+
+/**
  * A row with no pregame mark — THE SCRIPT's fold (D102 / D111). THE SCRIPT holds
  * no number for it (`scriptNumber` returns null), so it can say nothing about it.
  *
@@ -716,14 +750,21 @@ function isBinaryBarMark(item: PropMark): boolean {
 }
 
 export default function PropsSection({
-  items,
+  items: servedItems,
   state,
   eventStatus,
   title = "Props",
   domain = null,
   matchup = null,
 }: PropsSectionProps) {
-  if (!items || items.length === 0) return null;
+  if (!servedItems || servedItems.length === 0) return null;
+
+  // #9148: "SEA Seahawks D/ST: 1+" reads "Seahawks D/ST: 1+", decided before
+  // any family, pair or card rule reads a label so they all see one string.
+  const items = servedItems.map((item) => {
+    const label = propLabelDisplay(item.label);
+    return label === item.label ? item : { ...item, label };
+  });
 
   const activeState = state ?? deriveState(eventStatus);
   const baseMeta = STATE_META[activeState];
@@ -789,7 +830,19 @@ export default function PropsSection({
   // #8833: WHAT HIT's section-level bound. See WHAT_HIT_FAMILIES.
   const boundFamilies =
     activeState === "graded" && shownGroups.length > WHAT_HIT_FAMILIES + 1;
-  const leadGroups = boundFamilies ? shownGroups.slice(0, WHAT_HIT_FAMILIES) : shownGroups;
+  // #9914: THE DIVERGENCE's families that moved nothing. See UNCHANGED_FAMILIES_FOLD.
+  const stillCandidates =
+    activeState === "divergence"
+      ? shownGroups.filter(
+          (g) => g.items.length > 0 && g.items.every((i) => rowDidNotMove(i, divergencePairs)),
+        )
+      : [];
+  const stillGroups = stillCandidates.length >= UNCHANGED_FAMILIES_FOLD ? stillCandidates : [];
+  const stillCount = stillGroups.reduce((n, g) => n + g.items.length, 0);
+  const listedGroups =
+    stillGroups.length > 0 ? shownGroups.filter((g) => !stillGroups.includes(g)) : shownGroups;
+
+  const leadGroups = boundFamilies ? shownGroups.slice(0, WHAT_HIT_FAMILIES) : listedGroups;
   const restGroups = boundFamilies ? shownGroups.slice(WHAT_HIT_FAMILIES) : [];
   const restCount = restGroups.reduce((n, g) => n + g.items.length, 0);
 
@@ -860,6 +913,25 @@ export default function PropsSection({
                 </div>
               </details>
             )}
+            {stillGroups.length > 0 && (
+              <details className={leadGroups.length > 0 ? "mt-4" : ""}>
+                <summary className="cursor-pointer select-none py-1 text-[11px] text-text-muted">
+                  {UNCHANGED_PROPS_LABEL} ({stillCount})
+                </summary>
+                <div className="mt-3 space-y-4">
+                  {stillGroups.map((group, i) => (
+                    <PropFamilyBlock
+                      key={`${group.name ?? "unnamed"}-still-${i}`}
+                      group={group}
+                      state={activeState}
+                      renderRow={renderRow}
+                      divergencePairs={divergencePairs}
+                      insideUnchangedFold
+                    />
+                  ))}
+                </div>
+              </details>
+            )}
           </div>
         ) : (
           (() => {
@@ -909,10 +981,14 @@ function PropFamilyBlock({
   state,
   renderRow,
   divergencePairs = EMPTY_DIVERGENCE_PAIRS,
+  insideUnchangedFold = false,
 }: {
   group: PropFamilyGroup<PropMark>;
   state: PropsState;
   renderRow: (item: PropMark) => ReactNode;
+  /** #9914: rendered inside THE DIVERGENCE's section-level "Unchanged props"
+   *  disclosure. The family then lists its rows directly. */
+  insideUnchangedFold?: boolean;
   /** #5296: the family's own decision, so the partition below splits rows by the
    *  badge they PRINT. Empty outside THE DIVERGENCE, and empty for any row that
    *  is not half of a complement pair — those keep the raw test. */
@@ -922,21 +998,21 @@ function PropFamilyBlock({
   // everything, grouped but uncollapsed — except its own hole, the rows it has
   // no mark for, which fold (D102 / #4530). WHAT HIT prints a bounded head of
   // each family and folds the rest (#8833, WHAT_HIT_FAMILY_ROWS).
-  const collapsible = state === "divergence";
+  // #9914: inside the section's "Unchanged props" fold, every row is unchanged
+  // by construction, so a second drawer per family would hide what the reader
+  // just opened.
+  const collapsible = state === "divergence" && !insideUnchangedFold;
   const { listed, folded } = partitionScript(group.items, state);
   // #5296: a paired row is "unchanged" when the badge it prints is absent, not
   // when its raw movement rounds to zero. Those two answers differ whenever the
   // printed levels straddle a boundary the raw difference does not, and the row
   // would otherwise show `↑ 1` from inside the drawer that says it did not move.
-  const didNotMove = (item: PropMark) => {
-    const pair = divergencePairs.get(item.key);
-    // #5408: `move === 0` and not `move == null`, spelled out because the type
-    // now admits null. A markless pair makes no claim about movement, so it is
-    // not evidence of "didn't move" and must stay in plain sight — which is also
-    // what `isUnchanged` answers for it (a null mark is never unchanged). Encode
-    // such a pair as `move: 0` and its live row would vanish into the drawer.
-    return pair?.move != null ? pair.move === 0 : isUnchanged(item);
-  };
+  // #5408: `move === 0` and not `move == null`, spelled out because the type
+  // now admits null. A markless pair makes no claim about movement, so it is
+  // not evidence of "didn't move" and must stay in plain sight — which is also
+  // what `isUnchanged` answers for it (a null mark is never unchanged). Encode
+  // such a pair as `move: 0` and its live row would vanish into the drawer.
+  const didNotMove = (item: PropMark) => rowDidNotMove(item, divergencePairs);
   const moved = collapsible ? listed.filter((i) => !didNotMove(i)) : listed;
   const unchanged = collapsible ? listed.filter(didNotMove) : [];
   // #8833: WHAT HIT's per-family bound. `moved` is the whole family outside THE

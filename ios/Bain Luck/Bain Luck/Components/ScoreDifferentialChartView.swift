@@ -63,7 +63,8 @@ struct ScoreDifferentialChartView: View {
             awayServed: awayTeamAbbrev, homeServed: homeTeamAbbrev,
             fontSize: fontSize,
             awayRun: ChartGutter.nameRun(run: run, hasCrest: awayCrest),
-            homeRun: ChartGutter.nameRun(run: run, hasCrest: homeCrest)
+            homeRun: ChartGutter.nameRun(run: run, hasCrest: homeCrest),
+            sportKey: sportKey
         )
     }
 
@@ -406,16 +407,19 @@ struct ScoreDifferentialChartView: View {
     static func winProbStateScoreDiffs(history: EventHistoryResponse,
                                        since startDate: Date?) -> [Int: (date: Date, diff: Double)] {
         var byMinute: [Int: (date: Date, diff: Double)] = [:]
-        for (_, points) in history.winProbHistory ?? [:] {
-            for pt in points where pt.liveEdge != true {
+        // #8509 — the earliest reading in each minute across all sources (ties to
+        // the alphabetically first source), so two opens of the same bytes draw
+        // the same line; "first row" used to mean first in Dictionary order.
+        let series = history.winProbHistory ?? [:]
+        for source in series.keys.sorted() {
+            for pt in series[source] ?? [] where pt.liveEdge != true {
                 guard let gs = pt.gameState,
                       let hs = gs.homeScore, let as_ = gs.awayScore,
                       let date = pt.timestamp.asDate else { continue }
                 if let start = startDate, date < start { continue }
                 let bucket = Int(date.timeIntervalSince1970 / 60)
-                if byMinute[bucket] == nil {
-                    byMinute[bucket] = (date, Double(hs - as_))
-                }
+                if let held = byMinute[bucket], held.date <= date { continue }
+                byMinute[bucket] = (date, Double(hs - as_))
             }
         }
         return byMinute
@@ -431,6 +435,26 @@ struct ScoreDifferentialChartView: View {
     /// that was never captured is not invented.
     static func actualIsALonePoint(_ actualDiffs: [Double?]) -> Bool {
         actualDiffs.lazy.compactMap { $0 }.prefix(2).count == 1
+    }
+
+    /// #9175 — a score reading is a CHANGE LOG entry: the new score holds from the
+    /// reading that saw it. `.stepCenter` put every change at the midpoint between
+    /// two readings, so on `/events/15196509` (NED 1–0 SRB; `score_history`
+    /// 16:00:59Z 0-0, 16:30:37Z 0-1) the goal was drawn at 16:15Z, fifteen
+    /// minutes before it happened. `.stepEnd` holds each value until the next
+    /// reading and steps there — the web twin's `stepAfter`.
+    static let actualInterpolation: InterpolationMethod = .stepEnd
+
+    /// #9175 — the actual readings, oldest first, with the last one carried to
+    /// the chart's right edge. The score does not stop being true when it stops
+    /// changing: without this the NED 1–0 line ended at the goal while the game
+    /// ran on at 38'. FORWARD ONLY — a minute before the first reading has no
+    /// score to state. Same rule as the web's #7211.
+    static func actualSteps(_ readings: [(date: Date, diff: Double)],
+                            carriedTo edge: Date) -> [(date: Date, diff: Double)] {
+        let sorted = readings.sorted { $0.date < $1.date }
+        guard let last = sorted.last, edge > last.date else { return sorted }
+        return sorted + [(date: edge, diff: last.diff)]
     }
 
     /// Merge projected and actual into unified points. Extracted so the
@@ -525,15 +549,18 @@ struct ScoreDifferentialChartView: View {
                 .foregroundStyle(Color(hex: "#0d9488"))
                 .symbolSize(50)
             } else {
-                ForEach(dataPoints.filter { $0.actualDiff != nil }) { point in
+                let steps = Self.actualSteps(
+                    dataPoints.compactMap { p in p.actualDiff.map { (date: p.date, diff: $0) } },
+                    carriedTo: domain.upperBound)
+                ForEach(Array(steps.enumerated()), id: \.offset) { _, step in
                     LineMark(
-                        x: .value("Time", point.date),
-                        y: .value("Diff", point.actualDiff!),
+                        x: .value("Time", step.date),
+                        y: .value("Diff", step.diff),
                         series: .value("Series", "actual")
                     )
                     .foregroundStyle(Color(hex: "#0d9488"))
                     .lineStyle(StrokeStyle(lineWidth: 2.5))
-                    .interpolationMethod(.stepCenter)
+                    .interpolationMethod(Self.actualInterpolation)
                 }
             }
         }
@@ -656,20 +683,14 @@ struct ScoreDifferentialChartView: View {
             markers.append(ScoreDiffPeriodMarker(date: date, label: label))
         }
 
-        // Supplement from win_prob_history game_state
-        for (_, points) in (history.winProbHistory ?? [:]) {
-            for pt in points {
-                guard let gs = pt.gameState, let date = pt.timestamp.asDate,
-                      date >= minDate, date <= maxDate else { continue }
-                let periodStr: String
-                if let p = gs.period, !p.isEmpty { periodStr = p }
-                else if let inning = gs.inning, inning > 0 { periodStr = "Top \(inning)" }
-                else { continue }
-                let label = normalizePeriodLabel(periodStr)
-                guard !label.isEmpty, !seenLabels.contains(label) else { continue }
-                seenLabels.insert(label)
-                markers.append(ScoreDiffPeriodMarker(date: date, label: label))
-            }
+        // Supplement from win_prob_history game_state: the earliest sighting per
+        // label across every source, never the first source a Dictionary yields
+        // (#8509 — the same rule as the probability chart above this one).
+        for sighting in WinProbPeriodSightings.earliest(
+            in: history.winProbHistory, sportKey: sportKey, admits: { $0 >= minDate && $0 <= maxDate }
+        ) where !seenLabels.contains(sighting.label) {
+            seenLabels.insert(sighting.label)
+            markers.append(ScoreDiffPeriodMarker(date: sighting.date, label: sighting.label))
         }
 
         let sorted = markers.sorted { $0.date < $1.date }

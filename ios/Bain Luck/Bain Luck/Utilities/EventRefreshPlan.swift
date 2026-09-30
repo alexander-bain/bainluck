@@ -52,8 +52,23 @@ nonisolated enum EventRefreshPlan: Equatable {
     /// In play with the push stream delivering. The stream owns the price; this
     /// lane exists only for what the stream cannot carry — the score, the
     /// history chart, the markets. Four times cheaper than `livePollInterval`,
-    /// which keeps most of #2687's saving, and finite, which is the fix.
+    /// which keeps most of #2687's saving, and finite, which is the fix. The
+    /// detail alone is re-read more often than this — see `liveStatePollInterval`.
     static let livePushPollInterval: TimeInterval = 120
+
+    /// #9268 — how often the pushed slow lane re-reads the DETAIL alone between
+    /// its full loads.
+    ///
+    /// The stream carries a price and no game state, so on the 120 s lane the
+    /// clock badge beside a moving price stood still for up to two minutes: the
+    /// build-28 simulator run held Q3 11:13 across 90 s of pushed prices while the
+    /// served `espn.game_clock` had gone 11:10 → 9:56. The score, clock, period
+    /// and status all ride the one detail payload, so reading that one endpoint
+    /// at the unpushed cadence fixes the page without paying for the other five.
+    /// Same rate an unpushed live page already reads the detail at, and the
+    /// server caches that payload for 30 s while live, so no reader asks the
+    /// database for it more often than one already could.
+    static let liveStatePollInterval: TimeInterval = 30
 
     /// #9056 — how far a pushed price has to move from the one the last load
     /// served before the page stops trusting the slow lane for the score.
@@ -69,6 +84,22 @@ nonisolated enum EventRefreshPlan: Equatable {
     /// polls, because the detail payload is cached for up to 30 s while live:
     /// the first poll after the play can be served the score from before it.
     static let scoreCatchUpWindow: TimeInterval = 90
+
+    /// #9657 — how long a page waits before asking again for a price pair
+    /// (detail + history) that just failed, by consecutive failure.
+    ///
+    /// Before this the only re-ask was the next poll slot: 30 s live, 60–300 s
+    /// before play. Build 32 held "Update interrupted" 91 s on a live tennis page
+    /// with the stream up — three 30 s slots. The first re-asks come quickly so a
+    /// brief failure clears in seconds; the schedule then settles at
+    /// `livePollInterval`, never faster than a live page with no stream, so a
+    /// failing server is not asked harder than it already was.
+    static let pricePairRetryDelays: [TimeInterval] = [2, 4, 8, 16]
+
+    static func pricePairRetryDelay(afterFailures failures: Int) -> TimeInterval {
+        guard failures >= 1, failures <= pricePairRetryDelays.count else { return livePollInterval }
+        return pricePairRetryDelays[failures - 1]
+    }
 
     /// Kick-off is close (or overdue) and the status has not flipped yet. This
     /// is the window the reader is actually sitting in the page for.
@@ -129,5 +160,18 @@ nonisolated enum EventRefreshPlan: Equatable {
         let imminent = started
             || (commenceTime.map { $0.timeIntervalSince(now) <= imminentWindow } ?? false)
         return .poll(every: imminent ? imminentPollInterval : distantPollInterval)
+    }
+
+    /// #9268 — how many slots one cycle of `plan` is cut into. Every slot but
+    /// the last re-reads the detail alone; the last is the full `load()`.
+    ///
+    /// Only the pushed slow lane is cut: it is the one in-play plan that reads
+    /// the detail less often than `liveStatePollInterval`. Every other plan is
+    /// one slot, which is exactly the loop that ran before this existed. Keyed
+    /// on the plan rather than re-deriving "in play and pushed" so the two can
+    /// never disagree about which lane the page is on.
+    static func slots(for plan: EventRefreshPlan) -> Int {
+        guard plan == .poll(every: livePushPollInterval) else { return 1 }
+        return max(1, Int((livePushPollInterval / liveStatePollInterval).rounded(.down)))
     }
 }

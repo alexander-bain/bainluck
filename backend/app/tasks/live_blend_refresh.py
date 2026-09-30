@@ -26,7 +26,7 @@ THE CHART POINT (Q501). This module originally declined to write
 `win_prob_snapshots` on the grounds that a snapshot per tick would grow that
 table ~60x for resolution nobody can see. That reasoning was about *per-tick*
 writes, and it is still right — so the write is throttled on its own clock
-(`DEFAULT_SNAPSHOT_INTERVAL_S`, 25s) rather than the blend's 5s one, and it goes
+(`DEFAULT_SNAPSHOT_INTERVAL_S`, 25s) rather than the blend's 2s one, and it goes
 through the same `_create_or_update_win_prob_snapshot` helper the 120s poll uses,
 which appends a row only when the value actually CHANGES and otherwise just
 bumps `reading_count`/`valid_until` on the existing point. Upper bound is
@@ -68,10 +68,22 @@ from typing import Iterable, Optional
 logger = logging.getLogger(__name__)
 
 
-#: Per-event floor between fast-lane recomputes. The WS flushes every 2s; an
-#: event whose price ticks continuously does not need a JSONB write every tick
-#: to feel live, and 5s keeps the write rate bounded on a busy slate.
-DEFAULT_MIN_REFRESH_INTERVAL_S = 5.0
+#: Per-event floor between fast-lane recomputes, equal to the WS's 2s flush:
+#: every flush that carries a new price for an event may stamp it. It was 5s
+#: (the 2026-08-30 "<=1 change/~5s" live look), which on a liquid market kept
+#: real prices off the page — Alex's required benchmark (Angelini v Johns,
+#: 2026-09-28) moves Kalshi 77 -> 80 -> 85 -> 84 two seconds apart, and at 5s
+#: the 85 was stored and never stamped. The write rate stays bounded by the
+#: flush itself, by the unchanged-value arm (45s, below) and by the chart's own
+#: 25s clock; what 2s adds is up to one blend UPDATE per moving event per flush.
+DEFAULT_MIN_REFRESH_INTERVAL_S = 2.0
+
+#: How long an event whose batch FAILED waits before it is attempted again —
+#: the 5s the success floor used to give it for free. A failed transaction is
+#: usually a database in trouble, and at the 2s floor every flush would open a
+#: fresh session against it for the same owed stamp. Row-lock retries are not
+#: failures and stay due at once.
+DEFAULT_FAILED_RETRY_INTERVAL_S = 5.0
 
 #: How long a cached inversion verdict stays good. One poll interval plus slack:
 #: the 120s poll re-derives it authoritatively, so this never has to be the
@@ -81,14 +93,14 @@ DEFAULT_INVERSION_TTL_S = 150.0
 #: When the recomputed value rounds to what is already stored, the write is
 #: still worth making occasionally — `updated_at` is what drives the hero's
 #: recency decay (#1829), so a source that goes quiet must still look ALIVE
-#: rather than progressively losing weight. Just not every five seconds.
+#: rather than progressively losing weight. Just not on every flush.
 #:
 #: #5661 — and only when the venue WAS re-read. "Quiet" and "dead" recompute
 #: the same number from the same rows; see `restamp_records_no_observation`.
 UNCHANGED_RESTAMP_INTERVAL_S = 45.0
 
 #: Per-event floor between fast-lane CHART points. Deliberately slower than the
-#: blend's 5s throttle: the number wants to be as live as the socket, the line
+#: blend's 2s throttle: the number wants to be as live as the socket, the line
 #: only has to gain a point often enough that a watching user sees it grow.
 #: 25s clears Alex's "within a minute" bar with margin while keeping
 #: `win_prob_snapshots` growth to a small multiple of the 120s poll's.
@@ -660,6 +672,7 @@ class LiveBlendRefresher:
         source: str,
         *,
         min_refresh_interval_s: float = DEFAULT_MIN_REFRESH_INTERVAL_S,
+        failed_retry_interval_s: float = DEFAULT_FAILED_RETRY_INTERVAL_S,
         inversion_ttl_s: float = DEFAULT_INVERSION_TTL_S,
         unchanged_restamp_interval_s: float = UNCHANGED_RESTAMP_INTERVAL_S,
         snapshot_interval_s: float = DEFAULT_SNAPSHOT_INTERVAL_S,
@@ -668,6 +681,7 @@ class LiveBlendRefresher:
     ) -> None:
         self.source = source
         self.min_refresh_interval_s = min_refresh_interval_s
+        self.failed_retry_interval_s = failed_retry_interval_s
         self.inversion_ttl_s = inversion_ttl_s
         self.unchanged_restamp_interval_s = unchanged_restamp_interval_s
         self.snapshot_interval_s = snapshot_interval_s
@@ -691,6 +705,9 @@ class LiveBlendRefresher:
         #: 120s poll.
         self._throttle_deferred: set[int] = set()
         self._last_refresh_at: dict[int, float] = {}
+        #: Events whose last batch failed -> the monotonic time before which
+        #: they are not due, whatever the throttle says.
+        self._failed_hold_until: dict[int, float] = {}
         self._last_write_at: dict[int, float] = {}
         self._last_written_value: dict[int, float] = {}
         self._last_snapshot_at: dict[int, float] = {}
@@ -718,6 +735,12 @@ class LiveBlendRefresher:
             # #837 tail — stamps that stopped waiting on another transaction's
             # row lock and were re-queued. Not an error: the retry is the path.
             "lock_skipped": 0,
+            # #9484 — committed market invalidations (`live:market:{id}`) this
+            # consumer's writers published through the same client. Counted
+            # for the same reason as `published`: a quiet market and a dead
+            # market publisher must not look alike.
+            "market_published": 0,
+            "market_publish_errors": 0,
         }
         #: Lazily-built async Redis client, reused for the life of this
         #: refresher. Built on first publish rather than in __init__ so a
@@ -733,6 +756,11 @@ class LiveBlendRefresher:
     # ── throttling ───────────────────────────────────────────────────────────
 
     def _due(self, event_id: int, now: float) -> bool:
+        hold = self._failed_hold_until.get(event_id)
+        if hold is not None:
+            if now < hold:
+                return False
+            del self._failed_hold_until[event_id]
         last = self._last_refresh_at.get(event_id)
         return last is None or (now - last) >= self.min_refresh_interval_s
 
@@ -811,9 +839,14 @@ class LiveBlendRefresher:
             )
             # The outcome prices already committed before this refresh. Keep
             # every owed stamp if its transaction fails, even when no further
-            # venue input arrives. Ordinary retries retain the attempt's 5s
-            # throttle; only existing row-lock retries remain due at once.
+            # venue input arrives. Ordinary retries wait out the failed-retry
+            # hold; only existing row-lock retries remain due at once.
+            failed = set(due).difference(self._lock_retry, retry)
             self._throttle_deferred.update(set(due).difference(self._lock_retry))
+            for event_id in failed:
+                self._failed_hold_until[event_id] = (
+                    now + self.failed_retry_interval_s
+                )
             for event_id in retry.intersection(due):
                 self._lock_retry.add(event_id)
                 self._last_refresh_at.pop(event_id, None)
@@ -856,6 +889,18 @@ class LiveBlendRefresher:
         if not self._lock_retry and not self._throttle_deferred:
             return self.stats
         return await self.refresh(())
+
+    def pending_event_ids(self) -> frozenset:
+        """Every event this refresher still owes a stamp (#9462 review)."""
+        return frozenset(self._lock_retry | self._throttle_deferred)
+
+    def adopt_pending(self, event_ids: Iterable[int]) -> None:
+        """Take over stamps a previous run of this source still owed.
+
+        Queued as throttle-deferred: this refresher has never stamped them, so
+        the first flush (`refresh` or `refresh_pending`) finds them due.
+        """
+        self._throttle_deferred.update(event_ids)
 
     async def _refresh_batch(self, event_ids: list[int], now: float) -> None:
         from types import SimpleNamespace
@@ -1054,7 +1099,9 @@ class LiveBlendRefresher:
                         )
                         if admits is not None:
                             stamp = stamp.where(admits)
-                        new_sources = (
+                        # #9051: the row's revision rides the same RETURNING,
+                        # so the frame names exactly the write it reports.
+                        stamped_row = (
                             await session.execute(
                                 stamp.values(
                                     win_probability_sources=atomic_stamp_expression(
@@ -1064,9 +1111,15 @@ class LiveBlendRefresher:
                                         observed_basis=basis,
                                     )
                                 )
-                                .returning(Event.win_probability_sources)
+                                .returning(
+                                    Event.win_probability_sources,
+                                    Event.win_probability_sources_rev,
+                                )
                             )
-                        ).scalar_one_or_none()
+                        ).first()
+                        new_sources, new_rev = (
+                            (None, None) if stamped_row is None else stamped_row
+                        )
                         if new_sources is None and admits is not None:
                             # Refused: the poll or the matcher stored a later
                             # observation of these rows since this batch read
@@ -1158,6 +1211,7 @@ class LiveBlendRefresher:
                             source_value=value,
                             updated_at=stamped_at,
                             status=event.status,
+                            rev=new_rev,
                         )
                     )
                 except Exception as exc:
@@ -1214,6 +1268,44 @@ class LiveBlendRefresher:
                     self._last_snapshot_at[event_id] = at
             raise
 
+    def _client(self):
+        """The one async Redis client this refresher publishes on, built lazily.
+
+        Both publishers (event frames and #9484 market invalidations) take it
+        from here, so a consumer holds one pool, not one per publisher — the
+        #6515 census counts this as one construction site.
+        """
+        if self._redis is None:
+            from app.tasks.redis_state import get_async_redis_client
+
+            self._redis = get_async_redis_client()
+        return self._redis
+
+    async def publish_market_changes(self, session) -> int:
+        """#9484: drain the market invalidations ``session`` staged and committed.
+
+        Call AFTER the writer's ``get_task_session()`` block has exited, so only
+        an outer commit that landed can publish (`market_quote_push` holds the
+        rows until its after-commit hook moves them). It shares ``self._redis``
+        with the event frames: one client per consumer, never one per flush,
+        and it does not wait on ``refresh()`` — a standalone future has no
+        event blend to stamp, and its quote is just as real. Never raises.
+        """
+        from app.utils.market_quote_push import publish_committed_market_changes
+
+        try:
+            sent = await publish_committed_market_changes(session, self._client())
+        except Exception:
+            self.stats["market_publish_errors"] += 1
+            self._redis = None
+            logger.warning(
+                "live_blend_refresh[%s]: market publication failed",
+                self.source, exc_info=True,
+            )
+            return 0
+        self.stats["market_published"] += sent
+        return sent
+
     async def _publish(self, frames: list[dict]) -> None:
         """Fan the committed frames out to any SSE subscribers. Never raises.
 
@@ -1227,13 +1319,10 @@ class LiveBlendRefresher:
         try:
             from app.utils.live_push import publish_frame
 
-            if self._redis is None:
-                from app.tasks.redis_state import get_async_redis_client
-
-                self._redis = get_async_redis_client()
+            client = self._client()
             sent = 0
             for frame in frames:
-                if await publish_frame(self._redis, frame):
+                if await publish_frame(client, frame):
                     sent += 1
                     self.stats["published"] += 1
                 else:
@@ -1263,7 +1352,7 @@ class LiveBlendRefresher:
 
         Called only after a blend stamp actually happened, which on a FLAT
         market is the `unchanged_restamp_interval_s` beat (45s) rather than the
-        5s blend beat. `_create_or_update_win_prob_snapshot` is the same helper
+        2s blend beat. `_create_or_update_win_prob_snapshot` is the same helper
         the 120s poll uses — it appends a row on a value CHANGE and, since
         live/035, also once `max_gap_seconds` of silence have passed, so a
         motionless market still draws a breathing line instead of one straight
@@ -1350,3 +1439,65 @@ def event_ids_for_outcomes(
         if event_id is not None:
             seen.add(event_id)
     return seen
+
+
+# ── #9462 review: owed stamps survive a recycle ──────────────────────────────
+#
+# Each consumer run builds a NEW refresher, and the final drain stops as soon as
+# the price buffer is empty. A price committed inside the 2 s throttle (or behind
+# a row lock) is held in `_throttle_deferred` / `_lock_retry` and stamped by a
+# LATER flush — but at a recycle there is no later flush in this run, and the
+# next run's refresher started empty. The outcome price stayed in the database;
+# the number on the card waited for another venue tick or the 120 s poll. #9418's
+# admission recycle made that end-of-run far more frequent.
+#
+# So the ending run hands its owed events to the next run of the same source,
+# which adopts them before its first flush. Process-local on purpose: the two
+# consumers of a dyno run in one process, and a restart takes the owed stamps
+# with it exactly as it takes the socket. A hand-off older than
+# `PENDING_HANDOFF_TTL_S` is dropped — by then the poll has restamped the event.
+
+#: The oldest hand-off a new run adopts. The 120 s poll restamps every live
+#: event on its own; carrying a stamp past that would only re-date its work.
+PENDING_HANDOFF_TTL_S = 120.0
+
+_pending_handoff: dict[str, tuple[float, frozenset]] = {}
+
+
+def hand_off_pending(refresher) -> int:
+    """Leave `refresher`'s owed stamps for the next run of its source.
+
+    Returns how many events were handed off. Never raises: a refresher that
+    cannot say what it owes (a test double) hands off nothing.
+    """
+    try:
+        pending = frozenset(refresher.pending_event_ids())
+    except Exception:
+        return 0
+    if pending:
+        _pending_handoff[refresher.source] = (_mono(), pending)
+    else:
+        _pending_handoff.pop(refresher.source, None)
+    return len(pending)
+
+
+def adopt_handed_off(refresher) -> int:
+    """Give `refresher` the stamps the previous run of its source still owed.
+
+    Returns how many events were adopted (0 when none, too old, or the
+    refresher cannot adopt). The hand-off is consumed either way.
+    """
+    try:
+        handed = _pending_handoff.pop(refresher.source, None)
+    except Exception:
+        return 0
+    if handed is None:
+        return 0
+    at, pending = handed
+    if _mono() - at > PENDING_HANDOFF_TTL_S:
+        return 0
+    try:
+        refresher.adopt_pending(pending)
+    except Exception:
+        return 0
+    return len(pending)

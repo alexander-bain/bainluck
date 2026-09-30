@@ -50,6 +50,7 @@ import re
 from typing import Iterable, Optional, Sequence
 
 from app.utils.event_completion import EVENT_SUSPENDED
+from app.utils.kalshi_resolution_window import VENUE_VOIDED_METADATA_KEY
 
 #: The only ``futures_outcomes.resolution_source`` this module will read a
 #: result out of: the venue stated the settlement itself.
@@ -325,6 +326,45 @@ def _names_a_draw(
     )
 
 
+def _pair_partners(name: str) -> Optional[tuple[str, str]]:
+    """The two partners of a doubles name, or ``None`` if it is not one."""
+    parts = [part.strip() for part in name.split("/")]
+    if len(parts) != 2 or not all(parts):
+        return None
+    return parts[0], parts[1]
+
+
+def _pair_names_side(outcome_name: str, side_name: str) -> bool:
+    """Does a doubles outcome name this doubles side, partner by partner? (#9889)
+
+    🔴 THE WHOLE-STRING TEST CANNOT SEE A PAIR. Kalshi grades
+    ``Alexander Bublik / Juncheng Shang`` and our row stores
+    ``Bublik / Shang``. ``_normalize_for_matching`` glues the slash into one
+    token on each side (``bublik/juncheng`` against ``bublik/shang``), so
+    neither containment nor the word-subset test can match, and a match the
+    venue settled read "No result reported" (``/events/15320754``, 2026-09-30).
+
+    So each partner is matched on its own, with the SAME primitive
+    (:func:`~app.utils.prediction_market_matching._fuzzy_team_match`, #1951),
+    and the two partners must match two DIFFERENT partners of ours. One shared
+    surname is how two different pairs look alike, so matching one partner is
+    not enough. Either order counts, because venues list partners in either
+    order. :func:`_names_a_participant`'s both-sides refusal still applies on
+    top of this.
+    """
+    from app.utils.prediction_market_matching import _fuzzy_team_match
+
+    outcome = _pair_partners(outcome_name)
+    side = _pair_partners(side_name)
+    if outcome is None or side is None:
+        return False
+    (a, b), (x, y) = outcome, side
+    return bool(
+        (_fuzzy_team_match(a, x) and _fuzzy_team_match(b, y))
+        or (_fuzzy_team_match(a, y) and _fuzzy_team_match(b, x))
+    )
+
+
 def _names_a_participant(
     outcome_name: Optional[str],
     home_team_name: Optional[str],
@@ -365,8 +405,12 @@ def _names_a_participant(
         return None
     home = (home_team_name or "").strip()
     away = (away_team_name or "").strip()
-    matches_home = bool(home) and _fuzzy_team_match(name, home)
-    matches_away = bool(away) and _fuzzy_team_match(name, away)
+    matches_home = bool(home) and (
+        _fuzzy_team_match(name, home) or _pair_names_side(name, home)
+    )
+    matches_away = bool(away) and (
+        _fuzzy_team_match(name, away) or _pair_names_side(name, away)
+    )
     if matches_home and matches_away:
         return None
     if matches_home:
@@ -626,3 +670,116 @@ def settlement_from_graded_rows(
     if not result:
         return dict(NO_VENUE_GRADE)
     return {"venue_settled": True, "venue_settled_result": result}
+
+
+#: #5811: the served key for "the venue closed this event and named no winner".
+#: Its own key, never a value of ``venue_settled_result``: the pair above is
+#: co-true (#7702) and winner-only, and every current reader of it keeps that
+#: contract. Present only when ``True`` — an absent key is "not established",
+#: the same absent-vs-False refusal the reader makes for the pair.
+VENUE_CLOSED_NO_WINNER_KEY = "venue_closed_no_winner"
+
+
+def venue_closed_without_winner(
+    market_metadatas: Sequence[Optional[dict]], has_any_winner: bool
+) -> bool:
+    """Did the venue settle EVERY market on this event and grade none? (#5811)
+
+    ``/sports`` filed Visconde v Bulaid (``15320964``, ``suspended``) under Live
+    & Paused as "No result reported" for days after Kalshi finalised both legs
+    ``result: "scalar"`` — closed, no winner (a draw, a no contest, a
+    cancellation). #7035's capture had already stamped all six of its markets
+    ``venue_voided``; no surface served it, so the card got the same input as a
+    fight still in progress. This is the rule that serves it.
+
+    The same fact :func:`~app.tasks.espn_sync._row_markets_all_venue_voided`
+    and :func:`~app.utils.event_completion.venue_voided_row_is_retirable` act
+    on 72 h later, read the same way, so the card and the retirement cannot
+    disagree about which rows the venue voided:
+
+    * 🔴 EVERY market, and the empty case is False. ``all([])`` is True and
+      would call a legless event voided. One market the capture has not
+      answered — or answered with ``venue_void_checked_at`` (the venue named a
+      result) — and this is a row mid-way through being asked about, not a
+      void: 4 voided to 10 graded on #7035's venue sample.
+    * ``is True``, never truthiness. The capture writes a JSON boolean; a
+      string, a ``1`` or the negative stamp's timestamp are truthy and none of
+      them is this fact.
+    * ``has_any_winner`` refuses. A winner written against the event — from any
+      source, not only the venue grade the pair reads — contradicts "no result
+      was reported", and when two facts disagree this declines rather than
+      picks.
+
+    Pure: the caller supplies both inputs, so a guard can state each refusal as
+    a counter-example rather than a WHERE clause.
+    """
+    if has_any_winner is not False:
+        return False
+    if not market_metadatas:
+        return False
+    return all(
+        isinstance(metadata, dict)
+        and metadata.get(VENUE_VOIDED_METADATA_KEY) is True
+        for metadata in market_metadatas
+    )
+
+
+def names_completed_match(market_name: Optional[str]) -> bool:
+    """Is this Polymarket's "was the match completed?" market? (#8874, #8288)
+
+    Judged on a whole colon segment, never a substring:
+    ``M25 Setubal, Main Draw: Completed Match: Alec Deckers vs Philip Henning``
+    carries it as its own segment, and a player whose name merely contains the
+    words cannot.
+
+    The one definition: the settled page's fold (#8874) and the void arm below
+    (#8288) must agree about which market is the venue's completion verdict.
+    """
+    return any(
+        segment.strip().casefold() == "completed match"
+        for segment in (market_name or "").split(":")
+    )
+
+
+def venue_declared_not_completed(
+    completed_match_reads: Sequence[tuple[bool, bool]], has_other_winner: bool
+) -> bool:
+    """Did the venue say this match was never completed, and nothing disagrees? (#8288)
+
+    A tennis match nobody played — a withdrawal before the first ball, a
+    walkover — settles on Polymarket as a void: the match winner and every prop
+    pay 0.5/0.5. Our settlement rail grades a leg only on a terminal price, so
+    those legs stay ungraded, and "both legs false" is also what an ungraded
+    leg looks like (#4788). The void itself is not readable from them.
+
+    The venue does publish the verdict, as a market of its own: "Completed
+    Match" settles ``["0", "1"]`` and the rail grades its **No** leg a winner.
+    Production 2026-09-30: 60+ such legs in three days, every attached row
+    ``suspended`` with no score, reading "No result reported" (15320785, Sherif
+    v Kudermetova, is the PM copy of #9798's page).
+
+    ``completed_match_reads`` holds one ``(no_graded_by_venue, yes_is_winner)``
+    pair per Completed Match market on the event:
+
+    * ``no_graded_by_venue`` — the No leg is ``is_winner IS TRUE`` from a
+      tier-3 source (``resolution_authority.AUTHORITATIVE_SOURCES``). A guess
+      family grade (``pass2_guess``, ``clean_resolution``) is not the venue
+      speaking, and the Roland Garros rows show guesses landing No at 0.50.
+    * ``yes_is_winner`` — the Yes leg graded a winner, from any source. "It was
+      played" beside "it was not" is two facts disagreeing, and this declines
+      rather than picks. So does a second Completed Match copy that says Yes.
+
+    🔴 ``has_other_winner`` refuses: any winner on any OTHER market of the
+    event, from any source, contradicts "never completed". The Completed Match
+    No is excluded from it by the caller, because it is this verdict, not a
+    result. ``is not False``, as in :func:`venue_closed_without_winner`: an
+    unanswered read is not an absence.
+
+    No Completed Match market at all is False — nothing was said (the final
+    ``any`` over no reads).
+    """
+    if has_other_winner is not False:
+        return False
+    if any(yes_is_winner is not False for _, yes_is_winner in completed_match_reads):
+        return False
+    return any(no_graded is True for no_graded, _ in completed_match_reads)

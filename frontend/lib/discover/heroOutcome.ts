@@ -100,23 +100,72 @@ export function negates(negative: HeroCandidate, affirmative: HeroCandidate): bo
 }
 
 /**
+ * #9401 — a title that names one of the market's own DATE legs.
+ *
+ * Production 2026-09-28 16:0xZ, page one, the Middle East bundle:
+ *
+ *     Will Iran target an Arab country by September 30, 2026?
+ *     October 31 · Resolves within a week                       64%
+ *
+ * The venue's event is "Will Iran target an Arab country by...?" with three
+ * cumulative date legs; our stored name is ONE leg's question. The served order
+ * is by price, so the hero was the October 31 leg — while the words above it
+ * ask about September 30, which traded at 28.5%.
+ *
+ * Only an explicit deadline preposition counts ("by/before/through <Month>
+ * <day>"), and only an outcome whose name IS that date (a trailing year is
+ * allowed on either side). Exactly one match, or nothing: two legs both
+ * reading "September 30" is not a title we can resolve.
+ */
+const MONTHS = "jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?";
+const TITLE_DEADLINE = new RegExp(`\\b(?:by|before|through)\\s+(${MONTHS})\\.?\\s+(\\d{1,2})\\b`, "i");
+const OUTCOME_DATE = new RegExp(`^\\s*(${MONTHS})\\.?\\s+(\\d{1,2})(?:\\s*,?\\s*\\d{4})?\\s*$`, "i");
+
+function monthDayKey(month: string, day: string): string {
+  return `${month.slice(0, 3).toLowerCase()} ${Number(day)}`;
+}
+
+function titleNamedDateLeg<T extends HeroCandidate>(
+  outcomes: readonly T[],
+  title: string | null | undefined,
+): T | undefined {
+  const named = TITLE_DEADLINE.exec(title ?? "");
+  if (!named) return undefined;
+  const key = monthDayKey(named[1], named[2]);
+  const matches = outcomes.filter((o) => {
+    const m = OUTCOME_DATE.exec(o.name ?? "");
+    return m != null && monthDayKey(m[1], m[2]) === key;
+  });
+  if (matches.length !== 1) return undefined;
+  const leg = matches[0];
+  if (leg.probability == null || !Number.isFinite(leg.probability)) return undefined;
+  return leg;
+}
+
+/**
  * The outcome a card's hero number speaks for.
  *
- * The served headline (`top_outcomes[0]`) in every case except one: a
+ * The served headline (`top_outcomes[0]`) in every case except two: a
  * two-outcome market whose headline is the explicit negation of its sibling,
  * where the hero becomes the affirmative side so the number answers the
- * question the title asks.
+ * question the title asks; and (#9401) a title that names one of the market's
+ * own date legs, where the hero is that leg.
  *
  * 🔴 A SWAP THAT LEFT THE CARD WORSE WOULD NOT BE A FIX (UX-P237-5). The
  * affirmative side must actually have a number to print — otherwise the card
  * would trade a wrong hero for no hero at all — so an unpriced affirmative
  * keeps the served headline and the card renders exactly as it does today.
+ * The same holds for an unpriced date leg.
  */
 export function heroOutcome<T extends HeroCandidate>(
   outcomes: readonly T[] | null | undefined,
+  title?: string | null,
 ): T | undefined {
   const served = outcomes?.[0];
-  if (!served || !outcomes || outcomes.length !== 2) return served;
+  if (!served || !outcomes) return served;
+  const dated = titleNamedDateLeg(outcomes, title);
+  if (dated) return dated;
+  if (outcomes.length !== 2) return served;
 
   const other = outcomes[1];
   if (!other || !negates(served, other)) return served;

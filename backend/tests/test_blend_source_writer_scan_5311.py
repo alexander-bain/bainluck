@@ -198,6 +198,21 @@ from app.utils.probability_eligibility import MARKET_DERIVED_SOURCES  # noqa: E4
 #    anchored pass that does not report the stoppage. No source, no market, no
 #    reading. Both shapes for `_process_live_sport`'s reason — one Core update,
 #    then the ORM object mirrored (gotcha #4/#5).
+#  * `espn_sync.py::_record_statpal_later_sessions` and the demotion arm of
+#    `_transition_event_statuses_impl` — SIDECAR, #9613. The #9588 hold keeps a
+#    venue-stamped row `scheduled` while its own StatPal anchor puts the match in
+#    a later session; the serve path and the rails never read the anchor, so the
+#    task records StatPal's start on the row under the non-probability key
+#    `statpal_later_session_start` (and removes it once the hold ends). When
+#    StatPal's start releases the row, the same function writes the receipt
+#    `statpal_released_session` (StatPal's start + fixture) so the staleness
+#    arm's clock survives StatPal's first score (CERT-3811).
+#    `_return_held_suspended_rows` writes the same stamp on a suspended row it
+#    returns to `scheduled` (the hold's third door, #9588 after-check). No
+#    source, no market, no reading. ONE shape, `_sync_tennis_from_espn`'s: this
+#    task writes every other column by plain ORM assignment, so a Core update
+#    mixed in would be gotcha #5, and the helpers return a whole new dict so the
+#    assignment is tracked (gotcha #4).
 #  * `prediction_market_matching.py` / `admin_matching.py` / `source_intelligence.py`
 #    — PRUNE. Each REMOVES a source key rather than writing a value: the two
 #    `prune_blend_source` callers, the admin "clear kalshi" repair, and the raw
@@ -240,6 +255,12 @@ KNOWN_NON_READING_WRITES: dict[tuple[str, str, str], str] = {
      "_recover_unstarted_authority_fixtures", "orm-assign"): "sidecar",
     ("backend/app/tasks/espn_sync.py",
      "_recover_unstarted_authority_fixtures", "update.values"): "sidecar",
+    ("backend/app/tasks/espn_sync.py",
+     "_record_statpal_later_sessions", "orm-assign"): "sidecar",
+    ("backend/app/tasks/espn_sync.py",
+     "_return_held_suspended_rows", "orm-assign"): "sidecar",
+    ("backend/app/tasks/espn_sync.py",
+     "_transition_event_statuses_impl", "orm-assign"): "sidecar",
     ("backend/app/tasks/futures_price_refresh.py",
      "_KALSHI_WITHDRAW_EVENT_HERO_SQL", "raw-sql"): "prune",
     ("backend/app/tasks/statpal_sync.py", "_set_statpal_id", "orm-assign"):

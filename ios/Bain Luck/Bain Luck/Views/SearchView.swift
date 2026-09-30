@@ -737,6 +737,24 @@ struct SearchView: View {
                 }
             }
 
+            // Eligible collection cards are server-selected from this answer's
+            // event IDs. No client name matching, ranking or extra Browse read.
+            let collectionEntries = SearchCollectionRows.entries(in: results)
+            if !collectionEntries.isEmpty {
+                Section {
+                    ForEach(collectionEntries) { entry in
+                        NavigationLink(value: entry.route) {
+                            SearchCollectionRow(entry: entry)
+                        }
+                    }
+                } header: {
+                    Label("Collections", systemImage: "square.stack.3d.up.fill")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .textCase(nil)
+                }
+            }
+
             // Did you mean
             if let dym = results.didYouMean {
                 Section {
@@ -958,7 +976,7 @@ struct SearchView: View {
                 hasFamilies: !families.isEmpty,
                 hasConcepts: !concepts.isEmpty,
                 hasTeams: !(results.teams ?? []).isEmpty,
-                hasHubs: !hubs.isEmpty,
+                hasHubs: !hubs.isEmpty || !collectionEntries.isEmpty,
                 degraded: results.degraded
             ) {
             case .present:
@@ -1052,7 +1070,9 @@ struct SearchView: View {
                     // #4021 — see StatusBadge: the suspended arm is clock-gated.
                     StatusBadge(
                         status: event.status, commenceTime: event.commenceTime,
-                        startIsTbd: event.startIsTbd == true)
+                        startIsTbd: event.startIsTbd == true,
+                        // #5811 — `/api/events/search` serves it.
+                        venueClosedNoWinner: event.venueClosedNoWinner == true)
                     // #6444 — EVERY ROW SAYS WHEN. This was gated on
                     // `status == "scheduled"`, which drew the date on the rows
                     // whose badge already reads "In 3h" and withheld it from

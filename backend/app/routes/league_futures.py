@@ -15,7 +15,7 @@ import re
 from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, Path
-from sqlalchemy import select, and_, or_, exists, literal_column
+from sqlalchemy import select, and_, or_, case, exists, literal_column
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
 from sqlalchemy.orm.attributes import set_committed_value
@@ -1257,9 +1257,57 @@ def unreported_games_query(
         # unreported as ONE list, so a row here with an unloaded sport is a row
         # the soccer pass must skip, and a survivor it cannot elect.
         .options(selectinload(fenced_event.sport))
-        .order_by(fenced_event.commence_time.desc())
+        .order_by(
+            unreported_anchor_rank(fenced_event),
+            fenced_event.commence_time.desc(),
+        )
         .limit(UNREPORTED_LIMIT + 1)
     )
+
+
+def unreported_anchor_rank(event=Event):
+    """0 for a row a provider knows by id, 1 for a claim. #5602, league page.
+
+    The unreported rail's cap decides which rows the twin fold ever sees, and
+    `commence_time DESC` alone handed the cap to the claims. Production
+    2026-09-30 09:4xZ, `/api/leagues/mma_mixed_martial_arts`: five bouts of the
+    Sep 29 card are each two `suspended` rows, a Kalshi claim (no id, stamped
+    ~3 h after the bout) and the Odds API row with its `external_id` and the
+    bout's own slot. Newest-first, `LIMIT 7` admitted all five claims and only
+    two anchored rows. The drain took the two claims whose markets had moved
+    over; the other three (15319837 Escuza v Borando, 38, 39) printed "No
+    result reported" while their anchored twins (15320966 — "Ian Escuza wins"
+    — 65, 64) sat below the cap, so `_merge_combat_claim_bouts` (#7993), which
+    folds exactly this pair, was handed one half of it.
+
+    Same key and same fix as the feed's `suspended_anchor_rank` (#9760): the
+    fold's own anchor test, `espn_id` OR `external_id`
+    (`event_twin_fold._group_is_id_anchored`), leads the admission order, so a
+    claim is admitted only after every anchored row in the window. It decides
+    ADMISSION only — the route puts the rail back in kick-off order
+    (`_kickoff_order`) before anything counts or caps, so a reader sees the
+    same chronological rail with the right rows on it.
+
+    On the OUTER select, like #9060's tie-breakers: the fence and its measured
+    plan are untouched; the key sorts at most one league's 14-day set.
+    """
+    anchored = or_(event.espn_id.isnot(None), event.external_id.isnot(None))
+    return case((anchored, 0), else_=1)
+
+
+def _kickoff_order(rows: list) -> list:
+    """The unreported rail back in `commence_time DESC` order. #5602.
+
+    `unreported_anchor_rank` chose which rows were admitted; this restores the
+    order the rail has always been read in. Stable, so rows sharing a kick-off
+    keep the SQL's order. A row that cannot be compared leaves the list as the
+    SQL returned it (gotcha #42 — the order is chrome, the rows are content).
+    """
+    try:
+        return sorted(rows, key=lambda e: e.commence_time, reverse=True)
+    except Exception:  # noqa: BLE001
+        logger.exception("league page: unreported rail kick-off sort failed")
+        return rows
 
 
 # How many Finals may share one kickoff minute before we stop asking. MLB is the
@@ -3277,7 +3325,10 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
         _r = await asyncio.wait_for(db.execute(_results_q), timeout=10)
         _r_events = list(_r.scalars().all())
         _u = await asyncio.wait_for(db.execute(_unreported_q), timeout=10)
+        # #5602: admitted anchored-first (`unreported_anchor_rank`), read in
+        # kick-off order from here on.
         _u_events = list(_u.scalars().all())
+        _u_events = _kickoff_order(_u_events)
 
         # ── #6346: a row whose kick-off was never a kick-off is not "late" ────
         #

@@ -7,7 +7,7 @@ import {
   tempColorC,
   toC,
   SOURCES,
-  tomorrowDateStr,
+  isoDayLabel,
   weatherProbability,
 } from "./data";
 import { SourceBadge, CrossSourceBadge } from "./SourceBadge";
@@ -52,6 +52,10 @@ export default function DistributionPanel({ city }: DistributionPanelProps) {
   const isCrossSource = city.srcs.length > 1 && !!city.kalshiHigh;
 
   const unit = city.high.unit === "C" ? "C" : "F";
+  const dayLabel = isoDayLabel(city.iso);
+  // Badge the venue whose ladder this is (#9260); a payload that cannot say,
+  // over a city two venues quote, gets no badge rather than a guess.
+  const badgeSrc = city.src ?? (city.srcs.length === 1 ? city.srcs[0] : undefined);
   const modeDisplay = Math.round(city.high.mode);
 
   const kalshiDist = city.kalshiHigh?.dist;
@@ -80,11 +84,11 @@ export default function DistributionPanel({ city }: DistributionPanelProps) {
             {city.name}
           </div>
         </div>
-        {isCrossSource ? <CrossSourceBadge /> : <SourceBadge src={city.srcs[0]} />}
+        {isCrossSource ? <CrossSourceBadge /> : badgeSrc ? <SourceBadge src={badgeSrc} /> : null}
       </div>
 
       <div className="font-mono" style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 8 }}>
-        Tomorrow&apos;s high temperature &middot; {tomorrowDateStr()}
+        High temperature{dayLabel ? <> &middot; {dayLabel}</> : null}
       </div>
 
       {/* Peak display */}
@@ -147,7 +151,7 @@ export default function DistributionPanel({ city }: DistributionPanelProps) {
         ) : (
           <>
             Click any pin on the map &middot; {dist.length} outcome buckets
-            {city.srcs.length > 1 ? " (Polymarket)" : ` (${SOURCES[city.srcs[0]].label})`}
+            {badgeSrc ? ` (${SOURCES[badgeSrc].label})` : null}
           </>
         )}
       </div>
@@ -156,6 +160,18 @@ export default function DistributionPanel({ city }: DistributionPanelProps) {
 }
 
 /* ── Single-source histogram ─────────────────────────────────────────── */
+
+/**
+ * #9249 — room for the peak's "38%" label, taken off EVERY column's scale.
+ *
+ * Each column is a fixed-height `flex-col justify-end`, and the peak column
+ * also holds its label (11px type + 4px margin). A peak bar at `height: 100%`
+ * was flex-shrunk by the label's height, so on New York (70-71°F 36%, 72-73°F
+ * 38%) the 36% bar drew TALLER than the bar the panel calls most likely. Every
+ * bar now measures against the same `100% - reserve`, the peak's label fits in
+ * the reserve, and `flexShrink: 0` means a bar is never squeezed to fit.
+ */
+export const PEAK_LABEL_RESERVE_PX = 22;
 
 function SingleSourceHistogram({
   dist,
@@ -199,8 +215,9 @@ function SingleSourceHistogram({
               <div
                 style={{
                   width: "100%",
-                  height: `${barHeight}%`,
+                  height: `calc(${barHeight / 100} * (100% - ${PEAK_LABEL_RESERVE_PX}px))`,
                   minHeight: priced ? 3 : 0,
+                  flexShrink: 0,
                   backgroundColor: color,
                   opacity: isPeak ? 1 : 0.35 + (bucket.prob / maxProb) * 0.45,
                   borderRadius: "3px 3px 0 0",

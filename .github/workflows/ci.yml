@@ -401,7 +401,18 @@ jobs:
   # session, so the WHERE clause never touches data and this whole defect class
   # was unguarded on a p1 surface. This job is that rail, and it is
   # deploy-blocking (see `deploy.needs`).
-  search-recall:
+  # #9670: two isolated runners. The shared sequence is deliberately kept in
+  # order: some legacy fixtures inherit earlier schema/seed state. Only chains
+  # with their own provisioning, or full schema-reset fixtures, run separately.
+  # Every original command and skip/exit check remains below; the manifest and
+  # offline coverage tests require each unit to execute on exactly one leg.
+  # These matrix contexts are not required contexts. search-recall below is the
+  # stable required aggregate and remains deploy-blocking.
+  database-integration:
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [shared, isolated]
     # #5007 — the recall rail exercises backend search. A candidate confined to
     # `frontend/` and touching no cross-tier path cannot change what it measures.
     needs: change-scope
@@ -482,6 +493,7 @@ jobs:
         # test skips, and a silently-skipped gate reads exactly like a passing
         # one. That is the failure mode this whole job exists to end, so it is
         # not allowed to recur in the job's own plumbing.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_recall_contract.py \
@@ -511,6 +523,7 @@ jobs:
         # Same skip detection as every gate in this job: pytest exits 0 when
         # each test skips, and a gate that silently did not run reads exactly
         # like one that passed.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_proven_duplicate_pg.py \
@@ -549,6 +562,7 @@ jobs:
         # Same skip detection as every gate in this job: pytest exits 0 when
         # each test skips, and a gate that silently did not run reads exactly
         # like one that passed.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_typeahead_next_fixture_pg.py \
@@ -564,6 +578,7 @@ jobs:
         # typed text matched markets; the controls (the market closed, `tigerz`)
         # are properties of which rows the route returns, so they need the route
         # and a real database. Same skip detection as above.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_did_you_mean_withdrawn_8750_pg.py \
@@ -580,6 +595,7 @@ jobs:
         # (`cowboys`, `nfl`, a newer same-city WNBA final, a 40-day-old meeting,
         # `new york`) are properties of which rows the route returns, so they
         # need the route and a real database. Same skip detection as above.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_typeahead_matchup_last_meeting_8428_pg.py \
@@ -594,6 +610,7 @@ jobs:
         # ordered the finals ahead of recency and last night's game sat 14th.
         # Settled rows now take no tag boost; upcoming rows keep it (the
         # control). JSONB `@>` + ts_rank_cd through the route need Postgres.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_settled_recency_pg_8505.py \
@@ -609,6 +626,7 @@ jobs:
         # TEAMS card's leader owns every word, a game whose words split across
         # both sides now sinks below the club's games; a matchup query and a
         # one-word query are the controls. Reads the route's teams statement.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_split_terms_sink_pg_9044.py \
@@ -624,6 +642,7 @@ jobs:
         # date. A query whose TEAMS card names a club now orders its upcoming
         # games by date; no card keeps the tag tier (the control). The club gate
         # reads the route's teams statement, so it needs the route and Postgres.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_club_schedule_date_order_pg_8942.py \
@@ -638,12 +657,57 @@ jobs:
         # finals (the TEAMS card's leader, #8738) above that result — page 3.
         # Finished games now order by Eastern day first, the leader within it;
         # the upcoming tier still follows the leader (the control).
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_settled_day_over_lead_club_pg_9040.py \
             -v -rs 2>&1 | tee /tmp/settledday.txt
           if grep -qiE "[0-9]+ skipped" /tmp/settledday.txt; then
             echo "::error::search settled-day contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
+      - name: Search today's final right behind the next game (real Postgres)
+        # #9211. `q=chiefs` two hours after the Chiefs won printed 13 upcoming
+        # games (through January) above the result. The next game still leads
+        # (D107); today's final is second. Strawman, a no-final-day control,
+        # the #8738 leader case (a namesake tomorrow is not "next"), and a
+        # namesake with NO Team row (#8697's teamless key sinks it, so it cannot
+        # hold the next game's slot; production `chiefs` 2026-09-27 23:20Z).
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_search_todays_final_behind_next_pg_9211.py \
+            -v -rs 2>&1 | tee /tmp/todaysfinal.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/todaysfinal.txt; then
+            echo "::error::search today's-final contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
+      - name: "mnf / monday night football finds Monday night's NFL game (real Postgres)"
+        # PILLAR: DISCOVER. SHIP: typing mnf, snf or tnf (or the spelled phrase)
+        # in search or the dropdown shows that night's NFL game. Production
+        # 2026-09-28 served nothing for `mnf` with Eagles @ Bears on the schedule.
+        #
+        # The slot is `timezone('America/New_York', ...)` + `extract(isodow)`
+        # inside two route bodies, so only a real database can observe it. Both
+        # screens, a strawman (slot map emptied -> nothing) and two controls.
+        # Three refusals: a skip, a zero count, and a short count.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_search_broadcast_slot_pg.py \
+            -v -rs 2>&1 | tee /tmp/slot.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/slot.txt; then
+            echo "::error::broadcast-slot search gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          if grep -qiE "no tests ran|collected 0 items" /tmp/slot.txt; then
+            echo "::error::broadcast-slot search gate collected NOTHING"
+            exit 1
+          fi
+          if ! grep -qE "^=+ 15 passed" /tmp/slot.txt; then
+            echo "::error::broadcast-slot search gate did not pass all 15"
             exit 1
           fi
 
@@ -672,12 +736,212 @@ jobs:
         # set SEARCH_TEST_DATABASE_URL — so they SKIPPED on every run, and armed
         # by hand they could not build their own fixture. That is precisely the
         # failure this job's skip detection exists to end, so they are wired here.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_proven_duplicate_bridge_pg_5821.py \
             -v -rs 2>&1 | tee /tmp/dupbridge.txt
           if grep -qiE "[0-9]+ skipped" /tmp/dupbridge.txt; then
             echo "::error::proven-duplicate search BRIDGE contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
+      - name: "playoffs leads with the postseason in progress (real Postgres)"
+        # PILLAR: DISCOVER. SHIP: typing `playoffs` in search or the dropdown the
+        # day before MLB's postseason shows the MLB postseason boards. Production
+        # 2026-09-28 led with a VALORANT novelty and 2027 Stanley Cup / College
+        # Football Playoff boards (#9340).
+        #
+        # The key is an ORDER BY term over a twenty-row LIMIT window (plus the
+        # refill) inside two route bodies, so only a real database cuts it. Three
+        # strawmen and two controls. Three refusals.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_search_playoffs_now_pg.py \
+            -v -rs 2>&1 | tee /tmp/playoffsnow.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/playoffsnow.txt; then
+            echo "::error::playoffs search gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          if grep -qiE "no tests ran|collected 0 items" /tmp/playoffsnow.txt; then
+            echo "::error::playoffs search gate collected NOTHING"
+            exit 1
+          fi
+          if ! grep -qE "^=+ 9 passed" /tmp/playoffsnow.txt; then
+            echo "::error::playoffs search gate did not pass all 9"
+            exit 1
+          fi
+
+      - name: "wild card finds this week's MLB Wild Card games (real Postgres)"
+        # PILLAR: DISCOVER. SHIP: typing `wild card` in search or the dropdown
+        # shows the Wild Card games and series markets. Production 2026-09-28
+        # served no games and led with NCAAB/NCAAF futures (#9333).
+        #
+        # The round is read from Kalshi tickers by a correlated EXISTS with
+        # substr/concat inside two route bodies, so only a real database can
+        # observe it. A strawman (round map emptied -> old answer) and two
+        # controls. Three refusals: a skip, a zero count, and a short count.
+        # 24 = 15 round cases + 9 for #9578 (`playoffs`/`mlb playoffs` show
+        # today's Wild Card games, with its strawman and controls).
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_search_postseason_round_pg.py \
+            -v -rs 2>&1 | tee /tmp/round.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/round.txt; then
+            echo "::error::postseason-round search gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          if grep -qiE "no tests ran|collected 0 items" /tmp/round.txt; then
+            echo "::error::postseason-round search gate collected NOTHING"
+            exit 1
+          fi
+          if ! grep -qE "^=+ 24 passed" /tmp/round.txt; then
+            echo "::error::postseason-round search gate did not pass all 24"
+            exit 1
+          fi
+
+      - name: "division series finds the ALDS/NLDS markets, never Byron Donalds (real Postgres)"
+        # PILLAR: DISCOVER. SHIP: typing `division series` in search or the
+        # dropdown shows the ALDS/NLDS markets. Production 2026-09-28 served
+        # nothing at all with eight open markets about the round (#9340).
+        #
+        # The alias arm is a whole-word `~*` regex beside a trigram ILIKE, wired
+        # as a UNION arm inside two route bodies, so only a real database can
+        # observe it. Two strawmen (aliases removed -> nothing; substring compile
+        # -> Byron Donalds) and one control. Three refusals.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_search_division_series_pg.py \
+            -v -rs 2>&1 | tee /tmp/divseries.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/divseries.txt; then
+            echo "::error::division-series search gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          if grep -qiE "no tests ran|collected 0 items" /tmp/divseries.txt; then
+            echo "::error::division-series search gate collected NOTHING"
+            exit 1
+          fi
+          if ! grep -qE "^=+ 8 passed" /tmp/divseries.txt; then
+            echo "::error::division-series search gate did not pass all 8"
+            exit 1
+          fi
+
+      - name: "championship series leads with the ALCS/NLCS markets, not NFL season-series boards (real Postgres)"
+        # PILLAR: DISCOVER. SHIP: typing `championship series` in search or the
+        # dropdown leads with the ALCS/NLCS markets. Production `fa40adc3`
+        # 2026-09-28 served nine "NFL: … Season Series Winner" boards under a
+        # CHAMPIONSHIP SERIES heading instead (#9340): `championship` carries the
+        # `winner` synonym, so those names out-tier the round's alias arm.
+        #
+        # The lead is a tier in the /search window's ORDER BY, the dropdown
+        # pool's first key and the scorer's private alias, so only a real
+        # database behind the real route can observe it. One strawman (rule
+        # disarmed -> NFL leads) and one control. Three refusals.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_search_championship_series_lead_pg.py \
+            -v -rs 2>&1 | tee /tmp/lcslead.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/lcslead.txt; then
+            echo "::error::championship-series lead gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          if grep -qiE "no tests ran|collected 0 items" /tmp/lcslead.txt; then
+            echo "::error::championship-series lead gate collected NOTHING"
+            exit 1
+          fi
+          if ! grep -qE "^=+ 8 passed" /tmp/lcslead.txt; then
+            echo "::error::championship-series lead gate did not pass all 8"
+            exit 1
+          fi
+
+      - name: "#9587 a club's World Series card leads search when it is already on the page (real Postgres)"
+        # PILLAR: DISCOVER. SHIP: a Cubs or Padres fan searching their club sees
+        # the World Series card first in Futures & Markets, the way Yankees and
+        # Dodgers fans already do. Production v5274 2026-09-29 served it at row 7
+        # of 10 for `cubs`, behind six game props: the headline lane fired only
+        # when the market was ABSENT from the page.
+        #
+        # The hoist arm restricts the lane's own SQL to the page's ids, so only a
+        # real database behind the real route can observe it. One strawman (arm
+        # disarmed -> props lead) and two controls. Three refusals.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_search_contender_on_page_hoist_9587_pg.py \
+            -v -rs 2>&1 | tee /tmp/hoist9587.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/hoist9587.txt; then
+            echo "::error::#9587 on-page contender hoist gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          if grep -qiE "no tests ran|collected 0 items" /tmp/hoist9587.txt; then
+            echo "::error::#9587 on-page contender hoist gate collected NOTHING"
+            exit 1
+          fi
+          if ! grep -qE "^=+ 6 passed" /tmp/hoist9587.txt; then
+            echo "::error::#9587 on-page contender hoist gate did not pass all 6"
+            exit 1
+          fi
+
+      - name: "#9597 a playoff club's search shows its pennant, not a column of one game's props (real Postgres)"
+        # PILLAR: DISCOVER. SHIP: searching `red sox`, `yankees` or `phillies` on a
+        # playoff game day shows the AL/NL pennant and division-series odds. Production
+        # 2026-09-29 served the World Series and nine props from tonight's game: the
+        # window was all name matches, so the outcome arm was skipped, and the
+        # fixture cap's sunk rows still shipped.
+        #
+        # The fix is a second, outcome-only execution of the window statement, so only
+        # a real database behind the real route can observe it. One strawman (arm
+        # disarmed -> props fill the page), two controls, the World Series pin, and a
+        # seed the drop-the-exclusion mutant bites. Three refusals.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_search_sunk_slot_outcome_arm_9597_pg.py \
+            -v -rs 2>&1 | tee /tmp/sunkslot9597.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/sunkslot9597.txt; then
+            echo "::error::#9597 sunk-slot outcome arm gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          if grep -qiE "no tests ran|collected 0 items" /tmp/sunkslot9597.txt; then
+            echo "::error::#9597 sunk-slot outcome arm gate collected NOTHING"
+            exit 1
+          fi
+          if ! grep -qE "^=+ 9 passed" /tmp/sunkslot9597.txt; then
+            echo "::error::#9597 sunk-slot outcome arm gate did not pass all 9"
+            exit 1
+          fi
+
+      - name: "#9632 a bye club's search keeps its latest finals, pennant odds up top (real Postgres)"
+        # PILLAR: DISCOVER. SHIP: searching `dodgers` or `brewers` (a first-round
+        # bye) shows the World Series/pennant odds instead of burying them under 23
+        # finished regular-season games (production 2026-09-29). All-finished +
+        # live futures -> page one keeps the latest 3 finals, page two the rest.
+        #
+        # The probe reads the route's own full-text predicate, so only a real
+        # database behind the real route can observe it. One strawman, four
+        # controls (upcoming game, no futures, open game market, sub-1% outcome),
+        # page-two reachability; #9762 adds two not-the-club outcomes (a player,
+        # a city-named prop) that arm nothing and the club under its venue name,
+        # which still arms. Three refusals.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_search_bye_team_finals_cap_pg_9632.py \
+            -v -rs 2>&1 | tee /tmp/byefinals9632.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/byefinals9632.txt; then
+            echo "::error::#9632 bye-finals gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          if grep -qiE "no tests ran|collected 0 items" /tmp/byefinals9632.txt; then
+            echo "::error::#9632 bye-finals gate collected NOTHING"
+            exit 1
+          fi
+          if ! grep -qE "^=+ 9 passed" /tmp/byefinals9632.txt; then
+            echo "::error::#9632 bye-finals gate did not pass all 9"
             exit 1
           fi
 
@@ -689,6 +953,7 @@ jobs:
         # database can observe it. The file's strawman case puts the old flat
         # `now - 1h` floor back and asserts the live rows disappear. Three
         # refusals: a skip, a zero count, and a short count.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_typeahead_live_game_stays_5030_pg.py \
@@ -703,6 +968,223 @@ jobs:
           fi
           if ! grep -qE "^=+ 5 passed" /tmp/live5030.txt; then
             echo "::error::#5030 live-game dropdown gate did not report exactly 5 passed"
+            exit 1
+          fi
+
+      - name: "#9493 the search dropdown offers today's suspended match (real Postgres)"
+        # PILLAR: TRUTH. SHIP: typing a player whose match today is suspended
+        # offers that match, not only its Kalshi market as a separate row.
+        #
+        # The fix is a WHERE clause plus a sort term, so only a real database
+        # can observe it. Two strawmen: the old live/scheduled window (specimen
+        # gone, its market back), and no sort term (a suspended row takes a full
+        # pool's slot). Three refusals: a skip, a zero count, and a short count.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_typeahead_offers_todays_suspended_match_9493_pg.py \
+            -v -rs 2>&1 | tee /tmp/ta9493.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/ta9493.txt; then
+            echo "::error::#9493 suspended-match dropdown gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          if grep -qiE "no tests ran|collected 0 items" /tmp/ta9493.txt; then
+            echo "::error::#9493 suspended-match dropdown gate collected NOTHING"
+            exit 1
+          fi
+          if ! grep -qE "^=+ 8 passed" /tmp/ta9493.txt; then
+            echo "::error::#9493 suspended-match dropdown gate did not report exactly 8 passed"
+            exit 1
+          fi
+
+      - name: "#9550 the search dropdown says 'Settled · Pereira wins' (real Postgres)"
+        # PILLAR: TRUTH. SHIP: a settled match in the search dropdown says
+        # "Settled · Pereira wins", as its event page does, not "No result reported".
+        #
+        # The verdict is a read over graded legs gated on the row's own score,
+        # and both degraded stages (outcome-arm shed, futures timeout) expire the
+        # session's rows, so only a real database can observe it. Strawman: the
+        # attach a no-op (production's row). Three refusals: a skip, a zero
+        # count, and a short count.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_typeahead_venue_settled_pg_9550.py \
+            -v -rs 2>&1 | tee /tmp/ta9550.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/ta9550.txt; then
+            echo "::error::#9550 dropdown venue-settled gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          if grep -qiE "no tests ran|collected 0 items" /tmp/ta9550.txt; then
+            echo "::error::#9550 dropdown venue-settled gate collected NOTHING"
+            exit 1
+          fi
+          if ! grep -qE "^=+ 6 passed" /tmp/ta9550.txt; then
+            echo "::error::#9550 dropdown venue-settled gate did not report exactly 6 passed"
+            exit 1
+          fi
+
+      - name: "#9527/#9522 'red sox vs yankees' finds the game; a tennis row reads 'v' (real Postgres)"
+        # PILLAR: DISCOVER. SHIP: typing "red sox vs yankees" finds the game on
+        # /search and in the dropdown, and a tennis match in the dropdown reads
+        # "Michelsen v Alcaraz", not "at".
+        #
+        # Both routes' term filters and the dropdown's row text, so only a real
+        # database can observe it. Strawman: the connector set emptied (search
+        # finds no game). Three refusals: a skip, a zero count, a short count.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_typeahead_individual_sport_v_pg_9522.py \
+            -v -rs 2>&1 | tee /tmp/ta9527.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/ta9527.txt; then
+            echo "::error::#9527 vs-query gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          if grep -qiE "no tests ran|collected 0 items" /tmp/ta9527.txt; then
+            echo "::error::#9527 vs-query gate collected NOTHING"
+            exit 1
+          fi
+          if ! grep -qE "^=+ 30 passed" /tmp/ta9527.txt; then
+            echo "::error::#9527 vs-query gate did not report exactly 30 passed"
+            exit 1
+          fi
+
+      - name: "#9211 the search dropdown offers today's final beside the next game (real Postgres)"
+        # PILLAR: DISCOVER. SHIP: typing a club on game day offers the result
+        # it just finished right behind its next game.
+        #
+        # The arm is a WHERE clause over the Eastern day plus a placement before
+        # the pool cut, so only a real database can observe it. The strawman
+        # case zeroes the arm and asserts production's list comes back. Three
+        # refusals: a skip, a zero count, and a short count.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_typeahead_todays_final_pg_9211.py \
+            -v -rs 2>&1 | tee /tmp/ta9211.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/ta9211.txt; then
+            echo "::error::#9211 typeahead today's-final gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          if grep -qiE "no tests ran|collected 0 items" /tmp/ta9211.txt; then
+            echo "::error::#9211 typeahead today's-final gate collected NOTHING"
+            exit 1
+          fi
+          if ! grep -qE "^=+ 4 passed" /tmp/ta9211.txt; then
+            echo "::error::#9211 typeahead today's-final gate did not report exactly 4 passed"
+            exit 1
+          fi
+
+      - name: "#9226 the search dropdown's finished game carries its score (real Postgres)"
+        # PILLAR: FORMATTING. SHIP: the dropdown's "Final" row can print who
+        # won (24–10), not just that the game ended.
+        #
+        # The finished row exists only because #9211's arm fetched it, so only
+        # a real database can observe the score riding it. The strawman case
+        # swaps the rule for an empty one and asserts production's bare row.
+        # Three refusals: a skip, a zero count, and a short count.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_typeahead_final_score_pg_9226.py \
+            -v -rs 2>&1 | tee /tmp/ta9226.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/ta9226.txt; then
+            echo "::error::#9226 typeahead final-score gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          if grep -qiE "no tests ran|collected 0 items" /tmp/ta9226.txt; then
+            echo "::error::#9226 typeahead final-score gate collected NOTHING"
+            exit 1
+          fi
+          if ! grep -qE "^=+ 4 passed" /tmp/ta9226.txt; then
+            echo "::error::#9226 typeahead final-score gate did not report exactly 4 passed"
+            exit 1
+          fi
+
+      - name: search shows one award race once, dropdown and /search (real Postgres, #9439)
+        # `mvp` printed Kalshi `MVP Winner?` (Josh Allen 25%) and Polymarket
+        # `Pro Football: 2026 MVP Winner` (22%) as two rows on both surfaces. The
+        # rule is pinned on production rows by the #9439 unit file; this drives
+        # both routes, with NBA MVP beside NFL MVP as the control. Same skip
+        # detection as the gates around it.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_search_one_award_race_one_row_9439_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/search_one_award_race_9439.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/search_one_award_race_9439.txt; then
+            echo "::error::#9439 one-award-race control SKIPPED — the gate did not run"
+            exit 1
+          fi
+
+      - name: "#9306 typing alds shows the ALDS markets, not Byron Donalds (real Postgres)"
+        # PILLAR: DISCOVER. SHIP: typing a round word (alds/alcs/nlcs/nlds) in
+        # search or the dropdown serves that round's markets, not politics
+        # markets whose outcome carries the letters inside a surname.
+        #
+        # The fix is an outcome predicate (whole word for round words), so only
+        # a real database can observe which rows it admits. Both screens, a
+        # strawman (round-word set emptied -> Donalds back) and two controls.
+        # Three refusals: a skip, a zero count, and a short count.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_search_round_word_outcome_arm_pg_9306.py \
+            -v -rs 2>&1 | tee /tmp/rw9306.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/rw9306.txt; then
+            echo "::error::#9306 round-word outcome gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          if grep -qiE "no tests ran|collected 0 items" /tmp/rw9306.txt; then
+            echo "::error::#9306 round-word outcome gate collected NOTHING"
+            exit 1
+          fi
+          if ! grep -qE "^=+ 13 passed" /tmp/rw9306.txt; then
+            echo "::error::#9306 round-word outcome gate did not report exactly 13 passed"
+            exit 1
+          fi
+
+      - name: "#9609 typing rays or mets shows the club's markets, not Grayson or Kimetsu (real Postgres)"
+        # PILLAR: DISCOVER. SHIP: searching a club's word (rays, mets, suns)
+        # fills Futures & Markets with the club's markets, not Senate races and
+        # anime awards whose options spell the word inside a surname.
+        #
+        # The fix is an outcome predicate (whole word when the page's own teams
+        # read names the club), so only a real database can observe which rows it
+        # admits. A strawman (rule off -> collisions back) and two controls.
+        # Three refusals: a skip, a zero count, and a short count.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_search_finished_club_word_outcome_arm_pg_9609.py \
+            -v -rs 2>&1 | tee /tmp/cw9609.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/cw9609.txt; then
+            echo "::error::#9609 finished-club-word gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          if grep -qiE "no tests ran|collected 0 items" /tmp/cw9609.txt; then
+            echo "::error::#9609 finished-club-word gate collected NOTHING"
+            exit 1
+          fi
+          if ! grep -qE "^=+ 5 passed" /tmp/cw9609.txt; then
+            echo "::error::#9609 finished-club-word gate did not report exactly 5 passed"
+            exit 1
+          fi
+
+      - name: typeahead folds one question asked by two venues, the search page's #8851 fold (real Postgres, #9444)
+        # `oscars` in the dropdown printed Best Picture twice — Polymarket
+        # `Oscars 2027: Best Picture Winner` and Kalshi `Oscar Winner: Best
+        # Picture`, both 49% — while /search folded the pair as a post-pass the
+        # dropdown never reached. Real Postgres because the claim is that the
+        # ROUTE asks the fold; the fold itself is pinned by the #8851 unit file.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_typeahead_same_question_fold_9444_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/typeahead_same_question_9444.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/typeahead_same_question_9444.txt; then
+            echo "::error::#9444 typeahead same-question fold control SKIPPED — the gate did not run"
             exit 1
           fi
 
@@ -727,6 +1209,7 @@ jobs:
         # Three refusals, not one: a skip, a zero count, and a short count.
         # pytest exits 0 when every test skips AND when it collects nothing, so
         # the exit code alone cannot tell "8 passed" from "0 collected".
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_faceted_answerless_rows_6354_real_postgres.py \
@@ -761,6 +1244,7 @@ jobs:
         # tables — it SELECTs the real expression over JSONB literals — and runs
         # the pre-#5531 expression beside it as a strawman. Same three refusals as
         # the step above: a skip, nothing collected, and a short count.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_hook_stamp_survives_ingest_poll_5531_pg.py \
@@ -803,6 +1287,7 @@ jobs:
         # `create_all` is a syntax error on the 14.x Homebrew default).
         #
         # Three refusals, not one: a skip, a zero count, and a short count.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_the_route_supplies_the_fleet_stamp_2077_pg.py \
@@ -844,6 +1329,7 @@ jobs:
         # Same skip detection as every gate in this job: pytest exits 0 when
         # each test skips, and a gate that silently did not run reads exactly
         # like one that passed.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_tennis_twin_sweep_pg.py \
@@ -858,6 +1344,7 @@ jobs:
         # retargets it elsewhere; both are JSONB `-` / `||` / `@>` arithmetic that
         # only a server runs (`duplicate-of:2` vs `duplicate-of:20` is the case a
         # substring would get wrong). Same skip detection as every gate here.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_dangling_duplicate_tag_8308_pg.py \
@@ -867,9 +1354,25 @@ jobs:
             exit 1
           fi
 
+      - name: "#9187 a ghost label never lands on a row that changed between read and write (real Postgres)"
+        # CERT-3662 follow-up 9187-CAS-ANCHOR-SCORE-AT-WRITE: the reschedule /
+        # adjacent-day sweep's UPDATE re-asserts what the plan read — no ESPN id
+        # (NULLIF), the same scores and status (IS NOT DISTINCT FROM). SQL only a
+        # server runs; named here because a `*_pg.py` nobody adds runs nowhere.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_ghost_label_refuses_a_row_that_changed_9187_pg.py \
+            -v -rs 2>&1 | tee /tmp/ghostcas9187.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/ghostcas9187.txt; then
+            echo "::error::#9187 ghost-label write-guard gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#7345 a listing both of whose teams played someone else at that kick-off stops printing (real Postgres)"
         # Two LATERAL joins on exact `commence_time` equality with NULL-false
         # team-id `<>` — SQL only a server runs. Same skip detection.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_same_instant_refutation_7345_pg.py \
@@ -883,6 +1386,7 @@ jobs:
         # "Lukko Rauma" must reach our "Lukko" and never "Rauma" or "Luk": a
         # folded, space-terminated `strpos` plus `translate` for the accents,
         # windowed on the venue stamp — SQL only a server runs. Same skip detection.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_pm_venue_name_extension_8440_pg.py \
@@ -896,6 +1400,7 @@ jobs:
         # The carry's fences are SQL: same-matchup rows on the ticker's
         # Eastern day, and the venue's own game tickers for the later row.
         # Same skip detection.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_kalshi_postponed_carry_9120_pg.py \
@@ -923,6 +1428,7 @@ jobs:
         # Same skip detection as every gate in this job: pytest exits 0 when
         # each test skips, and a gate that silently did not run reads exactly
         # like one that passed.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_illegal_settled_tennis_score_recall_2772_pg.py \
@@ -952,6 +1458,7 @@ jobs:
         # Same skip detection as every gate in this job: pytest exits 0 when
         # each test skips, and a gate that silently did not run reads exactly
         # like one that passed.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_reconcile_lookback_reach_5779_pg.py \
@@ -974,6 +1481,7 @@ jobs:
         # protection turns out to be a statement, not a codebase.
         #
         # Same skip detection as every gate in this job.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_3672_bind_contract.py \
@@ -1003,6 +1511,7 @@ jobs:
         # from CI, and reads green in both places.
         #
         # Same skip detection as every gate in this job.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_backup_round_trip_jsonb_6215_pg.py \
@@ -1018,6 +1527,7 @@ jobs:
         # judged. ESPN sync writes `teams` on the same app, so a row re-enriched
         # between read and write must be left alone. That is a claim about an
         # `UPDATE ... FROM unnest(...)` on a real server; this step is its reach.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_foreign_espn_id_apply_cas_9017_pg.py \
@@ -1043,6 +1553,7 @@ jobs:
         # Same skip detection as every gate in this job — and the same reason
         # the #6215 step gives for existing at all: this job names each PG file
         # explicitly, so a `*_pg.py` nobody adds here runs nowhere.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_team_slug_fill_7501_pg.py \
@@ -1061,6 +1572,7 @@ jobs:
         #
         # Same skip detection as every gate in this job; this job names each PG
         # file explicitly, so a `*_pg.py` nobody adds here runs nowhere.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_hook_queue_reaches_what_its_gate_allows_5531_pg.py \
@@ -1096,6 +1608,7 @@ jobs:
         # Postgres 14 (the full schema needs 15+ for `NULLS NOT DISTINCT`).
         #
         # Same skip detection as every gate in this job.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_durable_venue_history_7807_pg.py \
@@ -1112,6 +1625,7 @@ jobs:
         # handed; only Postgres says what ON CONFLICT DO UPDATE left in the row,
         # including that a SETTLED leg keeps its stored date. Wired here because
         # this job names each PG file explicitly (the shards skip it).
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_polymarket_leg_resolution_date_8466_pg.py \
@@ -1129,6 +1643,7 @@ jobs:
         # double neither aborts nor turns COMMIT into ROLLBACK; only Postgres
         # does. Wired here because this job names each PG file explicitly (the
         # shards skip it).
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_polymarket_batch_savepoint_8935_pg.py \
@@ -1145,6 +1660,7 @@ jobs:
         # over production's own Fitzpatrick rows. Which row that returns, and
         # which rows the two bounds let it see, only Postgres can say. Wired
         # here because this job names each PG file explicitly (the shards skip it).
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_golf_move_basis_between_rounds_8692_pg.py \
@@ -1170,6 +1686,7 @@ jobs:
         # they never set SEARCH_TEST_DATABASE_URL, so all 10 tests SKIP there
         # and the shard goes green having tested none of them. That is the
         # exact shape this job's skip detection exists to end.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_live_stale_touch_reach_5024_pg.py \
@@ -1194,6 +1711,7 @@ jobs:
         # Same skip-detection as the two gates around it: pytest exits 0 when
         # every test skips, so a gate that silently did not run is
         # indistinguishable from one that passed.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_provenance_enum_real_postgres.py \
@@ -1219,12 +1737,29 @@ jobs:
         # Real Postgres because `_write_prices` builds its INSERT with `pg_insert`
         # (no other dialect compiles it) and because the defect is a writer/data
         # contract split — every instrument not touching real rows said green.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_futures_price_refresh_writes_pg.py \
             -v -s -rs 2>&1 | tee /tmp/futures_writer.txt
           if grep -qiE "[0-9]+ skipped" /tmp/futures_writer.txt; then
             echo "::error::futures price writer contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
+      - name: "#9484 the Kalshi socket signals only a quote that moved (real Postgres)"
+        # A tick that re-stamps `last_updated` with the same price and book is
+        # written (liveness) but sends no market invalidation. The book arm reads
+        # the pre-UPDATE row through a scalar subquery in RETURNING — Postgres
+        # snapshot semantics; SQLite sees the new row, so only this server can
+        # pass or fail it.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_ws_quote_moved_9484_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/quote_moved_9484.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/quote_moved_9484.txt; then
+            echo "::error::#9484 quote-moved contract SKIPPED — the gate did not run"
             exit 1
           fi
 
@@ -1244,12 +1779,30 @@ jobs:
         # a mutation that widens the retirement fails here rather than in the
         # ship assertion. `stats["stale_zeroed"]` is asserted too — a seed that
         # never reached the block would satisfy "is NULL" by doing nothing.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_stale_futures_leg_retires_to_null_5869.py \
             -v -s -rs 2>&1 | tee /tmp/stale_leg_5869.txt
           if grep -qiE "[0-9]+ skipped" /tmp/stale_leg_5869.txt; then
             echo "::error::#5869 stale-leg contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
+      - name: Polymarket price-crown venue re-grade (real Postgres)
+        # #9394. The Gamma winner rail selected only markets holding a row that
+        # was neither `api_settlement` nor `clean_resolution`, so a field Pass 1
+        # price-crowned was never asked about again — the settled TOUR
+        # Championship crowned Gotterup off a 0.99 captured before the event.
+        # The fix is one HAVING arm; only a real database can say which markets
+        # that statement selects, so this runs the real rail against real rows.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_price_crowned_pm_winner_venue_regrade_9394_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/price_crown_9394.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/price_crown_9394.txt; then
+            echo "::error::#9394 price-crown venue re-grade gate SKIPPED — the gate did not run"
             exit 1
           fi
 
@@ -1272,6 +1825,7 @@ jobs:
         # source assertion can see it. Same skip-detection as the gates around
         # it — pytest exits 0 when every test skips, so a gate that silently did
         # not run is indistinguishable from one that passed.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_polymarket_resolved_candidate_sql_pg.py \
@@ -1304,6 +1858,7 @@ jobs:
         # Same skip-detection as the gates around it: pytest exits 0 when every
         # test skips, so a gate that silently did not run is indistinguishable
         # from one that passed.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_movement_window_pg.py \
@@ -1320,6 +1875,7 @@ jobs:
         # one-second lateral at `opening_captured_at`, the
         # `NOT coalesce(priced, false)` arm a one-sided book turns NULL, and the
         # `id % :slices` scope are properties of real rows. Same skip detection.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_unpriced_opening_pg_8612.py \
@@ -1347,6 +1903,7 @@ jobs:
         # Same skip-detection as the gates around it: pytest exits 0 when every
         # test skips, so a gate that silently did not run is indistinguishable
         # from one that passed.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_restore_3026_jsonb_roundtrip_pg.py \
@@ -1376,6 +1933,7 @@ jobs:
         # Same skip-detection as the gates around it: pytest exits 0 when every
         # test skips, so a gate that silently did not run is indistinguishable
         # from one that passed.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_kalshi_fabricated_loss_bind_contract_pg.py \
@@ -1402,6 +1960,7 @@ jobs:
         # Same skip-detection as the gates around it: pytest exits 0 when every
         # test skips, so a gate that silently did not run is indistinguishable
         # from one that passed.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_kalshi_sweep_settlement_bind_pg.py \
@@ -1430,6 +1989,7 @@ jobs:
         # Same skip-detection as the gates around it: pytest exits 0 when every
         # test skips, so a gate that silently did not run is indistinguishable
         # from one that passed.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_kalshi_sweep_void_bind_pg.py \
@@ -1463,6 +2023,7 @@ jobs:
         # Same skip-detection as the gates around it: pytest exits 0 when every
         # test skips, so a gate that silently did not run is indistinguishable
         # from one that passed.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_kalshi_resolved_void_selection_pg.py \
@@ -1478,6 +2039,7 @@ jobs:
         # price. The subject is the task's own UPDATE (jsonb `||` stamp plus a
         # correlated NOT EXISTS over events), which sqlite cannot host. Controls
         # (finished, stale-scheduled, unlinked) must still resolve.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_mark_resolved_spares_live_events_8586_pg.py \
@@ -1493,6 +2055,7 @@ jobs:
         # "Kevin Warsh >99%" as live. The subject reads `market_metadata->'shape'`
         # with `->>`/`?` and screens on correlated EXISTS, which sqlite cannot
         # host. One-column controls, including a fully graded ladder, stay open.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_mark_resolved_venue_winner_8615_pg.py \
@@ -1533,6 +2096,7 @@ jobs:
         # Same skip-detection as the gates around it: pytest exits 0 when every
         # test skips, so a gate that silently did not run is indistinguishable
         # from one that passed.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_venue_void_retirement_pg.py \
@@ -1558,6 +2122,7 @@ jobs:
         # Same skip-detection as the gates around it: pytest exits 0 when every
         # test skips, so a gate that silently did not run is indistinguishable
         # from one that passed.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_kalshi_settlement_recency_band_pg.py \
@@ -1585,6 +2150,7 @@ jobs:
         # Same skip-detection as the gates around it: pytest exits 0 when every
         # test skips, so a gate that silently did not run is indistinguishable
         # from one that passed.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_typeahead_played_game_suppression_pg.py \
@@ -1611,6 +2177,7 @@ jobs:
         # Same skip-detection as the gates around it: pytest exits 0 when every
         # test skips, so a gate that silently did not run is indistinguishable
         # from one that passed.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_pm_ungraded_loss_4788_pg.py \
@@ -1640,6 +2207,7 @@ jobs:
         # Same skip-detection as the gates around it: pytest exits 0 when every
         # test skips, so a gate that silently did not run is indistinguishable
         # from one that passed.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_typeahead_final_seven_route_control_pg.py \
@@ -1655,12 +2223,77 @@ jobs:
         # above the Dodgers' own. Real Postgres because the first half is the
         # stemmer and the second is `team_pool` feeding the rerank — neither
         # exists in a session double. Same skip-detection as the gates around it.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_typeahead_team_query_cross_sport_5082_pg.py \
             -v -s -rs 2>&1 | tee /tmp/typeahead_cross_sport_5082.txt
           if grep -qiE "[0-9]+ skipped" /tmp/typeahead_cross_sport_5082.txt; then
             echo "::error::#5082 typeahead cross-sport control SKIPPED — the gate did not run"
+            exit 1
+          fi
+
+      - name: typeahead team nickname keeps other-sport games below its own (real Postgres, #5082)
+        # `pats` served "Tamara Korpatsch at Taylah Preston" (an infix, Kor-pats-ch)
+        # and `niners` ranked "Niners Chemnitz" above the 49ers' own game, whose
+        # names never carry the nickname. Real Postgres because the infix row
+        # comes from the ILIKE event arm and the lead-team marks from the route.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_typeahead_team_query_other_sport_events_5082_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/typeahead_other_sport_events_5082.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/typeahead_other_sport_events_5082.txt; then
+            echo "::error::#5082 typeahead other-sport events control SKIPPED — the gate did not run"
+            exit 1
+          fi
+
+      - name: typeahead shows one question once, the search page's repeat rule (real Postgres, #9404)
+        # `world series` in the dropdown printed the World Series twice — Dodgers
+        # 30% (Polymarket, tier 1) and 28% (odds_api, tier 5) — because the loop
+        # deduped on the tiered key while /search asks `_admit_search_future`.
+        # Real Postgres because the claim is that the ROUTE asks the helper over a
+        # recalled pool; the helper itself is pinned by the #8378 unit file. Same
+        # skip-detection as the gates around it.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_typeahead_one_question_one_row_9404_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/typeahead_one_question_9404.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/typeahead_one_question_9404.txt; then
+            echo "::error::#9404 typeahead one-question control SKIPPED — the gate did not run"
+            exit 1
+          fi
+
+      - name: "#9865 'world series' leads with baseball's boards, not a Dota 2 namesake (real Postgres)"
+        # PILLAR: DISCOVER. SHIP: typing `world series` in the search dropdown
+        # during the MLB postseason lists the World Series markets above the Dota
+        # 2 "EPL World Series" group-stage matches. Real Postgres because the claim
+        # is that the ROUTE hands the reranker the sport and nothing later re-sorts
+        # the pool; the in-rig strawman proves the order is the fix's doing.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_typeahead_world_series_sport_pg_9865.py \
+            -v -s -rs 2>&1 | tee /tmp/typeahead_world_series_9865.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/typeahead_world_series_9865.txt; then
+            echo "::error::#9865 world series sport control SKIPPED — the gate did not run"
+            exit 1
+          fi
+
+      - name: typeahead keeps the resolved team's own game in the four (real Postgres, #9435)
+        # `giants` served the New York Giants card over four Yomiuri/Lotte Giants
+        # games: the Giants' game was row 8 of the soonest-first fetch, so the
+        # #5201 rescue arm stayed off and the four-slot cut dropped it. Real
+        # Postgres because the defect is the fetch's ORDER BY + LIMIT meeting the
+        # cut. Same skip-detection as the gates around it.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_typeahead_lead_fixture_survives_the_cut_pg_9435.py \
+            -v -s -rs 2>&1 | tee /tmp/typeahead_lead_fixture_9435.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/typeahead_lead_fixture_9435.txt; then
+            echo "::error::#9435 typeahead lead-fixture gate SKIPPED — the gate did not run"
             exit 1
           fi
 
@@ -1682,6 +2315,7 @@ jobs:
         # Same skip-detection as the gates around it: pytest exits 0 when every
         # test skips, so a gate that silently did not run is indistinguishable
         # from one that passed.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_futures_outcome_grade_schema_parity_pg.py \
@@ -1702,6 +2336,7 @@ jobs:
         # Same skip-detection as the recall gate above, for the same reason: pytest
         # exits 0 when every test skips, so a gate that silently did not run is
         # indistinguishable from one that passed.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_odds_enrichment_equivalence.py \
@@ -1728,6 +2363,7 @@ jobs:
         # Same skip-detection as every gate in this job, for the same reason:
         # pytest exits 0 when every test skips, so a gate that silently did not
         # run is indistinguishable from one that passed.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_bookmaker_count_real_postgres.py \
@@ -1750,6 +2386,7 @@ jobs:
         # which is what a mock-session test cannot promise.
         #
         # Same skip-detection as every gate in this job.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_futures_no_result_price_exemption_6757_pg.py \
@@ -1774,6 +2411,7 @@ jobs:
         # that shape once shipped a syntax error past 23 unit guards.
         #
         # Same skip-detection as every gate in this job.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_twin_fold_candidate_sql_7021_pg.py \
@@ -1801,6 +2439,7 @@ jobs:
         # Same skip-detection as every gate in this job, for the same reason:
         # pytest exits 0 when every test skips, so a gate that silently did not
         # run is indistinguishable from one that passed.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest \
@@ -1837,6 +2476,7 @@ jobs:
         # Same skip-detection as every gate in this job, for the same reason:
         # pytest exits 0 when every test skips, so a gate that silently did not
         # run is indistinguishable from one that passed.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest \
@@ -1879,6 +2519,7 @@ jobs:
         # the rest non-vacuous.
         #
         # Same skip-detection as every gate in this job, for the same reason.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest \
@@ -1905,6 +2546,7 @@ jobs:
         # query twice over the same two Celta rows, with and without the loader.
         #
         # Same skip-detection as every gate in this job, for the same reason.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest \
@@ -1935,6 +2577,7 @@ jobs:
         # Same skip-detection as every gate in this job, for the same reason:
         # pytest exits 0 when every test skips, so a gate that silently did not
         # run is indistinguishable from one that passed.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_prematch_prior_lateral_equivalence_pg.py \
@@ -1955,6 +2598,7 @@ jobs:
         #
         # Only a real driver enforces a bind type, so this gate lives here.
         # Same skip-detection as the two gates above, for the same reason.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_kalshi_cliff_bind_contract.py \
@@ -1983,6 +2627,7 @@ jobs:
         # The file is two-armed on purpose — it reverts each fix and asserts the
         # driver RAISES — so a green run means red-first was proved rather than
         # that nothing objected. Same skip-detection as the gates above.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_create_wave_insert_bind_contract.py \
@@ -2010,6 +2655,7 @@ jobs:
         # EXECUTES the reverted (pre-fix) SQL and asserts the suppression comes
         # back, so a green run means red-first was proved rather than that
         # nothing objected. Same skip-detection as every gate in this job.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_calibration_mode_price_source_scope_pg.py \
@@ -2036,6 +2682,7 @@ jobs:
         # real Kalshi entertainment markets). Same skip-detection as every gate
         # in this job — and see the guard test that asserts this STEP exists,
         # because a PG-gated file no step names skips silently and exits 0.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_calibration_threshold_ladder_pg.py \
@@ -2060,6 +2707,7 @@ jobs:
         # nothing), the terminal `residual` state, and the new retryable
         # `unverified` state, which must be withheld just as symmetrically or it
         # becomes the same censoring in the other direction (D112).
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest \
@@ -2089,6 +2737,7 @@ jobs:
         # chains are executed as production strings — the admin one via the
         # module constant CAL-P091 hoisted it into, so a guard cannot pass
         # against a copy while the original regresses.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest \
@@ -2122,6 +2771,7 @@ jobs:
         # requires — cricket's published SET must not move under a change that
         # is only allowed to change multiplicity, or the D14 reinvestigation
         # loses its baseline.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest \
@@ -2154,6 +2804,7 @@ jobs:
         # while the route drifted) AND executes the pre-fix statement, which is
         # required to fail. A green run therefore means red-first was proved,
         # not that nothing objected. Same skip-detection as every gate here.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_tag_counts_real_postgres.py \
@@ -2205,6 +2856,7 @@ jobs:
         # ORIGINAL one-statement restore and requires it to leave the row gone,
         # so a green run means the repair was proved necessary, not that
         # nothing objected. Same skip-detection as every gate here.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_rekey_statpal_anchors_real_postgres.py \
@@ -2237,6 +2889,7 @@ jobs:
         # no statement may touch, so a population test that ever loosens to
         # "not NULL" or "longer than six" fails here. Same skip-detection as
         # every gate in this job.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_null_statpal_live_space_3094_real_postgres.py \
@@ -2265,6 +2918,7 @@ jobs:
         # attribution rests on), and whether the CAS declines a moved value.
         #
         # Same skip detection as every gate in this job.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_soccer_statpal_manifest_restore_pg.py \
@@ -2293,6 +2947,7 @@ jobs:
         # a clean rowcount and nothing raises, and requires the post-condition
         # query to report it as still-applied. Same skip-detection as every gate
         # here.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_link_tennis_statpal_real_postgres.py \
@@ -2320,6 +2975,7 @@ jobs:
         # Batch-size arm included: a one-id batch would execute even if the array
         # binding degenerated to a scalar, so one test runs the real ~70-id pass.
         # Same skip-detection as every gate here.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_link_tennis_already_linked_pg.py \
@@ -2360,6 +3016,7 @@ jobs:
         # predicate was proved load-bearing rather than that nothing objected.
         # Its fixture drops and recreates the schema, so it sits beside the other
         # gate that does. Same skip-detection as every gate in this job.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_tennis_commence_predicate_real_postgres.py \
@@ -2380,6 +3037,7 @@ jobs:
         # 70-99 into the 1900s, a non-month RAISING mid-beat, and first-match
         # regex semantics) plus the Eastern-vs-UTC night-game case, none of
         # which any fake can decide. Same skip-detection as every gate here.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_market_identity_quarantine_sql_real_postgres.py \
@@ -2399,6 +3057,7 @@ jobs:
         # asserts both directions; it also reverts the fix by textual surgery
         # and proves the reverted chain reproduces the finding, so a green run
         # means red-first was executed here rather than assumed.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_identity_quarantine_linked_event_date_6275_pg.py \
@@ -2421,6 +3080,7 @@ jobs:
         # way (it has this chain at 1-5 rows), which is why it chose the rescan.
         # The second arm strips the keyword back out and asserts the defect
         # shape returns, so a green run means red-first executed here.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_identity_quarantine_single_evaluation_6275_pg.py \
@@ -2467,6 +3127,7 @@ jobs:
         # the market really is re-dated back to midnight.
         # Its fixture drops and recreates the schema, so it sits beside the other
         # gates that do. Same skip-detection as every gate in this job.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_stand_in_event_starts_real_postgres.py \
@@ -2514,6 +3175,7 @@ jobs:
         # `on_conflict_do_update` so it shows that CAL-P1004's fixed UPDATE arm
         # does nothing for a row that does not exist yet. The step keeps its
         # gap-create name because the ledger and #1852 cite it by that name.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_gap_create_grade_real_postgres.py \
@@ -2548,6 +3210,7 @@ jobs:
         # against "always prefer the occurrence", a different and wrong repair.
         # Runs after the #1852 step because its fixture also drops and recreates
         # the schema. Same skip-detection as every gate here.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_kalshi_game_commence_wiring_real_postgres.py \
@@ -2582,6 +3245,7 @@ jobs:
         # accepted, which is the round trip proving these rows are reachable and
         # not merely present. Runs after the #3433 step because its fixture also
         # drops and recreates the schema. Same skip-detection as every gate here.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_kalshi_unpriced_outcome_is_recorded_real_postgres.py \
@@ -2590,6 +3254,49 @@ jobs:
             echo "::error::#3518 unpriced-outcome gate SKIPPED — the gate did not run"
             exit 1
           fi
+
+      - name: "#9460 one Kalshi event's failed write does not sink the rest of the beat (real Postgres)"
+        # The discovery poll upserts every event inside the beat's one
+        # transaction and swallows a per-event failure. On Postgres the failed
+        # statement aborted the transaction, and every later event raised with
+        # it: 6,253 in the 9/28 20:45Z beat, including every existing market.
+        # Each event now writes inside its own savepoint. Only Postgres aborts a
+        # transaction, so only Postgres can show the savepoint contains it. Same
+        # rig and database as the #3518 step. Skip detection plus a count.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_kalshi_poll_survives_one_failed_event_real_postgres_9460.py \
+            -v -rs 2>&1 | tee /tmp/kalshisavepoint9460.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/kalshisavepoint9460.txt; then
+            echo "::error::#9460 Kalshi per-event savepoint gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]3 passed" /tmp/kalshisavepoint9460.txt || {
+            echo "::error::#9460 Kalshi per-event savepoint gate did not run all three cases"
+            exit 1
+          }
+
+      - name: "#9543 the Kalshi beat reaches the existing rows it wrote longest ago first (real Postgres)"
+        # The poll breaks on a deadline every beat and walked existing events in
+        # the venue's listing order, so the same tail was cut off every beat
+        # (scan report 9/29: three beats `starved`, 9,436-17,579 existing events
+        # unreached each). It now orders them by `volume_updated_at`, the stamp
+        # only this poll writes, read from the server. Same rig and database as
+        # the #9460 step. Skip detection plus a count.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_kalshi_poll_reaches_the_stalest_rows_first_real_postgres_9543.py \
+            -v -rs 2>&1 | tee /tmp/kalshireach9543.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/kalshireach9543.txt; then
+            echo "::error::#9543 Kalshi poll reach gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]5 passed" /tmp/kalshireach9543.txt || {
+            echo "::error::#9543 Kalshi poll reach gate did not run all five cases"
+            exit 1
+          }
 
       - name: "#3569 The live poll speaks the venue's current price dialect (real Postgres)"
         # `get_markets` returns the venue's RAW JSON and the 2-minute poll read
@@ -2604,12 +3311,31 @@ jobs:
         # divided by 100 a second time is 0.0022 for a 22% team — inside
         # 0 < p < 1, inside Numeric(5,4), charted without an exception anywhere.
         # An arm has to read the stored value back and judge its SCALE.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_live_poll_kalshi_prices_real_postgres.py \
             -v -s -rs 2>&1 | tee /tmp/livepricedialect3569.txt
           if grep -qiE "[0-9]+ skipped" /tmp/livepricedialect3569.txt; then
             echo "::error::#3569 live-price dialect gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
+      - name: "#9399 A Polymarket leg we refuse to price stops keeping a number its own book prices out (real Postgres)"
+        # The poll writer's withdrawal of a stored `current_probability` that the
+        # leg's CURRENT bid/ask refutes (Hurricane Nolo "Category 5 92%" beside a
+        # 0.09/0.32 book). Why the server: the withdrawal is a compare-and-set
+        # re-asserting the value it read and it stamps `price_changed_at` through
+        # the shared helper's SQL CASE, and both only mean something on real
+        # Postgres. Its fixture drops and recreates the schema, like the steps
+        # around it. Same skip-detection as every gate here.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_polymarket_refused_leg_withdrawn_9399_real_postgres.py \
+            -v -s -rs 2>&1 | tee /tmp/refusedlegwithdrawn9399.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/refusedlegwithdrawn9399.txt; then
+            echo "::error::#9399 refused-leg withdrawal gate SKIPPED — the gate did not run"
             exit 1
           fi
 
@@ -2627,6 +3353,7 @@ jobs:
         # out, no volume, unregistered, unserved) and each of those is EXECUTED
         # as a control, because "nothing else covers this" is the load-bearing
         # claim. Same skip-detection as every gate here.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_linked_game_price_chain_real_postgres.py \
@@ -2644,6 +3371,7 @@ jobs:
         # write — which is also the only place `is_winner`'s `DEFAULT false`
         # can bite, because only Postgres applies a column default.
         # Same skip-detection as every gate here.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_dark_polymarket_selector_real_postgres.py \
@@ -2668,6 +3396,7 @@ jobs:
         # that control stops reproducing the defect the gate is decoration, and
         # it fails rather than passing quietly.
         # Same skip-detection as every gate here.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_polymarket_kickoff_ordering_pg.py \
@@ -2705,6 +3434,7 @@ jobs:
         # Same skip-detection as every gate in this job, for the same reason:
         # pytest exits 0 when every test skips, so a gate that silently did not
         # run is indistinguishable from one that passed.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_containers_migration_real_postgres.py \
@@ -2741,12 +3471,30 @@ jobs:
         # AFTER its edge was written and which therefore requires deleting one.
         #
         # Same skip-detection as every gate in this job, for the same reason.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_container_assembly_real_postgres.py \
             -v -s -rs 2>&1 | tee /tmp/assembly2927.txt
           if grep -qiE "[0-9]+ skipped" /tmp/assembly2927.txt; then
             echo "::error::#2927 container assembly SKIPPED — the gate did not run"
+            exit 1
+          fi
+
+      - name: "#9653 collection discovery offers only eligible published hubs (real Postgres)"
+        # The discovery producer's eligibility filters live in ONE aggregate
+        # statement so an ineligible row cannot spend the LIMIT. A session
+        # double agrees with whatever SQL was built; only a server shows that
+        # unpublished/withdrawn/nested/empty/wrong-edition rows are excluded,
+        # a deleted member is not counted, and the array binds work (the
+        # local run caught `week-09` spending the only LIMIT slot).
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_container_discovery_real_postgres.py \
+            -v -s -rs 2>&1 | tee /tmp/discovery9653.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/discovery9653.txt; then
+            echo "::error::#9653 collection discovery SKIPPED — the gate did not run"
             exit 1
           fi
 
@@ -2770,6 +3518,7 @@ jobs:
         # Same skip-detection as every gate in this job. Adding the file is not
         # adding the gate: without this step the suite goes green while the
         # file's mere existence reads as coverage (lane1b/102's #4157 lesson).
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_kalshi_senate_category_4229_real_postgres.py \
@@ -2803,6 +3552,7 @@ jobs:
         #
         # Same skip-detection as every gate in this job: adding the file is not
         # adding the gate.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_polymarket_senate_category_4229_real_postgres.py \
@@ -2834,6 +3584,7 @@ jobs:
         #
         # Same skip-detection as every gate in this job: adding the file is not
         # adding the gate.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_kalshi_delisted_leg_retirement_pg.py \
@@ -2859,6 +3610,7 @@ jobs:
         #
         # Same skip-detection as every gate in this job: adding the file is not
         # adding the gate.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_settled_speaker_sweep_reaches_suspended_5820_pg.py \
@@ -2896,6 +3648,7 @@ jobs:
         #
         # Same skip-detection as every gate in this job: adding the file is not
         # adding the gate.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_kalshi_empty_book_openings_1086_real_postgres.py \
@@ -2912,6 +3665,7 @@ jobs:
         # statement (with a positive control) and the repair rail's apply and
         # restore; the numeric and timestamp provenance clauses are database
         # comparisons a mock cannot see.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_polymarket_empty_book_openings_9083_real_postgres.py \
@@ -2952,6 +3706,7 @@ jobs:
         #
         # Same skip-detection as every gate in this job: adding the file is not
         # adding the gate.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_golf_round_closing_line_1081_real_postgres.py \
@@ -2984,6 +3739,7 @@ jobs:
         #
         # Same skip-detection as every gate in this job: adding the file is not
         # adding the gate.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_census_cap_real_postgres.py \
@@ -3016,6 +3772,7 @@ jobs:
         #
         # Same skip-detection as every gate in this job: adding the file is not
         # adding the gate.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_task_session_budget_recycle_pg.py \
@@ -3049,6 +3806,7 @@ jobs:
         #
         # Same skip-detection as every gate in this job: adding the file is not
         # adding the gate.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_restore_4586_manifest_cas_pg.py \
@@ -3074,6 +3832,7 @@ jobs:
         #
         # Same skip-detection as every gate in this job: a rejected submission
         # is an expensive way to find out the gate never ran.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_account_deletion_678_pg.py \
@@ -3101,6 +3860,7 @@ jobs:
         # Same skip detection as every gate in this job: pytest exits 0 when
         # each test skips, and a gate that silently did not run reads exactly
         # like one that passed.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_folded_market_sport_net_6221_pg.py \
@@ -3129,6 +3889,7 @@ jobs:
         # Same skip detection as every gate in this job: pytest exits 0 when
         # each test skips, and a gate that silently did not run reads exactly
         # like one that passed.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_price_table_fold_6390_pg.py \
@@ -3157,6 +3918,7 @@ jobs:
         # Same skip detection as every gate in this job: pytest exits 0 when
         # each test skips, and a gate that silently did not run reads exactly
         # like one that passed.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_event_subresources_resolve_twin_id_6975_pg.py \
@@ -3189,6 +3951,7 @@ jobs:
         # Same skip detection as every gate in this job. Note this file's
         # premise arm runs WITHOUT a database by design, so a fully-skipped run
         # still reports skips here and trips the detector.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_prekickoff_leg_withdrawal_5896_pg.py \
@@ -3225,6 +3988,7 @@ jobs:
         # Same skip detection as every gate in this job; this file's premise
         # arm runs WITHOUT a database by design, so a fully-skipped run still
         # reports skips here and trips the detector.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_stranded_prekickoff_hero_6511_pg.py \
@@ -3259,6 +4023,7 @@ jobs:
         # tolerance; dropping `yes_ask > 0`; and dropping the ungraded bid arm.
         #
         # Same skip detection as every gate in this job.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_grid_book_refuted_price_6532_pg.py \
@@ -3296,12 +4061,35 @@ jobs:
         # pass with the fix reverted.
         #
         # Same skip detection as every gate in this job.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_grid_untaken_offer_8220_pg.py \
             -v -rs 2>&1 | tee /tmp/untakenoffer8220.txt
           if grep -qiE "[0-9]+ skipped" /tmp/untakenoffer8220.txt; then
             echo "::error::#8220 untaken-offer grid gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
+      - name: "#8192 a Polymarket champion number nothing stands behind, at the GRID (real Postgres)"
+        # `/playoffs/ncaa-basketball`'s Champion column printed UConn P19,
+        # Illinois P15, North Carolina P11 beside 1-5% headlines: seventeen
+        # Polymarket legs summing to 1.58 for one title. On a one-winner column
+        # whose venue column does not add up, a leg keeps its number only with a
+        # buyer above the empty-book floor or a trade that prints as its price.
+        #
+        # Two corpora, identical but for two legs naming teams with no grid row:
+        # `broken` (venue column 1.63) withholds, `sound` (0.95) serves the same
+        # bidless books. Measured non-vacuous, five mutants, each killed:
+        # unwiring the call site, dropping the sum gate, dropping the trade
+        # term, dropping the buyer test, and letting any trade back a price.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_grid_polymarket_unbacked_8192_pg.py \
+            -v -rs 2>&1 | tee /tmp/pmunbacked8192.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/pmunbacked8192.txt; then
+            echo "::error::#8192 Polymarket champion grid gate SKIPPED — the gate did not run"
             exit 1
           fi
 
@@ -3323,6 +4111,7 @@ jobs:
         # where the qualified spelling has no ticker and must stay unbound.
         #
         # Same skip detection as every gate in this job.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_grid_miami_identity_7829_pg.py \
@@ -3357,6 +4146,7 @@ jobs:
         # Same skip detection as every gate in this job: pytest exits 0 when
         # each test skips, and a gate that silently did not run reads exactly
         # like one that passed.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_live_blend_concurrent_stamp_pg.py \
@@ -3370,6 +4160,7 @@ jobs:
       - name: "#837 blend stamp deadlock — provision the disposable database"
         # Its own database for the reason the #7617 step above gives: the file
         # drops and creates the tables it touches.
+        if: matrix.group == 'isolated'
         run: |
           set -o pipefail
           python - <<'PY' >> "$GITHUB_ENV"
@@ -3402,6 +4193,7 @@ jobs:
         # not freeze the other games' stamps (500ms lock_timeout, retry next
         # flush), plus its control with the timeout off.
         # Skip detection plus a count, as for #7617.
+        if: matrix.group == 'isolated'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_live_blend_stamp_deadlock_pg_837.py \
@@ -3437,6 +4229,7 @@ jobs:
         # written opt-in on SEARCH_TEST_DATABASE_URL and, until this step, were
         # collected by the unit shards (which do not set it) and named by nothing
         # in this job, i.e. they would have run nowhere.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_feed_negative_rank_keeps_discover_eligibility_1927a_pg.py \
@@ -3463,6 +4256,7 @@ jobs:
         # the noise filter off), and the anonymous reader's Discover is unchanged.
         #
         # Same skip detection as every gate in this job, for the same reason.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_feed_swipes_rank_never_hide_a_sport_1927_pg.py \
@@ -3497,6 +4291,7 @@ jobs:
         # origin/master before wiring: 4 of 11 red.
         #
         # Same skip detection as every gate in this job, for the same reason.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_settled_book_closes_the_market_row_6919_real_postgres.py \
@@ -3535,6 +4330,7 @@ jobs:
         # Runs the SHIPPED scripts with `get_task_session` pointed at this
         # database; only the Gamma HTTP call is substituted. Same skip detection
         # as every gate in this job, for the same reason.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_drain_6919_apply_restore_real_postgres.py \
@@ -3552,6 +4348,7 @@ jobs:
         # timeout, while every unit guard passed on a recording session that
         # accepts any type. Proved non-vacuous before wiring: binding the raw
         # string reds both arms with the production error.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_sport_category_cursor_resume_2526_real_postgres.py \
@@ -3591,6 +4388,7 @@ jobs:
         # (patched on the restore module, not on `app.tasks.base` — it binds the
         # name at import). Nothing is faked: there is no venue in this pair.
         # Same skip detection as every gate in this job, for the same reason.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_restore_8132_undo_real_postgres.py \
@@ -3630,6 +4428,7 @@ jobs:
         # import backfill_winners` binds the Celery TASK, which shadows the
         # module and has no such attribute. Same skip detection as every gate in
         # this job, for the same reason.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_price_crown_leg_guard_8132_real_postgres.py \
@@ -3663,6 +4462,7 @@ jobs:
         # NULL-`espn_id` exclusion that share the predicate. Red-first is
         # executed, not remembered: one arm reverts the cast by surgery on the
         # shipped constant and asserts the server still refuses it.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_7354_population_sql_real_postgres.py \
@@ -3697,6 +4497,7 @@ jobs:
         # population (a hardcoded 30 fails there). Red-first is executed, not
         # remembered: one arm rebuilds the merged text by surgery on the shipped
         # constant and asserts the server still refuses it.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_7739_candidate_sql_real_postgres.py \
@@ -3740,6 +4541,7 @@ jobs:
         # for the arm to mean anything. Red-first is executed, not remembered —
         # one arm reverts the gate by surgery on the shipped planner and asserts
         # the draw's rows flip again.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_7354_is_idempotent_real_postgres.py \
@@ -3785,6 +4587,7 @@ jobs:
         # connection AND being enforced, and the dead-tuple read returning no row
         # and no error — the reachable absence whose mishandling got the first
         # candidate for this issue rejected.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_vacuum_block_signals_2006_real_postgres.py \
@@ -3825,12 +4628,83 @@ jobs:
         # Same skip detection as every gate in this job: pytest exits 0 when
         # each test skips, and a gate that silently did not run reads exactly
         # like one that passed.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_diacritic_fold_pg_6977.py \
             -v -rs 2>&1 | tee /tmp/diacriticfold.txt
           if grep -qiE "[0-9]+ skipped" /tmp/diacriticfold.txt; then
             echo "::error::#6977 diacritic fold contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
+      - name: "#9836 'ohio st' finds Ohio State, its game and both venues' markets (real Postgres)"
+        # PILLAR: MATCHING. SHIP: typing `ohio st`, `penn st` or `iowa st` and
+        # pressing Enter shows the team and its games, not only Kalshi's
+        # `Ohio St.` markets. The Teams gate is pure FTS and the game arms AND a
+        # word test onto the ILIKE, so only Postgres can show `st` failing to be
+        # a word of "Ohio State Buckeyes". Strawman on master fails 4 ship cases;
+        # removing either half of the fix alone fails 5-6.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_search_college_state_abbrev_pg_9836.py \
+            -v -rs 2>&1 | tee /tmp/collegestate.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/collegestate.txt; then
+            echo "::error::#9836 college St. contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
+      - name: "#9859 'sf giants' cards the San Francisco Giants and leads with their game (real Postgres)"
+        # PILLAR: MATCHING. SHIP: typing `sf giants`, `la kings`, `ny rangers` or
+        # `la angels` and pressing Enter shows that club's card and leads with its
+        # games, not 49ers @ New York Giants. The Teams gate is pure FTS and
+        # `angels` stemming to the stem of "Angeles" is a Postgres fact. The
+        # in-rig strawman proves the cases measure the fix.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_search_city_abbrev_pg_9859.py \
+            -v -rs 2>&1 | tee /tmp/cityabbrev.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/cityabbrev.txt; then
+            echo "::error::#9859 city-abbreviation contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
+      - name: "#9897 'chicago' puts Sunday's Bears game with the week's games (real Postgres)"
+        # PILLAR: MATCHING. SHIP: typing `chicago`, `los angeles` or `new york`
+        # shows this Sunday's Bears/Rams/Giants/Jets game with the week's games,
+        # not under basketball a month out. The teams window's `ts_rank_cd` over
+        # name + aliases is what puts the Bears seventh, a Postgres fact. The
+        # in-rig strawman proves the cases measure the fix.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_search_city_lead_tier_pg_9897.py \
+            -v -rs 2>&1 | tee /tmp/cityleadtier.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/cityleadtier.txt; then
+            echo "::error::#9897 city lead-tier contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
+      - name: "#9735 one player of an unspaced doubles pair finds its match (real Postgres)"
+        # PILLAR: DISCOVER. SHIP: searching a doubles player finds this week's
+        # match. `q=Winegar` served 0 games while Rojer/Winegar was live: the
+        # parser reads an unspaced `A/B` as ONE token, so the word test ANDed
+        # onto the ILIKE threw the row away (93 rows in the window, 17 live).
+        # Only Postgres tokenises. Strawman on master fails 6 of 7; a substring
+        # loosening fails the `fed` case; a double-split fails the rank case.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_search_slash_doubles_pg_9735.py \
+            -v -rs 2>&1 | tee /tmp/slashdoubles.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/slashdoubles.txt; then
+            echo "::error::#9735 slash-doubles contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+          if ! grep -qE "^=+ 7 passed" /tmp/slashdoubles.txt; then
+            echo "::error::#9735 slash-doubles contract did not run all 7 tests"
             exit 1
           fi
 
@@ -3841,6 +4715,7 @@ jobs:
         # per-term ILIKE + FTS arms, so it is proved here, over Postgres, on both
         # routes; the no-DB pin is `tests/test_search_superbowl_synonym_8427.py`.
         # Same skip detection as every gate in this job.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_superbowl_joined_pg_8427.py \
@@ -3857,6 +4732,7 @@ jobs:
         # board. The fix is an ORDER BY key, so the page it produces needs a real
         # ranking; the no-DB pin is `TestTheNamedYearOrdersTheFuturesWindow` in
         # `test_route_search_intent_5688.py`. Same skip detection as every gate here.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_named_year_pg_8805.py \
@@ -3890,6 +4766,7 @@ jobs:
         # same shape and drift between them is the likeliest regression.
         #
         # Same skip detection as every gate in this job, for the same reason.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_club_noun_apply_restore_6955_pg.py \
@@ -3904,6 +4781,7 @@ jobs:
         # whose own FK actions (CASCADE / SET NULL) would silently destroy or
         # orphan any reference the repoint missed. Only a real server runs those.
         # Same skip detection as every gate in this job.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_7021_fold_apply_restore_pg.py \
@@ -3913,12 +4791,58 @@ jobs:
             exit 1
           fi
 
+      - name: "#8636 volleyball rows — retire, relabel, re-run and undo against real Postgres"
+        # The repair retires volleyball rows the venue contradicts and relabels
+        # soccer rows onto the right sport; its undo must put back ONLY rows
+        # still where the repair left them. Those guarded writes are SQL, so
+        # only a real server runs them. Same skip detection as every gate here.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_repair_8636_venue_contradicted_rows_pg.py \
+            -v -rs 2>&1 | tee /tmp/repair8636.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/repair8636.txt; then
+            echo "::error::#8636 venue-contradicted-rows apply/restore gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
+      - name: "#8100 Phoenix placement — select, bank, apply, refuse mid-run and undo against real Postgres"
+        # The repair moves the Phoenix's Polymarket-born rows from the catch-all
+        # into the NBL, banking each sport_id first; a row that changes under
+        # the run rolls every write back, and the undo touches only rows still
+        # in the league. Those are SQL, so only a real server runs them.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_repair_8100_phoenix_placement_apply_restore_pg.py \
+            -v -rs 2>&1 | tee /tmp/repair8100.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/repair8100.txt; then
+            echo "::error::#8100 Phoenix placement apply/restore gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
+      - name: "#9850 seeded opening — clear, re-run, undo and refusals against real Postgres"
+        # The repair withdraws Trammell's seeded 47% opening on two legs; its
+        # compare-and-swap binds Decimal / aware datetime / int against numeric,
+        # timestamptz and integer columns, and its undo writes the exact BEFORE
+        # back. Only a real server runs those. Same skip detection as every gate here.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_repair_9850_trammell_seeded_opening_pg.py \
+            -v -rs 2>&1 | tee /tmp/repair9850.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/repair9850.txt; then
+            echo "::error::#9850 seeded-opening apply/restore gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#6974 MLS duplicate clubs — strip, fold, re-run and undo against real Postgres"
         # Folds 21 duplicate club rows through team_merge._apply_merge and then
         # DELETEs them; the delete's own FK actions (CASCADE / SET NULL) would
         # silently destroy or orphan any reference the repoint missed, and the
         # after-state is read back through the serve path's own name lookup.
         # Only a real server runs those. Same skip detection as every gate here.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_6974_fold_mls_apply_restore_pg.py \
@@ -3932,6 +4856,7 @@ jobs:
         # Same shape as the MLS gate above, plus a mapping repointed BEFORE the
         # fold (the delete's CASCADE would destroy it) and the after-state read
         # back through the search route's own Teams filter and rank.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_6974_fold_nhl_apply_restore_pg.py \
@@ -3945,6 +4870,7 @@ jobs:
         # The NHL gate's shape, plus mappings banked whole and deleted before the
         # fold, and the ship read back through the search route: "lafc" answers
         # with one club, and that club's row carries the game only the duplicate named.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_6974_fold_lafc_apply_restore_pg.py \
@@ -3954,10 +4880,25 @@ jobs:
             exit 1
           fi
 
+      - name: "#6974 NBA duplicate clubs — repoint, bank-delete, correct legs, fold, re-run and undo against real Postgres"
+        # The LAFC gate's shape, plus legs that are another club's moved (or a
+        # college leg unlinked) before the fold, and the ship read back through the
+        # #9617 league step: Kalshi's "Detroit" and "Portland" bind to the real club.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_repair_6974_fold_nba_apply_restore_pg.py \
+            -v -rs 2>&1 | tee /tmp/fold6974nba.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/fold6974nba.txt; then
+            echo "::error::#6974 NBA fold apply/restore gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#2841 Chicago Fire v Vancouver — ESPN id, Kalshi market and label moved, re-run and undo against real Postgres"
         # One pinned pair: ESPN 761660 moved inside the real partial unique index,
         # the market re-pointed with its immutable link-change row, and the ship read
         # back through not_a_proven_duplicate — search shows the kept row only.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_2841_chifire_van_fold_apply_restore_pg.py \
@@ -3973,6 +4914,7 @@ jobs:
         # matcher's own read, skip any row whose league already holds its game,
         # move `sport_id` guarded on the value read, and undo only what they
         # moved. Same skip detection as every gate here.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_5576_venue_named_competition_pg.py \
@@ -4000,6 +4942,7 @@ jobs:
         #
         # The nonce is not a credential: it authorises destruction of a scratch
         # database, so it is printed nowhere and is regenerated every run.
+        if: matrix.group == 'isolated'
         run: |
           set -o pipefail
           python - <<'PY' > /tmp/mvacc.env
@@ -4063,6 +5006,7 @@ jobs:
         #     deselected — the count is asserted, not eyeballed.
         # pytest's exit code is read for its VALUE (gotcha #54): 1 is a result,
         # anything else is a story about the harness.
+        if: matrix.group == 'isolated'
         run: |
           # `set +e` around the pipeline on purpose: the step runs under `bash -e`,
           # so a red suite would abort HERE and the count/skip refusals below —
@@ -4112,6 +5056,7 @@ jobs:
         # CI is the only route for this guard: the Mac's Postgres is 14 and the
         # schema carries a PG15-only `NULLS NOT DISTINCT` unique index, so
         # `Base.metadata.create_all` cannot build it there.
+        if: matrix.group == 'isolated'
         run: |
           set -o pipefail
           python - <<'PY' > /tmp/tlroute.env
@@ -4167,6 +5112,7 @@ jobs:
         # and a short count means something was deselected. pytest's exit code is
         # read for its VALUE (gotcha #54) — 1 is a result, anything else is a
         # story about the harness.
+        if: matrix.group == 'isolated'
         run: |
           # `set +e` on purpose: the step runs under `bash -e`, so a red suite
           # would abort HERE and the refusals below — the half that cannot be
@@ -4212,6 +5158,7 @@ jobs:
         # any Postgres or Redis that is not loopback or does not carry the nonce,
         # and `GENERIC_HISTORY_*` deliberately do NOT fall back to `$DATABASE_URL`
         # / `$REDIS_URL`.
+        if: matrix.group == 'isolated'
         run: |
           set -o pipefail
           python - <<'PY' > /tmp/gmh.env
@@ -4272,6 +5219,7 @@ jobs:
         env:
           REDIS_URL: redis://localhost:56379/15
           KALSHI_API_KEY: ""
+        if: matrix.group == 'isolated'
         run: |
           set +e
           python -m pytest \
@@ -4378,6 +5326,7 @@ jobs:
         env:
           REDIS_URL: redis://localhost:56379/15
           KALSHI_API_KEY: ""
+        if: matrix.group == 'isolated'
         run: |
           set +e
           python -m pytest \
@@ -4436,6 +5385,7 @@ jobs:
         env:
           REDIS_URL: redis://localhost:56379/15
           KALSHI_API_KEY: ""
+        if: matrix.group == 'isolated'
         run: |
           set +e
           python -m pytest \
@@ -4490,6 +5440,7 @@ jobs:
         # planted in BOTH. The suite refuses any Postgres or Redis that is not
         # loopback or does not carry the nonce, and `NASCAR_7548_*` deliberately
         # do NOT fall back to `$DATABASE_URL` / `$REDIS_URL`.
+        if: matrix.group == 'isolated'
         run: |
           set -o pipefail
           python - <<'PY' > /tmp/nascar7548.env
@@ -4553,6 +5504,7 @@ jobs:
         # and pytest's exit code is read for its VALUE (gotcha #54).
         env:
           REDIS_URL: redis://localhost:56379/14
+        if: matrix.group == 'isolated'
         run: |
           set +e
           python -m pytest \
@@ -4634,6 +5586,7 @@ jobs:
         # ZERO collected is a collection error wearing a green hat, and a short
         # count means something was deselected. The exit code is read for its
         # VALUE (gotcha #54) — 1 is a result, anything else is a harness story.
+        if: matrix.group == 'shared'
         run: |
           # `set +e` on purpose: the step runs under `bash -e`, so a red suite
           # would abort HERE and the refusals below would never execute.
@@ -4700,6 +5653,7 @@ jobs:
         # Same skip-detection as every gate here — a skipped gate reads exactly
         # like a passing one, and this file would skip silently on every other
         # runner in the matrix.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest \
@@ -4717,6 +5671,7 @@ jobs:
         # sportsbook rows have no spread), and whether that matches, re-runs as
         # a no-op, and lets the restore spare a row written since is decided by
         # the server. Same skip-detection as every gate here.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest \
@@ -4732,6 +5687,7 @@ jobs:
         # `bl_searchtest` has been populated by eighty steps before it, whose
         # inbound foreign keys make the drop fail outright. Created empty here
         # and thrown away with the runner.
+        if: matrix.group == 'isolated'
         run: |
           set -o pipefail
           python - <<'PY' >> "$GITHUB_ENV"
@@ -4778,6 +5734,7 @@ jobs:
         # doubleheader's second game (6h) and a back-to-back's (23h) sit inside
         # the screen's own ±30h window and MUST survive the arm. Restoring that
         # window as the write's identity turns both red.
+        if: matrix.group == 'isolated'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_7594_canonical_ownership_pg.py \
@@ -4803,6 +5760,7 @@ jobs:
         # sentinel nonce: unlike #4079 this suite never drops a schema it did not
         # create in the same job, and it reads its own variable rather than
         # falling back to `$DATABASE_URL`.
+        if: matrix.group == 'isolated'
         run: |
           set -o pipefail
           python - <<'PY' >> "$GITHUB_ENV"
@@ -4844,6 +5802,7 @@ jobs:
         # exits 0 when each test skips, and four of the six cases here are
         # controls that pass with OR without the fix — a run that lost the two
         # ship cases would still print a green summary.
+        if: matrix.group == 'isolated'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_a_delay_is_not_silence_pg_7617.py \
@@ -4866,6 +5825,7 @@ jobs:
         # PRE-GAME-only sibling read so a LIVE_ONLY quota night withdraws
         # nothing) that only Postgres can compute. Reuses the #7617 database:
         # this file drops and creates its own tables, after that step.
+        if: matrix.group == 'isolated'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_a_withdrawn_listing_is_not_a_start_pg_8755.py \
@@ -4879,9 +5839,30 @@ jobs:
             exit 1
           }
 
+      - name: "#9588 a venue stamp does not start a later StatPal session (real Postgres)"
+        # Seven Beijing doubles read LIVE a day early on Kalshi's expiry stamp
+        # while their own StatPal anchor had them at the next session. The hold
+        # reads `claim_context->>'statpal_start_time'` from JSONB through
+        # `ANY(:event_ids)` under asyncpg, which only Postgres can answer.
+        # Reuses the #7617 database: this file drops and creates its own tables.
+        if: matrix.group == 'isolated'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_a_venue_stamp_later_session_pg_9588.py \
+            -v -rs 2>&1 | tee /tmp/latersession9588.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/latersession9588.txt; then
+            echo "::error::#9588 later-session contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]14 passed," /tmp/latersession9588.txt || {
+            echo "::error::#9588 later-session contract did not run all fourteen cases"
+            exit 1
+          }
+
       - name: "#7878 win-prob evidence collapse — provision the disposable database"
         # Its own database for the reason the #7617 step above gives: the file
         # drops and creates the five tables it touches.
+        if: matrix.group == 'isolated'
         run: |
           set -o pipefail
           python - <<'PY' >> "$GITHUB_ENV"
@@ -4911,6 +5892,7 @@ jobs:
         # longer show the two unobserved hours honestly. The rule is one SQL
         # statement of window functions over a JSONB tuple; only Postgres can
         # say what it keeps. Skip detection plus a count, as for #7617.
+        if: matrix.group == 'isolated'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_winprob_evidence_collapse_pg_7878.py \
@@ -4931,6 +5913,7 @@ jobs:
         # GETs /api/events/{id}/history through the real app and reads the
         # served JSON for every evidence kind. Shared `bl_searchtest`, reserved
         # ids, ORM seeding. Skip detection plus a count.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_winprob_evidence_wire_7878_pg.py \
@@ -4951,6 +5934,7 @@ jobs:
         # Postgres aborts a transaction, so only Postgres can show that the
         # savepoints restore it. Reuses the #7617 database; this file drops and
         # creates its own tables. Skip detection plus a count.
+        if: matrix.group == 'isolated'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_espn_pass_survives_one_failed_statement_pg_8796.py \
@@ -4964,12 +5948,34 @@ jobs:
             exit 1
           }
 
+      - name: "#9797 a failed replaced-player release costs its own row, not the tennis pass (real Postgres)"
+        # #9797 flushes a withdrawn row's ESPN-id release inside the tennis
+        # pass's one transaction. A lock failure there, caught and logged,
+        # left it aborted and the final COMMIT dropped every other row's
+        # anchor. Only Postgres aborts, so only Postgres can show the per-row
+        # savepoint restores it. Same database as the #8796 step; this file
+        # drops and creates its own tables. Skip detection plus a count.
+        if: matrix.group == 'isolated'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_tennis_release_savepoint_pg_9797.py \
+            -v -rs 2>&1 | tee /tmp/tennisrelease9797.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/tennisrelease9797.txt; then
+            echo "::error::#9797 tennis release-savepoint contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]2 passed," /tmp/tennisrelease9797.txt || {
+            echo "::error::#9797 tennis release-savepoint contract did not run both cases"
+            exit 1
+          }
+
       - name: "#9049 the ESPN pass lets go of each game's row before its next ESPN call (real Postgres)"
         # A savepoint releases a SAVEPOINT, not a row lock: the one-commit pass
         # held every live game's row through later sports and box-score fetches
         # (12-23 s on production), and the socket's price write queued behind
         # it. Only Postgres holds the lock, so only Postgres can show it free.
         # Same database and fixture as the #8796 step. Skip detection + count.
+        if: matrix.group == 'isolated'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_espn_pass_releases_rows_pg_9049.py \
@@ -4983,12 +5989,95 @@ jobs:
             exit 1
           }
 
+      - name: "#9602 a certain postseason game's row reads as a playoff game before game day (real Postgres)"
+        # The certain-postseason pass marks every certain game's row
+        # llm_importance='playoff' (never downgrading 'championship'), scoped by
+        # league and ESPN id. Only a database proves what that WHERE does to
+        # rows. Same database and table closure as the #8796 step. Skip
+        # detection plus a count.
+        if: matrix.group == 'isolated'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_certain_postseason_playoff_pg_9602.py \
+            -v -rs 2>&1 | tee /tmp/playoff9602.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/playoff9602.txt; then
+            echo "::error::#9602 playoff-mark gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]2 passed," /tmp/playoff9602.txt || {
+            echo "::error::#9602 playoff-mark gate did not run both cases"
+            exit 1
+          }
+
+      - name: "#9713 one refused box does not discard the settled box-score pass (real Postgres)"
+        # The settled box-score pass wrote every finished game in the pass's one
+        # transaction with no per-game savepoint. Postgres refused one box (an
+        # ERA of INF serialised as Infinity), the transaction aborted, and every
+        # run settled nothing while that game led the 48-hour queue. Only
+        # Postgres aborts a transaction. Same database and fixture as #8796.
+        if: matrix.group == 'isolated'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_settled_box_pass_survives_one_refused_box_pg_9713.py \
+            -v -rs 2>&1 | tee /tmp/settledbox9713.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/settledbox9713.txt; then
+            echo "::error::#9713 settled box-score gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]2 passed," /tmp/settledbox9713.txt || {
+            echo "::error::#9713 settled box-score gate did not run both cases"
+            exit 1
+          }
+
+      - name: "#8913 one game's failed write does not discard the live box-score pass (real Postgres)"
+        # Each live game's box score is written inside the pass's one
+        # transaction. A lost row lock on one game aborted it, the later games
+        # failed, and the step's savepoint rolled back the earlier ones too.
+        # Only Postgres aborts a transaction, so only Postgres can show the
+        # per-game savepoint contains it. Same database and fixture as the
+        # #8796 step. Skip detection plus a count.
+        if: matrix.group == 'isolated'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_live_box_pass_survives_one_failed_write_pg_8913.py \
+            -v -rs 2>&1 | tee /tmp/livebox8913.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/livebox8913.txt; then
+            echo "::error::#8913 live box-score gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]2 passed," /tmp/livebox8913.txt || {
+            echo "::error::#8913 live box-score gate did not run both cases"
+            exit 1
+          }
+
+      - name: "#9067 the live box-score pass spends its slots on games it will fetch (real Postgres)"
+        # The pass took 10 live rows by `fetched_at` nulls first and then
+        # skipped the ones it would not fetch (tennis: no ESPN path, and a
+        # line with no `fetched_at`). Skipped rows were never written, so they
+        # held every slot and a live MLB line score froze for 80 minutes. The
+        # defect is the ORDER BY + LIMIT on the JSONB column, so only Postgres
+        # shows it. Same database and fixture as the #8796 step.
+        if: matrix.group == 'isolated'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_live_box_pass_reaches_every_fetchable_game_pg_9067.py \
+            -v -rs 2>&1 | tee /tmp/livebox9067.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/livebox9067.txt; then
+            echo "::error::#9067 live box-score reach gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]2 passed," /tmp/livebox9067.txt || {
+            echo "::error::#9067 live box-score reach gate did not run both cases"
+            exit 1
+          }
+
       - name: "#837 subscription slate — provision the disposable database"
         # Its own database for the reason the #7617 step above gives: this
         # contract creates and drops the six tables the slate predicate joins,
         # and `bl_searchtest` has inbound foreign keys on `futures_markets` that
         # make that drop die with `DependentObjectsStillExist`. Created empty and
         # thrown away with the runner.
+        if: matrix.group == 'isolated'
         run: |
           set -o pipefail
           python - <<'PY' >> "$GITHUB_ENV"
@@ -5039,6 +6128,7 @@ jobs:
         # the point (it is how a silently-dropped case gets caught), but it means
         # the number is part of the test file's contract, not CI boilerplate.
         # 12 = 7 age-floor cases + 4 settled-market cases + 1 consumer wiring case.
+        if: matrix.group == 'isolated'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_ws_slate_age_floor_pg_837.py \
@@ -5053,6 +6143,31 @@ jobs:
           # only by the accident of this file currently raising warnings.
           grep -qE "[^0-9]12 passed[,[:space:]]" /tmp/slate837.txt || {
             echo "::error::#837 slate contract did not run all twelve cases"
+            exit 1
+          }
+
+      - name: "#9484 a suspended match whose market still trades keeps its stream (real Postgres)"
+        # Both sockets subscribed from `live` or `scheduled` within 6 h, so a
+        # row the graph suspends fell off at the next recycle while its market
+        # kept trading (Dickerson v Pereira, 2026-09-28: frozen at .51 while
+        # Kalshi traded .90). The new arm subscribes an open market on an event
+        # suspended inside 24 h. Reuses the #837 database provisioned above;
+        # the file drops and recreates its own six tables.
+        #
+        # Count pin: 12 = 6 cases x 2 venues. Four of the six are kill controls
+        # for the arm's own clauses (status, floor, market, NULL), so a run that
+        # lost the ship case would still print green without the count.
+        if: matrix.group == 'isolated'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_ws_slate_suspended_open_market_pg_9484.py \
+            -v -rs 2>&1 | tee /tmp/slate9484.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/slate9484.txt; then
+            echo "::error::#9484 suspended-arm contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]12 passed[,[:space:]]" /tmp/slate9484.txt || {
+            echo "::error::#9484 suspended-arm contract did not run all twelve cases"
             exit 1
           }
 
@@ -5074,6 +6189,7 @@ jobs:
         # Same skip detection as every gate in this job, and a count so a
         # dropped case cannot print green: 3 = family roster (MLB/NPB/KBO) +
         # NHL/WNBA/NCAAF pages + the one-roster-read arm.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_route_related_futures_team_paths_7867_pg.py \
@@ -5096,8 +6212,19 @@ jobs:
         # event, not itself) plus #4965's fixture guard against `events`. A
         # session double answers whatever it is handed, so this is the gate.
         #
-        # 7 = found + another group + split group + parent-only group + itself
-        # + the fixture guard refusing + its control (same row, venue agrees).
+        # 18 = found + another group + split group + parent-only group + itself
+        # + the fixture guard refusing x4 (ESPN / external / StatPal anchored,
+        # and #8430's suspended row) + its control (same row, venue agrees)
+        # + #9338's three: an open unanchored row is joined despite its clock,
+        # of several rows the one the guard accepts is joined, two refused rows
+        # leave nothing to pick + #9338's follow-up three: a group already
+        # split over accepted twins joins the busier twin (Cretu v Rocha), an
+        # anchored twin beats a busier id-less one, an open twin beats a
+        # closed anchored one (the split-group case now joins the oldest)
+        # + #9450's two, the whole matcher attempt: a not-game-level child
+        # (Harris v Galarneau's match market) is stored on its group's row,
+        # and a group holding no row leaves it unlinked.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_polymarket_group_sibling_8430_pg.py \
@@ -5106,8 +6233,8 @@ jobs:
             echo "::error::#8430 group-sibling gate SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]7 passed[,[:space:]]" /tmp/groupsibling8430.txt || {
-            echo "::error::#8430 group-sibling gate did not run all seven cases"
+          grep -qE "[^0-9]18 passed[,[:space:]]" /tmp/groupsibling8430.txt || {
+            echo "::error::#8430 group-sibling gate did not run all eighteen cases"
             exit 1
           }
 
@@ -5124,6 +6251,7 @@ jobs:
         # 3 = the probe's positive control (a held row reads `locked`) + one arm
         # per pass. Each arm also asserts the pass really wrote `betting` on the
         # row it probes, and that it parked mid-pass.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_a_poll_releases_its_event_rows_per_sport_837_pg.py \
@@ -5148,6 +6276,7 @@ jobs:
         # 4 = the probe's positive control + the scores-loop arm + one rollback
         # arm per pass. The rollback arms inject a real Postgres error, and the
         # discover arm fails with MissingGreenlet on the ORM-loop mutant.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_a_failed_sport_and_the_scores_loop_release_837_pg.py \
@@ -5169,6 +6298,7 @@ jobs:
         # #8755 adds 3: the `odds_snapshots` line read (DISTINCT, numeric as text)
         # tagging a newer-id ghost whose line moved, a one-number-off line refused,
         # and the one-off repair's by-id read on a `live` ghost + restore. 6 total.
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_odds_api_reissued_twin_8422_pg.py \
@@ -5192,6 +6322,7 @@ jobs:
         # stamp, no point) + released (the refusal lets go of the row before its
         # next statement) + control. Lock removed: race red; guard removed:
         # refused red; refusal's commit removed: released red.
+        if: matrix.group == 'isolated'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_live_poll_stamp_race_8910_pg.py \
@@ -5216,6 +6347,7 @@ jobs:
         # (parity with the Python rule) + their numeric control. Matcher unlocked: CE2 red; matcher
         # guard removed: CE1 red; WS guard removed: CE3/CE4/CE5 red; WS guard
         # moved to a read before the UPDATE: CE5 red.
+        if: matrix.group == 'isolated'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_live_writers_observation_order_8910_pg.py \
@@ -5229,9 +6361,30 @@ jobs:
             exit 1
           }
 
+      - name: "#837 every benchmark price reaches the number at the default floor (real Postgres)"
+        # Alex's 2026-09-28 live benchmark (Kalshi 77 -> 80 -> 85 -> 84, 2s apart,
+        # then 73) through the REAL WS refresher at its DEFAULT floor on #8910's
+        # fixture: every price stamped and framed at its flush. 2 = that case +
+        # the old 5s floor on the same rows, which must drop the 85 (the control
+        # that tells the floors apart). Floor back at 5s: the first case red.
+        if: matrix.group == 'isolated'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_live_blend_rapid_benchmark_837_pg.py \
+            -v -rs 2>&1 | tee /tmp/benchmark837.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/benchmark837.txt; then
+            echo "::error::#837 benchmark gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]2 passed[,[:space:]]" /tmp/benchmark837.txt || {
+            echo "::error::#837 benchmark gate did not run both cases"
+            exit 1
+          }
+
       - name: "#9050 source retirement preserves concurrent live prices (real Postgres)"
         # Uses #8910's disposable full-schema fixture. Two writer races,
         # three healthy controls, fresh membership/lifecycle and two no-op locks.
+        if: matrix.group == 'isolated'
         run: |
           python -m pytest tests/integration/test_retirement_preserves_live_sources_9050_pg.py \
             -v -rs > /tmp/retirement9050.txt 2>&1 || {
@@ -5247,6 +6400,50 @@ jobs:
             echo "::error::#9050 retirement gate did not run all nine cases"
             exit 1
           }
+
+      - name: "#9051 the fold's revision vector orders two reads of a folded blend (real Postgres)"
+        # #9051 producer. 6 = R1 only a changed bag moves the row's revision +
+        # R2 the second writer to COMMIT gets the higher revision (row-lock wait)
+        # + R3 Codex's twin removals through the real fold: the later vector
+        # dominates, where a max removal clock could not order them + R4 a
+        # nonvenue frame names the revision its own UPDATE returned + R5 the
+        # migration's upgrade/downgrade install/remove the same trigger + R6
+        # (CERT-3625) a canonical loaded before two removals committed is not
+        # folded stale beside the fresh twin. Trigger hook removed: 6 red;
+        # frame rev dropped: R4 red; fold's twin revision dropped: R3 red;
+        # canonical taken off the loaded row: R6 red.
+        if: matrix.group == 'isolated'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_fold_revision_9051_pg.py \
+            -v -rs 2>&1 | tee /tmp/foldrev9051.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/foldrev9051.txt; then
+            echo "::error::#9051 fold-revision gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]6 passed[,[:space:]]" /tmp/foldrev9051.txt || {
+            echo "::error::#9051 fold-revision gate did not run all six cases"
+            exit 1
+          }
+
+  # The existing required context stays non-matrix. A failed, cancelled or
+  # unexpectedly skipped worker must never satisfy branch protection as green.
+  # Frontend-only candidates retain the original intentional job-level skip.
+  search-recall:
+    needs: [change-scope, database-integration]
+    if: always() && needs.change-scope.outputs.scope != 'frontend'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every database integration group passed
+        env:
+          SCOPE_RESULT: ${{ needs.change-scope.result }}
+          INTEGRATION_RESULT: ${{ needs.database-integration.result }}
+        run: |
+          if [ "$SCOPE_RESULT" != "success" ] || [ "$INTEGRATION_RESULT" != "success" ]; then
+            echo "::error::database integration incomplete: scope=$SCOPE_RESULT groups=$INTEGRATION_RESULT"
+            exit 1
+          fi
+          echo "All database integration groups passed."
 
   frontend-build:
     runs-on: ubuntu-latest

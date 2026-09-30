@@ -30,10 +30,12 @@ from app.utils.cross_source_matching import (
     find_cross_source_markets,
     group_markets_by_group_id,
     is_resolved as _is_resolved,
+    is_same_question,
     source as _source,
 )
 from app.utils.feed_market_quality import hard_excluded_family
 from app.utils.futures_liveness import market_reads_settled
+from app.utils.kalshi_retention import PROVABLY_PURGED_AGE_DAYS
 from app.utils.market_staleness import (
     expired_ladder_rungs,
     should_exclude_from_featured,
@@ -47,18 +49,25 @@ router = APIRouter()
 # Sub-theme classification
 # ---------------------------------------------------------------------------
 
+# #9477 residual — `kxelection` is gone from this table, and from classification
+# altogether. Its only two series ever, on production 2026-09-28, are
+# KXELECTIONEMERGENCY ("Will Trump declare an election emergency?") and
+# KXELECTIONBILL ("Will the SAVE America Act become law?"): an administration
+# question and a bill, both Policy by NAME. The prefix filed them presidential
+# ahead of any name line, so once #9477 moved the administration out of the
+# 2028 race they were the two Trump-administration questions left in its
+# Related Markets pool. Both rows carry `llm_sport_category = 'politics'`, so
+# the category arm still fetches them and the LIKE arm bought nothing (#9165).
+# 🔴 Do not restore it as a label: "election" is not "presidential election",
+# and the name lines read the difference.
 _THEME_BY_TICKER: list[tuple[str, str]] = [
-    ("kxpres", "presidential"),
-    ("kxelection", "presidential"),
     ("kxsenate", "congressional"),
     ("kxhouse", "congressional"),
     ("kxcongress", "congressional"),
-    ("kxgov", "gubernatorial"),
     ("kxscotus", "scotus"),
     ("kxsupremecourt", "scotus"),
     ("kxtariff", "policy"),
     ("kximpeach", "policy"),
-    ("kxbill", "policy"),
 ]
 
 # #8038 — the two national chamber-control markets, anchored by TICKER, and
@@ -96,37 +105,233 @@ _THEME_BY_TICKER: list[tuple[str, str]] = [
 #
 # Hyphenated on purpose: `CONTROLS` is an English word and would claim any
 # future `CONTROLSOMETHING-*` series; `controls-` can only match this family.
+#
+# #9165 — `kxpres`, `kxgov` and `kxbill` moved here from `_THEME_BY_TICKER`, and
+# for the opposite reason: their LIKE arms bought ONLY rows that are not
+# politics. A Kalshi series prefix is not a word (#7298 is the entertainment
+# twin): `KXPRES%` also matches the Presidents Cup (`KXPRESCUP*`, golf — "Presidents
+# Cup: Hole-in-One" was served in `themes.presidential.side_markets` and
+# rendered on the iPhone during the Cup), `KXBILL%` matches the Billboard charts
+# (`KXBILLBOARD*`, entertainment) and `KXGOV%` matches government budget-balance
+# and spending series (`KXGOVBAL`, `KXGOVTSPEND`, economics). Measured on
+# production 2026-09-27, every open row these three arms fetched that the
+# category arm did not was one of those: 22 golf, 4 Billboard, 7 economics and
+# one culture row (`KXPRESENDORSEMUSKD`). Every real presidential, governor and
+# bills series carries `llm_sport_category = 'politics'`, so the category arm
+# fetches them and the prefix still labels them here — no politics row changes
+# theme, and the cold build loses three unindexable arms.
+#
+# #9171 — the same collision inside the category arm, so no query change can
+# reach it: `KXGOVT*` is Kalshi's federal-GOVERNMENT family, tagged `politics`,
+# and the bare `kxgov` label filed "How much government spending will Trump cut
+# before 2027?" as the second card under Gubernatorial. Each non-governor series
+# is NAMED, ahead of `kxgov` (first match wins). 🔴 Never widen these to a
+# `kxgovt` prefix: `KXGOVTXNOMD` is the Texas governor nominee, and a Tennessee
+# race would be `KXGOVTN`.
 _THEME_BY_TICKER_CLASSIFY_ONLY: list[tuple[str, str]] = [
     ("controlh-", "congressional"),
     ("controls-", "congressional"),
+    # #9477 — `KXPRESS*` is the White House press office (KXPRESSSEC, the
+    # Press Secretary; KXPRESSBRIEFINGCOUNT, "Number of White House Press
+    # Briefings in Sep 2026?"), not a presidential race: the same prefix
+    # collision as `KXPRESCUP*` above.
+    ("kxpress", "policy"),
+    ("kxpres", "presidential"),
+    ("kxgovtcuts", "policy"),        # How much government spending will Trump cut?
+    ("kxgovtshut", "policy"),        # KXGOVTSHUTDOWN, KXGOVTSHUTLENGTH
+    ("kxgovtfunds", "policy"),       # Senators voting for the next funding bill
+    ("kxgovtspend", "policy"),       # Government spending increase
+    ("kxgovaikillswitch", "policy"),  # a government AI kill switch
+    ("kxgovbal", "other"),           # a country's budget balance (FRA, China, …)
+    ("kxgov", "gubernatorial"),
+    ("kxbill", "policy"),
 ]
 
 _THEME_BY_NAME: list[tuple[re.Pattern, str]] = [
     # International FIRST — prevents foreign presidential elections from matching "presidential"
+    # (#9193: `russia|russian|putin` were missing, so "Putin out as President of Russia"
+    # was a presidential Related Market and the Ukraine front-line questions sat in Other.)
     (re.compile(
         r"\b(?:uk\s*election|france|french|germany|german|canada|canadian|brazil|brazilian|"
         r"mexico|mexican|australia|australian|india|indian|japan|japanese|"
         r"colombia|colombian|chile|chilean|argentina|argentin|nigeria|nigerian|"
-        r"south\s*africa|turkey|turkish|poland|polish|ukraine|ukrainian|"
+        r"south\s*africa|turkey|turkish|poland|polish|ukraine|ukrainian|russia|russian|putin|"
         r"israel|israeli|iran|iranian|taiwan|taiwanese|philippines|filipino|"
         r"indonesia|indonesian|egypt|egyptian|south\s*korea|korean|"
         r"italy|italian|spain|spanish|netherlands|dutch|"
-        r"eu\s*election|european|nato|un\s*general|g7|g20|foreign\s*policy)\b", re.I,
+        r"eu\s*election|european|nato|un\s*general|g7|g20|foreign\s*policy|"
+        # `eu`, `kyiv` and `zelensk…` (#9193 residual): "What countries will hold
+        # referenda on leaving the EU?" and "Will any aircraft land or take off
+        # at Kyiv Boryspil Airport…?" sat in Other — no country word above.
+        r"eu|kyiv|zelensk\w*|"
+        # `venezuela` (#9477): "Will Trump endorse María Corina Machado for
+        # Venezuela president in 2026?" was a 2028 Related Market on "president".
+        r"venezuela|venezuelan|"
+        # #9477 — the countries whose "…out as President of X?" or "X
+        # presidential election winner?" reached the 2028 race on the word
+        # "president" (2026-09-28: Peru, Cuba, both Congos, Lebanon, Estonia,
+        # Kosovo, Bosnia, Serbia, Bulgaria, Ghana, Moldova, Mongolia, Portugal,
+        # Costa Rica, Gambia, Cape Verde, the Palestinian presidency, Saxony-
+        # Anhalt's Minister-President, the ECB). `philippine` because the venue
+        # writes "Philippine presidential election winner?", not "Philippines".
+        r"peru|peruvian|cuba|congo|drc|lebanon|lebanese|estonia|estonian|"
+        r"kosovo|bosnia|herzegovina|srpska|serbia|serbian|bulgaria|bulgarian|"
+        r"ghana|ghanaian|moldova|moldovan|mongolia|mongolian|portugal|portuguese|"
+        r"costa\s*rica|costa\s*rican|gambia|gambian|cape\s*verde|palestine|palestinian|"
+        r"philippine|new\s*zealand|nz|saxony|ecb)\b", re.I,
     ), "international"),
-    (re.compile(r"\b(?:trump|biden|desantis|harris|newsom|haley|ramaswamy|kennedy|rfk)\b", re.I), "presidential"),
-    (re.compile(r"\b(?:president|presidential|2028\s*election|white\s*house|nominee|primary)\b", re.I), "presidential"),
-    (re.compile(r"\b(?:senate|senator|house\s*(?:of\s*rep|seat)|congress|midterm|2026\s*election)\b", re.I), "congressional"),
+    # #9477 — there is no candidate-NAME line here any more. It read
+    # `trump|biden|desantis|harris|newsom|haley|ramaswamy|kennedy|rfk` as
+    # presidential, and on 2026-09-28 it claimed 578 open rows (296 question
+    # groups). Every one that is about the race also carries a word the line
+    # below reads ("presidential run", "President", "2028 … nominee"), so the
+    # names added only the wrong ones: the sitting administration ("Will Trump
+    # try to fire Powell…", "Who will join Trump's sovereign wealth fund…"),
+    # a building ("Kennedy Center demolition…"), a county ("Harris County
+    # Judge winner?"), a governor's race ("Ohio Governor election: Vivek
+    # Ramaswamy…") and a cabinet post ("RFK Jr. Out…") — the 2028 board's
+    # Related Markets were six of them. The administration now lands in
+    # Policy through the `trump` line at the BOTTOM of this list, after every
+    # topic line has had its say. 🔴 Do not restore a name line to catch a
+    # future "Will <name> run?": `run\s+for\s+president` is below, and a
+    # name alone cannot tell a candidacy from a news story.
+    #
+    # White House STAFF and PRESS are the office, not the race, and they must
+    # decide before `white\s*house` below claims them: "When will Trump
+    # announce a new White House Press Secretary?", "Will Trump attend any
+    # White House Correspondents Dinner?", "Trump bans more news outlets from
+    # White House…", "How many presidential actions will Trump take this week?"
+    (re.compile(r"\b(?:press\s+secretary|correspondents|news\s+outlets?|presidential\s+actions?)\b", re.I), "policy"),
+    # #9477 — the presidential line below is the US RACE, and the word
+    # "president" alone does not say so. On 2026-09-28 it filed 464 open rows
+    # there; these lines take the ones that name some OTHER presidency, a
+    # House seat, a state office, or the sitting administration, before it
+    # can. Each is a class measured on the production pool, not a row list.
+    #
+    # Someone else's president: an organisation ("Gianni Infantino out as
+    # President of FIFA", "Next President of Lucasfilm", "…of the Federal
+    # Reserve Bank of Atlanta", "Shawn Fain … UAW President", "Real Madrid:
+    # Florentino Pérez Out as President", "Chicago Board of Education
+    # President winner?") or a tribal nation ("Navajo Nation presidential
+    # election winner?"). A foreign country's president is International,
+    # above. Before the administration line, which reads "out as president".
+    (re.compile(
+        r"\bpresident\s+of\s+(?!the\s+united\s+states\b|the\s+u\.?s\.?\b)|"
+        r"\b(?:uaw|real\s+madrid|board\s+of\s+education|navajo)\b", re.I,
+    ), "other"),
+    # The sitting presidency, not the next one: "Trump out as President
+    # before 2027?", "Donald Trump announces departure as President?",
+    # "Who will receive the Presidential Medal of Freedom in 2026?", "Natalie
+    # Harp out as Special Assistant to the President…", "Will Trump repeal
+    # Presidential term limits in 2026?", "Will Trump post "President Xi"…".
+    (re.compile(
+        r"\b(?:(?:out|departure)\s+as\s+president|medal\s+of\s+freedom|"
+        r"to\s+the\s+president|presidential\s+term\s+limits|president\s+xi)\b", re.I,
+    ), "policy"),
+    # A past race or a book is neither: "…Joe Biden used Ambien before the
+    # 2024 presidential debate?", "When will Biden release his presidential
+    # memoir?".
+    (re.compile(r"\b(?:(?:2016|2020|2024)\s+presidential|presidential\s+memoir)\b", re.I), "other"),
+    (re.compile(r"\bsupreme\s+court\s+justices?\b", re.I), "scotus"),
+    # A House seat's nominee or primary is written with its district code —
+    # "TX-38 Democratic nominee?", "Margin of victory in the NJ-11 special
+    # Democratic primary?", "Who will advance from the CA-22 primary?" — which
+    # "nominee" and "primary" below would file presidential (134 open rows).
+    # Only the nominee/primary rows: a bare "WA-09 House Election Winner" never
+    # reached the race and stays where it is. The code is case-SENSITIVE and
+    # closed over the real state codes, so "COVID-19" can never read as a seat.
+    (re.compile(
+        r"^(?=.*\b(?i:nominee|primar(?:y|ies))\b)"
+        r"(?=.*\b(?:A[KLRZ]|C[AOT]|D[CE]|FL|GA|HI|I[ADLN]|K[SY]|LA|M[ADEINOST]|"
+        r"N[CDEHJMVY]|O[HKR]|PA|RI|S[CD]|T[NX]|UT|V[AT]|W[AIVY])-(?:\d{1,2}|AL)\b)"
+    ), "congressional"),
+    # A state office's primary or nominee: "Illinois Democratic Comptroller
+    # nominee?", "Illinois Republican Attorney General nominee?", "California
+    # Insurance Commissioner primary: who will advance?".
+    (re.compile(
+        r"\b(?:comptroller|insurance\s+commissioner|attorney\s+general\s+(?:nominee|primary))\b", re.I,
+    ), "other"),
+    # A ballot measure that says "primary": "Massachusetts passes jungle
+    # primary ballot measure?", "Will Wyoming vote to exempt 50% of
+    # primary-home assessed value?".
+    (re.compile(r"\bprimary(?:\s+ballot\s+measure|[-\s]home)\b", re.I), "policy"),
+    # #9193 — `primary` is not a presidential word on its own: here it filed
+    # "Texas Senate primary: which counties will Paxton win?" as the first
+    # Related Market under the 2028 nominee race, with 15 more Senate and five
+    # Governor primaries. It is the fallback line below the governor arm, so the
+    # chamber or office a primary names decides first; a bare "2028 South
+    # Carolina Democratic primary winner?" still falls through to presidential.
+    # `midterms?` because every venue writes the plural ("…win in the
+    # Midterms?"); the singular left 53 open midterm markets in Other. It sits
+    # below the governor arm, which now reads the plural too, so "Which party
+    # will hold more governorships after the midterms?" is a governor question.
+    # `third term` (#9477): "Will Trump run for a third term?" is the one
+    # 2028 question the removed name line caught that no word here did.
+    # `white house` is no longer a word of the race (#9477): every open row that
+    # carried it on 2026-09-28 was the administration — visits ("Mamdani
+    # visits the White House by…?", the Super Bowl champions), staff ("Susie
+    # Wiles out as White House Chief of Staff…", "Natalie Harp White House
+    # departure announced?"), briefings and post counts. Only "win the White
+    # House" / "occupant of the White House" is the race; the rest falls to
+    # the Policy line just below.
+    (re.compile(r"\b(?:president|presidential|2028\s*election|(?:win|occupant\s+of)\s+the\s+white\s+house|nominee|run\s+for\s+president|(?:third|3rd)\s*term)\b", re.I), "presidential"),
+    (re.compile(r"\bwhite\s*house\b", re.I), "policy"),
+    # `senators?` and `the\s+house` for the same reason as `midterms?`: venues
+    # write "How many Senators will vote for the Clarity Act?" and "Will the
+    # House pass a cap on federal student loan interest rates?", and both sat
+    # in Other while "Senate passes Clarity Act by...?" sat here. Measured over
+    # all 7,971 open pool rows 2026-09-28: 23 move, every one a Congress
+    # question (20 from Other, 3 "…the House pass a reconciliation bill" from
+    # Policy). "White House" is claimed by the presidential line above, and a
+    # foreign parliament by the international line first. "the House of …"
+    # is refused: every live "House of Representatives" market is a foreign or
+    # state chamber (#8038 pins that), and none of the 23 needs the phrase.
+    # One mover is Polymarket's "Which party will win the House in 2026?",
+    # which now meets Kalshi's CONTROLH-2026 in `_best_control` exactly as the
+    # Senate twins already meet there.
+    (re.compile(r"\b(?:senate|senators?|house\s*(?:of\s*rep|seat)|the\s+house(?!\s+of\b)|congress|2026\s*election)\b", re.I), "congressional"),
     # A Federal Reserve governor is not a state governor. Without this line
     # "Lisa Cook out as Fed Governor by October 31?" files under Gubernatorial
     # on the word "Governor" alone. Sits beside the federal-appointment line
     # below (`cabinet|secretary of|ambassador`), which is the same class.
-    (re.compile(r"\bfed(?:eral\s*reserve)?\s*governor(?:s|ship)?\b", re.I), "policy"),
-    (re.compile(r"\b(?:governor|gubernatorial)\b", re.I), "gubernatorial"),
+    # `chair or` (#9477): "Will Trump try to fire Powell as Fed Chair or
+    # Governor?" reached this list once the name line stopped claiming it.
+    (re.compile(r"\bfed(?:eral\s*reserve)?\s*(?:chair\s*(?:or|and|/)\s*)?governor(?:s|ship)?\b", re.I), "policy"),
+    (re.compile(r"\b(?:governors?|governorships?|gubernatorial)\b", re.I), "gubernatorial"),
+    (re.compile(r"\bmidterms?\b", re.I), "congressional"),
+    # #9477 — a primary is the 2028 race only when it says 2028 ("2028 South
+    # Carolina Democratic primary winner?"). Every other open primary is this
+    # cycle's — "Trump-endorsed May primary candidates combo", "Which Georgia
+    # primary elections will have a first-round winner?" — the midterms'.
+    (re.compile(r"^(?=.*\b2028\b).*\bprimar(?:y|ies)\b", re.I), "presidential"),
+    (re.compile(r"\bprimar(?:y|ies)\b", re.I), "congressional"),
     (re.compile(r"\b(?:supreme\s*court|scotus|justice|roe|overturn)\b", re.I), "scotus"),
     (re.compile(r"\b(?:bill|legislation|executive\s*order|policy|tariff|immigration|gun|abortion|cannabis|marijuana|legalize|ban|mandate|regulation)\b", re.I), "policy"),
-    (re.compile(r"\b(?:approval\s*rating|favorab|popular\s*vote|electoral\s*college)\b", re.I), "presidential"),
-    (re.compile(r"\b(?:cabinet|secretary\s*of|attorney\s*general|cia|fbi\s*director|ambassador)\b", re.I), "policy"),
+    (re.compile(r"\b(?:popular\s*vote|electoral\s*college)\b", re.I), "presidential"),
+    # #9477 — approval is the SITTING president's ("How high will Trump's
+    # approval rating get before 2027?", "Trump's approval rating on Oct 2,
+    # 2026?"): about twenty open rows, every one of them the administration,
+    # and two of them the 2028 board's Related Markets.
+    (re.compile(r"\b(?:approval\s*rating|favorab)\b", re.I), "policy"),
+    # `be confirmed as`, `u.s. attorney`, `become law` (#9193 residual): "When will
+    # James McDonald be confirmed as SDNY U.S. attorney?" and "Which ICE
+    # reforms will become law in 2026?" sat in Other beside the ambassador
+    # confirmations and farm-bill questions this line already files as Policy.
+    (re.compile(r"\b(?:cabinet|secretary\s*of|attorney\s*general|cia|fbi\s*director|ambassador|be\s+confirmed\s+as|u\.s\.\s*attorney|become\s+law|signed\s+into\s+law)\b", re.I), "policy"),
+    # #9477 — LAST, on purpose: a question about the sitting administration
+    # ("Will Trump abolish the Department of Education?", "Who will Trump
+    # pardon?", "RFK Jr. Out by December 31?") is Policy, the section that
+    # already holds "How much government spending will Trump cut?" (#9171).
+    # Every topic line above decides first, so "Will Congress override
+    # Trump's veto?" stays Congressional and "Will the Supreme Court rule in
+    # favor of Trump's tariffs?" stays SCOTUS.
+    (re.compile(r"\b(?:trump|rfk)\b", re.I), "policy"),
 ]
+
+# The country line, by name, for `_classify_theme`'s `KXPRES*` check (#9477).
+# It is the list's first line so a foreign presidency never reaches the race;
+# the guard test holds both facts.
+_INTERNATIONAL_RE: re.Pattern = _THEME_BY_NAME[0][0]
 
 
 _NON_POLITICS_RE = re.compile(
@@ -184,9 +389,21 @@ _US_GOVERNORSHIPS = frozenset(
 # before the optional `lieutenant` group is ever tried, so "Alabama Lieutenant
 # Governor winner?" parses its place as "Alabama Lieutenant" and the guard
 # above fails open on the exact ten races it was written for.
+#
+# #9193 residual — the other statewide executive offices ride the same shape:
+# "Georgia Secretary of State Election Winner", "Georgia Attorney General
+# winner?", "Iowa Secretary of Agriculture winner?". Without them the policy
+# line's `secretary of|attorney general` arm (written for federal
+# appointments) filed 73 open state-election races under Policy, three of them
+# on the served page, and the international line filed New Mexico's two under
+# International on the word "Mexico". They are first-level-subdivision
+# executive races, the definition this section already uses for lieutenant
+# governor. Measured over all 7,987 open pool rows 2026-09-28: 111 move, each
+# one by these three #9193-residual edits and each one to the right section.
 _PLACE_LED_GOV_RACE_RE = re.compile(
     r"^(?P<place>[^\s]+(?:\s+[^\s]+){0,3}?)\s+"
-    r"(?:lieutenant\s+)?(?:governor|gubernatorial)\s+"
+    r"(?:(?:lieutenant\s+)?(?:governor|gubernatorial)"
+    r"|attorney\s+general|secretary\s+of\s+(?:state|agriculture))\s+"
     r"(?:election\s+)?winner\s*\??$",
     re.I,
 )
@@ -214,10 +431,16 @@ def _place_led_gov_race_is_us(name: str) -> bool | None:
 
 def _classify_theme(market: FuturesMarket) -> str:
     ext = (market.external_id or "").lower()
+    name = market.name or ""
     for prefix, theme in (*_THEME_BY_TICKER, *_THEME_BY_TICKER_CLASSIFY_ONLY):
         if ext.startswith(prefix):
+            # #9477 — Kalshi files every country's presidential election under
+            # `KXPRES*` (KXPRESTAIWAN, KXPRESTURKEYR1, KXPRESNIGERIA), so the
+            # prefix says "a presidential election", not "ours". The country
+            # the name gives decides, as it does for a ticker-less row.
+            if theme == "presidential" and _INTERNATIONAL_RE.search(name):
+                return "international"
             return theme
-    name = market.name or ""
     # Decide a place-led race by WHOSE governorship it is, before the name
     # patterns below can assert a US one from the word "governor" alone.
     # Those patterns recognise a foreign contest only by a country word, and
@@ -452,14 +675,22 @@ def _market_row(market: FuturesMarket, *, now: datetime) -> dict | None:
         # read the same defensive way. A cumulative "Before …" rung settles YES
         # early and is never touched again, so the stamp test alone would drop a
         # declared winner from this page's three-row summary.
+        # #9109 follow-up: over EVERY outcome, priced or not — the page's own
+        # population. The helper's twin arm reads the whole list, so which rungs
+        # go in is load-bearing, and the "+N more" count below needs the page's
+        # answer, not a priced-only one.
         [
             (
                 o.name,
-                float(o.current_probability),
+                (
+                    None
+                    if o.current_probability is None
+                    else float(o.current_probability)
+                ),
                 getattr(o, "last_updated", None),
                 getattr(o, "is_winner", None),
             )
-            for o in priced
+            for o in outcomes
         ],
         now,
     )
@@ -483,7 +714,32 @@ def _market_row(market: FuturesMarket, *, now: datetime) -> dict | None:
     # Normalize independent binary market probabilities (BR36 fix)
     # When markets like "Will X win?" are displayed as a ranked list,
     # probabilities from independent contracts can sum well over 100%.
-    _normalize_outcome_probs(top_outcomes)
+    #
+    # #9474 — ONLY A FIELD WITH ONE WINNER IS SHRUNK TO 100. The helper's own
+    # docstring says so and this call ignored it: a pick-several market's legs
+    # can ALL be true, so their sum carries no over-round to remove. Measured
+    # 2026-09-28 22:10Z, `What cases will the Supreme Court agree to hear`
+    # (56775624, `mutually_exclusive = false`) printed Bird v. Iowa 35 / DOGE 32
+    # / Norfolk 32 over stored 39 / 36 / 36 — the page behind the card prints
+    # the stored three. `None` keeps today's behaviour (the column defaults
+    # True; the chamber-control reader below makes the same call).
+    mutually_exclusive = getattr(market, "mutually_exclusive", None)
+    if mutually_exclusive is not False:
+        _normalize_outcome_probs(top_outcomes)
+
+    # #9109 follow-up — "+N MORE" COUNTS WHAT THE PAGE SHOWS, NOT THE LADDER.
+    # The card's badge was `outcome_count - 3`: every rung the ladder ever had,
+    # less three rows. Since #7784 the page behind the card drops the passed
+    # rungs, and since #9109 the card can show fewer than three, so the badge
+    # promised rows the page does not have: measured 2026-09-27 12:25Z, 15 of
+    # the 25 badged cards on `/api/politics` over-counted — "When will the
+    # Senate vote on the SAVE America Act?" read "+9 more" over two rows, and
+    # `/api/futures/5466697` shows those same two; "Kash Patel out as FBI
+    # Director?" read "+5 more" over the three rows its page shows. The count
+    # is the page's membership — `expired` is read over every outcome, above —
+    # and never the whole board. `outcome_count` keeps its meaning; its other
+    # readers gate on arity, not on what is shown.
+    page_rungs = [o for o in outcomes if o.name not in expired] or outcomes
 
     return {
         "q": market.name,
@@ -501,6 +757,11 @@ def _market_row(market: FuturesMarket, *, now: datetime) -> dict | None:
         # Every rung, priced or not — the filter above drops rungs from the
         # SLICE, never from the ladder's arity.
         "outcome_count": len(outcomes),
+        # The rungs `/futures/{id}` shows that this card does not.
+        "more_count": max(0, len(page_rungs) - len(top_outcomes)),
+        # #9474: `false` = the legs can all be true (a deadline or threshold
+        # ladder, a pick-several list), so the card names no "Leader".
+        "mutually_exclusive": mutually_exclusive,
     }
 
 
@@ -616,6 +877,44 @@ def _never_really_traded(market: FuturesMarket) -> bool:
     return volume < _THINLY_TRADED_VOLUME
 
 
+def _last_priced_before_the_venue_forgets(
+    market: FuturesMarket, now: datetime
+) -> bool:
+    """Is this market's FRESHEST price older than Kalshi keeps a closed book?
+
+    #9330. The specimen is "Texas Senate primary: which counties will Paxton
+    win?" (`KXPAXTONPRIMARYCOUNTIES-26`), a March 2026 primary that /politics
+    still printed on 2026-09-28 as a live card — "LEADER Harris 6%" — off eight
+    legs last written 2026-03-20, 191 days earlier. Nothing else on the page
+    could see it: `status` is `'open'` (gotcha #33), `resolution_date` is the
+    one-year backstop (2027-03-03), no leg is graded, and no venue-settled stamp
+    was ever written, because by the time anything looked Kalshi had purged the
+    markets — the event still answers, with `markets: []`.
+
+    A price that old is not a quote whatever the venue now holds, and past
+    :data:`PROVABLY_PURGED_AGE_DAYS` it cannot even be checked against the
+    venue's history. So the page stops printing it. Measured on the served bank
+    (`updated_at` 2026-09-28 07:25Z): this removes 1 of 68 cards, the specimen;
+    the next oldest was priced 2 days ago.
+
+    The FRESHEST leg decides, not the stalest — one leg written this week means
+    the market is being priced. A market with no stamp on any leg is NO
+    EVIDENCE and stays, the same way `_never_really_traded` reads a NULL.
+    """
+    stamps = [
+        o.last_updated
+        for o in (getattr(market, "outcomes", None) or [])
+        if getattr(o, "last_updated", None) is not None
+    ]
+    if not stamps:
+        return False
+    freshest = max(
+        s if s.tzinfo is not None else s.replace(tzinfo=timezone.utc)
+        for s in stamps
+    )
+    return freshest < now - timedelta(days=PROVABLY_PURGED_AGE_DAYS)
+
+
 def _by_uncertainty(row: dict, market: FuturesMarket) -> tuple[int, float]:
     """Sort key for every `/politics` section: the open questions first.
 
@@ -650,6 +949,72 @@ def _by_uncertainty(row: dict, market: FuturesMarket) -> tuple[int, float]:
     distribution rather than a number tuned to promote anything.
     """
     return (1 if _never_really_traded(market) else 0, _decidedness(row))
+
+
+# #9448 — ONE RACE, ONE CARD. Kalshi and Polymarket both list Georgia's
+# down-ballot races, and `build_section` sliced the sorted pool with nothing
+# folding a venue's market into its twin, so the governor section served each
+# race twice (19:25Z 2026-09-28: six of its ten cards were three races, and the
+# Secretary of State pair led with opposite candidates — Tim Fleming (R) 50% on
+# one card, Penny Brown Reynolds 51% on the other).
+#
+# 🔴 THE TITLE ALONE IS NOT ENOUGH. `is_same_question` pairs all three twins,
+# and it ALSO pairs "Georgia Governor winner?" with "Georgia Lieutenant
+# Governor winner?" (near-match containment passes), which are two races. A
+# deduper that over-pairs deletes a card the reader wanted, so a twin must also
+# price the same candidates. Polymarket tags its candidates with a party
+# (`Greg Dolezal (R)`) and Kalshi does not, so the tag is stripped. The governor
+# and lieutenant-governor races share no candidate and are refused.
+#
+# 🔴 AND THE CANDIDATES MUST BE EVIDENCE. A binary question's outcomes are
+# "Yes" (or "Yes"/"No") on both venues, so equal sets prove nothing and the
+# fold would rest on the title alone — the over-pairing guard above, gone.
+# A twin therefore names at least two candidates that are not Yes/No. That is
+# every race this fold exists for; a binary pair stays two rows, as it was, and
+# the cross-source spotlight keeps featuring what the sections render
+# (tests/integration/test_route_category_spotlight_featured_gate_uxp194.py).
+#
+# The pair keeps the card that sorts first. The venues' volumes are in
+# different units (Kalshi contracts, Polymarket dollars), so "the more traded
+# one" is not a comparison this page can make; the section's own selector is.
+_PARTY_TAG_RE = re.compile(r"\s*\((?:R|D|I)\)\s*$", re.I)
+_NOT_CANDIDATES = frozenset({"yes", "no"})
+
+
+def _candidate_key(market: FuturesMarket) -> frozenset[str]:
+    return frozenset(
+        _PARTY_TAG_RE.sub("", o.name or "").strip().casefold()
+        for o in _clean_outcomes(market.outcomes)
+    )
+
+
+def _is_venue_twin(a: FuturesMarket, b: FuturesMarket) -> bool:
+    if _source(a) == _source(b):
+        return False
+    candidates = _candidate_key(a) - _NOT_CANDIDATES
+    if len(candidates) < 2 or candidates != _candidate_key(b) - _NOT_CANDIDATES:
+        return False
+    return is_same_question(a.name, b.name)
+
+
+def _take_without_venue_twins(
+    pairs: list[tuple[dict, FuturesMarket]], limit: int
+) -> list[dict]:
+    """The first `limit` rows of an already-sorted section, one card per race.
+
+    Compares each candidate only with the rows already kept (at most `limit`),
+    never pool-wide: the Other pool is ~4,000 rows, and a pairwise pass over it
+    would cost seconds of title comparisons. A folded twin's slot backfills from
+    the same sorted pool.
+    """
+    kept: list[tuple[dict, FuturesMarket]] = []
+    for row, market in pairs:
+        if len(kept) >= limit:
+            break
+        if any(_is_venue_twin(market, other) for _, other in kept):
+            continue
+        kept.append((row, market))
+    return [row for row, _ in kept]
 
 
 def _is_headline_market(name_lower: str) -> bool:
@@ -960,8 +1325,8 @@ def _build_presidential(
 # requires the literal word "control".
 #
 # So the party-containment arms are GONE and the phrasings are named instead.
-# `_SENATE_CONTROL_KEYWORDS` below already knew "which party"; it feeds the
-# senate MAP, not this selector, which is how the gap survived.
+# The senate MAP's old keyword skip already knew "which party"; it fed the
+# map, not this selector, which is how the gap survived.
 _SENATE_CONTROL_RE = re.compile(
     r"(?:\bsenate\s+control\b"
     r"|\bcontrol\s+(?:of\s+)?(?:the\s+)?senate\b"
@@ -1139,26 +1504,68 @@ _STATE_ABBREV: dict[str, str] = {
     "wisconsin": "WI", "wyoming": "WY",
 }
 
-_SENATE_STATE_TICKER_RE = re.compile(r"kxsenate[-_]?\d{2}[-_]([a-z]{2})", re.I)
-
-_SENATE_CONTROL_KEYWORDS = re.compile(
-    r"\b(?:control|majority|flip|which party)\b", re.I
+# #9199: the map is one question per state — "who wins this state's U.S. Senate
+# seat" — so it is read ONLY off a market that asks exactly that. The old
+# builder took the FIRST congressional market whose name contained a state, in
+# heap order (the query has no ORDER BY), and production painted Maryland 7% D
+# off "Maryland State Senate District 2 winner?" and coloured 14 states with no
+# 2026 race off their "(2028)" seats. Anchored at both ends, so "Texas State
+# Senate", "District 2", county, primary, margin, turnout and combo questions
+# cannot match. Venue shapes (measured 2026-09-27): Kalshi "Texas Senate
+# winner?" / "... winner? (2028)" / "... winner? (Person)", Polymarket "Texas
+# Senate Election Winner".
+_STATE_NAME_ALT = "|".join(
+    re.escape(n) for n in sorted(_STATE_ABBREV, key=len, reverse=True)
 )
+_SENATE_SEAT_RE = re.compile(
+    rf"^(?:who (?:wins|will win) (?:the )?)?(?P<state>{_STATE_NAME_ALT}) senate "
+    r"(?:election winner|winner|race|election)"
+    r"(?: (?P<year>20\d\d))?\??(?: \((?:person|(?P<year2>20\d\d))\))?\s*\??$",
+    re.I,
+)
+# Kalshi's year suffix: SENATETX-26, KXSENATELA-26NOV, KXIASENATE-26.
+_SENATE_TICKER_YEAR_RE = re.compile(r"-(\d{2})(?:[A-Z]{3})?(?:-|$)")
 
 
-def _extract_senate_state(market: FuturesMarket) -> str | None:
-    ext = (market.external_id or "")
-    m = _SENATE_STATE_TICKER_RE.search(ext)
-    if m:
-        return m.group(1).upper()
-    name_lower = (market.name or "").lower()
-    for full, abbr in _STATE_ABBREV.items():
-        if full in name_lower:
-            return abbr
-    for abbr in _STATE_ABBREV.values():
-        if re.search(rf"\b{abbr}\b", market.name or ""):
-            return abbr
-    return None
+def _senate_seat(market: FuturesMarket) -> tuple[str, int | None] | None:
+    """(state, election year) if this market asks who wins a state's Senate seat.
+
+    The state is read from the NAME, never the ticker: Kalshi files Kentucky's
+    2026 seat as `SENATELA-26`. The year is the name's own "(2028)" first, then
+    the ticker's two-digit suffix, then the resolution date rounded down to an
+    even year (federal elections are even-year; seats resolve the next January).
+    None when nothing states it — a yearless name is the venue's current race.
+    """
+    m = _SENATE_SEAT_RE.match((market.name or "").strip())
+    if not m:
+        return None
+    state = _STATE_ABBREV[m.group("state").lower()]
+    year_text = m.group("year") or m.group("year2")
+    if year_text:
+        return state, int(year_text)
+    t = _SENATE_TICKER_YEAR_RE.search(market.external_id or "")
+    if t:
+        return state, 2000 + int(t.group(1))
+    if market.resolution_date is not None:
+        y = market.resolution_date.year
+        return state, y if y % 2 == 0 else y - 1
+    return state, None
+
+
+def _stated_party(name: str) -> str:
+    """The party an outcome's own text STATES — "(D)", "Democratic party" — else "".
+
+    Deliberately not `_detect_party`: its surname allowlists are substring
+    matches, so "Barry Moore" (R, Alabama) reads D off "moore", and "Scott
+    Colom" (D, Mississippi) reads R off "scott". A state's colour on the map is
+    a claim about a real race; it is made only on the venue's own word.
+    """
+    n = name.lower()
+    if "republican" in n or "(r)" in n:
+        return "R"
+    if "democrat" in n or "(d)" in n:
+        return "D"
+    return ""
 
 
 def _extract_dem_prob(market: FuturesMarket) -> float | None:
@@ -1166,8 +1573,7 @@ def _extract_dem_prob(market: FuturesMarket) -> float | None:
     if not outcomes:
         return None
     for o in outcomes:
-        name_lower = (o.name or "").lower()
-        if "(d)" in name_lower or "democrat" in name_lower:
+        if _stated_party(o.name or "") == "D":
             return float(o.current_probability or 0)
     market_name = (market.name or "").lower()
     if len(outcomes) <= 2:
@@ -1179,34 +1585,46 @@ def _extract_dem_prob(market: FuturesMarket) -> float | None:
                     return 1.0 - prob
                 if "democrat" in market_name:
                     return prob
-    for o in outcomes:
-        party = _detect_party(o.name or "")
-        if party == "D":
-            return float(o.current_probability or 0)
-    for o in outcomes:
-        party = _detect_party(o.name or "")
-        if party == "R":
-            return 1.0 - float(o.current_probability or 0)
+        # Two-way only: in a wider field (an Independent, say) the rest of the
+        # book is not the Democrat's.
+        for o in outcomes:
+            if _stated_party(o.name or "") == "R":
+                return 1.0 - float(o.current_probability or 0)
     return None
 
 
 def _build_senate_map(congressional_markets: list[FuturesMarket]) -> dict[str, float]:
-    state_probs: dict[str, float] = {}
+    """Per-state Dem chance of the Senate seat, for the NEAREST election cycle only.
+
+    Order-independent: every venue's seat market for the state is blended (a
+    plain mean of the ones that state a Democrat's price), so the colour no
+    longer depends on which row the heap returned first. A state whose only
+    open seat market is a later cycle is left off rather than painted with a
+    race two years out; once the near cycle resolves, the next one is nearest.
+    """
+    seats: list[tuple[str, int | None, float]] = []
     for m in congressional_markets:
-        if _is_resolved(m):
-            continue
-        name = (m.name or "").lower()
-        if "house" in name:
-            continue
-        if _SENATE_CONTROL_KEYWORDS.search(name):
-            continue
-        state = _extract_senate_state(m)
-        if not state or state in state_probs:
+        # No `_is_resolved` price test here: it calls any leg at 99% settled,
+        # which greyed out Rhode Island (Reed 99%) — the safest seats vanished
+        # from the map. The pool is already filtered by `market_reads_settled`,
+        # the shared settlement answer, before it reaches this builder.
+        seat = _senate_seat(m)
+        if seat is None:
             continue
         dem_prob = _extract_dem_prob(m)
-        if dem_prob is not None:
-            state_probs[state] = round(dem_prob * 100, 1)
-    return state_probs
+        if dem_prob is None:
+            continue
+        seats.append((seat[0], seat[1], dem_prob))
+    years = [y for _, y, _ in seats if y is not None]
+    cycle = min(years) if years else None
+    by_state: dict[str, list[float]] = defaultdict(list)
+    for state, year, dem_prob in seats:
+        if year is None or year == cycle:
+            by_state[state].append(dem_prob)
+    return {
+        state: round(sum(ps) / len(ps) * 100, 1)
+        for state, ps in sorted(by_state.items())
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1412,10 +1830,20 @@ async def get_politics(db: AsyncSession, stage_ms: dict | None = None):
     # **0** — 8 of 8 `/politics`, 8 of 8 `/entertainment`, 3 of 3 `/economics`
     # survive. The class closes at no cost to today's page.
     spotlight_eligible: list = []
+    # #9199: the Senate map's own pool. A map colour is not a featured card, so
+    # it is chosen by the anchored seat test rather than the theme, and the
+    # featured PRICE cap does not apply to it. Both cut real 2026 races:
+    # `probability_extreme` (leader > 0.98) dropped Rhode Island (Reed 99%),
+    # Delaware and West Virginia, and `_classify_theme` filed "New Mexico
+    # Senate winner?" under `international` off "Mexico". Every other gate
+    # below — settled, stale, off-topic — still applies to the map.
+    senate_seat_markets: list = []
     for m in all_markets:
-        if should_exclude_from_featured(
+        featured_block = should_exclude_from_featured(
             m.name, m.llm_sport_category, m.status, _leader_prob(m), now,
-        ):
+        )
+        is_seat = _senate_seat(m) is not None
+        if featured_block and not (featured_block == "probability_extreme" and is_seat):
             continue
         if _is_non_politics(m):
             continue
@@ -1428,6 +1856,10 @@ async def get_politics(db: AsyncSession, stage_ms: dict | None = None):
         # 2026-08-30 it removes 280 of the 305 settled politics markets that
         # render today and keeps the 25 genuine independent bundles.
         if market_reads_settled(m, now=now):
+            continue
+        # #9330: a months-old price is not a live card, and the settled test
+        # above cannot see a market the venue purged before anyone graded it.
+        if _last_priced_before_the_venue_forgets(m, now):
             continue
         if m.resolution_date and m.resolution_date < stale_cutoff:
             continue
@@ -1454,6 +1886,10 @@ async def get_politics(db: AsyncSession, stage_ms: dict | None = None):
         # what is dropped here backfills from the same sorted pool.
         if hard_excluded_family(m.name, m.external_id):
             continue
+        if is_seat:
+            senate_seat_markets.append(m)
+        if featured_block:
+            continue
         spotlight_eligible.append(m)
         theme = _classify_theme(m)
         themed[theme].append(m)
@@ -1472,7 +1908,7 @@ async def get_politics(db: AsyncSession, stage_ms: dict | None = None):
                 continue
             pairs.append((row, m))
         pairs.sort(key=lambda rm: _by_uncertainty(*rm))
-        return [row for row, _ in pairs][:limit]
+        return _take_without_venue_twins(pairs, limit)
 
     # Presidential — dual-source merge
     presidential, outcome_id_map = _build_presidential(
@@ -1539,7 +1975,7 @@ async def get_politics(db: AsyncSession, stage_ms: dict | None = None):
     # Congressional — with chamber control + senate map
     congressional_markets = themed.get("congressional", [])
     chamber_control = _find_chamber_control(congressional_markets)
-    senate_map = _build_senate_map(congressional_markets)
+    senate_map = _build_senate_map(senate_seat_markets)
     _t = _mark("congressional", _t)
 
     # Cross-source spotlight — fed the set this page ACCEPTED, not `all_markets`.

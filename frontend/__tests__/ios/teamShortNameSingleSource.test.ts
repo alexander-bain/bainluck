@@ -202,7 +202,12 @@ d("iOS team short names have exactly one implementation", () => {
     // rule is still what every other name gets, and this pins that it is reached
     // by delegation rather than re-derived — an `abbreviation` that split the raw
     // name itself would be the re-implementation this whole file exists to catch.
-    expect(canonical).toMatch(/let shipped = glyphs\(ofLabel: short\(name\)\)/);
+    //
+    // #5634 — `short` now keeps a multi-word country whole and delegates every
+    // other name to `shortByRule`; the badge reads `shortByRule` so "Czech
+    // Republic" keeps `REP`. Still delegation to the ONE rule, pinned both ways.
+    expect(canonical).toMatch(/let shipped = glyphs\(ofLabel: shortByRule\(name\)\)/);
+    expect(canonical).toMatch(/return shortByRule\(name, sportKey: sportKey\)/);
     expect(canonical).toMatch(/return shipped/);
     expect(canonical).toMatch(/label\.split\(separator: " "\)/);
     expect(canonical).toMatch(/\.uppercased\(\)/);

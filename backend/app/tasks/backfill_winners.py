@@ -39,6 +39,8 @@ from app.utils.resolution_authority import (
     price_crown_protected_sql,
     SINGLE_WINNER_GUESS_SOURCES_SQL,
 )
+from app.utils.kalshi_fabricated_loss import RETRACTION_SOURCE
+from app.utils.box_score_capture import box_is_live_capture
 from app.utils.price_change_stamp import price_changed_at_value
 from app.utils.settled_price import (
     SETTLED_NO_PRICE,
@@ -271,6 +273,24 @@ _STATUS_SYNC_CURSOR_KEY = "bainluck:kalshi_winner_status_sync_cursor"
 def _read_status_sync_cursor(rc) -> str:
     """Band 5's cursor, decoded. Same contract as `_read_longdated_cursor`."""
     raw = rc.get(_STATUS_SYNC_CURSOR_KEY)
+    return raw.decode() if isinstance(raw, bytes) else (raw or "")
+
+
+#: Band 6's budget (#7000). 50, the same as bands 4 and 5, for the same reason:
+#: the cost is a fixed 50 `GET /events/{ticker}` per cycle whatever the
+#: population does. MEASURED 2026-09-30 08:4xZ: **3,816** open Kalshi markets
+#: whose every leg is a retraction carry a `resolution_date` more than two days
+#: out, so at ~52 cycles a day one wrap is about a day and a half.
+_RETRACTED_OPEN_MAX_TICKERS = 50
+
+#: Band 6's cursor key. Its OWN, for gotcha #34's reason — four bands now walk
+#: the same alphabet over different populations.
+_RETRACTED_OPEN_CURSOR_KEY = "bainluck:kalshi_winner_retracted_open_cursor"
+
+
+def _read_retracted_open_cursor(rc) -> str:
+    """Band 6's cursor, decoded. Same contract as `_read_longdated_cursor`."""
+    raw = rc.get(_RETRACTED_OPEN_CURSOR_KEY)
     return raw.decode() if isinstance(raw, bytes) else (raw or "")
 
 
@@ -781,6 +801,78 @@ async def _select_kalshi_status_sync_tickers(
     return [r[0] for r in rows.all()]
 
 
+async def _select_kalshi_retracted_open_tickers(
+    session, limit: int, cursor: str
+) -> list[str]:
+    """Band 6 — every leg is a retraction and our status still says open.
+
+    #7000. A market whose every leg carries `ungradeable_result` is refused by
+    each of the five bands above on one clause apiece:
+
+      * band 1 skips retracted legs by name ("a decision, not a gap");
+      * band 2 requires `status = 'resolved'`;
+      * bands 3 and 4 require at least one AUTHORITATIVE leg;
+      * band 5 requires an authoritative WINNER.
+
+    `kalshi_resolution_sweep` ranks this same cohort second (#7000's
+    `RETRACTED_COHORT_RANK_SQL`), but only among rows its own predicate admits,
+    and that predicate drops every row whose `resolution_date` is earlier than
+    its `expiration_time` — the sweep reads those as already answered. So until
+    the stored date passes and the #1818 date flip hands the row to band 2, the
+    venue's answer is never fetched.
+
+    THE SPECIMEN (production 2026-09-30, venue read per notice 26/27). The MLB
+    regular season ended 2026-09-27. Kalshi finalized `KXMLBBESTRECORD-26`,
+    `KXMLBWORSTRECORD-26` and the five `KXLEADERMLB*` stat races by 01:42Z on
+    the 28th, each with exactly one `yes`. We held all seven at `status='open'`,
+    `resolution_date` 2026-10-15 < `expiration_time` 10-22/10-29, every leg
+    `is_winner=false / ungradeable_result` — Milwaukee, which had the best
+    record, included — and the Yankees' team page offered "Worst Record 1%" and
+    "Lowest ERA 1%" as open questions two days later. 2,089 open retracted rows
+    sat outside the sweep's predicate that morning, so no rail could reach them.
+
+    Membership proves nothing about settlement. `repair_kalshi_fabricated_loss`
+    writes the retraction over an `api_settlement` stamp, and CAL-P1004 measured
+    that most such stamps were written on markets still trading. #7000's venue
+    probe of this cohort found ~12% finalized. That is why this is a cursor
+    with a fixed budget and not a sort: most members are re-asked and correctly
+    left alone, and a date sort would re-probe the same permanent head forever.
+
+    Disjoint from bands 1-5 by construction (gotcha #34): a fully retracted
+    market has no leg band 1 can qualify on and no authoritative leg for bands
+    3-5, and `status <> 'resolved'` keeps it off band 2. The grader writes the
+    venue's `api_settlement` over the retraction (tier 3 over tier 1, an
+    upgrade) only where the venue declared a side, and the #7870 status flip in
+    the same pass closes the board only when every nested market is terminal.
+    This band SELECTS; it writes nothing.
+    """
+    if limit <= 0:
+        return []
+    rows = await session.execute(
+        text("""
+            SELECT fm.external_id
+            FROM futures_markets fm
+            WHERE fm.source = 'kalshi'
+              AND fm.status <> 'resolved'
+              AND fm.external_id > :cursor
+              AND EXISTS (
+                  SELECT 1 FROM futures_outcomes fo
+                  WHERE fo.market_id = fm.id
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM futures_outcomes fo
+                  WHERE fo.market_id = fm.id
+                    AND COALESCE(fo.resolution_source, '') <> :retraction
+              )
+            GROUP BY fm.external_id
+            ORDER BY fm.external_id ASC
+            LIMIT :limit
+        """),
+        {"limit": limit, "cursor": cursor, "retraction": RETRACTION_SOURCE},
+    )
+    return [r[0] for r in rows.all()]
+
+
 #: Phase 0c-repair's promotion, hoisted to module level so a test can execute
 #: THE SHIPPED STATEMENT (#4745, CAL-P1086).
 #:
@@ -1147,6 +1239,9 @@ async def _backfill_kalshi_winners(
         # and a cycle that selected 50 and confirmed none of them are different
         # states, and the grading counters cannot tell them apart.
         "status_sync_selected": 0,
+        # #7000 band 6 — rows asked about because every leg is a retraction
+        # and the status is still open. Its own counter for band 5's reason.
+        "retracted_open_selected": 0,
         # #7870 — markets this pass flipped to 'resolved' because the venue
         # reported every market in the event terminal. Its OWN counter, never
         # folded into winners/losers: the grade and the status are two different
@@ -1205,6 +1300,14 @@ async def _backfill_kalshi_winners(
         status_sync_tickers = await _select_kalshi_status_sync_tickers(
             session, _STATUS_SYNC_MAX_TICKERS, _status_sync_cursor
         )
+        # #7000 — band 6, the fully retracted markets still marked open. Own
+        # budget and own cursor as bands 4 and 5 have; disjoint from all five
+        # by its WHERE clause (see its docstring). Runs in the fast lane too,
+        # for band 4's reason: a fixed cost whatever the population does.
+        _retracted_open_cursor = _read_retracted_open_cursor(_rc)
+        retracted_open_tickers = await _select_kalshi_retracted_open_tickers(
+            session, _RETRACTED_OPEN_MAX_TICKERS, _retracted_open_cursor
+        )
     fresh_set = set(fresh_tickers)
 
     # Band 4's cursor advances on band 4 alone, and WRAPS when the sweep runs dry
@@ -1246,6 +1349,17 @@ async def _backfill_kalshi_winners(
             "Kalshi winner backfill: status-sync cursor wrapped, will restart next run"
         )
 
+    # Band 6's cursor, on band 6 alone, wrapping for band 4's reason — its
+    # statement runs on every cycle of both lanes, so an empty result is the
+    # measured end of the walk.
+    if retracted_open_tickers:
+        _rc.setex(_RETRACTED_OPEN_CURSOR_KEY, 86400 * 14, retracted_open_tickers[-1])
+    elif _retracted_open_cursor:
+        _rc.delete(_RETRACTED_OPEN_CURSOR_KEY)
+        logger.info(
+            "Kalshi winner backfill: retracted-open cursor wrapped, will restart next run"
+        )
+
     # The cursor advances on the TAIL band alone. A recency ticker can sort
     # anywhere in the alphabet, so letting one set the cursor would skip every
     # tail ticker between here and there — the reach bug this ship exists to fix,
@@ -1265,6 +1379,7 @@ async def _backfill_kalshi_winners(
     stats["early_selected"] = len(early_tickers)
     stats["longdated_selected"] = len(longdated_tickers)
     stats["status_sync_selected"] = len(status_sync_tickers)
+    stats["retracted_open_selected"] = len(retracted_open_tickers)
 
     tickers = fresh_tickers + [t for t in tail_tickers if t not in fresh_set]
     _selected = set(tickers)
@@ -1278,6 +1393,8 @@ async def _backfill_kalshi_winners(
     # band is different.
     _selected = set(tickers)
     tickers += [t for t in status_sync_tickers if t not in _selected]
+    _selected = set(tickers)
+    tickers += [t for t in retracted_open_tickers if t not in _selected]
 
     if not tickers:
         logger.info("Kalshi winner backfill: nothing to do")
@@ -5733,7 +5850,7 @@ async def _resolve_kalshi_player_props_from_boxscore():
     Single-query fetch of all markets + outcomes + box scores, then
     processes in Python. No per-market DB round-trips.
     """
-    stats = {"resolved": 0, "no_player": 0, "no_parse": 0, "errors": []}
+    stats = {"resolved": 0, "no_player": 0, "no_parse": 0, "live_box": 0, "errors": []}
 
     all_prop_prefixes = list(_PROP_TICKER_TO_STAT.keys()) + list(_COMBO_STATS.keys())
 
@@ -5824,6 +5941,11 @@ async def _resolve_kalshi_player_props_from_boxscore():
                 bs_map: dict = {}
                 for bs_row in bs_result.all():
                     raw_bs = bs_row.box_score_data or {}
+                    # #9734: a live-pass snapshot is the game mid-play. Its
+                    # zeros are not results; the event waits for its final box.
+                    if box_is_live_capture(raw_bs):
+                        stats["live_box"] += 1
+                        continue
                     raw_players = (
                         raw_bs.get("players", raw_bs)
                         if isinstance(raw_bs, dict)
@@ -5912,10 +6034,11 @@ async def _resolve_kalshi_player_props_from_boxscore():
         logger.error("Player prop resolution error: %s", e)
 
     logger.info(
-        "Player prop resolution: %d resolved, %d no_player, %d no_parse, %d errors",
+        "Player prop resolution: %d resolved, %d no_player, %d no_parse, %d live_box, %d errors",
         stats["resolved"],
         stats["no_player"],
         stats["no_parse"],
+        stats["live_box"],
         len(stats["errors"]),
     )
     return stats
@@ -5960,7 +6083,7 @@ async def _resolve_kalshi_total_bases_from_boxscore():
     certain winners for low N) without doubles/triples. Marked
     resolution_source='box_score_bound' so it's auditable as a bound, not exact.
     """
-    stats = {"resolved": 0, "no_player": 0, "no_parse": 0, "indeterminate": 0, "errors": []}
+    stats = {"resolved": 0, "no_player": 0, "no_parse": 0, "indeterminate": 0, "live_box": 0, "errors": []}
 
     try:
         async with get_task_session() as session:
@@ -6002,6 +6125,12 @@ async def _resolve_kalshi_total_bases_from_boxscore():
                 player_name = m.group(1).strip()
                 threshold = int(m.group(2))
 
+                # #9734: a live-pass snapshot never grades. This pass writes
+                # only `is_winner IS NULL` rows and never revisits them, so a
+                # bound computed off a first-inning box would be permanent.
+                if box_is_live_capture(row.box_score_data):
+                    stats["live_box"] += 1
+                    continue
                 bs_id = id(row.box_score_data)
                 if bs_id not in _bs_cache:
                     raw_bs = row.box_score_data or {}
@@ -6059,11 +6188,12 @@ async def _resolve_kalshi_total_bases_from_boxscore():
         logger.error("Total-bases bound resolution error: %s", e)
 
     logger.info(
-        "Total-bases bound resolution: %d resolved, %d indeterminate, %d no_player, %d no_parse, %d errors",
+        "Total-bases bound resolution: %d resolved, %d indeterminate, %d no_player, %d no_parse, %d live_box, %d errors",
         stats["resolved"],
         stats["indeterminate"],
         stats["no_player"],
         stats["no_parse"],
+        stats["live_box"],
         len(stats["errors"]),
     )
     return stats
@@ -8311,6 +8441,20 @@ async def _backfill_polymarket_winners_from_api(
                 -- re-settled too (the local collapse phase is the read-side backstop).
                 OR ((fm.mutually_exclusive OR fm.name ~* '\yby\y' OR fm.name ~* '\ywhen\y')
                     AND SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) > 1
+                    AND fm.resolution_date > NOW() - INTERVAL '90 days')
+                -- #9394: a WINNER crowned only by `clean_resolution` has not been
+                -- checked against the venue. That pass crowns any stored leg at
+                -- >= 0.95, and `clean_resolution` is OVERWRITABLE for exactly
+                -- that reason — but the first arm above excludes it, so once
+                -- Pass 1 stamped a field this rail never looked at it again and
+                -- the price crown was final in practice. Specimen 59433935 (TOUR
+                -- Championship): 1 of the venue's 51 legs stored, Chris Gotterup,
+                -- priced 0.99 off a 0.01/0.99 book on Aug 22 and never re-read;
+                -- Pass 1 crowned him and Gamma, which says Gotterup Yes=0, was
+                -- never asked. Bring such a market back here so the venue's
+                -- result replaces the price. It leaves once graded: the matched
+                -- winner row becomes `api_settlement`. Same 90d bound as above.
+                OR (BOOL_OR(fo.is_winner AND fo.resolution_source = 'clean_resolution')
                     AND fm.resolution_date > NOW() - INTERVAL '90 days')
                 ORDER BY fm.id ASC
                 LIMIT :limit

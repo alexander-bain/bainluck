@@ -115,9 +115,9 @@ function heroText(html: string): string | null {
   return m ? m[1].trim() : null;
 }
 
-/** The compact row's percent element — it carries no testid of its own. */
+/** The compact row's percent element (testid added by #9642). */
 function compactPercent(html: string): string | null {
-  const m = /<span class="font-mono tabular-nums text-sm font-bold">([^<]*)</.exec(html);
+  const m = /data-testid="compact-row-percent"[^>]*>([^<]*)</.exec(html);
   return m ? m[1].trim() : null;
 }
 

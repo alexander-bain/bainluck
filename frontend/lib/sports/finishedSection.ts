@@ -42,14 +42,16 @@
  * `completed`/`closed`, something with standing saying the event is over. Never
  * a price at 0.99, never "the clock says it should be done by now". A
  * `suspended` match is NOT finished and does not appear here; it stays in the
- * live bucket, which is the one honest place for it (live/048).
+ * live bucket, which is the one honest place for it (live/048) — UNLESS the
+ * venue graded it and the card already prints "Settled · X wins" (#5811 via
+ * `feedEventSectionKey`, #7112's rung): that card is a result.
  *
  * PURE, and `now` is always injectable — an anchor that branches on the real
  * clock is not an anchor (gotcha #44).
  */
 
 import type { FeedEventData, FeedItem, SportHierarchy } from "@/lib/types";
-import { eventSectionKey } from "@/lib/eventState";
+import { feedEventSectionKey } from "@/lib/feedSections";
 import { finishedDayOffset } from "@/lib/gameTimeLabel";
 
 /**
@@ -108,7 +110,7 @@ export function partitionFinishedGames(items: FeedItem[]): FinishedSplit {
 
 function isFinishedGame(item: FeedItem): boolean {
   if (item.type !== "event") return false;
-  return eventSectionKey((item.data as FeedEventData).status) === "finished";
+  return feedEventSectionKey(item.data as FeedEventData) === "finished";
 }
 
 export interface FinishedSection {

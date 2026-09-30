@@ -77,22 +77,57 @@ const JOINS_BEFORE = /[a-z0-9-]/;
 const JOINS_AFTER = /[a-z0-9\-%]/;
 
 export function captionNames(caption: string | null | undefined, name: string | null | undefined): boolean {
-  const hay = normalize(caption);
+  return namedAt(caption, name) >= 0;
+}
+
+/**
+ * Where `text` first says `name` under `captionNames`' boundary rule, as an
+ * index into the whitespace-collapsed, lower-cased text; `-1` when it never
+ * does. #9876 — `titleNamedChoices` needs the position as well as the answer,
+ * to see whether an "or" sits between two names.
+ */
+export function namedAt(text: string | null | undefined, name: string | null | undefined): number {
+  const hay = normalize(text);
   const needle = normalize(name);
-  if (!hay || !needle) return false;
+  if (!hay || !needle) return -1;
 
   const isWordChar = (ch: string) => /[a-z0-9]/.test(ch);
   let from = 0;
   for (;;) {
     const at = hay.indexOf(needle, from);
-    if (at < 0) return false;
+    if (at < 0) return -1;
     const before = at === 0 ? "" : hay[at - 1];
     const after = hay[at + needle.length] ?? "";
     const headOk = !isWordChar(needle[0]) || before === "" || !JOINS_BEFORE.test(before);
     const tailOk = !isWordChar(needle[needle.length - 1]) || after === "" || !JOINS_AFTER.test(after);
-    if (headOk && tailOk) return true;
+    if (headOk && tailOk) return at;
     from = at + 1;
   }
+}
+
+/**
+ * #9876 — an answer that says the thing does NOT happen: `No`, `No IPO before
+ * January 2027`, `Not …`, `Neither`, `None`.
+ *
+ * Production, 390px, 2026-09-30 17:05Z, the IPO VALUATION RANGES group:
+ *
+ *     Oura IPO Closing Market Cap
+ *     No IPO before January 2027 leads at 85%                   85%
+ *
+ * The 85% is the chance Oura does NOT list, and the only thing that said so was
+ * the grey caption. `rowAnswerLabel` withheld the bold answer because that
+ * caption named it. In the bold column the row read as "Oura … 85%", beside
+ * other rows whose numbers are the chance something DOES happen. Alex's
+ * checkpoint the same day: "83% Yes" beside "84% No" is misleading when the
+ * two are displayed like comparable chances.
+ *
+ * Same marker shape as `heroOutcome`'s `NEGATION_PREFIX`, with its trailing `\s+`
+ * so "Norway" and "No. 1 seed" are not negative.
+ */
+const NEGATIVE_ANSWER = /^\s*(?:(?:no|not)\s*[:\-–—]?(?:\s+.*)?|neither|none)\s*$/i;
+
+export function answerIsNegative(name: string | null | undefined): boolean {
+  return NEGATIVE_ANSWER.test(name ?? "");
 }
 
 /**
@@ -109,6 +144,9 @@ export function rowAnswerLabel(
   const name = (hero?.name ?? "").replace(/\s+/g, " ").trim();
   if (!name) return null;
   if (BARE_AFFIRMATIVE.test(name)) return null;
+  // #9876 — a negative answer is never left to the caption. The caption is
+  // grey and can be clamped away, and the reader scans the bold column.
+  if (answerIsNegative(name)) return name;
   if (captionNames(caption, name)) return null;
   return name;
 }
@@ -210,6 +248,21 @@ const TOO_COMMON_TO_CLAIM = /^(yes|no|none|other|tbd|n\/a)$/i;
  * @param answerLabel what `rowAnswerLabel` decided to print, or null
  * @param outcomes    the market's served outcomes
  */
+/**
+ * #9876 — true when `caption` says `label` again, so a row that now prints the
+ * label in bold can drop the caption without losing anything. A label too
+ * ordinary to claim a caption (`No`, `None`, `Neither`) never matches: "No clear move this
+ * week" is not a restatement of the answer `No`.
+ */
+export function captionRepeatsAnswer(
+  caption: string | null | undefined,
+  label: string | null | undefined,
+): boolean {
+  const name = (label ?? "").trim();
+  if (!name || TOO_COMMON_TO_CLAIM.test(name) || /^neither$/i.test(name)) return false;
+  return captionNames(caption, name);
+}
+
 export function captionIsAboutAnotherLeg(
   caption: string | null | undefined,
   answerLabel: string | null | undefined,

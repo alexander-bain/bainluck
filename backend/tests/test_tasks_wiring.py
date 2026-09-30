@@ -212,6 +212,9 @@ class TestBeatScheduleCompleteness:
         # #3017: Polymarket's event record says an anchor-less match ended
         # (or was cancelled) — off the live board within one pass, not 3h.
         "suspend-venue-ended-events",
+        # #9418: a near-kickoff Polymarket match re-read by id for the venue's
+        # current start — the poll's listing-ordered window no longer reaches it.
+        "refresh-polymarket-fixture-starts",
         "enrich-events-hourly",
         "sync-espn-live",
         "sync-tennis-from-espn",
@@ -224,7 +227,14 @@ class TestBeatScheduleCompleteness:
         "collapse-odds-snapshots-daily",
         "collapse-winprob-snapshots-daily",
         "collapse-futures-snapshots-daily",
-        "sync-rosters-daily",
+        "sync-rosters-nba",
+        "sync-rosters-nfl",
+        "sync-rosters-nhl",
+        "sync-rosters-mlb",
+        "sync-rosters-ncaab",
+        "sync-rosters-ncaaf",
+        "sync-rosters-wnba",
+        "sync-rosters-mls",
         "sync-mlb-win-probability",
         "compute-game-moments",
         "recategorize-other-daily",
@@ -265,6 +275,9 @@ class TestBeatScheduleCompleteness:
         # #8981 — ESPN's date-only placeholder marked so readers print TBD
         # (background, hourly, :29 by the 2026-09-27 minute census).
         "mark-espn-start-placeholders-hourly",
+        # #9216 — a postseason game that must be played gets its row when ESPN
+        # schedules it (background, hourly, :11 by the same census).
+        "create-certain-postseason-games-hourly",
         "sync-statpal-standings-daily",
         "mark-resolved-futures",
         "backfill-winners",
@@ -297,6 +310,7 @@ class TestBeatScheduleCompleteness:
         "tennis-twin-sweep",
         "soccer-ghost-twin-sweep",
         "mlb-reschedule-ghost-sweep",
+        "nhl-adjacent-day-ghost-sweep",
         "polymarket-container-twin-sweep",
         "odds-api-reissued-twin-sweep",
         "odds-api-remint-sweep",

@@ -47,7 +47,13 @@
  * PURE: no I/O, no clock, no React.
  */
 
-import { readPropGrade, type PropGrade, type PropGradeFields } from "./propGrade";
+import {
+  readPropGrade,
+  readSettledLadder,
+  type PropGrade,
+  type PropGradeFields,
+  type SettledLadderRead,
+} from "./propGrade";
 import { parsePropLabel } from "./otherMarketGroups";
 
 export interface StatRung {
@@ -73,6 +79,8 @@ export interface PlayerStat {
   serverIsWinner?: boolean | null;
   /** UX-P040 (#1638): the backend's typed grade, or `{graded:false}`. */
   grade?: PropGrade;
+  /** #9454: the rungs' split, when `grade` withholds for conflicting rungs. */
+  settledLadder?: SettledLadderRead;
 }
 
 export interface PlayerData {
@@ -94,6 +102,8 @@ export interface PlayerPropRow extends PropGradeFields {
   source?: string | null;
   player_team?: "home" | "away" | "unknown" | null;
   player_headshot?: string | null;
+  /** Set by the route on the UNDER leg of an O/U market; its `hit` is the Under's. */
+  _inverted?: boolean | null;
 }
 
 /** An `other[]` row — the bucket #1722 came out of. */
@@ -168,6 +178,16 @@ export const STAT_TYPES = [
   "Receptions", "Interceptions", "Sacks",
   "Double Doubles", "Triple Doubles",
   "Points Leader", "Assists Leader",
+  // #6909 follow-up: Polymarket's football O/U stats outside the list above.
+  // Without them "Tyler Shough: Passing Touchdowns O/U 3.5" parsed its
+  // stat-and-line as the PLAYER, and the settled rail printed "Passing
+  // Touchdowns O/U 3.5's 4+ was marked 5%" beside Kalshi's "Shough's 4+ passing
+  // touchdowns" — the same question twice, one of them unnamed. APPENDED, not
+  // interleaved: the suffix strip below takes the first entry a name ends
+  // with, so an entry here can never outrank "Touchdowns" for a shape that
+  // parses today.
+  "Passing Touchdowns", "Passing Completions", "Passing Attempts",
+  "Longest Reception", "Rushing + Receiving Yards",
 ];
 
 export const STAT_TO_BOX_SCORE: Record<string, string> = {
@@ -195,6 +215,43 @@ export const STAT_TO_BOX_SCORE: Record<string, string> = {
   "touchdowns": "touchdowns",
   "tds": "touchdowns",
 };
+
+/**
+ * #9148: Kalshi names a team defense `<ABBR> <Nickname> D/ST` ("SEA Seahawks
+ * D/ST", "WAS Commanders D/ST"). Printed verbatim, the team is named twice, once
+ * as a ticker the rest of the page does not use (the margin maps say WSH). The
+ * nickname alone names the unit and stays unique where a city is shared
+ * (NY Jets / NY Giants, LA Rams / LA Chargers).
+ *
+ * Only that exact shape is touched: a leading run of 2–3 capitals, at least one
+ * more word, and a trailing `D/ST`. A player, a "Team" row, and any subject
+ * with no ticker come back unchanged.
+ */
+const TICKER_DEFENSE = /^[A-Z]{2,3}\s+(\S.*\sD\/ST)$/;
+
+export function propSubjectDisplay(subject: string): string {
+  const m = subject.match(TICKER_DEFENSE);
+  return m ? m[1] : subject;
+}
+
+/**
+ * #9148, second surface: THE SCRIPT's prop list (`PropsSection`) prints the
+ * served `props_script[].label`, which is the same Kalshi outcome name
+ * ("SEA Seahawks D/ST: Over 9.2"). The subject before the first colon gets the
+ * same treatment as above; the rest of the label is untouched.
+ */
+export function propLabelDisplay(label: string): string {
+  const colon = label.indexOf(":");
+  if (colon <= 0) return label;
+  const subject = label.slice(0, colon);
+  const shown = propSubjectDisplay(subject.trim());
+  return shown === subject.trim() ? label : shown + label.slice(colon);
+}
+
+/** #9384 — "A vs. B", "A @ B", "A v B": a matchup, not a person. */
+function isMatchupSubject(text: string): boolean {
+  return /\bvs?\.?\s|\s@\s/i.test(text);
+}
 
 /**
  * The player, statistic and team a prop row is about.
@@ -232,10 +289,26 @@ export function parsePlayerName(
   //
   // Strictly additive (gotcha #43): requires a colon, a trailing "O/U <line>",
   // and a KNOWN stat in between, so no shape that parses today changes.
+  //
+  // #9384: THE PLAYER IS BEFORE THE COLON WHATEVER THE STAT IS CALLED. Requiring
+  // the stat to be in STAT_TYPES threw the name away for every stat the list
+  // lacks — "Sam Darnold: Passing Touchdowns O/U 3.5" parsed as a player called
+  // "Passing Touchdowns O/U 3.5", so #9178's cross-venue collapse could not pair
+  // it with Kalshi's "Sam Darnold: 4+" and the settled rail printed the question
+  // twice, once with no player. Measured over 14 days of linked Polymarket
+  // markets: Outs Recorded, Hits Allowed, Earned Runs Allowed, Walks Allowed,
+  // Passing Touchdowns, Total Touchdowns, Passing Completions/Attempts, Longest
+  // Reception — 1,935 markets. An unknown phrase is kept whole, the way the
+  // Kalshi branch below keeps "Passing Touchdowns", so both venues key alike.
+  // The one shape where the text before the colon is NOT a person is the
+  // matchup ("Norway vs. Denmark: 1st Half O/U 1.5", "Army vs. Temple: 1Q") —
+  // every non-player O/U in the captured payloads — and it keeps today's parse.
   if (colonIdx > 0) {
     const ou = afterColon.match(/^(.*?)\s*O\/U\s*\d+(?:\.\d+)?$/i);
-    const known = ou
-      ? STAT_TYPES.find((st) => st.toLowerCase() === ou[1].trim().toLowerCase())
+    const phrase = ou ? ou[1].trim().replace(/\s+/g, " ") : "";
+    const known = phrase
+      ? STAT_TYPES.find((st) => st.toLowerCase() === phrase.toLowerCase()) ??
+        (/[a-z]/i.test(phrase) && !isMatchupSubject(beforeColon) ? phrase : undefined)
       : undefined;
     if (known) {
       // `team` is left blank deliberately: for this shape the text before the
@@ -243,6 +316,26 @@ export function parsePlayerName(
       // would be a confident wrong answer. The row's own `player_team` (which
       // the caller prefers anyway) is the honest source.
       return { player: beforeColon.trim(), stat: known, team: "", identified: true };
+    }
+    // #6909 follow-up, the same person-first shape without a line: Polymarket's
+    // "Juwan Johnson: 2+ Touchdowns" (Yes/No). The suffix strip below made the
+    // rung the PLAYER, and the settled rail printed "2+: 2+ touchdowns". Same
+    // guard as above — a colon, a leading "<n>+" and a KNOWN stat — and Kalshi
+    // never writes a rung after its matchup colon, so no shape that parses
+    // today changes (fixture census: 2 of 1,840 pairs, both this market).
+    //
+    // #9608: and, as #9384 ruled for the O/U shape, whatever the stat is called.
+    // "Shea Charles: 1+ goals + assists" failed the STAT_TYPES lookup, fell to the
+    // suffix strip, and the settled rail printed "1+ goals +: 1+ assists". An
+    // unknown phrase is kept whole; a matchup subject keeps today's parse.
+    const rung = afterColon.match(/^\d+\+\s+(.+)$/);
+    const rungPhrase = rung ? rung[1].trim().replace(/\s+/g, " ") : "";
+    const rungStat = rungPhrase
+      ? STAT_TYPES.find((st) => st.toLowerCase() === rungPhrase.toLowerCase()) ??
+        (/[a-z]/i.test(rungPhrase) && !isMatchupSubject(beforeColon) ? rungPhrase : undefined)
+      : undefined;
+    if (rungStat) {
+      return { player: beforeColon.trim(), stat: rungStat, team: "", identified: true };
     }
   }
 
@@ -283,7 +376,7 @@ export function parsePlayerName(
   // `parsePropLabel` fall-through below.
   const outcomeColon = (outcomeName || "").indexOf(":");
   const subjectFromOutcome =
-    outcomeColon > 0 ? outcomeName.slice(0, outcomeColon).trim() : "";
+    outcomeColon > 0 ? propSubjectDisplay(outcomeName.slice(0, outcomeColon).trim()) : "";
 
   if (subjectFromOutcome && afterColon && (exactStatMatch || colonIdx >= 0)) {
     player = subjectFromOutcome;
@@ -343,6 +436,16 @@ interface StatAccumulator {
   serverIsWinner?: boolean | null;
   gradeRows: PropGradeFields[];
   identified: boolean;
+}
+
+/**
+ * #9454: the split, attached only when there is one, so a stat without a split
+ * is byte-identical to what this module produced before it.
+ */
+function splitOf(statData: StatAccumulator, rungs: readonly StatRung[]): { settledLadder?: SettledLadderRead } {
+  if (!statData.identified) return {};
+  const split = readSettledLadder(rungs, statData.gradeRows);
+  return split ? { settledLadder: split } : {};
 }
 
 interface PlayerAccumulator {
@@ -606,7 +709,7 @@ export function groupPlayerProps(input: GroupPlayerPropsInput): GroupPlayerProps
     const outcomeColon = (p.outcome_name || "").indexOf(":");
     const subjectSide =
       outcomeColon > 0 &&
-      parsed.player === (p.outcome_name || "").slice(0, outcomeColon).trim()
+      parsed.player === propSubjectDisplay((p.outcome_name || "").slice(0, outcomeColon).trim())
         ? detectTeam(parsed.player)
         : "unknown";
     const team: TeamSide =
@@ -634,6 +737,16 @@ export function groupPlayerProps(input: GroupPlayerPropsInput): GroupPlayerProps
     const rawMovement = p.movement ?? null;
     const movement = rawMovement == null ? null : Number(rawMovement);
     const movementAbs = movement == null ? null : Math.abs(movement);
+    // #9454: a card is an OVER ladder, and the Under leg's typed `hit` is the
+    // Under's verdict. Pooled, every O/U line served with both legs carried one
+    // hit and one miss, so `readPropGrade` withheld it (60 of 102 cards on
+    // /events/14780548), and `rung.hit` was whichever leg arrived first
+    // (Ferguson, 1 catch: `1.5+` read HIT). The Over leg of the same market
+    // already states the verdict, so the Under leg keeps its `actual` and
+    // contributes no verdict. Not flipped: complementing a verdict is the
+    // client adjudicating, and a push has no complement.
+    const underLeg = p._inverted === true;
+    const verdict = underLeg ? null : (p.hit ?? null);
     const candidate: RowCandidate = {
       playerName: parsed.player,
       team,
@@ -644,15 +757,15 @@ export function groupPlayerProps(input: GroupPlayerPropsInput): GroupPlayerProps
       threshold: p.threshold,
       overProb: p.over_probability as number,
       movement,
-      hit: p.hit ?? null,
+      hit: verdict,
       actual: p.actual ?? null,
-      isWinner: p.is_winner ?? null,
+      isWinner: underLeg ? null : (p.is_winner ?? null),
       // Constructed HERE, in the read phase, so a throwing grade field cannot
       // leave a half-built player behind.
       gradeRow: {
         actual: p.actual ?? null,
-        hit: p.hit ?? null,
-        is_winner: p.is_winner ?? null,
+        hit: verdict,
+        is_winner: underLeg ? null : (p.is_winner ?? null),
         resolution_source: p.resolution_source ?? null,
       },
       source: p.source as string,
@@ -916,6 +1029,7 @@ export function groupPlayerProps(input: GroupPlayerPropsInput): GroupPlayerProps
             serverHit: sortedRungs[0]?.hit ?? null,
             serverIsWinner: statData.serverIsWinner ?? null,
             grade: readPropGrade(statData.gradeRows, { samePlayerStat: statData.identified }),
+            ...splitOf(statData, sortedRungs),
           });
         } else {
           const best = sortedRungs[0];
@@ -931,6 +1045,8 @@ export function groupPlayerProps(input: GroupPlayerPropsInput): GroupPlayerProps
             serverHit: best.hit ?? null,
             serverIsWinner: statData.serverIsWinner ?? null,
             grade: readPropGrade(statData.gradeRows, { samePlayerStat: statData.identified }),
+            // A two-rung "line" (Nix TDs: HIT 1+, MISS 2+) splits the same way.
+            ...splitOf(statData, sortedRungs),
           });
         }
       }

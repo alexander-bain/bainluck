@@ -127,6 +127,17 @@ struct NativeEventDiscoverCard: View {
             event.status, commenceTime: event.commenceTime?.asDate)
     }
 
+    /// #5811 — the venue closed this contest with no winner. Every such row is
+    /// also `isSuspended`, so this only changes the WORDS that arm prints
+    /// ("Paused", "No result reported"), never which arm draws: the bar and
+    /// the live number stay suppressed for exactly the reason they are now.
+    private var closedNoWinner: Bool {
+        EventState.showsVenueClosedNoWinner(
+            event.status, venueSettled: nil,
+            venueClosedNoWinner: event.venueClosedNoWinner,
+            commenceTime: event.commenceTime?.asDate)
+    }
+
     private var sportLabel: String {
         sportCategoryDisplayName(event.sportName ?? event.sport).uppercased()
     }
@@ -149,6 +160,7 @@ struct NativeEventDiscoverCard: View {
         // The split survives its own stated reason anyway — "Paused" belongs
         // between the crests and a sentence belongs in the badge, at any width —
         // which is exactly the case for restating it rather than deleting it.
+        if closedNoWinner { return "Ended" }
         if isSuspended { return "Paused" }
         return "vs"
     }
@@ -242,7 +254,9 @@ struct NativeEventDiscoverCard: View {
                 // uses for its result. Same string the web Discover card
                 // prints for the same row.
                 if isSuspended {
-                    Text(EventState.suspendedSummary(away: event.awayScore, home: event.homeScore))
+                    Text(closedNoWinner
+                         ? EventState.venueClosedNoWinnerLabel
+                         : EventState.suspendedSummary(away: event.awayScore, home: event.homeScore))
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
@@ -533,7 +547,7 @@ struct NativeEventDiscoverCard: View {
                     // The corner that says FINAL or LIVE has to say something
                     // here too — leaving it empty is how the state stayed
                     // invisible (live/048).
-                    Text("PAUSED")
+                    Text(closedNoWinner ? "ENDED" : "PAUSED")
                         .font(.caption2.weight(.heavy))
                         .foregroundStyle(.white.opacity(0.78))
                         .padding(.horizontal, 8)

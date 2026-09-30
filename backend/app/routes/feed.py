@@ -86,6 +86,8 @@ from app.utils.sports_first_page_rails import (
     finished_event_age_anchor,
     swap_client_deleted_finished_off_first_page,
 )
+from app.utils.sports_imminent_marquee import lead_upcoming_with_imminent_marquee_games
+from app.utils.sports_series_order import order_series_games_by_kickoff
 from app.utils.tonights_games import (
     MARQUEE_PIN_KEY,
     MAX_LEAD,
@@ -114,7 +116,7 @@ from app.utils.feed_event_candidates import (
     event_candidate_ids,
 )
 from app.utils.discover_card_archetypes import classify_discover_card_archetype
-from app.utils.game_market_club_names import repair_field_outcome_name
+from app.utils.series_card_labels import reader_outcome_name
 from app.utils.graded_card import (
     card_sum_reason,
     duel_percents_by_side,
@@ -157,6 +159,7 @@ from app.utils.futures_highlights import (
     SPORTS_CATEGORY_BASE,
 )
 from app.utils.feed_market_quality import (
+    _SPORTS_CATEGORIES,
     _story_key as compute_story_key,
     apply_explanation_quality_score,
     apply_quality_score,
@@ -277,7 +280,7 @@ from app.utils.labeling_queue import (
 from app.utils.duplicate_condition_outcomes import drop_duplicate_legs
 from app.utils.event_twin_fold import fold_twin_events
 from app.utils.name_normalization import names_match as _team_name_matches
-from app.utils.sport_keys import sport_display_name
+from app.utils.sport_keys import SPORT_LEAGUE_MAP, sport_display_name
 from app.utils.outcome_display import (
     _FIELD_SUM_MAX,
     display_divisor_mass,
@@ -459,6 +462,49 @@ _DISCOVER_ACTIONS = {
 #: affinity, category negative counts) and a set that drifts between them shows
 #: up as "swiping does nothing" and nowhere else.
 _DISCOVER_NEGATIVE_ACTIONS: frozenset[str] = frozenset({"dismiss", "unlike"})
+
+
+#: Every category a sports card can write, in the canonical key space: the LLM
+#: sports categories a futures card writes, plus every sport-key root an event
+#: card writes (`aussierules` is in the second and not the first). The category
+#: rollup carries no `item_type`, so a root missing here would still teach a
+#: whole-sport penalty from event swipes.
+_SPORTS_FEEDBACK_CATEGORIES: frozenset[str] = frozenset(
+    _SPORTS_CATEGORIES
+) | frozenset(
+    canonical_discover_category(key.split("_")[0]) for key in SPORT_LEAGUE_MAP
+)
+
+
+def _is_sports_feedback(category: str | None, item_type: str | None = None) -> bool:
+    """Whether a Discover interaction was on a sports card. #9645.
+
+    A negative swipe on a sports card is EXACT: it hides that card and its
+    story, and teaches nothing broader. Swiping away Yankees v Orioles says "not
+    this game", not "less baseball", "less matchups", "less Boston" or "less of
+    either team" — a two-team card cannot say which side the reader dislikes, and
+    the reader who swiped five unrelated MLB games away while opening every Red
+    Sox game was being taught the opposite of what they did. Positive sports
+    signals are untouched.
+
+    An `event` row is always a game. Otherwise the canonical category decides,
+    so an event card's sport-key root (`americanfootball`) and a futures card's
+    LLM category (`football`) agree.
+    """
+    if (item_type or "").strip().lower() == "event":
+        return True
+    return canonical_discover_category(category) in _SPORTS_FEEDBACK_CATEGORIES
+
+
+def _is_sports_negative(
+    category: str | None, action: str | None, item_type: str | None = None
+) -> bool:
+    """A negative swipe on a sports card — exact/story scoped only. #9645."""
+    return action in _DISCOVER_NEGATIVE_ACTIONS and _is_sports_feedback(
+        category, item_type
+    )
+
+
 # `concept` and `bundle` were missing, and the miss was silent in the worst way:
 # `_normalize_discover_value` coerces an unrecognized type to its DEFAULT, which
 # here is `"futures"`. So every swipe on a UFC/F1/cycling concept card was stored
@@ -2834,6 +2880,41 @@ def apply_discover_display_chain(
             )
     _tick("futures_first_page_cap")
 
+    # === THE SOONER GAME OF A SERIES TAKES THE EARLIER SLOT (#9602) ===
+    #
+    # Measured 2026-09-29 11:12Z: tomorrow's NLWC Game 2 (Kalshi 51%, score 65)
+    # sat 3rd and today's Game 1 of the same series (a 63/37 favorite, 45) sat
+    # 15th. Both scores are honest; the order is not. Within each same-matchup
+    # set of upcoming games, the slots they hold are refilled in kickoff order —
+    # no score changes and no other card moves. BEFORE #9489's pass, which keeps
+    # served order inside its two groups, so a series it touches stays in order.
+    series_order_meta = None
+    if sports_mode and not my_teams_only:
+        items, series_order_meta = order_series_games_by_kickoff(items)
+    _tick("series_kickoff_order")
+
+    # === TONIGHT'S MARQUEE GAME LEADS UPCOMING (#9489) ===
+    #
+    # Measured 2026-09-28 23:05Z, an hour before Monday Night Football: the
+    # Sports first page served Eagles @ Bears (tier:1, score 48) fifth among
+    # upcoming games, below four that start TOMORROW (87/70/55/52), and
+    # `groupFeedIntoSections` never re-sorts, so "Upcoming" printed it fifth.
+    # The score has no "starts in an hour" term and must not grow one (#4541's
+    # pin-not-boost reasoning); this refills the upcoming-game slots with the
+    # imminent marquee games first and touches no score and no other card.
+    #
+    # Gated exactly as the three passes above, for the same CERT-2190 reason.
+    # AFTER them, so it reorders the upcoming slots they settled; BEFORE the
+    # live hoist, which keeps the last word on first-page membership — and
+    # which vacates the WORST window slots, i.e. the later-starting games this
+    # pass has just moved behind tonight's.
+    imminent_marquee_meta = None
+    if sports_mode and not my_teams_only:
+        items, imminent_marquee_meta = lead_upcoming_with_imminent_marquee_games(
+            items, now=now
+        )
+    _tick("imminent_marquee_upcoming")
+
     # === LIVE COMPLETENESS ON THE GAMES-LED SURFACES (#2709, Alex P1) ===
     #
     # The `include_tonights_games=discover_mode` gate above is correct and stays:
@@ -2886,6 +2967,8 @@ def apply_discover_display_chain(
         "finished_rail_cap": finished_rail_cap_meta,
         "client_deletion_swap": client_deletion_swap_meta,
         "futures_first_page_cap": futures_cap_meta,
+        "series_kickoff_order": series_order_meta,
+        "imminent_marquee_upcoming": imminent_marquee_meta,
         "live_first_page": live_first_page_meta,
         # 0 = the check passed OR no marquee game was required this request.
         # The two are distinguished by `marquee_lead_required` beside it, so a
@@ -3926,7 +4009,22 @@ async def get_feed(
                 detail="category is not supported with mode=sports",
             )
 
-    if not debug and not exclude_reviewed:
+    from app.utils.feed_collections import (
+        add_feed_collections,
+        feed_collections_enabled,
+    )
+
+    _collections_enabled = feed_collections_enabled(
+        mode=mode,
+        include_events=include_events,
+        my_teams_only=my_teams_only,
+        debug=debug or exclude_reviewed,
+    )
+    # Publication/revocation is live authority. A collection-bearing page must
+    # never be served from response, stale, last-good or page-base caches.
+    # Flag-off requests retain all existing cache behavior. Shared scoring
+    # artifacts remain available to the flag-on build.
+    if not debug and not exclude_reviewed and not _collections_enabled:
         _cache_status = "miss"
         # LAT-P089: the request SHAPE, held once. The private key and the
         # principal-independent key differ only in the principal, so deriving
@@ -5246,6 +5344,15 @@ async def get_feed(
                 "filtered_count": _chain_meta["reviewed_filtered_count"],
             }
 
+        if _collections_enabled:
+            feed_items = await add_feed_collections(
+                db,
+                feed_items,
+                rank_key=_rank_key,
+                page_window=DISCOVER_COMPOSITION_WINDOW,
+                budget_seconds=_feed_budget_remaining_s(),
+            )
+
         # T4-B2 / #5102: the pin, on the BUILD path. Applied to ``feed_items``
         # before the slice below, which is the only placement that works —
         # reordering after the window has been taken would reorder twenty cards
@@ -5388,6 +5495,14 @@ async def get_feed(
                 debug_payload["external_curator_ground_truth"] = empty_ground_truth
                 debug_payload["external_curator_ground_truth_misses"] = []
         _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "debug")
+
+        # #5811: a game card the venue already graded says who won, as its event
+        # page does. Over ``feed_items`` (the page base every page is sliced
+        # from) and before the Redis write, so a cached page carries it too.
+        await _attach_feed_venue_settlement(db, feed_items, now)
+        _previous_at = _record_feed_timing(
+            _timings, _started_at, _previous_at, "venue_settlement"
+        )
 
         # Remove internal sort/debug keys.
         #
@@ -6136,6 +6251,120 @@ async def _attach_missing_ground_truth_traces(
         item["db_trace"] = summarize_missing_ground_truth_db_trace(
             item, matches, now=now
         )
+
+
+def _feed_item_may_be_askable(data: dict, now: datetime) -> bool:
+    """Could the venue-settlement gate admit this served event card? (#5811)
+
+    A cheap pre-filter over the SERVED dict, so the ordinary page issues no
+    query: it must be a strict SUPERSET of
+    :func:`~app.utils.venue_settlement.venue_settlement_is_askable`, which
+    stays the only rule. The gate admits a scoreless row that is ``suspended``
+    or started-without-result — and the latter needs ``scheduled`` and a start
+    more than ``UPCOMING_GRACE`` ago. ``live`` is never admitted on a list
+    (``askable_briefs`` passes ``live_claim_is_unbacked=False``).
+
+    An unparseable start keeps a ``scheduled`` card IN — the row re-read decides.
+    """
+    from app.utils.event_completion import UPCOMING_GRACE
+
+    if data.get("home_score") is not None or data.get("away_score") is not None:
+        return False
+    status = (data.get("status") or "").strip().lower()
+    if status == EVENT_SUSPENDED:
+        return True
+    if status != "scheduled":
+        return False
+    raw = data.get("commence_time")
+    try:
+        start = _utc(
+            raw if isinstance(raw, datetime) else datetime.fromisoformat(str(raw))
+        )
+    except (TypeError, ValueError):
+        return True
+    return start is None or start < now - UPCOMING_GRACE
+
+
+async def _attach_feed_venue_settlement(db, feed_items: list, now: datetime) -> None:
+    """#5811: a feed game card the venue already graded carries the verdict.
+
+    ``/sports`` → Live & Paused printed "No result reported · Sep 29" over
+    Borando–Escuza (``15320966``) while ``/events/15320966`` read
+    ``Settled · Ian Escuza wins``: every other door onto the shared card — the
+    detail route (#6381), the league rails (#6739), ``/api/events`` and search
+    (#7092), the dropdown (#9550) — attaches ``venue_settled`` /
+    ``venue_settled_result``, and the feed did not. Same shared reader, same
+    gate, same key names, so the feed cannot answer one row differently.
+
+    🔴 THE GATE READS THE ROW, NOT THE CARD, as #9550's does: the briefs are
+    built from a re-read of the row's own status, start and score. The served
+    dict only narrows WHICH rows are re-read (:func:`_feed_item_may_be_askable`).
+
+    Matched by id, never by position; only the two keys are copied, only when
+    the reader returned them, so a failed read leaves every card exactly as it
+    was (the reader's absent-vs-False contract). Fail-open: this is ``/api/feed``.
+    Producer half only — the section and the card are ux's (notice 41).
+    """
+    from types import SimpleNamespace
+
+    from app.utils.venue_settlement import VENUE_CLOSED_NO_WINNER_KEY
+    from app.utils.venue_settlement_reader import attach_venue_settlement
+
+    cards_by_id: dict[int, list[dict]] = {}
+    for item in feed_items:
+        if not isinstance(item, dict) or item.get("type") != "event":
+            continue
+        data = item.get("data")
+        if not isinstance(data, dict) or not isinstance(data.get("id"), int):
+            continue
+        if _feed_item_may_be_askable(data, now):
+            cards_by_id.setdefault(data["id"], []).append(data)
+    if not cards_by_id:
+        return
+
+    try:
+        result = await db.execute(
+            select(
+                Event.id,
+                Event.status,
+                Event.commence_time,
+                Event.home_team_name,
+                Event.away_team_name,
+                Event.home_score,
+                Event.away_score,
+                Event.win_probability_sources,
+            ).where(Event.id.in_(list(cards_by_id)))
+        )
+        # Plain scalars, never live ORM rows (gotcha #6). The start is made
+        # tz-aware because the gate answers a naive/aware TypeError with False.
+        rows = [
+            SimpleNamespace(
+                **{**dict(r._mapping), "commence_time": _utc(r.commence_time)}
+            )
+            for r in result.all()
+        ]
+        briefs = [
+            {
+                "id": row.id,
+                "status": served_event_status(row.status, row.commence_time, now),
+                "home_score": row.home_score,
+                "away_score": row.away_score,
+            }
+            for row in rows
+        ]
+        await attach_venue_settlement(db, rows, briefs, now)
+    except Exception:
+        logger.debug("Feed venue settlement attach skipped", exc_info=True)
+        return
+
+    for brief in briefs:
+        if "venue_settled" not in brief:
+            continue
+        for data in cards_by_id.get(int(brief["id"]), []):
+            data["venue_settled"] = brief["venue_settled"]
+            data["venue_settled_result"] = brief.get("venue_settled_result")
+            if brief.get(VENUE_CLOSED_NO_WINNER_KEY) is True:
+                data[VENUE_CLOSED_NO_WINNER_KEY] = True
 
 
 def _utc(dt: datetime | None) -> datetime | None:
@@ -7290,7 +7519,7 @@ def _card_outcome_name(outcome) -> Optional[str]:
     whose ticker says `CWS` is left truncated rather than renamed to the wrong
     club.
     """
-    return repair_field_outcome_name(outcome.external_id, outcome.name) or outcome.name
+    return reader_outcome_name(outcome.external_id, outcome.name) or outcome.name
 
 
 def _card_display_names(outcomes) -> dict[str, str]:
@@ -9082,54 +9311,68 @@ async def _load_personalization_context(
         prefs = prefs_result.scalar_one_or_none()
         pins = list(pins_result.scalars().all())
 
-    # Recent Discover behaviour — these DO run for a session-only principal,
-    # because a session can carry interactions even with no user attached.
-    interactions_result = await db.execute(
-        select(
-            DiscoverInteraction.category,
-            DiscoverInteraction.action,
-            func.count(DiscoverInteraction.id).label("count"),
+    # #9645 / #9236 (Alex, 2026-09-29): "No preference is learned without
+    # sign-in; browsing remains free." The two rollups below are the LEARNING
+    # reads — category and feature affinities — so they run only for a signed-in
+    # reader and read only rows that reader wrote while signed in
+    # (`user_id == user.id`, never the session arm). A signed-out swipe is still
+    # recorded (released clients keep their contract, diagnostics keep the row)
+    # and still hides its exact card via the recent-items read, which DOES keep
+    # the session arm; it just cannot teach a taste — neither to the anonymous
+    # session nor to the account that later signs in on it.
+    category_interaction_rows: list = []
+    feature_interaction_rows: list = []
+    if user:
+        interactions_result = await db.execute(
+            select(
+                DiscoverInteraction.category,
+                DiscoverInteraction.action,
+                func.count(DiscoverInteraction.id).label("count"),
+            )
+            .where(
+                DiscoverInteraction.user_id == user.id,
+                DiscoverInteraction.created_at >= interaction_cutoff,
+                DiscoverInteraction.category.isnot(None),
+            )
+            .group_by(DiscoverInteraction.category, DiscoverInteraction.action)
         )
-        .where(
-            interaction_identity_clause,
-            DiscoverInteraction.created_at >= interaction_cutoff,
-            DiscoverInteraction.category.isnot(None),
+        # #5453: materialise once — `Result.all()` is single-use and both
+        # builders read the same (category, action, count) rollup.
+        category_interaction_rows = interactions_result.all()
+        feature_interactions_result = await db.execute(
+            select(
+                DiscoverInteraction.item_type,
+                DiscoverInteraction.item_name,
+                DiscoverInteraction.category,
+                DiscoverInteraction.action,
+                func.count(DiscoverInteraction.id).label("count"),
+            )
+            .where(
+                DiscoverInteraction.user_id == user.id,
+                DiscoverInteraction.created_at >= interaction_cutoff,
+                DiscoverInteraction.item_name.isnot(None),
+                DiscoverInteraction.category.isnot(None),
+                DiscoverInteraction.action.in_(
+                    (
+                        "detail_click",
+                        "open",
+                        "share",
+                        "like",
+                        "unlike",
+                        "dismiss",
+                        "group_expand",
+                        "context_expand",
+                    )
+                ),
+            )
+            .group_by(
+                DiscoverInteraction.item_type,
+                DiscoverInteraction.item_name,
+                DiscoverInteraction.category,
+                DiscoverInteraction.action,
+            )
         )
-        .group_by(DiscoverInteraction.category, DiscoverInteraction.action)
-    )
-    feature_interactions_result = await db.execute(
-        select(
-            DiscoverInteraction.item_type,
-            DiscoverInteraction.item_name,
-            DiscoverInteraction.category,
-            DiscoverInteraction.action,
-            func.count(DiscoverInteraction.id).label("count"),
-        )
-        .where(
-            interaction_identity_clause,
-            DiscoverInteraction.created_at >= interaction_cutoff,
-            DiscoverInteraction.item_name.isnot(None),
-            DiscoverInteraction.category.isnot(None),
-            DiscoverInteraction.action.in_(
-                (
-                    "detail_click",
-                    "open",
-                    "share",
-                    "like",
-                    "unlike",
-                    "dismiss",
-                    "group_expand",
-                    "context_expand",
-                )
-            ),
-        )
-        .group_by(
-            DiscoverInteraction.item_type,
-            DiscoverInteraction.item_name,
-            DiscoverInteraction.category,
-            DiscoverInteraction.action,
-        )
-    )
+        feature_interaction_rows = feature_interactions_result.all()
     recent_items_result = await db.execute(
         select(
             DiscoverInteraction.item_type,
@@ -9176,18 +9419,15 @@ async def _load_personalization_context(
     pinned_event_ids = {p.target_id for p in pins if p.pin_type == "event"}
     pinned_futures_ids = {p.target_id for p in pins if p.pin_type == "future"}
 
-    # #5453: materialise once — `Result.all()` is single-use and both builders read
-    # the same (category, action, count) rollup. Calling `.all()` twice would hand
-    # the second builder an empty list, which is exactly the silent-zero shape that
-    # left `discover_category_negative_counts` write-dead in the first place.
-    _category_interaction_rows = interactions_result.all()
-    category_affinities = _build_discover_category_affinities(_category_interaction_rows)
+    # #5453: both builders read the ONE materialised rollup above. Calling
+    # `.all()` twice would hand the second builder an empty list, which is
+    # exactly the silent-zero shape that left `discover_category_negative_counts`
+    # write-dead in the first place.
+    category_affinities = _build_discover_category_affinities(category_interaction_rows)
     category_negative_counts = _build_discover_category_negative_counts(
-        _category_interaction_rows
+        category_interaction_rows
     )
-    feature_affinities = _build_discover_feature_affinities(
-        feature_interactions_result.all()
-    )
+    feature_affinities = _build_discover_feature_affinities(feature_interaction_rows)
     recent_seen_event_ids: set[int] = set()
     recent_seen_futures_ids: set[int] = set()
     recent_seen_event_at: dict[int, datetime] = {}
@@ -9232,7 +9472,17 @@ async def _load_personalization_context(
                     sk = compute_story_key(item_name, category or "")
                     if sk:
                         recent_dismissed_story_keys.add(sk)
-                    if len(recent_dismissed_feature_token_sets) < 50:
+                    # #9645 / CERT-3826: a sports negative carries NO
+                    # resemblance set. Dropping only its `team:`/`region:` tokens
+                    # was not enough — the `term:` tokens left behind still
+                    # softly penalised a distinct card by wording ("Aaron Judge
+                    # over 40 home runs" swiped ⇒ "over 50" at 0.70). The exact
+                    # card and its story key above are the whole of it.
+                    if (
+                        user
+                        and len(recent_dismissed_feature_token_sets) < 50
+                        and not _is_sports_feedback(category, item_type)
+                    ):
                         recent_dismissed_feature_token_sets.append(
                             _discover_semantic_tokens(
                                 item_name=item_name,
@@ -9399,6 +9649,12 @@ def _build_discover_category_affinities(rows) -> dict[str, float]:
     for category, action, count in all_rows:
         if action not in weights:
             continue
+        # #9645: a sports negative is exact/story scoped (the recent-items loop
+        # in `_load_personalization_context`). It neither lowers the sport's
+        # score nor counts toward the two-action minimum, so unrelated MLB
+        # swipes cannot cancel the Red Sox opens beside them.
+        if _is_sports_negative(category, action):
+            continue
         # CERT-2672: the rollup is keyed by ONE canonical category, not by
         # whichever vocabulary the card that produced the swipe happened to use.
         # An event card writes the sport-key root (`americanfootball`), a
@@ -9468,6 +9724,10 @@ def _build_discover_category_negative_counts(rows) -> dict[str, int]:
     counts: dict[str, int] = {}
     for category, action, count in rows:
         if action not in _DISCOVER_NEGATIVE_ACTIONS:
+            continue
+        # #9645: the escalation ladder is a whole-category downrank, which a
+        # sports negative no longer teaches — same skip as the affinity builder.
+        if _is_sports_negative(category, action):
             continue
         # Same canonical key as the affinity builder above (CERT-2672). These
         # two dictionaries are looked up with one category by
@@ -9785,6 +10045,12 @@ def _build_discover_feature_affinities(rows) -> dict[str, float]:
     for item_type, item_name, category, action, count in rows:
         if action not in weights:
             continue
+        # #9645: every token a sports card derives — `category:`, `type:`,
+        # `format:matchup`, `archetype:`, `region:`, `team:`, both teams'
+        # `entity:` names — is broader than the card. A sports negative adds to
+        # none of them; its exact card and story are suppressed separately.
+        if _is_sports_negative(category, action, item_type):
+            continue
         tokens = _discover_feature_tokens(
             item_name=item_name,
             category=category,
@@ -9858,6 +10124,7 @@ async def _score_events(
     my_team_names: Optional[list] = None,
     tag_filter: Optional[list[str]] = None,
     static_tag_filter: Optional[list[str]] = None,
+    price_refresh_events: list | None = None,
 ) -> list[dict]:
     """Score and format events for the feed.
 
@@ -10056,8 +10323,13 @@ async def _score_events(
         )
         query = query.limit(EVENT_CANDIDATE_BUDGET)  # Safety cap (all events)
 
-    result = await db.execute(query)
-    events = result.scalars().all()
+    if price_refresh_events is None:
+        result = await db.execute(query)
+        events = result.scalars().all()
+    else:
+        # Already-painted exact identities, freshly loaded/folded by price-cards.
+        # No candidate pool, pagination, ranking or response cache is traversed.
+        events = list(price_refresh_events)
 
     if not events:
         return []
@@ -10088,28 +10360,29 @@ async def _score_events(
     # improvement to the page, never a precondition for having one. If anything
     # in it raises, the feed serves the unfolded candidate set — the bug Alex
     # reported — instead of serving nothing.
-    try:
-        _fold = fold_twin_events(events)
-        if _fold.dropped_ids:
-            for _survivor_id, _merged in _fold.merged_sources.items():
-                _survivor = next(e for e in _fold.events if e.id == _survivor_id)
-                set_committed_value(_survivor, "win_probability_sources", _merged)
-            logger.info(
-                "feed twin fold: %d duplicate event rows collapsed, %d cards gained "
-                "a venue (dropped=%s)",
-                _fold.folded_count,
-                len(_fold.merged_sources),
-                _fold.dropped_ids[:20],
-            )
-            events = _fold.events
-    except Exception:
-        logger.exception("feed twin fold failed; serving the unfolded candidate set")
+    if price_refresh_events is None:
+        try:
+            _fold = fold_twin_events(events)
+            if _fold.dropped_ids:
+                for _survivor_id, _merged in _fold.merged_sources.items():
+                    _survivor = next(e for e in _fold.events if e.id == _survivor_id)
+                    set_committed_value(_survivor, "win_probability_sources", _merged)
+                logger.info(
+                    "feed twin fold: %d duplicate event rows collapsed, %d cards gained "
+                    "a venue (dropped=%s)",
+                    _fold.folded_count,
+                    len(_fold.merged_sources),
+                    _fold.dropped_ids[:20],
+                )
+                events = _fold.events
+        except Exception:
+            logger.exception("feed twin fold failed; serving the unfolded candidate set")
 
     # Batch fallback: for events where _compute_aggregate_probability() returns
     # None, query the latest win_prob_snapshot per event. This catches
     # Kalshi/Polymarket pregame data that's only in snapshots (not on Event model).
     snapshot_fallbacks: dict[int, float] = {}
-    events_needing_fallback = [
+    events_needing_fallback = [] if price_refresh_events is not None else [
         e for e in events if _compute_aggregate_probability(e) is None
     ]
     if events_needing_fallback:
@@ -10178,7 +10451,7 @@ async def _score_events(
     scored_items = []
     user_team_ids = set(ctx.team_relations.keys()) if my_teams_only else set()
 
-    champ_probs = await _get_championship_probabilities(db)
+    champ_probs = {} if price_refresh_events is not None else await _get_championship_probabilities(db)
 
     from app.utils.feed_scoring import (
         apply_completed_freshness_decay,
@@ -10203,7 +10476,7 @@ async def _score_events(
 
     for event in events:
         try:
-            if not my_teams_only:
+            if not my_teams_only and price_refresh_events is None:
                 if event.id in ctx.recent_dismissed_event_ids:
                     continue
                 if event.id in ctx.recent_seen_event_ids and event.status != "live":
@@ -10256,13 +10529,29 @@ async def _score_events(
             current_away_prob = (
                 round(1.0 - current_home_prob, 6) if current_home_prob is not None else None
             )
+            if price_refresh_events is not None:
+                # The displayed quote is the same authoritative folded hero as
+                # detail. Opening-only/final-unresolved is not a current quote.
+                from app.utils.draw_priced_winner import printable_away
+
+                price_hero = resolve_hero(event)
+                current_home_prob = None
+                current_away_prob = None
+                if price_hero is not None and price_hero.source in ("blend", "settled"):
+                    current_home_prob = price_hero.home_probability
+                    current_away_prob = price_hero.away_probability
+                    if price_hero.source != "settled":
+                        current_away_prob = printable_away(
+                            current_away_prob, current_home_prob,
+                            event.sport.key if event.sport else None,
+                        )
 
             # Skip events without any probability data:
             # - Scheduled: StatPal-created events not yet matched to Odds API
             # - Completed/closed with no scores: no odds movement, no final score
             #   = terrible UX (empty chart, no data). These are typically niche
             #   sports where only StatPal has schedules but no odds coverage.
-            if current_home_prob is None and event.status == "scheduled":
+            if price_refresh_events is None and current_home_prob is None and event.status == "scheduled":
                 continue
             # live/048 — `suspended` joins this skip, and admitting it to the
             # candidate query above is exactly why it has to. A row with no
@@ -10273,7 +10562,8 @@ async def _score_events(
             # being absent. That is most of the 89% esports mass, and this is
             # where it stops — on having no data, not on being suspended.
             if (
-                current_home_prob is None
+                price_refresh_events is None
+                and current_home_prob is None
                 and event.status in ("completed", "closed", EVENT_SUSPENDED)
                 and not event.home_score
                 and not event.away_score
@@ -10513,7 +10803,7 @@ async def _score_events(
             # — with the full penalty — is what ranks, which is the entire
             # behaviour of #5453.
             admission_score = _discover_admission_score(base_score, p_result)
-            if admission_score < min_score:
+            if price_refresh_events is None and admission_score < min_score:
                 continue
 
             # --- Completed-game freshness decay (#3484) ---
@@ -12123,6 +12413,7 @@ async def _score_futures(
     broaden_config: dict[str, float | bool] | None = None,
     capture_broadened: dict | None = None,
     category_filter: Optional[str] = None,
+    price_refresh: bool = False,
 ) -> list[dict]:
     """Score and format futures markets for the feed.
 
@@ -12139,6 +12430,8 @@ async def _score_futures(
     Every market is then scored once instead of twice; the measured cost of the
     second scoring was ~383 ms of every cold Discover build.
     """
+    if price_refresh and (preloaded_base is None or preloaded_base.get("markets") is None):
+        raise ValueError("price refresh requires freshly loaded exact markets")
     timing_previous_at = time.perf_counter()
     config = config or _discover_runtime_config_defaults()
     stale_no_movement_days = float(config.get("stale_no_movement_days", 2))
@@ -12451,9 +12744,15 @@ async def _score_futures(
     candidate_canonical_keys = {
         market.canonical_market_key for market in markets if market.canonical_market_key
     }
-    canonical_source_counts = await _get_canonical_source_counts(
-        db, keys=candidate_canonical_keys
-    )
+    fresh_source_names = None
+    if price_refresh:
+        canonical_source_counts, fresh_source_names = await _query_canonical_source_counts(
+            db, keys=candidate_canonical_keys
+        )
+    else:
+        canonical_source_counts = await _get_canonical_source_counts(
+            db, keys=candidate_canonical_keys
+        )
     mark_timing("canonical_counts")
 
     # #6550: the leader's verb, resolved for the whole pool in one PK SELECT.
@@ -12465,78 +12764,79 @@ async def _score_futures(
     mark_timing("team_names")
 
     # --- Load precomputed interestingness scores from Redis ---
-    try:
-        # Queue 271: shared client + bounded ops (no per-request pool, no
-        # unbounded await on a large MGET). A Redis stall degrades to no-blend.
-        from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
+    if not price_refresh:
+        try:
+            # Queue 271: shared client + bounded ops (no per-request pool, no
+            # unbounded await on a large MGET). A Redis stall degrades to no-blend.
+            from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
 
-        _int_redis = await get_shared_async_redis()
-        # A caller may pin the weight for THIS scoring pass only — the
-        # ratification diagnostic (LAT-P043) renders one slate at two weights
-        # and must not touch the live key to do it. Deliberately an in-process
-        # argument rather than a second Redis key: a diagnostic that switches
-        # the blend on for real users, even briefly, is the exact accident
-        # Alex's dark ruling exists to prevent. Absent from the runtime config
-        # defaults, so the served path is byte-identical to before.
-        _weight_override = (config or {}).get("interestingness_blend_weight_override")
-        # Read the blend weight. ABSENT MEANS DARK — LAT-P043, Alex's ruling of
-        # 2026-08-12: the interestingness signal stays off until he has seen a
-        # side-by-side and ratified a weight, so the blend requires an explicit
-        # key and there is no implicit one.
-        #
-        # This used to default to 0.2, which made the ruled-OFF state depend on
-        # a cache entry surviving. The kill switch lives in a 100 MB Redis under
-        # `allkeys-lru` with no TTL (measured 2026-08-12: 36.3 MB used,
-        # evicted_keys 0) — so eviction, a flush, or a plan migration would have
-        # silently turned the blend back ON, and nothing would have reported it.
-        # A switch whose "off" position is the absence of a key fails open.
-        # Fail dark instead: to enable the blend, set the key.
-        if _weight_override is not None:
-            raw_weight = str(_weight_override)
-        else:
-            _weight_res = await bounded_redis_call(
-                lambda: _int_redis.get("interestingness:blend_weight")
-            )
-            raw_weight = _weight_res.value if _weight_res.is_ok else None
-        if raw_weight is not None:
-            try:
-                _interestingness_blend_weight = float(
-                    raw_weight.decode()
-                    if isinstance(raw_weight, bytes)
-                    else str(raw_weight)
+            _int_redis = await get_shared_async_redis()
+            # A caller may pin the weight for THIS scoring pass only — the
+            # ratification diagnostic (LAT-P043) renders one slate at two weights
+            # and must not touch the live key to do it. Deliberately an in-process
+            # argument rather than a second Redis key: a diagnostic that switches
+            # the blend on for real users, even briefly, is the exact accident
+            # Alex's dark ruling exists to prevent. Absent from the runtime config
+            # defaults, so the served path is byte-identical to before.
+            _weight_override = (config or {}).get("interestingness_blend_weight_override")
+            # Read the blend weight. ABSENT MEANS DARK — LAT-P043, Alex's ruling of
+            # 2026-08-12: the interestingness signal stays off until he has seen a
+            # side-by-side and ratified a weight, so the blend requires an explicit
+            # key and there is no implicit one.
+            #
+            # This used to default to 0.2, which made the ruled-OFF state depend on
+            # a cache entry surviving. The kill switch lives in a 100 MB Redis under
+            # `allkeys-lru` with no TTL (measured 2026-08-12: 36.3 MB used,
+            # evicted_keys 0) — so eviction, a flush, or a plan migration would have
+            # silently turned the blend back ON, and nothing would have reported it.
+            # A switch whose "off" position is the absence of a key fails open.
+            # Fail dark instead: to enable the blend, set the key.
+            if _weight_override is not None:
+                raw_weight = str(_weight_override)
+            else:
+                _weight_res = await bounded_redis_call(
+                    lambda: _int_redis.get("interestingness:blend_weight")
                 )
-            except (ValueError, TypeError):
-                # An unparsable weight is not a licence to pick one.
+                raw_weight = _weight_res.value if _weight_res.is_ok else None
+            if raw_weight is not None:
+                try:
+                    _interestingness_blend_weight = float(
+                        raw_weight.decode()
+                        if isinstance(raw_weight, bytes)
+                        else str(raw_weight)
+                    )
+                except (ValueError, TypeError):
+                    # An unparsable weight is not a licence to pick one.
+                    _interestingness_blend_weight = 0.0
+            else:
                 _interestingness_blend_weight = 0.0
-        else:
-            _interestingness_blend_weight = 0.0
 
-        if _interestingness_blend_weight > 0:
-            _int_keys = [f"interestingness:{mid}" for mid in market_ids]
-            if _int_keys:
-                _mget_res = await bounded_redis_call(
-                    lambda: _int_redis.mget(_int_keys),
-                    treat_none_as_miss=False,
-                )
-                _int_values = _mget_res.value if _mget_res.is_ok else None
-                _interestingness_cache = {}
-                for mid, raw_val in zip(market_ids, _int_values or []):
-                    if raw_val is not None:
-                        try:
-                            parsed = _json_module.loads(
-                                raw_val.decode()
-                                if isinstance(raw_val, bytes)
-                                else raw_val
-                            )
-                            _interestingness_cache[mid] = parsed
-                        except (ValueError, TypeError):
-                            pass
-    except Exception:
-        logger.debug(
-            "Interestingness cache load failed — skipping blend", exc_info=True
-        )
-        _interestingness_cache = None
-        _interestingness_blend_weight = 0.0
+            if _interestingness_blend_weight > 0:
+                _int_keys = [f"interestingness:{mid}" for mid in market_ids]
+                if _int_keys:
+                    _mget_res = await bounded_redis_call(
+                        lambda: _int_redis.mget(_int_keys),
+                        treat_none_as_miss=False,
+                    )
+                    _int_values = _mget_res.value if _mget_res.is_ok else None
+                    _interestingness_cache = {}
+                    for mid, raw_val in zip(market_ids, _int_values or []):
+                        if raw_val is not None:
+                            try:
+                                parsed = _json_module.loads(
+                                    raw_val.decode()
+                                    if isinstance(raw_val, bytes)
+                                    else raw_val
+                                )
+                                _interestingness_cache[mid] = parsed
+                            except (ValueError, TypeError):
+                                pass
+        except Exception:
+            logger.debug(
+                "Interestingness cache load failed — skipping blend", exc_info=True
+            )
+            _interestingness_cache = None
+            _interestingness_blend_weight = 0.0
     mark_timing("interestingness_cache")
 
     scored_items: list[dict] = []
@@ -12545,7 +12845,7 @@ async def _score_futures(
     for market in markets:
         try:
             is_recycled = False
-            if not my_teams_only:
+            if not my_teams_only and not price_refresh:
                 if market.id in ctx.recent_dismissed_futures_ids:
                     continue
                 if market.id in ctx.recent_seen_futures_ids:
@@ -12566,7 +12866,7 @@ async def _score_futures(
             # Skip markets past their resolution date (belt-and-suspenders;
             # base_filters should exclude these at the SQL level, but naive
             # datetime timezone mismatches can let them through — issue #486).
-            if market.resolution_date:
+            if market.resolution_date and not price_refresh:
                 res_dt = _utc(market.resolution_date)
                 if res_dt and res_dt < now:
                     continue
@@ -12579,7 +12879,7 @@ async def _score_futures(
             # Discover at live-looking probabilities for weeks. The title-implied
             # calendar already existed in market_staleness but was wired only
             # into the debug trace, never into this live path.
-            if _market_title_implied_stale_blocker(
+            if not price_refresh and _market_title_implied_stale_blocker(
                 market.name, market.llm_sport_category, now
             ):
                 continue
@@ -12899,7 +13199,7 @@ async def _score_futures(
                 strict_no_movement_days=_strict_no_movement_days,
                 strict_no_resolution_stale_days=_strict_no_resolution_days,
             )
-            if not runtime_filters["eligible"]:
+            if not price_refresh and not runtime_filters["eligible"]:
                 continue
             # LAT-P105: on the unfused path the gate WAS the strict gate, so
             # everything that got here is strict-eligible.
@@ -12929,7 +13229,7 @@ async def _score_futures(
             # >=99% or <=1%) with no live interest — the lone "100%"/"0%" junk cards
             # Manus flagged. Guarded: a genuine near-certain mover (>=10pt 24h swing)
             # or a high-volume market stays eligible.
-            if market.outcomes and is_locked_near_certain(
+            if not price_refresh and market.outcomes and is_locked_near_certain(
                 leader_prob,
                 max(
                     (
@@ -13155,9 +13455,9 @@ async def _score_futures(
                 external_id=market.external_id,
                 status=market.status,  # R6: resolved sports never surface
             )
-            if quality.quality_class == "suppress":
+            if not price_refresh and quality.quality_class == "suppress":
                 continue
-            if _should_skip_futures_for_recent_dismissal(
+            if not price_refresh and _should_skip_futures_for_recent_dismissal(
                 market=market,
                 quality=quality,
                 ctx=ctx,
@@ -13495,11 +13795,11 @@ async def _score_futures(
 
             # "If it's wild" — higher bar for low-affinity futures too
             is_low_affinity = any("sport_suppress" in r for r in p_result.reasons)
-            if is_low_affinity and not my_teams_only and admission_score < 55:
+            if not price_refresh and is_low_affinity and not my_teams_only and admission_score < 55:
                 continue
 
             # Filter low-signal futures (my_teams_only shows everything)
-            if not my_teams_only and admission_score < 15:
+            if not price_refresh and not my_teams_only and admission_score < 15:
                 continue
 
             reason = generate_futures_reason(
@@ -13528,7 +13828,7 @@ async def _score_futures(
             )
 
             source_names = (
-                (_canonical_source_names_cache or {}).get(
+                (fresh_source_names if fresh_source_names is not None else (_canonical_source_names_cache or {})).get(
                     market.canonical_market_key, [market.source]
                 )
                 if market.canonical_market_key
@@ -13764,6 +14064,11 @@ async def _score_futures(
             )
             continue
     mark_timing("scoring_loop")
+
+    if price_refresh:
+        # Hydrate every requested leaf independently. Existing parent/group
+        # membership belongs to the held page, not this price response.
+        return scored_items
 
     def _dedupe_and_cap(items: list[dict]) -> list[dict]:
         # Dedup by group_id: keep only the highest-scoring market per group.
@@ -14379,12 +14684,17 @@ async def _score_golf_tournaments(
         # Build the reason text
         leader = golfers[0]
         leader_pct = round(leader["probability"] * 100, 1)
+        champion = t.get("champion")
         # `or`, not a .get() default: UX-P185 lets `tour_label` be present-and-None
         # for a tournament whose tour we cannot evidence, and a .get() default only
         # fires on an ABSENT key — this line would otherwise read "None: X leads…".
-        reason = (
-            f"{t.get('tour_label') or 'Golf'}: {leader['name']} leads at {leader_pct}%"
-        )
+        if champion:
+            # #9212: a decided tournament has a winner, not a leader at a price.
+            reason = f"{t.get('tour_label') or 'Golf'}: {champion} won"
+        else:
+            reason = (
+                f"{t.get('tour_label') or 'Golf'}: {leader['name']} leads at {leader_pct}%"
+            )
         # #7179 — the DATED move, or no movement clause. This is the fourth
         # claim-producing path #4079's A8 did not reach: the other three share
         # `_dated_movement_change`, which keys a banked basis on `outcome_id`,
@@ -14413,7 +14723,8 @@ async def _score_golf_tournaments(
         # so the same tournaments appear in the same order. This narrows what a
         # card may SAY, never what a reader is SHOWN — the rule A8 shipped under.
         if (
-            leader.get("movement_is_dated")
+            not champion
+            and leader.get("movement_is_dated")
             and leader.get("movement_24h")
             and abs(leader["movement_24h"]) >= 0.01
         ):
@@ -14434,7 +14745,9 @@ async def _score_golf_tournaments(
         # Build headline
         headline = None
         is_live = _tournament_is_live(t, now)
-        if is_live:
+        if champion:
+            headline = "Final"
+        elif is_live:
             headline = "Live"
         elif t.get("start_date"):
             start = datetime.fromisoformat(t["start_date"])
@@ -14461,6 +14774,10 @@ async def _score_golf_tournaments(
             "schedule_status": t.get("schedule_status"),
             "commence_time": t.get("commence_time"),
             "resolution_date": t.get("resolution_date"),
+            # #9212: who won, once ESPN calls the tournament final; None until
+            # then. Spelled as this card's own field row spells the golfer, so a
+            # client can find the row by name (a team side may stay ESPN's word).
+            "champion": champion,
             "golfers": [
                 {
                     "name": g["name"],
@@ -14591,6 +14908,11 @@ def _drop_futures_blended_into_tournaments(items: list[dict]) -> list[dict]:
 
 def _tournament_is_live(t: dict, now: datetime) -> bool:
     """Check if a tournament is currently live."""
+    # #9212: ESPN called it final. Checked first, because every arm below can
+    # still say yes to a tournament that has ended: the date window runs 12h past
+    # the last day, and a winner's 24h movement outlives the final putt.
+    if t.get("champion"):
+        return False
     if t.get("schedule_status") == "in-progress":
         return True
     if t.get("start_date") and t.get("end_date"):

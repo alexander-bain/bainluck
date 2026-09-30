@@ -1,0 +1,14 @@
+[
+  {
+    "path": "backend/app/routes/feed_prices.py",
+    "sha256": "0d837e40e4419ed50cf03da02dfdd737a2402bfcded59992216d4a7e934bc033"
+  },
+  {
+    "path": "backend/tests/test_feed_price_cards_9515.py",
+    "sha256": "1299bbfcc01259fc613e30f3ed3503d880d782d80d27c86ea49f8a95876d01f1"
+  },
+  {
+    "path": "artifacts/feed-prices-9515/API.md",
+    "sha256": "874ac00b79df6c35d421a74ea739ca49aaff1a2c164cf52b377f3976b6d4111a"
+  }
+]

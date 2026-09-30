@@ -78,13 +78,28 @@ export const UPCOMING_GRACE_MS = 2 * 60 * 60 * 1000;
  * the clock is one we have no standing to move off the schedule, and `new
  * Date("").getTime()` is `NaN`, which compares false against everything — so
  * the guard is written out rather than left to that accident.
+ *
+ * ── #9634: THE SERVED ANSWER OUTRANKS THE CLOCK ──
+ *
+ * `served` is the payload's own `started_without_result`, computed by
+ * `event_completion.started_without_result` — the same clock, plus the two
+ * things only the server can see: a fresh ESPN "not started" stamp (#9195)
+ * and a StatPal later-session hold (#9613). Recomputing from the clock alone
+ * threw both away: `/events/15320754` (a China Open doubles match StatPal has
+ * at 02:00Z) served `false` and its hero still read "No result reported".
+ * So a boolean wins; the clock answers only when the key is ABSENT (the feed,
+ * search and league envelopes do not carry it). The status gate still runs
+ * first — the server's predicate is `scheduled`-only too, so a `true` on any
+ * other status would be a payload we have no reading for.
  */
 export function startedWithoutResult(
   status: string | null | undefined,
   commenceTime: string | null | undefined,
   now: number = Date.now(),
+  served?: boolean | null,
 ): boolean {
   if (status !== "scheduled") return false;
+  if (typeof served === "boolean") return served;
   if (!commenceTime) return false;
   const t = new Date(commenceTime).getTime();
   if (!Number.isFinite(t)) return false;
@@ -103,13 +118,36 @@ export function startedWithoutResult(
  * `isSuspendedStatus` stays, and stays narrow: it answers "is the status
  * literally `suspended`", which is the right question for anything reasoning
  * about the ladder's own vocabulary rather than about pixels.
+ *
+ * `served` is the payload's `started_without_result` — pass it wherever the
+ * payload carries it (#9634, see {@link startedWithoutResult}).
  */
 export function hasNoReportedResult(
   status: string | null | undefined,
   commenceTime: string | null | undefined,
   now: number = Date.now(),
+  served?: boolean | null,
 ): boolean {
-  return isSuspendedStatus(status) || startedWithoutResult(status, commenceTime, now);
+  return (
+    isSuspendedStatus(status) ||
+    startedWithoutResult(status, commenceTime, now, served)
+  );
+}
+
+/**
+ * #9634 — the server holds this `scheduled` row as not started although the
+ * clock alone says its time ran out: a fresh ESPN "not started" stamp (#9195)
+ * or a StatPal later-session hold (#9613). Only the served `false` PAST the
+ * grace says that — inside the grace the server's `false` is the same clock,
+ * so it proves nothing and #6031's "Started" stands.
+ */
+export function serverHeldPastKickoff(
+  status: string | null | undefined,
+  commenceTime: string | null | undefined,
+  now: number = Date.now(),
+  served?: boolean | null,
+): boolean {
+  return served === false && startedWithoutResult(status, commenceTime, now);
 }
 
 /**
@@ -147,6 +185,21 @@ export const SUSPENDED_DESCRIPTION =
  * scoreboard never arrived.
  */
 export const VENUE_SETTLED_LABEL = "Settled";
+
+/**
+ * #5811 — what a card says when the venue CLOSED the contest with no winner:
+ * a draw, a no contest, a split settlement. Production 2026-09-30, `/sports`
+ * at 390px: Visconde v Bulaid (15320964, UFC, `suspended`, no score) sat under
+ * "Live & Paused" reading "No result reported" hours after Kalshi finalized
+ * both fight markets as `scalar`. Nothing named a winner, so `venue_settled`
+ * was rightly false, and the card had no end state to give.
+ *
+ * Read off the producer's `venue_closed_no_winner` (live's PR #9821: every
+ * market on a scoreless row carries #7035's `venue_voided` stamp and no
+ * outcome from any source is a winner). The key is PRESENT ONLY WHEN TRUE —
+ * absent means "not established", never "still going".
+ */
+export const VENUE_CLOSED_NO_WINNER_LABEL = "Ended · no winner";
 
 /**
  * The sentence behind {@link VENUE_SETTLED_LABEL}, on the `title` where
@@ -204,10 +257,33 @@ export const VENUE_SETTLED_DESCRIPTION =
 export function venueSettledSummary(
   venueSettled: boolean | null | undefined,
   venueSettledResult: string | null | undefined,
+  /** #5811 — {@link VENUE_CLOSED_NO_WINNER_LABEL}. A graded winner wins. */
+  venueClosedNoWinner?: boolean | null,
 ): string | null {
-  if (!venueSettled) return null;
+  if (!venueSettled) {
+    return venueClosedNoWinner === true ? VENUE_CLOSED_NO_WINNER_LABEL : null;
+  }
   const result = venueSettledResult?.trim();
   return result ? `${VENUE_SETTLED_LABEL} · ${result}` : VENUE_SETTLED_LABEL;
+}
+
+/**
+ * #9798 — did the venue close this match with NO winner (a void: walkover,
+ * withdrawal, a match never played)? The same rule {@link venueSettledSummary}
+ * applies to pick {@link VENUE_CLOSED_NO_WINNER_LABEL}: a graded winner wins.
+ *
+ * Its own answer, not `venueSettledSummary(...) !== null`, because the two
+ * mean opposite things to a market row. A venue-settled match's legs carry
+ * their grades; a voided match's legs were paid out at the void price
+ * (`is_winner=false` on BOTH sides, probability 0.5), so reading them as
+ * graded prints "Lost" beside every player — `/events/15321431` did exactly
+ * that at 390px on 2026-09-30, four "Lost"s under an "Ended · no winner" pill.
+ */
+export function isVenueVoided(
+  venueSettled: boolean | null | undefined,
+  venueClosedNoWinner: boolean | null | undefined,
+): boolean {
+  return !venueSettled && venueClosedNoWinner === true;
 }
 
 /**
@@ -335,13 +411,45 @@ export function authorityStoppageDescription(
  * Lives here rather than inline for the reason #5885 moved `hasStarted` into
  * `pageLiveClaimIsUnbacked`: a Next.js page carries no named exports, so a
  * ternary in the JSX is a decision no test can hold.
+ *
+ * #9634 — `heldByServer` ({@link serverHeldPastKickoff}): the server has said
+ * this match has NOT begun though its stamp is hours past, so "Started" would
+ * trade "No result reported" for a different false claim. It is not started;
+ * it is pregame.
  */
 export function startBadgeLabel(
   hasStarted: boolean,
   countdown: string | null | undefined,
+  heldByServer: boolean = false,
+  playedBeforeClock: boolean = false,
 ): string {
-  if (hasStarted) return "Started";
+  if (hasStarted && !heldByServer) return "Started";
+  // #9780 — games already on the board: the clock is when play RESUMES.
+  if (playedBeforeClock) return countdown ? `Resumes in ${countdown}` : "Paused";
   return countdown ? `Starts in ${countdown}` : "Pregame";
+}
+
+/**
+ * #9780 — AN INTERRUPTED MATCH: THE CLOCK SAYS LATER, THE BOARD SAYS PLAYED.
+ *
+ * Lehecka v Bergs (`/events/15320485`, 2026-09-30) played a set, 6-3, and was
+ * stopped; ESPN moved the rest of it to Oct 1 05:00Z. The row carried that
+ * future `commence_time` beside a linescore of `[[6, 3]]`, and the hero read
+ * "Starts in 14h 13m" with no score — a match a set in, announced as not begun.
+ *
+ * A game on the board is evidence the match has been played; a future clock on
+ * such a row can only be the resumption. Same "has it produced a game at all"
+ * test as `liveHeroGamesLine`: `[[0, 0]]` is not play. A finished match is
+ * never interrupted — it has a result.
+ */
+export function playedBeforeItsClock(input: {
+  hasStarted: boolean;
+  isFinished: boolean;
+  linescore?: { sets?: [number, number][] | null } | null;
+}): boolean {
+  if (input.hasStarted || input.isFinished) return false;
+  const sets = input.linescore?.sets ?? [];
+  return sets.some(([home, away]) => home > 0 || away > 0);
 }
 
 /**
@@ -470,10 +578,32 @@ export function blendCaptionIsStale(
  * Passed by the two LEAGUE-PAGE callers, which read `Event` and so can carry
  * the keys: `lib/sports/leagueSections` (the bucket a reader sees) and
  * `lib/sports/leagueHorizon` (whose docblock states it must agree with that
- * bucket — a settled match is not "the league is playing right now"). The feed
- * and My Stuff read `FeedEventData`, which carries neither key, so they pass
- * nothing and are byte-for-byte unaffected; when that envelope gains them, the
- * call sites are the second half of that change, exactly as for `#3211`'s time.
+ * bucket — a settled match is not "the league is playing right now"). #5811:
+ * `FeedEventData` gained the keys (live's #9728), and the feed's two callers
+ * now pass them through `feedEventSectionKey` in `lib/feedSections` — the
+ * second half named here. My Stuff still passes nothing and is unaffected.
+ *
+ * ── #9265: A CALLED-OFF GAME WAS NEVER STARTED, SO IT IS NOT "PAUSED" ──
+ *
+ * The opening premise — a suspended row "started, it has not finished" — is
+ * false for the row whose authority told us it was called off. Production
+ * 2026-09-28 02:2xZ, `/sports/baseball_mlb` at 390px: the page opened on
+ * `Live & Paused 1`, and the one card under it (Orioles @ Yankees, 15319530,
+ * `espn.period: "Postponed"`, no score) read `Postponed · Sep 27`. Nothing on
+ * the page was live or paused.
+ *
+ * `settlement.stoppage` is `authorityStoppageLabel`'s answer (the #8810
+ * allowlist in `lib/gameTimeLabel`, the one home for reading `espn.period`),
+ * resolved by the caller and passed as the LABEL — the same contract
+ * `suspendedSummary` takes, and the reason this module still imports nothing.
+ * A labelled suspended row files under "finished": the question is settled
+ * for today, and the card above the heading already says why in the
+ * authority's own word, so the bucket claims no result the card does not.
+ *
+ * Keyed on `isSuspendedStatus` so the label can only re-file a row the ladder
+ * already put in the live bucket for want of an answer: a stray word on a
+ * `live` row cannot move it. Passed by the same two league-page callers as
+ * #7112's settlement; the feed and My Stuff pass nothing and are unaffected.
  */
 export function eventSectionKey(
   status: string | null | undefined,
@@ -482,21 +612,29 @@ export function eventSectionKey(
   settlement?: {
     venue_settled?: boolean | null;
     venue_settled_result?: string | null;
+    /** #5811 — see {@link VENUE_CLOSED_NO_WINNER_LABEL}. */
+    venue_closed_no_winner?: boolean | null;
+    stoppage?: string | null;
+    /** #9634 — the served `started_without_result`, when the payload has it. */
+    started_without_result?: boolean | null;
   } | null,
 ): "live" | "finished" | "upcoming" {
+  const served = settlement?.started_without_result;
+  if (settlement?.stoppage && isSuspendedStatus(status)) return "finished";
   if (
     settlement &&
-    hasNoReportedResult(status, commenceTime, now) &&
+    hasNoReportedResult(status, commenceTime, now, served) &&
     venueSettledSummary(
       settlement.venue_settled,
       settlement.venue_settled_result,
+      settlement.venue_closed_no_winner,
     ) !== null
   ) {
     return "finished";
   }
   if (status === "live" || isSuspendedStatus(status)) return "live";
   if (isFinishedStatus(status)) return "finished";
-  if (startedWithoutResult(status, commenceTime, now)) return "live";
+  if (startedWithoutResult(status, commenceTime, now, served)) return "live";
   return "upcoming";
 }
 

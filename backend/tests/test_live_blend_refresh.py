@@ -56,6 +56,54 @@ class TestThrottle:
         r._last_refresh_at[42] = 1000.0
         assert r._due(43, now=1001.0) is True
 
+    def test_the_default_floor_lets_every_flush_stamp_a_moving_event(self):
+        """#837 — Alex's live benchmark moves a price every 2s. A floor above
+        the WS flush coalesces real prices that were stored and never shown."""
+        from app.tasks import kalshi_ws
+        from app.tasks.live_blend_refresh import DEFAULT_MIN_REFRESH_INTERVAL_S
+
+        assert DEFAULT_MIN_REFRESH_INTERVAL_S <= kalshi_ws.PRICE_FLUSH_SECONDS
+        r = LiveBlendRefresher("kalshi")
+        r._last_refresh_at[42] = 1000.0
+        assert r._due(42, now=1000.0 + kalshi_ws.PRICE_FLUSH_SECONDS) is True
+
+
+class TestFailedRetryHold:
+    """At a 2s floor the throttle no longer spaces out retries of a FAILED
+    batch, so the hold does: a database in trouble is not asked again for the
+    same owed stamp on every flush."""
+
+    def test_a_failed_event_is_held_past_the_floor(self):
+        r = LiveBlendRefresher("kalshi")
+        r._last_refresh_at[42] = 1000.0
+        r._failed_hold_until[42] = 1000.0 + r.failed_retry_interval_s
+        assert r._due(42, now=1002.0) is False
+        assert r._due(42, now=1000.0 + r.failed_retry_interval_s) is True
+        assert 42 not in r._failed_hold_until
+
+    def test_the_hold_is_per_event(self):
+        r = LiveBlendRefresher("kalshi")
+        r._failed_hold_until[42] = 1005.0
+        assert r._due(43, now=1001.0) is True
+
+    @pytest.mark.asyncio
+    async def test_a_failed_batch_sets_the_hold_and_a_lock_retry_does_not(
+        self, monkeypatch,
+    ):
+        import app.tasks.live_blend_refresh as lbr
+
+        monkeypatch.setattr(lbr, "_mono", lambda: 1000.0)
+        r = LiveBlendRefresher("kalshi")
+        r._lock_retry = {7}
+
+        async def _fails(event_ids, now):
+            raise RuntimeError("database gone")
+
+        r._refresh_batch = _fails
+        await r.refresh([42])
+        assert r._failed_hold_until == {42: 1000.0 + r.failed_retry_interval_s}
+        assert r._lock_retry == {7}
+
 
 class TestShouldWrite:
     def test_first_value_for_an_event_is_written(self):
@@ -438,9 +486,10 @@ class TestSnapshotContainment:
 class _Result:
     """Just enough of a SQLAlchemy Result for the three shapes used here."""
 
-    def __init__(self, rows=None, scalar=None):
+    def __init__(self, rows=None, scalar=None, rev=None):
         self._rows = rows or []
         self._scalar = scalar
+        self._rev = rev
 
     def all(self):
         return self._rows
@@ -453,6 +502,10 @@ class _Result:
 
     def scalar_one_or_none(self):
         return self._scalar
+
+    def first(self):
+        # The stamp's `RETURNING win_probability_sources, ..._rev` (#9051).
+        return None if self._scalar is None else (self._scalar, self._rev)
 
 
 class _RecordingSession:
@@ -469,6 +522,8 @@ class _RecordingSession:
         self._market_rows = market_rows
         self._outcomes = outcomes
         self._returned = returned
+        #: #9051 — the revision the stamp's RETURNING reports beside the bag.
+        self.returned_rev = None
         self._selects = 0
         self.updates = []
         #: #837 — each event's stamp runs in a SAVEPOINT; this records how each
@@ -480,7 +535,7 @@ class _RecordingSession:
 
         if isinstance(statement, Update):
             self.updates.append(statement)
-            return _Result(scalar=self._returned)
+            return _Result(scalar=self._returned, rev=self.returned_rev)
         self._selects += 1
         if self._selects == 1:
             return _Result(rows=self._market_rows)
@@ -539,6 +594,8 @@ class TestTheFrameCarriesTheStoredBlend:
         )
         market = SimpleNamespace(id=10, event_id=1, name="Twins vs Yankees")
         session = _RecordingSession([(market, event)], [], returned)
+        # #9051: the revision the SAME UPDATE returned rides the frame.
+        session.returned_rev = 7
 
         @asynccontextmanager
         async def _fake_session():
@@ -588,6 +645,7 @@ class TestTheFrameCarriesTheStoredBlend:
         assert len(published) == 1, "the fast lane published nothing"
         assert published[0]["updated_at"] == returned["kalshi"]["updated_at"]
         assert r._dispositions[1][2] == published[0]["updated_at"]
+        assert published[0]["rev"] == {"1": 7}
         # `p` is the aggregate the hero renders — the field live/305's capture
         # showed disagreeing with itself 89 ms apart.
         got = published[0]["p"]

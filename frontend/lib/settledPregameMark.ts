@@ -32,6 +32,16 @@
  * the same `awayIsTheComplement` question the opening path already asks (the
  * caller passes the opening away already withheld by it). A three-way venue
  * reading that carries its draw falls short of 1 and is kept.
+ *
+ * ═══ THE LOSER'S NUMBER (#9490) ═══
+ *
+ * "Upset" is a comparison — the winner was priced below the side it beat — so
+ * the mark carries the loser's leg of the same pair. A fixed cut on the winner
+ * alone called Italy's win an upset at 0.395 when Turkey sat at 0.325: on a
+ * three-way board the draw takes a quarter and the favourite routinely sits
+ * under 0.40. When the loser is the away leg of a draw-priced sport and that
+ * leg is just `1 − home`, it carries the draw and is no price for the loser, so
+ * it is withheld and nothing is called an upset.
  */
 
 import type { FeedEventData } from "@/lib/types";
@@ -51,6 +61,13 @@ export interface SettledPregameMark {
   source: string;
   /** "sportsbooks" on the books rung; `null` for a prediction market. */
   label: string | null;
+  /**
+   * #9490 — the losing side's leg of the same pair, for the upset comparison
+   * only (never printed). `null` when that leg is not a price for the loser.
+   */
+  loserProbability: number | null;
+  /** The loser's whole percent from the same pair rounding as `percent`. */
+  loserPercent: number | null;
 }
 
 export function settledPregameMark(args: {
@@ -74,11 +91,24 @@ export function settledPregameMark(args: {
     ) {
       return null;
     }
+    const loserIsTheDraw =
+      winnerSide === "home" &&
+      awayIsTheComplement(served.awayProbability, served.homeProbability, sport);
     return {
       probability: winnerSide === "home" ? served.homeProbability : served.awayProbability,
       percent: winnerSide === "home" ? served.homePercent : served.awayPercent,
       source: served.source,
       label: served.label,
+      loserProbability: loserIsTheDraw
+        ? null
+        : winnerSide === "home"
+          ? served.awayProbability
+          : served.homeProbability,
+      loserPercent: loserIsTheDraw
+        ? null
+        : winnerSide === "home"
+          ? served.awayPercent
+          : served.homePercent,
     };
   }
 
@@ -90,5 +120,7 @@ export function settledPregameMark(args: {
     percent: null,
     source: BOOKS_SOURCE,
     label: BOOKS_LABEL,
+    loserProbability: winnerSide === "home" ? openingAwayProb : openingHomeProb,
+    loserPercent: null,
   };
 }

@@ -7,6 +7,7 @@ import os
 import re
 import time
 from collections import Counter
+from types import SimpleNamespace
 from contextlib import asynccontextmanager, suppress
 
 logger = logging.getLogger(__name__)
@@ -18,7 +19,7 @@ from zoneinfo import ZoneInfo
 from typing import Annotated, Optional, Sequence
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from sqlalchemy import select, and_, or_, union, func, case, cast, any_, literal, Date, Integer, String, literal_column, text, true
+from sqlalchemy import select, and_, or_, union, func, case, cast, any_, literal, Date, Integer, String, literal_column, text, true, false
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, aliased
 from sqlalchemy.orm.attributes import set_committed_value
@@ -63,11 +64,15 @@ from app.utils.game_market_club_names import (
     any_truncated_side,
     repair_card_club_names,
     repair_club_names,
-    repair_field_outcome_name,
 )
 from app.utils.market_staleness import unobserved_board_keys
 from app.utils.nation_flags import flag_nation
-from app.utils.sport_keys import SPORT_PREFIX_TO_LLM_CATEGORY
+from app.utils.series_card_labels import (
+    market_threshold_label,
+    reader_outcome_name,
+    relabel_series_card,
+)
+from app.utils.sport_keys import NON_SPORT_LLM_CATEGORIES, SPORT_PREFIX_TO_LLM_CATEGORY
 
 # #6923. The search card's age pip and the futures card's age mark must agree on
 # what "prints a price" means, so both call the one predicate; `routes/feed.py`
@@ -87,6 +92,7 @@ from app.utils.period_window_grade import grade_period_window
 from app.utils.served_period_scores import served_period_scores
 from app.utils.final_score_margin import margin_verdict_from_final_score
 from app.utils.resolution_authority import authority_tier
+from app.utils.box_score_capture import BOX_SCORE_SOURCES, box_is_live_capture
 from app.utils.prop_window import prop_window_closed, prop_window_span
 from app.utils.event_rails import (
     live_first_order,
@@ -100,6 +106,7 @@ from app.utils.event_completion import (
     EVENT_SUSPENDED,
     SETTLED_STATUSES,
     is_retired_event_status,
+    served_commence_time,
     started_without_result,
 )
 from app.utils.current_odds_probability import current_odds_probability
@@ -122,8 +129,15 @@ from app.utils.hero_probability import resolve_hero
 from app.utils.settled_hero import resolve_settled_hero
 from app.utils.settled_price import priceless_leg_keeps_its_row
 from app.utils.settledness import market_assigned_settled
-from app.utils.venue_settlement import venue_settlement_is_askable
-from app.utils.venue_settlement_reader import attach_venue_settlement
+from app.utils.venue_settlement import (
+    VENUE_CLOSED_NO_WINNER_KEY,
+    names_completed_match as _names_completed_match,
+    venue_settlement_is_askable,
+)
+from app.utils.venue_settlement_reader import (
+    attach_venue_settlement,
+    mark_venue_closed_no_winner,
+)
 from app.utils.standings_shape import (
     public_standings,
     reconciled_record_and_standings,
@@ -154,16 +168,28 @@ from app.utils.game_window import (
     filter_state_bearing_rows as _filter_state_bearing_rows,
     game_state_window as _game_state_window,
 )
-from app.utils.name_normalization import diacritic_fold_query, expand_search_terms
+from app.utils.name_normalization import (
+    city_abbreviated_names,
+    city_abbreviation_query,
+    college_state_abbreviated_names,
+    college_state_query,
+    diacritic_fold_query,
+    expand_search_terms,
+)
 from app.config.team_aliases import (
+    curated_team_aliases,
+    expand_club_short_forms,
     team_nickname_event_expansions,
     team_nickname_search_expansions,
+    team_nickname_team_rows,
 )
 from app.utils.search_headline_contender import (
     HEADLINE_MARKET_TIER,
     MIN_CONTENDER_PROBABILITY,
     MIN_CONTENDER_VOLUME,
     contender_patterns,
+    contender_word_pattern,
+    on_page_contender_candidates,
     promote_headline_contenders,
     reserve_headline_slot,
 )
@@ -180,6 +206,7 @@ from app.utils.search_cache import (
     search_response_cache_key,
 )
 from app.utils.participant_images import participant_images_for_event
+from app.utils.search_collections import attach_search_collections
 from app.utils.search_fixture_dedup import (
     collapse_duplicate_fixtures,
     is_individual_sport,
@@ -420,7 +447,7 @@ _PLACEHOLDER_TEAM_RE = re.compile(
 # 2% — only kills the obviously-useless deep rungs (measured: collapses a
 # 38-item ladder to the 3 meaningful lines on event 14961907).
 _SPREAD_DEEP_OTM_FLOOR = 0.02
-from app.utils.event_twin_fold import fold_twin_events
+from app.utils.event_twin_fold import fold_twin_events, team_name_fold_key
 from app.utils.kalshi_expiration_start import (
     KALSHI_EXPIRATION_RECOVERY_STAMP,
     recover_kalshi_expiration_starts,
@@ -752,12 +779,106 @@ def _is_paraphrase_of_a_kept_board(market, kept_boards: list) -> bool:
         return False
     from app.utils.cross_source_matching import is_same_question
 
-    for kept_source, kept_name, kept_names in kept_boards:
+    for kept_source, kept_name, kept_names, *_ in kept_boards:
         if kept_source == source:
             continue
         if not _search_boards_list_the_same_field(names, kept_names):
             continue
         if is_same_question(market.name, kept_name):
+            return True
+    return False
+
+
+#: #9439 — how far apart two venues' resolution dates may sit and still be one
+#: season's award. Production 2026-09-28: Kalshi's MLB awards resolve 2026-12-08
+#: and Polymarket's 2027-01-01 (24 days, across a calendar year); NHL Art Ross
+#: 2027-06-30 vs 2027-04-20 (71 days). The next season's race is ~365 days away.
+_SEARCH_AWARD_SEASON_MAX_DAYS = 120
+_SEARCH_TITLE_YEAR = re.compile(r"\b(?:19|20)\d{2}\b")
+
+
+def _search_award_race(market) -> Optional[str]:
+    """The award race a row IS (#4414's merge group), or None.
+
+    Only a merge rule that names the whole label counts
+    (`get_whole_label_merge_group`); a label that merely contains `NFC Champion`
+    is not the NFC title race. Fail-closed: a name that cannot be read has no race.
+    """
+    name = getattr(market, "name", None)
+    if not isinstance(name, str) or not name.strip():
+        return None
+    from app.utils.market_label_normalization import (
+        get_whole_label_merge_group,
+        normalize_market_label,
+    )
+
+    try:
+        return get_whole_label_merge_group(normalize_market_label(name))
+    except Exception:
+        logger.warning(
+            "search: award race unreadable for market %s",
+            getattr(market, "id", None), exc_info=True,
+        )
+        return None
+
+
+def _search_same_season(market, kept_name: str, kept_resolution) -> bool:
+    """Do two venues' boards for one award race cover the same season?
+
+    Both resolution dates are required and must sit within
+    `_SEARCH_AWARD_SEASON_MAX_DAYS`; and if both titles name a year, it is the
+    same year. An undated title (Kalshi's `AL Cy Young Winner?`) is judged by its
+    resolution date alone.
+    """
+    resolution = getattr(market, "resolution_date", None)
+    if resolution is None or kept_resolution is None:
+        return False
+    try:
+        if abs(resolution - kept_resolution) > timedelta(days=_SEARCH_AWARD_SEASON_MAX_DAYS):
+            return False
+    except TypeError:
+        return False
+    years = set(_SEARCH_TITLE_YEAR.findall(getattr(market, "name", None) or ""))
+    kept_years = set(_SEARCH_TITLE_YEAR.findall(kept_name or ""))
+    return not (years and kept_years and years != kept_years)
+
+
+def _is_same_award_race_as_a_kept_board(market, kept_boards: list) -> bool:
+    """True if another venue's row already on the page is the same award race,
+    for the same season, listing the same field.
+
+    #9439 — `mvp` at 390px (production 2026-09-28) printed Kalshi `MVP Winner?`
+    (KXNFLMVP-27, Josh Allen 25%) and, two rows down, Polymarket `Pro Football:
+    2026 MVP Winner` (Josh Allen 22%); `cy young` printed Kalshi `AL Cy Young
+    Winner?` and Polymarket `MLB: 2026 AL Cy Young Winner`. #8843's title gate
+    refuses both: `is_same_question` will not pair a title carrying `2026` with
+    one carrying no number, and that guard is what keeps `Fed hike in 2026?`
+    apart from `2027`, so it is not loosened here.
+
+    #4414 already knows these are one race — the Related Futures rail merges
+    them under `get_merge_group` (`mvp`, `al_cy_young`). That key is built for a
+    page scoped to one league, so on search three more gates are required:
+
+    * the rule names the whole label (`_search_award_race`);
+    * the same field (`_search_boards_list_the_same_field`) — the bare `mvp`
+      group holds the NFL and NBA races, whose boards share no names;
+    * the same season (`_search_same_season`).
+
+    Cross-venue only, like #8378. The first row kept is the ranking's choice.
+    """
+    source = getattr(market, "source", None)
+    if not kept_boards or not source:
+        return False
+    race = _search_award_race(market)
+    if race is None:
+        return False
+    names = _search_listed_names(market)
+    for kept_source, kept_name, kept_names, kept_race, kept_resolution in kept_boards:
+        if kept_source == source or kept_race != race:
+            continue
+        if not _search_boards_list_the_same_field(names, kept_names):
+            continue
+        if _search_same_season(market, kept_name, kept_resolution):
             return True
     return False
 
@@ -811,39 +932,59 @@ def _search_same_question_folded_ids(
     must never wipe the pass (gotcha 42) — a row whose facts cannot be built is
     left out of the comparison and kept.
     """
-    from app.utils.discover_bundles import fold_same_question_cards
-
     folded: set[int] = set()
     kept: list[tuple] = []  # (listed names, card item), rank order
     for m in markets:
-        try:
-            item = {
-                "type": "futures",
-                "data": {
-                    "name": m.name,
-                    "source": m.source,
-                    "resolution_date": m.resolution_date,
-                    "top_outcomes": _build_search_top_outcomes(
-                        m, withheld=withheld_by_market.get(m.id)
-                    ),
-                },
-            }
-            names = _search_listed_names(m)
-        except Exception:
-            logger.warning(
-                "search: same-question fold skipped market %s",
-                getattr(m, "id", None), exc_info=True,
-            )
-            continue
-        if any(
-            _search_boards_list_the_same_field(names, kept_names)
-            and len(fold_same_question_cards([kept_item, item])) == 1
-            for kept_names, kept_item in kept
+        if _search_same_question_as_a_kept_card(
+            m, withheld_by_market.get(m.id), kept
         ):
             folded.add(m.id)
-            continue
-        kept.append((names, item))
     return folded
+
+
+def _search_same_question_as_a_kept_card(market, withheld, kept: list) -> bool:
+    """#8851's per-row decision: True if a better-ranked row from another venue,
+    already in `kept`, asks this row's question. Otherwise the row is appended to
+    `kept` and False is returned.
+
+    `_search_same_question_folded_ids` walks the search page with it; the
+    dropdown asks it row by row as it admits (#9444). Production 2026-09-28,
+    `oscars` at 390px: the dropdown printed Polymarket `Oscars 2027: Best Picture
+    Winner` (The Odyssey 49%) and, on the next row, Kalshi `Oscar Winner: Best
+    Picture` (49%), while the page showed Best Picture once. #9404 gave the
+    dropdown the page's per-row rule, `_admit_search_future`; this fold ran as a
+    post-pass over the page and so never reached it. One helper, two consumers.
+
+    A row whose facts cannot be built is left out of the comparison and kept
+    (gotcha 42) — it is not appended, so it cannot fold a later row either.
+    """
+    from app.utils.discover_bundles import fold_same_question_cards
+
+    try:
+        item = {
+            "type": "futures",
+            "data": {
+                "name": market.name,
+                "source": market.source,
+                "resolution_date": market.resolution_date,
+                "top_outcomes": _build_search_top_outcomes(market, withheld=withheld),
+            },
+        }
+        names = _search_listed_names(market)
+    except Exception:
+        logger.warning(
+            "search: same-question fold skipped market %s",
+            getattr(market, "id", None), exc_info=True,
+        )
+        return False
+    if any(
+        _search_boards_list_the_same_field(names, kept_names)
+        and len(fold_same_question_cards([kept_item, item])) == 1
+        for kept_names, kept_item in kept
+    ):
+        return True
+    kept.append((names, item))
+    return False
 
 
 #: #8628 — the line of an over/under rung: the number right after `O/U`.
@@ -884,7 +1025,8 @@ def _admit_search_future(
     #993/#1769), or it is another venue's copy of a question already kept
     (#8378), or another series of one race (#8410), or another rung of an O/U
     ladder already kept (#8628), or another venue's paraphrase of a kept board
-    with the same field (#8843). True = keep it, and record the keys so later rows are judged
+    with the same field (#8843), or another venue's board for the same award race
+    and season (#9439). True = keep it, and record the keys so later rows are judged
     against it. Both route loops — the window and its refill — call this, so
     the refill cannot re-admit a copy the window dropped. `kept_boards` is
     required, not defaulted, for the same reason.
@@ -896,6 +1038,7 @@ def _admit_search_future(
         or (lkey is not None and lkey in seen_keys)
         or _is_repeat_of_a_kept_question(market, kept_sources_by_question)
         or _is_paraphrase_of_a_kept_board(market, kept_boards)
+        or _is_same_award_race_as_a_kept_board(market, kept_boards)
     ):
         return False
     seen_keys.add(dkey)
@@ -906,7 +1049,13 @@ def _admit_search_future(
         (getattr(market, "source", None), person)
     )
     kept_boards.append(
-        (getattr(market, "source", None), market.name, _search_listed_names(market))
+        (
+            getattr(market, "source", None),
+            market.name,
+            _search_listed_names(market),
+            _search_award_race(market),
+            getattr(market, "resolution_date", None),
+        )
     )
     return True
 
@@ -958,12 +1107,26 @@ def _is_over_match_cap(market, match_counts: dict, query_words: frozenset) -> bo
     `_SEARCH_MATCH_ROWS_CAP` rows are its highest-ranked ones. An over-cap row is
     SUNK, not dropped (`_sink_over_match_cap`): when nothing else answers the
     query it still fills the page.
+
+    #9724 — the fixture is also the GAME the row is linked to. `?q=braves` on
+    Wild Card day (production 2026-09-30 04:05Z) served 7 of its 10 market rows
+    from Phillies vs. Braves, and 6 of them named no fixture before a colon:
+    `Spread: Atlanta Braves (-1.5)`, `Atlanta Braves Team Total: O/U 3.5`,
+    `Will the game go to extra innings?: Philadelphia Phillies vs. Atlanta
+    Braves`. All six carry the game's `event_id`, and an open market that
+    carries one is a game's market (21,326 of 21,328 on production; the other
+    two are the Ryder Cup captains, one event of two rows), so the link is the
+    key the name could not give. A row counts against each key it has and is over once either is full.
+    The name's query test still disarms the cap for a row whose name has sides.
     """
     key = _search_match_key(market)
-    if key is None or _query_names_both_sides(key, query_words):
+    if key is not None and _query_names_both_sides(key, query_words):
         return False
-    match_counts[key] = match_counts.get(key, 0) + 1
-    return match_counts[key] > _SEARCH_MATCH_ROWS_CAP
+    event_id = getattr(market, "event_id", None)
+    keys = [k for k in (key, f"event:{event_id}" if event_id else None) if k]
+    for k in keys:
+        match_counts[k] = match_counts.get(k, 0) + 1
+    return any(match_counts[k] > _SEARCH_MATCH_ROWS_CAP for k in keys)
 
 
 def _sink_over_match_cap(markets: list, over_cap_ids: set) -> list:
@@ -1112,6 +1275,21 @@ def _is_individual_sport(sport_key: str | None) -> bool:
     return sport_key.startswith(_INDIVIDUAL_SPORT_PREFIXES)
 
 
+def _typeahead_event_text(
+    away: str | None, home: str | None, sport_key: str | None
+) -> str:
+    """#9522: the dropdown row's matchup — "Michelsen v Alcaraz", never "at".
+
+    A tennis match, a fight or a golf match has no home side, so "at" tells the
+    reader one player is visiting the other. The 1-on-1 sports read " v "; every
+    other sport keeps " at ". Away stays FIRST either way: the web prints a
+    finished row's score away-first (`finalScoreText`) so the numbers sit under
+    the names they belong to.
+    """
+    sep = "v" if _is_individual_sport(sport_key) else "at"
+    return f"{away} {sep} {home}"
+
+
 def _normalize_team_sport_key(sport_key: str | None) -> str | None:
     """Collapse tournament-specific sport keys to their base league.
 
@@ -1248,6 +1426,58 @@ def _resolve_sport_aliases(expanded) -> tuple[list[str] | None, set[str]]:
     deduped = list(dict.fromkeys(keys))
     return (deduped or None), consumed
 
+
+#: A broadcast SLOT name: `mnf` and `monday night football` asked on Monday
+#: 2026-09-28 returned ZERO rows of every kind from production, with that
+#: night's Eagles @ Bears (event 14780549, 00:15Z) on the schedule. Same shape
+#: as #4126's `us open`: the slot is nowhere on the event row. Worse, the spelled
+#: phrase resolved `football` to NFL+NCAAF and then AND-ed `monday` and `night`
+#: against team names, which no team has.
+#:
+#: A slot is not a text match; it is the league plus WHEN the game is played:
+#: ISO weekday and earliest kickoff hour, both on the Eastern clock the slots
+#: are named for. 18:00 ET clears every Sunday 4:25 window, Thanksgiving's two
+#: afternoon games and the London mornings, and still admits a 7:00 PM Monday
+#: doubleheader.
+_BROADCAST_SLOT_ALIASES: dict[tuple[str, ...], tuple[tuple[str, ...], int, int]] = {
+    ("mnf",): (("americanfootball_nfl",), 1, 18),
+    ("monday", "night", "football"): (("americanfootball_nfl",), 1, 18),
+    ("tnf",): (("americanfootball_nfl",), 4, 18),
+    ("thursday", "night", "football"): (("americanfootball_nfl",), 4, 18),
+    ("snf",): (("americanfootball_nfl",), 7, 18),
+    ("sunday", "night", "football"): (("americanfootball_nfl",), 7, 18),
+}
+
+_BROADCAST_SLOT_MAX_PHRASE_LEN = max(len(p) for p in _BROADCAST_SLOT_ALIASES)
+
+
+def _resolve_broadcast_slot(expanded):
+    """``(slot | None, consumed_terms)`` — the first slot name in the query.
+
+    Consumed terms leave the query BEFORE `_resolve_sport_aliases` sees it, so
+    `football` inside `monday night football` cannot resolve to a bare
+    NFL+NCAAF league arm (every game of both) and `nfl` beside `mnf` is still
+    consumed as a league word rather than matched against team names.
+    """
+    terms = [term.lower() for term, _ in expanded]
+    for length in range(min(_BROADCAST_SLOT_MAX_PHRASE_LEN, len(terms)), 0, -1):
+        for i in range(len(terms) - length + 1):
+            slot = _BROADCAST_SLOT_ALIASES.get(tuple(terms[i:i + length]))
+            if slot:
+                return slot, set(terms[i:i + length])
+    return None, set()
+
+
+def _broadcast_slot_scope(slot):
+    """The slot as a WHERE: its league, its Eastern weekday, its evening."""
+    sport_keys, iso_weekday, min_hour = slot
+    eastern = func.timezone(_EASTERN_TZ_NAME, Event.commence_time)
+    return and_(
+        Sport.key.in_(sport_keys),
+        func.extract("isodow", eastern) == iso_weekday,
+        func.extract("hour", eastern) >= min_hour,
+    )
+
 # Marquee pro leagues — used only to break FTS-rank TIES in the team search
 # surface. A nickname shared by a college and a pro franchise ("patriots",
 # "bruins", "cardinals") produces identical single-token ranks, and the old
@@ -1308,6 +1538,66 @@ def _dedupe_prefix_duplicate_team_rows(rows: list) -> list:
     return [
         r for r in rows
         if not _is_prefix_dup((getattr(r, "name", "") or ""), getattr(r, "sport_key", None))
+    ]
+
+
+def _drop_stem_only_team_rows(rows: list, query: str) -> list:
+    """#9281: drop the rows a one-word query reached only through its STEM.
+
+    The Teams prefix arm (#4126) stems before the ``:*``, so ``pats:*`` is
+    ``pat:*``. On production 2026-09-28 `pats` carded Paterno and Patro Eisden
+    above two Patriots teams, `bucs` carded Milwaukee Bucks, Bucknell and Ohio
+    State Buckeyes, and `cats` carded Catamounts and Catania.
+
+    Armed only when some row matches the whole word (match class MC0 or MC1: the
+    name, an alias or a curated nickname), i.e. the reader has already named a
+    club. Then a row survives only if one of its words starts with what was
+    typed (`bull` keeps Bulldogs beside the Bulls), or it carries the named
+    club's own nickname word (`pats` -> New England Patriots, so George Mason
+    Patriots stays; `bucs` -> Tampa Bay Buccaneers, so Charleston Southern
+    Buccaneers stays).
+
+    With no whole-word row nothing moves. `nugs`, `cards`, `pels` and `caps`
+    reach their clubs ONLY through the stem, which is why #9277 refused the
+    unconditional form of this rule, and they arm nothing here. One word only:
+    a multi-word query's recall already ANDs its words.
+    """
+    from app.utils.search_match_class import MC1_ALL_TOKENS, _name_tokens, match_class
+
+    typed = _name_tokens(query)
+    if len(typed) != 1 or not rows:
+        return rows
+    word = typed[0]
+
+    def _owned(row) -> list[str]:
+        # The card's own evidence (`_team_row_aliases`: stored aliases plus the
+        # curated map's, #9272), so a club reached only by its map nickname
+        # (`rox` -> Colorado Rockies) reads as a whole-word hit here too.
+        abbreviation = getattr(row, "abbreviation", None)
+        return [row.name or "", *_team_row_aliases(row), *([abbreviation] if abbreviation else [])]
+
+    def _whole_word(row) -> bool:
+        owned = _owned(row)
+        cls = match_class(query, _SearchEvidence(name=owned[0], aliases=tuple(owned[1:]), kind="team"))
+        return cls is not None and cls <= MC1_ALL_TOKENS
+
+    whole = [row for row in rows if _whole_word(row)]
+    if not whole:
+        return rows
+    whole_ids = {id(row) for row in whole}
+    # The named club's nickname word: a word of its NAME sharing the stem's
+    # first three letters (`patriots` for `pats`, `buccaneers` for `bucs`).
+    nickname_words = {
+        token for row in whole for token in _name_tokens(getattr(row, "name", "") or "")
+        if token[:3] == word[:3]
+    }
+    return [
+        row for row in rows
+        if id(row) in whole_ids
+        or any(
+            token.startswith(word) or token in nickname_words
+            for owned in _owned(row) for token in _name_tokens(owned)
+        )
     ]
 
 
@@ -1512,29 +1802,68 @@ def _pick_team_row_per_name(rows: list) -> list:
     This is the rule `_build_team_lookup` already applies to the same two rows
     one surface over — *"Same league, two rows: keep the PARENT league's"* — and
     it reasons about no names or kickoff times that the collapse it rides was
-    not already keyed on, so ruling 048 is not in play. Nothing here writes."""
+    not already keyed on, so ruling 048 is not in play. Nothing here writes.
+
+    #9229 — ONE CLUB, TWO SPELLINGS. `blues` on production 2026-09-27 printed
+    `St Louis Blues 36-33-12 · NHL` above `St. Louis Blues 1-2-0 · NHL`, and
+    `canadiens` printed `Montréal Canadiens` above `Montreal Canadiens`: the
+    group key was the exact name, so a period or an accent made two groups.
+    A group is now also joined by `team_name_fold_key` within ONE league
+    identity — the key the team page already reads these rows as one club by
+    (#7929), which folds diacritics and punctuation and nothing else, so
+    `Portland Timbers 2` stays its own side and `Djurgårdens IF` (hockey) never
+    meets `Djurgardens IF` (soccer). Exact-name grouping is untouched: a join
+    only ever ADDS a row to a group, never splits one. Inside a group that holds
+    more than one spelling, the row whose standings board was written most
+    recently wins before arrival order (#7132's rule, `_standings_vintage`):
+    571's `1-2-0` was last written in May, 3705's this morning. Single-spelling
+    groups compare exactly as before."""
     parents = _seasons_with_a_parent_row(rows)
+    group_by_name: dict = {}
+    group_by_fold: dict = {}
+    grouped: list = []
+    for row in rows:
+        name = getattr(row, "name", None)
+        fold = team_name_fold_key(name)
+        fold_key = (fold, league_identity(getattr(row, "sport_key", None)))
+        group = group_by_name.get(name)
+        if group is None and fold:
+            group = group_by_fold.get(fold_key)
+        if group is None:
+            group = name
+        group_by_name.setdefault(name, group)
+        if fold:
+            group_by_fold.setdefault(fold_key, group)
+        grouped.append((group, row))
+    spellings: dict = {}
+    for group, row in grouped:
+        spellings.setdefault(group, set()).add(getattr(row, "name", None))
     order: list = []
     best: dict = {}
-    for index, row in enumerate(rows):
+    for index, (group, row) in enumerate(grouped):
         name = getattr(row, "name", None)
         sport_key = getattr(row, "sport_key", None)
         spring_row = (
             is_season_variant(sport_key)
             and (name, league_identity(sport_key)) in parents
         )
+        stamp_rank, stamp = (
+            _standings_vintage(row) if len(spellings[group]) > 1 else (0, 0.0)
+        )
         candidate = (
             int(spring_row),
             _team_competition_rank(sport_key),
             _college_sport_audience_rank(sport_key),
+            -stamp_rank,
+            -stamp,
             index,
         )
-        if name not in best:
-            order.append(name)
-            best[name] = (candidate, row)
-        elif candidate < best[name][0]:
-            best[name] = (candidate, row)
-    return [best[name][1] for name in order]
+        if group not in best:
+            order.append(group)
+            best[group] = (candidate, row)
+        elif candidate < best[group][0]:
+            best[group] = (candidate, row)
+    return [best[group][1] for group in order]
 
 
 # #993 Slice C: multi-word search AND-matches every term against the market NAME,
@@ -1658,6 +1987,16 @@ _QUERY_PHRASE_ALIASES: dict[tuple[str, ...], tuple[tuple[str, ...], ...]] = {
     ("big", "dance"): (("college", "basketball"), ("ncaa", "tournament")),
     ("ncaa", "tournament"): (("college", "basketball"),),
     ("ncaa", "basketball"): (("college", "basketball"),),
+    # #9340: the spelled-out MLB postseason rounds. The venues name them only by
+    # abbreviation — "MLB Playoffs: Team to advance to ALDS", "Pro Baseball NLCS
+    # Matchup" — so `division series` served nothing at all on production
+    # 2026-09-28 with eight open ALDS/NLDS markets. Kalshi's per-round series
+    # code (#9333's `WC`) for these rounds is not listed yet and was absent from
+    # every 2025 ticker (`KXMLBSERIES-25DETSEA`), so there is no ticker arm to
+    # add; the NAME is the owned signal. The abbreviations compile whole-word
+    # (`_build_round_word_ilike`), so no alternative reaches Byron Don(alds).
+    ("division", "series"): (("alds",), ("nlds",)),
+    ("championship", "series"): (("alcs",), ("nlcs",)),
     # LAT-P036: `nba finals` has been carried as a sibling of #1761's stemmer bug
     # for six cycles. It is NOT the same defect and no stemmer or synonym fix can
     # reach it. Kalshi names the market **"2026 Pro Basketball Champion"**
@@ -1819,14 +2158,290 @@ def _futures_season_order_key(intent):
     return case((names_year, 0), else_=1)
 
 
+#: #9340: a query that is ONLY a postseason word. `playoffs` names no league and
+#: no year, so the reader means the postseason that is happening now.
+_BARE_POSTSEASON_TERMS: frozenset[str] = frozenset({"playoff", "playoffs", "postseason"})
+#: Long enough to hold a whole league postseason from its first round (MLB's
+#: World Series boards resolve ~34 days after its Wild Card round opens).
+_POSTSEASON_NOW_WINDOW = timedelta(days=45)
+#: Team-sport leagues. Esports series names carry "Playoffs" too and resolve
+#: within days; they are the rows this key must not promote.
+_POSTSEASON_NOW_SPORT_CATEGORIES: frozenset[str] = frozenset({
+    "baseball", "basketball", "football", "hockey", "soccer",
+})
+
+
+def _futures_postseason_now_order_key(terms: list[str], now: datetime):
+    """#9340: the postseason in progress, as a FUTURES window sort key — or ``None``.
+
+    Production, Monday 2026-09-28, the day before MLB's Wild Card round:
+    `playoffs` matched ~615 open market names and every one tied on the name
+    tier and on `ts_rank_cd` (0.1). `market_tier` then decided the twenty-row
+    window, and every MLB postseason board ("MLB Playoffs: Team to advance to
+    ALDS", "Boston: First Playoff Opponent") is tier 5, so none was fetched: the
+    page led with a VALORANT novelty and 2027 Stanley Cup and College Football
+    Playoff boards — seasons that have not started.
+
+    Rows of a team-sport league that resolve within `_POSTSEASON_NOW_WINDOW`
+    sort first, inside their name tier and above the rank. It orders; it removes
+    nothing. ``None`` unless every term is a postseason word, so `mlb playoffs`,
+    `patriots playoffs` and every other query compile byte-identical SQL.
+    """
+    if not _is_bare_postseason_query(terms):
+        return None
+    in_progress = and_(
+        FuturesMarket.resolution_date >= now,
+        FuturesMarket.resolution_date < now + _POSTSEASON_NOW_WINDOW,
+        FuturesMarket.llm_sport_category.in_(sorted(_POSTSEASON_NOW_SPORT_CATEGORIES)),
+    )
+    return case((in_progress, 0), else_=1)
+
+
+def _is_bare_postseason_query(terms: list[str]) -> bool:
+    """Every term is a postseason word (`playoffs`, `playoff`, `postseason`)."""
+    return bool(terms) and all(t.lower() in _BARE_POSTSEASON_TERMS for t in terms)
+
+
+def _postseason_now_first(markets: list, terms: list[str]) -> list:
+    """`_futures_postseason_now_order_key`'s rule in Python, as a stable partition.
+
+    The SQL key decides which rows the window FETCHES; the reranker then
+    re-sorts them by name match and volume, which would put a VALORANT novelty
+    (536 volume, `playoffs` in its name) above "Boston: First Playoff Opponent".
+    One rule, both places. A no-op for every query that is not a bare
+    postseason word.
+    """
+    if not _is_bare_postseason_query(terms):
+        return markets
+    now = datetime.now(timezone.utc)
+    horizon = now + _POSTSEASON_NOW_WINDOW
+
+    def _in_progress(m) -> bool:
+        res = m.resolution_date
+        if res is None:
+            return False
+        if res.tzinfo is None:
+            res = res.replace(tzinfo=timezone.utc)
+        return (
+            now <= res < horizon
+            and (m.llm_sport_category or "") in _POSTSEASON_NOW_SPORT_CATEGORIES
+        )
+
+    return [m for m in markets if _in_progress(m)] + [
+        m for m in markets if not _in_progress(m)
+    ]
+
+
+def _postseason_round_series_first(markets: list, terms: list[str]) -> list:
+    """#9333: a round name (`wild card`) keeps the round's own series markets first.
+
+    Production, Monday 2026-09-28, prod `7cb0bae4`: the dropdown for `wild card`
+    led with "Curitiba: Thiago Seyboth Wild vs Pedro Bos·card·in Dias", its Game
+    Spread, "Wildcard Gaming vs. M80" and its Rainbow Six board — both typed
+    words sit inside those NAMES, so the name-match split put them above "Series
+    Winner: Boston vs New York Y", whose name says neither. The round lives in
+    the ticker (`_POSTSEASON_ROUND_ALIASES`), so the ticker decides: the same
+    rule as `_postseason_round_series_match`, in Python. A stable partition; a
+    no-op unless the query IS the round name (`_bare_postseason_round`).
+    """
+    in_round = _postseason_round_lead_predicate(terms)
+    if in_round is None:
+        return markets
+    return [m for m in markets if in_round(m)] + [m for m in markets if not in_round(m)]
+
+
+def _postseason_round_lead_predicate(terms: list[str]):
+    """`_postseason_round_lead_match` in Python — a market test, or ``None``.
+
+    One rule for the reranker's partition and the dropdown's private alias: a
+    ticker round (`wild card`) is its Kalshi series markets; a spelled-out
+    round (`championship series`, #9340) is the markets naming its
+    abbreviation as a whole word, the same word test `_build_round_word_ilike`
+    compiles.
+    """
+    rnd = _bare_postseason_round(terms)
+    if rnd is not None:
+        _sport_key, stem, _winner, _game, code = rnd
+
+        def _in_series(m) -> bool:
+            ext = m.external_id or ""
+            return m.source == "kalshi" and ext.startswith(stem) and ext.endswith(code)
+
+        return _in_series
+    named = _bare_postseason_named_round(terms)
+    if named is None:
+        return None
+    named_re = re.compile(
+        r"(?:^|[^0-9a-z])(?:" + "|".join(map(re.escape, named)) + r")(?:[^0-9a-z]|$)",
+        re.IGNORECASE,
+    )
+    return lambda m: bool(named_re.search(m.name or ""))
+
+
+def _futures_postseason_round_order_key(terms: list[str]):
+    """`_postseason_round_series_first` as a SQL sort key, or ``None`` without a round.
+
+    The dropdown's futures window is `_TYPEAHEAD_FUTURES_POOL` rows ordered by
+    name keys that the series markets can never win, so the partition above can
+    only reorder what this key makes sure is fetched.
+    """
+    match = _postseason_round_lead_match(terms)
+    return None if match is None else case((match, 0), else_=1)
+
+
+def _postseason_round_lead_match(terms: list[str]):
+    """The rows a bare round query leads with, as SQL; ``None`` without one.
+
+    A ticker round (`wild card`) is its series markets; a spelled-out round
+    (`championship series`, #9340) is the markets naming its abbreviation as a
+    whole word. Both are rows `_alias_futures_arms` already recalls.
+    """
+    rnd = _bare_postseason_round(terms)
+    if rnd is not None:
+        return _postseason_round_series_match(rnd)
+    named = _bare_postseason_named_round(terms)
+    if named is None:
+        return None
+    return or_(*[_build_round_word_ilike(FuturesMarket.name, a, None) for a in named])
+
+
+def _bare_postseason_round(terms: list[str]):
+    """The round, when the query names it and nothing else but a league word.
+
+    `wild card` and `mlb wild card` are asking for the round; `wildcard gaming`
+    is asking for Wildcard Gaming and `yankees wild card` for one club's series,
+    so neither gets the round's markets hoisted over what they named.
+    """
+    rnd, consumed = _resolve_postseason_round(terms)
+    if rnd is None:
+        return None
+    return rnd if _only_the_rounds_league(terms, consumed, rnd[0]) else None
+
+
+#: #9340: the spelled-out MLB rounds the venues name only by abbreviation.
+#: `_QUERY_PHRASE_ALIASES` RECALLS their markets (the whole-word abbreviation
+#: arm); this table makes those markets LEAD when the query is the round itself.
+#: On production `fa40adc3` `championship series` recalled them and then served
+#: nine "NFL: … Season Series Winner" boards instead: `championship` carries the
+#: `winner` synonym, so those names match every typed word and fill the window.
+_POSTSEASON_NAMED_ROUNDS: dict[tuple[str, ...], str] = {
+    ("division", "series"): "baseball_mlb",
+    ("championship", "series"): "baseball_mlb",
+}
+
+
+#: #9865: a championship the reader names as ONE sport's, although another
+#: sport's markets carry the same words. Production 2026-09-28 16:05Z and again
+#: 2026-09-30 16:05Z, the MLB postseason: the dropdown for `world series` put
+#: "Dota 2: Ivory vs Team Kinetix (BO3) - EPL World Series Southeast Asia Group
+#: Stage" (esports, volume 22,272) in row 2, above "MLB Postseason: World Series
+#: MVP" and "MLB 2026: World Series Winning League", whose volume is NULL. Every
+#: row names both words, so the name-match split cannot tell them apart and the
+#: volume sort decides. No team resolves, so neither `/search`'s facet tally nor
+#: the dropdown's team pool supplies the sport that `_demote_wrong_sport` needs;
+#: the query itself does, when it is the championship's name and nothing else.
+#: `world series of poker` is another question and keeps the old order.
+#: Measured the same day: `super bowl`, `stanley cup`, `nba finals` and
+#: `world cup` serve no other sport's row, so they are not claimed here.
+_CHAMPIONSHIP_QUERY_SPORT_KEYS: dict[tuple[str, ...], str] = {
+    ("world", "series"): "baseball_mlb",
+}
+
+
+def _championship_query_sport_category(expanded) -> str | None:
+    """The `llm_sport_category` a bare championship query names (#9865), or None.
+
+    `world series` and `mlb world series` are asking about baseball's; any other
+    word beside the name (`world series of poker`, `nfl world series`) returns
+    None, and the caller's own signal stands. Translated through
+    `_resolved_search_sport_category` so the prefix map is applied in one place.
+    """
+    terms = [t.lower() for t, _e in expanded]
+    for phrase, sport_key in _CHAMPIONSHIP_QUERY_SPORT_KEYS.items():
+        width = len(phrase)
+        for i in range(len(terms) - width + 1):
+            if tuple(terms[i:i + width]) != phrase:
+                continue
+            if not _only_the_rounds_league(terms, set(phrase), sport_key):
+                return None
+            return _resolved_search_sport_category([{"key": sport_key}])
+    return None
+
+
+def _bare_postseason_named_round(terms: list[str]) -> tuple[str, ...] | None:
+    """The round's abbreviations (`alcs`, `nlcs`) when the query IS a named round."""
+    lowered = [t.lower() for t in terms]
+    for phrase, sport_key in _POSTSEASON_NAMED_ROUNDS.items():
+        width = len(phrase)
+        for i in range(len(lowered) - width + 1):
+            if tuple(lowered[i:i + width]) != phrase:
+                continue
+            abbreviations = tuple(alt[0] for alt in _QUERY_PHRASE_ALIASES.get(phrase, ()))
+            if not abbreviations or not _only_the_rounds_league(terms, set(phrase), sport_key):
+                return None
+            return abbreviations
+    return None
+
+
+def _only_the_rounds_league(terms: list[str], consumed: set[str], sport_key: str) -> bool:
+    """Every term outside the round is a league word, and names the round's league.
+
+    `mlb wild card` asks for the round; `nfl championship series` is another
+    league's question and `yankees wild card` one club's, so neither gets the
+    MLB round hoisted over what it named.
+    """
+    rest = [(t, None) for t in terms if t.lower() not in consumed]
+    if not rest:
+        return True
+    keys, league_words = _resolve_sport_aliases(rest)
+    return all(t.lower() in league_words for t, _e in rest) and sport_key in (keys or [])
+
+
+# #9527: the words that join the two sides of a matchup. `at` is already
+# scaffolding above; these are not, so `red sox vs yankees` asked every row to
+# contain "vs" and no team or game name does — zero games, on the way most
+# people type a matchup. Dropped only BETWEEN two words: a trailing "v" is a
+# numeral ("grand theft auto v"), not a connector.
+_MATCHUP_CONNECTORS: frozenset[str] = frozenset({
+    "vs", "vs.", "v", "v.", "versus", "@",
+})
+
+
 def _strip_search_scaffolding(terms: list[str]) -> list[str]:
     """Drop generic scaffolding words from a >=3-term query; never strip to empty.
     Pure — safe to unit test. Leaves 1-2 word queries untouched (name collisions
     like 'Will Smith')."""
     if len(terms) < 3:
         return terms
-    kept = [t for t in terms if t.lower() not in _SEARCH_SCAFFOLDING]
+    kept = [
+        t for i, t in enumerate(terms)
+        if t.lower() not in _SEARCH_SCAFFOLDING
+        and not (0 < i < len(terms) - 1 and t.lower() in _MATCHUP_CONNECTORS)
+    ]
     return kept if kept else terms
+
+
+def _matchup_subject(q: str) -> str:
+    """`q` with a matchup connector between two words dropped. Pure. (#9527)
+
+    For the sites that ask whether the reader NAMED the teams, and for the
+    ranker. #9533 dropped the connector from the database terms only, so
+    `query_names_participant("eagles v bears", ...)` still asked the Eagles or
+    the Bears to own the word "v" — False — and the dropdown lost the finished
+    game and sank the next one below four inning markets that happen to SAY
+    "vs.". Same between-two-words rule as `_strip_search_scaffolding`, plus
+    `at`, which is scaffolding there and a connector here. The recall pattern,
+    the terms and the concept detectors keep reading the subject unchanged.
+    """
+    words = (q or "").split()
+    kept = [
+        w for i, w in enumerate(words)
+        if not (
+            0 < i < len(words) - 1
+            and (w.lower() in _MATCHUP_CONNECTORS or w.lower() == "at")
+        )
+    ]
+    return " ".join(kept) if kept else (q or "")
 
 
 def _apply_search_synonyms(
@@ -2468,6 +3083,12 @@ _SEARCH_SPORT_LLM_CATEGORIES = frozenset(
 )
 
 
+# #7355 r4: the categories that can never be a club's own market, so a row from
+# one is a namesake on a club's ANSWERS card (`Kings County` on `kings`). The
+# house set, minus `other`: that is the classifier's shrug and holds sports rows.
+_SEARCH_NAMESAKE_NON_SPORT_CATEGORIES = NON_SPORT_LLM_CATEGORIES - {"other"}
+
+
 def _team_evidence_sport_categories(team_rows, window: int) -> frozenset | None:
     """#7355: the sport categories the query's matched TEAMS belong to, or None.
 
@@ -2568,24 +3189,47 @@ def _event_teamless_sport_order_key(team_categories: frozenset | None):
     return case((func.split_part(Sport.key, "_", 1).in_(sunk), 1), else_=0)
 
 
-def _team_card_keyed(team_rows, query: str) -> list:
+def _team_card_keyed(
+    team_rows, query: str, cap: int | None = 5, *, restated_aliases: bool = True
+) -> list:
     """The TEAMS card — at most five `(scorer key, row dict)` pairs, in card order.
 
     ONE definition, read by the card itself and by the games list's leader key
     (#8765), so the two cannot disagree about who "the" Eagles are. Individual
-    sports dropped, prefix duplicates dropped, the card's sort, the same-name
+    sports dropped, stem-only rows dropped (#9281), prefix duplicates dropped, the card's sort, the same-name
     collapse (#4489), then the match-class scorer over the WHOLE window — its
     `[:5]` is the card's cap (#8756). `rank()` is `rank_with_keys()` without the
     keys, so the card's order is byte-for-byte what it was.
+
+    #9261: the scorer breaks its own ties by arrival order, and arrival order is
+    `ts_rank_cd`, which counts how often the word appears across name + aliases.
+    A row that restates its name as an alias (`Princeton Tigers` lacrosse,
+    `Grambling Tigers` on the FCS row) scores 3 where `LSU Tigers` scores 2, so
+    on production 2026-09-28 `tigers` carded Princeton lacrosse and Tennessee St
+    basketball over LSU and Clemson, and `bulldogs` put Georgia 4th behind two
+    baseball rows. So the collapsed groups are stably re-sorted by the same
+    college-audience rank #8993 uses INSIDE a group — football, men's
+    basketball, other college — before the scorer sees them. Every non-college
+    row reads 0, so no pro or soccer ordering moves, and the scorer's class,
+    kind and prominence still lead: this only reorders rows it already tied.
+
+    #9897: `cap=None` returns the whole scored window in the same order — the
+    card is its first five. `restated_aliases=False` scores each row without the
+    aliases that only repeat the first words of its own name (the bare city
+    `Chicago` on `Chicago Bulls`, see `_alias_restates_name_prefix`). Only
+    #8738's lead TIER reads it either way; the card never does.
     """
     from app.utils.search_match_class import rank_with_keys
 
-    rows = _pick_team_row_per_name(_sort_matched_team_rows(
-        _dedupe_prefix_duplicate_team_rows([
-            row for row in (team_rows or ())
-            if not _is_individual_sport(row.sport_key)
-        ])
-    ))
+    rows = sorted(
+        _pick_team_row_per_name(_sort_matched_team_rows(
+            _dedupe_prefix_duplicate_team_rows(_drop_stem_only_team_rows([
+                row for row in (team_rows or ())
+                if not _is_individual_sport(row.sport_key)
+            ], query))
+        )),
+        key=lambda row: _college_sport_audience_rank(row.sport_key),
+    )
     cards = [
         {
             "id": row.id,
@@ -2598,11 +3242,67 @@ def _team_card_keyed(team_rows, query: str) -> list:
             # Ranking evidence, never a payload — popped before the response,
             # same as typeahead. Guarded on `isinstance(str)` because the column
             # is JSON and has been observed holding non-string members.
-            "_aliases": [a for a in (row.alternate_names or []) if isinstance(a, str)],
+            "_aliases": _team_row_aliases(row),
         }
         for row in rows
     ]
-    return rank_with_keys(query, [(_search_team_evidence(t), t) for t in cards])[:5]
+    if not restated_aliases:
+        for card in cards:
+            card["_aliases"] = [
+                a for a in card["_aliases"]
+                if not _alias_restates_name_prefix(a, card["name"])
+            ]
+    return rank_with_keys(query, [(_search_team_evidence(t, query), t) for t in cards])[:cap]
+
+
+def _alias_restates_name_prefix(alias: str, name: str | None) -> bool:
+    """#9897: the alias is the leading words of the row's own name, and shorter.
+
+    `Chicago` on `Chicago Bulls`, `Los Angeles` on `Los Angeles Kings`, `Texas`
+    on `Texas Rangers`. They came from the odds provider's city-only rows, which
+    the #6974 folds merged into the NBA/NHL/MLS clubs; NFL rows never had one
+    (`Chicago Bears` carries only `Bears`). Such an alias says nothing the name
+    does not, yet it scores MC0 for the bare city where the name scores MC1, so
+    it separates clubs by their row's history, not by what the reader typed.
+    A nickname (`Bulls`, `Lakers`) is a suffix, never a prefix, and stays.
+    """
+    alias_words = alias.lower().split()
+    name_words = (name or "").lower().split()
+    return (
+        0 < len(alias_words) < len(name_words)
+        and name_words[: len(alias_words)] == alias_words
+    )
+
+
+def _unify_school_st_spelling(cards: list) -> list:
+    """#9309: one school, one spelling, when the card shows it twice.
+
+    `bucs` on production 2026-09-28 carded `East Tennessee St Buccaneers`
+    (baseball, a source's abbreviation) directly above `East Tennessee State
+    Buccaneers` (football) — same logo, two spellings, so a reader saw one
+    school listed twice. They are two real rows for two sports; only the
+    display name is wrong.
+
+    A middle `St`/`St.` word is rewritten to `State` ONLY when that exact
+    `State` spelling is already evidenced: another row on the same card is
+    named it, or the row's own aliases hold it (3607 stores `East Tennessee
+    State Buccaneers` as an alias). So `Mount St Mary's` and `St Johns` (Saint,
+    no such evidence) never change. Display only: ids, slugs and order are
+    untouched. Reads the private `_aliases` key, so it runs before that key is
+    popped. Mutates and returns `cards`.
+    """
+    spelled = {str(c.get("name") or "").casefold() for c in cards}
+    for card in cards:
+        own = {a.casefold() for a in card.get("_aliases") or () if isinstance(a, str)}
+        words = str(card.get("name") or "").split(" ")
+        for i in range(1, len(words) - 1):
+            if words[i] not in ("St", "St."):
+                continue
+            candidate = " ".join(words[:i] + ["State"] + words[i + 1:])
+            if candidate.casefold() in spelled | own:
+                card["name"] = candidate
+                break
+    return cards
 
 
 def _split_terms_order_key(team_rows, query: str, expanded: list):
@@ -2634,7 +3334,7 @@ def _split_terms_order_key(team_rows, query: str, expanded: list):
         return None
     from app.utils.search_match_class import MC1_ALL_TOKENS, match_class
 
-    lead_class = match_class(query, _search_team_evidence(keyed[0][1]))
+    lead_class = match_class(query, _search_team_evidence(keyed[0][1], query))
     if lead_class is None or lead_class > MC1_ALL_TOKENS:
         return None
 
@@ -2674,13 +3374,31 @@ def _team_card_lead_sport_keys(team_rows, query: str) -> frozenset | None:
     None — the caller then adds NO key and the compiled SQL is unchanged — when
     there is no card, or nothing to decide (every matched club's sport is a lead
     sport: `dodgers`; two clubs the scorer cannot separate share the lead).
+
+    #9897: a bare city names no one club. `chicago` on production 2026-09-30:
+    the card showed Blackhawks, Bulls, Cubs, Sky and White Sox — each row
+    carries the alias `Chicago` (MC0) — and no Bears, whose row carries only
+    `Bears` (MC1 on its name). The key then sank every Bears game, Jets @ Bears
+    this Sunday included, under Bulls games in late October; `los angeles` put
+    Rams @ Eagles 14th, under Lakers in November. So the tier is scored without
+    aliases that restate a name's own first words, and over the WHOLE window,
+    not the five-card cap (the Bears arrive seventh). The leader is still the
+    card's first row, and neither change can reach the card: its own order
+    reads the default arguments.
     """
-    keyed = _team_card_keyed(team_rows, query)
+    keyed = _team_card_keyed(team_rows, query, cap=None)
     if not keyed:
         return None
-    lead_key = keyed[0][0]
+    # The leader is the CARD's first row; the tier is every club the scorer
+    # cannot separate from it once aliases that restate a name's own first
+    # words are set aside (a bare city names no one club).
+    leader_id = keyed[0][1]["id"]
+    tier = _team_card_keyed(team_rows, query, cap=None, restated_aliases=False)
+    lead_key = next((key for key, card in tier if card["id"] == leader_id), None)
+    if lead_key is None:
+        lead_key, tier = keyed[0][0], keyed
     lead_names = {
-        (card.get("name") or "").lower() for key, card in keyed if key == lead_key
+        (card.get("name") or "").lower() for key, card in tier if key == lead_key
     }
     rows = _dedupe_prefix_duplicate_team_rows([
         row for row in team_rows if not _is_individual_sport(row.sport_key)
@@ -2734,6 +3452,159 @@ def _settled_day_order_key(lead_keys: frozenset | None):
         (Event.status.in_(_SEARCH_SETTLED_STATUSES), eastern_day),
         else_=None,
     ).desc().nulls_last()
+
+
+#: #9632: how many finals page one keeps when a club has nothing left to play
+#: in the window but still has live futures. Three is "how did the last week
+#: go" at phone width; everything past it moves to page two, not away.
+_SEARCH_BYE_FINALS_CAP = 3
+
+
+def _search_bye_team_ids(team_rows, query: str) -> list[int]:
+    """#9632: every team row of the club the TEAMS card leads with, or [].
+
+    `dodgers` on production 2026-09-29, the first day of the postseason: the
+    Dodgers have a first-round bye, so every game in the window is a final and
+    page one opened with 23 of them — the World Series (30%) and NL pennant
+    (42%) rows sat ~5,500px down at phone width. The futures probe reads the
+    club's own outcomes by `team_id`, and a club carries one row per
+    competition (`Los Angeles Dodgers` mlb AND preseason), so the ids are
+    every row whose name is a lead-tier card name, the tier
+    `_team_card_lead_sport_keys` reads (one definition of "the" club). Unlike
+    that helper this is NOT disarmed when every row is a lead sport — that is
+    exactly the `dodgers` shape.
+    """
+    keyed = _team_card_keyed(team_rows, query)
+    if not keyed:
+        return []
+    lead_key = keyed[0][0]
+    lead_names = {
+        (card.get("name") or "").lower() for key, card in keyed if key == lead_key
+    }
+    return sorted({
+        row.id for row in team_rows
+        if not _is_individual_sport(row.sport_key)
+        and (getattr(row, "name", "") or "").lower() in lead_names
+    })
+
+
+def _search_bye_finals_probe(event_conditions, team_ids: list[int], pattern: str):
+    """#9632: ONE statement — nothing left to play AND the club has live futures.
+
+    True only when (a) no matched game is `live` or `scheduled` — a stale
+    `scheduled` row counts as "something to play", which fails toward today's
+    page — and (b) an OPEN futures market not tied to a game carries one of the
+    club's outcomes at 1% or more. (b) is what separates `dodgers` (World
+    Series, pennant) from a club whose question is over; a game-linked market
+    is excluded because Kalshi leaves settled game markets `open` (gotcha #33).
+    Both arms are EXISTS, so the upcoming-game case (`chiefs`) stops at its
+    first scheduled row.
+
+    #9762: "one of the club's outcomes" is TWO signals, not a `team_id`. The
+    column also anchors players and mis-anchored rows — `mets` on 2026-09-30,
+    out of the playoffs, was capped by Carson Benge (ROY 30%) and Nolan McLean
+    (Gold Glove 45%), `orioles` by Pete Alonso and an NFL "Baltimore" row,
+    while both clubs' own boards sat at Kalshi's 1¢ floor. So the outcome's own
+    name must also match the typed term as a whole word (`pattern`, from
+    `contender_word_pattern`), the same agreement
+    `_headline_contender_outcome_clause` requires: `Los Angeles Dodgers` passes
+    for `dodgers`, `Carson Benge` and `New York M` do not.
+    """
+    nothing_to_play = ~(
+        select(Event.id)
+        .join(Sport, Event.sport_id == Sport.id)
+        .where(*event_conditions, Event.status.in_(("live", "scheduled")))
+        .exists()
+    )
+    live_futures = (
+        select(FuturesOutcome.id)
+        .join(FuturesMarket, FuturesMarket.id == FuturesOutcome.market_id)
+        .where(
+            FuturesOutcome.team_id.in_(team_ids),
+            FuturesOutcome.name.op("~*")(pattern),
+            FuturesMarket.status == "open",
+            FuturesMarket.event_id.is_(None),
+            FuturesOutcome.current_probability >= 0.01,
+        )
+        .exists()
+    )
+    return select(and_(nothing_to_play, live_futures))
+
+
+def _search_games_page_window(page: int, per_page: int, capped: bool) -> tuple[int, int]:
+    """#9632: `(offset, limit)` of the games page. Uncapped: the plain window.
+
+    Capped, page one holds the first `_SEARCH_BYE_FINALS_CAP` rows and page two
+    starts at the row right after them, so every raw row is on exactly one page
+    — the same reachability rule #5513 set for the pager.
+    """
+    if not capped:
+        return (page - 1) * per_page, per_page
+    if page == 1:
+        return 0, _SEARCH_BYE_FINALS_CAP
+    return _SEARCH_BYE_FINALS_CAP + (page - 2) * per_page, per_page
+
+
+def _search_games_total_pages(raw_total: int, per_page: int, capped: bool) -> int:
+    """#9632: the page count `_search_games_page_window` partitions `raw_total` into."""
+    if not capped:
+        return (raw_total + per_page - 1) // per_page
+    return 1 + (raw_total - _SEARCH_BYE_FINALS_CAP + per_page - 1) // per_page
+
+
+def _todays_final_order_key(armed: bool, status_order, upcoming_order, now: datetime):
+    """#9211: a club's game that FINISHED TODAY sits right behind its next game.
+
+    `chiefs` on production 2026-09-27 21:15Z, two hours after the Chiefs won
+    24–10 at Miami: 13 upcoming games (Oct 4 through Jan 10) printed first and
+    the result was card 14. `steelers` put that afternoon's 30–27 win at 16.
+    `status_order` ranks EVERY upcoming game above every finished one, and
+    #8505/#9040 order only inside the finished tier, so neither could lift it.
+
+    D107 still decides the first slot: the entity, then its next game, "next
+    before last when one exists" (the T2 gate: a finished game displacing
+    live/next on a bare entity query, 0). So the live games and the row that
+    ALREADY leads the upcoming tier keep their places (0), today's finals come
+    next (1), and everything else keeps the old order below them (2).
+
+    "Leads the upcoming tier" is `row_number()` over that tier, ordered by the
+    keys the route orders it by below `status_order` (#8738's leader, rank,
+    soonest; a club query has no tag tier, #8942), so the lifted row is the one
+    the reader already saw first. On a day with no final every row reads as before: live, that row,
+    then the rest in their old order.
+
+    `completed`/`closed` only: a `suspended` row has no result to show. Today
+    is the Eastern day, from the route's own `now` (`_intent_day_order_key`).
+    Armed for a club query (the TEAMS card has a row, #8942's test); None
+    otherwise, and the SQL is then unchanged.
+    """
+    if not armed:
+        return None
+    # Today's Eastern day as two UTC instants, not a per-row `timezone()` cast:
+    # the same rows, a range the `commence_time` index can serve, and no
+    # `timezone` token for #5688's named-day guard to mistake for its own key.
+    eastern = ZoneInfo(_EASTERN_TZ_NAME)
+    today = now.astimezone(eastern).date()
+    day_start = datetime.combine(today, datetime.min.time(), tzinfo=eastern)
+    day_end = datetime.combine(
+        today + timedelta(days=1), datetime.min.time(), tzinfo=eastern
+    )
+    upcoming_place = func.row_number().over(
+        partition_by=status_order, order_by=list(upcoming_order)
+    )
+    return case(
+        (status_order == 0, 0),
+        (and_(status_order == 1, upcoming_place == 1), 0),
+        (
+            and_(
+                Event.status.in_(["completed", "closed"]),
+                Event.commence_time >= day_start.astimezone(timezone.utc),
+                Event.commence_time < day_end.astimezone(timezone.utc),
+            ),
+            1,
+        ),
+        else_=2,
+    )
 
 
 # Award-narrowing scope tokens. A market whose NAME carries one of these but the
@@ -2827,6 +3698,127 @@ def _decided_boards_last(markets: list) -> list:
     ]
 
 
+def _name_words(text: str | None) -> list[str]:
+    """Lower-cased words of ``text``, an apostrophe folded away ("d'Or" -> "dor")."""
+    folded = (text or "").lower().replace("'", "").replace("’", "")
+    return _SEARCH_WORD.findall(folded)
+
+
+def _name_holds_terms_tightly(name: str | None, choices: list[list[list[str]]]) -> bool:
+    """The name holds the query as a phrase (word starts, in order, side by side)
+    or holds every term as a whole word. ``choices`` is one list of word
+    sequences per term: the term's own words, then its expansion's.
+    """
+    words = _name_words(name)
+
+    def _phrase_from(i: int, k: int) -> bool:
+        if k == len(choices):
+            return True
+        for seq in choices[k]:
+            end = i + len(seq)
+            if end <= len(words) and all(
+                w.startswith(s) for w, s in zip(words[i:end], seq)
+            ) and _phrase_from(end, k + 1):
+                return True
+        return False
+
+    if any(_phrase_from(i, 0) for i in range(len(words))):
+        return True
+
+    def _whole(seq: list[str]) -> bool:
+        n = len(seq)
+        return any(words[i:i + n] == seq for i in range(len(words) - n + 1))
+
+    return all(any(_whole(seq) for seq in alts) for alts in choices)
+
+
+def _scattered_terms_last(markets: list, low: list[tuple[str, str]]) -> list:
+    """#8689 r2: among name matches, a row that holds a multi-word query only as
+    scattered pieces of longer words yields to one that holds it tightly.
+
+    `?q=us open` (production 2026-09-28 00:1xZ, after r1) served `US job openings
+    in August` second, above `2027 US Open Women's Singles Winner` and `US Open
+    Winner`. The name-match test is a substring test, so "US ... open(ings)"
+    passes it, and the volume sort put the 714-volume jobs question ahead. A
+    tight row either has the terms side by side as word starts ("US Open", and
+    "us ope" while typing) or has every term as a whole word ("NBA: 2027
+    Champion", "Fed funds rate"). Only a row with neither sinks.
+
+    A stable partition like its siblings: nothing is dropped, each group keeps
+    its volume order, and a single-word query or a list with no loose row comes
+    back untouched. Over the top 57 real multi-word queries (30 days, read
+    2026-09-28) it moved two pages: `us open` and `finish top 3`.
+    """
+    choices = []
+    for t, e in low:
+        alts = [seq for seq in (_name_words(t), _name_words(e)) if seq]
+        if alts:
+            choices.append(alts)
+    if len(choices) < 2 or len(markets) < 2:
+        return markets
+    tight = [_name_holds_terms_tightly(m.name, choices) for m in markets]
+    if all(tight) or not any(tight):
+        return markets
+    return [m for m, ok in zip(markets, tight) if ok] + [
+        m for m, ok in zip(markets, tight) if not ok
+    ]
+
+
+def _holds_every_term_at_a_word_start(text: str, low: list[tuple[str, str]]) -> bool:
+    """Every term (or its expansion) starts a word of ``text`` (lower-cased)."""
+    return all(
+        any(
+            alt and re.search(r"(?<![^\W_])" + re.escape(alt), text)
+            for alt in (t, e)
+        )
+        for t, e in low
+    )
+
+
+def _interior_outcome_hits_last(markets: list, low: list[tuple[str, str]]) -> list:
+    """#9292: a row that holds the query only mid-word in an option yields to
+    the rows that answer it by a word.
+
+    `?q=hawks` (production 2026-09-28 04:4xZ) served `NFL: 2027 Champion` as
+    futures row 2, above `NBA: 2027 Champion`, on "Seattle Sea(hawks)"; `nets`
+    put `NCAAB Championship Winner` ("Alabama St Hor(nets)") above the Brooklyn
+    Nets' own boards; `rays` found four Grayson markets; `mets` found an
+    animated-film award through "Ki(mets)u". The outcome arm is a substring
+    match on purpose (LAT-P035 keeps its recall), and the volume sort then let
+    a big board with a mid-word hit beat a board that names the club.
+
+    A row sinks when its NAME does not hold the terms, some option holds every
+    term, and no option holds every term at a word start (#7381's rule, so
+    `yank` -> "Yankees" counts as a word). It sinks only below a page that has
+    an answer: a name match or a word-start option. A row that reached the page
+    by another arm (league ticker, alias, nickname) holds no such option and is
+    never flagged. Runs after `_demote_narrower_scope`, because a board about
+    the Nets' conference semifinal is still about the Nets and a Hornets board
+    is not. A stable partition like its siblings: nothing is dropped, and a
+    page where every option hit is mid-word (`9ers` -> "49ers") is untouched.
+    """
+    if len(markets) < 2 or not low:
+        return markets
+    interior, answered = [], False
+    for m in markets:
+        if _text_names_every_term(m.name, low):
+            interior.append(False)
+            answered = True
+            continue
+        names = (
+            (o.name or "").lower() for o in (getattr(m, "outcomes", None) or [])
+        )
+        hits = [n for n in names if all((t in n) or (e and e in n) for t, e in low)]
+        word = any(_holds_every_term_at_a_word_start(n, low) for n in hits)
+        answered = answered or word
+        interior.append(bool(hits) and not word)
+    if not answered or not any(interior):
+        return markets
+    return [m for m, i in zip(markets, interior) if not i] + [
+        m for m, i in zip(markets, interior) if i
+    ]
+
+
 def _rerank_search_futures(
     markets: list,
     expanded: list[tuple[str, str | None]],
@@ -2858,7 +3850,8 @@ def _rerank_search_futures(
     from the query text — it is what the query's GAMES resolved to, passed in by
     the caller that computed it. Optional and defaulted because only `/search`
     has it: see the demotion's own docstring, and the typeahead call site for why
-    that endpoint deliberately passes nothing.
+    that endpoint deliberately passes nothing. When the caller resolved none, a
+    bare championship query (`world series`, #9865) supplies it from its text.
 
     `team_sport_categories` (#7355) is the fourth, same provenance: the sports
     the query's matched teams play, for the multi-sport queries the third cannot
@@ -2875,6 +3868,9 @@ def _rerank_search_futures(
     name_matches = [m for m in markets if _name_match(m)]
     outcome_only = [m for m in markets if not _name_match(m)]
     name_matches.sort(key=_market_volume, reverse=True)  # real-interest signal
+    # #8689 r2: "US job openings" is not a name match for `us open` in any sense
+    # a reader means, so it yields to the rows that hold the query tightly.
+    name_matches = _scattered_terms_last(name_matches, low)
     # #8726: a board with no open question left yields to one that has one,
     # inside each partition so a name match still leads every outcome-only row.
     ordered = _decided_boards_last(name_matches) + _decided_boards_last(outcome_only)
@@ -2886,6 +3882,9 @@ def _rerank_search_futures(
     # correct-league sub-award still outranks a wrong-league market (WNBA stays
     # last). Both are stable partitions; composition preserves within-group order.
     ordered = _demote_narrower_scope(ordered, low)
+    # #9292: a mid-word option hit ("Sea(hawks)") yields to the rows that answer
+    # the query by a word. After the scope demotion, before the league/sport ones.
+    ordered = _interior_outcome_hits_last(ordered, low)
     # Then push substring-cousin wrong-league markets to the bottom
     # ("nba mvp" must not lead with "WNBA: 2026 MVP").
     ordered = _demote_wrong_league(ordered, expanded)
@@ -2894,8 +3893,20 @@ def _rerank_search_futures(
     ordered = _demote_teamless_sport(ordered, team_sport_categories)
     # And finally the wrong SPORT (#7259), below even the wrong league — the one
     # signal here that the query text cannot supply. `astros` must not lead with
-    # an LNBP basketball fixture. No-op when the caller resolved no single sport.
-    ordered = _demote_wrong_sport(ordered, resolved_sport_category)
+    # an LNBP basketball fixture. No-op when the caller resolved no single sport,
+    # unless the query is a championship's bare name (#9865): `world series`
+    # resolves no team, and its Dota 2 namesake must not lead the MLB boards.
+    ordered = _demote_wrong_sport(
+        ordered,
+        resolved_sport_category or _championship_query_sport_category(expanded),
+    )
+    # #9340: a bare `playoffs` keeps the postseason in progress first — the SQL
+    # key fetched those rows, and the name-match split above would otherwise
+    # hand "Boston: First Playoff Opponent" (no `playoffs` in it) to the bottom.
+    ordered = _postseason_now_first(ordered, [t for t, _e in low])
+    # #9333: likewise a round name keeps the round's ticker-matched series first,
+    # above the rows whose names merely contain its words (`Wild`·Bos`card`in).
+    ordered = _postseason_round_series_first(ordered, [t for t, _e in low])
     # Last, and inside one question only (#8417): a frozen row — last season's
     # settled market still stored open — yields its place to the same question's
     # live row, so the volume sort above cannot hand dedup the dead one.
@@ -3040,6 +4051,69 @@ def _typeahead_fold_twins(events: list, promoted_ids: set) -> list:
     return fold.events
 
 
+def _typeahead_seven_without_served_game_winners(
+    keyed: list, headline_ids, *, limit: int = 7
+) -> list:
+    """#9415: the dropdown prints each game once — the #8734 rule, on the seven.
+
+    Production 2026-09-28 16:3xZ, `/typeahead?q=chiefs`: "Kansas City Chiefs at
+    Las Vegas Raiders" (event 14781710) and, three rows down, "KC Chiefs vs LV
+    Raiders — Kansas City 65.5%", Kalshi `KXNFLGAME-26OCT04KCLV`, attached to
+    that same game. `/search` has withheld that row since #8734; the dropdown
+    never asked.
+
+    `keyed` is the scorer's `(key, payload)` list. The reservation, the entity
+    floor and the slice run exactly as the route ran them, over the rows that
+    are left. A futures row leaves only when the game it answers
+    (`_answers_game`, stamped in the futures loop) is among the rows the reader
+    sees. A game cut from the seven keeps its market, because there the market is
+    the only way to reach it. Dropping a market only moves rows up, and game rows
+    are never dropped, so the loop ends: at worst one pass per futures row.
+    """
+    from app.utils.search_match_class import entity_prefix_len
+
+    dropped: set[int] = set()
+    while True:
+        kept = [(k, p) for k, p in keyed if id(p) not in dropped]
+        seven = reserve_headline_slot(
+            [p for _k, p in kept], headline_ids, floor=entity_prefix_len(kept)
+        )[:limit]
+        served = {
+            p.get("event_id") for p in seven if p.get("type") == "event"
+        } - {None}
+        leaving = {
+            id(p)
+            for _k, p in kept
+            if p.get("type") == "futures" and p.get("_answers_game") in served
+        }
+        if not leaving:
+            return seven
+        dropped |= leaving
+
+
+def _typeahead_lead_fixtures_first(events: list, lead_ids: set) -> list:
+    """#9435: the resolved team's own fixtures take the first of the four slots.
+
+    Production 2026-09-28 18:2xZ, `/typeahead?q=giants`: the New York Giants
+    card, then four Yomiuri/Lotte Giants games and no New York Giants game.
+    The 8-row fetch is ordered by start time, and the Giants' Oct 4 game
+    (`14780551`) was row 8, behind five NPB rows, a KBO row and an AFLW row.
+    Being IN the fetch is what hid it: #5201's rescue arm fires only when the
+    pool holds none of the team's fixtures, #4615 marked the row as the team's
+    own, and then the four-slot cut dropped it before anything was scored.
+
+    A stable partition, the order #5201's arm already gives the rows it
+    prepends: the lead team's rows keep their order, then everybody else's.
+    The scorer ties namesake games on kind, so a lead row that is merely kept
+    would still print under the other club's games.
+    """
+    if not lead_ids:
+        return events
+    return [ev for ev in events if ev.id in lead_ids] + [
+        ev for ev in events if ev.id not in lead_ids
+    ]
+
+
 def _typeahead_stem_only_event(
     participants: tuple[str | None, str | None],
     expanded: list[tuple[str, str | None]],
@@ -3078,6 +4152,53 @@ def _typeahead_stem_only_event(
         if n and all((t in n) or (e and e in n) for t, e in low):
             return False
     return True
+
+
+def _typeahead_infix_only_event(
+    participants: tuple[str | None, str | None],
+    expanded: list[tuple[str, str | None]],
+    names_participant: bool,
+) -> bool:
+    """#5082: the event arm's substring rows that only an INFIX admitted.
+
+    Production 2026-09-28 21:4xZ, `/typeahead?q=pats`: the Patriots card, their
+    game and four of their markets, then `Tamara Korpatsch at Taylah Preston`,
+    a China Open match. `pats` is inside Kor·pats·ch. The event name arm is
+    `_build_expanded_ilike` (`%pats%`, anywhere), and `_typeahead_stem_only_event`
+    keeps every substring row on purpose, so nothing removed it.
+
+    The team arm already refuses this shape (#7381, `_build_word_start_ilike`,
+    which measured it over the 250 most-searched queries: `pats` kept New England
+    and shed Tamara Korpatsch). This is that rule for the event rows, applied
+    only where the caller already gates it — a query that resolved a team — so
+    a query naming no team keeps every row the arm finds.
+
+    True only when ALL of these hold:
+      1. the route did not already judge that the row names a participant
+         (`names_participant`: the curated nicknames, OR fetched by the lead
+         team's own id — `9ers` inside "49ers" is kept by that half);
+      2. every term (or its expansion) is a substring of some participant — the
+         row is a substring row, not one only the stemmer admitted;
+      3. some term (and its expansion) starts no word in any participant.
+    """
+    if names_participant:
+        return False
+    names = [(n or "").lower() for n in participants if n]
+    low = [(t.lower(), (e or "").lower()) for t, e in expanded]
+    if not names or not low:
+        return False
+
+    def _in(name: str, s: str) -> bool:
+        return bool(s) and s in name
+
+    def _word_start(name: str, s: str) -> bool:
+        return bool(s) and re.search(r"(?:^|[\W_])" + re.escape(s), name) is not None
+
+    if not all(any(_in(n, t) or _in(n, e) for n in names) for t, e in low):
+        return False
+    return not all(
+        any(_word_start(n, t) or _word_start(n, e) for n in names) for t, e in low
+    )
 
 
 def _futures_board_is_not_a_partition(market: "FuturesMarket") -> bool:
@@ -3278,6 +4399,16 @@ def _compose_futures_families(
 
     query_label = " ".join(t for t, _ in expanded).strip()
     entity_key = f"entity:{query_label.lower()}" if query_label else None
+    # #9340: a bare round (`championship series`, `wild card`) builds its card
+    # from the round's own rows — the one rule the flat list and the dropdown
+    # already lead with. Production `91183e5b`, 2026-09-28 14:4xZ: the list led
+    # with ALCS/NLCS, and the ANSWERS card above it was "Championship Series"
+    # holding four `NFL: … Season Series Winner` boards (`championship` carries
+    # the `winner` synonym, so they match by NAME); `wild card`'s card was a
+    # tennis match, `Set 1 Winner: Thiago Seyboth Wild vs Pedro Boscardin Dias`.
+    # The round's rows name the round only by abbreviation or ticker, so they
+    # never joined. A name-only row stays in the flat list at its own rank.
+    in_round = _postseason_round_lead_predicate([t for t, _ in expanded])
 
     def _family_key(m):
         # #7355 r3: the demotion sank these rows in the flat list, and the card
@@ -3293,6 +4424,8 @@ def _compose_futures_families(
         sk = _story_key(m.name or "", m.llm_sport_category or "")
         if sk:
             return sk
+        if in_round is not None:
+            return entity_key if entity_key and in_round(m) else None
         if entity_key and _query_name_match(m, expanded):
             return entity_key
         return None
@@ -3303,6 +4436,30 @@ def _compose_futures_families(
         if k:
             groups.setdefault(k, []).append(m)
 
+    # #7355 r4: `?q=kings` on production 2026-09-28 00:4xZ — the "Kings" card
+    # was `NHL: LA Kings Total Points` then `Kings County, New York: Kathy
+    # Hochul vote percentage`. When the card's top-ranked row is from a sport
+    # one of the matched clubs plays, the ranking has already said the card is
+    # the clubs', and a politics row that merely contains the word is a
+    # namesake. It leaves the card and keeps its own rank in the flat list.
+    # Only the entity card, only when armed, only when the LEADER is a club
+    # row: `hurricanes` ranks the Atlantic-season rows first, and one Carolina
+    # row further down must not turn that card into the hockey club's — this
+    # removes rows that contradict the card, it never decides what the query
+    # means. `other` (the classifier's shrug, which holds sports too) is
+    # never judged.
+    if team_sport_categories and entity_key in groups:
+        entity_members = groups[entity_key]
+        if (entity_members[0].llm_sport_category or "").strip().lower() in (
+            team_sport_categories
+        ):
+            groups[entity_key] = [
+                m
+                for m in entity_members
+                if (m.llm_sport_category or "").strip().lower()
+                not in _SEARCH_NAMESAKE_NON_SPORT_CATEGORIES
+            ]
+
     families: list[dict] = []
     for key, members in groups.items():
         if len(members) < 2:
@@ -3311,7 +4468,10 @@ def _compose_futures_families(
         # it's an outcome-only cluster (e.g. "lebron james" matched the 2028
         # election markets only because he's a listed candidate → not a LeBron
         # family). Spec: "family relevance = best member's name-match score".
-        if not any(_query_name_match(m, expanded) for m in members):
+        # #9340: a round card's members passed the round predicate, which IS
+        # the relevance evidence; its rows name the round only by abbreviation.
+        round_card = in_round is not None and key == entity_key
+        if not round_card and not any(_query_name_match(m, expanded) for m in members):
             continue
         if key.startswith("story:"):
             # #6941. The house vocabulary, never string surgery on the key. A
@@ -3713,6 +4873,129 @@ def _futures_refill_in_hand(arm_state: str, spare_rows: list) -> list | None:
     return None
 
 
+def _needs_sunk_slot_outcome_arm(
+    arm_state: str, answer_rows: int, over_cap_ids: set
+) -> bool:
+    """#9597: should the outcome arm run for the slots #8628 r2's sunk rows hold?
+
+    Only when all three are true: the window SKIPPED the arm (LAT-P111's proof
+    that it could not matter holds only while every slot is a name match), the
+    cap sank at least one row, and the answer rows cannot fill the page, so a
+    sunk row would be SHIPPED. Any other page is untouched and pays nothing.
+    """
+    return (
+        arm_state == "skipped"
+        and bool(over_cap_ids)
+        and answer_rows < _SEARCH_FUTURES_PAGE
+    )
+
+
+def _sunk_slot_spare_rows(
+    arm_state: str,
+    spare_rows: list,
+    over_cap_ids: set,
+    answer_rows: int,
+    refill_source: str,
+) -> list:
+    """#9724 r2: the name matches ranked 21-60, for the slots sunk rows would ship.
+
+    `?q=braves` on Wild Card day (production `adf0d5f0`, 2026-09-30 06:57Z),
+    after #9724's game key: `futures_outcome_arm: skipped`,
+    `futures_refill_source: not_fired`, and four sunk Phillies vs. Braves props
+    (6th/7th/8th Inning Winner, Player Props) still filled rows 7-10 while "Will
+    Atlanta Braves advance to the NLDS in the 2026 MLB Playoffs?" (61380837,
+    open) was off both pages. It is a NAME match past rank 20. The collapse
+    refill never fires here — its gate counts a sunk row as an answer (#8628 r2,
+    for the refill query's cost) — and #9597's arm fetches outcome-only rows, so
+    nothing read the rows the window statement had already returned.
+
+    Those rows cost nothing: they are `_futures_spare_rows`, in hand. With the
+    outcome arm ``skipped`` or ``absent`` they are the full arm order's ranks 21+
+    exactly (tier is the first ORDER BY key, so no outcome-only row can sit
+    among them) — a SHORT spare page is still an exact prefix, which is why this
+    does not need `_futures_refill_in_hand`'s full-page test. Any other arm state,
+    a refill that already ran (it read these ranks), no sunk row, or a page the
+    answer rows fill: nothing to read, and the page is untouched.
+    """
+    if (
+        refill_source != "not_fired"
+        or arm_state not in ("skipped", "absent")
+        or not over_cap_ids
+        or answer_rows >= _SEARCH_FUTURES_PAGE
+    ):
+        return []
+    return list(spare_rows)
+
+
+async def _fetch_sunk_slot_outcome_rows(
+    db, window_query, candidates_in, tier1_arms: list, outcome_arm, deadline: float
+) -> tuple[list, str]:
+    """#9597: the outcome-only rows, for the page slots #8628 r2's sunk rows hold.
+
+    `?q=red sox` on the first day of MLB's postseason (production `462717ea48`,
+    2026-09-29): the 20-row window was all name matches from tonight's Red Sox @
+    Yankees game, so `_fetch_futures_window` SKIPPED the outcome arm. The
+    fixture cap then sank seven of them, but nothing else was in hand, so the
+    sunk rows still filled the page (nine game props) and `MLB: 2026 American
+    League Champion` (199045, tier 2, $4.4M, an OUTCOME match for Boston) was
+    never fetched. LAT-P111's skip is exact only while every slot goes to a
+    name match; a sunk row is a slot the name matches gave back.
+
+    OUTCOME-ONLY by exclusion, not by the window's order: `window_query` sorts
+    name tier first, and on this page the tier<=1 set is saturated, so the arm
+    alone would return twenty game props whose OUTCOMES name the club and no
+    outcome-only row at all. Excluding the tier<=1 arms leaves exactly the rows
+    `_futures_name_tier` scores 2, in the window's own order.
+
+    The arm's own bound (`_search_outcome_arm_bound_ms`) and a SAVEPOINT, never a
+    session rollback: `deduped_futures` is live and read again afterwards
+    (LAT-P255/#3731). On timeout the caller ships the page it already had, so
+    this does NOT join `degraded`: the page is not short, and marking it would
+    make a term whose arm always sheds permanently uncacheable (#3399).
+
+    Returns ``(rows, state)``; ``state`` is ``absent``, ``shed``,
+    ``budget_exceeded`` or ``merged``, reported under ``?debug_timing=1``.
+    """
+    if outcome_arm is None or not tier1_arms:
+        return [], "absent"
+    bound_ms = _search_outcome_arm_bound_ms(deadline)
+    if bound_ms is None:
+        return [], "shed"
+    await _apply_search_statement_timeout(db, deadline, bound_ms=bound_ms)
+    nested = await db.begin_nested()
+    try:
+        rows = list(
+            (
+                await db.execute(
+                    window_query(
+                        and_(
+                            candidates_in([outcome_arm]),
+                            ~candidates_in(tier1_arms),
+                        )
+                    )
+                )
+            )
+            .scalars()
+            .unique()
+            .all()
+        )
+    except Exception as exc:  # noqa: BLE001 — re-raised below unless it is the bound
+        if not _is_query_timeout(exc):
+            with suppress(Exception):
+                await nested.rollback()
+            raise
+        await nested.rollback()
+        await _apply_search_statement_timeout(db, deadline)
+        logger.warning(
+            "search sunk-slot outcome arm exceeded its %d ms budget — keeping "
+            "the capped page", bound_ms,
+        )
+        return [], "budget_exceeded"
+    await nested.commit()
+    await _apply_search_statement_timeout(db, deadline)
+    return rows, "merged"
+
+
 def _search_tsquery(q: str):
     """Build a PostgreSQL query parser expression for user search text."""
     return func.websearch_to_tsquery(_SEARCH_TS_CONFIG_SQL, q.strip())
@@ -3733,10 +5016,66 @@ def _combine_search_vectors(*vectors):
     return combined
 
 
+def _has_unspaced_slash(column):
+    """#9735: TRUE when the name holds a slash with no space on either side.
+
+    Only that spelling parses as one token. `Bolelli / Vavassori` (Kalshi's)
+    already tokenises per player; splitting it again would count each player
+    twice and rank it 2.0 against the unspaced twin's 1.0 (measured).
+    """
+    return column.op("~")("[^[:space:]]/[^[:space:]]")
+
+
+def _slash_split_or_empty(column):
+    """#9735: the name with its slashes read as spaces, or '' when it has none.
+
+    Postgres's default parser reads an unspaced `Rojer/Winegar` as ONE `file`
+    token (measured on production 2026-09-30)::
+
+        to_tsvector('simple','Rojer/Winegar')       -> 'rojer/winegar':1
+        to_tsvector('simple','Bolelli / Vavassori') -> 'bolelli':1 'vavassori':2
+
+    so no word test and no rank can see either player of a doubles pair stored
+    that way (the StatPal/Polymarket spelling; Kalshi-minted rows are spaced).
+    This is the split copy those tests read BESIDE the unsplit name, never
+    instead of it: a reader who types `rojer/winegar` still needs the one token.
+
+    A name without an unspaced slash yields '' — an empty vector and a
+    guarded-out word test — so every other row ranks and matches exactly as
+    before, and only the unspaced-slash rows pay the second `to_tsvector`.
+    """
+    return case(
+        (_has_unspaced_slash(column), func.replace(column, "/", " ")),
+        else_="",
+    )
+
+
+def _slash_split_fts(column, term: str, expansion: str | None):
+    """#9735: `_build_expanded_fts` over the slash-split name, slash rows only.
+
+    A CASE, not an AND, so the guard is evaluated first by contract and a row
+    without an unspaced slash never pays the extra `to_tsvector`.
+    """
+    return case(
+        (
+            _has_unspaced_slash(column),
+            _build_expanded_fts(func.replace(column, "/", " "), term, expansion),
+        ),
+        else_=false(),
+    )
+
+
 def _event_search_vector():
     return _combine_search_vectors(
         _weighted_search_vector(Event.home_team_name, _SEARCH_EVENT_TEAM_WEIGHT),
         _weighted_search_vector(Event.away_team_name, _SEARCH_EVENT_TEAM_WEIGHT),
+        # #9735: `Rojer/Winegar` is one token above; this adds `rojer`/`winegar`.
+        _weighted_search_vector(
+            _slash_split_or_empty(Event.home_team_name), _SEARCH_EVENT_TEAM_WEIGHT
+        ),
+        _weighted_search_vector(
+            _slash_split_or_empty(Event.away_team_name), _SEARCH_EVENT_TEAM_WEIGHT
+        ),
     )
 
 
@@ -3943,6 +5282,36 @@ def _build_word_start_ilike(column, term: str, expansion: str | None):
     if expansion:
         return or_(_one(term), _one(expansion))
     return _one(term)
+
+
+def _build_round_word_ilike(column, term: str, expansion: str | None):
+    """`_build_expanded_ilike`, except a ROUND word must be a whole word (#9306).
+
+    For the closed list in `_TEAM_PREFIX_REFUSED_TOKENS` only. Those words are
+    finished — nobody types `alds` on the way to anything — and the substring is
+    somebody's surname or a club: `%alds%` is inside Byron Don(alds) and
+    Wea(lds)tone. PR #9317 narrowed the futures OUTCOME arm and production then
+    showed the dropdown's NAME arm doing the same thing: `/typeahead?q=alds`
+    (prod `e5966389`, 2026-09-28 09:20Z) slotted "Florida Governor election:
+    Byron Donalds vote percent" and "Miami-Dade County, Florida: Byron Donalds
+    vote percent" above the ALDS "advance" markets, then two Wealdstone markets
+    and two Wealdstone games. `/search` was clean because its name arm is already
+    a whole-word FTS test.
+
+    Every other term compiles exactly as `_build_expanded_ilike` — #7381's
+    word-start rule and #5773's refusal of a general word test are about
+    progressive typing, which a round word is not. Same ILIKE-then-`~*` shape as
+    `_outcome_whole_word`, so the trigram index still drives the scan.
+    """
+    if term.lower() not in _TEAM_PREFIX_REFUSED_TOKENS:
+        return _build_expanded_ilike(column, term, expansion)
+    whole = and_(
+        column.ilike(f"%{term}%"),
+        column.op("~*")(f"(^|[^[:alnum:]]){_regex_escape(term)}([^[:alnum:]]|$)"),
+    )
+    if expansion:
+        return or_(whole, column.ilike(f"%{expansion}%"))
+    return whole
 
 
 def _build_futures_name_filter(ilike_futures_filter, fts_q: str):
@@ -4360,16 +5729,187 @@ def _alias_futures_arms(terms: list[str]) -> list:
     misses are missed by NAME ("Men's 2027 College Basketball Champion" is a name
     match). An alias is a cheap recall additive; it does not buy a second full
     search. Returns [] for any query with no alias, so the common path is
-    unchanged SQL.
+    unchanged SQL. A postseason round name (#9333) adds its TICKER arm here too —
+    see `_postseason_round_futures_arms`.
+
+    Compiled through `_build_round_word_ilike` (#9340): an alternative can be a
+    round abbreviation (`division series` -> `alds`), and `%alds%` is inside
+    Byron Don(alds). Every other term compiles exactly as before.
     """
 
     arms = []
     for alternative in _phrase_alias_alternatives(terms):
         expanded = _apply_search_synonyms(expand_search_terms(alternative))
         arms.append(
-            and_(*[_build_expanded_ilike(FuturesMarket.name, t, e) for t, e in expanded])
+            and_(*[_build_round_word_ilike(FuturesMarket.name, t, e) for t, e in expanded])
         )
-    return arms
+    return arms + _postseason_round_futures_arms(terms)
+
+
+#: #9333 — a postseason ROUND, named by the reader and by no stored text.
+#: `/search?q=wild card` on Monday 2026-09-28 served ZERO games with four MLB
+#: Wild Card series opening the next day, and led its futures with the NCAAB and
+#: NCAAF championship markets (`wild` inside Wild·cats, `card` inside
+#: Card·inals, two outcome names). No event row, and no linked market name
+#: ("Game 1: Boston vs New York Y"), says "wild card".
+#:
+#: The round lives in Kalshi's TICKERS: every series market of the round ends in
+#: its code (`KXMLBSERIES-26BOSNYYWC`, `KXMLBSERIESGAMES-…WC`, `…SCORE-…WC`),
+#: and each game's own Kalshi market carries the same team pair
+#: (`KXMLBGAME-26SEP292000BOSNYY`). So a game belongs to the round when its
+#: linked game ticker ends in the pair of an open series market of that round,
+#: and was played after that series was listed — which keeps out the two clubs'
+#: regular-season meetings (`KXMLBGAME-26AUG281915BOSNYY`), whose tickers end in
+#: the same pair.
+#:
+#: phrase -> (sport key, series-family stem, winner-market prefix, game-market
+#: prefix, round code). NFL wild card weekend has no such owned signal yet, so
+#: it is not claimed here.
+_POSTSEASON_ROUND_ALIASES: dict[tuple[str, ...], tuple[str, str, str, str, str]] = {
+    ("wild", "card"): ("baseball_mlb", "KXMLBSERIES", "KXMLBSERIES-", "KXMLBGAME-", "WC"),
+    ("wildcard",): ("baseball_mlb", "KXMLBSERIES", "KXMLBSERIES-", "KXMLBGAME-", "WC"),
+}
+
+_POSTSEASON_ROUND_MAX_PHRASE_LEN = max(len(p) for p in _POSTSEASON_ROUND_ALIASES)
+
+
+def _resolve_postseason_round(terms):
+    """``(round | None, consumed_terms)`` — the first round name in the query.
+
+    Longest phrase first, like `_resolve_sport_aliases`. Pure, so the guard
+    tests can pin it without a database.
+    """
+    lowered = [term.lower() for term in terms]
+    for length in range(min(_POSTSEASON_ROUND_MAX_PHRASE_LEN, len(lowered)), 0, -1):
+        for i in range(len(lowered) - length + 1):
+            rnd = _POSTSEASON_ROUND_ALIASES.get(tuple(lowered[i:i + length]))
+            if rnd:
+                return rnd, set(lowered[i:i + length])
+    return None, set()
+
+
+def _resolve_postseason_games(terms):
+    """``(rounds, consumed_terms)`` — the ticker rounds whose GAMES a query asks for.
+
+    #9578. A round name (`wild card`) is its own round, via
+    `_resolve_postseason_round`. A postseason word (`playoffs`, `postseason`)
+    names no round and asks for every one in progress: on production
+    2026-09-29, the first day of MLB's postseason, `mlb playoffs`, `playoffs`,
+    `mlb postseason` and `baseball playoffs` served ZERO games while `wild
+    card` served that day's four Wild Card games. No event row says either
+    word; the round map is the only signal, so these queries read it too.
+
+    Only the postseason word and league words naming the round's league
+    (`_only_the_rounds_league`): `nfl playoffs` is another league's question,
+    and `patriots playoffs` one club's, so neither gets the MLB round's games.
+    Pure — no database — so the guard tests pin it.
+    """
+    rnd, consumed = _resolve_postseason_round(terms)
+    if rnd is not None:
+        return [rnd], consumed
+    consumed = {t.lower() for t in terms if t.lower() in _BARE_POSTSEASON_TERMS}
+    if not consumed:
+        return [], set()
+    rounds = [
+        r for r in dict.fromkeys(_POSTSEASON_ROUND_ALIASES.values())
+        if _only_the_rounds_league(terms, consumed, r[0])
+    ]
+    return rounds, (consumed if rounds else set())
+
+
+def _ticker_range(column, prefix: str):
+    """``column LIKE 'prefix%'`` in a form `uq_futures_source_external` can serve.
+
+    A bare `LIKE 'KXMLBSERIES%'` seq-scans `futures_markets` on production (cost
+    179,038); a range on the same prefix is an index scan (cost 4). But the
+    range is bounded on the prefix's ALPHANUMERIC stem: production's collation
+    ignores punctuation, so `'KXMLBSERIES-' <= x < 'KXMLBSERIES.'` matched ZERO
+    rows there while passing on a C-collated test database. The LIKE then
+    restores the exact prefix.
+    """
+    stem = prefix.rstrip("-_.")
+    return and_(
+        column >= stem,
+        column < stem[:-1] + chr(ord(stem[-1]) + 1),
+        column.like(f"{prefix}%"),
+    )
+
+
+def _postseason_round_series_match(rnd, market=FuturesMarket):
+    """The round's own Kalshi series markets (winner, total games, exact score)."""
+    _sport_key, stem, _winner, _game, code = rnd
+    return and_(
+        market.source == "kalshi",
+        _ticker_range(market.external_id, stem),
+        market.external_id.like(f"%{code}"),
+    )
+
+
+def _postseason_round_futures_arms(terms: list[str]) -> list:
+    """The round's series markets as one UNION arm; `[]` without a round name.
+
+    Rides `_alias_futures_arms` so it gets that arm's three wirings on both
+    surfaces — recall, the tier-1 window, and relevance tier 1 — rather than
+    landing in tier 2 beside the Wild·cats/Card·inals outcome collisions.
+    """
+    rnd, _consumed = _resolve_postseason_round(terms)
+    return [] if rnd is None else [_postseason_round_series_match(rnd)]
+
+
+def _postseason_round_event_scope(rnd):
+    """The round's games: see `_POSTSEASON_ROUND_ALIASES` for the rule.
+
+    An uncorrelated `IN`, not a per-event EXISTS: correlated, the planner walked
+    every `KXMLBGAME` ticker once per MLB event in the window (1,166 ms on
+    production 2026-09-28); as one set it is 72-85 ms, and only a query naming
+    a round pays it.
+
+    #9578: the league is checked INSIDE the set, on its own alias of `sports`.
+    It used to be `Sport.key == …` beside the `IN`, which names the OUTER
+    query's `sports`: the zero-result bridge (`bridged_canonical_ids`) reads the
+    recall arms with no `sports` join, so that statement became a cartesian
+    product of `events` and `sports` (SAWarning in the playoffs gate).
+    """
+    sport_key, _stem, winner, game_prefix, code = rnd
+    game = aliased(FuturesMarket, name="round_game")
+    series = aliased(FuturesMarket, name="round_series")
+    game_event = aliased(Event, name="round_game_event")
+    game_sport = aliased(Sport, name="round_game_sport")
+    # `KXMLBSERIES-26BOSNYYWC`: the two-digit year follows the prefix, the pair
+    # sits between the year and the round code.
+    year = func.substr(series.external_id, len(winner) + 1, 2)
+    pair = func.substr(
+        series.external_id,
+        len(winner) + 3,
+        func.length(series.external_id) - (len(winner) + 2 + len(code)),
+    )
+    round_games = (
+        select(game.event_id)
+        .select_from(game)
+        .join(
+            series,
+            and_(
+                series.source == "kalshi",
+                _ticker_range(series.external_id, winner),
+                series.external_id.like(f"%{code}"),
+                series.status == "open",
+                game.external_id.like(func.concat(game_prefix, year, "%", pair)),
+            ),
+        )
+        .join(
+            game_event,
+            and_(
+                game_event.id == game.event_id,
+                game_event.commence_time >= series.created_at,
+            ),
+        )
+        .join(
+            game_sport,
+            and_(game_sport.id == game_event.sport_id, game_sport.key == sport_key),
+        )
+        .where(game.source == "kalshi", _ticker_range(game.external_id, game_prefix))
+    )
+    return Event.id.in_(round_games)
 
 
 # Built once at import: a dict rebuild per keystroke on the typeahead path would be
@@ -4381,6 +5921,83 @@ _TEAM_NICKNAME_EXPANSIONS: dict[str, tuple[str, str]] = team_nickname_search_exp
 _TEAM_NICKNAME_EVENT_EXPANSIONS: dict[str, tuple[str, str]] = (
     team_nickname_event_expansions()
 )
+
+#: #9272 — the same map keyed for the TEAMS card: `alias -> (sport_key, team name)`.
+_TEAM_NICKNAME_TEAM_ROWS: dict[str, tuple[str, str]] = team_nickname_team_rows()
+
+
+def _team_nickname_team_arms(terms: list[str]) -> list:
+    """TEAMS-card recall arms for curated nicknames: the named row, by (sport, name).
+
+    The Teams card on `/search` matches by full text and `/typeahead`'s by
+    word-start ILIKE, both over `alternate_names`, so a nickname only reached the
+    card once a repair script had written it onto the row — and an apostrophe
+    nickname not even then: `a's` has no lexeme under the English config, so
+    `/search?q=a's` carded nothing while the Athletics row held `A's`
+    (production 2026-09-28). This arm needs no stored alias; the map already
+    names the row. OR'd onto the card's filter by both routes, it only ADDS
+    rows, and is `[]` — no SQL change — for every query without a nickname.
+
+    #9842: a nickname QUALIFIED by the word before it names someone else.
+    `leicester riders` and `knight riders` carded the Saskatchewan Roughriders
+    first, because `riders` recalled its row from inside a longer name. See
+    `_nickname_is_qualified` for which preceding words leave it the nickname.
+    """
+    pairs: list[tuple[str, str]] = []
+    for i, term in enumerate(terms):
+        entry = _TEAM_NICKNAME_TEAM_ROWS.get(term.lower())
+        if entry is None or entry in pairs:
+            continue
+        if i > 0 and _nickname_is_qualified(terms[i - 1], entry):
+            continue
+        pairs.append(entry)
+    return [and_(Sport.key == sport_key, Team.name == name) for sport_key, name in pairs]
+
+
+def _nickname_is_qualified(prev: str, entry: tuple[str, str]) -> bool:
+    """Does `prev`, the word just before a nickname, make it part of another name? (#9842)
+
+    `leicester riders` is the Leicester Riders and `knight riders` the Knight
+    Riders — the qualifier turns the nickname into the tail of a different club's
+    name. A word that does NOT is scaffolding (`the boilers`), a matchup
+    connector (`stamps vs riders`), a league (`cfl riders`), another curated
+    nickname (`pats bills`), or a word of the named club itself (`new england
+    pats`, `saskatchewan riders`). Adjacency, not "every other word belongs to
+    the row": `pats playoffs` and `riders score` keep their club, because a word
+    AFTER the nickname does not rename it.
+    """
+    word = prev.lower()
+    if (
+        word in _SEARCH_SCAFFOLDING
+        or word in _MATCHUP_CONNECTORS
+        or word in _SPORT_SEARCH_ALIASES
+        or word in _TEAM_NICKNAME_TEAM_ROWS
+    ):
+        return False
+    sport_key, name = entry
+    own_words = set(name.lower().split()) | set(sport_key.lower().split("_"))
+    for alias in curated_team_aliases(sport_key, name):
+        own_words.update(alias.lower().split())
+    return word not in own_words
+
+
+def _team_nickname_team_order(arms: list) -> list:
+    """ORDER BY prefix putting the rows `_team_nickname_team_arms` named first.
+
+    Recall is not enough on its own: those rows match no FTS lexeme, so they
+    rank 0 and `m's` — whose `m` matches every "A&M" row — could push the
+    Mariners past the fetch window. Empty when there are no arms, so the ORDER
+    BY of every other query is unchanged.
+    """
+    return [case((or_(*arms), 0), else_=1)] if arms else []
+
+
+def _team_row_aliases(row) -> list[str]:
+    """A team row's ranking evidence: its stored `alternate_names` plus the map's
+    curated aliases for it (#9272), so a row found by nickname scores on it."""
+    return [
+        a for a in (row.alternate_names or []) if isinstance(a, str)
+    ] + list(curated_team_aliases(row.sport_key, row.name))
 
 
 def _team_nickname_futures_arms(terms: list[str]) -> list:
@@ -4693,6 +6310,14 @@ def _event_name_match(term: str, expansion: str | None):
     rows the test was never able to judge and changes no row it could. Read that
     helper for the live before/after — the shipped form answered `dodgers` with
     25 events and `dodgers and cubs` with zero.
+
+    #9735 added the two slash-split arms (`_slash_split_fts`). The parser reads
+    an unspaced doubles pair `Rojer/Winegar` as ONE token, so the word test threw
+    away every such row the ILIKE had found: `q=Winegar` served 0 games while
+    Rojer/Winegar was live, 93 rows in the ±10-day window (17 live). Like
+    LAT-P035's arm this only gives the test a reading it could not make; it is
+    still AND-ed behind the ILIKE, so it rechecks rows the trigram scan already
+    returned and adds no scan.
     """
     return and_(
         or_(
@@ -4703,6 +6328,8 @@ def _event_name_match(term: str, expansion: str | None):
             _term_has_no_lexemes(term),
             _build_expanded_fts(Event.home_team_name, term, expansion),
             _build_expanded_fts(Event.away_team_name, term, expansion),
+            _slash_split_fts(Event.home_team_name, term, expansion),
+            _slash_split_fts(Event.away_team_name, term, expansion),
         ),
     )
 
@@ -4911,6 +6538,55 @@ def _resolved_club_words(term: str, resolved: list[tuple[str, str]]) -> list[str
     return words
 
 
+def _is_finished_club_word(term: str, team_rows) -> bool:
+    """#9609: `term` is a WHOLE word of a club the page's own teams read returned.
+
+    `rays` + Tampa Bay Rays, `mets` + New York Mets. The reader has finished a word
+    the registry recognises, so — the reason #9306 gives for a round word — the
+    progressive-typing case the outcome arm's substring protects does not apply,
+    and the substring is somebody's surname: `rays` reached two Senate races and
+    "Who will Bernie endorse?" through G(rays)on, `mets` a Demon Slayer award and
+    three table-tennis matches through Ki(mets)u / E(mets). #9292 sank those rows,
+    but on these pages the real rows are too few to fill ten, so the sunk junk
+    still filled them.
+
+    Two refusals keep the old arm, both about typing. A row from an individual
+    sport or with no sport is ignored (`_rescue_teams_from_rows`' strip: a golfer
+    is not a club). And if any club word the term STARTS is longer than it
+    (`red` + California Redwoods, `heat` + Flackwell Heath FC), the reader may
+    still be typing, so nothing changes. Pure, so the rule is testable without a
+    database.
+    """
+
+    lowered = term.lower()
+    finished = False
+    for row in team_rows or ():
+        sport_key = getattr(row, "sport_key", None)
+        if not sport_key or _is_individual_sport(sport_key):
+            continue
+        for word in re.findall(r"[^\W_]+", row.name or ""):
+            word = word.lower()
+            if word == lowered:
+                finished = True
+            elif word.startswith(lowered):
+                return False
+    return finished
+
+
+def _outcome_whole_word(term: str):
+    """An outcome NAME carrying `term` as a whole word, never inside one.
+
+    The trigram-servable ILIKE drives the scan and the regex rechecks it, for the
+    seq-scan reason `_build_word_start_ilike` records.
+    """
+    return and_(
+        FuturesOutcome.name.ilike(f"%{term}%"),
+        FuturesOutcome.name.op("~*")(
+            f"(^|[^[:alnum:]]){_regex_escape(term)}([^[:alnum:]]|$)"
+        ),
+    )
+
+
 def _resolved_club_outcome_match(term: str, exp: str | None, club_words: list[str]):
     """#5773: the futures OUTCOME arm when the teams registry has named a club.
 
@@ -4924,18 +6600,63 @@ def _resolved_club_outcome_match(term: str, exp: str | None, club_words: list[st
     """
 
     arms = [FuturesOutcome.name.ilike(f"%{word}%") for word in club_words]
-    arms.append(
-        and_(
-            FuturesOutcome.name.ilike(f"%{term}%"),
-            FuturesOutcome.name.op("~*")(
-                f"(^|[^[:alnum:]]){_regex_escape(term)}([^[:alnum:]]|$)"
-            ),
-        )
-    )
+    arms.append(_outcome_whole_word(term))
     if exp:
         arms.append(FuturesOutcome.name.ilike(f"%{exp}%"))
     return FuturesMarket.id.in_(
         select(FuturesOutcome.market_id).where(or_(*arms))
+    )
+
+
+def _multi_term_outcome_match(expanded: list[tuple[str, str | None]]):
+    """#9646: the futures OUTCOME arm for a query of two or more terms.
+
+    Each term used to need SOME outcome of the market, each its own. `cy young`
+    therefore served five boards reached by one word here and the other there,
+    read on production 2026-09-29:
+
+        Presidential Election Winner 2028   Person CY      / Glenn Youngkin
+        NFL Championship Halftime Show      Miley Cyrus    / Young Thug
+        FCS National Championship Winner    Mercyhurst     / Youngstown St.
+        LOTTE Championship (x2)             Lucy Li        / Jin Young Ko
+
+    A term pg_trgm cannot serve (`_has_extractable_trigram` false: `cy`, `us`,
+    `f1`, `2.5`) is spelled inside nearly every tenth name, so on its own it
+    attests nothing, which is LAT-P010's single-term finding. It now counts only
+    in the SAME outcome as one of the query's longer terms. The longer terms
+    keep their own outcomes, so a board holding two names the reader typed
+    (`zelenskyy putin`, `falcons packers`) is still reached, and the short term
+    still FILTERS (LAT-P006: `us recession` must not admit "Euro area growth").
+
+    The cost, named: a short term found only in an outcome while its partner is
+    only in the market NAME no longer reaches through this arm (`award d'or` ->
+    "France Football Award 2026", whose `d'Or` and `Award` sit in different
+    outcomes). An OR onto the name would put an unservable `%cy%` subquery
+    under a top-level OR, the LAT-P006 plan that timed out.
+
+    Every term short, or every term long: unchanged.
+    """
+
+    def _some_outcome(term: str, exp: str | None):
+        return FuturesMarket.id.in_(
+            select(FuturesOutcome.market_id).where(
+                _build_expanded_ilike(FuturesOutcome.name, term, exp)
+            )
+        )
+
+    long_terms = [(t, e) for t, e in expanded if _has_extractable_trigram(t)]
+    short_terms = [(t, e) for t, e in expanded if not _has_extractable_trigram(t)]
+    if not long_terms or not short_terms:
+        return and_(*[_some_outcome(t, e) for t, e in expanded])
+    # The long-term ILIKE is AND-ed inside the one subquery, so the trigram
+    # index drives it and the short term is a recheck on the rows it returned.
+    anchored = select(FuturesOutcome.market_id).where(
+        or_(*[_build_expanded_ilike(FuturesOutcome.name, t, e) for t, e in long_terms]),
+        *[_build_expanded_ilike(FuturesOutcome.name, t, e) for t, e in short_terms],
+    )
+    return and_(
+        *[_some_outcome(t, e) for t, e in long_terms],
+        FuturesMarket.id.in_(anchored),
     )
 
 
@@ -5130,8 +6851,36 @@ def _team_prefix_tsquery(q: str):
 
     Returns ``None`` when there is nothing safe to build; callers must treat that
     as "no prefix arm", never as a match-nothing predicate.
+
+    #9277: a last token in `_TEAM_PREFIX_REFUSED_TOKENS` also gets no prefix arm.
+    The stemmer runs BEFORE the ``:*``, so ``alcs:*`` is really ``alc:*`` and
+    recalled Alcorn State, and ``alds:*`` recalled Aldosivi. Those tokens are
+    finished words naming a postseason round, not a team half-typed.
     """
+    tokens = re.findall(r"[^\W_]+", q or "", re.UNICODE)
+    if tokens and tokens[-1].lower() in _TEAM_PREFIX_REFUSED_TOKENS:
+        return None
     return _last_token_prefix_tsquery(q)
+
+
+#: #9277: complete words that name a competition ROUND and never a team, so the
+#: Teams prefix arm must not treat them as a name still being typed. Measured on
+#: production 2026-09-28: `alcs` carded Alcorn State / Alcochetense and rescued
+#: four Alcorn games above the ALCS markets; `alds` carded Aldosivi, rescued six
+#: of its games, and the soccer category it resolved demoted every ALDS market
+#: below Byron Donalds politics. No team row holds any of the four as a whole word
+#: (name, abbreviation or aliases: 0 rows), so the whole-lexeme arms are unchanged
+#: and still decide.
+#:
+#: A CLOSED LIST, NOT A RULE, on purpose. The general rule ("the typed token must
+#: start a word") was measured and refused. It sheds `mets`->Metz and
+#: `rams`->boxers, but also loses `nugs`, `cards`, `pels` and `caps`, which
+#: reach their clubs only through this same stem. Those need aliases first.
+#:
+#: #9306: the futures OUTCOME arm on /search and /typeahead is the second
+#: consumer — for these tokens an outcome must carry the word whole, because
+#: `alds` is also the tail of Byron Donalds.
+_TEAM_PREFIX_REFUSED_TOKENS: frozenset[str] = frozenset({"alcs", "alds", "nlcs", "nlds"})
 
 
 def _last_token_prefix_tsquery(q: str):
@@ -5203,6 +6952,19 @@ def _build_team_search_filter(q: str):
     folded_q = diacritic_fold_query(q)
     if folded_q is not None:
         arms += [_fts_filter(column, folded_q) for column in _team_ts_columns()]
+    # #9836: `ohio st` reaches Ohio State the same way — `st` is not a word of
+    # the name, so the rewritten `ohio state` rides beside the typed query. The
+    # same additive, whole-lexeme shape as the fold above, None for every query
+    # without a non-leading `st`.
+    state_q = college_state_query(q)
+    if state_q is not None:
+        arms += [_fts_filter(column, state_q) for column in _team_ts_columns()]
+    # #9859: `sf giants` reaches the San Francisco Giants the same way — `sf` is
+    # not a word of the name, so `san francisco giants` rides beside the typed
+    # query. None for every query without a leading city abbreviation.
+    city_q = city_abbreviation_query(q)
+    if city_q is not None:
+        arms += [_fts_filter(column, city_q) for column in _team_ts_columns()]
     return or_(*arms)
 
 
@@ -6841,8 +8603,14 @@ async def _resolve_typeahead_outcome_arm(
     open_now: tuple,
     deadline: float | None,
     pattern: str | None = None,
+    outcome_cond=None,
 ) -> list[int] | None:
     """The outcome-name arm's market ids, ordered and bounded. ``None`` = shed it.
+
+    #9306: ``outcome_cond`` is the arm's own outcome predicate, and the probe
+    uses it when given. Built from ``pattern`` alone, the probe was a second copy
+    of the predicate that could not see a narrowing — `alds`'s whole-word rule
+    held in the arm and the probe served Byron Don(alds) anyway.
 
     LAT-P143/#1866. Full measurement, the plan flip this buys, and the two
     disproved alternatives are at :data:`_TYPEAHEAD_OUTCOME_ARM_TIMEOUT_MS`.
@@ -6945,7 +8713,11 @@ async def _resolve_typeahead_outcome_arm(
         if pattern is not None:
             probe = await db.execute(
                 select(FuturesOutcome.market_id)
-                .where(FuturesOutcome.name.ilike(pattern))
+                .where(
+                    outcome_cond
+                    if outcome_cond is not None
+                    else FuturesOutcome.name.ilike(pattern)
+                )
                 .limit(_TYPEAHEAD_OUTCOME_PROBE_CAP + 1)
             )
             probe_rows = probe.all()
@@ -7515,7 +9287,9 @@ async def search_events(
             # instead of a promise about a callee.
             _record_search_query(_hit, q=q, request=request, current_user=current_user)
             response.headers[SEARCH_CACHE_HEADER] = "hit"
-            return _hit
+            # #9653: publication is live authority, so the hubs this page's games
+            # belong to are read on every serve, never from the cached body.
+            return await attach_search_collections(db, _hit)
     response.headers[SEARCH_CACHE_HEADER] = (
         "miss" if _search_cache_readable else "bypass"
     )
@@ -7602,6 +9376,11 @@ async def search_events(
         if _intent is not None and _intent.kind in _IDENTITY_SUBSTITUTED_KINDS
         else q
     )
+    # #9834: a club's short form identifies the club — `man utd` and `bvb` share
+    # no word with any name a rail matches, so the page answered them with
+    # nothing. An identity site, so it rewrites the subject and never `q`; the
+    # same call sits at `/typeahead`'s `_q_identity` so the two cannot disagree.
+    _q_identity = expand_club_short_forms(_q_identity)
 
     # `search_pattern = f"%{q}%"` STOOD HERE AND WAS DEAD — assigned on this line
     # and read nowhere in the backend (one occurrence in the tree). It is deleted
@@ -7625,9 +9404,16 @@ async def search_events(
     # membership — a phrase is invisible to a per-token test, and leaving `us`
     # and `open` in the remaining terms would AND them against team names and
     # return the same zero rows the bug already returns.
-    sport_alias_keys, _alias_consumed_terms = _resolve_sport_aliases(expanded)
+    _broadcast_slot, _slot_consumed_terms = _resolve_broadcast_slot(expanded)
+    _unslotted_expanded = [
+        (t, e) for t, e in expanded if t.lower() not in _slot_consumed_terms
+    ]
+    sport_alias_keys, _alias_consumed_terms = _resolve_sport_aliases(
+        _unslotted_expanded
+    )
     non_league_expanded = [
-        (t, e) for t, e in expanded if t.lower() not in _alias_consumed_terms
+        (t, e) for t, e in _unslotted_expanded
+        if t.lower() not in _alias_consumed_terms
     ]
 
     # LAT-P033/#1732: the `fts_q = " ".join(exp if exp else term …)` string that
@@ -7679,6 +9465,24 @@ async def search_events(
     #                     asking for the league (corpus case `league_only_explicit`).
     _event_recall_arms = [team_filter]
 
+    # #9333: `wild card` names the round's games, which no event text does —
+    # see `_POSTSEASON_ROUND_ALIASES`. A separate UNION arm, so it only ADDS
+    # cards; the words left beside it (`yankees wild card`) narrow it, and league
+    # words (`mlb wild card`) are already consumed.
+    # #9578: `playoffs` / `mlb playoffs` name every round in progress.
+    _postseason_rounds, _round_consumed_terms = _resolve_postseason_games(terms)
+    if _postseason_rounds:
+        _event_recall_arms.append(
+            and_(
+                or_(*[_postseason_round_event_scope(r) for r in _postseason_rounds]),
+                *[
+                    _event_name_match(t, e)
+                    for t, e in non_league_expanded
+                    if t.lower() not in _round_consumed_terms
+                ],
+            )
+        )
+
     # #4809 — the nickname's game-card arm. #4728 gave `pats` the team row and the
     # markets; this gives it the games. A separate UNION arm for the same reason
     # the league arm is one, and additive by construction: it can only ADD cards.
@@ -7688,7 +9492,22 @@ async def search_events(
     _event_nickname_arms = _team_nickname_event_arms(terms)
     _event_recall_arms.extend(_event_nickname_arms)
 
-    if sport_alias_keys:
+    if _broadcast_slot:
+        # `mnf` is the league narrowed to Monday nights, so it takes the league
+        # arm's place: `mnf nfl` must not also add every NFL game, and a team
+        # word beside the slot (`eagles mnf`) is carried exactly as it is there.
+        slot_scope = _broadcast_slot_scope(_broadcast_slot)
+        if non_league_expanded:
+            remaining = [_event_name_match(t, e) for t, e in non_league_expanded]
+            slot_scope = and_(slot_scope, *remaining)
+        _event_recall_arms.append(slot_scope)
+        # The slot NAMES a league, so every "no rows" rescue below gated on
+        # `not sport_alias_keys` stands down for it as for `nfl`: a quiet week
+        # must not answer `mnf` with a fuzzy team correction.
+        sport_alias_keys = list(
+            dict.fromkeys([*(sport_alias_keys or ()), *_broadcast_slot[0]])
+        )
+    elif sport_alias_keys:
         league_scope = Sport.key.in_(sport_alias_keys)
         if non_league_expanded:
             remaining = [_event_name_match(t, e) for t, e in non_league_expanded]
@@ -7832,8 +9651,16 @@ async def search_events(
     # unless the resolved-team rescue hands it roster ids, which change its
     # statement. A SAVEPOINT for the stage's reason; a shed read disarms the
     # evidence (no rows) and marks `teams` degraded exactly once.
+    # #9272: a curated nickname recalls its own row — see the helper. #9842: it
+    # reads the words AS TYPED, because `terms` has dropped the `vs` of `stamps vs
+    # riders`, and the word before a nickname is what says whether it is one.
+    _team_nickname_rows = _team_nickname_team_arms(_q_identity.split())
+
     def _search_team_rows_q(roster_team_ids: list[int]):
         team_rank = _team_search_rank(_q_identity).label("team_rank")
+        team_filter = _build_team_search_filter(_q_identity)
+        if _team_nickname_rows:
+            team_filter = or_(team_filter, *_team_nickname_rows)
         stmt = (
             # `alternate_names` is SELECTed for the scorer, not for the payload — the
             # same correction typeahead needed (spec §3). The recall arms had always
@@ -7843,6 +9670,8 @@ async def search_events(
             # a team would win on turns the floor into a ceiling.
             select(Team.id, Team.name, Team.slug, Team.abbreviation,
                    Team.logo_url_small, Team.current_record, Sport.key.label("sport_key"),
+                   # #9229: the spelling fold's tie-break reads the board's age.
+                   Team.standings_updated_at,
                    Team.alternate_names, team_rank)
             .join(Sport, Team.sport_id == Sport.id, isouter=True)
             .where(
@@ -7852,12 +9681,9 @@ async def search_events(
                 # Non-empty only when that filter resolved nothing (the rescue's own
                 # gate), and absent otherwise: the SQL every other query compiles is
                 # unchanged.
-                or_(
-                    _build_team_search_filter(_q_identity),
-                    Team.id.in_(roster_team_ids),
-                )
+                or_(team_filter, Team.id.in_(roster_team_ids))
                 if roster_team_ids
-                else _build_team_search_filter(_q_identity)
+                else team_filter
             )
             # #8756: the marquee tiebreak BEFORE the name one. `ts_rank_cd` counts
             # how often the word appears across name + aliases, so `eagles` put
@@ -7865,7 +9691,10 @@ async def search_events(
             # other ties — and `Team.name` sorted "Philadelphia" to row 26 of a
             # 25-row window. It was never fetched, so nothing below could rank
             # it. Rank still leads; only equal-rank rows reorder.
-            .order_by(team_rank.desc(), _team_marquee_order(), Team.name)
+            .order_by(
+                *_team_nickname_team_order(_team_nickname_rows),
+                team_rank.desc(), _team_marquee_order(), Team.name,
+            )
             .limit(_SEARCH_TEAM_WINDOW)
         )
         if sport:
@@ -7924,6 +9753,35 @@ async def search_events(
     # query ranks every row that does not contain "today" at 0 and flattens the
     # relevance ordering of the very pool the reader asked about.
     search_rank = _search_rank(_event_search_vector(), _q_identity)
+    # #9211: today's final right behind the next game (see the key). A club
+    # query is exactly the one #8942 strips the tag tier from, so an empty
+    # `tag_boost_keys` IS the TEAMS-card test, already paid for.
+    #
+    # The "leads the upcoming tier" window is ordered by EVERY key the page
+    # sorts that tier by, the ones ABOVE the status tier included. On
+    # production 2026-09-27 23:20Z `chiefs` printed today's final ABOVE the
+    # Raiders game: *Exeter Chiefs at Bath* (no Team row, so #8738's key is
+    # off) outranked it on text, held the window's first place, and was printed
+    # last because #8697's teamless key sinks it. The club's next game then
+    # read as "the rest".
+    _todays_final_key = _todays_final_order_key(
+        not tag_boost_keys,
+        status_order,
+        (
+            *(
+                k for k in (
+                    _intent_day_order_key(_intent, now),  # `_day_boost`, below
+                    _teamless_sport_key,
+                    _split_terms_key,
+                )
+                if k is not None
+            ),
+            *( (_team_card_lead_key,) if _team_card_lead_key is not None else () ),
+            search_rank.desc(),
+            Event.commence_time.asc(),
+        ),
+        now,
+    )
 
     # #5688, second half: a time qualifier LEADS, and it has to do it HERE.
     #
@@ -7962,6 +9820,8 @@ async def search_events(
         # #9044: above the status tier, for #8697's reason — a game the query's
         # words reach only split across its two sides names no club typed.
         *( (_split_terms_key,) if _split_terms_key is not None else () ),
+        # #9211: live and the next game, then today's finals, then the rest.
+        *( (_todays_final_key,) if _todays_final_key is not None else () ),
         status_order,
         # #9040: among finished games, the newest day first (armed with #8738).
         *( (_settled_day_key,) if _settled_day_key is not None else () ),
@@ -8020,6 +9880,11 @@ async def search_events(
         sport_facets = None
         degraded.append("event_count")
     _mark("event_count")
+    # #9632: the count the primary predicate produced. Every rescue arm below
+    # fires only on 0 and replaces `query` wholesale, so the bye-finals probe
+    # (which reads `event_conditions`) is armed only when this number is the one
+    # the page will be cut from.
+    _primary_total_count = total_count
 
     # #5821 — THE PROVEN-DUPLICATE BRIDGE: a fold must never cost the reader a way in.
     #
@@ -8551,8 +10416,44 @@ async def search_events(
             fuzzy_corrected = None
 
     # Apply pagination
-    offset = (page - 1) * per_page
-    query = query.offset(offset).limit(per_page)
+    # #9632: a club with nothing left to play and live futures (`dodgers` on a
+    # postseason bye) keeps only its latest finals on page one, so the pennant
+    # rows are not buried under three weeks of results. Decided BEFORE the page
+    # is cut, from the query alone, so page two computes the same answer and
+    # starts where page one stopped. A shed probe leaves the page as it was.
+    _bye_finals_capped = False
+    # #9762: an unservable term (no 3+ character word) cannot name the club's
+    # own outcome, so it leaves the page uncapped.
+    _bye_pattern = contender_word_pattern(_q_identity)
+    _bye_team_ids = (
+        _search_bye_team_ids(_early_team_rows, _q_identity)
+        if _early_team_rows
+        and _bye_pattern
+        and _primary_total_count > _SEARCH_BYE_FINALS_CAP
+        else []
+    )
+    if _bye_team_ids and time.monotonic() <= _deadline:
+        _bye_savepoint = await db.begin_nested()
+        try:
+            _bye_finals_capped = bool(
+                (await db.execute(
+                    _search_bye_finals_probe(
+                        event_conditions, _bye_team_ids, _bye_pattern
+                    )
+                )).scalar()
+            )
+        except Exception as exc:  # noqa: BLE001
+            await _bye_savepoint.rollback()
+            if not _is_query_timeout(exc):
+                raise
+            logger.warning("search bye-finals probe timed out for %r", q)
+            await _apply_search_statement_timeout(db, _deadline)
+        else:
+            await _bye_savepoint.commit()
+    _mark("bye_finals_probe")
+
+    offset, _page_limit = _search_games_page_window(page, per_page, _bye_finals_capped)
+    query = query.offset(offset).limit(_page_limit)
 
     # Execute
     try:
@@ -9002,7 +10903,7 @@ async def search_events(
     # 🔴 AND THE PAGE COUNT IS NOT THE SAME QUESTION. `total_results` is a
     # sentence about the rows ("· 16 games"); `total_pages` is a claim about
     # what the NEXT button can still reach, and the two live in different
-    # spaces. `offset = (page - 1) * per_page` indexes the UNFOLDED result set
+    # spaces. The page window (`_search_games_page_window`) indexes the UNFOLDED result set
     # — folding after the limit is what keeps it there (see the fold stage
     # above) — so every page boundary is a raw-row boundary, and a page count
     # derived from the adjusted number can retire a page that still holds rows.
@@ -9048,7 +10949,7 @@ async def search_events(
     # on page one; the other five already satisfy `total_results == rendered`
     # and are untouched by this branch.
     _raw_total_count = total_count
-    total_pages = (_raw_total_count + per_page - 1) // per_page
+    total_pages = _search_games_total_pages(_raw_total_count, per_page, _bye_finals_capped)
     _page_duplicates_dropped = _fixture_duplicates_dropped + _twin_duplicates_dropped
     if _page_duplicates_dropped and total_pages <= 1:
         total_count = max(len(formatted_results), total_count - _page_duplicates_dropped)
@@ -9126,9 +11027,7 @@ async def search_events(
             for term, exp in expanded
         ]
         futures_name_ilike = and_(*futures_name_conditions)
-        futures_outcome_match = and_(
-            *[_outcome_id_match(term, exp) for term, exp in expanded]
-        )
+        futures_outcome_match = _multi_term_outcome_match(expanded)
     else:
         term, exp = expanded[0]
         futures_name_ilike = _futures_name_match_term(term, exp)
@@ -9266,15 +11165,33 @@ async def search_events(
         # them until the word is finished (`phillips` resolves no club). None of
         # them was on `phil`'s served ten that minute: its one outcome-only row,
         # "Colorado Governor winner?", is reached by `Phil Weiser`, a whole word.
+        #
+        # #9306: a ROUND word (`_TEAM_PREFIX_REFUSED_TOKENS`) is finished, so the
+        # progressive-typing case above does not apply to it, and its substring
+        # is somebody's surname: `alds` reached eight politics markets through
+        # Byron Don(alds) and Jimmy Don(alds)on. Whole word + expansion only —
+        # the same arm with no club words. Measured on production 2026-09-28:
+        # `alds` served 2 ALDS markets then 8 of those; `alcs`/`nlds`/`nlcs`
+        # collide with nothing today and are unchanged.
         _club_words = _resolved_club_words(term, _resolved_teams)
         if not _has_extractable_trigram(term):
             futures_outcome_match = (
                 _outcome_id_match(exp, None) if exp else None
             )
+        elif term.lower() in _TEAM_PREFIX_REFUSED_TOKENS:
+            futures_outcome_match = _resolved_club_outcome_match(term, exp, [])
         elif _club_words:
             futures_outcome_match = _resolved_club_outcome_match(
                 term, exp, _club_words
             )
+        # #9609: a finished CLUB word, read from the page's own teams read (which
+        # runs on every page, not only the empty rail) — whole word + expansion,
+        # the round-word arm. See `_is_finished_club_word`. Measured on production
+        # 2026-09-29, open markets reached only mid-word, all collisions:
+        #     rays 16 (Grayson)  mets 8 (Kimetsu, Emets)  suns 10 (Samsunspor)
+        #     nets 39 (Hornets, Volynets)  rams 28 (Abrams)  kings 30 (Vikings)
+        elif _is_finished_club_word(term, _early_team_rows):
+            futures_outcome_match = _resolved_club_outcome_match(term, exp, [])
         else:
             futures_outcome_match = _outcome_id_match(term, exp)
 
@@ -9523,6 +11440,14 @@ async def search_events(
     # so this appends nothing and the compiled SQL is byte-identical on the
     # no-alias path — the same no-cost property the recall arms already have.
     _futures_tier_whens = [(futures_name_match, 0)]
+    # #9340: a bare round query's own markets sit ABOVE the name matches (tier
+    # -1) — "Season Series Winner" matches `championship series` by name through
+    # the `winner` synonym and would fill the window. Every such row is recalled
+    # by `_alias_futures_arms`, i.e. is tier<=1 anyway, so the LAT-P111 split's
+    # proof (every tier-2 row sorts below every tier<=1 row) is untouched.
+    _futures_round_lead = _postseason_round_lead_match(terms)
+    if _futures_round_lead is not None:
+        _futures_tier_whens.insert(0, (_futures_round_lead, -1))
     if league_ticker_match is not None:
         _futures_tier_whens.append((league_ticker_match, 1))
     if _futures_alias_arms:
@@ -9541,6 +11466,12 @@ async def search_events(
     _futures_season_order = (
         [] if _futures_season_key is None else [_futures_season_key.asc()]
     )
+    # #9340: a bare `playoffs` puts the postseason in progress first. `[]` otherwise.
+    _futures_postseason_key = _futures_postseason_now_order_key(
+        terms, datetime.now(timezone.utc)
+    )
+    if _futures_postseason_key is not None:
+        _futures_season_order.append(_futures_postseason_key.asc())
 
     def _futures_window_query(candidate_filter):
         """The futures window statement over a given candidate filter.
@@ -9919,6 +11850,78 @@ async def search_events(
             deduped_futures, _team_sport_categories
         )
 
+    # #9724 r2: before paying for outcome-only rows, read the name matches the
+    # window statement already returned past rank 20. No query. Counted fresh, for
+    # the same reason as the arm below. See `_sunk_slot_spare_rows`.
+    _spare_answer_rows = sum(
+        1 for m in deduped_futures
+        if m.id not in _over_match_cap_ids
+        and not _is_teamless_sport(m, _team_sport_categories)
+    )
+    _spare_for_sunk = _sunk_slot_spare_rows(
+        _futures_outcome_arm,
+        _futures_spare_rows,
+        _over_match_cap_ids,
+        _spare_answer_rows,
+        _futures_refill_source,
+    )
+    if _spare_for_sunk:
+        _futures_refill_source = "spare"
+        _deduped_ids = {m.id for m in deduped_futures}
+        for m in _rerank_search_futures(
+            _spare_for_sunk, expanded, _resolved_sport_category,
+            _team_sport_categories,
+        ):
+            if m.id in _deduped_ids or not _admit_search_future(
+                m, seen_search_keys, kept_sources_by_question, kept_boards
+            ):
+                continue
+            if _is_over_match_cap(m, _match_counts, _query_words):
+                _over_match_cap_ids.add(m.id)
+            deduped_futures.append(m)
+            if (
+                not _is_teamless_sport(m, _team_sport_categories)
+                and m.id not in _over_match_cap_ids
+            ):
+                _spare_answer_rows += 1
+            if _spare_answer_rows >= _SEARCH_FUTURES_PAGE:
+                break
+
+    # #9597: a sunk row that would be SHIPPED is a slot the name matches gave
+    # back, and the outcome-only rows the window skipped are what it owes. Counted
+    # fresh, because the window path above counts an over-cap row as an answer.
+    # The rows join the list and the sink below puts them above every sunk row.
+    _futures_sunk_slot_arm = "not_fired"
+    if _needs_sunk_slot_outcome_arm(
+        _futures_outcome_arm,
+        sum(
+            1 for m in deduped_futures
+            if m.id not in _over_match_cap_ids
+            and not _is_teamless_sport(m, _team_sport_categories)
+        ),
+        _over_match_cap_ids,
+    ):
+        _sunk_slot_rows, _futures_sunk_slot_arm = await _fetch_sunk_slot_outcome_rows(
+            db,
+            _futures_window_query,
+            _futures_candidates_in,
+            _futures_tier1_arms,
+            futures_outcome_match,
+            _deadline,
+        )
+        _deduped_ids = {m.id for m in deduped_futures}
+        for m in _rerank_search_futures(
+            _sunk_slot_rows, expanded, _resolved_sport_category,
+            _team_sport_categories,
+        ):
+            if m.id in _deduped_ids or not _admit_search_future(
+                m, seen_search_keys, kept_sources_by_question, kept_boards
+            ):
+                continue
+            if _is_over_match_cap(m, _match_counts, _query_words):
+                _over_match_cap_ids.add(m.id)
+            deduped_futures.append(m)
+
     # #8628 r2: sink the over-cap rows, on EITHER path — the window alone can
     # hold them. Then the teamless pass again, so a nickname cousin still sits
     # below a real match's third row. Both partitions are stable; with nothing
@@ -10073,19 +12076,40 @@ async def search_events(
     # at 7,384 blocks, 69% of everything that query touched.
     _headline_patterns = contender_patterns(expanded)
     _headline_promoted = 0
+    # #6327: `_deduped_page`, not `futures_markets` — the gate reads the page as
+    # dedup produced it, so this lane's firing condition is unchanged by the price
+    # filter. Full reasoning at `_deduped_page`'s definition above.
+    _headline_absent_arm = bool(
+        len(futures_markets_raw) >= _SEARCH_FUTURES_WINDOW
+        and _deduped_page
+        and all(_query_name_match(m, expanded) for m in _deduped_page)
+    )
+    # #9587 — THE HOIST ARM. The gate above fires only when the contender cannot
+    # be on the page; when it IS on the page it kept the reranker's slot. On the
+    # first day of MLB's postseason `cubs` served `MLB World Series Champion
+    # 2026` at row 7 behind six game props while `yankees` (market absent, lane
+    # fired) had it at row 0. So when the SHIPPED page holds a tier-1
+    # outcome-only row below row 0, the same statement runs restricted to those
+    # ids: same rule, same bound, same savepoint and shed path, and it can only
+    # REORDER the page — every id it may return is already on it, and
+    # `promote_headline_contenders` hoists the page's own row. `futures_markets`,
+    # not `_deduped_page`: a row the price filter withdrew is not on the page,
+    # and handing it to the promoter would put it back.
+    _headline_hoist_ids = (
+        []
+        if _headline_absent_arm or not _headline_patterns
+        else on_page_contender_candidates(
+            futures_markets, lambda m: _query_name_match(m, expanded)
+        )
+    )
     # Resolved ONCE and reused. Calling the helper in the condition and again for
     # the value would read the clock twice, and the two reads can disagree across
     # the stage floor — the gate passes, the value comes back `None`, and the
     # arming line raises `TypeError` on the rarest request in the system.
     _headline_bound_ms = _search_headline_bound_ms(_deadline)
-    # #6327: `_deduped_page`, not `futures_markets` — the gate reads the page as
-    # dedup produced it, so this lane's firing condition is unchanged by the price
-    # filter. Full reasoning at `_deduped_page`'s definition above.
     if (
         _headline_patterns
-        and len(futures_markets_raw) >= _SEARCH_FUTURES_WINDOW
-        and _deduped_page
-        and all(_query_name_match(m, expanded) for m in _deduped_page)
+        and (_headline_absent_arm or _headline_hoist_ids)
         and _headline_bound_ms is not None
     ):
         # THE LANE'S OWN BOUND, not the request's remainder — see
@@ -10141,17 +12165,21 @@ async def search_events(
         # path correct in both).
         _headline_savepoint = await db.begin_nested()
         try:
-            _headline_result = await db.execute(
-                _headline_contender_statement(
-                    _headline_patterns,
-                    _futures_open_now,
-                    limit=_SEARCH_FUTURES_PAGE,
-                    options=(
-                        selectinload(FuturesMarket.sport),
-                        selectinload(FuturesMarket.outcomes),
-                    ),
-                )
+            _headline_statement = _headline_contender_statement(
+                _headline_patterns,
+                _futures_open_now,
+                limit=_SEARCH_FUTURES_PAGE,
+                options=(
+                    selectinload(FuturesMarket.sport),
+                    selectinload(FuturesMarket.outcomes),
+                ),
             )
+            if _headline_hoist_ids:
+                # #9587: the hoist arm may only answer about rows already shipped.
+                _headline_statement = _headline_statement.where(
+                    FuturesMarket.id.in_(_headline_hoist_ids)
+                )
+            _headline_result = await db.execute(_headline_statement)
             _headline_rows = _headline_result.scalars().unique().all()
         except Exception as exc:  # noqa: BLE001
             # THE SAVEPOINT ROLLBACK, and it comes before the re-raise decision
@@ -10667,7 +12695,9 @@ async def search_events(
     # key also reads (#8765) — so the games list cannot follow a club the card
     # does not lead with. Ranked HERE, before the World Cup check below, so that
     # check still reads the card a reader sees and not the whole window.
-    matched_teams = [card for _key, card in _team_card_keyed(_team_result_rows, _q_identity)]
+    matched_teams = _unify_school_st_spelling(
+        [card for _key, card in _team_card_keyed(_team_result_rows, _q_identity)]
+    )
     # The scorer's import lives here; `event_concepts` uses it below.
     from app.utils.search_match_class import rank as _search_rank_candidates
 
@@ -10801,7 +12831,8 @@ async def search_events(
         **({"debug_timing": {**_stage_ms,
                              "total_ms": sum(_stage_ms.values()),
                              "futures_outcome_arm": _futures_outcome_arm,
-                             "futures_refill_source": _futures_refill_source}}
+                             "futures_refill_source": _futures_refill_source,
+                             "futures_sunk_slot_arm": _futures_sunk_slot_arm}}
            if debug_timing else {}),
     }
 
@@ -10839,7 +12870,13 @@ async def search_events(
     # recovery live in there rather than at each call site (#2117 / #1866).
     _record_search_query(_payload, q=q, request=request, current_user=current_user)
 
-    return _payload
+    # #9653: AFTER the cache write above, so the cache never holds a collection
+    # card and a withdrawn hub is gone from the next response. The warmer's
+    # rebuild only refreshes the cache and discards this return, so it skips
+    # the read.
+    if _force_search_cache_rebuild.get():
+        return _payload
+    return await attach_search_collections(db, _payload)
 
 
 # L2-88: extra query synonyms per hub slug so "ufc"→mma, "pga"→golf, etc. resolve
@@ -10962,6 +12999,11 @@ _NEXT_MATCH_LOOKAHEAD_DAYS = 120
 #: the one row taken is the live game if there is one and the soonest otherwise,
 #: which is the whole of Alex's "the live game, else the next".
 _LEAD_TEAM_FIXTURE_LIMIT = 1
+
+#: #9211: how many of the resolved team's games that FINISHED TODAY the dropdown
+#: offers beside its next one. Two, for a doubleheader; every other day it is one
+#: row or none.
+_LEAD_TEAM_TODAYS_FINAL_LIMIT = 2
 
 #: The sport keys the scorer counts as prominent (`rank_key`'s third term).
 #: Imported rather than re-listed: two copies of this set is one copy that drifts,
@@ -11319,6 +13361,13 @@ async def typeahead_search(
     # used to find the thing they asked it about.
     _ta_intent = parse_intent(q)
     _q_identity = _ta_intent.subject if _ta_intent else q
+    # #9834: club short forms (`man utd`, `bvb`) name the club — the same
+    # rewrite, at the same identity site, as `/search`.
+    _q_identity = expand_club_short_forms(_q_identity)
+    # #9527: the same subject with a matchup connector dropped, for the sites
+    # that ask whether the reader named the teams and for the ranker. Read
+    # `_matchup_subject` for why those, and only those.
+    _q_matchup = _matchup_subject(_q_identity)
 
     # The recall pattern for the futures OUTCOME arm
     # (`FuturesOutcome.name ILIKE pattern`). On the subject, because it is a
@@ -11347,9 +13396,11 @@ async def typeahead_search(
         team_term_conditions = []
         futures_term_conditions = []
         for term, exp in ta_expanded:
+            # #9306: `_build_round_word_ilike` is `_build_expanded_ilike` for
+            # every term but the four round words, which must be whole words.
             event_term_conditions.append(or_(
-                _build_expanded_ilike(Event.home_team_name, term, exp),
-                _build_expanded_ilike(Event.away_team_name, term, exp),
+                _build_round_word_ilike(Event.home_team_name, term, exp),
+                _build_round_word_ilike(Event.away_team_name, term, exp),
             ))
             # #7381: word-START, not anywhere. See `_build_word_start_ilike` for
             # the measurement and for why the dropdown takes a weaker rule than
@@ -11361,7 +13412,7 @@ async def typeahead_search(
                 _build_word_start_ilike(cast(Team.alternate_names, String), term, exp),
             ))
             futures_term_conditions.append(
-                _build_expanded_ilike(FuturesMarket.name, term, exp)
+                _build_round_word_ilike(FuturesMarket.name, term, exp)
             )
         ilike_event_names = and_(*event_term_conditions)
         ilike_event_filter = ilike_event_names
@@ -11370,8 +13421,8 @@ async def typeahead_search(
     else:
         term, exp = ta_expanded[0]
         ilike_event_names = or_(
-            _build_expanded_ilike(Event.home_team_name, term, exp),
-            _build_expanded_ilike(Event.away_team_name, term, exp),
+            _build_round_word_ilike(Event.home_team_name, term, exp),
+            _build_round_word_ilike(Event.away_team_name, term, exp),
         )
         ilike_event_filter = ilike_event_names
         if sport_alias_keys:
@@ -11384,7 +13435,7 @@ async def typeahead_search(
             _build_word_start_ilike(Team.abbreviation, term, exp),
             _build_word_start_ilike(cast(Team.alternate_names, String), term, exp),
         )
-        ilike_futures_filter = _build_expanded_ilike(FuturesMarket.name, term, exp)
+        ilike_futures_filter = _build_round_word_ilike(FuturesMarket.name, term, exp)
 
     # Combine FTS + ILIKE for events and futures
     fts_event_names = or_(
@@ -11395,6 +13446,28 @@ async def typeahead_search(
     if sport_alias_keys:
         fts_event_f = or_(fts_event_names, Sport.key.in_(sport_alias_keys))
     event_team_filter = or_(fts_event_f, ilike_event_filter)
+
+    # The broadcast slot, as on /search (`_BROADCAST_SLOT_ALIASES`). It REPLACES
+    # the arm above rather than widening it: `monday night football` reached the
+    # dropdown only through `football`'s bare league arm, which offered Thursday's
+    # NFL game and two college games under tonight's, and `mnf` offered nothing.
+    _ta_slot, _ta_slot_consumed = _resolve_broadcast_slot(ta_expanded)
+    if _ta_slot:
+        _ta_slot_rest = [
+            (t, e) for t, e in ta_expanded if t.lower() not in _ta_slot_consumed
+        ]
+        _, _ta_slot_league_words = _resolve_sport_aliases(_ta_slot_rest)
+        event_team_filter = and_(
+            _broadcast_slot_scope(_ta_slot),
+            *[
+                or_(
+                    _build_expanded_ilike(Event.home_team_name, t, e),
+                    _build_expanded_ilike(Event.away_team_name, t, e),
+                )
+                for t, e in _ta_slot_rest
+                if t.lower() not in _ta_slot_league_words
+            ],
+        )
     # #4411's or-last arm recalls on PARTICIPANT NAMES ONLY — the sport-alias
     # arm is deliberately left out. With it in, `us open` (an alias, naming no
     # participant) would drag every finished match of the tournament into a
@@ -11447,6 +13520,31 @@ async def typeahead_search(
     if _ta_nickname_arms:
         event_team_filter = or_(event_team_filter, *_ta_nickname_arms)
         event_name_filter = or_(event_name_filter, *_ta_nickname_arms)
+
+    # #9333: the round's games, from the same builder `/search` uses. Upcoming
+    # pool only: a round names no participant, so the or-last arm's admission
+    # test would discard them anyway.
+    # #9578: and every round in progress for `playoffs` / `mlb playoffs`.
+    _ta_rounds, _ta_round_consumed = _resolve_postseason_games(terms)
+    if _ta_rounds:
+        _ta_round_rest = [
+            (t, e) for t, e in ta_expanded if t.lower() not in _ta_round_consumed
+        ]
+        _, _ta_round_league_words = _resolve_sport_aliases(_ta_round_rest)
+        event_team_filter = or_(
+            event_team_filter,
+            and_(
+                or_(*[_postseason_round_event_scope(r) for r in _ta_rounds]),
+                *[
+                    or_(
+                        _build_expanded_ilike(Event.home_team_name, t, e),
+                        _build_expanded_ilike(Event.away_team_name, t, e),
+                    )
+                    for t, e in _ta_round_rest
+                    if t.lower() not in _ta_round_league_words
+                ],
+            ),
+        )
 
     # LAT-P140: the two halves go in as SEPARATE arms of the UNION built below,
     # not as one OR'd arm. `_futures_name_arms` carries the measurement; the short
@@ -11518,11 +13616,19 @@ async def typeahead_search(
         (Team.name.ilike(f"{_escape_like(_q_norm)}%", escape="\\"), 1),
         else_=2,
     )
+    # #9272: a curated nickname recalls its own row — see the helper. #9842:
+    # the words as typed, as at `/search`.
+    _ta_team_nickname_rows = _team_nickname_team_arms(_q_identity.split())
+    if _ta_team_nickname_rows:
+        team_filter = or_(team_filter, *_ta_team_nickname_rows)
     team_query = (
-        select(Team.id, Team.name, Team.slug, Team.abbreviation, Team.sport_id, Team.logo_url_small, Team.alternate_names, Sport.key.label("sport_key"))
+        select(Team.id, Team.name, Team.slug, Team.abbreviation, Team.sport_id, Team.logo_url_small, Team.alternate_names, Sport.key.label("sport_key"), Team.standings_updated_at)
         .join(Sport, Team.sport_id == Sport.id, isouter=True)
         .where(team_filter)
-        .order_by(team_prominence_order, team_name_order, Team.name)
+        .order_by(
+            *_team_nickname_team_order(_ta_team_nickname_rows),
+            team_prominence_order, team_name_order, Team.name,
+        )
         .limit(_TEAM_POOL_FETCH_LIMIT)
     )
     _ta_mark("setup")
@@ -11592,7 +13698,7 @@ async def typeahead_search(
             "team_slug": row.slug,
             "sport_key": _normalize_team_sport_key(row.sport_key),
             # Private: scorer evidence only, popped before the response.
-            "_aliases": [a for a in (row.alternate_names or []) if isinstance(a, str)]
+            "_aliases": _team_row_aliases(row)
             + ([_ta_roster_alias] if _ta_roster_alias else []),
         })
 
@@ -11607,8 +13713,9 @@ async def typeahead_search(
         )
         .where(
             event_team_filter,
-            Event.status.in_(["live", "scheduled"]),
-            _pool_start_floor(now),
+            # #9493: live/scheduled on #5030's floor, plus a match that started
+            # today and is `suspended` (`/search` has always admitted it).
+            _typeahead_event_pool_window(now),
             Event.commence_time <= now + timedelta(days=7),
             # #2263 / CERT-439: the dropdown is the FIRST search surface a person
             # touches, and it takes four slots. Two of them spent on one game is
@@ -11616,6 +13723,8 @@ async def typeahead_search(
             not_a_proven_duplicate(),
         )
         .order_by(
+            # #9493: first, so a suspended row only fills slots nothing else took.
+            _typeahead_suspended_last(),
             # Q438: live-AND-started. This pool serves its status through
             # `served_event_status`, so ordering on the raw column would sort a
             # row above the field that the same payload prints as `scheduled`.
@@ -11675,7 +13784,7 @@ async def typeahead_search(
         names = (ev.home_team_name, ev.away_team_name)
         # The SUBJECT (T2-3): this asks whether the reader NAMED a participant,
         # which is an identity question. "red sox tonight" names the Red Sox.
-        if query_names_participant(_q_identity, names):
+        if query_names_participant(_q_matchup, names):
             return True
         return _nickname_names_participant(
             _ta_nickname_admissions,
@@ -11726,7 +13835,7 @@ async def typeahead_search(
             _ta_matchups = [
                 ev for ev in _ta_next
                 if query_names_both_sides(
-                    _q_identity, ev.home_team_name, ev.away_team_name
+                    _q_matchup, ev.home_team_name, ev.away_team_name
                 )
             ]
             _ta_last = []
@@ -11855,13 +13964,49 @@ async def typeahead_search(
     # markets, then tonight's game. Gated on the team being the entity the query
     # names (`query_resolves_team`), so `angel`/`new` keep ruling 041.
     if _ta_lead_team is not None and query_resolves_team(
-        _q_identity, _typeahead_evidence(_ta_lead_team, _q_identity)
+        _q_matchup, _typeahead_evidence(_ta_lead_team, _q_matchup)
     ):
         _ta_lead_team_row_ids |= {
             ev.id for ev in _ta_rows if _ta_is_lead_team_fixture(ev)
         }
+        # #9211: the game this team finished TODAY, right behind its live or next
+        # game (the query's docstring has the specimen). Same gate as the line
+        # above, so only a query that IS the team pays the extra ~2 ms, and it is
+        # skipped when an arm above already fetched today's result.
+        _ta_day_start = _eastern_day_start(now)
+        if not any(
+            ev.status in ("completed", "closed")
+            and ev.commence_time is not None
+            and ev.commence_time >= _ta_day_start
+            and _ta_is_lead_team_fixture(ev)
+            for ev in _ta_rows
+        ):
+            _ta_finals = (
+                await db.execute(
+                    _lead_team_todays_final_query(
+                        _ta_lead_team["team_id"], _ta_lead_team["text"], now
+                    )
+                )
+            ).scalars().all()
+            _ta_mark("lead_team_todays_final_query")
+            if _ta_finals:
+                _ta_lead_team_row_ids |= {ev.id for ev in _ta_finals}
+                _ta_rows = _place_todays_finals(
+                    _ta_rows,
+                    _ta_finals,
+                    lambda ev: (
+                        ev.status in ("live", "scheduled")
+                        and _ta_is_lead_team_fixture(ev)
+                    ),
+                )
 
     event_pool = []
+    # #9550: the facts of the row behind each event suggestion, by id, so the
+    # settled verdict is gated on the row's own score rather than the
+    # suggestion's (which carries a score only once the row is finished).
+    # PLAIN DATA, never the ORM row: the futures-timeout recovery below rolls
+    # the session back after this loop, which expires every live row (gotcha #6).
+    _ta_event_rows: dict[int, object] = {}
     # #2580 is #2623 seen through this dropdown: typing "Alcaraz" offered the
     # same first-round match twice, "Alcaraz at Faria 5:00 PM" beside "Carlos
     # Alcaraz at Jaime Faria 5:10 PM". Same collapse, same helper.
@@ -11872,6 +14017,8 @@ async def typeahead_search(
     # #8488: a team query drops the fixtures only the stemmer admitted (`angels`
     # -> "Los Angeles Sparks"). Before the pool cut, so the slot goes to a row
     # that names the team; the helper says why substring and nickname rows stay.
+    # #5082: and the substring rows only an infix admitted (`pats` -> "Tamara
+    # Korpatsch"), the event twin of #7381's word-start team arm.
     if _ta_lead_team is not None:
         _ta_events = [
             ev for ev in _ta_events
@@ -11881,16 +14028,39 @@ async def typeahead_search(
                 _ta_lead_team["text"],
                 _ta_names_participant(ev) or ev.id in _ta_lead_team_row_ids,
             )
+            and not _typeahead_infix_only_event(
+                (ev.home_team_name, ev.away_team_name),
+                ta_expanded,
+                _ta_names_participant(ev) or ev.id in _ta_lead_team_row_ids,
+            )
         ]
+    # #9435: and the lead team's own fixtures go first, so the cut below
+    # cannot drop a game that was fetched and marked as the team's.
+    _ta_events = _typeahead_lead_fixtures_first(_ta_events, _ta_lead_team_row_ids)
     for event in _ta_events[:_EVENT_POOL_SIZE]:
+        _ta_event_rows[event.id] = _typeahead_settlement_facts(event)  # #9550
         home = event.home_team
         away = event.away_team
+        _ta_served_status = served_event_status(
+            event.status, event.commence_time, datetime.now(timezone.utc)
+        )
         event_pool.append({
             "type": "event",
-            "text": f"{event.away_team_name} at {event.home_team_name}",
+            "text": _typeahead_event_text(
+                event.away_team_name,
+                event.home_team_name,
+                event.sport.key if event.sport else None,
+            ),
             "event_id": event.id,
-            "status": served_event_status(
-                event.status, event.commence_time, datetime.now(timezone.utc)
+            "status": _ta_served_status,
+            # #9226: a finished row carries its result. This pool is the only
+            # one that can hold a finished row (the fuzzy pool below selects
+            # live/scheduled only). `getattr`: the route's session-double
+            # rigs build rows without score columns.
+            **_typeahead_final_score(
+                _ta_served_status,
+                getattr(event, "home_score", None),
+                getattr(event, "away_score", None),
             ),
             "sport_key": event.sport.key if event.sport else None,
             "commence_time": event.commence_time.isoformat() if event.commence_time else None,
@@ -11943,11 +14113,33 @@ async def typeahead_search(
             # list him as an outcome (MC4) — production 2026-09-25 05:5xZ. With
             # the alias it is MC0, directly under the club. Lead-team fixtures
             # only: that is the team the name resolved to.
-            "_aliases": (
-                [_ta_roster_alias]
-                if _ta_roster_alias and _ta_is_lead_team_fixture(event)
-                else []
-            ),
+            #
+            # #5082: and the club's own aliases, for the same reason. `niners`
+            # is an alias of San Francisco, not a word of "Denver Broncos at San
+            # Francisco 49ers", so the 49ers' game ranked under "Niners Chemnitz
+            # at Tofas SK Bursa", whose NAME carries the word (production
+            # 2026-09-28 21:4xZ). Rows the route marked as the resolved team's
+            # (`_ta_lead_team_row_ids`) only, so `angel`/`new` keep ruling 041;
+            # and only an alias the query IS, whole (`query_is_entity_name`, the
+            # test that makes the club the entity). A partly typed alias stays
+            # off the game: `dodg` against "Dodgers" would tie the game with the
+            # club on class and lift it above the club (#4615).
+            "_aliases": [
+                *(
+                    [_ta_roster_alias]
+                    if _ta_roster_alias and _ta_is_lead_team_fixture(event)
+                    else []
+                ),
+                *(
+                    a
+                    for a in (
+                        (_ta_lead_team or {}).get("_aliases") or []
+                        if event.id in _ta_lead_team_row_ids
+                        else []
+                    )
+                    if query_is_entity_name(_q_identity, (a,))
+                ),
+            ],
         })
 
     # 3. Futures (sports + non-sports, deduplicated)
@@ -12006,10 +14198,20 @@ async def typeahead_search(
     # filtering on the subject would shed the arm on exactly the queries the
     # subject was computed to rescue.
     _ta_q_compact = _q_identity.strip()
+
+    # #9306: a round word matches an outcome only as a whole word, as on
+    # /search — `alds` put "Florida Governor winner?" (Byron Donalds) in the
+    # dropdown. The condition is also the probe's, so the two cannot disagree.
     _ta_outcome_arm = None
+    _ta_outcome_cond = None
     if _has_extractable_trigram(_ta_q_compact):
+        _ta_outcome_cond = (
+            _outcome_whole_word(_ta_q_compact)
+            if _ta_q_compact.lower() in _TEAM_PREFIX_REFUSED_TOKENS
+            else FuturesOutcome.name.ilike(pattern)
+        )
         _ta_outcome_arm = FuturesMarket.id.in_(
-            select(FuturesOutcome.market_id).where(FuturesOutcome.name.ilike(pattern))
+            select(FuturesOutcome.market_id).where(_ta_outcome_cond)
         )
 
     ta_league_ticker_match = _build_league_ticker_match(ta_expanded)
@@ -12062,7 +14264,8 @@ async def typeahead_search(
     _ta_mark("events_assemble")
     if _ta_outcome_arm is not None:
         _ta_outcome_ids = await _resolve_typeahead_outcome_arm(
-            db, _ta_outcome_arm, _ta_open_now, _ta_deadline, pattern=pattern
+            db, _ta_outcome_arm, _ta_open_now, _ta_deadline, pattern=pattern,
+            outcome_cond=_ta_outcome_cond,
         )
         # ONE mark, labelled by outcome — the same grammar as
         # `futures_query` / `futures_query_TIMED_OUT` below, and for the same
@@ -12194,6 +14397,18 @@ async def typeahead_search(
         ]
     )
 
+    _ta_futures_postseason_key = _futures_postseason_now_order_key(
+        terms, datetime.now(timezone.utc)
+    )
+    _ta_futures_postseason_order = (
+        [] if _ta_futures_postseason_key is None else [_ta_futures_postseason_key.asc()]
+    )
+    # #9333: a round name fetches the round's series markets before the name
+    # collisions that would otherwise fill the window.
+    _ta_futures_round_key = _futures_postseason_round_order_key(terms)
+    if _ta_futures_round_key is not None:
+        _ta_futures_postseason_order.append(_ta_futures_round_key.asc())
+
     futures_query = (
         select(FuturesMarket)
         .options(selectinload(FuturesMarket.outcomes))
@@ -12202,6 +14417,8 @@ async def typeahead_search(
             *_ta_open_now,
         )
         .order_by(
+            # #9340: the same postseason-in-progress key /search orders by.
+            *_ta_futures_postseason_order,
             *_ta_futures_relevance_order_keys,
             FuturesMarket.market_tier.asc().nulls_last(),
             FuturesMarket.volume.desc().nulls_last(),
@@ -12449,6 +14666,20 @@ async def typeahead_search(
 
     futures_pool = []
     seen_futures_keys: set[str] = set()
+    # #9404: the search page's per-row repeat decision, bookkeeping included.
+    # See the call in the loop below.
+    _ta_kept_sources_by_question: dict[str, set] = {}
+    _ta_kept_boards: list = []
+    # #9444: #8851's same-question fold, asked row by row. See the call below.
+    _ta_kept_cards: list = []
+    # #9340: the match-class scorer below reads the typed words, and the round's
+    # own markets hold none of them ("MLB Playoffs: Team to advance to ALCS" for
+    # `championship series`) while "NFL: … Season Series Winner" holds `series`
+    # — so the NFL boards out-classed the round the partition put first. The
+    # round's markets carry the round as a private alias, as #8523's lead-team
+    # fixture carries the player's name. `None` for every other query.
+    _ta_round_lead = _postseason_round_lead_predicate(terms)
+    _ta_round_alias = " ".join(t.lower() for t in terms)
     #: `(market id, kalshi ticker, event id)` for every row that reaches the
     #: dropdown — plain scalars, read while the ORM row is live. #6447 residual.
     _ta_market_facts: list[tuple[int, Optional[str], Optional[int]]] = []
@@ -12485,10 +14716,27 @@ async def typeahead_search(
         # dedup key so a live row sharing the key can take it.
         if _search_market_is_past_and_frozen(market):
             continue
-        dedup_key = _normalize_futures_dedup_key(market)
-        if dedup_key in seen_futures_keys:
+        # #9404: the SAME per-row decision the search page makes, not the tiered
+        # key alone. Production 2026-09-28 16:05Z, `world series` at 390px: the
+        # dropdown printed `MLB World Series Champion  Dodgers 30%` and, two rows
+        # down, `MLB World Series Winner  Dodgers 28%` — Polymarket 114584 (tier
+        # 1) and odds_api 1 (tier 5), one question whose venues disagree on its
+        # tier. /search dropped the second copy since #8378; this loop kept the
+        # pre-#8378 rule, so every later fold (#8410 one race, #8628 one ladder,
+        # #8843 paraphrase) stopped at the page too. One helper, two consumers:
+        # the dropdown cannot drift into its own idea of what a repeat is. The
+        # first row admitted is the reranked leader, as on /search.
+        if not _admit_search_future(
+            market, seen_futures_keys, _ta_kept_sources_by_question, _ta_kept_boards
+        ):
             continue
-        seen_futures_keys.add(dedup_key)
+        # #9444: the search page's #8851 fold, which runs there as a post-pass
+        # and so never reached this loop. `oscars` (production 2026-09-28)
+        # printed Polymarket's `Oscars 2027: Best Picture Winner` and Kalshi's
+        # `Oscar Winner: Best Picture` on consecutive rows, both at 49%.
+        _ta_withheld = await _search_withheld_price_ids(db, market)
+        if _search_same_question_as_a_kept_card(market, _ta_withheld, _ta_kept_cards):
+            continue
         # #6447 residual: the two scalars the club-name repair needs, read HERE
         # while the row is certainly live and kept as plain data. The repair
         # itself runs 400 lines below, past an `attach_season_answers` and the
@@ -12531,7 +14779,7 @@ async def typeahead_search(
                 market,
                 limit=3,
                 lean=True,
-                withheld=await _search_withheld_price_ids(db, market),
+                withheld=_ta_withheld,
                 query_terms=ta_expanded,  # #8842
             ),
             # RANKING evidence, private and stripped before the response. The
@@ -12539,6 +14787,22 @@ async def typeahead_search(
             # owned-outcome evidence made display truncation silently truncate
             # ranking evidence. See `_search_owned_outcome_names`.
             "_outcome_names": _search_owned_outcome_names(market),
+            "_aliases": (
+                [_ta_round_alias]
+                if _ta_round_lead is not None and _ta_round_lead(market)
+                else []
+            ),
+            # #9415: the game this row is the WINNER market of, or None. Asked
+            # here, while the ORM row is live, with the search page's own rule
+            # (#8734) against the row's own game; whether that game is in the
+            # dropdown is only known after the slice. Private, stripped below.
+            "_answers_game": (
+                getattr(market, "event_id", None)
+                if _answers_a_served_game_card(
+                    market, {getattr(market, "event_id", None)}
+                )
+                else None
+            ),
         })
 
     # L2-65 Item 1c: EVENT CONCEPT suggestions (tournament pages) from the same
@@ -12835,11 +15099,16 @@ async def typeahead_search(
                     .limit(3)
                 )
                 for event in fuzzy_events.scalars().all():
+                    _ta_event_rows[event.id] = _typeahead_settlement_facts(event)  # #9550
                     home = event.home_team
                     away = event.away_team
                     event_pool.append({
                         "type": "event",
-                        "text": f"{event.away_team_name} at {event.home_team_name}",
+                        "text": _typeahead_event_text(
+                            event.away_team_name,
+                            event.home_team_name,
+                            event.sport.key if event.sport else None,
+                        ),
                         "event_id": event.id,
                         # Q438: typeahead's OTHER event pool (above) already went
                         # through the invariant; this fuzzy pool was left raw, so
@@ -12910,9 +15179,11 @@ async def typeahead_search(
     # withheld-evidence shape wearing different clothes: the team owns every
     # token of the subject and none of the question, so it scores MC3 on the
     # full string and MC0 on the subject. Handing the two halves different
-    # strings would be two rules, so both read `_q_identity`.
+    # strings would be two rules, so both read `_q_identity` — connector
+    # dropped (`_q_matchup`, #9527), else `red sox vs yankees` scores the game
+    # below every market whose name says "vs.".
     _ta_candidates = [
-        (_typeahead_evidence(item, _q_identity), item)
+        (_typeahead_evidence(item, _q_matchup), item)
         for item in (*hub_pool, *team_pool, *event_pool,
                      *event_concept_pool, *futures_pool)
     ]
@@ -12926,12 +15197,11 @@ async def typeahead_search(
     # keys come back from the scorer instead of being recomputed here: the full
     # key carries the plural-namesake penalty, which is a property of the whole
     # candidate set, so a second per-row derivation would be a second rule.
-    _ta_keyed = _s_rank_with_keys(_q_identity, _ta_candidates)
-    suggestions = reserve_headline_slot(
-        [_payload for _key, _payload in _ta_keyed],
-        _ta_headline_ids,
-        floor=_s_entity_prefix_len(_ta_keyed),
-    )[:7]
+    _ta_keyed = _s_rank_with_keys(_q_matchup, _ta_candidates)
+    # #9415: a game's own winner market leaves when its game is in the seven.
+    suggestions = _typeahead_seven_without_served_game_winners(
+        _ta_keyed, _ta_headline_ids
+    )
     _ta_mark("rank")
 
     # T2-3: the requested answer LEADS (design decision B — "`Patriots playoffs`
@@ -12967,6 +15237,7 @@ async def typeahead_search(
         # Ranking evidence, never a payload: a 40-outcome market would other-
         # wise ship 40 strings on every keystroke.
         _s.pop("_outcome_names", None)
+        _s.pop("_answers_game", None)  # #9415
         # #4411: same rule — the participants are what the row was PROMOTED on,
         # and both names are already inside `text`.
         _s.pop("_participants", None)
@@ -13025,6 +15296,16 @@ async def typeahead_search(
         _ta_market_facts,
         card_fields=TYPEAHEAD_CARD_FIELDS,
     )
+
+    # #9550: a suspended row the venue already graded carries the verdict the
+    # event page prints ("Settled · Pereira wins"), not "No result reported".
+    # After the slice (only served rows are asked) and before the Redis write
+    # (a warm keystroke serves the same body). The ordinary dropdown issues no
+    # query: the gate refuses every row with a score or still ahead of kickoff.
+    await _typeahead_attach_venue_settlement(
+        db, suggestions, _ta_event_rows, datetime.now(timezone.utc)
+    )
+    _ta_mark("venue_settlement")
 
     result: dict = {"suggestions": suggestions, "query": q}
 
@@ -15663,6 +17944,92 @@ def _cached_detail_payload(event_id: int, now: float) -> dict | None:
     return cached_resp
 
 
+#: #9294/#9296 — `fresh=true` detail reads, coalesced per event per process.
+#:
+#: `fresh` exists for one caller: a page that has just been told its held blend
+#: moved (a folded contributor's invalidation, #9295) and must not be answered
+#: from an entry built before the move. But that hint is BROADCAST — every open
+#: page of the game receives it in the same second — so an uncoalesced bypass
+#: turns one venue frame into one full detail build per viewer, where the cache
+#: made it one per `_EVENT_DETAIL_LIVE_TTL` per worker. On a marquee game that
+#: is the stampede this cache exists to prevent.
+#:
+#: The rule that keeps `fresh` exact AND bounded: a fresh read is served by a
+#: build that STARTED after it arrived — never one that started before, which
+#: may predate the write the caller was told about. At most one such build is
+#: in flight per event; every fresh read that arrives while it runs waits for
+#: the NEXT one, which then answers all of them. N simultaneous fresh readers
+#: cost ≤ 2 builds per worker, not N.
+#:
+#: Entry: the build's start clock (`time.time()`, the scale `_event_detail_cache`
+#: stamps with) and the `asyncio.Future` its waiters share.
+_DETAIL_FRESH_BUILDS: dict[int, tuple[float, object]] = {}
+#: True only inside the one build the barrier is running, so that `get_event`'s
+#: re-entry skips the barrier and the cache read. A contextvar and not a
+#: parameter: a parameter on the route would be a query string anyone can send.
+_detail_fresh_leader: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "_detail_fresh_leader", default=False
+)
+
+
+class _FreshBuildAbandoned(Exception):
+    """The shared build's own request went away before it finished; the
+    waiters elect a new one rather than inherit a cancellation."""
+
+
+async def _coalesced_fresh_detail(event_id: int, asked_at: float, build) -> dict:
+    """Serve a fresh detail read from a build that started after ``asked_at``.
+
+    Strictly after: two clocks that read equal cannot say which came first,
+    and the safe reading of a tie is "before". A build that started before the
+    caller asked is awaited only as a queue position — its answer, or its
+    error, belongs to the readers who were already waiting for it.
+    """
+    import asyncio
+
+    while True:
+        entry = _event_detail_cache.get(event_id)
+        if entry is not None and entry[0] > asked_at:
+            # Any build that started after we asked — fresh or an ordinary
+            # miss — read state at least as new as the write we were told of.
+            return entry[2]
+        inflight = _DETAIL_FRESH_BUILDS.get(event_id)
+        if inflight is None:
+            break
+        started_at, shared = inflight
+        try:
+            result = await asyncio.shield(shared)
+        except _FreshBuildAbandoned:
+            continue
+        except Exception:
+            if started_at > asked_at:
+                raise  # our build's answer: a 404 or a 410 is everyone's
+            continue
+        if started_at > asked_at:
+            return result
+
+    started_at = time.time()
+    shared = asyncio.get_running_loop().create_future()
+    # Nobody may be waiting; an unread exception must not log as a leak.
+    shared.add_done_callback(lambda f: f.cancelled() or f.exception())
+    _DETAIL_FRESH_BUILDS[event_id] = (started_at, shared)
+    token = _detail_fresh_leader.set(True)
+    try:
+        result = await build()
+    except Exception as exc:
+        shared.set_exception(exc)
+        raise
+    except BaseException:
+        shared.set_exception(_FreshBuildAbandoned())
+        raise
+    finally:
+        _detail_fresh_leader.reset(token)
+        if _DETAIL_FRESH_BUILDS.get(event_id, (None, None))[1] is shared:
+            del _DETAIL_FRESH_BUILDS[event_id]
+    shared.set_result(result)
+    return result
+
+
 #: The only `hero_probability_source` whose number IS the point-in-time blend.
 #: A settled hero, an `opening` fallback and `final-unresolved` are different
 #: claims, and pinning a curve's live edge to one of them would put a number on
@@ -15933,6 +18300,28 @@ async def _venue_settlement(db: AsyncSession, event) -> dict | None:
     )
 
 
+async def _venue_settlement_served(db: AsyncSession, event) -> dict | None:
+    """The detail payload's settlement keys: the pair, plus #5811's void arm.
+
+    ``venue_closed_no_winner: True`` joins the pair when the venue settled every
+    market on the event and graded none (Visconde v Bulaid, ``15320964``) — the
+    same shared rule the list doors serve through
+    :func:`~app.utils.venue_settlement_reader.venue_settlements_for_events`.
+
+    A wrapper rather than an arm inside :func:`_venue_settlement`, because that
+    function's result-only reader (:func:`_settled_hero_result`, behind the
+    game-markets fold and the chart's terminal point) never reads the void key
+    and should not pay its statement. ``None`` stays ``None``: a failed pair
+    read refuses the whole answer, the void arm included.
+    """
+    settlement = await _venue_settlement(db, event)
+    if settlement is None:
+        return None
+    by_id = {event.id: settlement}
+    await mark_venue_closed_no_winner(db, by_id)
+    return by_id[event.id]
+
+
 # ═══ #6975: WHICH ROW A READER WHO ASKED FOR AN ID IS SERVED ══════════════════
 #
 # One decision, four callers. ``GET /api/events/{id}`` has resolved a twin id to
@@ -16164,12 +18553,23 @@ async def _settled_prematch_odds(
 
 
 @router.get("/{event_id}")
-async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
+async def get_event(
+    event_id: int, db: AsyncSession = Depends(get_db), fresh: bool = False,
+):
     """Get event details with aggregated odds from all bookmakers."""
     import time as _time
     _now = _time.time()
     requested_event_id = event_id
-    _cached_resp = _cached_detail_payload(event_id, _now)
+    # #9051: a coalesced stream-reconciliation read already knows the held
+    # price may be behind. Bypass only this cache READ; publish the resulting
+    # canonical/folded payload under the ordinary keys below, as on any miss.
+    # #9296: and coalesced — a broadcast invalidation must not become one
+    # build per open page. See `_coalesced_fresh_detail`.
+    if fresh and not _detail_fresh_leader.get():
+        return await _coalesced_fresh_detail(
+            event_id, _now, lambda: get_event(event_id, db=db, fresh=True)
+        )
+    _cached_resp = None if fresh else _cached_detail_payload(event_id, _now)
     if _cached_resp is not None:
         return _cached_resp
 
@@ -16421,9 +18821,11 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
     # (acceptance 4 — ruling 048 permits the read and forbids the write).
     from app.utils.proven_duplicates import (
         FoldedBlendView,
-        folded_probability_sources,
+        folded_probability_sources_with_revision,
     )
-    folded_sources = await folded_probability_sources(db, event, absorbed)
+    folded_sources, blend_fold_revision = (
+        await folded_probability_sources_with_revision(db, event, absorbed)
+    )
     blend_view = FoldedBlendView(event, folded_sources)
 
     response = _format_event(
@@ -16482,6 +18884,7 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
         _team_for_event(team_lookup, event.away_team_name, loaded_sport_key(event)),
         event.home_team_name,
         event.away_team_name,
+        importance=getattr(event, "llm_importance", None),
     )
     if standings_context:
         response["standings_context"] = standings_context
@@ -16793,6 +19196,10 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
     # serve this cached probability while reading a newer event row; borrowing
     # that row's clock would falsely promote an older cached price to new truth.
     response["hero_probability_observed_at"] = None
+    # #9051: which read of each row the hero was computed from, cached in the
+    # same entry as the hero and its clock, so a client can order two folds
+    # without trusting any quote clock. `None` = no claim.
+    response["blend_fold_revision"] = blend_fold_revision
     if _hero is not None:
         response["hero_probability"] = _hero.home_probability
         if _hero.source == "blend":
@@ -16867,7 +19274,7 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
         response,
         live_claim_is_unbacked=bool(_pinned and _pinned.get("pinned")),
     ):
-        _settlement = await _venue_settlement(db, event)
+        _settlement = await _venue_settlement_served(db, event)
         if _settlement is not None:
             response.update(_settlement)
 
@@ -17093,11 +19500,30 @@ def _escape_like(s: str) -> str:
 # shared with a pro franchise, plus a league scope that lets NFL markets into an
 # NCAAF pool), and `'North Carolina Tar Heels'` still emits a bare `'Carolina'`.
 # Both need a recall census before they move; this one needs none.
+#
+# `port` MOVED 2026-09-30 (#6124) — a place-TYPE word, the same defect in the
+# city slot. Production, `/api/events/15315471/related-futures` (Port Vale v
+# Northampton Town, League Two): `'Port Vale'` emitted a bare `'Port'`, a whole
+# token of `Shanghai Port FC`, `Shanghai Port` and `Port FC`, so Port Vale's
+# card served the Chinese Super League and Thai League 1 titles. Neither club
+# has a `teams` row, so #7867's known-club cover cannot see them.
+#
+#   port   | RECALL CENSUS, production 2026-09-30 05:5xZ, every `futures_outcomes`
+#          | label with `port` as a whole token: all but three carry the club's
+#          | other word (`Port Vale`, `Port FC`, `Shanghai Port`, `Port Adelaide
+#          | Power`, `AS Port`). The three: `Tawny Port` (a horse), `Spain vs
+#          | Port` (cricket) and ONE `Port` — Port FC's leg of Polymarket's AFC
+#          | Champions League Elite winner market. That leg reaches Port FC's
+#          | own event page only through the bare token, and the same token
+#          | hands it to Port Vale, Shanghai Port and AS Port.       LOSS 1
+#          | Every club keeps its full name and, where it has one, its own word:
+#          | Port Vale on `Port Vale`/`Vale`, Port Adelaide on `Adelaide`,
+#          | Shanghai Port on `Shanghai`; `Port FC`/`AS Port` on their full names.
 _GENERIC_PLACE_QUALIFIERS = frozenset({
     "state", "university", "college", "academy", "institute", "tech",
     "north", "south", "east", "west", "central",
     "northern", "southern", "eastern", "western",
-    "saint",
+    "saint", "port",
 })
 
 # A word that names a club TYPE rather than a club — the same defect as the set
@@ -17408,8 +19834,30 @@ _MATCHUP_SUBJECT_RE = re.compile(r"\b(?:vs\.?|at)\b", re.IGNORECASE)
 # `\bouts\b` cannot match "strikeouts" — the preceding "e" is a word character, so the
 # opening `\b` fails — which is why the word is safe to add here even though
 # `_PLAYER_PROP_RE` already carries "strikeouts" for the looser question.
+#
+# The football words joined for #6909. Polymarket's NFL card quotes
+# "<Player>: Receptions O/U 3.5", "Passing Completions O/U 21.5", "Passing
+# Attempts O/U 35.5" and "Longest Reception O/U 19.5", and none of those stat
+# words is in either vocabulary, so all four classified `game_total` — the
+# game's combined POINTS. Measured on production 2026-09-28 (NFL, 21 days):
+# 446 + 37 + 34 + 25 markets across 30 events, and the only sport any of the
+# four words appears in. Two ways that went wrong, both on the same page:
+#   * lines inside football's 15–120 band stayed on the points ladder —
+#     `Bo Nix: Passing Attempts O/U 35.5` served as a 35.5-point total rung on
+#     Broncos–Rams (`/api/events/14780548/game-markets`), and five such rungs on
+#     Cowboys–Ravens;
+#   * lines below it (every receptions line) were deleted by the range guard
+#     before kick-off — Monday night's 18 receptions lines reached no section —
+#     and after the final were rescued to `other[]` as a Won/Lost pair with no
+#     stat line, though the grader already maps "receptions", "passing
+#     completions" and "longest reception" to box-score keys.
+# NCAAF's "Utah State Total Receptions: O/U 19.5" is NOT this shape — the stat
+# sits in the subject and the part after the colon is empty — so it does not
+# move here.
 _PLAYER_PROP_OU_STAT_RE = re.compile(
-    r"\b(?:bases|rbis?|walks|doubles|triples|singles|outs)\b", re.IGNORECASE
+    r"\b(?:bases|rbis?|walks|doubles|triples|singles|outs|"
+    r"receptions|completions|attempts|longest\s+(?:reception|rush))\b",
+    re.IGNORECASE,
 )
 
 
@@ -17470,6 +19918,17 @@ def _prop_player_and_stat(
     if m and not _MATCHUP_SUBJECT_RE.search(m.group("who")):
         who = m.group("who").strip().lower()
         return who, (m.group("stat").strip().lower() or stat)
+
+    # Polymarket Yes/No (#9608): market "Pierce Charles: 1+ saves", outcome "Yes".
+    # A bare Yes/No names nobody either, so the fallback below keyed every player on
+    # `yes`/`no` — Pierce Charles's settled 1+ saves was averaged into Balázs Tóth's
+    # open one on /events/15316808 and served under Tóth's name. The subject names
+    # the player. A matchup subject ("A vs B: Both teams to score") is the game's
+    # question, not a person's, and keeps the old key, as in the O/U branch above.
+    if oname.lower() in ("yes", "no") and ":" in mname:
+        who = mname.rsplit(":", 1)[0].strip()
+        if who and not _MATCHUP_SUBJECT_RE.search(who):
+            return who.lower(), stat
 
     # Neither shape: fall back to what the old key used, so a row we cannot identify
     # groups exactly as it did rather than joining someone else's group.
@@ -17648,7 +20107,17 @@ def _btts_reader_facing_name(market_name: str) -> str:
 #: `\bbases\b` is scoped to the totals branch and cannot reach "Total Runs". The
 #: player-prop form ("Brandon Marsh: Total Bases O/U 2.5") is already `player_prop`
 #: by the check above this one, so ORDER is load-bearing: this must stay below it.
-_NON_SCORING_TOTAL_RE = re.compile(r"\bbases\b")
+#:
+#: `corners` is the soccer half of the same class (#9308). Polymarket lists a corners
+#: ladder beside the goals one on nearly every fixture ("O/U 9.5 Total Corners",
+#: "1st Half O/U 4.5 Total Corners", "<Club> O/U 5.5 Corners"); Kalshi lists
+#: "<A> vs <B>: Total Corners". Measured 2026-09-28 over 60 days of linked totals
+#: markets: 26,405 name corners, and 0 name cards, bookings, shots, fouls or offsides.
+#: So those words stay OUT until a venue lists them ("Cards" is also a Cardinals
+#: nickname). On a 400-market sample, 303 classified `game_total` and 86 `half_total`.
+#: Japan–Venezuela (15312535) served "O/U 8.5 Total Corners" as its 8.5-GOALS rung,
+#: and León–Juárez's 1st-half goals map read "Four lines quoted" 0.5/3.5/4.5/5.5.
+_NON_SCORING_TOTAL_RE = re.compile(r"\b(?:bases|corners?)\b")
 
 
 #: The shapes that only ever exist as the *output* of decomposing a container
@@ -18123,20 +20592,6 @@ def _match_winner_rank_beats(challenger, incumbent, blended_observed_at) -> bool
 _COMPLETED_MATCH_YES_FLOOR = 0.99
 
 
-def _names_completed_match(market_name: Optional[str]) -> bool:
-    """Is this Polymarket's "was the match completed?" market? (#8874)
-
-    Judged on a whole colon segment, never a substring:
-    ``M25 Setubal, Main Draw: Completed Match: Alec Deckers vs Philip Henning``
-    carries it as its own segment, and a player whose name merely contains the
-    words cannot.
-    """
-    return any(
-        segment.strip().casefold() == "completed match"
-        for segment in (market_name or "").split(":")
-    )
-
-
 def _completed_match_says_played(rows: list) -> bool:
     """Does a served ``Completed Match`` market read "yes, it was played"? (#8874)
 
@@ -18231,7 +20686,8 @@ async def _settled_hero_result(db: AsyncSession, event, now) -> str | None:
     served = dict(
         status=served_event_status(event.status, event.commence_time, now),
         started_without_result=started_without_result(
-            event.status, event.commence_time, now
+            event.status, event.commence_time, now,
+            getattr(event, "win_probability_sources", None),
         ),
         home_score=event.home_score,
         away_score=event.away_score,
@@ -18354,6 +20810,101 @@ def _withhold_partial_field_markets(other_rows: list, markets: list) -> list:
         for row in other_rows
         if not (_row_market_ids(row) and _row_market_ids(row) <= withheld)
     ]
+
+
+def _squeeze_exclusive_field_markets(other_rows: list, markets: list) -> list:
+    """A one-winner card never adds up to more than 100% (#4724).
+
+    WHAT A READER SAW, production 2026-09-30 15:05Z, `/events/14780550`
+    (Steelers @ Browns, Thursday Night Football), 390px. Additional Markets drew
+    *Pittsburgh vs Cleveland: Race to 21 Points* as Pittsburgh 45% / Neither
+    team 35% / Cleveland 27% — **107%** for three outcomes of which exactly one
+    happens. The US Open semi-final Exact Match Score cards read 104% and 108%
+    the same way (#4724, #4895). Kalshi market `63152878` stores
+    `mutually_exclusive = true` and legs 0.445 / 0.35 / 0.27: the excess is the
+    venue's mid-prices carrying the vig, served straight through. No rounding
+    rule can reach it (#4724's measurement: DATA +4.00 pts, ROUNDING +0.00).
+
+    THE RULE. For a market the venue declares one-winner, with every one of its
+    three or more served legs priced and attributed to it alone, whose legs sum
+    past 1.0: divide each by the sum. Nothing else moves.
+
+    * **Only DOWN.** A subset of a one-winner field can never legitimately sum
+      past 1, so dividing by its own sum moves every leg toward the true share
+      and never past it — even when legs are missing, the true divisor is at
+      least this one. A field summing UNDER 1 is left alone: a partial field is
+      honest as it stands, and inflating it would invent weight for legs nobody
+      priced.
+    * **`mutually_exclusive` is the structure; a sum is not** (#7641). The flag
+      is what `normalize_display_probs` already trusts (#199: Kalshi flags
+      make-cut / top-N / player-prop fields False). A Receptions field summing
+      to 21.9 is flagged False and never reaches the arithmetic.
+    * **Past `_FIELD_SUM_MAX` it stays raw**, #1200's line: a "one-winner" field
+      summing that far past 1 is really independent binaries, and squeezing it
+      would turn a near-lock into a coin flip.
+    * **Every leg priced.** A settled market serves its losers as `None`; a
+      field with an unpriced leg is not one this can reason about (#7103's
+      "absent is not zero").
+    * **Three legs or more.** A two-leg one-winner market is the moneyline
+      shape the page's `findWinProbMarkets` recognises by its SUM (±0.1), so
+      moving that sum could move which card a reader sees. Every specimen here
+      is a field of three or more.
+    * **Merged rows abstain.** A row carrying several `_market_ids` speaks for
+      more than one market; a market seen through one is never squeezed, the
+      same caution `_withhold_partial_field_markets` takes.
+
+    WHY NOT `normalize_display_probs`: its squeeze fires only past 105%
+    (`politics._normalize_outcome_probs`), which leaves Race to 14 printing
+    52 + 42 + 10 = 104 and the Zverev–Khachanov ladder at 104 — the exact
+    readings #4724 was filed on. #6583 records the same threshold leaving
+    102/103 on Discover. The guards above are that function's guards; only
+    the threshold differs, and it differs because a reader of a three-row card
+    adds the rows.
+
+    Rows are copied, never mutated, so a caller holding the list it passed in
+    keeps the raw prices.
+    """
+    from app.utils.outcome_display import _FIELD_SUM_MAX
+
+    exclusive = {
+        market.id for market in markets if getattr(market, "mutually_exclusive", None) is True
+    }
+    if not exclusive:
+        return other_rows
+
+    legs: dict = {}
+    merged: set = set()
+    for row in other_rows:
+        ids = _row_market_ids(row)
+        if len(ids) > 1:
+            merged |= ids
+            continue
+        if len(ids) == 1:
+            market_id = next(iter(ids))
+            if market_id in exclusive:
+                legs.setdefault(market_id, []).append(row)
+
+    divisor: dict = {}
+    for market_id, rows in legs.items():
+        if market_id in merged or len(rows) < 3:
+            continue
+        probs = [row.get("probability") for row in rows]
+        if any(p is None for p in probs):
+            continue
+        total = sum(float(p) for p in probs)
+        if 1.0 < total <= _FIELD_SUM_MAX:
+            divisor[market_id] = total
+    if not divisor:
+        return other_rows
+
+    out = []
+    for row in other_rows:
+        ids = _row_market_ids(row)
+        market_id = next(iter(ids)) if len(ids) == 1 else None
+        if market_id in divisor:
+            row = {**row, "probability": round(float(row["probability"]) / divisor[market_id], 4)}
+        out.append(row)
+    return out
 
 
 def _futures_row_market_ids(row: dict) -> set:
@@ -18797,6 +21348,7 @@ def _withhold_redundant_parent_futures(
     parent_ids: set,
     group_markets: list,
     legs_by_market: dict,
+    drawn_by_game_markets: frozenset = frozenset(),
 ) -> tuple[list, list]:
     """#4189 / #5273's verdict, at the second door (#8848).
 
@@ -18828,6 +21380,20 @@ def _withhold_redundant_parent_futures(
     Rows that speak for merged contributors (`contributor_market_ids`) are kept
     unless EVERY id behind them is a redundant parent — door one's rule for its
     merged rows — so a member's price never leaves with the container's.
+
+    🔴 A MEMBER THE #4646 FOLD TOOK STILL REACHED THE READER (#4646,
+    `/events/15320104`). The two doors run the same two passes in opposite
+    orders. Door one judges its parents BEFORE it folds duplicate winner cards
+    (#6799), so the match-winner child counts as served. This door folds the
+    fixture's winner first (:func:`_fold_event_match_winner_futures`), and that
+    fold is the only reason the child's row is gone: `/game-markets` draws it
+    as the labelled card. Measured 2026-09-29 16:00Z: parent `62829653`
+    (`field`) served one leg, "Mouilleron-Le-Captif (Doubles): Balshaw/Martineau
+    vs Harris/" at 60% under a 95% hero. That leg is a copy of child `62842567`
+    (`duel`), which the fold had taken, so no member survived and the parent
+    stayed. ``drawn_by_game_markets`` is the set of ids that fold removed. They
+    count as surviving; nothing else does, so a parent whose children were all
+    filtered away for any other reason still stays (CERT-2335/2340).
     """
     if not parent_ids or not group_markets:
         return home_futures, away_futures
@@ -18844,7 +21410,7 @@ def _withhold_redundant_parent_futures(
         if m.group_id and (m.market_type or "") in _DECOMPOSED_MEMBER_SHAPES:
             member_ids_by_group.setdefault(m.group_id, set()).add(m.id)
 
-    surviving_ids: set = set()
+    surviving_ids: set = set(drawn_by_game_markets)
     for row in list(home_futures) + list(away_futures):
         surviving_ids |= _futures_row_market_ids(row)
 
@@ -19239,6 +21805,44 @@ def _extract_threshold(outcome_name: str) -> Optional[float]:
     return float(m.group(1)) if m else None
 
 
+# THE PERIOD'S NUMBER IS NOT THE LINE (#9121). Kalshi names the period inside
+# the outcome, in front of the line, so `_extract_threshold`'s first-number
+# fallback took the period:
+#
+#     Cruz Azul wins the 1H by more than 1.5 goals   -> served 1.0, line 1.5
+#     CIN Bengals wins 3Q by over 6.5 points         -> served 3.0, line 6.5
+#     Cincinnati wins 2nd Half / Tie 4th Quarter     -> served 2.0 / 4.0, no line
+#
+# Measured on production 2026-09-27 (native, on #9121): 1,587 legs, 41 pages. Web
+# never read the field; the installed iPhone build (1.0.1(26)) reads it first
+# and drew "Azul by 1" on a 1.5 line. A winner leg has no line, so it serves
+# None; a spread leg serves the number left once the period token is gone
+# (every token `_HALF_PATTERNS`/`_QUARTER_PATTERNS` classify by, F5 included).
+_PERIOD_TOKEN_RE = re.compile(
+    r"\b(?:[1-4](?:st|nd|rd|th)\s+(?:half|quarter|period)|[1-4][hq]|[hq][1-4]"
+    r"|(?:first|second)\s+half|(?:first|1st)\s+5\s+innings|f5)\b",
+    re.IGNORECASE,
+)
+
+
+# …and a team name can carry digits too ("SF 49ers wins 2H by over 3.5 points",
+# "Philadelphia 76ers wins 1st Quarter"), so the line is read beside Kalshi's
+# own margin wording first, and a winner leg is None whatever its name holds.
+_PERIOD_MARGIN_LINE_RE = re.compile(
+    r"\bby\s+(?:more\s+than|over)\s+(\d+(?:\.\d+)?)", re.IGNORECASE
+)
+
+
+def _extract_period_threshold(outcome_name: str, market_type: str) -> Optional[float]:
+    """The line of a half/quarter leg, or None for a winner leg. #9121."""
+    if market_type.endswith("_winner"):
+        return None
+    m = _PERIOD_MARGIN_LINE_RE.search(outcome_name)
+    if m:
+        return float(m.group(1))
+    return _extract_threshold(_PERIOD_TOKEN_RE.sub(" ", outcome_name))
+
+
 def _is_match_scope_total(market_name: Optional[str], sport_prefix: Optional[str]) -> bool:
     """False for a totals market that is not scoped to the whole contest.
 
@@ -19348,6 +21952,36 @@ _PROP_NAME_STAT_PITCHING = sorted(
     key=lambda pair: len(pair[0]),
     reverse=True,
 )
+# #6909 — FOOTBALL ON THE NAME PATH. A Polymarket prop has a numeric id, so the
+# ticker table can never answer for it, and until this list the name path had
+# no football word at all: on the Saints–Raiders final (event 14782707, read
+# 2026-09-28) Kalshi graded 402 of 402 player props and Polymarket 0 of 154 —
+# `Tyler Shough: Passing Yards O/U 149.5` sat ungraded directly above Kalshi's
+# `Tyler Shough: 150+ → 250.0 hit`.
+#
+# Phrase → the key the BOX SCORE writes, which is the same key the ticker
+# table uses (`backfill_winners._PROP_TICKER_TO_STAT`), so a Polymarket and a
+# Kalshi row about one player and one stat read one number. Longest phrase
+# wins, as for pitching. DELIBERATELY ABSENT, as in the ticker table:
+# "passing attempts" (no attempts key), a bare "touchdowns" (does not say
+# which), "interceptions" (thrown or caught). The composite is the name twin
+# of `kxnflrryds`; longest-first is what keeps it ahead of the "receiving
+# yards" it contains, which would otherwise grade it off one leg.
+_PROP_NAME_STAT_FOOTBALL = sorted(
+    [
+        ("rushing + receiving yards", ["rushing yards", "receiving yards"]),
+        ("passing yards", ["passing yards"]),
+        ("rushing yards", ["rushing yards"]),
+        ("receiving yards", ["receiving yards"]),
+        ("passing touchdowns", ["passing touchdowns"]),
+        ("passing completions", ["completions"]),
+        ("longest reception", ["long reception"]),
+        ("receptions", ["receptions"]),
+    ],
+    key=lambda pair: len(pair[0]),
+    reverse=True,
+)
+_SUPERLATIVE_NAME_RE = re.compile(r"\bmost\b")
 # #5097 — stats whose name is TRUE OF BOTH SIDES of a baseball box score, with
 # no "allowed" in the market name to tell them apart.
 #
@@ -19366,12 +22000,25 @@ _PROP_NAME_STAT_PITCHING = sorted(
 _BATTER_PITCHER_TWIN_STATS = {"strikeouts": "pitching strikeouts"}
 
 
+#: #9734 — the context for a finished event whose box is still a live-pass
+#: snapshot. Truthy, so it is not confused with "no box score" (None), and it
+#: carries none of the resolver helpers, so no path can read a stat from it.
+_LIVE_CAPTURE_CTX: dict = {"live_capture": True}
+
+
 def _build_prop_grade_context(event) -> Optional[dict]:
     """Build the per-event grading context (normalized box score + resolver
-    helpers) once. Returns None if the event has no usable box score data."""
+    helpers) once. Returns None if the event has no usable box score data.
+
+    #9734: a box the live pass wrote (``live: true``) is a snapshot of the game
+    mid-play, not its final line. It returns ``_LIVE_CAPTURE_CTX`` instead,
+    which grades nothing from the box and refuses the verdicts stored off it
+    (see `_grade_settled_prop`)."""
     box = getattr(event, "box_score_data", None)
     if not isinstance(box, dict):
         return None
+    if box_is_live_capture(box):
+        return _LIVE_CAPTURE_CTX
     # Production box scores key players by name under "players" (gotcha #37).
     raw_players = box.get("players", box)
     if not isinstance(raw_players, dict):
@@ -19425,9 +22072,36 @@ def _prop_stat_keys(market, ctx: dict, player_stats: Optional[dict] = None) -> O
     for phrase, stat in _PROP_NAME_STAT_PITCHING:
         if phrase in name_lower:
             return [stat]
+    football = _football_name_stat_keys(market, ctx)
+    if football:
+        return football
     for stat in _PROP_NAME_STAT_SINGLES:
         if stat in name_lower:
             return _disambiguate_twin_stat(stat, player_stats)
+    return None
+
+
+def _football_name_stat_keys(market, ctx: dict) -> Optional[list]:
+    """#6909: the stat key(s) a football prop reads by NAME, or None.
+
+    None whenever the ticker table answers (the ticker is authoritative), so a
+    non-None answer here also says "this row was identified by its name alone" —
+    `_grade_settled_prop` leans on that to withhold a name-path verdict the
+    row's own settlement contradicts.
+
+    "Most Receiving Yards" (Kalshi KXNFLMOST*) names the same stat but asks who
+    led, not whether one player cleared a line — it needs its own grader, so
+    the football phrases never answer for it.
+    """
+    ticker_lower = (getattr(market, "external_id", None) or "").lower()
+    if ctx["stats_for_ticker"](ticker_lower):
+        return None
+    name_lower = (getattr(market, "name", None) or "").lower()
+    if _SUPERLATIVE_NAME_RE.search(name_lower):
+        return None
+    for phrase, stats in _PROP_NAME_STAT_FOOTBALL:
+        if phrase in name_lower:
+            return list(stats)
     return None
 
 
@@ -20108,6 +22782,18 @@ def _grade_settled_prop(event_finished, ctx, market, outcome, threshold, is_unde
 
     if ctx is None:
         return _finish(result)
+    if ctx.get("live_capture"):
+        # #9734: the box is a mid-game snapshot, so it types no `hit` and no
+        # `actual`. A verdict the resolver STORED off that same box
+        # (`box_score`, `box_score_bound`) is the same mid-game read, so it is
+        # refused too: `is_winner` is withheld, which keeps
+        # `_build_props_script`'s is_winner fallback from printing it, and the
+        # venue fallback is skipped, because on such a row the only signal
+        # left would be the price. A venue's own settlement still grades.
+        if result["resolution_source"] in BOX_SCORE_SOURCES:
+            result["is_winner"] = None
+            return result
+        return _finish(result)
     # #5097: the PLAYER is resolved before the stat key, because for the handful
     # of names that are true of a batter and a pitcher alike, which key to read
     # is a fact about the player's own line and not about the market name.
@@ -20167,6 +22853,25 @@ def _grade_settled_prop(event_finished, ctx, market, outcome, threshold, is_unde
     result["actual"] = total
     if threshold is not None:
         result["hit"] = (total < threshold) if is_under else (total >= threshold)
+        # #6909: a football verdict found by NAME withholds when the row's own
+        # settlement says the opposite. Measured on the specimen game
+        # (14782707): Juwan Johnson's stored box line reads 48 receiving yards
+        # while Kalshi's `api_settlement` of his 50+ rung AND Polymarket's
+        # settled O/U 49.5 both say he cleared 50. Which is right is not
+        # knowable here, so the number stays (`actual` is what ESPN wrote) and
+        # the verdict does not; the venue fallback cannot type it either
+        # (`clean_resolution` is tier 1). Withhold-only: it never types a hit.
+        # The source must be a classified settlement (tier >= 1): an ungraded
+        # row stores False with no source, and that False is not a verdict.
+        won = getattr(outcome, "is_winner", None)
+        if (
+            (won is True or won is False)
+            and authority_tier(getattr(outcome, "resolution_source", None)) >= 1
+            and won is not result["hit"]
+            and _football_name_stat_keys(market, ctx) == stat_keys
+        ):
+            result["hit"] = None
+            return result
     return _finish(result)
 
 
@@ -21016,6 +23721,11 @@ def _build_props_script(player_props):
         if hit is not None:
             graded_result = "hit" if hit else "miss"
             actual = pp.get("actual")
+            # #9428: the box-score grader sums stats as floats, so an integral
+            # count printed "2.0 — miss" on every NFL row (559 of 559 on
+            # 14780548). A whole number drops its `.0`; a real fraction keeps it.
+            if isinstance(actual, float) and actual.is_integer():
+                actual = int(actual)
             if actual is not None:
                 graded_label = f"{actual} — {graded_result}"
         # #4390: `_inverted` is set by the endpoint's own over/under
@@ -21334,6 +24044,8 @@ def _estimate_game_pace(
 async def get_game_markets(
     event_id: int,
     db: AsyncSession = Depends(get_db),
+    fresh: bool = False,
+    response: Response = None,
 ):
     """Game-level markets for an event (totals spectrum, player props, spreads).
 
@@ -21367,6 +24079,14 @@ async def get_game_markets(
     (#6355), so the first reader after the release rebuilds it.
     """
     from app.utils import game_markets_cache as gmc
+
+    # Invalidation readers need current rows, not either cached response tier.
+    # This read never publishes into the ordinary route's cache ladder.
+    if fresh is True:
+        body, _status, _market_ids = await _build_game_markets(event_id, db)
+        if response is not None:
+            response.headers["Cache-Control"] = "no-store"
+        return body
 
     # L1 — in-memory. Live 30 s, completed `gmc.FRESH_TTL_FINAL` (#6355), and a
     # miss whenever the entry was built by another release.
@@ -21712,6 +24432,7 @@ async def _build_game_markets(
     Everything below this line is the pre-LAT-P121 route body, moved unchanged.
     """
     from app.models import FuturesOddsSnapshot
+    from app.utils.game_market_stream_envelope import game_market_stream_envelope
 
     # 1. Load event with sport
     result = await db.execute(
@@ -21940,7 +24661,22 @@ async def _build_game_markets(
 
     if not markets:
         return (
-            {"event_id": event_id, "totals": [], "player_props": [], "spreads": [], "matchups": [], "other": [], "pace": None, "props_script": []},
+            {
+                "event_id": event_id,
+                "home_team": event.home_team_name,
+                "away_team": event.away_team_name,
+                "home_score": event.home_score,
+                "away_score": event.away_score,
+                "status": served_event_status(
+                    event.status, event.commence_time, datetime.now(timezone.utc)
+                ),
+                "totals": [], "player_props": [], "team_totals": [],
+                "spreads": [], "period_markets": [], "matchups": [],
+                "other": [], "pace": None, "props_script": [],
+                **game_market_stream_envelope([], [], {}),
+                "open_winner_quote": None,
+                "closed_winner_market_ids": [],
+            },
             event.status or "",
             [],
         )
@@ -22269,6 +25005,7 @@ async def _build_game_markets(
                         "market_name": market.name,
                         "outcome_name": o.name,
                         "observed_at": _observed(o),
+                        "contributor_outcome_ids": [o.id],
                         "threshold": threshold,
                         "over_probability": round(over_prob, 4),
                         "opening_over_probability": tt_opening_over,
@@ -22349,6 +25086,7 @@ async def _build_game_markets(
                         "market_name": market.name,
                         "outcome_name": o.name,
                         "observed_at": _observed(o),
+                        "contributor_outcome_ids": [o.id],
                         # Same expression as the `other` branch below, so the
                         # two ways into this section cannot serve two shapes.
                         "probability": round(prob, 4) if prob else None,
@@ -22370,6 +25108,7 @@ async def _build_game_markets(
                     "market_name": market.name,
                     "outcome_name": o.name,
                     "observed_at": _observed(o),
+                    "contributor_outcome_ids": [o.id],
                     **_settled_over_verdict(_grade, _inverted, _market_settled),
                     "movement": round(float(o.current_probability) - float(o.opening_probability), 4)
                         if o.opening_probability is not None and o.current_probability is not None else None,
@@ -22414,6 +25153,7 @@ async def _build_game_markets(
                     "market_name": market.name,
                     "outcome_name": o.name,
                     "observed_at": _observed(o),
+                    "contributor_outcome_ids": [o.id],
                     "threshold": threshold,
                     "over_probability": round(over_prob, 4),
                     "opening_over_probability": opening_over,
@@ -22444,6 +25184,7 @@ async def _build_game_markets(
                     "market_name": market.name,
                     "outcome_name": o.name,
                     "observed_at": _observed(o),
+                    "contributor_outcome_ids": [o.id],
                     "threshold": threshold,
                     # 🔴 #6312: `if prob else None` — 0.0 IS FALSY, so a rung the
                     # venue settled at zero published a NULL probability beside a
@@ -22498,11 +25239,12 @@ async def _build_game_markets(
         elif market_type in ("half_spread", "quarter_spread", "half_winner", "quarter_winner"):
             for o in market_outcomes:
                 prob = float(o.current_probability) if o.current_probability is not None else None
-                threshold = _extract_threshold(o.name)
+                threshold = _extract_period_threshold(o.name, market_type)
                 period_markets.append({
                     "market_name": market.name,
                     "outcome_name": o.name,
                     "observed_at": _observed(o),
+                    "contributor_outcome_ids": [o.id],
                     "threshold": threshold,
                     "probability": round(prob, 4) if prob else None,
                     "source": market.source,
@@ -22522,6 +25264,7 @@ async def _build_game_markets(
                         "name": o.name,
                         "probability": round(prob, 4),
                         "observed_at": _observed(o),
+                        "contributor_outcome_ids": [o.id],
                         **_settled_grade_fields(market, o, **_grade_ctx),
                     })
             if outcomes_list:
@@ -22530,6 +25273,10 @@ async def _build_game_markets(
                     "type": market_type,
                     "source": market.source,
                     "outcomes": outcomes_list,
+                    "contributor_outcome_ids": sorted({
+                        oid for row in outcomes_list
+                        for oid in row["contributor_outcome_ids"]
+                    }),
                     "_market_id": market.id,
                 })
 
@@ -22594,6 +25341,7 @@ async def _build_game_markets(
                             "market_name": market.name,
                             "outcome_name": o.name,
                             "observed_at": _observed(o),
+                            "contributor_outcome_ids": [o.id],
                             "threshold": threshold,
                             "over_probability": round(over_prob, 4),
                             "opening_over_probability": opening_over,
@@ -22640,6 +25388,7 @@ async def _build_game_markets(
                         "market_name": market.name,
                         "outcome_name": o.name,
                         "observed_at": _observed(o),
+                        "contributor_outcome_ids": [o.id],
                         "threshold": threshold,
                         "over_probability": round(over_prob, 4),
                         "opening_over_probability": opening_over,
@@ -22666,6 +25415,7 @@ async def _build_game_markets(
                     ),
                     "outcome_name": o.name,
                     "observed_at": _observed(o),
+                    "contributor_outcome_ids": [o.id],
                     "probability": round(prob, 4) if prob else None,
                     "source": market.source,
                     **_settled_grade_fields(market, o, **_grade_ctx),
@@ -23132,6 +25882,9 @@ async def _build_game_markets(
     # change. Built from the plain list, before any commit boundary, so no ORM
     # attribute is read lazily here (gotcha #6).
     _ticker_by_market_id = {m.id: m.external_id for m in markets}
+    # #9849: the same plain-list pass for the venue's threshold label (#9383),
+    # read here for the same reason — no lazy ORM read after a commit boundary.
+    _threshold_label_by_market_id = {m.id: market_threshold_label(m) for m in markets}
 
     # #1735 — THE SUPPRESSED ROWS ARE EXACTLY THE ROWS OWED A RESULT.
     #
@@ -23384,6 +26137,10 @@ async def _build_game_markets(
                 )
                 if merged_ids:
                     best["_market_ids"] = merged_ids
+                best["contributor_outcome_ids"] = sorted({
+                    oid for entry in entries
+                    for oid in entry.get("contributor_outcome_ids", [])
+                })
                 merged_props.append(best)
         player_props = merged_props
 
@@ -23646,6 +26403,11 @@ async def _build_game_markets(
     # claim the reader reads is made by the rendered rows and by nothing else.
     other_markets = _withhold_partial_field_markets(other_markets, markets)
 
+    # #4724 — A ONE-WINNER CARD NEVER ADDS UP TO MORE THAN 100%. After the
+    # partial-field withhold, for its reason: which legs reach the reader is a
+    # fact only here, and the sum the reader adds is the sum of those legs.
+    other_markets = _squeeze_exclusive_field_markets(other_markets, markets)
+
     # #6447 — THE CARDS STOP NAMING A CLUB THAT DOES NOT EXIST.
     #
     # `San Francisco vs Los Angeles R: First Touchdown` is the venue's own title
@@ -23672,6 +26434,28 @@ async def _build_game_markets(
         _ticker_by_market_id,
         protected_names=(event.home_team_name, event.away_team_name),
     )
+
+    # #9849 — THE DOOR #9383 MISSED. A single-leg Kalshi threshold market is
+    # stored as one `Yes` outcome and its question lives in
+    # `market_metadata.threshold_label`. Search, `/futures/{id}` and My Stuff
+    # print that label through `reader_outcome_name`; this route served the bare
+    # `Yes`, so `/events/15320289` read "1st Inning Total — Yes · Lost" directly
+    # above "a run scored in the first inning — Yes · Won". The market was
+    # "Over 1.5 runs in the 1st inning" and both were right. Applied LAST, after
+    # every filter and fold above has keyed on the stored name, and only to a
+    # row whose market carries a label — the helper replaces nothing but a bare
+    # `Yes`, so every other row is served exactly as before.
+    for _row in other_markets:
+        _label = _threshold_label_by_market_id.get(_row.get("_market_id"))
+        if _label:
+            _row["outcome_name"] = (
+                reader_outcome_name(
+                    _ticker_by_market_id.get(_row.get("_market_id")),
+                    _row.get("outcome_name"),
+                    _label,
+                )
+                or _row.get("outcome_name")
+            )
 
     response = {
         "event_id": event_id,
@@ -23732,6 +26516,24 @@ async def _build_game_markets(
     # reached through the stale-refresh path publishes through exactly the same
     # writer as one reached through a request. Two writers for one tier is
     # LAT-P001's defect and it is not being rebuilt here.
+    response.update(game_market_stream_envelope(
+        market_ids, outcomes, _observed_at_by_outcome
+    ))
+    from app.utils.final_game_winner_quote import final_game_winner_quotes
+    from app.utils.outcome_display import normalize_display_probs
+
+    response.update(final_game_winner_quotes(
+        event_id=event_id, event_is_finished=event_is_finished,
+        mapped_event_ids=market_event_ids,
+        home_name=event.home_team_name, away_name=event.away_team_name,
+        markets=markets, outcomes=outcomes,
+        observed_at=_observed_at_by_outcome,
+        is_match_winner=_market_is_event_match_winner,
+        winner_side=_match_winner_side,
+        fold_winner_markets=_fold_duplicate_match_winner_markets,
+        resolve_outcome_name=resolve_binary_matchup_outcome_name,
+        normalize_probs=normalize_display_probs,
+    ))
     return response, event.status or "", market_ids
 
 
@@ -24240,6 +27042,62 @@ def _settled_before_the_game(market, commence_time) -> bool:
     if commence_time.tzinfo is None:
         commence_time = commence_time.replace(tzinfo=timezone.utc)
     return resolved_at < commence_time
+
+
+def _squeeze_exclusive_series_outcomes(
+    outcomes: list[dict], *, exclusive: bool, decided_lost: set, whole_market: bool
+) -> list[dict]:
+    """A one-winner SERIES card never adds up to more than 100% (#9901).
+
+    WHAT A READER SAW, production 2026-09-30 18:00Z, `/events/15320289`
+    (Phillies v Braves, Wild Card Game 1, final — Atlanta won), 390px. Bigger
+    Picture drew *Series Exact Score: Philadelphia vs Atlanta* as ATL 2-0 49% /
+    ATL 2-1 30% / PHI 2-1 27% / PHI 2-0 --- — **106%** for a question with one
+    answer. Kalshi `62898792` is stored `mutually_exclusive = true`; its live legs
+    are 1-cent books (0.485 / 0.295 / 0.265) and PHI 2-0 is stored `is_winner =
+    False` at 0 — decided lost the moment Atlanta took Game 1.
+
+    #4724's `_squeeze_exclusive_field_markets` is the same rule for the
+    `game-markets` rows and never reaches this array. It also abstains on any
+    unpriced leg, which is right there (a settled market serves its losers as
+    None) and wrong here: a leg the venue has already graded LOST is not an
+    unknown price, it is a known 0, and the rest of the field is still the whole
+    field.
+
+    THE RULE. A venue-declared one-winner market, every one of whose legs is on
+    the card (`whole_market`) and each either priced or decided lost, with three
+    or more priced legs whose raw sum is at most `_FIELD_SUM_MAX`: divide the
+    priced legs by `display_divisor_mass` when that mass is past 1.0. Only down —
+    a field under 100% is left as it stands. A refused or unpriced leg that is
+    NOT graded lost makes the card abstain. The divisor is the page's and the
+    feed card's (#7537, #8595), so the 1-cent floor never counts as vig here
+    either. `probability_change_24h` stays the venue's move.
+
+    Entries are copied, never mutated.
+    """
+    from app.utils.outcome_display import _FIELD_SUM_MAX, display_divisor_mass
+
+    if exclusive is not True or not whole_market:
+        return outcomes
+    priced: list[float] = []
+    for outcome in outcomes:
+        p = outcome.get("probability")
+        if p is None:
+            if outcome.get("outcome_id") in decided_lost:
+                continue
+            return outcomes
+        priced.append(float(p))
+    if len(priced) < 3 or sum(priced) > _FIELD_SUM_MAX:
+        return outcomes
+    divisor = display_divisor_mass(priced)
+    if divisor <= 1.0:
+        return outcomes
+    return [
+        {**o, "probability": round(float(o["probability"]) / divisor, 4)}
+        if o.get("probability") is not None
+        else o
+        for o in outcomes
+    ]
 
 
 async def _related_futures_withheld_ids(db: AsyncSession, market_ids) -> set[int]:
@@ -25454,6 +28312,9 @@ async def _build_related_futures(
     # as one labelled card. Drawn again here it becomes unlabelled chips split
     # across two columns. Folded BEFORE the merges, while every leg still carries
     # its own market's id.
+    pre_fold_market_ids = {
+        r.get("market_id") for r in list(home_futures) + list(away_futures)
+    }
     home_futures, away_futures = _fold_event_match_winner_futures(
         home_futures,
         away_futures,
@@ -25462,6 +28323,13 @@ async def _build_related_futures(
         event.home_team_name,
         event.away_team_name,
         headline_market_ids=_headline_winner_market_ids(event.win_probability_sources),
+    )
+    # #4646 / #8848 — what the fold just took is drawn by `/game-markets`, so the
+    # redundant-parent verdict below still counts it as having reached the reader.
+    folded_to_game_markets = frozenset(
+        pre_fold_market_ids
+        - {r.get("market_id") for r in list(home_futures) + list(away_futures)}
+        - {None}
     )
 
     # ── Cross-source deduplication ──────────────────────────────────
@@ -25616,6 +28484,7 @@ async def _build_related_futures(
             redundant_parent_ids,
             group_markets,
             parent_legs,
+            drawn_by_game_markets=folded_to_game_markets,
         )
 
     # ── Enrich matchup outcomes with team logos ───────────────────
@@ -25726,6 +28595,13 @@ async def _build_related_futures(
                         None if refused or not so.probability_change_24h else float(so.probability_change_24h)
                     ),
                 })
+            # #9901 — a one-winner series card never adds up past 100%.
+            top_outcomes = _squeeze_exclusive_series_outcomes(
+                top_outcomes,
+                exclusive=getattr(mkt, "mutually_exclusive", None),
+                decided_lost={so.id for so in outcomes_list if so.is_winner is False},
+                whole_market=len(outcomes_list) <= 10,
+            )
             formatted_series.append({
                 "market_id": mkt.id,
                 "market_name": mkt.name,
@@ -25736,6 +28612,11 @@ async def _build_related_futures(
             })
         # Limit to 10 series markets total
         formatted_series = formatted_series[:10]
+        # #9139 — a bare "Yes" rung names its games count, and "New York Y"
+        # names its club, from each outcome's own ticker.
+        relabel_series_card(
+            formatted_series, {so.id: so.external_id for so in series_outcomes}
+        )
 
     resp = {
         "event_id": event_id,
@@ -26893,7 +29774,12 @@ def _pin_blend_edge(
         if live_edge is None:
             return False
 
-        edge_ts = now.replace(second=0, microsecond=0)
+        # #9051: this is the current-state presentation pin, not a quote.
+        # Keep its exact live as-of time so a genuine earlier publication in
+        # this minute remains historical rather than outliving the pin after
+        # client-side merging. The quote's observation clock stays separate.
+        # Pregame keeps its existing minute-based, overwrite-only policy.
+        edge_ts = now if is_live else now.replace(second=0, microsecond=0)
         # Compare parsed datetimes, not ISO strings: bucket timestamps carry
         # whatever tzinfo their source points had, so a "+00:00" vs "Z" style
         # difference must not silently create a duplicate-minute point.
@@ -27022,6 +29908,7 @@ async def get_event_odds_history(
     ),
     response: Response = None,
     db: AsyncSession = Depends(get_db),
+    fresh: bool = False,
 ):
     """
     Get odds history for trending chart.
@@ -27898,6 +30785,14 @@ async def get_event_odds_history(
             for point in source_points:
                 gs = point.get("game_state") or {}
                 period_val = gs.get("period")
+                if _is_transition_sport and isinstance(period_val, str) and period_val:
+                    # #9179: football's period text carries the game clock, so the
+                    # raw string made `15:00 - 1st Quarter` and `14:51 - 1st Quarter`
+                    # two markers (12–17 per scoreless game). Key on the period; a
+                    # break or a non-state string (a pre-game date) is no marker.
+                    period_val = pm_source.football_period_label(period_val)
+                    if period_val is None:
+                        continue
                 if isinstance(period_val, str) and period_val:
                     if period_val not in first_seen_wp:
                         first_seen_wp[period_val] = point["timestamp"]
@@ -27948,6 +30843,13 @@ async def get_event_odds_history(
                 for pt in pts
                 if isinstance(pt.get("game_state"), dict)
             ],
+            # #9179: the listed kickoff lower-bounds a Q1 whose stream opened
+            # already running — never when it is a venue's expected END (#7878).
+            kickoff_not_before=(
+                event.commence_time
+                if event.commence_time and not _commence_time_is_venue_expiration(event)
+                else None
+            ),
         )
         if _observed:
             period_markers = _observed
@@ -28434,6 +31336,9 @@ async def get_event_odds_history(
     pin_event = event
     served_blend = None
     blend_edge_observed_at = None
+    # #9051: the revision vector of the fold the pinned edge's VALUE came from,
+    # set beside that value in both arms below and never from a different read.
+    blend_edge_fold_revision = None
     if aggregate_line:
         # THE NUMBER THE HERO IS ACTUALLY SHOWING, when one is being served.
         # `_cached_detail_payload` applies the identical TTL ladder `get_event`
@@ -28442,7 +31347,10 @@ async def get_event_odds_history(
         # reproduction that made this necessary.
         import time as _time
 
-        _served = _cached_detail_payload(event_id, _time.time())
+        # The paired authoritative read must not pin a newly read history to
+        # an older process-local hero. Recompute value AND revision together;
+        # ordinary history requests retain their existing cached-hero parity.
+        _served = None if fresh else _cached_detail_payload(event_id, _time.time())
         if (
             _served is not None
             and _served.get("hero_probability_source") == _PINNABLE_HERO_SOURCE
@@ -28451,6 +31359,8 @@ async def get_event_odds_history(
             # The clock belongs to this cached value, not the fresh row below.
             # An older cache entry without provenance remains honestly unknown.
             blend_edge_observed_at = _served.get("hero_probability_observed_at")
+            # A cache entry written before #9051 has no vector: no claim.
+            blend_edge_fold_revision = _served.get("blend_fold_revision")
 
         if served_blend is None:
             # Nothing is being served, so the chart computes it — from the same
@@ -28459,12 +31369,13 @@ async def get_event_odds_history(
             # boundary rather than only inside it.
             from app.utils.proven_duplicates import (
                 FoldedBlendView,
-                folded_probability_sources,
+                folded_probability_sources_with_revision,
             )
 
-            pin_event = FoldedBlendView(
-                event, await folded_probability_sources(db, event, absorbed)
+            _pin_sources, blend_edge_fold_revision = (
+                await folded_probability_sources_with_revision(db, event, absorbed)
             )
+            pin_event = FoldedBlendView(event, _pin_sources)
             from app.utils.aggregation import newest_source_reading_time
 
             observed_at = newest_source_reading_time(
@@ -28911,6 +31822,12 @@ async def get_event_odds_history(
         # a new price. Null means no pin or incomplete observation provenance.
         "blend_edge_observed_at": (
             blend_edge_observed_at if blend_edge_pinned else None
+        ),
+        # #9051: `{row_id: rev}` of the fold the pinned value was read from,
+        # the chart's twin of detail's `blend_fold_revision`. Null means no pin
+        # or no claim, never "revision zero".
+        "blend_edge_fold_revision": (
+            blend_edge_fold_revision if blend_edge_pinned else None
         ),
         # #6925: true iff `range=since_start` actually removed points, i.e. iff
         # a second request without it would tell this caller more. False on
@@ -30180,11 +33097,19 @@ async def _rebuild_team_lookup() -> None:
     _team_cache_time = time.monotonic()
 
 
-def _compute_standings_context(home_team, away_team, home_name: str, away_name: str) -> dict | None:
+def _compute_standings_context(
+    home_team,
+    away_team,
+    home_name: str,
+    away_name: str,
+    importance: str | None = None,
+) -> dict | None:
     """Compute standings context text for an event.
 
     Returns a dict with 'home', 'away' record strings and optional 'stakes' text,
-    or None if no standings data is available.
+    or None if no standings data is available. `importance` is the event's own
+    `llm_importance`; a playoff or championship game says so before any
+    standings rule is consulted (#9623).
     """
     if not home_team and not away_team:
         return None
@@ -30237,7 +33162,18 @@ def _compute_standings_context(home_team, away_team, home_name: str, away_name: 
 
     # Compute simple stakes text via rules
     stakes = None
-    if home_team and away_team:
+    # The event's own importance comes first (#9623). The standings rules below
+    # answer a whole playoff round with regular-season words: on 2026-09-29 the
+    # AL Wild Card Game 1 (Red Sox @ Yankees, `importance:playoff`) served
+    # "Division rivals" as the page's only chip, because in a Wild Card round
+    # every pairing is two winning teams and often two from one division. The
+    # words are the ones `utils/highlights.py` puts on the feed card for the
+    # same importance, so the card and the page it opens agree.
+    if importance == "championship":
+        stakes = "Championship game"
+    elif importance == "playoff":
+        stakes = "Playoff game"
+    if not stakes and home_team and away_team:
         # The public view here too (#5377) — otherwise "Division rivals" keeps
         # firing off the same unsupported pre-season ranks the line above just
         # stopped printing, and a stakes badge is a louder claim than a number.
@@ -30369,6 +33305,10 @@ def _format_event(
     # `started_without_result` can never be computed from two different
     # instants — see the note on that key.
     _served_now = datetime.now(timezone.utc)
+    _served_start = served_commence_time(
+        event.status, event.commence_time,
+        getattr(event, "win_probability_sources", None), _served_now,
+    )
 
     # Named once, used by both source blocks below. `is not None` and not `or`:
     # an event whose twins add nothing folds to `{}`, and `{} or x` would fall
@@ -30423,11 +33363,15 @@ def _format_event(
         else None,
         "home_team": event.home_team_name,
         "away_team": event.away_team_name,
-        "commence_time": event.commence_time.isoformat(),
+        # #9634: StatPal's start while a held row waits for its session; the
+        # stored start otherwise. See `served_commence_time`.
+        "commence_time": _served_start.isoformat(),
         # #8841: the venue listed the game before its start was announced and
         # `commence_time` is a placeholder — print the date, not the clock.
+        # Asked of the served start: a placeholder tag names the stored instant,
+        # and StatPal's start is not a placeholder.
         "start_is_tbd": start_is_tbd(
-            getattr(event, "event_tags", None), event.commence_time, event.status
+            getattr(event, "event_tags", None), _served_start, event.status
         ),
         # Emit completed_at so finished-event cards (My Stuff, etc.) have an
         # authoritative game-date fallback instead of showing a stale/future
@@ -30473,7 +33417,8 @@ def _format_event(
         # `started_without_result: false` from clocks microseconds apart, which
         # is the contradiction this key exists to end.
         "started_without_result": started_without_result(
-            event.status, event.commence_time, _served_now
+            event.status, event.commence_time, _served_now,
+            getattr(event, "win_probability_sources", None),
         ),
         "home_score": event.home_score,
         "away_score": event.away_score,
@@ -31152,6 +34097,7 @@ from app.utils.outcome_display import (  # noqa: E402
     leader_pick_order as _leader_pick_order,
     drop_dominant_field_outcomes as _drop_dominant_field_outcomes,
     drop_incoherent_near_certain as _drop_incoherent_near_certain,
+    drop_incoherent_ladder_outcomes as _drop_incoherent_ladder_outcomes,
     drop_unbacked_legs as _drop_unbacked_legs,
 )
 from app.utils.futures_liveness import leg_is_graded  # noqa: E402  #8640
@@ -32151,6 +35097,18 @@ def _search_ladder_window(
     ]
     if any(o.id not in withheld_ids and o.current_probability is not None for o in live):
         ordered = live
+    # #9676. A rung priced against its own ladder is not evidence, and the feed
+    # has stripped it since #4610 — search drew it. `?q=fed rate`, 390px,
+    # 2026-09-29 19:10Z: 108626 printed `Above 4.50% 28% · Above 4.75% 76%` off
+    # 8¢/76¢ and 2¢/78¢ books. Same helper, same never-collapse rule, so the two
+    # surfaces cannot disagree about which rung is impossible. Withheld rungs
+    # read as unpriced: a price the card will not print cannot condemn one it will.
+    ordered = _drop_incoherent_ladder_outcomes(
+        ordered,
+        lambda o: o.name,
+        lambda o: None if o.id in withheld_ids else o.current_probability,
+        getattr(market, "name", None),
+    )
     priced = [
         index
         for index, o in enumerate(ordered)
@@ -32216,6 +35174,43 @@ def _search_query_matched_leg(market, board: list, top: list, query_terms, withh
     if not matched:
         return None
     return max(matched, key=lambda o: o.current_probability or 0)
+
+
+def _search_keep_settled_winners(real: list, limit: int, headline_tier) -> tuple[list, list]:
+    """#9675: the top ``limit`` of an already-sorted open multi-winner board,
+    with its graded winners guaranteed a row. Returns ``(top, kept_winners)``.
+
+    The winners go in a STABLE order — rank, then name, then id — because the
+    sort ahead of this ties them (every winner is 1.0, and on the specimen both
+    are rank 1), and a tie left to load order is what made the card show the
+    Dodgers in one read and the Brewers in the next.
+
+    One row stays with the best live leg while any exists: #8640's point is
+    that a result must not headline an open board, and a board with more
+    winners than rows would otherwise be all results. Everything else keeps its
+    sorted place — live legs, then the winners, then graded losers and
+    unpriced legs — so a board whose winners already fit is unchanged except
+    for the order among its tied winners.
+    """
+    winners = sorted(
+        (o for o in real if headline_tier(o) == 1 and getattr(o, "is_winner", None) is True),
+        key=lambda o: (
+            getattr(o, "rank", None) is None,
+            getattr(o, "rank", None) or 0,
+            o.name or "",
+            o.id or 0,
+        ),
+    )
+    if not winners:
+        return real[:limit], []
+    has_live = any(headline_tier(o) == 2 for o in real)
+    kept = winners[: max(limit - 1, 0) if has_live else limit]
+    kept_ids = {id(o) for o in kept}
+    rest = [o for o in real if id(o) not in kept_ids]
+    room = limit - len(kept)
+    live = [o for o in rest if headline_tier(o) == 2][:room]
+    tail = [o for o in rest if headline_tier(o) != 2][: room - len(live)]
+    return live + kept + tail, kept
 
 
 def _build_search_top_outcomes(
@@ -32371,11 +35366,31 @@ def _build_search_top_outcomes(
             reverse=True,
         )
         top = real[:limit]
+        # #9675: EVERY SETTLED WINNER OF A MULTI-WINNER BOARD STAYS ON THE CARD.
+        # `?q=braves` (2026-09-29) drew *Team to advance to NLDS* (60087232) as
+        # four live teams and `Milwaukee Brewers ✓ Won` — the Dodgers, graded a
+        # winner at 1.0 on the same board, had gone. The demotion above puts
+        # both winners in tier 1 behind four live legs; the five-row slice kept
+        # one, and with both at 1.0 and rank 1 WHICH one was arbitrary (the
+        # morning read showed the Dodgers and no Brewers). A card that names
+        # one of two teams through reads as if only that team is through.
+        winners: list = []
+        if _demote_graded:
+            top, winners = _search_keep_settled_winners(real, limit, _headline_tier)
         # #8842: a card recalled through an outcome name shows that outcome, in
         # the last row, when the probability cut left it out. Not on the ladder
         # window above: a threshold rung is never a player or a team.
         pinned = _search_query_matched_leg(market, real, top, query_terms, _withheld_ids)
         if pinned is not None:
+            # It displaces the last row that is not a kept winner, so searching
+            # for a live team cannot evict the result #9675 put back.
+            if len(top) >= limit:
+                kept = {id(o) for o in winners}
+                drop = next(
+                    (i for i in range(len(top) - 1, -1, -1) if id(top[i]) not in kept),
+                    len(top) - 1,
+                )
+                top = top[:drop] + top[drop + 1:]
             top = top[: limit - 1] + [pinned]
     # #6479, and it is the SAME rung a reader meets on the detail page. Search
     # ranks these boards by probability, so the truncated name is not buried in
@@ -32387,8 +35402,10 @@ def _build_search_top_outcomes(
     # the #993 pair went wrong, and this serializer exists so that cannot
     # recur. Completed from each rung's own ticker; see
     # `game_market_club_names.repair_field_outcome_name`.
+    threshold_label = market_threshold_label(market)  # #9383
     named = [
-        (o, repair_field_outcome_name(o.external_id, o.name) or o.name) for o in top
+        (o, reader_outcome_name(o.external_id, o.name, threshold_label) or o.name)
+        for o in top
     ]
     # #6195: A `0.0` IS A PRICE, AND THIS IS THE LINE THAT PRINTED IT AS A DASH.
     #
@@ -32683,6 +35700,71 @@ def _pool_start_floor(now: datetime):
     )
 
 
+def _typeahead_suspended_started(now: datetime):
+    """#9493: a `suspended` row the dropdown's upcoming pool may offer.
+
+    Production 2026-09-28 23:32Z, `/typeahead?q=Dickerson`, from Alex's tap on
+    build 31: today's Dickerson v Pereira Challenger match (15320435, started
+    17:10Z, `suspended`) was absent. The dropdown offered tomorrow's doubles, then
+    the match's own Kalshi market as a "Prop" row, and the tap landed on a
+    futures page with no way back to the match. `/search?q=Dickerson` returned
+    the match, because `_SEARCH_STATUSES` admits `suspended` by design ("a reader
+    who types Alcaraz during a rain delay is asking the question this state
+    exists to answer"). Every typeahead event arm admitted live/scheduled or
+    completed/closed, and nothing else, so the two doors disagreed.
+
+    It is the #5030 defect by another route. `_transition_event_statuses_impl`
+    moves a row nothing reports on from `live` to `suspended` once its unobserved
+    bound passes (`UNOBSERVED_MAX_HOURS["tennis"]` is 3h), and from that moment
+    the match left the dropdown while its venue was still trading it. The
+    doubles row names "Dickerson", so the or-NEXT/or-LAST arms never opened.
+
+    Two bounds (gotcha #41). STARTED (`commence_time <= now`): a suspended row
+    dated in the future is the #4114 mislabel, not a match that stopped, and it
+    is not this arm's to offer. At most :data:`_MAX_GAME_DURATION` ago, the same
+    ceiling a live row gets, so the 2,597-row suspended-forever bucket (#5028)
+    never reaches the pool.
+    """
+    return and_(
+        Event.status == EVENT_SUSPENDED,
+        Event.commence_time <= now,
+        Event.commence_time >= now - _MAX_GAME_DURATION,
+    )
+
+
+def _typeahead_event_pool_window(now: datetime):
+    """#9493: the upcoming pool's status-and-time window.
+
+    The live/scheduled half is exactly what the pool selected before, through
+    the shared :func:`_pool_start_floor`. The suspended half is
+    :func:`_typeahead_suspended_started`. The outer `commence_time` floor
+    repeats a bound both halves already carry, so the `commence_time` range
+    scan stays outside the OR.
+    """
+    return and_(
+        Event.commence_time >= now - _MAX_GAME_DURATION,
+        or_(
+            and_(Event.status.in_(["live", "scheduled"]), _pool_start_floor(now)),
+            _typeahead_suspended_started(now),
+        ),
+    )
+
+
+def _typeahead_suspended_last():
+    """#9493: the FIRST sort term of the upcoming pool. Suspended rows go last.
+
+    This is what keeps the change additive. The pool fetches
+    `_EVENT_POOL_FETCH_LIMIT` rows ordered by start time, and a suspended row
+    always started earlier than the scheduled ones, so without this term it would
+    take the first slots. For a broad query (`tennis`, `challenger`) that would
+    push upcoming matches out of the fetch. Sorted last, a suspended row fills
+    only slots the old pool left empty. A query whose pool was already full gets
+    the same rows in the same order as before. The term is 0 for every
+    live/scheduled row, so `live_first_order` keeps ordering them unchanged.
+    """
+    return case((Event.status == EVENT_SUSPENDED, 1), else_=0)
+
+
 def _next_match_query(event_name_filter, now: datetime):
     """The "or-NEXT" arm of T2-2 (#5059): the team's next fixture, past the 7-day pool.
 
@@ -32827,6 +35909,180 @@ def _lead_team_next_match_query(team_id: int, team_name: str, now: datetime):
         )
         .limit(_LEAD_TEAM_FIXTURE_LIMIT)
     )
+
+
+def _eastern_day_start(now: datetime) -> datetime:
+    """Midnight of `now`'s Eastern day, as an aware datetime (#9211).
+
+    The same day `_todays_final_order_key` uses on /search, so the dropdown and
+    the results page agree about which game "finished today".
+    """
+    tz = ZoneInfo(_EASTERN_TZ_NAME)
+    return datetime.combine(now.astimezone(tz).date(), datetime.min.time(), tzinfo=tz)
+
+
+def _lead_team_todays_final_query(team_id: int, team_name: str, now: datetime):
+    """#9211: the RESOLVED team's games that finished TODAY, found by identity.
+
+    `/typeahead?q=chiefs` on production 2026-09-27 21:31Z, four and a half hours
+    after the Chiefs beat Miami 24–10: the team, *Chiefs at Raiders* (Oct 4),
+    *Exeter Chiefs at Bath* (rugby), then four futures. The result was not in the
+    list. Every arm above selects `live`/`scheduled`, and #4411's or-LAST arm is
+    short-circuited whenever a next fixture exists — on purpose, because a
+    finished game must not DISPLACE the next one (T2 decision B). It still has to
+    appear beside it on the day it was played: on game day the result is the
+    answer.
+
+    The `_lead_team_next_match_query` predicate (team id OR exact name, never a
+    LIKE, for the reasons that docstring measured) over a window that opens at
+    midnight Eastern and closes at `now`. Priced before it was chosen: EXPLAIN
+    ANALYZE on production 2026-09-27 for Kansas City Chiefs, 1.5 ms execution /
+    0.5 ms planning, a BitmapAnd of `ix_events_status_commence` with the four
+    team indexes. No text predicate, so #4506's generic-plan pathology does not
+    apply and the arm is not wrapped in `_forced_custom_plan`.
+
+    `completed`/`closed` only: a `suspended` row has no result to show. Newest
+    first, so a doubleheader lists the game just played first.
+    """
+    return (
+        select(Event)
+        .join(Sport, Event.sport_id == Sport.id)
+        .options(
+            selectinload(Event.sport),
+            selectinload(Event.home_team),
+            selectinload(Event.away_team),
+        )
+        .where(
+            or_(
+                Event.home_team_id == team_id,
+                Event.away_team_id == team_id,
+                Event.home_team_name == team_name,
+                Event.away_team_name == team_name,
+            ),
+            Event.status.in_(["completed", "closed"]),
+            Event.commence_time >= _eastern_day_start(now),
+            Event.commence_time <= now,
+            not_a_proven_duplicate(),
+        )
+        .order_by(Event.commence_time.desc())
+        .limit(_LEAD_TEAM_TODAYS_FINAL_LIMIT)
+    )
+
+
+def _place_todays_finals(rows: list, finals: list, is_next) -> list:
+    """#9211: put today's finals directly BEHIND the team's live-or-next row.
+
+    Never in front of it: "next before last" (D107, T2 decision B). With no such
+    row the finals lead. The pool is cut to `_EVENT_POOL_SIZE` BEFORE anything is
+    scored, and the scorer keeps pool order between two rows of the same class,
+    so the next row and its finals move up together when the next row sits too
+    deep for both to survive the cut. Otherwise every row keeps its place.
+    """
+    at = next((i for i, ev in enumerate(rows) if is_next(ev)), None)
+    if at is None:
+        return [*finals, *rows]
+    start = min(at, max(0, _EVENT_POOL_SIZE - 1 - len(finals)))
+    rest = [*rows[:at], *rows[at + 1:]]
+    return [*rest[:start], rows[at], *finals, *rest[start:]]
+
+
+def _typeahead_final_score(served_status: str | None, home_score, away_score) -> dict:
+    """#9226: the result a finished dropdown row prints, keyed as the row stores it.
+
+    Once #9211 offered today's final, the dropdown drew it as a bare "Final": the
+    payload carried no score, so a reader learned the game was over but not who
+    won. Only a FINISHED row gets the keys, and only when both sides were
+    reported. A live score in a cached dropdown would go stale between
+    keystrokes. A half score is not a result, and printing one would put a
+    number where the product has none. `0` is a score (`0-0`); `None` is not.
+    """
+    if served_status not in ("completed", "closed"):
+        return {}
+    if home_score is None or away_score is None:
+        return {}
+    return {"home_score": home_score, "away_score": away_score}
+
+
+#: #9550: the row columns :func:`_typeahead_settlement_facts` copies.
+_TYPEAHEAD_SETTLEMENT_FACTS = (
+    "status",
+    "commence_time",
+    "home_score",
+    "away_score",
+    "win_probability_sources",
+    "home_team_name",
+    "away_team_name",
+)
+
+
+def _typeahead_settlement_facts(event) -> SimpleNamespace:
+    """#9550: the columns the settlement gate and reader read, copied off a LIVE row.
+
+    Taken inside the event loops, because the row cannot be carried to the
+    attach: a futures-stage timeout runs ``_recover_search_session`` between the
+    two, and that ``db.rollback()`` expires every ORM row in the session
+    (gotcha #6) — reading one afterwards is a lazy refresh inside async, i.e. a
+    ``MissingGreenlet`` 500 on exactly the request that was already degraded.
+    Every name here is one ``attach_venue_settlement`` reads with ``getattr``,
+    and is read the same tolerant way (an absent attribute is ``None``).
+    """
+    return SimpleNamespace(
+        id=event.id,
+        **{name: getattr(event, name, None) for name in _TYPEAHEAD_SETTLEMENT_FACTS},
+    )
+
+
+async def _typeahead_attach_venue_settlement(
+    db, suggestions: list[dict], rows_by_id: dict, now
+) -> None:
+    """#9550: dropdown event rows carry the venue's verdict, as /search's do (#7092).
+
+    The same shared reader the events list, search and league rails call, so a
+    row cannot say "Settled · Pereira wins" on its event page and "No result
+    reported" in the dropdown one tap before it.
+
+    ``rows_by_id`` holds :func:`_typeahead_settlement_facts`, never ORM rows.
+
+    🔴 THE GATE READS THE ROW, NOT THE SUGGESTION. A suggestion carries a score
+    only when its row is finished (#9226, :func:`_typeahead_final_score`), so a
+    suspended row holding a score would look scoreless and be asked — and the
+    detail route, which gates on the row's score, would never print that
+    verdict. The briefs handed to the reader are therefore built from the row.
+
+    Matched by ``event_id``, never by position. Only the two settlement keys are
+    copied, and only when the reader returned them, so a failed read leaves the
+    row exactly as it was (the reader's own absent-vs-False contract).
+    Fail-open: this is the hottest path in the API.
+    """
+    served_ids = [
+        s["event_id"] for s in suggestions
+        if s.get("type") == "event" and s.get("event_id") in rows_by_id
+    ]
+    if not served_ids:
+        return
+    rows = [rows_by_id[i] for i in served_ids]
+    briefs = [
+        {
+            "id": ev.id,
+            "status": served_event_status(ev.status, ev.commence_time, now),
+            "home_score": getattr(ev, "home_score", None),
+            "away_score": getattr(ev, "away_score", None),
+        }
+        for ev in rows
+    ]
+    try:
+        await attach_venue_settlement(db, rows, briefs, now)
+    except Exception:
+        logger.debug("Typeahead venue settlement attach skipped", exc_info=True)
+        return
+    by_id = {b["id"]: b for b in briefs if "venue_settled" in b}
+    for s in suggestions:
+        brief = by_id.get(s.get("event_id")) if s.get("type") == "event" else None
+        if brief is not None:
+            s["venue_settled"] = brief["venue_settled"]
+            s["venue_settled_result"] = brief.get("venue_settled_result")
+            if brief.get(VENUE_CLOSED_NO_WINNER_KEY) is True:
+                s[VENUE_CLOSED_NO_WINNER_KEY] = True
 
 
 #: #8428: how many previous meetings a MATCHUP query adds beside the next one.
@@ -33083,11 +36339,23 @@ def _search_concept_evidence(row: dict) -> "_SearchEvidence":
     )
 
 
-def _search_team_evidence(row: dict) -> "_SearchEvidence":
-    """Convert a `/search` team row into the `Evidence` the scorer scores."""
+def _search_team_evidence(row: dict, query: str | None = None) -> "_SearchEvidence":
+    """Convert a `/search` team row into the `Evidence` the scorer scores.
+
+    #9859: when the query opens with a city abbreviation (`sf giants`), the row
+    also owns its name with that city abbreviated (`SF giants`), so the club the
+    reader named leads the card and arms #9044's split-words key. #9836 does the
+    same for a non-leading `st` (`ohio st` -> `Ohio St Buckeyes`). Every other
+    query builds exactly the evidence it built before."""
     aliases: tuple[str, ...] = tuple(row.get("_aliases") or ())
     if row.get("abbreviation"):
         aliases = (*aliases, row["abbreviation"])
+    if city_abbreviation_query(query) is not None:
+        aliases = (*aliases, *city_abbreviated_names(row.get("name")))
+    # #9836: `ohio st` owns every word of "Ohio St Buckeyes", so the carded
+    # school arms the split-words key (the `St` spelling the reader typed).
+    if query is not None and college_state_query(query) is not None:
+        aliases = (*aliases, *college_state_abbreviated_names(row.get("name")))
     return _SearchEvidence(
         name=row.get("name") or "",
         aliases=aliases,

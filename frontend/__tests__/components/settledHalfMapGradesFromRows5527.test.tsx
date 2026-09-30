@@ -282,10 +282,15 @@ describe("#5527 the two pure helpers", () => {
   const under = (is_winner: boolean | null) =>
     ({ ...over(is_winner), outcome_name: "Under" }) as PeriodTotalRow;
 
-  it("an Under leg votes the other way; abstainers do not vote; disagreement is no verdict", () => {
+  // #9307: the route serves an Under row's grade on the OVER axis (#6239,
+  // `_settled_over_verdict`), so `under(true)` says the over won. This arm used
+  // to read it as the Under's own win and flip it a second time.
+  it("an Under leg votes on the over axis it is served on; abstainers do not vote; disagreement is no verdict", () => {
     expect(halfRungRowGrade([over(true), under(null)], true)).toBe("cleared");
-    expect(halfRungRowGrade([under(true)], true)).toBe("missed");
-    expect(halfRungRowGrade([over(true), under(true)], true)).toBeUndefined();
+    expect(halfRungRowGrade([under(true)], true)).toBe("cleared");
+    expect(halfRungRowGrade([under(false)], true)).toBe("missed");
+    expect(halfRungRowGrade([over(true), under(true)], true)).toBe("cleared");
+    expect(halfRungRowGrade([over(true), under(false)], true)).toBeUndefined();
     expect(halfRungRowGrade([over(null)], true)).toBeUndefined();
     expect(halfRungRowGrade([{ ...over(true), outcome_name: "Yes" } as PeriodTotalRow], true)).toBeUndefined();
   });

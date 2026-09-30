@@ -722,24 +722,33 @@ function SpotifyRace({ markets }: { markets: EntMarketRow[] }) {
 
   const contenders = best.top_outcomes;
   if (contenders.length < 2) return <MarketFallback markets={markets} />;
+  // #9468: a cumulative ladder ("Before Dec 4" contains "Before Dec 3") has no
+  // leader and no ranks — the route serves its legs in calendar order, so draw
+  // them as a list: no rank number, no cover tile, no lit #1.
+  const ladder = best.ladder === true;
 
   return (
     <Link href={`/futures/${best.market_id}`}>
       <div className={s.card} style={{ padding: 18 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 14 }}>
           <div>
-            <div className={s.eyebrow}>🎧 Spotify Chart Race</div>
+            <div className={s.eyebrow}>{ladder ? "🎧 Spotify" : "🎧 Spotify Chart Race"}</div>
             <div style={{ fontSize: 14, fontWeight: 600, marginTop: 2 }}>{best.q}</div>
           </div>
           <EntSourceChip source={best.src} />
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {contenders.map((c, i) => {
-            const isLeader = i === 0;
+            const isLeader = !ladder && i === 0;
             return (
-              <div key={i} className={s.raceRow}>
-                <span className={isLeader ? s.raceRankLead : s.raceRank}>{i + 1}</span>
-                <CoverTile title={c.name} size={36} />
+              <div
+                key={i}
+                className={s.raceRow}
+                data-ladder-rung={ladder ? i : undefined}
+                style={ladder ? { gridTemplateColumns: "1fr 56px 42px" } : undefined}
+              >
+                {!ladder && <span className={isLeader ? s.raceRankLead : s.raceRank}>{i + 1}</span>}
+                {!ladder && <CoverTile title={c.name} size={36} />}
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                     {c.name}
@@ -1407,6 +1416,12 @@ function MarketFallback({ markets }: { markets: EntMarketRow[] }) {
 }
 
 function GenericMarketCard({ market }: { market: EntMarketRow }) {
+  // #9803: a ladder's priced leader is its loosest rung ("Above 45 · 95%");
+  // the served headline is the rung the market actually leans on.
+  const answer = market.headline ?? {
+    name: market.top_outcomes[0]?.name || "Yes",
+    prob: market.prob,
+  };
   return (
     <Link href={`/futures/${market.market_id}`}>
       <div className={s.card} style={{ padding: 14, height: "100%", display: "flex", flexDirection: "column", gap: 10 }}>
@@ -1452,11 +1467,11 @@ function GenericMarketCard({ market }: { market: EntMarketRow }) {
           }}
         >
           <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>
-            {market.top_outcomes[0]?.name || "Yes"}
+            {answer.name}
           </span>
-          <ProbPct value={market.prob} size={20} />
+          <ProbPct value={answer.prob} size={20} />
         </div>
-        <EntProbBar value={market.prob} height={4} />
+        <EntProbBar value={answer.prob} height={4} />
       </div>
     </Link>
   );

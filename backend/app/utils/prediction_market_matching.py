@@ -305,6 +305,38 @@ _DASH_MATCHUP_RE = re.compile(
 # So the parse is left exactly as master has it. "University at Albany" still
 # does not reach its own game; that is a real defect, it predates this branch,
 # and it is filed rather than fixed by a parse preference that costs #3026.
+# #9873: a name that ENDS in the initial "V" — Kalshi's "Tokyo V" (Tokyo Verdy),
+# "Geerts / Prashanth V" — sits right before the real " vs ". Both matchup
+# patterns match case-insensitively and read their first side lazily, so the
+# split lands on that initial: "Tokyo V vs Kobe" -> ("Tokyo", "vs Kobe").
+# Production: 16 rows minted with a side name that starts with a separator word,
+# 13 of them Tokyo Verdy home games, since March.
+#
+# The fix reads the parse and does not choose between separators (that choice
+# is what #3026 turned down — see the note above). A second side that STARTS
+# with a strong separator ("vs", "at", "@") after a weak "v" split can only
+# mean the split landed inside the first name, so the "v" goes back onto that
+# name. The two directions it must not touch:
+#   * a strong split whose second side starts with "V " is a real name
+#     ("Tokyo vs V Varen"): the first separator was not "v", so nothing moves;
+#   * #3026's embedded matchup ("Announcers at Duke vs Virginia") has no
+#     separator at the start of its second side, so it parses exactly as before.
+_WEAK_V_SEPARATOR_RE = re.compile(r'^v\.?$', re.IGNORECASE)
+_LEADING_STRONG_SEPARATOR_RE = re.compile(r'^(?:vs\.?|at|@)\s+(\S.*)$', re.IGNORECASE | re.DOTALL)
+
+
+def _restore_name_final_initial_v(name: str, m: "re.Match[str]"):
+    """``(team_a, team_b)`` from a two-sided matchup match, the initial V restored. #9873."""
+    team_a = m.group(1).strip()
+    team_b = m.group(2).strip()
+    separator = name[m.end(1):m.start(2)].strip()
+    if _WEAK_V_SEPARATOR_RE.match(separator):
+        rest = _LEADING_STRONG_SEPARATOR_RE.match(team_b)
+        if rest:
+            return name[:m.start(2)].strip(), rest.group(1).strip()
+    return team_a, team_b
+
+
 # "Will (the) Team A beat/win against Team B?"
 _WILL_BEAT_RE = re.compile(
     r'^Will\s+(?:the\s+)?(.+?)\s+(?:beat|defeat|win\s+against)\s+(?:the\s+)?(.+?)\??$',
@@ -1058,6 +1090,73 @@ def _clean_esports_matchup(result: MatchupInfo, market_name: str) -> MatchupInfo
     return MatchupInfo(team_a, team_b, yes_team, result.format_type)
 
 
+#: #9827. Market-type words #2947's segment rule does not name ("- Games Total",
+#: "- Map Handicap"). A backstop only: measured on production 2026-09-30, 0 of
+#: the 1,355 Gamma-`moneyline` esports titles of 14 days carry any of them after
+#: the marker, so it refuses nothing real — and a derivative title that ever did
+#: would still have to carry Gamma's exact `moneyline` label to reach the join.
+_ESPORTS_WINNER_CONTEXT_REFUSE_RE = re.compile(
+    r"\b(?:total|handicap|map|o/u|over|under|spread|kills?|first\s+blood)\b",
+    re.IGNORECASE,
+)
+
+
+def esports_winner_matchup_name(market_name: str) -> Optional[str]:
+    """``A vs B`` behind Polymarket's esports match-winner title, or None. #9827.
+
+    Polymarket spells every esports match winner ``<Game>: A vs B (BOn) -
+    <Tournament>``, and `is_game_level_market` reads none of them: the game title
+    is not on `_CATEGORY_PREFIX_RE` and the tournament tail rides on team_b. The
+    only ones that ever linked were titles whose TOURNAMENT held its own colon
+    ("CCT Europe Closed Qualifier: Series #10"), which `_GAME_PROP_RE` then
+    split — an accident, and those tournaments ended on 2026-09-27.
+
+    **SEARCH NAME ONLY.** #2947 deliberately left these titles unable to MINT
+    (a 19k-row flood). The caller uses this answer to JOIN a row that already
+    exists and passes ``allow_create=False``; nothing here changes what
+    `extract_matchup` or `is_game_level_market` answer for the raw title.
+
+    Anchored on the same closed token #2947 anchors on, the ``(BOn)`` marker,
+    and refused on the derivative reads of the post-marker context: any segment
+    naming a market type (#2947's rule, "- Map 1 Winner"), or a market-type word
+    it does not name. A derivative suffix with no marker never gets that far.
+    What is left before the marker must be a bare two-sided matchup, and the
+    game title must be the one short prefix.
+
+    Examples:
+        "Counter-Strike: Revenge vs Passion Academy (BO3) - United21 Group B"
+            → "Revenge vs Passion Academy"
+        "LoL: T1 vs Gen.G (BO5)" → "T1 vs Gen.G"
+        "Counter-Strike: Revenge vs Passion Academy - Map 1 Winner" → None
+        "Revenge vs Passion Academy (BO3)" → None (no game title)
+    """
+    if not market_name:
+        return None
+    marker = _ESPORTS_BEST_OF_RE.search(market_name)
+    if marker is None:
+        return None
+    head, context = market_name[:marker.start()], market_name[marker.end():]
+    if _esports_context_is_derivative(
+        context
+    ) or _ESPORTS_WINNER_CONTEXT_REFUSE_RE.search(context):
+        return None
+    # The game title is the text before the ONE colon in the head. Read by
+    # position, not with `_ESPORTS_TITLE_PREFIX_RE`: that pattern runs on team_a
+    # alone and refuses any string holding " vs ", which the head always does.
+    title, colon, matchup = head.partition(":")
+    matchup = matchup.strip()
+    if (
+        not colon
+        or not _ESPORTS_TITLE_PREFIX_RE.match(title + ": ")
+        or not matchup
+        or ":" in matchup
+    ):
+        return None
+    if not _BARE_MATCHUP_RE.match(matchup) or not _check_game_level(matchup):
+        return None
+    return matchup
+
+
 def matchup_for_link_search(
     matchup: Optional[MatchupInfo], market_name: str
 ) -> Optional[MatchupInfo]:
@@ -1202,8 +1301,7 @@ def _extract_matchup_impl(market_name: str) -> Optional[MatchupInfo]:
     # The stat suffix (": Points", ": Spread", etc.) is irrelevant for matching.
     m = _GAME_PROP_RE.match(market_name)
     if m:
-        team_a = m.group(1).strip()
-        team_b = m.group(2).strip()
+        team_a, team_b = _restore_name_final_initial_v(market_name, m)
         return MatchupInfo(team_a, team_b, yes_team=team_a, format_type="game_prop")
     m = _DASH_PROP_RE.match(market_name)
     if m:
@@ -1235,8 +1333,7 @@ def _extract_matchup_impl(market_name: str) -> Optional[MatchupInfo]:
     # "Team A at/vs/v Team B" (bare matchup)
     m = _BARE_MATCHUP_RE.match(market_name)
     if m:
-        team_a = m.group(1).strip()
-        team_b = m.group(2).strip()
+        team_a, team_b = _restore_name_final_initial_v(market_name, m)
         # A season-long futures ("Panthers vs. Saints Season Series Winner")
         # matches here because team_b absorbs the trailing descriptor. Do not
         # treat it as a game matchup (prevents bogus event auto-creation).
@@ -1386,6 +1483,29 @@ def _build_state_qualified_pairs() -> frozenset[tuple[str, str]]:
 _STATE_QUALIFIED_PAIRS: frozenset[tuple[str, str]] = _build_state_qualified_pairs()
 
 
+def _build_venue_spelling_pairs() -> frozenset[tuple[str, str]]:
+    """#8100 — a venue's whole-name spelling of a club, the same shape again.
+
+    ``app.utils.venue_club_spellings`` holds the table because the twin fold
+    reads it too, and the two must not hold two lists. Polymarket's "South East
+    Melbourne Phoenix" is teams 2919 "S.E. Melbourne Phoenix"; no structural
+    rule below reaches ``s e`` from ``south east`` and none safely could.
+    """
+    from app.utils.venue_club_spellings import VENUE_CLUB_SPELLINGS
+
+    pairs: set[tuple[str, str]] = set()
+    for venue, ours in VENUE_CLUB_SPELLINGS.items():
+        a = _normalize_for_matching(venue)
+        b = _normalize_for_matching(ours)
+        if a and b and a != b:
+            pairs.add((a, b))
+            pairs.add((b, a))
+    return frozenset(pairs)
+
+
+_VENUE_SPELLING_PAIRS: frozenset[tuple[str, str]] = _build_venue_spelling_pairs()
+
+
 def _fuzzy_team_match(market_team: str, event_team: str) -> bool:
     """
     Check if a team name from a prediction market matches an event team name.
@@ -1418,7 +1538,11 @@ def _fuzzy_team_match(market_team: str, event_team: str) -> bool:
     # Texas State. `authority_name_forms` makes exactly this argument at length
     # and answers it with an exact lookup; this consults THAT table rather than
     # starting a second one, so a club is named in one place and swept once.
-    if (mt, et) in _CLUB_SYNONYM_PAIRS or (mt, et) in _STATE_QUALIFIED_PAIRS:
+    if (
+        (mt, et) in _CLUB_SYNONYM_PAIRS
+        or (mt, et) in _STATE_QUALIFIED_PAIRS
+        or (mt, et) in _VENUE_SPELLING_PAIRS
+    ):
         return True
 
     # One contains the other (for short-form vs full-form)
@@ -1467,6 +1591,73 @@ def _fuzzy_team_match(market_team: str, event_team: str) -> bool:
             return True
 
     return False
+
+
+#: A venue's over/under label, the one slash a singles market name carries.
+_OVER_UNDER_RE = re.compile(r"\bO/U\b", re.IGNORECASE)
+
+
+def _names_a_pair(name: Optional[str]) -> bool:
+    """Is this side a doubles pair ("Balshaw/Martineau", "Balshaw / Martineau")?"""
+    return isinstance(name, str) and "/" in _OVER_UNDER_RE.sub("", name)
+
+
+def pair_shape(side_a: Optional[str], side_b: Optional[str]) -> Optional[bool]:
+    """True: two pairs. False: two single players. None: the sides disagree. #9600."""
+    a, b = _names_a_pair(side_a), _names_a_pair(side_b)
+    return a if a == b else None
+
+
+def pair_shapes_disagree(
+    team_a: Optional[str], team_b: Optional[str],
+    event_home_team: Optional[str], event_away_team: Optional[str],
+) -> bool:
+    """Is one side of this comparison two single players and the other two pairs? #9600.
+
+    `_fuzzy_team_match` reads containment, so the singles market "Harris vs
+    Balshaw" (Kalshi KXATPCHALLENGERMATCH-26SEP29HARBAL) named both sides of the
+    doubles row "Balshaw/Martineau v Harris/Whitehouse" 15320104 and linked to
+    it. The matched path then swept all eleven Polymarket legs of the singles
+    match onto the doubles page ("Felix Balshaw wins Set 1 >99%"), and the
+    singles match never got a row of its own.
+
+    A doubles row writes BOTH sides as a pair, so the test needs both sides of
+    each comparison to agree on a shape before it can disagree. A slash on one
+    side alone is a club name, not a pair: "Bodø/Glimt v Kristiansund",
+    "Scranton/Wilkes-Barre RailRiders". Those are left to the name test.
+    """
+    market = pair_shape(team_a, team_b)
+    event = pair_shape(event_home_team, event_away_team)
+    return market is not None and event is not None and market != event
+
+
+def _names_both_sides(
+    team_a: str, team_b: str, event_home_team: str, event_away_team: str,
+) -> bool:
+    """Do a two-sided market's names land on the event's two DIFFERENT sides? #9584.
+
+    The two-sided name gate used to ask each market name "do you match home or
+    away?" on its own, so two names that both match the SAME side passed it.
+    Polymarket's W15 Maanshan legs are "Sun vs. Sun" (Yingqun Sun v Junlu Sun);
+    both halves matched the `Sun` of `Tomic v Sun` 15320530, and six legs of a
+    different match landed on Tomic's page — a ">99%" Set 1 line under its
+    Additional Markets and a second fixture clock that froze the row.
+
+    A game's two sides are never one player, so this refuses no correct link:
+    one name may match both sides (the "New York" case `match_teams_to_event`
+    disambiguates), as long as some assignment puts the two names on opposite
+    sides.
+
+    #9600: and a match between two players is never a match between two pairs.
+    See :func:`pair_shapes_disagree`.
+    """
+    if pair_shapes_disagree(team_a, team_b, event_home_team, event_away_team):
+        return False
+    a_home = _fuzzy_team_match(team_a, event_home_team)
+    a_away = _fuzzy_team_match(team_a, event_away_team)
+    b_home = _fuzzy_team_match(team_b, event_home_team)
+    b_away = _fuzzy_team_match(team_b, event_away_team)
+    return (a_home and b_away) or (a_away and b_home)
 
 
 def match_teams_to_event(
@@ -1764,6 +1955,73 @@ def _outcome_names_team(outcome_name: str, event_team: str) -> bool:
     )
 
 
+def _names_player_by_surname(outcome_name: str, event_team: str) -> bool:
+    """``Eva Lys`` names ``Lys``: the stored side is the outcome's whole surname.
+
+    Strict on purpose. The stored side, normalized, must equal the LAST whole
+    word(s) of the outcome, and what precedes it must be one or two given names
+    of letters only — ``Xinran Sun`` names ``Sun``; ``San Diego wins 6th inning``
+    names nothing. Not :func:`tennis_twin_pairs.players_agree`: that comparator
+    reads every name surname-first AND surname-last, so ``san`` from ``San Diego
+    wins 6th inning`` agrees with ``San Diego Padres``, and its own docstring
+    says that permissiveness is safe only behind ``classify_pair``'s guard.
+    Measured over the 6,792 Kalshi/Polymarket markets linked to events in
+    (-6h, +72h) on 2026-09-29, it paired 14 inning/half-winner derivative
+    outcomes to a team; this rule pairs none.
+    """
+    # A doubles pair never passes: its "/" is not a letter. That is
+    # `_doubles_pair_match`'s question, not this one.
+    outcome_words = _normalize_for_matching(outcome_name).split()
+    side_words = _normalize_for_matching(event_team).split()
+    if not side_words or len(outcome_words) <= len(side_words):
+        return False
+    given = outcome_words[: -len(side_words)]
+    if outcome_words[-len(side_words):] != side_words or len(given) > 2:
+        return False
+    return all(word.isalpha() for word in given)
+
+
+def _surname_side_outcomes(
+    candidates: list, event_home_team: str, event_away_team: str
+) -> Optional[tuple]:
+    """``(home outcome, away outcome)`` paired by surname, or ``None``. #9472.
+
+    WHY. Kalshi stores a tennis row by surname — ``Lys v Sun`` — and prices it
+    with full-name outcomes, ``Eva Lys`` / ``Xinran Sun``. :func:`_fuzzy_team_match`
+    refuses a bare token of three letters or fewer on purpose (its containment
+    floor, and its acronym arm's "Gea must not reach Arthur Gea"), so when BOTH
+    surnames are that short neither outcome names a side and the source says
+    nothing. Measured 2026-09-29 03:00Z: ``/events/15320683`` (Lys v Sun, China
+    Open) carried no Kalshi leg while its linked market quoted 0.685, $11,495
+    traded. ``Gao v Udvardy`` beside it spoke only because ``Udvardy`` is long.
+
+    THE RULE. Only asked when the side test named no outcome at all.
+    :func:`_names_player_by_surname` must pair the outcomes one-to-one: exactly
+    one outcome names the home player and not the away one, exactly one other
+    names the away player and not the home one. An outcome naming both sides, or
+    a side named twice, refuses the whole reading. Refusing costs one reading;
+    accepting a wrong pairing would price the wrong player.
+
+    DELIBERATELY NOT INSIDE ``_fuzzy_team_match``, for #8722's reason: the linker
+    uses that function, and this rule is only for the resolvers, which already
+    hold a market the linker attached to this event and only have to pick a side.
+    """
+    home_hits = []
+    away_hits = []
+    for outcome in candidates:
+        names_home = _names_player_by_surname(outcome.name, event_home_team)
+        names_away = _names_player_by_surname(outcome.name, event_away_team)
+        if names_home and names_away:
+            return None
+        if names_home:
+            home_hits.append(outcome)
+        elif names_away:
+            away_hits.append(outcome)
+    if len(home_hits) != 1 or len(away_hits) != 1:
+        return None
+    return home_hits[0], away_hits[0]
+
+
 def find_moneyline_outcome(
     outcomes: list,
     matchup: MatchupInfo,
@@ -1787,6 +2045,7 @@ def find_moneyline_outcome(
     # Build list of outcomes that match a team name
     home_outcomes = []
     away_outcomes = []
+    side_candidates = []
 
     for outcome in outcomes:
         if not outcome.name or outcome.current_probability is None:
@@ -1798,6 +2057,7 @@ def find_moneyline_outcome(
         # Skip prop/spread/total outcomes before fuzzy matching
         if _is_prop_or_spread_outcome(outcome.name):
             continue
+        side_candidates.append(outcome)
 
         # AN OUTCOME THAT MATCHES BOTH TEAMS NAMES NEITHER SIDE (#4629).
         #
@@ -1838,6 +2098,16 @@ def find_moneyline_outcome(
             home_outcomes.append(outcome)
         elif matches_away:
             away_outcomes.append(outcome)
+
+    # #9472: both surnames too short for the side test (`Lys v Sun` against
+    # `Eva Lys` / `Xinran Sun`). Only when it named nothing, and only on a
+    # one-to-one pairing — see `_surname_side_outcomes`.
+    if not home_outcomes and not away_outcomes:
+        paired = _surname_side_outcomes(
+            side_candidates, event_home_team, event_away_team
+        )
+        if paired is not None:
+            home_outcomes, away_outcomes = [paired[0]], [paired[1]]
 
     # Determine yes_is_home from matchup
     team_mapping = match_teams_to_event(matchup, event_home_team, event_away_team)
@@ -2764,9 +3034,25 @@ def extract_game_date_from_ticker(external_id: str) -> Optional[datetime]:
 # which is exactly why `extract_game_date_from_ticker` never fell for these ids
 # and the team-code extractor did. Measured over the same 7,869 linked markets:
 # 1,904 bogus non-Kalshi parses removed, **0 Kalshi tickers parse differently**.
+#
+# #9696: the TEAM code may begin with a DIGIT. `9Z` is 9z Globant, `1WIN`,
+# `100T`, `99DREV`, `4IKI`, `1SK` (1. FC Slovácko) — Kalshi writes the club's
+# own short name, and the old `[A-Za-z]` first character refused all of them,
+# so `KXLOLGAME-26SEP2917009ZEST` had NO game id: its series anchored as a lone
+# `market`, its map markets minted a second row an hour away, and search listed
+# one match twice (`15319091` + `15319219`). Measured on production 2026-09-29
+# over 21 days: ~140 Kalshi markets in 21 families carry such a code, almost
+# all esports. The id is still read verbatim out of the ticker — the whole run
+# from the date to the next hyphen — so the only change is that these tickers
+# get one; the token still needs a letter somewhere, a hyphen boundary and a
+# real month (the #3198 discipline above). `_KALSHI_GAME_TEAMS_RE` below is
+# deliberately NOT widened: where the team code starts is ambiguous after a
+# digit (`...0435HEIF` is HHMM+`HEIF` or a day+`35HEIF`), and its one reader
+# keeps a market whose code it cannot parse.
 _KALSHI_TICKER_MONTH = r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)"
 _KALSHI_GAME_ID_RE = re.compile(
-    rf"(?:^|-)(\d{{2}}{_KALSHI_TICKER_MONTH}\d{{1,2}}(?:\d{{4}})?[A-Za-z][A-Za-z0-9]*)",
+    rf"(?:^|-)(\d{{2}}{_KALSHI_TICKER_MONTH}\d{{1,2}}(?:\d{{4}})?"
+    r"[A-Za-z0-9]*[A-Za-z][A-Za-z0-9]*)",
     re.IGNORECASE,
 )
 # Same token, capturing the TEAM-code portion only (date + optional HHMM stripped).

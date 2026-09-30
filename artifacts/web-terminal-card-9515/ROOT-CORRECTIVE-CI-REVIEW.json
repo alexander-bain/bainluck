@@ -1,0 +1,24 @@
+{
+  "at": "2026-09-29T05:28:03.478115+00:00",
+  "base": "7b4fd9330605439ff191c26e3a0cda2505206ff9",
+  "verdict": "SOURCE PASS",
+  "files": [
+    {
+      "path": "frontend/components/discover/FuturesCard.tsx",
+      "sha256": "092a0f69fe5f0d8077830145f395c8766726fe3eb0030c08b5ffd0596ad61e96"
+    },
+    {
+      "path": "frontend/__tests__/components/DiscoverFuturesTerminal9515.test.tsx",
+      "sha256": "1ac082b99bf4c384a2ae645dd96960b1306f59388db2a50b012356ebb51416b7"
+    },
+    {
+      "path": "frontend/__tests__/components/forYouCueRenderPaths.test.tsx",
+      "sha256": "33ee0745268d49a44f34e523629fb088b46e961241d89cf105b471460e3a1dc5"
+    },
+    {
+      "path": "frontend/__tests__/components/priceAgeOnFeedCards5752.test.tsx",
+      "sha256": "d7a46dd3d03bd437e6b5e8732bd4214b86c17a37cc9ab8aa33ec4e281c7c33c3"
+    }
+  ],
+  "review": "Existing personalization cue now reaches assigned full and compact rows. Explicit null ActionBar price-observation avoids stale-age claim on terminal branch while preserving real status. Countguard tracks actual fifth root and price-age exception is limited to first assigned FuturesCard ActionBar; all forecast sites retain actual clocks. Mounted test carries oldclock and asserts no price-age-mark. No result decision/identity changes; executablegates still authorowned."
+}

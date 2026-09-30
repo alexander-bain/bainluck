@@ -227,7 +227,14 @@ class TestBothTeamBranchesUseIt:
             "Event.away_team_name",
             "FuturesMarket.name",
         ):
-            assert f"_build_expanded_ilike({column}" in src, (
+            # #9306 was that own issue, for a closed list of four finished round
+            # words only: `_build_round_word_ilike` is `_build_expanded_ilike` for
+            # every other term (pinned in test_search_latency_contract.py).
+            assert f"_build_round_word_ilike({column}" in src, (
+                f"{column} left the substring arm. That is a recall change this "
+                "fix never measured — it belongs to its own issue."
+            )
+            assert f"_build_word_start_ilike({column}" not in src, (
                 f"{column} was moved onto the word-start rule. That is a recall "
                 "change this fix never measured — it belongs to its own issue."
             )

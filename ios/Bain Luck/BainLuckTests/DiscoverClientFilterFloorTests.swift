@@ -93,9 +93,12 @@ final class DiscoverClientFilterFloorTests: XCTestCase {
             recordedAt: now
         )
 
-        // What the pre-#1221 cooldown alone would have left — the measured "3".
+        // What the pre-#1221 cooldown alone would have left was the measured "3".
+        // Since #9648 a sports penalty reads as neutral, so the same profile now
+        // cools only its five non-sports categories: the 18 soccer / hockey /
+        // baseball / motorsports / cycling / football cards stay uncooled too.
         let uncooled = page.filter { !profile.suppresses(category: categoryOf($0), now: now) }
-        XCTAssertEqual(uncooled.count, 3, "the defect's arithmetic, pinned")
+        XCTAssertEqual(uncooled.count, 3 + 18, "the defect's arithmetic, less what #9648 retired")
 
         let rendered = DiscoverView.applyCooldownSink(
             to: page,
@@ -274,17 +277,20 @@ final class DiscoverClientFilterFloorTests: XCTestCase {
     /// A backwards clock (timezone change, NTP correction) must not amplify a
     /// score into a deeper cooldown than the user ever earned.
     func testBackwardClockDoesNotAmplify() {
-        let profile = DiscoverInteractionProfile.forTesting(scores: ["soccer": -4], recordedAt: now)
-        XCTAssertEqual(profile.score(for: "soccer", now: now.addingTimeInterval(-90000)), -4)
+        // `weather`, not the `soccer` this used: a sports penalty now reads as
+        // neutral (#9648), so it can no longer witness amplification.
+        let profile = DiscoverInteractionProfile.forTesting(scores: ["weather": -4], recordedAt: now)
+        XCTAssertEqual(profile.score(for: "weather", now: now.addingTimeInterval(-90000)), -4)
     }
 
     /// Recording decays first, then applies — otherwise a stale score gets a
     /// fresh timestamp at its old magnitude and never ages out.
     func testRecordAppliesToTheDecayedScoreNotTheStoredOne() {
-        var profile = DiscoverInteractionProfile.forTesting(scores: ["golf": -8], recordedAt: now)
+        // `economics`, not `golf`: a sports negative writes nothing (#9648).
+        var profile = DiscoverInteractionProfile.forTesting(scores: ["economics": -8], recordedAt: now)
         let later = now.addingTimeInterval(7 * 24 * 3600) // half-decayed to -4
-        profile.record(category: "golf", action: .unlike, now: later)
-        XCTAssertEqual(profile.score(for: "golf", now: later), -5, accuracy: 0.001)
+        profile.record(category: "economics", action: .unlike, now: later)
+        XCTAssertEqual(profile.score(for: "economics", now: later), -5, accuracy: 0.001)
     }
 
     func testAdjustmentIgnoresAFullyDecayedScore() {

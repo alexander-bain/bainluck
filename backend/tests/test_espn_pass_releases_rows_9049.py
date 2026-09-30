@@ -30,6 +30,7 @@ Real-Postgres arms (the lock itself, not the call order):
 
 from __future__ import annotations
 
+import contextlib
 from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -70,6 +71,12 @@ class _LoggingSession:
             raise RuntimeError("write failed")
         self._log.append(("write", params["eid"]))
         return _Result([])
+
+    def begin_nested(self):
+        # #8913: each game's write runs in its own SAVEPOINT. The fake has no
+        # transaction to abort; the real-Postgres half is
+        # tests/integration/test_live_box_pass_survives_one_failed_write_pg_8913.py.
+        return contextlib.nullcontext()
 
 
 def _live_event(event_id):
@@ -134,8 +141,9 @@ async def test_every_game_still_gets_its_box_score():
 async def test_one_games_failed_fetch_or_write_costs_only_that_game():
     """The per-game try/except survives the split: a dark fetch (2) and a failed
     write (3) each cost their own game here. That is the Python half only — on
-    Postgres a failed UPDATE aborts the step's savepoint and costs the whole
-    box pass (no per-game savepoint yet): #8913, CERT-3611's follow-up."""
+    Postgres a failed UPDATE aborts the transaction, which the per-game
+    savepoint (#8913) contains; that half is proved on a real server in
+    tests/integration/test_live_box_pass_survives_one_failed_write_pg_8913.py."""
     log: list = []
     stats = await _run_box_pass(
         [_live_event(1), _live_event(2), _live_event(3), _live_event(4)],
@@ -168,7 +176,9 @@ def _wire(monkeypatch, log):
         return None
 
     async def _execute(*a, **k):
-        return None
+        # #9143: the pre-game prefetch reads rows; an empty result, as a real
+        # session with nothing scheduled would return.
+        return SimpleNamespace(all=lambda: [])
 
     async def _commit():
         log.append("commit")

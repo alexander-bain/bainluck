@@ -1,0 +1,3387 @@
+{
+"_source": "production read 2026-09-29: teams for americanfootball_ncaaf (sport_id 2) and americanfootball_ncaaf_fcs (sport_id 6); futures_outcomes of Kalshi KXNCAAFFCS-27 with their team_id before #9663. `expected` is each leg's FCS school, read by hand; null = no FCS row.",
+"fbs_teams": [
+[
+3,
+"Virginia Cavaliers",
+[
+"Virginia",
+"Cavaliers"
+]
+],
+[
+4,
+"NC State Wolfpack",
+[
+"Wolfpack",
+"NC State",
+"north carolina state"
+]
+],
+[
+5,
+"TCU Horned Frogs",
+[
+"TCU",
+"Horned Frogs"
+]
+],
+[
+6,
+"North Carolina Tar Heels",
+[
+"Tar Heels",
+"North Carolina"
+]
+],
+[
+7,
+"Auburn Tigers",
+[
+"Tigers",
+"Auburn"
+]
+],
+[
+8,
+"Baylor Bears",
+[
+"Bears",
+"Baylor"
+]
+],
+[
+9,
+"LSU Tigers",
+[
+"LSU",
+"Tigers"
+]
+],
+[
+10,
+"Clemson Tigers",
+[
+"Clemson",
+"Tigers"
+]
+],
+[
+81,
+"California Golden Bears",
+[
+"Golden Bears",
+"California"
+]
+],
+[
+82,
+"UCLA Bruins",
+[
+"Bruins",
+"UCLA"
+]
+],
+[
+83,
+"Ole Miss Rebels",
+[
+"Ole Miss",
+"Rebels"
+]
+],
+[
+84,
+"Louisville Cardinals",
+[
+"Cardinals",
+"Louisville"
+]
+],
+[
+834,
+"Texas Longhorns",
+[
+"Longhorns",
+"Texas",
+"horns"
+]
+],
+[
+835,
+"Notre Dame Fighting Irish",
+[
+"Fighting Irish",
+"Notre Dame"
+]
+],
+[
+836,
+"Michigan Wolverines",
+[
+"Wolverines",
+"Michigan"
+]
+],
+[
+837,
+"Ohio State Buckeyes",
+[
+"Ohio State",
+"Buckeyes"
+]
+],
+[
+838,
+"Oklahoma Sooners",
+[
+"Oklahoma",
+"Sooners"
+]
+],
+[
+839,
+"Wisconsin Badgers",
+[
+"Badgers",
+"Wisconsin"
+]
+],
+[
+13472,
+"SMU Mustangs",
+[
+"SMU",
+"Mustangs"
+]
+],
+[
+13473,
+"Florida State Seminoles",
+[
+"Florida St",
+"noles",
+"Seminoles"
+]
+],
+[
+14125,
+"Texas Tech Red Raiders",
+[
+"Texas Tech",
+"Red Raiders"
+]
+],
+[
+14126,
+"Houston Cougars",
+[
+"Cougars",
+"Houston"
+]
+],
+[
+15256,
+"Iowa State Cyclones",
+[
+"Iowa State",
+"Cyclones"
+]
+],
+[
+15257,
+"Oklahoma State Cowboys",
+[
+"Cowboys",
+"Oklahoma St"
+]
+],
+[
+15258,
+"Kansas Jayhawks",
+[
+"Kansas",
+"Jayhawks"
+]
+],
+[
+15259,
+"Missouri Tigers",
+[
+"Tigers",
+"Missouri"
+]
+],
+[
+15260,
+"Oregon Ducks",
+[
+"Ducks",
+"Oregon"
+]
+],
+[
+15261,
+"Indiana Hoosiers",
+[
+"Hoosiers",
+"Indiana"
+]
+],
+[
+15262,
+"Alabama Crimson Tide",
+[
+"bama",
+"Crimson Tide",
+"Alabama"
+]
+],
+[
+15263,
+"Georgia Bulldogs",
+[
+"Bulldogs",
+"Georgia"
+]
+],
+[
+15264,
+"Miami Hurricanes",
+[
+"Hurricanes",
+"Miami"
+]
+],
+[
+15265,
+"Iowa Hawkeyes",
+[
+"Hawkeyes",
+"Iowa"
+]
+],
+[
+15294,
+"South Florida Bulls",
+[
+"Bulls",
+"South Florida"
+]
+],
+[
+15295,
+"South Carolina Gamecocks",
+[
+"Gamecocks",
+"South Carolina"
+]
+],
+[
+15296,
+"James Madison Dukes",
+[
+"Dukes",
+"James Madison"
+]
+],
+[
+15297,
+"New Mexico Lobos",
+[
+"New Mexico",
+"Lobos"
+]
+],
+[
+15298,
+"Akron Zips",
+[
+"Zips",
+"Akron"
+]
+],
+[
+15299,
+"Ball State Cardinals",
+[
+"Ball State",
+"Cardinals"
+]
+],
+[
+15300,
+"Florida Atlantic Owls",
+[
+"Owls",
+"FAU"
+]
+],
+[
+15301,
+"Washington Huskies",
+[
+"Huskies",
+"Washington"
+]
+],
+[
+15302,
+"Ohio Bobcats",
+[
+"Bobcats",
+"Ohio"
+]
+],
+[
+15303,
+"Colorado State Rams",
+[
+"Rams",
+"Colorado St"
+]
+],
+[
+15304,
+"San Jose State Spartans",
+[
+"San José State Spartans",
+"San José St",
+"Spartans"
+]
+],
+[
+15305,
+"Tulane Green Wave",
+[
+"Green Wave",
+"Tulane"
+]
+],
+[
+15306,
+"UL Monroe Warhawks",
+[
+"UL Monroe",
+"Warhawks"
+]
+],
+[
+15307,
+"Troy Trojans",
+[
+"Trojans",
+"Troy"
+]
+],
+[
+15308,
+"Eastern Michigan Eagles",
+[
+"E Michigan",
+"Eagles"
+]
+],
+[
+15309,
+"Sacramento State Hornets",
+[
+"Sacramento St",
+"Hornets"
+]
+],
+[
+15310,
+"Wake Forest Demon Deacons",
+[
+"Wake Forest",
+"Demon Deacons"
+]
+],
+[
+15311,
+"Duke Blue Devils",
+[
+"Blue Devils",
+"Duke"
+]
+],
+[
+15312,
+"Fresno State Bulldogs",
+[
+"Fresno St",
+"Bulldogs"
+]
+],
+[
+15313,
+"Texas A&M Aggies",
+[
+"Texas A&M",
+"Aggies"
+]
+],
+[
+15314,
+"North Texas Mean Green",
+[
+"Mean Green",
+"North Texas"
+]
+],
+[
+15315,
+"Colorado Buffaloes",
+[
+"Colorado",
+"Buffaloes"
+]
+],
+[
+15316,
+"Toledo Rockets",
+[
+"Toledo",
+"Rockets"
+]
+],
+[
+15317,
+"Oregon State Beavers",
+[
+"Oregon St",
+"Beavers"
+]
+],
+[
+15318,
+"Liberty Flames",
+[
+"Flames",
+"Liberty"
+]
+],
+[
+15319,
+"Pittsburgh Panthers",
+[
+"Panthers",
+"Pitt"
+]
+],
+[
+15320,
+"Central Michigan Chippewas",
+[
+"Chippewas",
+"C Michigan"
+]
+],
+[
+15321,
+"Marshall Thundering Herd",
+[
+"Thundering Herd",
+"Marshall"
+]
+],
+[
+15322,
+"Coastal Carolina Chanticleers",
+[
+"Coastal",
+"Chanticleers"
+]
+],
+[
+15323,
+"Jacksonville State Gamecocks",
+[
+"Jax State",
+"Gamecocks"
+]
+],
+[
+15324,
+"UTEP Miners",
+[
+"UTEP",
+"Miners"
+]
+],
+[
+15325,
+"Georgia Tech Yellow Jackets",
+[
+"Yellow Jackets",
+"Georgia Tech"
+]
+],
+[
+15326,
+"Stanford Cardinal",
+[
+"Cardinal",
+"Stanford"
+]
+],
+[
+15327,
+"Tulsa Golden Hurricane",
+[
+"Tulsa",
+"Golden Hurricane"
+]
+],
+[
+15328,
+"Hawaii Rainbow Warriors",
+[
+"Hawai'i Rainbow Warriors",
+"Rainbow Warriors",
+"Hawai'i"
+]
+],
+[
+15329,
+"Sam Houston State Bearkats",
+[
+"Sam Houston Bearkats",
+"Bearkats",
+"Sam Houston"
+]
+],
+[
+15330,
+"Arkansas State Red Wolves",
+[
+"Arkansas St",
+"Red Wolves"
+]
+],
+[
+15331,
+"USC Trojans",
+[
+"Trojans",
+"USC"
+]
+],
+[
+15332,
+"Miami (OH) RedHawks",
+[
+"RedHawks",
+"Miami OH"
+]
+],
+[
+15333,
+"Florida Gators",
+[
+"Gators",
+"Florida"
+]
+],
+[
+15334,
+"Illinois Fighting Illini",
+[
+"Illinois",
+"Fighting Illini"
+]
+],
+[
+15335,
+"New Mexico State Aggies",
+[
+"Aggies",
+"New Mexico St"
+]
+],
+[
+15336,
+"Western Kentucky Hilltoppers",
+[
+"Hilltoppers",
+"Western KY"
+]
+],
+[
+15337,
+"Wyoming Cowboys",
+[
+"Cowboys",
+"Wyoming"
+]
+],
+[
+15338,
+"Rutgers Scarlet Knights",
+[
+"Rutgers",
+"Scarlet Knights"
+]
+],
+[
+15339,
+"Florida International Panthers",
+[
+"FIU",
+"Panthers"
+]
+],
+[
+15340,
+"Texas State Bobcats",
+[
+"Bobcats",
+"Texas St"
+]
+],
+[
+15341,
+"Western Michigan Broncos",
+[
+"W Michigan",
+"Broncos"
+]
+],
+[
+15342,
+"Boston College Eagles",
+[
+"Boston College",
+"Eagles"
+]
+],
+[
+15343,
+"Nevada Wolf Pack",
+[
+"Nevada",
+"Wolf Pack"
+]
+],
+[
+15344,
+"Cincinnati Bearcats",
+[
+"Cincinnati",
+"Bearcats"
+]
+],
+[
+15345,
+"Memphis Tigers",
+[
+"Tigers",
+"Memphis"
+]
+],
+[
+15346,
+"North Dakota State Bison",
+[
+"Bison",
+"N Dakota St"
+]
+],
+[
+15347,
+"West Virginia Mountaineers",
+[
+"Mountaineers",
+"West Virginia"
+]
+],
+[
+15348,
+"Northern Illinois Huskies",
+[
+"N Illinois",
+"Huskies"
+]
+],
+[
+15349,
+"Nebraska Cornhuskers",
+[
+"Cornhuskers",
+"Nebraska",
+"huskers"
+]
+],
+[
+15350,
+"Missouri State Bears",
+[
+"Missouri St",
+"Bears"
+]
+],
+[
+15351,
+"Boise State Broncos",
+[
+"Boise St",
+"Broncos"
+]
+],
+[
+15352,
+"Kent State Golden Flashes",
+[
+"Kent State",
+"Golden Flashes"
+]
+],
+[
+15353,
+"UAB Blazers",
+[
+"Blazers",
+"UAB"
+]
+],
+[
+15354,
+"East Carolina Pirates",
+[
+"Pirates",
+"East Carolina"
+]
+],
+[
+15355,
+"Washington State Cougars",
+[
+"Cougars",
+"Washington St"
+]
+],
+[
+15356,
+"Penn State Nittany Lions",
+[
+"Penn State",
+"Nittany Lions"
+]
+],
+[
+15357,
+"UMass Minutemen",
+[
+"UMass",
+"Minutemen",
+"Massachusetts Minutemen"
+]
+],
+[
+15358,
+"Michigan State Spartans",
+[
+"Michigan St",
+"Spartans"
+]
+],
+[
+15359,
+"UNLV Rebels",
+[
+"Rebels",
+"UNLV"
+]
+],
+[
+15360,
+"Mississippi State Bulldogs",
+[
+"Mississippi St",
+"Bulldogs"
+]
+],
+[
+15936,
+"Arizona State Sun Devils",
+[
+"Arizona St",
+"Sun Devils"
+]
+],
+[
+15937,
+"Tennessee Volunteers",
+[
+"Volunteers",
+"Tennessee",
+"vols"
+]
+],
+[
+15938,
+"Arkansas Razorbacks",
+[
+"Arkansas",
+"Razorbacks"
+]
+],
+[
+15939,
+"Utah Utes",
+[
+"Utes",
+"Utah"
+]
+],
+[
+15995,
+"Kansas State Wildcats",
+[
+"Kansas St",
+"Wildcats"
+]
+],
+[
+17022,
+"Arkansas Pine Bluff Golden Lions",
+[
+"AR-Pine Bluff",
+"Arkansas-Pine Bluff Golden Lions",
+"Golden Lions"
+]
+],
+[
+17023,
+"Idaho Vandals",
+[
+"Vandals",
+"Idaho"
+]
+],
+[
+17024,
+"Furman Paladins",
+[
+"Furman",
+"Paladins"
+]
+],
+[
+17025,
+"Minnesota Golden Gophers",
+[
+"Golden Gophers",
+"Minnesota"
+]
+],
+[
+17026,
+"Eastern Illinois Panthers",
+[
+"Panthers",
+"E Illinois"
+]
+],
+[
+17027,
+"Bethune-Cookman Wildcats",
+[
+"Wildcats",
+"Bethune"
+]
+],
+[
+17028,
+"UCF Knights",
+[
+"UCF",
+"Knights"
+]
+],
+[
+17029,
+"Virginia Tech Hokies",
+[
+"Virginia Tech",
+"Hokies"
+]
+],
+[
+17068,
+"Abilene Christian Wildcats",
+[
+"Abilene Chrstn",
+"Wildcats"
+]
+],
+[
+17069,
+"Northern Arizona Lumberjacks",
+[
+"Lumberjacks",
+"N Arizona"
+]
+],
+[
+17070,
+"Indiana State Sycamores",
+[
+"Sycamores",
+"Indiana St"
+]
+],
+[
+17071,
+"LIU Sharks",
+[
+"Long Island University Sharks",
+"Sharks",
+"Long Island"
+]
+],
+[
+17072,
+"New Hampshire Wildcats",
+[
+"Wildcats",
+"New Hampshire"
+]
+],
+[
+17073,
+"Youngstown St Penguins",
+[
+"Penguins",
+"Youngstown State Penguins",
+"Youngstown St"
+]
+],
+[
+17074,
+"Purdue Boilermakers",
+[
+"Purdue",
+"Boilermakers"
+]
+],
+[
+17075,
+"Syracuse Orange",
+[
+"Orange",
+"Syracuse"
+]
+],
+[
+17076,
+"Tennessee State Tigers",
+[
+"Tigers",
+"Tennessee St"
+]
+],
+[
+17077,
+"VMI Keydets",
+[
+"VMI",
+"Keydets"
+]
+],
+[
+17078,
+"North Alabama Lions",
+[
+"North Alabama",
+"Lions"
+]
+],
+[
+17109,
+"West Georgia Wolves",
+[
+"West Georgia",
+"Wolves"
+]
+],
+[
+17110,
+"Kennesaw State Owls",
+[
+"Owls",
+"Kennesaw St"
+]
+],
+[
+17111,
+"Delaware Blue Hens",
+[
+"Blue Hens",
+"Delaware"
+]
+],
+[
+17112,
+"Merrimack Warriors",
+[
+"Merrimack",
+"Warriors"
+]
+],
+[
+17113,
+"Duquesne Dukes",
+[
+"Dukes",
+"Duquesne"
+]
+],
+[
+17114,
+"Tarleton State Texans",
+[
+"Tarleton St",
+"Texans"
+]
+],
+[
+17115,
+"Lafayette Leopards",
+[
+"Lafayette",
+"Leopards"
+]
+],
+[
+17116,
+"Albany",
+[]
+],
+[
+17117,
+"Georgia State Panthers",
+[
+"Panthers",
+"Georgia St"
+]
+],
+[
+17118,
+"Air Force Falcons",
+[
+"Air Force",
+"Falcons"
+]
+],
+[
+17119,
+"Bowling Green Falcons",
+[
+"Falcons",
+"Bowling Green"
+]
+],
+[
+17120,
+"Buffalo Bulls",
+[
+"Bulls",
+"Buffalo"
+]
+],
+[
+17121,
+"Army Black Knights",
+[
+"Black Knights",
+"Army"
+]
+],
+[
+17122,
+"Rhode Island Rams",
+[
+"Rhode Island",
+"Rams"
+]
+],
+[
+17123,
+"Fordham Rams",
+[
+"Fordham",
+"Rams"
+]
+],
+[
+17124,
+"Temple Owls",
+[
+"Temple",
+"Owls"
+]
+],
+[
+17163,
+"Old Dominion Monarchs",
+[
+"Old Dominion",
+"Monarchs"
+]
+],
+[
+17164,
+"Alcorn State Braves",
+[
+"Alcorn St",
+"Braves"
+]
+],
+[
+17165,
+"Appalachian State Mountaineers",
+[
+"App State",
+"App State Mountaineers",
+"Mountaineers"
+]
+],
+[
+17166,
+"Austin Peay Governors",
+[
+"Governors",
+"Austin Peay"
+]
+],
+[
+17167,
+"Maine Black Bears",
+[
+"Maine",
+"Black Bears"
+]
+],
+[
+17168,
+"Charlotte 49ers",
+[
+"49ers",
+"Charlotte"
+]
+],
+[
+17169,
+"Vanderbilt Commodores",
+[
+"Commodores",
+"Vanderbilt"
+]
+],
+[
+17170,
+"Southern Mississippi Golden Eagles",
+[
+"Southern Miss",
+"Southern Miss Golden Eagles",
+"Golden Eagles"
+]
+],
+[
+17171,
+"Eastern Kentucky Colonels",
+[
+"Colonels",
+"E Kentucky"
+]
+],
+[
+17172,
+"Houston Baptist Huskies",
+[
+"Hou Christian",
+"Houston Christian Huskies",
+"Huskies"
+]
+],
+[
+17173,
+"Charleston Southern Buccaneers",
+[
+"Charleston So",
+"Buccaneers"
+]
+],
+[
+17174,
+"Mercyhurst Lakers",
+[
+"Mercyhurst",
+"Lakers"
+]
+],
+[
+17175,
+"Idaho State Bengals",
+[
+"Bengals",
+"Idaho St"
+]
+],
+[
+17176,
+"Murray State Racers",
+[
+"Racers",
+"Murray St"
+]
+],
+[
+17177,
+"Middle Tennessee Blue Raiders",
+[
+"Blue Raiders",
+"MTSU"
+]
+],
+[
+17178,
+"South Alabama Jaguars",
+[
+"Jaguars",
+"South Alabama"
+]
+],
+[
+17179,
+"Southeastern Louisiana Lions",
+[
+"SE Louisiana",
+"SE Louisiana Lions",
+"Lions"
+]
+],
+[
+17180,
+"Nicholls State Colonels",
+[
+"Colonels",
+"Nicholls Colonels",
+"Nicholls"
+]
+],
+[
+17181,
+"Louisiana Tech Bulldogs",
+[
+"Louisiana Tech",
+"Bulldogs"
+]
+],
+[
+17182,
+"Northwestern State Demons",
+[
+"Demons",
+"N'Western St"
+]
+],
+[
+17183,
+"Louisiana Ragin Cajuns",
+[
+"Ragin' Cajuns",
+"Louisiana Ragin' Cajuns",
+"Louisiana"
+]
+],
+[
+17184,
+"Navy Midshipmen",
+[
+"Navy",
+"Midshipmen"
+]
+],
+[
+17185,
+"Utah Tech Trailblazers",
+[
+"Utah Tech",
+"Trailblazers"
+]
+],
+[
+17186,
+"Portland State Vikings",
+[
+"Portland St",
+"Vikings"
+]
+],
+[
+17187,
+"Mississippi Valley State Delta Devils",
+[
+"Delta Devils",
+"Miss Valley St"
+]
+],
+[
+17236,
+"UT Rio Grande Valley Vaqueros",
+[
+"Vaqueros",
+"UT Rio Grande"
+]
+],
+[
+17237,
+"UTSA Roadrunners",
+[
+"Roadrunners",
+"UTSA"
+]
+],
+[
+17911,
+"Maryland Terrapins",
+[
+"Maryland",
+"Terrapins"
+]
+],
+[
+17912,
+"Hampton Pirates",
+[
+"Hampton",
+"Pirates"
+]
+],
+[
+19076,
+"Cal Poly Mustangs",
+[
+"Mustangs",
+"Cal Poly"
+]
+],
+[
+19077,
+"Richmond Spiders",
+[]
+],
+[
+19078,
+"Florida A&M Rattlers",
+[
+"Rattlers",
+"Florida A&M"
+]
+],
+[
+19103,
+"Stony Brook Seawolves",
+[]
+],
+[
+19111,
+"Holy Cross Crusaders",
+[
+"Crusaders",
+"Holy Cross"
+]
+],
+[
+19112,
+"Southern Utah Thunderbirds",
+[
+"Thunderbirds",
+"Southern Utah"
+]
+],
+[
+19113,
+"Monmouth Hawks",
+[
+"Monmouth",
+"Hawks"
+]
+],
+[
+19114,
+"Wofford Terriers",
+[]
+],
+[
+19115,
+"Campbell Fighting Camels",
+[
+"Fighting Camels",
+"Campbell"
+]
+],
+[
+19116,
+"Prairie View A&M Panthers",
+[
+"Prairie View",
+"Panthers"
+]
+],
+[
+19117,
+"Gardner-Webb Runnin Bulldogs",
+[
+"Runnin' Bulldogs",
+"Gardner-Webb Runnin' Bulldogs",
+"Gardner-Webb"
+]
+],
+[
+19118,
+"Texas Southern Tigers",
+[
+"Texas Southern",
+"Tigers"
+]
+],
+[
+19119,
+"Howard Bison",
+[
+"Bison",
+"Howard"
+]
+],
+[
+19120,
+"Sacred Heart Pioneers",
+[]
+],
+[
+19121,
+"Western Carolina Catamounts",
+[
+"Catamounts",
+"W Carolina"
+]
+],
+[
+19122,
+"Colgate Raiders",
+[]
+],
+[
+19123,
+"Robert Morris Colonials",
+[
+"Colonials",
+"Robert Morris"
+]
+],
+[
+19124,
+"Wagner Seahawks",
+[
+"Seahawks",
+"Wagner"
+]
+],
+[
+19125,
+"Northern Colorado Bears",
+[]
+],
+[
+19126,
+"Southern University Jaguars",
+[
+"Southern",
+"Southern Jaguars",
+"Jaguars"
+]
+],
+[
+19129,
+"Lindenwood Lions",
+[
+"Lions",
+"Lindenwood"
+]
+],
+[
+19130,
+"Illinois State Redbirds",
+[
+"Redbirds",
+"Illinois St"
+]
+],
+[
+19131,
+"Western Illinois Leathernecks",
+[
+"W Illinois",
+"Leathernecks"
+]
+],
+[
+19132,
+"UT Martin Skyhawks",
+[
+"UT Martin",
+"Skyhawks"
+]
+],
+[
+19133,
+"UC Davis Aggies",
+[
+"Aggies",
+"UC Davis"
+]
+],
+[
+19269,
+"Northern Iowa Panthers",
+[
+"Northern Iowa",
+"Panthers"
+]
+],
+[
+19270,
+"Southern Illinois Salukis",
+[
+"Salukis",
+"S Illinois"
+]
+],
+[
+19271,
+"Stonehill Skyhawks",
+[
+"Stonehill",
+"Skyhawks"
+]
+],
+[
+19272,
+"South Dakota Coyotes",
+[
+"Coyotes",
+"South Dakota"
+]
+],
+[
+19273,
+"Montana Grizzlies",
+[
+"Grizzlies",
+"Montana"
+]
+],
+[
+19683,
+"Northwestern Wildcats",
+[
+"Wildcats",
+"Northwestern"
+]
+],
+[
+19684,
+"Georgia Southern Eagles",
+[
+"GA Southern",
+"Eagles"
+]
+],
+[
+19713,
+"Central Arkansas Bears",
+[
+"C Arkansas",
+"Bears"
+]
+],
+[
+19714,
+"William and Mary Tribe",
+[
+"William & Mary",
+"Tribe",
+"William & Mary Tribe"
+]
+],
+[
+19715,
+"Incarnate Word Cardinals",
+[
+"Cardinals",
+"Incarnate Word"
+]
+],
+[
+19766,
+"Kentucky Wildcats",
+[
+"Wildcats",
+"Kentucky"
+]
+],
+[
+19767,
+"San Diego State Aztecs",
+[
+"Aztecs",
+"San Diego St"
+]
+],
+[
+19768,
+"UConn Huskies",
+[
+"UConn",
+"Huskies"
+]
+],
+[
+19769,
+"North Carolina Central Eagles",
+[
+"Eagles",
+"NC Central"
+]
+],
+[
+19770,
+"Arizona Wildcats",
+[
+"Arizona",
+"Wildcats"
+]
+],
+[
+19771,
+"Bucknell Bison",
+[
+"Bison",
+"Bucknell"
+]
+],
+[
+19772,
+"Utah State Aggies",
+[
+"Utah State",
+"Aggies"
+]
+],
+[
+19773,
+"Rice Owls",
+[
+"Owls",
+"Rice"
+]
+],
+[
+19788,
+"BYU Cougars",
+[
+"Cougars",
+"BYU"
+]
+]
+],
+"fcs_teams": [
+[
+18613,
+"Southern Utah Thunderbirds",
+[
+"Southern Utah",
+"Thunderbirds"
+]
+],
+[
+18614,
+"North Alabama Lions",
+[
+"North Alabama",
+"Lions"
+]
+],
+[
+18615,
+"East Tennessee State Buccaneers",
+[
+"ETSU",
+"Buccaneers"
+]
+],
+[
+18616,
+"Jackson State Tigers",
+[
+"Jackson St",
+"Tigers"
+]
+],
+[
+18617,
+"Robert Morris Colonials",
+[]
+],
+[
+18618,
+"Abilene Christian Wildcats",
+[
+"Wildcats",
+"Abilene Chrstn"
+]
+],
+[
+18619,
+"Idaho Vandals",
+[]
+],
+[
+18620,
+"Colgate Raiders",
+[
+"Colgate",
+"Raiders"
+]
+],
+[
+18621,
+"Montana State Bobcats",
+[
+"Bobcats",
+"Montana St"
+]
+],
+[
+18622,
+"Villanova Wildcats",
+[
+"Wildcats",
+"Villanova"
+]
+],
+[
+18623,
+"Eastern Washington Eagles",
+[
+"Eagles",
+"E Washington"
+]
+],
+[
+18624,
+"North Carolina A&T Aggies",
+[
+"NC A&T",
+"Aggies"
+]
+],
+[
+18625,
+"Rhode Island Rams",
+[
+"Rams",
+"Rhode Island"
+]
+],
+[
+18626,
+"Prairie View A&M Panthers",
+[
+"Panthers",
+"Prairie View"
+]
+],
+[
+18627,
+"Southern University Jaguars",
+[
+"Southern",
+"Southern Jaguars",
+"Jaguars"
+]
+],
+[
+18628,
+"Indiana State Sycamores",
+[
+"Sycamores",
+"Indiana St"
+]
+],
+[
+18629,
+"Bucknell Bison",
+[]
+],
+[
+18630,
+"VMI Keydets",
+[
+"VMI",
+"Keydets"
+]
+],
+[
+18631,
+"Morgan State Bears",
+[]
+],
+[
+18632,
+"Western Carolina Catamounts",
+[
+"W Carolina",
+"Catamounts"
+]
+],
+[
+18633,
+"Holy Cross Crusaders",
+[
+"Holy Cross",
+"Crusaders"
+]
+],
+[
+18634,
+"Idaho State Bengals",
+[
+"Idaho St",
+"Bengals"
+]
+],
+[
+18635,
+"Northern Colorado Bears",
+[
+"Bears",
+"N Colorado"
+]
+],
+[
+18636,
+"Southeast Missouri State Redhawks",
+[
+"SE Missouri",
+"Redhawks"
+]
+],
+[
+18637,
+"Montana Grizzlies",
+[
+"Grizzlies",
+"Montana"
+]
+],
+[
+18638,
+"McNeese State Cowboys",
+[
+"McNeese Cowboys",
+"McNeese",
+"Cowboys"
+]
+],
+[
+18639,
+"East Texas A&M Lions",
+[
+"Lions",
+"East Texas A&M"
+]
+],
+[
+18640,
+"Northern Arizona Lumberjacks",
+[
+"Lumberjacks",
+"N Arizona"
+]
+],
+[
+18641,
+"Portland State Vikings",
+[
+"Vikings",
+"Portland St"
+]
+],
+[
+18642,
+"Monmouth Hawks",
+[
+"Monmouth",
+"Hawks"
+]
+],
+[
+18643,
+"Bryant Bulldogs",
+[]
+],
+[
+18644,
+"Tennessee Tech Golden Eagles",
+[
+"Tennessee Tech",
+"Golden Eagles"
+]
+],
+[
+18645,
+"Campbell Fighting Camels",
+[
+"Fighting Camels",
+"Campbell"
+]
+],
+[
+18646,
+"Lehigh Mountain Hawks",
+[
+"Mountain Hawks",
+"Lehigh"
+]
+],
+[
+18647,
+"Merrimack Warriors",
+[
+"Merrimack",
+"Warriors"
+]
+],
+[
+18648,
+"Weber State Wildcats",
+[
+"Wildcats",
+"Weber St"
+]
+],
+[
+18649,
+"South Dakota Coyotes",
+[
+"South Dakota",
+"Coyotes"
+]
+],
+[
+18650,
+"Alabama State Hornets",
+[
+"Alabama St",
+"Hornets"
+]
+],
+[
+18651,
+"Alabama A&M Bulldogs",
+[
+"Bulldogs",
+"Alabama A&M"
+]
+],
+[
+18652,
+"Central Connecticut Blue Devils",
+[]
+],
+[
+18653,
+"Samford Bulldogs",
+[
+"Samford",
+"Bulldogs"
+]
+],
+[
+18654,
+"Texas Southern Tigers",
+[
+"Texas Southern",
+"Tigers"
+]
+],
+[
+18655,
+"New Hampshire Wildcats",
+[
+"New Hampshire",
+"Wildcats"
+]
+],
+[
+18656,
+"Cal Poly Mustangs",
+[
+"Mustangs",
+"Cal Poly"
+]
+],
+[
+18657,
+"North Carolina Central Eagles",
+[]
+],
+[
+18658,
+"UC Davis Aggies",
+[
+"UC Davis",
+"Aggies"
+]
+],
+[
+18659,
+"New Haven Chargers",
+[
+"New Haven",
+"Chargers"
+]
+],
+[
+18660,
+"Eastern Kentucky Colonels",
+[]
+],
+[
+18661,
+"Tarleton State Texans",
+[]
+],
+[
+18662,
+"Stephen F. Austin Lumberjacks",
+[]
+],
+[
+18663,
+"Stonehill Skyhawks",
+[]
+],
+[
+18664,
+"Fordham Rams",
+[
+"Rams",
+"Fordham"
+]
+],
+[
+18665,
+"Stetson Hatters",
+[]
+],
+[
+18666,
+"Wofford Terriers",
+[
+"Terriers",
+"Wofford"
+]
+],
+[
+18667,
+"Wagner Seahawks",
+[]
+],
+[
+18668,
+"Tennessee State Tigers",
+[]
+],
+[
+18669,
+"Lamar Cardinals",
+[
+"Lamar",
+"Cardinals"
+]
+],
+[
+18670,
+"South Dakota State Jackrabbits",
+[
+"Jackrabbits",
+"S Dakota St"
+]
+],
+[
+18671,
+"William and Mary Tribe",
+[]
+],
+[
+18672,
+"Citadel Bulldogs",
+[
+"The Citadel",
+"The Citadel Bulldogs",
+"Bulldogs"
+]
+],
+[
+18673,
+"Marist Red Foxes",
+[
+"Marist",
+"Red Foxes"
+]
+],
+[
+18674,
+"Richmond Spiders",
+[
+"Spiders",
+"Richmond"
+]
+],
+[
+18675,
+"Mercer Bears",
+[
+"Bears",
+"Mercer"
+]
+],
+[
+18676,
+"Utah Tech Trailblazers",
+[
+"Utah Tech",
+"Trailblazers"
+]
+],
+[
+18677,
+"Albany",
+[]
+],
+[
+18678,
+"Howard Bison",
+[]
+],
+[
+18982,
+"Western Illinois Leathernecks",
+[
+"Leathernecks",
+"W Illinois"
+]
+],
+[
+18983,
+"Presbyterian College Blue Hose",
+[
+"Blue Hose",
+"Presbyterian",
+"Presbyterian Blue Hose"
+]
+],
+[
+18984,
+"San Diego Toreros",
+[
+"Toreros",
+"San Diego"
+]
+],
+[
+18985,
+"Georgetown Hoyas",
+[
+"Hoyas",
+"Georgetown"
+]
+],
+[
+18986,
+"Southern Illinois Salukis",
+[
+"S Illinois",
+"Salukis"
+]
+],
+[
+18987,
+"Lindenwood Lions",
+[]
+],
+[
+18988,
+"Gardner-Webb Runnin Bulldogs",
+[]
+],
+[
+18989,
+"Stony Brook Seawolves",
+[
+"Stony Brook",
+"Seawolves"
+]
+],
+[
+18990,
+"Northern Iowa Panthers",
+[
+"Northern Iowa",
+"Panthers"
+]
+],
+[
+18991,
+"Elon Phoenix",
+[
+"Elon",
+"Phoenix"
+]
+],
+[
+18992,
+"Illinois State Redbirds",
+[
+"Illinois St",
+"Redbirds"
+]
+],
+[
+18993,
+"Florida A&M Rattlers",
+[
+"Rattlers",
+"Florida A&M"
+]
+],
+[
+18994,
+"Chattanooga Mocs",
+[
+"Mocs",
+"Chattanooga"
+]
+],
+[
+19037,
+"North Dakota Fighting Hawks",
+[
+"North Dakota",
+"Fighting Hawks"
+]
+],
+[
+19038,
+"St. Thomas (MN) Tommies",
+[
+"St. Thomas Tommies",
+"St Thomas",
+"Tommies"
+]
+],
+[
+19085,
+"Sacred Heart Pioneers",
+[
+"Sacred Heart",
+"Pioneers"
+]
+],
+[
+19088,
+"UT Martin Skyhawks",
+[
+"Skyhawks",
+"UT Martin"
+]
+],
+[
+19089,
+"Chicago State Cougars",
+[
+"Cougars",
+"Chicago St"
+]
+],
+[
+19149,
+"Lafayette Leopards",
+[
+"Leopards",
+"Lafayette"
+]
+],
+[
+19150,
+"Northwestern State Demons",
+[
+"N'Western St",
+"Demons"
+]
+],
+[
+19151,
+"Valparaiso Beacons",
+[
+"Beacons",
+"Valparaiso"
+]
+],
+[
+19152,
+"Duquesne Dukes",
+[]
+],
+[
+19153,
+"Charleston Southern Buccaneers",
+[]
+],
+[
+19154,
+"Eastern Illinois Panthers",
+[
+"Panthers",
+"E Illinois"
+]
+],
+[
+19155,
+"Furman Paladins",
+[
+"Furman",
+"Paladins"
+]
+],
+[
+19156,
+"Hampton Pirates",
+[
+"Hampton",
+"Pirates"
+]
+],
+[
+19157,
+"Austin Peay Governors",
+[
+"Governors",
+"Austin Peay"
+]
+],
+[
+19158,
+"Murray State Racers",
+[
+"Racers",
+"Murray St"
+]
+],
+[
+19159,
+"Maine Black Bears",
+[
+"Maine",
+"Black Bears"
+]
+],
+[
+19160,
+"Youngstown St Penguins",
+[
+"Youngstown State Penguins",
+"Penguins",
+"Youngstown St"
+]
+],
+[
+19161,
+"LIU Sharks",
+[]
+],
+[
+19162,
+"Morehead State Eagles",
+[]
+],
+[
+19163,
+"Incarnate Word Cardinals",
+[]
+],
+[
+19164,
+"UT Rio Grande Valley Vaqueros",
+[]
+],
+[
+19165,
+"Nicholls State Colonels",
+[
+"Nicholls Colonels",
+"Nicholls",
+"Colonels"
+]
+],
+[
+19166,
+"Arkansas Pine Bluff Golden Lions",
+[]
+],
+[
+19167,
+"Alcorn State Braves",
+[
+"Braves",
+"Alcorn St"
+]
+],
+[
+19177,
+"Southeastern Louisiana Lions",
+[
+"Lions",
+"SE Louisiana Lions",
+"SE Louisiana"
+]
+],
+[
+19283,
+"Dartmouth Big Green",
+[
+"Dartmouth",
+"Big Green"
+]
+],
+[
+19284,
+"Harvard Crimson",
+[]
+],
+[
+19285,
+"Central Arkansas Bears",
+[]
+],
+[
+19286,
+"West Georgia Wolves",
+[]
+],
+[
+19287,
+"Towson Tigers",
+[
+"Towson",
+"Tigers"
+]
+],
+[
+19288,
+"Yale University Bulldogs",
+[
+"Bulldogs",
+"Yale",
+"Yale Bulldogs"
+]
+],
+[
+19289,
+"Cornell Big Red",
+[
+"Big Red",
+"Cornell"
+]
+],
+[
+19290,
+"Dayton Flyers",
+[]
+],
+[
+19291,
+"Norfolk State Spartans",
+[
+"Spartans",
+"Norfolk St"
+]
+],
+[
+19292,
+"Pennsylvania Quakers",
+[
+"Quakers",
+"Penn"
+]
+],
+[
+19293,
+"Houston Baptist Huskies",
+[]
+],
+[
+19739,
+"Mississippi Valley State Delta Devils",
+[
+"Miss Valley St",
+"Delta Devils"
+]
+],
+[
+19774,
+"Delaware State Hornets",
+[
+"Delaware St",
+"Hornets"
+]
+],
+[
+19775,
+"Davidson Wildcats",
+[
+"Davidson",
+"Wildcats"
+]
+],
+[
+19776,
+"Drake Bulldogs",
+[
+"Bulldogs",
+"Drake"
+]
+],
+[
+19777,
+"Butler Bulldogs",
+[
+"Butler",
+"Bulldogs"
+]
+],
+[
+19778,
+"Columbia Lions",
+[
+"Columbia",
+"Lions"
+]
+],
+[
+19779,
+"Grambling State Tigers",
+[
+"Grambling Tigers",
+"Tigers",
+"Grambling"
+]
+],
+[
+19780,
+"Bethune-Cookman Wildcats",
+[]
+],
+[
+19781,
+"South Carolina State Bulldogs",
+[]
+],
+[
+19783,
+"West Florida Argonauts",
+[
+"Argonauts",
+"West Florida"
+]
+]
+],
+"legs": [
+[
+222298526,
+"Montana St.",
+null
+],
+[
+222298527,
+"South Dakota St.",
+19272
+],
+[
+222298528,
+"UC Davis",
+19133
+],
+[
+222298529,
+"Montana",
+19273
+],
+[
+222298530,
+"Illinois St.",
+null
+],
+[
+222298531,
+"Tarleton St.",
+17114
+],
+[
+222298532,
+"Rhode Island",
+17122
+],
+[
+222298533,
+"Villanova",
+null
+],
+[
+222298534,
+"Youngstown St.",
+17073
+],
+[
+222298535,
+"Lehigh",
+null
+],
+[
+225952114,
+"South Dakota",
+19272
+],
+[
+225952115,
+"North Dakota",
+15346
+],
+[
+225952119,
+"Tennessee Tech",
+15937
+],
+[
+225952120,
+"Austin Peay",
+17166
+],
+[
+225952121,
+"Lamar",
+null
+],
+[
+225952122,
+"Mercer",
+null
+],
+[
+225952123,
+"Stephen F. Austin",
+null
+],
+[
+225952126,
+"Yale",
+null
+],
+[
+225952129,
+"William & Mary",
+19714
+],
+[
+225952130,
+"Northern Arizona",
+17069
+],
+[
+225952131,
+"Abilene Christian",
+17068
+],
+[
+225952132,
+"Monmouth",
+19113
+],
+[
+225952133,
+"Richmond",
+19077
+],
+[
+225952134,
+"South Carolina St.",
+15295
+],
+[
+225952135,
+"Southern Illinois",
+null
+],
+[
+225952136,
+"Western Carolina",
+19121
+],
+[
+225952137,
+"Alabama A&M",
+null
+],
+[
+225952138,
+"Alabama St.",
+null
+],
+[
+225952139,
+"Cal Poly",
+19076
+],
+[
+225952140,
+"Campbell",
+19115
+],
+[
+225952141,
+"Central Arkansas",
+15938
+],
+[
+225952142,
+"Chattanooga",
+null
+],
+[
+225952143,
+"Delaware St.",
+17111
+],
+[
+225952144,
+"Elon",
+null
+],
+[
+225952145,
+"Furman",
+17024
+],
+[
+225952146,
+"Houston Christian",
+17172
+],
+[
+225952147,
+"Idaho St.",
+17175
+],
+[
+225952148,
+"Incarnate Word",
+19715
+],
+[
+225952149,
+"Maine",
+17167
+],
+[
+225952150,
+"West Florida",
+null
+],
+[
+225952151,
+"Northern Iowa",
+19269
+],
+[
+225952152,
+"Southeast Missouri St.",
+null
+],
+[
+225952153,
+"Southeastern Louisiana",
+null
+],
+[
+225952154,
+"Southern Utah",
+19112
+],
+[
+225952155,
+"Tennessee-Martin",
+15937
+],
+[
+225952156,
+"UT Rio Grande Valley",
+17236
+],
+[
+225952157,
+"Wofford",
+null
+],
+[
+225952158,
+"Alcorn St.",
+17164
+],
+[
+225952159,
+"Arkansas-Pine Bluff",
+null
+],
+[
+225952160,
+"Bethune-Cookman",
+17027
+],
+[
+225952161,
+"Brown",
+null
+],
+[
+225952162,
+"Bryant",
+null
+],
+[
+225952163,
+"Bucknell",
+19771
+],
+[
+225952164,
+"Butler",
+null
+],
+[
+225952165,
+"Central Connecticut St.",
+null
+],
+[
+225952166,
+"Charleston Southern",
+null
+],
+[
+225952167,
+"Colgate",
+null
+],
+[
+225952168,
+"Columbia",
+null
+],
+[
+225952169,
+"Cornell",
+null
+],
+[
+225952170,
+"Dartmouth",
+null
+],
+[
+225952171,
+"Davidson",
+null
+],
+[
+225952172,
+"Dayton",
+null
+],
+[
+225952173,
+"Drake",
+null
+],
+[
+225952174,
+"Duquesne",
+17113
+],
+[
+225952175,
+"East Tennessee St.",
+null
+],
+[
+225952176,
+"East Texas A&M",
+15313
+],
+[
+225952177,
+"Eastern Illinois",
+null
+],
+[
+225952178,
+"Eastern Kentucky",
+17171
+],
+[
+225952179,
+"Eastern Washington",
+15301
+],
+[
+225952180,
+"Florida A&M",
+19078
+],
+[
+225952181,
+"Fordham",
+17123
+],
+[
+225952182,
+"Gardner-Webb",
+19117
+],
+[
+225952183,
+"Georgetown",
+null
+],
+[
+225952184,
+"Grambling St.",
+null
+],
+[
+225952185,
+"Hampton",
+17912
+],
+[
+225952186,
+"Harvard",
+null
+],
+[
+225952187,
+"Holy Cross",
+19111
+],
+[
+225952188,
+"Howard",
+19119
+],
+[
+225952189,
+"Idaho",
+17023
+],
+[
+225952190,
+"Indiana St.",
+17070
+],
+[
+225952191,
+"Jackson St.",
+null
+],
+[
+225952192,
+"LIU",
+null
+],
+[
+225952193,
+"Lafayette",
+17115
+],
+[
+225952194,
+"Lindenwood",
+19129
+],
+[
+225952195,
+"Marist",
+null
+],
+[
+225952196,
+"McNeese",
+null
+],
+[
+225952197,
+"Mercyhurst",
+17174
+],
+[
+225952198,
+"Merrimack",
+17112
+],
+[
+225952199,
+"Mississippi Valley St.",
+null
+],
+[
+225952200,
+"Morehead St.",
+null
+],
+[
+225952201,
+"Morgan St.",
+null
+],
+[
+225952202,
+"Murray St.",
+17176
+],
+[
+225952203,
+"New Hampshire",
+17072
+],
+[
+225952204,
+"New Haven",
+null
+],
+[
+225952205,
+"Nicholls St.",
+17180
+],
+[
+225952206,
+"Norfolk St.",
+null
+],
+[
+225952207,
+"North Alabama",
+17078
+],
+[
+225952208,
+"North Carolina A&T",
+6
+],
+[
+225952209,
+"North Carolina Central",
+6
+],
+[
+225952210,
+"Northern Colorado",
+null
+],
+[
+225952211,
+"Northwestern St.",
+19683
+],
+[
+225952212,
+"Penn",
+null
+],
+[
+225952213,
+"Portland St.",
+17186
+],
+[
+225952214,
+"Prairie View A&M",
+19116
+],
+[
+225952215,
+"Presbyterian",
+null
+],
+[
+225952216,
+"Princeton",
+null
+],
+[
+225952217,
+"Robert Morris",
+19123
+],
+[
+225952218,
+"Chicago St.",
+null
+],
+[
+225952219,
+"Sacred Heart",
+19120
+],
+[
+225952220,
+"Samford",
+null
+],
+[
+225952221,
+"San Diego",
+19767
+],
+[
+225952222,
+"Southern University",
+19126
+],
+[
+225952223,
+"St. Thomas",
+null
+],
+[
+225952224,
+"Stetson",
+null
+],
+[
+225952225,
+"Stonehill",
+19271
+],
+[
+225952226,
+"Stony Brook",
+19103
+],
+[
+225952227,
+"Tennessee St.",
+null
+],
+[
+225952228,
+"Texas Southern",
+19118
+],
+[
+225952229,
+"The Citadel",
+null
+],
+[
+225952230,
+"Towson",
+null
+],
+[
+225952231,
+"University at Albany",
+null
+],
+[
+225952232,
+"Utah Tech",
+17185
+],
+[
+225952233,
+"VMI",
+null
+],
+[
+225952234,
+"Valparaiso",
+null
+],
+[
+225952235,
+"Wagner",
+19124
+],
+[
+225952236,
+"Weber St.",
+null
+],
+[
+225952237,
+"West Georgia",
+17109
+],
+[
+225952238,
+"Western Illinois",
+null
+]
+],
+"expected": {
+"Abilene Christian": "Abilene Christian Wildcats",
+"Alabama A&M": "Alabama A&M Bulldogs",
+"Alabama St.": "Alabama State Hornets",
+"Alcorn St.": "Alcorn State Braves",
+"Arkansas-Pine Bluff": "Arkansas Pine Bluff Golden Lions",
+"Austin Peay": "Austin Peay Governors",
+"Bethune-Cookman": "Bethune-Cookman Wildcats",
+"Brown": null,
+"Bryant": "Bryant Bulldogs",
+"Bucknell": "Bucknell Bison",
+"Butler": "Butler Bulldogs",
+"Cal Poly": "Cal Poly Mustangs",
+"Campbell": "Campbell Fighting Camels",
+"Central Arkansas": "Central Arkansas Bears",
+"Central Connecticut St.": "Central Connecticut Blue Devils",
+"Charleston Southern": "Charleston Southern Buccaneers",
+"Chattanooga": "Chattanooga Mocs",
+"Chicago St.": "Chicago State Cougars",
+"Colgate": "Colgate Raiders",
+"Columbia": "Columbia Lions",
+"Cornell": "Cornell Big Red",
+"Dartmouth": "Dartmouth Big Green",
+"Davidson": "Davidson Wildcats",
+"Dayton": "Dayton Flyers",
+"Delaware St.": "Delaware State Hornets",
+"Drake": "Drake Bulldogs",
+"Duquesne": "Duquesne Dukes",
+"East Tennessee St.": "East Tennessee State Buccaneers",
+"East Texas A&M": "East Texas A&M Lions",
+"Eastern Illinois": "Eastern Illinois Panthers",
+"Eastern Kentucky": "Eastern Kentucky Colonels",
+"Eastern Washington": "Eastern Washington Eagles",
+"Elon": "Elon Phoenix",
+"Florida A&M": "Florida A&M Rattlers",
+"Fordham": "Fordham Rams",
+"Furman": "Furman Paladins",
+"Gardner-Webb": "Gardner-Webb Runnin Bulldogs",
+"Georgetown": "Georgetown Hoyas",
+"Grambling St.": "Grambling State Tigers",
+"Hampton": "Hampton Pirates",
+"Harvard": "Harvard Crimson",
+"Holy Cross": "Holy Cross Crusaders",
+"Houston Christian": "Houston Baptist Huskies",
+"Howard": "Howard Bison",
+"Idaho": "Idaho Vandals",
+"Idaho St.": "Idaho State Bengals",
+"Illinois St.": "Illinois State Redbirds",
+"Incarnate Word": "Incarnate Word Cardinals",
+"Indiana St.": "Indiana State Sycamores",
+"Jackson St.": "Jackson State Tigers",
+"LIU": "LIU Sharks",
+"Lafayette": "Lafayette Leopards",
+"Lamar": "Lamar Cardinals",
+"Lehigh": "Lehigh Mountain Hawks",
+"Lindenwood": "Lindenwood Lions",
+"Maine": "Maine Black Bears",
+"Marist": "Marist Red Foxes",
+"McNeese": "McNeese State Cowboys",
+"Mercer": "Mercer Bears",
+"Mercyhurst": null,
+"Merrimack": "Merrimack Warriors",
+"Mississippi Valley St.": "Mississippi Valley State Delta Devils",
+"Monmouth": "Monmouth Hawks",
+"Montana": "Montana Grizzlies",
+"Montana St.": "Montana State Bobcats",
+"Morehead St.": "Morehead State Eagles",
+"Morgan St.": "Morgan State Bears",
+"Murray St.": "Murray State Racers",
+"New Hampshire": "New Hampshire Wildcats",
+"New Haven": "New Haven Chargers",
+"Nicholls St.": "Nicholls State Colonels",
+"Norfolk St.": "Norfolk State Spartans",
+"North Alabama": "North Alabama Lions",
+"North Carolina A&T": "North Carolina A&T Aggies",
+"North Carolina Central": "North Carolina Central Eagles",
+"North Dakota": "North Dakota Fighting Hawks",
+"Northern Arizona": "Northern Arizona Lumberjacks",
+"Northern Colorado": "Northern Colorado Bears",
+"Northern Iowa": "Northern Iowa Panthers",
+"Northwestern St.": "Northwestern State Demons",
+"Penn": "Pennsylvania Quakers",
+"Portland St.": "Portland State Vikings",
+"Prairie View A&M": "Prairie View A&M Panthers",
+"Presbyterian": "Presbyterian College Blue Hose",
+"Princeton": null,
+"Rhode Island": "Rhode Island Rams",
+"Richmond": "Richmond Spiders",
+"Robert Morris": "Robert Morris Colonials",
+"Sacred Heart": "Sacred Heart Pioneers",
+"Samford": "Samford Bulldogs",
+"San Diego": "San Diego Toreros",
+"South Carolina St.": "South Carolina State Bulldogs",
+"South Dakota": "South Dakota Coyotes",
+"South Dakota St.": "South Dakota State Jackrabbits",
+"Southeast Missouri St.": "Southeast Missouri State Redhawks",
+"Southeastern Louisiana": "Southeastern Louisiana Lions",
+"Southern Illinois": "Southern Illinois Salukis",
+"Southern University": "Southern University Jaguars",
+"Southern Utah": "Southern Utah Thunderbirds",
+"St. Thomas": "St. Thomas (MN) Tommies",
+"Stephen F. Austin": "Stephen F. Austin Lumberjacks",
+"Stetson": "Stetson Hatters",
+"Stonehill": "Stonehill Skyhawks",
+"Stony Brook": "Stony Brook Seawolves",
+"Tarleton St.": "Tarleton State Texans",
+"Tennessee St.": "Tennessee State Tigers",
+"Tennessee Tech": "Tennessee Tech Golden Eagles",
+"Tennessee-Martin": "UT Martin Skyhawks",
+"Texas Southern": "Texas Southern Tigers",
+"The Citadel": "Citadel Bulldogs",
+"Towson": "Towson Tigers",
+"UC Davis": "UC Davis Aggies",
+"UT Rio Grande Valley": "UT Rio Grande Valley Vaqueros",
+"University at Albany": "Albany",
+"Utah Tech": "Utah Tech Trailblazers",
+"VMI": "VMI Keydets",
+"Valparaiso": "Valparaiso Beacons",
+"Villanova": "Villanova Wildcats",
+"Wagner": "Wagner Seahawks",
+"Weber St.": "Weber State Wildcats",
+"West Florida": "West Florida Argonauts",
+"West Georgia": "West Georgia Wolves",
+"Western Carolina": "Western Carolina Catamounts",
+"Western Illinois": "Western Illinois Leathernecks",
+"William & Mary": "William and Mary Tribe",
+"Wofford": "Wofford Terriers",
+"Yale": "Yale University Bulldogs",
+"Youngstown St.": "Youngstown St Penguins"
+}
+}

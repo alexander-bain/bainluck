@@ -10,6 +10,7 @@ No test here reaches the network: the ESPN wire is a MockTransport, and the
 schedule tests stub both fetches.
 """
 
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -59,11 +60,17 @@ def test_espn_in_play_makes_the_presidents_cup_live():
     assert _golf_status({**out, "schedule_status": out["status"]}) == "live"
 
 
+# The instant the defect was served (docstring). `_golf_status` falls back to the
+# schedule dates, so an unpinned clock reads this entry as settled once its end
+# date is behind today (the control went red at 2026-09-29 00:00Z).
+_SERVED_AT = datetime(2026, 9, 25, 7, 35, tzinfo=timezone.utc)
+
+
 def test_control_without_espn_the_same_entry_stays_upcoming():
     # The defect as served: DataGolf's `upcoming` inside its own dates.
     entry = _entry()
     assert _status_after(entry, {}) == "upcoming"
-    assert _golf_status({**entry, "schedule_status": entry["status"]}) == "upcoming"
+    assert _golf_status({**entry, "schedule_status": entry["status"]}, now=_SERVED_AT) == "upcoming"
 
 
 def test_dp_world_board_is_espn_eur_and_schedule_euro():
@@ -228,6 +235,7 @@ async def test_golf_scoreboard_parses_espns_shape(espn_state):
         "end": "2026-09-27T04:00Z",
         "state": "in",
         "status": "STATUS_IN_PROGRESS",
+        "champion": None,  # #9212: only a STATUS_FINAL names one
     }]
 
 

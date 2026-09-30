@@ -20,6 +20,7 @@ from sqlalchemy.orm import selectinload
 from app.models import FuturesMarket, FuturesOddsSnapshot, FuturesOutcome
 from app.services import get_db
 from app.utils.cross_source_matching import group_markets_by_group_id
+from app.utils.ladder_headline import ladder_median_row
 from app.utils.market_staleness import should_exclude_from_featured, is_title_implied_stale
 
 logger = logging.getLogger(__name__)
@@ -294,12 +295,22 @@ _TEMP_MARKET_RE = re.compile(
 )
 
 
+#: Every alias as a whole word, longest first (#9255). A bare substring test
+#: filed "Manila", "Dallas", "Atlanta", "Milan", "Kuala Lumpur", "Las Vegas",
+#: "Oklahoma City" and "Philadelphia" under the 2-letter alias "la", so the Los
+#: Angeles pin served Manila's ladder and those eight cities never reached the
+#: map. Longest first so "washington dc" wins over "washington".
+_CITY_ALIAS_RES: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"(?<![a-z])" + re.escape(alias) + r"(?![a-z])"), city_id)
+    for alias, city_id in sorted(_CITY_ALIASES.items(), key=lambda kv: -len(kv[0]))
+]
+
+
 def _resolve_city(name: str) -> str | None:
     """Try to extract and resolve a city name from a market name to a canonical city id."""
     name_lower = name.lower()
-    # Direct alias match
-    for alias, city_id in _CITY_ALIASES.items():
-        if alias in name_lower:
+    for pattern, city_id in _CITY_ALIAS_RES:
+        if pattern.search(name_lower):
             return city_id
     return None
 
@@ -344,10 +355,10 @@ _CLIMATE_RE = re.compile(
     r"\b(?:hottest|climate|CO2|EV|2030|2050)\b", re.I,
 )
 
-# Wildcard keywords
-_WILDCARD_RE = re.compile(
-    r"\b(?:volcano|supervolcano|arctic|solar)\b", re.I,
-)
+# Wildcard keywords. ONE list: get_wildcards selects on it and get_climate
+# declines it, so a volcano question renders once, on Wild Cards (#6983).
+_WILDCARD_TERMS = ("volcano", "arctic", "solar")
+_WILDCARD_RE = re.compile("|".join(_WILDCARD_TERMS), re.I)
 
 # Health/pandemic keywords — these are NOT weather/climate markets even if
 # the LLM tagged them as llm_sport_category="weather"
@@ -520,11 +531,51 @@ def _card_outcome(market: FuturesMarket):
         if nyc is not None and nyc.current_probability is not None:
             return nyc
 
+    rung = _ladder_median_rung(market)
+    if rung is not None:
+        return rung
+
     leader = _leader_outcome(market)
     if leader is None or not _prices_the_negation(leader):
         return leader
 
     return _best_non_negated_outcome(market) or leader
+
+
+def _ladder_median_rung(market: FuturesMarket):
+    """The tightest rung a cumulative ladder still calls likely, or None.
+
+    A cumulative ladder's dearest leg is its LOOSEST rung by arithmetic — every
+    storm that reaches Category 5 also reached Category 1 — so the leader scan
+    quotes the least informative answer the market holds. Production,
+    2026-09-28, `/weather` "Hurricane markets" (#9283):
+
+        Hurricane Polo category?   100%  Category 1 or above
+        How strong will Hurricane Polo be?  98%  Category 5
+
+    Kalshi prices Polo's "Category 5 or above" rung at 99.5% too; the card
+    picked Category 1 because it came first in a five-way tie. Nolo read "100%
+    Category 1 or above" over a 83.5% "Category 4 or above" rung, and the ski
+    resorts read "opens before Jan 10: 94%" where the market says "before
+    Dec 13: 66%".
+
+    So on a ladder the card is about the median: walk the priced rungs from the
+    loosest, keep going while each is still >= 50%, and quote the last one. The
+    walk stops at the first rung under 50% rather than jumping to any later rung
+    over it, so an incoherent ladder (1+ 90%, 2+ 30%, 3+ 60%) can never be read
+    as "3+ is likely" over a rung that says it is not. Unpriced rungs take no
+    part. When even the loosest priced rung is under 50% there is no median to
+    quote and this returns None — the ordinary leader stands, unchanged.
+
+    The walk lives in `app.utils.ladder_headline` since #9531, so the market
+    page this card links to quotes the same rung.
+    """
+    row = ladder_median_row(
+        [{"name": o.name, "outcome": o} for o in (market.outcomes or [])],
+        question=market.name,
+        probability=lambda r: r["outcome"].current_probability,
+    )
+    return row["outcome"] if row is not None else None
 
 
 def _card_probability(market: FuturesMarket) -> float:
@@ -1059,6 +1110,8 @@ async def get_cities(db: AsyncSession):
         for d in dist:
             del d["_sort"]
 
+        await _squeeze_like_the_market_page(db, chosen, dist)
+
         # Extract numeric mode value from label (e.g., "50-55°F" -> 52.5)
         mode_val = _extract_mode_value(mode_label)
         expected_unit = "F" if city_id in _FAHRENHEIT_CITIES else "C"
@@ -1129,6 +1182,7 @@ async def get_cities(db: AsyncSession):
         for m in mkts:
             sources.add(_market_source(m))
 
+        day = _temperature_day(chosen)
         cities.append({
             "id": city_id,
             "name": info["name"],
@@ -1138,7 +1192,13 @@ async def get_cities(db: AsyncSession):
             "x": info["x"],
             "y": info["y"],
             "srcs": sorted(sources),
+            # The venue whose ladder this card draws (#9260). `srcs` is every
+            # venue quoting the city, sorted, so its first entry is not it.
+            "src": _market_source(chosen),
             "marketId": chosen.id,
+            # The day this city's ladder is about, `YYYY-MM-DD`, or None.
+            # The map labels its date from this and nothing else (#8046).
+            "iso": day.isoformat() if day else None,
             "high": {
                 "unit": unit,
                 "mode": mode_val,
@@ -1147,6 +1207,54 @@ async def get_cities(db: AsyncSession):
         })
 
     return cities
+
+
+async def _squeeze_like_the_market_page(
+    db: AsyncSession, market: FuturesMarket, dist: list[dict]
+) -> None:
+    """Print each city ladder on the scale its own market page prints (#8046).
+
+    WHAT A READER SAW, 2026-09-28 00:3xZ. The Houston panel read "90-91°F 46%";
+    its "View probability timeline →" link — the only link on the card — opened
+    `/futures/62721461`, which answered the same bucket 39%. The ladder summed to
+    116.9%; the page summed to 100.0%. Six of 48 cities disagreed that way
+    (Houston, Miami, Toronto, Seattle, Phoenix, Taipei), every one on a page
+    summing to exactly 1.000.
+
+    The page runs `normalize_display_probs` (the #23 squeeze) and this card never
+    did. Same helper, same arguments, same gate — so the squeeze fires on the card
+    exactly when it fires on the page, and a coherent 1.02 ladder the page prints
+    raw stays raw here too. Not a fork of its thresholds.
+
+    ``field_complete`` is asked of `_page_withheld_outcome_ids`, the refusal a
+    reader meets on the market's own page (#7103: a withheld leg turns the squeeze
+    OFF there). This card still draws every bucket's bar, so it only borrows the
+    GATE — it does not null the legs. If the refusal read raises, the ladder keeps
+    its raw prices: one board's error never takes the map down (gotcha #42), and
+    raw is what this card served before.
+
+    `mode` is untouched on purpose: it is an argmax over the raw prices, and one
+    divisor never moves an argmax.
+    """
+    from app.routes.league_futures import _page_withheld_outcome_ids
+    from app.utils.outcome_display import normalize_display_probs
+
+    try:
+        withheld = await _page_withheld_outcome_ids(db, market)
+    except Exception:
+        logger.warning(
+            "weather cities: withheld read failed for market %s — ladder stays raw",
+            getattr(market, "id", None),
+            exc_info=True,
+        )
+        return
+    if normalize_display_probs(
+        dist,
+        mutually_exclusive=getattr(market, "mutually_exclusive", True),
+        field_complete=not withheld,
+    ):
+        for d in dist:
+            d["prob"] = round(float(d["probability"] or 0) * 100)
 
 
 # A bucket's temperatures, with the degree marker that says which scale they
@@ -1503,6 +1611,42 @@ def _rain_day(market: FuturesMarket) -> Optional[date]:
     return None
 
 
+#: Polymarket names its temperature day without a year:
+#: "Highest temperature in Tokyo on September 29?".
+_NAME_DAY_NO_YEAR_RE = re.compile(r"\bon\s+([A-Za-z]{3})[a-z]*\s+(\d{1,2})\b(?!,\s*\d{4})")
+
+
+def _temperature_day(market: FuturesMarket) -> Optional[date]:
+    """The day a city's high-temperature market is ABOUT, or None (#8046 Half B).
+
+    Same readings as `_rain_day` (ticker first, then a dated name), plus the
+    year-less Polymarket name, whose year is taken from the market's own
+    `resolution_date` — the one within half a year of it, so a December
+    question settling in January keeps its year. Never the reader's clock:
+    the map used to print `new Date() + 1` over 48 pins spread across three
+    different days.
+    """
+    day = _rain_day(market)
+    if day is not None:
+        return day
+    m = _NAME_DAY_NO_YEAR_RE.search(market.name or "")
+    if not m or market.resolution_date is None:
+        return None
+    month = _MONTH_ABBR.get(m.group(1).upper())
+    if not month:
+        return None
+    anchor = market.resolution_date.date()
+    candidates = []
+    for year in (anchor.year - 1, anchor.year, anchor.year + 1):
+        try:
+            candidates.append(date(year, month, int(m.group(2))))
+        except ValueError:
+            continue
+    if not candidates:
+        return None
+    return min(candidates, key=lambda d: abs((d - anchor).days))
+
+
 #: The venue's own key for the New York City leg of a daily KXRAIN event
 #: (`KXRAIN-26SEP06-NYC`). Preferred over the outcome's display name, which is
 #: prose and can be re-worded upstream without notice.
@@ -1654,6 +1798,9 @@ async def get_events(db: AsyncSession):
             "leader": _leader_outcome_name(m),
             "src": _market_source(m),
             "closes": _format_closes(m.resolution_date),
+            # The row's own market (#9478), the same id /featured serves, so a
+            # tap opens /futures/{market_id} instead of going nowhere.
+            "market_id": m.id,
             "_res_date": m.resolution_date,
         }
         name = m.name
@@ -1730,30 +1877,71 @@ async def get_climate(db: AsyncSession):
             continue
         if _EXCLUDE_RE.search(m.name):
             continue
+        # Owned by another card on the same page (#6983): the California
+        # 8.0 quake printed 14% under Seismic activity AND under climate's
+        # "This year"; "Will a supervolcano erupt before 2050?" under 2050
+        # AND on Wild Cards. Earthquakes aren't climate; each renders once.
+        if _EARTHQUAKE_RE.search(m.name) or _WILDCARD_RE.search(m.name):
+            continue
         dedup_key = m.name.lower().strip()
         if dedup_key in seen_names:
             continue
         seen_names.add(dedup_key)
-        scale = _classify_scale(m)
+        scale = _classify_scale(m, now)
         items.append({
             "q": m.name,
             "prob": _card_prob(m),
             # The raw twin of `prob` (#6616).
             "probability": _card_probability(m),
+            # Which outcome `prob` prices (#9289). The climate card was the one
+            # /weather card still printing a bare number: "EV market share in
+            # 2030? — 84%" is 84% of "Above 10%", and "How low will Lake Powell
+            # drop? — 70%" names no level at all. Same field, same rule as the
+            # events, wildcards and hero cards; None when the question answers
+            # itself.
+            "leader": _leader_outcome_name(m),
             "src": _market_source(m),
             "closes": _format_closes(m.resolution_date),
+            # See get_events (#9478).
+            "market_id": m.id,
             "scale": scale,
+            "_res_date": (
+                m.resolution_date.replace(tzinfo=timezone.utc)
+                if m.resolution_date and m.resolution_date.tzinfo is None
+                else m.resolution_date
+            ),
         })
 
-    # Sort: current year first, then by date
+    # Horizon first, then soonest-resolving first. The key was `closes`, the
+    # "Fri, Apr 16" display string, so every column sorted by weekday name
+    # (Fri, Mon, Thu, Tue, Wed) and a 2028 market sat above eight that settle
+    # before it (#6983). Undated rows go last.
     scale_order = {"2026": 0, "2030": 1, "2050": 2}
-    items.sort(key=lambda x: (scale_order.get(x["scale"], 99), x["closes"] or ""))
+    items.sort(key=lambda x: (
+        scale_order.get(x["scale"], 99),
+        x["_res_date"] is None,
+        x["_res_date"] or now,
+    ))
+    for item in items:
+        item.pop("_res_date", None)
 
     return items
 
 
-def _classify_scale(market: FuturesMarket) -> str:
-    """Classify a climate market into a time scale bucket."""
+# The first column reads "2026 · Next 12 months"; a market settling later
+# than this has not earned it (#6983).
+_CLIMATE_NEAR_HORIZON_DAYS = 365
+
+
+def _classify_scale(market: FuturesMarket, now: datetime) -> str:
+    """Classify a climate market into a time scale bucket.
+
+    "2026" is a HORIZON, not a fallthrough: it holds only markets settling
+    within a year of ``now``. It used to take everything that was neither
+    2030 nor 2050, so "...earthquake in California before 2028?" (resolves
+    2028-12-31) was printed under "This year" (#6983). A market due later
+    than a year out but before 2030 settles by the end of the decade.
+    """
     name = market.name
     if re.search(r"\b2050\b", name):
         return "2050"
@@ -1765,6 +1953,11 @@ def _classify_scale(market: FuturesMarket) -> str:
         if year >= 2050:
             return "2050"
         if year >= 2030:
+            return "2030"
+        res = market.resolution_date
+        if res.tzinfo is None:
+            res = res.replace(tzinfo=timezone.utc)
+        if res > now + timedelta(days=_CLIMATE_NEAR_HORIZON_DAYS):
             return "2030"
     return "2026"
 
@@ -1786,10 +1979,7 @@ async def get_wildcards(db: AsyncSession):
     """Build wildcards response from database."""
     query = _open_weather_query().where(
         or_(
-            FuturesMarket.name.ilike("%volcano%"),
-            FuturesMarket.name.ilike("%supervolcano%"),
-            FuturesMarket.name.ilike("%arctic%"),
-            FuturesMarket.name.ilike("%solar%"),
+            *(FuturesMarket.name.ilike(f"%{term}%") for term in _WILDCARD_TERMS)
         )
     )
     result = await db.execute(query)
@@ -1821,7 +2011,13 @@ async def get_wildcards(db: AsyncSession):
             "leader": _leader_outcome_name(m),
             "src": _market_source(m),
             "closes": _format_closes(m.resolution_date),
-            "tag": _derive_tag(m.name),
+            # Membership above is a substring match; `_derive_tag` is
+            # word-bounded, so "supervolcano" got in and was labelled
+            # "Weather" beside its siblings (#3134). This row's framing is
+            # the route's, not a title guess.
+            "tag": "Wild card",
+            # See get_events (#9478).
+            "market_id": m.id,
         })
 
     items.sort(key=lambda x: x["prob"], reverse=True)

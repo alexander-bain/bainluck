@@ -35,7 +35,7 @@ START?* — because both nets measure elapsed time from ``commence_time`` and
 neither ever asked whether that field held a start anybody reported. See
 ``commence_time_is_a_reported_start``.
 """
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from app.utils.sport_keys import statpal_anchor_is_shadow
@@ -112,6 +112,23 @@ KALSHI_OCCURRENCE_COMMENCE_SOURCE = "kalshi_occurrence"
 #: 3h-after-the-whistle defect (above) is not shared: that field is a settlement
 #: backstop wearing a start's name, this one is the start.
 POLYMARKET_VENUE_COMMENCE_SOURCE = "polymarket_venue"
+
+#: #9827. The instant a Kalshi esports ticker names in its HHMM — the one field
+#: Kalshi publishes that IS a start. `KXCS2GAME-26OCT010630PSNAREV` reads 06:30
+#: US Eastern, 10:30Z, and Polymarket's `gameStartTime` for the same match says
+#: 10:30Z too.
+#:
+#: Named apart from BOTH of its neighbours, because each would be a lie here:
+#: ``kalshi_ticker`` is a DATE resolved to midnight (a stand-in, and in
+#: ``DERIVED_COMMENCE_SOURCES``), and ``kalshi`` is ``occurrence_datetime``, the
+#: expected expiration that every reader in ``KALSHI_OCCURRENCE_TIMED_SOURCES``
+#: treats as the far end of the contest. Measured on production 2026-09-30: of
+#: the Kalshi esports rows minted in 10 days, 404 sat exactly +4.00h after their
+#: ticker's instant and none at 0 — the rows went LIVE as the match ended.
+#:
+#: A published time of day, so a clock may run from it (not derived), and a
+#: market's word, so it is market-born and ranks with ``kalshi``.
+KALSHI_TICKER_TIME_COMMENCE_SOURCE = "kalshi_ticker_time"
 
 
 def commence_time_is_a_reported_start(commence_time_source) -> bool:
@@ -254,6 +271,365 @@ def odds_api_listing_withdrawn(
     if listing_last_seen is None or sport_last_seen is None:
         return False
     return sport_last_seen - listing_last_seen >= WITHDRAWN_LISTING_GAP
+
+
+# ── A VENUE STAMP DOES NOT START A MATCH OUR SCHEDULE PUTS LATER (#9588) ──────
+#
+#: The market stamps that name no start. ``kalshi`` is a Kalshi market's own
+#: ``commence_time`` (gotcha #14: a close/expiry time), ``kalshi_occurrence`` is
+#: the settlement backstop #5905 measured, and ``polymarket`` is Gamma's
+#: ``startDate`` listing stamp (``tasks.polymarket.LISTING_COMMENCE_SOURCE``).
+#: ``polymarket_venue`` is deliberately absent: Gamma's ``startTime`` is the
+#: fixture instant (#6073), and on 2026-09-29 it put Chengdu doubles 15320657 on
+#: court while StatPal still said three hours later. ``kalshi_ticker`` is absent
+#: because ``commence_time_is_a_reported_start`` already holds it.
+VENUE_STAMP_COMMENCE_SOURCES = frozenset({
+    "kalshi",
+    KALSHI_OCCURRENCE_COMMENCE_SOURCE,
+    "polymarket",
+})
+
+#: How far StatPal's start must sit after the row's own before the two count as
+#: a disagreement. A lesser gap is two readings of one session and is left to
+#: the clock. It is also the band the census below was taken on.
+STATPAL_LATER_SESSION_MARGIN = timedelta(hours=1)
+
+#: StatPal's start as ``link_tennis_statpal_fixtures`` recorded it on the anchor
+#: (``claim_context.statpal_start_time``). Keyed by event, and filtered to the
+#: row's CURRENT fixture in Python (:func:`statpal_start_from_anchors`), so an
+#: anchor for a fixture the row no longer carries says nothing.
+STATPAL_SCHEDULED_START_SQL = """
+    SELECT a.event_id,
+           a.source_id,
+           a.first_seen_at,
+           a.claim_context->>'statpal_start_time' AS statpal_start_time
+    FROM event_provider_anchors a
+    WHERE a.event_id = ANY(:event_ids)
+      AND a.source = 'statpal'
+"""
+
+
+def statpal_schedule_candidate(
+    commence_time_source, statpal_fixture_id, has_play_evidence
+) -> bool:
+    """May StatPal's schedule speak for this row's state? (#9588)
+
+    The cheap, in-memory half of :func:`statpal_names_a_later_session`, so the
+    anchor read runs only for rows that could be held.
+    """
+    if commence_time_source not in VENUE_STAMP_COMMENCE_SOURCES:
+        return False
+    if not row_carries_an_authority_id(None, statpal_fixture_id):
+        return False
+    return not has_play_evidence
+
+
+def statpal_start_from_anchors(rows, statpal_fixture_id):
+    """StatPal's recorded start for the row's current fixture, or None.
+
+    ``rows`` carry ``source_id``, ``first_seen_at`` and ``statpal_start_time``
+    (an ISO string, as the JSONB holds it). Only a ``tennis:<id>`` anchor naming
+    the row's own ``statpal_fixture_id`` counts. That is the only writer of the
+    key. If there are several, the newest wins. An unparseable value is no
+    value.
+    """
+    fixture = str(statpal_fixture_id or "").strip()
+    if not fixture:
+        return None
+    wanted = f"tennis:{fixture}"
+    best = None
+    for row in rows:
+        if row.source_id != wanted or not row.statpal_start_time:
+            continue
+        try:
+            start = datetime.fromisoformat(str(row.statpal_start_time))
+        except ValueError:
+            continue
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=timezone.utc)
+        key = row.first_seen_at or datetime.min.replace(tzinfo=timezone.utc)
+        if best is None or key > best[0]:
+            best = (key, start)
+    return best[1] if best else None
+
+
+def statpal_names_a_later_session(
+    commence_time_source,
+    statpal_fixture_id,
+    has_play_evidence,
+    commence_time,
+    statpal_start,
+    now,
+) -> bool:
+    """Does our own StatPal anchor put this match in a later session? (#9588)
+
+    True ⇒ the row is not live on the clock. ``scheduled → live`` must not
+    promote it, and a row the clock already promoted goes back to
+    ``scheduled``. The row's start is a venue stamp that names no start, and
+    StatPal, the schedule the row is anchored to, puts the match materially
+    later and has not reached it yet.
+
+    MEASURED, production 2026-09-29 09:22Z. ``/events/15320754`` Bublik / Shang
+    v Cerundolo / Rinderknech read LIVE with no score from 05:00Z 9/29, Kalshi's
+    ``expected_expiration_time``. StatPal (``tennis:2638141``) had it at 02:00Z
+    9/30, the Beijing session start, and ESPN at 05:30Z 9/30. All seven Beijing
+    doubles rows had the same shape. Over the 21 days before, 37 rows stamped
+    ``kalshi``/``polymarket`` had a StatPal start more than
+    :data:`STATPAL_LATER_SESSION_MARGIN` after their own: US Open, São Paulo,
+    Guadalajara, Seoul, Singapore, Hangzhou and Beijing doubles and qualifying.
+    None of the 37 ever got a score, and none ended before StatPal's start.
+    The same test over ``odds_api`` rows found two Guadalajara singles played a
+    day BEFORE StatPal's stamp. That is why only a venue stamp is read here: a
+    reported start is not overruled by StatPal.
+
+    The hold ends at StatPal's start, when the clock runs as before. It also
+    ends on evidence: play on the row, or a better source rewriting
+    ``commence_time_source``. Every clause fails OPEN.
+
+    The band StatPal's start may sit in is
+    :data:`STATPAL_LATER_SESSION_HORIZON`, the same constant every reader of
+    the stamp honours (#9613), so a row this holds is never a row a reader
+    calls "No result reported". Beyond it the hold fails OPEN.
+    """
+    start = statpal_later_session_clock(
+        commence_time_source,
+        statpal_fixture_id,
+        has_play_evidence,
+        commence_time,
+        statpal_start,
+    )
+    return start is not None and now < start
+
+
+def statpal_later_session_clock(
+    commence_time_source,
+    statpal_fixture_id,
+    has_play_evidence,
+    commence_time,
+    statpal_start,
+):
+    """StatPal's start when it is this row's real start, else None. #9588, #9613.
+
+    The clock-free half of :func:`statpal_names_a_later_session`. Before
+    StatPal's start it is the hold. After it, it is where the row's clock
+    starts: ``transition_event_statuses`` measures a promoted row's staleness
+    from here, not from the venue stamp. Otherwise a match promoted at its
+    Beijing session would be 21 hours "past its start" on the same pass and be
+    suspended before a ball was hit.
+    """
+    if not statpal_schedule_candidate(
+        commence_time_source, statpal_fixture_id, has_play_evidence
+    ):
+        return None
+    if statpal_start is None or commence_time is None:
+        return None
+    gap = statpal_start - commence_time
+    if gap <= STATPAL_LATER_SESSION_MARGIN or gap > STATPAL_LATER_SESSION_HORIZON:
+        return None
+    return statpal_start
+
+
+# ── The #9588 hold, as the readers that cannot run it see it (#9613) ─────────
+#
+# The hold above is decided inside `transition_event_statuses`, which reads the
+# StatPal anchor. The serve path and the rails do not, so a held row stayed
+# `scheduled` (good) and still served `started_without_result: true` off its
+# venue stamp: `/events/15320754` read "No result reported" on 2026-09-29 11:50Z
+# for a match StatPal had at 02:00Z 9/30. The task records its answer on the
+# row, in the `win_probability_sources` mirror that already carries
+# `espn_not_started_at` for #9195's reason, and every reader reads that.
+#
+# The value is StatPal's start, so the stamp runs out on its own at the instant
+# the hold would have. It is honoured only while the row's own start is inside
+# STATPAL_LATER_SESSION_HORIZON. The task revisits a stamped row every pass for
+# that long and rewrites or clears the stamp, so a reader never trusts a stamp
+# the task has stopped maintaining. The upper bound gives the SQL half a text
+# range that a malformed value cannot satisfy.
+STATPAL_LATER_SESSION_KEY = "statpal_later_session_start"
+
+#: THE ONE BAND of the #9588 hold. Three readers and one writer bound it here:
+#: the writer holds only while StatPal's start is at most this far after the
+#: row's own, the promoter keeps revisiting a stamped row for this long, and
+#: both reader halves honour the stamp inside it. So every stamp the writer
+#: writes is one the readers honour for as long as it is live.
+#:
+#: MEASURED, production 2026-09-29 22:05Z, over the 37 rows the #9588 census
+#: found (venue-stamped, StatPal start more than the margin later, 35 days):
+#: the largest gap is 34.66h (15309330, Polymarket 05:20Z 9/10 → StatPal 16:00Z
+#: 9/11), and 9 of the 37 exceed 24h (26.0–34.66h). The band was 24h, so on
+#: those nine a held row read "No result reported" once its venue stamp aged out
+#: while StatPal's session was still ahead. 48h is the largest gap with half
+#: a day to spare.
+#:
+#: RE-MEASURED 2026-09-30 14:15Z against StatPal's CURRENT fixtures, not the
+#: start the anchor recorded at link time: 45 venue-stamped StatPal-anchored
+#: tennis rows over 8 days, gaps to 54.7h on matches StatPal reports finished
+#: and 69.0h on four Beijing doubles (Kalshi 05:00Z 9/29, StatPal 02:00Z 10/2).
+#: 48h failed OPEN on five of the six Beijing rows still to be played. 96h is
+#: the largest gap with a day to spare.
+STATPAL_LATER_SESSION_HORIZON = timedelta(hours=96)
+
+
+def statpal_later_session_value(statpal_start) -> str:
+    """The stored form: UTC ``isoformat``, which the SQL half compares as text."""
+    return statpal_start.astimezone(timezone.utc).isoformat()
+
+
+def stamp_statpal_later_session(sources, statpal_start):
+    """A NEW sources dict carrying the hold, or the original when it already does.
+
+    A new object, because an in-place JSONB change is invisible to the ORM
+    (gotcha #4). The original when nothing changes, so a held row costs one
+    write when it is first held and none on the passes after.
+    """
+    value = statpal_later_session_value(statpal_start)
+    if isinstance(sources, dict) and sources.get(STATPAL_LATER_SESSION_KEY) == value:
+        return sources
+    updated = dict(sources or {})
+    updated[STATPAL_LATER_SESSION_KEY] = value
+    return updated
+
+
+def clear_statpal_later_session(sources):
+    """A NEW sources dict without the hold, or the original when it has none."""
+    if not isinstance(sources, dict) or STATPAL_LATER_SESSION_KEY not in sources:
+        return sources
+    updated = dict(sources)
+    updated.pop(STATPAL_LATER_SESSION_KEY, None)
+    return updated
+
+
+# ── The receipt the hold leaves when it releases a row (#9613, CERT-3811) ────
+#
+# The clock above is only computable while the row is a hold candidate, and a
+# candidate has no play on it. So the first StatPal score or period on a
+# released row ended the clock: the staleness arm fell back to the venue stamp,
+# 21h or more before the session, and suspended a match being played. CERT-3811
+# reproduced it one hour into the session with ``period='1st Set'``.
+#
+# When the task releases a row onto StatPal's clock it writes this receipt, and
+# after play arrives the staleness arm reads the clock from it. It is honoured
+# only where the clock itself would be: the row's start is still the venue
+# stamp, it still carries the same StatPal fixture, the start sits inside the
+# hold's band, and it has arrived. A string, like the hold's stamp, because
+# several readers walk every key of ``win_probability_sources`` and a string is
+# the shape they already pass over.
+STATPAL_RELEASED_SESSION_KEY = "statpal_released_session"
+
+
+def statpal_released_session_value(statpal_start, statpal_fixture_id) -> str:
+    """The stored form: ``<UTC isoformat>|<StatPal fixture id>``."""
+    return (
+        f"{statpal_later_session_value(statpal_start)}|"
+        f"{str(statpal_fixture_id or '').strip()}"
+    )
+
+
+def stamp_statpal_released_session(sources, statpal_start, statpal_fixture_id):
+    """A NEW sources dict carrying the receipt, or the original when it already does."""
+    value = statpal_released_session_value(statpal_start, statpal_fixture_id)
+    if isinstance(sources, dict) and sources.get(STATPAL_RELEASED_SESSION_KEY) == value:
+        return sources
+    updated = dict(sources or {})
+    updated[STATPAL_RELEASED_SESSION_KEY] = value
+    return updated
+
+
+def statpal_released_session_clock(
+    sources, commence_time_source, statpal_fixture_id, commence_time, now
+):
+    """StatPal's start from the release receipt, when it still counts, else None.
+
+    Play on the row does not end it: play is what a released session brings.
+    Everything else that ends the hold's clock ends this one, through the same
+    predicate (:func:`statpal_later_session_clock`): a better source rewriting
+    the start, the StatPal id gone, a start outside the band. A receipt for a
+    different fixture, or a start not yet reached, is no receipt. Fails CLOSED
+    to None on every unreadable input, so the row keeps its own start.
+    """
+    raw = sources.get(STATPAL_RELEASED_SESSION_KEY) if isinstance(sources, dict) else None
+    if not isinstance(raw, str) or now is None:
+        return None
+    stamp, sep, fixture = raw.rpartition("|")
+    if not sep or not fixture or fixture != str(statpal_fixture_id or "").strip():
+        return None
+    try:
+        start = datetime.fromisoformat(stamp)
+    except (ValueError, TypeError):
+        return None
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    try:
+        clock = statpal_later_session_clock(
+            commence_time_source, statpal_fixture_id, False, commence_time, start
+        )
+        if clock is None or clock > now:
+            return None
+    except TypeError:
+        return None
+    return clock
+
+
+def statpal_later_session_pending(sources, commence_time, now) -> bool:
+    """The row carries a live #9588 hold: StatPal's session is still ahead.
+
+    :func:`~app.utils.event_rails.statpal_later_session_rows` is the SQL half
+    and must agree. Fails CLOSED to "no hold" on every unreadable input, so a
+    bad value can only leave the row where the clock alone puts it.
+    """
+    return statpal_later_session_pending_start(sources, commence_time, now) is not None
+
+
+def statpal_later_session_pending_start(sources, commence_time, now):
+    """StatPal's start while the #9588 hold is live, else None.
+
+    The one parse behind :func:`statpal_later_session_pending`, so the start a
+    reader is shown and the hold that decides ``started_without_result`` can
+    never disagree about whether the stamp counts.
+    """
+    if now is None or commence_time is None:
+        return None
+    raw = sources.get(STATPAL_LATER_SESSION_KEY) if isinstance(sources, dict) else None
+    if not isinstance(raw, str):
+        return None
+    try:
+        start = datetime.fromisoformat(raw)
+    except (ValueError, TypeError):
+        return None
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    try:
+        if (
+            commence_time >= now - STATPAL_LATER_SESSION_HORIZON
+            and now < start <= now + STATPAL_LATER_SESSION_HORIZON
+        ):
+            return start
+    except TypeError:
+        return None
+    return None
+
+
+def served_commence_time(status, commence_time, sources, now):
+    """The start a reader is shown: StatPal's, while a ``scheduled`` row is held.
+
+    #9634. The hold (#9613) stopped a held row reading "No result reported", and
+    the page then printed the venue stamp as its start: ``/events/15320754`` on
+    2026-09-29 read "Pregame" beside **Sep 28, 10:00 PM PDT** — Kalshi's expiry
+    hour (gotcha #14), seventeen hours before the 02:00Z session StatPal has the
+    match in. Every client prints ``commence_time`` as the start and counts down
+    to it, so serving StatPal's start there is what turns the header and the
+    cards into "Starts in …" without a new key for web and iOS to learn.
+
+    SERVE-ONLY. The column keeps the venue stamp: matching and the promoter read
+    it, and the hold itself is defined against it. ``scheduled`` only, so no
+    live/finished row — and none of the flow sentinel's live or settled limbs —
+    ever sees a moved start. When the stamp lapses (StatPal's start arrives, or
+    the task clears it) the row serves its stored start again.
+    """
+    if status != "scheduled":
+        return commence_time
+    held = statpal_later_session_pending_start(sources, commence_time, now)
+    return held if held is not None else commence_time
 
 
 # ── WHEN DID THIS FINISHED GAME END? (D109) ──────────────────────────────────
@@ -531,7 +907,56 @@ RECENT_RAIL_STATUSES = ["completed", "closed", EVENT_SUSPENDED]
 UPCOMING_GRACE = timedelta(hours=2)
 
 
-def started_without_result(status, commence_time, now) -> bool:
+# ── The authority's "not started", as the clock predicates read it (#9195) ──
+#
+# Written by ESPN's live pass into the `win_probability_sources` JSONB mirror
+# while ESPN reports an anchored row as not begun (#5324 / CERT-2777; the WHY
+# of the key, the column and the TTL is in `espn_helpers`, which re-exports
+# these names). Defined HERE because the rail predicates below must read it and
+# `espn_helpers` already imports this module.
+ESPN_NOT_STARTED_KEY = "espn_not_started_at"
+_ESPN_LIVE_BEAT_SECONDS = 60
+_AUTHORITY_NOT_STARTED_MISSED_PASSES = 15
+AUTHORITY_NOT_STARTED_TTL = timedelta(
+    seconds=_ESPN_LIVE_BEAT_SECONDS * _AUTHORITY_NOT_STARTED_MISSED_PASSES
+)
+#: How far past its own listing a row's "not started" stamp still moves it off
+#: the no-result class (#9195). The writers only visit a `scheduled` row inside
+#: the promoter's 24h window, so a fresh stamp older than this cannot be written
+#: today; the bound exists so the SQL half has an index range to walk, and the
+#: Python half applies the same bound so the two cannot disagree.
+AUTHORITY_NOT_STARTED_HORIZON = timedelta(hours=24)
+
+
+def authority_not_started_fresh(sources, now, ttl=AUTHORITY_NOT_STARTED_TTL) -> bool:
+    """The authority said within ``ttl`` that this row has not begun.
+
+    Only the stamp: no play-evidence clause (`espn_helpers.
+    authority_not_started_holds` adds that for the promoter). Fails CLOSED to
+    "no statement" on every unreadable input — absent key, non-string,
+    unparseable, a stamp from the future — so a corrupt value can only leave a
+    row where the clock alone would put it. :func:`authority_not_started_rows`
+    in `event_rails` is the SQL half and must agree with this one.
+    """
+    if now is None:
+        return False
+    raw = (sources or {}).get(ESPN_NOT_STARTED_KEY) if isinstance(sources, dict) else None
+    if not isinstance(raw, str):
+        return False
+    try:
+        stamped = datetime.fromisoformat(raw)
+    except (ValueError, TypeError):
+        return False
+    if stamped.tzinfo is None:
+        stamped = stamped.replace(tzinfo=timezone.utc)
+    try:
+        age = now - stamped
+    except TypeError:
+        return False
+    return timedelta(0) <= age <= ttl
+
+
+def started_without_result(status, commence_time, now, sources=None) -> bool:
     """Has this row's kickoff passed while it still claims to be a fixture?
 
     🔴 THE THIRD STATUS THROUGH THE SAME HOLE — #3211, lane1/134.
@@ -584,12 +1009,34 @@ def started_without_result(status, commence_time, now) -> bool:
     ``None`` for either time is False. A row we cannot place on the clock is a
     row we have no standing to move off the schedule — the same rule
     :func:`is_retired_event_status` applies to an unrecognised status.
+
+    ``sources`` is the row's ``win_probability_sources``; a fresh authority
+    "not started" stamp in it answers False (#9195, below). Callers that omit it
+    get the clock-only answer they always had.
     """
     if status != "scheduled":
         return False
     if commence_time is None or now is None:
         return False
+    # #9195: THE AUTHORITY OUTRANKS THE CLOCK HERE TOO. A game ESPN still lists
+    # as not begun — a rain delay before first pitch, BAL @ NYY 15319530 on
+    # 2026-09-27, still `pre` three hours past its 17:05Z listing — has not run
+    # out of clock; it is late. Read as "started without a result" it printed
+    # "No result reported" and sank to the bottom of search. The stamp is
+    # refreshed every live pass while ESPN says so and expires after
+    # AUTHORITY_NOT_STARTED_TTL, so a row ESPN stops reporting falls back to the
+    # clock within fifteen minutes: bounded, never a new way to strand a row.
     try:
+        if commence_time >= now - AUTHORITY_NOT_STARTED_HORIZON and (
+            authority_not_started_fresh(sources, now)
+        ):
+            return False
+        # #9613: nor has a venue-stamped row whose own StatPal schedule puts it
+        # in a later session. `transition_event_statuses` holds it `scheduled`
+        # (#9588) and records why on the row; without this it read "No result
+        # reported" from its venue stamp + 2h until StatPal's start.
+        if statpal_later_session_pending(sources, commence_time, now):
+            return False
         return commence_time < now - UPCOMING_GRACE
     except TypeError:
         # 🔴 #6057. A tz-naive `commence_time` against a tz-aware `now` raises

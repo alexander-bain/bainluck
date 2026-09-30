@@ -31,10 +31,14 @@ def name_tokens(name: Any) -> frozenset[str]:
     return frozenset(token for token in cleaned.split() if token)
 
 
-#: Shortest token that may serve as the shared anchor between two names. Two
-#: characters is enough to exclude the initials that make the prefix rule a
-#: wildcard, and short enough to keep every real surname in the draw.
+#: Shortest token that may serve as the shared anchor between two names. Three
+#: characters excludes the initials that make the prefix rule a wildcard; the
+#: two-letter surnames it also excludes are readmitted by `LONE_SURNAME_CHARS`.
 SUBSTANTIAL_TOKEN_CHARS = 3
+
+#: Shortest token that may anchor two names when it is the WHOLE of one of them
+#: and appears verbatim in the other — a two-letter surname given alone (#2774).
+LONE_SURNAME_CHARS = 2
 
 
 def token_covered(token: str, others: frozenset[str] | set[str]) -> bool:
@@ -93,6 +97,20 @@ def names_agree(a: Any, b: Any) -> bool:
     # wrong in, but it is still a hole.  Requiring one shared token of real
     # length closes it and costs none of the benign cases: every one of them
     # shares a full surname.
+    #
+    # EXCEPT A TWO-LETTER SURNAME STANDING ALONE (#2774). Kalshi names a player
+    # by surname only, and `Wu`, `Ma`, `Li`, `Bu`, `Ye` are whole surnames that
+    # can never reach three characters — so `Wu` never agreed with ESPN's `Ru
+    # Xi Wu`, every such row refused `no-candidate`, and the Asia swing kept a
+    # suspended second card for Okamura v Wu, Dart v Ma, Cerundolo v Bu. The
+    # exception is EXACT equality, and only when that token is the whole of one
+    # name: the prefix rule would let `ma` cover `martin`, and a shared `de`
+    # inside two longer names is not a surname at all.
+    for lone, other in ((tokens_a, tokens_b), (tokens_b, tokens_a)):
+        if len(lone) == 1:
+            (token,) = lone
+            if len(token) >= LONE_SURNAME_CHARS and token.isalpha() and token in other:
+                return True
     return any(
         len(token) >= SUBSTANTIAL_TOKEN_CHARS
         and any(

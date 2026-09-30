@@ -1,0 +1,132 @@
+{
+ "_source": "GET https://api.bainluck.com/api/leagues/icehockey_nhl, 2026-09-28 ~16:40Z, built_at 2026-09-28T16:32:55.651973+00:00, upcoming_games verbatim",
+ "leafs_canadiens": {
+  "id": 15317562,
+  "external_id": "485b295347cb22f002e014cb87813ed7",
+  "sport": "icehockey_nhl",
+  "home_team": "Toronto Maple Leafs",
+  "away_team": "Montreal Canadiens",
+  "commence_time": "2026-09-29T23:00:00+00:00",
+  "completed_at": null,
+  "status": "scheduled",
+  "home_score": null,
+  "away_score": null,
+  "home_win_probability": 0.505,
+  "current_odds": {
+   "home_probability": 0.505,
+   "away_probability": 0.495
+  },
+  "home_team_data": {
+   "team_id": 115,
+   "slug": "toronto-maple-leafs",
+   "primary_color": "#003e7e",
+   "secondary_color": "#ffffff",
+   "logo_small": "https://a.espncdn.com/i/teamlogos/nhl/500/scoreboard/tor.png",
+   "logo_large": "https://a.espncdn.com/i/teamlogos/nhl/500/scoreboard/tor.png",
+   "record": "0-0",
+   "abbreviation": "TOR",
+   "standings": {
+    "wins": 0,
+    "losses": 0,
+    "points": 0,
+    "streak": "-",
+    "division": "Atlantic Division",
+    "goals_for": 0,
+    "conference": "Eastern Conference",
+    "home_record": "0-0-0",
+    "road_record": "0-0-0",
+    "goals_against": 0
+   }
+  },
+  "away_team_data": {
+   "team_id": 3706,
+   "slug": "montral-canadiens",
+   "primary_color": "#c41230",
+   "secondary_color": "#013a81",
+   "logo_small": "https://a.espncdn.com/i/teamlogos/nhl/500/scoreboard/mtl.png",
+   "logo_large": "https://a.espncdn.com/i/teamlogos/nhl/500/scoreboard/mtl.png",
+   "record": "0-0",
+   "abbreviation": "MTL",
+   "standings": {
+    "wins": 0,
+    "losses": 0,
+    "points": 0,
+    "streak": "-",
+    "division": "Atlantic Division",
+    "goals_for": 0,
+    "conference": "Eastern Conference",
+    "home_record": "0-0-0",
+    "road_record": "0-0-0",
+    "goals_against": 0
+   }
+  }
+ },
+ "panthers_hurricanes": {
+  "id": 15168031,
+  "external_id": "9de33ce1013f2a3375dbded2c9fbc7d6",
+  "sport": "icehockey_nhl",
+  "home_team": "Carolina Hurricanes",
+  "away_team": "Florida Panthers",
+  "commence_time": "2026-09-29T21:00:00+00:00",
+  "completed_at": null,
+  "status": "scheduled",
+  "home_score": null,
+  "away_score": null,
+  "home_win_probability": 0.5325,
+  "current_odds": {
+   "home_probability": 0.5325,
+   "away_probability": 0.4675
+  },
+  "opening_odds": {
+   "home_probability": 0.5385,
+   "away_probability": 0.4615
+  },
+  "home_team_data": {
+   "team_id": 58,
+   "slug": "carolina-hurricanes",
+   "primary_color": "#e30426",
+   "secondary_color": "#000000",
+   "logo_small": "https://a.espncdn.com/i/teamlogos/nhl/500/scoreboard/car.png",
+   "logo_large": "https://a.espncdn.com/i/teamlogos/nhl/500/scoreboard/car.png",
+   "record": "0-0",
+   "abbreviation": "CAR",
+   "standings": {
+    "wins": 0,
+    "losses": 0,
+    "points": 0,
+    "streak": "-",
+    "division": "Metropolitan Division",
+    "goals_for": 0,
+    "conference": "Eastern Conference",
+    "home_record": "0-0-0",
+    "road_record": "0-0-0",
+    "goals_against": 0
+   }
+  },
+  "away_team_data": {
+   "team_id": 62,
+   "slug": "florida-panthers",
+   "primary_color": "#e51937",
+   "secondary_color": "#002d62",
+   "logo_small": "https://a.espncdn.com/i/teamlogos/nhl/500/scoreboard/fla.png",
+   "logo_large": "https://a.espncdn.com/i/teamlogos/nhl/500/scoreboard/fla.png",
+   "record": "0-0",
+   "abbreviation": "FLA",
+   "standings": {
+    "wins": 0,
+    "losses": 0,
+    "points": 0,
+    "streak": "-",
+    "division": "Atlantic Division",
+    "goals_for": 0,
+    "conference": "Eastern Conference",
+    "home_record": "0-0-0",
+    "road_record": "0-0-0",
+    "goals_against": 0
+   }
+  },
+  "espn": {
+   "broadcast": "ESPN"
+  }
+ }
+}

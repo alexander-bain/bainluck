@@ -111,25 +111,13 @@ RESOLVER_MUTATIONS: list[dict] = [
     },
     {
         "id": "M3-attribute-served-pair-to-the-blend",
-        "needle": """      return withRenderedPercents(
-        {
-          homeProb,
-          awayProb,
-          probSourceLabel,
-          openingHomeProb,
-          openingAwayProb,
-        },
+        "needle": """      const resolved = withRenderedPercents(
+        { homeProb, awayProb, probSourceLabel, openingHomeProb, openingAwayProb },
         odds,
         false,
       );""",
-        "replacement": """      return withRenderedPercents(
-        {
-          homeProb,
-          awayProb,
-          probSourceLabel,
-          openingHomeProb,
-          openingAwayProb,
-        },
+        "replacement": """      const resolved = withRenderedPercents(
+        { homeProb, awayProb, probSourceLabel, openingHomeProb, openingAwayProb },
         odds,
         true,
       );""",
@@ -206,15 +194,16 @@ RESOLVER_MUTATIONS += [
     },
     {
         "id": "M7-scheduled-branch-forgets-the-served-pair",
+        # Re-targeted after #9097 put the hero-sportsbook comment where the
+        # `const count` line used to follow; the mutant (drop the flag in the
+        # scheduled branch) is unchanged.
         "needle": """    homeProb = odds?.home_probability ?? null;
     awayProb = odds?.away_probability ?? null;
     fromCurrentOdds = true;
-    const count = odds?.bookmaker_count ?? 0;
-    if (count > 0) {""",
+    // #9097 — count the sportsbooks behind the NUMBER, not every served book""",
         "replacement": """    homeProb = odds?.home_probability ?? null;
     awayProb = odds?.away_probability ?? null;
-    const count = odds?.bookmaker_count ?? 0;
-    if (count > 0) {""",
+    // #9097 — count the sportsbooks behind the NUMBER, not every served book""",
         "why": "The scheduled hero stops honouring the server's decision and "
         "always re-derives. The printed numbers still sum to 100 and are "
         "usually identical — so this is only visible to a test that asserts "
@@ -236,8 +225,12 @@ VIEW_MUTATIONS: list[dict] = [
     },
     {
         "id": "M9-ios-single-sided-served-coalesce",
-        "needle": "let bothServed = odds.awayRenderedPercent != nil && odds.homeRenderedPercent != nil",
-        "replacement": "let bothServed = odds.awayRenderedPercent != nil || odds.homeRenderedPercent != nil",
+        # RE-TARGETED for #9470. The hero now reads its pair off
+        # `OpeningLineHero.resolve(odds, for: event)`, bound as `shown`, so the
+        # served-percent coalesce reads `shown.` where it read `odds.`. The
+        # mutation is unchanged in substance.
+        "needle": "let bothServed = shown.awayRenderedPercent != nil && shown.homeRenderedPercent != nil",
+        "replacement": "let bothServed = shown.awayRenderedPercent != nil || shown.homeRenderedPercent != nil",
         "why": "M2 on native — and the pattern the neighbouring `DiscoverEventCard` "
         "still uses, so this is the mutation most likely to arrive as a "
         "well-meaning consistency edit.",

@@ -20,6 +20,8 @@ from sqlalchemy.orm import selectinload
 from app.models import FuturesMarket
 from app.services import get_db
 from app.utils.hook_staleness import is_hook_stale
+from app.utils.ladder_headline import ladder_median_row
+from app.utils.ladder_monotonicity import cumulative_outcome_ladder
 from app.utils.cross_source_matching import (
     # #2427 — the deduping pair, not bare `clean_outcomes`: every row this file
     # builds must also lose a Polymarket `_yes`/`_no` leg that duplicates a rung
@@ -80,7 +82,14 @@ _THEME_BY_TICKER: list[tuple[str, str]] = [
     ("kxrtcompare", "movies"),
     ("kxrttv", "movies"),
     ("kxbeastgames", "tv_streaming"),
-    ("kxbachelor", "tv_streaming"),
+    # #9202 — `kxbachelor` was the third bare prefix. It also matched
+    # `KXBACHELOROPEN-27`, "When will Mt. Bachelor open for the 26/27 winter
+    # season?", a SKI RESORT, which the Reality TV tab printed between two Big
+    # Brother cards. Every real show series Kalshi lists under the stem is a
+    # Bachelorette one (`KXBACHELORETTE`, `…ELIMINATION`, `…FIR`, measured
+    # 2026-09-27); a bare The Bachelor series is named with its dash, like `kxrt-`.
+    ("kxbachelorette", "tv_streaming"),
+    ("kxbachelor-", "tv_streaming"),
     ("kxloveisland", "tv_streaming"),
     # Same collision, four characters and three orders of magnitude worse.
     # `kxli` was here for Love Island's real tickers (`KXLIUK…`, `KXLIUSA…`), and
@@ -98,10 +107,16 @@ _THEME_BY_TICKER: list[tuple[str, str]] = [
     ("kxmusk", "social_media"),
 ]
 
+# #9202 — the show, never the mountain. "Mt. Bachelor" / "Mount Bachelor" is an
+# Oregon ski resort whose season-opening market is a Kalshi series of its own;
+# a bare `bachelor` word match filed it as reality TV. Shared by both name
+# tables so the theme and the card kind cannot disagree about it.
+_BACHELOR = r"(?<!mt\. )(?<!mt )(?<!mount )bachelor(?:ette)?"
+
 _THEME_BY_NAME: list[tuple[re.Pattern, str]] = [
     (re.compile(r"\b(?:box\s*office|opening\s*weekend|domestic\s*gross|worldwide\s*gross|film|movie)\b", re.I), "movies"),
     (re.compile(r"\b(?:rotten\s*tomatoes|RT\s*score|critic\s*score|tomatometer)\b", re.I), "movies"),
-    (re.compile(r"\b(?:netflix|hulu|disney\+|hbo|max|streaming|series|show|season\s*\d|episode|sitcom|reality\s*tv|survivor|bachelor|big\s*brother|beast\s*games|love\s*island)\b", re.I), "tv_streaming"),
+    (re.compile(r"\b(?:netflix|hulu|disney\+|hbo|max|streaming|series|show|season\s*\d|episode|sitcom|reality\s*tv|survivor|" + _BACHELOR + r"|big\s*brother|beast\s*games|love\s*island)\b", re.I), "tv_streaming"),
     (re.compile(r"\b(?:spotify|billboard|hot\s*100|album|song|artist|concert|tour|grammy|music|rapper|singer|band)\b", re.I), "music"),
     (re.compile(r"\b(?:oscar|emmy|golden\s*globe|sag\s*award|tony|bafta|cannes|sundance|venice\s*film)\b", re.I), "awards"),
     (re.compile(r"\b(?:youtube|tiktok|instagram|twitter|x\.com|subscriber|follower|views|viral|mrbeast|influencer|streamer|twitch|podcast|elon|musk|tweet)\b", re.I), "social_media"),
@@ -117,7 +132,12 @@ _ENTERTAINMENT_EXCLUDE_RE = re.compile(
     r"launch\s+count|rocket|satellite|orbit|"
     r"richest|billionaire|fortune|wealth|"
     r"SEC\s+investigation|antitrust|lawsuit|"
-    r"company\s+stake|acquisition|acquire)\b",
+    r"company\s+stake|acquisition|acquire|"
+    # #9202 — a ski resort's season opening is weather, whatever its name
+    # sounds like ("Mt. Bachelor", and "Big Sky" is a TV show too). Its 20
+    # siblings are all stored as weather; this is the page refusing the one
+    # that was not, not a re-categorisation.
+    r"open\s+for\s+the\s+[\d/]+\s+winter\s+season|ski\s+(?:resort|season))\b",
     re.IGNORECASE,
 )
 
@@ -146,7 +166,8 @@ _KIND_BY_TICKER: list[tuple[str, str]] = [
     ("kxboxoffice", "boxoffice"),
     ("kxrottentomatoes", "rt"),
     ("kxsurvivor", "reality"),
-    ("kxbachelor", "reality"),
+    ("kxbachelorette", "reality"),
+    ("kxbachelor-", "reality"),
     ("kxbeastgames", "reality"),
     ("kxeurovision", "eurovision"),
 ]
@@ -156,7 +177,7 @@ _KIND_BY_NAME: list[tuple[re.Pattern, str]] = [
     (re.compile(r"\b(?:billboard|hot\s*100)\b", re.I), "billboard"),
     (re.compile(r"\b(?:box\s*office|opening\s*weekend|domestic\s*gross)\b", re.I), "boxoffice"),
     (re.compile(r"\b(?:rotten\s*tomatoes|tomatometer)\b", re.I), "rt"),
-    (re.compile(r"\b(?:survivor|bachelor|bachelorette|beast\s*games|big\s*brother|reality)\b", re.I), "reality"),
+    (re.compile(r"\b(?:survivor|" + _BACHELOR + r"|beast\s*games|big\s*brother|reality)\b", re.I), "reality"),
     (re.compile(r"\b(?:eurovision)\b", re.I), "eurovision"),
 ]
 
@@ -279,6 +300,7 @@ def _market_row(
     top = priced[:max_outcomes]
     outcome_count = len(outcomes)
     return {
+        **_ladder_headline(market, priced),
         "q": market.name,
         # #6255 — `priced[0]`, not `outcomes[0]`. Both name the leader on every
         # ladder that has one priced rung above zero, but they part when every
@@ -365,6 +387,42 @@ def _market_row(
             )
             else market.hook_description
         ),
+    }
+
+
+def _ladder_headline(market: FuturesMarket, priced: list) -> dict:
+    """#9803 — the rung a ladder card quotes, when it is not the priced leader.
+
+    `priced` is sorted by price, so on a cumulative ladder `priced[0]` is the
+    LOOSEST rung: the answer that is nearly certain by construction. Production
+    2026-09-30, `/entertainment` Rotten Tomatoes cards at 390px:
+
+        Clayface · Rotten Tomatoes score        Above 45  95%   (median: Above 75  55.5%)
+        "Sense and Sensibility" RT Score?       60+       98%   (median: 75+  54%)
+
+    That was 10 of the 104 rows the page served. /weather (#9283) and the market
+    page (#9531) already quote the median rung through `ladder_median_row`. This
+    card links to that market page, so it asks the same helper, over the same
+    priced legs the card draws, rather than growing a second rule.
+
+    The result is served as `headline` ONLY when it differs from `priced[0]`.
+    Every other row carries `headline: None` and renders exactly as before.
+    `prob` stays the priced leader because `_is_interesting`, `_by_uncertainty`
+    and the hook gate all read it, and a display fix must not reorder the page.
+    """
+    median = ladder_median_row(
+        [{"name": o.name, "outcome": o} for o in priced],
+        question=market.name,
+        probability=lambda r: r["outcome"].current_probability,
+    )
+    if median is None or median["outcome"] is priced[0]:
+        return {"headline": None}
+    outcome = median["outcome"]
+    return {
+        "headline": {
+            "name": outcome.name,
+            "prob": round(float(outcome.current_probability) * 100, 1),
+        }
     }
 
 
@@ -620,6 +678,36 @@ def _distinct_served_market_ids(*sections) -> set:
     return found
 
 
+def _mark_ladder(row: dict) -> None:
+    """#9468 — a row whose legs are ONE cumulative ladder is not a race.
+
+    `spotify_race` membership is the `kxspotify` ticker prefix, and
+    `SpotifyRace` draws the row with the most legs as a numbered race — rank,
+    cover tile, the #1 slot lit as the leader. Kalshi's "When will Spotify
+    release 2026 Wrapped?" is that row, and its legs are nested dates:
+    "Before Dec 5" CONTAINS "Before Dec 4", so ranking them by price printed
+    `1 Before Dec 4 · 2 Before Dec 5 · 3 Before Dec 3` — no date was ahead of
+    another, and the calendar came out scrambled.
+
+    The discriminator is the one the feed and the outcome display already use
+    (`cumulative_outcome_ladder`, dates on): every leg a threshold, one
+    direction, one affix, no repeated rung. A row it recognises is served with
+    `ladder: True` and its legs in RUNG order, so the card can draw the dates
+    as a calendar. A race of named contenders fails the check on its first leg
+    and is served exactly as before, price order and all.
+
+    Only the ORDER of the served slice changes. `prob` stays the priced leader
+    `_market_row` chose, and the slice is the same legs.
+    """
+    ladder = cumulative_outcome_ladder(
+        row["top_outcomes"], dates=True, question=row.get("q")
+    )
+    row["ladder"] = ladder is not None
+    if ladder is not None:
+        legs, _direction = ladder
+        row["top_outcomes"] = [leg for _rung, leg in legs]
+
+
 def _build_music(
     themed: dict, withheld_ids: frozenset[int] | set[int] = frozenset()
 ) -> dict:
@@ -645,6 +733,7 @@ def _build_music(
             continue
         all_rows.append(row)
         if kind == "spotify":
+            _mark_ladder(row)
             spotify_race.append(row)
         elif kind == "billboard":
             billboard_watch.append(row)

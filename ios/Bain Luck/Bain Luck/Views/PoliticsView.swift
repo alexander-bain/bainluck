@@ -647,8 +647,8 @@ struct PoliticsView: View {
 
             // Bottom row: overflow count + source
             HStack(spacing: 6) {
-                if m.outcomeCount > 3 {
-                    Text("+\(m.outcomeCount - 3) more")
+                if m.overflowCount > 0 {
+                    Text("+\(m.overflowCount) more")
                         .font(.system(size: 10))
                         .foregroundStyle(DS.textMuted)
                 }

@@ -445,14 +445,18 @@ def test_most_espn_sports_have_no_statpal_counterpart_at_all():
 
     18 of 29 since #8810 put `soccer_england_league2` on the ESPN map (eng.4).
     StatPal names no League Two key.
+
+    19 of 30 since #9267 put `soccer_mexico_ligamx` on the ESPN map (mex.1).
+    StatPal names no Liga MX key.
     """
     _, _, none_at_all = _tiers()
-    assert len(none_at_all) == 18
+    assert len(none_at_all) == 19
     assert "golf_pga" in none_at_all
     assert "soccer_uefa_nations_league" in none_at_all
     assert "americanfootball_ncaaf_fcs" in none_at_all
     assert "soccer_england_league2" in none_at_all
-    assert len(ESPN_SPORT_MAPPING) == 29
+    assert "soccer_mexico_ligamx" in none_at_all
+    assert len(ESPN_SPORT_MAPPING) == 30
     assert none_at_all == set(ESPN_SPORT_MAPPING) - set(STATPAL_SPORT_MAPPING)
     # The headline sports among them, spelled out: an outage on any of these
     # has no fallback of any kind, today or after the switch ships.

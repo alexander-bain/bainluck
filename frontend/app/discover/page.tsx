@@ -6,9 +6,10 @@ import Link from "next/link";
 import useSWR from "swr";
 import { fetchFeed, fetchResolutions } from "@/lib/api";
 import { useAuthContext } from "@/components/AuthProvider";
-import type { FeedItem, FeedEventData, FeedFuturesData, FeedBundleData, FeedConceptData } from "@/lib/types";
+import type { FeedItem, FeedEventData, FeedFuturesData, FeedBundleData, FeedConceptData, FeedCollectionData } from "@/lib/types";
 import DiscoverCard, { type DiscoverGroupedItem, GuessCard, DailyChallengeCard, ResolutionCard, ResolutionGroup } from "@/components/DiscoverCard";
 import EndOfFeedCard from "@/components/discover/EndOfFeedCard";
+import DiscoverCollectionCard from "@/components/discover/DiscoverCollectionCard";
 import MasonryCell, { MASONRY_GRID_CLASS } from "@/components/discover/MasonryCell";
 import FeedUnavailableNotice, { type FeedFailureReason } from "@/components/discover/FeedUnavailableNotice";
 import DiscoverSkeletonGrid from "@/components/discover/DiscoverSkeletonGrid";
@@ -22,6 +23,11 @@ import {
   readDiscoverInteractionProfile,
   recordDiscoverInteraction,
   sendDiscoverInteraction,
+  setDiscoverLearningGate,
+  setDiscoverLearningIdentity,
+  isSportsDiscoverCategory,
+  getDiscoverDismissedStorageKey,
+  dropPendingDiscoverInteractions,
   type DiscoverProfile,
 } from "@/lib/discoverInteractions";
 import { SHAPE_UNSHAPED } from "@/lib/marketShape";
@@ -54,6 +60,8 @@ import { applyLocalPersonalization, recordEditionScores, runManualRefresh } from
 import { spaceBySport } from "@/lib/discover/spacedOrder";
 import { feedItemHasRenderableContent, collectSuppressedEnvelopes, feedItemCanBeGuessed } from "@/components/discover/utils";
 import FirstRunOrientation from "@/components/discover/FirstRunOrientation";
+import SignInToPersonalizeInvite from "@/components/discover/SignInToPersonalizeInvite";
+import { DiscoverFeedbackAttemptContext, decideDiscoverFeedbackAttempt, resolveDiscoverLearning } from "@/lib/discoverFeedbackGate";
 import {
   areGamesUnlocked,
   isFirstRunAnonymous,
@@ -64,8 +72,10 @@ import {
   type FirstRunStorage,
 } from "@/lib/discoverFirstRun";
 import { CHALLENGE_SURFACES_ENABLED } from "@/lib/launchSurfaces";
+import { useDiscoverPriceStream } from "@/hooks/useDiscoverPriceStream";
+import { groupedLeaves, priceKey } from "@/lib/discover/priceRefresh";
+import { admitCollection, isCollectionItem, placeCollections, splitCollections } from "@/lib/discover/collectionFeed";
 
-const DISMISSED_KEY = "discover_dismissed";
 const PAGE_SIZE = 20;
 const DISMISS_TTL_MS = 6 * 60 * 60 * 1000;
 const MAX_LOCAL_DISMISSES = 40;
@@ -76,6 +86,8 @@ const CATEGORY_COOLDOWN_SCORE = -3;
 function getDismissed(): Set<string> {
   if (typeof window === "undefined") return new Set();
   try {
+    const DISMISSED_KEY = getDiscoverDismissedStorageKey();
+    if (!DISMISSED_KEY) return new Set();
     const raw = localStorage.getItem(DISMISSED_KEY);
     if (!raw) return new Set();
 
@@ -96,7 +108,6 @@ function getDismissed(): Set<string> {
     localStorage.setItem(DISMISSED_KEY, JSON.stringify({ items: fresh }));
     return new Set(fresh.map((entry: { id: string }) => entry.id));
   } catch {
-    localStorage.removeItem(DISMISSED_KEY);
     return new Set();
   }
 }
@@ -104,6 +115,8 @@ function getDismissed(): Set<string> {
 function saveDismissed(items: Set<string>) {
   if (typeof window === "undefined") return;
   try {
+    const DISMISSED_KEY = getDiscoverDismissedStorageKey();
+    if (!DISMISSED_KEY) return;
     const now = Date.now();
     const existingRaw = localStorage.getItem(DISMISSED_KEY);
     const existing = existingRaw ? JSON.parse(existingRaw) : {};
@@ -135,6 +148,8 @@ function getItemId(item: FeedItem): string {
   // give them a concept-specific id so they no longer share the `tournament-`
   // namespace (avoids a prefix collision in the dedup pass). (L2-167 Item 3.)
   if (item.type === "concept") return `concept-${(item.data as FeedConceptData).key}`;
+  // #9905 — a hub's identity is its slug.
+  if (item.type === "collection") return `collection-${(item.data as FeedCollectionData)?.slug}`;
   return `tournament-${(item.data as any).key}`;
 }
 
@@ -171,6 +186,7 @@ function getSuppressedCategories(profile: DiscoverProfile | null): Set<string> {
   if (!profile?.categories) return suppressed;
 
   for (const [category, bucket] of Object.entries(profile.categories)) {
+    if (isSportsDiscoverCategory(category)) continue;
     if (
       bucket.dismisses >= CATEGORY_COOLDOWN_DISMISSES &&
       bucket.score <= CATEGORY_COOLDOWN_SCORE &&
@@ -271,6 +287,8 @@ function FeedItemShell({
   positionIndex,
   personalizationTrace,
   onSeen,
+  priceOwner,
+  onPriceVisibility,
   children,
 }: {
   groupedItem: DiscoverGroupedItem;
@@ -285,11 +303,26 @@ function FeedItemShell({
    * scrolling at all, and a scroll-distance threshold would never fire.
    */
   onSeen?: (positionIndex: number) => void;
+  priceOwner?: string;
+  onPriceVisibility?: (owner: string, keys: string[], visible: boolean) => void;
   children: ReactNode;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const tracked = useRef(false);
   const analytics = useMemo(() => getGroupedAnalytics(groupedItem), [groupedItem]);
+  const priceKeys = groupedLeaves([groupedItem]).map(priceKey).join(',');
+
+  useEffect(() => {
+    const node = ref.current;
+    if (!node || !priceOwner || !onPriceVisibility || !priceKeys) return;
+    const keys = priceKeys.split(',');
+    if (typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver(([entry]) => {
+      onPriceVisibility(priceOwner, keys, entry.isIntersecting);
+    }, { threshold: 0 });
+    observer.observe(node);
+    return () => { observer.disconnect(); onPriceVisibility(priceOwner, keys, false); };
+  }, [priceKeys, priceOwner, onPriceVisibility]);
 
   useEffect(() => {
     if (tracked.current) return;
@@ -463,7 +496,39 @@ export default function DiscoverPage() {
   // never served the shared feed — the backend keys authenticated requests to
   // `u:<id>` regardless of x-session-id — but passing `authenticated` here keeps
   // the client decision honest.
-  const { user } = useAuthContext();
+  const { user, isLoading: authLoading, isAuthenticated, isAuthAvailable, signInWithGoogle, signInWithApple, getToken } = useAuthContext();
+
+  // #9643 — only a signed-in reader teaches Discover. Read through a ref so the
+  // card callbacks stay stable and always see the CURRENT auth state: a sign-out
+  // must stop learning on the very next swipe, and a refused guest swipe is
+  // dropped, never replayed after sign-in.
+  const learningState = resolveDiscoverLearning({ isLoading: authLoading, isAuthenticated, uid: user?.uid });
+  const learningStateRef = useRef(learningState);
+  learningStateRef.current = learningState;
+  const learningAuthRef = useRef({ uid: user?.uid ?? null, getToken });
+  learningAuthRef.current = { uid: user?.uid ?? null, getToken };
+  const [signInInviteOpen, setSignInInviteOpen] = useState(false);
+  const closeSignInInvite = useCallback(() => setSignInInviteOpen(false), []);
+  const handleFeedbackAttempt = useCallback((): boolean => {
+    const decision = decideDiscoverFeedbackAttempt(learningStateRef.current);
+    if (decision.invite) setSignInInviteOpen(true);
+    return decision.proceed;
+  }, []);
+  // Signing in (from the invitation or the header) closes the invitation; the
+  // swipe that opened it stays unrecorded.
+  useEffect(() => {
+    if (learningState === "learn") setSignInInviteOpen(false);
+  }, [learningState]);
+  // The same rule at the writers: impressions, taps, shares, expands and bundle
+  // likes all score the profile, so nothing but `learn` may write or queue one.
+  useEffect(() => {
+    setDiscoverLearningGate(() => learningStateRef.current === "learn");
+    setDiscoverLearningIdentity({
+      getUid: () => learningAuthRef.current.uid,
+      getToken: () => learningAuthRef.current.getToken(),
+    });
+    return () => setDiscoverLearningGate(null);
+  }, []);
 
   // L2-242 / C133 — only the PROVEN first request of a fresh, signed-out,
   // zero-interaction visitor may reuse the shared `anon` warm feed. Flips false
@@ -472,6 +537,9 @@ export default function DiscoverPage() {
   const sharedAnonEligibleRef = useRef(true);
 
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
+  const [dismissedOwner, setDismissedOwner] = useState<string | null>(null);
+  const dismissedOwnerRef = useRef(dismissedOwner);
+  dismissedOwnerRef.current = dismissedOwner;
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   // #8176 — whether the infinite-scroll sentinel is inside the observer's band
   // right now. A LEVEL, deliberately: the advance that reads it must be
@@ -540,6 +608,7 @@ export default function DiscoverPage() {
 
   useEffect(() => {
     setDismissed(getDismissed());
+    setDismissedOwner(learningAuthRef.current.uid);
     const profile = readDiscoverInteractionProfile();
     setInteractionProfile(profile);
     setOrderingProfile(profile);
@@ -554,6 +623,17 @@ export default function DiscoverPage() {
     const stored = localStorage.getItem(`daily_guesses_${today}`);
     if (stored) setDailyGuesses(parseInt(stored, 10));
   }, []);
+
+  // A new account opens its own local edition. Unowned legacy storage stays
+  // intact, but cannot be attributed to an arbitrary reader on this device.
+  useEffect(() => {
+    dropPendingDiscoverInteractions();
+    const profile = readDiscoverInteractionProfile();
+    setInteractionProfile(profile);
+    setOrderingProfile(profile);
+    setDismissed(getDismissed());
+    setDismissedOwner(learningAuthRef.current.uid);
+  }, [learningState, user?.uid]);
 
   useEffect(() => {
     const refreshProfile = () => {
@@ -974,6 +1054,9 @@ export default function DiscoverPage() {
   }, []);
 
   const handleDismiss = useCallback((itemId: string) => {
+    // #9643 — the card already asked `handleFeedbackAttempt`; this is the page's
+    // own write, so it checks again rather than trusting every caller to.
+    if (learningStateRef.current !== "learn") return;
     // L2-242 — a dismiss is seen/dismiss evidence: never share the warm feed on
     // a later request this mount (the durable dismiss set also proves this on
     // reload).
@@ -982,10 +1065,12 @@ export default function DiscoverPage() {
     // any subsequent card open, so this reflects the FINAL action, not "a
     // dismiss happened at some point".
     lastActionWasDismissRef.current = true;
-    // Persist local dismissals so anonymous users do not see the same card
-    // again after refresh while the server downrank catches up.
+    // Persist this reader's exact dismissals across refreshes.
+    const uid = learningAuthRef.current.uid;
+    const reuseDismissals = dismissedOwnerRef.current === uid;
+    setDismissedOwner(uid);
     setDismissed((prev) => {
-      const next = new Set([...prev, itemId]);
+      const next = new Set([...(reuseDismissals ? prev : []), itemId]);
       saveDismissed(next);
       return next;
     });
@@ -1039,7 +1124,10 @@ export default function DiscoverPage() {
     const raw = [...page1Items, ...allItems];
     // Deduplicate by stable item ID across pages (defense in depth — a paging
     // hiccup can never render the same card twice).
-    const unique = dedupeById(raw, getItemId);
+    const deduped = dedupeById(raw, getItemId);
+    // #9905 — collection cards sit out every step below and are put back in
+    // front of the card the server placed them before (see collectionFeed).
+    const { ordinary: unique, anchored: collections } = splitCollections(deduped, getItemId);
     // #2603 — first sight fixes a card's ranking score for this edition.
     const editionScores = editionScoresRef.current;
     recordEditionScores(editionScores, unique, getItemId);
@@ -1050,19 +1138,23 @@ export default function DiscoverPage() {
     // fetching when this shortens a page, so it can never leave a blank tab.
     const renderable = unique.filter((item) => feedItemHasRenderableContent(item));
     const fresh = renderable.filter((item) => !isStale(item));
-    const dismissFiltered = fresh.filter((item) => !dismissed.has(getItemId(item)));
+    const currentUid = learningState === "learn" ? user?.uid : null;
+    const activeDismissed = currentUid && dismissedOwner === currentUid ? dismissed : new Set<string>();
+    const dismissFiltered = fresh.filter((item) => !activeDismissed.has(getItemId(item)));
     const filtered = dismissFiltered.length >= MIN_ITEMS_AFTER_LOCAL_DISMISS
       || fresh.length < MIN_ITEMS_AFTER_LOCAL_DISMISS
       ? dismissFiltered
       : fresh;
-    const suppressedCategories = getSuppressedCategories(interactionProfile);
+    const activeProfile = currentUid && interactionProfile?.owner_uid === currentUid ? interactionProfile : null;
+    const activeOrderingProfile = currentUid && orderingProfile?.owner_uid === currentUid ? orderingProfile : null;
+    const suppressedCategories = getSuppressedCategories(activeProfile);
     const cooldownFiltered = suppressedCategories.size
       ? filtered.filter((item) => !suppressedCategories.has(getItemCategory(item).toLowerCase()))
       : filtered;
     const cooldownSafe = cooldownFiltered.length > 0 ? cooldownFiltered : filtered;
     const grouped = groupRelatedMarkets(spaceBySport(cooldownSafe, getItemCategory));
-    return spaceBySport(
-      applyLocalPersonalization(grouped, orderingProfile, (groupedItem) => {
+    const ordered = spaceBySport(
+      applyLocalPersonalization(grouped, activeOrderingProfile, (groupedItem) => {
         const item = groupedItem.type === "single" ? groupedItem.item : groupedItem.items?.[0];
         if (!item) return null;
         return {
@@ -1072,14 +1164,20 @@ export default function DiscoverPage() {
       }),
       getGroupedCategory,
     );
-  }, [page1Items, allItems, dismissed, interactionProfile, orderingProfile]);
+    return placeCollections<DiscoverGroupedItem>(
+      ordered,
+      collections,
+      (gi) => (gi.type === "single" ? (gi.item ? [gi.item] : []) : gi.items ?? []).map(getItemId),
+      (item) => ({ type: "single", item }),
+    );
+  }, [page1Items, allItems, dismissed, dismissedOwner, interactionProfile, orderingProfile, learningState, user?.uid]);
 
   // L2-215 Item 1 — suppression telemetry. Count the empty predictive envelopes
   // dropped by the fail-closed filter, by card type + machine reason, with NO
   // identity data (no ids, names, sessions, or market text). Fired once per distinct
   // suppression signature so a stable feed does not re-emit on every render.
   const suppressedEnvelopes = useMemo(
-    () => collectSuppressedEnvelopes(dedupeById([...page1Items, ...allItems], getItemId)),
+    () => collectSuppressedEnvelopes(dedupeById([...page1Items, ...allItems], getItemId).filter((item) => !isCollectionItem(item))),
     [page1Items, allItems],
   );
   const suppressedSigRef = useRef("");
@@ -1099,7 +1197,8 @@ export default function DiscoverPage() {
     }
   }, [suppressedEnvelopes]);
 
-  const visibleItems = processedItems.slice(0, visibleCount);
+  const streamedPrices = useDiscoverPriceStream(processedItems, user?.uid ?? 'anonymous');
+  const visibleItems = streamedPrices.items.slice(0, visibleCount);
 
   // Queue 309 — the whole first-run decision, in two lines. Both delegate to
   // pure functions that take no time input, so neither can expire on a timer
@@ -1412,12 +1511,21 @@ export default function DiscoverPage() {
         />
       )}
 
+      <SignInToPersonalizeInvite
+        // No sign-in configured ⇒ nothing to offer; the swipe is still refused.
+        open={signInInviteOpen && isAuthAvailable !== false}
+        onClose={closeSignInInvite}
+        onSignInGoogle={signInWithGoogle}
+        onSignInApple={signInWithApple}
+      />
+
       {/* Feed — responsive: 1 col mobile, 2 col tablet, 3 col desktop.
           #8254: width classes here are the HEADER's, character for character (see the note on it).
           The extra width becomes WIDER cards, not more of them — four columns in 1520px are ~368px
           each against ~300px before, which is the "comfortably readable" half of the ask. A fifth
           column at this width would take them back down to ~291px, narrower than the defect, so
           the column ladder is deliberately untouched. */}
+      <DiscoverFeedbackAttemptContext.Provider value={handleFeedbackAttempt}>
       <main className="max-w-content mx-auto px-4 py-4">
         {isLoading && <DiscoverSkeletonGrid />}
 
@@ -1499,6 +1607,15 @@ export default function DiscoverPage() {
         <div className={MASONRY_GRID_CLASS}>
           {visibleItems.map((gi, idx) => {
             const key = gi.type === "single" ? getItemId(gi.item!) : `group-${gi.groupTitle}-${idx}`;
+            // #9905 — only admitted collections reach this list.
+            const collection = gi.type === "single" ? admitCollection(gi.item) : null;
+            if (collection) {
+              return (
+                <MasonryCell key={key} data-testid="discover-card">
+                  <DiscoverCollectionCard entry={collection} />
+                </MasonryCell>
+              );
+            }
             // Queue 309 Item 3: a locked slot falls through to the normal
             // DiscoverCard rather than rendering nothing — suppressing the quiz
             // must never leave a hole in the masonry grid.
@@ -1539,7 +1656,8 @@ export default function DiscoverPage() {
                 data-testid="discover-card"
                 className={isFirstCard ? "animate-peek-right" : ""}
               >
-                <FeedItemShell groupedItem={gi} positionIndex={idx} personalizationTrace={personalizationTrace} onSeen={handleCardSeen}>
+                <FeedItemShell groupedItem={gi} positionIndex={idx} personalizationTrace={personalizationTrace} onSeen={handleCardSeen}
+                  priceOwner={key} onPriceVisibility={streamedPrices.setPriceVisibility}>
                   {isGuessSlot ? (
                     <GuessCard item={gi.item!} onGuessCompleted={incrementDailyGuesses} />
                   ) : (
@@ -1549,6 +1667,7 @@ export default function DiscoverPage() {
                       onDismiss={handleLessLike}
                       showProbabilityHint={isFirstPosition && isFirstRunAnon}
                       pinFor={pinForFutures}
+                      onFeedbackAttempt={handleFeedbackAttempt}
                     />
                   )}
                 </FeedItemShell>
@@ -1585,12 +1704,16 @@ export default function DiscoverPage() {
 
         {!feedUnavailable && visibleCount >= processedItems.length && !hasMore && processedItems.length > 0 && (
           <div className="mt-6 mb-2 flex justify-center">
-            <EndOfFeedCard count={processedItems.length} onRefresh={handleRefreshFeed} />
+            {/* #9905 — a collection is not a market; the count names markets. */}
+            <EndOfFeedCard
+              count={processedItems.filter((gi) => !(gi.type === "single" && isCollectionItem(gi.item))).length}
+              onRefresh={handleRefreshFeed}
+            />
           </div>
         )}
       </main>
+      </DiscoverFeedbackAttemptContext.Provider>
     </div>
     </ErrorBoundary>
   );
 }
-

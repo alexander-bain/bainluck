@@ -63,6 +63,19 @@ needs_machine = pytest.mark.skipif(
 )
 
 
+# #9668: an empty inbox now asks `config/lane-ownership.json` what kind of lane
+# it is before it restocks, and a lane the charter does not name is refused
+# ("lane policy unavailable") — so every scratch lane below would stop there,
+# before the program-file path these tests were written for. `demo` is declared
+# a service lane in a scratch charter; the refusal itself is pinned by
+# test_restock_refuses_a_lane_the_charter_does_not_name.
+@pytest.fixture(autouse=True)
+def _scratch_lane_charter(tmp_path_factory, monkeypatch):
+    charter = tmp_path_factory.mktemp("charter") / "lane-ownership.json"
+    charter.write_text('{"schema_version": 1, "lanes": {"demo": {"mode": "quality"}}}')
+    monkeypatch.setenv("BL_LANE_POLICY", str(charter))
+
+
 def run(script, *args, env=None):
     """Run a launcher, returning (rc, stdout+stderr).
 
@@ -817,6 +830,25 @@ def test_restock_refuses_a_lane_with_no_program_file(tmp_path):
     assert "NO PROGRAM FILE" in out
     assert "lane-program-map.txt" in out
     assert "WOULD WRITE" not in out
+
+
+def test_restock_refuses_a_lane_the_charter_does_not_name(tmp_path):
+    """#9668 fails closed: a lane with no charter entry gets no directive at all.
+
+    Control: the same tree under a charter that names `demo` restocks, so the
+    refusal is the charter lookup and not a missing program file.
+    """
+    handoff = _handoff(tmp_path)
+    charter = tmp_path / "charter.json"
+    charter.write_text('{"schema_version": 1, "lanes": {"other": {"mode": "quality"}}}')
+    rc, out = _restock(handoff, BL_LANE_POLICY=str(charter))
+    assert rc == 0, out
+    assert "lane policy unavailable" in out
+    assert "WOULD WRITE" not in out
+
+    rc, out = _restock(handoff)
+    assert rc == 0, out
+    assert "WOULD WRITE" in out
 
 
 def test_restock_map_entry_pointing_at_a_missing_file_fails_closed(tmp_path):

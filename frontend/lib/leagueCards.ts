@@ -104,6 +104,8 @@ export function leagueGameToEvent(game: LeagueGameBrief): Event {
     event.venue_settled = game.venue_settled;
     event.venue_settled_result = game.venue_settled_result ?? null;
   }
+  // #5811 — present only when true, so it travels only when present.
+  if (game.venue_closed_no_winner === true) event.venue_closed_no_winner = true;
 
   // #8515 — the provider's doubleheader facts travel as served. The card
   // decides whether they license a "Game N" mark (`providerGameNumber`); this
@@ -152,10 +154,12 @@ export function leagueGameToEvent(game: LeagueGameBrief): Event {
 export const MIXED_UNREPORTED_RAIL_TITLE = "Other games";
 
 export function unreportedRailTitle(
-  games: Pick<LeagueGameBrief, "venue_settled" | "venue_settled_result">[],
+  games: Pick<LeagueGameBrief, "venue_settled" | "venue_settled_result" | "venue_closed_no_winner">[],
 ): string {
   const namesAResult = games.some(
-    (g) => venueSettledSummary(g.venue_settled, g.venue_settled_result) !== null,
+    (g) =>
+      venueSettledSummary(g.venue_settled, g.venue_settled_result, g.venue_closed_no_winner) !==
+      null,
   );
   return namesAResult ? MIXED_UNREPORTED_RAIL_TITLE : SUSPENDED_LABEL;
 }

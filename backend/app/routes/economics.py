@@ -11,7 +11,7 @@ import json
 import logging
 import re
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends
 from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,6 +33,7 @@ from app.utils.cross_source_matching import (
 )
 from app.utils.duplicate_condition_outcomes import drop_duplicate_legs
 from app.utils.inflation_release_identity import fold_same_release
+from app.utils.feed_market_quality import book_bounds_nothing, is_fabricated_midpoint
 from app.utils.economics_headline import (
     LadderCandidate,
     RecessionCandidate,
@@ -42,6 +43,7 @@ from app.utils.economics_headline import (
 from app.utils.market_staleness import (
     CUMULATIVE_THRESHOLD_PREFIXES,
     featured_leader_probability,
+    last_priced_before_the_venue_forgets,
     outcome_names_are_cumulative_ladder,
     should_exclude_from_featured,
 )
@@ -442,6 +444,32 @@ def _index_symbol(market: FuturesMarket, cut: str) -> str:
     head = re.split(rf"\b{re.escape(cut)}\b", market.name or "", maxsplit=1, flags=re.I)[0]
     head = re.sub(r"\b(?:closes?|finishes|ends?|settles?)\s*$", "", head.strip(), flags=re.I)
     return head.strip(" ,-—")[:20]
+
+
+#: How far ahead a TODAY'S CLOSE market may resolve. Friday after the bell,
+#: the next session's markets resolve Monday 20:00Z — three days out — and a
+#: Monday holiday pushes that to Tuesday. Four days admits every next-session
+#: market and nothing that resolves a week or a year away.
+_TODAYS_CLOSE_HORIZON = timedelta(days=4)
+
+
+def _resolves_by_the_next_close(market: FuturesMarket, now: datetime) -> bool:
+    """Is this a question about the NEXT close, the only one the card answers?
+
+    #9343. The card is headed TODAY'S CLOSE and prints ``{prob}% up``. The
+    branch that feeds it admitted any market whose name holds an index word and
+    ``close``, so ``Will Nasdaq 100 (NDX) close over $24,000 on the final
+    trading day of December 2026?`` (Polymarket 148025) reached it, read as
+    "Will Nasdaq 100 (NDX — 49.5% up": a year-end threshold printed as today's
+    direction. Every daily market carries its session's close as
+    ``resolution_date``; a market without one cannot claim to be today's.
+    """
+    resolves = getattr(market, "resolution_date", None)
+    if resolves is None:
+        return False
+    if resolves.tzinfo is None:
+        resolves = resolves.replace(tzinfo=timezone.utc)
+    return resolves <= now + _TODAYS_CLOSE_HORIZON
 
 
 def _index_row(market: FuturesMarket) -> dict | None:
@@ -875,12 +903,109 @@ def _reads_as_cumulative(outcomes: list) -> bool:
     )
 
 
-def _cumulative_to_discrete(outcomes: list, max_buckets: int = 8) -> list[list]:
+def _rung_is_quoted(outcome) -> bool:
+    """Does this priced rung carry a number somebody could trade at? (#9214)
+
+    Two existing shared predicates, no new constant: the book must bound
+    something (:func:`book_bounds_nothing` — a 1c/99c quote locates nothing, so
+    the last trade stored beside it is not a current price either), and the
+    price must not be that book's own midpoint (:func:`is_fabricated_midpoint`
+    — #8826's one market-maker quote copied down a ladder). A rung with no book
+    at all is a model price and passes, the predicates' own fail-open.
+    """
+    probability = getattr(outcome, "current_probability", None)
+    bid = getattr(outcome, "current_yes_bid", None)
+    ask = getattr(outcome, "current_yes_ask", None)
+    return not book_bounds_nothing(bid, ask) and not is_fabricated_midpoint(
+        probability, bid, ask
+    )
+
+
+def _ladder_is_mostly_quoted(outcomes: list) -> bool:
+    """May this ladder be drawn as a distribution at all? (#9214)
+
+    ``_cumulative_to_discrete`` differences whatever is stored, so a ladder whose
+    prices come from nobody draws a confident column anyway. On production
+    2026-09-27 the rate path drew three:
+
+        column     priced rungs  quoted  drawn
+        Jun 2027   17            2       91% at 3.25%
+        Jul 2027   14            0       99% at 3.25%
+        Sep 2027   14            0       80% at 3.25%
+
+    while the five real meetings (Oct 2026 - Apr 2027) had 11-18 quoted rungs
+    and at least 74% of their priced rungs quoted. A majority is the rule: most
+    of what the column draws must come from a price somebody agreed on.
+    Otherwise the column is left out (notice 34: leave the space empty).
+
+    Why not repair the ladder rung by rung instead, measured over the 22
+    cumulative ladders the page served that morning: dropping unpriced rungs
+    moves Apr's 56% onto "5.50%" (a stale 83c trade on a dead rung that the
+    zero had been masking), and dropping only empty-book rungs turns Jun into
+    "96% at 0.00%". A ladder this empty has no honest partial reading.
+    """
+    priced = [o for o in outcomes if getattr(o, "current_probability", None) is not None]
+    if not priced:
+        return False
+    quoted = sum(1 for o in priced if _rung_is_quoted(o))
+    return quoted * 2 > len(priced)
+
+
+# A rung label that is a bare percentage, e.g. "0.2%" or "-0.4%" — what is left
+# of "Above 0.2%" once the threshold wording is stripped.
+_PERCENT_RUNG_RE = re.compile(r'^(-?\d+)(?:\.(\d+))?%$')
+
+
+def _print_grid_step(clean_labels: list[str], thresholds: list[float]) -> tuple[int, float] | None:
+    """(decimals, step) when a ladder's rungs sit on the grid its figure is printed on (#9558).
+
+    Kalshi's CPI rule reads "increases by above 0.2%", and BLS prints to one
+    decimal, so "above 0.2% and not above 0.3%" is a print of exactly 0.3% — the
+    difference covers ONE printable value, and it is the UPPER threshold's. The
+    tell is in the labels themselves: every rung written to d decimals, and the
+    rungs 10^-d apart. Then a difference can only be one value (or, across a
+    missing rung, a short run of them).
+
+    None for everything else, which keeps its old labels: the Fed ladder (0.25
+    apart, written to two decimals — "4.00%" names a target range by its floor),
+    Brazil's IPCA (0.10 apart, written and printed to two decimals, so each
+    difference is ten prints wide), whole-number rungs, and every dollar or
+    index ladder.
+    """
+    decimals = set()
+    for label in clean_labels:
+        match = _PERCENT_RUNG_RE.match(label)
+        if not match:
+            return None
+        decimals.add(len(match.group(2) or ""))
+    if len(decimals) != 1 or len(thresholds) < 2:
+        return None
+    d = decimals.pop()
+    # Whole-number rungs ("Above -4%") are not a print grid: no statistic here
+    # is published to the whole percent, so "above -5, not above -4" is a range.
+    if d == 0:
+        return None
+    step = 10 ** -d
+    gaps = [round(b - a, d + 2) for a, b in zip(thresholds, thresholds[1:])]
+    if min(gaps) <= 0 or round(min(gaps), d + 2) != round(step, d + 2):
+        return None
+    return d, step
+
+
+def _cumulative_to_discrete(outcomes: list, max_buckets: int = 8, *, usable=None) -> list[list]:
     """Convert cumulative 'Above X' outcomes to discrete bracket probabilities.
 
     Kalshi economics markets use cumulative outcomes (P(above 3%), P(above 3.5%)).
     We need P(exactly in bracket) = P(above lower) - P(above upper).
     Returns [[prob, label], ...] sorted by threshold, at most max_buckets entries.
+
+    ``usable`` (#9804) is an optional per-rung predicate: may this rung's number
+    bound a served cell? A cell is served only when both rungs it differences
+    are usable, and a rung the monotone clamp overwrote is usable only if the
+    rung it copied is too. Otherwise the cell is left out (notice 34: leave the
+    space empty) — never re-linked across the gap, which is the repair #9214
+    measured and rejected. ``None``, what every caller but the rate path
+    passes, keeps the old output byte-for-byte.
 
     The threshold is parsed WITH its sign (#7081). An unsigned `[\\d.]+` reads
     "Above -0.4%" as 0.4, which interleaves a mixed-sign ladder — 0.0, -0.1,
@@ -924,7 +1049,7 @@ def _cumulative_to_discrete(outcomes: list, max_buckets: int = 8) -> list[list]:
             _suffix = _SUFFIX_THRESHOLD_RE.match(clean)
             if _suffix:
                 clean = _suffix.group(1).strip()
-        raw.append((p, clean, sort_val))
+        raw.append((p, clean, sort_val, usable is None or bool(usable(o))))
 
     if not raw:
         return []
@@ -933,9 +1058,11 @@ def _cumulative_to_discrete(outcomes: list, max_buckets: int = 8) -> list[list]:
     raw.sort(key=lambda x: x[2])
 
     # Enforce monotonicity: P(above lower threshold) >= P(above higher threshold)
+    # A clamped rung keeps its own question but now holds its neighbour's
+    # number, which only bounds it — so it is usable only if both are (#9804).
     for i in range(1, len(raw)):
         if raw[i][0] > raw[i - 1][0]:
-            raw[i] = (raw[i - 1][0], raw[i][1], raw[i][2])
+            raw[i] = (raw[i - 1][0], raw[i][1], raw[i][2], raw[i][3] and raw[i - 1][3])
 
     # Convert cumulative to discrete:
     # P(in bracket i) = P(above threshold_i) - P(above threshold_{i+1})
@@ -943,13 +1070,39 @@ def _cumulative_to_discrete(outcomes: list, max_buckets: int = 8) -> list[list]:
     # Rows carry their threshold as a third element so the re-sort below can
     # order by it; it is projected away before returning, because callers
     # (`_modal_bracket`) unpack exactly [prob, label].
+    #
+    # On a print grid (#9558) each difference is named by what it covers: the
+    # upper threshold ("above 0.2, not above 0.3" is a 0.3% print), a run where
+    # a rung is missing ("0.4–0.6%"), "X%+" for the top rung's own price, and
+    # the bottom bucket, 1 − P(above lowest), which the lower-threshold naming
+    # had no label for and so never drew ("≤0.0%"). Kalshi's CPI combo market
+    # on the same card words its legs the same way ("Exactly 0.4%", "0.5% or
+    # above"). Off the grid the labels are unchanged.
+    grid = _print_grid_step([r[1] for r in raw], [r[2] for r in raw])
     discrete = []
+    if grid:
+        d, step = grid
+        fmt = lambda v: f"{round(v, d) + 0.0:.{d}f}%"  # noqa: E731  (+0.0: never "-0.0%")
+        bottom_p = round(100 - raw[0][0], 1)
+        if bottom_p >= 0.1 and raw[0][3]:
+            discrete.append([bottom_p, f"≤{raw[0][1]}", raw[0][2] - step])
     for i in range(len(raw)):
         cum_p = raw[i][0]
         next_p = raw[i + 1][0] if i + 1 < len(raw) else 0
         bracket_p = round(cum_p - next_p, 1)
-        if bracket_p >= 0.1:
-            discrete.append([bracket_p, raw[i][1], raw[i][2]])
+        # The top bracket is bounded by its own rung alone.
+        bounded_by_usable = raw[i][3] and (i + 1 == len(raw) or raw[i + 1][3])
+        if bracket_p >= 0.1 and bounded_by_usable:
+            label = raw[i][1]
+            if grid:
+                low = raw[i][2] + step
+                if i + 1 == len(raw):
+                    label = f"{fmt(low)}+"
+                elif round(raw[i + 1][2] - raw[i][2], d + 2) == round(step, d + 2):
+                    label = raw[i + 1][1]
+                else:
+                    label = f"{fmt(low)[:-1]}–{raw[i + 1][1]}"
+            discrete.append([bracket_p, label, raw[i][2]])
 
     # If too many, keep top by probability, then restore threshold order.
     # Sorting the survivors by their LABEL instead would reverse an
@@ -1137,6 +1290,10 @@ async def get_economics(db: AsyncSession):
             m.name, m.llm_sport_category, m.status, _leader_prob(m), now,
         ):
             continue
+        # #9343: a months-old price is not a quote. `status` cannot see a
+        # market the venue stopped listing (gotcha #33); the touch stamp can.
+        if last_priced_before_the_venue_forgets(m, now):
+            continue
         spotlight_eligible.append(m)
         theme = _classify_theme(m)
         themed[theme].append(m)
@@ -1238,9 +1395,21 @@ async def get_economics(db: AsyncSession):
 
     for m in fomc_source:
         outcomes = _outcomes_sorted(m)
+        # #9214: a meeting nobody is trading gets no column, rather than a
+        # confident one differenced out of 1c/99c books and copied quotes.
+        if not _ladder_is_mostly_quoted(outcomes):
+            continue
         has_cumulative = _reads_as_cumulative(outcomes)
         if has_cumulative:
-            discrete = _cumulative_to_discrete(outcomes, max_buckets=10)
+            # #9804: a column #9214 keeps can still hold a rung nobody is
+            # trading; the cells it bounds are left empty, not drawn confident.
+            discrete = _cumulative_to_discrete(outcomes, max_buckets=10, usable=_rung_is_quoted)
+            # And when what is left no longer carries most of the probability,
+            # the column is a few slivers wearing the modal outline — Mar 2027
+            # on 2026-09-30 kept 4.5 of 100 points, Apr kept none — so it is
+            # left out whole, #9214's majority rule read over mass.
+            if sum(cell[0] for cell in discrete) * 2 <= 100:
+                continue
             # Reverse so highest rate is first (top of heatmap)
             discrete.reverse()
         else:
@@ -1484,6 +1653,13 @@ async def get_economics(db: AsyncSession):
     for m in markets_markets:
         name_lower = (m.name or "").lower()
         if any(idx in name_lower for idx in ("nasdaq", "s&p", "dow", "vix")) and ("up or down" in name_lower or "close" in name_lower):
+            # #9343: the name test also admits "…close over $24,000 on the
+            # final trading day of December 2026?", which the card printed as
+            # "49.5% up". Such a market is dropped, not re-routed to the side
+            # list: this card is the only place the page reads the name as a
+            # daily question.
+            if not _resolves_by_the_next_close(m, now):
+                continue
             _row = _index_row(m)
             if _row:
                 today_indices.append(_row)

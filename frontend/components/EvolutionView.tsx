@@ -4,7 +4,7 @@ import { useState, useMemo, useCallback, useEffect } from "react";
 import useSWR from "swr";
 import { FuturesChart } from "@/components/FuturesChart";
 import { EvolutionLeaderboard } from "@/components/EvolutionLeaderboard";
-import { fetchFuturesHistory, fetchMultiMarketHistory } from "@/lib/api";
+import { fetchFuturesHistory, fetchMultiMarketHistory, fetchFuturesMarket } from "@/lib/api";
 import { fieldIsOneQuestion } from "@/lib/combinedLinePolicy";
 import type { FuturesOutcomeHistory } from "@/lib/types";
 import {
@@ -72,6 +72,8 @@ export interface PositionOption {
 
 interface EvolutionViewProps {
   marketId: number;
+  /** Use canonical current prices for defaults/labels; historical points remain intact. */
+  requireCurrentPrices?: boolean;
   marketName?: string;
   defaultTopN?: number;
   hours?: number;
@@ -89,6 +91,7 @@ export function EvolutionView({
   marketId,
   marketName,
   defaultTopN = 8,
+  requireCurrentPrices = false,
   hours = 168,
   className,
   positionOptions,
@@ -199,13 +202,35 @@ export function EvolutionView({
     ? `futures-evolution-multi-${activeMarketIds.join(",")}-${fetchKey}`
     : `futures-evolution-${activeMarketId}-${fetchKey}`;
 
-  const { data, error, isLoading } = useSWR(
+  const { data: historyData, error, isLoading } = useSWR(
     cacheKey,
     () => activeMarketIds.length > 1
       ? fetchMultiMarketHistory(activeMarketIds, fetchHours, 50)
       : fetchFuturesHistory(activeMarketId, fetchHours, undefined, 50),
     { refreshInterval: 60_000, keepPreviousData: true }
   );
+
+  const checkCurrentPrices = requireCurrentPrices && activeMarketIds.length === 1;
+  const { data: currentMarket, error: currentError, isLoading: currentLoading } = useSWR(
+    checkCurrentPrices ? ["futures-market", activeMarketId] : null,
+    () => fetchFuturesMarket(activeMarketId),
+    { refreshInterval: 60_000, keepPreviousData: true, revalidateOnFocus: false },
+  );
+  // Current refusal says nothing about whether an earlier price was supported.
+  // Annotate presentation only; never filter or rewrite the historical points.
+  const data = useMemo(() => {
+    if (!historyData || !checkCurrentPrices) return historyData;
+    const current = currentMarket?.id === activeMarketId && !currentError
+      ? new Map(currentMarket.outcomes.map((o) => [o.id, o.probability]))
+      : new Map<number, number | null>();
+    return {
+      ...historyData,
+      outcomes: historyData.outcomes.map((o) => ({
+        ...o,
+        current_price_available: current.has(o.outcome_id) && current.get(o.outcome_id) != null,
+      })),
+    };
+  }, [historyData, checkCurrentPrices, currentMarket, currentError, activeMarketId]);
 
   // Derive day-boundary markers for the tournament range: start of each day
   // from tournament start through min(end, now). Uses UTC dates since the API
@@ -251,7 +276,7 @@ export function EvolutionView({
       const bLast = b.history[b.history.length - 1]?.probability ?? 0;
       return bLast - aLast;
     });
-    const active = sorted.filter((o) => !o.eliminated);
+    const active = sorted.filter((o) => !o.eliminated && o.current_price_available !== false);
     const selected = active.slice(0, defaultTopN).map((o) => o.outcome_id);
     return new Set(selected);
   }, [data, selectedOutcomeIds, defaultTopN]);
@@ -350,9 +375,11 @@ export function EvolutionView({
     [effectiveSelectedIds]
   );
 
-  // Current position label for footer
+  // Current position label for footer. #9371: only a chart with a position
+  // picker has a position to name — without one, the old "Win" fallback was
+  // appended to names that already say it ("… — Win Probability — Win").
   const activePositionLabel =
-    positionOptions?.find((p) => p.key === selectedPosition)?.label || "Win";
+    positionOptions?.find((p) => p.key === selectedPosition)?.label ?? null;
 
   const cardClasses = isFullscreen
     ? "fixed inset-0 z-[9999] bg-surface-card flex flex-col"
@@ -360,7 +387,7 @@ export function EvolutionView({
 
   // Show the card shell immediately with a loading chart area inside,
   // so controls are visible and the layout doesn't jump.
-  const chartContent = isLoading ? (
+  const chartContent = (isLoading || (checkCurrentPrices && currentLoading)) ? (
     <div className="flex-1 min-w-0 px-3 sm:px-4 pt-2 pb-1 flex items-center justify-center" style={{ minHeight: isFullscreen ? 600 : 300 }}>
       <div className="flex flex-col items-center gap-2 text-text-muted">
         <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24" fill="none">
@@ -547,9 +574,12 @@ export function EvolutionView({
         </div>
 
         {/* ── Footer ── */}
-        <div className="px-3 sm:px-4 py-1.5 border-t border-surface-border bg-surface-secondary/80 flex justify-between text-[11px] text-text-muted">
-          <span>{marketName || "Win Probability"} — {activePositionLabel}</span>
-          <span>
+        <div className="px-3 sm:px-4 py-1.5 border-t border-surface-border bg-surface-secondary/80 flex justify-between gap-3 text-[11px] text-text-muted">
+          <span className="min-w-0">
+            {marketName || "Win Probability"}
+            {activePositionLabel ? ` — ${activePositionLabel}` : null}
+          </span>
+          <span className="shrink-0 whitespace-nowrap">
             {effectiveSelectedIds.size} of {data?.outcomes.length ?? 0}
             {selectedOutcomeIds !== null && (
               <button

@@ -219,6 +219,41 @@ def already_tagged_ids(current_tags: dict[int, str]) -> set[int]:
     }
 
 
+def split_todo(tags, tagged: set[int]) -> tuple[list, list]:
+    """``(todo, withheld)``: which planned tags to write, and which to refuse
+    because their CANONICAL is itself already a proven duplicate. Pure.
+
+    #8818 family. The election (``twin_identity_rank``) is re-run every hour
+    and it can change its mind — one row gains a source, the other loses its
+    league. When it flips, the old canonical becomes the new duplicate, carries
+    no tag, and used to be written ``duplicate-of`` the row that ALREADY says it
+    is a duplicate of it. Two rows naming each other: ``not_a_proven_duplicate``
+    hides both from every rail, and the fixture leaves the site.
+
+    Measured on production 2026-09-27: **25 such pairs**, every one banked in
+    this sweep's own table in both directions, the second write 13 h to 8 days
+    after the first. On 16 of the 25 the pair was the fixture's only row, so the
+    game was simply gone — the whole J2 League slate of 2026-09-26 (ten games,
+    flipped 09-19 to 09-21, hidden for the week before kick-off), Gotham FC v
+    Chicago Stars (170 markets), Västerås v Malmö, Debrecen v Vasas.
+
+    Refusing is the fail-closed direction: the row the earlier pass chose stays
+    the one readers see, and its sibling's markets keep folding onto it. A
+    canonical tagged by a DIFFERENT rail is refused for the same reason — the
+    tag would be a second hop, and the reader follows one
+    (:func:`app.utils.proven_duplicates.canonical_id_from_tags`).
+    """
+    todo, withheld = [], []
+    for tag in tags:
+        if tag.duplicate_id in tagged:
+            continue
+        if tag.canonical_id in tagged:
+            withheld.append(tag)
+            continue
+        todo.append(tag)
+    return todo, withheld
+
+
 def fold_is_live() -> bool:
     """Is ``_build_game_markets`` still the consumer that makes this pay?
 
@@ -464,7 +499,7 @@ async def run_polymarket_container_twin_sweep(
 
         plan = plan_container_tags(markets, rows)
         tagged = already_tagged_ids(current_tags)
-        todo = [t for t in plan.tags if t.duplicate_id not in tagged]
+        todo, withheld = split_todo(plan.tags, tagged)
         folding = fold_is_live()
 
         summary.update(
@@ -479,8 +514,15 @@ async def run_polymarket_container_twin_sweep(
                 "pairs_found": len(plan.tags),
                 "refusals": len(plan.refusals),
                 "refusal_samples": plan.refusals[:10],
-                "already_tagged": len(plan.tags) - len(todo),
+                "already_tagged": len(plan.tags) - len(todo) - len(withheld),
                 "to_tag": len(todo),
+                # Not damage and not work: the election flipped (or another rail
+                # tagged the canonical) and writing would name a row that is
+                # itself a duplicate. See `split_todo`.
+                "withheld_canonical_is_duplicate": len(withheld),
+                "withheld_samples": [
+                    f"{t.duplicate_id}->{t.canonical_id}" for t in withheld[:10]
+                ],
                 # The consumer check, reported whether or not there is work: a
                 # sweep whose fold has been removed writes tags that deliver
                 # nothing, and that must be visible on a quiet day too.
