@@ -338,7 +338,7 @@ def test_the_stale_row_a_poll_never_saw_keeps_its_age(session):
 #                                     condition-twin write (#4983)
 #   tournament_price_refresh.py    1  one PARTITION BY statement per pass
 #   kalshi_ws.py                   1  per flush
-#   polymarket_ws.py               1  per flush
+#   polymarket_ws.py               2  per flush · the wide-book withdrawal (#9934)
 #   datagolf.py                    2  pre-tournament poll · live poll
 #   prediction_market_matching.py  2  the live poll's Kalshi and Polymarket arms
 #
@@ -353,7 +353,7 @@ WIRED_WRITERS = {
     "tasks/futures_price_refresh.py": 5,
     "tasks/tournament_price_refresh.py": 1,
     "tasks/kalshi_ws.py": 1,
-    "tasks/polymarket_ws.py": 1,
+    "tasks/polymarket_ws.py": 2,
     "tasks/datagolf.py": 2,
     "tasks/prediction_market_matching.py": 2,
     # CERT-3189's named residual, wired by #6598's follow-up. The operator

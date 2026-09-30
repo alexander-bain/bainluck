@@ -346,6 +346,10 @@ def _exec_flush(module, consumer_name: str, namespace: dict):
     return namespace["flush_prices"]
 
 
+async def _no_withdrawals():
+    return []
+
+
 class TestAQuietFlushServicesLockDeferredStamps:
     """Codex review of #8490 (P1 #1), reproduced against the committed bodies:
     both sockets returned from `flush_prices()` on an empty buffer BEFORE the
@@ -372,6 +376,8 @@ class TestAQuietFlushServicesLockDeferredStamps:
                 "buffer_lock": asyncio.Lock(),
                 "price_buffer": {},
                 "blend_refresher": refresher,
+                # #9934: the Polymarket flush also asks its wide books; none here.
+                "flush_withdrawals": _no_withdrawals,
             })
             asyncio.run(flush())
             assert seen == [[15318131]], f"{consumer}: quiet flush skipped the retry"
@@ -393,6 +399,8 @@ class TestAQuietFlushServicesLockDeferredStamps:
                 "buffer_lock": asyncio.Lock(),
                 "price_buffer": {},
                 "blend_refresher": refresher,
+                # #9934: the Polymarket flush also asks its wide books; none here.
+                "flush_withdrawals": _no_withdrawals,
             })
             asyncio.run(flush())
             assert refresher.stats["considered"] == 0, consumer

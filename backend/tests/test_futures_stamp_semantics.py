@@ -666,7 +666,9 @@ PRICE_CHANGE_STAMPERS = {
     # whose absence made `price_changed_at` least able to answer its own
     # question for Kalshi and Polymarket game markets.
     "app/tasks/kalshi_ws.py": 1,
-    "app/tasks/polymarket_ws.py": 1,
+    # #9934: + the withdrawal of a held price a wide book priced out (a price
+    # going away is a move).
+    "app/tasks/polymarket_ws.py": 2,
     # #4958: DataGolf, the writer this census could never have named. The
     # tripwire fires on DRIFT IN A DECLARED COUNT, and a file that calls the
     # helper zero times declares nothing — the same blind spot Q460 records two
