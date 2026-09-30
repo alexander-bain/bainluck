@@ -148,6 +148,37 @@ enum EventState {
         return hasStarted(commenceTime: commenceTime, now: now)
     }
 
+    /// Whether the row says the venue CLOSED the contest with no winner — a
+    /// draw, a no contest, a split settlement.
+    ///
+    /// #5811, the native consumer half. Production 2026-09-30: Erick Visconde v
+    /// Ilias Bulaid (15320964, UFC, `suspended`, no score) sat under "Live &
+    /// Paused" on the MMA page with the badge "No result reported", hours after
+    /// Kalshi finalized both fight markets as `scalar`. Nothing named a winner,
+    /// so `venue_settled` was rightly false and the row had no end state to give.
+    ///
+    /// Read off the producer's `venue_closed_no_winner` (live's PR #9821: every
+    /// market on a scoreless row carries #7035's `venue_voided` stamp and no
+    /// outcome from any source is a winner). The key is PRESENT ONLY WHEN TRUE —
+    /// absent means "not established", never "still going".
+    ///
+    /// Same gates as ``showsVenueSettledVerdict`` for the same reasons (a Final
+    /// already says it better; a future kick-off is still pregame), plus two:
+    /// a graded winner OUTRANKS it — the web rule (`venueSettledSummary`'s third
+    /// argument) — and a `live` row keeps its live badge, as web's card does.
+    static func showsVenueClosedNoWinner(
+        _ status: String?, venueSettled: Bool?, venueClosedNoWinner: Bool?,
+        commenceTime: Date?, now: Date = Date()
+    ) -> Bool {
+        guard venueClosedNoWinner == true, venueSettled != true else { return false }
+        guard status != "live", !isFinished(status) else { return false }
+        return hasStarted(commenceTime: commenceTime, now: now)
+    }
+
+    /// What a row the venue closed with no winner says. Pinned to the web's
+    /// `VENUE_CLOSED_NO_WINNER_LABEL` by `eventStatusSingleSource.test.ts`.
+    static let venueClosedNoWinnerLabel = "Ended · no winner"
+
     /// Whether a LIST ROW prints the date and time the event starts.
     ///
     /// #6444 — Alex photographed search for "Boston Red Sox" and got three rows
@@ -342,6 +373,25 @@ enum EventState {
         if status == "live" || isSuspended(status) { return .live }
         if isFinished(status) { return .finished }
         return .upcoming
+    }
+
+    /// The section a feed GAME card files under. #5811 — a row the venue
+    /// closed with no winner is over, so it files where results file instead
+    /// of under "Live & Paused". Every other row files exactly as
+    /// ``section(_:)`` puts it. One function for every bucket, so the Sports
+    /// tab, a category page and My Stuff cannot read one card two ways.
+    ///
+    /// `venueSettled: nil` because the feed model does not decode that key on
+    /// native; the producer never sends both (a graded winner suppresses
+    /// `venue_closed_no_winner` at the source — 15321573 on 2026-09-30).
+    static func section(of event: FeedEventData?, now: Date = Date()) -> Section {
+        if let event, showsVenueClosedNoWinner(
+            event.status, venueSettled: nil,
+            venueClosedNoWinner: event.venueClosedNoWinner,
+            commenceTime: event.commenceTime?.asDate, now: now) {
+            return .finished
+        }
+        return section(event?.status)
     }
 
     /// What the live section calls itself, given what landed in it. "Live Now"

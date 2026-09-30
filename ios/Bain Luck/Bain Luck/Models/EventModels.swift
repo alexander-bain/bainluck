@@ -84,6 +84,11 @@ nonisolated struct EventDetail: Decodable, Identifiable, Sendable {
     /// value to fill in — it is the state where saying "settled" without
     /// inventing a score is the whole answer (#6381 acceptance 4).
     let venueSettledResult: String?
+    /// #5811 — the venue CLOSED this contest with no winner (a draw, a no
+    /// contest, a split settlement), decoded from `venue_closed_no_winner`.
+    /// PRESENT ONLY WHEN TRUE: absent means "not established", never "still
+    /// going". Read it through ``EventState/showsVenueClosedNoWinner(_:venueSettled:venueClosedNoWinner:commenceTime:now:)``.
+    let venueClosedNoWinner: Bool?
     /// #9067 — ESPN's per-period scores, decoded from `box_score_data`. Absent
     /// on a server that still serves only `players`; Game Segments then keeps
     /// its `espn_history` inference. See `EventBoxScoreData`.

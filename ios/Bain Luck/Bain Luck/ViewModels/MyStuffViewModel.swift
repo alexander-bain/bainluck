@@ -112,7 +112,7 @@ final class MyStuffViewModel: ObservableObject {
     /// screen. The one place that shows is a bug report saying "my match is
     /// gone", which is a harder thing to notice than a wrong badge.
     var liveNow: [FeedItem] {
-        items.filter { EventState.section($0.event?.status) == .live }
+        items.filter { EventState.section(of: $0.event) == .live }
     }
 
     /// True when the live bucket is holding a match nobody is watching, so the
@@ -122,13 +122,13 @@ final class MyStuffViewModel: ObservableObject {
     }
 
     var justHappened: [FeedItem] {
-        items.filter { EventState.section($0.event?.status) == .finished }
+        items.filter { EventState.section(of: $0.event) == .finished }
     }
 
     var upcoming: [FeedItem] {
         items.filter {
             guard $0.type == "event" else { return false }
-            return EventState.section($0.event?.status) == .upcoming
+            return EventState.section(of: $0.event) == .upcoming
         }
     }
 

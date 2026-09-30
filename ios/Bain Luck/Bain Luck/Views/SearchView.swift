@@ -1052,7 +1052,9 @@ struct SearchView: View {
                     // #4021 — see StatusBadge: the suspended arm is clock-gated.
                     StatusBadge(
                         status: event.status, commenceTime: event.commenceTime,
-                        startIsTbd: event.startIsTbd == true)
+                        startIsTbd: event.startIsTbd == true,
+                        // #5811 — `/api/events/search` serves it.
+                        venueClosedNoWinner: event.venueClosedNoWinner == true)
                     // #6444 — EVERY ROW SAYS WHEN. This was gated on
                     // `status == "scheduled"`, which drew the date on the rows
                     // whose badge already reads "In 3h" and withheld it from
