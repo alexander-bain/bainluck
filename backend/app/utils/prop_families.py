@@ -584,6 +584,14 @@ def _rows_for_market(market: dict, fk: str) -> list[dict]:
     if entity_from_name:
         prob, top_outcome, winner = _market_row_prob(outcomes)
         settled, result = _settled_status(market, winner)
+        if fk == "next team" and settled and winner is None:
+            # #6622: the team page reaches a player's Next Team market through
+            # this team's own leg, so a closed question with no winner among
+            # the legs it holds went somewhere else (Bobrovsky → Toronto on the
+            # Kraken page) or was withdrawn (Polymarket archived Quinn Hughes).
+            # Neither is this team's story; the row printed "No result" beside
+            # the leg's last price. A leg that won keeps its row.
+            return []
         row = _make_row(
             entity=entity_from_name, market_id=market_id, outcome_id=None,
             probability=prob, source=source, group_id=group_id, market=market,
