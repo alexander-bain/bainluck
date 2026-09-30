@@ -2030,7 +2030,17 @@ def free_background_slots(
 #: quota), a write only for a series-certain game. The census RUN over the
 #: assembled `beat_schedule` rebased onto `35e6fda727` printed
 #: `explicit 90 implicit 43 total 133`.
-BACKGROUND_BEAT_COUNT = 133
+#:
+#: 🔴 RE-DERIVED at lane1b (2026-09-30, #5184): 133 → 140, explicit 90 → 98,
+#: fall-through 43 → 42. `sync-rosters-daily` (one all-sports run, default-queue
+#: fall-through) is replaced by eight per-sport `sync-rosters-<sport>` beats at
+#: 10:00/:05/:20/:25/:45/:50/:55/:57 UTC, each naming `background` explicitly and
+#: clear of the settlement sweep's 10:31–10:44 window. Cost: DAILY, the same
+#: ~536 ESPN roster reads (no quota) the single run attempted — ~9 min of the
+#: slot in total, where the old run held it 270 s and then rolled everything
+#: back. The census RUN over the tree branched from `5c3ba39503` printed
+#: `explicit 98 implicit 42 total 140`.
+BACKGROUND_BEAT_COUNT = 140
 #: 🔴 RE-DERIVED at lane1/282 (2026-09-13, #5896): 122 → **123**, explicit
 #: 79 → **80**, fall-through UNMOVED at 43. One beat added,
 #: `soccer-ghost-twin-sweep` (`crontab(minute="9,49")`) with an EXPLICIT
