@@ -1591,6 +1591,14 @@ _NAME_ALIASES: dict[str, str] = {
 }
 
 
+# #9752: one golfer, two names across venues — a legal name and the name she
+# plays under, which no first-name alias rule can derive. Keyed and valued in
+# `_match_key` form (after the given-name join).
+_GOLFER_FULL_NAME_ALIASES: dict[str, str] = {
+    "atthaya thitikul": "jeeno thitikul",
+}
+
+
 def _merge_abbreviated_golfers(golfer_data: dict[str, dict]) -> dict[str, dict]:
     """Merge abbreviated-name entries into full-name entries.
 
@@ -1868,8 +1876,15 @@ def _match_key(name: str) -> str:
     # Expand first-name aliases for cross-source dedup
     if parts and parts[0] in _NAME_ALIASES:
         parts[0] = _NAME_ALIASES[parts[0]]
+    # #9752: a given name written in two parts is one token. Polymarket writes
+    # "Hyo-Joo Kim" (the hyphen strip above already gives "hyojoo kim") while
+    # Kalshi writes "Hyo Joo Kim", so the same golfer got two rows and the
+    # merged LOTTE card would have listed her twice. Only equal-after-joining
+    # names become equal, so every pair that matched before still matches.
+    if len(parts) >= 3:
+        parts = ["".join(parts[:-1]), parts[-1]]
     clean = " ".join(parts)
-    return clean
+    return _GOLFER_FULL_NAME_ALIASES.get(clean, clean)
 
 
 def _normalize_tournament(
@@ -1946,6 +1961,121 @@ def _normalize_tournament(
         return key
 
     return "other"
+
+
+# #9752: words that cannot tell one event from another. A fold core made only of
+# these ("championship", "open_womens") never folds anything.
+_FOLD_GENERIC_TOKENS = frozenset({
+    "lpga", "women", "womens", "ladies", "championship", "open", "classic",
+    "invitational", "tournament", "tour", "golf", "the", "of", "at", "and",
+})
+# Two groups of one tournament resolve on neighbouring days. Kalshi's per-round
+# markets resolve two weeks after the final round, so the window compares each
+# group's EARLIEST resolution.
+_FOLD_RESOLUTION_WINDOW = timedelta(days=14)
+
+
+def _fold_core(tourn_key: str) -> str:
+    """The key with its sponsor tail and `_womens` suffix removed.
+
+    The sponsor strip is the served slug's own (`_SPONSOR_SUFFIX_RE`), so two keys
+    with the same core are two cards that already share one URL.
+    """
+    base = tourn_key.removesuffix("_womens").replace("_", " ")
+    return _slug_tournament(_SPONSOR_SUFFIX_RE.sub("", base))
+
+
+def _fold_market_tour(market) -> str | None:
+    """The tour one market declares, for the fold only.
+
+    `_declared_tour` plus the Kalshi series ticker, which it deliberately does not
+    read for LPGA (it gates men's-major claims). `KXLPGATOUR-…` is the only place
+    Kalshi's LOTTE markets say LPGA.
+    """
+    declared = _declared_tour(market.name or "", market.external_id)
+    if declared:
+        return declared
+    if getattr(market, "source", None) == "kalshi":
+        return _kalshi_series_tour([market.external_id])
+    return None
+
+
+def _group_declared_tours(tourn_markets: list) -> set[str]:
+    return {tour for m in tourn_markets if (tour := _fold_market_tour(m))}
+
+
+def _earliest_resolution(tourn_markets: list):
+    dates = [m.resolution_date for m in tourn_markets if m.resolution_date]
+    return min(dates) if dates else None
+
+
+def _fold_sponsor_split_tournaments(
+    tournament_markets: dict[str, list],
+) -> tuple[dict[str, list], dict[str, str]]:
+    """Fold one tournament that two venues titled differently onto one key. #9752.
+
+    Kalshi lists "LOTTE Championship presented by Hoakalei" and says LPGA only in
+    its ticker (`KXLPGATOUR-…`); Polymarket lists "LPGA: LOTTE Championship". The
+    grouping keyed them `lotte_championship_presented_by_hoakalei` and
+    `lotte_championship_womens`, and /sports showed two cards for one event with
+    two different favourites. PGA events are folded by the DataGolf schedule
+    (Priority 2 strips the sponsor); LPGA is deliberately not on that schedule
+    (see `_fill_dates_from_espn_lpga_calendar`), so nothing folded it.
+
+    A group folds onto another only when ALL of these hold:
+
+    * same core — the key minus its sponsor tail and `_womens` suffix — and the
+      core names something beyond generic words;
+    * no tour contradiction — the markets' declared tours (ticker, DataGolf id,
+      name prefix) agree or are absent;
+    * gender agrees — a group without the `_womens` suffix joins a women's group
+      only if its own markets declare the LPGA, so a men's event never folds
+      into a women's event of the same name;
+    * dates agree — when both groups carry resolution dates, the earliest ones
+      are within `_FOLD_RESOLUTION_WINDOW`.
+
+    The surviving key prefers the `_womens` form, then the shortest, then the
+    alphabetically first, so the choice does not depend on market order. Returns
+    the folded mapping and `{folded_away_key: surviving_key}` for callers that
+    route by key afterwards (h2h).
+    """
+    by_core: dict[str, list[str]] = defaultdict(list)
+    for key in tournament_markets:
+        if key.startswith("other_") or key == "other":
+            continue
+        core = _fold_core(key)
+        if not core or not (set(core.split("_")) - _FOLD_GENERIC_TOKENS):
+            continue
+        by_core[core].append(key)
+
+    aliases: dict[str, str] = {}
+    for keys in by_core.values():
+        if len(keys) < 2:
+            continue
+        keys = sorted(keys, key=lambda k: (not k.endswith("_womens"), len(k), k))
+        survivor = keys[0]
+        for other in keys[1:]:
+            survivor_markets = tournament_markets[survivor]
+            other_markets = tournament_markets[other]
+            other_tours = _group_declared_tours(other_markets)
+            if len(_group_declared_tours(survivor_markets) | other_tours) > 1:
+                continue
+            if survivor.endswith("_womens") != other.endswith("_womens"):
+                mens_side = other_tours if survivor.endswith("_womens") else _group_declared_tours(survivor_markets)
+                if mens_side != {"lpga"}:
+                    continue
+            a = _earliest_resolution(survivor_markets)
+            b = _earliest_resolution(other_markets)
+            if a is not None and b is not None and abs(a - b) > _FOLD_RESOLUTION_WINDOW:
+                continue
+            survivor_markets.extend(other_markets)
+            aliases[other] = survivor
+
+    if not aliases:
+        return tournament_markets, {}
+    folded = {k: v for k, v in tournament_markets.items() if k not in aliases}
+    logger.info("Golf fold (#9752): %s", ", ".join(f"{k} -> {v}" for k, v in sorted(aliases.items())))
+    return folded, aliases
 
 
 def _is_h2h_matchup(market) -> bool:
@@ -3221,6 +3351,7 @@ async def get_golf(
             if _WOMENS_RE.search(market.name):
                 tournament_key = tournament_key + "_womens"
             tournament_markets[tournament_key].append(market)
+    tournament_markets, folded_key_aliases = _fold_sponsor_split_tournaments(tournament_markets)
 
     # Build tournament entries with cross-source aggregation
     tournaments = []
@@ -3407,6 +3538,7 @@ async def get_golf(
         tourn_key = _route_h2h_to_tournament(
             market, golfer_to_tournaments, tourn_by_commence, schedule,
         )
+        tourn_key = folded_key_aliases.get(tourn_key, tourn_key)
         if not tourn_key:
             h2h_unrouted += 1
             continue
