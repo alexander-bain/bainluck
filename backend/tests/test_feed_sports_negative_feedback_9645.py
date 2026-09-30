@@ -44,6 +44,7 @@ from app.routes.feed import (
     _discover_semantic_tokens,
     _is_sports_feedback,
     _load_personalization_context,
+    compute_story_key,
 )
 from app.utils.personalization import (
     compute_event_multiplier,
@@ -231,13 +232,101 @@ async def test_a_swiped_red_sox_game_teaches_no_boston_or_red_sox_dislike():
     swiped = "Boston Red Sox vs New York Yankees"
     ctx = await _ctx([], [swiped])
 
-    assert not any(
-        t.startswith(("team:", "region:"))
-        for token_set in ctx.recent_dismissed_feature_token_sets
-        for t in token_set
-    ), ctx.recent_dismissed_feature_token_sets
+    assert ctx.recent_dismissed_feature_token_sets == []
     result = _mlb_card(ctx, "Boston Red Sox vs Baltimore Orioles")
     assert result.multiplier == 1.0, result.reasons
+
+
+# ---------------------------------------------------------------------------
+# CERT-3826: no resemblance penalty survives a sports negative
+# ---------------------------------------------------------------------------
+
+_JUDGE_40 = "Will Aaron Judge hit over 40 home runs this season?"
+_JUDGE_50 = "Will Aaron Judge hit over 50 home runs this season?"
+_SWIFT_2026 = "Will Taylor Swift release a new album in 2026?"
+_SWIFT_2027 = "Will Taylor Swift release a new album in 2027?"
+
+
+async def _one_futures_dismissal_ctx(name, category, futures_id=80001):
+    """Signed-in; the only interaction is one dismissed futures card. The
+    rollups carry nothing, so a moved score can only come from the recent-items
+    read — exact id, story key or the resemblance set."""
+    return await _load_personalization_context(
+        _session(
+            [],
+            [],
+            [("futures", futures_id, "dismiss", _NOW, name, category)],
+        ),
+        _READER,
+        session_id=_SESSION_ID,
+        config=None,
+    )
+
+
+def _futures_card(ctx, name, category):
+    """Score a futures card the way `_score_futures` does: feature tokens PLUS
+    the semantic tokens derived from them."""
+    features = _discover_feature_tokens(
+        item_name=name, category=category, item_type="futures"
+    )
+    return compute_futures_multiplier(
+        ctx,
+        sport_category=category,
+        outcome_team_ids=[],
+        feature_tokens=sorted(features)
+        + sorted(
+            _discover_semantic_tokens(
+                item_name=name,
+                category=category,
+                item_type="futures",
+                feature_tokens=features,
+            )
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_swiped_sports_future_does_not_downrank_a_distinct_one_by_wording():
+    """CERT-3826's reproduction. Swiping "Judge over 40 home runs" away left
+    `term:aaron/judge/home/runs/season` in the resemblance set, and the distinct
+    "over 50" card scored 0.70 (`semantic_dismiss:-0.30:0.62`). Neither card has
+    a story key, so that was not exact or story suppression — it was the broader
+    propagation #9645 removes."""
+    assert compute_story_key(_JUDGE_40, "baseball") is None
+    assert compute_story_key(_JUDGE_50, "baseball") is None
+
+    no_negative = await _load_personalization_context(
+        _session([], [], []), _READER, session_id=_SESSION_ID, config=None
+    )
+    dismissed = await _one_futures_dismissal_ctx(_JUDGE_40, "baseball")
+
+    before = _futures_card(no_negative, _JUDGE_50, "baseball")
+    after = _futures_card(dismissed, _JUDGE_50, "baseball")
+
+    assert after.multiplier == pytest.approx(before.multiplier), after.reasons
+    assert not any(r.startswith("semantic_dismiss") for r in after.reasons), (
+        after.reasons
+    )
+    assert dismissed.recent_dismissed_feature_token_sets == []
+    # The swiped card itself is still hidden, exactly.
+    assert dismissed.recent_dismissed_futures_ids == {80001}
+
+
+@pytest.mark.asyncio
+async def test_a_swiped_non_sports_future_still_downranks_a_resembling_one():
+    """PAIRED CONTROL, same shape as the Judge test: a non-sports negative keeps
+    its resemblance penalty. Without this arm the test above would pass for a
+    loader that stopped building resemblance sets for everyone."""
+    assert compute_story_key(_SWIFT_2026, "entertainment") is None
+
+    dismissed = await _one_futures_dismissal_ctx(_SWIFT_2026, "entertainment")
+    result = _futures_card(dismissed, _SWIFT_2027, "entertainment")
+
+    assert len(dismissed.recent_dismissed_feature_token_sets) == 1
+    assert result.multiplier < 1.0, result.reasons
+    assert any(r.startswith("semantic_dismiss") for r in result.reasons), (
+        result.reasons
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -1106,22 +1106,13 @@ async def test_every_gate_floor_admits_the_swiped_reader_5453(floor, gate):
 #: (gotcha #44: offset FIRST, and no `if` in the anchor).
 _NOW = datetime.now(timezone.utc) - timedelta(minutes=5)
 
-#: The same eight swipes as rows of the RECENT-ITEMS read — the projection that
-#: writes `recent_dismissed_feature_token_sets` and so the semantic term.
-_EIGHT_NFL_RECENT = [
-    ("event", 9000 + i, "unlike", _NOW, f"{away} @ {home}", "americanfootball")
-    for i, (away, home) in enumerate(
-        (
-            ("Patriots", "Jets"),
-            ("Bills", "Dolphins"),
-            ("Ravens", "Steelers"),
-            ("Bengals", "Browns"),
-            ("Texans", "Colts"),
-            ("Jaguars", "Titans"),
-            ("Broncos", "Chiefs"),
-            ("Raiders", "Chargers"),
-        )
-    )
+#: The eight politics swipes as rows of the RECENT-ITEMS read — the projection
+#: that writes `recent_dismissed_feature_token_sets` and so the semantic term.
+#: #9645 / CERT-3826: a sports negative writes no resemblance set at all, so the
+#: semantic specimen is the non-sports one.
+_EIGHT_POLITICS_RECENT = [
+    ("futures", 9100 + i, "unlike", _NOW, name, category)
+    for i, (_t, name, category, _a, _n) in enumerate(_EIGHT_POLITICS_SWIPES)
 ]
 
 
@@ -1136,15 +1127,12 @@ async def test_the_semantic_term_is_really_written_and_really_fires():
     never fires cannot be guarded. This asserts the field is written by real
     rows through the real loader, and that a near-identical card trips it.
     """
-    from app.utils.personalization import (
-        SEMANTIC_DISMISS_PENALTY,
-        compute_event_multiplier,
-    )
+    from app.utils.personalization import SEMANTIC_DISMISS_PENALTY
 
     ctx = await _dismissal_only_context(
-        [("americanfootball", "unlike", 8), _WARM],
-        _EIGHT_NFL_SWIPES,
-        _EIGHT_NFL_RECENT,
+        [("politics", "unlike", 8), _WARM],
+        _EIGHT_POLITICS_SWIPES,
+        _EIGHT_POLITICS_RECENT,
     )
 
     assert ctx.recent_dismissed_feature_token_sets, (
@@ -1154,9 +1142,7 @@ async def test_the_semantic_term_is_really_written_and_really_fires():
 
     # A card that looks like one they just swiped away.
     resembling = list(ctx.recent_dismissed_feature_token_sets[0])
-    p_result = compute_event_multiplier(
-        ctx, None, None, "americanfootball_nfl", None, feature_tokens=resembling
-    )
+    p_result = _politics_futures_multiplier(ctx, feature_tokens=resembling)
 
     assert any("semantic_dismiss" in r for r in p_result.reasons), (
         f"the semantic term did not fire on a card built from a dismissed "
@@ -1171,13 +1157,6 @@ async def test_the_semantic_term_is_really_written_and_really_fires():
         f"reasons={p_result.reasons}"
     )
 
-
-#: The same eight politics swipes as rows of the RECENT-ITEMS read, so the
-#: semantic term fires on the politics specimen too. #9645.
-_EIGHT_POLITICS_RECENT = [
-    ("futures", 9100 + i, "unlike", _NOW, name, category)
-    for i, (_t, name, category, _a, _n) in enumerate(_EIGHT_POLITICS_SWIPES)
-]
 
 
 @pytest.mark.asyncio

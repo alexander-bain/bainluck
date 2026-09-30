@@ -505,12 +505,6 @@ def _is_sports_negative(
     )
 
 
-#: Semantic-dismiss tokens a sports negative may NOT carry. #9645: they infer a
-#: team or a region from a two-team card, so one swiped Red Sox v Yankees game
-#: would have softly penalised the next Red Sox game by resemblance alone.
-_SPORTS_NEGATIVE_SEMANTIC_DROP_PREFIXES = ("region:", "team:")
-
-
 # `concept` and `bundle` were missing, and the miss was silent in the worst way:
 # `_normalize_discover_value` coerces an unrecognized type to its DEFAULT, which
 # here is `"futures"`. So every swipe on a UFC/F1/cycling concept card was stored
@@ -9332,21 +9326,24 @@ async def _load_personalization_context(
                     sk = compute_story_key(item_name, category or "")
                     if sk:
                         recent_dismissed_story_keys.add(sk)
-                    if user and len(recent_dismissed_feature_token_sets) < 50:
-                        semantic_tokens = _discover_semantic_tokens(
-                            item_name=item_name,
-                            category=category,
-                            item_type=item_type,
+                    # #9645 / CERT-3826: a sports negative carries NO
+                    # resemblance set. Dropping only its `team:`/`region:` tokens
+                    # was not enough — the `term:` tokens left behind still
+                    # softly penalised a distinct card by wording ("Aaron Judge
+                    # over 40 home runs" swiped ⇒ "over 50" at 0.70). The exact
+                    # card and its story key above are the whole of it.
+                    if (
+                        user
+                        and len(recent_dismissed_feature_token_sets) < 50
+                        and not _is_sports_feedback(category, item_type)
+                    ):
+                        recent_dismissed_feature_token_sets.append(
+                            _discover_semantic_tokens(
+                                item_name=item_name,
+                                category=category,
+                                item_type=item_type,
+                            )
                         )
-                        if _is_sports_feedback(category, item_type):
-                            semantic_tokens = {
-                                t
-                                for t in semantic_tokens
-                                if not t.startswith(
-                                    _SPORTS_NEGATIVE_SEMANTIC_DROP_PREFIXES
-                                )
-                            }
-                        recent_dismissed_feature_token_sets.append(semantic_tokens)
             elif (
                 action == "impression"
                 and last_seen_dt
