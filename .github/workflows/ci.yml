@@ -4032,6 +4032,28 @@ jobs:
             exit 1
           fi
 
+      - name: "#8192 a Polymarket champion number nothing stands behind, at the GRID (real Postgres)"
+        # `/playoffs/ncaa-basketball`'s Champion column printed UConn P19,
+        # Illinois P15, North Carolina P11 beside 1-5% headlines: seventeen
+        # Polymarket legs summing to 1.58 for one title. On a one-winner column
+        # whose venue column does not add up, a leg keeps its number only with a
+        # buyer above the empty-book floor or a trade that prints as its price.
+        #
+        # Two corpora, identical but for two legs naming teams with no grid row:
+        # `broken` (venue column 1.63) withholds, `sound` (0.95) serves the same
+        # bidless books. Measured non-vacuous, five mutants, each killed:
+        # unwiring the call site, dropping the sum gate, dropping the trade
+        # term, dropping the buyer test, and letting any trade back a price.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_grid_polymarket_unbacked_8192_pg.py \
+            -v -rs 2>&1 | tee /tmp/pmunbacked8192.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/pmunbacked8192.txt; then
+            echo "::error::#8192 Polymarket champion grid gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: Miami identity on the NCAAF grid, two schools two rows (real Postgres, #7829)
         # #7829 part 1. Kalshi spells two different schools `Miami (FL)` and
         # `Miami (OH)`; `normalize_team_name` strips the trailing qualifier, so

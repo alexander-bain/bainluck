@@ -426,6 +426,9 @@ COVERED = (
     # specimen filtered for THAT reason makes the refusal assertion pass with the
     # fix reverted. That one is held by the gate's own anti-vacuity test.
     "test_grid_untaken_offer_8220_pg.py",
+    # #8192. Seeds a Kalshi and a Polymarket champion market plus snapshots by
+    # raw INSERT; `reading_count` and the market NOT NULLs are spelled out.
+    "test_grid_polymarket_unbacked_8192_pg.py",
     # #7829 part 1. The Miami identity gate on the same grid route. Seeds
     # `sports`, `teams`, `futures_markets` and `futures_outcomes` by raw INSERT
     # (the `teams.abbreviation` column is the anchor under test, so the seed
