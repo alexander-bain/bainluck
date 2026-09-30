@@ -392,6 +392,74 @@ def anchor_receipt(
     }
 
 
+#: The statuses a replaced-player hold takes a row out of (#8288). A settled row
+#: is never touched: it already stopped claiming the match is to come or under
+#: way, and un-settling it is the authority's job, not a refusal's.
+REPLACED_PLAYER_HOLD_FROM = frozenset({"live", "scheduled"})
+
+
+def replaced_player(
+    *,
+    our_status: Any,
+    our_espn_id: Any,
+    ours: list[str],
+    receipt: dict[str, Any],
+    competition: Optional[dict[str, Any]],
+) -> Optional[str]:
+    """The player ESPN took out of THIS row's own competition, or ``None``. (#8288)
+
+    ═══ A WITHDRAWAL UNDER THE SAME COMPETITION ID ═══
+
+    When a player withdraws before play, ESPN fills the slot with a lucky loser
+    and keeps the competition id. Measured 2026-09-30: ``15320690`` Marcinko v
+    Frech held ``espn_id 184289`` and read LIVE from 02:00Z with no score, while
+    ``184289`` had become Frech v Jacquemot and Kalshi had halted both legs. The
+    anchor pass refuses the row, correctly, as ``no-candidate`` (writing
+    Jacquemot's result onto it would invent one), and until now it stopped
+    there. Nothing else says the match will not be played, so the row sat LIVE
+    until the wall-clock net retired it hours later.
+
+    Every clause has to hold, and each one fails closed:
+
+    * the row is still ``live`` or ``scheduled``;
+    * the row holds an ESPN id and ``competition`` is THAT id, read on this
+      pass. The id was stamped when both our players were in it, so it is the
+      row's own record of the fixture, not a lookalike found by searching;
+    * the receipt refused as ``no-candidate`` with exactly ONE absent player,
+      so that player is missing from the whole tournament window, not just
+      from this competition;
+    * the competition still has two real, named players (no placeholder, no
+      half-read pairing); and
+    * our other player is in it and the absent one is not.
+
+    A spelling drift cannot pass: it would have to break ``names_agree`` for
+    one name only, on a pairing that name already matched when it was stamped.
+    """
+    if our_status not in REPLACED_PLAYER_HOLD_FROM:
+        return None
+    if not our_espn_id or competition is None:
+        return None
+    if str(competition.get("espn_competition_id")) != str(our_espn_id):
+        return None
+    if receipt.get("reason") != REJECT_NO_CANDIDATE:
+        return None
+    absent_players = receipt.get("absent_players") or []
+    if len(absent_players) != 1 or len(ours) != 2 or not all(ours):
+        return None
+    if not anchorable_competitions([competition]):
+        return None
+    absent = absent_players[0]
+    if absent not in ours:
+        return None
+    present = ours[1] if ours[0] == absent else ours[0]
+    theirs = competition["players"]
+    if any(names_agree(absent, name) for name in theirs):
+        return None
+    if sum(1 for name in theirs if names_agree(present, name)) != 1:
+        return None
+    return absent
+
+
 #: ESPN slate state -> the ``events.status`` it authorises. ``in_progress``
 #: already has lane1/054's ``play_refutes_upcoming`` folded into it upstream in
 #: ``scoreboard_competitions``, so a match ESPN calls ``pre`` while scoring its
