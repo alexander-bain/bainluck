@@ -75,10 +75,30 @@ describe("#9914 SHIP: on the served PHI @ ATL page, the wall of empty headers is
   test("BOTH DIRECTIONS: nothing is dropped — every priced row still renders", () => {
     // Each divergence row prints `pregame → current`. Folding moves rows behind
     // a disclosure; it must not remove one (gotcha #43).
-    const priced = served.filter(
+    // #1626: the only rows that leave are the second legs of two-sided
+    // complement questions (Over/Under, Yes/No summing to 1 at both ends),
+    // counted here independently of the component.
+    const pricedMarks = served.filter(
       (m) => m.pregame_mark != null && m.current != null && !m.settled,
+    );
+    const byQuestion = new Map<string, PropMark[]>();
+    for (const m of served) {
+      const q = String(m.key).split("|")[0];
+      byQuestion.set(q, [...(byQuestion.get(q) ?? []), m]);
+    }
+    const sides = (a: string, b: string) =>
+      [a, b].map((x) => x.toLowerCase()).sort().join("/");
+    const complement = (x: number, y: number) => x + y >= 0.99 && x + y <= 1.01;
+    const secondLegs = [...byQuestion.values()].filter(
+      (legs) =>
+        legs.length === 2 &&
+        legs.every((l) => l.pregame_mark != null && l.current != null && !l.settled) &&
+        ["over/under", "no/yes"].includes(sides(legs[0].label, legs[1].label)) &&
+        complement(legs[0].current!, legs[1].current!) &&
+        complement(legs[0].pregame_mark!, legs[1].pregame_mark!),
     ).length;
-    expect(count(html, "→")).toBe(priced);
+    expect(secondLegs).toBeGreaterThan(40);
+    expect(count(html, "→")).toBe(pricedMarks.length - secondLegs);
   });
 });
 
@@ -92,12 +112,14 @@ describe("#9914 CONTROLS: what the fold must not touch", () => {
   test("ONE wholly unchanged family keeps today's per-family drawer", () => {
     const html = render([MOVER, ...still("Home Runs O/U 0.5")]);
     expect(html).not.toContain(FOLD);
-    expect(html).toContain("2 unchanged");
+    // #1626: one leg per complement pair, so the drawer holds that one row.
+    expect(html).toContain("1 unchanged");
   });
 
   test("TWO wholly unchanged families: both leave the list for the one fold", () => {
     const html = render([MOVER, ...still("Home Runs O/U 0.5"), ...still("Total Bases O/U 1.5")]);
-    expect(html).toContain(`${FOLD}4)`);
+    // #1626: one leg per complement pair — two families, two rows.
+    expect(html).toContain(`${FOLD}2)`);
     expect(html).not.toMatch(/\d+ unchanged</);
     // The mover stays above the fold and out of any drawer.
     expect(html.indexOf("A: 2+")).toBeLessThan(html.indexOf("<details"));
@@ -118,7 +140,9 @@ describe("#9914 CONTROLS: what the fold must not touch", () => {
     expect(html.indexOf("Strikeouts O/U 6.5")).toBeLessThan(html.indexOf(FOLD));
     expect(html.indexOf("45%")).toBeLessThan(html.indexOf(FOLD));
     expect(html).toContain("1 unchanged");
-    expect(html).toContain(`${FOLD}4)`);
+    // #1626: the partly moved family (0.45 + 0.50) is not a complement and keeps
+    // both legs; the two unchanged complement families keep one each.
+    expect(html).toContain(`${FOLD}2)`);
   });
 
   test("a family with a markless row is not 'unchanged' and stays listed", () => {

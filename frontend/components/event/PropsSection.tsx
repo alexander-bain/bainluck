@@ -520,6 +520,51 @@ function divergencePairPercents(
 }
 
 /**
+ * #1626 — THE DIVERGENCE prints one row per two-sided question.
+ *
+ * Alex, on the NYY–BOS Wild Card page (2026-09-29): "interesting idea, but
+ * currently unreadable", "needs to be way more compact". Every O/U and Yes/No
+ * family printed both legs — `SEAN BURKE: STRIKEOUTS O/U 10.5` as
+ * `Under 90% → 92% ↑ 2` over `Over 10% → 8% ↓ 2` (CWS @ HOU, 2026-09-30, 390px)
+ * — and when the two legs are a complement at both ends the second row is the
+ * first one restated upside down.
+ *
+ * WHAT HIT already prints one leg per question (#8230), and this keeps the SAME
+ * leg — `gradedPairDecision`, the pregame favourite (the live one for a
+ * markless pair) — so the row a reader follows through the game is the row that
+ * is graded at the end.
+ *
+ * Only where nothing is lost: both legs carry the family's paired numbers
+ * (`divergencePairPercents`, which already refuses a marked pair that is not a
+ * complement at both ends) and the live pair is a complement. A settled or
+ * `pending_label` leg leaves its family whole, as #8230 does.
+ */
+const EMPTY_DROP: ReadonlySet<PropMark["key"]> = new Set();
+
+function divergenceOneSide(
+  groups: ReadonlyArray<{ name: string | null; items: PropMark[] }>,
+  state: PropsState,
+  pairs: ReadonlyMap<PropMark["key"], DivergencePair>,
+): ReadonlySet<PropMark["key"]> {
+  if (state !== "divergence") return EMPTY_DROP;
+  const drop = new Set<PropMark["key"]>();
+  for (const group of groups) {
+    if (group.name == null) continue;
+    const legs = group.items;
+    if (legs.length !== 2) continue;
+    if (legs.some((i) => i.settled || i.pending_label?.trim())) continue;
+    if (!legs.every((i) => pairs.has(i.key))) continue;
+    if (!isComplementPair(legs.map((i) => i.current))) continue;
+    // A markless pair (#5408) has no pregame favourite; it keeps the live one.
+    const decision = gradedPairDecision(
+      legs.map((i) => ({ key: i.key, label: i.label, pregame_mark: i.pregame_mark ?? i.current })),
+    );
+    if (decision) drop.add(decision.drop);
+  }
+  return drop.size === 0 ? EMPTY_DROP : drop;
+}
+
+/**
  * Absolute movement of a prop from its pregame mark to the current number, or
  * null when either endpoint is missing (a forward-only mark that can't yet
  * diverge). Used to rank THE DIVERGENCE biggest-mover-first.
@@ -801,26 +846,31 @@ export default function PropsSection({
   const groups = groupByPropFamily(rows, (item) => item.key, matchup);
   const grouped = !(groups.length === 1 && groups[0].name === null);
 
-  // #8230: a graded two-sided question keeps one leg. Decided on the whole
-  // families; every per-family decision below still reads the full `groups`.
-  const graded = gradedPairs(groups, activeState);
-  const shownGroups =
-    graded.drop.size === 0
-      ? groups
-      : groups.map((g) => ({ ...g, items: g.items.filter((i) => !graded.drop.has(i.key)) }));
-
-  // #5240: decided ONCE for the whole family, here, where both legs are in hand.
-  // The row is handed the finished number, not the pair — a row that had to find
-  // its own sibling would be a second place this rule lives.
-  const pairPercents =
-    activeState === "script" ? scriptPairPercents(groups) : EMPTY_PAIR_PERCENTS;
-
   // #5296: the same decision for THE DIVERGENCE, which needs three numbers rather
   // than one — see `divergencePairPercents`. Computed here for the same reason
   // #5240's is: once, where both legs are in hand, so the row, the badge and the
   // moved/unchanged partition all read one answer.
   const divergencePairs =
     activeState === "divergence" ? divergencePairPercents(groups) : EMPTY_DIVERGENCE_PAIRS;
+
+  // #8230: a graded two-sided question keeps one leg. Decided on the whole
+  // families; every per-family decision below still reads the full `groups`.
+  // #1626: and so does a live one in THE DIVERGENCE — see `divergenceOneSide`.
+  const graded = gradedPairs(groups, activeState);
+  const oneSide = divergenceOneSide(groups, activeState, divergencePairs);
+  const shownGroups =
+    graded.drop.size === 0 && oneSide.size === 0
+      ? groups
+      : groups.map((g) => ({
+          ...g,
+          items: g.items.filter((i) => !graded.drop.has(i.key) && !oneSide.has(i.key)),
+        }));
+
+  // #5240: decided ONCE for the whole family, here, where both legs are in hand.
+  // The row is handed the finished number, not the pair — a row that had to find
+  // its own sibling would be a second place this rule lives.
+  const pairPercents =
+    activeState === "script" ? scriptPairPercents(groups) : EMPTY_PAIR_PERCENTS;
 
   // #5191: the same "decide it where the whole family is in hand" shape, for the
   // words rather than the numbers. State-independent — a rung restates its header

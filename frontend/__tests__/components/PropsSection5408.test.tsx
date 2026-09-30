@@ -114,7 +114,8 @@ describe("#5408 a markless pair stops printing 101 (and 99)", () => {
     expect(html).toContain("57%");
     // 44 is what the independent rounding produced. The derived sibling is 43.
     expect(html).not.toContain("44%");
-    expect(html).toContain("43%");
+    // #1626: one leg per complement pair — the live favourite, `Over`.
+    expect(html).not.toContain("43%");
   });
 
   test("SHIP: the pair four rows down stops printing 99 as well", () => {
@@ -122,8 +123,9 @@ describe("#5408 a markless pair stops printing 101 (and 99)", () => {
     // pair helper and not a "both legs rounded up" special case.
     const html = divergence(ABRAMS);
     expect(html).toContain("91%");
-    expect(html).toContain("9%");
     expect(html).not.toContain("90%");
+    // #1626: the `Over` sibling (9%) is no longer a row.
+    expect(html).not.toMatch(/>9%/);
   });
 
   // ── GUARDS on this ship's encoding (green on the parent; killed by mutation) ─
@@ -192,7 +194,8 @@ describe("#5408 a markless pair stops printing 101 (and 99)", () => {
     const html = divergence(turku);
     expect(html).toContain("84%");
     expect(html).not.toContain("17%");
-    expect(html).toContain("16%");
+    // #1626: the `Yes` leg is no longer a row; `No` carries the pair's number.
+    expect(html).not.toContain("16%");
   });
 
   test("CONTROL: a marked pair that really moved still shows its badge", () => {
@@ -204,7 +207,8 @@ describe("#5408 a markless pair stops printing 101 (and 99)", () => {
     ];
     const html = divergence(realMove);
     expect(html).toContain("↑ 12");
-    expect(html).toContain("↓ 12");
+    // #1626: one leg per complement pair.
+    expect(html).not.toContain("↓ 12");
   });
 
   test("CONTROL: a markless leg with no current price is not paired", () => {
