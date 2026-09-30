@@ -992,12 +992,20 @@ def _print_grid_step(clean_labels: list[str], thresholds: list[float]) -> tuple[
     return d, step
 
 
-def _cumulative_to_discrete(outcomes: list, max_buckets: int = 8) -> list[list]:
+def _cumulative_to_discrete(outcomes: list, max_buckets: int = 8, *, usable=None) -> list[list]:
     """Convert cumulative 'Above X' outcomes to discrete bracket probabilities.
 
     Kalshi economics markets use cumulative outcomes (P(above 3%), P(above 3.5%)).
     We need P(exactly in bracket) = P(above lower) - P(above upper).
     Returns [[prob, label], ...] sorted by threshold, at most max_buckets entries.
+
+    ``usable`` (#9804) is an optional per-rung predicate: may this rung's number
+    bound a served cell? A cell is served only when both rungs it differences
+    are usable, and a rung the monotone clamp overwrote is usable only if the
+    rung it copied is too. Otherwise the cell is left out (notice 34: leave the
+    space empty) — never re-linked across the gap, which is the repair #9214
+    measured and rejected. ``None``, what every caller but the rate path
+    passes, keeps the old output byte-for-byte.
 
     The threshold is parsed WITH its sign (#7081). An unsigned `[\\d.]+` reads
     "Above -0.4%" as 0.4, which interleaves a mixed-sign ladder — 0.0, -0.1,
@@ -1041,7 +1049,7 @@ def _cumulative_to_discrete(outcomes: list, max_buckets: int = 8) -> list[list]:
             _suffix = _SUFFIX_THRESHOLD_RE.match(clean)
             if _suffix:
                 clean = _suffix.group(1).strip()
-        raw.append((p, clean, sort_val))
+        raw.append((p, clean, sort_val, usable is None or bool(usable(o))))
 
     if not raw:
         return []
@@ -1050,9 +1058,11 @@ def _cumulative_to_discrete(outcomes: list, max_buckets: int = 8) -> list[list]:
     raw.sort(key=lambda x: x[2])
 
     # Enforce monotonicity: P(above lower threshold) >= P(above higher threshold)
+    # A clamped rung keeps its own question but now holds its neighbour's
+    # number, which only bounds it — so it is usable only if both are (#9804).
     for i in range(1, len(raw)):
         if raw[i][0] > raw[i - 1][0]:
-            raw[i] = (raw[i - 1][0], raw[i][1], raw[i][2])
+            raw[i] = (raw[i - 1][0], raw[i][1], raw[i][2], raw[i][3] and raw[i - 1][3])
 
     # Convert cumulative to discrete:
     # P(in bracket i) = P(above threshold_i) - P(above threshold_{i+1})
@@ -1074,13 +1084,15 @@ def _cumulative_to_discrete(outcomes: list, max_buckets: int = 8) -> list[list]:
         d, step = grid
         fmt = lambda v: f"{round(v, d) + 0.0:.{d}f}%"  # noqa: E731  (+0.0: never "-0.0%")
         bottom_p = round(100 - raw[0][0], 1)
-        if bottom_p >= 0.1:
+        if bottom_p >= 0.1 and raw[0][3]:
             discrete.append([bottom_p, f"≤{raw[0][1]}", raw[0][2] - step])
     for i in range(len(raw)):
         cum_p = raw[i][0]
         next_p = raw[i + 1][0] if i + 1 < len(raw) else 0
         bracket_p = round(cum_p - next_p, 1)
-        if bracket_p >= 0.1:
+        # The top bracket is bounded by its own rung alone.
+        bounded_by_usable = raw[i][3] and (i + 1 == len(raw) or raw[i + 1][3])
+        if bracket_p >= 0.1 and bounded_by_usable:
             label = raw[i][1]
             if grid:
                 low = raw[i][2] + step
@@ -1389,7 +1401,15 @@ async def get_economics(db: AsyncSession):
             continue
         has_cumulative = _reads_as_cumulative(outcomes)
         if has_cumulative:
-            discrete = _cumulative_to_discrete(outcomes, max_buckets=10)
+            # #9804: a column #9214 keeps can still hold a rung nobody is
+            # trading; the cells it bounds are left empty, not drawn confident.
+            discrete = _cumulative_to_discrete(outcomes, max_buckets=10, usable=_rung_is_quoted)
+            # And when what is left no longer carries most of the probability,
+            # the column is a few slivers wearing the modal outline — Mar 2027
+            # on 2026-09-30 kept 4.5 of 100 points, Apr kept none — so it is
+            # left out whole, #9214's majority rule read over mass.
+            if sum(cell[0] for cell in discrete) * 2 <= 100:
+                continue
             # Reverse so highest rate is first (top of heatmap)
             discrete.reverse()
         else:
