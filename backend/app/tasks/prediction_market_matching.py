@@ -26,6 +26,7 @@ from sqlalchemy.orm.attributes import set_committed_value
 
 from app.tasks.base import get_task_session
 from app.utils.event_completion import (
+    KALSHI_TICKER_TIME_COMMENCE_SOURCE,
     POLYMARKET_VENUE_COMMENCE_SOURCE,
     RETIRED_STATUSES,
     TICKER_DERIVED_COMMENCE_SOURCE,
@@ -62,6 +63,7 @@ from app.utils.prediction_market_matching import (
     get_sport_prefix_from_ticker,
     _TICKER_TO_SPORT_PREFIX,
     extract_matchup,
+    esports_winner_matchup_name,
     extract_matchup_with_ticker_fallback,
     matchup_for_link_search,
     extract_teams_from_ticker,
@@ -1425,6 +1427,7 @@ MARKET_BORN_COMMENCE_SOURCES = (
     "kalshi",
     "kalshi_ticker",
     "kalshi_occurrence",
+    "kalshi_ticker_time",  # #9827: a Kalshi esports ticker's HHMM instant
     "polymarket",
     "polymarket_venue",
 )
@@ -3007,6 +3010,26 @@ def auto_create_commence_time(market, fallback):
     ticker_time = extract_game_date_from_ticker(getattr(market, "external_id", None))
     if ticker_time is None:
         return fallback, None
+    # #9827: an esports ticker's HHMM is the START, and the fallback is not.
+    # Kalshi's `commence_time` for these series is `occurrence_datetime`, the
+    # expected expiration: 404 of the Kalshi esports rows minted in the 10 days
+    # to 2026-09-30 sat exactly +4.00h after their ticker's instant, none at 0,
+    # and Polymarket's own fixture instant agreed with the TICKER. The ±12h
+    # esports window (`_ESPORTS_EVENT_DATE_MAX_DIFF_HOURS`) never refutes 4h,
+    # so the narrow rule that follows kept every one of them. Esports family only (the measured population),
+    # and only a ticker that carries a time of day — `ticker_start_utc` is the
+    # one Eastern→UTC conversion and returns None for a date-only ticker.
+    if getattr(market, "source", None) == "kalshi":
+        prefix = _kalshi_prefix(getattr(market, "external_id", None))
+        start = ticker_start_utc(ticker_time)
+        if (
+            start is not None
+            and prefix
+            and prefix.startswith(_ESPORTS_TICKER_PREFIXES)
+        ):
+            if fallback == start:
+                return fallback, None
+            return start, KALSHI_TICKER_TIME_COMMENCE_SOURCE
     if not auto_create_self_refutes(market, fallback):
         return fallback, None  # already coherent — change nothing
     return ticker_time, TICKER_DERIVED_COMMENCE_SOURCE
@@ -4241,10 +4264,20 @@ def _venue_moneyline_match_name(market) -> Optional[str]:
     through. "Set 1 Winner:", "Set Handicap:" and "Completed Match:" all carry
     their own Gamma types, and a title with a second colon is refused outright.
     An absent label (~21% of markets) answers None, the refusal as before.
+
+    #9827: esports, the same two signals and the same join-only contract.
+    Polymarket titles every esports match winner "<Game>: A vs B (BOn) -
+    <Tournament>", which is not game level either; the title is read by
+    `esports_winner_matchup_name`, anchored on #2947's `(BOn)` marker and
+    refusing every derivative tail. Measured on production 2026-09-30, over
+    14 days of esports titles, it refuses every derivative Gamma type
+    (child_moneyline, totals, map_handicap, round/kill props) on its own; the
+    `moneyline` gate is the second, independent signal.
     """
     if getattr(market, "source", None) != "polymarket":
         return None
-    if getattr(market, "llm_sport_category", None) != "tennis":
+    sport = getattr(market, "llm_sport_category", None)
+    if sport not in ("tennis", "esports"):
         return None
     from app.services.polymarket_api import is_full_contest_winner_type
     from app.utils.content_understanding import understanding_from_metadata
@@ -4256,6 +4289,8 @@ def _venue_moneyline_match_name(market) -> Optional[str]:
         understanding.get("venue_type")
     ):
         return None
+    if sport == "esports":
+        return esports_winner_matchup_name(market.name or "")
     label, colon, rest = (market.name or "").partition(":")
     rest = rest.strip()
     if not colon or not label.strip() or not rest or ":" in rest:
@@ -5572,6 +5607,71 @@ def _phase15_rows_by_id_query(market_ids):
     )
 
 
+#: #9827 rung 2 (CERT-3864) — the esports ticker re-date arm's own slice.
+#:
+#: The rows are the ones #9827's mint arm cannot reach: minted BEFORE it, from
+#: Kalshi's expected expiration, and already linked, so no mint or link phase
+#: ever sees them again (every one selects ``event_id IS NULL``). Neither the
+#: fresh slice nor the rotation can be trusted to hold them before the match —
+#: the #8547 measurement above is why — so the arm selects its own: every
+#: near-term link of a Kalshi esports ticker on a ``scheduled`` row whose start
+#: is still Kalshi's expiration, filtered by :func:`kalshi_esports_ticker_redate`
+#: itself (called verbatim, never restated in SQL). About ninety events
+#: (~two markets each) on 2026-09-30, and the class drains: a corrected row
+#: leaves the probe's own ``commence_time_source`` band.
+_PHASE15_ESPORTS_TICKER_SLICE = 200
+_PHASE15_ESPORTS_TICKER_LOOKBACK = timedelta(hours=6)
+_PHASE15_ESPORTS_TICKER_LOOKAHEAD = timedelta(days=4)
+
+
+def _phase15_esports_ticker_probe_query(now: datetime):
+    """``(market id, external_id, commence_time, commence_time_source, status)``
+    of every eligible Kalshi esports link to a scheduled row still stamped with
+    Kalshi's expiration, starting inside the window."""
+    from app.models.models import FuturesMarket, Event
+
+    return (
+        select(
+            FuturesMarket.id,
+            FuturesMarket.external_id,
+            Event.commence_time,
+            Event.commence_time_source,
+            Event.status,
+        )
+        .join(Event, FuturesMarket.event_id == Event.id)
+        .where(
+            *_phase15_eligible_where(),
+            FuturesMarket.source == "kalshi",
+            or_(*[
+                FuturesMarket.external_id.ilike(f"{prefix}%")
+                for prefix in _ESPORTS_TICKER_PREFIXES
+            ]),
+            Event.status == "scheduled",
+            Event.commence_time_source.in_(sorted(KALSHI_OCCURRENCE_TIMED_SOURCES)),
+            Event.commence_time >= now - _PHASE15_ESPORTS_TICKER_LOOKBACK,
+            Event.commence_time <= now + _PHASE15_ESPORTS_TICKER_LOOKAHEAD,
+        )
+    )
+
+
+def _phase15_esports_ticker_candidate_ids(
+    probe_rows, limit: int = _PHASE15_ESPORTS_TICKER_SLICE,
+) -> list[int]:
+    """The probe rows :func:`kalshi_esports_ticker_redate` would re-date,
+    soonest first. Pure, and asks the arm's own predicate, so the slice can
+    never disagree with the arm about which links it examines."""
+    claimed = []
+    for market_id, external_id, commence, source, status in probe_rows:
+        market = SimpleNamespace(source="kalshi", external_id=external_id)
+        event = SimpleNamespace(
+            commence_time=commence, commence_time_source=source, status=status,
+        )
+        if kalshi_esports_ticker_redate(market, event) is not None:
+            claimed.append((_as_utc(commence), market_id))
+    claimed.sort(key=lambda pair: (pair[0], pair[1]))
+    return [market_id for _commence, market_id in claimed[:limit]]
+
+
 #: How far an event's recorded start must sit from the venue's own fixture
 #: instant before Phase 1.5 rewrites it. NOT a "close enough" tolerance — it is
 #: the floor under a no-op write. Gamma reports whole minutes and the measured
@@ -5761,6 +5861,99 @@ def polymarket_venue_redate(market, event, fixture=None) -> Optional[datetime]:
     ):
         return None
     return fixture
+
+
+def kalshi_esports_ticker_redate(market, event) -> Optional[datetime]:
+    """The ticker's start for an ALREADY-LINKED Kalshi esports row, or None. #9827.
+
+    CERT-3864's required repair (`9827-EXISTING-ESPORTS-ROW-RETIME`). #9827's
+    mint arm dates a NEW esports row at its ticker's HHMM; the rows minted
+    before it — ``/events/15321207`` and ~90 others on 2026-09-30 — keep
+    Kalshi's ``occurrence_datetime``, the expected expiration, four hours after
+    the start. Nothing re-dates them (a linked market never re-enters the
+    registry), and #4965's ±3h fixture guard then refuses Polymarket's match
+    winner on every one of them, so the page stays late AND Kalshi-only.
+
+    Pure: no DB, no clock. Every condition is necessary:
+
+    1. **A Kalshi esports-family ticker carrying a time of day** — the mint
+       arm's own population (``_ESPORTS_TICKER_PREFIXES``, and
+       :func:`ticker_start_utc`, the one Eastern→UTC conversion, which answers
+       None for a date-only ticker).
+    2. **The row's start is Kalshi's expiration** —
+       ``KALSHI_OCCURRENCE_TIMED_SOURCES``. A schedule source, a Polymarket
+       fixture, or a row this arm already corrected (``kalshi_ticker_time``) is
+       left alone, so the arm writes each row at most once and never flaps.
+    3. **The row is ``scheduled``** — nothing has been reported on it.
+    4. **The move is EARLIER, by more than a minute and at most the esports
+       window** (``_ESPORTS_EVENT_DATE_MAX_DIFF_HOURS``). The expiration sits
+       after the match by construction (#8722's argument), so a ticker LATER
+       than it is not this correction; and a gap wider than the window the link
+       guard accepted is a question about the pairing, not the date.
+
+    NECESSARY, NOT SUFFICIENT, exactly as :func:`polymarket_venue_redate`: the
+    caller asks ``phase15_link_is_valid_for_redate`` and
+    :func:`kalshi_esports_ticker_redate_is_unambiguous` before writing.
+    """
+    if getattr(market, "source", None) != "kalshi":
+        return None
+    external_id = getattr(market, "external_id", None)
+    if not _kalshi_prefix(external_id).startswith(_ESPORTS_TICKER_PREFIXES):
+        return None
+    if getattr(event, "commence_time_source", None) not in KALSHI_OCCURRENCE_TIMED_SOURCES:
+        return None
+    if getattr(event, "status", None) != "scheduled":
+        return None
+    start = ticker_start_utc(extract_game_date_from_ticker(external_id))
+    current = _as_utc(getattr(event, "commence_time", None))
+    if start is None or not isinstance(current, datetime):
+        return None
+    drift = current - start
+    if drift < _PM_VENUE_REDATE_MIN_DRIFT:
+        return None
+    if drift > timedelta(hours=_ESPORTS_EVENT_DATE_MAX_DIFF_HOURS):
+        return None
+    return start
+
+
+async def kalshi_esports_ticker_redate_is_unambiguous(
+    session, event, start,
+) -> tuple[bool, str]:
+    """Does every venue instant on ``event`` agree with ``start``? #9827.
+
+    The ambiguity bound. One row, one match, one start: every Kalshi esports
+    ticker linked to it must name the same instant (the game leg and its map
+    legs share one token), and a linked Polymarket market's own fixture instant
+    must not name another game (:data:`_PM_VENUE_NAMES_ANOTHER_GAME`). Either
+    disagreement means two matches are sharing a row, and re-dating it would
+    pick one of them — refused, never guessed. A market with no instant is no
+    signal.
+    """
+    from app.models.models import FuturesMarket as _FuturesMarket
+
+    siblings = (
+        await session.execute(
+            select(_FuturesMarket).where(
+                _FuturesMarket.event_id == event.id,
+                _FuturesMarket.source.in_(["kalshi", "polymarket"]),
+                _FuturesMarket.status == "open",
+            )
+        )
+    ).scalars().all()
+    for sibling in siblings:
+        if sibling.source == "kalshi":
+            if not _kalshi_prefix(sibling.external_id).startswith(
+                _ESPORTS_TICKER_PREFIXES
+            ):
+                continue
+            other = ticker_start_utc(extract_game_date_from_ticker(sibling.external_id))
+            if other is not None and other != start:
+                return False, "tickers_disagree"
+        else:
+            fixture = venue_game_start(sibling)
+            if fixture is not None and abs(fixture - start) >= _PM_VENUE_NAMES_ANOTHER_GAME:
+                return False, "venue_disagrees"
+    return True, "ok"
 
 
 def _as_utc(value):
@@ -6123,6 +6316,75 @@ async def phase15_link_is_valid_for_redate(session, market, event) -> tuple[bool
     return True, "ok"
 
 
+async def _phase15_kalshi_esports_ticker_redate(
+    session, market, linked_event, stats: dict,
+) -> None:
+    """Re-date ``linked_event`` from its Kalshi esports ticker. #9827 rung 2.
+
+    :func:`kalshi_esports_ticker_redate` decides, the link and the ambiguity
+    bound are asked next, and the write rides #6073's rail unchanged: the one
+    authority door, the freshness read, :func:`authorized_commence_time_write`
+    (the #46 guard, once), and the compare-and-write whose WHERE re-asserts the
+    row the decision read. Every refusal is counted under its own name.
+    """
+    start = kalshi_esports_ticker_redate(market, linked_event)
+    if start is None:
+        return
+    funnel = stats["funnel"]
+
+    def _count(key):
+        funnel.setdefault(key, 0)
+        funnel[key] += 1
+
+    ok, why = await phase15_link_is_valid_for_redate(session, market, linked_event)
+    if ok:
+        ok, why = await kalshi_esports_ticker_redate_is_unambiguous(
+            session, linked_event, start,
+        )
+    if not ok:
+        _count(f"phase15_kalshi_esports_ticker_refused_{why}")
+        logger.info(
+            "Not re-dating event %d from Kalshi %s — %s (#9827)",
+            linked_event.id, market.external_id, why,
+        )
+        return
+
+    from app.services.event_registry import (
+        authorized_commence_time_write,
+        commence_time_write_authorized,
+    )
+
+    authorized, _why = commence_time_write_authorized(
+        linked_event.commence_time_source, KALSHI_TICKER_TIME_COMMENCE_SOURCE,
+    )
+    if not authorized:
+        _count("phase15_kalshi_esports_ticker_refused_authority")
+        return
+    unmoved, observed = await phase15_event_row_is_unmoved(session, linked_event)
+    if not unmoved:
+        _count("phase15_kalshi_esports_ticker_refused_row_moved")
+        return
+    was = linked_event.commence_time
+    outcome, writes = authorized_commence_time_write(
+        linked_event, start, KALSHI_TICKER_TIME_COMMENCE_SOURCE,
+    )
+    if outcome == "refused_inversion":
+        _count("phase15_kalshi_esports_ticker_refused_inversion")
+        return
+    wrote = await _phase15_redate_write_or_shout(
+        session, linked_event, writes, observed, stats,
+    )
+    if wrote:
+        _count(f"phase15_kalshi_esports_ticker_{outcome}")
+        logger.info(
+            "Re-dated event %d from Kalshi %s: %s -> %s (expected expiration -> "
+            "ticker start, #9827)",
+            linked_event.id, market.external_id, was, start,
+        )
+    elif wrote is False:
+        _count("phase15_kalshi_esports_ticker_lost_race")
+
+
 async def _phase15_revalidate(
     session, stats: dict, now: datetime, _time_remaining,
     link_changes: Optional[list[MatchReceipt]] = None,
@@ -6238,6 +6500,20 @@ async def _phase15_revalidate(
     stats["funnel"]["phase15_venue_instant_probed"] = len(venue_probe)
     stats["funnel"]["phase15_venue_instant_candidates"] = len(venue_rows)
 
+    # #9827 rung 2: the esports ticker re-date arm's own rows — see
+    # `_PHASE15_ESPORTS_TICKER_SLICE`.
+    esports_probe = (
+        await session.execute(_phase15_esports_ticker_probe_query(now))
+    ).all()
+    esports_ids = _phase15_esports_ticker_candidate_ids(esports_probe)
+    esports_rows: list = []
+    if esports_ids:
+        esports_rows = (
+            await session.execute(_phase15_rows_by_id_query(esports_ids))
+        ).all()
+    stats["funnel"]["phase15_esports_ticker_probed"] = len(esports_probe)
+    stats["funnel"]["phase15_esports_ticker_candidates"] = len(esports_rows)
+
     fresh_rows = (await session.execute(_phase15_fresh_query())).all()
     rotation_rows = (
         await session.execute(_phase15_rotation_query(shards, shard_index))
@@ -6249,7 +6525,8 @@ async def _phase15_revalidate(
     all_linked_rows = list(resolved_rows)
     _seen_market_ids = {market.id for market, _ in resolved_rows}
     for market, linked_event in (
-        list(venue_rows) + list(fresh_rows) + list(rotation_rows)
+        list(venue_rows) + list(esports_rows)
+        + list(fresh_rows) + list(rotation_rows)
     ):
         if market.id not in _seen_market_ids:
             _seen_market_ids.add(market.id)
@@ -6421,6 +6698,15 @@ async def _phase15_revalidate(
                             "row moved between the read and the write (#6073)",
                             linked_event.id,
                         )
+
+            # #9827 rung 2 (CERT-3864): an esports row minted before #9827's
+            # mint arm still wears Kalshi's expected expiration, four hours
+            # late, and #4965's fixture guard refuses Polymarket's winner on it.
+            # Above the gates for #6073's reason: the correction needs no
+            # matchup and no game-level read.
+            await _phase15_kalshi_esports_ticker_redate(
+                session, market, linked_event, stats,
+            )
 
             if not is_game_level_market(
                 market.name, market.category, external_id=market.external_id,

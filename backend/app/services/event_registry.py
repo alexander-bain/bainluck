@@ -58,6 +58,7 @@ from app.services.anchor_channel import (
 from app.utils.espn_helpers import commence_correction_inverts_completion
 from app.utils.espn_id_stamp import espn_id_holder
 from app.utils.event_completion import (
+    KALSHI_TICKER_TIME_COMMENCE_SOURCE,
     POLYMARKET_VENUE_COMMENCE_SOURCE,
     settlement_is_a_staleness_artifact,
 )
@@ -71,6 +72,10 @@ logger = logging.getLogger(__name__)
 # Source priority for field updates (higher index = higher priority)
 _SOURCE_PRIORITY = {
     "kalshi": 0,
+    # #9827: the HHMM instant a Kalshi esports ticker names. The same authority
+    # as `kalshi` (same venue, same row), so the same rank: a schedule source
+    # still corrects it, and it never corrects one.
+    "kalshi_ticker_time": 0,
     "polymarket": 0,
     # #6073. The SAME authority as `polymarket` — same provider, same row — and
     # ranked identically on purpose. The string differs only to record which of
@@ -186,6 +191,37 @@ def polymarket_venue_corrects_a_kalshi_expiration(
     )
 
 
+def kalshi_ticker_time_corrects_a_kalshi_expiration(
+    current_source: Optional[str], incoming_source: Optional[str],
+) -> bool:
+    """Is a Kalshi esports ticker's HHMM replacing Kalshi's own expiration? (#9827)
+
+    ONE venue, TWO fields, and one of them is the wrong field to have read —
+    #6073's shape on the Kalshi side. ``kalshi``/``kalshi_occurrence`` is
+    ``occurrence_datetime``, the expected EXPIRATION; ``kalshi_ticker_time`` is
+    the start the same market's ticker names. Specimen, event 15321207 (CS2,
+    Passion Academy v Revenge): stored 14:30Z ``kalshi``,
+    ``KXCS2GAME-26OCT010630PSNAREV`` names 10:30Z, Polymarket's fixture 10:30Z.
+    Both rank 0, so the tie rule froze the expiration in place on every one of
+    the rows minted before #9827's mint arm, and nothing re-dated them.
+
+    **DIRECTIONAL**, like the two Polymarket clauses above: the ticker's start
+    may replace the expiration, and a ``kalshi`` claim can never come back over
+    ``kalshi_ticker_time`` (the tie rule still refuses it). Not a rank bump —
+    that would stop a schedule source correcting it. ``kalshi_ticker`` (a DATE at
+    midnight) is absent on purpose, as it is from #8722's clause.
+
+    The PAIRING and the DIRECTION of the move are not this predicate's to vouch
+    for: Phase 1.5's :func:`kalshi_esports_ticker_redate` moves a row only
+    EARLIER, inside the esports window, when every esports ticker on the row
+    names the one instant, and after ``phase15_link_is_valid_for_redate``.
+    """
+    return (
+        incoming_source == KALSHI_TICKER_TIME_COMMENCE_SOURCE
+        and current_source in KALSHI_OCCURRENCE_TIMED_SOURCES
+    )
+
+
 def commence_time_write_authorized(
     current_source: Optional[str],
     incoming_source: Optional[str],
@@ -265,6 +301,8 @@ def commence_time_write_authorized(
         return (True, "revision: polymarket's fixture instant over its listing stamp")
     if polymarket_venue_corrects_a_kalshi_expiration(current_source, incoming_source):
         return (True, "correction: polymarket's fixture instant over kalshi's expiration")
+    if kalshi_ticker_time_corrects_a_kalshi_expiration(current_source, incoming_source):
+        return (True, "correction: kalshi's ticker start over kalshi's expiration")
     return (
         False,
         f"priority: {incoming_source or '<none>'}({incoming}) does not outrank "

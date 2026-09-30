@@ -46,6 +46,10 @@ class _Market:
 _SPECIMEN_TICKER = "KXLOLGAME-26AUG210500GAMTSW"
 _SPECIMEN_TICKER_TIME = datetime(2026, 8, 21, 5, 0, tzinfo=timezone.utc)
 _SPECIMEN_CLOSE_TIME = datetime(2026, 8, 23, 9, 0, tzinfo=timezone.utc)
+# #9827: `_SPECIMEN_TICKER_TIME` is the ticker's wall clock stamped UTC — a
+# carrier. 05:00 US Eastern is 09:00Z, and since #9827 an esports ticker that
+# names a time of day mints its row at that real instant.
+_SPECIMEN_START_UTC = datetime(2026, 8, 21, 9, 0, tzinfo=timezone.utc)
 
 
 # ---------------------------------------------------------------------------
@@ -66,8 +70,10 @@ def test_the_created_row_no_longer_self_refutes():
     market = _Market(_SPECIMEN_TICKER, commence_time=_SPECIMEN_CLOSE_TIME)
     commence, source = auto_create_commence_time(market, _SPECIMEN_CLOSE_TIME)
 
-    assert commence == _SPECIMEN_TICKER_TIME
-    assert source == "kalshi_ticker"
+    # #9827: the esports specimen names 05:00 Eastern, so the row takes the
+    # real instant — a published start, not the midnight/carrier stand-in.
+    assert commence == _SPECIMEN_START_UTC
+    assert source == "kalshi_ticker_time"
     # ...and the loop is closed: the row we would now write is one the guard
     # accepts, so the next poll LINKS instead of creating a 298th event.
     assert auto_create_self_refutes(market, commence) is False
@@ -81,12 +87,39 @@ def test_a_coherent_kalshi_market_is_left_completely_alone():
     special provenance. Only markets that would otherwise re-create themselves
     forever get re-timed.
     """
-    coherent = _SPECIMEN_TICKER_TIME + timedelta(minutes=30)  # inside the window
-    market = _Market(_SPECIMEN_TICKER, commence_time=coherent)
+    # #9827 moved this off the esports specimen: an esports ticker's HHMM is
+    # now read as the start (its `commence_time` is the expected expiration,
+    # +4h, not a "more precise" time). The blast-radius property stands for
+    # every other sport — an MLB ticker 30 minutes off its own first pitch.
+    mlb_ticker = "KXMLBGAME-26AUG211905NYYBOS"  # 19:05 ET = 23:05Z
+    coherent = datetime(2026, 8, 21, 23, 35, tzinfo=timezone.utc)
+    market = _Market(mlb_ticker, commence_time=coherent)
 
     commence, source = auto_create_commence_time(market, coherent)
     assert commence == coherent
     assert source is None
+
+
+def test_an_esports_market_already_at_its_ticker_start_is_left_alone_9827():
+    """The esports arm changes nothing when the fallback already IS the start."""
+    market = _Market(_SPECIMEN_TICKER, commence_time=_SPECIMEN_START_UTC)
+
+    assert auto_create_commence_time(market, _SPECIMEN_START_UTC) == (
+        _SPECIMEN_START_UTC, None,
+    )
+
+
+def test_the_date_only_ticker_arm_still_stamps_the_ticker_date():
+    """#2020's arm, on a ticker #9827 does not reach: a date-only tennis ticker
+    whose close time is two days out still gets the ticker DATE, stamped
+    `kalshi_ticker`, and the row it writes no longer self-refutes."""
+    market = _Market("KXATPMATCH-26AUG21SINALC", commence_time=_SPECIMEN_CLOSE_TIME)
+    commence, source = auto_create_commence_time(market, _SPECIMEN_CLOSE_TIME)
+
+    assert (commence, source) == (
+        datetime(2026, 8, 21, tzinfo=timezone.utc), "kalshi_ticker",
+    )
+    assert auto_create_self_refutes(market, commence) is False
 
 
 def test_a_market_with_no_parseable_ticker_keeps_the_fallback():
@@ -206,11 +239,12 @@ async def test_call_site_stamps_the_ticker_time_on_the_identity(monkeypatch):
 
     assert result is None  # the ValueError path, as designed
     identity = seen["identity"]
-    assert identity.commence_time == _SPECIMEN_TICKER_TIME, (
+    assert identity.commence_time == _SPECIMEN_START_UTC, (
         "the created row must carry the ticker's game time, not Kalshi's close "
         "time — stamping the close time is what closed the 297-event loop"
     )
-    assert identity.commence_time_source == "kalshi_ticker"
+    # #9827: an esports ticker's HHMM is the real start, Eastern → UTC.
+    assert identity.commence_time_source == "kalshi_ticker_time"
     # Ruling 048 is untouched by this fix: the claim stays unanchored.
     assert identity.claim.schedule_derived is False
 

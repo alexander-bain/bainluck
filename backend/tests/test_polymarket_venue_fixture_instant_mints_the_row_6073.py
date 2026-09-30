@@ -250,14 +250,14 @@ class TestNothingElseMoves:
         listing = datetime(2026, 8, 23, 9, 0, tzinfo=UTC)
         market = _market(
             source="kalshi",
-            external_id="KXLOLGAME-26AUG210500GAMTSW",
+            external_id="KXATPMATCH-26AUG21SINALC",  # date-only (#9827 re-times esports HHMM)
             listing_stamp=listing,
             venue_stamp="2026-09-14T13:00:00Z",
         )
         chosen, source = auto_create_commence_time(market, listing)
 
         assert source == TICKER_DERIVED_COMMENCE_SOURCE
-        assert chosen == datetime(2026, 8, 21, 5, 0, tzinfo=UTC)
+        assert chosen == datetime(2026, 8, 21, 0, 0, tzinfo=UTC)
 
     def test_the_ticker_arm_is_untouched(self):
         """#2020's specimen, re-run whole: ticker date 26AUG21 against a close
@@ -267,13 +267,13 @@ class TestNothingElseMoves:
         listing = datetime(2026, 8, 23, 9, 0, tzinfo=UTC)
         market = _market(
             source="kalshi",
-            external_id="KXLOLGAME-26AUG210500GAMTSW",
+            external_id="KXATPMATCH-26AUG21SINALC",  # date-only (#9827 re-times esports HHMM)
             listing_stamp=listing,
         )
         chosen, source = auto_create_commence_time(market, listing)
 
         assert (chosen, source) == (
-            datetime(2026, 8, 21, 5, 0, tzinfo=UTC), TICKER_DERIVED_COMMENCE_SOURCE,
+            datetime(2026, 8, 21, 0, 0, tzinfo=UTC), TICKER_DERIVED_COMMENCE_SOURCE,
         )
 
     def test_other_polymarket_metadata_keys_are_not_read_as_a_start(self):

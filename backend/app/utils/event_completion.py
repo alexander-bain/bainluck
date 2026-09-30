@@ -113,6 +113,23 @@ KALSHI_OCCURRENCE_COMMENCE_SOURCE = "kalshi_occurrence"
 #: backstop wearing a start's name, this one is the start.
 POLYMARKET_VENUE_COMMENCE_SOURCE = "polymarket_venue"
 
+#: #9827. The instant a Kalshi esports ticker names in its HHMM — the one field
+#: Kalshi publishes that IS a start. `KXCS2GAME-26OCT010630PSNAREV` reads 06:30
+#: US Eastern, 10:30Z, and Polymarket's `gameStartTime` for the same match says
+#: 10:30Z too.
+#:
+#: Named apart from BOTH of its neighbours, because each would be a lie here:
+#: ``kalshi_ticker`` is a DATE resolved to midnight (a stand-in, and in
+#: ``DERIVED_COMMENCE_SOURCES``), and ``kalshi`` is ``occurrence_datetime``, the
+#: expected expiration that every reader in ``KALSHI_OCCURRENCE_TIMED_SOURCES``
+#: treats as the far end of the contest. Measured on production 2026-09-30: of
+#: the Kalshi esports rows minted in 10 days, 404 sat exactly +4.00h after their
+#: ticker's instant and none at 0 — the rows went LIVE as the match ended.
+#:
+#: A published time of day, so a clock may run from it (not derived), and a
+#: market's word, so it is market-born and ranks with ``kalshi``.
+KALSHI_TICKER_TIME_COMMENCE_SOURCE = "kalshi_ticker_time"
+
 
 def commence_time_is_a_reported_start(commence_time_source) -> bool:
     """May a clock be run from this event's ``commence_time``?

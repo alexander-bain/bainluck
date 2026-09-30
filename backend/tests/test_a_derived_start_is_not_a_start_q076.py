@@ -182,9 +182,12 @@ class TestOneStringThreeReaders:
             "M",
             (),
             {
-                # A real production ticker: date 26AUG21, close time two days later.
+                # Date 26AUG21, close time two days later. A date-only tennis
+                # ticker: #9827 reads an esports ticker's HHMM as a real start
+                # (`kalshi_ticker_time`), so the derived stamp is asserted on a
+                # ticker that still only names a day.
                 "source": "kalshi",
-                "external_id": "KXLOLGAME-26AUG210500GAMTSW",
+                "external_id": "KXATPMATCH-26AUG21SINALC",
                 "commence_time": datetime(2026, 8, 23, 9, 0, tzinfo=UTC),
             },
         )()

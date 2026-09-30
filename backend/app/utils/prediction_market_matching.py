@@ -1058,6 +1058,73 @@ def _clean_esports_matchup(result: MatchupInfo, market_name: str) -> MatchupInfo
     return MatchupInfo(team_a, team_b, yes_team, result.format_type)
 
 
+#: #9827. Market-type words #2947's segment rule does not name ("- Games Total",
+#: "- Map Handicap"). A backstop only: measured on production 2026-09-30, 0 of
+#: the 1,355 Gamma-`moneyline` esports titles of 14 days carry any of them after
+#: the marker, so it refuses nothing real — and a derivative title that ever did
+#: would still have to carry Gamma's exact `moneyline` label to reach the join.
+_ESPORTS_WINNER_CONTEXT_REFUSE_RE = re.compile(
+    r"\b(?:total|handicap|map|o/u|over|under|spread|kills?|first\s+blood)\b",
+    re.IGNORECASE,
+)
+
+
+def esports_winner_matchup_name(market_name: str) -> Optional[str]:
+    """``A vs B`` behind Polymarket's esports match-winner title, or None. #9827.
+
+    Polymarket spells every esports match winner ``<Game>: A vs B (BOn) -
+    <Tournament>``, and `is_game_level_market` reads none of them: the game title
+    is not on `_CATEGORY_PREFIX_RE` and the tournament tail rides on team_b. The
+    only ones that ever linked were titles whose TOURNAMENT held its own colon
+    ("CCT Europe Closed Qualifier: Series #10"), which `_GAME_PROP_RE` then
+    split — an accident, and those tournaments ended on 2026-09-27.
+
+    **SEARCH NAME ONLY.** #2947 deliberately left these titles unable to MINT
+    (a 19k-row flood). The caller uses this answer to JOIN a row that already
+    exists and passes ``allow_create=False``; nothing here changes what
+    `extract_matchup` or `is_game_level_market` answer for the raw title.
+
+    Anchored on the same closed token #2947 anchors on, the ``(BOn)`` marker,
+    and refused on the derivative reads of the post-marker context: any segment
+    naming a market type (#2947's rule, "- Map 1 Winner"), or a market-type word
+    it does not name. A derivative suffix with no marker never gets that far.
+    What is left before the marker must be a bare two-sided matchup, and the
+    game title must be the one short prefix.
+
+    Examples:
+        "Counter-Strike: Revenge vs Passion Academy (BO3) - United21 Group B"
+            → "Revenge vs Passion Academy"
+        "LoL: T1 vs Gen.G (BO5)" → "T1 vs Gen.G"
+        "Counter-Strike: Revenge vs Passion Academy - Map 1 Winner" → None
+        "Revenge vs Passion Academy (BO3)" → None (no game title)
+    """
+    if not market_name:
+        return None
+    marker = _ESPORTS_BEST_OF_RE.search(market_name)
+    if marker is None:
+        return None
+    head, context = market_name[:marker.start()], market_name[marker.end():]
+    if _esports_context_is_derivative(
+        context
+    ) or _ESPORTS_WINNER_CONTEXT_REFUSE_RE.search(context):
+        return None
+    # The game title is the text before the ONE colon in the head. Read by
+    # position, not with `_ESPORTS_TITLE_PREFIX_RE`: that pattern runs on team_a
+    # alone and refuses any string holding " vs ", which the head always does.
+    title, colon, matchup = head.partition(":")
+    matchup = matchup.strip()
+    if (
+        not colon
+        or not _ESPORTS_TITLE_PREFIX_RE.match(title + ": ")
+        or not matchup
+        or ":" in matchup
+    ):
+        return None
+    if not _BARE_MATCHUP_RE.match(matchup) or not _check_game_level(matchup):
+        return None
+    return matchup
+
+
 def matchup_for_link_search(
     matchup: Optional[MatchupInfo], market_name: str
 ) -> Optional[MatchupInfo]:
