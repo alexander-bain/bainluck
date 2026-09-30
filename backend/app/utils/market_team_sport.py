@@ -145,8 +145,18 @@ _SERIES_LEAGUE_SUPPLEMENT.update(dict.fromkeys(_NFL_SUPPLEMENT_SERIES, "american
 # linked on 2026-09-29, every one on an FBS row). Read-side only, like the
 # supplement: reclassifying the market at ingest is a different change. Matched
 # on the exact series, so KXNCAAFFINALIST and KXNCAAFFIRSTTDTEAM stay FBS.
+#
+# Kalshi's women's VOLLEYBALL series (#9924) resolve through the bare ``kxncaaw``
+# entry to women's basketball, which is every KXNCAAW series except the explicit
+# ``kxncaawb…`` ones. So "Division I Women's Volleyball Champion" was a women's
+# basketball board by the league check and led Nebraska's basketball page (26 of
+# its 49 open legs on WNCAAB rows, 2026-09-30), with the match series' legs
+# beside it. No team row carries this key, so Phase 3 clears those links and
+# Phase 2 can never write them again.
 _SERIES_LEAGUE_OVERRIDE: dict[str, str] = {
     "kxncaaffcs": "americanfootball_ncaaf_fcs",
+    "kxncaawv": "volleyball_ncaaw",
+    "kxncaawvmatch": "volleyball_ncaaw",
 }
 
 
