@@ -2031,8 +2031,10 @@ def _fold_sponsor_split_tournaments(
     * gender agrees — a group without the `_womens` suffix joins a women's group
       only if its own markets declare the LPGA, so a men's event never folds
       into a women's event of the same name;
-    * dates agree — when both groups carry resolution dates, the earliest ones
-      are within `_FOLD_RESOLUTION_WINDOW`.
+    * dates agree — both groups carry resolution dates and the earliest ones are
+      within `_FOLD_RESOLUTION_WINDOW`. A group with no date at all never folds:
+      the same name is exactly what last year's edition shares with this one, so
+      without a date there is no evidence the two groups are the same week.
 
     The surviving key prefers the `_womens` form, then the shortest, then the
     alphabetically first, so the choice does not depend on market order. Returns
@@ -2066,7 +2068,7 @@ def _fold_sponsor_split_tournaments(
                     continue
             a = _earliest_resolution(survivor_markets)
             b = _earliest_resolution(other_markets)
-            if a is not None and b is not None and abs(a - b) > _FOLD_RESOLUTION_WINDOW:
+            if a is None or b is None or abs(a - b) > _FOLD_RESOLUTION_WINDOW:
                 continue
             survivor_markets.extend(other_markets)
             aliases[other] = survivor
