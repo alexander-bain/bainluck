@@ -4767,6 +4767,43 @@ def _needs_sunk_slot_outcome_arm(
     )
 
 
+def _sunk_slot_spare_rows(
+    arm_state: str,
+    spare_rows: list,
+    over_cap_ids: set,
+    answer_rows: int,
+    refill_source: str,
+) -> list:
+    """#9724 r2: the name matches ranked 21-60, for the slots sunk rows would ship.
+
+    `?q=braves` on Wild Card day (production `adf0d5f0`, 2026-09-30 06:57Z),
+    after #9724's game key: `futures_outcome_arm: skipped`,
+    `futures_refill_source: not_fired`, and four sunk Phillies vs. Braves props
+    (6th/7th/8th Inning Winner, Player Props) still filled rows 7-10 while "Will
+    Atlanta Braves advance to the NLDS in the 2026 MLB Playoffs?" (61380837,
+    open) was off both pages. It is a NAME match past rank 20. The collapse
+    refill never fires here — its gate counts a sunk row as an answer (#8628 r2,
+    for the refill query's cost) — and #9597's arm fetches outcome-only rows, so
+    nothing read the rows the window statement had already returned.
+
+    Those rows cost nothing: they are `_futures_spare_rows`, in hand. With the
+    outcome arm ``skipped`` or ``absent`` they are the full arm order's ranks 21+
+    exactly (tier is the first ORDER BY key, so no outcome-only row can sit
+    among them) — a SHORT spare page is still an exact prefix, which is why this
+    does not need `_futures_refill_in_hand`'s full-page test. Any other arm state,
+    a refill that already ran (it read these ranks), no sunk row, or a page the
+    answer rows fill: nothing to read, and the page is untouched.
+    """
+    if (
+        refill_source != "not_fired"
+        or arm_state not in ("skipped", "absent")
+        or not over_cap_ids
+        or answer_rows >= _SEARCH_FUTURES_PAGE
+    ):
+        return []
+    return list(spare_rows)
+
+
 async def _fetch_sunk_slot_outcome_rows(
     db, window_query, candidates_in, tier1_arms: list, outcome_arm, deadline: float
 ) -> tuple[list, str]:
@@ -11625,6 +11662,43 @@ async def search_events(
         deduped_futures = _demote_teamless_sport(
             deduped_futures, _team_sport_categories
         )
+
+    # #9724 r2: before paying for outcome-only rows, read the name matches the
+    # window statement already returned past rank 20. No query. Counted fresh, for
+    # the same reason as the arm below. See `_sunk_slot_spare_rows`.
+    _spare_answer_rows = sum(
+        1 for m in deduped_futures
+        if m.id not in _over_match_cap_ids
+        and not _is_teamless_sport(m, _team_sport_categories)
+    )
+    _spare_for_sunk = _sunk_slot_spare_rows(
+        _futures_outcome_arm,
+        _futures_spare_rows,
+        _over_match_cap_ids,
+        _spare_answer_rows,
+        _futures_refill_source,
+    )
+    if _spare_for_sunk:
+        _futures_refill_source = "spare"
+        _deduped_ids = {m.id for m in deduped_futures}
+        for m in _rerank_search_futures(
+            _spare_for_sunk, expanded, _resolved_sport_category,
+            _team_sport_categories,
+        ):
+            if m.id in _deduped_ids or not _admit_search_future(
+                m, seen_search_keys, kept_sources_by_question, kept_boards
+            ):
+                continue
+            if _is_over_match_cap(m, _match_counts, _query_words):
+                _over_match_cap_ids.add(m.id)
+            deduped_futures.append(m)
+            if (
+                not _is_teamless_sport(m, _team_sport_categories)
+                and m.id not in _over_match_cap_ids
+            ):
+                _spare_answer_rows += 1
+            if _spare_answer_rows >= _SEARCH_FUTURES_PAGE:
+                break
 
     # #9597: a sunk row that would be SHIPPED is a slot the name matches gave
     # back, and the outcome-only rows the window skipped are what it owes. Counted
