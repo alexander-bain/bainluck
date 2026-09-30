@@ -9,7 +9,9 @@ import { marketEventKey, eventPath } from "@/lib/eventKey";
 import { printsAPercent } from "@/lib/discover/leaderOrder";
 import { boardRowRanks, futuresBoardRemainderLabel, futuresDistributionBoard } from "@/lib/discover/futuresBoard";
 import { heroOutcome } from "@/lib/discover/heroOutcome";
-import { answerIsBareQuantity, captionIsAboutAnotherLeg, rowAnswerLabel } from "@/lib/discover/rowAnswerLabel";
+import type { HeroCandidate } from "@/lib/discover/heroOutcome";
+import { answerIsBareQuantity, answerIsNegative, captionIsAboutAnotherLeg, captionRepeatsAnswer, rowAnswerLabel } from "@/lib/discover/rowAnswerLabel";
+import { titleNamedChoices } from "@/lib/discover/titleNamedChoices";
 import { buildHeroSrcSet, HERO_IMAGE_SIZES } from "@/lib/discover/heroSrcSet";
 import { formatProbabilityPercent, formatMovementPointsLikeSentence, movementPoints } from "@/lib/probabilityDisplay";
 import { renderedLeaderPercent } from "@/lib/renderedPercent";
@@ -648,6 +650,10 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
   // served 0 over a live 0.003 prints `<1%` and not `0%`. That composition lives
   // in `formatProbabilityPercent`; passing `{ rendered }` does not opt out of it.
   const pctDisplay = prob != null ? formatProbabilityPercent(prob, { rendered: heroPercent }) : null;
+  // #9876 — "Will AOC announce a run for Senate or President …?" headlined
+  // 48% over "Senate" and printed President nowhere. The other choice the
+  // title offers rides the leader's name line with its own served number.
+  const heroNameLine = leader ? withOtherChoices(leader.name, data, leader) : null;
   // #8151 — the caption stops saying the hero's number back to it.
   //
   // THIS LINE'S POSITION IS THE GATE. Only the two roots below (variant B at the
@@ -744,7 +750,7 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
               A/B split and "61% · Democratic Party" on the other. Same string,
               same `heroOutcome` pick, so the two halves cannot disagree. */}
           {pctDisplay && leader && (
-            <div className="-mt-1.5 mb-3 text-[12px] font-medium text-text-secondary line-clamp-1" data-testid="futures-hero-outcome">{leader.name}</div>
+            <div className="-mt-1.5 mb-3 text-[12px] font-medium text-text-secondary line-clamp-1" data-testid="futures-hero-outcome">{heroNameLine}</div>
           )}
 
           {prob != null && (
@@ -861,7 +867,7 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
                 <span className={`font-mono font-bold text-[13px] pb-1 whitespace-nowrap ${movementUp ? "text-emerald-400" : "text-red-400"}`} title={movementTitle} aria-label={movementTitle}>{movementStr}</span>
               )}
             </div>
-            <div className="text-[12px] font-medium text-white/85 mt-0.5 line-clamp-1">{leader.name}</div>
+            <div className="text-[12px] font-medium text-white/85 mt-0.5 line-clamp-1" data-testid="futures-hero-outcome">{heroNameLine}</div>
             {/* Queue 309 Item 2 — this hero sits on a photo scrim, so it uses the
                 same white/opacity treatment as the leader name above rather than
                 a surface token. */}
@@ -1170,6 +1176,33 @@ function formatComparisonTheme(theme: string | null | undefined): string {
   }
 }
 
+/**
+ * #9876 — the choices a title offers besides the hero, each with its own served
+ * percent ("President 41%"), or `[]`. Read through `renderedLeaderPercent` so
+ * the number is the one the market's own card and page print for that outcome.
+ */
+function otherChoiceTexts(
+  data: FeedFuturesData,
+  hero: HeroCandidate | null | undefined,
+): string[] {
+  return titleNamedChoices(data.name, data.top_outcomes, hero).map((o) => {
+    // `titleNamedChoices` returns only priced choices, so the `?? 0` never runs.
+    const pct = formatProbabilityPercent(o.probability ?? 0, {
+      rendered: renderedLeaderPercent(data.top_outcomes, o),
+    });
+    return `${o.name} ${pct}`;
+  });
+}
+
+/** `name`, followed by any other choice the title offers: "Senate · President 41%". */
+function withOtherChoices(
+  name: string,
+  data: FeedFuturesData,
+  hero: HeroCandidate | null | undefined,
+): string {
+  return [name, ...otherChoiceTexts(data, hero)].join(" · ");
+}
+
 // ── Compact row used by GroupCard ──
 
 export function FuturesCompactRow({ item, data }: { item: FeedItem; data: FeedFuturesData }) {
@@ -1208,7 +1241,13 @@ export function FuturesCompactRow({ item, data }: { item: FeedItem; data: FeedFu
   // 25bps leads at 56%" do not print their outcome twice. The full
   // `FuturesCard` has printed `leader.name` under its hero all along; this row
   // is its small twin and now says the same thing. Measurement: the module.
-  const answerLabel = rowAnswerLabel(leader, context);
+  // #9876 — a title that offers a choice ("Senate or President") prints the
+  // other choice beside the answer, with its own number. The answer is then
+  // always named, so the reader can tell which choice the column's number is.
+  const otherChoices = otherChoiceTexts(data, leader);
+  const answerLabel = otherChoices.length > 0 && leader?.name?.trim()
+    ? leader.name.trim()
+    : rowAnswerLabel(leader, context);
   // #7331 — and the label #4396 added collapses when the answer is itself a
   // quantity: `Core CPI YoY - September 2026 · 2.4% · Resolves within a month`
   // with `41%` in this column printed two percentages and said which was which
@@ -1223,7 +1262,18 @@ export function FuturesCompactRow({ item, data }: { item: FeedItem; data: FeedFu
   // neither. The row draws one number, so the half that cannot be read is the
   // sentence about the leg it does not draw; the answer stays, because saying
   // which outcome the percentage is for is what this line is for.
-  const rowCaption = captionIsAboutAnotherLeg(context, answerLabel, data.top_outcomes) ? "" : context;
+  //
+  // #9876 — and a caption that only repeats an answer the row now prints in
+  // bold goes too. That covers a negative answer ("No IPO before January 2027
+  // leads at 85%" under **No IPO before January 2027**) and a choice line
+  // ("Senate leads at 48%…" under **Senate** · President 41%). The full card
+  // this row opens still carries the caption.
+  const captionRepeatsBoldAnswer =
+    answerLabel != null &&
+    (answerIsNegative(answerLabel) || otherChoices.length > 0) &&
+    captionRepeatsAnswer(context, answerLabel);
+  const rowCaption =
+    captionRepeatsBoldAnswer || captionIsAboutAnotherLeg(context, answerLabel, data.top_outcomes) ? "" : context;
   const rowCue = forYouCue(item);
   const conceptKey = marketEventKey(data);
   const detailHref = conceptKey ? eventPath(conceptKey) : `/futures/${data.id}`;
@@ -1262,6 +1312,11 @@ export function FuturesCompactRow({ item, data }: { item: FeedItem; data: FeedFu
         {(answerLabel || rowCaption) && (
           <div className="text-xs mt-0.5 line-clamp-2" data-testid="compact-row-caption">
             {answerLabel && <span className="font-semibold text-text-secondary" data-testid="compact-row-answer">{answerLabel}</span>}
+            {answerLabel && otherChoices.map((choice) => (
+              <span key={choice} className="text-text-secondary" data-testid="compact-row-other-choice">
+                <span className="text-text-muted"> · </span>{choice}
+              </span>
+            ))}
             {answerLabel && rowCaption && <span className="text-text-muted"> · </span>}
             {rowCaption && <span className="text-text-muted">{rowCaption}</span>}
           </div>
