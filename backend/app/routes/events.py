@@ -5834,13 +5834,48 @@ def _team_nickname_team_arms(terms: list[str]) -> list:
     (production 2026-09-28). This arm needs no stored alias; the map already
     names the row. OR'd onto the card's filter by both routes, it only ADDS
     rows, and is `[]` — no SQL change — for every query without a nickname.
+
+    #9842: a nickname QUALIFIED by the word before it names someone else.
+    `leicester riders` and `knight riders` carded the Saskatchewan Roughriders
+    first, because `riders` recalled its row from inside a longer name. See
+    `_nickname_is_qualified` for which preceding words leave it the nickname.
     """
     pairs: list[tuple[str, str]] = []
-    for term in terms:
+    for i, term in enumerate(terms):
         entry = _TEAM_NICKNAME_TEAM_ROWS.get(term.lower())
-        if entry is not None and entry not in pairs:
-            pairs.append(entry)
+        if entry is None or entry in pairs:
+            continue
+        if i > 0 and _nickname_is_qualified(terms[i - 1], entry):
+            continue
+        pairs.append(entry)
     return [and_(Sport.key == sport_key, Team.name == name) for sport_key, name in pairs]
+
+
+def _nickname_is_qualified(prev: str, entry: tuple[str, str]) -> bool:
+    """Does `prev`, the word just before a nickname, make it part of another name? (#9842)
+
+    `leicester riders` is the Leicester Riders and `knight riders` the Knight
+    Riders — the qualifier turns the nickname into the tail of a different club's
+    name. A word that does NOT is scaffolding (`the boilers`), a matchup
+    connector (`stamps vs riders`), a league (`cfl riders`), another curated
+    nickname (`pats bills`), or a word of the named club itself (`new england
+    pats`, `saskatchewan riders`). Adjacency, not "every other word belongs to
+    the row": `pats playoffs` and `riders score` keep their club, because a word
+    AFTER the nickname does not rename it.
+    """
+    word = prev.lower()
+    if (
+        word in _SEARCH_SCAFFOLDING
+        or word in _MATCHUP_CONNECTORS
+        or word in _SPORT_SEARCH_ALIASES
+        or word in _TEAM_NICKNAME_TEAM_ROWS
+    ):
+        return False
+    sport_key, name = entry
+    own_words = set(name.lower().split()) | set(sport_key.lower().split("_"))
+    for alias in curated_team_aliases(sport_key, name):
+        own_words.update(alias.lower().split())
+    return word not in own_words
 
 
 def _team_nickname_team_order(arms: list) -> list:
@@ -9498,8 +9533,10 @@ async def search_events(
     # unless the resolved-team rescue hands it roster ids, which change its
     # statement. A SAVEPOINT for the stage's reason; a shed read disarms the
     # evidence (no rows) and marks `teams` degraded exactly once.
-    # #9272: a curated nickname recalls its own row — see the helper.
-    _team_nickname_rows = _team_nickname_team_arms(terms)
+    # #9272: a curated nickname recalls its own row — see the helper. #9842: it
+    # reads the words AS TYPED, because `terms` has dropped the `vs` of `stamps vs
+    # riders`, and the word before a nickname is what says whether it is one.
+    _team_nickname_rows = _team_nickname_team_arms(_q_identity.split())
 
     def _search_team_rows_q(roster_team_ids: list[int]):
         team_rank = _team_search_rank(_q_identity).label("team_rank")
@@ -13455,8 +13492,9 @@ async def typeahead_search(
         (Team.name.ilike(f"{_escape_like(_q_norm)}%", escape="\\"), 1),
         else_=2,
     )
-    # #9272: a curated nickname recalls its own row — see the helper.
-    _ta_team_nickname_rows = _team_nickname_team_arms(terms)
+    # #9272: a curated nickname recalls its own row — see the helper. #9842:
+    # the words as typed, as at `/search`.
+    _ta_team_nickname_rows = _team_nickname_team_arms(_q_identity.split())
     if _ta_team_nickname_rows:
         team_filter = or_(team_filter, *_ta_team_nickname_rows)
     team_query = (

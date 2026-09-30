@@ -143,13 +143,13 @@ def test_a_contested_alias_names_no_row(monkeypatch) -> None:
 
 def test_both_teams_queries_use_the_arm_and_the_order() -> None:
     search = _code_lines(ev.search_events)
-    assert "_team_nickname_rows = _team_nickname_team_arms(terms)" in search
+    assert "_team_nickname_rows = _team_nickname_team_arms(_q_identity.split())" in search
     assert "team_filter = or_(team_filter, *_team_nickname_rows)" in search
     assert "*_team_nickname_team_order(_team_nickname_rows)," in search
     assert "_build_team_search_filter(_q_identity),\n" not in search
 
     typeahead = _code_lines(ev.typeahead_search)
-    assert "_ta_team_nickname_rows = _team_nickname_team_arms(terms)" in typeahead
+    assert "_ta_team_nickname_rows = _team_nickname_team_arms(_q_identity.split())" in typeahead
     assert "team_filter = or_(team_filter, *_ta_team_nickname_rows)" in typeahead
     assert "*_team_nickname_team_order(_ta_team_nickname_rows)," in typeahead
 
