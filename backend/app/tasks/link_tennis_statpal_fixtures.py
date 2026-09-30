@@ -282,6 +282,35 @@ UPDATE events
    AND statpal_fixture_id IS NULL
 """
 
+#: StatPal's start, re-stamped on the anchor of a fixture we already hold PAIRED
+#: (#9588). `_link_one` wrote it once and nothing refreshed it, so a session
+#: placeholder (Beijing doubles at 02:00Z 9/30) outlived StatPal's own move to
+#: 10-01 / 10-02 and `event_completion`'s later-session hold released on it.
+#:
+#: Keyed on the exact anchor (source, source_id, id_kind, event_id) and on the
+#: row still carrying the fixture, so it can only touch the link this task made.
+#: `IS DISTINCT FROM` makes an unchanged start a no-op, so `seen_at` marks when
+#: StatPal's start last CHANGED rather than when the task last ran. `COALESCE`
+#: for the same reason as `stamp_v1_statpal_fixtures`: `NULL || jsonb` is NULL.
+REFRESH_STATPAL_START = """
+UPDATE event_provider_anchors
+   SET claim_context = COALESCE(claim_context, '{}'::jsonb)
+                       || jsonb_build_object(
+                              'statpal_start_time', CAST(:start_time AS text),
+                              'statpal_start_seen_at', CAST(:seen_at AS text))
+ WHERE source = :source
+   AND source_id = :source_id
+   AND id_kind = :id_kind
+   AND event_id = :event_id
+   AND (claim_context->>'statpal_start_time') IS DISTINCT FROM CAST(:start_time AS text)
+   AND EXISTS (
+         SELECT 1
+           FROM events e
+          WHERE e.id = event_provider_anchors.event_id
+            AND e.statpal_fixture_id = :fixture_id
+       )
+"""
+
 #: Which of this pass's fixture ids are ALREADY on one of our rows, and whether
 #: the row that holds one holds the ANCHOR too.
 #:
@@ -362,6 +391,10 @@ class LinkRun:
     #: Not a link and not a miss: we hold the id and cannot prove it names the
     #: match. CERT-883 FOLLOW-UP `AUTHORITY-008-PAIR-AWARE-ALREADY-LINKED`.
     unpaired: list[dict[str, Any]] = field(default_factory=list)
+    #: Already-linked fixtures whose StatPal start had moved since the anchor
+    #: last recorded it, and was re-stamped (#9588). Counted inside
+    #: `already_linked` too: a refresh is a property of a link, not a bucket.
+    start_refreshed: list[dict[str, Any]] = field(default_factory=list)
     sources_read: list[str] = field(default_factory=list)
     read_failures: list[str] = field(default_factory=list)
 
@@ -376,6 +409,7 @@ class LinkRun:
             "collisions": len(self.collisions),
             "write_refusals": len(self.write_refusals),
             "unpaired": len(self.unpaired),
+            "start_refreshed": len(self.start_refreshed),
             "sources_read": self.sources_read,
             "read_failures": self.read_failures,
         }
@@ -755,7 +789,9 @@ async def _already_linked(
     }
 
 
-async def _link_one(session, fixture: StatPalFixture, candidate: dict) -> str:
+async def _link_one(
+    session, fixture: StatPalFixture, candidate: dict, *, now: datetime
+) -> str:
     """Write both shapes for one match. Returns the anchor outcome.
 
     The column is written FIRST and guarded by `statpal_fixture_id IS NULL`, so
@@ -782,9 +818,50 @@ async def _link_one(session, fixture: StatPalFixture, candidate: dict) -> str:
             "statpal_start_time": (
                 fixture.start_time.isoformat() if fixture.start_time else None
             ),
+            # The same pair `_refresh_statpal_start` keeps current (#9588), so
+            # a reader can tell a start seen once at link time from one seen
+            # moving later.
+            "statpal_start_seen_at": now.isoformat(),
         },
     )
     return written.outcome
+
+
+async def _refresh_statpal_start(
+    session, fixture: StatPalFixture, prior: dict[str, Any], *, now: datetime
+) -> bool:
+    """Re-stamp StatPal's start on an anchor we already hold. True if it moved.
+
+    #9588. StatPal publishes a session placeholder first and the real slot
+    later, sometimes a day or two later, and `event_completion` holds a
+    venue-stamped row off the clock on exactly this value. A start written
+    once at link time is a start that can only go stale.
+
+    Only for a PAIRED prior: the anchor is proven to be this fixture's on this
+    row. A half-link or a foreign holder has no anchor of ours to refresh, and
+    repairing one is not this task's job (D35). A fixture with no start says
+    nothing, so it never blanks one we hold.
+    """
+    if prior.get("state") != PRIOR_PAIRED or fixture.start_time is None:
+        return False
+    key = statpal_anchor_key(
+        fixture.fixture_id, statpal_id_space(prior["sport_key"])
+    )
+    if key is None:
+        return False
+    result = await session.execute(
+        text(REFRESH_STATPAL_START),
+        {
+            "start_time": fixture.start_time.isoformat(),
+            "seen_at": now.isoformat(),
+            "source": key.source,
+            "source_id": key.source_id,
+            "id_kind": key.id_kind,
+            "event_id": prior["event_id"],
+            "fixture_id": fixture.fixture_id,
+        },
+    )
+    return bool(result.rowcount or 0)
 
 
 async def _run_link_tennis_statpal_fixtures(
@@ -898,6 +975,28 @@ async def _run_link_tennis_statpal_fixtures(
             prior = linked_already.get(fixture.fixture_id)
             if prior is not None:
                 _record_prior(run, fixture, prior)
+                # The one write an already-held fixture does get (#9588): its
+                # start, if StatPal moved it. Committed alone and only when it
+                # wrote, so an unchanged pass stays a pass that wrote nothing.
+                if apply:
+                    try:
+                        refreshed = await _refresh_statpal_start(
+                            session, fixture, prior, now=now
+                        )
+                        if refreshed:
+                            await session.commit()
+                    except Exception as e:  # one bad row never wipes the pass (#42)
+                        await session.rollback()
+                        refreshed = False
+                        logger.exception(
+                            "StatPal tennis start refresh failed for fixture %s "
+                            "on event %s: %s",
+                            fixture.fixture_id, prior.get("event_id"), e,
+                        )
+                    if refreshed:
+                        run.start_refreshed.append(
+                            _receipt(fixture, event_id=prior["event_id"])
+                        )
                 continue
 
             if verdict == VERDICT_UNMATCHED:
@@ -931,7 +1030,7 @@ async def _run_link_tennis_statpal_fixtures(
                 continue
 
             try:
-                outcome = await _link_one(session, fixture, candidate)
+                outcome = await _link_one(session, fixture, candidate, now=now)
             except Exception as e:  # one bad row never wipes the pass (#42)
                 await session.rollback()
                 logger.exception(
@@ -1047,4 +1146,5 @@ async def _run_link_tennis_statpal_fixtures(
         "collision_receipts": run.collisions,
         "write_refusal_receipts": run.write_refusals,
         "unpaired_receipts": run.unpaired,
+        "start_refreshed_receipts": run.start_refreshed,
     }
