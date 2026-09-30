@@ -61,6 +61,21 @@ CURATED_TEAM_ALIASES: dict[tuple[str, str], list[str]] = {
     # second. `caps`/`cavs`/`canes`/`bolts`/`wolves` are in neither club's name,
     # so they stay refused.
     ("icehockey_nhl", "Colorado Avalanche"): ["avs"],
+    # #7386 — `riders`, a nickname spelled INSIDE a longer token of the name
+    # (Rough*riders*), which no WHERE clause can separate from `nets` inside
+    # "Hornets" (#7381). Measured on production 2026-09-30 11:5xZ. Before: `riders`
+    # carded Kolkata and Trinbago Knight Riders and Rider Broncs and served 0
+    # games, while `roughriders` served Friday's Stampeders–Roughriders game.
+    # `Roughriders` names exactly ONE americanfootball_cfl club over 120 days of
+    # events (15); the Knight Riders (cricket) and the RailRiders (MiLB) sit
+    # outside the scope and keep the word, which is in their own names. No
+    # futures arm: `riders` is inside its token, so the substring skip applies.
+    # Refused in the same pass, each already another club's word: `9ers`
+    # (Charlotte 49ers — the San Francisco 49ers hold it, and a second claimant
+    # would make it contested and cost them their game arm), `blue jays`
+    # (Creighton — Toronto's name), `oil` (Purdue — the Edmonton Oilers are "the
+    # Oil"; Purdue's own `boilers` already cards Purdue).
+    ("americanfootball_cfl", "Saskatchewan Roughriders"): ["riders"],
     # #9272 — four MLB nicknames, measured on production 2026-09-28 02:5xZ.
     # Before: `o's` served O Elvas CAD, O'Higgins and a boxing bout, `a's` and
     # `rox` served nothing at all, and `m's` served four "A&M" schools and Texas

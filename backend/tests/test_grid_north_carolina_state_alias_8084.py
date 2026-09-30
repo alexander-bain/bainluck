@@ -152,6 +152,8 @@ def test_search_and_game_card_expansions_are_byte_identical_to_before():
         "dubs": ("Warriors", "basketball_nba"),
         # #9263 `avs`
         "avs": ("Avalanche", "icehockey_nhl"),
+        # #7386 `riders` — spelled inside `Roughriders`; the event arm has no skip.
+        "riders": ("Roughriders", "americanfootball_cfl"),
         # #9272
         "o's": ("Orioles", "baseball_mlb"),
         "o\u2019s": ("Orioles", "baseball_mlb"),

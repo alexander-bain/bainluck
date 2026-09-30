@@ -83,6 +83,8 @@ def test_the_derived_event_expansions_are_exactly_these() -> None:
         "dubs": ("Warriors", "basketball_nba"),
         # #9263 `avs`
         "avs": ("Avalanche", "icehockey_nhl"),
+        # #7386 `riders` — spelled inside `Roughriders`; the event arm has no skip.
+        "riders": ("Roughriders", "americanfootball_cfl"),
         # #9272
         "o's": ("Orioles", "baseball_mlb"),
         "o\u2019s": ("Orioles", "baseball_mlb"),
@@ -136,8 +138,13 @@ def test_the_two_rails_diverge_only_where_their_matchers_do() -> None:
     # games before they were curated — the 9ers hole, twice more.
     # #9076 added three more: `noles`/`horns`/`huskers` inside Seminoles/Longhorns/Cornhuskers.
     # #9080 added two more: `phins` inside `Dolphins`, `stros` inside `Astros`.
+    # #7386 added `riders` inside `Roughriders`. Unlike `9ers`, production does NOT
+    # serve its markets unaided (2026-09-30: 0 Roughriders markets on `riders` —
+    # the Knight Riders make it a finished club word, #9609); a sport-scoped arm
+    # would add only 2 of 6, the other 4 carrying no category. Games + team card only.
     assert only_events == {
         "9ers", "dbacks", "nucks", "noles", "horns", "huskers", "phins", "stros",
+        "riders",
     }, (
         "the rails diverge somewhere new. Only an alias spelled inside its own "
         "token (`9ers`/`49ers`, `dbacks`/`Diamondbacks`, `nucks`/`Canucks`) may be "
