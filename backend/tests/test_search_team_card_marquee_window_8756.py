@@ -73,7 +73,10 @@ def test_the_card_is_capped_by_the_scorer_not_before_it():
     assert src.count("_search_team_evidence(t), t) for t in matched_teams") == 0
     # The card's one definition (#8765) ranks the whole window, then caps.
     card = _code_lines(ev._team_card_keyed)
-    assert "for t in cards])[:5]" in card
+    # #9897: the cap is a parameter (the lead tier reads `cap=None`); the card's
+    # own call sites take the default, which is five.
+    assert "for t in cards])[:cap]" in card
+    assert inspect.signature(ev._team_card_keyed).parameters["cap"].default == 5
     assert "cards[:5]" not in card and "rows[:5]" not in card
 
 

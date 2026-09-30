@@ -4650,6 +4650,22 @@ jobs:
             exit 1
           fi
 
+      - name: "#9897 'chicago' puts Sunday's Bears game with the week's games (real Postgres)"
+        # PILLAR: MATCHING. SHIP: typing `chicago`, `los angeles` or `new york`
+        # shows this Sunday's Bears/Rams/Giants/Jets game with the week's games,
+        # not under basketball a month out. The teams window's `ts_rank_cd` over
+        # name + aliases is what puts the Bears seventh, a Postgres fact. The
+        # in-rig strawman proves the cases measure the fix.
+        if: matrix.group == 'shared'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_search_city_lead_tier_pg_9897.py \
+            -v -rs 2>&1 | tee /tmp/cityleadtier.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/cityleadtier.txt; then
+            echo "::error::#9897 city lead-tier contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#9735 one player of an unspaced doubles pair finds its match (real Postgres)"
         # PILLAR: DISCOVER. SHIP: searching a doubles player finds this week's
         # match. `q=Winegar` served 0 games while Rojer/Winegar was live: the
