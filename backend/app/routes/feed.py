@@ -4229,8 +4229,6 @@ async def get_feed(
         _cache_status = "disabled_debug"
     elif exclude_reviewed:
         _cache_status = "disabled_reviewed_filter"
-    elif _collections_enabled:
-        _cache_status = "disabled_collections"
 
     now = datetime.now(timezone.utc)
 
