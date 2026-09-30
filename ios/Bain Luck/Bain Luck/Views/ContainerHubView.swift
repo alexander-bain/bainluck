@@ -61,10 +61,9 @@ struct ContainerHubView: View {
                     .buttonStyle(.plain)
                     .id("container:\(child.slug)")
                 }
-                // Indices preserve the exact response order, even for future
-                // repeated section classes. The client never sorts or regroups.
-                ForEach(presentation.sections.indices, id: \.self) { index in
-                    let section = presentation.sections[index]
+                // Standalone cards retain published section order. Questions
+                // linked to a rendered event appear once, in that event below.
+                ForEach(presentation.displaySections) { section in
                     Section {
                         ForEach(section.members) { member in
                             memberCard(member, presentation: presentation)
@@ -100,15 +99,15 @@ struct ContainerHubView: View {
                 let related = presentation.relatedQuestions(for: member)
                 if !related.isEmpty {
                     DisclosureGroup("Related questions (\(related.count))") {
-                        ForEach(related) { question in
-                            if case .question(let feed, _) = question.card {
-                                NavigationLink(value: Route.futuresDetail(id: question.memberId)) {
-                                    Text(feed.name).font(.subheadline).fixedSize(horizontal: false, vertical: true)
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(related) { question in
+                                if case .question(let feed, let search) = question.card {
+                                    questionCard(question, feed: feed, search: search)
+                                        .id(question.id)
                                 }
-                                .simultaneousGesture(TapGesture().onEnded { vm.opened(question) })
-                                .padding(.vertical, 4)
                             }
                         }
+                        .scrollTargetLayout()
                     }
                     .font(.subheadline)
                     .tint(DS.textSecondary)
@@ -118,49 +117,55 @@ struct ContainerHubView: View {
             .background(DS.cardBg, in: RoundedRectangle(cornerRadius: 12))
             .overlay(RoundedRectangle(cornerRadius: 12).stroke(DS.border, lineWidth: 0.5))
         case .question(let feed, let search):
-            NavigationLink(value: Route.futuresDetail(id: member.memberId)) {
-                VStack(alignment: .leading, spacing: 8) {
-                    if let imageURL = feed.imageUrl {
-                        FuturesHeroBackground(imageURL: imageURL, category: feed.llmSportCategory)
-                            .frame(height: 120)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                    }
-                    if ContainerHubPresentation.questionNeedsVerdictRows(search) {
-                        Text(search.name).font(.subheadline.weight(.semibold))
-                            .fixedSize(horizontal: false, vertical: true)
-                        ForEach(search.topOutcomes ?? []) { outcome in
-                            HStack(alignment: .firstTextBaseline) {
-                                Text(outcome.name).font(.caption)
-                                Spacer(minLength: 8)
-                                Text(ContainerHubPresentation.outcomeLabel(outcome, market: search))
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(outcome.verdict(in: search) == .won ? DS.emerald : DS.textSecondary)
-                            }
-                        }
-                        if search.topOutcomes?.isEmpty != false {
-                            Text("Result unavailable").font(.caption).foregroundStyle(DS.textSecondary)
-                        }
-                    } else {
-                        // This existing compact card omits missing prices rather
-                        // than the Discover hero's current `nil -> 0%` treatment.
-                        FuturesCardView(futures: feed)
-                        if search.topOutcomes?.isEmpty != false {
-                            Text("Prices aren't available right now.").font(.caption).foregroundStyle(DS.textSecondary)
-                        } else if search.topOutcomes?.contains(where: { $0.probability == nil }) == true {
-                            Text("Some prices aren't available right now.").font(.caption).foregroundStyle(DS.textSecondary)
-                        }
-                    }
-                }
-                .foregroundStyle(DS.textPrimary)
-                .padding(14)
-                .background(DS.cardBg, in: RoundedRectangle(cornerRadius: 12))
-                .overlay(RoundedRectangle(cornerRadius: 12).stroke(DS.border, lineWidth: 0.5))
-            }
-            .buttonStyle(.plain)
-            .simultaneousGesture(TapGesture().onEnded { vm.opened(member) })
+            questionCard(member, feed: feed, search: search)
         case .unsupported:
             EmptyView() // Counted as partial; never given a destination.
         }
+    }
+
+    /// Related and standalone questions share the familiar hydrated card and
+    /// ordinary destination; moving one never turns it into an opaque text link.
+    private func questionCard(_ member: ContainerHubMember, feed: FeedFuturesData, search: SearchFuturesMarket) -> some View {
+        NavigationLink(value: Route.futuresDetail(id: member.memberId)) {
+            VStack(alignment: .leading, spacing: 8) {
+                if let imageURL = feed.imageUrl {
+                    FuturesHeroBackground(imageURL: imageURL, category: feed.llmSportCategory)
+                        .frame(height: 120)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+                if ContainerHubPresentation.questionNeedsVerdictRows(search) {
+                    Text(search.name).font(.subheadline.weight(.semibold))
+                        .fixedSize(horizontal: false, vertical: true)
+                    ForEach(search.topOutcomes ?? []) { outcome in
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(outcome.name).font(.caption)
+                            Spacer(minLength: 8)
+                            Text(ContainerHubPresentation.outcomeLabel(outcome, market: search))
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(outcome.verdict(in: search) == .won ? DS.emerald : DS.textSecondary)
+                        }
+                    }
+                    if search.topOutcomes?.isEmpty != false {
+                        Text("Result unavailable").font(.caption).foregroundStyle(DS.textSecondary)
+                    }
+                } else {
+                    // This existing compact card omits missing prices rather
+                    // than the Discover hero's current `nil -> 0%` treatment.
+                    FuturesCardView(futures: feed)
+                    if search.topOutcomes?.isEmpty != false {
+                        Text("Prices aren't available right now.").font(.caption).foregroundStyle(DS.textSecondary)
+                    } else if search.topOutcomes?.contains(where: { $0.probability == nil }) == true {
+                        Text("Some prices aren't available right now.").font(.caption).foregroundStyle(DS.textSecondary)
+                    }
+                }
+            }
+            .foregroundStyle(DS.textPrimary)
+            .padding(14)
+            .background(DS.cardBg, in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(DS.border, lineWidth: 0.5))
+        }
+        .buttonStyle(.plain)
+        .simultaneousGesture(TapGesture().onEnded { vm.opened(member) })
     }
 
     private func status(_ message: String, retry: Bool) -> some View {

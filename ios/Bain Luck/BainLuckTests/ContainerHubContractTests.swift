@@ -96,6 +96,55 @@ final class ContainerHubContractTests: XCTestCase {
         XCTAssertEqual(mutated.relatedQuestions(for: sameBills).map(\.memberId), [9103])
     }
 
+    func testNFLRelatedQuestionsRenderOnceWithoutChangingInventoryOrAnchors() throws {
+        let p = ContainerHubPresentation(response: try ContainerHubFixture.decode())
+        XCTAssertEqual(p.members.map(\.memberId), [502, 501, 9101, 9102, 9103])
+        XCTAssertEqual(p.response.memberCount, 5)
+        XCTAssertEqual(p.sections.map(\.count), [4, 1])
+        XCTAssertEqual(p.displaySections.map(\.sectionClass), ["match_winner"])
+        XCTAssertEqual(p.displaySections.flatMap(\.members).map(\.memberId), [502, 501])
+        let rendered = p.displaySections.flatMap(\.members).flatMap { [$0] + p.relatedQuestions(for: $0) }
+        XCTAssertEqual(rendered.count, 5, "Related questions must not also render standalone")
+        XCTAssertEqual(Set(rendered.map(\.id)), Set(p.members.map(\.id)), "No published member may disappear")
+        XCTAssertTrue(p.isPartial) // Only the original withheld row, not hidden duplicates.
+        XCTAssertEqual(p.response.withheldCount, 1)
+
+        let prop = try XCTUnwrap(rendered.first { $0.memberId == 9103 })
+        XCTAssertEqual(prop.destination?.api, "/api/futures/9103")
+        var context = ContainerHubReadingContext()
+        context.accept(p)
+        context.scrollMemberId = prop.id
+        context.open(prop)
+        context.accept(p)
+        XCTAssertEqual(context.scrollMemberId, "market:9103")
+        XCTAssertEqual(context.selectedMemberId, "market:9103")
+    }
+
+    func testMLBUnrelatedChampionshipStaysStandaloneWhileRelatedWinnerAppearsOnce() throws {
+        let p = ContainerHubPresentation(response: try ContainerHubFixture.decode("representative_mlb_postseason"))
+        XCTAssertEqual(p.displaySections.map(\.sectionClass), ["match_winner", "title"])
+        XCTAssertEqual(p.displaySections.flatMap(\.members).map(\.memberId), [801, 802, 9202])
+        let rendered = p.displaySections.flatMap(\.members).flatMap { [$0] + p.relatedQuestions(for: $0) }
+        XCTAssertEqual(rendered.count, 4)
+        XCTAssertEqual(Set(rendered.map(\.memberId)), Set([801, 802, 9201, 9202]))
+        XCTAssertEqual(p.response.memberCount, 4)
+        XCTAssertEqual(p.sections.map(\.count), [3, 1])
+        XCTAssertFalse(p.isPartial, "Placement must not change inventory/count semantics")
+    }
+
+    func testQuestionStaysStandaloneWhenItsAssociatedEventCannotRender() throws {
+        let response = try ContainerHubFixture.decode { object in
+            ContainerHubFixture.mutateMember(&object, member: 1) { $0["card"] = ["id": 501] }
+        }
+        let p = ContainerHubPresentation(response: response)
+        XCTAssertEqual(p.displaySections.flatMap(\.members).map(\.memberId), [502, 9101, 9103])
+        let rendered = p.displaySections.flatMap(\.members).flatMap { [$0] + p.relatedQuestions(for: $0) }
+        XCTAssertEqual(rendered.count, p.members.count)
+        XCTAssertEqual(Set(rendered.map(\.id)), Set(p.members.map(\.id)))
+        XCTAssertTrue(p.isPartial) // The malformed event remains unavailable.
+        XCTAssertEqual(p.response.memberCount, 5) // The server's declaration is preserved.
+    }
+
     func testProducerCollectionCardsDecodeWithoutInventingAnEndpoint() throws {
         let nfl = try XCTUnwrap(ContainerHubFixture.collections("search_by_games").first)
         XCTAssertEqual(nfl.slug, "nfl-2026-week-5")

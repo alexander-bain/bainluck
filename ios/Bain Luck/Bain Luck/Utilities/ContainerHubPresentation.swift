@@ -11,6 +11,24 @@ nonisolated struct ContainerHubPresentation: Sendable {
     var sections: [ContainerHubSection] { response.sections }
     var children: [ContainerHubChild] { response.children.filter(\.canOpen) }
     var members: [ContainerHubMember] { sections.flatMap(\.members) }
+
+    nonisolated struct DisplaySection: Identifiable, Sendable {
+        let id: Int
+        let sectionClass: String
+        let members: [ContainerHubMember]
+    }
+
+    /// A question shown under a rendered event has one home on the screen.
+    /// Keep the published sections/inventory intact for counts and anchors;
+    /// this projection only removes the second, standalone rendering.
+    var displaySections: [DisplaySection] {
+        let relatedIds = Set(members.flatMap { relatedQuestions(for: $0) }.map(\.id))
+        return sections.enumerated().compactMap { index, section in
+            let standalone = section.members.filter { !relatedIds.contains($0.id) }
+            guard !standalone.isEmpty else { return nil }
+            return DisplaySection(id: index, sectionClass: section.sectionClass, members: standalone)
+        }
+    }
     var isPartial: Bool {
         response.state == .published && (response.withheldCount > 0 || !response.withheld.isEmpty || sections.contains { $0.unavailableCount > 0 || $0.count != $0.members.count } || members.count != response.memberCount)
     }
@@ -39,7 +57,7 @@ nonisolated struct ContainerHubPresentation: Sendable {
         }
     }
 
-    /// A related question is present AND linked to THIS event on both sides of
+    /// A related question is present AND linked to THIS rendered event on both sides of
     /// the published contract. Season-long questions stay in their own section.
     func relatedQuestions(for member: ContainerHubMember) -> [ContainerHubMember] {
         guard case .event = member.card else { return [] }
