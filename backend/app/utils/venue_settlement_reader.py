@@ -69,16 +69,19 @@ from __future__ import annotations
 import logging
 from typing import Iterable, Sequence
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.models.models import FuturesMarket, FuturesOutcome
 from app.utils.event_completion import started_without_result
 from app.utils.lifecycle import served_event_status
+from app.utils.resolution_authority import AUTHORITATIVE_SOURCES
 from app.utils.venue_settlement import (
     VENUE_CLOSED_NO_WINNER_KEY,
     VENUE_SETTLEMENT_SOURCE,
+    names_completed_match,
     settlement_from_graded_rows,
     venue_closed_without_winner,
+    venue_declared_not_completed,
 )
 
 logger = logging.getLogger(__name__)
@@ -186,11 +189,20 @@ async def venue_settlements_for_events(db, events: Sequence) -> dict[int, dict]:
 
 
 async def venue_voided_event_ids(db, event_ids: Iterable[int]) -> set[int]:
-    """The ids among ``event_ids`` the venue closed with no winner (#5811).
+    """The ids among ``event_ids`` the venue closed with no winner (#5811, #8288).
 
-    One statement for the batch: every market on each event with its metadata
-    and whether any of its outcomes carries a winner, then
-    :func:`~app.utils.venue_settlement.venue_closed_without_winner` per event.
+    One statement for the batch: every market on each event with its metadata,
+    its source and name, whether any of its outcomes carries a winner, and the
+    two Completed Match reads; then either arm, per event:
+
+    * :func:`~app.utils.venue_settlement.venue_closed_without_winner` (#5811) —
+      every market ``venue_voided``, nothing graded. Its inputs are exactly
+      what they were before #8288: every market's metadata and ANY winner,
+      the Completed Match market included.
+    * :func:`~app.utils.venue_settlement.venue_declared_not_completed` (#8288)
+      — Polymarket's Completed Match graded **No** by the venue, and no winner
+      on any other market.
+
     The void stamp is read in Python for the reason
     ``kalshi_resolution_window.VENUE_VOIDED_METADATA_KEY`` records — ``->>`` is
     Postgres-only and yields the STRING ``'true'``.
@@ -206,13 +218,23 @@ async def venue_voided_event_ids(db, event_ids: Iterable[int]) -> set[int]:
     ids = sorted({int(i) for i in event_ids if i is not None})
     if not ids:
         return set()
-    has_winner = (
-        select(FuturesOutcome.id)
-        .where(
-            FuturesOutcome.market_id == FuturesMarket.id,
-            FuturesOutcome.is_winner.is_(True),
+
+    def _leg(*where):
+        return (
+            select(FuturesOutcome.id)
+            .where(FuturesOutcome.market_id == FuturesMarket.id, *where)
+            .exists()
         )
-        .exists()
+
+    has_winner = _leg(FuturesOutcome.is_winner.is_(True))
+    no_graded_by_venue = _leg(
+        func.lower(FuturesOutcome.name) == "no",
+        FuturesOutcome.is_winner.is_(True),
+        FuturesOutcome.resolution_source.in_(sorted(AUTHORITATIVE_SOURCES)),
+    )
+    yes_is_winner = _leg(
+        func.lower(FuturesOutcome.name) == "yes",
+        FuturesOutcome.is_winner.is_(True),
     )
     try:
         rows = (
@@ -221,16 +243,38 @@ async def venue_voided_event_ids(db, event_ids: Iterable[int]) -> set[int]:
                     FuturesMarket.event_id,
                     FuturesMarket.market_metadata,
                     has_winner,
+                    FuturesMarket.source,
+                    FuturesMarket.name,
+                    no_graded_by_venue,
+                    yes_is_winner,
                 ).where(FuturesMarket.event_id.in_(ids))
             )
         ).all()
         metadata_by_event: dict[int, list] = {}
         winner_by_event: dict[int, bool] = {}
-        for event_id, metadata, market_has_winner in rows:
-            metadata_by_event.setdefault(int(event_id), []).append(metadata)
-            winner_by_event[int(event_id)] = winner_by_event.get(
-                int(event_id), False
-            ) or bool(market_has_winner)
+        completed_match_by_event: dict[int, list] = {}
+        other_winner_by_event: dict[int, bool] = {}
+        for (
+            event_id,
+            metadata,
+            market_has_winner,
+            source,
+            name,
+            market_no_graded,
+            market_yes_winner,
+        ) in rows:
+            event_id = int(event_id)
+            metadata_by_event.setdefault(event_id, []).append(metadata)
+            winner_by_event[event_id] = winner_by_event.get(event_id, False) or bool(
+                market_has_winner
+            )
+            other_winner_by_event.setdefault(event_id, False)
+            if source == "polymarket" and names_completed_match(name):
+                completed_match_by_event.setdefault(event_id, []).append(
+                    (bool(market_no_graded), bool(market_yes_winner))
+                )
+            elif market_has_winner:
+                other_winner_by_event[event_id] = True
     except Exception:
         logger.exception(
             "venue void read failed for %d event(s); no card is told its venue "
@@ -243,6 +287,10 @@ async def venue_voided_event_ids(db, event_ids: Iterable[int]) -> set[int]:
         event_id
         for event_id, metadatas in metadata_by_event.items()
         if venue_closed_without_winner(metadatas, winner_by_event[event_id])
+        or venue_declared_not_completed(
+            completed_match_by_event.get(event_id, []),
+            other_winner_by_event[event_id],
+        )
     }
 
 

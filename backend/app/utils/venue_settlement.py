@@ -679,3 +679,64 @@ def venue_closed_without_winner(
         and metadata.get(VENUE_VOIDED_METADATA_KEY) is True
         for metadata in market_metadatas
     )
+
+
+def names_completed_match(market_name: Optional[str]) -> bool:
+    """Is this Polymarket's "was the match completed?" market? (#8874, #8288)
+
+    Judged on a whole colon segment, never a substring:
+    ``M25 Setubal, Main Draw: Completed Match: Alec Deckers vs Philip Henning``
+    carries it as its own segment, and a player whose name merely contains the
+    words cannot.
+
+    The one definition: the settled page's fold (#8874) and the void arm below
+    (#8288) must agree about which market is the venue's completion verdict.
+    """
+    return any(
+        segment.strip().casefold() == "completed match"
+        for segment in (market_name or "").split(":")
+    )
+
+
+def venue_declared_not_completed(
+    completed_match_reads: Sequence[tuple[bool, bool]], has_other_winner: bool
+) -> bool:
+    """Did the venue say this match was never completed, and nothing disagrees? (#8288)
+
+    A tennis match nobody played — a withdrawal before the first ball, a
+    walkover — settles on Polymarket as a void: the match winner and every prop
+    pay 0.5/0.5. Our settlement rail grades a leg only on a terminal price, so
+    those legs stay ungraded, and "both legs false" is also what an ungraded
+    leg looks like (#4788). The void itself is not readable from them.
+
+    The venue does publish the verdict, as a market of its own: "Completed
+    Match" settles ``["0", "1"]`` and the rail grades its **No** leg a winner.
+    Production 2026-09-30: 60+ such legs in three days, every attached row
+    ``suspended`` with no score, reading "No result reported" (15320785, Sherif
+    v Kudermetova, is the PM copy of #9798's page).
+
+    ``completed_match_reads`` holds one ``(no_graded_by_venue, yes_is_winner)``
+    pair per Completed Match market on the event:
+
+    * ``no_graded_by_venue`` — the No leg is ``is_winner IS TRUE`` from a
+      tier-3 source (``resolution_authority.AUTHORITATIVE_SOURCES``). A guess
+      family grade (``pass2_guess``, ``clean_resolution``) is not the venue
+      speaking, and the Roland Garros rows show guesses landing No at 0.50.
+    * ``yes_is_winner`` — the Yes leg graded a winner, from any source. "It was
+      played" beside "it was not" is two facts disagreeing, and this declines
+      rather than picks. So does a second Completed Match copy that says Yes.
+
+    🔴 ``has_other_winner`` refuses: any winner on any OTHER market of the
+    event, from any source, contradicts "never completed". The Completed Match
+    No is excluded from it by the caller, because it is this verdict, not a
+    result. ``is not False``, as in :func:`venue_closed_without_winner`: an
+    unanswered read is not an absence.
+
+    No Completed Match market at all is False — nothing was said (the final
+    ``any`` over no reads).
+    """
+    if has_other_winner is not False:
+        return False
+    if any(yes_is_winner is not False for _, yes_is_winner in completed_match_reads):
+        return False
+    return any(no_graded is True for no_graded, _ in completed_match_reads)
