@@ -120,9 +120,13 @@ def _event(
     home_score=None,
     away_score=None,
     opening_home_probability=None,
+    espn_id=None,
+    external_id=None,
 ):
     return Event(
         id=id,
+        espn_id=espn_id,
+        external_id=external_id,
         sport_id=sport_id,
         home_team_name=home,
         away_team_name=away,
@@ -1128,3 +1132,181 @@ def test_the_guard_is_in_the_shared_pass_so_a_third_caller_cannot_miss_it():
     assert "not_a_proven_duplicate()" in fns["_collapsed_subquery"]
     assert "not_a_proven_duplicate()" not in fns["event_candidate_ids"]
     assert "not_a_proven_duplicate()" not in fns["deduplicated_event_ids"]
+
+
+# ---------------------------------------------------------------------------
+# #5602 — inside the suspended tier, the row a provider knows by id is admitted
+# ahead of the id-less flood
+# ---------------------------------------------------------------------------
+
+S_MMA = S_LIGUE1  # any sport id the seed creates; the key does not read the sport
+SUSPENDED_FLOOD_ID_BASE = 200_000
+
+
+def _in_flood(ids):
+    return {i for i in ids if SUSPENDED_FLOOD_ID_BASE <= i < 1_000_000}
+
+
+ESCUZA_CLAIM_ID = 15319837
+ESCUZA_ANCHOR_ID = 15320966
+
+
+def _suspended_flood(n, newest=NOW - timedelta(minutes=10)):
+    """`n` distinct id-less suspended rows, each newer than the Escuza pair."""
+    return [
+        _event(
+            SUSPENDED_FLOOD_ID_BASE + i,
+            S_ESPORTS,
+            f"SH{i}",
+            f"SA{i}",
+            newest - timedelta(minutes=i),
+            "suspended",
+            None,
+        )
+        for i in range(n)
+    ]
+
+
+def _escuza_pair(**anchor_id):
+    """Production 2026-09-30: the Kalshi claim three hours NEWER than its anchor."""
+    return [
+        _event(
+            ESCUZA_CLAIM_ID,
+            S_MMA,
+            "Ian Escuza",
+            "Luca Borando",
+            NOW - timedelta(hours=5),
+            "suspended",
+            {},
+        ),
+        _event(
+            ESCUZA_ANCHOR_ID,
+            S_MMA,
+            "Ian Escuza",
+            "Luca Borando",
+            NOW - timedelta(hours=8),
+            "suspended",
+            {"betting_book_count": 2},
+            opening_home_probability=0.5285,
+            **anchor_id,
+        ),
+    ]
+
+
+@pytest.mark.parametrize(
+    "anchor_id",
+    [{"external_id": "9c9b0a1e31fc9d1f135dac4f2fe9c7ff"}, {"espn_id": "401800001"}],
+    ids=["external_id", "espn_id"],
+)
+def test_an_anchored_suspended_row_is_admitted_under_a_newer_idless_flood(
+    engine, anchor_id
+):
+    """The Escuza v Borando shape. Without the key the quota ranks newest-first,
+    so the anchor, older than a whole quota of id-less rows, is the row it cuts.
+    The precondition assertion proves the corpus puts it there."""
+    flood = _suspended_flood(TIER_QUOTAS[TIER_SUSPENDED] + 40)
+    newer = [r for r in flood if r.commence_time > NOW - timedelta(hours=8)]
+    assert len(newer) >= TIER_QUOTAS[TIER_SUSPENDED]
+    with Session(engine) as s:
+        _seed(s, flood + _escuza_pair(**anchor_id))
+        admitted = _admitted(s)
+        assert ESCUZA_ANCHOR_ID in admitted
+        # Both directions (gotcha #43): the flood still fills, and is still capped.
+        suspended = _in_flood(admitted) | (
+            {ESCUZA_CLAIM_ID, ESCUZA_ANCHOR_ID} & admitted
+        )
+        assert len(suspended) == TIER_QUOTAS[TIER_SUSPENDED]
+
+
+def test_an_idless_twin_gains_nothing_from_the_key(engine):
+    """Control: the claim has neither id, so it keeps its newest-first place
+    and is cut under the same flood. Only the anchor moves."""
+    flood = _suspended_flood(TIER_QUOTAS[TIER_SUSPENDED] + 40)
+    with Session(engine) as s:
+        _seed(s, flood + _escuza_pair(external_id="9c9b0a1e"))
+        admitted = _admitted(s)
+        assert ESCUZA_ANCHOR_ID in admitted
+        assert ESCUZA_CLAIM_ID not in admitted
+
+
+def test_the_idless_half_is_still_newest_first(engine):
+    """The flood keeps the slots the anchored rows leave, newest first."""
+    flood = _suspended_flood(TIER_QUOTAS[TIER_SUSPENDED] + 40)
+    with Session(engine) as s:
+        _seed(s, flood + _escuza_pair(external_id="9c9b0a1e"))
+        admitted = _admitted(s)
+        kept = TIER_QUOTAS[TIER_SUSPENDED] - 1
+        expected = {SUSPENDED_FLOOD_ID_BASE + i for i in range(kept)}
+        assert _in_flood(admitted) == expected
+
+
+def test_the_anchored_half_is_newest_first_when_it_overflows(engine):
+    """More anchored rows than the quota: the newest are kept."""
+    n = TIER_QUOTAS[TIER_SUSPENDED] + 10
+    rows = [
+        _event(
+            SUSPENDED_FLOOD_ID_BASE + i,
+            S_MLB,
+            f"AH{i}",
+            f"AA{i}",
+            NOW - timedelta(minutes=10 + i),
+            "suspended",
+            None,
+            external_id=f"x{i}",
+        )
+        for i in range(n)
+    ]
+    with Session(engine) as s:
+        _seed(s, rows)
+        admitted = _admitted(s)
+        expected = {
+            SUSPENDED_FLOOD_ID_BASE + i for i in range(TIER_QUOTAS[TIER_SUSPENDED])
+        }
+        assert admitted == expected
+
+
+def test_the_key_is_inert_outside_the_suspended_tier(engine):
+    """An anchored LIVE row older than a full live quota is still cut: the live
+    tier ranks on `commence_time DESC` exactly as before."""
+    rows = [
+        _event(
+            SUSPENDED_FLOOD_ID_BASE + i,
+            S_ESPORTS,
+            f"LH{i}",
+            f"LA{i}",
+            NOW - timedelta(minutes=1 + i),
+            "live",
+            None,
+        )
+        for i in range(TIER_QUOTAS[TIER_LIVE] + 10)
+    ]
+    rows.append(
+        _event(
+            ESCUZA_ANCHOR_ID,
+            S_MMA,
+            "Ian Escuza",
+            "Luca Borando",
+            NOW - timedelta(hours=8),
+            "live",
+            None,
+            external_id="9c9b0a1e",
+        )
+    )
+    with Session(engine) as s:
+        _seed(s, rows)
+        admitted = _admitted(s)
+        assert ESCUZA_ANCHOR_ID not in admitted
+        assert len(admitted) == TIER_QUOTAS[TIER_LIVE]
+
+
+def test_the_suspended_anchor_key_leads_the_tier_ordering():
+    """Postgres shape: the key is in the statement and precedes `commence_time`
+    inside the ranked window."""
+    sql = _pg_sql()
+    assert "suspended_anchor_rank" in sql
+    window = sql[
+        sql.index("feed_event_candidates_collapsed.suspended_anchor_rank ASC") :
+    ]
+    assert window.index("suspended_anchor_rank ASC") < window.index(
+        "commence_time DESC"
+    )
