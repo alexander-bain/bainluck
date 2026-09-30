@@ -279,3 +279,81 @@ async def test_without_the_rewrite_production_comes_back(maker, search, monkeypa
         await search("la kings")
     ).index(KINGS_GAME)
     assert _teams(await search("la angels"))[:1] != [ANGELS]
+
+
+# ── Negatives (CERT-3880 follow-up `9859-CITY-ABBREVIATION-NEGATIVE-PG-CONTROL`) ──
+#
+# The rewrite fires on a LEADING table key in front of more words, and nowhere
+# else. Each case below asks the route twice on the same rows — once as shipped,
+# once with the rewrite made a no-op (production before #9859) — and requires the
+# same teams and the same games in the same order. `no` and `ok` are table keys
+# (`new orleans`, `oklahoma`) that open ordinary phrases; a New Orleans club and
+# an Oklahoma City club are seeded so a rewrite that leaked would have one to card.
+
+PELICANS = "New Orleans Pelicans"
+THUNDER = "Oklahoma City Thunder"
+
+
+async def _seed_with_ambiguous_cities(session):
+    from app.models.models import Sport, Team
+
+    await _seed(session)
+    nba = (await session.execute(
+        Sport.__table__.select().where(Sport.key == "basketball_nba")
+    )).first()
+    session.add_all([
+        Team(sport_id=nba.id, name=PELICANS, abbreviation="NOP"),
+        Team(sport_id=nba.id, name=THUNDER, abbreviation="OKC"),
+    ])
+    await session.commit()
+
+
+def _page(payload) -> tuple[list[str], list[str]]:
+    return _teams(payload), _games(payload)
+
+
+NEGATIVES = [
+    "sf",            # bare: asks for more than one club
+    "la",
+    "giants sf",     # trailing: the city comes first in a club's name
+    "kings la",
+    "no kings",      # `no` opens a phrase, not a New Orleans club
+    "no hitter",
+    "ok computer",   # `ok` opens a phrase, not an Oklahoma club
+]
+
+
+async def test_negatives_serve_the_page_production_served(maker, search, monkeypatch):
+    from app.routes import events as ev
+
+    async with maker() as session:
+        await _seed_with_ambiguous_cities(session)
+
+    # `no`/`ok` phrases take the rewritten path — the city arm joins their SQL
+    # and the scorer sees abbreviated names — so equality below is earned there,
+    # not granted by a key that never fires. Bare and trailing inputs never fire.
+    fired = {q: ev.city_abbreviation_query(q) for q in NEGATIVES}
+    assert fired["no kings"] == "new orleans kings"
+    assert fired["ok computer"] == "oklahoma computer"
+    assert [q for q, r in fired.items() if r is None] == ["sf", "la", "giants sf", "kings la"]
+
+    shipped = {q: _page(await search(q)) for q in NEGATIVES}
+    monkeypatch.setattr(ev, "city_abbreviation_query", lambda q: None)
+    before = {q: _page(await search(q)) for q in NEGATIVES}
+
+    assert shipped == before
+    for q in ("no kings", "no hitter"):
+        assert PELICANS not in shipped[q][0], (q, shipped[q])
+    assert THUNDER not in shipped["ok computer"][0], shipped["ok computer"]
+
+
+async def test_a_rewritten_city_still_cards_its_club_on_this_seed(maker, search):
+    """The control for the case above, on the same rows: with the rewrite on,
+    `okc thunder` cards the Thunder (and cards nothing with it off), so the
+    negatives are not passing because this seed cannot card a rewritten club.
+    (`no pelicans` cannot testify: `no` is a stopword, so the typed query alone
+    reaches the Pelicans.)"""
+    async with maker() as session:
+        await _seed_with_ambiguous_cities(session)
+
+    assert _teams(await search("okc thunder"))[:1] == [THUNDER]
