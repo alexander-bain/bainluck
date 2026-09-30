@@ -29,7 +29,7 @@ Adopted 2026-09-22 from Codex's `TESTER-FEEDBACK-TWO-CHANNEL-INTAKE` directive. 
 
 ## Board ownership
 
-Shopper is the routine board writer. Codex handles disputed acceptance, cross-lane bottlenecks and product decisions, and checks that upkeep is running. The diagnosis lane continues separately. Do not widen either role to fill idle time. A no-change pass is successful and quiet.
+September 29 ownership reset: implementation owners update their own issue and board fields at work transitions using the shared status tool. Shopper owns freshness exceptions, missing receipts, inconsistent claims and dedicated user-journey bug intake; it does not routinely reconstruct every worker's progress. Codex handles disputed acceptance, bottlenecks and product decisions. For v3, Start App Update Post-Mortem owns the single V3-YOUR-TURN projection, with V3 update work owning scope. Preserve current passes and release receipts during adoption; no additional sweep or model timer. A no-change pass remains quiet. See [Product lanes and delivery](lane-workflow.md).
 
 ## Restart
 

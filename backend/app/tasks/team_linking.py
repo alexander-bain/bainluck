@@ -37,6 +37,18 @@ _SKIP_PATTERNS = (
 )
 SKIP_REGEX = "|".join(f"({p})" for p in _SKIP_PATTERNS)
 
+# A name this short is a generic word ("Yes", "Tie", "AFC") far more often than
+# a team, so only a Kalshi leg is selected with one, and only the ticker's own
+# league may bind it (Step 0): "USC" on Kalshi's college board is USC, "LSU" is
+# LSU, "VMI" is VMI (#9687). No category-wide or LLM step reads it, and the
+# roster matcher refuses it itself.
+_MIN_NAME_CHARS = 4
+
+
+def _short_name(name: str | None) -> bool:
+    return len(name or "") < _MIN_NAME_CHARS
+
+
 # Prioritize US major sports where we have roster data.
 # Skip golf — individual sport, no team rosters to match against.
 _US_SPORTS = ("basketball", "baseball", "football", "hockey")
@@ -160,7 +172,10 @@ def unlinked_outcomes_query(*, open_markets: bool, cursor: int, batch: int):
         .where(
             FuturesOutcome.team_id.is_(None),
             ~FuturesOutcome.name.op("~*")(SKIP_REGEX),
-            func.length(FuturesOutcome.name) >= 4,
+            or_(
+                func.length(FuturesOutcome.name) >= _MIN_NAME_CHARS,
+                FuturesMarket.source == "kalshi",
+            ),
             FuturesMarket.llm_sport_category.in_(_US_SPORTS),  # US sports only
             status_clause,
             FuturesOutcome.id > cursor,
@@ -206,20 +221,348 @@ def _match_in_ticker_league(outcome, teams: list[dict]) -> Optional[int]:
     ``teams`` is the category's team list; only the rows whose sport key is the
     ticker's league are consulted. No league, or no team rows for it, leaves the
     outcome to the category-wide matcher exactly as before.
+
+    The league is the same read Phase 3 rebinds into and the league check refuses
+    on (#9663): read off the bare ticker map, the FCS title board is FBS, so this
+    bound "San Diego" to San Diego State and Phase 3 cleared it again every run.
     """
-    from app.utils.sport_keys import get_sport_key_from_ticker
+    from app.utils.market_team_sport import market_league_sport_key
     from app.utils.team_linking import match_outcome_to_league_team
 
     market = outcome.market
     if market is None or market.source != "kalshi":
         return None
-    league = get_sport_key_from_ticker(market.external_id)
+    league = market_league_sport_key(market.source, market.external_id)
     if not league:
         return None
     league_teams = [t for t in teams if t.get("sport_key") == league]
     if not league_teams:
         return None
     return match_outcome_to_league_team(outcome.name, league_teams)
+
+
+async def _ticker_league_teams(
+    session: AsyncSession, outcome, teams: list[dict], cache: dict
+) -> list[dict]:
+    """The teams Step 0 reads: the category's, or its ticker league's when those are missing (#9663).
+
+    ``get_sport_keys_for_category("football")`` is NFL + FBS, so the FCS title
+    board's league had no rows in ``teams`` and Step 0 could never bind inside it.
+    The league's rows are loaded once per run, whatever the market's category,
+    as Phase 3 already does when it rebinds a stored link into that league.
+    """
+    from app.utils.market_team_sport import market_league_sport_key
+
+    market = outcome.market
+    if market is None or market.source != "kalshi":
+        return teams
+    league = market_league_sport_key(market.source, market.external_id)
+    if not league:
+        return teams
+    if any(t.get("sport_key") == league for t in teams):
+        return teams
+    if league not in cache:
+        cache[league] = await _load_teams_by_sport(session, [league])
+    return cache[league]
+
+
+async def _load_team_sport_keys(session: AsyncSession) -> dict[int, str]:
+    """Every team's sport key, for the league check at each bind site (#5119)."""
+    from app.models import Team, Sport
+
+    rows = await session.execute(
+        select(Team.id, Sport.key).join(Sport, Team.sport_id == Sport.id)
+    )
+    return {team_id: key for team_id, key in rows.all()}
+
+
+def _crosses_market_league(outcome, team_id: int, team_sport_keys: dict[int, str]) -> bool:
+    """True when binding ``team_id`` would put the outcome outside its market's league (#5119).
+
+    ``link_crosses_league`` is the championship path's own refusal (#2593), so a
+    link the page would drop is never written in the first place. A market whose
+    venue id names no league, or a team outside the one-league sports, is no claim.
+    """
+    from app.utils.market_team_sport import link_crosses_league
+
+    market = outcome.market
+    if market is None:
+        return False
+    return link_crosses_league(
+        market.source, market.external_id, team_sport_keys.get(team_id)
+    )
+
+
+async def _load_team_names(session: AsyncSession) -> dict[int, str]:
+    """Every team's name, for the conference check at each bind site (#8072)."""
+    from app.models import Team
+
+    rows = await session.execute(select(Team.id, Team.name))
+    return {team_id: name for team_id, name in rows.all()}
+
+
+def _crosses_market_conference(
+    outcome, team_id: int, team_sport_keys: dict[int, str], team_names: dict[int, str]
+) -> bool:
+    """True when binding ``team_id`` would put the outcome in the other conference (#8072)."""
+    from app.utils.market_team_sport import link_crosses_conference
+
+    market = outcome.market
+    if market is None:
+        return False
+    return link_crosses_conference(
+        market.source,
+        market.external_id,
+        team_sport_keys.get(team_id),
+        team_names.get(team_id),
+    )
+
+
+async def _relink_outside_market_league(
+    session: AsyncSession, stats: dict, limit: int
+) -> None:
+    """Move a stored link that sits outside its market's league (#5119, #2593).
+
+    City-name matching across a whole sport category put Kalshi's "Buffalo" Super
+    Bowl leg on the Buffalo Bulls and "Houston" on the Houston Cougars, so the
+    Bills' and Texans' pages carried no Kalshi title, conference or playoff price
+    at all. Measured 2026-09-29: 520 open Kalshi outcomes linked outside the league
+    their ticker names. Phase 2 only ever selects ``team_id IS NULL``, so a wrong
+    link was permanent.
+
+    Each such link is re-decided inside the market's league with the #9617
+    matcher — unique exact name/alias or own-name-minus-nickname, never a
+    substring — and set to that team, or to NULL when the league has no unique
+    answer (a player's rookie-award leg on his college, "Tennessee: 2+ wins" on the
+    Volunteers). A NULL re-enters Phase 2, whose league check refuses the old
+    team, so the two passes cannot undo each other.
+    """
+    from app.models import FuturesMarket, FuturesOutcome, Sport, Team
+    from app.utils.market_team_sport import link_crosses_league, market_league_sport_key
+    from app.utils.team_linking import match_outcome_to_league_team
+
+    rows = (
+        await session.execute(
+            select(
+                FuturesOutcome.id,
+                FuturesOutcome.name,
+                FuturesMarket.source,
+                FuturesMarket.external_id,
+                Sport.key,
+            )
+            .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
+            .join(Team, Team.id == FuturesOutcome.team_id)
+            .join(Sport, Sport.id == Team.sport_id)
+            .where(FuturesMarket.source == "kalshi", FuturesMarket.status == "open")
+            .order_by(FuturesOutcome.id)
+        )
+    ).all()
+    crossing = [r for r in rows if link_crosses_league(r.source, r.external_id, r.key)]
+    stats["links_outside_market_league"] = len(crossing)
+    crossing = crossing[:limit]
+    if not crossing:
+        return
+
+    league_teams: dict[str, list[dict]] = {}
+    decisions: dict[int, Optional[int]] = {}
+    for row in crossing:
+        league = market_league_sport_key(row.source, row.external_id)
+        if league not in league_teams:
+            league_teams[league] = await _load_teams_by_sport(session, [league])
+        decisions[row.id] = match_outcome_to_league_team(row.name, league_teams[league])
+
+    outcomes = (
+        await session.execute(
+            select(FuturesOutcome).where(FuturesOutcome.id.in_(list(decisions)))
+        )
+    ).scalars().all()
+    for outcome in outcomes:
+        new_team_id = decisions[outcome.id]
+        outcome.team_id = new_team_id
+        if new_team_id:
+            stats["outcomes_relinked_into_market_league"] += 1
+        else:
+            stats["outcomes_unlinked_outside_market_league"] += 1
+
+
+# Outcome names Phase 3c reads: two to four words (a name suffix included). No
+# letters in it, so case-insensitive `~*` selects exactly what `~` would.
+_GIVEN_NAME_SHAPE = r"^[^ ]+( [^ ]+){1,3}$"
+
+
+def _rests_on_given_name_city(name: str, team_name: str, alternate_names) -> bool:
+    """True when a stored link can only have come from a given name before the team's city (#9726).
+
+    False whenever any of the team's names still matches the outcome.
+    """
+    from app.utils.team_linking import _names_match, given_name_before_city
+
+    alts = [a for a in alternate_names if isinstance(a, str)] if isinstance(
+        alternate_names, list
+    ) else []
+    if not any(given_name_before_city(name, alias, team_name) for alias in alts):
+        return False
+    return not _names_match(name, team_name, alts)
+
+
+def _on_own_roster(name: str, roster) -> bool:
+    """True when the team's own roster lists the person (a Huskies player named Washington)."""
+    from app.utils.team_linking import match_outcome_to_roster
+
+    players = [
+        (p.get("name") if isinstance(p, dict) else p)
+        for p in (roster if isinstance(roster, list) else [])
+    ]
+    players = [p for p in players if isinstance(p, str) and len(p) >= 4]
+    return bool(players) and match_outcome_to_roster(name, {0: players}) == 0
+
+
+async def _unlink_given_name_city_alias(
+    session: AsyncSession, stats: dict, limit: int
+) -> None:
+    """Clear a stored link made by a surname that is a team's city (#9726).
+
+    Step 1 no longer binds "Parker Washington" to the Washington Huskies, but
+    Phase 2 only selects ``team_id IS NULL``, so the links it already wrote would
+    stay forever. Each open outcome whose link rests only on that shape, and whose
+    team's roster does not list the person, is set to NULL; Phase 2 then offers it
+    to the roster matcher (Darnell Washington reaches the Steelers) or leaves it
+    unlinked.
+    """
+    from app.models import FuturesMarket, FuturesOutcome, Team
+
+    rows = (
+        await session.execute(
+            select(FuturesOutcome.id, FuturesOutcome.name, FuturesOutcome.team_id)
+            .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
+            .where(
+                FuturesMarket.status == "open",
+                FuturesOutcome.team_id.is_not(None),
+                FuturesOutcome.name.op("~*")(_GIVEN_NAME_SHAPE),
+            )
+            .order_by(FuturesOutcome.id)
+        )
+    ).all()
+    if not rows:
+        return
+    teams = {
+        t.id: t
+        for t in (
+            await session.execute(
+                select(Team.id, Team.name, Team.alternate_names).where(
+                    Team.id.in_({r.team_id for r in rows})
+                )
+            )
+        ).all()
+    }
+    suspects = [
+        r
+        for r in rows
+        if r.team_id in teams
+        and _rests_on_given_name_city(
+            r.name, teams[r.team_id].name, teams[r.team_id].alternate_names
+        )
+    ]
+    if not suspects:
+        stats["links_on_given_name_city_alias"] = 0
+        return
+    rosters = dict(
+        (
+            await session.execute(
+                select(Team.id, Team.roster_players).where(
+                    Team.id.in_({r.team_id for r in suspects})
+                )
+            )
+        ).all()
+    )
+    doomed = [r.id for r in suspects if not _on_own_roster(r.name, rosters.get(r.team_id))]
+    stats["links_on_given_name_city_alias"] = len(doomed)
+    doomed = doomed[:limit]
+    if not doomed:
+        return
+
+    outcomes = (
+        await session.execute(select(FuturesOutcome).where(FuturesOutcome.id.in_(doomed)))
+    ).scalars().all()
+    for outcome in outcomes:
+        outcome.team_id = None
+        stats["outcomes_unlinked_given_name_city_alias"] += 1
+
+
+async def _relink_outside_market_conference(
+    session: AsyncSession, stats: dict, limit: int
+) -> None:
+    """Move a stored link that sits in the other half of its market's league (#8072).
+
+    "NL MVP Winner?" and "NL Hank Aaron Award Winner?" — Max Muncy were linked to
+    the Athletics (an American League club) because the Athletics' roster was read
+    before the Dodgers', so the Athletics' team page listed the Dodgers' player's
+    National League awards. Phase 2 only selects ``team_id IS NULL``, so the wrong
+    link was permanent.
+
+    Each such link is re-decided with the #9617 matcher among the league's teams
+    in the conference the ticker names, and set to that team or to NULL (a
+    player's name never matches a team). A NULL re-enters Phase 2, whose
+    conference check refuses the old team, so the two passes cannot undo each other.
+    """
+    from app.models import FuturesMarket, FuturesOutcome, Sport, Team
+    from app.utils.market_team_sport import link_crosses_conference, market_conference
+    from app.utils.static_divisions import lookup_division
+    from app.utils.team_linking import match_outcome_to_league_team
+
+    rows = (
+        await session.execute(
+            select(
+                FuturesOutcome.id,
+                FuturesOutcome.name,
+                FuturesMarket.source,
+                FuturesMarket.external_id,
+                Sport.key,
+                Team.name.label("team_name"),
+            )
+            .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
+            .join(Team, Team.id == FuturesOutcome.team_id)
+            .join(Sport, Sport.id == Team.sport_id)
+            .where(FuturesMarket.source == "kalshi", FuturesMarket.status == "open")
+            .order_by(FuturesOutcome.id)
+        )
+    ).all()
+    crossing = [
+        r
+        for r in rows
+        if link_crosses_conference(r.source, r.external_id, r.key, r.team_name)
+    ]
+    stats["links_outside_market_conference"] = len(crossing)
+    crossing = crossing[:limit]
+    if not crossing:
+        return
+
+    conference_teams: dict[tuple[str, str], list[dict]] = {}
+    decisions: dict[int, Optional[int]] = {}
+    for row in crossing:
+        league, conference = market_conference(row.source, row.external_id)
+        if (league, conference) not in conference_teams:
+            conference_teams[(league, conference)] = [
+                t
+                for t in await _load_teams_by_sport(session, [league])
+                if lookup_division(league, t["name"])[0] == conference
+            ]
+        decisions[row.id] = match_outcome_to_league_team(
+            row.name, conference_teams[(league, conference)]
+        )
+
+    outcomes = (
+        await session.execute(
+            select(FuturesOutcome).where(FuturesOutcome.id.in_(list(decisions)))
+        )
+    ).scalars().all()
+    for outcome in outcomes:
+        new_team_id = decisions[outcome.id]
+        outcome.team_id = new_team_id
+        if new_team_id:
+            stats["outcomes_relinked_into_market_conference"] += 1
+        else:
+            stats["outcomes_unlinked_outside_market_conference"] += 1
 
 
 async def link_outcome_to_team(
@@ -315,6 +658,13 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
         "outcomes_linked_by_league": 0,
         "outcomes_linked_by_roster": 0,
         "outcomes_linked_by_llm": 0,
+        "outcomes_refused_outside_market_league": 0,
+        "outcomes_relinked_into_market_league": 0,
+        "outcomes_unlinked_outside_market_league": 0,
+        "outcomes_refused_outside_market_conference": 0,
+        "outcomes_relinked_into_market_conference": 0,
+        "outcomes_unlinked_outside_market_conference": 0,
+        "outcomes_unlinked_given_name_city_alias": 0,
         "markets_tiered": 0,
         "errors": [],
     }
@@ -396,6 +746,23 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
             # applied outside this block, after the session has committed, and
             # a wrap recorded by an empty pass has to survive.
 
+            # #5119: every bind below is refused when it would put the outcome
+            # outside the league its market's venue id names.
+            team_sport_keys = await _load_team_sport_keys(session) if outcomes else {}
+            # #8072: and outside the conference its ticker names (NL MVP, AFC East).
+            team_names = await _load_team_names(session) if outcomes else {}
+
+            def _admit(outcome, team_id) -> bool:
+                if team_id and _crosses_market_league(outcome, team_id, team_sport_keys):
+                    stats["outcomes_refused_outside_market_league"] += 1
+                    return False
+                if team_id and _crosses_market_conference(
+                    outcome, team_id, team_sport_keys, team_names
+                ):
+                    stats["outcomes_refused_outside_market_conference"] += 1
+                    return False
+                return bool(team_id)
+
             # --- Phase 2a: Fast path for event-linked markets ---
             # Game props (Kalshi/Polymarket) have FuturesMarket.event_id set,
             # which gives us the exact two teams. Match against only those
@@ -466,7 +833,7 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
                 event_rosters = event_cache[market.event_id]
                 if event_rosters:
                     team_id = match_outcome_to_roster(outcome.name, event_rosters)
-                    if team_id:
+                    if _admit(outcome, team_id):
                         outcome.team_id = team_id
                         stats["outcomes_linked"] += 1
                         stats["outcomes_linked_by_roster"] += 1
@@ -488,6 +855,7 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
                 category_outcomes.setdefault(category, []).append(outcome)
 
             # Process each category
+            ticker_league_cache: dict[str, list[dict]] = {}
             for category, cat_outcomes in category_outcomes.items():
                 try:
                     # Load teams for this sport category
@@ -524,18 +892,29 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
                             # Step 0: the Kalshi ticker names the league (#9617).
                             # A city-only name is ambiguous across the category
                             # (Knicks + Liberty) and unique inside one league.
-                            team_id = _match_in_ticker_league(outcome, teams)
-                            if team_id:
+                            team_id = _match_in_ticker_league(
+                                outcome,
+                                await _ticker_league_teams(
+                                    session, outcome, teams, ticker_league_cache
+                                ),
+                            )
+                            # ...and inside the conference the ticker names (#8072,
+                            # CERT-3801's follow-up): "Los Angeles D" on the AL
+                            # champion board is the Dodgers by city and an NL club.
+                            if _admit(outcome, team_id):
                                 outcome.team_id = team_id
                                 stats["outcomes_linked"] += 1
                                 stats["outcomes_linked_by_league"] += 1
+                                continue
+                            if _short_name(outcome.name):
+                                # #9687: Step 0 is the only reader of a short name.
                                 continue
 
                             # Step 1: Try name matching first (no LLM)
                             from app.utils.team_linking import match_outcome_to_team
                             team_id = match_outcome_to_team(outcome.name, teams)
 
-                            if team_id:
+                            if _admit(outcome, team_id):
                                 outcome.team_id = team_id
                                 stats["outcomes_linked"] += 1
                                 stats["outcomes_linked_by_name"] += 1
@@ -545,7 +924,7 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
                             team_id = match_outcome_to_roster(
                                 outcome.name, team_rosters
                             )
-                            if team_id:
+                            if _admit(outcome, team_id):
                                 outcome.team_id = team_id
                                 stats["outcomes_linked"] += 1
                                 stats["outcomes_linked_by_roster"] += 1
@@ -561,7 +940,7 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
                                     teams=teams,
                                     use_llm=True,
                                 )
-                                if team_id:
+                                if _admit(outcome, team_id):
                                     outcome.team_id = team_id
                                     stats["outcomes_linked"] += 1
                                     stats["outcomes_linked_by_llm"] += 1
@@ -574,7 +953,25 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
                 except Exception as e:
                     stats["errors"].append(f"Category '{category}': {str(e)}")
 
-        # Outside the session: ``get_task_session`` commits on the way out and
+            # --- Phase 3: stored links outside their market's league (#5119) ---
+            try:
+                await _relink_outside_market_league(session, stats, limit)
+            except Exception as e:
+                stats["errors"].append(f"Market-league relink: {str(e)}")
+
+            # --- Phase 3b: stored links in the other conference (#8072) ---
+            try:
+                await _relink_outside_market_conference(session, stats, limit)
+            except Exception as e:
+                stats["errors"].append(f"Market-conference relink: {str(e)}")
+
+            # --- Phase 3c: stored links on a surname that is a city (#9726) ---
+            try:
+                await _unlink_given_name_city_alias(session, stats, limit)
+            except Exception as e:
+                stats["errors"].append(f"Given-name city unlink: {str(e)}")
+
+        # Outside the session:``get_task_session`` commits on the way out and
         # rolls back on an exception, so reaching here is the proof the batch
         # landed. Only now may the window move (#7307).
         _apply_cursor_writes(rc, cursor_writes)

@@ -436,24 +436,59 @@ def statpal_later_session_pending(sources, commence_time, now) -> bool:
     and must agree. Fails CLOSED to "no hold" on every unreadable input, so a
     bad value can only leave the row where the clock alone puts it.
     """
+    return statpal_later_session_pending_start(sources, commence_time, now) is not None
+
+
+def statpal_later_session_pending_start(sources, commence_time, now):
+    """StatPal's start while the #9588 hold is live, else None.
+
+    The one parse behind :func:`statpal_later_session_pending`, so the start a
+    reader is shown and the hold that decides ``started_without_result`` can
+    never disagree about whether the stamp counts.
+    """
     if now is None or commence_time is None:
-        return False
+        return None
     raw = sources.get(STATPAL_LATER_SESSION_KEY) if isinstance(sources, dict) else None
     if not isinstance(raw, str):
-        return False
+        return None
     try:
         start = datetime.fromisoformat(raw)
     except (ValueError, TypeError):
-        return False
+        return None
     if start.tzinfo is None:
         start = start.replace(tzinfo=timezone.utc)
     try:
-        return (
+        if (
             commence_time >= now - STATPAL_LATER_SESSION_HORIZON
             and now < start <= now + STATPAL_LATER_SESSION_HORIZON
-        )
+        ):
+            return start
     except TypeError:
-        return False
+        return None
+    return None
+
+
+def served_commence_time(status, commence_time, sources, now):
+    """The start a reader is shown: StatPal's, while a ``scheduled`` row is held.
+
+    #9634. The hold (#9613) stopped a held row reading "No result reported", and
+    the page then printed the venue stamp as its start: ``/events/15320754`` on
+    2026-09-29 read "Pregame" beside **Sep 28, 10:00 PM PDT** — Kalshi's expiry
+    hour (gotcha #14), seventeen hours before the 02:00Z session StatPal has the
+    match in. Every client prints ``commence_time`` as the start and counts down
+    to it, so serving StatPal's start there is what turns the header and the
+    cards into "Starts in …" without a new key for web and iOS to learn.
+
+    SERVE-ONLY. The column keeps the venue stamp: matching and the promoter read
+    it, and the hold itself is defined against it. ``scheduled`` only, so no
+    live/finished row — and none of the flow sentinel's live or settled limbs —
+    ever sees a moved start. When the stamp lapses (StatPal's start arrives, or
+    the task clears it) the row serves its stored start again.
+    """
+    if status != "scheduled":
+        return commence_time
+    held = statpal_later_session_pending_start(sources, commence_time, now)
+    return held if held is not None else commence_time
 
 
 # ── WHEN DID THIS FINISHED GAME END? (D109) ──────────────────────────────────

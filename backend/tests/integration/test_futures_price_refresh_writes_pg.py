@@ -734,7 +734,7 @@ def _served_hero(event):
     return prob, home_pct
 
 
-async def _drive_the_real_task(monkeypatch, session, verdicts):
+async def _drive_the_real_task(monkeypatch, session, verdicts, *, fetch=None):
     """Run `_refresh_stale_futures_prices` for real against `session`.
 
     Only the VENUE is faked — `verdicts` maps a ticker to what Kalshi answers —
@@ -770,6 +770,8 @@ async def _drive_the_real_task(monkeypatch, session, verdicts):
     )
     monkeypatch.setattr(fpr, "_load_attempt_skips", lambda ids: set())
     monkeypatch.setattr(fpr, "_mark_attempted", lambda ids, ttl_seconds: None)
+    monkeypatch.setattr(fpr, "_load_label_attempt_skips", lambda ids: set())  # #9543
+    monkeypatch.setattr(fpr, "_mark_label_attempted", lambda ids: None)
     monkeypatch.setattr(
         "app.services.polymarket_api.PolymarketAPIService", lambda: _Svc()
     )
@@ -778,7 +780,7 @@ async def _drive_the_real_task(monkeypatch, session, verdicts):
     async def _fetch(_service, external_id, **_kw):
         return verdicts.get(external_id)
 
-    monkeypatch.setattr(fpr, "_fetch_kalshi_prices", _fetch)
+    monkeypatch.setattr(fpr, "_fetch_kalshi_prices", fetch or _fetch)
     return await fpr._refresh_stale_futures_prices()
 
 
@@ -1687,3 +1689,228 @@ class TestAConditionTwinIsPricedWithItsSibling:
 
         assert await _prob(db, legs["parent_dodgers"].id) == pytest.approx(0.71)
         assert await _prob(db, legs["parent_yankees"].id) == pytest.approx(0.12)
+
+
+# ── #9543 — THE THRESHOLD LABEL, MERGED INTO JSONB ON REAL POSTGRES ──────────
+
+
+class TestTheThresholdLabelWriteOnPostgres9543:
+    """#9543 — `_KALSHI_THRESHOLD_LABEL_WRITE_SQL` on real Postgres via asyncpg.
+
+    The unit file pins the statement's shape; only Postgres can answer the
+    JSONB half: `||` keeps every other key, `COALESCE` turns a NULL into the one
+    key, the text bind survives twice, and a same-label rerun is zero writes.
+    """
+
+    async def test_the_label_merges_and_every_other_key_survives(self, db):
+        from sqlalchemy import text
+
+        from app.models.models import FuturesMarket
+        from app.tasks import futures_price_refresh as fpr
+
+        def _m(ext, meta, source=_BOOKMAKER):
+            return FuturesMarket(
+                source=source,
+                external_id=ext,
+                name=ext,
+                category="futures",
+                market_tier=2,
+                status="open",
+                market_metadata=meta,
+            )
+
+        poll_meta = {
+            "kalshi_event_ticker": "KXCOWAGE-2027",
+            "event_title": "Colombia minimum wage growth minus inflation in 2027",
+        }
+        specimen = _m("KXCOWAGE-2027", dict(poll_meta))
+        null_meta = _m("KXPOKEMON-26SEPCELULTPR", None)  # ORM stores JSON null
+        stale = _m("KXSTALE-27", {"threshold_label": "Above 3.00 pp", "x": 1})
+        other = _m("0xpoly", {"a": 1}, source="polymarket")
+        db.add_all([specimen, null_meta, stale, other])
+        await db.flush()
+
+        async def _write(mid, label):
+            return (
+                await db.execute(
+                    fpr._KALSHI_THRESHOLD_LABEL_WRITE_SQL,
+                    {"mid": mid, "label": label},
+                )
+            ).rowcount
+
+        assert await _write(specimen.id, "Above 4.00 pp") == 1
+        assert await _write(specimen.id, "Above 4.00 pp") == 0  # idempotent
+        assert await _write(null_meta.id, "Above $1237.81") == 1
+        assert await _write(stale.id, "Above 4.00 pp") == 1  # corrected
+        assert await _write(other.id, "Above 4.00 pp") == 0  # Kalshi only
+        await db.commit()
+
+        rows = dict(
+            (
+                await db.execute(
+                    text("SELECT external_id, market_metadata FROM futures_markets")
+                )
+            ).fetchall()
+        )
+        assert rows["KXCOWAGE-2027"] == {**poll_meta, "threshold_label": "Above 4.00 pp"}
+        assert rows["KXPOKEMON-26SEPCELULTPR"] == {"threshold_label": "Above $1237.81"}
+        assert rows["KXSTALE-27"] == {"threshold_label": "Above 4.00 pp", "x": 1}
+        assert rows["0xpoly"] == {"a": 1}
+
+        # SQL NULL, the other non-object shape, gains the one key too.
+        await db.execute(
+            text("UPDATE futures_markets SET market_metadata = NULL WHERE id = :i"),
+            {"i": null_meta.id},
+        )
+        assert await _write(null_meta.id, "Above $1237.81") == 1
+        got = (
+            await db.execute(
+                text("SELECT market_metadata FROM futures_markets WHERE id = :i"),
+                {"i": null_meta.id},
+            )
+        ).scalar()
+        assert got == {"threshold_label": "Above $1237.81"}
+
+
+# ── #9543 / CERT-3817 — THE LABEL ARM, SELECTOR TO WRITE, ON REAL POSTGRES ────
+
+
+async def _seed_one_yes(
+    session,
+    ticker,
+    *,
+    tier=2,
+    volume=None,
+    meta=None,
+    status="open",
+    source=_BOOKMAKER,
+    extra_outcome=None,
+):
+    """A market stored the way the Kalshi poll stores a one-market event: one
+    outcome named ``Yes`` (``_kalshi_outcome_name`` rule 1), no snapshot."""
+    from app.models.models import FuturesMarket, FuturesOutcome
+
+    market = FuturesMarket(
+        source=source,
+        external_id=ticker,
+        name=ticker,
+        category="futures",
+        market_tier=tier,
+        volume=volume,
+        status=status,
+        resolution_date=datetime.now(timezone.utc) + timedelta(days=30),
+        market_metadata=meta,
+    )
+    session.add(market)
+    await session.flush()
+    for name in ["Yes"] + ([extra_outcome] if extra_outcome else []):
+        session.add(
+            FuturesOutcome(
+                market_id=market.id,
+                external_id=f"{ticker}-{name}",
+                name=name,
+                is_winner=False,
+            )
+        )
+    await session.flush()
+    return market.id
+
+
+class TestTheLabelArmReachesTheBoardTheValueArmsCannot9543:
+    """CERT-3817's required regression. `/futures/60481264` is tier 2 at volume
+    5,170 — under the floor, off the register, off page one, not in play, not a
+    series family — so before this arm the task never read it and it printed
+    "Yes". Seeded as production stores it; only the venue is faked.
+    """
+
+    async def _seed(self, db):
+        ids = {
+            # the two #9543 specimens
+            "pokemon": await _seed_one_yes(
+                db, "KXPOKEMON-26SEPCELULTPR", volume=5_170, meta=None
+            ),
+            "cowage": await _seed_one_yes(
+                db,
+                "KXCOWAGE-2027",
+                volume=4_000,
+                meta={"kalshi_event_ticker": "KXCOWAGE-2027"},
+            ),
+            # selected, but the venue refuses: a plain binary and a failed read
+            "plain": await _seed_one_yes(db, "KXINDUS-27JAN01", volume=900, meta={}),
+            "unreadable": await _seed_one_yes(db, "KXGONE-27", volume=50, meta={}),
+            # never selected
+            "labelled": await _seed_one_yes(
+                db, "KXDONE-27", meta={"threshold_label": "Above 3.00 pp"}
+            ),
+            "multi": await _seed_one_yes(db, "KXTWO-27", extra_outcome="No"),
+            "resolved": await _seed_one_yes(db, "KXOVER-27", status="resolved"),
+            "polymarket": await _seed_one_yes(db, "0xpolyyes", source="polymarket"),
+        }
+        await db.commit()
+        return ids
+
+    async def test_the_selector_admits_both_specimens_and_refuses_the_controls(
+        self, db
+    ):
+        from app.tasks import futures_price_refresh as fpr
+
+        ids = await self._seed(db)
+        out = await fpr._scan_threshold_label_candidates(db)
+        selected = [m["id"] for m in out]
+
+        assert selected == sorted(
+            [ids["pokemon"], ids["cowage"], ids["plain"], ids["unreadable"]]
+        )
+        assert all(m["arm"] == fpr._ARM_THRESHOLD_LABEL and m["priority"] for m in out)
+
+    async def test_the_real_task_writes_both_labels_and_nothing_else(
+        self, db, monkeypatch
+    ):
+        from sqlalchemy import text
+
+        ids = await self._seed(db)
+        labels_by_ticker = {
+            "KXPOKEMON-26SEPCELULTPR": "Above $1237.81",
+            "KXCOWAGE-2027": "Above 4.00 pp",
+        }
+        fetched: list[str] = []
+
+        async def _venue(_service, external_id, *, windows=None, labels=None, **_kw):
+            fetched.append(external_id)
+            if external_id == "KXGONE-27":
+                return None
+            if labels is not None and external_id in labels_by_ticker:
+                labels[external_id] = labels_by_ticker[external_id]
+            return _priced(external_id=f"{external_id}-Yes", probability=0.41)
+
+        before = dict(
+            (
+                await db.execute(text("SELECT id, market_metadata FROM futures_markets"))
+            ).fetchall()
+        )
+        stats = await _drive_the_real_task(monkeypatch, db, {}, fetch=_venue)
+
+        assert sorted(fetched) == sorted(
+            ["KXPOKEMON-26SEPCELULTPR", "KXCOWAGE-2027", "KXINDUS-27JAN01", "KXGONE-27"]
+        )
+        assert stats["threshold_label_candidates"] == 4
+        assert stats["threshold_labels_written"] == 2
+
+        after = dict(
+            (
+                await db.execute(text("SELECT id, market_metadata FROM futures_markets"))
+            ).fetchall()
+        )
+        assert after[ids["pokemon"]] == {"threshold_label": "Above $1237.81"}
+        assert after[ids["cowage"]] == {
+            "kalshi_event_ticker": "KXCOWAGE-2027",
+            "threshold_label": "Above 4.00 pp",
+        }
+        for control in ("plain", "unreadable", "labelled", "multi", "resolved", "polymarket"):
+            assert after[ids[control]] == before[ids[control]], control
+
+        # And the next beat has nothing left to label on either specimen.
+        from app.tasks import futures_price_refresh as fpr
+
+        again = {m["id"] for m in await fpr._scan_threshold_label_candidates(db)}
+        assert ids["pokemon"] not in again and ids["cowage"] not in again

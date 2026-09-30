@@ -539,6 +539,12 @@ COVERED = (
     # corrections, fold and `--restore` against a real server. `sports.active`
     # is the Python-side default the seed names.
     "test_repair_6974_fold_lafc_apply_restore_pg.py",
+    # #6974 (NBA residual). Seeds `sports`, `teams`, `events`, `entities`,
+    # `team_identity_mapping` and `futures_outcomes` by raw INSERT to drive the
+    # NBA fold's leg corrections, mapping corrections, fold and `--restore`
+    # against a real server. `sports.active` is the Python-side default the
+    # seed names.
+    "test_repair_6974_fold_nba_apply_restore_pg.py",
     # #5576. Seeds `sports`, `teams`, `team_identity_mapping`, `events` and
     # `futures_markets` by raw INSERT, in a private schema, to drive the
     # venue-named-competition repair's apply, re-run and `--restore`.
@@ -794,7 +800,7 @@ def test_every_real_postgres_gate_is_wired_into_ci():
     one DISCOVERS instead.
     """
     workflow = yaml.safe_load(CI_WORKFLOW.read_text())
-    job = workflow["jobs"]["search-recall"]
+    job = workflow["jobs"]["database-integration"]
     invoked = "\n".join(s.get("run") or "" for s in job["steps"])
 
     unwired = sorted(
@@ -820,7 +826,7 @@ def test_the_never_wired_allowlist_has_not_grown_stale():
     """
     workflow = yaml.safe_load(CI_WORKFLOW.read_text())
     invoked = "\n".join(
-        s.get("run") or "" for s in workflow["jobs"]["search-recall"]["steps"]
+        s.get("run") or "" for s in workflow["jobs"]["database-integration"]["steps"]
     )
     stale = sorted(
         name
@@ -852,7 +858,7 @@ def test_every_search_recall_step_that_runs_something_has_a_name():
     )
     anonymous = [
         step
-        for step in workflow["jobs"]["search-recall"]["steps"]
+        for step in workflow["jobs"]["database-integration"]["steps"]
         if "run" in step and not step.get("name")
     ]
     assert not anonymous, (

@@ -1,0 +1,4484 @@
+{
+"read": "production db-query 2026-09-30 ~04:05Z: open futures outcomes, linked, two words (+suffix) ending in a team alias of 8+ chars",
+"rows": [
+{
+"id": 34312769,
+"name": "Virginia Cavaliers",
+"team": "Virginia Cavaliers",
+"alternate_names": [
+"Cavaliers",
+"Virginia"
+]
+},
+{
+"id": 83,
+"name": "Virginia Cavaliers",
+"team": "Virginia Cavaliers",
+"alternate_names": [
+"Cavaliers",
+"Virginia"
+]
+},
+{
+"id": 1979,
+"name": "West Virginia",
+"team": "Virginia Cavaliers",
+"alternate_names": [
+"Cavaliers",
+"Virginia"
+]
+},
+{
+"id": 226006886,
+"name": "Blacksburg, Virginia",
+"team": "Virginia Cavaliers",
+"alternate_names": [
+"Cavaliers",
+"Virginia"
+]
+},
+{
+"id": 38,
+"name": "Cleveland Cavaliers",
+"team": "Virginia Cavaliers",
+"alternate_names": [
+"Cavaliers",
+"Virginia"
+]
+},
+{
+"id": 214496837,
+"name": "Virginia Cavaliers",
+"team": "Virginia Cavaliers",
+"alternate_names": [
+"Cavaliers",
+"Virginia"
+]
+},
+{
+"id": 231082034,
+"name": "Seattle Seahawks",
+"team": "Seattle Seahawks",
+"alternate_names": [
+"Seahawks"
+]
+},
+{
+"id": 13207565,
+"name": "Seattle Seahawks",
+"team": "Seattle Seahawks",
+"alternate_names": [
+"Seahawks"
+]
+},
+{
+"id": 231082106,
+"name": "Seattle Seahawks",
+"team": "Seattle Seahawks",
+"alternate_names": [
+"Seahawks"
+]
+},
+{
+"id": 235255556,
+"name": "Seattle Seahawks",
+"team": "Seattle Seahawks",
+"alternate_names": [
+"Seahawks"
+]
+},
+{
+"id": 231028206,
+"name": "Seattle Seahawks",
+"team": "Seattle Seahawks",
+"alternate_names": [
+"Seahawks"
+]
+},
+{
+"id": 1309484,
+"name": "Seattle Seahawks",
+"team": "Seattle Seahawks",
+"alternate_names": [
+"Seahawks"
+]
+},
+{
+"id": 1709761,
+"name": "Seattle Seahawks",
+"team": "Seattle Seahawks",
+"alternate_names": [
+"Seahawks"
+]
+},
+{
+"id": 95102256,
+"name": "Seattle Seahawks",
+"team": "Seattle Seahawks",
+"alternate_names": [
+"Seahawks"
+]
+},
+{
+"id": 210786579,
+"name": "Seattle Seahawks",
+"team": "Seattle Seahawks",
+"alternate_names": [
+"Seahawks"
+]
+},
+{
+"id": 210787527,
+"name": "Seattle Seahawks",
+"team": "Seattle Seahawks",
+"alternate_names": [
+"Seahawks"
+]
+},
+{
+"id": 1709099,
+"name": "Seattle Seahawks",
+"team": "Seattle Seahawks",
+"alternate_names": [
+"Seahawks"
+]
+},
+{
+"id": 224359822,
+"name": "Seattle Seahawks",
+"team": "Seattle Seahawks",
+"alternate_names": [
+"Seahawks"
+]
+},
+{
+"id": 231081893,
+"name": "Dallas Mavericks",
+"team": "Dallas Mavericks",
+"alternate_names": [
+"Mavericks",
+"Dallas",
+"Dallas Mavericks",
+"mavs"
+]
+},
+{
+"id": 231081977,
+"name": "Dallas Mavericks",
+"team": "Dallas Mavericks",
+"alternate_names": [
+"Mavericks",
+"Dallas",
+"Dallas Mavericks",
+"mavs"
+]
+},
+{
+"id": 109193650,
+"name": "Dallas Mavericks",
+"team": "Dallas Mavericks",
+"alternate_names": [
+"Mavericks",
+"Dallas",
+"Dallas Mavericks",
+"mavs"
+]
+},
+{
+"id": 217454949,
+"name": "Dallas Mavericks",
+"team": "Dallas Mavericks",
+"alternate_names": [
+"Mavericks",
+"Dallas",
+"Dallas Mavericks",
+"mavs"
+]
+},
+{
+"id": 53,
+"name": "Dallas Mavericks",
+"team": "Dallas Mavericks",
+"alternate_names": [
+"Mavericks",
+"Dallas",
+"Dallas Mavericks",
+"mavs"
+]
+},
+{
+"id": 220348457,
+"name": "Dallas Mavericks",
+"team": "Dallas Mavericks",
+"alternate_names": [
+"Mavericks",
+"Dallas",
+"Dallas Mavericks",
+"mavs"
+]
+},
+{
+"id": 214465543,
+"name": "Dallas Mavericks",
+"team": "Dallas Mavericks",
+"alternate_names": [
+"Mavericks",
+"Dallas",
+"Dallas Mavericks",
+"mavs"
+]
+},
+{
+"id": 825,
+"name": "Denzel Washington",
+"team": "Washington Wizards",
+"alternate_names": [
+"Wizards",
+"Washington",
+"Washington Wizards"
+]
+},
+{
+"id": 4529,
+"name": "P.J. Washington",
+"team": "Washington Wizards",
+"alternate_names": [
+"Wizards",
+"Washington",
+"Washington Wizards"
+]
+},
+{
+"id": 62,
+"name": "Michigan Wolverines",
+"team": "Michigan Wolverines",
+"alternate_names": [
+"Michigan",
+"Wolverines"
+]
+},
+{
+"id": 687,
+"name": "Ottawa Senators",
+"team": "Ottawa Senators",
+"alternate_names": [
+"Senators",
+"sens"
+]
+},
+{
+"id": 206814620,
+"name": "Carolina Hurricanes",
+"team": "Carolina Hurricanes",
+"alternate_names": [
+"Hurricanes",
+"Carolina Hurricanes",
+"Carolina"
+]
+},
+{
+"id": 211427512,
+"name": "Carolina Hurricanes",
+"team": "Carolina Hurricanes",
+"alternate_names": [
+"Hurricanes",
+"Carolina Hurricanes",
+"Carolina"
+]
+},
+{
+"id": 231081739,
+"name": "Carolina Hurricanes",
+"team": "Carolina Hurricanes",
+"alternate_names": [
+"Hurricanes",
+"Carolina Hurricanes",
+"Carolina"
+]
+},
+{
+"id": 238302915,
+"name": "Carolina Hurricanes",
+"team": "Carolina Hurricanes",
+"alternate_names": [
+"Hurricanes",
+"Carolina Hurricanes",
+"Carolina"
+]
+},
+{
+"id": 238303109,
+"name": "Carolina Hurricanes",
+"team": "Carolina Hurricanes",
+"alternate_names": [
+"Hurricanes",
+"Carolina Hurricanes",
+"Carolina"
+]
+},
+{
+"id": 198632538,
+"name": "Carolina Hurricanes",
+"team": "Carolina Hurricanes",
+"alternate_names": [
+"Hurricanes",
+"Carolina Hurricanes",
+"Carolina"
+]
+},
+{
+"id": 64516917,
+"name": "Carolina Hurricanes",
+"team": "Carolina Hurricanes",
+"alternate_names": [
+"Hurricanes",
+"Carolina Hurricanes",
+"Carolina"
+]
+},
+{
+"id": 238303012,
+"name": "Carolina Hurricanes",
+"team": "Carolina Hurricanes",
+"alternate_names": [
+"Hurricanes",
+"Carolina Hurricanes",
+"Carolina"
+]
+},
+{
+"id": 238303204,
+"name": "Carolina Hurricanes",
+"team": "Carolina Hurricanes",
+"alternate_names": [
+"Hurricanes",
+"Carolina Hurricanes",
+"Carolina"
+]
+},
+{
+"id": 237966766,
+"name": "Carolina Hurricanes",
+"team": "Carolina Hurricanes",
+"alternate_names": [
+"Hurricanes",
+"Carolina Hurricanes",
+"Carolina"
+]
+},
+{
+"id": 219796474,
+"name": "Carolina Hurricanes",
+"team": "Carolina Hurricanes",
+"alternate_names": [
+"Hurricanes",
+"Carolina Hurricanes",
+"Carolina"
+]
+},
+{
+"id": 198632527,
+"name": "Carolina Hurricanes",
+"team": "Carolina Hurricanes",
+"alternate_names": [
+"Hurricanes",
+"Carolina Hurricanes",
+"Carolina"
+]
+},
+{
+"id": 219816958,
+"name": "Carolina Hurricanes",
+"team": "Carolina Hurricanes",
+"alternate_names": [
+"Hurricanes",
+"Carolina Hurricanes",
+"Carolina"
+]
+},
+{
+"id": 222336578,
+"name": "Carolina Hurricanes",
+"team": "Carolina Hurricanes",
+"alternate_names": [
+"Hurricanes",
+"Carolina Hurricanes",
+"Carolina"
+]
+},
+{
+"id": 149479143,
+"name": "Carolina Hurricanes",
+"team": "Carolina Hurricanes",
+"alternate_names": [
+"Hurricanes",
+"Carolina Hurricanes",
+"Carolina"
+]
+},
+{
+"id": 219817088,
+"name": "Carolina Hurricanes",
+"team": "Carolina Hurricanes",
+"alternate_names": [
+"Hurricanes",
+"Carolina Hurricanes",
+"Carolina"
+]
+},
+{
+"id": 222318548,
+"name": "Carolina Hurricanes",
+"team": "Carolina Hurricanes",
+"alternate_names": [
+"Hurricanes",
+"Carolina Hurricanes",
+"Carolina"
+]
+},
+{
+"id": 157469776,
+"name": "Carolina Hurricanes",
+"team": "Carolina Hurricanes",
+"alternate_names": [
+"Hurricanes",
+"Carolina Hurricanes",
+"Carolina"
+]
+},
+{
+"id": 671,
+"name": "Carolina Hurricanes",
+"team": "Carolina Hurricanes",
+"alternate_names": [
+"Hurricanes",
+"Carolina Hurricanes",
+"Carolina"
+]
+},
+{
+"id": 219750241,
+"name": "Carolina Hurricanes",
+"team": "Carolina Hurricanes",
+"alternate_names": [
+"Hurricanes",
+"Carolina Hurricanes",
+"Carolina"
+]
+},
+{
+"id": 206814639,
+"name": "Carolina Hurricanes",
+"team": "Carolina Hurricanes",
+"alternate_names": [
+"Hurricanes",
+"Carolina Hurricanes",
+"Carolina"
+]
+},
+{
+"id": 231406626,
+"name": "Carolina Hurricanes",
+"team": "Carolina Hurricanes",
+"alternate_names": [
+"Hurricanes",
+"Carolina Hurricanes",
+"Carolina"
+]
+},
+{
+"id": 231081836,
+"name": "Carolina Hurricanes",
+"team": "Carolina Hurricanes",
+"alternate_names": [
+"Hurricanes",
+"Carolina Hurricanes",
+"Carolina"
+]
+},
+{
+"id": 237995111,
+"name": "Carolina Hurricanes",
+"team": "Carolina Hurricanes",
+"alternate_names": [
+"Hurricanes",
+"Carolina Hurricanes",
+"Carolina"
+]
+},
+{
+"id": 219817000,
+"name": "Pittsburgh Penguins",
+"team": "Pittsburgh Penguins",
+"alternate_names": [
+"pens",
+"Pittsburgh Penguins",
+"Penguins",
+"Pittsburgh"
+]
+},
+{
+"id": 219750223,
+"name": "Pittsburgh Penguins",
+"team": "Pittsburgh Penguins",
+"alternate_names": [
+"pens",
+"Pittsburgh Penguins",
+"Penguins",
+"Pittsburgh"
+]
+},
+{
+"id": 224051307,
+"name": "Pittsburgh Penguins",
+"team": "Pittsburgh Penguins",
+"alternate_names": [
+"pens",
+"Pittsburgh Penguins",
+"Penguins",
+"Pittsburgh"
+]
+},
+{
+"id": 206814632,
+"name": "Pittsburgh Penguins",
+"team": "Pittsburgh Penguins",
+"alternate_names": [
+"pens",
+"Pittsburgh Penguins",
+"Penguins",
+"Pittsburgh"
+]
+},
+{
+"id": 238303033,
+"name": "Pittsburgh Penguins",
+"team": "Pittsburgh Penguins",
+"alternate_names": [
+"pens",
+"Pittsburgh Penguins",
+"Penguins",
+"Pittsburgh"
+]
+},
+{
+"id": 237995132,
+"name": "Pittsburgh Penguins",
+"team": "Pittsburgh Penguins",
+"alternate_names": [
+"pens",
+"Pittsburgh Penguins",
+"Penguins",
+"Pittsburgh"
+]
+},
+{
+"id": 238302939,
+"name": "Pittsburgh Penguins",
+"team": "Pittsburgh Penguins",
+"alternate_names": [
+"pens",
+"Pittsburgh Penguins",
+"Penguins",
+"Pittsburgh"
+]
+},
+{
+"id": 238303127,
+"name": "Pittsburgh Penguins",
+"team": "Pittsburgh Penguins",
+"alternate_names": [
+"pens",
+"Pittsburgh Penguins",
+"Penguins",
+"Pittsburgh"
+]
+},
+{
+"id": 238303297,
+"name": "Pittsburgh Penguins",
+"team": "Pittsburgh Penguins",
+"alternate_names": [
+"pens",
+"Pittsburgh Penguins",
+"Penguins",
+"Pittsburgh"
+]
+},
+{
+"id": 219817038,
+"name": "Pittsburgh Penguins",
+"team": "Pittsburgh Penguins",
+"alternate_names": [
+"pens",
+"Pittsburgh Penguins",
+"Penguins",
+"Pittsburgh"
+]
+},
+{
+"id": 219796490,
+"name": "Pittsburgh Penguins",
+"team": "Pittsburgh Penguins",
+"alternate_names": [
+"pens",
+"Pittsburgh Penguins",
+"Penguins",
+"Pittsburgh"
+]
+},
+{
+"id": 198632534,
+"name": "Pittsburgh Penguins",
+"team": "Pittsburgh Penguins",
+"alternate_names": [
+"pens",
+"Pittsburgh Penguins",
+"Penguins",
+"Pittsburgh"
+]
+},
+{
+"id": 238012543,
+"name": "Pittsburgh Penguins",
+"team": "Pittsburgh Penguins",
+"alternate_names": [
+"pens",
+"Pittsburgh Penguins",
+"Penguins",
+"Pittsburgh"
+]
+},
+{
+"id": 238303221,
+"name": "Pittsburgh Penguins",
+"team": "Pittsburgh Penguins",
+"alternate_names": [
+"pens",
+"Pittsburgh Penguins",
+"Penguins",
+"Pittsburgh"
+]
+},
+{
+"id": 219816936,
+"name": "Pittsburgh Penguins",
+"team": "Pittsburgh Penguins",
+"alternate_names": [
+"pens",
+"Pittsburgh Penguins",
+"Penguins",
+"Pittsburgh"
+]
+},
+{
+"id": 231406652,
+"name": "Pittsburgh Penguins",
+"team": "Pittsburgh Penguins",
+"alternate_names": [
+"pens",
+"Pittsburgh Penguins",
+"Penguins",
+"Pittsburgh"
+]
+},
+{
+"id": 222336594,
+"name": "Pittsburgh Penguins",
+"team": "Pittsburgh Penguins",
+"alternate_names": [
+"pens",
+"Pittsburgh Penguins",
+"Penguins",
+"Pittsburgh"
+]
+},
+{
+"id": 219817106,
+"name": "Pittsburgh Penguins",
+"team": "Pittsburgh Penguins",
+"alternate_names": [
+"pens",
+"Pittsburgh Penguins",
+"Penguins",
+"Pittsburgh"
+]
+},
+{
+"id": 157469802,
+"name": "Pittsburgh Penguins",
+"team": "Pittsburgh Penguins",
+"alternate_names": [
+"pens",
+"Pittsburgh Penguins",
+"Penguins",
+"Pittsburgh"
+]
+},
+{
+"id": 683,
+"name": "Pittsburgh Penguins",
+"team": "Pittsburgh Penguins",
+"alternate_names": [
+"pens",
+"Pittsburgh Penguins",
+"Penguins",
+"Pittsburgh"
+]
+},
+{
+"id": 222318917,
+"name": "Pittsburgh Penguins",
+"team": "Pittsburgh Penguins",
+"alternate_names": [
+"pens",
+"Pittsburgh Penguins",
+"Penguins",
+"Pittsburgh"
+]
+},
+{
+"id": 231081751,
+"name": "Pittsburgh Penguins",
+"team": "Pittsburgh Penguins",
+"alternate_names": [
+"pens",
+"Pittsburgh Penguins",
+"Penguins",
+"Pittsburgh"
+]
+},
+{
+"id": 198632555,
+"name": "Pittsburgh Penguins",
+"team": "Pittsburgh Penguins",
+"alternate_names": [
+"pens",
+"Pittsburgh Penguins",
+"Penguins",
+"Pittsburgh"
+]
+},
+{
+"id": 64516935,
+"name": "Pittsburgh Penguins",
+"team": "Pittsburgh Penguins",
+"alternate_names": [
+"pens",
+"Pittsburgh Penguins",
+"Penguins",
+"Pittsburgh"
+]
+},
+{
+"id": 219817073,
+"name": "Pittsburgh Penguins",
+"team": "Pittsburgh Penguins",
+"alternate_names": [
+"pens",
+"Pittsburgh Penguins",
+"Penguins",
+"Pittsburgh"
+]
+},
+{
+"id": 219750233,
+"name": "Florida Panthers",
+"team": "Florida Panthers",
+"alternate_names": [
+"Panthers"
+]
+},
+{
+"id": 219816927,
+"name": "Florida Panthers",
+"team": "Florida Panthers",
+"alternate_names": [
+"Panthers"
+]
+},
+{
+"id": 219817029,
+"name": "Florida Panthers",
+"team": "Florida Panthers",
+"alternate_names": [
+"Panthers"
+]
+},
+{
+"id": 231081740,
+"name": "Florida Panthers",
+"team": "Florida Panthers",
+"alternate_names": [
+"Panthers"
+]
+},
+{
+"id": 231406625,
+"name": "Florida Panthers",
+"team": "Florida Panthers",
+"alternate_names": [
+"Panthers"
+]
+},
+{
+"id": 238303019,
+"name": "Florida Panthers",
+"team": "Florida Panthers",
+"alternate_names": [
+"Panthers"
+]
+},
+{
+"id": 238303206,
+"name": "Florida Panthers",
+"team": "Florida Panthers",
+"alternate_names": [
+"Panthers"
+]
+},
+{
+"id": 237966767,
+"name": "Florida Panthers",
+"team": "Florida Panthers",
+"alternate_names": [
+"Panthers"
+]
+},
+{
+"id": 219796482,
+"name": "Florida Panthers",
+"team": "Florida Panthers",
+"alternate_names": [
+"Panthers"
+]
+},
+{
+"id": 222336586,
+"name": "Florida Panthers",
+"team": "Florida Panthers",
+"alternate_names": [
+"Panthers"
+]
+},
+{
+"id": 237995109,
+"name": "Florida Panthers",
+"team": "Florida Panthers",
+"alternate_names": [
+"Panthers"
+]
+},
+{
+"id": 198632520,
+"name": "Florida Panthers",
+"team": "Florida Panthers",
+"alternate_names": [
+"Panthers"
+]
+},
+{
+"id": 219817096,
+"name": "Florida Panthers",
+"team": "Florida Panthers",
+"alternate_names": [
+"Panthers"
+]
+},
+{
+"id": 238302918,
+"name": "Florida Panthers",
+"team": "Florida Panthers",
+"alternate_names": [
+"Panthers"
+]
+},
+{
+"id": 238303114,
+"name": "Florida Panthers",
+"team": "Florida Panthers",
+"alternate_names": [
+"Panthers"
+]
+},
+{
+"id": 219816963,
+"name": "Florida Panthers",
+"team": "Florida Panthers",
+"alternate_names": [
+"Panthers"
+]
+},
+{
+"id": 149479149,
+"name": "Florida Panthers",
+"team": "Florida Panthers",
+"alternate_names": [
+"Panthers"
+]
+},
+{
+"id": 198632536,
+"name": "Florida Panthers",
+"team": "Florida Panthers",
+"alternate_names": [
+"Panthers"
+]
+},
+{
+"id": 674,
+"name": "Florida Panthers",
+"team": "Florida Panthers",
+"alternate_names": [
+"Panthers"
+]
+},
+{
+"id": 219817064,
+"name": "Florida Panthers",
+"team": "Florida Panthers",
+"alternate_names": [
+"Panthers"
+]
+},
+{
+"id": 64516925,
+"name": "Florida Panthers",
+"team": "Florida Panthers",
+"alternate_names": [
+"Panthers"
+]
+},
+{
+"id": 222318894,
+"name": "Florida Panthers",
+"team": "Florida Panthers",
+"alternate_names": [
+"Panthers"
+]
+},
+{
+"id": 231081835,
+"name": "Florida Panthers",
+"team": "Florida Panthers",
+"alternate_names": [
+"Panthers"
+]
+},
+{
+"id": 157469785,
+"name": "Florida Panthers",
+"team": "Florida Panthers",
+"alternate_names": [
+"Panthers"
+]
+},
+{
+"id": 231406631,
+"name": "Washington Capitals",
+"team": "Washington Capitals",
+"alternate_names": [
+"Capitals",
+"Washington Capitals",
+"Washington"
+]
+},
+{
+"id": 219816943,
+"name": "Washington Capitals",
+"team": "Washington Capitals",
+"alternate_names": [
+"Capitals",
+"Washington Capitals",
+"Washington"
+]
+},
+{
+"id": 219750219,
+"name": "Washington Capitals",
+"team": "Washington Capitals",
+"alternate_names": [
+"Capitals",
+"Washington Capitals",
+"Washington"
+]
+},
+{
+"id": 231081742,
+"name": "Washington Capitals",
+"team": "Washington Capitals",
+"alternate_names": [
+"Capitals",
+"Washington Capitals",
+"Washington"
+]
+},
+{
+"id": 231081838,
+"name": "Washington Capitals",
+"team": "Washington Capitals",
+"alternate_names": [
+"Capitals",
+"Washington Capitals",
+"Washington"
+]
+},
+{
+"id": 238303018,
+"name": "Washington Capitals",
+"team": "Washington Capitals",
+"alternate_names": [
+"Capitals",
+"Washington Capitals",
+"Washington"
+]
+},
+{
+"id": 219817047,
+"name": "Washington Capitals",
+"team": "Washington Capitals",
+"alternate_names": [
+"Capitals",
+"Washington Capitals",
+"Washington"
+]
+},
+{
+"id": 238303300,
+"name": "Washington Capitals",
+"team": "Washington Capitals",
+"alternate_names": [
+"Capitals",
+"Washington Capitals",
+"Washington"
+]
+},
+{
+"id": 219816982,
+"name": "Washington Capitals",
+"team": "Washington Capitals",
+"alternate_names": [
+"Capitals",
+"Washington Capitals",
+"Washington"
+]
+},
+{
+"id": 219817007,
+"name": "Washington Capitals",
+"team": "Washington Capitals",
+"alternate_names": [
+"Capitals",
+"Washington Capitals",
+"Washington"
+]
+},
+{
+"id": 219796499,
+"name": "Washington Capitals",
+"team": "Washington Capitals",
+"alternate_names": [
+"Capitals",
+"Washington Capitals",
+"Washington"
+]
+},
+{
+"id": 238302923,
+"name": "Washington Capitals",
+"team": "Washington Capitals",
+"alternate_names": [
+"Capitals",
+"Washington Capitals",
+"Washington"
+]
+},
+{
+"id": 238012531,
+"name": "Washington Capitals",
+"team": "Washington Capitals",
+"alternate_names": [
+"Capitals",
+"Washington Capitals",
+"Washington"
+]
+},
+{
+"id": 677,
+"name": "Washington Capitals",
+"team": "Washington Capitals",
+"alternate_names": [
+"Capitals",
+"Washington Capitals",
+"Washington"
+]
+},
+{
+"id": 238303113,
+"name": "Washington Capitals",
+"team": "Washington Capitals",
+"alternate_names": [
+"Capitals",
+"Washington Capitals",
+"Washington"
+]
+},
+{
+"id": 238303210,
+"name": "Washington Capitals",
+"team": "Washington Capitals",
+"alternate_names": [
+"Capitals",
+"Washington Capitals",
+"Washington"
+]
+},
+{
+"id": 206814640,
+"name": "Washington Capitals",
+"team": "Washington Capitals",
+"alternate_names": [
+"Capitals",
+"Washington Capitals",
+"Washington"
+]
+},
+{
+"id": 157469807,
+"name": "Washington Capitals",
+"team": "Washington Capitals",
+"alternate_names": [
+"Capitals",
+"Washington Capitals",
+"Washington"
+]
+},
+{
+"id": 222318902,
+"name": "Washington Capitals",
+"team": "Washington Capitals",
+"alternate_names": [
+"Capitals",
+"Washington Capitals",
+"Washington"
+]
+},
+{
+"id": 219817082,
+"name": "Washington Capitals",
+"team": "Washington Capitals",
+"alternate_names": [
+"Capitals",
+"Washington Capitals",
+"Washington"
+]
+},
+{
+"id": 64516944,
+"name": "Washington Capitals",
+"team": "Washington Capitals",
+"alternate_names": [
+"Capitals",
+"Washington Capitals",
+"Washington"
+]
+},
+{
+"id": 237995115,
+"name": "Washington Capitals",
+"team": "Washington Capitals",
+"alternate_names": [
+"Capitals",
+"Washington Capitals",
+"Washington"
+]
+},
+{
+"id": 198632521,
+"name": "Washington Capitals",
+"team": "Washington Capitals",
+"alternate_names": [
+"Capitals",
+"Washington Capitals",
+"Washington"
+]
+},
+{
+"id": 198632545,
+"name": "Washington Capitals",
+"team": "Washington Capitals",
+"alternate_names": [
+"Capitals",
+"Washington Capitals",
+"Washington"
+]
+},
+{
+"id": 222336604,
+"name": "Washington Capitals",
+"team": "Washington Capitals",
+"alternate_names": [
+"Capitals",
+"Washington Capitals",
+"Washington"
+]
+},
+{
+"id": 237995137,
+"name": "Nashville Predators",
+"team": "Nashville Predators",
+"alternate_names": [
+"Predators"
+]
+},
+{
+"id": 231081702,
+"name": "Nashville Predators",
+"team": "Nashville Predators",
+"alternate_names": [
+"Predators"
+]
+},
+{
+"id": 231081797,
+"name": "Nashville Predators",
+"team": "Nashville Predators",
+"alternate_names": [
+"Predators"
+]
+},
+{
+"id": 219750231,
+"name": "Nashville Predators",
+"team": "Nashville Predators",
+"alternate_names": [
+"Predators"
+]
+},
+{
+"id": 219817034,
+"name": "Nashville Predators",
+"team": "Nashville Predators",
+"alternate_names": [
+"Predators"
+]
+},
+{
+"id": 238302941,
+"name": "Nashville Predators",
+"team": "Nashville Predators",
+"alternate_names": [
+"Predators"
+]
+},
+{
+"id": 238303038,
+"name": "Nashville Predators",
+"team": "Nashville Predators",
+"alternate_names": [
+"Predators"
+]
+},
+{
+"id": 238303229,
+"name": "Nashville Predators",
+"team": "Nashville Predators",
+"alternate_names": [
+"Predators"
+]
+},
+{
+"id": 222336589,
+"name": "Nashville Predators",
+"team": "Nashville Predators",
+"alternate_names": [
+"Predators"
+]
+},
+{
+"id": 219796487,
+"name": "Nashville Predators",
+"team": "Nashville Predators",
+"alternate_names": [
+"Predators"
+]
+},
+{
+"id": 238303133,
+"name": "Nashville Predators",
+"team": "Nashville Predators",
+"alternate_names": [
+"Predators"
+]
+},
+{
+"id": 219816932,
+"name": "Nashville Predators",
+"team": "Nashville Predators",
+"alternate_names": [
+"Predators"
+]
+},
+{
+"id": 219816968,
+"name": "Nashville Predators",
+"team": "Nashville Predators",
+"alternate_names": [
+"Predators"
+]
+},
+{
+"id": 219817101,
+"name": "Nashville Predators",
+"team": "Nashville Predators",
+"alternate_names": [
+"Predators"
+]
+},
+{
+"id": 219816996,
+"name": "Nashville Predators",
+"team": "Nashville Predators",
+"alternate_names": [
+"Predators"
+]
+},
+{
+"id": 231406649,
+"name": "Nashville Predators",
+"team": "Nashville Predators",
+"alternate_names": [
+"Predators"
+]
+},
+{
+"id": 198632510,
+"name": "Nashville Predators",
+"team": "Nashville Predators",
+"alternate_names": [
+"Predators"
+]
+},
+{
+"id": 219817068,
+"name": "Nashville Predators",
+"team": "Nashville Predators",
+"alternate_names": [
+"Predators"
+]
+},
+{
+"id": 64516930,
+"name": "Nashville Predators",
+"team": "Nashville Predators",
+"alternate_names": [
+"Predators"
+]
+},
+{
+"id": 693,
+"name": "Nashville Predators",
+"team": "Nashville Predators",
+"alternate_names": [
+"Predators"
+]
+},
+{
+"id": 222318918,
+"name": "Nashville Predators",
+"team": "Nashville Predators",
+"alternate_names": [
+"Predators"
+]
+},
+{
+"id": 237966770,
+"name": "Nashville Predators",
+"team": "Nashville Predators",
+"alternate_names": [
+"Predators"
+]
+},
+{
+"id": 198632560,
+"name": "Nashville Predators",
+"team": "Nashville Predators",
+"alternate_names": [
+"Predators"
+]
+},
+{
+"id": 157469800,
+"name": "Nashville Predators",
+"team": "Nashville Predators",
+"alternate_names": [
+"Predators"
+]
+},
+{
+"id": 96,
+"name": "Texas Longhorns",
+"team": "Texas Longhorns",
+"alternate_names": [
+"Texas",
+"Longhorns"
+]
+},
+{
+"id": 80,
+"name": "Louisville Cardinals",
+"team": "Louisville Cardinals",
+"alternate_names": [
+"Louisville",
+"Cardinals"
+]
+},
+{
+"id": 85,
+"name": "Iowa Hawkeyes",
+"team": "Iowa Hawkeyes",
+"alternate_names": [
+"Hawkeyes",
+"Iowa"
+]
+},
+{
+"id": 206814772,
+"name": "Pasadena, California",
+"team": "California Golden Bears",
+"alternate_names": [
+"California",
+"Golden Bears"
+]
+},
+{
+"id": 34312757,
+"name": "Louisville Cardinals",
+"team": "Louisville Cardinals",
+"alternate_names": [
+"Louisville",
+"Cardinals"
+]
+},
+{
+"id": 214496831,
+"name": "Louisville Cardinals",
+"team": "Louisville Cardinals",
+"alternate_names": [
+"Louisville",
+"Cardinals"
+]
+},
+{
+"id": 224071021,
+"name": "Memphis Grizzlies",
+"team": "Memphis Grizzlies",
+"alternate_names": [
+"Memphis",
+"Grizzlies"
+]
+},
+{
+"id": 231081982,
+"name": "Memphis Grizzlies",
+"team": "Memphis Grizzlies",
+"alternate_names": [
+"Memphis",
+"Grizzlies"
+]
+},
+{
+"id": 217454955,
+"name": "Memphis Grizzlies",
+"team": "Memphis Grizzlies",
+"alternate_names": [
+"Memphis",
+"Grizzlies"
+]
+},
+{
+"id": 220348464,
+"name": "Memphis Grizzlies",
+"team": "Memphis Grizzlies",
+"alternate_names": [
+"Memphis",
+"Grizzlies"
+]
+},
+{
+"id": 54,
+"name": "Memphis Grizzlies",
+"team": "Memphis Grizzlies",
+"alternate_names": [
+"Memphis",
+"Grizzlies"
+]
+},
+{
+"id": 109193652,
+"name": "Memphis Grizzlies",
+"team": "Memphis Grizzlies",
+"alternate_names": [
+"Memphis",
+"Grizzlies"
+]
+},
+{
+"id": 214465551,
+"name": "Memphis Grizzlies",
+"team": "Memphis Grizzlies",
+"alternate_names": [
+"Memphis",
+"Grizzlies"
+]
+},
+{
+"id": 214465554,
+"name": "Minnesota Timberwolves",
+"team": "Minnesota Timberwolves",
+"alternate_names": [
+"Minnesota",
+"Timberwolves",
+"Minnesota Timberwolves"
+]
+},
+{
+"id": 231081971,
+"name": "Minnesota Timberwolves",
+"team": "Minnesota Timberwolves",
+"alternate_names": [
+"Minnesota",
+"Timberwolves",
+"Minnesota Timberwolves"
+]
+},
+{
+"id": 109193631,
+"name": "Minnesota Timberwolves",
+"team": "Minnesota Timberwolves",
+"alternate_names": [
+"Minnesota",
+"Timberwolves",
+"Minnesota Timberwolves"
+]
+},
+{
+"id": 217454958,
+"name": "Minnesota Timberwolves",
+"team": "Minnesota Timberwolves",
+"alternate_names": [
+"Minnesota",
+"Timberwolves",
+"Minnesota Timberwolves"
+]
+},
+{
+"id": 220348449,
+"name": "Minnesota Timberwolves",
+"team": "Minnesota Timberwolves",
+"alternate_names": [
+"Minnesota",
+"Timberwolves",
+"Minnesota Timberwolves"
+]
+},
+{
+"id": 231081884,
+"name": "Minnesota Timberwolves",
+"team": "Minnesota Timberwolves",
+"alternate_names": [
+"Minnesota",
+"Timberwolves",
+"Minnesota Timberwolves"
+]
+},
+{
+"id": 219816924,
+"name": "Colorado Avalanche",
+"team": "Colorado Avalanche",
+"alternate_names": [
+"Colorado Avalanche",
+"Colorado",
+"Avalanche"
+]
+},
+{
+"id": 211427516,
+"name": "Colorado Avalanche",
+"team": "Colorado Avalanche",
+"alternate_names": [
+"Colorado Avalanche",
+"Colorado",
+"Avalanche"
+]
+},
+{
+"id": 231081787,
+"name": "Colorado Avalanche",
+"team": "Colorado Avalanche",
+"alternate_names": [
+"Colorado Avalanche",
+"Colorado",
+"Avalanche"
+]
+},
+{
+"id": 238302916,
+"name": "Colorado Avalanche",
+"team": "Colorado Avalanche",
+"alternate_names": [
+"Colorado Avalanche",
+"Colorado",
+"Avalanche"
+]
+},
+{
+"id": 238303011,
+"name": "Colorado Avalanche",
+"team": "Colorado Avalanche",
+"alternate_names": [
+"Colorado Avalanche",
+"Colorado",
+"Avalanche"
+]
+},
+{
+"id": 198632537,
+"name": "Colorado Avalanche",
+"team": "Colorado Avalanche",
+"alternate_names": [
+"Colorado Avalanche",
+"Colorado",
+"Avalanche"
+]
+},
+{
+"id": 238303107,
+"name": "Colorado Avalanche",
+"team": "Colorado Avalanche",
+"alternate_names": [
+"Colorado Avalanche",
+"Colorado",
+"Avalanche"
+]
+},
+{
+"id": 238303211,
+"name": "Colorado Avalanche",
+"team": "Colorado Avalanche",
+"alternate_names": [
+"Colorado Avalanche",
+"Colorado",
+"Avalanche"
+]
+},
+{
+"id": 219816961,
+"name": "Colorado Avalanche",
+"team": "Colorado Avalanche",
+"alternate_names": [
+"Colorado Avalanche",
+"Colorado",
+"Avalanche"
+]
+},
+{
+"id": 237966764,
+"name": "Colorado Avalanche",
+"team": "Colorado Avalanche",
+"alternate_names": [
+"Colorado Avalanche",
+"Colorado",
+"Avalanche"
+]
+},
+{
+"id": 222336582,
+"name": "Colorado Avalanche",
+"team": "Colorado Avalanche",
+"alternate_names": [
+"Colorado Avalanche",
+"Colorado",
+"Avalanche"
+]
+},
+{
+"id": 219817013,
+"name": "Colorado Avalanche",
+"team": "Colorado Avalanche",
+"alternate_names": [
+"Colorado Avalanche",
+"Colorado",
+"Avalanche"
+]
+},
+{
+"id": 219796478,
+"name": "Colorado Avalanche",
+"team": "Colorado Avalanche",
+"alternate_names": [
+"Colorado Avalanche",
+"Colorado",
+"Avalanche"
+]
+},
+{
+"id": 219817092,
+"name": "Colorado Avalanche",
+"team": "Colorado Avalanche",
+"alternate_names": [
+"Colorado Avalanche",
+"Colorado",
+"Avalanche"
+]
+},
+{
+"id": 222318556,
+"name": "Colorado Avalanche",
+"team": "Colorado Avalanche",
+"alternate_names": [
+"Colorado Avalanche",
+"Colorado",
+"Avalanche"
+]
+},
+{
+"id": 231406627,
+"name": "Colorado Avalanche",
+"team": "Colorado Avalanche",
+"alternate_names": [
+"Colorado Avalanche",
+"Colorado",
+"Avalanche"
+]
+},
+{
+"id": 198632505,
+"name": "Colorado Avalanche",
+"team": "Colorado Avalanche",
+"alternate_names": [
+"Colorado Avalanche",
+"Colorado",
+"Avalanche"
+]
+},
+{
+"id": 157469778,
+"name": "Colorado Avalanche",
+"team": "Colorado Avalanche",
+"alternate_names": [
+"Colorado Avalanche",
+"Colorado",
+"Avalanche"
+]
+},
+{
+"id": 669,
+"name": "Colorado Avalanche",
+"team": "Colorado Avalanche",
+"alternate_names": [
+"Colorado Avalanche",
+"Colorado",
+"Avalanche"
+]
+},
+{
+"id": 222318895,
+"name": "Colorado Avalanche",
+"team": "Colorado Avalanche",
+"alternate_names": [
+"Colorado Avalanche",
+"Colorado",
+"Avalanche"
+]
+},
+{
+"id": 219817060,
+"name": "Colorado Avalanche",
+"team": "Colorado Avalanche",
+"alternate_names": [
+"Colorado Avalanche",
+"Colorado",
+"Avalanche"
+]
+},
+{
+"id": 64516921,
+"name": "Colorado Avalanche",
+"team": "Colorado Avalanche",
+"alternate_names": [
+"Colorado Avalanche",
+"Colorado",
+"Avalanche"
+]
+},
+{
+"id": 231081691,
+"name": "Colorado Avalanche",
+"team": "Colorado Avalanche",
+"alternate_names": [
+"Colorado Avalanche",
+"Colorado",
+"Avalanche"
+]
+},
+{
+"id": 237995110,
+"name": "Colorado Avalanche",
+"team": "Colorado Avalanche",
+"alternate_names": [
+"Colorado Avalanche",
+"Colorado",
+"Avalanche"
+]
+},
+{
+"id": 72,
+"name": "Nebraska Cornhuskers",
+"team": "Nebraska Cornhuskers",
+"alternate_names": [
+"Nebraska",
+"Cornhuskers"
+]
+},
+{
+"id": 158,
+"name": "Maryland Terrapins",
+"team": "Maryland Terrapins",
+"alternate_names": [
+"Terrapins",
+"Maryland"
+]
+},
+{
+"id": 231082001,
+"name": "Cleveland Cavaliers",
+"team": "Cleveland Cavaliers",
+"alternate_names": [
+"Cleveland",
+"Cavaliers",
+"Cleveland Cavaliers"
+]
+},
+{
+"id": 214465542,
+"name": "Cleveland Cavaliers",
+"team": "Cleveland Cavaliers",
+"alternate_names": [
+"Cleveland",
+"Cavaliers",
+"Cleveland Cavaliers"
+]
+},
+{
+"id": 217454948,
+"name": "Cleveland Cavaliers",
+"team": "Cleveland Cavaliers",
+"alternate_names": [
+"Cleveland",
+"Cavaliers",
+"Cleveland Cavaliers"
+]
+},
+{
+"id": 220348450,
+"name": "Cleveland Cavaliers",
+"team": "Cleveland Cavaliers",
+"alternate_names": [
+"Cleveland",
+"Cavaliers",
+"Cleveland Cavaliers"
+]
+},
+{
+"id": 231081931,
+"name": "Cleveland Cavaliers",
+"team": "Cleveland Cavaliers",
+"alternate_names": [
+"Cleveland",
+"Cavaliers",
+"Cleveland Cavaliers"
+]
+},
+{
+"id": 109193639,
+"name": "Cleveland Cavaliers",
+"team": "Cleveland Cavaliers",
+"alternate_names": [
+"Cleveland",
+"Cavaliers",
+"Cleveland Cavaliers"
+]
+},
+{
+"id": 70,
+"name": "Purdue Boilermakers",
+"team": "Purdue Boilermakers",
+"alternate_names": [
+"Purdue",
+"Boilermakers"
+]
+},
+{
+"id": 71,
+"name": "Kansas Jayhawks",
+"team": "Kansas Jayhawks",
+"alternate_names": [
+"Jayhawks",
+"Kansas"
+]
+},
+{
+"id": 75,
+"name": "Vanderbilt Commodores",
+"team": "Vanderbilt Commodores",
+"alternate_names": [
+"Commodores",
+"Vanderbilt"
+]
+},
+{
+"id": 84,
+"name": "Kentucky Wildcats",
+"team": "Kentucky Wildcats",
+"alternate_names": [
+"Kentucky",
+"Wildcats"
+]
+},
+{
+"id": 157,
+"name": "Northwestern Wildcats",
+"team": "Kentucky Wildcats",
+"alternate_names": [
+"Kentucky",
+"Wildcats"
+]
+},
+{
+"id": 91,
+"name": "Villanova Wildcats",
+"team": "Kentucky Wildcats",
+"alternate_names": [
+"Kentucky",
+"Wildcats"
+]
+},
+{
+"id": 61,
+"name": "Arizona Wildcats",
+"team": "Kentucky Wildcats",
+"alternate_names": [
+"Kentucky",
+"Wildcats"
+]
+},
+{
+"id": 81,
+"name": "Tennessee Volunteers",
+"team": "Tennessee Volunteers",
+"alternate_names": [
+"Tennessee",
+"Volunteers"
+]
+},
+{
+"id": 156,
+"name": "Colorado Buffaloes",
+"team": "Colorado Buffaloes",
+"alternate_names": [
+"Buffaloes",
+"Colorado"
+]
+},
+{
+"id": 120,
+"name": "Xavier Musketeers",
+"team": "Xavier Musketeers",
+"alternate_names": [
+"Xavier",
+"Musketeers"
+]
+},
+{
+"id": 78,
+"name": "Arkansas Razorbacks",
+"team": "Arkansas Razorbacks",
+"alternate_names": [
+"Razorbacks",
+"Arkansas"
+]
+},
+{
+"id": 97,
+"name": "Miami Hurricanes",
+"team": "Miami Hurricanes",
+"alternate_names": [
+"Miami",
+"Hurricanes"
+]
+},
+{
+"id": 162,
+"name": "Pittsburgh Panthers",
+"team": "Pittsburgh Panthers",
+"alternate_names": [
+"Pitt",
+"Panthers"
+]
+},
+{
+"id": 121,
+"name": "Creighton Bluejays",
+"team": "Creighton Bluejays",
+"alternate_names": [
+"Bluejays",
+"Creighton"
+]
+},
+{
+"id": 218371892,
+"name": "Pittsburgh Steelers",
+"team": "Pittsburgh Steelers",
+"alternate_names": [
+"Steelers"
+]
+},
+{
+"id": 231082084,
+"name": "Pittsburgh Steelers",
+"team": "Pittsburgh Steelers",
+"alternate_names": [
+"Steelers"
+]
+},
+{
+"id": 1709789,
+"name": "Pittsburgh Steelers",
+"team": "Pittsburgh Steelers",
+"alternate_names": [
+"Steelers"
+]
+},
+{
+"id": 210786566,
+"name": "Pittsburgh Steelers",
+"team": "Pittsburgh Steelers",
+"alternate_names": [
+"Steelers"
+]
+},
+{
+"id": 237202395,
+"name": "Pittsburgh Steelers",
+"team": "Pittsburgh Steelers",
+"alternate_names": [
+"Steelers"
+]
+},
+{
+"id": 1309507,
+"name": "Pittsburgh Steelers",
+"team": "Pittsburgh Steelers",
+"alternate_names": [
+"Steelers"
+]
+},
+{
+"id": 95102265,
+"name": "Pittsburgh Steelers",
+"team": "Pittsburgh Steelers",
+"alternate_names": [
+"Steelers"
+]
+},
+{
+"id": 13026336,
+"name": "Pittsburgh Steelers",
+"team": "Pittsburgh Steelers",
+"alternate_names": [
+"Steelers"
+]
+},
+{
+"id": 210787501,
+"name": "Pittsburgh Steelers",
+"team": "Pittsburgh Steelers",
+"alternate_names": [
+"Steelers"
+]
+},
+{
+"id": 1709122,
+"name": "Pittsburgh Steelers",
+"team": "Pittsburgh Steelers",
+"alternate_names": [
+"Steelers"
+]
+},
+{
+"id": 224581569,
+"name": "Pittsburgh Steelers",
+"team": "Pittsburgh Steelers",
+"alternate_names": [
+"Steelers"
+]
+},
+{
+"id": 231082110,
+"name": "Arizona Cardinals",
+"team": "Arizona Cardinals",
+"alternate_names": [
+"Cardinals"
+]
+},
+{
+"id": 210787498,
+"name": "Arizona Cardinals",
+"team": "Arizona Cardinals",
+"alternate_names": [
+"Cardinals"
+]
+},
+{
+"id": 237202420,
+"name": "Arizona Cardinals",
+"team": "Arizona Cardinals",
+"alternate_names": [
+"Cardinals"
+]
+},
+{
+"id": 1309514,
+"name": "Arizona Cardinals",
+"team": "Arizona Cardinals",
+"alternate_names": [
+"Cardinals"
+]
+},
+{
+"id": 231028205,
+"name": "Arizona Cardinals",
+"team": "Arizona Cardinals",
+"alternate_names": [
+"Cardinals"
+]
+},
+{
+"id": 95102283,
+"name": "Arizona Cardinals",
+"team": "Arizona Cardinals",
+"alternate_names": [
+"Cardinals"
+]
+},
+{
+"id": 13207567,
+"name": "Arizona Cardinals",
+"team": "Arizona Cardinals",
+"alternate_names": [
+"Cardinals"
+]
+},
+{
+"id": 231082043,
+"name": "Arizona Cardinals",
+"team": "Arizona Cardinals",
+"alternate_names": [
+"Cardinals"
+]
+},
+{
+"id": 210786577,
+"name": "Arizona Cardinals",
+"team": "Arizona Cardinals",
+"alternate_names": [
+"Cardinals"
+]
+},
+{
+"id": 1709774,
+"name": "Arizona Cardinals",
+"team": "Arizona Cardinals",
+"alternate_names": [
+"Cardinals"
+]
+},
+{
+"id": 1709129,
+"name": "Arizona Cardinals",
+"team": "Arizona Cardinals",
+"alternate_names": [
+"Cardinals"
+]
+},
+{
+"id": 231082039,
+"name": "Washington Commanders",
+"team": "Washington Commanders",
+"alternate_names": [
+"Commanders"
+]
+},
+{
+"id": 237202409,
+"name": "Washington Commanders",
+"team": "Washington Commanders",
+"alternate_names": [
+"Commanders"
+]
+},
+{
+"id": 235276932,
+"name": "Washington Commanders",
+"team": "Washington Commanders",
+"alternate_names": [
+"Commanders"
+]
+},
+{
+"id": 1309504,
+"name": "Washington Commanders",
+"team": "Washington Commanders",
+"alternate_names": [
+"Commanders"
+]
+},
+{
+"id": 231028208,
+"name": "Washington Commanders",
+"team": "Washington Commanders",
+"alternate_names": [
+"Commanders"
+]
+},
+{
+"id": 13026366,
+"name": "Washington Commanders",
+"team": "Washington Commanders",
+"alternate_names": [
+"Commanders"
+]
+},
+{
+"id": 1709770,
+"name": "Washington Commanders",
+"team": "Washington Commanders",
+"alternate_names": [
+"Commanders"
+]
+},
+{
+"id": 95102270,
+"name": "Washington Commanders",
+"team": "Washington Commanders",
+"alternate_names": [
+"Commanders"
+]
+},
+{
+"id": 224051319,
+"name": "Washington Commanders",
+"team": "Washington Commanders",
+"alternate_names": [
+"Commanders"
+]
+},
+{
+"id": 210786572,
+"name": "Washington Commanders",
+"team": "Washington Commanders",
+"alternate_names": [
+"Commanders"
+]
+},
+{
+"id": 210787516,
+"name": "Washington Commanders",
+"team": "Washington Commanders",
+"alternate_names": [
+"Commanders"
+]
+},
+{
+"id": 1709121,
+"name": "Washington Commanders",
+"team": "Washington Commanders",
+"alternate_names": [
+"Commanders"
+]
+},
+{
+"id": 231082041,
+"name": "Carolina Panthers",
+"team": "Carolina Panthers",
+"alternate_names": [
+"Panthers"
+]
+},
+{
+"id": 232072891,
+"name": "Carolina Panthers",
+"team": "Carolina Panthers",
+"alternate_names": [
+"Panthers"
+]
+},
+{
+"id": 237202414,
+"name": "Carolina Panthers",
+"team": "Carolina Panthers",
+"alternate_names": [
+"Panthers"
+]
+},
+{
+"id": 231028211,
+"name": "Carolina Panthers",
+"team": "Carolina Panthers",
+"alternate_names": [
+"Panthers"
+]
+},
+{
+"id": 1309508,
+"name": "Carolina Panthers",
+"team": "Carolina Panthers",
+"alternate_names": [
+"Panthers"
+]
+},
+{
+"id": 1709773,
+"name": "Carolina Panthers",
+"team": "Carolina Panthers",
+"alternate_names": [
+"Panthers"
+]
+},
+{
+"id": 95102264,
+"name": "Carolina Panthers",
+"team": "Carolina Panthers",
+"alternate_names": [
+"Panthers"
+]
+},
+{
+"id": 210812944,
+"name": "Carolina Panthers",
+"team": "Carolina Panthers",
+"alternate_names": [
+"Panthers"
+]
+},
+{
+"id": 210787522,
+"name": "Carolina Panthers",
+"team": "Carolina Panthers",
+"alternate_names": [
+"Panthers"
+]
+},
+{
+"id": 13207560,
+"name": "Carolina Panthers",
+"team": "Carolina Panthers",
+"alternate_names": [
+"Panthers"
+]
+},
+{
+"id": 1709125,
+"name": "Carolina Panthers",
+"team": "Carolina Panthers",
+"alternate_names": [
+"Panthers"
+]
+},
+{
+"id": 1709790,
+"name": "Miami Dolphins",
+"team": "Miami Dolphins",
+"alternate_names": [
+"Dolphins",
+"phins",
+"fins"
+]
+},
+{
+"id": 13026334,
+"name": "Miami Dolphins",
+"team": "Miami Dolphins",
+"alternate_names": [
+"Dolphins",
+"phins",
+"fins"
+]
+},
+{
+"id": 237202399,
+"name": "Miami Dolphins",
+"team": "Miami Dolphins",
+"alternate_names": [
+"Dolphins",
+"phins",
+"fins"
+]
+},
+{
+"id": 235276930,
+"name": "Miami Dolphins",
+"team": "Miami Dolphins",
+"alternate_names": [
+"Dolphins",
+"phins",
+"fins"
+]
+},
+{
+"id": 231028210,
+"name": "Miami Dolphins",
+"team": "Miami Dolphins",
+"alternate_names": [
+"Dolphins",
+"phins",
+"fins"
+]
+},
+{
+"id": 1309515,
+"name": "Miami Dolphins",
+"team": "Miami Dolphins",
+"alternate_names": [
+"Dolphins",
+"phins",
+"fins"
+]
+},
+{
+"id": 1709126,
+"name": "Miami Dolphins",
+"team": "Miami Dolphins",
+"alternate_names": [
+"Dolphins",
+"phins",
+"fins"
+]
+},
+{
+"id": 210786563,
+"name": "Miami Dolphins",
+"team": "Miami Dolphins",
+"alternate_names": [
+"Dolphins",
+"phins",
+"fins"
+]
+},
+{
+"id": 210787503,
+"name": "Miami Dolphins",
+"team": "Miami Dolphins",
+"alternate_names": [
+"Dolphins",
+"phins",
+"fins"
+]
+},
+{
+"id": 231082087,
+"name": "Miami Dolphins",
+"team": "Miami Dolphins",
+"alternate_names": [
+"Dolphins",
+"phins",
+"fins"
+]
+},
+{
+"id": 95102284,
+"name": "Miami Dolphins",
+"team": "Miami Dolphins",
+"alternate_names": [
+"Dolphins",
+"phins",
+"fins"
+]
+},
+{
+"id": 211427515,
+"name": "Chicago Blackhawks",
+"team": "Chicago Blackhawks",
+"alternate_names": [
+"Chicago",
+"Blackhawks"
+]
+},
+{
+"id": 231081705,
+"name": "Chicago Blackhawks",
+"team": "Chicago Blackhawks",
+"alternate_names": [
+"Chicago",
+"Blackhawks"
+]
+},
+{
+"id": 219750232,
+"name": "Chicago Blackhawks",
+"team": "Chicago Blackhawks",
+"alternate_names": [
+"Chicago",
+"Blackhawks"
+]
+},
+{
+"id": 231081800,
+"name": "Chicago Blackhawks",
+"team": "Chicago Blackhawks",
+"alternate_names": [
+"Chicago",
+"Blackhawks"
+]
+},
+{
+"id": 238302944,
+"name": "Chicago Blackhawks",
+"team": "Chicago Blackhawks",
+"alternate_names": [
+"Chicago",
+"Blackhawks"
+]
+},
+{
+"id": 238303042,
+"name": "Chicago Blackhawks",
+"team": "Chicago Blackhawks",
+"alternate_names": [
+"Chicago",
+"Blackhawks"
+]
+},
+{
+"id": 238303232,
+"name": "Chicago Blackhawks",
+"team": "Chicago Blackhawks",
+"alternate_names": [
+"Chicago",
+"Blackhawks"
+]
+},
+{
+"id": 238303286,
+"name": "Chicago Blackhawks",
+"team": "Chicago Blackhawks",
+"alternate_names": [
+"Chicago",
+"Blackhawks"
+]
+},
+{
+"id": 206814631,
+"name": "Chicago Blackhawks",
+"team": "Chicago Blackhawks",
+"alternate_names": [
+"Chicago",
+"Blackhawks"
+]
+},
+{
+"id": 237995135,
+"name": "Chicago Blackhawks",
+"team": "Chicago Blackhawks",
+"alternate_names": [
+"Chicago",
+"Blackhawks"
+]
+},
+{
+"id": 198632564,
+"name": "Chicago Blackhawks",
+"team": "Chicago Blackhawks",
+"alternate_names": [
+"Chicago",
+"Blackhawks"
+]
+},
+{
+"id": 222336581,
+"name": "Chicago Blackhawks",
+"team": "Chicago Blackhawks",
+"alternate_names": [
+"Chicago",
+"Blackhawks"
+]
+},
+{
+"id": 198632511,
+"name": "Chicago Blackhawks",
+"team": "Chicago Blackhawks",
+"alternate_names": [
+"Chicago",
+"Blackhawks"
+]
+},
+{
+"id": 219817091,
+"name": "Chicago Blackhawks",
+"team": "Chicago Blackhawks",
+"alternate_names": [
+"Chicago",
+"Blackhawks"
+]
+},
+{
+"id": 219796477,
+"name": "Chicago Blackhawks",
+"team": "Chicago Blackhawks",
+"alternate_names": [
+"Chicago",
+"Blackhawks"
+]
+},
+{
+"id": 237966780,
+"name": "Chicago Blackhawks",
+"team": "Chicago Blackhawks",
+"alternate_names": [
+"Chicago",
+"Blackhawks"
+]
+},
+{
+"id": 238303138,
+"name": "Chicago Blackhawks",
+"team": "Chicago Blackhawks",
+"alternate_names": [
+"Chicago",
+"Blackhawks"
+]
+},
+{
+"id": 219816923,
+"name": "Chicago Blackhawks",
+"team": "Chicago Blackhawks",
+"alternate_names": [
+"Chicago",
+"Blackhawks"
+]
+},
+{
+"id": 219817012,
+"name": "Chicago Blackhawks",
+"team": "Chicago Blackhawks",
+"alternate_names": [
+"Chicago",
+"Blackhawks"
+]
+},
+{
+"id": 231406645,
+"name": "Chicago Blackhawks",
+"team": "Chicago Blackhawks",
+"alternate_names": [
+"Chicago",
+"Blackhawks"
+]
+},
+{
+"id": 222318921,
+"name": "Chicago Blackhawks",
+"team": "Chicago Blackhawks",
+"alternate_names": [
+"Chicago",
+"Blackhawks"
+]
+},
+{
+"id": 219817059,
+"name": "Chicago Blackhawks",
+"team": "Chicago Blackhawks",
+"alternate_names": [
+"Chicago",
+"Blackhawks"
+]
+},
+{
+"id": 64516920,
+"name": "Chicago Blackhawks",
+"team": "Chicago Blackhawks",
+"alternate_names": [
+"Chicago",
+"Blackhawks"
+]
+},
+{
+"id": 697,
+"name": "Chicago Blackhawks",
+"team": "Chicago Blackhawks",
+"alternate_names": [
+"Chicago",
+"Blackhawks"
+]
+},
+{
+"id": 157469779,
+"name": "Chicago Blackhawks",
+"team": "Chicago Blackhawks",
+"alternate_names": [
+"Chicago",
+"Blackhawks"
+]
+},
+{
+"id": 102,
+"name": "Indiana Hoosiers",
+"team": "Indiana Hoosiers",
+"alternate_names": [
+"Hoosiers",
+"Indiana"
+]
+},
+{
+"id": 204435479,
+"name": "Massachusetts Minutemen",
+"team": "Massachusetts Minutemen",
+"alternate_names": [
+"UMass",
+"Minutemen"
+]
+},
+{
+"id": 34312731,
+"name": "Texas Longhorns",
+"team": "Texas Longhorns",
+"alternate_names": [
+"Longhorns",
+"Texas",
+"horns"
+]
+},
+{
+"id": 214496854,
+"name": "Texas Longhorns",
+"team": "Texas Longhorns",
+"alternate_names": [
+"Longhorns",
+"Texas",
+"horns"
+]
+},
+{
+"id": 216749268,
+"name": "Texas Longhorns",
+"team": "Texas Longhorns",
+"alternate_names": [
+"Longhorns",
+"Texas",
+"horns"
+]
+},
+{
+"id": 55309438,
+"name": "Texas Longhorns",
+"team": "Texas Longhorns",
+"alternate_names": [
+"Longhorns",
+"Texas",
+"horns"
+]
+},
+{
+"id": 34312742,
+"name": "Michigan Wolverines",
+"team": "Michigan Wolverines",
+"alternate_names": [
+"Michigan",
+"Wolverines"
+]
+},
+{
+"id": 214514576,
+"name": "Michigan Wolverines",
+"team": "Michigan Wolverines",
+"alternate_names": [
+"Michigan",
+"Wolverines"
+]
+},
+{
+"id": 55309442,
+"name": "Michigan Wolverines",
+"team": "Michigan Wolverines",
+"alternate_names": [
+"Michigan",
+"Wolverines"
+]
+},
+{
+"id": 226010348,
+"name": "Norman, Oklahoma",
+"team": "Oklahoma Sooners",
+"alternate_names": [
+"Oklahoma",
+"Sooners"
+]
+},
+{
+"id": 219819403,
+"name": "Norman, Oklahoma",
+"team": "Oklahoma Sooners",
+"alternate_names": [
+"Oklahoma",
+"Sooners"
+]
+},
+{
+"id": 226006876,
+"name": "Norman, Oklahoma",
+"team": "Oklahoma Sooners",
+"alternate_names": [
+"Oklahoma",
+"Sooners"
+]
+},
+{
+"id": 226006270,
+"name": "Norman, Oklahoma",
+"team": "Oklahoma Sooners",
+"alternate_names": [
+"Oklahoma",
+"Sooners"
+]
+},
+{
+"id": 226006877,
+"name": "Stillwater, Oklahoma",
+"team": "Oklahoma Sooners",
+"alternate_names": [
+"Oklahoma",
+"Sooners"
+]
+},
+{
+"id": 206814767,
+"name": "Madison, Wisconsin",
+"team": "Wisconsin Badgers",
+"alternate_names": [
+"Wisconsin",
+"Badgers"
+]
+},
+{
+"id": 226016721,
+"name": "Madison, Wisconsin",
+"team": "Wisconsin Badgers",
+"alternate_names": [
+"Wisconsin",
+"Badgers"
+]
+},
+{
+"id": 3,
+"name": "Seattle Mariners",
+"team": "Seattle Mariners",
+"alternate_names": [
+"Mariners",
+"Seattle"
+]
+},
+{
+"id": 20,
+"name": "Arizona Diamondbacks",
+"team": "Arizona Diamondbacks",
+"alternate_names": [
+"Arizona",
+"Diamondbacks"
+]
+},
+{
+"id": 53914632,
+"name": "Brian Campbell",
+"team": "Campbell Fighting Camels",
+"alternate_names": [
+"Campbell",
+"Fighting Camels"
+]
+},
+{
+"id": 527,
+"name": "Ben Campbell",
+"team": "Campbell Fighting Camels",
+"alternate_names": [
+"Campbell",
+"Fighting Camels"
+]
+},
+{
+"id": 654,
+"name": "Ben Campbell",
+"team": "Campbell Fighting Camels",
+"alternate_names": [
+"Campbell",
+"Fighting Camels"
+]
+},
+{
+"id": 53914633,
+"name": "Brian Campbell",
+"team": "Campbell Fighting Camels",
+"alternate_names": [
+"Campbell",
+"Fighting Camels"
+]
+},
+{
+"id": 53914630,
+"name": "Brian Campbell",
+"team": "Campbell Fighting Camels",
+"alternate_names": [
+"Campbell",
+"Fighting Camels"
+]
+},
+{
+"id": 122,
+"name": "Stanford Cardinal",
+"team": "Stanford Cardinal",
+"alternate_names": [
+"Stanford",
+"Cardinal",
+"Stanford Cardinal"
+]
+},
+{
+"id": 21544696,
+"name": "Furman Paladins",
+"team": "Furman Paladins",
+"alternate_names": [
+"Furman",
+"Paladins"
+]
+},
+{
+"id": 18,
+"name": "Cleveland Guardians",
+"team": "Cleveland Guardians",
+"alternate_names": [
+"Guardians",
+"Cleveland"
+]
+},
+{
+"id": 1634486,
+"name": "Arizona Diamondbacks",
+"team": "Arizona Diamondbacks",
+"alternate_names": [
+"dbacks",
+"Diamondbacks",
+"Arizona"
+]
+},
+{
+"id": 232072992,
+"name": "Arizona Diamondbacks",
+"team": "Arizona Diamondbacks",
+"alternate_names": [
+"dbacks",
+"Diamondbacks",
+"Arizona"
+]
+},
+{
+"id": 2083168,
+"name": "Arizona Diamondbacks",
+"team": "Arizona Diamondbacks",
+"alternate_names": [
+"dbacks",
+"Diamondbacks",
+"Arizona"
+]
+},
+{
+"id": 2083165,
+"name": "Washington Nationals",
+"team": "Washington Nationals",
+"alternate_names": [
+"nats",
+"Washington",
+"Nationals"
+]
+},
+{
+"id": 84250943,
+"name": "Ron Washington",
+"team": "Washington Nationals",
+"alternate_names": [
+"nats",
+"Washington",
+"Nationals"
+]
+},
+{
+"id": 1634493,
+"name": "Washington Nationals",
+"team": "Washington Nationals",
+"alternate_names": [
+"nats",
+"Washington",
+"Nationals"
+]
+},
+{
+"id": 1634466,
+"name": "Seattle Mariners",
+"team": "Seattle Mariners",
+"alternate_names": [
+"Seattle",
+"Mariners"
+]
+},
+{
+"id": 231082164,
+"name": "Seattle Mariners",
+"team": "Seattle Mariners",
+"alternate_names": [
+"Seattle",
+"Mariners"
+]
+},
+{
+"id": 231082231,
+"name": "Seattle Mariners",
+"team": "Seattle Mariners",
+"alternate_names": [
+"Seattle",
+"Mariners"
+]
+},
+{
+"id": 2083142,
+"name": "Seattle Mariners",
+"team": "Seattle Mariners",
+"alternate_names": [
+"Seattle",
+"Mariners"
+]
+},
+{
+"id": 231082227,
+"name": "Cleveland Guardians",
+"team": "Cleveland Guardians",
+"alternate_names": [
+"Guardians",
+"Cleveland"
+]
+},
+{
+"id": 1634481,
+"name": "Cleveland Guardians",
+"team": "Cleveland Guardians",
+"alternate_names": [
+"Guardians",
+"Cleveland"
+]
+},
+{
+"id": 2083141,
+"name": "Cleveland Guardians",
+"team": "Cleveland Guardians",
+"alternate_names": [
+"Guardians",
+"Cleveland"
+]
+},
+{
+"id": 224051327,
+"name": "Cleveland Guardians",
+"team": "Cleveland Guardians",
+"alternate_names": [
+"Guardians",
+"Cleveland"
+]
+},
+{
+"id": 231082194,
+"name": "Philadelphia Phillies",
+"team": "Philadelphia Phillies",
+"alternate_names": [
+"Philadelphia",
+"phils",
+"Phillies"
+]
+},
+{
+"id": 1634475,
+"name": "Philadelphia Phillies",
+"team": "Philadelphia Phillies",
+"alternate_names": [
+"Philadelphia",
+"phils",
+"Phillies"
+]
+},
+{
+"id": 237799857,
+"name": "Philadelphia Phillies",
+"team": "Philadelphia Phillies",
+"alternate_names": [
+"Philadelphia",
+"phils",
+"Phillies"
+]
+},
+{
+"id": 2083161,
+"name": "Philadelphia Phillies",
+"team": "Philadelphia Phillies",
+"alternate_names": [
+"Philadelphia",
+"phils",
+"Phillies"
+]
+},
+{
+"id": 237869571,
+"name": "Philadelphia Phillies",
+"team": "Philadelphia Phillies",
+"alternate_names": [
+"Philadelphia",
+"phils",
+"Phillies"
+]
+},
+{
+"id": 237799855,
+"name": "Philadelphia Phillies",
+"team": "Philadelphia Phillies",
+"alternate_names": [
+"Philadelphia",
+"phils",
+"Phillies"
+]
+},
+{
+"id": 237869569,
+"name": "Philadelphia Phillies",
+"team": "Philadelphia Phillies",
+"alternate_names": [
+"Philadelphia",
+"phils",
+"Phillies"
+]
+},
+{
+"id": 678,
+"name": "Montr\u00e9al Canadiens",
+"team": "Montreal",
+"alternate_names": [
+"Montreal Canadiens",
+"Canadiens"
+]
+},
+{
+"id": 34312752,
+"name": "SMU Mustangs",
+"team": "SMU Mustangs",
+"alternate_names": [
+"Mustangs",
+"SMU"
+]
+},
+{
+"id": 214514600,
+"name": "SMU Mustangs",
+"team": "SMU Mustangs",
+"alternate_names": [
+"Mustangs",
+"SMU"
+]
+},
+{
+"id": 34312780,
+"name": "Kansas Jayhawks",
+"team": "Kansas Jayhawks",
+"alternate_names": [
+"Kansas",
+"Jayhawks"
+]
+},
+{
+"id": 214514562,
+"name": "Kansas Jayhawks",
+"team": "Kansas Jayhawks",
+"alternate_names": [
+"Kansas",
+"Jayhawks"
+]
+},
+{
+"id": 226007931,
+"name": "Columbia, Missouri",
+"team": "Missouri Tigers",
+"alternate_names": [
+"Missouri",
+"Tigers"
+]
+},
+{
+"id": 219820483,
+"name": "Columbia, Missouri",
+"team": "Missouri Tigers",
+"alternate_names": [
+"Missouri",
+"Tigers"
+]
+},
+{
+"id": 226016714,
+"name": "Columbia, Missouri",
+"team": "Missouri Tigers",
+"alternate_names": [
+"Missouri",
+"Tigers"
+]
+},
+{
+"id": 34312732,
+"name": "Indiana Hoosiers",
+"team": "Indiana Hoosiers",
+"alternate_names": [
+"Hoosiers",
+"Indiana"
+]
+},
+{
+"id": 214514572,
+"name": "Indiana Hoosiers",
+"team": "Indiana Hoosiers",
+"alternate_names": [
+"Hoosiers",
+"Indiana"
+]
+},
+{
+"id": 216749264,
+"name": "Indiana Hoosiers",
+"team": "Indiana Hoosiers",
+"alternate_names": [
+"Hoosiers",
+"Indiana"
+]
+},
+{
+"id": 55309445,
+"name": "Indiana Hoosiers",
+"team": "Indiana Hoosiers",
+"alternate_names": [
+"Hoosiers",
+"Indiana"
+]
+},
+{
+"id": 216749273,
+"name": "Georgia Bulldogs",
+"team": "Georgia Bulldogs",
+"alternate_names": [
+"Bulldogs",
+"Georgia"
+]
+},
+{
+"id": 34312734,
+"name": "Georgia Bulldogs",
+"team": "Georgia Bulldogs",
+"alternate_names": [
+"Bulldogs",
+"Georgia"
+]
+},
+{
+"id": 214496844,
+"name": "Georgia Bulldogs",
+"team": "Georgia Bulldogs",
+"alternate_names": [
+"Bulldogs",
+"Georgia"
+]
+},
+{
+"id": 55309446,
+"name": "Georgia Bulldogs",
+"team": "Georgia Bulldogs",
+"alternate_names": [
+"Bulldogs",
+"Georgia"
+]
+},
+{
+"id": 34312736,
+"name": "Miami Hurricanes",
+"team": "Miami Hurricanes",
+"alternate_names": [
+"Hurricanes",
+"Miami"
+]
+},
+{
+"id": 216749265,
+"name": "Miami Hurricanes",
+"team": "Miami Hurricanes",
+"alternate_names": [
+"Hurricanes",
+"Miami"
+]
+},
+{
+"id": 214514589,
+"name": "Miami Hurricanes",
+"team": "Miami Hurricanes",
+"alternate_names": [
+"Hurricanes",
+"Miami"
+]
+},
+{
+"id": 55309450,
+"name": "Miami Hurricanes",
+"team": "Miami Hurricanes",
+"alternate_names": [
+"Hurricanes",
+"Miami"
+]
+},
+{
+"id": 34312755,
+"name": "Iowa Hawkeyes",
+"team": "Iowa Hawkeyes",
+"alternate_names": [
+"Iowa",
+"Hawkeyes"
+]
+},
+{
+"id": 214514573,
+"name": "Iowa Hawkeyes",
+"team": "Iowa Hawkeyes",
+"alternate_names": [
+"Iowa",
+"Hawkeyes"
+]
+},
+{
+"id": 206764250,
+"name": "Parker Washington",
+"team": "Washington Huskies",
+"alternate_names": [
+"Washington",
+"Huskies"
+]
+},
+{
+"id": 211453883,
+"name": "Mike Washington Jr.",
+"team": "Washington Huskies",
+"alternate_names": [
+"Washington",
+"Huskies"
+]
+},
+{
+"id": 219751321,
+"name": "Parker Washington",
+"team": "Washington Huskies",
+"alternate_names": [
+"Washington",
+"Huskies"
+]
+},
+{
+"id": 222361727,
+"name": "Parker Washington",
+"team": "Washington Huskies",
+"alternate_names": [
+"Washington",
+"Huskies"
+]
+},
+{
+"id": 105263242,
+"name": "Parker Washington",
+"team": "Washington Huskies",
+"alternate_names": [
+"Washington",
+"Huskies"
+]
+},
+{
+"id": 105263000,
+"name": "Mike Washington Jr.",
+"team": "Washington Huskies",
+"alternate_names": [
+"Washington",
+"Huskies"
+]
+},
+{
+"id": 105263288,
+"name": "Parker Washington",
+"team": "Washington Huskies",
+"alternate_names": [
+"Washington",
+"Huskies"
+]
+},
+{
+"id": 217475522,
+"name": "Darnell Washington",
+"team": "Washington Huskies",
+"alternate_names": [
+"Washington",
+"Huskies"
+]
+},
+{
+"id": 222327571,
+"name": "Mike Washington Jr.",
+"team": "Washington Huskies",
+"alternate_names": [
+"Washington",
+"Huskies"
+]
+},
+{
+"id": 222298458,
+"name": "Mike Washington Jr.",
+"team": "Washington Huskies",
+"alternate_names": [
+"Washington",
+"Huskies"
+]
+},
+{
+"id": 141594285,
+"name": "Mike Washington Jr.",
+"team": "Washington Huskies",
+"alternate_names": [
+"Washington",
+"Huskies"
+]
+},
+{
+"id": 149466066,
+"name": "Mike Washington Jr.",
+"team": "Washington Huskies",
+"alternate_names": [
+"Washington",
+"Huskies"
+]
+},
+{
+"id": 222334911,
+"name": "Malik Washington",
+"team": "Washington Huskies",
+"alternate_names": [
+"Washington",
+"Huskies"
+]
+},
+{
+"id": 217465704,
+"name": "Parker Washington",
+"team": "Washington Huskies",
+"alternate_names": [
+"Washington",
+"Huskies"
+]
+},
+{
+"id": 105263138,
+"name": "Parker Washington",
+"team": "Washington Huskies",
+"alternate_names": [
+"Washington",
+"Huskies"
+]
+},
+{
+"id": 222327332,
+"name": "Parker Washington",
+"team": "Washington Huskies",
+"alternate_names": [
+"Washington",
+"Huskies"
+]
+},
+{
+"id": 225995443,
+"name": "Malik Washington",
+"team": "Washington Huskies",
+"alternate_names": [
+"Washington",
+"Huskies"
+]
+},
+{
+"id": 225995556,
+"name": "Malik Washington",
+"team": "Washington Huskies",
+"alternate_names": [
+"Washington",
+"Huskies"
+]
+},
+{
+"id": 226006268,
+"name": "Seattle, Washington",
+"team": "Washington Huskies",
+"alternate_names": [
+"Washington",
+"Huskies"
+]
+},
+{
+"id": 226007938,
+"name": "Seattle, Washington",
+"team": "Washington Huskies",
+"alternate_names": [
+"Washington",
+"Huskies"
+]
+},
+{
+"id": 226710913,
+"name": "Mike Washington Jr.",
+"team": "Washington Huskies",
+"alternate_names": [
+"Washington",
+"Huskies"
+]
+},
+{
+"id": 222334804,
+"name": "Malik Washington",
+"team": "Washington Huskies",
+"alternate_names": [
+"Washington",
+"Huskies"
+]
+},
+{
+"id": 222334805,
+"name": "Jordan Washington",
+"team": "Washington Huskies",
+"alternate_names": [
+"Washington",
+"Huskies"
+]
+},
+{
+"id": 222327525,
+"name": "Mike Washington Jr.",
+"team": "Washington Huskies",
+"alternate_names": [
+"Washington",
+"Huskies"
+]
+},
+{
+"id": 222327482,
+"name": "Mike Washington Jr.",
+"team": "Washington Huskies",
+"alternate_names": [
+"Washington",
+"Huskies"
+]
+},
+{
+"id": 233853574,
+"name": "Parker Washington",
+"team": "Washington Huskies",
+"alternate_names": [
+"Washington",
+"Huskies"
+]
+},
+{
+"id": 222335636,
+"name": "Malik Washington",
+"team": "Washington Huskies",
+"alternate_names": [
+"Washington",
+"Huskies"
+]
+},
+{
+"id": 206764155,
+"name": "Parker Washington",
+"team": "Washington Huskies",
+"alternate_names": [
+"Washington",
+"Huskies"
+]
+},
+{
+"id": 222335162,
+"name": "A'Mauri Washington",
+"team": "Washington Huskies",
+"alternate_names": [
+"Washington",
+"Huskies"
+]
+},
+{
+"id": 222327375,
+"name": "Parker Washington",
+"team": "Washington Huskies",
+"alternate_names": [
+"Washington",
+"Huskies"
+]
+},
+{
+"id": 225944983,
+"name": "Mike Washington Jr.",
+"team": "Washington Huskies",
+"alternate_names": [
+"Washington",
+"Huskies"
+]
+},
+{
+"id": 222334874,
+"name": "Malik Washington",
+"team": "Washington Huskies",
+"alternate_names": [
+"Washington",
+"Huskies"
+]
+},
+{
+"id": 206764287,
+"name": "Parker Washington",
+"team": "Washington Huskies",
+"alternate_names": [
+"Washington",
+"Huskies"
+]
+},
+{
+"id": 222327943,
+"name": "Mike Washington Jr.",
+"team": "Washington Huskies",
+"alternate_names": [
+"Washington",
+"Huskies"
+]
+},
+{
+"id": 149466188,
+"name": "Parker Washington",
+"team": "Washington Huskies",
+"alternate_names": [
+"Washington",
+"Huskies"
+]
+},
+{
+"id": 219751392,
+"name": "Parker Washington",
+"team": "Washington Huskies",
+"alternate_names": [
+"Washington",
+"Huskies"
+]
+},
+{
+"id": 225947655,
+"name": "Parker Washington",
+"team": "Washington Huskies",
+"alternate_names": [
+"Washington",
+"Huskies"
+]
+},
+{
+"id": 235708432,
+"name": "Eastern Washington",
+"team": "Washington Huskies",
+"alternate_names": [
+"Washington",
+"Huskies"
+]
+},
+{
+"id": 236766003,
+"name": "Eastern Washington",
+"team": "Washington Huskies",
+"alternate_names": [
+"Washington",
+"Huskies"
+]
+},
+{
+"id": 206764361,
+"name": "Parker Washington",
+"team": "Washington Huskies",
+"alternate_names": [
+"Washington",
+"Huskies"
+]
+},
+{
+"id": 136471500,
+"name": "Mike Washington Jr.",
+"team": "Washington Huskies",
+"alternate_names": [
+"Washington",
+"Huskies"
+]
+},
+{
+"id": 232724981,
+"name": "Colorado Buffaloes",
+"team": "Colorado Buffaloes",
+"alternate_names": [
+"Colorado",
+"Buffaloes"
+]
+},
+{
+"id": 226006883,
+"name": "Boulder, Colorado",
+"team": "Colorado Buffaloes",
+"alternate_names": [
+"Colorado",
+"Buffaloes"
+]
+},
+{
+"id": 226010359,
+"name": "Boulder, Colorado",
+"team": "Colorado Buffaloes",
+"alternate_names": [
+"Colorado",
+"Buffaloes"
+]
+},
+{
+"id": 34312787,
+"name": "Colorado Buffaloes",
+"team": "Colorado Buffaloes",
+"alternate_names": [
+"Colorado",
+"Buffaloes"
+]
+},
+{
+"id": 214514560,
+"name": "Colorado Buffaloes",
+"team": "Colorado Buffaloes",
+"alternate_names": [
+"Colorado",
+"Buffaloes"
+]
+},
+{
+"id": 226016724,
+"name": "Boulder, Colorado",
+"team": "Colorado Buffaloes",
+"alternate_names": [
+"Colorado",
+"Buffaloes"
+]
+},
+{
+"id": 34312765,
+"name": "Pittsburgh Panthers",
+"team": "Pittsburgh Panthers",
+"alternate_names": [
+"Panthers",
+"Pitt"
+]
+},
+{
+"id": 214496834,
+"name": "Pittsburgh Panthers",
+"team": "Pittsburgh Panthers",
+"alternate_names": [
+"Panthers",
+"Pitt"
+]
+},
+{
+"id": 225995242,
+"name": "Jordan Marshall",
+"team": "Marshall Thundering Herd",
+"alternate_names": [
+"Marshall",
+"Thundering Herd"
+]
+},
+{
+"id": 222334613,
+"name": "Chris Marshall",
+"team": "Marshall Thundering Herd",
+"alternate_names": [
+"Marshall",
+"Thundering Herd"
+]
+},
+{
+"id": 222334773,
+"name": "Jordan Marshall",
+"team": "Marshall Thundering Herd",
+"alternate_names": [
+"Marshall",
+"Thundering Herd"
+]
+},
+{
+"id": 222335596,
+"name": "Jordan Marshall",
+"team": "Marshall Thundering Herd",
+"alternate_names": [
+"Marshall",
+"Thundering Herd"
+]
+},
+{
+"id": 216749521,
+"name": "Jordan Marshall",
+"team": "Marshall Thundering Herd",
+"alternate_names": [
+"Marshall",
+"Thundering Herd"
+]
+},
+{
+"id": 34312827,
+"name": "Stanford Cardinal",
+"team": "Stanford Cardinal",
+"alternate_names": [
+"Cardinal",
+"Stanford"
+]
+},
+{
+"id": 214496835,
+"name": "Stanford Cardinal",
+"team": "Stanford Cardinal",
+"alternate_names": [
+"Cardinal",
+"Stanford"
+]
+},
+{
+"id": 222336454,
+"name": "Champaign, Illinois",
+"team": "Illinois Fighting Illini",
+"alternate_names": [
+"Illinois",
+"Fighting Illini"
+]
+},
+{
+"id": 226006278,
+"name": "Champaign, Illinois",
+"team": "Illinois Fighting Illini",
+"alternate_names": [
+"Illinois",
+"Fighting Illini"
+]
+},
+{
+"id": 226007940,
+"name": "Evanston, Illinois",
+"team": "Illinois Fighting Illini",
+"alternate_names": [
+"Illinois",
+"Fighting Illini"
+]
+},
+{
+"id": 206814764,
+"name": "Champaign, Illinois",
+"team": "Illinois Fighting Illini",
+"alternate_names": [
+"Illinois",
+"Fighting Illini"
+]
+},
+{
+"id": 34312773,
+"name": "Cincinnati Bearcats",
+"team": "Cincinnati Bearcats",
+"alternate_names": [
+"Bearcats",
+"Cincinnati"
+]
+},
+{
+"id": 214514559,
+"name": "Cincinnati Bearcats",
+"team": "Cincinnati Bearcats",
+"alternate_names": [
+"Bearcats",
+"Cincinnati"
+]
+},
+{
+"id": 214514578,
+"name": "Nebraska Cornhuskers",
+"team": "Nebraska Cornhuskers",
+"alternate_names": [
+"huskers",
+"Cornhuskers",
+"Nebraska"
+]
+},
+{
+"id": 226006264,
+"name": "Lincoln, Nebraska",
+"team": "Nebraska Cornhuskers",
+"alternate_names": [
+"huskers",
+"Cornhuskers",
+"Nebraska"
+]
+},
+{
+"id": 226010352,
+"name": "Lincoln, Nebraska",
+"team": "Nebraska Cornhuskers",
+"alternate_names": [
+"huskers",
+"Cornhuskers",
+"Nebraska"
+]
+},
+{
+"id": 219820475,
+"name": "Lincoln, Nebraska",
+"team": "Nebraska Cornhuskers",
+"alternate_names": [
+"huskers",
+"Cornhuskers",
+"Nebraska"
+]
+},
+{
+"id": 34312768,
+"name": "Nebraska Cornhuskers",
+"team": "Nebraska Cornhuskers",
+"alternate_names": [
+"huskers",
+"Cornhuskers",
+"Nebraska"
+]
+},
+{
+"id": 226016723,
+"name": "Lincoln, Nebraska",
+"team": "Nebraska Cornhuskers",
+"alternate_names": [
+"huskers",
+"Cornhuskers",
+"Nebraska"
+]
+},
+{
+"id": 34312810,
+"name": "UMass Minutemen",
+"team": "UMass Minutemen",
+"alternate_names": [
+"UMass",
+"Massachusetts Minutemen",
+"Minutemen"
+]
+},
+{
+"id": 214514621,
+"name": "Massachusetts Minutemen",
+"team": "UMass Minutemen",
+"alternate_names": [
+"UMass",
+"Massachusetts Minutemen",
+"Minutemen"
+]
+},
+{
+"id": 34312745,
+"name": "Tennessee Volunteers",
+"team": "Tennessee Volunteers",
+"alternate_names": [
+"Volunteers",
+"vols",
+"Tennessee"
+]
+},
+{
+"id": 219820484,
+"name": "Nashville, Tennessee",
+"team": "Tennessee Volunteers",
+"alternate_names": [
+"Volunteers",
+"vols",
+"Tennessee"
+]
+},
+{
+"id": 219819411,
+"name": "Nashville, Tennessee",
+"team": "Tennessee Volunteers",
+"alternate_names": [
+"Volunteers",
+"vols",
+"Tennessee"
+]
+},
+{
+"id": 219819409,
+"name": "Knoxville, Tennessee",
+"team": "Tennessee Volunteers",
+"alternate_names": [
+"Volunteers",
+"vols",
+"Tennessee"
+]
+},
+{
+"id": 222336457,
+"name": "Knoxville, Tennessee",
+"team": "Tennessee Volunteers",
+"alternate_names": [
+"Volunteers",
+"vols",
+"Tennessee"
+]
+},
+{
+"id": 226006271,
+"name": "Knoxville, Tennessee",
+"team": "Tennessee Volunteers",
+"alternate_names": [
+"Volunteers",
+"vols",
+"Tennessee"
+]
+},
+{
+"id": 226006878,
+"name": "Nashville, Tennessee",
+"team": "Tennessee Volunteers",
+"alternate_names": [
+"Volunteers",
+"vols",
+"Tennessee"
+]
+},
+{
+"id": 214496852,
+"name": "Tennessee Volunteers",
+"team": "Tennessee Volunteers",
+"alternate_names": [
+"Volunteers",
+"vols",
+"Tennessee"
+]
+},
+{
+"id": 226016716,
+"name": "Knoxville, Tennessee",
+"team": "Tennessee Volunteers",
+"alternate_names": [
+"Volunteers",
+"vols",
+"Tennessee"
+]
+},
+{
+"id": 34312782,
+"name": "Arkansas Razorbacks",
+"team": "Arkansas Razorbacks",
+"alternate_names": [
+"Arkansas",
+"Razorbacks"
+]
+},
+{
+"id": 226010357,
+"name": "Fayetteville, Arkansas",
+"team": "Arkansas Razorbacks",
+"alternate_names": [
+"Arkansas",
+"Razorbacks"
+]
+},
+{
+"id": 219820481,
+"name": "Fayetteville, Arkansas",
+"team": "Arkansas Razorbacks",
+"alternate_names": [
+"Arkansas",
+"Razorbacks"
+]
+},
+{
+"id": 214496841,
+"name": "Arkansas Razorbacks",
+"team": "Arkansas Razorbacks",
+"alternate_names": [
+"Arkansas",
+"Razorbacks"
+]
+},
+{
+"id": 206814769,
+"name": "Minneapolis, Minnesota",
+"team": "Minnesota Golden Gophers",
+"alternate_names": [
+"Golden Gophers",
+"Minnesota"
+]
+},
+{
+"id": 34312860,
+"name": "Purdue Boilermakers",
+"team": "Purdue Boilermakers",
+"alternate_names": [
+"Boilermakers",
+"Purdue"
+]
+},
+{
+"id": 214514587,
+"name": "Purdue Boilermakers",
+"team": "Purdue Boilermakers",
+"alternate_names": [
+"Boilermakers",
+"Purdue"
+]
+},
+{
+"id": 231406563,
+"name": "UNC Charlotte",
+"team": "Charlotte 49ers",
+"alternate_names": [
+"49ers",
+"Charlotte"
+]
+},
+{
+"id": 34312759,
+"name": "Vanderbilt Commodores",
+"team": "Vanderbilt Commodores",
+"alternate_names": [
+"Commodores",
+"Vanderbilt"
+]
+},
+{
+"id": 214496855,
+"name": "Vanderbilt Commodores",
+"team": "Vanderbilt Commodores",
+"alternate_names": [
+"Commodores",
+"Vanderbilt"
+]
+},
+{
+"id": 34312786,
+"name": "Navy Midshipmen",
+"team": "Navy Midshipmen",
+"alternate_names": [
+"Navy",
+"Midshipmen"
+]
+},
+{
+"id": 214484620,
+"name": "Navy Midshipmen",
+"team": "Navy Midshipmen",
+"alternate_names": [
+"Navy",
+"Midshipmen"
+]
+},
+{
+"id": 34312852,
+"name": "UTSA Roadrunners",
+"team": "UTSA Roadrunners",
+"alternate_names": [
+"UTSA",
+"Roadrunners"
+]
+},
+{
+"id": 214484628,
+"name": "UTSA Roadrunners",
+"team": "UTSA Roadrunners",
+"alternate_names": [
+"UTSA",
+"Roadrunners"
+]
+},
+{
+"id": 34312811,
+"name": "Maryland Terrapins",
+"team": "Maryland Terrapins",
+"alternate_names": [
+"Terrapins",
+"Maryland"
+]
+},
+{
+"id": 214514574,
+"name": "Maryland Terrapins",
+"team": "Maryland Terrapins",
+"alternate_names": [
+"Terrapins",
+"Maryland"
+]
+},
+{
+"id": 962289,
+"name": "Matt Campbell",
+"team": "Campbell Fighting Camels",
+"alternate_names": [
+"Fighting Camels",
+"Campbell"
+]
+},
+{
+"id": 89593478,
+"name": "Will Campbell",
+"team": "Campbell Fighting Camels",
+"alternate_names": [
+"Fighting Camels",
+"Campbell"
+]
+},
+{
+"id": 225918425,
+"name": "Jack Campbell",
+"team": "Campbell Fighting Camels",
+"alternate_names": [
+"Fighting Camels",
+"Campbell"
+]
+},
+{
+"id": 222336190,
+"name": "CJ Campbell Jr.",
+"team": "Campbell Fighting Camels",
+"alternate_names": [
+"Fighting Camels",
+"Campbell"
+]
+},
+{
+"id": 226710794,
+"name": "Jack Campbell",
+"team": "Campbell Fighting Camels",
+"alternate_names": [
+"Fighting Camels",
+"Campbell"
+]
+},
+{
+"id": 225995381,
+"name": "Ernest Campbell",
+"team": "Campbell Fighting Camels",
+"alternate_names": [
+"Fighting Camels",
+"Campbell"
+]
+},
+{
+"id": 222335008,
+"name": "Ernest Campbell",
+"team": "Campbell Fighting Camels",
+"alternate_names": [
+"Fighting Camels",
+"Campbell"
+]
+},
+{
+"id": 225918544,
+"name": "Jack Campbell",
+"team": "Campbell Fighting Camels",
+"alternate_names": [
+"Fighting Camels",
+"Campbell"
+]
+},
+{
+"id": 225995005,
+"name": "Amare Campbell",
+"team": "Campbell Fighting Camels",
+"alternate_names": [
+"Fighting Camels",
+"Campbell"
+]
+},
+{
+"id": 222335664,
+"name": "Amare Campbell",
+"team": "Campbell Fighting Camels",
+"alternate_names": [
+"Fighting Camels",
+"Campbell"
+]
+},
+{
+"id": 222335407,
+"name": "Matt Campbell",
+"team": "Campbell Fighting Camels",
+"alternate_names": [
+"Fighting Camels",
+"Campbell"
+]
+},
+{
+"id": 225918318,
+"name": "Dan Campbell",
+"team": "Campbell Fighting Camels",
+"alternate_names": [
+"Fighting Camels",
+"Campbell"
+]
+},
+{
+"id": 225918293,
+"name": "Dan Campbell",
+"team": "Campbell Fighting Camels",
+"alternate_names": [
+"Fighting Camels",
+"Campbell"
+]
+},
+{
+"id": 216785091,
+"name": "Matt Campbell",
+"team": "Campbell Fighting Camels",
+"alternate_names": [
+"Fighting Camels",
+"Campbell"
+]
+},
+{
+"id": 225946264,
+"name": "Matt Campbell",
+"team": "Campbell Fighting Camels",
+"alternate_names": [
+"Fighting Camels",
+"Campbell"
+]
+},
+{
+"id": 215432932,
+"name": "Georgia Southern",
+"team": "Southern University Jaguars",
+"alternate_names": [
+"Southern",
+"Southern Jaguars",
+"Jaguars"
+]
+},
+{
+"id": 225981280,
+"name": "Georgia Southern",
+"team": "Southern University Jaguars",
+"alternate_names": [
+"Southern",
+"Southern Jaguars",
+"Jaguars"
+]
+},
+{
+"id": 29928142,
+"name": "Georgia Southern",
+"team": "Southern University Jaguars",
+"alternate_names": [
+"Southern",
+"Southern Jaguars",
+"Jaguars"
+]
+},
+{
+"id": 231406600,
+"name": "Georgia Southern",
+"team": "Southern University Jaguars",
+"alternate_names": [
+"Southern",
+"Southern Jaguars",
+"Jaguars"
+]
+},
+{
+"id": 34312804,
+"name": "Northwestern Wildcats",
+"team": "Northwestern Wildcats",
+"alternate_names": [
+"Wildcats",
+"Northwestern"
+]
+},
+{
+"id": 214514579,
+"name": "Northwestern Wildcats",
+"team": "Northwestern Wildcats",
+"alternate_names": [
+"Wildcats",
+"Northwestern"
+]
+},
+{
+"id": 34312772,
+"name": "Kentucky Wildcats",
+"team": "Kentucky Wildcats",
+"alternate_names": [
+"Wildcats",
+"Kentucky"
+]
+},
+{
+"id": 219820482,
+"name": "Lexington, Kentucky",
+"team": "Kentucky Wildcats",
+"alternate_names": [
+"Wildcats",
+"Kentucky"
+]
+},
+{
+"id": 214496845,
+"name": "Kentucky Wildcats",
+"team": "Kentucky Wildcats",
+"alternate_names": [
+"Wildcats",
+"Kentucky"
+]
+},
+{
+"id": 34312764,
+"name": "Arizona Wildcats",
+"team": "Arizona Wildcats",
+"alternate_names": [
+"Wildcats",
+"Arizona"
+]
+},
+{
+"id": 214514556,
+"name": "Arizona Wildcats",
+"team": "Arizona Wildcats",
+"alternate_names": [
+"Wildcats",
+"Arizona"
+]
+}
+]
+}

@@ -124,7 +124,17 @@ const SPORT_WORD_SUFFIXES: ReadonlySet<string> = new Set([
   "basketball", // 2  Dubai Basketball, Paris Basketball
   "basket", // 1  Valencia Basket
   "hockey", // 2  Modo Hockey, TUTO Hockey
+  // Re-measured 2026-09-29 across the Catalan/Spanish/Italian/Portuguese forms
+  // too (bàsquet, baloncesto, pallacanestro, basquete, hóquei, ...): one more
+  // name, FC Barcelona Bàsquet, printed "Bàsquet" / "BÀS" on a EuroLeague final.
+  // The lookup folds accents first — `alphanumeric` alone makes it "Bsquet".
+  "basquet", // 1  FC Barcelona Bàsquet
 ]);
+
+/** "Bàsquet" -> "Basquet": NFD, then drop the combining marks. */
+function foldAccents(token: string): string {
+  return token.normalize("NFD").replace(/\p{M}/gu, "");
+}
 
 function alphanumeric(token: string): string {
   return token.replace(/[^A-Za-z0-9]/g, "");
@@ -404,7 +414,7 @@ export function isNonDistinctiveTrailingWord(token: string): boolean {
   if (bare.length === 0) return true;
   if (bare.length <= 2) return true;
   if (CLUB_TYPE_SUFFIXES.has(bare.toLowerCase())) return true;
-  if (SPORT_WORD_SUFFIXES.has(bare.toLowerCase())) return true;
+  if (SPORT_WORD_SUFFIXES.has(alphanumeric(foldAccents(token)).toLowerCase())) return true;
   // Squad markers: "U21", "U23", and bare reserve numbers.
   if (/^u\d{1,2}$/i.test(bare)) return true;
   if (/^\d+$/.test(bare)) return true;
@@ -465,8 +475,25 @@ export function namesAPerson(sportKey: string | null | undefined): boolean {
 }
 
 /**
- * #5634 — does this sport key name a football (soccer) competition, where a
- * club's last word is so often its CITY that the last-word rule cannot be used?
+ * #5634 — the non-football competitions whose clubs are named the European
+ * way, distinctive word first and city last, so they take the football rule.
+ *
+ * `/events/15318709`, Fenerbahce SK 100-76 FC Bayern München, 390px,
+ * 2026-09-29: the hero named the away side "München". Over all 30 distinct
+ * `basketball_euroleague` names of 60 days of production `events` the
+ * last-word rule printed a city or a fragment for eleven ("Real Madrid" →
+ * "Madrid", "Zalgiris Kaunas" → "Kaunas", "KK Crvena zvezda" → "zvezda") and
+ * folded BOTH Tel Aviv clubs onto "Aviv". Whole keys only, unlike the football
+ * prefix: `basketball_nba`, `basketball_wnba` and `basketball_nbl` name their
+ * clubs city-first ("Sydney Kings"), and `basketball_other` mixes the WNBA and
+ * Japan's B.League with the Bundesliga, so no rule reads it right.
+ */
+const WHOLE_CLUB_NAME_KEYS: ReadonlySet<string> = new Set(["basketball_euroleague"]);
+
+/**
+ * #5634 — does this sport key name a football (soccer) competition, or one of
+ * `WHOLE_CLUB_NAME_KEYS`, where a club's last word is so often its CITY that
+ * the last-word rule cannot be used?
  *
  * "1. FC Union Berlin" became "Berlin" (so did Hertha, Croatia and Füchse),
  * "Bayern Munich" became "Munich" (so did 1860), "Real Salt Lake" became
@@ -483,8 +510,45 @@ export function keepsWholeClubName(sportKey: string | null | undefined): boolean
   if (typeof sportKey !== "string") return false;
   const key = sportKey.trim().toLowerCase();
   if (!key) return false;
-  return key.split("_")[0] === "soccer";
+  return key.split("_")[0] === "soccer" || WHOLE_CLUB_NAME_KEYS.has(key);
 }
+
+/**
+ * #5634 — does this sport key name an esports competition, where the last word
+ * of an organisation's name is so often its TYPE that the last-word rule cannot
+ * be used at all?
+ *
+ * `/events/15319232`, G2 Esports v Paper Rex, 390px, 2026-09-29: the hero read
+ * **"Esports"** and **"Rex"**. Measured the same day over the 1,000 most-used
+ * esports names of 60 days of production `events`: the rule changed 516 of
+ * them, and folded about a hundred organisations onto "Esports" (Top, FURIA,
+ * Hanwha Life, KRÜ, Gen.G ...), 45 onto "Gaming" (JD, SK, Bilibili, EDward ...)
+ * and 16 onto "Esport", and cut the rest to a fragment ("Natus Vincere" →
+ * "Vincere", "Dplus KIA" → "KIA"). Leading short tokens are the org itself
+ * here ("KT Rolster", "SK Gaming", "G2 Gozen"), so the football rule's
+ * leading-designator drop does not apply either: the name is kept verbatim.
+ *
+ * Same first-segment match and same fail-closed type test as `namesAPerson`.
+ */
+export function keepsWholeOrgName(sportKey: string | null | undefined): boolean {
+  if (typeof sportKey !== "string") return false;
+  const key = sportKey.trim().toLowerCase();
+  if (!key) return false;
+  return key.split("_")[0] === "esports";
+}
+
+/**
+ * The organisation-type words an esports name ends in. A name longer than
+ * `WHOLE_CLUB_NAME_MAX_WORDS` still keeps itself whole when it ends in one, so
+ * "Gamespace Mediterranean College Esports" never prints "Esports". Compared
+ * alphanumeric and case-blind, so "E-SPORTS" and "eSports" are one word.
+ */
+const ESPORTS_ORG_SUFFIXES: ReadonlySet<string> = new Set([
+  "esports",
+  "esport",
+  "gaming",
+  "team", // "Once Upon A Team", "EDward Gaming Youth Team"
+]);
 
 /**
  * #5634 — a football club's label: its own name with LEADING designators
@@ -652,6 +716,33 @@ export function teamCrestBadge(
   // `O'C`), which is the same three-real-glyph rule.
   if (isDoublesPair(full)) {
     return teamShortName(full).replace(/[^\p{L}\p{N}]/gu, "").slice(0, 3).toUpperCase();
+  }
+  // #5634 — an esports organisation's crest is not its TYPE. The label keeps
+  // "G2 Esports" whole, but the badge read the last word and painted `ESP`:
+  // /events/15319232, 390px, 2026-09-29, hero crest `ESP` beside a Bigger
+  // Picture tile reading `G2` for the same team. Over all 925 esports names of
+  // 60 days of production `events`, 158 painted a type word (`ESP` 103, `GAM`
+  // 40, `TEA` 13, `E-S` 2) — a crest naming a hundred organisations at once.
+  // The type words are dropped and the remainder takes this same rule,
+  // sport-free: "SK Gaming" is `SK`, "Top Esports" `TOP`, "Team WE" `WE`.
+  //
+  // ONLY WHEN THE BADGE IS THE TYPE WORD. Dropping the type words from every
+  // name that carries one moved 191 badges, and 38 of them got worse: an
+  // initials badge that spells the org's own tag counts the type word as one
+  // letter ("Hanwha Life Esports" `HLE` -> `LIF`, "Berlin International
+  // Gaming" `BIG` -> `INT`). So the badge the rule already paints stands unless
+  // it is the leading glyphs of a type word in the name. A name with no type
+  // word keeps its badge to the character ("Paper Rex" is still `REX`).
+  if (keepsWholeOrgName(sportKey)) {
+    const words = full.split(/\s+/);
+    const isType = (word: string) => ESPORTS_ORG_SUFFIXES.has(alphanumeric(word).toLowerCase());
+    const shipped = teamCrestBadge(full);
+    const org = words.filter(word => !isType(word)).join(" ");
+    const typeBadge = words.some(
+      word => isType(word) && word.slice(0, 3).toUpperCase() === shipped,
+    );
+    if (typeBadge && org) return teamCrestBadge(org);
+    return shipped;
   }
   // Hyphen splits like a space so that "Paris Saint-Germain" and "Paris Saint
   // Germain" — both live on production the same afternoon — agree.
@@ -1018,6 +1109,14 @@ function shortNameByRule(full: string, sportKey?: string | null): string {
     if (whole.split(/\s+/).length <= WHOLE_CLUB_NAME_MAX_WORDS) return whole;
   }
   const words = full.split(/\s+/);
+  // #5634 — an esports organisation is not its type: "G2 Esports", never
+  // "Esports"; "Paper Rex", never "Rex".
+  if (keepsWholeOrgName(sportKey)) {
+    const last = alphanumeric(words[words.length - 1]).toLowerCase();
+    if (words.length <= WHOLE_CLUB_NAME_MAX_WORDS || ESPORTS_ORG_SUFFIXES.has(last)) {
+      return full;
+    }
+  }
   if (words.length < 2) return full;
   if (isNonDistinctiveTrailingWord(words[words.length - 1])) return full;
   // #5634 — "Red Sox", not "Sox". Clubs only: a person's name never reaches it.
@@ -1103,8 +1202,9 @@ export function teamShortNames(
   // rescue below is asked exactly as it was before that rule: from what the
   // last-word rule would have printed. Seattle Sounders FC v Real Salt Lake
   // keeps "SEA / RSL"; only the city-last labels move.
+  // An esports organisation's whole name is chosen the same way.
   const lastWordRule = (full: string, short: string) =>
-    keepsWholeClubName(sportKey) ? teamShortName(full) : short;
+    keepsWholeClubName(sportKey) || keepsWholeOrgName(sportKey) ? teamShortName(full) : short;
   const homeGaveUp = gaveUp(homeFull, lastWordRule(homeFull, homeShort));
   const awayGaveUp = gaveUp(awayFull, lastWordRule(awayFull, awayShort));
   const collide =

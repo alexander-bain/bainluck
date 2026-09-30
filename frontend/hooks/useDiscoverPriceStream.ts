@@ -52,7 +52,7 @@ export function useDiscoverPriceStream(groups: DiscoverGroupedItem[], principal:
         const next = adoptPriceCards(previous.book, groupedLeaves(groupsRef.current), response, requested);
         return next === previous.book ? previous : { principal, book: next };
       }),
-      now: () => Date.now(), setTimer: (callback, ms) => setTimeout(callback, ms), clearTimer: clearTimeout,
+      now: () => Date.now(), setTimer: (callback, ms) => setTimeout(callback, ms), clearTimer: timer => clearTimeout(timer),
     });
     dispatcher.current = delivery;
     const sync = () => document.visibilityState === 'hidden' ? delivery.stop() : delivery.start();

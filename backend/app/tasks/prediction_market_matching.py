@@ -42,7 +42,10 @@ from app.utils.kalshi_occurrence_start import (
     KALSHI_OCCURRENCE_TIMED_SOURCES,
     kalshi_game_scale_commence,
 )
-from app.utils.event_twin_fold import _catchall_sport_prefix  # #7904, the catch-all shadow arm
+from app.utils.event_twin_fold import (  # #7904/#9686, the catch-all shadow arm
+    CATCHALL_SHADOW_KICKOFF_DRIFT,
+    _catchall_sport_prefix,
+)
 from app.utils.futures_liveness import KALSHI_BOOK_SILENT_SQL
 from app.utils.polymarket_empty_book import (  # #9083, the pregame pin's book guard
     POLYMARKET_BOOKMAKER,
@@ -71,6 +74,7 @@ from app.utils.prediction_market_matching import (
     is_kalshi_match_segment_ticker,
     _fuzzy_team_match,
     _names_both_sides,
+    _doubles_pair_match,
     pair_shape,
     _expand_team_search_terms,
     _SPORT_CATEGORY_TO_KEY_PREFIX,
@@ -2222,7 +2226,42 @@ def _is_kalshi_self_mint(event) -> bool:
     )
 
 
-async def _kalshi_self_mint_real_fixture(session, matchup, market, linked_event):
+def _kalshi_tennis_listing_window(game_date):
+    """Where a Kalshi tennis ticker's match can be played: ``(lo, hi)``. #9624.
+
+    A Kalshi tennis ticker's date is the day the DRAW was listed, not the day of
+    play (:func:`is_kalshi_match_segment_ticker`). Measured on the specimen,
+    2026-09-29: ``KXATPDOUBLES-26SEP28BOLVAVMOCWAT`` is Tokyo Round of 16
+    doubles, and the match is scheduled 2026-10-01 01:00Z — 73h after its
+    ticker's date, so the date-only window (−6h/+30h) ends two days short.
+
+    The far bound is :data:`~app.utils.tennis_twin_pairs.MAX_TWIN_SEPARATION`,
+    measured on the same relation (a draw-date ghost against its played match:
+    median 25h, p90 67h, 96h keeps 170/172). The near bound is the date-only
+    window's own −6h. Play never precedes the draw.
+    """
+    from app.utils.tennis_twin_pairs import MAX_TWIN_SEPARATION
+
+    return game_date - timedelta(hours=6), game_date + MAX_TWIN_SEPARATION
+
+
+def _doubles_pairs_on_opposite_sides(team_a, team_b, home, away) -> bool:
+    """Both of a doubles market's pairs name the row's two DIFFERENT pairs. #9624.
+
+    :func:`_doubles_pair_match` is the one-to-one partner test (#8722), stricter
+    than :func:`_fuzzy_team_match`'s containment: every partner of one pair must
+    land inside exactly one partner of the other. A side that is not exactly two
+    partners fails it, so a singles row never passes.
+    """
+    return (
+        (_doubles_pair_match(team_a, home) and _doubles_pair_match(team_b, away))
+        or (_doubles_pair_match(team_a, away) and _doubles_pair_match(team_b, home))
+    )
+
+
+async def _kalshi_self_mint_real_fixture(
+    session, matchup, market, linked_event, *, mint_sport_key=None,
+):
     """The ONE scheduled row a Kalshi market on its own mint belongs to, or None. #6720.
 
     The #5544 finder cannot answer this: it needs the ticker's HHMM, and soccer
@@ -2240,30 +2279,57 @@ async def _kalshi_self_mint_real_fixture(session, matchup, market, linked_event)
          carried the game yet, and the next pass asks again. Two: a twin pair or
          a doubleheader, which is #1946's to tell apart, not this pass's.
 
+    THE TENNIS ARM (#9624), doubles only — ``mint_sport_key`` is ``tennis*``.
+    Seven Tokyo doubles matches were each stored twice on 2026-09-29: the
+    Kalshi mint (``tennis_atp``, dated its ticker's listing day, ``suspended``,
+    "No result reported · Sep 28") and the StatPal row (``tennis_other``, the
+    real Oct 1 01:00Z), each holding one venue's price. Three steps differ:
+
+      * step 2's sport is the mint's own OR the ``tennis_other`` bucket — the
+        forward path's own carve-out (:func:`_is_cross_sport_link`), so ATP
+        never reaches WTA — and the window is
+        :func:`_kalshi_tennis_listing_window`, because the ticker names the draw
+        day, not the day of play;
+      * step 4 is :func:`_doubles_pairs_on_opposite_sides`, the one-to-one
+        partner test, never a surname containment;
+      * a singles market is not this arm's. Singles mints are folded by the
+        twin sweeps (``tennis_twin_pairs``, the #5821 container sweep) and a
+        surname-only name test was never measured here (#9584's "Sun v Sun").
+
     Ruling 048 is untouched: no event absorbs another and the mint is left
     standing. Only the market's pointer moves, onto the row the forward path
     would have chosen had it existed first, and the caller routes it through the
     same duplicate-linkage guard the forward path uses.
     """
-    from app.models.models import Event
+    from app.models.models import Event, Sport
 
     if getattr(market, "source", None) != "kalshi" or not matchup.team_b:
         return None
     game_date = extract_game_date_from_ticker(getattr(market, "external_id", None))
     if game_date is None or not getattr(linked_event, "sport_id", None):
         return None
-    start = ticker_start_utc(game_date)
-    if start is not None:
-        lo, hi = start - timedelta(hours=3), start + timedelta(hours=3)
+    tennis = _sport_family(mint_sport_key) == "tennis"
+    if tennis:
+        if pair_shape(matchup.team_a, matchup.team_b) is not True:
+            return None  # singles — see "THE TENNIS ARM" above
+        lo, hi = _kalshi_tennis_listing_window(game_date)
+        sport_clause = Sport.key.like("tennis%")
     else:
-        lo, hi = game_date - timedelta(hours=6), game_date + timedelta(hours=30)
+        start = ticker_start_utc(game_date)
+        if start is not None:
+            lo, hi = start - timedelta(hours=3), start + timedelta(hours=3)
+        else:
+            lo, hi = game_date - timedelta(hours=6), game_date + timedelta(hours=30)
+        sport_clause = Event.sport_id == linked_event.sport_id
 
     candidates = (await session.execute(
         select(
             Event.id, Event.sport_id, Event.home_team_name, Event.away_team_name,
+            Sport.key.label("sport_key"),
         )
+        .join(Sport, Sport.id == Event.sport_id)
         .where(
-            Event.sport_id == linked_event.sport_id,
+            sport_clause,
             Event.id != linked_event.id,
             Event.commence_time >= lo,
             Event.commence_time <= hi,
@@ -2275,13 +2341,25 @@ async def _kalshi_self_mint_real_fixture(session, matchup, market, linked_event)
             ),
         )
     )).all()
-    confirmed = [
-        row for row in candidates
-        if _names_both_sides(
-            matchup.team_a, matchup.team_b,
-            row.home_team_name, row.away_team_name,
-        )
-    ]
+    if tennis:
+        confirmed = [
+            row for row in candidates
+            if not _is_cross_sport_link(
+                mint_sport_key, row.sport_key, allow_unclassified_bucket=False,
+            )
+            and _doubles_pairs_on_opposite_sides(
+                matchup.team_a, matchup.team_b,
+                row.home_team_name, row.away_team_name,
+            )
+        ]
+    else:
+        confirmed = [
+            row for row in candidates
+            if _names_both_sides(
+                matchup.team_a, matchup.team_b,
+                row.home_team_name, row.away_team_name,
+            )
+        ]
     if len(confirmed) != 1:
         if confirmed:
             logger.info(
@@ -2293,8 +2371,9 @@ async def _kalshi_self_mint_real_fixture(session, matchup, market, linked_event)
         return None
     row = confirmed[0]
     logger.info(
-        "Kalshi self-mint relink (#6720): %s is scheduled event %d — moving it "
+        "Kalshi self-mint relink (%s): %s is scheduled event %d — moving it "
         "off its own mint %d",
+        "#9624 tennis" if tennis else "#6720",
         market.external_id, row.id, linked_event.id,
     )
     return {"event_id": row.id, "sport_id": row.sport_id}
@@ -2642,7 +2721,8 @@ async def _split_pair_by_venue_home(market, pair):
 
 
 async def _check_duplicate_kalshi_linkage_reason(
-    session, event_id: int, market, ticker_game_date,
+    session, event_id: int, market, ticker_game_date, *,
+    tennis_listing_date: bool = False,
 ) -> str | None:
     """Why linking this Kalshi market to ``event_id`` must be refused, if it must.
 
@@ -2667,6 +2747,11 @@ async def _check_duplicate_kalshi_linkage_reason(
       (b) pre-existing — this market's ticker date vs an EXISTING SIBLING Kalshi
           market's ticker date on the same event. Still scoped to game/map
           WINNER prefixes on both sides, unchanged.
+
+    ``tennis_listing_date`` (#9624) is passed by Phase 1.5's tennis self-mint
+    arm only. For a Kalshi tennis segment ticker it swaps arm (a)'s date-only
+    rule for :func:`_kalshi_tennis_listing_window` — the window that arm
+    searched. Every other caller leaves it False.
     """
     from app.models.models import FuturesMarket
 
@@ -2689,7 +2774,32 @@ async def _check_duplicate_kalshi_linkage_reason(
     td = ticker_game_date or extract_game_date_from_ticker(market.external_id)
     if td is not None and not _is_combat_kalshi_prefix(prefix):
         event_commence = await _event_commence_time(session, event_id)
-        if _ticker_date_conflicts_with_event(
+        if (
+            tennis_listing_date
+            and event_commence is not None
+            and is_kalshi_match_segment_ticker(market.external_id)
+        ):
+            # #9624: the tennis self-mint arm's move. Arm (a) still runs, on
+            # the window that arm searched — the ticker names the DRAW day, so
+            # the date-only rule's 2 Eastern days refused the Tokyo doubles'
+            # Oct 1 match for its own Sep 28 ticker.
+            lo, hi = _kalshi_tennis_listing_window(td)
+            ec = (
+                event_commence if event_commence.tzinfo
+                else event_commence.replace(tzinfo=timezone.utc)
+            )
+            ref_lo, ref_hi = (
+                b if b.tzinfo else b.replace(tzinfo=timezone.utc) for b in (lo, hi)
+            )
+            if not ref_lo <= ec <= ref_hi:
+                logger.warning(
+                    "Event-date linkage blocked (#9624): tennis %s ticker=%s "
+                    "would link to event %d (commence=%s) — outside the "
+                    "listing-date window",
+                    market.external_id, td.isoformat(), event_id, ec.isoformat(),
+                )
+                return _REFUSAL_EVENT_DATE
+        elif _ticker_date_conflicts_with_event(
             td, event_commence, prefix,
         ) and not await _kalshi_postponed_game_carries(
             session, market.external_id, td, event_id,
@@ -6385,6 +6495,7 @@ async def _phase15_revalidate(
             venue_named_row = None
             catchall_shadow_named = False
             kalshi_self_mint_named = False
+            kalshi_self_mint_tennis = False
             if (
                 teams_match and not is_finished and not is_auto_created
                 and not sport_mismatch and not is_retired
@@ -6395,15 +6506,23 @@ async def _phase15_revalidate(
                     # #7904: the market sits on the row Polymarket minted for it
                     # in the catch-all bucket, and the venue instant agrees with
                     # that row, so the arm below would leave it. Ask the #5544
-                    # finder instead: exactly one real covered-league row at the
-                    # venue's minute is the game. See the helper's docstring.
+                    # finder instead: exactly one real covered-league row near
+                    # the venue's minute is the game. See the helper's docstring.
+                    # #9686: "near" is CATCHALL_SHADOW_KICKOFF_DRIFT, not the
+                    # 15-minute `_PM_VENUE_SAME_GAME` — Gamma listed Islanders–
+                    # Rangers 30 min and Golden Knights–Kraken 40 min off ESPN.
+                    # Soccer keeps 15 (the fold's bound never reaches soccer).
                     if event_sport_key is None:
                         event_sport_key = await _event_sport_key(session, linked_event)
                     shadow_sport = _catchall_sport_prefix(event_sport_key)
                     if shadow_sport:
                         venue_named_row = await _venue_confirmed_covered_fixture(
                             session, matchup, market, linked_event,
-                            window=_PM_VENUE_SAME_GAME, exclude_retired=True,
+                            window=(
+                                _PM_VENUE_SAME_GAME if shadow_sport == "soccer"
+                                else CATCHALL_SHADOW_KICKOFF_DRIFT
+                            ),
+                            exclude_retired=True,
                             within_sport=shadow_sport,
                         )
                         if venue_named_row is None:
@@ -6418,19 +6537,22 @@ async def _phase15_revalidate(
                 elif market.source == "kalshi" and _is_kalshi_self_mint(linked_event):
                     # #6720: the market sits on the row it minted for itself,
                     # and a scheduled row for the game may have arrived since.
-                    # Tennis is out: its Kalshi halves are paired by
-                    # `tennis_twin_pairs` and the #2774 contest path, on
-                    # surnames this finder's name test was never measured on.
+                    # #9624: a tennis mint asks the finder's doubles-only arm —
+                    # a singles mint is still left to `tennis_twin_pairs` and
+                    # the #2774 contest path (see the finder's docstring).
                     if event_sport_key is None:
                         event_sport_key = await _event_sport_key(session, linked_event)
-                    if not (event_sport_key or "").startswith("tennis"):
-                        venue_named_row = await _kalshi_self_mint_real_fixture(
-                            session, matchup, market, linked_event,
+                    venue_named_row = await _kalshi_self_mint_real_fixture(
+                        session, matchup, market, linked_event,
+                        mint_sport_key=event_sport_key,
+                    )
+                    if venue_named_row is not None:
+                        kalshi_self_mint_named = True
+                        kalshi_self_mint_tennis = (
+                            _sport_family(event_sport_key) == "tennis"
                         )
-                        if venue_named_row is not None:
-                            kalshi_self_mint_named = True
-                            stats["funnel"].setdefault("phase15_kalshi_self_mint_named", 0)
-                            stats["funnel"]["phase15_kalshi_self_mint_named"] += 1
+                        stats["funnel"].setdefault("phase15_kalshi_self_mint_named", 0)
+                        stats["funnel"]["phase15_kalshi_self_mint_named"] += 1
                 if venue_named_row is None:
                     if not _venue_instant_disowns_link(market, linked_event):
                         continue
@@ -6559,6 +6681,7 @@ async def _phase15_revalidate(
             if better_match and better_match["event_id"] != linked_event.id:
                 refusal = await _check_duplicate_kalshi_linkage_reason(
                     session, better_match["event_id"], market, ticker_game_date,
+                    tennis_listing_date=kalshi_self_mint_tennis,
                 )
                 if refusal:
                     relink_blocked = True

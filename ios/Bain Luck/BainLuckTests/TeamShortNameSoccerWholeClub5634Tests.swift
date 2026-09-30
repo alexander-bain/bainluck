@@ -132,8 +132,10 @@ final class TeamShortNameSoccerWholeClub5634Tests: XCTestCase {
             ("baseball_mlb", "Boston Red Sox", "Red Sox"),
             ("americanfootball_nfl", "Kansas City Chiefs", "Chiefs"),
             ("tennis_atp_us_open", "Carlos Alcaraz", "Alcaraz"),
-            // A key that merely CONTAINS the word is not football.
-            ("esports_soccer_sim", "Team Berlin", "Berlin"),
+            // A key that merely CONTAINS the word is not football. (Not an
+            // esports key: since 2026-09-29 those keep the whole name by their
+            // own rule, the browser's same move.)
+            ("basketball_soccer_sim", "Team Berlin", "Berlin"),
         ]
         for (sport, name, label) in cases {
             XCTAssertEqual(TeamShortName.short(name, sportKey: sport), label, "\(sport ?? "nil") · \(name)")

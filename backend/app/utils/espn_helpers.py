@@ -54,6 +54,7 @@ from app.utils.game_pairing import (
 # own door since the guard shipped; the two doors in THIS module write the same
 # column from the same `upsert_team` and were never routed through it (#4883).
 from app.utils.team_binding_invariant import accept_team_binding
+from app.utils.espn_team_spelling import apply_espn_respelling
 
 logger = logging.getLogger(__name__)
 
@@ -2279,11 +2280,25 @@ _BREAK_CLOCK_SPORT_PREFIXES = (
 )
 
 
+#: #9521: ESPN's own names for a live game stopped at a period boundary.
+#: `_parse_event` maps only STATUS_IN_PROGRESS to "in", so a real break arrives
+#: under these, never as "in" — measured 2026-09-30 00:15Z, MTL @ TOR:
+#: `STATUS_END_PERIOD`, displayClock "0:00", "End of 1st Period".
+_ESPN_BREAK_STATUSES = frozenset({"status_halftime", "status_end_period"})
+
+
 def _break_clock(ee, sport_key: str) -> str | None:
-    """"0:00" when a live, clockless reading sits at a known break, else None."""
-    if ee.status != "in" or ee.clock or not sport_key.startswith(
-        _BREAK_CLOCK_SPORT_PREFIXES
-    ):
+    """"0:00" when a live reading sits at a known break, else None.
+
+    A break is ESPN saying so (`_ESPN_BREAK_STATUSES`), or an "in" reading
+    with no clock whose detail is Halftime / "End of ...". Either way the
+    position is the period boundary, whatever clock rides along.
+    """
+    if not sport_key.startswith(_BREAK_CLOCK_SPORT_PREFIXES):
+        return None
+    if ee.status in _ESPN_BREAK_STATUSES:
+        return "0:00"
+    if ee.status != "in" or ee.clock:
         return None
     detail = (_sanitize_period(ee.status_detail) or "").strip().lower()
     if detail == "halftime" or detail.startswith("end of "):
@@ -2307,12 +2322,14 @@ async def compute_and_write_stat_model(session, event, ee, sport_key, stats):
     # one priced before the last score of the half on the row for the whole
     # break (MNF: 80.7% Bears at 10–7, every market ~42%). A break's position
     # is known without a clock — Halftime and "End of Nth ..." sit at a period
-    # boundary — so price it there.
+    # boundary — so price it there. ESPN names a real break with its own
+    # status (Halftime, End of Period), not "in"; that is a live reading too.
     break_clock = _break_clock(ee, sport_key)
+    is_live = ee.status == "in" or break_clock is not None
     has_game_progress = ee.clock or break_clock or sport_key.startswith("baseball_")
-    if ee.status != "in" or ee.home_score is None or ee.away_score is None or not has_game_progress:
+    if not is_live or ee.home_score is None or ee.away_score is None or not has_game_progress:
         # Track missing data for live games
-        if ee.status == "in":
+        if is_live:
             if ee.home_score is None or ee.away_score is None:
                 stats["stat_model_no_score"] = stats.get("stat_model_no_score", 0) + 1
             elif not ee.clock:
@@ -2366,7 +2383,7 @@ async def compute_and_write_stat_model(session, event, ee, sport_key, stats):
             period_str = _sanitize_period(ee.status_detail)
             if ee.period and not period_str:
                 period_str = str(ee.period)
-            model_clock = ee.clock or break_clock
+            model_clock = break_clock or ee.clock
             # #9020 / CERT-3657: the row refused this reading's position as
             # outrunning the wall clock. The model is priced at the position
             # the row DID admit (with this pass's score, which has its own
@@ -2699,6 +2716,9 @@ async def sync_scheduled_events(session, sport_key, espn_events, stats):
             continue
 
         ee = matched_espn
+        # #9482: a spelling-only difference takes ESPN's name first, so the
+        # side resolves (and #1918 binds) to ESPN's id-anchored team row.
+        apply_espn_respelling(event, ee, sched_team_cache, stats, source="espn_scheduled")
         home_team = await upsert_team(session, event.home_team_name, ee.home_team, event.sport_id, sched_team_cache, stats)
         away_team = await upsert_team(session, event.away_team_name, ee.away_team, event.sport_id, sched_team_cache, stats)
         # #1918/#4883. Same column, same resolver and the same OVERWRITE shape as
@@ -2882,6 +2902,7 @@ async def fetch_completed_box_scores(session, stats):
                 now_str = datetime.now(timezone.utc).isoformat()
                 had_live_box = event.box_score_data is not None
 
+                settled_over_live = False
                 if box_score or scoring_plays:
                     bsd = {
                         "source": "espn",
@@ -2896,38 +2917,38 @@ async def fetch_completed_box_scores(session, stats):
                         bsd["away_period_scores"] = scores.get(
                             "away_period_scores", []
                         )
-                    await session.execute(
-                        _raw_text("UPDATE events SET box_score_data = cast(:bsd AS jsonb) WHERE id = :eid"),
-                        {"bsd": _json_mod.dumps(bsd), "eid": event.id},
-                    )
-                    event.box_score_data = bsd
-                    stats["box_scores_fetched"] = stats.get("box_scores_fetched", 0) + 1
-                    if had_live_box:
-                        stats["box_scores_settled_over_live"] = (
-                            stats.get("box_scores_settled_over_live", 0) + 1
-                        )
+                    settled_over_live = had_live_box
                 elif had_live_box:
                     # #8970: ESPN answered with nothing for a game we already
                     # hold a live box for. That box is the best we have, so it
                     # is kept — only the live stamp goes, or this row would be
                     # re-asked every minute for 48 hours.
                     bsd = {**event.box_score_data, "live": False}
-                    await session.execute(
-                        _raw_text("UPDATE events SET box_score_data = cast(:bsd AS jsonb) WHERE id = :eid"),
-                        {"bsd": _json_mod.dumps(bsd), "eid": event.id},
-                    )
-                    event.box_score_data = bsd
                 else:
-                    err_bsd = {
+                    bsd = {
                         "source": "espn",
                         "error": "not_available",
                         "fetched_at": now_str,
                     }
+                # #9713: each game's write in its own SAVEPOINT, as the live
+                # pass does (#8913). On Postgres a refused statement aborts the
+                # transaction, the except below swallowed it, and every later
+                # game and the step's savepoint went with it: one box Postgres
+                # would not take (15319563, 9/30) cost every settled box in the
+                # 48-hour window, every minute, while it stayed at the head of
+                # the queue.
+                async with session.begin_nested():
                     await session.execute(
                         _raw_text("UPDATE events SET box_score_data = cast(:bsd AS jsonb) WHERE id = :eid"),
-                        {"bsd": _json_mod.dumps(err_bsd), "eid": event.id},
+                        {"bsd": _json_mod.dumps(bsd), "eid": event.id},
                     )
-                    event.box_score_data = err_bsd
+                event.box_score_data = bsd
+                if box_score or scoring_plays:
+                    stats["box_scores_fetched"] = stats.get("box_scores_fetched", 0) + 1
+                if settled_over_live:
+                    stats["box_scores_settled_over_live"] = (
+                        stats.get("box_scores_settled_over_live", 0) + 1
+                    )
             except Exception as e:
                 logger.error(f"Box score fetch error for event {event.id}: {e}")
     finally:
@@ -2971,21 +2992,53 @@ async def fetch_live_box_scores(session, stats):
     10 slots a round-robin over every live event instead of a fixed window on
     ten of them. It costs no additional ESPN calls: the limit and the 2-minute
     staleness rule are both unchanged.
+
+    #9067 — THE 10 SLOTS WENT TO ROWS THIS PASS CAN NEVER FETCH
+    ------------------------------------------------------------
+    The query picked 10 rows and the loop below then skipped the ones it would
+    not fetch: a sport ESPN has no summary path for, or a box that is not a
+    live box. Nothing was written to those rows, so they held the top of the
+    staleness order for good. Tennis is both: no ``ESPN_SPORT_MAPPING`` path, and
+    the ESPN tennis anchor stores ``{"tennis": {...}}`` with no top-level
+    ``fetched_at``, which sorts first as NULL. Measured 9/30 03:23Z: 29 of 32
+    live ESPN-linked rows were tennis, and the pass reached none of the other
+    three. Red Sox at Yankees (15319563) kept its 01:59Z line score (NYY 2)
+    until it finished 9–0 at 03:18Z. So the loop's rule is now also the
+    query's WHERE, and only a row the pass will ask ESPN about can hold a slot.
     """
     from app.services.espn_api import ESPNAPIService
-    from app.models.models import Event
+    from app.models.models import Event, Sport
     from app.tasks.config import ESPN_SPORT_MAPPING
+    from sqlalchemy import and_
     from sqlalchemy.orm import selectinload
     import json as _json_mod
     from sqlalchemy import text as _raw_text
 
     stale_cutoff = datetime.now(timezone.utc) - timedelta(minutes=2)
+    # Every writer stamps `fetched_at` with `datetime.isoformat()` in UTC, so the
+    # stored strings sort in time order as text. A cast could raise on one bad
+    # row and cost the whole pass.
+    fetched_at_text = Event.box_score_data["fetched_at"].astext
     live_box_result = await session.execute(
         select(Event)
         .options(selectinload(Event.sport))
         .where(
             Event.status == "live",
             Event.espn_id.isnot(None),
+            # #9067: the same two rules the loop below applies.
+            Event.sport_id.in_(
+                select(Sport.id).where(Sport.key.in_(list(ESPN_SPORT_MAPPING)))
+            ),
+            or_(
+                Event.box_score_data.is_(None),
+                and_(
+                    Event.box_score_data["live"].astext == "true",
+                    or_(
+                        fetched_at_text.is_(None),
+                        fetched_at_text < stale_cutoff.isoformat(),
+                    ),
+                ),
+            ),
         )
         .order_by(
             Event.box_score_data["fetched_at"].astext.asc().nullsfirst(),

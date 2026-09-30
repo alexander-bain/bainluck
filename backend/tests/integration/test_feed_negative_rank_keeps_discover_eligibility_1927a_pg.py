@@ -535,31 +535,38 @@ async def test_persisted_swipe_feedback_alone_cannot_exclude_the_no_media_live_g
     with a NEUTRAL sport dial dismisses eight baseball cards not on the slate
     through the real interactions route. The escalated category term (-0.80)
     puts the subject at 19 → "not exceptional" → capped → deleted. It must
-    instead be served, at the bottom, with the swipe term visible in its rank."""
+    instead be served, at the bottom, with the swipe term visible in its rank.
+
+    #9645 (2026-09-29) goes further: a sports negative is exact/story scoped and
+    teaches no category term at all, so eight swipes on OTHER baseball cards
+    leave this one exactly where it was — served, same score, no dismissal term.
+    """
     user = seed.users["swiper"]
     before = _by_matchup(await _feed(pg, user, session_id=SESSION_A))
     assert SUBJECT in before and "personalized" not in before[SUBJECT], "neutral premise broken"
     await _swipe(pg, user, SESSION_A, EIGHT_BASEBALL_DISMISSES)
     after = _by_matchup(await _feed(pg, user, session_id=SESSION_A))
     assert SUBJECT in after, f"eight swipes deleted the no-media live game: {sorted(after)}"
-    reasons = after[SUBJECT]["personalization_reasons"]
-    assert any(r.startswith("discover_dismiss") for r in reasons), reasons
-    assert after[SUBJECT]["score"] < before[SUBJECT]["score"]
-    assert after[NBA_LIVE]["score"] > after[SUBJECT]["score"]
+    reasons = after[SUBJECT].get("personalization_reasons", [])
+    assert not any(r.startswith("discover_dismiss") for r in reasons), reasons
+    assert after[SUBJECT]["score"] == before[SUBJECT]["score"]
     # a swipe never wrote a sport preference
     assert not any(r.startswith("sport_nah") for r in reasons), reasons
 
 
 async def test_repeat_negative_feedback_on_top_of_a_stored_nah_still_serves_it(seed, pg):
     """Both negative signals at once: multiplier clamped at its minimum, card
-    still eligible on Discover, ranked last among the games, reached by paging."""
+    still eligible on Discover, ranked last among the games, reached by paging.
+
+    Since #9645 the eight swipes on OTHER baseball cards add no category term
+    (sports negatives are exact/story scoped); the stored Nah still ranks it."""
     user = seed.users["nah"]
     await _swipe(pg, user, SESSION_A, EIGHT_BASEBALL_DISMISSES)
     full = await _feed(pg, user, session_id=SESSION_A, limit=50)
     got = _by_matchup(full)
     assert SUBJECT in got, sorted(got)
     reasons = got[SUBJECT]["personalization_reasons"]
-    assert any(r.startswith("discover_dismiss") for r in reasons)
+    assert not any(r.startswith("discover_dismiss") for r in reasons), reasons
     assert any(r.startswith("sport_nah") for r in reasons)
     order = [_matchup(e) for e in _events(full)]
     assert order[-1] == SUBJECT or got[SUBJECT]["score"] <= min(e["score"] for e in _events(full)), order

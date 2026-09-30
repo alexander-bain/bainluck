@@ -159,6 +159,7 @@ from app.utils.futures_highlights import (
     SPORTS_CATEGORY_BASE,
 )
 from app.utils.feed_market_quality import (
+    _SPORTS_CATEGORIES,
     _story_key as compute_story_key,
     apply_explanation_quality_score,
     apply_quality_score,
@@ -279,7 +280,7 @@ from app.utils.labeling_queue import (
 from app.utils.duplicate_condition_outcomes import drop_duplicate_legs
 from app.utils.event_twin_fold import fold_twin_events
 from app.utils.name_normalization import names_match as _team_name_matches
-from app.utils.sport_keys import sport_display_name
+from app.utils.sport_keys import SPORT_LEAGUE_MAP, sport_display_name
 from app.utils.outcome_display import (
     _FIELD_SUM_MAX,
     display_divisor_mass,
@@ -461,6 +462,49 @@ _DISCOVER_ACTIONS = {
 #: affinity, category negative counts) and a set that drifts between them shows
 #: up as "swiping does nothing" and nowhere else.
 _DISCOVER_NEGATIVE_ACTIONS: frozenset[str] = frozenset({"dismiss", "unlike"})
+
+
+#: Every category a sports card can write, in the canonical key space: the LLM
+#: sports categories a futures card writes, plus every sport-key root an event
+#: card writes (`aussierules` is in the second and not the first). The category
+#: rollup carries no `item_type`, so a root missing here would still teach a
+#: whole-sport penalty from event swipes.
+_SPORTS_FEEDBACK_CATEGORIES: frozenset[str] = frozenset(
+    _SPORTS_CATEGORIES
+) | frozenset(
+    canonical_discover_category(key.split("_")[0]) for key in SPORT_LEAGUE_MAP
+)
+
+
+def _is_sports_feedback(category: str | None, item_type: str | None = None) -> bool:
+    """Whether a Discover interaction was on a sports card. #9645.
+
+    A negative swipe on a sports card is EXACT: it hides that card and its
+    story, and teaches nothing broader. Swiping away Yankees v Orioles says "not
+    this game", not "less baseball", "less matchups", "less Boston" or "less of
+    either team" — a two-team card cannot say which side the reader dislikes, and
+    the reader who swiped five unrelated MLB games away while opening every Red
+    Sox game was being taught the opposite of what they did. Positive sports
+    signals are untouched.
+
+    An `event` row is always a game. Otherwise the canonical category decides,
+    so an event card's sport-key root (`americanfootball`) and a futures card's
+    LLM category (`football`) agree.
+    """
+    if (item_type or "").strip().lower() == "event":
+        return True
+    return canonical_discover_category(category) in _SPORTS_FEEDBACK_CATEGORIES
+
+
+def _is_sports_negative(
+    category: str | None, action: str | None, item_type: str | None = None
+) -> bool:
+    """A negative swipe on a sports card — exact/story scoped only. #9645."""
+    return action in _DISCOVER_NEGATIVE_ACTIONS and _is_sports_feedback(
+        category, item_type
+    )
+
+
 # `concept` and `bundle` were missing, and the miss was silent in the worst way:
 # `_normalize_discover_value` coerces an unrecognized type to its DEFAULT, which
 # here is `"futures"`. So every swipe on a UFC/F1/cycling concept card was stored
@@ -5428,6 +5472,14 @@ async def get_feed(
                 debug_payload["external_curator_ground_truth_misses"] = []
         _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "debug")
 
+        # #5811: a game card the venue already graded says who won, as its event
+        # page does. Over ``feed_items`` (the page base every page is sliced
+        # from) and before the Redis write, so a cached page carries it too.
+        await _attach_feed_venue_settlement(db, feed_items, now)
+        _previous_at = _record_feed_timing(
+            _timings, _started_at, _previous_at, "venue_settlement"
+        )
+
         # Remove internal sort/debug keys.
         #
         # LAT-P141: over ``feed_items``, not ``paginated``. ``paginated`` is a
@@ -6175,6 +6227,117 @@ async def _attach_missing_ground_truth_traces(
         item["db_trace"] = summarize_missing_ground_truth_db_trace(
             item, matches, now=now
         )
+
+
+def _feed_item_may_be_askable(data: dict, now: datetime) -> bool:
+    """Could the venue-settlement gate admit this served event card? (#5811)
+
+    A cheap pre-filter over the SERVED dict, so the ordinary page issues no
+    query: it must be a strict SUPERSET of
+    :func:`~app.utils.venue_settlement.venue_settlement_is_askable`, which
+    stays the only rule. The gate admits a scoreless row that is ``suspended``
+    or started-without-result — and the latter needs ``scheduled`` and a start
+    more than ``UPCOMING_GRACE`` ago. ``live`` is never admitted on a list
+    (``askable_briefs`` passes ``live_claim_is_unbacked=False``).
+
+    An unparseable start keeps a ``scheduled`` card IN — the row re-read decides.
+    """
+    from app.utils.event_completion import UPCOMING_GRACE
+
+    if data.get("home_score") is not None or data.get("away_score") is not None:
+        return False
+    status = (data.get("status") or "").strip().lower()
+    if status == EVENT_SUSPENDED:
+        return True
+    if status != "scheduled":
+        return False
+    raw = data.get("commence_time")
+    try:
+        start = _utc(
+            raw if isinstance(raw, datetime) else datetime.fromisoformat(str(raw))
+        )
+    except (TypeError, ValueError):
+        return True
+    return start is None or start < now - UPCOMING_GRACE
+
+
+async def _attach_feed_venue_settlement(db, feed_items: list, now: datetime) -> None:
+    """#5811: a feed game card the venue already graded carries the verdict.
+
+    ``/sports`` → Live & Paused printed "No result reported · Sep 29" over
+    Borando–Escuza (``15320966``) while ``/events/15320966`` read
+    ``Settled · Ian Escuza wins``: every other door onto the shared card — the
+    detail route (#6381), the league rails (#6739), ``/api/events`` and search
+    (#7092), the dropdown (#9550) — attaches ``venue_settled`` /
+    ``venue_settled_result``, and the feed did not. Same shared reader, same
+    gate, same key names, so the feed cannot answer one row differently.
+
+    🔴 THE GATE READS THE ROW, NOT THE CARD, as #9550's does: the briefs are
+    built from a re-read of the row's own status, start and score. The served
+    dict only narrows WHICH rows are re-read (:func:`_feed_item_may_be_askable`).
+
+    Matched by id, never by position; only the two keys are copied, only when
+    the reader returned them, so a failed read leaves every card exactly as it
+    was (the reader's absent-vs-False contract). Fail-open: this is ``/api/feed``.
+    Producer half only — the section and the card are ux's (notice 41).
+    """
+    from types import SimpleNamespace
+
+    from app.utils.venue_settlement_reader import attach_venue_settlement
+
+    cards_by_id: dict[int, list[dict]] = {}
+    for item in feed_items:
+        if not isinstance(item, dict) or item.get("type") != "event":
+            continue
+        data = item.get("data")
+        if not isinstance(data, dict) or not isinstance(data.get("id"), int):
+            continue
+        if _feed_item_may_be_askable(data, now):
+            cards_by_id.setdefault(data["id"], []).append(data)
+    if not cards_by_id:
+        return
+
+    try:
+        result = await db.execute(
+            select(
+                Event.id,
+                Event.status,
+                Event.commence_time,
+                Event.home_team_name,
+                Event.away_team_name,
+                Event.home_score,
+                Event.away_score,
+                Event.win_probability_sources,
+            ).where(Event.id.in_(list(cards_by_id)))
+        )
+        # Plain scalars, never live ORM rows (gotcha #6). The start is made
+        # tz-aware because the gate answers a naive/aware TypeError with False.
+        rows = [
+            SimpleNamespace(
+                **{**dict(r._mapping), "commence_time": _utc(r.commence_time)}
+            )
+            for r in result.all()
+        ]
+        briefs = [
+            {
+                "id": row.id,
+                "status": served_event_status(row.status, row.commence_time, now),
+                "home_score": row.home_score,
+                "away_score": row.away_score,
+            }
+            for row in rows
+        ]
+        await attach_venue_settlement(db, rows, briefs, now)
+    except Exception:
+        logger.debug("Feed venue settlement attach skipped", exc_info=True)
+        return
+
+    for brief in briefs:
+        if "venue_settled" not in brief:
+            continue
+        for data in cards_by_id.get(int(brief["id"]), []):
+            data["venue_settled"] = brief["venue_settled"]
+            data["venue_settled_result"] = brief.get("venue_settled_result")
 
 
 def _utc(dt: datetime | None) -> datetime | None:
@@ -9121,54 +9284,68 @@ async def _load_personalization_context(
         prefs = prefs_result.scalar_one_or_none()
         pins = list(pins_result.scalars().all())
 
-    # Recent Discover behaviour — these DO run for a session-only principal,
-    # because a session can carry interactions even with no user attached.
-    interactions_result = await db.execute(
-        select(
-            DiscoverInteraction.category,
-            DiscoverInteraction.action,
-            func.count(DiscoverInteraction.id).label("count"),
+    # #9645 / #9236 (Alex, 2026-09-29): "No preference is learned without
+    # sign-in; browsing remains free." The two rollups below are the LEARNING
+    # reads — category and feature affinities — so they run only for a signed-in
+    # reader and read only rows that reader wrote while signed in
+    # (`user_id == user.id`, never the session arm). A signed-out swipe is still
+    # recorded (released clients keep their contract, diagnostics keep the row)
+    # and still hides its exact card via the recent-items read, which DOES keep
+    # the session arm; it just cannot teach a taste — neither to the anonymous
+    # session nor to the account that later signs in on it.
+    category_interaction_rows: list = []
+    feature_interaction_rows: list = []
+    if user:
+        interactions_result = await db.execute(
+            select(
+                DiscoverInteraction.category,
+                DiscoverInteraction.action,
+                func.count(DiscoverInteraction.id).label("count"),
+            )
+            .where(
+                DiscoverInteraction.user_id == user.id,
+                DiscoverInteraction.created_at >= interaction_cutoff,
+                DiscoverInteraction.category.isnot(None),
+            )
+            .group_by(DiscoverInteraction.category, DiscoverInteraction.action)
         )
-        .where(
-            interaction_identity_clause,
-            DiscoverInteraction.created_at >= interaction_cutoff,
-            DiscoverInteraction.category.isnot(None),
+        # #5453: materialise once — `Result.all()` is single-use and both
+        # builders read the same (category, action, count) rollup.
+        category_interaction_rows = interactions_result.all()
+        feature_interactions_result = await db.execute(
+            select(
+                DiscoverInteraction.item_type,
+                DiscoverInteraction.item_name,
+                DiscoverInteraction.category,
+                DiscoverInteraction.action,
+                func.count(DiscoverInteraction.id).label("count"),
+            )
+            .where(
+                DiscoverInteraction.user_id == user.id,
+                DiscoverInteraction.created_at >= interaction_cutoff,
+                DiscoverInteraction.item_name.isnot(None),
+                DiscoverInteraction.category.isnot(None),
+                DiscoverInteraction.action.in_(
+                    (
+                        "detail_click",
+                        "open",
+                        "share",
+                        "like",
+                        "unlike",
+                        "dismiss",
+                        "group_expand",
+                        "context_expand",
+                    )
+                ),
+            )
+            .group_by(
+                DiscoverInteraction.item_type,
+                DiscoverInteraction.item_name,
+                DiscoverInteraction.category,
+                DiscoverInteraction.action,
+            )
         )
-        .group_by(DiscoverInteraction.category, DiscoverInteraction.action)
-    )
-    feature_interactions_result = await db.execute(
-        select(
-            DiscoverInteraction.item_type,
-            DiscoverInteraction.item_name,
-            DiscoverInteraction.category,
-            DiscoverInteraction.action,
-            func.count(DiscoverInteraction.id).label("count"),
-        )
-        .where(
-            interaction_identity_clause,
-            DiscoverInteraction.created_at >= interaction_cutoff,
-            DiscoverInteraction.item_name.isnot(None),
-            DiscoverInteraction.category.isnot(None),
-            DiscoverInteraction.action.in_(
-                (
-                    "detail_click",
-                    "open",
-                    "share",
-                    "like",
-                    "unlike",
-                    "dismiss",
-                    "group_expand",
-                    "context_expand",
-                )
-            ),
-        )
-        .group_by(
-            DiscoverInteraction.item_type,
-            DiscoverInteraction.item_name,
-            DiscoverInteraction.category,
-            DiscoverInteraction.action,
-        )
-    )
+        feature_interaction_rows = feature_interactions_result.all()
     recent_items_result = await db.execute(
         select(
             DiscoverInteraction.item_type,
@@ -9215,18 +9392,15 @@ async def _load_personalization_context(
     pinned_event_ids = {p.target_id for p in pins if p.pin_type == "event"}
     pinned_futures_ids = {p.target_id for p in pins if p.pin_type == "future"}
 
-    # #5453: materialise once — `Result.all()` is single-use and both builders read
-    # the same (category, action, count) rollup. Calling `.all()` twice would hand
-    # the second builder an empty list, which is exactly the silent-zero shape that
-    # left `discover_category_negative_counts` write-dead in the first place.
-    _category_interaction_rows = interactions_result.all()
-    category_affinities = _build_discover_category_affinities(_category_interaction_rows)
+    # #5453: both builders read the ONE materialised rollup above. Calling
+    # `.all()` twice would hand the second builder an empty list, which is
+    # exactly the silent-zero shape that left `discover_category_negative_counts`
+    # write-dead in the first place.
+    category_affinities = _build_discover_category_affinities(category_interaction_rows)
     category_negative_counts = _build_discover_category_negative_counts(
-        _category_interaction_rows
+        category_interaction_rows
     )
-    feature_affinities = _build_discover_feature_affinities(
-        feature_interactions_result.all()
-    )
+    feature_affinities = _build_discover_feature_affinities(feature_interaction_rows)
     recent_seen_event_ids: set[int] = set()
     recent_seen_futures_ids: set[int] = set()
     recent_seen_event_at: dict[int, datetime] = {}
@@ -9271,7 +9445,17 @@ async def _load_personalization_context(
                     sk = compute_story_key(item_name, category or "")
                     if sk:
                         recent_dismissed_story_keys.add(sk)
-                    if len(recent_dismissed_feature_token_sets) < 50:
+                    # #9645 / CERT-3826: a sports negative carries NO
+                    # resemblance set. Dropping only its `team:`/`region:` tokens
+                    # was not enough — the `term:` tokens left behind still
+                    # softly penalised a distinct card by wording ("Aaron Judge
+                    # over 40 home runs" swiped ⇒ "over 50" at 0.70). The exact
+                    # card and its story key above are the whole of it.
+                    if (
+                        user
+                        and len(recent_dismissed_feature_token_sets) < 50
+                        and not _is_sports_feedback(category, item_type)
+                    ):
                         recent_dismissed_feature_token_sets.append(
                             _discover_semantic_tokens(
                                 item_name=item_name,
@@ -9438,6 +9622,12 @@ def _build_discover_category_affinities(rows) -> dict[str, float]:
     for category, action, count in all_rows:
         if action not in weights:
             continue
+        # #9645: a sports negative is exact/story scoped (the recent-items loop
+        # in `_load_personalization_context`). It neither lowers the sport's
+        # score nor counts toward the two-action minimum, so unrelated MLB
+        # swipes cannot cancel the Red Sox opens beside them.
+        if _is_sports_negative(category, action):
+            continue
         # CERT-2672: the rollup is keyed by ONE canonical category, not by
         # whichever vocabulary the card that produced the swipe happened to use.
         # An event card writes the sport-key root (`americanfootball`), a
@@ -9507,6 +9697,10 @@ def _build_discover_category_negative_counts(rows) -> dict[str, int]:
     counts: dict[str, int] = {}
     for category, action, count in rows:
         if action not in _DISCOVER_NEGATIVE_ACTIONS:
+            continue
+        # #9645: the escalation ladder is a whole-category downrank, which a
+        # sports negative no longer teaches — same skip as the affinity builder.
+        if _is_sports_negative(category, action):
             continue
         # Same canonical key as the affinity builder above (CERT-2672). These
         # two dictionaries are looked up with one category by
@@ -9823,6 +10017,12 @@ def _build_discover_feature_affinities(rows) -> dict[str, float]:
     raw_scores: dict[str, float] = {}
     for item_type, item_name, category, action, count in rows:
         if action not in weights:
+            continue
+        # #9645: every token a sports card derives — `category:`, `type:`,
+        # `format:matchup`, `archetype:`, `region:`, `team:`, both teams'
+        # `entity:` names — is broader than the card. A sports negative adds to
+        # none of them; its exact card and story are suppressed separately.
+        if _is_sports_negative(category, action, item_type):
             continue
         tokens = _discover_feature_tokens(
             item_name=item_name,

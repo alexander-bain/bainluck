@@ -21,12 +21,46 @@ final class SearchViewModelRaceTests: XCTestCase {
     private nonisolated final class ManualSearchTransport: @unchecked Sendable {
         private let lock = NSLock()
         private var pending: [String: CheckedContinuation<SearchResponse, Error>] = [:]
+        private var starts: [String: XCTestExpectation] = [:]
+        private var stopped = false
 
         func fetch(query: String, sport: String?) async throws -> SearchResponse {
             try await withCheckedThrowingContinuation { cont in
                 lock.lock()
+                guard !stopped else {
+                    lock.unlock()
+                    cont.resume(throwing: CancellationError())
+                    return
+                }
                 pending[query] = cont
+                let started = starts.removeValue(forKey: query)
                 lock.unlock()
+                started?.fulfill()
+            }
+        }
+
+        // Register before or after fetch enters: neither scheduling order
+        // can lose the signal that the continuation is ready to be released.
+        func startedExpectation(_ query: String) -> XCTestExpectation {
+            let expectation = XCTestExpectation(description: "search started: \(query)")
+            lock.lock()
+            let alreadyPending = pending[query] != nil
+            if !alreadyPending { starts[query] = expectation }
+            lock.unlock()
+            if alreadyPending { expectation.fulfill() }
+            return expectation
+        }
+
+        // Timeout cleanup must also reject a fetch that starts after cleanup.
+        func stop() {
+            lock.lock()
+            stopped = true
+            let waiting = Array(pending.values)
+            pending.removeAll()
+            starts.removeAll()
+            lock.unlock()
+            for continuation in waiting {
+                continuation.resume(throwing: CancellationError())
             }
         }
 
@@ -48,14 +82,18 @@ final class SearchViewModelRaceTests: XCTestCase {
         return try! JSONDecoder().decode(SearchResponse.self, from: Data(json.utf8))
     }
 
-    /// Spin the cooperative pool until the view model's search() has reached its
-    /// `await searchFetch(...)` suspension and registered the continuation.
-    private func waitForPending(_ transport: ManualSearchTransport, _ query: String) async {
-        for _ in 0..<1000 {
-            if transport.hasPending(query) { return }
-            await Task.yield()
+    /// Await the fake transport's actual start signal; a count of Task.yield
+    /// calls is not a bound on elapsed time or proof that search was scheduled.
+    private func waitForPending(_ transport: ManualSearchTransport, _ query: String) async -> Bool {
+        let started = transport.startedExpectation(query)
+        await fulfillment(of: [started], timeout: 10)
+        guard transport.hasPending(query) else {
+            // XCTest records the timeout; stop before exercising a nonexistent
+            // in-flight response and drain any other pending fake requests.
+            transport.stop()
+            return false
         }
-        XCTFail("timed out waiting for in-flight request: \(query)")
+        return true
     }
 
     // MARK: - Tests
@@ -67,11 +105,21 @@ final class SearchViewModelRaceTests: XCTestCase {
 
         vm.query = "raider"
         let older = Task { await vm.search() }
-        await waitForPending(transport, "raider")
+        guard await waitForPending(transport, "raider") else {
+            older.cancel()
+            await older.value
+            return
+        }
 
         vm.query = "raiders"
         let newer = Task { await vm.search() }
-        await waitForPending(transport, "raiders")
+        guard await waitForPending(transport, "raiders") else {
+            older.cancel()
+            newer.cancel()
+            await older.value
+            await newer.value
+            return
+        }
 
         // Newer resolves FIRST (correct result lands)...
         transport.complete("raiders", with: makeResponse(query: "raiders"))
@@ -93,7 +141,11 @@ final class SearchViewModelRaceTests: XCTestCase {
 
         vm.query = "wizards"
         let task = Task { await vm.search() }
-        await waitForPending(transport, "wizards")
+        guard await waitForPending(transport, "wizards") else {
+            task.cancel()
+            await task.value
+            return
+        }
 
         // User clears the field before the response arrives.
         vm.cancelInFlightWork()
@@ -115,7 +167,11 @@ final class SearchViewModelRaceTests: XCTestCase {
 
         vm.query = "celtics"
         let task = Task { await vm.search() }
-        await waitForPending(transport, "celtics")
+        guard await waitForPending(transport, "celtics") else {
+            task.cancel()
+            await task.value
+            return
+        }
 
         // Surface disappears (navigation away) → onDisappear calls this.
         vm.cancelInFlightWork()
@@ -135,7 +191,11 @@ final class SearchViewModelRaceTests: XCTestCase {
 
         vm.query = "lakers"
         let task = Task { await vm.search() }
-        await waitForPending(transport, "lakers")
+        guard await waitForPending(transport, "lakers") else {
+            task.cancel()
+            await task.value
+            return
+        }
 
         transport.complete("lakers", with: makeResponse(query: "lakers"))
         await task.value

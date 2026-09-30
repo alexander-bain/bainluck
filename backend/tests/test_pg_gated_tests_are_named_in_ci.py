@@ -41,7 +41,16 @@ INTEGRATION_DIR = Path(__file__).resolve().parent / "integration"
 #: A file is "PG-gated" if it skips itself on a Postgres URL env var. Those are
 #: the only files that can skip WITHOUT any local signal, which is what makes an
 #: unnamed one dangerous rather than merely unrun.
-PG_GATE_ENV_RE = re.compile(r"[A-Z_]*TEST_DATABASE_URL")
+#:
+#: #9602 follow-up (CERT-3793): the pattern used to be ``[A-Z_]*TEST_DATABASE_URL``,
+#: which only sees the ``*_TEST_*`` convention. Thirteen gated files use a name
+#: without ``TEST`` (``DELAY_CONTRACT_DATABASE_URL`` ×5, ``WS_SLATE_…``,
+#: ``GENERIC_HISTORY_…``, ``BLEND_DEADLOCK_…``, …), so a new file on one of
+#: those gates could go unnamed in ci.yml and this guard would never know it
+#: existed. Any PREFIXED ``*_DATABASE_URL`` is a gate. The bare ``DATABASE_URL``
+#: is not matched: the prefix-and-underscore is required, and the files that read
+#: the bare name are either gated on a prefixed one as well or not PG-gated.
+PG_GATE_ENV_RE = re.compile(r"[A-Z][A-Z0-9_]*_DATABASE_URL")
 
 #: Pre-existing violations, each of which must name why it is tolerated. This is
 #: a debt list, not a discretionary opt-out: an entry is a file whose gate does
@@ -84,6 +93,28 @@ def test_ci_names_every_pg_gated_integration_test():
         "skip in every environment and pytest still exits 0 — nothing about "
         f"them may be quoted as evidence: {sorted(unnamed - KNOWN_UNWIRED)}"
     )
+
+
+def test_detector_sees_gates_not_spelled_test_database_url():
+    """#9602 follow-up: a gate named without ``TEST`` is still a gate.
+
+    The #9602 playoff file and the #7617 file it reuses are gated on
+    ``DELAY_CONTRACT_DATABASE_URL``. Under the old pattern neither was in the
+    gated set, so deleting their ci.yml step would have left this guard green.
+    """
+    gated = _pg_gated_files()
+    for name in (
+        "test_certain_postseason_playoff_pg_9602.py",
+        "test_a_delay_is_not_silence_pg_7617.py",
+        "test_ws_slate_age_floor_pg_837.py",
+    ):
+        assert name in gated, f"{name} is PG-gated but the detector does not see it"
+
+    assert PG_GATE_ENV_RE.search('os.environ.get("DELAY_CONTRACT_DATABASE_URL")')
+    assert PG_GATE_ENV_RE.search('os.environ.get("SEARCH_TEST_DATABASE_URL")')
+    # The bare app URL is not a gate name; matching it would sweep in files
+    # that read the app's own database setting.
+    assert not PG_GATE_ENV_RE.search('os.environ.get("DATABASE_URL")')
 
 
 def test_known_unwired_list_does_not_outlive_its_entries():

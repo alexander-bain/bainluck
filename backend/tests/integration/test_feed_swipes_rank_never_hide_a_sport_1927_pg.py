@@ -612,17 +612,14 @@ async def test_what_a_yankees_swipe_actually_learns_is_bounded_and_not_team_targ
     """Measured, not claimed (BRIEF-24: "do not overclaim targeted team learning
     if it doesn't exist").
 
-    One dismissed Yankees card leaves a bounded feature dislike behind
-    (`FEATURE_DISLIKE_MAX_PENALTY`, -0.25) — and because the card's tokens are
-    mostly GENERIC (`category:baseball`, `type:event`, `format:matchup`, the
-    archetype), the other Yankees game and the Red Sox game receive the SAME
-    bounded term. The only Yankees-specific learner is the semantic-resemblance
-    penalty, which fires on a near-identical matchup, not on "any Yankees card".
-    This test pins that honestly: every remaining MLB card ranks below where it
-    ranked before the swipe, by a bounded amount, and none is removed.
+    It used to pin that one dismissed Yankees card left a bounded feature
+    dislike behind — and because the card's tokens are mostly GENERIC
+    (`category:baseball`, `type:event`, `format:matchup`, the archetype), the
+    other Yankees game and the RED SOX game received the same term. That is the
+    defect #9645 removes (Alex, 2026-09-29): a sports negative is exact/story
+    scoped and teaches nothing broader than the card. So every remaining MLB
+    card is served at exactly its pre-swipe multiplier with no dislike term.
     """
-    from app.utils.personalization import FEATURE_DISLIKE_MAX_PENALTY
-
     user = seed.users["nah"]
     before = {
         _matchup(e): e for e in _mlb_events(await _feed(pg, user, session_id=SESSION_A, mode="sports"))
@@ -646,11 +643,12 @@ async def test_what_a_yankees_swipe_actually_learns_is_bounded_and_not_team_targ
     for name in ("Yankees @ Rays", "Red Sox @ Rangers", "Royals @ Astros"):
         assert name in after, f"{name} was removed by a swipe on another card"
         reasons = after[name].get("personalization_reasons", [])
-        assert any(r.startswith("discover_feature_dislike") for r in reasons), reasons
-        assert after[name]["score"] <= before[name]["score"]
-        # bounded: the multiplier moved by no more than the feature cap (plus
-        # the category term's first rung, which a single swipe cannot reach).
-        assert after[name]["multiplier"] >= before[name]["multiplier"] + FEATURE_DISLIKE_MAX_PENALTY - 0.01
+        assert not any(
+            r.startswith(("discover_feature_dislike", "discover_dismiss", "semantic_dismiss"))
+            for r in reasons
+        ), reasons
+        assert after[name]["score"] == before[name]["score"]
+        assert after[name]["multiplier"] == pytest.approx(before[name]["multiplier"])
 
 
 async def test_anonymous_session_swipes_are_scoped_to_that_session(seed, pg):
@@ -682,6 +680,10 @@ async def test_eight_baseball_dismisses_plus_a_stored_nah_still_serve_baseball(s
     and the cards are STILL eligible. Eligibility, order and page inclusion
     are read separately: eligibility from the unpaged `total`, order from the
     served list, inclusion from a deliberately small page.
+
+    Since #9645 a baseball swipe no longer writes that category floor at all
+    (sports negatives are exact/story scoped); the stored Nah alone ranks the
+    cards down, and the eligibility/order/paging contract is unchanged.
     """
     user = seed.users["nah"]
     # Eight dismissals of baseball cards that are NOT on the slate, so the
@@ -699,7 +701,7 @@ async def test_eight_baseball_dismisses_plus_a_stored_nah_still_serve_baseball(s
     mlb = _mlb_events(full)
     assert sorted(_matchup(e) for e in mlb) == MLB_SLATE, "eligibility: a card was excluded"
     reasons = mlb[0]["personalization_reasons"]
-    assert any(r.startswith("discover_dismiss") for r in reasons), reasons
+    assert not any(r.startswith("discover_dismiss") for r in reasons), reasons
     assert any(r.startswith("sport_nah") for r in reasons), reasons
     # order: every MLB card sits below the loved sport's game and its future
     order = [(it["type"], _sport_of(it)) for it in full]

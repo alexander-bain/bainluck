@@ -42,7 +42,14 @@ jest.mock("@/components/Analytics", () => ({
 import DiscoverCard from "../../components/DiscoverCard";
 
 function servedBundle(): FeedItem {
-  return JSON.parse(JSON.stringify(fixture.bundle)) as FeedItem;
+  const item = JSON.parse(JSON.stringify(fixture.bundle)) as FeedItem;
+  // #9642: a collapsed bundle now seats three rows (selected design A) and the
+  // Mykolaivka row was the fourth. Hoist it into the peek so the render still
+  // goes through the real entry point; every member stays verbatim.
+  const data = item.data as unknown as { items: Array<{ data: { name: string } }> };
+  const isSpecimen = (m: { data: { name: string } }) => m.data.name.includes("Mykolaivka");
+  data.items = [...data.items.filter(isSpecimen), ...data.items.filter((m) => !isSpecimen(m))];
+  return item;
 }
 
 /** Every movement chip's visible text, e.g. "28.5 pts". */

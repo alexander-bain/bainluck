@@ -540,7 +540,9 @@ class TestTheFrontendContractStillHasTwoArms:
         tail = body[body.index(marker) :]
         returned = tail[tail.index("return ") : tail.index(";", tail.index("return "))]
         assert "isSuspendedStatus(status)" in returned
-        assert "startedWithoutResult(status, commenceTime, now)" in returned
+        # #9634: the arm passes the served `started_without_result` through —
+        # still ONE arm, and the same key `venue_settlement_is_askable` reads.
+        assert "startedWithoutResult(status, commenceTime, now, served)" in returned
         assert returned.count("||") == 1, (
             "hasNoReportedResult grew an arm; venue_settlement_is_askable must "
             "grow the same one or #6381 ships to a subset of its own class"

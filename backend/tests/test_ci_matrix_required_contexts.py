@@ -51,11 +51,16 @@ def _evaluate(cond: str | None, scope) -> bool:
     raise AssertionError(f"unrecognised backend-tests step condition: {cond!r}")
 
 
-def test_no_matrix_job_is_skipped_at_job_level_by_change_scope():
+def test_no_required_matrix_job_is_skipped_at_job_level_by_change_scope():
+    # #9670 database-integration is covered by the stable search-recall aggregate.
+    # Its worker names are not required contexts; aggregate failure/skip behavior
+    # is exercised in test_ci_postgres_groups.py.
     offenders = [
         name
         for name, job in _jobs().items()
-        if (job.get("strategy") or {}).get("matrix") and "change-scope" in str(job.get("if", ""))
+        if name != "database-integration"
+        and (job.get("strategy") or {}).get("matrix")
+        and "change-scope" in str(job.get("if", ""))
     ]
     assert not offenders, (
         f"{offenders} skip a MATRIX job at job level on change-scope. A job-level skip never "
@@ -112,4 +117,5 @@ def test_deploy_still_waits_on_the_sibling_gates_that_skip_on_frontend():
         assert not (job.get("strategy") or {}).get("matrix"), (
             f"{name} became a matrix job; a job-level skip would then drop its required contexts"
         )
-        assert job.get("if") == RUNS, (name, job.get("if"))
+        expected = f"always() && {RUNS}" if name == "search-recall" else RUNS
+        assert job.get("if") == expected, (name, job.get("if"))

@@ -19,6 +19,8 @@ rewrite carries no live stamp so the row is not asked again.
 
 from __future__ import annotations
 
+import contextlib
+
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -63,6 +65,10 @@ class _RecordingSession:
             return _FakeResult(self._events)
         self.writes.append((statement, params))
         return _FakeResult([])
+
+    def begin_nested(self):
+        # #9713: the settled box-score write runs in a per-game SAVEPOINT.
+        return contextlib.nullcontext()
 
 
 def _completed_event(box_score_data):
