@@ -35,12 +35,14 @@ async def add_feed_collections(
     page_window=20,
     budget_seconds=COLLECTION_READ_BUDGET_SECONDS
 ):
-    """Insert eligible cards by the existing key, preserving ordinary deck order.
+    """Insert eligible cards before their strongest member in the composed deck.
 
     Read publication on every serve; callers must not cache the resulting deck.
-    A hub inherits its strongest visible member's score and recency, so it
-    cannot purchase a slot with a new ranking bonus. The producer card remains
-    intact under ``data``, the normal feed envelope.
+    The existing key selects the strongest visible member; its actual position
+    determines placement. Composition has already moved cards out of key order,
+    so a key scan cannot determine that position. A hub inherits the member's
+    score and recency without a bonus. The producer card remains intact under
+    ``data``, the normal feed envelope.
     """
     games = {
         item["data"]["id"]: item
@@ -70,23 +72,26 @@ async def add_feed_collections(
             continue
         strongest = max(members, key=rank_key)
         additions.append(
-            {
-                "type": "collection",
-                "score": strongest.get("score", 0),
-                "_rank_score": strongest.get("_rank_score", strongest.get("score", 0)),
-                "_sort_time": strongest.get("_sort_time", 0),
-                "reason": card["name"],
-                "headline": None,
-                "data": card,
-            }
+            (
+                strongest,
+                {
+                    "type": "collection",
+                    "score": strongest.get("score", 0),
+                    "_rank_score": strongest.get(
+                        "_rank_score", strongest.get("score", 0)
+                    ),
+                    "_sort_time": strongest.get("_sort_time", 0),
+                    "reason": card["name"],
+                    "headline": None,
+                    "data": card,
+                },
+            )
         )
     if not additions:
         return items
     result = list(items)
-    for card in sorted(additions, key=rank_key, reverse=True):
-        position = next(
-            (i for i, item in enumerate(result) if rank_key(card) > rank_key(item)),
-            len(result),
-        )
-        result.insert(position, card)
+    for strongest, card in sorted(
+        additions, key=lambda addition: rank_key(addition[1]), reverse=True
+    ):
+        result.insert(result.index(strongest), card)
     return result

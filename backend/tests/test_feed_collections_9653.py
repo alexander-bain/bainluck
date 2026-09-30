@@ -115,6 +115,48 @@ async def test_card_competes_without_a_slot_or_score_bonus(monkeypatch, card):
     assert feed_edition_token(result) != feed_edition_token(items)
 
 
+@pytest.mark.parametrize("page_size", [2, 4, 5])
+async def test_hub_stays_before_its_member_in_an_unsorted_composed_deck(
+    monkeypatch, card, page_size
+):
+    # Discover's composition can lead with low-scored games ahead of stronger
+    # futures. The hub's member is fifth, after a lower-keyed second lead game;
+    # comparing keys across this deck would incorrectly seat the hub second.
+    items = [
+        {**event(1, 35), "_sort_time": 100},
+        {**event(2, 35), "_sort_time": 5},
+        {"type": "futures", "score": 92, "data": {"id": 900}},
+        {"type": "futures", "score": 88, "data": {"id": 901}},
+        {**event(7, 35), "_sort_time": 10},
+    ]
+    before = copy.deepcopy(items)
+    card = {**card, "matched_event_ids": [7]}
+    monkeypatch.setattr(
+        producer,
+        "discover_collections",
+        AsyncMock(return_value=SimpleNamespace(collections=[card])),
+    )
+
+    result = await consumer.add_feed_collections(AsyncMock(), items, rank_key=_rank_key)
+
+    assert result[:4] == before[:4]  # No unearned lead slot or futures reorder.
+    assert result[4]["type"] == "collection"
+    assert result[4]["data"] == card
+    assert result[5] == before[4]
+    assert items == before
+    assert [item for item in result if item["type"] != "collection"] == before
+
+    # The hub/member pair may span a page boundary. Both still occur once in
+    # the same augmented deck, with no displaced/skipped ordinary card.
+    pages = [
+        result[offset : offset + page_size]
+        for offset in range(0, len(result), page_size)
+    ]
+    flattened = [item for page in pages for item in page]
+    assert flattened == result
+    assert len({(item["type"], item["data"]["id"]) for item in flattened}) == 6
+
+
 async def test_a_card_without_a_visible_member_is_not_offered(monkeypatch, card):
     read = AsyncMock(return_value=SimpleNamespace(collections=[card]))
     monkeypatch.setattr(producer, "discover_collections", read)
