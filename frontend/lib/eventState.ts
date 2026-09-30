@@ -268,6 +268,25 @@ export function venueSettledSummary(
 }
 
 /**
+ * #9798 — did the venue close this match with NO winner (a void: walkover,
+ * withdrawal, a match never played)? The same rule {@link venueSettledSummary}
+ * applies to pick {@link VENUE_CLOSED_NO_WINNER_LABEL}: a graded winner wins.
+ *
+ * Its own answer, not `venueSettledSummary(...) !== null`, because the two
+ * mean opposite things to a market row. A venue-settled match's legs carry
+ * their grades; a voided match's legs were paid out at the void price
+ * (`is_winner=false` on BOTH sides, probability 0.5), so reading them as
+ * graded prints "Lost" beside every player — `/events/15321431` did exactly
+ * that at 390px on 2026-09-30, four "Lost"s under an "Ended · no winner" pill.
+ */
+export function isVenueVoided(
+  venueSettled: boolean | null | undefined,
+  venueClosedNoWinner: boolean | null | undefined,
+): boolean {
+  return !venueSettled && venueClosedNoWinner === true;
+}
+
+/**
  * Which side a surface paints FIRST when it prints a pair of scores.
  *
  * Not a preference and not a style token — a fact about a specific component,
