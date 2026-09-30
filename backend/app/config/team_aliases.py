@@ -388,3 +388,71 @@ def curated_team_aliases(sport_key: str | None, team_name: str | None) -> tuple[
     row, which is why the backfill writes them too.
     """
     return tuple(CURATED_TEAM_ALIASES.get((sport_key or "", team_name or ""), ()))
+
+
+# #9834 — club SHORT FORMS: what a reader types that shares no usable word with the
+# club's name. Measured on production 2026-09-30 ~13:30Z, `/api/events/search`:
+#
+#     query          teams               games   markets
+#     man utd        0                   0       0
+#     man u          0                   0       7   (row 1: a Le Mans Europa League market)
+#     man united     Manchester United   7       0
+#     man city       Manchester City     7       0
+#     bvb            0                   0       0
+#
+# while `manchester united`, `manchester city` and `borussia dortmund` each serve
+# the team, their games and 10 markets. None of the five short forms appears in any
+# open market name or any game of the last 30 days (0/0/0), so nothing is lost by
+# answering them with the full name.
+#
+# WHY NOT `CURATED_TEAM_ALIASES`. Every consumer of that map looks up ONE term, and
+# its market and game arms expand to the LAST word of the club's name, sport-scoped.
+# For these clubs that word is `United` or `City`, which dozens of soccer clubs
+# share, so a sport scope cannot separate them. And the map is keyed per
+# (sport, name): Manchester United plays EPL, Champions League and FA Cup games under
+# three sport keys, and an alias claimed by three entries is contested and refused
+# (`_alias_claim_counts`). A short form stands for the club's WHOLE name in every
+# competition, so the honest rewrite is the query itself: `man utd` is answered
+# exactly as `manchester united` is.
+#
+# Keep entries UNAMBIGUOUS and measured, like the map above. `spurs` is not here: it
+# is the San Antonio Spurs as much as Tottenham, and both cards already show.
+CLUB_QUERY_SHORT_FORMS: dict[tuple[str, ...], str] = {
+    ("man", "utd"): "Manchester United",
+    ("man", "united"): "Manchester United",
+    ("man", "u"): "Manchester United",
+    ("man", "city"): "Manchester City",
+    ("bvb",): "Borussia Dortmund",
+}
+
+_SHORT_FORM_MAX_WIDTH = max(len(key) for key in CLUB_QUERY_SHORT_FORMS)
+
+
+def expand_club_short_forms(query: str) -> str:
+    """`query` with every club short form replaced by the club's full name (#9834).
+
+    Whole words only, matched case-insensitively over a CONTIGUOUS span, longest
+    span first, with the surrounding words kept: `man utd today` -> `Manchester
+    United today`. `manu`, `man` alone and `batman u` are untouched, because a
+    short form is a whole-word phrase and not a substring.
+
+    Returns `query` itself — the same string, whitespace and all — when nothing
+    matches, which is every query but these few. Pure, so the guards pin it.
+    """
+    words = query.split()
+    lowered = [word.lower() for word in words]
+    out: list[str] = []
+    changed = False
+    index = 0
+    while index < len(words):
+        for width in range(min(_SHORT_FORM_MAX_WIDTH, len(words) - index), 0, -1):
+            club = CLUB_QUERY_SHORT_FORMS.get(tuple(lowered[index : index + width]))
+            if club is not None:
+                out.extend(club.split())
+                index += width
+                changed = True
+                break
+        else:
+            out.append(words[index])
+            index += 1
+    return " ".join(out) if changed else query

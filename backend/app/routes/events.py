@@ -171,6 +171,7 @@ from app.utils.game_window import (
 from app.utils.name_normalization import diacritic_fold_query, expand_search_terms
 from app.config.team_aliases import (
     curated_team_aliases,
+    expand_club_short_forms,
     team_nickname_event_expansions,
     team_nickname_search_expansions,
     team_nickname_team_rows,
@@ -9222,6 +9223,11 @@ async def search_events(
         if _intent is not None and _intent.kind in _IDENTITY_SUBSTITUTED_KINDS
         else q
     )
+    # #9834: a club's short form identifies the club — `man utd` and `bvb` share
+    # no word with any name a rail matches, so the page answered them with
+    # nothing. An identity site, so it rewrites the subject and never `q`; the
+    # same call sits at `/typeahead`'s `_q_identity` so the two cannot disagree.
+    _q_identity = expand_club_short_forms(_q_identity)
 
     # `search_pattern = f"%{q}%"` STOOD HERE AND WAS DEAD — assigned on this line
     # and read nowhere in the backend (one occurrence in the tree). It is deleted
@@ -13194,6 +13200,9 @@ async def typeahead_search(
     # used to find the thing they asked it about.
     _ta_intent = parse_intent(q)
     _q_identity = _ta_intent.subject if _ta_intent else q
+    # #9834: club short forms (`man utd`, `bvb`) name the club — the same
+    # rewrite, at the same identity site, as `/search`.
+    _q_identity = expand_club_short_forms(_q_identity)
     # #9527: the same subject with a matchup connector dropped, for the sites
     # that ask whether the reader named the teams and for the ranker. Read
     # `_matchup_subject` for why those, and only those.
