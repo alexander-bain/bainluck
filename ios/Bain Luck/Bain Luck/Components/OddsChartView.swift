@@ -444,6 +444,16 @@ struct OddsChartView: View {
                            commenceTimeIsKickoff: vm.history?.commenceTimeIsKickoff)
     }
 
+    /// #6158 — where the Since Start window opens: the first OBSERVED opening
+    /// period on a game that began late, else `kickoffDate`. The page's shared
+    /// window opens at the same instant; this is the cut when there is none
+    /// (the fullscreen chart), so the two views agree on when play began.
+    private var sinceStartDate: Date? {
+        guard let kickoffDate else { return nil }
+        return ObservedPlayStart.cut(scheduled: kickoffDate, history: vm.history,
+                                     sportKey: sportKey) ?? kickoffDate
+    }
+
     /// Show the All / Since Start picker only when the game has started
     /// and we know when it started.
     private var showPicker: Bool {
@@ -1141,7 +1151,7 @@ struct OddsChartView: View {
         }
 
         guard isGameStarted else { return filtered }
-        return Self.sinceStartWindow(filtered, range: drawnRange, kickoff: kickoffDate)
+        return Self.sinceStartWindow(filtered, range: drawnRange, kickoff: sinceStartDate)
     }
 
     /// #7878 D / #8215 — where "Since Start" may cut, or `nil` for nowhere.
