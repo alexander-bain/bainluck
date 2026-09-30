@@ -649,6 +649,7 @@ WRONG_GAME_PREFIXES = frozenset({
     "kxcs2game", "kxcs2map", "kxcs2mapwinner",
     "kxlolgame", "kxlolmap",
     "kxvalorantgame", "kxvalorantmap",
+    "kxdota2game", "kxdota2map",  # #9823
 })
 
 
@@ -775,7 +776,7 @@ _EVENT_DATE_MAX_DIFF_DAYS = 2
 # the gap, admits the whole near cluster, and still refuses the 489+ beyond
 # ±60h tournament-dump population that WRONG_GAME_PREFIXES exists to catch.
 # The date-only rule is UNCHANGED for esports (>=2 Eastern days).
-_ESPORTS_TICKER_PREFIXES = ("kxcs2", "kxlol", "kxvalorant")
+_ESPORTS_TICKER_PREFIXES = ("kxcs2", "kxlol", "kxvalorant", "kxdota2")  # kxdota2: #9823
 _ESPORTS_EVENT_DATE_MAX_DIFF_HOURS = 12
 
 try:  # pragma: no cover - exercised implicitly; only the absence path is dead
