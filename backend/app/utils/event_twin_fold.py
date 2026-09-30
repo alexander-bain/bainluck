@@ -169,6 +169,7 @@ from app.utils.proven_duplicates import merge_opening_line
 from app.utils.search_fixture_dedup import FIXTURE_TIME_WINDOW_HOURS
 from app.utils.soccer_team_matching import club_alias_tokens, soccer_pair_matches
 from app.utils.sport_keys import is_season_variant, league_identity
+from app.utils.venue_club_spellings import VENUE_CLUB_SPELLINGS
 
 logger = logging.getLogger(__name__)
 
@@ -268,15 +269,34 @@ def _settled_on_one_scoreline(left: list, right: list) -> bool:
     return len(scores) == 1 and len(espn_ids) <= 1
 
 
+def _squash_spelling(name: str) -> str:
+    return _NON_ALNUM.sub("", strip_diacritics(name).lower())
+
+
+#: #8100: a venue's whole-name spelling, squashed, onto ours squashed. Applied
+#: to the WHOLE squashed name only, so it can never rewrite part of a name.
+_VENUE_SQUASHED: dict[str, str] = {
+    _squash_spelling(venue): _squash_spelling(ours)
+    for venue, ours in VENUE_CLUB_SPELLINGS.items()
+}
+
+
 def _squash(name: Optional[str]) -> str:
     """Alphanumeric-only, lowercase, diacritic-free form of a team name.
 
     "St. Louis Cardinals" and "St.Louis Cardinals" both become
     "stlouiscardinals"; "Atlético Madrid" becomes "atleticomadrid".
+
+    #8100: and a venue's whole-name spelling of a club named in
+    :data:`~app.utils.venue_club_spellings.VENUE_CLUB_SPELLINGS` squashes to
+    ours: Polymarket's "South East Melbourne Phoenix" is "semelbournephoenix",
+    like the Odds API's "S.E. Melbourne Phoenix". Only a whole name in that
+    table moves; every other name squashes exactly as before.
     """
     if not name:
         return ""
-    return _NON_ALNUM.sub("", strip_diacritics(name).lower())
+    squashed = _squash_spelling(name)
+    return _VENUE_SQUASHED.get(squashed, squashed)
 
 
 team_name_fold_key = _squash
