@@ -612,6 +612,83 @@ async def _relink_outside_market_conference(
             stats["outcomes_unlinked_outside_market_conference"] += 1
 
 
+async def _relink_contradicted_in_league(
+    session: AsyncSession, stats: dict, limit: int
+) -> None:
+    """Move a stored link its own league's matcher names a different school for (#9952).
+
+    North Carolina's football page listed NC State's playoff and title odds as its
+    own: 53 open "North Carolina St." legs sat on the Tar Heels while the Wolfpack
+    row (alias "north carolina state") got none, and 46 "Northwestern" legs sat on
+    the Northwestern State Demons. Measured 2026-09-30 over all 19,693 open Kalshi
+    links: the #9617 matcher named a different team on 114 legs (10 names, all
+    NCAAF), and every stored link was the wrong school. Phase 3 re-decides only a
+    link outside its market's league, 3b the other conference, so a wrong school
+    inside the right league was permanent.
+
+    Only a positive contradiction moves a link — the matcher's unique answer in the
+    stored team's league, different from the stored team. No answer leaves the link
+    alone (event-linked and roster links are names the matcher cannot read), and an
+    answer 3b would move back across a conference is skipped, so no pass undoes
+    another.
+    """
+    from app.models import FuturesMarket, FuturesOutcome, Sport, Team
+    from app.utils.market_team_sport import link_crosses_conference, link_crosses_league
+    from app.utils.team_linking import match_outcome_to_league_team
+
+    rows = (
+        await session.execute(
+            select(
+                FuturesOutcome.id,
+                FuturesOutcome.name,
+                FuturesOutcome.team_id,
+                FuturesMarket.source,
+                FuturesMarket.external_id,
+                Sport.key,
+            )
+            .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
+            .join(Team, Team.id == FuturesOutcome.team_id)
+            .join(Sport, Sport.id == Team.sport_id)
+            .where(FuturesMarket.source == "kalshi", FuturesMarket.status == "open")
+            .order_by(FuturesOutcome.id)
+        )
+    ).all()
+
+    league_teams: dict[str, list[dict]] = {}
+    answers: dict[tuple[str, str], Optional[int]] = {}
+    decisions: dict[int, int] = {}
+    for row in rows:
+        if link_crosses_league(row.source, row.external_id, row.key):
+            continue  # Phase 3's row
+        if row.key not in league_teams:
+            league_teams[row.key] = await _load_teams_by_sport(session, [row.key])
+        if (row.name, row.key) not in answers:
+            answers[(row.name, row.key)] = match_outcome_to_league_team(
+                row.name, league_teams[row.key]
+            )
+        new_team_id = answers[(row.name, row.key)]
+        if not new_team_id or new_team_id == row.team_id:
+            continue
+        new_name = next(t["name"] for t in league_teams[row.key] if t["id"] == new_team_id)
+        if link_crosses_conference(row.source, row.external_id, row.key, new_name):
+            continue  # 3b would move it back
+        decisions[row.id] = new_team_id
+
+    stats["links_contradicted_in_league"] = len(decisions)
+    chosen = dict(list(decisions.items())[:limit])
+    if not chosen:
+        return
+
+    outcomes = (
+        await session.execute(
+            select(FuturesOutcome).where(FuturesOutcome.id.in_(list(chosen)))
+        )
+    ).scalars().all()
+    for outcome in outcomes:
+        outcome.team_id = chosen[outcome.id]
+        stats["outcomes_relinked_in_league"] += 1
+
+
 async def link_outcome_to_team(
     session: AsyncSession,
     outcome_name: str,
@@ -734,6 +811,7 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
         "outcomes_relinked_into_market_conference": 0,
         "outcomes_unlinked_outside_market_conference": 0,
         "outcomes_unlinked_given_name_city_alias": 0,
+        "outcomes_relinked_in_league": 0,
         "markets_tiered": 0,
         "units_rolled_back": [],
         "errors": [],
@@ -1037,6 +1115,10 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
             # --- Phase 3c: stored links on a surname that is a city (#9726) ---
             async with _unit(session, stats, "Given-name city unlink"):
                 await _unlink_given_name_city_alias(session, stats, limit)
+
+            # --- Phase 3d: stored links on the wrong school in the right league (#9952) ---
+            async with _unit(session, stats, "In-league contradiction relink"):
+                await _relink_contradicted_in_league(session, stats, limit)
 
         # Outside the session:``get_task_session`` commits on the way out and
         # rolls back on an exception, so reaching here is the proof the batch
