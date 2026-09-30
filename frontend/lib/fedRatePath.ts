@@ -72,3 +72,24 @@ export function ratePathHeading(meetings: readonly RatePathMeeting[] | null | un
       : String(last);
   return `${first}–${abbreviated} rate path`;
 }
+
+/**
+ * The heatmap grid's minimum width for a given number of meeting columns.
+ *
+ * #9856 — the floor was a fixed 500px, sized for five meetings. When the card
+ * dropped to three, the 500px grid sat in a 316px scroller at a 390px viewport
+ * and the last meeting (Jan 2027) was entirely off-screen: a reader saw two
+ * columns and no hint of a third. 70px per column plus the 70px rate-label
+ * track keeps three meetings on a 360px phone; the cap at the old 500 leaves a
+ * long rate path scrolling exactly as it did before.
+ */
+export const HEATMAP_LABEL_TRACK_PX = 70;
+export const HEATMAP_MIN_COLUMN_PX = 70;
+export const HEATMAP_MAX_MIN_WIDTH_PX = 500;
+
+export function heatmapMinWidth(meetingCount: number): number {
+  return Math.min(
+    HEATMAP_MAX_MIN_WIDTH_PX,
+    HEATMAP_LABEL_TRACK_PX + meetingCount * HEATMAP_MIN_COLUMN_PX,
+  );
+}
