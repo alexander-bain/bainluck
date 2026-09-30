@@ -5738,8 +5738,8 @@ jobs:
             echo "::error::#9588 later-session contract SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]5 passed," /tmp/latersession9588.txt || {
-            echo "::error::#9588 later-session contract did not run all five cases"
+          grep -qE "[^0-9]10 passed," /tmp/latersession9588.txt || {
+            echo "::error::#9588 later-session contract did not run all ten cases"
             exit 1
           }
 

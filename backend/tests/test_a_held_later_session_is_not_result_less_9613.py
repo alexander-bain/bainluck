@@ -29,8 +29,10 @@ from app.utils.event_completion import (
     ESPN_NOT_STARTED_KEY,
     STATPAL_LATER_SESSION_HORIZON,
     STATPAL_LATER_SESSION_KEY,
+    STATPAL_RELEASED_SESSION_KEY,
     started_without_result,
     statpal_later_session_value,
+    statpal_released_session_value,
 )
 from app.utils.event_rails import (
     started_without_result_rows,
@@ -42,6 +44,7 @@ from tests.test_a_result_less_fixture_does_not_lead_the_search_4876 import (
     _tier_of,
 )
 from tests.test_a_venue_stamp_does_not_start_a_later_session_9588 import (
+    FIXTURE,
     KALSHI_STAMP,
     STATPAL_START,
     _anchor_for,
@@ -97,8 +100,8 @@ class TestTheSpecimen:
         assert started_without_result("scheduled", KALSHI_STAMP, at_start, _sources(HELD)) is True
 
     def test_a_row_past_the_horizon_is_not_held(self):
-        """The writer only revisits rows inside the promoter's 24h window, so a
-        stamp past it is one nothing maintains."""
+        """The writer only revisits a stamped row inside the band, so a stamp
+        past it is one nothing maintains."""
         old = READ - STATPAL_LATER_SESSION_HORIZON - timedelta(minutes=1)
         far = statpal_later_session_value(READ + timedelta(hours=3))
         assert started_without_result("scheduled", old, READ, _sources(far)) is True
@@ -244,7 +247,14 @@ class TestTheWriter:
             anchors=[_anchor_for(15320754, start="2026-09-29T09:00:00+00:00")],
         )
         assert row.status == "live"
-        assert row.win_probability_sources == {"kalshi": 1}
+        # CERT-3811: the hold's stamp goes, and the release leaves its receipt
+        # so the clock survives StatPal's first score. Nothing else is touched.
+        assert row.win_probability_sources == {
+            "kalshi": 1,
+            STATPAL_RELEASED_SESSION_KEY: statpal_released_session_value(
+                datetime(2026, 9, 29, 9, 0, tzinfo=timezone.utc), FIXTURE
+            ),
+        }
         assert stats["statpal_later_session_cleared"] == 1
 
     @pytest.mark.asyncio

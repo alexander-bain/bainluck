@@ -368,16 +368,48 @@ def statpal_names_a_later_session(
     The hold ends at StatPal's start, when the clock runs as before. It also
     ends on evidence: play on the row, or a better source rewriting
     ``commence_time_source``. Every clause fails OPEN.
+
+    The band StatPal's start may sit in is
+    :data:`STATPAL_LATER_SESSION_HORIZON`, the same constant every reader of
+    the stamp honours (#9613), so a row this holds is never a row a reader
+    calls "No result reported". Beyond it the hold fails OPEN.
+    """
+    start = statpal_later_session_clock(
+        commence_time_source,
+        statpal_fixture_id,
+        has_play_evidence,
+        commence_time,
+        statpal_start,
+    )
+    return start is not None and now < start
+
+
+def statpal_later_session_clock(
+    commence_time_source,
+    statpal_fixture_id,
+    has_play_evidence,
+    commence_time,
+    statpal_start,
+):
+    """StatPal's start when it is this row's real start, else None. #9588, #9613.
+
+    The clock-free half of :func:`statpal_names_a_later_session`. Before
+    StatPal's start it is the hold. After it, it is where the row's clock
+    starts: ``transition_event_statuses`` measures a promoted row's staleness
+    from here, not from the venue stamp. Otherwise a match promoted at its
+    Beijing session would be 21 hours "past its start" on the same pass and be
+    suspended before a ball was hit.
     """
     if not statpal_schedule_candidate(
         commence_time_source, statpal_fixture_id, has_play_evidence
     ):
-        return False
+        return None
     if statpal_start is None or commence_time is None:
-        return False
-    if statpal_start - commence_time <= STATPAL_LATER_SESSION_MARGIN:
-        return False
-    return now < statpal_start
+        return None
+    gap = statpal_start - commence_time
+    if gap <= STATPAL_LATER_SESSION_MARGIN or gap > STATPAL_LATER_SESSION_HORIZON:
+        return None
+    return statpal_start
 
 
 # ── The #9588 hold, as the readers that cannot run it see it (#9613) ─────────
@@ -392,12 +424,26 @@ def statpal_names_a_later_session(
 #
 # The value is StatPal's start, so the stamp runs out on its own at the instant
 # the hold would have. It is honoured only while the row's own start is inside
-# the promoter's 24h window, the window in which the task revisits the row every
-# pass and rewrites or clears the stamp. A reader therefore never trusts a stamp
+# STATPAL_LATER_SESSION_HORIZON. The task revisits a stamped row every pass for
+# that long and rewrites or clears the stamp, so a reader never trusts a stamp
 # the task has stopped maintaining. The upper bound gives the SQL half a text
 # range that a malformed value cannot satisfy.
 STATPAL_LATER_SESSION_KEY = "statpal_later_session_start"
-STATPAL_LATER_SESSION_HORIZON = timedelta(hours=24)
+
+#: THE ONE BAND of the #9588 hold. Three readers and one writer bound it here:
+#: the writer holds only while StatPal's start is at most this far after the
+#: row's own, the promoter keeps revisiting a stamped row for this long, and
+#: both reader halves honour the stamp inside it. So every stamp the writer
+#: writes is one the readers honour for as long as it is live.
+#:
+#: MEASURED, production 2026-09-29 22:05Z, over the 37 rows the #9588 census
+#: found (venue-stamped, StatPal start more than the margin later, 35 days):
+#: the largest gap is 34.66h (15309330, Polymarket 05:20Z 9/10 → StatPal 16:00Z
+#: 9/11), and 9 of the 37 exceed 24h (26.0–34.66h). The band was 24h, so on
+#: those nine a held row read "No result reported" once its venue stamp aged out
+#: while StatPal's session was still ahead. 48h is the largest gap with half
+#: a day to spare.
+STATPAL_LATER_SESSION_HORIZON = timedelta(hours=48)
 
 
 def statpal_later_session_value(statpal_start) -> str:
@@ -427,6 +473,77 @@ def clear_statpal_later_session(sources):
     updated = dict(sources)
     updated.pop(STATPAL_LATER_SESSION_KEY, None)
     return updated
+
+
+# ── The receipt the hold leaves when it releases a row (#9613, CERT-3811) ────
+#
+# The clock above is only computable while the row is a hold candidate, and a
+# candidate has no play on it. So the first StatPal score or period on a
+# released row ended the clock: the staleness arm fell back to the venue stamp,
+# 21h or more before the session, and suspended a match being played. CERT-3811
+# reproduced it one hour into the session with ``period='1st Set'``.
+#
+# When the task releases a row onto StatPal's clock it writes this receipt, and
+# after play arrives the staleness arm reads the clock from it. It is honoured
+# only where the clock itself would be: the row's start is still the venue
+# stamp, it still carries the same StatPal fixture, the start sits inside the
+# hold's band, and it has arrived. A string, like the hold's stamp, because
+# several readers walk every key of ``win_probability_sources`` and a string is
+# the shape they already pass over.
+STATPAL_RELEASED_SESSION_KEY = "statpal_released_session"
+
+
+def statpal_released_session_value(statpal_start, statpal_fixture_id) -> str:
+    """The stored form: ``<UTC isoformat>|<StatPal fixture id>``."""
+    return (
+        f"{statpal_later_session_value(statpal_start)}|"
+        f"{str(statpal_fixture_id or '').strip()}"
+    )
+
+
+def stamp_statpal_released_session(sources, statpal_start, statpal_fixture_id):
+    """A NEW sources dict carrying the receipt, or the original when it already does."""
+    value = statpal_released_session_value(statpal_start, statpal_fixture_id)
+    if isinstance(sources, dict) and sources.get(STATPAL_RELEASED_SESSION_KEY) == value:
+        return sources
+    updated = dict(sources or {})
+    updated[STATPAL_RELEASED_SESSION_KEY] = value
+    return updated
+
+
+def statpal_released_session_clock(
+    sources, commence_time_source, statpal_fixture_id, commence_time, now
+):
+    """StatPal's start from the release receipt, when it still counts, else None.
+
+    Play on the row does not end it: play is what a released session brings.
+    Everything else that ends the hold's clock ends this one, through the same
+    predicate (:func:`statpal_later_session_clock`): a better source rewriting
+    the start, the StatPal id gone, a start outside the band. A receipt for a
+    different fixture, or a start not yet reached, is no receipt. Fails CLOSED
+    to None on every unreadable input, so the row keeps its own start.
+    """
+    raw = sources.get(STATPAL_RELEASED_SESSION_KEY) if isinstance(sources, dict) else None
+    if not isinstance(raw, str) or now is None:
+        return None
+    stamp, sep, fixture = raw.rpartition("|")
+    if not sep or not fixture or fixture != str(statpal_fixture_id or "").strip():
+        return None
+    try:
+        start = datetime.fromisoformat(stamp)
+    except (ValueError, TypeError):
+        return None
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    try:
+        clock = statpal_later_session_clock(
+            commence_time_source, statpal_fixture_id, False, commence_time, start
+        )
+        if clock is None or clock > now:
+            return None
+    except TypeError:
+        return None
+    return clock
 
 
 def statpal_later_session_pending(sources, commence_time, now) -> bool:

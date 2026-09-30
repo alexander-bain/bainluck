@@ -4693,6 +4693,34 @@ async def _statpal_later_session_starts(session, events) -> dict:
     return starts
 
 
+def _statpal_sessions_reached(events, statpal_starts, now) -> set:
+    """The rows whose StatPal session has begun, so the clock now runs. #9613.
+
+    The same clock-free predicate as the hold
+    (:func:`~app.utils.event_completion.statpal_later_session_clock`), read
+    after StatPal's start instead of before it.
+    """
+    from app.utils.espn_helpers import play_evidence
+    from app.utils.event_completion import statpal_later_session_clock
+
+    reached = set()
+    for event in events:
+        if event.id not in statpal_starts:
+            continue
+        start = statpal_later_session_clock(
+            event.commence_time_source,
+            event.statpal_fixture_id,
+            play_evidence(
+                event.home_score, event.away_score, event.period, event.game_clock
+            ),
+            event.commence_time,
+            statpal_starts[event.id],
+        )
+        if start is not None and start <= now:
+            reached.add(event.id)
+    return reached
+
+
 def _record_statpal_later_sessions(events, statpal_starts, now, stats) -> set:
     """Decide the #9588 hold for each row and record it ON the row. #9613.
 
@@ -4825,13 +4853,30 @@ async def _transition_event_statuses_impl() -> dict:
 
         # --- scheduled → live ---
         # Find events that have started but are still marked "scheduled"
+        from app.utils.event_completion import (
+            STATPAL_LATER_SESSION_HORIZON,
+            STATPAL_LATER_SESSION_KEY,
+        )
+
         started_result = await session.execute(
             select(Event)
             .where(
                 Event.status == "scheduled",
                 Event.commence_time <= now,
-                # Only within the last 24h to avoid touching ancient events
-                Event.commence_time >= now - timedelta(hours=24),
+                or_(
+                    # Only within the last 24h to avoid touching ancient events
+                    Event.commence_time >= now - timedelta(hours=24),
+                    # #9613: a row this task holds for a later StatPal session
+                    # is not ancient. It is revisited for the whole band, so
+                    # its stamp is maintained for as long as the readers
+                    # honour it, and it is promoted at StatPal's start.
+                    and_(
+                        Event.commence_time >= now - STATPAL_LATER_SESSION_HORIZON,
+                        Event.win_probability_sources.has_key(
+                            STATPAL_LATER_SESSION_KEY
+                        ),
+                    ),
+                ),
             )
         )
         started_events = started_result.scalars().all()
@@ -4932,6 +4977,12 @@ async def _transition_event_statuses_impl() -> dict:
         statpal_held_ids = _record_statpal_later_sessions(
             started_events, statpal_starts, now, stats
         )
+        stats["cleared_statpal_outside_window"] = 0
+        stats["statpal_released_session_stamped"] = 0
+        statpal_released_ids = _statpal_sessions_reached(
+            started_events, statpal_starts, now
+        )
+        from app.utils.event_completion import stamp_statpal_released_session
 
         for event in started_events:
             if not commence_time_is_a_reported_start(event.commence_time_source):
@@ -4973,8 +5024,30 @@ async def _transition_event_statuses_impl() -> dict:
             if event.id in statpal_held_ids:
                 stats["held_statpal_later_session"] += 1
                 continue
+            # #9613: a row older than the 24h window is here only because it
+            # carried the hold. StatPal's start arriving releases it onto the
+            # clock like any row; a hold lost any other way (the anchor moved,
+            # play on the row, a better source rewrote the start) only drops
+            # the stamp, which `_record_statpal_later_sessions` just did.
+            if event.commence_time < now - timedelta(
+                hours=24
+            ) and event.id not in statpal_released_ids:
+                stats["cleared_statpal_outside_window"] += 1
+                continue
             event.status = "live"
             stats["scheduled_to_live"] += 1
+            # #9613, CERT-3811: the receipt that StatPal's start released this
+            # row, so its clock survives the first score or period StatPal
+            # writes (which ends the hold's own predicate).
+            if event.id in statpal_released_ids:
+                _released = stamp_statpal_released_session(
+                    event.win_probability_sources,
+                    statpal_starts[event.id],
+                    event.statpal_fixture_id,
+                )
+                if _released is not event.win_probability_sources:
+                    event.win_probability_sources = _released
+                    stats["statpal_released_session_stamped"] += 1
 
         # --- live → suspended, ON THE VENUE'S WORD (rung 2 of §R) ---
         #
@@ -5142,6 +5215,7 @@ async def _transition_event_statuses_impl() -> dict:
         # nobody has played yet. The same predicate as the hold, so the two
         # arms cannot trade a row.
         stats["demoted_statpal_later_session"] = 0
+        statpal_clock_starts: dict = {}
         if live_events:
             from app.utils.espn_helpers import play_evidence as _play_evidence
             from app.utils.event_completion import (
@@ -5179,6 +5253,58 @@ async def _transition_event_statuses_impl() -> dict:
             if demoted_ids:
                 stats["demoted_statpal_later_session"] = len(demoted_ids)
                 live_events = [e for e in live_events if e.id not in demoted_ids]
+
+            # #9613: a row held for StatPal's session starts its clock there.
+            # The hold released it at 02:00Z; measured from the 05:00Z venue
+            # stamp the day before it would already be 21h "past its start"
+            # and the arm below would suspend it on the pass that promoted it.
+            #
+            # CERT-3811: StatPal's first score or period makes the row no longer
+            # a hold candidate, so the clock above goes quiet exactly when the
+            # match is being played. Before play the clock is written to the row
+            # as a receipt; after it, the receipt is the clock.
+            from app.utils.event_completion import (
+                stamp_statpal_released_session as _stamp_released,
+            )
+            from app.utils.event_completion import (
+                statpal_later_session_clock as _later_session_clock,
+            )
+            from app.utils.event_completion import (
+                statpal_released_session_clock as _released_clock,
+            )
+
+            stats.setdefault("statpal_released_session_stamped", 0)
+            for event in live_events:
+                _clock = None
+                if event.id in live_statpal_starts:
+                    _clock = _later_session_clock(
+                        event.commence_time_source,
+                        event.statpal_fixture_id,
+                        _play_evidence(
+                            event.home_score, event.away_score, event.period, event.game_clock
+                        ),
+                        event.commence_time,
+                        live_statpal_starts[event.id],
+                    )
+                if _clock is not None:
+                    _released = _stamp_released(
+                        event.win_probability_sources, _clock, event.statpal_fixture_id
+                    )
+                    if _released is not event.win_probability_sources:
+                        event.win_probability_sources = _released
+                        stats["statpal_released_session_stamped"] += 1
+                else:
+                    # `getattr`: this runs over every live row, and a row that
+                    # does not carry a field carries no receipt.
+                    _clock = _released_clock(
+                        getattr(event, "win_probability_sources", None),
+                        getattr(event, "commence_time_source", None),
+                        getattr(event, "statpal_fixture_id", None),
+                        getattr(event, "commence_time", None),
+                        now,
+                    )
+                if _clock is not None:
+                    statpal_clock_starts[event.id] = _clock
 
         # The guard this docstring has always promised but never implemented.
         # A wall-clock timeout is not evidence a game is over — long games (extra
@@ -5252,7 +5378,9 @@ async def _transition_event_statuses_impl() -> dict:
             )
             bound_hours = wall_clock_bound_hours(sport_key, max_hours, never_observed)
 
-            hours_since_start = (now - event.commence_time).total_seconds() / 3600
+            hours_since_start = (
+                now - statpal_clock_starts.get(event.id, event.commence_time)
+            ).total_seconds() / 3600
             if hours_since_start > bound_hours + 0.5:
                 last_snap = last_snaps.get(event.id)
                 if game_may_still_be_running(last_snap, now):

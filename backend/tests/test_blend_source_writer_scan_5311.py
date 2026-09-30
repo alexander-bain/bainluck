@@ -203,7 +203,10 @@ from app.utils.probability_eligibility import MARKET_DERIVED_SOURCES  # noqa: E4
 #    venue-stamped row `scheduled` while its own StatPal anchor puts the match in
 #    a later session; the serve path and the rails never read the anchor, so the
 #    task records StatPal's start on the row under the non-probability key
-#    `statpal_later_session_start` (and removes it once the hold ends). No
+#    `statpal_later_session_start` (and removes it once the hold ends). When
+#    StatPal's start releases the row, the same function writes the receipt
+#    `statpal_released_session` (StatPal's start + fixture) so the staleness
+#    arm's clock survives StatPal's first score (CERT-3811). No
 #    source, no market, no reading. ONE shape, `_sync_tennis_from_espn`'s: this
 #    task writes every other column by plain ORM assignment, so a Core update
 #    mixed in would be gotcha #5, and the helpers return a whole new dict so the
