@@ -94,7 +94,7 @@ class TestTheHandlerWiring:
         teamless = call.index("_teamless_sport_key,")
         split = call.index("_split_terms_key,")
         lead = call.index("_team_card_lead_key")
-        rank = call.index("search_rank.desc()")
+        rank = call.index("search_rank_key,")  # #9940: the club-aware rank key
         soon = call.index("Event.commence_time.asc()")
         assert day < teamless < split < lead < rank < soon
 

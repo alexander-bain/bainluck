@@ -316,6 +316,32 @@ def _search_tag_boost_keys(team_rows, query: str) -> tuple:
         return ()
     return (_search_tag_boost(),)
 
+
+def _search_rank_order_key(search_rank, *, names_a_club: bool):
+    """#9940: the text-rank ORDER BY key — a yes/no when the query names a club.
+
+    #8942's premise is that every row of a club query ties on `search_rank`.
+    A bare city breaks it. `new york` on production 2026-09-30, once #9897
+    disarmed #8738's key: rows 1–4 were Islanders @ Rangers (Oct 6), Devils @
+    Islanders, **New** Orleans @ Giants (Oct 18) and **New** England @ Jets
+    (Dec 27), above tonight's games and Sunday's Jets @ Bears (row 9);
+    `los angeles` led with a Rams–Chargers game on Nov 1. `ts_rank_cd` counts
+    every cover of the city's words — 2.5 with the city on both sides, 1.5 when
+    a New York home side runs into a "New …" away side — against 1.0 for a game
+    that names it once. It separated the city's games by how often their names
+    say it, not by anything the reader typed.
+
+    So for a club query (the TEAMS card has a row — the test #8942 already made,
+    passed in as `not tag_boost_keys`), the rank reads only whether the row
+    covers EVERY word of the query. `giants saints` still leads with the one
+    game carrying both clubs (the other Giants games score 0 against the AND),
+    and the rest fall through to kickoff. No card keeps `search_rank.desc()`,
+    and the compiled SQL is then unchanged.
+    """
+    if not names_a_club:
+        return search_rank.desc()
+    return case((search_rank > 0, 0), else_=1)
+
 #: The default `GET /api/events` status set — every state the list is MEANT to
 #: reach, as opposed to the four that happened to exist when it was written.
 #:
@@ -9753,6 +9779,10 @@ async def search_events(
     # query ranks every row that does not contain "today" at 0 and flattens the
     # relevance ordering of the very pool the reader asked about.
     search_rank = _search_rank(_event_search_vector(), _q_identity)
+    # #9940: a club query ranks by "covers every word", then kickoff.
+    search_rank_key = _search_rank_order_key(
+        search_rank, names_a_club=not tag_boost_keys
+    )
     # #9211: today's final right behind the next game (see the key). A club
     # query is exactly the one #8942 strips the tag tier from, so an empty
     # `tag_boost_keys` IS the TEAMS-card test, already paid for.
@@ -9777,7 +9807,7 @@ async def search_events(
                 if k is not None
             ),
             *( (_team_card_lead_key,) if _team_card_lead_key is not None else () ),
-            search_rank.desc(),
+            search_rank_key,
             Event.commence_time.asc(),
         ),
         now,
@@ -9828,7 +9858,7 @@ async def search_events(
         # #8738: within a state, the club the TEAMS card leads with first.
         *( (_team_card_lead_key,) if _team_card_lead_key is not None else () ),
         *tag_boost_keys,
-        search_rank.desc(),
+        search_rank_key,
         # For live/scheduled, sort ascending; for completed, we want descending
         # Using a compound sort: status priority, then time
         case(
