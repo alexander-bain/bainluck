@@ -40,6 +40,18 @@ struct SpecialEventMarketsView: View {
         /// entry here and only the first one's number survives, so taking a
         /// different row's stamp would date a number that is not on screen.
         var observedAt: String?
+        /// #9917 — did any venue price this row? A wire `null` used to become
+        /// `prob: 0` and print `0%`; the absence now survives, so the row says
+        /// nothing instead of inventing a number (web #8067).
+        var priced: Bool = true
+        /// #9917 — the settlement rail's grade, carried raw from the FIRST wire
+        /// row (same reason as `observedAt`). `verdict(for:)` decides whether
+        /// it may be said; this type only holds it.
+        var isWinner: Bool? = nil
+        var resolutionSource: String? = nil
+        /// #9917 / #6595 — is this market the game's own question (a bare
+        /// `A vs B`)? See `isGamesOwnQuestion`.
+        var gamesOwnQuestion: Bool = false
     }
 
     private static let categoryPatterns: [(pattern: String, category: String, subtitle: String)] = [
@@ -83,6 +95,31 @@ struct SpecialEventMarketsView: View {
     /// same question. Narrower than "race to" on purpose: the SCORE UNIT is
     /// required, so a player race ("Race to 5 catches") — a shape nobody has
     /// measured — is left out rather than swept in by grammar.
+    /// Is this market asking the GAME'S OWN question — the one the hero answers?
+    ///
+    /// #9917's guard, the Swift twin of web's `marketIsTheGamesOwnQuestion`
+    /// (#6595). Web asks `canonicalMatchupTitle` for the bare matchup; that
+    /// function builds its answer from our own two team names, so the equality
+    /// it then checks can only fail when the title function refuses. What is
+    /// left is the SHAPE, which is all this reads: no colon (`Set 1 Winner: A vs
+    /// B`, `…?: A vs B` carry more than the matchup), no spaced-dash qualifier
+    /// (`A vs B - Halftime Result`), exactly two `vs` sides.
+    ///
+    /// Why a live card needs it: a stale weekly container graded before first
+    /// pitch arrives as ONE `is_winner: true` leg on the moneyline, which
+    /// `isWinProbabilityMarket` cannot see (it needs two legs summing to ~1).
+    /// Printing its `Won` would crown a side of a game still being played.
+    static func isGamesOwnQuestion(_ marketName: String) -> Bool {
+        let name = marketName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, !name.contains(":") else { return false }
+        if name.range(of: #"\s+[-–—]\s+"#, options: .regularExpression) != nil { return false }
+        let sides = name
+            .replacingOccurrences(of: #"\s+vs\.?\s+"#, with: "\u{0}", options: [.regularExpression, .caseInsensitive])
+            .split(separator: "\u{0}", omittingEmptySubsequences: false)
+        guard sides.count == 2 else { return false }
+        return sides.allSatisfy { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+    }
+
     static func isScoringRaceMarket(_ name: String) -> Bool {
         name.range(
             of: #"\brace to\s+\d+(?:\.\d+)?\s+points?\b"#,
@@ -169,10 +206,40 @@ struct SpecialEventMarketsView: View {
         case livePrice
         /// `SettledQuote.prefix` and no bar — the number, declared as frozen.
         case frozenQuote
+        /// #9917 — the question is answered and the settlement rail says so:
+        /// `Won` / `Lost` in the slot the price would take, no bar.
+        case verdict(OutcomeVerdict)
+        /// #9917 — no venue priced this row: its name and nothing else. Not a
+        /// dash, not `0%` (notice 34: leave the space empty).
+        case noPrice
     }
 
+    /// May this row state its grade? (#9917, web's `outcomeVerdict`.)
+    ///
+    /// `OutcomeVerdict.verdict` IS the rule and is not re-derived: a retracted
+    /// or missing `resolution_source` withholds, a null `is_winner` withholds,
+    /// and while the game is NOT finished only an authoritative `won` crosses —
+    /// which is what lets `run scored in the first inning? — Yes` say `Won` in
+    /// the 6th without a defaulted `false` printing `Lost` on a leg still open.
+    /// The one scope test added here is #6595's: while the game is live, the
+    /// game's own question never gets a verdict, because the hero is answering
+    /// it on the same screen.
+    func verdict(for o: OutcomeEntry) -> OutcomeVerdict? {
+        if !isGameFinished && o.gamesOwnQuestion { return nil }
+        return OutcomeVerdict.verdict(
+            isWinner: o.isWinner,
+            resolutionSource: o.resolutionSource,
+            marketResolved: isGameFinished
+        )
+    }
+
+    /// Order matters and mirrors web's `OutcomeBar`: a verdict is the strongest
+    /// statement, then an unpriced row (true live or settled), then a frozen
+    /// quote, then a live bar.
     func treatment(for o: OutcomeEntry) -> RowTreatment {
-        (isGameFinished || isFrozen(o)) ? .frozenQuote : .livePrice
+        if let v = verdict(for: o) { return .verdict(v) }
+        if !o.priced { return .noPrice }
+        return (isGameFinished || isFrozen(o)) ? .frozenQuote : .livePrice
     }
 
     /// Only a LIVE event's card can go quiet — web's
@@ -230,23 +297,13 @@ struct SpecialEventMarketsView: View {
                     catMap[cat]!.items[idx].outcomes[oIdx].sourceCount += 1
                 } else {
                     catMap[cat]!.items[idx].outcomes.append(
-                        OutcomeEntry(
-                            label: label,
-                            prob: m.probability ?? 0,
-                            sourceCount: 1,
-                            observedAt: m.observedAt
-                        )
+                        Self.entry(label: label, from: m)
                     )
                 }
             } else {
                 catMap[cat]!.items.append(
                     MarketItem(id: "\(cat)-\(name)", name: name, outcomes: [
-                        OutcomeEntry(
-                            label: m.outcomeName,
-                            prob: m.probability ?? 0,
-                            sourceCount: 1,
-                            observedAt: m.observedAt
-                        )
+                        Self.entry(label: m.outcomeName, from: m)
                     ])
                 )
             }
@@ -255,6 +312,22 @@ struct SpecialEventMarketsView: View {
         return catMap.values
             .filter { !$0.items.isEmpty }
             .sorted { (categoryOrder.firstIndex(of: $0.title) ?? 99) < (categoryOrder.firstIndex(of: $1.title) ?? 99) }
+    }
+
+    /// One wire row as a card row (#9917: the grade, the market's scope and
+    /// the absence of a price all survive; `prob` is 0 only as geometry for a
+    /// row that `treatment` will never draw as a bar).
+    static func entry(label: String, from m: GameMarketOther) -> OutcomeEntry {
+        OutcomeEntry(
+            label: label,
+            prob: m.probability ?? 0,
+            sourceCount: 1,
+            observedAt: m.observedAt,
+            priced: m.probability != nil,
+            isWinner: m.isWinner,
+            resolutionSource: m.resolutionSource,
+            gamesOwnQuestion: isGamesOwnQuestion(m.marketName)
+        )
     }
 
     /// WHERE THE AGE IS SAID ON ONE CARD — card header, every stale row, or
@@ -444,6 +517,7 @@ struct SpecialEventMarketsView: View {
         showAge: Bool
     ) -> some View {
         let percent = Int((o.prob * 100).rounded())
+        let rowTreatment = treatment(for: o)
         HStack(spacing: 6) {
             Text(labelWithoutRedundantHeading(o.label, under: heading))
                 .font(.system(size: 11))
@@ -458,14 +532,21 @@ struct SpecialEventMarketsView: View {
             // quote 100%" is the whole evidence that the number is not about the
             // game in progress. The finished-card suppression below is a
             // different case — that card says it once, in its own header.
-            if showAge, !isGameFinished {
+            if showAge, !isGameFinished, Self.isLivePriced(rowTreatment) {
                 PriceAgeMarkView(observedAt: o.observedAt, cadence: .live)
             }
-            if treatment(for: o) == .frozenQuote {
+            switch rowTreatment {
+            case .verdict(let v):
+                Text(v.label)
+                    .font(.system(size: 11, weight: v == .won ? .bold : .regular, design: .monospaced))
+                    .foregroundStyle(v == .won ? DS.emerald : Color.secondary)
+            case .noPrice:
+                EmptyView()
+            case .frozenQuote:
                 Text("\(SettledQuote.prefix) \(percent)%")
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(.secondary)
-            } else {
+            case .livePrice:
                 GeometryReader { geo in
                     RoundedRectangle(cornerRadius: 2)
                         .fill(i == 0 ? Color.purple.opacity(0.4) : Color.secondary.opacity(0.2))
@@ -479,10 +560,34 @@ struct SpecialEventMarketsView: View {
         }
     }
 
+    /// Does this row still carry a LIVE price? (#9917, web's `isLivePriced`.)
+    /// A `Won` has no price for an age to be about, and an unpriced row has no
+    /// price at all — counting either would let it decide whether the card may
+    /// speak for its rows (#4970's denominator).
+    static func isLivePriced(_ t: RowTreatment) -> Bool {
+        t == .livePrice
+    }
+
+    /// Row order inside one card: a graded winner first (it is the answer),
+    /// then prices high to low, then the rows nobody priced.
+    func sortedOutcomes(_ outcomes: [OutcomeEntry]) -> [OutcomeEntry] {
+        func rank(_ o: OutcomeEntry) -> Int {
+            if verdict(for: o) == .won { return 2 }
+            return o.priced ? 1 : 0
+        }
+        return outcomes.sorted {
+            let (a, b) = (rank($0), rank($1))
+            return a != b ? a > b : $0.prob > $1.prob
+        }
+    }
+
     private func propMiniCard(_ item: MarketItem) -> some View {
-        let sorted = item.outcomes.sorted { $0.prob > $1.prob }
+        let sorted = sortedOutcomes(item.outcomes)
         let maxSources = sorted.map(\.sourceCount).max() ?? 1
-        let age = Self.ageDecision(sorted, live: isLiveEvent)
+        let age = Self.ageDecision(
+            sorted.filter { Self.isLivePriced(treatment(for: $0)) },
+            live: isLiveEvent
+        )
 
         return VStack(alignment: .leading, spacing: 4) {
             HStack {
