@@ -408,7 +408,9 @@ function ladderFamilyKey(row: Pick<DivergenceRow, "player" | "stat">): string {
 }
 
 /**
- * Did this question actually move before first pitch?
+ * Did this question actually move since it opened? Pregame it splits THE
+ * SCRIPT's two tiers; in-game it is the entry condition for "What's moving"
+ * (#1626 slice 2).
  *
  * Defined off `direction`, NOT off a second comparison of the printed
  * numbers (`railPercentPoints`), and that is the whole point: the movement tier is then
@@ -1097,6 +1099,22 @@ export function selectDivergenceRows(input: DivergenceInput): DivergenceResult {
     // five-row rail from tier 2 — but the shape is real and is covered
     // synthetically in the suite rather than left to be discovered.
     if (pregame && suppressedByStructuralFloor(row)) continue;
+    // #1626 slice 2: IN-GAME THE HEADER IS "What's moving", SO A ROW WHOSE OWN
+    // BAR PRINTS BOTH ENDS THE SAME IS NOT ON IT. `byTravel` only ranks, so on
+    // a quiet board the five slots were filled by whatever came next: CWS@HOU
+    // `15321836` (2026-09-30 22:45Z) LED the rail with `Sean Burke: 5+ hits
+    // allowed — opened 42% · now 42%`, served `0.425 → 0.42`. Same predicate as
+    // the pregame movement tier (`hasTravelled`, #8754's printed-number line),
+    // so the rail and the picture cannot disagree here either.
+    //
+    // `continue`, not `break`: raw travel and the printed line do not sort
+    // together — `0.425 → 0.42` (travel 0.005) prints flat while `0.674 →
+    // 0.678` (0.004) prints a point. Placed BEFORE the caps so a flat row
+    // spends none of its player's slots. Every skipped row stays in
+    // `notSelected`, behind "See all" and the "All N props" list below.
+    // A board where nothing has moved yet ends `clean`, and the rail says
+    // nothing rather than titling five flat bars "What's moving".
+    if (!settled && !pregame && !hasTravelled(row)) continue;
     // UX-P108, Alex: AT MOST ONE RUNG PER LADDER, ANYWHERE IN THE RAIL.
     //
     // ** WHAT PROTECTS THE LADDER IS THAT THE SLOT IS CONSUMED AT PUSH, NOT

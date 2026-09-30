@@ -87,8 +87,15 @@ describe("#8991 — the production specimen", () => {
 describe("#8991 — a lone Under leg", () => {
   it("still reads its inverted price: it is the best number the page has", () => {
     const under = ROWS.filter((r) => r.market_name === CONTRERAS && r.outcome_name === "Under");
+    // #1626 slice 2: 0.075 → 0.08 prints 8% → 8%, so the lone leg is no longer
+    // on "What's moving" — the READ is this test's subject, and the detail view
+    // uses the same admission rule, so it is asserted there. It is not lost.
     const res = live(under);
-    expect(res.rows).toHaveLength(1);
-    expect(res.rows[0].current).toBe(0.08);
+    expect(res.rows).toHaveLength(0);
+    expect(res.eligible).toBe(1);
+    const rows = detailRows(under);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].current).toBe(0.08);
+    expect(rows[0].direction).toBe("flat");
   });
 });
