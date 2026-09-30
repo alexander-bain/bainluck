@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// ESPN-style game play card displayed above the odds chart's plot (#925).
+/// ESPN-style game play card: floating over the page chart's plot under a finger
+/// (#9517), and above the fullscreen chart's plot (#925).
 /// Updates as the user scrubs across the chart, showing:
 /// - Score (team-colored)
 /// - Period and clock

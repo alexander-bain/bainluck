@@ -75,9 +75,10 @@ struct OddsChartSelectionOverlay: View {
     var gameFinished = false
     /// #5271 — a draw-priced sport speaks no away number, as the card prints none.
     var sportKey: String?
-    /// #8651 — the inline chart's scrub tooltip, only where the page gave no
-    /// readout card (before a game, or before its first scoring play). Build 30
-    /// drew a bare crosshair there: "scrubbing is smooth but no tooltip appears".
+    /// #8651 — the inline chart's scrub tooltip. Build 30 drew a bare crosshair
+    /// where the page gave no readout card: "scrubbing is smooth but no tooltip
+    /// appears". #9517 — it is the page's card too, which no longer rests above
+    /// the plot (`OddsChartView.inlineScrubCard`).
     var floatingCard: GamePlayCardView? = nil
 
     var body: some View {

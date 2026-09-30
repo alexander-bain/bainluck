@@ -247,16 +247,18 @@ final class TheRestingReadoutPrintsWhereTheLineEnds8652Tests: XCTestCase {
         XCTAssertNil(card.resting(on: chart).selectedPoint, "resting never becomes the scrubbed moment")
     }
 
-    /// Both places the chart draws the readout rest it on the drawn points
-    /// (`dataPoints`: after the finished-game clip and the window), not on the
-    /// unclipped set a late post-game print lives in.
-    func testBothReadoutSitesRestOnTheDrawnPoints() throws {
+    /// The place the chart draws the resting readout (fullscreen; #9517 took
+    /// the inline one) rests it on the drawn points (`dataPoints`: after the
+    /// finished-game clip and the window), not on the unclipped set a late
+    /// post-game print lives in.
+    func testTheReadoutSiteRestsOnTheDrawnPoints() throws {
         let url = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Bain Luck/Components/OddsChartView.swift")
         let chart = try String(contentsOf: url, encoding: .utf8)
-        XCTAssertEqual(chart.components(
-            separatedBy: "OddsChartSelectionReadout(selection: selection, readout: readout.finished(EventState.isFinished(status)), dataPoints: dataPoints, sportKey: sportKey)").count - 1, 1)
+        // #9517 — the inline chart rests no readout (the hero says it); only
+        // the fullscreen site below rests one.
+        XCTAssertEqual(chart.components(separatedBy: "OddsChartSelectionReadout(").count - 1, 1)
         // #9185 — the fullscreen site's card is `fullscreenReadout`'s, flagged
         // as the chart's own only when the page gave none. #9015 — both sites
         // tell the card whether the game is over.
