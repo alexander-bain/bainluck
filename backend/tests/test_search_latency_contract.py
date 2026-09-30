@@ -1555,19 +1555,21 @@ class TestEventsBucketRequiresWordAboutness:
         # the letters "fed", so a bare substring count reads the expansion as the
         # term and the replacement bug passes unnoticed. Both traps were found by
         # the mutation run, one of them after a first fix that only looked right.
+        # The FTS half reads each column twice since #9735 — as stored and
+        # slash-split (`Rojer/Winegar` is one token as stored) — so 4 arms.
         halves = (
-            (ilike_half, "ILIKE", "'%%fed%%'", "'%%federal reserve%%'"),
-            ("to_tsvector" + fts_half, "FTS", "'fed'", "'federal reserve'"),
+            (ilike_half, "ILIKE", "'%%fed%%'", "'%%federal reserve%%'", 2),
+            ("to_tsvector" + fts_half, "FTS", "'fed'", "'federal reserve'", 4),
         )
-        for half, name, term_tok, exp_tok in halves:
-            assert half.count(exp_tok) == 2, (
-                f"the expansion reaches {half.count(exp_tok)} of the two columns "
+        for half, name, term_tok, exp_tok, arms in halves:
+            assert half.count(exp_tok) == arms, (
+                f"the expansion reaches {half.count(exp_tok)} of the {arms} arms "
                 f"on the {name} half — an expansion that widens only one half "
                 "ANDs itself away to nothing"
             )
-            assert half.count(term_tok) == 2, (
+            assert half.count(term_tok) == arms, (
                 f"the ORIGINAL term appears {half.count(term_tok)} of the expected "
-                f"2 times on the {name} half. That is LAT-P033's exact bug "
+                f"{arms} times on the {name} half. That is LAT-P033's exact bug "
                 "(`exp if exp else term`) arriving on a new surface."
             )
 
