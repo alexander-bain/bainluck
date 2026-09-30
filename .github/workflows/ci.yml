@@ -3449,6 +3449,7 @@ jobs:
         # unpublished/withdrawn/nested/empty/wrong-edition rows are excluded,
         # a deleted member is not counted, and the array binds work (the
         # local run caught `week-09` spending the only LIMIT slot).
+        if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_container_discovery_real_postgres.py \
