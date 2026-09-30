@@ -117,11 +117,15 @@ export function countCards(items: FeedItem[]): number {
  * `suspended` arm moves; a card without the keys files exactly as before.
  */
 export function feedEventSectionKey(
-  data: Pick<FeedEventData, "status" | "venue_settled" | "venue_settled_result">,
+  data: Pick<
+    FeedEventData,
+    "status" | "venue_settled" | "venue_settled_result" | "venue_closed_no_winner"
+  >,
 ): "live" | "finished" | "upcoming" {
   return eventSectionKey(data.status, undefined, undefined, {
     venue_settled: data.venue_settled,
     venue_settled_result: data.venue_settled_result,
+    venue_closed_no_winner: data.venue_closed_no_winner,
   });
 }
 

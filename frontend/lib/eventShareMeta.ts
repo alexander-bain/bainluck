@@ -123,6 +123,8 @@ export interface EventShareMetaInput {
   venue_settled?: boolean;
   /** @see EventDetailResponse.venue_settled — #6381. */
   venue_settled_result?: string | null;
+  /** @see Event.venue_closed_no_winner — #5811. */
+  venue_closed_no_winner?: boolean;
   /** @see Event.started_without_result — #9634. Served by `/api/events/{id}`. */
   started_without_result?: boolean | null;
   /** #8810 — ESPN's status detail; read ONLY for a stoppage word.
@@ -613,6 +615,7 @@ export function buildEventShareCopy(
     const settledByVenue = venueSettledSummary(
       event.venue_settled,
       event.venue_settled_result,
+      event.venue_closed_no_winner,
     );
     const stoppage = authorityStoppageLabel(event.espn?.period);
     const summary =

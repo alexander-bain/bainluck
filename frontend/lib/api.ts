@@ -564,6 +564,8 @@ export interface TypeaheadSuggestion {
   // event detail route serves, so the dropdown says what the page says.
   venue_settled?: boolean | null;
   venue_settled_result?: string | null;
+  // #5811 @see Event.venue_closed_no_winner
+  venue_closed_no_winner?: boolean;
   // Event concept fields (#999 L2-65: tournament pages)
   event_key?: string;
   // Hub fields (L2-88: competition-hub landing shortcut)
@@ -1992,6 +1994,8 @@ export interface LeagueGameBrief {
   // @see Event.venue_settled for what the result string is and is not.
   venue_settled?: boolean;
   venue_settled_result?: string | null;
+  // #5811 @see Event.venue_closed_no_winner
+  venue_closed_no_winner?: boolean;
   // ── #8515 ── the provider's doubleheader flag + game number, same names as
   // `TeamGameBrief` and `Event`. @see Event.doubleheader
   doubleheader?: boolean | null;

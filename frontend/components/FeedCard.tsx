@@ -513,7 +513,7 @@ function EventFeedCard({
   // `venueSettledSummary` is null on every row the venue has not graded and on
   // every cached payload without the keys, so those cards are untouched.
   const venueSettledSentence = isSuspended
-    ? venueSettledSummary(data.venue_settled, data.venue_settled_result)
+    ? venueSettledSummary(data.venue_settled, data.venue_settled_result, data.venue_closed_no_winner)
     : null;
 
   // ═══ ux/1041 (#2752): THE LIVE SCORE READS IN THE CARD'S OWN ORDER ═══
