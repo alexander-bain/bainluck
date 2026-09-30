@@ -124,8 +124,14 @@ def _names(items: list[dict]) -> list[str]:
 
 
 def test_the_name_keyed_caps_cannot_see_this_pair():
+    # #9877 gave national presidential races a story key, so the STORY cap now
+    # folds this particular pair. It is switched off here (`story_family_cap=0`)
+    # because what this test pins is the exact-family cap: a same-WORDING cap
+    # that no cross-venue duplicate can trip. The fold below still covers every
+    # cross-venue pair that has no shared story key — #4170's trophy specimen is
+    # that class.
     kept = diversify_quality_families(
-        _brazil_pair(), exact_family_cap=1, story_family_cap=5
+        _brazil_pair(), exact_family_cap=1, story_family_cap=0
     )
 
     assert _names(kept) == [BRAZIL_POLY, BRAZIL_KALSHI], (
@@ -134,7 +140,9 @@ def test_the_name_keyed_caps_cannot_see_this_pair():
     )
     families = {c["_quality_family_key"] for c in _brazil_pair()}
     assert len(families) == 2, "one trailing word is what makes them two families"
-    assert {c["_quality_story_key"] for c in _brazil_pair()} == {None}
+    assert {c["_quality_story_key"] for c in _brazil_pair()} == {
+        "story:brazil_presidential_election"
+    }
 
 
 # ---------------------------------------------------------------------------

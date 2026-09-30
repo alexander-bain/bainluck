@@ -1789,6 +1789,123 @@ def _subnational_election_story_key(name: str) -> str | None:
     return None
 
 
+
+# #9877. One national presidential race, one story. Alex's September 30 feed
+# (production, 390px) served "Brazil Presidential Election First Round Winner"
+# at slot 7 and "Brazil Presidential Election" at slot 16, and he read the second
+# as a duplicate of the first. Nothing counted them as one: the first computed no
+# story key at all, and the second carried a PERSISTED single-member key
+# (`story:brazil_presidential_election`) — the displacement the golf comment in
+# `classify_market_quality` describes — so the story cap saw two unrelated
+# families and the exact-family cap saw two different names. #4170's Kalshi /
+# Polymarket pair ("Brazil Presidential election winner?" / "Brazil Presidential
+# Election") is the same miss across venues.
+#
+# The key is the PLACE named directly before "presidential election", plus the
+# edition year when the title states one. So Brazil and France never share a
+# story, and an explicit edition never merges into another; a title that states
+# no year ("Next French ...") keys without one, which can only fail to fold, never
+# fold two editions together. The venues spell a country two ways (Kalshi
+# "Bulgarian", Polymarket "Bulgaria"), so a demonym is mapped to its country; one
+# the map does not know keys under itself, which again only fails to fold.
+#
+# Every arm above wins over this one — "Iranian presidential election" keeps
+# `story:middle_east_conflict`, a Russian one `story:russia_ukraine`, a 2028 one
+# `story:us_2028_election` — and US races are refused outright here, so the only
+# markets this touches are ones that had no deterministic key before.
+NATIONAL_PRESIDENTIAL_ELECTION_STORY_SUFFIX = "_presidential_election"
+
+_PLACE_WORD = r"[A-Z](?:[^\W\d_]|\.)*(?:['’]s)?"
+_NATIONAL_PRESIDENTIAL_ELECTION_RE = re.compile(
+    r"(?:\b(?P<year>20\d\d)\s+)?"
+    r"\b(?P<place>" + _PLACE_WORD + r"(?:\s+" + _PLACE_WORD + r"){0,2})"
+    r"\s+(?i:presidential\s+elections?)\b"
+)
+
+# Capitalised words that can sit before the office without being a place.
+_PRESIDENTIAL_PLACE_LEADERS = frozenset({"next", "the", "who", "will", "win"})
+
+# Not a foreign national race: the US one, and the party labels of its primaries.
+_PRESIDENTIAL_PLACE_REFUSED = frozenset(
+    {
+        "us",
+        "u s",
+        "usa",
+        "united states",
+        "america",
+        "american",
+        "democratic",
+        "republican",
+    }
+)
+
+_DEMONYM_TO_COUNTRY = {
+    "argentine": "argentina",
+    "argentinian": "argentina",
+    "bolivian": "bolivia",
+    "brazilian": "brazil",
+    "bulgarian": "bulgaria",
+    "cape verdean": "cape verde",
+    "chilean": "chile",
+    "colombian": "colombia",
+    "costa rican": "costa rica",
+    "ecuadorian": "ecuador",
+    "french": "france",
+    "gambian": "gambia",
+    "ghanaian": "ghana",
+    "kenyan": "kenya",
+    "mexican": "mexico",
+    "moldovan": "moldova",
+    "mongolian": "mongolia",
+    "nigerian": "nigeria",
+    "peruvian": "peru",
+    "philippine": "philippines",
+    "polish": "poland",
+    "portuguese": "portugal",
+    "romanian": "romania",
+    "russian": "russia",
+    "serbian": "serbia",
+    "south korean": "south korea",
+    "korean": "south korea",
+    "taiwanese": "taiwan",
+    "turkish": "turkey",
+    "ukrainian": "ukraine",
+    "uruguayan": "uruguay",
+    "venezuelan": "venezuela",
+}
+
+
+def national_presidential_election_story_key(name: str) -> str | None:
+    """``story:brazil_presidential_election`` for a non-US national presidential
+    race, ``story:2027_france_presidential_election`` when the title names its
+    edition, else ``None``."""
+    match = _NATIONAL_PRESIDENTIAL_ELECTION_RE.search(name or "")
+    if match is None:
+        return None
+    words = match.group("place").split()
+    while words and words[0].lower() in _PRESIDENTIAL_PLACE_LEADERS:
+        words.pop(0)
+    if not words:
+        return None
+    place = re.sub(r"['’]s$", "", " ".join(words)).lower()
+    if place.replace(".", " ").strip() in _PRESIDENTIAL_PLACE_REFUSED:
+        return None
+    place = _DEMONYM_TO_COUNTRY.get(place, place)
+    slug = re.sub(r"[^\w]+", "_", place).strip("_")
+    if not slug:
+        return None
+    year = match.group("year")
+    edition = f"{year}_" if year else ""
+    return f"story:{edition}{slug}{NATIONAL_PRESIDENTIAL_ELECTION_STORY_SUFFIX}"
+
+
+def is_national_presidential_election_story_key(story_key: str | None) -> bool:
+    return bool(
+        story_key
+        and story_key.startswith("story:")
+        and story_key.endswith(NATIONAL_PRESIDENTIAL_ELECTION_STORY_SUFFIX)
+    )
+
 # Margin-of-victory + voter-turnout election markets — Alex product decision
 # (2026-06-24). These two families flooded Discover: ~1,100 open variants, one
 # per state/district (KXMIDTERMMOV-*, KXMIDTERMVOTETURN-*, ...), and Alex judged
@@ -2800,6 +2917,12 @@ def _story_key(name: str, category: str) -> str | None:
     if subnational is not None:
         return subnational
 
+    # #9877. After the sub-national arm, which returns None for any title that
+    # says "presidential", so the order between the two changes nothing.
+    national_presidential = national_presidential_election_story_key(name)
+    if national_presidential is not None:
+        return national_presidential
+
     return None
 
 
@@ -3100,9 +3223,17 @@ def classify_market_quality(
     # trade one wrong key for another. That needs its own measurement and its
     # own ship. Here the claim is narrow and checked by name: for a golf
     # tournament, the grammar above is the authority.
+    #
+    # #9877 widens the claim by exactly one grammar, on the same evidence: the
+    # national-presidential key names its country, and the persisted keys it
+    # displaced were each a slug of one title ("Brazil Presidential Election" →
+    # `story:brazil_presidential_election`, "Brazil Presidential election
+    # winner?" → `story:brazil_presidential_election_winner`), which is how one
+    # race reached page one twice.
     computed_story_key = _story_key(name, category)
-    if computed_story_key is not None and computed_story_key.startswith(
-        GOLF_TOURNAMENT_STORY_PREFIX
+    if computed_story_key is not None and (
+        computed_story_key.startswith(GOLF_TOURNAMENT_STORY_PREFIX)
+        or is_national_presidential_election_story_key(computed_story_key)
     ):
         story_key = computed_story_key
     else:
@@ -4875,6 +5006,11 @@ def diversify_quality_families(
         exact = per_story_caps.get(story_key)
         if exact is not None:
             return exact
+        # #9877: one card per national presidential race. The surplus rides the
+        # #7426 overflow reserve, so a first-round question still reaches a reader
+        # inside that race's bundle rather than as a second card beside it.
+        if is_national_presidential_election_story_key(story_key):
+            return 1
         for prefix, value in sorted(
             prefix_story_caps.items(), key=lambda kv: -len(kv[0])
         ):
