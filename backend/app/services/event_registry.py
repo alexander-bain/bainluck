@@ -71,6 +71,10 @@ logger = logging.getLogger(__name__)
 # Source priority for field updates (higher index = higher priority)
 _SOURCE_PRIORITY = {
     "kalshi": 0,
+    # #9827: the HHMM instant a Kalshi esports ticker names. The same authority
+    # as `kalshi` (same venue, same row), so the same rank: a schedule source
+    # still corrects it, and it never corrects one.
+    "kalshi_ticker_time": 0,
     "polymarket": 0,
     # #6073. The SAME authority as `polymarket` — same provider, same row — and
     # ranked identically on purpose. The string differs only to record which of

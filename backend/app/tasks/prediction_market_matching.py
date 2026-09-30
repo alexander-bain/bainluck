@@ -26,6 +26,7 @@ from sqlalchemy.orm.attributes import set_committed_value
 
 from app.tasks.base import get_task_session
 from app.utils.event_completion import (
+    KALSHI_TICKER_TIME_COMMENCE_SOURCE,
     POLYMARKET_VENUE_COMMENCE_SOURCE,
     RETIRED_STATUSES,
     TICKER_DERIVED_COMMENCE_SOURCE,
@@ -61,6 +62,7 @@ from app.utils.prediction_market_matching import (
     get_sport_prefix_from_ticker,
     _TICKER_TO_SPORT_PREFIX,
     extract_matchup,
+    esports_winner_matchup_name,
     extract_matchup_with_ticker_fallback,
     matchup_for_link_search,
     extract_teams_from_ticker,
@@ -1419,6 +1421,7 @@ MARKET_BORN_COMMENCE_SOURCES = (
     "kalshi",
     "kalshi_ticker",
     "kalshi_occurrence",
+    "kalshi_ticker_time",  # #9827: a Kalshi esports ticker's HHMM instant
     "polymarket",
     "polymarket_venue",
 )
@@ -3001,6 +3004,26 @@ def auto_create_commence_time(market, fallback):
     ticker_time = extract_game_date_from_ticker(getattr(market, "external_id", None))
     if ticker_time is None:
         return fallback, None
+    # #9827: an esports ticker's HHMM is the START, and the fallback is not.
+    # Kalshi's `commence_time` for these series is `occurrence_datetime`, the
+    # expected expiration: 404 of the Kalshi esports rows minted in the 10 days
+    # to 2026-09-30 sat exactly +4.00h after their ticker's instant, none at 0,
+    # and Polymarket's own fixture instant agreed with the TICKER. The ±12h
+    # esports window (`_ESPORTS_EVENT_DATE_MAX_DIFF_HOURS`) never refutes 4h,
+    # so the narrow rule that follows kept every one of them. Esports family only (the measured population),
+    # and only a ticker that carries a time of day — `ticker_start_utc` is the
+    # one Eastern→UTC conversion and returns None for a date-only ticker.
+    if getattr(market, "source", None) == "kalshi":
+        prefix = _kalshi_prefix(getattr(market, "external_id", None))
+        start = ticker_start_utc(ticker_time)
+        if (
+            start is not None
+            and prefix
+            and prefix.startswith(_ESPORTS_TICKER_PREFIXES)
+        ):
+            if fallback == start:
+                return fallback, None
+            return start, KALSHI_TICKER_TIME_COMMENCE_SOURCE
     if not auto_create_self_refutes(market, fallback):
         return fallback, None  # already coherent — change nothing
     return ticker_time, TICKER_DERIVED_COMMENCE_SOURCE
@@ -4235,10 +4258,20 @@ def _venue_moneyline_match_name(market) -> Optional[str]:
     through. "Set 1 Winner:", "Set Handicap:" and "Completed Match:" all carry
     their own Gamma types, and a title with a second colon is refused outright.
     An absent label (~21% of markets) answers None, the refusal as before.
+
+    #9827: esports, the same two signals and the same join-only contract.
+    Polymarket titles every esports match winner "<Game>: A vs B (BOn) -
+    <Tournament>", which is not game level either; the title is read by
+    `esports_winner_matchup_name`, anchored on #2947's `(BOn)` marker and
+    refusing every derivative tail. Measured on production 2026-09-30, over
+    14 days of esports titles, it refuses every derivative Gamma type
+    (child_moneyline, totals, map_handicap, round/kill props) on its own; the
+    `moneyline` gate is the second, independent signal.
     """
     if getattr(market, "source", None) != "polymarket":
         return None
-    if getattr(market, "llm_sport_category", None) != "tennis":
+    sport = getattr(market, "llm_sport_category", None)
+    if sport not in ("tennis", "esports"):
         return None
     from app.services.polymarket_api import is_full_contest_winner_type
     from app.utils.content_understanding import understanding_from_metadata
@@ -4250,6 +4283,8 @@ def _venue_moneyline_match_name(market) -> Optional[str]:
         understanding.get("venue_type")
     ):
         return None
+    if sport == "esports":
+        return esports_winner_matchup_name(market.name or "")
     label, colon, rest = (market.name or "").partition(":")
     rest = rest.strip()
     if not colon or not label.strip() or not rest or ":" in rest:
