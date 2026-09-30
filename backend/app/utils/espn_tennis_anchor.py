@@ -437,6 +437,70 @@ def replaced_player(
     """
     if our_status not in REPLACED_PLAYER_HOLD_FROM:
         return None
+    return _replaced_in_own_competition(
+        our_espn_id=our_espn_id, ours=ours, receipt=receipt,
+        competition=competition,
+    )
+
+
+#: The tag a withdrawn row carries once it gives its ESPN id back (#9797). The
+#: suffix is the id it held, so the release is readable off the row and a
+#: restore needs nothing but the row itself.
+ESPN_ID_RELEASED_TAG_PREFIX = "provenance:espn-id-released:"
+
+
+def released_espn_id(
+    *,
+    our_status: Any,
+    our_espn_id: Any,
+    ours: list[str],
+    receipt: dict[str, Any],
+    competition: Optional[dict[str, Any]],
+) -> Optional[str]:
+    """The ESPN id a withdrawn row must give back, or ``None``. (#9797)
+
+    ═══ THE HOLD STOPPED THE ROW; THE ID STILL BLOCKED THE MATCH ═══
+
+    :func:`replaced_player` takes a withdrawn match off the schedule and, on
+    purpose, leaves its ``espn_id`` alone. But ESPN keeps the competition id for
+    the lucky loser, so that id now names a DIFFERENT match, one we also hold.
+    ``stamp_espn_id_if_unheld`` refuses that match every pass while the
+    withdrawn row keeps the id, so the authority never reaches the row that is
+    actually going to be played. Measured 2026-09-30 10:4xZ: all four rows the
+    #8288 hold had suspended still held their competition's id. ``15320486``
+    Musetti v Fery held ``183485``, which ESPN lists as Fery v Faria at
+    ``02:00Z``, and our Fery v Faria row (``15322144``) printed a start twelve
+    hours late with no anchor to correct it.
+
+    The evidence is exactly the hold's, minus the status clause, so it can never
+    release an id the hold would not have acted on. Status matters only one
+    way: a SETTLED row keeps its id. Its result was written through that id, and
+    un-anchoring a finished match is a question about the result, not about a
+    draw change. ``suspended`` is released, because that is where the hold
+    leaves the row, and a pass that runs after the hold must still be able to
+    release it.
+    """
+    if our_status in SETTLED_STATUSES:
+        return None
+    if _replaced_in_own_competition(
+        our_espn_id=our_espn_id, ours=ours, receipt=receipt,
+        competition=competition,
+    ) is None:
+        return None
+    return str(our_espn_id)
+
+
+def _replaced_in_own_competition(
+    *,
+    our_espn_id: Any,
+    ours: list[str],
+    receipt: dict[str, Any],
+    competition: Optional[dict[str, Any]],
+) -> Optional[str]:
+    """The evidence :func:`replaced_player` and :func:`released_espn_id` share.
+
+    Every clause but the status one, which is where the two rules differ.
+    """
     if not our_espn_id or competition is None:
         return None
     if str(competition.get("espn_competition_id")) != str(our_espn_id):

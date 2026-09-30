@@ -6757,6 +6757,8 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
         carried_start,
         generic_sport_keys,
         pick_contest_canonical,
+        ESPN_ID_RELEASED_TAG_PREFIX,
+        released_espn_id,
         replaced_player,
         with_held_competitions,
         authority_write,
@@ -6826,6 +6828,7 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
         # competition replaced one of our players. Eagerly zeroed, so the key
         # appearing is the deployment proof and a 0 is a reading.
         "replaced_player_holds": 0,
+        "replaced_player_id_releases": 0,
     }
 
     # ═══ THE BOARD ═══
@@ -7165,6 +7168,35 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
                             "Tennis REPLACED PLAYER: event %s (%s v %s) suspended — "
                             "ESPN %s no longer names %s",
                             event.id, ours[0], ours[1], event.espn_id, gone,
+                        )
+                    # AND IT GIVES THE ID BACK (#9797). ESPN kept the id for
+                    # the lucky loser, so it now names a match we also hold,
+                    # and while this row keeps it that match can never be
+                    # stamped. Same evidence as the hold; read AFTER it, so the
+                    # status it tests is the one the hold just wrote.
+                    released = released_espn_id(
+                        our_status=event.status,
+                        our_espn_id=event.espn_id,
+                        ours=ours,
+                        receipt=receipt,
+                        competition=by_id.get(event.espn_id),
+                    )
+                    if released is not None:
+                        event.espn_id = None
+                        # A whole new list, never an in-place append (gotcha #4).
+                        event.event_tags = [
+                            *(event.event_tags or []),
+                            f"{ESPN_ID_RELEASED_TAG_PREFIX}{released}",
+                        ]
+                        # Flushed now, so the replacement's stamp (this pass or
+                        # the next) finds no holder, and the unit of work can
+                        # never order its UPDATE ahead of this one.
+                        await session.flush()
+                        stats["replaced_player_id_releases"] += 1
+                        logger.warning(
+                            "Tennis REPLACED PLAYER: event %s (%s v %s) released "
+                            "espn_id %s — ESPN now lists another pairing under it",
+                            event.id, ours[0], ours[1], released,
                         )
                     continue
 

@@ -766,6 +766,13 @@ class TestNoUngatedEspnIdStampSurvives:
         ("app/tasks/espn_sync.py", "_cleanup_bad_espn_matches._clear_espn_data",
          "team.espn_id = None"):
             "A CLEAR of Team.espn_id during bad-match cleanup.",
+        ("app/tasks/espn_sync.py", "_sync_tennis_from_espn",
+         "event.espn_id = None"):
+            "A CLEAR (#9797): a withdrawn tennis row gives back the id ESPN "
+            "kept for the lucky loser, on the #8288 hold's own evidence, so "
+            "the match ESPN now lists under it can be stamped through "
+            "`stamp_espn_id_if_unheld`. Writing NULL manufactures no identity; "
+            "the released id is recorded on the row's own tags.",
         ("app/tasks/espn_sync.py", "_backfill_team_logos",
          "team.espn_id = matched_espn.espn_id"):
             "Team.espn_id again, and already gated on `match_was_exact` so a "
