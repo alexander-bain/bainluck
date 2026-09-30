@@ -357,10 +357,11 @@ async def test_apply_corrects_folds_and_kalshi_binds_each_city_to_its_club(gate)
     assert await _league_step(gate, "Detroit", "KXNBAEAST-27") == PISTONS
     assert await _league_step(gate, "Portland") == BLAZERS
     assert await _league_step(gate, "Portland", "KXNBAWEST-27") == BLAZERS
-    # Said, not implied: normalize_name reads "Los Angeles C" and "Los Angeles L"
-    # as "los angeles", which the Lakers answer to too. No fold changes that.
-    assert await _league_step(gate, "Los Angeles C") is None
-    assert await _league_step(gate, "Los Angeles L") is None
+    # The LA pair is read by #9617's city-initials arm, not by this fold (it landed
+    # beside #6974 and reddened this pin, which said None). Asserted here so the
+    # fold's alias edits provably do not steal "Los Angeles C" from the Clippers.
+    assert await _league_step(gate, "Los Angeles C") == CLIPPERS
+    assert await _league_step(gate, "Los Angeles L") == LAKERS
     assert await _search(gate, "pistons") == [PISTONS]
     assert await _search(gate, "clippers") == [CLIPPERS]
 
