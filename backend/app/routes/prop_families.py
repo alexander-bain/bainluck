@@ -91,7 +91,12 @@ from app.utils.event_concept_cache import (
     with_availability,
     write_payload,
 )
-from app.utils.market_team_sport import link_crosses_conference, link_crosses_gender
+from app.utils.market_team_sport import (
+    link_crosses_conference,
+    link_crosses_gender,
+    link_crosses_league,
+    market_event_slug,
+)
 from app.utils.prop_families import group_prop_families, resolve_family_key
 from app.utils.statement_timeout import is_statement_timeout
 
@@ -763,6 +768,13 @@ async def _withhold_other_side(
     Athletics' MVP card printed it. The resolver already refuses that link
     (``link_crosses_conference``); this asks the same rule.
 
+    #9761: and every market whose venue id names another LEAGUE of the team's
+    sport. Notre Dame's roster still lists Jeremiyah Love, Jadarian Price and
+    Malachi Fields, so the roster branch matched Kalshi's NFL rookie board
+    (``KXNFLOROTY-27``) and the page printed an "Offensive Rookie Of The Year"
+    race after the linker had unbound every leg. ``link_crosses_league`` is the
+    linker's own refusal (Kalshi series, Polymarket event slug).
+
     Returns a loss reason, or None. A team with no ``sport_id`` is not screened.
     A failed lookup FAILS OPEN (the page keeps today's rows) and says so in the
     envelope, like the price screen.
@@ -794,9 +806,16 @@ async def _withhold_other_side(
     for mid in list(by_market):
         name, sport_id, source, external_id = side_inputs[mid]
         market_sport_key = sport_keys.get(int(sport_id)) if sport_id is not None else None
-        if link_crosses_gender(
-            name, team_sport_key, market_sport_key, source, external_id
-        ) or link_crosses_conference(source, external_id, team_sport_key, team_name):
+        if (
+            link_crosses_gender(name, team_sport_key, market_sport_key, source, external_id)
+            or link_crosses_conference(source, external_id, team_sport_key, team_name)
+            or link_crosses_league(
+                source,
+                external_id,
+                team_sport_key,
+                market_event_slug(by_market[mid].get("market_metadata")),
+            )
+        ):
             del by_market[mid]
     return None
 
