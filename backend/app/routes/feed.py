@@ -5428,6 +5428,14 @@ async def get_feed(
                 debug_payload["external_curator_ground_truth_misses"] = []
         _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "debug")
 
+        # #5811: a game card the venue already graded says who won, as its event
+        # page does. Over ``feed_items`` (the page base every page is sliced
+        # from) and before the Redis write, so a cached page carries it too.
+        await _attach_feed_venue_settlement(db, feed_items, now)
+        _previous_at = _record_feed_timing(
+            _timings, _started_at, _previous_at, "venue_settlement"
+        )
+
         # Remove internal sort/debug keys.
         #
         # LAT-P141: over ``feed_items``, not ``paginated``. ``paginated`` is a
@@ -6175,6 +6183,117 @@ async def _attach_missing_ground_truth_traces(
         item["db_trace"] = summarize_missing_ground_truth_db_trace(
             item, matches, now=now
         )
+
+
+def _feed_item_may_be_askable(data: dict, now: datetime) -> bool:
+    """Could the venue-settlement gate admit this served event card? (#5811)
+
+    A cheap pre-filter over the SERVED dict, so the ordinary page issues no
+    query: it must be a strict SUPERSET of
+    :func:`~app.utils.venue_settlement.venue_settlement_is_askable`, which
+    stays the only rule. The gate admits a scoreless row that is ``suspended``
+    or started-without-result — and the latter needs ``scheduled`` and a start
+    more than ``UPCOMING_GRACE`` ago. ``live`` is never admitted on a list
+    (``askable_briefs`` passes ``live_claim_is_unbacked=False``).
+
+    An unparseable start keeps a ``scheduled`` card IN — the row re-read decides.
+    """
+    from app.utils.event_completion import UPCOMING_GRACE
+
+    if data.get("home_score") is not None or data.get("away_score") is not None:
+        return False
+    status = (data.get("status") or "").strip().lower()
+    if status == EVENT_SUSPENDED:
+        return True
+    if status != "scheduled":
+        return False
+    raw = data.get("commence_time")
+    try:
+        start = _utc(
+            raw if isinstance(raw, datetime) else datetime.fromisoformat(str(raw))
+        )
+    except (TypeError, ValueError):
+        return True
+    return start is None or start < now - UPCOMING_GRACE
+
+
+async def _attach_feed_venue_settlement(db, feed_items: list, now: datetime) -> None:
+    """#5811: a feed game card the venue already graded carries the verdict.
+
+    ``/sports`` → Live & Paused printed "No result reported · Sep 29" over
+    Borando–Escuza (``15320966``) while ``/events/15320966`` read
+    ``Settled · Ian Escuza wins``: every other door onto the shared card — the
+    detail route (#6381), the league rails (#6739), ``/api/events`` and search
+    (#7092), the dropdown (#9550) — attaches ``venue_settled`` /
+    ``venue_settled_result``, and the feed did not. Same shared reader, same
+    gate, same key names, so the feed cannot answer one row differently.
+
+    🔴 THE GATE READS THE ROW, NOT THE CARD, as #9550's does: the briefs are
+    built from a re-read of the row's own status, start and score. The served
+    dict only narrows WHICH rows are re-read (:func:`_feed_item_may_be_askable`).
+
+    Matched by id, never by position; only the two keys are copied, only when
+    the reader returned them, so a failed read leaves every card exactly as it
+    was (the reader's absent-vs-False contract). Fail-open: this is ``/api/feed``.
+    Producer half only — the section and the card are ux's (notice 41).
+    """
+    from types import SimpleNamespace
+
+    from app.utils.venue_settlement_reader import attach_venue_settlement
+
+    cards_by_id: dict[int, list[dict]] = {}
+    for item in feed_items:
+        if not isinstance(item, dict) or item.get("type") != "event":
+            continue
+        data = item.get("data")
+        if not isinstance(data, dict) or not isinstance(data.get("id"), int):
+            continue
+        if _feed_item_may_be_askable(data, now):
+            cards_by_id.setdefault(data["id"], []).append(data)
+    if not cards_by_id:
+        return
+
+    try:
+        result = await db.execute(
+            select(
+                Event.id,
+                Event.status,
+                Event.commence_time,
+                Event.home_team_name,
+                Event.away_team_name,
+                Event.home_score,
+                Event.away_score,
+                Event.win_probability_sources,
+            ).where(Event.id.in_(list(cards_by_id)))
+        )
+        # Plain scalars, never live ORM rows (gotcha #6). The start is made
+        # tz-aware because the gate answers a naive/aware TypeError with False.
+        rows = [
+            SimpleNamespace(
+                **{**dict(r._mapping), "commence_time": _utc(r.commence_time)}
+            )
+            for r in result.all()
+        ]
+        briefs = [
+            {
+                "id": row.id,
+                "status": served_event_status(row.status, row.commence_time, now),
+                "home_score": row.home_score,
+                "away_score": row.away_score,
+            }
+            for row in rows
+        ]
+        await attach_venue_settlement(db, rows, briefs, now)
+    except Exception:
+        logger.debug("Feed venue settlement attach skipped", exc_info=True)
+        return
+
+    for brief in briefs:
+        if "venue_settled" not in brief:
+            continue
+        for data in cards_by_id.get(int(brief["id"]), []):
+            data["venue_settled"] = brief["venue_settled"]
+            data["venue_settled_result"] = brief.get("venue_settled_result")
 
 
 def _utc(dt: datetime | None) -> datetime | None:
