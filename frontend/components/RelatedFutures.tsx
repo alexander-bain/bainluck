@@ -15,6 +15,7 @@ import { isEventOwnMoneylineMarket } from "@/lib/eventOwnMoneyline";
 import { groupAwardsByPlayer, playerAwardKey } from "@/lib/playerAwardRows";
 import { withoutGamePropsDrawnAbove } from "@/lib/gamePropsDrawnAbove";
 import EntityImage from "./EntityImage";
+import { SettledMark, isSettledOutcome } from "@/components/SettledOutcomeMark";
 import AdvancementPath from "@/components/event/AdvancementPath";
 import PlayerAwardsList from "@/components/event/PlayerAwardsList";
 
@@ -2913,14 +2914,22 @@ export default function RelatedFutures({
                       <div key={o.outcome_id} className="flex items-center justify-between py-1">
                         <div className="text-sm text-text-primary truncate flex-1 min-w-0">{displayName}</div>
                         <div className="flex items-center gap-2 shrink-0 ml-3">
-                          {o.probability_change_24h != null && Math.abs(o.probability_change_24h) >= 0.005 && (
-                            <span className={`text-xs font-mono tabular-nums ${o.probability_change_24h > 0 ? "text-accent-brand" : "text-accent-danger"}`}>
-                              {o.probability_change_24h > 0 ? "↑" : "↓"} {(Math.abs(o.probability_change_24h) * 100).toFixed(1)}%
-                            </span>
+                          {/* #9919: a leg already answered ("BOS wins 2-0" once NYY
+                              took Game 1) is a result, in the one settled vocabulary. */}
+                          {isSettledOutcome(o) ? (
+                            <SettledMark won={o.is_winner === true} />
+                          ) : (
+                            <>
+                              {o.probability_change_24h != null && Math.abs(o.probability_change_24h) >= 0.005 && (
+                                <span className={`text-xs font-mono tabular-nums ${o.probability_change_24h > 0 ? "text-accent-brand" : "text-accent-danger"}`}>
+                                  {o.probability_change_24h > 0 ? "↑" : "↓"} {(Math.abs(o.probability_change_24h) * 100).toFixed(1)}%
+                                </span>
+                              )}
+                              <span className="font-mono tabular-nums text-sm font-bold">
+                                {o.probability != null ? `${Math.round(o.probability * 100)}%` : "---"}
+                              </span>
+                            </>
                           )}
-                          <span className="font-mono tabular-nums text-sm font-bold">
-                            {o.probability != null ? `${Math.round(o.probability * 100)}%` : "---"}
-                          </span>
                         </div>
                       </div>
                     );

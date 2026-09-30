@@ -1300,6 +1300,11 @@ export interface SeriesMarketOutcome {
   name: string;
   probability: number | null;
   probability_change_24h: number | null;
+  /** #9919: the leg's question is answered (`_outcome_is_settled`, #3868). Absent
+   *  on a payload older than the field reads as not settled. */
+  settled?: boolean;
+  /** True won, false lost, null nobody has looked. Only read when `settled`. */
+  is_winner?: boolean | null;
 }
 
 export interface SeriesMarket {

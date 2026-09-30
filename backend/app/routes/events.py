@@ -28571,6 +28571,8 @@ async def _build_related_futures(
         # #9008 — the series card is a whole board, so a refused leg stays on it,
         # named, with its price keys present and null (the clients test `!== null`).
         series_withheld = await _related_futures_withheld_ids(db, series_market_ids)
+        # Imported here, not at the top: `league_futures` imports this module.
+        from app.routes.league_futures import _field_has_a_winner, _outcome_is_settled
 
         # Group outcomes by market, then format each market as one entry
         from collections import defaultdict
@@ -28584,6 +28586,12 @@ async def _build_related_futures(
             mkt = outcomes_list[0].market
             if not mkt or _settled_before_the_game(mkt, event.commence_time):
                 continue  # #9042 — a series settled before this game started
+            # #9919 — a leg the venue has already ruled out ("BOS wins 2-0" once
+            # the Yankees took Game 1) is a RESULT. It reached the card as a bare
+            # null and printed "---". The league and hub cards' own rule decides
+            # it (#3868), over the WHOLE field, so a retraction or an unlicensed
+            # FALSE never reads Lost. `is_winner` passes through raw.
+            field_has_winner = _field_has_a_winner(outcomes_list)
             top_outcomes = []
             for so in outcomes_list[:10]:  # cap outcomes per market
                 refused = so.id in series_withheld
@@ -28594,6 +28602,8 @@ async def _build_related_futures(
                     "probability_change_24h": (
                         None if refused or not so.probability_change_24h else float(so.probability_change_24h)
                     ),
+                    "settled": _outcome_is_settled(so, mkt.status, field_has_winner),
+                    "is_winner": so.is_winner,
                 })
             # #9901 — a one-winner series card never adds up past 100%.
             top_outcomes = _squeeze_exclusive_series_outcomes(
