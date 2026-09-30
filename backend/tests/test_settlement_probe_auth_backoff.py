@@ -463,12 +463,27 @@ async def test_g7_healthy_traffic_is_not_paced(sleep_spy):
 
 
 @pytest.mark.asyncio
-async def test_g7_sustained_429_grows_wall_time_instead_of_staying_flat(fast_backoff):
-    """The measured property CERT-399 asks for, stated as a comparison.
+async def test_g7_sustained_429_grows_wall_time_instead_of_staying_flat(
+    fast_backoff, sleep_spy
+):
+    """The measured property CERT-399 asks for: same batch, same concurrency,
+    only the source's answer differs — the 429 batch must cost wall time and the
+    healthy one must not. A fix that bounds in-flight but not rate leaves the two
+    roughly equal, because a 429 returns as fast as a 200.
 
-    Same batch size, same concurrency, only the source's answer differs. A fix
-    that bounds in-flight but not rate leaves these two roughly equal, because a
-    429 returns as fast as a 200.
+    Each half is asserted on something a slow runner cannot forge (#9890, the
+    sibling of #6942). The original form compared the two wall clocks
+    (``throttled > healthy * 5``) and reddened a shard when load stretched the
+    healthy batch — 20 in-memory 200s — to 0.61 s. Load inflates a ratio's
+    denominator; it can only LENGTHEN a lower bound. So:
+
+    * healthy: the probe slept nothing at all (same instrument as
+      ``test_g7_healthy_traffic_is_not_paced``);
+    * throttled: wall time is at least what the backoff alone guarantees. Every
+      item makes ``_MAX_429_ATTEMPTS`` tries with a backoff sleep between each,
+      held inside its semaphore permit, so ``ceil(20 / 8) = 3`` items run back
+      to back on some permit. A probe that returned the 429 immediately, as
+      pre-fix, finishes in milliseconds and fails the floor.
     """
     def ok(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"market": {"status": "finalized"}})
@@ -476,25 +491,33 @@ async def test_g7_sustained_429_grows_wall_time_instead_of_staying_flat(fast_bac
     def limited(request: httpx.Request) -> httpx.Response:
         return httpx.Response(429, json={})
 
-    items = [(i, "kalshi", TICKER) for i in range(20)]
+    n_items, concurrency = 20, 8
+    items = [(i, "kalshi", TICKER) for i in range(n_items)]
 
-    started = time.monotonic()
     async with _client(ok) as client:
-        await probe_many(items, concurrency=8, client=client)
-    healthy = time.monotonic() - started
+        await probe_many(items, concurrency=concurrency, client=client)
+    assert sleep_spy.paced == [], (
+        f"healthy traffic cost wall time: the probe slept {sleep_spy.paced} "
+        f"({sum(sleep_spy.paced):.4f}s total) against a source answering 200"
+    )
 
     pacer = RatePacer()
     started = time.monotonic()
     async with _client(limited) as client:
-        results = await probe_many(items, concurrency=8, client=client, pacer=pacer)
+        results = await probe_many(
+            items, concurrency=concurrency, client=client, pacer=pacer
+        )
     throttled = time.monotonic() - started
 
-    assert len(results) == 20
+    assert len(results) == n_items
     assert all(o.disposition is Disposition.RATE_LIMITED for _, o in results)
     assert pacer.interval > 0.0, "the shared brake never engaged"
-    assert throttled > healthy * 5, (
+    per_item = sum(_backoff_delay(a) for a in range(sp._MAX_429_ATTEMPTS - 1))
+    waves = -(-n_items // concurrency)
+    floor = waves * per_item
+    assert throttled >= floor * 0.9, (
         f"429 traffic ran as fast as healthy traffic "
-        f"(throttled {throttled:.4f}s vs healthy {healthy:.4f}s) — "
+        f"(throttled {throttled:.4f}s vs a backoff floor of {floor:.4f}s) — "
         "concurrency is bounding in-flight, not rate"
     )
 
