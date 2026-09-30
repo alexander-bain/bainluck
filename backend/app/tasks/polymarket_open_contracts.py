@@ -189,6 +189,9 @@ class OpenContractAdmission:
     #: game socket). Price-only fan-out: the token is subscribed once, and each
     #: of its ticks is buffered on the owner AND on every mirror.
     asset_mirrors: dict[str, list[tuple[int, int]]] = field(default_factory=dict)
+    #: #9733 follow-on — leg → the other leg of its binary, both admitted
+    #: (``complement_pairs``). A price accepted for one also prices the other.
+    complement_of: dict[int, int] = field(default_factory=dict)
     counts: dict[str, int] = field(
         default_factory=lambda: {
             "markets": 0,
@@ -201,6 +204,7 @@ class OpenContractAdmission:
             "assets_duplicate": 0,
             "legs_mirrored": 0,
             "legs_mirrored_by_condition": 0,
+            "legs_complemented": 0,
         }
     )
 
@@ -392,6 +396,57 @@ def open_contract_asset_map(
                     admitted = True
             if admitted:
                 counts["markets_admitted"] += 1
+
+    out.complement_of = complement_pairs(
+        legs_by_market,
+        set(out.asset_to_outcome.values()) | set(out.mirrored_outcomes()),
+        graded,
+        excluded,
+    )
+    counts["legs_complemented"] = len(out.complement_of)
+    return out
+
+
+def complement_pairs(
+    legs_by_market: Mapping[int, list[tuple[int, str]]],
+    admitted: set[int],
+    graded: set[int],
+    excluded: set[int] = frozenset(),
+) -> dict[int, int]:
+    """``leg → other leg`` for every open market that is one binary contract.
+
+    A market qualifies only when it has exactly two legs, and they are token 0
+    and token 1 of the same condition (``contract_key``). Both legs must be
+    admitted to this arm and neither graded. Two tokens of one condition pay
+    out 1 between them, so either price fixes the other. That makes this a
+    structural test, not a guess from names.
+
+    #9733 follow-on. Each tick priced only its own token's leg. A leg whose
+    next quote was refused (a wide book) or never came kept its old number
+    while its sibling moved. Measured 2026-09-30 13:3xZ: 29 of 7,883 streamed
+    binaries stored a pair more than 10 points from 100. Specimens: George
+    Kittle 524.5+ receiving yards, market 61352683, served Yes 77% / No 10%
+    after a 20-share No sell at 0.10 (venue 76.5 / 23.5); HOOD $125 week
+    high, market 62403481, stored Yes 0.815 / No 0.55.
+
+    Anything else (a field board, a market on the game slate, a leg this arm
+    does not carry, a suffix naming no token) has no complement. Those legs
+    are priced exactly as before.
+    """
+    out: dict[int, int] = {}
+    for market_id, legs in legs_by_market.items():
+        if market_id in excluded or len(legs) != 2:
+            continue
+        (a, ext_a), (b, ext_b) = legs
+        key_a, key_b = contract_key(ext_a), contract_key(ext_b)
+        if key_a is None or key_b is None or key_a[0] != key_b[0]:
+            continue
+        if {key_a[1], key_b[1]} != {0, 1}:
+            continue
+        if a in graded or b in graded or a not in admitted or b not in admitted:
+            continue
+        out[a] = b
+        out[b] = a
     return out
 
 

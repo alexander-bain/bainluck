@@ -75,6 +75,31 @@ def trade_sets_a_price(msg: dict) -> bool:
         return True
 
 
+def with_complements(
+    targets: list, prob: float, complement_of: dict
+) -> list[tuple[int, float]]:
+    """``(leg, price)`` for each leg a tick prices, then each one's complement.
+
+    #9733 follow-on. A price for one token of a binary is also a price for the
+    other: ``1 - p``. Writing both keeps a Yes/No pair adding to 100 whichever
+    token the venue quoted last. Before this, a leg whose own quotes were
+    refused or silent kept an old number beside a sibling that moved (Kittle
+    524.5+ receiving yards served Yes 77% / No 10%).
+
+    ``complement_of`` holds only the pairs ``complement_pairs`` proved. Any
+    other leg comes back alone, at the tick's price, exactly as before. A
+    complement that is itself one of ``targets`` keeps its own price.
+    """
+    priced = [(oid, prob) for oid in targets]
+    named = set(targets)
+    for oid in targets:
+        other = complement_of.get(oid)
+        if other is not None and other not in named:
+            priced.append((other, round(1.0 - prob, 6)))
+            named.add(other)
+    return priced
+
+
 def legs_in_token_order(pairs: list) -> list:
     """Order one market's ``(outcome_id, external_id)`` legs as its CLOB tokens are.
 
@@ -891,6 +916,8 @@ async def _run_polymarket_ws_consumer():
     # #9736: token → [(outcome_id, market_id)] of the other markets' legs that
     # name a token another leg owns. Each tick lands on the owner AND these.
     open_asset_mirrors: dict[str, list[tuple[int, int]]] = {}
+    # #9733 follow-on: leg → the other leg of its binary (`complement_pairs`).
+    open_complement_of: dict[int, int] = {}
     open_outcome_ids: set[int] = set()
     open_sockets: list = []
 
@@ -1146,9 +1173,11 @@ async def _run_polymarket_ws_consumer():
             return
 
         async with buffer_lock:
-            for outcome_id in targets:
-                price_buffer[outcome_id] = prob
-                _mark_input(outcome_id, prob, "price", msg)
+            for outcome_id, leg_prob in with_complements(
+                targets, prob, open_complement_of
+            ):
+                price_buffer[outcome_id] = leg_prob
+                _mark_input(outcome_id, leg_prob, "price", msg)
 
     def _tick_targets(asset_id: str) -> list[int]:
         """Every leg a tick in this token prices: its owner, then its mirrors.
@@ -1215,9 +1244,11 @@ async def _run_polymarket_ws_consumer():
             return
 
         async with buffer_lock:
-            for outcome_id in targets:
-                price_buffer[outcome_id] = prob
-                _mark_input(outcome_id, prob, "trade", msg)
+            for outcome_id, leg_prob in with_complements(
+                targets, prob, open_complement_of
+            ):
+                price_buffer[outcome_id] = leg_prob
+                _mark_input(outcome_id, leg_prob, "trade", msg)
         stats["trade_updates"] += 1
 
     async def handle_resolved(msg: dict):
@@ -1365,6 +1396,7 @@ async def _run_polymarket_ws_consumer():
         market_by_outcome.update(mirrored)
         open_outcome_ids.update(mirrored)
         open_asset_mirrors.update(admission.asset_mirrors)
+        open_complement_of.update(admission.complement_of)
         if not admission.asset_to_outcome:
             return
         # An open contract's field is re-ranked like a linked one's.
