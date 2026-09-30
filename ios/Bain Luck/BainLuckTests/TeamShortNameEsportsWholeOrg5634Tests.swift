@@ -95,16 +95,79 @@ final class TeamShortNameEsportsWholeOrg5634Tests: XCTestCase {
         XCTAssertEqual(TeamShortName.short("G2 Esports"), "Esports")
     }
 
-    func testTheCrestBadgeDoesNotMove() {
-        for name in ["G2 Esports", "Paper Rex", "Natus Vincere", "KT Rolster Challengers"] {
+    // MARK: - The crest (the browser's `teamCrestBadge` esports arm, PR #9695)
+
+    /// ux's specimens, before (unkeyed) -> after (esports key). Every "after" is
+    /// the org's own letters where the before was the type word.
+    private static let typeWordBadges: [(String, String, String)] = [
+        ("G2 Esports", "ESP", "G2"),
+        ("Top Esports", "ESP", "TOP"),
+        ("FURIA Esports", "ESP", "FUR"),
+        ("SK Gaming", "GAM", "SK"),
+        ("JD Gaming", "GAM", "JD"),
+        ("Bilibili Gaming", "GAM", "BIL"),
+        ("Team WE", "TEA", "WE"),
+        ("BOMBA Team", "TEA", "BOM"),
+        ("Insiders Esport", "ESP", "INS"),
+        ("INTZ e-Sports", "ESP", "INT"),
+    ]
+
+    func testAnEsportsCrestNamesTheOrganisationNotItsType() {
+        for (name, before, after) in Self.typeWordBadges {
+            XCTAssertEqual(TeamShortName.abbreviation(name), before, "the before, unkeyed: \(name)")
+            XCTAssertEqual(TeamShortName.abbreviation(name, sportKey: "esports_lol"), after, name)
+        }
+    }
+
+    func testABadgeThatIsNotTheTypeWordStands() {
+        // HLE and BIG spell the org's tag by counting the type word as a letter —
+        // the 38 names the ungated drop regressed on the web. The rest carry no
+        // type word, or really start "Gam".
+        for name in [
+            "Hanwha Life Esports", "Berlin International Gaming", "Team Secret Whales",
+            "Black Dragons e-Sports", "E WIE EINFACH E-SPORTS", "Paper Rex", "Team Liquid",
+            "Natus Vincere", "GamerLegion",
+        ] {
             XCTAssertEqual(
                 TeamShortName.abbreviation(name, sportKey: Self.esports),
                 TeamShortName.abbreviation(name), name
             )
         }
-        let keyed = TeamShortName.abbreviationPair(away: "Paper Rex", home: "G2 Esports", sportKey: Self.esports)
-        let unkeyed = TeamShortName.abbreviationPair(away: "Paper Rex", home: "G2 Esports")
-        XCTAssertEqual(keyed.away, unkeyed.away)
-        XCTAssertEqual(keyed.home, unkeyed.home)
+        XCTAssertEqual(TeamShortName.abbreviation("Hanwha Life Esports", sportKey: Self.esports), "HLE")
+        XCTAssertEqual(TeamShortName.abbreviation("Berlin International Gaming", sportKey: Self.esports), "BIG")
+        XCTAssertEqual(TeamShortName.abbreviation("Paper Rex", sportKey: Self.esports), "REX")
+        // "GAM Esports" is `ESP` unkeyed like any "<X> Esports"; the arm drops
+        // the type word and the org's own name happens to read `GAM` — the
+        // browser's expectation for the same name, not a type word.
+        XCTAssertEqual(TeamShortName.abbreviation("GAM Esports"), "ESP")
+        XCTAssertEqual(TeamShortName.abbreviation("GAM Esports", sportKey: Self.esports), "GAM")
+    }
+
+    func testTheCrestArmIsGatedOnTheEsportsKey() {
+        for key: String? in [nil, "", "soccer_epl", "basketball_nba", "soccer_esports_cup"] {
+            XCTAssertEqual(TeamShortName.abbreviation("G2 Esports", sportKey: key), "ESP", key ?? "nil")
+            XCTAssertEqual(TeamShortName.abbreviation("SK Gaming", sportKey: key), "GAM", key ?? "nil")
+        }
+    }
+
+    func testTheHeroPairKeepsEachOrganisationsBadge() {
+        // The hero and crest circles read `abbreviationPair`. Both sides shorten
+        // to "Esports", which the collision proxy would grow into `G2E`.
+        let both = TeamShortName.abbreviationPair(away: "G2 Esports", home: "Top Esports", sportKey: Self.esports)
+        XCTAssertEqual(both.away, "G2")
+        XCTAssertEqual(both.home, "TOP")
+        let tag = TeamShortName.abbreviationPair(away: "Hanwha Life Esports", home: "T1 Esports", sportKey: Self.esports)
+        XCTAssertEqual(tag.away, "HLE")
+        XCTAssertEqual(tag.home, "T1")
+        let specimen = TeamShortName.abbreviationPair(away: "Paper Rex", home: "G2 Esports", sportKey: Self.esports)
+        XCTAssertEqual(specimen.away, "REX")
+        XCTAssertEqual(specimen.home, "G2")
+        // An exact badge collision still grows, esports key or not.
+        let same = TeamShortName.abbreviationPair(away: "Team Phoenix", home: "FunPlus Phoenix", sportKey: Self.esports)
+        XCTAssertNotEqual(same.away, same.home)
+        // Unkeyed callers draw exactly what they drew before.
+        let unkeyed = TeamShortName.abbreviationPair(away: "G2 Esports", home: "Top Esports")
+        XCTAssertEqual(unkeyed.away, "G2E")
+        XCTAssertEqual(unkeyed.home, "TOP")
     }
 }
