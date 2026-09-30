@@ -42,7 +42,10 @@ from app.utils.kalshi_occurrence_start import (
     KALSHI_OCCURRENCE_TIMED_SOURCES,
     kalshi_game_scale_commence,
 )
-from app.utils.event_twin_fold import _catchall_sport_prefix  # #7904, the catch-all shadow arm
+from app.utils.event_twin_fold import (  # #7904/#9686, the catch-all shadow arm
+    CATCHALL_SHADOW_KICKOFF_DRIFT,
+    _catchall_sport_prefix,
+)
 from app.utils.futures_liveness import KALSHI_BOOK_SILENT_SQL
 from app.utils.polymarket_empty_book import (  # #9083, the pregame pin's book guard
     POLYMARKET_BOOKMAKER,
@@ -6503,15 +6506,23 @@ async def _phase15_revalidate(
                     # #7904: the market sits on the row Polymarket minted for it
                     # in the catch-all bucket, and the venue instant agrees with
                     # that row, so the arm below would leave it. Ask the #5544
-                    # finder instead: exactly one real covered-league row at the
-                    # venue's minute is the game. See the helper's docstring.
+                    # finder instead: exactly one real covered-league row near
+                    # the venue's minute is the game. See the helper's docstring.
+                    # #9686: "near" is CATCHALL_SHADOW_KICKOFF_DRIFT, not the
+                    # 15-minute `_PM_VENUE_SAME_GAME` — Gamma listed Islanders–
+                    # Rangers 30 min and Golden Knights–Kraken 40 min off ESPN.
+                    # Soccer keeps 15 (the fold's bound never reaches soccer).
                     if event_sport_key is None:
                         event_sport_key = await _event_sport_key(session, linked_event)
                     shadow_sport = _catchall_sport_prefix(event_sport_key)
                     if shadow_sport:
                         venue_named_row = await _venue_confirmed_covered_fixture(
                             session, matchup, market, linked_event,
-                            window=_PM_VENUE_SAME_GAME, exclude_retired=True,
+                            window=(
+                                _PM_VENUE_SAME_GAME if shadow_sport == "soccer"
+                                else CATCHALL_SHADOW_KICKOFF_DRIFT
+                            ),
+                            exclude_retired=True,
                             within_sport=shadow_sport,
                         )
                         if venue_named_row is None:
