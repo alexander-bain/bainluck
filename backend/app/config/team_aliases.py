@@ -49,6 +49,18 @@ CURATED_TEAM_ALIASES: dict[tuple[str, str], list[str]] = {
     # answer the query has had. Refused in the same pass: `avs` (#8685 — AVS
     # Futebol), `celts` (Celtic FC are "the Celts" too), `bolts`.
     ("basketball_nba", "Golden State Warriors"): ["dubs"],
+    # #9263 — `avs`, measured on production 2026-09-30 10:2xZ. Before: the TEAMS
+    # card held only AVS Futebol SAD and the markets list one Taça de Portugal
+    # market; 0 of the 37 open `hockey` markets naming `Avalanche` (every one is
+    # Colorado's — all 30 non-"Colorado" titles pair it with an NHL club).
+    # `Avalanche` names exactly ONE icehockey_nhl club over 120 days of events.
+    # Refused twice before (#8685, #9263 r1) under the two-franchise rule, which
+    # does not reach it: that rule protects a club that would LOSE the word, and
+    # AVS Futebol keeps it — `avs` is its own name, matched by the card's full text
+    # and the plain rails, and every arm here is additive. It stays on the card,
+    # second. `caps`/`cavs`/`canes`/`bolts`/`wolves` are in neither club's name,
+    # so they stay refused.
+    ("icehockey_nhl", "Colorado Avalanche"): ["avs"],
     # #9272 — four MLB nicknames, measured on production 2026-09-28 02:5xZ.
     # Before: `o's` served O Elvas CAD, O'Higgins and a boxing bout, `a's` and
     # `rox` served nothing at all, and `m's` served four "A&M" schools and Texas

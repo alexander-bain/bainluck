@@ -76,16 +76,20 @@ def test_an_alias_claimed_by_two_clubs_still_fails_the_guard():
 
 
 def test_nicknames_two_franchises_share_are_not_curated_8685():
-    """#8685 added eleven nicknames and deliberately refused six.
+    """#8685 added eleven nicknames and deliberately refused six; five still stand.
 
-    Each of these is how fans of TWO franchises type their team — `avs` is the
-    Colorado Avalanche and AVS Futebol, `caps` the Capitals and the Whitecaps,
-    `cavs` Cleveland and Virginia, `canes` Carolina and Miami, `bolts` the
-    Lightning and the Chargers, `wolves` Minnesota and Wolverhampton. A curated
-    alias is scoped to ONE franchise, so adding any of them hands one fan base's
-    word to the other. This file's rule: an alias that matches two franchises
-    makes search worse, not better.
+    Each of these is how fans of TWO franchises type their team — `caps` the
+    Capitals and the Whitecaps, `cavs` Cleveland and Virginia, `canes` Carolina
+    and Miami, `bolts` the Lightning and the Chargers, `wolves` Minnesota and
+    Wolverhampton. A curated alias is scoped to ONE franchise, and the word is in
+    neither club's name, so adding any of them hands one fan base's word to the
+    other. This file's rule: an alias that matches two franchises makes search
+    worse, not better.
+
+    The sixth, `avs`, was admitted by #9263: the other club's NAME is `AVS
+    Futebol`, so it keeps the word whatever the map says (see the config comment
+    and `test_avs_avalanche_9263.py`, which pins AVS Futebol still on the card).
     """
     curated = {a.lower() for aliases in CURATED_TEAM_ALIASES.values() for a in aliases}
-    for shared in ("avs", "caps", "cavs", "canes", "bolts", "wolves"):
+    for shared in ("caps", "cavs", "canes", "bolts", "wolves"):
         assert shared not in curated, f"{shared!r} names two franchises"
