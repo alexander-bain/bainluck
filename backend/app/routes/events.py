@@ -20708,6 +20708,101 @@ def _withhold_partial_field_markets(other_rows: list, markets: list) -> list:
     ]
 
 
+def _squeeze_exclusive_field_markets(other_rows: list, markets: list) -> list:
+    """A one-winner card never adds up to more than 100% (#4724).
+
+    WHAT A READER SAW, production 2026-09-30 15:05Z, `/events/14780550`
+    (Steelers @ Browns, Thursday Night Football), 390px. Additional Markets drew
+    *Pittsburgh vs Cleveland: Race to 21 Points* as Pittsburgh 45% / Neither
+    team 35% / Cleveland 27% — **107%** for three outcomes of which exactly one
+    happens. The US Open semi-final Exact Match Score cards read 104% and 108%
+    the same way (#4724, #4895). Kalshi market `63152878` stores
+    `mutually_exclusive = true` and legs 0.445 / 0.35 / 0.27: the excess is the
+    venue's mid-prices carrying the vig, served straight through. No rounding
+    rule can reach it (#4724's measurement: DATA +4.00 pts, ROUNDING +0.00).
+
+    THE RULE. For a market the venue declares one-winner, with every one of its
+    three or more served legs priced and attributed to it alone, whose legs sum
+    past 1.0: divide each by the sum. Nothing else moves.
+
+    * **Only DOWN.** A subset of a one-winner field can never legitimately sum
+      past 1, so dividing by its own sum moves every leg toward the true share
+      and never past it — even when legs are missing, the true divisor is at
+      least this one. A field summing UNDER 1 is left alone: a partial field is
+      honest as it stands, and inflating it would invent weight for legs nobody
+      priced.
+    * **`mutually_exclusive` is the structure; a sum is not** (#7641). The flag
+      is what `normalize_display_probs` already trusts (#199: Kalshi flags
+      make-cut / top-N / player-prop fields False). A Receptions field summing
+      to 21.9 is flagged False and never reaches the arithmetic.
+    * **Past `_FIELD_SUM_MAX` it stays raw**, #1200's line: a "one-winner" field
+      summing that far past 1 is really independent binaries, and squeezing it
+      would turn a near-lock into a coin flip.
+    * **Every leg priced.** A settled market serves its losers as `None`; a
+      field with an unpriced leg is not one this can reason about (#7103's
+      "absent is not zero").
+    * **Three legs or more.** A two-leg one-winner market is the moneyline
+      shape the page's `findWinProbMarkets` recognises by its SUM (±0.1), so
+      moving that sum could move which card a reader sees. Every specimen here
+      is a field of three or more.
+    * **Merged rows abstain.** A row carrying several `_market_ids` speaks for
+      more than one market; a market seen through one is never squeezed, the
+      same caution `_withhold_partial_field_markets` takes.
+
+    WHY NOT `normalize_display_probs`: its squeeze fires only past 105%
+    (`politics._normalize_outcome_probs`), which leaves Race to 14 printing
+    52 + 42 + 10 = 104 and the Zverev–Khachanov ladder at 104 — the exact
+    readings #4724 was filed on. #6583 records the same threshold leaving
+    102/103 on Discover. The guards above are that function's guards; only
+    the threshold differs, and it differs because a reader of a three-row card
+    adds the rows.
+
+    Rows are copied, never mutated, so a caller holding the list it passed in
+    keeps the raw prices.
+    """
+    from app.utils.outcome_display import _FIELD_SUM_MAX
+
+    exclusive = {
+        market.id for market in markets if getattr(market, "mutually_exclusive", None) is True
+    }
+    if not exclusive:
+        return other_rows
+
+    legs: dict = {}
+    merged: set = set()
+    for row in other_rows:
+        ids = _row_market_ids(row)
+        if len(ids) > 1:
+            merged |= ids
+            continue
+        if len(ids) == 1:
+            market_id = next(iter(ids))
+            if market_id in exclusive:
+                legs.setdefault(market_id, []).append(row)
+
+    divisor: dict = {}
+    for market_id, rows in legs.items():
+        if market_id in merged or len(rows) < 3:
+            continue
+        probs = [row.get("probability") for row in rows]
+        if any(p is None for p in probs):
+            continue
+        total = sum(float(p) for p in probs)
+        if 1.0 < total <= _FIELD_SUM_MAX:
+            divisor[market_id] = total
+    if not divisor:
+        return other_rows
+
+    out = []
+    for row in other_rows:
+        ids = _row_market_ids(row)
+        market_id = next(iter(ids)) if len(ids) == 1 else None
+        if market_id in divisor:
+            row = {**row, "probability": round(float(row["probability"]) / divisor[market_id], 4)}
+        out.append(row)
+    return out
+
+
 def _futures_row_market_ids(row: dict) -> set:
     """Every market that stood behind a rendered row (#7068).
 
@@ -26203,6 +26298,11 @@ async def _build_game_markets(
     # showed — the count has to be the rendered one, because the completeness
     # claim the reader reads is made by the rendered rows and by nothing else.
     other_markets = _withhold_partial_field_markets(other_markets, markets)
+
+    # #4724 — A ONE-WINNER CARD NEVER ADDS UP TO MORE THAN 100%. After the
+    # partial-field withhold, for its reason: which legs reach the reader is a
+    # fact only here, and the sum the reader adds is the sum of those legs.
+    other_markets = _squeeze_exclusive_field_markets(other_markets, markets)
 
     # #6447 — THE CARDS STOP NAMING A CLUB THAT DOES NOT EXIST.
     #
