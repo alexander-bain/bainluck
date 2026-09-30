@@ -113,37 +113,126 @@ def test_ribovics_claim_folds_onto_the_anchored_bout_with_both_venues():
     assert result.merged_sources[15318684] == {"betting": 0.3107, "kalshi": 0.325}
 
 
-def test_kopylov_reversed_and_priced_stays_two_cards_9304():
-    """#9304, the production values. The claim 15315711 is Gautier @ Kopylov
-    (home Kopylov, Kalshi 0.335 = Kopylov's chance). The anchor 15318681 is
-    Kopylov @ Gautier (home Gautier, sportsbooks 0.6425 = Gautier's chance).
-    A verbatim union printed Kalshi's 0.335 as GAUTIER's chance. Two cards,
-    each number on its own fighter, is the honest page."""
+def test_kopylov_reversed_and_priced_folds_with_kalshi_turned_round():
+    """#7993 residual, production 2026-09-30 17:0xZ. The claim 15315711 is
+    Gautier @ Kopylov (home Kopylov, Kalshi 0.345 = Kopylov's chance). The
+    anchor 15318681 is Kopylov @ Gautier (home Gautier, sportsbooks 0.6506 =
+    Gautier's chance). #9304 refused this pair, so `/sports/mma_mixed_martial_arts`
+    listed the bout twice. Now one card, and Kalshi reads 0.655 FOR GAUTIER,
+    beside the sportsbooks' 0.6506 for Gautier. A verbatim copy (#9304's
+    regression) would put 0.345 there."""
+    kalshi = {
+        "value": 0.345,
+        "observed_value": 0.345,
+        "updated_at": "2026-09-30T16:57:08.491649+00:00",
+        "eligibility": {"v": 1, "market_id": 61620856, "status": "verified"},
+        "observed_basis": {"232147185": 1790787428.491649},
+    }
     claim = _claim(
-        15315711, "Roman Kopylov", "Ateba Gautier", sources={"kalshi": 0.335}
+        15315711, "Roman Kopylov", "Ateba Gautier", sources={"kalshi": kalshi}
     )
     anchor = _anchor(
         15318681,
         "Ateba Gautier",
         "Roman Kopylov",
-        hours_after_card=4,
-        sources={"betting": 0.6425},
+        hours_after_card=3.25,
+        sources={"betting": {"value": 0.6506}, "betting_book_count": 7},
     )
 
     result = fold_twin_events([claim, anchor])
 
+    assert _ids(result) == [15318681]
+    assert result.survivor_of == {15315711: 15318681}
+    merged = result.merged_sources[15318681]
+    assert merged["betting"] == {"value": 0.6506}
+    assert merged["kalshi"]["value"] == pytest.approx(0.655)
+    # The pair turns together, so the basis still dates the value it binds.
+    assert merged["kalshi"]["observed_value"] == merged["kalshi"]["value"]
+    assert merged["kalshi"]["observed_basis"] == kalshi["observed_basis"]
+    assert merged["kalshi"]["eligibility"] == kalshi["eligibility"]
+    # The stored row is not touched: the flip is a served reading only.
+    assert claim.win_probability_sources == {"kalshi": kalshi}
+
+
+def test_pulyaev_reversed_bare_number_is_turned_round():
+    """Pulyaev–Pinas, a legacy bare-number reading: 0.185 for Pulyaev is 0.815
+    for Pinas, the anchor's home fighter."""
+    claim = _claim(15315709, "Andrey Pulyaev", "Damian Pinas", sources={"kalshi": 0.185})
+    anchor = _anchor(15318680, "Damian Pinas", "Andrey Pulyaev", sources={"betting": 0.8088})
+
+    result = fold_twin_events([claim, anchor])
+
+    assert _ids(result) == [15318680]
+    assert result.merged_sources[15318680]["kalshi"] == pytest.approx(0.815)
+
+
+def test_a_same_corner_claim_is_never_turned_round():
+    """The border of the flip: same corners, the number is copied as stored."""
+    claim = _claim(15315713, "King Green", "Esteban Ribovics", sources={"kalshi": 0.3})
+    anchor = _anchor(15318684, "King Green", "Esteban Ribovics", sources={"betting": 0.31})
+
+    assert fold_twin_events([claim, anchor]).merged_sources[15318684]["kalshi"] == 0.3
+
+
+def test_the_anchors_own_numbers_are_never_turned_round():
+    claim = _claim(15315711, "Roman Kopylov", "Ateba Gautier", sources={"kalshi": 0.345})
+    anchor = _anchor(
+        15318681, "Ateba Gautier", "Roman Kopylov",
+        sources={"betting": 0.6506, "polymarket": 0.66},
+    )
+
+    merged = fold_twin_events([claim, anchor]).merged_sources[15318681]
+    assert merged == {"betting": 0.6506, "polymarket": 0.66, "kalshi": pytest.approx(0.655)}
+
+
+@pytest.mark.parametrize(
+    "reading",
+    [
+        {"value": 0.345, "bid": 0.34},  # a key nobody has checked
+        {"observed_value": 0.345},  # no value
+        {"value": "0.345"},  # not a number
+        {"value": 1.4},  # not a probability
+        "0.345",
+        None,
+    ],
+)
+def test_a_reversed_reading_that_cannot_be_turned_round_stays_two_cards(reading):
+    claim = _claim(15315711, "Roman Kopylov", "Ateba Gautier", sources={"kalshi": reading})
+    anchor = _anchor(15318681, "Ateba Gautier", "Roman Kopylov", sources={"betting": 0.6506})
+
+    result = fold_twin_events([claim, anchor])
+
     assert _ids(result) == [15315711, 15318681]
-    assert result.survivor_of == {}
     assert 15318681 not in result.merged_sources
 
 
-@pytest.mark.parametrize("side", ["opening_home_probability", "opening_away_probability"])
-def test_a_reversed_claim_carrying_only_an_opening_line_stays_two_cards_9304(side):
-    claim = _claim(15315709, "Andrey Pulyaev", "Damian Pinas")
-    setattr(claim, side, 0.2)
-    anchor = _anchor(15318680, "Damian Pinas", "Andrey Pulyaev", sources={"betting": 0.8})
+def test_a_reversed_priced_claim_that_would_be_kept_stays_two_cards():
+    """A claim with a visible score outranks the anchor, so the anchor's
+    numbers would be the ones copied, unturned, onto the claim's corners."""
+    claim = _claim(
+        15315711, "Roman Kopylov", "Ateba Gautier",
+        home_score=1, away_score=0, sources={"kalshi": 0.345},
+    )
+    anchor = _anchor(15318681, "Ateba Gautier", "Roman Kopylov", sources={"betting": 0.6506})
 
-    assert _ids(fold_twin_events([claim, anchor])) == [15315709, 15318680]
+    assert _ids(fold_twin_events([claim, anchor])) == [15315711, 15318681]
+
+
+def test_a_reversed_claims_opening_line_crosses_with_its_halves_swapped():
+    """Pinas @ Pulyaev with only the claim holding a line: the claim's 0.2 for
+    Pulyaev (its home) is the anchor's AWAY half, and 0.8 for Pinas its home."""
+    claim = _claim(15315709, "Andrey Pulyaev", "Damian Pinas")
+    claim.opening_home_probability = 0.2
+    claim.opening_away_probability = 0.8
+    anchor = _anchor(15318680, "Damian Pinas", "Andrey Pulyaev", sources={"betting": 0.8})
+    anchor.opening_home_probability = None
+    anchor.opening_away_probability = None
+
+    result = fold_twin_events([claim, anchor])
+
+    assert _ids(result) == [15318680]
+    assert (anchor.opening_home_probability, anchor.opening_away_probability) == (0.8, 0.2)
+    assert result.merged_opening[15318680] == (0.8, 0.2)
 
 
 def test_a_reversed_claim_with_no_number_still_folds_9304():

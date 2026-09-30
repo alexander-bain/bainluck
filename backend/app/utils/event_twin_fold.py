@@ -153,6 +153,7 @@ from __future__ import annotations
 
 import bisect
 import logging
+import math
 import re
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -781,10 +782,15 @@ def fold_twin_events(events: Iterable[Any]) -> FoldResult:
     # #7993 — last, on whole clusters, for the same reason the catch-all pass is:
     # it only ever UNIONS what the passes above built, so an `mma_other` claim the
     # catch-all pass could not reach is still a cluster this one can place.
+    # #7993 residual — the reversed, priced claims this pass admits carry their
+    # numbers turned round to the anchor's corners, keyed on the Python object
+    # like `keep` below. Only `_elect` reads it.
+    corner_flips: dict[int, "_CornerFlip"] = {}
     try:
-        grouped = _merge_combat_claim_bouts(grouped)
+        grouped = _merge_combat_claim_bouts(grouped, corner_flips=corner_flips)
     except Exception:  # noqa: BLE001 — gotcha #42; the clusters above stand
         logger.exception("twin fold: combat claim merge failed; serving groups")
+        corner_flips = {}
 
     # Keyed on the PYTHON object, not on `.id`: the fold must survive a caller
     # that hands it two hydrated rows carrying the same primary key, and must
@@ -798,7 +804,7 @@ def fold_twin_events(events: Iterable[Any]) -> FoldResult:
             continue
 
         try:
-            _elect(members, keep, result)
+            _elect(members, keep, result, corner_flips)
         except Exception:  # noqa: BLE001 — one group's failure keeps its rows
             logger.warning(
                 "twin fold: election failed for %s; all rows kept",
@@ -3155,7 +3161,87 @@ def _combat_sport(members: list) -> Optional[str]:
     return sports.pop() if len(sports) == 1 else None
 
 
-def _merge_combat_claim_bouts(clusters: list[list]) -> list[list]:
+#: The keys a stored venue reading may carry for :func:`_flipped_reading` to turn
+#: it round (#7993 residual). `value` and `observed_value` are the home fighter's
+#: chance; the other three say where and when it was read and hold for either
+#: corner. Measured over every mma/boxing row of the last 120 days on production,
+#: 2026-09-30 17:1xZ: these five are the only keys a `kalshi`, `polymarket` or
+#: `betting` object carries. A key outside this set is a shape nobody has
+#: checked, so the reading is refused rather than guessed at.
+_FLIPPABLE_READING_KEYS = frozenset(
+    {"value", "observed_value", "updated_at", "eligibility", "observed_basis"}
+)
+_ORIENTED_READING_KEYS = ("value", "observed_value")
+
+
+def _flipped_chance(raw: Any) -> Optional[float]:
+    """``1 - raw`` for a finite probability, else ``None``."""
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return None
+    if not math.isfinite(raw) or not 0.0 <= raw <= 1.0:
+        return None
+    return round(1.0 - float(raw), 10)
+
+
+def _flipped_reading(name: str, reading: Any) -> tuple[bool, Any]:
+    """One stored venue entry read from the OTHER corner. ``(ok, reading)``.
+
+    A bare number or a `value`/`observed_value` pair is the home fighter's
+    chance, so the other corner's is its complement. Both halves of the pair
+    turn together, which keeps `observed_value == value` and so keeps the
+    observation basis bound to the value it dates (`stored_observation_basis`).
+    A `*_count` entry is a count of sources, not a chance, and is kept as is.
+    Anything else is refused.
+    """
+    if name.endswith("_count"):
+        return True, reading
+    if not isinstance(reading, dict):
+        flipped = _flipped_chance(reading)
+        return (flipped is not None), flipped
+    if not reading.keys() <= _FLIPPABLE_READING_KEYS or "value" not in reading:
+        return False, None
+    out = dict(reading)
+    for key in _ORIENTED_READING_KEYS:
+        if key in reading:
+            flipped = _flipped_chance(reading[key])
+            if flipped is None:
+                return False, None
+            out[key] = flipped
+    return True, out
+
+
+@dataclass(frozen=True)
+class _CornerFlip:
+    """A reversed claim row's numbers, read from the anchor's corners."""
+
+    sources: Optional[dict]
+    opening_home: Any
+    opening_away: Any
+
+
+def _corner_flip(member: Any) -> Optional[_CornerFlip]:
+    """The row's readings turned round, or ``None`` if any cannot be."""
+    sources = getattr(member, "win_probability_sources", None)
+    flipped: Optional[dict] = None
+    if sources:
+        if not isinstance(sources, dict):
+            return None
+        flipped = {}
+        for name, reading in sources.items():
+            ok, turned = _flipped_reading(str(name), reading)
+            if not ok:
+                return None
+            flipped[name] = turned
+    return _CornerFlip(
+        sources=flipped,
+        opening_home=getattr(member, "opening_away_probability", None),
+        opening_away=getattr(member, "opening_home_probability", None),
+    )
+
+
+def _merge_combat_claim_bouts(
+    clusters: list[list], corner_flips: Optional[dict] = None
+) -> list[list]:
     """Fold an id-less bout claim onto the one anchored bout it names. #7993.
 
     THE SHAPE, ON PRODUCTION 2026-09-28 02:1xZ. Six bouts of the Oct 3 UFC card
@@ -3192,13 +3278,23 @@ def _merge_combat_claim_bouts(clusters: list[list]) -> list[list]:
     * :func:`_objectively_different_games`: two `espn_id`s or two scorelines;
     * a live or suspended row, unless the claim holds no score
       (:func:`_live_anchored_claim_pair_is_licensed`), and any unknown status;
-    * #9304: the corners are reversed AND the claim carries a price or an opening
-      line. The union copies those home-oriented numbers verbatim, so after this
-      pass went live Kalshi's 0.335 for Roman Kopylov (claim 15315711, Gautier @
-      Kopylov) read as Ateba Gautier's chance on 15318681, beside the
-      sportsbooks' 0.6425 for Gautier. Pinas–Pulyaev was the same. A reversed
-      claim with no number (Rodriguez–Coria) still folds while the anchor is
-      the row kept (:func:`_anchor_is_elected`): nothing is copied the wrong way.
+    * #9304: the corners are reversed and the claim would be the row KEPT
+      (:func:`_anchor_is_elected` false), or it carries a reading
+      :func:`_corner_flip` cannot turn round. The union copies home-oriented
+      numbers, so after this pass first went live Kalshi's 0.335 for Roman
+      Kopylov (claim 15315711, Gautier @ Kopylov) read as Ateba Gautier's
+      chance on 15318681, beside the sportsbooks' 0.6425 for Gautier.
+
+    A REVERSED CLAIM THAT LOSES IS TURNED ROUND, NOT REFUSED (#7993 residual,
+    production 2026-09-30 17:05Z). Refusing it left Kopylov–Gautier and
+    Pulyaev–Pinas on `/sports/mma_mixed_martial_arts` twice each, at 2:00 PM and
+    5:15 PM, one card per venue. The claim's numbers are the other fighter's
+    complement, so each is recorded in ``corner_flips`` as ``1 - p`` (the
+    opening line's two halves swapped), and :func:`_elect` copies that instead
+    of the stored value. Kalshi's 0.345 for Kopylov lands on 15318681 as 0.655
+    for Gautier, beside the sportsbooks' 0.6506. Only a LOSING claim is turned:
+    a claim that would be kept keeps its own corners, and the anchor's numbers
+    are never flipped, so the refusal above stands for it.
 
     Nothing is written. Both rows stay in `events`, and when the event graph
     joins them this pass stops finding pairs.
@@ -3249,19 +3345,28 @@ def _merge_combat_claim_bouts(clusters: list[list]) -> list[list]:
         claim_members, anchor_members = clusters[claim], clusters[anchor]
         if _objectively_different_games(claim_members, anchor_members):
             continue
+        flips: dict[int, _CornerFlip] = {}
         if not all(
             _same_corners(c, a) for c in bouts[claim] for a in bouts[anchor]
-        ) and (
-            _group_carries_oriented_readings(claim_members)
-            or not _anchor_is_elected(claim_members, anchor_members)
         ):
-            continue
+            if not _anchor_is_elected(claim_members, anchor_members):
+                continue
+            if _group_carries_oriented_readings(claim_members):
+                turned = [_corner_flip(member) for member in claim_members]
+                if corner_flips is None or any(t is None for t in turned):
+                    continue
+                flips = {
+                    id(member): flip
+                    for member, flip in zip(claim_members, turned)
+                }
         if not (
             _variant_group_is_collapsible(claim_members)
             and _variant_group_is_collapsible(anchor_members)
         ) and not _live_anchored_claim_pair_is_licensed(claim_members):
             continue
         merged_into[claim] = anchor
+        if flips:
+            corner_flips.update(flips)
 
     if not merged_into:
         return clusters
@@ -3293,10 +3398,25 @@ def _set_served_value(event: Any, column: str, value: Any) -> None:
     setattr(event, column, value)
 
 
-def _elect(members: list, keep: set, result: "FoldResult") -> None:
-    """Pick the survivor for one group and union the losers' venues onto it."""
+def _elect(
+    members: list,
+    keep: set,
+    result: "FoldResult",
+    corner_flips: Optional[dict] = None,
+) -> None:
+    """Pick the survivor for one group and union the losers' venues onto it.
+
+    A loser in ``corner_flips`` (a reversed bout claim, #7993) contributes its
+    numbers read from the survivor's corners, never its stored ones.
+    """
     ranked = sorted(members, key=twin_identity_rank, reverse=True)
     survivor, losers = ranked[0], ranked[1:]
+    flips = corner_flips or {}
+    if id(survivor) in flips:
+        # `_merge_combat_claim_bouts` flips only a claim it proved would LOSE.
+        # A flipped row elected here means that proof no longer holds, and its
+        # turned numbers must not meet unturned ones: keep every row.
+        raise ValueError("twin fold: a corner-flipped claim was elected")
     keep.add(id(survivor))
     result.dropped_ids.extend(loser.id for loser in losers)
     # #5532 — recorded HERE, the one place the pair is still in hand. The fold
@@ -3309,19 +3429,28 @@ def _elect(members: list, keep: set, result: "FoldResult") -> None:
     merged = dict(getattr(survivor, "win_probability_sources", None) or {})
     added = False
     for loser in losers:
-        for name, reading in (
-            getattr(loser, "win_probability_sources", None) or {}
-        ).items():
+        flip = flips.get(id(loser))
+        loser_sources = (
+            flip.sources
+            if flip is not None
+            else getattr(loser, "win_probability_sources", None)
+        )
+        for name, reading in (loser_sources or {}).items():
             if name not in merged:
                 merged[name] = reading
                 added = True
     if added:
         result.merged_sources[survivor.id] = merged
 
-    _carry_opening_line(survivor, losers, result)
+    _carry_opening_line(survivor, losers, result, flips)
 
 
-def _carry_opening_line(survivor: Any, losers: list, result: "FoldResult") -> None:
+def _carry_opening_line(
+    survivor: Any,
+    losers: list,
+    result: "FoldResult",
+    corner_flips: Optional[dict] = None,
+) -> None:
     """Give the survivor the pre-match line only an absorbed row held. #5853.
 
     🔴 WITHOUT THIS, THIS FOLD DELETES A NUMBER, AND IT WAS DOING SO ON
@@ -3362,18 +3491,23 @@ def _carry_opening_line(survivor: Any, losers: list, result: "FoldResult") -> No
     """
     if not losers:
         return
+    flips = corner_flips or {}
+
+    def _line(loser: Any) -> tuple:
+        flip = flips.get(id(loser))
+        if flip is not None:
+            return (loser.id, flip.opening_home, flip.opening_away)
+        return (
+            loser.id,
+            getattr(loser, "opening_home_probability", None),
+            getattr(loser, "opening_away_probability", None),
+        )
+
     own_home = getattr(survivor, "opening_home_probability", None)
     home, away = merge_opening_line(
         own_home,
         getattr(survivor, "opening_away_probability", None),
-        [
-            (
-                loser.id,
-                getattr(loser, "opening_home_probability", None),
-                getattr(loser, "opening_away_probability", None),
-            )
-            for loser in losers
-        ],
+        [_line(loser) for loser in losers],
     )
     if home is own_home:
         return
