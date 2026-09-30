@@ -217,6 +217,12 @@ async def _load_teams_by_sport(
     ]
 
 
+# Venues whose market names its league for Step 0 and Phase 3: a Kalshi ticker,
+# and a Polymarket event slug (#9761 — "Pro Football: … Defensive Rookie of the
+# Year" is ``pro-football-…``, so Mansoor Delane leaves LSU for the NFL).
+_LEAGUE_NAMING_VENUES = ("kalshi", "polymarket")
+
+
 def _match_in_ticker_league(outcome, teams: list[dict]) -> Optional[int]:
     """Bind a Kalshi outcome inside the league its ticker names, else None (#9617).
 
@@ -228,13 +234,15 @@ def _match_in_ticker_league(outcome, teams: list[dict]) -> Optional[int]:
     on (#9663): read off the bare ticker map, the FCS title board is FBS, so this
     bound "San Diego" to San Diego State and Phase 3 cleared it again every run.
     """
-    from app.utils.market_team_sport import market_league_sport_key
+    from app.utils.market_team_sport import market_event_slug, market_league_sport_key
     from app.utils.team_linking import match_outcome_to_league_team
 
     market = outcome.market
-    if market is None or market.source != "kalshi":
+    if market is None or market.source not in _LEAGUE_NAMING_VENUES:
         return None
-    league = market_league_sport_key(market.source, market.external_id)
+    league = market_league_sport_key(
+        market.source, market.external_id, market_event_slug(market.market_metadata)
+    )
     if not league:
         return None
     league_teams = [t for t in teams if t.get("sport_key") == league]
@@ -253,12 +261,14 @@ async def _ticker_league_teams(
     The league's rows are loaded once per run, whatever the market's category,
     as Phase 3 already does when it rebinds a stored link into that league.
     """
-    from app.utils.market_team_sport import market_league_sport_key
+    from app.utils.market_team_sport import market_event_slug, market_league_sport_key
 
     market = outcome.market
-    if market is None or market.source != "kalshi":
+    if market is None or market.source not in _LEAGUE_NAMING_VENUES:
         return teams
-    league = market_league_sport_key(market.source, market.external_id)
+    league = market_league_sport_key(
+        market.source, market.external_id, market_event_slug(market.market_metadata)
+    )
     if not league:
         return teams
     if any(t.get("sport_key") == league for t in teams):
@@ -285,13 +295,16 @@ def _crosses_market_league(outcome, team_id: int, team_sport_keys: dict[int, str
     link the page would drop is never written in the first place. A market whose
     venue id names no league, or a team outside the one-league sports, is no claim.
     """
-    from app.utils.market_team_sport import link_crosses_league
+    from app.utils.market_team_sport import link_crosses_league, market_event_slug
 
     market = outcome.market
     if market is None:
         return False
     return link_crosses_league(
-        market.source, market.external_id, team_sport_keys.get(team_id)
+        market.source,
+        market.external_id,
+        team_sport_keys.get(team_id),
+        market_event_slug(market.market_metadata),
     )
 
 
@@ -340,9 +353,17 @@ async def _relink_outside_market_league(
     team, so the two passes cannot undo each other.
     """
     from app.models import FuturesMarket, FuturesOutcome, Sport, Team
-    from app.utils.market_team_sport import link_crosses_league, market_league_sport_key
+    from app.utils.market_team_sport import (
+        POLYMARKET_SLUG_LEAGUE_PREFIXES,
+        link_crosses_league,
+        market_league_sport_key,
+    )
     from app.utils.team_linking import match_outcome_to_league_team
+    from app.utils.venue_competition import POLYMARKET_EVENT_SLUG_KEY
 
+    # A Polymarket market names a league only through its event slug (#9761), so
+    # only the rows a listed prefix claims are read — not every Polymarket link.
+    slug = FuturesMarket.market_metadata[POLYMARKET_EVENT_SLUG_KEY].as_string()
     rows = (
         await session.execute(
             select(
@@ -350,16 +371,31 @@ async def _relink_outside_market_league(
                 FuturesOutcome.name,
                 FuturesMarket.source,
                 FuturesMarket.external_id,
+                slug.label("event_slug"),
                 Sport.key,
             )
             .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
             .join(Team, Team.id == FuturesOutcome.team_id)
             .join(Sport, Sport.id == Team.sport_id)
-            .where(FuturesMarket.source == "kalshi", FuturesMarket.status == "open")
+            .where(
+                or_(
+                    FuturesMarket.source == "kalshi",
+                    and_(
+                        FuturesMarket.source == "polymarket",
+                        or_(*(
+                            slug.startswith(prefix, autoescape=True)
+                            for prefix in POLYMARKET_SLUG_LEAGUE_PREFIXES
+                        )),
+                    ),
+                ),
+                FuturesMarket.status == "open",
+            )
             .order_by(FuturesOutcome.id)
         )
     ).all()
-    crossing = [r for r in rows if link_crosses_league(r.source, r.external_id, r.key)]
+    crossing = [
+        r for r in rows if link_crosses_league(r.source, r.external_id, r.key, r.event_slug)
+    ]
     stats["links_outside_market_league"] = len(crossing)
     crossing = crossing[:limit]
     if not crossing:
@@ -368,7 +404,7 @@ async def _relink_outside_market_league(
     league_teams: dict[str, list[dict]] = {}
     decisions: dict[int, Optional[int]] = {}
     for row in crossing:
-        league = market_league_sport_key(row.source, row.external_id)
+        league = market_league_sport_key(row.source, row.external_id, row.event_slug)
         if league not in league_teams:
             league_teams[league] = await _load_teams_by_sport(session, [league])
         decisions[row.id] = match_outcome_to_league_team(row.name, league_teams[league])

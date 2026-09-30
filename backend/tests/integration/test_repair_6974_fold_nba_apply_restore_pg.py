@@ -282,7 +282,10 @@ async def _league_step(s, name: str, ticker: str = "KXNBA-27"):
         for r in rows
     ]
     outcome = SimpleNamespace(
-        name=name, market=SimpleNamespace(source="kalshi", external_id=ticker)
+        name=name,
+        # The step reads `market_metadata` since #9761 (a Polymarket market can
+        # name its league by event slug); a Kalshi market carries none here.
+        market=SimpleNamespace(source="kalshi", external_id=ticker, market_metadata=None),
     )
     return _match_in_ticker_league(outcome, teams)
 

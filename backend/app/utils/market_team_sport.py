@@ -35,6 +35,7 @@ from app.utils.sport_keys import (
     sport_family_key,
 )
 from app.utils.static_divisions import lookup_division
+from app.utils.venue_competition import POLYMARKET_EVENT_SLUG_KEY
 
 # Team sport-key prefixes `SPORT_PREFIX_TO_LLM_CATEGORY` does not carry — the
 # same three `routes/events.py` translates for #7355 (rugbyleague 31 teams,
@@ -182,7 +183,42 @@ def _odds_api_outright_league(external_id: str | None) -> str | None:
     return None
 
 
-def _market_league_sport_key(source: str | None, external_id: str | None) -> str | None:
+# Polymarket event-slug prefixes that name one league (#9761, notice 40: the
+# venue's own structure, never a title match). A Polymarket id is a bare number,
+# so without this the market named no league: "Pro Football: 2026-27 AP Defensive
+# Rookie of the Year Winner — Mansoor Delane" sat on the LSU page, and Jeremiyah
+# Love's four NFL props on Notre Dame's. Every open ``pro-football-`` slug on
+# 2026-09-30 was an NFL question; the draft boards are ``2027-pro-football-draft-…``,
+# which this prefix does not claim, and they rightly stay on the college.
+POLYMARKET_SLUG_LEAGUE_PREFIXES: dict[str, str] = {
+    "pro-football-": "americanfootball_nfl",
+}
+
+
+def market_event_slug(market_metadata) -> str | None:
+    """The Polymarket event slug a market row's metadata carries, else None."""
+    if not isinstance(market_metadata, dict):
+        return None
+    slug = market_metadata.get(POLYMARKET_EVENT_SLUG_KEY)
+    return slug if isinstance(slug, str) else None
+
+
+def _polymarket_slug_league(event_slug: str | None) -> str | None:
+    """The sport key a Polymarket event slug's prefix names, else None.
+
+    Case-sensitive, like Phase 3's ``LIKE`` over the same key: Gamma's slugs are
+    lower-case, and the two reads must select the same rows.
+    """
+    slug = event_slug or ""
+    for prefix, sport_key in POLYMARKET_SLUG_LEAGUE_PREFIXES.items():
+        if slug.startswith(prefix):
+            return sport_key
+    return None
+
+
+def _market_league_sport_key(
+    source: str | None, external_id: str | None, event_slug: str | None = None
+) -> str | None:
     """The sport key of the league a market's own venue id names; None when it names none."""
     venue = (source or "").lower()
     if venue == "kalshi":
@@ -193,22 +229,28 @@ def _market_league_sport_key(source: str | None, external_id: str | None) -> str
         )
     if venue == "odds_api":
         return _odds_api_outright_league(external_id)
+    if venue == "polymarket":
+        return _polymarket_slug_league(event_slug)
     return None
 
 
-def market_league_sport_key(source: str | None, external_id: str | None) -> str | None:
+def market_league_sport_key(
+    source: str | None, external_id: str | None, event_slug: str | None = None
+) -> str | None:
     """The league a market's own venue id names, for a writer that binds inside it (#5119).
 
     The same read :func:`link_crosses_league` refuses on, so the team linker's
     rebind target and the championship path's refusal can never disagree.
+    ``event_slug`` is the Polymarket event slug (:func:`market_event_slug`).
     """
-    return _market_league_sport_key(source, external_id)
+    return _market_league_sport_key(source, external_id, event_slug)
 
 
 def link_crosses_league(
     market_source: str | None,
     market_external_id: str | None,
     team_sport_key: str | None,
+    event_slug: str | None = None,
 ) -> bool:
     """True when a market's own venue id names a different league than the team's.
 
@@ -223,12 +265,14 @@ def link_crosses_league(
 
     The market's league is read off its venue's own id (D55: an explicit key,
     never a name) — a Kalshi SERIES through the ticker → sport-key maps, an Odds
-    API outright through the sport key it is named with — the team's off its
-    sport key, and both are compared as :func:`league_family_identity` (season
-    variants and tour tournaments collapse onto their league). Refuses only when:
+    API outright through the sport key it is named with, a Polymarket market
+    through its event slug's prefix (#9761) — the team's off its sport key, and
+    both are compared as :func:`league_family_identity` (season variants and tour
+    tournaments collapse onto their league). Refuses only when:
 
-    * the venue id names a league — an unmapped Kalshi series (``KXNFLPOTM``), a
-      Polymarket numeric id or an unknown Odds API key is no claim;
+    * the venue id names a league — an unmapped Kalshi series, a Polymarket slug
+      no listed prefix claims (or none passed) or an unknown Odds API key is no
+      claim;
     * the team plays a one-league sport (:data:`_ONE_LEAGUE_TEAM_CATEGORIES`);
     * both leagues are known and differ.
     """
@@ -236,7 +280,7 @@ def link_crosses_league(
         return False
     if sport_key_llm_category(team_sport_key) not in _ONE_LEAGUE_TEAM_CATEGORIES:
         return False
-    market_sport_key = _market_league_sport_key(market_source, market_external_id)
+    market_sport_key = _market_league_sport_key(market_source, market_external_id, event_slug)
     if not market_sport_key:
         return False
     return league_family_identity(market_sport_key) != league_family_identity(team_sport_key)

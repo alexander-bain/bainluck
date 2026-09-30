@@ -17,6 +17,7 @@ from app.utils.lifecycle import served_event_status
 from app.utils.market_team_sport import (
     link_crosses_league,
     link_crosses_sport,
+    market_event_slug,
     sport_key_llm_category,
 )
 from app.utils.start_placeholder import start_is_tbd
@@ -1196,6 +1197,7 @@ async def _get_championship_path(
             getattr(market, "source", None),
             getattr(market, "external_id", None),
             team_sport_key,
+            market_event_slug(getattr(market, "market_metadata", None)),
         ):
             continue
 
