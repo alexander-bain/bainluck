@@ -471,12 +471,13 @@ def _log_open_contract_line(stats: dict, open_stats: dict) -> None:
     """
     logger.info(
         "Polymarket WS open contracts: assets=%d shards=%d/%d served=%d/%d "
-        "msgs=%d written=%d deferred=%d",
+        "msgs=%d snapshot_quotes=%d written=%d deferred=%d",
         stats.get("open_contract_assets", 0),
         open_stats.get("shards_connected", 0), open_stats.get("shards", 0),
         open_stats.get("assets_served", 0),
         open_stats.get("assets_subscribed", 0),
         open_stats.get("messages", 0),
+        open_stats.get("book_snapshot_quotes", 0),
         stats.get("open_contract_prices_written", 0),
         stats.get("open_contract_flush_deferred", 0),
     )
@@ -546,6 +547,7 @@ async def _run_polymarket_ws_consumer():
     )
     from app.tasks.polymarket_open_contracts import (  # #9484
         FLUSH_CHUNK_ROWS, OPEN_CONTRACT_MAX_CONCURRENT_HANDSHAKES,
+        book_snapshot_prices_enabled,
         OPEN_CONTRACT_MAX_QUEUE, OPEN_FLUSH_CHUNKS_PER_FLUSH,
         open_contract_asset_map, open_contract_markets_stmt,
         open_contract_outcome_stmts, open_contract_prices_enabled,
@@ -1413,6 +1415,10 @@ async def _run_polymarket_ws_consumer():
         open_ws = PolymarketWebSocket(
             max_concurrent_handshakes=OPEN_CONTRACT_MAX_CONCURRENT_HANDSHAKES,
             max_queue=OPEN_CONTRACT_MAX_QUEUE,
+            # #9733: a quiet book that moved while this client was down (every
+            # recycle) is priced from the subscribe snapshot, not left frozen
+            # until it moves again.
+            price_book_snapshots=book_snapshot_prices_enabled(),
         )
         open_ws.on_price = handle_price
         open_ws.on_trade = handle_trade

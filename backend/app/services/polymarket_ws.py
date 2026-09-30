@@ -204,6 +204,54 @@ def _assets_in(message: Any) -> set[str]:
     return found
 
 
+def _snapshot_quotes(message: Any) -> list[dict]:
+    """A ``best_bid_ask``-shaped quote for every book in a snapshot frame.
+
+    #9733. The venue answers a subscribe with the current book of every asset
+    it serves (a LIST of ``event_type: book`` entries; a lone ``book`` dict is
+    the same thing). This client used to discard it, so only a CHANGE moved a
+    leg: a quiet book that moved while we were disconnected (every recycle) or
+    before the leg was admitted stayed frozen until it moved again. Kittle
+    524.5+ receiving yards, market 61352683, read Yes 77% / No 10% for hours
+    while the venue's book sat at 0.80/0.87 and 0.13/0.20.
+
+    Top of book is read by value, never by position: the venue lists bids
+    ascending and asks descending, so ``[-1]`` happens to be best today and
+    ``[0]`` is the worst quote on each side. A side with no quote gets no
+    field, and the price handler refuses a half-empty book as it always has.
+    """
+    out: list[dict] = []
+    for entry in message if isinstance(message, list) else [message]:
+        if not isinstance(entry, dict):
+            continue
+        asset_id = entry.get("asset_id") or entry.get("assetId")
+        if not asset_id:
+            continue
+        best: dict[str, Optional[float]] = {}
+        for side, pick in (("bids", max), ("asks", min)):
+            prices = []
+            for level in entry.get(side) or []:
+                try:
+                    prices.append(float(level["price"]))
+                except (KeyError, TypeError, ValueError):
+                    continue
+            best[side] = pick(prices) if prices else None
+        if best["bids"] is None or best["asks"] is None:
+            continue
+        out.append(
+            {
+                "event_type": "best_bid_ask",
+                "asset_id": asset_id,
+                "market": entry.get("market"),
+                "best_bid": str(best["bids"]),
+                "best_ask": str(best["asks"]),
+                "timestamp": entry.get("timestamp"),
+                "book_snapshot": True,
+            }
+        )
+    return out
+
+
 def _evenly_spaced(items: list[str], limit: int) -> list[str]:
     """At most `limit` items, spread from the first to the last.
 
@@ -319,8 +367,14 @@ class PolymarketWebSocket:
         self,
         max_concurrent_handshakes: Optional[int] = None,
         max_queue: int = DEFAULT_MAX_QUEUE_MESSAGES,
+        price_book_snapshots: bool = False,
     ):
         self._message_count = 0
+        # #9733: hand each book in a snapshot frame to `on_price` as a quote.
+        # Off by default, so the game socket and the shadow consumer keep
+        # their behaviour; the open-contract client turns it on.
+        self._price_book_snapshots = price_book_snapshots
+        self._book_snapshot_quotes = 0
         self._reconnect_count = 0
         # #9484: None keeps every shard free to dial at once (the game slate's
         # handful). A client with many shards bounds how many dial and take
@@ -596,11 +650,19 @@ class PolymarketWebSocket:
                                     on_wire
                                 )
 
-                            if isinstance(data, list):
-                                # book snapshot — skip for now
-                                continue
+                            event_type = (
+                                "book"
+                                if isinstance(data, list)
+                                else data.get("event_type", "")
+                            )
 
-                            event_type = data.get("event_type", "")
+                            if event_type == "book":
+                                # #9733: the venue's current book. Priced only
+                                # by a client that asked for it; skipped by
+                                # every other, as before.
+                                if self._price_book_snapshots and self.on_price:
+                                    await self._price_snapshot(data)
+                                continue
 
                             if event_type == "best_bid_ask" and self.on_price:
                                 try:
@@ -781,6 +843,17 @@ class PolymarketWebSocket:
             sample[shard] = _evenly_spaced(unserved, limit)
         return sample
 
+    async def _price_snapshot(self, data: Any) -> None:
+        """Each book in a snapshot frame, through `on_price` like a quote."""
+        for quote in _snapshot_quotes(data):
+            self._book_snapshot_quotes += 1
+            try:
+                result = self.on_price(quote)
+                if asyncio.iscoroutine(result):
+                    await result
+            except Exception:
+                logger.exception("Polymarket book snapshot price handler error")
+
     @property
     def stats(self) -> dict:
         served = {i: len(s) for i, s in self._served_by_shard().items()}
@@ -821,4 +894,6 @@ class PolymarketWebSocket:
             # to intersect against.
             "assets_on_wire": sum(on_wire.values()),
             "on_wire_by_shard": on_wire,
+            # #9733: books from snapshot frames handed to `on_price`.
+            "book_snapshot_quotes": self._book_snapshot_quotes,
         }
