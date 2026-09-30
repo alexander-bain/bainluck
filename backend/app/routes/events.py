@@ -203,6 +203,7 @@ from app.utils.search_cache import (
     search_response_cache_key,
 )
 from app.utils.participant_images import participant_images_for_event
+from app.utils.search_collections import attach_search_collections
 from app.utils.search_fixture_dedup import (
     collapse_duplicate_fixtures,
     is_individual_sport,
@@ -9182,7 +9183,9 @@ async def search_events(
             # instead of a promise about a callee.
             _record_search_query(_hit, q=q, request=request, current_user=current_user)
             response.headers[SEARCH_CACHE_HEADER] = "hit"
-            return _hit
+            # #9653: publication is live authority, so the hubs this page's games
+            # belong to are read on every serve, never from the cached body.
+            return await attach_search_collections(db, _hit)
     response.headers[SEARCH_CACHE_HEADER] = (
         "miss" if _search_cache_readable else "bypass"
     )
@@ -12763,7 +12766,13 @@ async def search_events(
     # recovery live in there rather than at each call site (#2117 / #1866).
     _record_search_query(_payload, q=q, request=request, current_user=current_user)
 
-    return _payload
+    # #9653: AFTER the cache write above, so the cache never holds a collection
+    # card and a withdrawn hub is gone from the next response. The warmer's
+    # rebuild only refreshes the cache and discards this return, so it skips
+    # the read.
+    if _force_search_cache_rebuild.get():
+        return _payload
+    return await attach_search_collections(db, _payload)
 
 
 # L2-88: extra query synonyms per hub slug so "ufc"→mma, "pga"→golf, etc. resolve
