@@ -123,3 +123,68 @@ async def test_strawman_an_nfl_page_keeps_both_nfl_boards():
     # the refusals above are the league test, not an empty build.
     payload = await _build(_team(sport_id=NFL_ID, tid=4242, slug="nfl-club"), NFL_ROWS)
     assert _market_ids(payload) == {OROY.id, DROY.id}
+
+
+# ── #9761 residue: the question names the NFL season, the venue id names nothing ──
+# Production 2026-09-30 19:00Z: Notre Dame's Season Rushing Yards family still
+# carried these two Polymarket boards. Slugs `*-rushing-yards-2026-27` name no
+# league and `sport_id` is NULL, so `link_crosses_league` had nothing to read.
+LOVE_YDS = _market(
+    61355765, "Will Jeremiyah Love have 899.5+ rushing yards in the 2026-27 NFL regular season?",
+    "polymarket", "0xfeaa95e2", slug="jeremiyah-love-rushing-yards-2026-27",
+)
+PRICE_YDS = _market(
+    61352844, "Will Jadarian Price have 549.5+ rushing yards in the 2026-27 NFL regular season?",
+    "polymarket", "0x3b9a76f7", slug="jadarian-price-rushing-yards-2026-27",
+)
+# Controls: college season-yards boards resolve to the SAME family key
+# ("season rushing yards") and name no NFL season, so they stay on the college.
+# An NFL DRAFT board is a college player's own question; it forms no family, so
+# only the unit test below reads it.
+COLLEGE_YDS = _market(
+    90000002, "Will Jeremiyah Love have 1500+ rushing yards in the 2026 college football season?",
+    "polymarket", "0xc011e9e0", slug="jeremiyah-love-college-rushing-yards-2026",
+)
+COLLEGE_YDS_2 = _market(
+    90000004, "Will Jadarian Price have 900+ rushing yards in the 2026 college football season?",
+    "polymarket", "0xc011e9e1", slug="jadarian-price-college-rushing-yards-2026",
+)
+DRAFT = _market(
+    90000003, "Will Jeremiyah Love be a first-round pick in the 2027 NFL Draft?",
+    "polymarket", "0xd4af7000", slug="2027-pro-football-draft-first-round",
+)
+
+NFL_SEASON_ROWS = [
+    _leg(239100001, "Yes", LOVE_YDS, 0.41),
+    _leg(239100002, "Yes", PRICE_YDS, 0.37),
+]
+COLLEGE_SEASON_ROWS = [
+    _leg(90000021, "Yes", COLLEGE_YDS, 0.22),
+    _leg(90000041, "Yes", COLLEGE_YDS_2, 0.18),
+]
+
+
+async def test_the_college_page_drops_the_nfl_season_rushing_boards():
+    payload = await _build(_team(sport_id=NCAAF_ID), NFL_SEASON_ROWS + COLLEGE_SEASON_ROWS)
+    assert _market_ids(payload) == {COLLEGE_YDS.id, COLLEGE_YDS_2.id}
+
+
+async def test_strawman_an_nfl_page_keeps_the_nfl_season_rushing_boards():
+    # The same rows on an NFL team survive: the refusal is the league test on
+    # the question, not a rule that drops every "rushing yards" board.
+    # (Specimen rows only: the family keeps one board per player, so mixing in
+    # the college boards would test the grouping, not the screen.)
+    payload = await _build(_team(sport_id=NFL_ID, tid=4242, slug="nfl-club"), NFL_SEASON_ROWS)
+    assert _market_ids(payload) == {LOVE_YDS.id, PRICE_YDS.id}
+
+
+def test_the_name_rule_reads_the_season_not_the_letters():
+    crosses = route._name_crosses_into_nfl
+    assert crosses(LOVE_YDS.name, "americanfootball_ncaaf")
+    assert crosses("Most receiving yards in the NFL season?", "americanfootball_ncaaf_fcs")
+    assert not crosses(DRAFT.name, "americanfootball_ncaaf")
+    assert not crosses(COLLEGE_YDS.name, "americanfootball_ncaaf")
+    assert not crosses(LOVE_YDS.name, "americanfootball_nfl")
+    # Another sport's team is not this rule's business.
+    assert not crosses(LOVE_YDS.name, "basketball_ncaab")
+    assert not crosses(LOVE_YDS.name, None)
