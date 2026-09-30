@@ -2,6 +2,7 @@
 
 import { format, isSameDay, parseISO } from "date-fns";
 import { trustedLiveClock } from "@/lib/gameTimeLabel";
+import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import { renderedComplementPercents, renderedDuelPercents } from "@/lib/renderedPercent";
 import { teamShortNames } from "@/lib/teamShortName";
 import { teamTextColor } from "@/lib/teamColors";
@@ -155,6 +156,12 @@ export default function GamePlayCard({
     : renderedDuelPercents(point.awayProb, point.homeProb);
   const homeProb = homePct ?? Math.round(point.homeProb * 100);
   const awayProb = awayPct ?? Math.round(point.awayProb * 100);
+  // #9704 — the pair decides the INTEGERS; the boundary rule still runs on the
+  // PROBABILITY, exactly as the hero's `sideParts` does. Printed raw, a live
+  // 0.999 blend read `Yankees 100% — Red Sox 0%` under a hero reading `>99% –
+  // <1%` (/events/15319563, Bottom 8th, 9–0). Exact 0 and 1 still print plainly.
+  const homeText = formatProbabilityPercent(point.homeProb, { rendered: homeProb });
+  const awayText = formatProbabilityPercent(point.awayProb, { rendered: awayProb });
 
   // #2936 — the ninth copy of the last-word rule, and the one directly under a
   // hero that had already been fixed. `split(" ").pop()` collapses 6,335 of
@@ -364,7 +371,7 @@ export default function GamePlayCard({
               <span className="inline-block" data-testid="game-play-card-side">
                 {homeShort}{" "}
                 <span className="font-semibold" style={{ color: teamTextColor(homeTeamColor) || "var(--text-secondary)" }}>
-                  {homeProb}%
+                  {homeText}
                 </span>
               </span>
               {/* #6238 — the separator belongs to the slot it separates. Left
@@ -380,7 +387,7 @@ export default function GamePlayCard({
                     {"— "}
                     {awayShort}{" "}
                     <span className="font-semibold" style={{ color: teamTextColor(awayTeamColor) || "var(--text-secondary)" }}>
-                      {awayProb}%
+                      {awayText}
                     </span>
                   </span>
                 </>
