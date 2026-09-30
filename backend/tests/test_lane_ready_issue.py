@@ -119,7 +119,9 @@ class RestockTests(unittest.TestCase):
             gh.write_text('#!/bin/sh\necho call >> "$DISPATCH_TEST_CALLS"\ncat "$DISPATCH_TEST_FIXTURE"\n')
             gh.chmod(0o755)
             text = (ROOT / "lane-runner.sh").read_text()
-            functions = text[text.index("RESTOCK_QUIET=0"):text.index("# --dry-run: evaluate every named lane")]
+            # Include the real due/queue helpers used by maybe_restock. A slice
+            # of only the restock body would miss the deferred-inbox guard.
+            functions = text[text.index("runner_now ()"):text.index("# --dry-run: evaluate every named lane")]
             prelude = '''
 rs_dummy=1
 inbox_queued() { find "$1" -maxdepth 1 -name '*.md' | wc -l; }

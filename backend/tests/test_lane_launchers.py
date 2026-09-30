@@ -28,6 +28,7 @@ Terminal window, kills a process, or writes into the live handoff tree.
 """
 
 import contextlib
+import json
 import os
 import re
 import shutil
@@ -2831,6 +2832,77 @@ def test_pending_deferred_work_stops_the_runner_restocking_over_it(tmp_path):
     assert "no restock" in out, out
     assert "WOULD WRITE" not in out and "wrote " not in out, out
     assert _inbox(tmp_path) == ["A.md"], _inbox(tmp_path)
+
+
+def _ready_restock_rig(tmp_path, *, status="Ready", api_failure=False):
+    """Full runner/selector path, with offline GitHub and model doubles only."""
+    handoff, workdir, binp, launches = _runner_rig(tmp_path)
+    policy = tmp_path / "build-policy.json"
+    policy.write_text(json.dumps({"schema_version": 1, "lanes": {"demo": {"mode": "build"}}}))
+    fixture = tmp_path / "ready.json"
+    fixture.write_text(json.dumps({"data": {"repository": {"issues": {
+        "pageInfo": {"hasNextPage": False}, "nodes": [] if status is None else [{
+            "number": 9877, "createdAt": "2026-09-30T00:00:00Z",
+            "labels": {"pageInfo": {"hasNextPage": False}, "nodes": [
+                {"name": "lane:demo"}, {"name": "needs-agent"}]},
+            "projectItems": {"pageInfo": {"hasNextPage": False}, "nodes": [{
+                "project": {"number": 1, "owner": {"login": "alexander-bain"}},
+                "fieldValues": {"pageInfo": {"hasNextPage": False}, "nodes": [
+                    {"name": status, "field": {"name": "Status"}}]}}]}}]}}}}))
+    calls = tmp_path / "github-calls"
+    gh = binp / "gh"
+    gh.write_text(f'#!/bin/sh\necho call >> "{calls}"\n' +
+                  ('exit 1\n' if api_failure else f'cat "{fixture}"\n'))
+    gh.chmod(0o755)
+    env = {"LANE_HANDOFF": str(handoff), "PATH": f"{binp}:{os.environ['PATH']}",
+           "BL_LANE_POLICY": str(policy), "LANE_NOW_EPOCH": "1789497000"}
+    return workdir, launches, calls, env
+
+
+def test_deferred_only_build_lane_dispatches_ready_without_consuming_future_work(tmp_path):
+    workdir, launches, calls, env = _ready_restock_rig(tmp_path)
+    future = _stage(tmp_path, "SELF-future.md", "not-before: 2099-01-01T00:00:00Z\nshop later\n")
+    original = future.read_bytes()
+    rc, out = run(RUNNER, "--restock-once", str(workdir), "demo", env=env)
+    assert rc == 0, out
+    staged = list(future.parent.glob("RESTOCK-*.md"))
+    assert len(staged) == 1 and "Ready issue #9877" in staged[0].read_text()
+    assert future.read_bytes() == original and not launches.exists()
+    assert calls.read_text().count("call") == 1
+    rc, out, fired = _take_once(tmp_path, extra_env=env)
+    assert rc == 0 and fired == 1, out
+    assert future.read_bytes() == original
+    assert any(name.startswith("RESTOCK-") and ".consumed-" in name for name in _inbox(tmp_path))
+
+
+@pytest.mark.parametrize("status,api_failure", [(None, False), ("In Progress", False), (None, True)])
+def test_deferred_only_without_eligible_ready_work_launches_no_model(tmp_path, status, api_failure):
+    workdir, launches, calls, env = _ready_restock_rig(tmp_path, status=status, api_failure=api_failure)
+    future = _stage(tmp_path, "SELF-future.md", "not-before: 2099-01-01T00:00:00Z\n")
+    rc, out = run(RUNNER, "--restock-once", str(workdir), "demo", env=env)
+    assert rc == 1 and "no model launched" in out, out
+    assert _inbox(tmp_path) == [".last-restock", future.name] and not launches.exists()
+    assert calls.read_text().count("call") == 1
+    rc, out = run(RUNNER, "--restock-once", str(workdir), "demo", env=env)
+    assert rc == 1 and "floor" in out and calls.read_text().count("call") == 1
+
+
+@pytest.mark.parametrize("name,body", [
+    ("due.md", "not-before: 2026-09-15T00:00:00Z\n"),
+    ("immediate.md", "fix now\n"),
+    ("malformed.md", "not-before: tonight\n"),
+    ("active.md.running", "busy\n"),
+    ("RESTOCK-future.md", "not-before: 2099-01-01T00:00:00Z\n"),
+])
+def test_deferred_build_lane_preserves_assignment_and_restock_guards(tmp_path, name, body):
+    workdir, launches, calls, env = _ready_restock_rig(tmp_path)
+    _stage(tmp_path, "SELF-future.md", "not-before: 2099-01-01T00:00:00Z\n")
+    other = _stage(tmp_path, name, body)
+    rc, out = run(RUNNER, "--restock-once", str(workdir), "demo", env=env)
+    assert rc == 1 and "no restock" in out, out
+    assert other.read_text() == body and not launches.exists() and not calls.exists()
+    if name == "malformed.md":
+        assert "unreadable not-before" in out and "running it NOW" in out
 
 
 # --- the failure directions ---------------------------------------------------
