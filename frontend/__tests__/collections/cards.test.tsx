@@ -31,7 +31,7 @@ describe("collection readers see the supplied card facts", () => {
     expect(settled).toContain("Won");
     expect(settled).not.toContain("100%");
     const absent = renderToStaticMarkup(<CollectionMemberCard member={hub.members[2]} />);
-    expect(absent).toContain("Price unavailable");
+    expect(absent).toContain("Probability unavailable");
     expect(absent).not.toContain("0%");
   });
   test("final without an authoritative grade remains explicitly unavailable", () => {

@@ -22,13 +22,13 @@ export function CollectionMemberCard({ member }: { member: CollectionMember }) {
       <div className="space-y-2 text-sm">
         {outcomes?.map((outcome, index) => {
           const verdict = outcomeRowVerdict(outcome, resolved);
-          const label = verdict === "won" ? "Won" : verdict === "lost" ? "Lost" : resolved ? "Result unavailable" : outcome.probability == null ? "Price unavailable" : formatProbabilityPercent(outcome.probability);
+          const label = verdict === "won" ? "Won" : verdict === "lost" ? "Lost" : resolved ? "Result unavailable" : outcome.probability == null ? "Probability unavailable" : formatProbabilityPercent(outcome.probability);
           return <div key={`${outcome.id ?? index}:${outcome.name}`} className="flex items-baseline justify-between gap-3">
             <span className="min-w-0 text-text-secondary">{outcome.name}</span>
             <span className={`shrink-0 font-semibold ${verdict === "won" ? "text-accent-brand" : "text-text-primary"}`}>{label}</span>
           </div>;
         })}
-        {!outcomes?.length && <p className="text-text-secondary">{resolved ? "Result unavailable" : "Prices aren't available right now."}</p>}
+        {!outcomes?.length && <p className="text-text-secondary">{resolved ? "Result unavailable" : "Probabilities aren't available right now."}</p>}
       </div>
     </Link>
   ) : <FeedCard item={member.item} />;
