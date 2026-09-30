@@ -36,15 +36,35 @@ final class TeamShortNameSportWordClub5634Tests: XCTestCase {
         }
     }
 
-    func testTheSpecimensHeroPairNamesDubaiAndRealMadridIsUntouched() {
+    /// Real Madrid read "Madrid" here until the EuroLeague whole-club rule
+    /// (#5634, browser PR #9720, 2026-09-30); its badge is unchanged.
+    func testTheSpecimensHeroPairNamesDubaiAndRealMadridTakesTheWholeClubRule() {
         let pair = TeamShortName.shortPair(
             away: "Real Madrid", home: "Dubai Basketball", sportKey: "basketball_euroleague")
         XCTAssertEqual(pair.home, "Dubai Basketball")
-        XCTAssertEqual(pair.away, "Madrid")
+        XCTAssertEqual(pair.away, "Real Madrid")
         let badges = TeamShortName.abbreviationPair(
             away: "Real Madrid", home: "Dubai Basketball", sportKey: "basketball_euroleague")
         XCTAssertEqual(badges.home, "DUB")
         XCTAssertEqual(badges.away, "MAD")
+    }
+
+    /// The browser's #9680 (shopper pass 0126, `/events/15318706`): the
+    /// EuroLeague final printed "Bàsquet" / `BÀS`. The sport-word lookup folds
+    /// accents first — the ASCII filter alone turns "Bàsquet" into "Bsquet".
+    func testAnAccentedSportWordIsFoldedBeforeTheLookup() {
+        let name = "FC Barcelona Bàsquet"
+        XCTAssertEqual(TeamShortName.short(name, sportKey: "basketball_euroleague"), "Barcelona Bàsquet")
+        XCTAssertEqual(TeamShortName.short(name), name)
+        XCTAssertEqual(TeamShortName.short("Valencia BÀSQUET"), "Valencia BÀSQUET")
+        XCTAssertEqual(TeamShortName.abbreviation(name, sportKey: "basketball_euroleague"), "BAR")
+        XCTAssertEqual(TeamShortName.abbreviation(name), "BAR")
+        let pair = TeamShortName.shortPair(
+            away: "FC Barcelona Bàsquet", home: "Dubai Basketball", sportKey: "basketball_euroleague")
+        XCTAssertEqual(pair.away, "Barcelona Bàsquet")
+        // The fold feeds only this lookup: an accented NICKNAME still shortens.
+        XCTAssertEqual(TeamShortName.short("Club Atlético Tigres"), "Tigres")
+        XCTAssertEqual(TeamShortName.short("Montréal Canadiens", sportKey: "icehockey_nhl"), "Canadiens")
     }
 
     func testTheTwoEuroLeagueClubsThatBothPrintedBasketballAreToldApart() {

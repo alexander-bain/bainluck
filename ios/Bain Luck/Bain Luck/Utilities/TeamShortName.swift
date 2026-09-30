@@ -372,6 +372,11 @@ enum TeamShortName {
         "basketball", // 2  Dubai Basketball, Paris Basketball
         "basket",     // 1  Valencia Basket
         "hockey",     // 2  Modo Hockey, TUTO Hockey
+        // The browser's #9680: re-measured across the Catalan/Spanish/Italian/
+        // Portuguese forms, one more name — FC Barcelona Bàsquet printed
+        // "Bàsquet" on a EuroLeague final. Looked up accent-folded (see
+        // `isNonDistinctiveToken`), since the ASCII filter alone makes it "Bsquet".
+        "basquet",    // 1  FC Barcelona Bàsquet
     ]
 
     /// #5634 — does this sport key name a football (soccer) competition, where a
@@ -393,8 +398,17 @@ enum TeamShortName {
         guard let key = sportKey?.trimmingCharacters(in: .whitespaces).lowercased(),
               !key.isEmpty else { return false }
         let sport = key.split(separator: "_").first.map(String.init) ?? key
-        return sport == "soccer"
+        return sport == "soccer" || wholeClubNameKeys.contains(key)
     }
+
+    /// #5634 — whole sport keys (not prefixes) whose clubs are named the football
+    /// way, distinctive word first and city last. The browser's
+    /// `WHOLE_CLUB_NAME_KEYS` (PR #9720): `/events/15318709` named FC Bayern
+    /// München "München", and over 60 days of production EuroLeague names the
+    /// last-word rule printed a city or fragment for eleven and folded both Tel
+    /// Aviv clubs onto "Aviv". `basketball_nba`/`_wnba`/`_nbl` are city-first
+    /// ("Sydney Kings") and `basketball_other` is mixed, so none of them is here.
+    private static let wholeClubNameKeys: Set<String> = ["basketball_euroleague"]
 
     /// #5634 — the longest club label `wholeClubName` may return. A longer name
     /// is the formal one ("Sport Lisboa e Benfica", "Futebol Clube do Porto",
@@ -933,7 +947,9 @@ enum TeamShortName {
         if bare.count <= 2 { return true }
         let lower = bare.lowercased()
         if designators.contains(lower) { return true }
-        if sportWordSuffixes.contains(lower) { return true }              // Basketball
+        let folded = String(String(token).folding(options: .diacriticInsensitive, locale: nil)
+            .filter { $0.isASCII && ($0.isLetter || $0.isNumber) }).lowercased()
+        if sportWordSuffixes.contains(folded) { return true }             // Basketball, Bàsquet
         if lower.allSatisfy(\.isNumber) { return true }                   // 1846
         if lower.first == "u", lower.count == 3,
            lower.dropFirst().allSatisfy(\.isNumber) { return true }       // U20
