@@ -924,7 +924,9 @@ jobs:
         # The probe reads the route's own full-text predicate, so only a real
         # database behind the real route can observe it. One strawman, four
         # controls (upcoming game, no futures, open game market, sub-1% outcome),
-        # page-two reachability. Three refusals.
+        # page-two reachability; #9762 adds two not-the-club outcomes (a player,
+        # a city-named prop) that arm nothing and the club under its venue name,
+        # which still arms. Three refusals.
         if: matrix.group == 'shared'
         run: |
           set -o pipefail
@@ -938,8 +940,8 @@ jobs:
             echo "::error::#9632 bye-finals gate collected NOTHING"
             exit 1
           fi
-          if ! grep -qE "^=+ 6 passed" /tmp/byefinals9632.txt; then
-            echo "::error::#9632 bye-finals gate did not pass all 6"
+          if ! grep -qE "^=+ 9 passed" /tmp/byefinals9632.txt; then
+            echo "::error::#9632 bye-finals gate did not pass all 9"
             exit 1
           fi
 
