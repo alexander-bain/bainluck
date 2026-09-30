@@ -457,16 +457,13 @@ def state_contradiction(
         espn_state == "upcoming"
         and our_status == "live"
         and competition is not None
-        and now is not None
-        and not competition.get("start_is_tbd")
+        and espn_clock_says_not_started(competition, now)
     ):
-        espn_start = parse_espn_moment(competition.get("date"))
-        if espn_start is not None and espn_start > now:
-            # WE SAY LIVE, ESPN SAYS IT STARTS LATER. Reported only on a real
-            # future start — an `upcoming` whose clock has passed is a
-            # scoreboard that has not caught up, and calling that a
-            # contradiction would make the needle cry wolf every session.
-            return "in-play-but-not-started"
+        # WE SAY LIVE, ESPN SAYS IT STARTS LATER — a real start or a TBD day
+        # still ahead (#9756). An `upcoming` whose clock has passed is a
+        # scoreboard that has not caught up, and calling that a contradiction
+        # would make the needle cry wolf every session.
+        return "in-play-but-not-started"
     return None
 
 
@@ -499,6 +496,37 @@ def parse_espn_moment(value: Any) -> Optional[Any]:
     except ValueError:
         return None
     return moment if moment.tzinfo is not None else None
+
+
+def espn_clock_says_not_started(competition: dict[str, Any], now: Any) -> bool:
+    """Does an ``upcoming`` competition's own clock put play after ``now``?
+
+    The one question the demotion, the hold stamp and the contradiction needle
+    all ask, answered once so the three cannot drift apart.
+
+    ═══ A TBD PLACEHOLDER IS NOT A START, BUT IT IS STILL A DAY (#9756) ═══
+
+    ESPN writes an unscheduled fixture at midnight ET of the day it is listed
+    for (``2026-10-01T04:00Z`` = "some time on Oct 1"). That instant must never
+    be *written* as a start (#3829/#4344, the ``commence_time`` guard below),
+    but while it is still in the FUTURE it says something true: ESPN has put
+    the match on a later day, not today's court. Reading it as silence left
+    17 China/Japan Open rows (Alcaraz v Michelsen, 15320475) badged LIVE from
+    02:00Z 9/30 on an Odds API session stamp, while their ESPN anchors all read
+    ``STATUS_SCHEDULED``, TBD, Oct 1. No demotion and no marker meant the 60s
+    clock promoter had nothing to honour.
+
+    The one shape where this is early is an Asian or Oceanian day session, which
+    can begin a few hours before midnight ET of its local date (Beijing 11:00 is
+    03:00Z, an hour before the placeholder). ESPN itself is the backstop there:
+    the moment it reports play, the competition arrives ``in_progress`` (its own
+    state, or games on its board via ``play_refutes_upcoming``), which promotes
+    the row and retracts the hold in the same pass. A placeholder already in the
+    PAST says nothing and is still ignored: the day has begun, and a fixture
+    ESPN never timed may be on court.
+    """
+    espn_start = parse_espn_moment(competition.get("date"))
+    return espn_start is not None and now is not None and espn_start > now
 
 
 def authority_write(
@@ -555,6 +583,9 @@ def authority_write(
       Measured 2026-09-02T22:22Z: ESPN had 11 US Open singles in play and we
       called 14 live — one already decided, and two (Wu Yibing v Duckworth,
       Navone v Berrettini) both scheduled for 23:00Z with no games on the board.
+      A **TBD placeholder still in the future** counts too (#9756): it is not a
+      start, but it is the day ESPN lists the match for, and that day has not
+      arrived — see :func:`espn_clock_says_not_started`.
     * An unknown ``state`` writes nothing at all (gotcha #53).
 
     ``win_probability_sources`` carries the #5324 authority marker so the write
@@ -635,16 +666,10 @@ def authority_write(
                 changes["win_probability_sources"] = _cleared
     elif state == "upcoming":
         # NOT YET PLAYED, AND ESPN SAYS SO WITH A CLOCK RATHER THAN A SILENCE.
-        # Only a real (non-TBD) start still in the future counts; see the
-        # docstring. A row cannot be live, or complete, before it begins.
-        espn_start = parse_espn_moment(competition.get("date"))
-        not_started = (
-            not competition.get("start_is_tbd")
-            and espn_start is not None
-            and now is not None
-            and espn_start > now
-        )
-        if not_started:
+        # A real start still in the future counts, and so does a TBD day still
+        # in the future (#9756, `espn_clock_says_not_started`). A row cannot
+        # be live, or complete, before it begins.
+        if espn_clock_says_not_started(competition, now):
             if our_status == "live":
                 changes["status"] = "scheduled"
             if our_completed_at is not None:

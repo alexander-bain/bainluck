@@ -12,7 +12,7 @@ those numbers, and in both directions: each pass links what it should and
 refuses what it must.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -1345,11 +1345,23 @@ class TestNotStartedIsAStatementNotASilence:
         )
         assert "status" not in changes
 
-    def test_a_tbd_placeholder_never_demotes(self):
-        """04:00Z is midnight in Flushing Meadows, not a start."""
+    def test_a_FUTURE_tbd_placeholder_demotes(self):
+        """04:00Z is midnight in Flushing Meadows, not a start, but it IS the day
+        ESPN lists the match for, and at 22:22Z on 9/2 that day is tomorrow
+        (#9756). Reversed from the 9/2 reading, which took "not a start" to mean
+        "says nothing" and left 17 China/Japan Open rows LIVE a day early."""
         changes = authority_write(
             our_status="live", our_completed_at=None, our_commence_time=None,
             competition=self._upcoming("2026-09-03T04:00Z", tbd=True), now=self.NOW,
+        )
+        assert changes["status"] == "scheduled"
+
+    def test_a_PAST_tbd_placeholder_never_demotes(self):
+        """THE CONTROL for the reversal above: the listed day has begun, and a
+        fixture ESPN never gave a time may be on court. Silence, as before."""
+        changes = authority_write(
+            our_status="live", our_completed_at=None, our_commence_time=None,
+            competition=self._upcoming("2026-09-02T04:00Z", tbd=True), now=self.NOW,
         )
         assert "status" not in changes
 
@@ -1380,6 +1392,20 @@ class TestNotStartedIsAStatementNotASilence:
 
     def test_without_a_clock_the_class_is_not_judged(self):
         assert state_contradiction("live", None, "upcoming") is None
+
+    def test_a_FUTURE_tbd_day_is_counted_as_the_contradiction_it_is(self):
+        """#9756: the needle and the repair ask one question, so 17 LIVE rows
+        on a tomorrow TBD are counted before they are fixed."""
+        assert state_contradiction(
+            "live", None, "upcoming",
+            competition=self._upcoming("2026-09-03T04:00Z", tbd=True), now=self.NOW,
+        ) == "in-play-but-not-started"
+
+    def test_and_a_PAST_tbd_day_is_not(self):
+        assert state_contradiction(
+            "live", None, "upcoming",
+            competition=self._upcoming("2026-09-02T04:00Z", tbd=True), now=self.NOW,
+        ) is None
 
 
 class TestTheInPlayLineIsStampedByTheTask:
@@ -1635,17 +1661,84 @@ class TestTennisCarriesTheAuthorityHold:
         assert "win_probability_sources" not in changes
         assert "status" not in changes
 
-    def test_a_TBD_start_is_not_a_statement_and_writes_no_hold(self):
-        """Midnight ET is ESPN's stand-in for "some time that day"."""
+    def test_a_FUTURE_TBD_day_IS_a_statement_and_writes_the_hold(self):
+        """Midnight ET is ESPN's stand-in for "some time that day" — and when
+        that day is tomorrow, the match is not on court today (#9756).
+
+        Without the stamp the demotion buys one minute: the clock promoter
+        re-promotes at the next 60s beat. So the hold is asserted through the
+        promoter's OWN reader, not by the key's presence alone.
+        """
+        from app.utils.espn_helpers import authority_not_started_holds
+
+        now = _utc("2026-09-13T18:05:00+00:00")
         changes = authority_write(
             our_status="live", our_completed_at=None,
             our_commence_time=_utc("2026-09-13T18:00:00+00:00"),
             competition={"state": "upcoming", "date": "2026-09-14T04:00Z",
                          "start_is_tbd": True},
+            now=now,
+            our_sources={}, our_home_score=0, our_away_score=0,
+        )
+        assert changes["status"] == "scheduled"
+        assert authority_not_started_holds(
+            changes["win_probability_sources"], now + timedelta(minutes=1),
+            home_score=0, away_score=0, period=None, game_clock=None,
+        ) is True
+        # The placeholder is still never written as a start (#3829/#4344).
+        assert "commence_time" not in changes
+
+    def test_a_PAST_TBD_day_writes_no_hold(self):
+        """The listed day has begun; an untimed fixture may be on court."""
+        changes = authority_write(
+            our_status="live", our_completed_at=None,
+            our_commence_time=_utc("2026-09-13T18:00:00+00:00"),
+            competition={"state": "upcoming", "date": "2026-09-13T04:00Z",
+                         "start_is_tbd": True},
             now=_utc("2026-09-13T18:05:00+00:00"),
             our_sources={}, our_home_score=0, our_away_score=0,
         )
         assert "win_probability_sources" not in changes
+        assert "status" not in changes
+
+    def test_the_ALCARAZ_specimen_9756(self):
+        """Production 2026-09-30T07:0xZ: event 15320475 (Alcaraz v Michelsen,
+        anchored `espn_id` 183497) read LIVE from 02:00Z on an Odds API stamp
+        while ESPN said STATUS_SCHEDULED, TBD, 2026-10-01T04:00Z."""
+        from app.utils.espn_helpers import authority_not_started_holds
+
+        now = _utc("2026-09-30T07:05:00+00:00")
+        changes = authority_write(
+            our_status="live", our_completed_at=None,
+            our_commence_time=_utc("2026-09-30T02:00:00+00:00"),
+            our_commence_time_source="odds_api",
+            competition={"state": "upcoming", "date": "2026-10-01T04:00Z",
+                         "start_is_tbd": True},
+            now=now,
+            our_sources={"kalshi": {"probability": 0.83}},
+            our_home_score=None, our_away_score=None,
+        )
+        assert changes["status"] == "scheduled"
+        assert changes["win_probability_sources"]["kalshi"] == {"probability": 0.83}
+        assert authority_not_started_holds(
+            changes["win_probability_sources"], now + timedelta(minutes=1),
+        ) is True
+        assert "commence_time" not in changes
+
+    def test_ESPN_reporting_play_still_wins_over_a_future_TBD_day(self):
+        """The backstop for an Asian day session that begins before midnight ET
+        of its local date: ESPN's own `in_progress` promotes and retracts the
+        hold, whatever the placeholder says."""
+        changes = authority_write(
+            our_status="scheduled", our_completed_at=None,
+            our_commence_time=_utc("2026-09-30T02:00:00+00:00"),
+            competition={"state": "in_progress", "date": "2026-10-01T04:00Z",
+                         "start_is_tbd": True},
+            now=_utc("2026-10-01T02:30:00+00:00"),
+            our_sources={"espn_not_started_at": "2026-10-01T02:29:00+00:00"},
+        )
+        assert changes["status"] == "live"
+        assert "espn_not_started_at" not in changes["win_probability_sources"]
 
     def test_an_ordinary_playing_row_issues_no_pointless_write(self):
         """`clear_authority_not_started` returns the ORIGINAL when there is
