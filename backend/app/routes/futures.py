@@ -7758,8 +7758,25 @@ async def get_futures_history(
     # number from the hero above it (KBO 59698965: 7 of 10 legs, sum 0.89, printed
     # raw under a hero squeezed by 1.268). Graded legs are not carried — see the
     # helper for why neither their last price nor their grade may be.
+    # #9765 — A CLEARED PRICE IS NOT AN UNCHANGED ONE. A leg the writer has since
+    # nulled (DataGolf dropped 63 golfers off the Dunhill Links board) wrote no row
+    # when it went away, so the carry kept it alive and the chart divided by 1.587
+    # under a hero dividing by 1.000. It is carried up to the instant it was
+    # cleared and no further; with no stamp to bound it, not at all.
+    _cleared_until: dict[int, datetime] = {}
+    _never_carried = set(_settled_grades)
+    for _o in market.outcomes:
+        if _o.current_probability is not None or _o.id in _never_carried:
+            continue
+        _stamp = getattr(_o, "price_changed_at", None)
+        if _stamp is None:
+            _never_carried.add(_o.id)
+        else:
+            _cleared_until[_o.id] = _stamp
     devigged = devigged_consensus_by_time(
-        carry_forward_quotes(raw_by_time, do_not_carry=set(_settled_grades)),
+        carry_forward_quotes(
+            raw_by_time, do_not_carry=_never_carried, carry_until=_cleared_until
+        ),
         mutually_exclusive=getattr(market, "mutually_exclusive", True),
         field_complete=_field_complete,
     )
