@@ -524,7 +524,7 @@ async def _run_polymarket_ws_consumer():
         OPEN_CONTRACT_MAX_QUEUE, OPEN_FLUSH_CHUNKS_PER_FLUSH,
         open_contract_asset_map, open_contract_markets_stmt,
         open_contract_outcome_stmts, open_contract_prices_enabled,
-        plan_flush_chunks,
+        plan_flush_chunks, tokens_by_contract,
     )
     from app.tasks.ws_liveness import report as _report_liveness
     from app.utils.futures_rank import rerank_market_fields_stmt  # #6598
@@ -535,7 +535,9 @@ async def _run_polymarket_ws_consumer():
     # second client (`app.tasks.polymarket_open_contracts`). Never added to the
     # settlement maps or to the maps the #9418 admission watcher reads as "this
     # event is subscribed". A failed read costs the arm, never the game slate.
-    async def read_open_contracts(taken_assets, excluded_market_ids):
+    async def read_open_contracts(
+        taken_assets, excluded_market_ids, taken_tokens_by_contract=None
+    ):
         if not open_contract_prices_enabled():
             return None, False
         try:
@@ -548,7 +550,8 @@ async def _run_polymarket_ws_consumer():
                     outcome_rows.extend((await session.execute(stmt)).all())
             return (
                 open_contract_asset_map(
-                    market_rows, outcome_rows, taken_assets, excluded_market_ids
+                    market_rows, outcome_rows, taken_assets, excluded_market_ids,
+                    taken_tokens_by_contract,
                 ),
                 False,
             )
@@ -1332,10 +1335,23 @@ async def _run_polymarket_ws_consumer():
     # torn down in the `finally` on every exit path. Its run lives inside this
     # task, so cancelling the task closes every one of its connections.
     async def admit_open_contracts():
+        # #9736 repair: which contract each game-socket token is, by its leg's
+        # id, so an open leg with no token of its own can mirror it.
         admission, failed = (
             preread
             if preread is not None
-            else await read_open_contracts(set(asset_ids), market_ids)
+            else await read_open_contracts(
+                set(asset_ids),
+                market_ids,
+                tokens_by_contract(
+                    asset_to_outcome,
+                    {
+                        oid: ext
+                        for pairs in outcomes_by_market.values()
+                        for oid, ext in pairs
+                    },
+                ),
+            )
         )
         stats["open_contract_admission_error"] = failed
         if admission is None:

@@ -261,6 +261,102 @@ class TestSharedTokenFanOut:
         assert "cubsYes" not in adm.asset_mirrors
 
 
+class TestTokenlessBoardMirrorsByCondition:
+    """#9736 repair. #9753 went live and the board did not move: production
+    board 60087232 stores NO token key (read 2026-09-30 08:48Z — 1 of the 5
+    open markets in its group without one), so it was counted
+    ``markets_without_tokens`` and never reached the token mirror; its Cubs leg
+    sat at 0.225 @ 07:01Z beside the binary's 0.230 @ 08:48Z. Its legs still
+    name their contracts: ``0x52f9…`` is token 0 of the condition whose
+    ``0x52f9…_yes`` leg the binary streams."""
+
+    BOARD = (60087232, None, None, None)  # the production shape: no key at all
+    BINARY = (61380842, ["cubsYes", "cubsNo"], None, None)
+    LEGS = [
+        (601, 60087232, "0x52f9", False), (602, 60087232, "0x77aa", False),
+        (611, 61380842, "0x52f9_yes", False), (612, 61380842, "0x52f9_no", False),
+    ]
+
+    @pytest.mark.parametrize("board_first", [True, False])
+    async def test_the_board_leg_mirrors_the_binarys_yes_token(self, board_first):
+        rows = [self.BOARD, self.BINARY] if board_first else [self.BINARY, self.BOARD]
+        adm = open_mod.open_contract_asset_map(rows, self.LEGS)
+
+        assert adm.asset_to_outcome == {"cubsYes": 611, "cubsNo": 612}
+        assert adm.asset_mirrors == {"cubsYes": [(601, 60087232)]}
+        assert adm.mirrored_outcomes() == {601: 60087232}
+        c = adm.counts
+        assert c["markets_without_tokens"] == 1  # still counted: story intact
+        assert c["legs_mirrored_by_condition"] == 1
+        assert c["legs_mirrored"] == 1
+        assert c["markets_admitted"] == 2
+
+    async def test_a_leg_naming_no_streamed_contract_stays_unpriced(self):
+        adm = open_mod.open_contract_asset_map([self.BOARD, self.BINARY], self.LEGS)
+        assert 602 not in adm.mirrored_outcomes()
+
+    async def test_no_and_side1_legs_name_token_one(self):
+        adm = open_mod.open_contract_asset_map(
+            [(8, None, None, None), (9, ["y", "n"], None, None)],
+            [
+                (81, 8, "0xcc_side1", False),
+                (91, 9, "0xcc_yes", False), (92, 9, "0xcc_no", False),
+            ],
+        )
+        assert adm.asset_mirrors == {"n": [(81, 8)]}
+
+    async def test_the_game_socket_owner_is_mirrored_by_condition(self):
+        adm = open_mod.open_contract_asset_map(
+            [self.BOARD], self.LEGS[:2],
+            taken_assets={"slateCubs"},
+            taken_tokens_by_contract={"0x52f9:0": "slateCubs"},
+        )
+        assert adm.asset_to_outcome == {}
+        assert adm.asset_mirrors == {"slateCubs": [(601, 60087232)]}
+
+    async def test_an_unpaired_market_mirrors_by_condition_never_by_position(self):
+        # Two tokens, three legs: still never zipped, but the leg whose id
+        # names a streamed contract takes that contract's token.
+        adm = open_mod.open_contract_asset_map(
+            [(8, ["p", "q"], None, None), self.BINARY],
+            [
+                (81, 8, "0xaa", False), (82, 8, "0x52f9", False),
+                (83, 8, "0xbb", False), *self.LEGS[2:],
+            ],
+        )
+        assert adm.counts["markets_unpaired"] == 1
+        assert "p" not in adm.asset_to_outcome
+        assert adm.asset_mirrors == {"cubsYes": [(82, 8)]}
+
+    async def test_graded_and_non_condition_legs_are_never_mirrored(self):
+        adm = open_mod.open_contract_asset_map(
+            [self.BOARD, (6, None, None, None), self.BINARY],
+            [
+                (601, 60087232, "0x52f9", True),  # graded
+                (61, 6, "52f9_yes", False),       # not a condition id
+                *self.LEGS[2:],
+            ],
+        )
+        assert adm.asset_mirrors == {}
+        assert adm.counts["legs_mirrored_by_condition"] == 0
+
+    async def test_two_legs_of_one_board_naming_one_contract_take_it_once(self):
+        adm = open_mod.open_contract_asset_map(
+            [self.BOARD, self.BINARY],
+            [(601, 60087232, "0x52f9", False), (603, 60087232, "0x52f9_yes", False),
+             *self.LEGS[2:]],
+        )
+        assert adm.asset_mirrors == {"cubsYes": [(601, 60087232)]}
+        assert adm.counts["assets_duplicate"] == 1
+
+    async def test_contract_key(self):
+        key = open_mod.contract_key
+        assert key("0xab") == key("0xab_yes") == ("0xab", 0)
+        assert key("0xab_no") == key("0xab_side1") == ("0xab", 1)
+        assert key("0xab_over") is None
+        assert key("ab_yes") is None and key("") is None and key("0x") is None
+
+
 # ---------------------------------------------------- 35,000 tokens ----
 
 
@@ -944,6 +1040,59 @@ class TestTheConsumer:
         ], rig.subscribes
         assert market_channel(10) in [c for c, _f in rig.redis.published]
         assert stats["open_contract_assets_already_streaming"] == 1
+
+    async def test_a_tokenless_board_leg_moves_on_the_contract_it_names(
+        self, monkeypatch, tmp_path
+    ):
+        """#9736 repair, THE SHIP. Board market 10 stores no token at all (the
+        production 60087232 shape); its leg 101's id ``0x7`` names the contract
+        standalone market 7 streams as token ``711``. One tick moves both rows
+        and announces both markets; ``711`` is subscribed once."""
+        engine = _database(tmp_path, extra=[(10, 101, "711")])
+        rig = _Rig(
+            engine, GAME_SLATE,
+            (
+                [*OPEN_MARKET_ROWS, (10, None, None, None)],
+                [*OPEN_OUTCOME_ROWS, (101, 10, "0x7", False)],
+            ),
+            _frames_by_token({"711": [(0.0, _tick("711"))]}),
+        )
+        stats = await _drive(monkeypatch, rig)
+
+        assert stats["errors"] == 0
+        assert _stored(engine, 71) == pytest.approx(0.42)
+        assert _stored(engine, 101) == pytest.approx(0.42)
+        assert sorted(c for c, _f in rig.redis.published) == sorted(
+            [market_channel(7), market_channel(10)]
+        )
+        assert stats["open_contract_markets_without_tokens"] == 1
+        assert stats["open_contract_legs_mirrored_by_condition"] == 1
+        assert sorted(["711", "811", "911"]) in rig.subscribes
+        assert len(rig.subscribes) == 2
+
+    async def test_a_tokenless_board_leg_moves_on_the_game_sockets_contract(
+        self, monkeypatch, tmp_path
+    ):
+        """The contract the board leg names is the GAME slate's: the caller
+        hands admission which contract each game token is, by its leg's id."""
+        engine = _database(tmp_path, extra=[(10, 101, GAME_TOKEN)])
+        rig = _Rig(
+            engine, GAME_SLATE,
+            (
+                [*OPEN_MARKET_ROWS, (10, None, None, None)],
+                [*OPEN_OUTCOME_ROWS, (101, 10, f"0x{GAME_MARKET}", False)],
+            ),
+            _frames_by_token({GAME_TOKEN: [(0.1, _tick(GAME_TOKEN))]}),
+        )
+        stats = await _drive(monkeypatch, rig)
+
+        assert _stored(engine, GAME_OUTCOME) == pytest.approx(0.42)
+        assert _stored(engine, 101) == pytest.approx(0.42)
+        assert [a for a in rig.subscribes if GAME_TOKEN in (a or [])] == [
+            [GAME_TOKEN]
+        ], rig.subscribes
+        assert market_channel(10) in [c for c, _f in rig.redis.published]
+        assert stats["open_contract_legs_mirrored_by_condition"] == 1
 
     async def test_the_undo_flag_leaves_the_game_socket_alone(
         self, monkeypatch, tmp_path

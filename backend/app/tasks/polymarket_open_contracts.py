@@ -200,6 +200,7 @@ class OpenContractAdmission:
             "assets_already_streaming": 0,
             "assets_duplicate": 0,
             "legs_mirrored": 0,
+            "legs_mirrored_by_condition": 0,
         }
     )
 
@@ -212,11 +213,46 @@ class OpenContractAdmission:
         }
 
 
+def contract_key(ext: str) -> Optional[tuple[str, int]]:
+    """``(condition id, CLOB token index)`` a leg's ``external_id`` names.
+
+    ``0xabc`` and ``0xabc_yes`` are both token 0 of condition ``0xabc``;
+    ``0xabc_no`` and ``0xabc_side1`` are token 1 (``_token_index``, the rule the
+    pairing already orders by). ``None`` for anything that is not a Polymarket
+    condition id or whose suffix names no token, so it can never be matched.
+    """
+    from app.tasks.polymarket_ws import _token_index
+
+    index = _token_index(ext or "")
+    if index is None:
+        return None
+    condition = ext.split("_", 1)[0]
+    if not condition.startswith("0x") or len(condition) < 3:
+        return None
+    return condition, index
+
+
+def tokens_by_contract(
+    asset_to_outcome: Mapping[str, int], ext_by_outcome: Mapping[int, str]
+) -> dict[str, str]:
+    """``contract_key → token`` for every paired leg whose id names a contract.
+
+    Keys are ``"<condition>:<index>"`` strings so the map stays plain data.
+    """
+    out: dict[str, str] = {}
+    for token, oid in asset_to_outcome.items():
+        key = contract_key(ext_by_outcome.get(oid, ""))
+        if key is not None:
+            out.setdefault(f"{key[0]}:{key[1]}", token)
+    return out
+
+
 def open_contract_asset_map(
     market_rows: Iterable[tuple],
     outcome_rows: Iterable[tuple],
     taken_assets: Iterable[str] = (),
     excluded_market_ids: Iterable[int] = (),
+    taken_tokens_by_contract: Optional[Mapping[str, str]] = None,
 ) -> OpenContractAdmission:
     """Token → leg for every open contract the game socket does not carry.
 
@@ -242,6 +278,16 @@ def open_contract_asset_map(
     A mirror is only ever ANOTHER market's leg: two legs of one market naming
     one token is a pairing defect, not a shared contract, and the second is
     still dropped (``assets_duplicate``).
+
+    #9736 repair: a market with NO usable tokens (``markets_without_tokens`` /
+    ``markets_unpaired``) can still name a contract by its legs' ids. The live
+    NLDS board 60087232 stores no token key at all, so the token mirror above
+    never met it; its Cubs leg is ``0x52f9…dc27`` — condition ``0x52f9…dc27``,
+    token 0 — the very contract the standalone binary's ``0x52f9…dc27_yes``
+    leg streams. Such a leg mirrors the token of the leg, in another market,
+    whose id names the same ``(condition, token index)`` (``contract_key``):
+    an open owner here, or the game socket's (``taken_tokens_by_contract``).
+    Matched by id, never by position, so a shape it cannot read stays unpriced.
     """
     from app.tasks.polymarket_ws import legs_in_token_order
 
@@ -252,10 +298,14 @@ def open_contract_asset_map(
 
     legs_by_market: dict[int, list[tuple[int, str]]] = {}
     graded: set[int] = set()
+    ext_by_outcome: dict[int, str] = {}
     for outcome_id, market_id, ext, is_graded in outcome_rows:
         legs_by_market.setdefault(market_id, []).append((outcome_id, ext or ""))
+        ext_by_outcome[outcome_id] = ext or ""
         if is_graded:
             graded.add(outcome_id)
+    #: markets with no usable tokens, for the by-condition pass below
+    tokenless: list[int] = []
 
     for market_id, tokens_a, tokens_b, by_outcome in market_rows:
         counts["markets"] += 1
@@ -279,9 +329,11 @@ def open_contract_asset_map(
             ]
         elif tokens:
             counts["markets_unpaired"] += 1
+            tokenless.append(market_id)
             continue
         else:
             counts["markets_without_tokens"] += 1
+            tokenless.append(market_id)
             continue
 
         admitted = False
@@ -311,6 +363,35 @@ def open_contract_asset_map(
                 admitted = True
         if admitted:
             counts["markets_admitted"] += 1
+
+    if tokenless:
+        by_contract = dict(taken_tokens_by_contract or {})
+        for key, token in tokens_by_contract(
+            out.asset_to_outcome, ext_by_outcome
+        ).items():
+            by_contract.setdefault(key, token)
+        for market_id in tokenless:
+            admitted = False
+            seen: set[str] = set()
+            for outcome_id, ext in legs_by_market.get(market_id, []):
+                key = contract_key(ext)
+                if outcome_id in graded or key is None:
+                    continue
+                token = by_contract.get(f"{key[0]}:{key[1]}")
+                if token is None or out.asset_to_market.get(token) == market_id:
+                    continue
+                if token in seen:  # two legs of one market, one contract
+                    counts["assets_duplicate"] += 1
+                    continue
+                seen.add(token)
+                mirrors = out.asset_mirrors.setdefault(token, [])
+                if all(oid != outcome_id for oid, _mid in mirrors):
+                    mirrors.append((outcome_id, market_id))
+                    counts["legs_mirrored"] += 1
+                    counts["legs_mirrored_by_condition"] += 1
+                    admitted = True
+            if admitted:
+                counts["markets_admitted"] += 1
     return out
 
 
