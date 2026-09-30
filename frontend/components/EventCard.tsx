@@ -421,7 +421,7 @@ export default function EventCard({
   // including every row on a payload that does not carry the keys at all, which
   // today is every `/api/events` list row — so those cards are untouched.
   const venueSettledSentence = isSuspended
-    ? venueSettledSummary(event.venue_settled, event.venue_settled_result)
+    ? venueSettledSummary(event.venue_settled, event.venue_settled_result, event.venue_closed_no_winner)
     : null;
 
   // #2882 — NEITHER side has a number. This is #3459's rule reaching the league

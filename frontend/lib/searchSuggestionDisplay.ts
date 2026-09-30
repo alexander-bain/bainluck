@@ -256,7 +256,7 @@ export function suggestionSubtitle(
     if (hasNoReportedResult(s.status, s.commence_time, now?.getTime())) {
       return {
         kind: "event-time",
-        text: venueSettledSummary(s.venue_settled, s.venue_settled_result) ?? SUSPENDED_LABEL,
+        text: venueSettledSummary(s.venue_settled, s.venue_settled_result, s.venue_closed_no_winner) ?? SUSPENDED_LABEL,
       };
     }
     return {

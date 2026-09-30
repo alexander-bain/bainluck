@@ -187,6 +187,21 @@ export const SUSPENDED_DESCRIPTION =
 export const VENUE_SETTLED_LABEL = "Settled";
 
 /**
+ * #5811 — what a card says when the venue CLOSED the contest with no winner:
+ * a draw, a no contest, a split settlement. Production 2026-09-30, `/sports`
+ * at 390px: Visconde v Bulaid (15320964, UFC, `suspended`, no score) sat under
+ * "Live & Paused" reading "No result reported" hours after Kalshi finalized
+ * both fight markets as `scalar`. Nothing named a winner, so `venue_settled`
+ * was rightly false, and the card had no end state to give.
+ *
+ * Read off the producer's `venue_closed_no_winner` (live's PR #9821: every
+ * market on a scoreless row carries #7035's `venue_voided` stamp and no
+ * outcome from any source is a winner). The key is PRESENT ONLY WHEN TRUE —
+ * absent means "not established", never "still going".
+ */
+export const VENUE_CLOSED_NO_WINNER_LABEL = "Ended · no winner";
+
+/**
  * The sentence behind {@link VENUE_SETTLED_LABEL}, on the `title` where
  * `SUSPENDED_DESCRIPTION` sits — standing notice 34 keeps the explanation off
  * the page body, and this state needs one more than most: a reader who watched
@@ -242,8 +257,12 @@ export const VENUE_SETTLED_DESCRIPTION =
 export function venueSettledSummary(
   venueSettled: boolean | null | undefined,
   venueSettledResult: string | null | undefined,
+  /** #5811 — {@link VENUE_CLOSED_NO_WINNER_LABEL}. A graded winner wins. */
+  venueClosedNoWinner?: boolean | null,
 ): string | null {
-  if (!venueSettled) return null;
+  if (!venueSettled) {
+    return venueClosedNoWinner === true ? VENUE_CLOSED_NO_WINNER_LABEL : null;
+  }
   const result = venueSettledResult?.trim();
   return result ? `${VENUE_SETTLED_LABEL} · ${result}` : VENUE_SETTLED_LABEL;
 }
@@ -548,6 +567,8 @@ export function eventSectionKey(
   settlement?: {
     venue_settled?: boolean | null;
     venue_settled_result?: string | null;
+    /** #5811 — see {@link VENUE_CLOSED_NO_WINNER_LABEL}. */
+    venue_closed_no_winner?: boolean | null;
     stoppage?: string | null;
     /** #9634 — the served `started_without_result`, when the payload has it. */
     started_without_result?: boolean | null;
@@ -561,6 +582,7 @@ export function eventSectionKey(
     venueSettledSummary(
       settlement.venue_settled,
       settlement.venue_settled_result,
+      settlement.venue_closed_no_winner,
     ) !== null
   ) {
     return "finished";

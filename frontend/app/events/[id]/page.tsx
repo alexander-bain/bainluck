@@ -535,7 +535,11 @@ export default function EventPage({ params }: EventPageProps) {
   // Only the words were wrong. The page keeps its ONE `hasNoReportedResult`
   // answer (#4015) and gains one string derived from it.
   const venueSettledSentence = isSuspended
-    ? venueSettledSummary(event?.venue_settled, event?.venue_settled_result)
+    ? venueSettledSummary(
+        event?.venue_settled,
+        event?.venue_settled_result,
+        event?.venue_closed_no_winner,
+      )
     : null;
 
   // #8810 — and the AUTHORITY'S word, when it reported the match stopped before

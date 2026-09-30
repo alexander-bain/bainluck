@@ -369,6 +369,9 @@ export interface Event {
   venue_settled?: boolean;
   /** @see Event.venue_settled */
   venue_settled_result?: string | null;
+  /** #5811 — present (and `true`) only when the venue closed this scoreless
+   *  row with no winner. Read through `venueSettledSummary` only. */
+  venue_closed_no_winner?: boolean;
   /**
    * #9634 — the server's answer to "has this `scheduled` row's clock run out
    * with nothing reported?" (`event_completion.started_without_result`). It
@@ -1513,6 +1516,8 @@ export interface FeedEventData {
   venue_settled?: boolean;
   /** @see Event.venue_settled_result */
   venue_settled_result?: string | null;
+  /** @see Event.venue_closed_no_winner */
+  venue_closed_no_winner?: boolean;
   current_odds?: {
     home_probability: number | null;
     away_probability: number | null;
