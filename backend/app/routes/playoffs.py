@@ -38,6 +38,16 @@ from app.utils.futures_unsupported_price import (  # #8220, #8243
     needs_trade_evidence,
     price_is_unsupported,
 )
+# #8192. `_DISPLAY_ROUNDING` is imported rather than restated: "the trade prints
+# as the served price" must mean one thing on the grid and on the futures page.
+from app.utils.futures_unsupported_price import (
+    POLYMARKET_BOOKMAKER,
+    _DISPLAY_ROUNDING,
+)
+from app.utils.feed_market_quality import (  # #8192
+    FEED_EXCLUSIVE_SUM_MAX,
+    book_has_a_buyer,
+)
 from app.utils.futures_liveness import leg_is_graded  # #7387
 from app.utils.tournament_stages import classify_market_stage, get_stages_for_sport
 from app.utils.static_divisions import canonical_conference as _canonical_conference
@@ -4981,6 +4991,139 @@ def _grid_cell_quotes_an_untaken_offer(
     )
 
 
+# #8192. THE POLYMARKET HALF OF THE CHAMPION COLUMN, AND WHY IT NEEDED ITS OWN ARM.
+#
+# What a reader saw on `/playoffs/ncaa-basketball`: the Champion column's
+# Polymarket mark read P19 for UConn, P15 Illinois, P11 North Carolina, P8 VCU,
+# beside sportsbook and Kalshi marks of 1-5%. Seventeen Polymarket legs summed to
+# 1.58 for one title. Polymarket's own board (Gamma `/events/927445`, read
+# 2026-09-30 06:xxZ) has almost no trading: bids of 0-11c against asks of 14-71c
+# on every leg, and two traded legs in the whole field.
+#
+# Every shipped arm misses it because every one keys on
+# `FEED_PHANTOM_MIN_SPREAD` (0.20) and these books sit at 0.10-0.18: VCU is the
+# midpoint of no bid and an 18c ask. The feed measured that spread as bimodal
+# with an empty middle. This board is not bimodal, so a narrower spread would be
+# a new constant fitted to one market. What is not fitted is the COLUMN: stored,
+# the market's fresh legs sum to 2.03 for a one-winner title. Every other grid's
+# Polymarket champion market sums to 1.02-1.07 (MLB, MLS, NBA, NFL, NHL, WNBA,
+# measured the same hour).
+#
+# The rule is #7808's clause (`refuse_unbid_legs_that_outrank_a_bid_leg`) and
+# #7059's (`price_is_unlocated_in_broken_field`), applied at the grid. On a
+# one-winner column whose venue column does not add up
+# (`> FEED_EXCLUSIVE_SUM_MAX`), a leg keeps its number only if something stands
+# behind it: a buyer above the empty-book floor (`book_has_a_buyer`), or a trade
+# that prints as the served price. On a column that DOES add up, a bidless
+# longshot is backed by the arithmetic around it and is never asked. That gate is
+# load-bearing: those six sound boards carry 25-26 unbid legs each, which a
+# bid-only rule would have blanked.
+#
+# One-winner is the grid's own structural answer (`EXPECTED_COLUMN_SUMS` normalises
+# `championship` to 1.0). `conference`/`pennant` seat two and were not measured.
+# Withholding a Polymarket leg changes the blended headline on that row, so this
+# is the reviewed blending class under 49(d).
+_SINGLE_WINNER_COLUMNS = frozenset({"championship"})
+
+
+def _grid_venue_column_sum(outcomes, cutoff: datetime) -> float:
+    """The venue's own column for one market, as the grid would read it (#8192).
+
+    Every fresh, priced, ungraded leg of the market, including legs with no row on
+    the grid, because the question is whether the VENUE's column is a
+    distribution, not whether our subset of it is. Fresh means the same cutoff the
+    cell loop applies, so a leg the poller stopped touching months ago cannot
+    inflate the sum. Polymarket's grade test is `resolution_source is not None`,
+    the same one `needs_trade_disconfirmation` uses for this venue.
+    """
+    total = 0.0
+    for o in outcomes:
+        if o.current_probability is None or o.resolution_source is not None:
+            continue
+        if o.last_updated and o.last_updated < cutoff:
+            continue
+        total += float(o.current_probability)
+    return total
+
+
+def _grid_polymarket_leg_needs_backing(
+    col_key: str,
+    source: str | None,
+    resolution_source: str | None,
+    probability: float | None,
+    yes_bid: float | None,
+    yes_ask: float | None,
+    *,
+    venue_column_sum: float | None,
+) -> bool:
+    """True when this leg keeps its number only if a trade backs it (#8192).
+
+    The screen, split from the verdict for #8243's reason: everything here is
+    already on the rows the grid loaded, so a grid with no candidate issues no
+    trade read at all. :func:`_grid_polymarket_leg_is_unbacked` is this AND the
+    trade term, so the two name the same rows by construction.
+
+    Each absence fails open: no book at all (both sides NULL, which is a model
+    price or a derived complement), no price, no column sum, or a verdict (settled
+    means settled).
+    """
+    if col_key not in _SINGLE_WINNER_COLUMNS:
+        return False
+    if (source or "").strip().lower() != POLYMARKET_BOOKMAKER:
+        return False
+    if resolution_source is not None:
+        return False
+    if probability is None:
+        return False
+    if venue_column_sum is None or venue_column_sum <= FEED_EXCLUSIVE_SUM_MAX:
+        return False
+    if yes_bid is None and yes_ask is None:
+        return False
+    return not book_has_a_buyer(yes_bid)
+
+
+def _grid_polymarket_leg_is_unbacked(
+    col_key: str,
+    source: str | None,
+    resolution_source: str | None,
+    probability: float | None,
+    yes_bid: float | None,
+    yes_ask: float | None,
+    last_price: float | None,
+    *,
+    has_trade_evidence: bool,
+    venue_column_sum: float | None,
+) -> bool:
+    """True when nothing stands behind this leg's number in a broken column (#8192).
+
+    Unlike #8243's Kalshi arm, a leg the trade read never saw is NOT spared. That
+    arm fails open because it runs on a column nobody has shown to be wrong. This
+    one runs only after the venue's column has been shown impossible, and there a
+    number needs something positive behind it (#7059: "the legs still entitled to
+    a number are the ones whose own book pins one"). A Polymarket `last_price` of
+    NULL is the venue reporting no trade; it cannot back a price.
+
+    The trade must print as the served price (`_DISPLAY_ROUNDING`, half a point).
+    UConn is the case: bid 1c, ask 59c, and a real trade at 22c on 2026-09-29
+    that it serves at 0.22. It keeps its number. That matches what Polymarket's
+    own page shows, and the blend already sets it aside as the outlier.
+    """
+    if not _grid_polymarket_leg_needs_backing(
+        col_key,
+        source,
+        resolution_source,
+        probability,
+        yes_bid,
+        yes_ask,
+        venue_column_sum=venue_column_sum,
+    ):
+        return False
+    if has_trade_evidence and last_price is not None:
+        if abs(float(last_price) - float(probability)) < _DISPLAY_ROUNDING:
+            return False
+    return True
+
+
 def _build_league_name_conditions(config) -> list:
     """SQL prefilter for Path B.2 — league name patterns pushed down as ILIKE.
 
@@ -5719,6 +5862,10 @@ async def get_playoff_grid(
         # row is fresh AND its stored price is not refuted by its own book — it is
         # refused because an untaken offer is not a price inside a summed column.
         _ask_only_skipped = 0
+        # #8192. A fourth, because the reason is different again: a Polymarket
+        # leg on a one-winner column whose venue column does not add up, with
+        # no buyer and no trade behind its number.
+        _pm_unbacked_skipped = 0
 
         # Resolve every market to its column FIRST (market fields only), then load
         # outcomes for just the survivors — phase 2 of the #1484 bounded load.
@@ -5771,6 +5918,54 @@ async def get_playoff_grid(
             )
         ]
         _newest_trade = await _newest_kalshi_trades(db, _trade_candidate_ids)
+
+        # #8192. The venue column sum per Polymarket market on a one-winner
+        # column (no query: the outcomes are in memory), then ONE batched
+        # Polymarket trade read for the legs that need backing, the same shape
+        # as the Kalshi read above. A grid whose Polymarket columns add up has no
+        # candidate and pays nothing.
+        from app.routes.futures import (
+            _closest_trade_by_outcome,
+            _newest_venue_trade_rows,
+        )
+
+        _venue_column_sum: dict[int, float] = {
+            market.id: _grid_venue_column_sum(
+                outcomes_by_market.get(market.id, ()), _stale_cutoff
+            )
+            for market, col_key in matched_markets
+            if col_key in _SINGLE_WINNER_COLUMNS
+            and (market.source or "").strip().lower() == POLYMARKET_BOOKMAKER
+        }
+        _pm_backing_candidates = [
+            outcome
+            for market, col_key in matched_markets
+            if market.id in _venue_column_sum
+            for outcome in outcomes_by_market.get(market.id, ())
+            if _grid_polymarket_leg_needs_backing(
+                col_key,
+                market.source,
+                outcome.resolution_source,
+                float(outcome.current_probability)
+                if outcome.current_probability is not None
+                else None,
+                float(outcome.current_yes_bid)
+                if outcome.current_yes_bid is not None
+                else None,
+                float(outcome.current_yes_ask)
+                if outcome.current_yes_ask is not None
+                else None,
+                venue_column_sum=_venue_column_sum[market.id],
+            )
+        ]
+        # Newest capture per leg; on a tied capture, the trade nearest the served
+        # price, which is the direction that keeps a number.
+        _pm_newest_trade = _closest_trade_by_outcome(
+            _pm_backing_candidates,
+            await _newest_venue_trade_rows(
+                db, POLYMARKET_BOOKMAKER, [o.id for o in _pm_backing_candidates]
+            ),
+        )
 
         for market, col_key in matched_markets:
             cutoff = _settled_cutoff if col_key in _SETTLED_COLUMNS else _stale_cutoff
@@ -5873,6 +6068,29 @@ async def get_playoff_grid(
                 ):
                     _ask_only_skipped += 1
                     continue
+                # #8192 — A POLYMARKET NUMBER NOTHING STANDS BEHIND, IN A
+                # CHAMPION COLUMN THE VENUE ITSELF CANNOT MAKE ADD UP. The rule,
+                # its measurement and the three legs it spares are at
+                # `_SINGLE_WINNER_COLUMNS`.
+                if _grid_polymarket_leg_is_unbacked(
+                    col_key,
+                    market.source,
+                    outcome.resolution_source,
+                    float(outcome.current_probability)
+                    if outcome.current_probability is not None
+                    else None,
+                    float(outcome.current_yes_bid)
+                    if outcome.current_yes_bid is not None
+                    else None,
+                    float(outcome.current_yes_ask)
+                    if outcome.current_yes_ask is not None
+                    else None,
+                    _pm_newest_trade.get(outcome.id),
+                    has_trade_evidence=outcome.id in _pm_newest_trade,
+                    venue_column_sum=_venue_column_sum.get(market.id),
+                ):
+                    _pm_unbacked_skipped += 1
+                    continue
                 if outcome.current_probability is not None:
                     prob = float(outcome.current_probability)
                 elif (outcome.current_yes_bid is not None
@@ -5959,6 +6177,13 @@ async def get_playoff_grid(
                 "Playoff grid %s: withheld %d bracket cells quoting an untaken "
                 "offer with no bid (#8220)",
                 config.slug, _ask_only_skipped,
+            )
+        if _pm_unbacked_skipped:
+            # `config.slug`, not `league_slug` — same `py/log-injection` reason.
+            logger.info(
+                "Playoff grid %s: withheld %d Polymarket champion legs with no "
+                "buyer and no trade in a column that does not add up (#8192)",
+                config.slug, _pm_unbacked_skipped,
             )
 
         # Backfill empty columns from resolved markets (e.g., make_playoffs after
