@@ -15,6 +15,7 @@ import { isFinishedStatus } from "@/lib/eventState";
 import { PREMATCH_SAID, prematchReading } from "@/lib/prematchReading";
 import { awayIsTheComplement } from "@/lib/drawPricedWinner";
 import { futuresOutcomeTotal } from "@/lib/discover/futuresBoard";
+import { namesOnlyTheOtherLeague, sharedLeague } from "@/lib/otherLeagueMarket";
 
 /** The item types this section knows how to render.
  *
@@ -248,6 +249,15 @@ interface RelatedByTagProps {
    * the feed served it.
    */
   preferNames?: string[];
+  /**
+   * The leagues the two sides play in, `standings.conference` (#9799).
+   *
+   * When both name the same league, a market naming only the other league is
+   * dropped — `AL Reliever of the Year` has no business beside Cubs @ Padres.
+   * Unlike `preferNames` this IS a filter, and a narrow one: see
+   * `lib/otherLeagueMarket`. Omitted, or any side unknown, changes nothing.
+   */
+  conferences?: (string | null | undefined)[];
   /** Section title */
   title?: string;
   /**
@@ -269,7 +279,9 @@ export default function RelatedByTag({
   title = "More Like This",
   fallbackTitle,
   preferNames,
+  conferences,
 }: RelatedByTagProps) {
+  const league = sharedLeague(conferences ?? []);
   const { data } = useSWR(
     tags.length > 0 ? ["related-by-tag", ...tags] : null,
     () => fetchFeed({ limit: limit + 5, tags }),
@@ -293,6 +305,13 @@ export default function RelatedByTag({
             ? (item.data as FeedFuturesData).id
             : null;
         return !(item.type === excludeType && id === excludeId);
+      })
+      .filter((item) => {
+        /* #9799: before the slice, like the sort below, so a dropped card
+           frees its seat for the fifth rather than shrinking the rail. */
+        if (item.type === "event") return true;
+        const name = (item.data as FeedFuturesData | FeedConceptData).name;
+        return !namesOnlyTheOtherLeague(name, league);
       });
     /* THE SORT HAPPENS BEFORE THE SLICE, which is the whole point (#5973). The
        rail draws four of the nine it fetched, and every card this is meant to
