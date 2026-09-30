@@ -1881,3 +1881,51 @@ export function formatLinescore(
 export function mapColumnHeading(title: string, cardCount: number): string {
   return cardCount > 1 ? `${title.replace(/ map$/i, "")} maps` : title;
 }
+
+/* ── THE LIVE PROJECTED TOTAL ────────────────────────────────────────────────
+ *
+ * #9944. `pace.projected_total` is the score so far run forward over the whole
+ * game (`routes/events.py::_estimate_game_pace`, `round(scored / elapsed)`), and
+ * the producer's only floor is `elapsed > 0.05`. A baseball bottom-1st is 3 of
+ * the model's 54 minutes (0.056), so on `/events/15321836` (White Sox @ Astros,
+ * 2026-09-30 21:47Z, Bottom 1st, 4 – 1) the runs map headlined "Projected 90"
+ * and stretched its rail to 103+ — while the same page's sportsbook live total
+ * read 12.5 and the game opened at 7.5.
+ *
+ * #6831 (nothing scored) and #9930 (no time left) each refused the run-forward
+ * on one axis. This is the axis underneath both: a tally divided by a small
+ * fraction is not a forecast at any score. With a pre-game total the card
+ * projects what is already on the board plus the pre-game expectation for the
+ * time that is left — `scored + (1 − elapsed) × pregame` — which starts at the
+ * opening line and ends at the final tally, and read 12 on the specimen. With
+ * no pre-game total there is nothing to anchor the early game to, so the bare
+ * run-forward is printed only once half the game is played.
+ *
+ * #6831 and #9930 are kept as they were: nothing scored or no time left is
+ * still no projection.
+ */
+export const RUN_FORWARD_MIN_ELAPSED = 0.5;
+
+export function liveProjectedTotal(
+  pace:
+    | { total_scored: number; projected_total: number | null; fraction_elapsed: number }
+    | null
+    | undefined,
+  pregameTotal: number | null | undefined
+): number | null {
+  if (!pace) return null;
+  const runForward =
+    pace.projected_total != null && pace.projected_total > 0 ? pace.projected_total : null;
+  const elapsed = pace.fraction_elapsed;
+  // A payload with no fraction has nothing to anchor or refuse on, and reads as
+  // it always did (#9930's own clause). The producer always serves one.
+  if (elapsed == null || !Number.isFinite(elapsed)) return runForward;
+  // #9930: no time left.
+  if (elapsed <= 0 || elapsed >= 1) return null;
+  // #6831: nothing scored.
+  if (!(pace.total_scored > 0)) return null;
+  if (pregameTotal != null && pregameTotal > 0) {
+    return pace.total_scored + (1 - elapsed) * pregameTotal;
+  }
+  return elapsed < RUN_FORWARD_MIN_ELAPSED ? null : runForward;
+}

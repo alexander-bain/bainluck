@@ -144,8 +144,12 @@ describe("#8922 control: with no hero pair, each tile keeps the value it had", (
     it(`projectedFinal ${name}`, () => {
       const text = visibleText(renderLiveNDPurdue(pair));
       expect(text).toContain("Projection ND by 36.5+");
-      expect(text).toContain("Projected 51");
-      expect(text).toContain("Projection 51.0");
+      // #9944: the pace is anchored to the 57 opening total — 38 + 0.25 × 57 =
+      // 52.25 — rather than run forward (38 / 0.75 = 51). Still the pace, not
+      // the hero's 53, which is what this control is for.
+      expect(text).toContain("Projected 52");
+      expect(text).toContain("Projection 52.3");
+      expect(text).not.toContain("Projected 53");
     });
   }
 });

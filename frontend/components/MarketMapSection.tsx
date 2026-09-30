@@ -36,6 +36,7 @@ import {
   probabilitiesQuoteALine,
   probabilitiesQuoteASettledLine,
   TOTAL_MAP_HALVES,
+  liveProjectedTotal,
 } from "@/lib/marketMapUtils";
 import { formatProbability } from "@/lib/api";
 import { isNonDistinctiveTrailingWord, teamShortName, teamShortNames } from "@/lib/teamShortName";
@@ -955,7 +956,10 @@ export default function MarketMapSection({
     const minThresh = gameTotals[0].threshold;
     const maxThresh = gameTotals[gameTotals.length - 1].threshold;
     const actualTotal = homeScore != null && awayScore != null ? homeScore + awayScore : null;
-    const paceProj = (vocab.scoreboardCountsTheUnit ? gameMarkets.pace?.projected_total : null) ?? null;
+    // #9944: the rail widens to the projection the card prints, never the raw run-forward.
+    const paceProj = vocab.scoreboardCountsTheUnit
+      ? liveProjectedTotal(gameMarkets.pace, openingOverUnder)
+      : null;
     // #8922: while the hero prints a projected final, the points projection is
     // that final's SUM — not the pace run forward, which is a second answer to
     // the same question (`Projected final: 6 – 47` over a points map reading
@@ -1027,11 +1031,15 @@ export default function MarketMapSection({
        posture on a third axis: the value has no standing once the clock it
        divides by has run out. Refused on the evidence (`>= 1`), so a payload
        that omits the fraction reads as it always did. */
-    const paceClockRanOut = pace != null && pace.fraction_elapsed >= 1;
-    const projectedRaw = paceClockRanOut ? null : pace?.projected_total ?? null;
+    /* #9944: and a run-forward of a sliver of the game is not one at any score —
+       "Projected 90" in the bottom of the 1st. `liveProjectedTotal` holds all
+       three refusals (#6831, #9930, #9944) and anchors the early game to the
+       pre-game total; see it in `marketMapUtils`. On the live arm `ouVal` is
+       exactly `openingOverUnder`, so the projection and the `Pre-game` marker
+       read one number. */
+    const projectedRaw = liveProjectedTotal(pace, openingOverUnder);
     // #8922: see `heroProjectedTotal` at the top of this block.
-    const projected =
-      heroProjectedTotal ?? (projectedRaw != null && projectedRaw > 0 ? projectedRaw : null);
+    const projected = heroProjectedTotal ?? projectedRaw;
     // #5414: the quoted pre-game total first, for the same reason the margin
     // map takes the quoted pre-game spread first — this value feeds a marker
     // labelled `Pre-game` on the live and settled arms, and `overUnder` is the
