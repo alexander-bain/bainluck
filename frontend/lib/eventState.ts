@@ -514,10 +514,10 @@ export function blendCaptionIsStale(
  * Passed by the two LEAGUE-PAGE callers, which read `Event` and so can carry
  * the keys: `lib/sports/leagueSections` (the bucket a reader sees) and
  * `lib/sports/leagueHorizon` (whose docblock states it must agree with that
- * bucket — a settled match is not "the league is playing right now"). The feed
- * and My Stuff read `FeedEventData`, which carries neither key, so they pass
- * nothing and are byte-for-byte unaffected; when that envelope gains them, the
- * call sites are the second half of that change, exactly as for `#3211`'s time.
+ * bucket — a settled match is not "the league is playing right now"). #5811:
+ * `FeedEventData` gained the keys (live's #9728), and the feed's two callers
+ * now pass them through `feedEventSectionKey` in `lib/feedSections` — the
+ * second half named here. My Stuff still passes nothing and is unaffected.
  *
  * ── #9265: A CALLED-OFF GAME WAS NEVER STARTED, SO IT IS NOT "PAUSED" ──
  *

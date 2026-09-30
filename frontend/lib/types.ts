@@ -1502,6 +1502,17 @@ export interface FeedEventData {
   status: EventStatus;
   home_score: number | null;
   away_score: number | null;
+  /**
+   * #5811 — the venue already graded this scoreless row. Same keys, same
+   * shared reader and same three states (absent / `false` / `true`) as
+   * `Event.venue_settled`; `/api/feed` attaches them since live's #9728.
+   * OPTIONAL: a cached feed page can predate that deploy, and absent reads as
+   * "never asked" — the card stays exactly as it was.
+   * @see Event.venue_settled — read through `venueSettledSummary` only.
+   */
+  venue_settled?: boolean;
+  /** @see Event.venue_settled_result */
+  venue_settled_result?: string | null;
   current_odds?: {
     home_probability: number | null;
     away_probability: number | null;
