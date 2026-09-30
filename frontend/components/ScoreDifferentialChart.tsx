@@ -631,8 +631,12 @@ export default function ScoreDifferentialChart({
     // whether the line reaches the edge or not, and a guard built on it cannot
     // tell the ship from the defect. The battery is what said so.
     let lastReading = -1;
+    let actualReadings = 0;
     for (let i = 0; i < points.length; i += 1) {
-      if (typeof points[i].actualDiff === "number") lastReading = i;
+      if (typeof points[i].actualDiff === "number") {
+        lastReading = i;
+        actualReadings += 1;
+      }
     }
     const actualTailCarried =
       lastReading < 0 ? 0 : points.length - 1 - lastReading;
@@ -651,19 +655,15 @@ export default function ScoreDifferentialChart({
         ? null
         : typeof points[points.length - 1]?.actualDiff === "number";
 
-    // #8997: how many categories the actual series has a value at once the
-    // carry has run — the points the `<Line>` below is actually handed. A
-    // step line through ONE point is a zero-length segment: the legend names
-    // "Actual Score Diff" and the plot shows a sliver at the edge. Measured on
-    // production 9/30, Dubai 78–77 Real Madrid (15292394): `score_history` is
-    // one row, the final, stamped at completed_at — the last category — so the
-    // carry has nothing to extend and the series is exactly one point. Counted
-    // here, after the carry and the prune, because an earlier lone reading is
-    // carried to the edge and draws as a real line; only what survives counts.
-    let actualPointsDrawn = 0;
-    for (const pt of points) {
-      if (typeof pt.actualDiff === "number") actualPointsDrawn += 1;
-    }
+    // #8997: the category of the series' ONLY observed reading, or null when
+    // it has none or several. Counted here, BEFORE the carry, because the carry
+    // is what hid it: on the page the shared domain ends a minute or two after
+    // the final, so a lone final is carried across those minutes and draws as
+    // a 1px step at the edge (production 9/30, Dubai 78–77 Real Madrid,
+    // 15292394: `score_history` one row, path `M378.96,118.75L380,118.75`). A
+    // count taken after the carry read "line" there and the first cut of this
+    // fix shipped inert. The dot marks the reading; the carry still draws.
+    const loneReadingIndex = actualReadings === 1 ? lastReading : null;
 
     // ── WHERE THIS CHART ACTUALLY HAS INK (CERT-1989, corrected by CERT-1995) ──
     //
@@ -702,7 +702,7 @@ export default function ScoreDifferentialChart({
     const scoreSpan =
       scoreFrom === null ? null : { from: scoreFrom, to: scoreTo as number };
 
-    return { points, scoreSpan, actualTailCarried, actualReachesEdge, actualPointsDrawn };
+    return { points, scoreSpan, actualTailCarried, actualReachesEdge, loneReadingIndex };
   }, [filteredHistory, filteredBookmakerHistory, filteredScoreHistory, filteredEspnHistory, chartStartTime, chartEndTime, pmSpreadData, impliedSpreadSources, periodBoundaries, hasProjectedScoreData, hasActualScoreData, labelFormat]);
 
   const chartData = chartBuild.points;
@@ -732,10 +732,11 @@ export default function ScoreDifferentialChart({
    */
   const actualTailCarried = chartBuild.actualTailCarried;
   const actualReachesEdge = chartBuild.actualReachesEdge;
-  /** #8997: one captured score (typically only the final) is drawn as a dot at
-   *  the time it was observed; two or more keep the step line. The journey we
-   *  did not capture is not invented. Mirrors native #9005. */
-  const actualDrawnAsDot = hasActualScoreData && chartBuild.actualPointsDrawn === 1;
+  /** #8997: one captured score (typically only the final) is marked with a
+   *  dot at the minute it was observed; two or more readings draw the step
+   *  line alone. The journey we did not capture is not invented. Mirrors
+   *  native #9005. */
+  const loneReadingIndex = hasActualScoreData ? chartBuild.loneReadingIndex : null;
 
   // Filter period boundaries, deduplicate close markers, alternate label positions
   const filteredPeriodBoundaries = useMemo(() => {
@@ -978,7 +979,7 @@ export default function ScoreDifferentialChart({
       /* #8997: how the actual series is drawn — "dot" for a lone captured
          score, "line" for two or more. Absent when no actual series is drawn. */
       data-actual-drawn-as={
-        hasActualScoreData ? (actualDrawnAsDot ? "dot" : "line") : undefined
+        hasActualScoreData ? (loneReadingIndex !== null ? "dot" : "line") : undefined
       }
       data-projected-series={hasProjectedScoreData ? "true" : "false"}
       /* #6142, and the same reason verbatim: the implied-spread snapshot is a
@@ -1232,8 +1233,23 @@ export default function ScoreDifferentialChart({
                 stroke="#f97316"
                 strokeWidth={3}
                 dot={
-                  actualDrawnAsDot
-                    ? { r: 4, fill: "#f97316", stroke: "#f97316" }
+                  loneReadingIndex !== null
+                    ? (props: { cx?: number; cy?: number; index?: number }) =>
+                        props.index === loneReadingIndex &&
+                        typeof props.cx === "number" &&
+                        typeof props.cy === "number" ? (
+                          <circle
+                            key="lone-reading"
+                            className="recharts-dot recharts-line-dot"
+                            cx={props.cx}
+                            cy={props.cy}
+                            r={4}
+                            fill="#f97316"
+                            stroke="#f97316"
+                          />
+                        ) : (
+                          <g key={`no-dot-${props.index}`} />
+                        )
                     : false
                 }
                 activeDot={{ r: 5 }}
