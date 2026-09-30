@@ -133,17 +133,22 @@ describe("What's moving — a row is flat exactly when both ends print the same 
     expect(three.direction).toBe("flat");
   });
 
-  test("live, the 67 → 67 rung is drawn flat, after every real mover", () => {
+  test("live, the 67 → 67 rung is off \"What's moving\" and every real mover stays", () => {
     // Production drew `Indiana: 2+ … opened 67% · now 67%` 4th of 5 with a green
-    // journey. It still fills the slot (the live rail fills to five), but its bar
-    // now says what its numbers say.
-    const { rows } = selectDivergenceRows({ playerProps: RUNGS, status: "live" });
-    expect(rows.map((r) => [`${r.player} ${r.threshold}`, r.direction])).toEqual([
+    // journey. #8754 made its bar flat; #1626 slice 2 takes it off the rail — a
+    // header reading "What's moving" does not list a row that did not move. It
+    // is still eligible (the "See all" count) and still in the detail view.
+    const res = selectDivergenceRows({ playerProps: RUNGS, status: "live" });
+    expect(res.rows.map((r) => [`${r.player} ${r.threshold}`, r.direction])).toEqual([
       ["Northwestern 3", "over"],
       ["Indiana 4", "over"],
       ["Northwestern 2", "over"],
-      ["Indiana 2", "flat"],
     ]);
+    // Indiana 3 is flat too (asserted above); it was already off the rail,
+    // behind Indiana's two-row player cap. Both stay counted.
+    expect(res.eligible).toBe(5);
+    expect(res.notSelected).toBe(2);
+    expect(candidates(RUNGS, "live").find((r) => r.player === "Indiana" && r.threshold === 2)?.direction).toBe("flat");
   });
 
   test("a sub-point move across a whole number is a mover, not flat", () => {

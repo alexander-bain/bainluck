@@ -459,7 +459,7 @@ describe("the filter runs pregame and nowhere else", () => {
     expect(live.rows[0].travel).toBeCloseTo(0.58, 6);
   });
 
-  it("a rung suppressed pregame still leads the in-game rail — and the FLAT rung is the specimen (ruling 112)", () => {
+  it("a rung suppressed pregame is not counted suppressed in-game — and the FLAT rung is the specimen (ruling 112)", () => {
     // ** REWRITTEN, NOT DELETED, BY RULING 112. ** This test's subject is the
     // SCOPE of the filter: pregame it applies, in-game it must not. Its original
     // specimen was a rung that had moved 30 points, and ruling 112 makes that
@@ -475,9 +475,16 @@ describe("the filter runs pregame and nowhere else", () => {
     expect(labels(script.rows)).not.toContain("Mover: 5+ hits");
     expect(script.structuralSuppressed).toBe(1);
 
+    // #1626 slice 2 took flat rows off the in-game rail for a DIFFERENT reason
+    // ("What's moving" lists only rows that moved), so the rows can no longer
+    // carry the scope claim. The accounting still does: in-game nothing is
+    // counted suppressed, and the empty rail is `clean`, never `structural` —
+    // a filter scoped wrongly would make it read "structural" here.
     const live = selectDivergenceRows({ playerProps: ladder, status: "live" });
-    expect(labels(live.rows)).toContain("Mover: 5+ hits");
+    expect(labels(live.rows)).not.toContain("Mover: 5+ hits");
     expect(live.structuralSuppressed).toBe(0);
+    expect(live.emptyReason).toBe("clean");
+    expect(live.eligible).toBe(2);
   });
 
   it("the detail view lists structural rungs in EVERY state", () => {

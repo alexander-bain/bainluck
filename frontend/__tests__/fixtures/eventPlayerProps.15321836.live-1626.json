@@ -1,0 +1,818 @@
+[
+ {
+  "market_name": "Hunter Brown: Strikeouts O/U 5.5",
+  "outcome_name": "Under",
+  "observed_at": "2026-09-30T18:38:14.425757+00:00",
+  "contributor_outcome_ids": [
+   239004629
+  ],
+  "threshold": 5.5,
+  "over_probability": 0.57,
+  "opening_over_probability": 0.545,
+  "pregame_mark": 0.57,
+  "_inverted": true,
+  "source": "polymarket",
+  "movement": -0.025,
+  "_market_id": 63433307
+ },
+ {
+  "market_name": "Hunter Brown: Strikeouts O/U 6.5",
+  "outcome_name": "Under",
+  "observed_at": "2026-09-30T21:13:28.600785+00:00",
+  "contributor_outcome_ids": [
+   239004631
+  ],
+  "threshold": 6.5,
+  "over_probability": 0.46,
+  "opening_over_probability": 0.425,
+  "pregame_mark": 0.445,
+  "_inverted": true,
+  "source": "polymarket",
+  "movement": -0.035,
+  "_market_id": 63433308
+ },
+ {
+  "market_name": "Hunter Brown: Strikeouts O/U 7.5",
+  "outcome_name": "Under",
+  "observed_at": "2026-09-30T18:38:14.425757+00:00",
+  "contributor_outcome_ids": [
+   239004633
+  ],
+  "threshold": 7.5,
+  "over_probability": 0.275,
+  "opening_over_probability": 0.285,
+  "pregame_mark": 0.275,
+  "_inverted": true,
+  "source": "polymarket",
+  "movement": 0.01,
+  "_market_id": 63433309
+ },
+ {
+  "market_name": "Hunter Brown: Strikeouts O/U 8.5",
+  "outcome_name": "Under",
+  "observed_at": "2026-09-30T20:58:06.446583+00:00",
+  "contributor_outcome_ids": [
+   238779106
+  ],
+  "threshold": 8.5,
+  "over_probability": 0.105,
+  "opening_over_probability": 0.1,
+  "pregame_mark": 0.11,
+  "_inverted": true,
+  "source": "polymarket",
+  "movement": -0.005,
+  "_market_id": 63369559
+ },
+ {
+  "market_name": "Hunter Brown: Strikeouts O/U 9.5",
+  "outcome_name": "Under",
+  "observed_at": "2026-09-30T20:38:56.119995+00:00",
+  "contributor_outcome_ids": [
+   238879949
+  ],
+  "threshold": 9.5,
+  "over_probability": 0.07,
+  "opening_over_probability": 0.055,
+  "pregame_mark": 0.07,
+  "_inverted": true,
+  "source": "polymarket",
+  "movement": -0.015,
+  "_market_id": 63398595
+ },
+ {
+  "market_name": "Hunter Brown: Strikeouts O/U 5.5",
+  "outcome_name": "Over",
+  "observed_at": "2026-09-30T18:38:14.425757+00:00",
+  "contributor_outcome_ids": [
+   239004628
+  ],
+  "threshold": 5.5,
+  "over_probability": 0.57,
+  "opening_over_probability": 0.545,
+  "pregame_mark": 0.57,
+  "_inverted": false,
+  "source": "polymarket",
+  "movement": 0.025,
+  "_market_id": 63433307
+ },
+ {
+  "market_name": "Hunter Brown: Strikeouts O/U 6.5",
+  "outcome_name": "Over",
+  "observed_at": "2026-09-30T20:12:54.509108+00:00",
+  "contributor_outcome_ids": [
+   239004630
+  ],
+  "threshold": 6.5,
+  "over_probability": 0.445,
+  "opening_over_probability": 0.425,
+  "pregame_mark": 0.445,
+  "_inverted": false,
+  "source": "polymarket",
+  "movement": 0.02,
+  "_market_id": 63433308
+ },
+ {
+  "market_name": "Hunter Brown: Strikeouts O/U 7.5",
+  "outcome_name": "Over",
+  "observed_at": "2026-09-30T18:38:14.425757+00:00",
+  "contributor_outcome_ids": [
+   239004632
+  ],
+  "threshold": 7.5,
+  "over_probability": 0.275,
+  "opening_over_probability": 0.285,
+  "pregame_mark": 0.275,
+  "_inverted": false,
+  "source": "polymarket",
+  "movement": -0.01,
+  "_market_id": 63433309
+ },
+ {
+  "market_name": "Hunter Brown: Strikeouts O/U 8.5",
+  "outcome_name": "Over",
+  "observed_at": "2026-09-30T20:58:06.446583+00:00",
+  "contributor_outcome_ids": [
+   238779105
+  ],
+  "threshold": 8.5,
+  "over_probability": 0.105,
+  "opening_over_probability": 0.1,
+  "pregame_mark": 0.11,
+  "_inverted": false,
+  "source": "polymarket",
+  "movement": 0.005,
+  "_market_id": 63369559
+ },
+ {
+  "market_name": "Hunter Brown: Strikeouts O/U 9.5",
+  "outcome_name": "Over",
+  "observed_at": "2026-09-30T20:38:56.119995+00:00",
+  "contributor_outcome_ids": [
+   238879948
+  ],
+  "threshold": 9.5,
+  "over_probability": 0.07,
+  "opening_over_probability": 0.055,
+  "pregame_mark": 0.07,
+  "_inverted": false,
+  "source": "polymarket",
+  "movement": 0.015,
+  "_market_id": 63398595
+ },
+ {
+  "market_name": "Sean Burke: Strikeouts O/U 5.5",
+  "outcome_name": "Under",
+  "observed_at": "2026-09-30T18:38:14.425757+00:00",
+  "contributor_outcome_ids": [
+   239004641
+  ],
+  "threshold": 5.5,
+  "over_probability": 0.36,
+  "opening_over_probability": 0.405,
+  "pregame_mark": 0.36,
+  "_inverted": true,
+  "source": "polymarket",
+  "movement": 0.045,
+  "_market_id": 63433313
+ },
+ {
+  "market_name": "Sean Burke: Strikeouts O/U 10.5",
+  "outcome_name": "Under",
+  "observed_at": "2026-09-30T20:33:12.062325+00:00",
+  "contributor_outcome_ids": [
+   239170085
+  ],
+  "threshold": 10.5,
+  "over_probability": 0.0995,
+  "opening_over_probability": 0.035,
+  "pregame_mark": 0.0995,
+  "_inverted": true,
+  "source": "polymarket",
+  "movement": -0.0645,
+  "_market_id": 63478946
+ },
+ {
+  "market_name": "Sean Burke: Strikeouts O/U 11.5",
+  "outcome_name": "Under",
+  "observed_at": "2026-09-30T20:12:54.509108+00:00",
+  "contributor_outcome_ids": [
+   239170087
+  ],
+  "threshold": 11.5,
+  "over_probability": 0.0945,
+  "opening_over_probability": 0.035,
+  "pregame_mark": 0.0945,
+  "_inverted": true,
+  "source": "polymarket",
+  "movement": -0.0595,
+  "_market_id": 63478947
+ },
+ {
+  "market_name": "Sean Burke: Strikeouts O/U 5.5",
+  "outcome_name": "Over",
+  "observed_at": "2026-09-30T20:05:44.019431+00:00",
+  "contributor_outcome_ids": [
+   239004640
+  ],
+  "threshold": 5.5,
+  "over_probability": 0.4,
+  "opening_over_probability": 0.405,
+  "pregame_mark": 0.4,
+  "_inverted": false,
+  "source": "polymarket",
+  "movement": -0.005,
+  "_market_id": 63433313
+ },
+ {
+  "market_name": "Sean Burke: Strikeouts O/U 10.5",
+  "outcome_name": "Over",
+  "observed_at": "2026-09-30T20:33:12.062325+00:00",
+  "contributor_outcome_ids": [
+   239170084
+  ],
+  "threshold": 10.5,
+  "over_probability": 0.0995,
+  "opening_over_probability": 0.035,
+  "pregame_mark": 0.0995,
+  "_inverted": false,
+  "source": "polymarket",
+  "movement": 0.0645,
+  "_market_id": 63478946
+ },
+ {
+  "market_name": "Sean Burke: Strikeouts O/U 11.5",
+  "outcome_name": "Over",
+  "observed_at": "2026-09-30T20:12:54.509108+00:00",
+  "contributor_outcome_ids": [
+   239170086
+  ],
+  "threshold": 11.5,
+  "over_probability": 0.0945,
+  "opening_over_probability": 0.035,
+  "pregame_mark": 0.0945,
+  "_inverted": false,
+  "source": "polymarket",
+  "movement": 0.0595,
+  "_market_id": 63478947
+ },
+ {
+  "market_name": "Will the game go to extra innings?: Chicago White Sox vs. Houston Astros",
+  "outcome_name": "No",
+  "observed_at": "2026-09-30T22:08:12.757133+00:00",
+  "contributor_outcome_ids": [
+   238826417
+  ],
+  "threshold": null,
+  "over_probability": 0.11,
+  "opening_over_probability": 0.11,
+  "pregame_mark": 0.105,
+  "_inverted": true,
+  "source": "polymarket",
+  "movement": 0.0,
+  "_market_id": 63382633
+ },
+ {
+  "market_name": "Will the game go to extra innings?: Chicago White Sox vs. Houston Astros",
+  "outcome_name": "Yes",
+  "observed_at": "2026-09-30T22:08:12.757133+00:00",
+  "contributor_outcome_ids": [
+   238826416
+  ],
+  "threshold": null,
+  "over_probability": 0.11,
+  "opening_over_probability": 0.11,
+  "pregame_mark": 0.105,
+  "_inverted": false,
+  "source": "polymarket",
+  "movement": 0.0,
+  "_market_id": 63382633
+ },
+ {
+  "market_name": "Munetaka Murakami: Home Runs O/U 0.5",
+  "outcome_name": "Under",
+  "observed_at": "2026-09-30T20:12:54.509108+00:00",
+  "contributor_outcome_ids": [
+   238709960
+  ],
+  "threshold": 0.5,
+  "over_probability": 0.155,
+  "opening_over_probability": 0.1,
+  "pregame_mark": 0.155,
+  "_inverted": true,
+  "source": "polymarket",
+  "movement": -0.055,
+  "_market_id": 63348828
+ },
+ {
+  "market_name": "Munetaka Murakami: Home Runs O/U 0.5",
+  "outcome_name": "Over",
+  "observed_at": "2026-09-30T20:12:54.509108+00:00",
+  "contributor_outcome_ids": [
+   238709959
+  ],
+  "threshold": 0.5,
+  "over_probability": 0.155,
+  "opening_over_probability": 0.1,
+  "pregame_mark": 0.155,
+  "_inverted": false,
+  "source": "polymarket",
+  "movement": 0.055,
+  "_market_id": 63348828
+ },
+ {
+  "market_name": "Chicago White Sox vs Houston: Extra Innings",
+  "outcome_name": "Yes",
+  "observed_at": "2026-09-30T23:04:20.681782+00:00",
+  "contributor_outcome_ids": [
+   237550051
+  ],
+  "threshold": null,
+  "over_probability": 0.16,
+  "opening_over_probability": 0.08,
+  "pregame_mark": 0.11,
+  "_inverted": false,
+  "source": "kalshi",
+  "movement": 0.08,
+  "_market_id": 62972332
+ },
+ {
+  "market_name": "Yordan Alvarez: Home Runs O/U 0.5",
+  "outcome_name": "Under",
+  "observed_at": "2026-09-30T20:20:34.778872+00:00",
+  "contributor_outcome_ids": [
+   238762824
+  ],
+  "threshold": 0.5,
+  "over_probability": 0.215,
+  "opening_over_probability": 0.2,
+  "pregame_mark": 0.215,
+  "_inverted": true,
+  "source": "polymarket",
+  "movement": -0.015,
+  "_market_id": 63363783
+ },
+ {
+  "market_name": "Yordan Alvarez: Home Runs O/U 0.5",
+  "outcome_name": "Over",
+  "observed_at": "2026-09-30T20:20:34.778872+00:00",
+  "contributor_outcome_ids": [
+   238762823
+  ],
+  "threshold": 0.5,
+  "over_probability": 0.22,
+  "opening_over_probability": 0.2,
+  "pregame_mark": 0.22,
+  "_inverted": false,
+  "source": "polymarket",
+  "movement": 0.02,
+  "_market_id": 63363783
+ },
+ {
+  "market_name": "Sean Burke: Earned Runs Allowed O/U 1.5",
+  "outcome_name": "Over",
+  "observed_at": "2026-09-30T20:12:54.509108+00:00",
+  "contributor_outcome_ids": [
+   239004664
+  ],
+  "threshold": 1.5,
+  "over_probability": 0.59,
+  "opening_over_probability": 0.56,
+  "pregame_mark": 0.59,
+  "_inverted": false,
+  "source": "polymarket",
+  "movement": 0.03,
+  "_market_id": 63433325
+ },
+ {
+  "market_name": "Sean Burke: Earned Runs Allowed O/U 2.5",
+  "outcome_name": "Over",
+  "observed_at": "2026-09-30T12:36:28.119756+00:00",
+  "contributor_outcome_ids": [
+   239004666
+  ],
+  "threshold": 2.5,
+  "over_probability": 0.425,
+  "opening_over_probability": 0.425,
+  "pregame_mark": 0.425,
+  "_inverted": false,
+  "source": "polymarket",
+  "movement": 0.0,
+  "_market_id": 63433326
+ },
+ {
+  "market_name": "Sean Burke: Earned Runs Allowed O/U 1.5",
+  "outcome_name": "Under",
+  "observed_at": "2026-09-30T20:12:54.509108+00:00",
+  "contributor_outcome_ids": [
+   239004665
+  ],
+  "threshold": 1.5,
+  "over_probability": 0.59,
+  "opening_over_probability": 0.56,
+  "pregame_mark": 0.59,
+  "_inverted": true,
+  "source": "polymarket",
+  "movement": -0.03,
+  "_market_id": 63433325
+ },
+ {
+  "market_name": "Sean Burke: Earned Runs Allowed O/U 2.5",
+  "outcome_name": "Under",
+  "observed_at": "2026-09-30T12:36:28.119756+00:00",
+  "contributor_outcome_ids": [
+   239004667
+  ],
+  "threshold": 2.5,
+  "over_probability": 0.425,
+  "opening_over_probability": 0.425,
+  "pregame_mark": 0.425,
+  "_inverted": true,
+  "source": "polymarket",
+  "movement": 0.0,
+  "_market_id": 63433326
+ },
+ {
+  "market_name": "Isaac Paredes: Home Runs O/U 0.5",
+  "outcome_name": "Under",
+  "observed_at": "2026-09-30T20:12:54.509108+00:00",
+  "contributor_outcome_ids": [
+   238762820
+  ],
+  "threshold": 0.5,
+  "over_probability": 0.125,
+  "opening_over_probability": 0.125,
+  "pregame_mark": 0.125,
+  "_inverted": true,
+  "source": "polymarket",
+  "movement": 0.0,
+  "_market_id": 63363781
+ },
+ {
+  "market_name": "Isaac Paredes: Home Runs O/U 0.5",
+  "outcome_name": "Over",
+  "observed_at": "2026-09-30T20:12:54.509108+00:00",
+  "contributor_outcome_ids": [
+   238762819
+  ],
+  "threshold": 0.5,
+  "over_probability": 0.125,
+  "opening_over_probability": 0.125,
+  "pregame_mark": 0.125,
+  "_inverted": false,
+  "source": "polymarket",
+  "movement": 0.0,
+  "_market_id": 63363781
+ },
+ {
+  "market_name": "Sean Burke: Hits Allowed O/U 4.5",
+  "outcome_name": "Under",
+  "observed_at": "2026-09-30T20:55:02.604669+00:00",
+  "contributor_outcome_ids": [
+   239004657
+  ],
+  "threshold": 4.5,
+  "over_probability": 0.42,
+  "opening_over_probability": 0.45,
+  "pregame_mark": 0.425,
+  "_inverted": true,
+  "source": "polymarket",
+  "movement": 0.03,
+  "_market_id": 63433321
+ },
+ {
+  "market_name": "Sean Burke: Hits Allowed O/U 4.5",
+  "outcome_name": "Over",
+  "observed_at": "2026-09-30T20:55:02.604669+00:00",
+  "contributor_outcome_ids": [
+   239004656
+  ],
+  "threshold": 4.5,
+  "over_probability": 0.42,
+  "opening_over_probability": 0.45,
+  "pregame_mark": 0.425,
+  "_inverted": false,
+  "source": "polymarket",
+  "movement": -0.03,
+  "_market_id": 63433321
+ },
+ {
+  "market_name": "Andrew Benintendi: Home Runs O/U 0.5",
+  "outcome_name": "Under",
+  "observed_at": "2026-09-30T20:12:54.509108+00:00",
+  "contributor_outcome_ids": [
+   238931415
+  ],
+  "threshold": 0.5,
+  "over_probability": 0.05,
+  "opening_over_probability": null,
+  "pregame_mark": 0.05,
+  "_inverted": true,
+  "source": "polymarket",
+  "movement": null,
+  "_market_id": 63411948
+ },
+ {
+  "market_name": "Andrew Benintendi: Home Runs O/U 0.5",
+  "outcome_name": "Over",
+  "observed_at": "2026-09-30T20:12:54.509108+00:00",
+  "contributor_outcome_ids": [
+   238931414
+  ],
+  "threshold": 0.5,
+  "over_probability": 0.05,
+  "opening_over_probability": null,
+  "pregame_mark": 0.05,
+  "_inverted": false,
+  "source": "polymarket",
+  "movement": null,
+  "_market_id": 63411948
+ },
+ {
+  "market_name": "Hunter Brown: Outs Recorded O/U 14.5",
+  "outcome_name": "Over",
+  "observed_at": "2026-09-30T12:16:11.811061+00:00",
+  "contributor_outcome_ids": [
+   239004650
+  ],
+  "threshold": 14.5,
+  "over_probability": 0.575,
+  "opening_over_probability": 0.575,
+  "pregame_mark": 0.575,
+  "_inverted": false,
+  "source": "polymarket",
+  "movement": 0.0,
+  "_market_id": 63433318
+ },
+ {
+  "market_name": "Hunter Brown: Outs Recorded O/U 14.5",
+  "outcome_name": "Under",
+  "observed_at": "2026-09-30T12:16:11.811061+00:00",
+  "contributor_outcome_ids": [
+   239004651
+  ],
+  "threshold": 14.5,
+  "over_probability": 0.575,
+  "opening_over_probability": 0.575,
+  "pregame_mark": 0.575,
+  "_inverted": true,
+  "source": "polymarket",
+  "movement": 0.0,
+  "_market_id": 63433318
+ },
+ {
+  "market_name": "Miguel Vargas: Home Runs O/U 0.5",
+  "outcome_name": "Under",
+  "observed_at": "2026-09-30T20:56:36.280888+00:00",
+  "contributor_outcome_ids": [
+   238709958
+  ],
+  "threshold": 0.5,
+  "over_probability": 0.08,
+  "opening_over_probability": 0.085,
+  "pregame_mark": 0.075,
+  "_inverted": true,
+  "source": "polymarket",
+  "movement": 0.005,
+  "_market_id": 63348827
+ },
+ {
+  "market_name": "Miguel Vargas: Home Runs O/U 0.5",
+  "outcome_name": "Over",
+  "observed_at": "2026-09-30T20:56:36.280888+00:00",
+  "contributor_outcome_ids": [
+   238709957
+  ],
+  "threshold": 0.5,
+  "over_probability": 0.08,
+  "opening_over_probability": 0.085,
+  "pregame_mark": 0.075,
+  "_inverted": false,
+  "source": "polymarket",
+  "movement": -0.005,
+  "_market_id": 63348827
+ },
+ {
+  "market_name": "Christian Walker: Home Runs O/U 0.5",
+  "outcome_name": "Under",
+  "observed_at": "2026-09-30T20:55:02.604669+00:00",
+  "contributor_outcome_ids": [
+   238762818
+  ],
+  "threshold": 0.5,
+  "over_probability": 0.165,
+  "opening_over_probability": 0.155,
+  "pregame_mark": 0.17,
+  "_inverted": true,
+  "source": "polymarket",
+  "movement": -0.01,
+  "_market_id": 63363780
+ },
+ {
+  "market_name": "Christian Walker: Home Runs O/U 0.5",
+  "outcome_name": "Over",
+  "observed_at": "2026-09-30T20:55:02.604669+00:00",
+  "contributor_outcome_ids": [
+   238762817
+  ],
+  "threshold": 0.5,
+  "over_probability": 0.165,
+  "opening_over_probability": 0.155,
+  "pregame_mark": 0.17,
+  "_inverted": false,
+  "source": "polymarket",
+  "movement": 0.01,
+  "_market_id": 63363780
+ },
+ {
+  "market_name": "Kyle Teel: Home Runs O/U 0.5",
+  "outcome_name": "Under",
+  "observed_at": "2026-09-30T20:12:54.509108+00:00",
+  "contributor_outcome_ids": [
+   238931419
+  ],
+  "threshold": 0.5,
+  "over_probability": 0.055,
+  "opening_over_probability": null,
+  "pregame_mark": 0.055,
+  "_inverted": true,
+  "source": "polymarket",
+  "movement": null,
+  "_market_id": 63411950
+ },
+ {
+  "market_name": "Kyle Teel: Home Runs O/U 0.5",
+  "outcome_name": "Over",
+  "observed_at": "2026-09-30T20:12:54.509108+00:00",
+  "contributor_outcome_ids": [
+   238931418
+  ],
+  "threshold": 0.5,
+  "over_probability": 0.055,
+  "opening_over_probability": null,
+  "pregame_mark": 0.055,
+  "_inverted": false,
+  "source": "polymarket",
+  "movement": null,
+  "_market_id": 63411950
+ },
+ {
+  "market_name": "Hunter Brown: Hits Allowed O/U 3.5",
+  "outcome_name": "Over",
+  "observed_at": "2026-09-30T20:12:54.509108+00:00",
+  "contributor_outcome_ids": [
+   239004654
+  ],
+  "threshold": 3.5,
+  "over_probability": 0.545,
+  "opening_over_probability": 0.52,
+  "pregame_mark": 0.545,
+  "_inverted": false,
+  "source": "polymarket",
+  "movement": 0.025,
+  "_market_id": 63433320
+ },
+ {
+  "market_name": "Hunter Brown: Hits Allowed O/U 3.5",
+  "outcome_name": "Under",
+  "observed_at": "2026-09-30T20:12:54.509108+00:00",
+  "contributor_outcome_ids": [
+   239004655
+  ],
+  "threshold": 3.5,
+  "over_probability": 0.545,
+  "opening_over_probability": 0.52,
+  "pregame_mark": 0.545,
+  "_inverted": true,
+  "source": "polymarket",
+  "movement": -0.025,
+  "_market_id": 63433320
+ },
+ {
+  "market_name": "Hunter Brown: Earned Runs Allowed O/U 1.5",
+  "outcome_name": "Over",
+  "observed_at": "2026-09-30T20:12:54.509108+00:00",
+  "contributor_outcome_ids": [
+   239004658
+  ],
+  "threshold": 1.5,
+  "over_probability": 0.51,
+  "opening_over_probability": 0.51,
+  "pregame_mark": 0.51,
+  "_inverted": false,
+  "source": "polymarket",
+  "movement": 0.0,
+  "_market_id": 63433322
+ },
+ {
+  "market_name": "Hunter Brown: Earned Runs Allowed O/U 1.5",
+  "outcome_name": "Under",
+  "observed_at": "2026-09-30T20:12:54.509108+00:00",
+  "contributor_outcome_ids": [
+   239004659
+  ],
+  "threshold": 1.5,
+  "over_probability": 0.51,
+  "opening_over_probability": 0.51,
+  "pregame_mark": 0.51,
+  "_inverted": true,
+  "source": "polymarket",
+  "movement": 0.0,
+  "_market_id": 63433322
+ },
+ {
+  "market_name": "Taylor Trammell: Home Runs O/U 0.5",
+  "outcome_name": "Under",
+  "observed_at": "2026-09-30T20:29:55.204040+00:00",
+  "contributor_outcome_ids": [
+   238837725
+  ],
+  "threshold": 0.5,
+  "over_probability": 0.06,
+  "opening_over_probability": null,
+  "pregame_mark": 0.06,
+  "_inverted": true,
+  "source": "polymarket",
+  "movement": null,
+  "_market_id": 63386735
+ },
+ {
+  "market_name": "Taylor Trammell: Home Runs O/U 0.5",
+  "outcome_name": "Over",
+  "observed_at": "2026-09-30T20:29:55.204040+00:00",
+  "contributor_outcome_ids": [
+   238837724
+  ],
+  "threshold": 0.5,
+  "over_probability": 0.06,
+  "opening_over_probability": null,
+  "pregame_mark": 0.06,
+  "_inverted": false,
+  "source": "polymarket",
+  "movement": null,
+  "_market_id": 63386735
+ },
+ {
+  "market_name": "Sean Burke: Outs Recorded O/U 14.5",
+  "outcome_name": "Over",
+  "observed_at": "2026-09-30T20:38:56.119995+00:00",
+  "contributor_outcome_ids": [
+   239004652
+  ],
+  "threshold": 14.5,
+  "over_probability": 0.555,
+  "opening_over_probability": 0.535,
+  "pregame_mark": 0.555,
+  "_inverted": false,
+  "source": "polymarket",
+  "movement": 0.02,
+  "_market_id": 63433319
+ },
+ {
+  "market_name": "Sean Burke: Outs Recorded O/U 14.5",
+  "outcome_name": "Under",
+  "observed_at": "2026-09-30T20:38:56.119995+00:00",
+  "contributor_outcome_ids": [
+   239004653
+  ],
+  "threshold": 14.5,
+  "over_probability": 0.555,
+  "opening_over_probability": 0.535,
+  "pregame_mark": 0.555,
+  "_inverted": true,
+  "source": "polymarket",
+  "movement": -0.02,
+  "_market_id": 63433319
+ },
+ {
+  "market_name": "Colson Montgomery: Home Runs O/U 0.5",
+  "outcome_name": "Under",
+  "observed_at": "2026-09-30T20:58:52.094399+00:00",
+  "contributor_outcome_ids": [
+   239170101
+  ],
+  "threshold": 0.5,
+  "over_probability": 0.125,
+  "opening_over_probability": null,
+  "pregame_mark": 0.13,
+  "_inverted": true,
+  "source": "polymarket",
+  "movement": null,
+  "_market_id": 63478954
+ },
+ {
+  "market_name": "Colson Montgomery: Home Runs O/U 0.5",
+  "outcome_name": "Over",
+  "observed_at": "2026-09-30T20:58:52.094399+00:00",
+  "contributor_outcome_ids": [
+   239170100
+  ],
+  "threshold": 0.5,
+  "over_probability": 0.125,
+  "opening_over_probability": null,
+  "pregame_mark": 0.13,
+  "_inverted": false,
+  "source": "polymarket",
+  "movement": null,
+  "_market_id": 63478954
+ }
+]
