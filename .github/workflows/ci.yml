@@ -5832,6 +5832,27 @@ jobs:
             exit 1
           }
 
+      - name: "#9797 a failed replaced-player release costs its own row, not the tennis pass (real Postgres)"
+        # #9797 flushes a withdrawn row's ESPN-id release inside the tennis
+        # pass's one transaction. A lock failure there, caught and logged,
+        # left it aborted and the final COMMIT dropped every other row's
+        # anchor. Only Postgres aborts, so only Postgres can show the per-row
+        # savepoint restores it. Same database as the #8796 step; this file
+        # drops and creates its own tables. Skip detection plus a count.
+        if: matrix.group == 'isolated'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_tennis_release_savepoint_pg_9797.py \
+            -v -rs 2>&1 | tee /tmp/tennisrelease9797.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/tennisrelease9797.txt; then
+            echo "::error::#9797 tennis release-savepoint contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]2 passed," /tmp/tennisrelease9797.txt || {
+            echo "::error::#9797 tennis release-savepoint contract did not run both cases"
+            exit 1
+          }
+
       - name: "#9049 the ESPN pass lets go of each game's row before its next ESPN call (real Postgres)"
         # A savepoint releases a SAVEPOINT, not a row lock: the one-commit pass
         # held every live game's row through later sports and box-score fetches

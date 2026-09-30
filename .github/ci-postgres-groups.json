@@ -192,6 +192,7 @@
     "#7878 win-prob evidence collapse — provision the disposable database",
     "#7878 win-prob retention keeps observation evidence (real Postgres)",
     "#8796 one failed statement does not discard the ESPN pass (real Postgres)",
+    "#9797 a failed replaced-player release costs its own row, not the tennis pass (real Postgres)",
     "#9049 the ESPN pass lets go of each game's row before its next ESPN call (real Postgres)",
     "#9602 a certain postseason game's row reads as a playoff game before game day (real Postgres)",
     "#9713 one refused box does not discard the settled box-score pass (real Postgres)",
