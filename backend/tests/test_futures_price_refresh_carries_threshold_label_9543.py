@@ -355,3 +355,223 @@ class TestTheLoopWritesTheLabel:
         assert stats["threshold_labels_written"] == 0
         assert stats["markets_priced"] == 1
         assert any("kalshi label KXCOWAGE-2027" in e for e in stats["errors"])
+
+
+# --- 4. CERT-3817: the reach — an unlabelled row the value arms never select --
+
+POKEMON_ROW = (60481264, "kalshi", "KXPOKEMON-26SEPCELULTPR", 5_170, None, None)
+COWAGE_ROW = (61461638, "kalshi", "KXCOWAGE-2027", 123_078, None, None)
+PLAIN_ROW = (70000001, "kalshi", "KXINDUS-27JAN01", 900, None, None)
+UNREADABLE_ROW = (70000002, "kalshi", "KXGONE-27", 50, None, None)
+
+VENUE_LABELS = {
+    "KXPOKEMON-26SEPCELULTPR": "Above $1237.81",
+    "KXCOWAGE-2027": "Above 4.00 pp",
+}
+
+
+def _signal():
+    from app.utils.feed_served_markets import SERVED_EMPTY
+
+    return type(
+        "Sig",
+        (),
+        {
+            "ids": [],
+            "state": SERVED_EMPTY,
+            "green_allowed": True,
+            "shapes": 0,
+            "stale_shapes": 0,
+            "unreadable_shapes": 0,
+        },
+    )()
+
+
+class _ReachHarness(_RunHarness):
+    """The real entry point, with the label arm's statement answered.
+
+    The venue answers the two #9543 specimens with their real leg labels, a
+    plain binary with a price and no label, and one ticker with nothing (an
+    unreadable read). Everything between the selector and the write is the
+    task's own: attribution, ordering, the cap, rotation, both markers.
+    """
+
+    def __init__(self, *, label_rows, class_rows=(), skips=(), per_run=None):
+        super().__init__(signal=_signal(), class_rows=list(class_rows))
+        self.label_rows = list(label_rows)
+        self.skips = set(skips)
+        self.per_run = per_run
+        self.fetched: list[str] = []
+        self.label_writes: list[tuple[int, str]] = []
+        self.marks: dict[tuple[int, ...], int] = {}
+        self.label_marks: list[int] = []
+        self.label_skip_asked: list[int] = []
+
+    class _Session(_RunHarness._Session):
+        async def execute(self, statement, params=None):
+            if statement is fpr._THRESHOLD_LABEL_CANDIDATE_SQL:
+                limit = params["threshold_label_limit"]
+                return _RunHarness._Result(self.outer.label_rows[:limit])
+            if statement is fpr._KALSHI_THRESHOLD_LABEL_WRITE_SQL:
+                self.outer.label_writes.append((params["mid"], params["label"]))
+                return _RunHarness._Result(rows=[(params["mid"],)])
+            return await super().execute(statement, params)
+
+    def _mark(self, ids, ttl_seconds):
+        self.marks[tuple(ids)] = ttl_seconds
+
+    async def run(self, monkeypatch):
+        outer = self
+
+        async def _fetch(service, external_id, *, windows=None, labels=None):
+            outer.fetched.append(external_id)
+            if external_id == UNREADABLE_ROW[2]:
+                return None
+            if labels is not None and external_id in VENUE_LABELS:
+                labels[external_id] = VENUE_LABELS[external_id]
+            return [{"external_id": f"{external_id}-T1", "probability": 0.4}]
+
+        async def _write_prices(session, mid, source, priced, stats):
+            return 1
+
+        async def _nothing(*a, **k):
+            return {}
+
+        class _KService:
+            async def close(self):
+                return None
+
+        def _label_skips(ids):
+            outer.label_skip_asked.extend(ids)
+            return {i for i in ids if i in outer.skips}
+
+        monkeypatch.setenv("KALSHI_API_KEY", "test-only")
+        monkeypatch.setattr(fpr, "_fetch_kalshi_prices", _fetch)
+        monkeypatch.setattr(fpr, "_write_prices", _write_prices)
+        monkeypatch.setattr(fpr, "_scan_kalshi_frozen_certain", _nothing)
+        monkeypatch.setattr(fpr, "_kalshi_reach_arm", _nothing)
+        monkeypatch.setattr(fpr, "_load_label_attempt_skips", _label_skips)
+        monkeypatch.setattr(fpr, "_mark_label_attempted", outer.label_marks.extend)
+        monkeypatch.setattr(
+            "app.services.kalshi_api.KalshiAPIService", lambda *a, **k: _KService()
+        )
+        if self.per_run is not None:
+            real = fpr._refresh_stale_futures_prices
+
+            async def _capped(**kw):
+                return await real(threshold_label_per_run=self.per_run, **kw)
+
+            monkeypatch.setattr(fpr, "_refresh_stale_futures_prices", _capped)
+        return await super().run(monkeypatch)
+
+
+class TestTheArmReachesWhatTheValueArmsCannot:
+    @pytest.mark.asyncio
+    async def test_both_specimens_are_selected_fetched_and_labelled(self, monkeypatch):
+        """CERT-3817's required regression, selector to write. 60481264 is in
+        no other arm (no class rows here), so before this arm it was never read.
+        """
+        h = _ReachHarness(label_rows=[POKEMON_ROW, COWAGE_ROW])
+        stats = await h.run(monkeypatch)
+
+        assert h.fetched == ["KXPOKEMON-26SEPCELULTPR", "KXCOWAGE-2027"]
+        assert h.label_writes == [
+            (60481264, "Above $1237.81"),
+            (61461638, "Above 4.00 pp"),
+        ]
+        assert stats["threshold_label_pool"] == 2
+        assert stats["threshold_label_candidates"] == 2
+        assert stats["threshold_label_attempted"] == 2
+        assert stats["threshold_labels_written"] == 2
+        assert stats["threshold_label_pool_capped"] is False
+        # Rotated on the arm's OWN marker, never the 45-minute identity one.
+        assert sorted(h.label_marks) == [60481264, 61461638]
+        for ids in h.marks:
+            assert 60481264 not in ids and 61461638 not in ids
+
+    @pytest.mark.asyncio
+    async def test_a_plain_binary_and_an_unreadable_read_write_no_label(
+        self, monkeypatch
+    ):
+        h = _ReachHarness(label_rows=[PLAIN_ROW, UNREADABLE_ROW, POKEMON_ROW])
+        stats = await h.run(monkeypatch)
+
+        assert h.fetched == ["KXINDUS-27JAN01", "KXGONE-27", "KXPOKEMON-26SEPCELULTPR"]
+        assert h.label_writes == [(60481264, "Above $1237.81")]
+        assert stats["threshold_labels_written"] == 1
+        # Refusals are attempts too: they rotate out for the retry window
+        # rather than taking the head of every beat.
+        assert sorted(h.label_marks) == [60481264, 70000001, 70000002]
+
+    @pytest.mark.asyncio
+    async def test_a_stale_class_row_stays_on_the_class_arm_and_is_still_labelled(
+        self, monkeypatch
+    ):
+        """The Colombia row clears the volume floor. Taken by the label arm it
+        would trade its 6h price marker for a 20h rotation slot."""
+        h = _ReachHarness(
+            label_rows=[COWAGE_ROW, POKEMON_ROW], class_rows=[COWAGE_ROW + (0, 1)]
+        )
+        stats = await h.run(monkeypatch)
+
+        assert h.fetched.count("KXCOWAGE-2027") == 1
+        assert stats["candidates"] == 2
+        assert stats["threshold_label_candidates"] == 1
+        assert h.label_marks == [60481264]
+        assert h.marks.get((61461638,)) == fpr.STALE_AFTER_HOURS * 3600
+        assert (61461638, "Above 4.00 pp") in h.label_writes
+        # The label arm is identity: it leads, the class row follows.
+        assert h.fetched == ["KXPOKEMON-26SEPCELULTPR", "KXCOWAGE-2027"]
+
+    @pytest.mark.asyncio
+    async def test_rotation_skips_what_was_read_and_the_cap_takes_the_next(
+        self, monkeypatch
+    ):
+        rows = [
+            (80000000 + i, "kalshi", f"KXROT-{i}", 10, None, None) for i in range(5)
+        ]
+        h = _ReachHarness(label_rows=rows, skips={80000000, 80000002}, per_run=2)
+        stats = await h.run(monkeypatch)
+
+        assert h.fetched == ["KXROT-1", "KXROT-3"]
+        assert stats["threshold_label_pool"] == 5
+        assert stats["threshold_label_candidates"] == 2
+        # Skips are looked up over the pool BEFORE the cap, so a skipped head
+        # cannot starve the rows behind it.
+        assert sorted(h.label_skip_asked) == [r[0] for r in rows]
+
+    @pytest.mark.asyncio
+    async def test_a_pool_at_the_ceiling_says_so(self, monkeypatch):
+        rows = [
+            (81000000 + i, "kalshi", f"KXCAP-{i}", 10, None, None) for i in range(4)
+        ]
+        monkeypatch.setattr(fpr, "THRESHOLD_LABEL_SCAN_LIMIT", 3)
+        h = _ReachHarness(label_rows=rows)
+        stats = await h.run(monkeypatch)
+        # `_scan_threshold_label_candidates` bound its default at import, so the
+        # statement still ran at 3000 here; the flag reads the module constant.
+        assert stats["threshold_label_pool"] == 4
+        assert stats["threshold_label_pool_capped"] is True
+
+
+class TestTheArmsBounds:
+    def test_the_measured_population_is_read_inside_a_day(self):
+        measured_pool = 963  # production 2026-09-30 03:5xZ, both specimens in it
+        assert fpr.THRESHOLD_LABEL_RETRY_HOURS <= 24
+        assert (
+            fpr.THRESHOLD_LABEL_PER_RUN * fpr.THRESHOLD_LABEL_RETRY_HOURS
+            >= measured_pool
+        )
+        assert fpr.THRESHOLD_LABEL_SCAN_LIMIT >= 3 * measured_pool
+
+    def test_its_marker_cannot_veto_a_price_refresh(self):
+        assert fpr._label_attempt_key(5) != fpr._attempt_key(5)
+        assert not fpr._label_attempt_key(5).startswith(fpr._ATTEMPT_KEY_PREFIX)
+
+    def test_the_statement_selects_the_stored_single_yes_shape(self):
+        sql = " ".join(fpr._THRESHOLD_LABEL_CANDIDATE_SQL.text.split())
+        assert "fm.source = 'kalshi'" in sql
+        assert "->> 'threshold_label') IS NULL" in sql
+        assert "fo_y.name = 'Yes'" in sql
+        assert "fo_o.name <> 'Yes'" in sql
+        assert "LIMIT :threshold_label_limit" in sql

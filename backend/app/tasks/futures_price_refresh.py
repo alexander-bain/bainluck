@@ -89,6 +89,13 @@ the stored one. It only ever ADDS or corrects a label, never removes one: a
 wholesale ``market_metadata`` rewrite stays the only path that drops one. See
 :data:`_KALSHI_THRESHOLD_LABEL_WRITE_SQL`.
 
+A write only reaches rows the task selects, and CERT-3817 showed that most
+unlabelled rows were never selected: ``/futures/60481264`` (tier 2, volume
+5,170) fails every value and identity arm. So an unlabelled one-``Yes`` Kalshi
+row is its own identity arm (:data:`_THRESHOLD_LABEL_CANDIDATE_SQL`). It is
+capped at :data:`THRESHOLD_LABEL_PER_RUN` per run and rotated through its own
+marker, which reaches the whole measured population inside a day.
+
 THREE ARMS, BECAUSE THERE ARE THREE KINDS OF WORTH REFRESHING
 --------------------------------------------------------------
 The sweep selects on **value** (volume above a floor at any tier, or tier 1
@@ -521,6 +528,31 @@ SERIES_CARD_TICKER_RE = r"^KX(WNBA|NBA|NHL|MLB)SERIES(GAMES|SCORE)?-"
 #: today, and an NBA + NHL first round together is 16 series x 3 families = 48.
 SERIES_CARD_LIMIT = 150
 
+#: #9543 / CERT-3817 — Kalshi rows stored as one ``Yes`` outcome with no
+#: ``threshold_label``. The label is only readable off the venue's event, and
+#: the value arms cannot reach most of them: ``/futures/60481264``
+#: (``KXPOKEMON-26SEPCELULTPR``, tier 2, volume 5,170) is outside the floor,
+#: the register, page one, the in-play calendar and the series families, so
+#: it printed "Yes" with its last snapshot two days old. Measured on
+#: production 2026-09-30 03:5xZ: **963** live rows in this shape, both named
+#: specimens among them, 0.9 s to select.
+#:
+#: Rotated through its OWN attempt marker (:func:`_label_attempt_key`), not
+#: the price marker: most of the population is plain binaries the helper
+#: correctly refuses, which never leave, and a day-long price marker on a row
+#: the class arm also prices would stretch its 6 h clock to a day. Sizing: a
+#: row is retried after :data:`THRESHOLD_LABEL_RETRY_HOURS`, and
+#: ``PER_RUN x RETRY_HOURS`` = 1,200 >= 963 hourly beats' worth, so every row
+#: in the population is read inside 20 h — the "within one day" #9543 promises.
+#: Wall cost: 60 x ~0.35 s = ~21 s against the 420 s loop budget.
+THRESHOLD_LABEL_PER_RUN = 60
+THRESHOLD_LABEL_RETRY_HOURS = 20
+
+#: A ceiling, not a fence: ~3x the measured population. The run reports
+#: ``threshold_label_pool_capped`` when it binds, because a capped pool is the
+#: one way this arm could stop reaching the tail in silence.
+THRESHOLD_LABEL_SCAN_LIMIT = 3000
+
 #: Markets refreshed per run, PER SOURCE, because the two sources cost 20x
 #: different amounts per market and one shared cap over two unequally-priced
 #: populations does not bound cost — it silently decides which source gets swept.
@@ -724,6 +756,15 @@ _ATTEMPT_KEY_PREFIX = "bainluck:futures_price_refresh:attempted:"
 
 def _attempt_key(market_id: int) -> str:
     return f"{_ATTEMPT_KEY_PREFIX}{market_id}"
+
+
+#: #9543. The threshold-label arm's rotation marker, a separate namespace so a
+#: 20 h label retry can never veto a price refresh on its own clock.
+_LABEL_ATTEMPT_KEY_PREFIX = "bainluck:futures_price_refresh:label_attempted:"
+
+
+def _label_attempt_key(market_id: int) -> str:
+    return f"{_LABEL_ATTEMPT_KEY_PREFIX}{market_id}"
 
 
 # --- selection ---------------------------------------------------------------
@@ -985,6 +1026,36 @@ _SERIES_CARD_CANDIDATE_SQL = text(
 )
 
 
+#: #9543 / CERT-3817 — live Kalshi rows whose only outcome is ``Yes`` and that
+#: carry no ``threshold_label``. No staleness bound: a row another writer
+#: priced an hour ago still prints "Yes", and the label, not the price, is
+#: what this arm is for. ``->>`` reads SQL NULL, JSON ``null`` and a missing
+#: key alike as NULL. The one-``Yes`` shape is the stored half of the helper's
+#: "one market" rule; whether it is a THRESHOLD is only answerable by the venue,
+#: which is why the arm rotates rather than converging to empty.
+_THRESHOLD_LABEL_CANDIDATE_SQL = text(
+    f"""
+    SELECT fm.id, fm.source, fm.external_id, fm.volume,
+           {_POLY_EVENT_ID_SQL},
+           fm.market_metadata->>'{VENUE_SETTLED_KEY}' AS venue_settled_since
+      FROM futures_markets fm
+     WHERE {LIVE_MARKET_SQL}
+       AND fm.source = 'kalshi'
+       AND (fm.market_metadata ->> '{THRESHOLD_LABEL_KEY}') IS NULL
+       AND EXISTS (
+             SELECT 1 FROM futures_outcomes fo_y
+              WHERE fo_y.market_id = fm.id AND fo_y.name = 'Yes'
+           )
+       AND NOT EXISTS (
+             SELECT 1 FROM futures_outcomes fo_o
+              WHERE fo_o.market_id = fm.id AND fo_o.name <> 'Yes'
+           )
+     ORDER BY fm.id
+     LIMIT :threshold_label_limit
+    """
+)
+
+
 #: The arm a candidate came in on. ``class`` is the value sweep; the other two
 #: are identity arms. Kept as a NAME rather than as a pair of booleans because
 #: three of the run's decisions read it and each wants a different grouping:
@@ -997,6 +1068,7 @@ _ARM_REGISTERED = "registered"
 _ARM_SERVED = "served"
 _ARM_IN_PLAY = "in_play"
 _ARM_SERIES_CARD = "series_card"
+_ARM_THRESHOLD_LABEL = "threshold_label"  # #9543
 
 
 def _rows_to_markets(rows, *, arm: str) -> list[dict]:
@@ -1233,6 +1305,18 @@ async def _scan_series_card_candidates(
     return _rows_to_markets(rows, arm=_ARM_SERIES_CARD)
 
 
+async def _scan_threshold_label_candidates(
+    session, *, limit: int = THRESHOLD_LABEL_SCAN_LIMIT
+) -> list[dict]:
+    """Live one-``Yes`` Kalshi rows with no threshold label yet (#9543)."""
+    rows = (
+        await session.execute(
+            _THRESHOLD_LABEL_CANDIDATE_SQL, {"threshold_label_limit": limit}
+        )
+    ).fetchall()
+    return _rows_to_markets(rows, arm=_ARM_THRESHOLD_LABEL)
+
+
 #: How many served ids this task CAN price. The unreachable count is derived
 #: from it by subtraction, and the subtraction is the point.
 #:
@@ -1285,13 +1369,17 @@ def _load_attempt_skips(market_ids: list[int]) -> set[int]:
     async task. A Redis outage degrades this to "no rotation", which is strictly
     better than not running.
     """
+    return _markers_present(market_ids, _attempt_key)
+
+
+def _markers_present(market_ids: list[int], key) -> set[int]:
     if not market_ids:
         return set()
     try:
         from app.tasks.redis_state import get_redis_client
 
         rc = get_redis_client(socket_timeout=2.0, socket_connect_timeout=2.0)
-        values = rc.mget([_attempt_key(mid) for mid in market_ids])
+        values = rc.mget([key(mid) for mid in market_ids])
     except Exception:
         return set()
     return {mid for mid, val in zip(market_ids, values) if val}
@@ -1304,6 +1392,10 @@ def _mark_attempted(market_ids: list[int], ttl_seconds: int) -> None:
     the queue on every single run and starve the tail behind it — the same
     fixed-point failure the volume ordering above avoids.
     """
+    _set_markers(market_ids, ttl_seconds, _attempt_key)
+
+
+def _set_markers(market_ids: list[int], ttl_seconds: int, key) -> None:
     if not market_ids:
         return
     try:
@@ -1312,10 +1404,24 @@ def _mark_attempted(market_ids: list[int], ttl_seconds: int) -> None:
         rc = get_redis_client(socket_timeout=2.0, socket_connect_timeout=2.0)
         pipe = rc.pipeline()
         for mid in market_ids:
-            pipe.setex(_attempt_key(mid), ttl_seconds, "1")
+            pipe.setex(key(mid), ttl_seconds, "1")
         pipe.execute()
     except Exception:
         pass
+
+
+def _load_label_attempt_skips(market_ids: list[int]) -> set[int]:
+    """#9543. Rows the threshold-label arm read inside its retry window.
+
+    Same best-effort contract as :func:`_load_attempt_skips`: a Redis outage
+    means no rotation this beat, and the per-run cap still bounds the cost.
+    """
+    return _markers_present(market_ids, _label_attempt_key)
+
+
+def _mark_label_attempted(market_ids: list[int]) -> None:
+    """#9543. Rotate the threshold-label arm: skip these for the retry window."""
+    _set_markers(market_ids, THRESHOLD_LABEL_RETRY_HOURS * 3600, _label_attempt_key)
 
 
 # --- writing -----------------------------------------------------------------
@@ -3192,6 +3298,7 @@ async def _refresh_stale_futures_prices(
     registered_refresh_minutes: int = REGISTERED_REFRESH_MINUTES,
     served_refresh_minutes: int = SERVED_REFRESH_MINUTES,
     in_play_refresh_minutes: int = IN_PLAY_REFRESH_MINUTES,
+    threshold_label_per_run: int = THRESHOLD_LABEL_PER_RUN,
 ) -> dict:
     """Refresh prices for stale high-value open futures markets. See module docstring."""
     from app.tasks.base import get_task_session
@@ -3398,6 +3505,15 @@ async def _refresh_stale_futures_prices(
         "series_card_candidates": 0,
         "series_card_attempted": 0,
         "series_card_priced": 0,
+        # #9543 / CERT-3817: the threshold-label arm. `pool` is every live
+        # one-`Yes` Kalshi row with no label (capped at the scan ceiling, and
+        # `pool_capped` says when that bound bit); `candidates` is the slice this
+        # run took after rotation; the label writes themselves are
+        # `threshold_labels_written`, shared with the other arms' reads.
+        "threshold_label_pool": 0,
+        "threshold_label_pool_capped": False,
+        "threshold_label_candidates": 0,
+        "threshold_label_attempted": 0,
         # Served ids this task structurally cannot refresh: an `odds_api` row
         # (LIVE_MARKET_SQL is Kalshi/Polymarket only) or a market the liveness
         # bounds retired. Counted so a page-one card that stays wrong has a
@@ -3508,11 +3624,33 @@ async def _refresh_stale_futures_prices(
         # candidate keeps the identity classification.
         series_card_scan = [m for m in series_card_scan if m["id"] not in priority_ids]
         priority_ids |= {m["id"] for m in series_card_scan}
+        # #9543 / CERT-3817: the threshold-label arm ranks LAST among the
+        # identity arms, and it also yields to a stale class row — that row is
+        # fetched by the class pass, which writes the label off the same read,
+        # and taking it here would swap its 6h marker for a rotation slot. What
+        # is left is rotated through the arm's own marker and capped per run.
+        threshold_label_pool = await _scan_threshold_label_candidates(session)
+        stats["threshold_label_pool"] = len(threshold_label_pool)
+        stats["threshold_label_pool_capped"] = (
+            len(threshold_label_pool) >= THRESHOLD_LABEL_SCAN_LIMIT
+        )
+        class_ids = {m["id"] for m in class_scan}
+        threshold_label_pool = [
+            m
+            for m in threshold_label_pool
+            if m["id"] not in priority_ids and m["id"] not in class_ids
+        ]
+        label_skips = _load_label_attempt_skips([m["id"] for m in threshold_label_pool])
+        threshold_label_scan = [
+            m for m in threshold_label_pool if m["id"] not in label_skips
+        ][: max(0, threshold_label_per_run)]
+        priority_ids |= {m["id"] for m in threshold_label_scan}
         scan = (
             served_scan
             + registered_scan
             + in_play_scan
             + series_card_scan
+            + threshold_label_scan
             + [m for m in class_scan if m["id"] not in priority_ids]
         )
 
@@ -3521,6 +3659,7 @@ async def _refresh_stale_futures_prices(
         stats["served_candidates"] = len(served_scan)
         stats["in_play_candidates"] = len(in_play_scan)
         stats["series_card_candidates"] = len(series_card_scan)
+        stats["threshold_label_candidates"] = len(threshold_label_scan)
 
         skip_ids = _load_attempt_skips([m["id"] for m in scan])
         eligible = [m for m in scan if m["id"] not in skip_ids]
@@ -3554,7 +3693,8 @@ async def _refresh_stale_futures_prices(
             # opposite states, so they get different terminals.
             stats["terminal"] = "complete" if not scan else "no_work"
             stats["reason"] = (
-                "no stale valuable, registered, served, in-play or series-card markets"
+                "no stale valuable, registered, served, in-play or series-card "
+                "markets and no unlabelled threshold rows"
                 if not scan
                 else "every stale market was attempted inside the current window"
             )
@@ -3574,6 +3714,9 @@ async def _refresh_stale_futures_prices(
 
         attempted_ids: list[int] = []
         priority_attempted_ids: list[int] = []
+        # #9543: the label arm's attempts take the arm's own 20h marker, never
+        # the 45-minute identity one — see `_mark_label_attempted`.
+        label_attempted_ids: list[int] = []
 
         def _note_attempt(market: dict) -> None:
             stats["markets_attempted"] += 1
@@ -3585,7 +3728,10 @@ async def _refresh_stale_futures_prices(
                 stats["in_play_attempted"] += 1
             if market["arm"] == _ARM_SERIES_CARD:
                 stats["series_card_attempted"] += 1
-            if market["priority"]:
+            if market["arm"] == _ARM_THRESHOLD_LABEL:
+                stats["threshold_label_attempted"] += 1
+                label_attempted_ids.append(market["id"])
+            elif market["priority"]:
                 priority_attempted_ids.append(market["id"])
             else:
                 attempted_ids.append(market["id"])
@@ -4031,6 +4177,7 @@ async def _refresh_stale_futures_prices(
             )
             * 60,
         )
+        _mark_label_attempted(label_attempted_ids)
 
         # Measure what is LEFT, so the run reports the invariant's state and not
         # just its own throughput. This is the number the guard reads, so it
