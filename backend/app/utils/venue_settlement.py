@@ -326,6 +326,45 @@ def _names_a_draw(
     )
 
 
+def _pair_partners(name: str) -> Optional[tuple[str, str]]:
+    """The two partners of a doubles name, or ``None`` if it is not one."""
+    parts = [part.strip() for part in name.split("/")]
+    if len(parts) != 2 or not all(parts):
+        return None
+    return parts[0], parts[1]
+
+
+def _pair_names_side(outcome_name: str, side_name: str) -> bool:
+    """Does a doubles outcome name this doubles side, partner by partner? (#9889)
+
+    🔴 THE WHOLE-STRING TEST CANNOT SEE A PAIR. Kalshi grades
+    ``Alexander Bublik / Juncheng Shang`` and our row stores
+    ``Bublik / Shang``. ``_normalize_for_matching`` glues the slash into one
+    token on each side (``bublik/juncheng`` against ``bublik/shang``), so
+    neither containment nor the word-subset test can match, and a match the
+    venue settled read "No result reported" (``/events/15320754``, 2026-09-30).
+
+    So each partner is matched on its own, with the SAME primitive
+    (:func:`~app.utils.prediction_market_matching._fuzzy_team_match`, #1951),
+    and the two partners must match two DIFFERENT partners of ours. One shared
+    surname is how two different pairs look alike, so matching one partner is
+    not enough. Either order counts, because venues list partners in either
+    order. :func:`_names_a_participant`'s both-sides refusal still applies on
+    top of this.
+    """
+    from app.utils.prediction_market_matching import _fuzzy_team_match
+
+    outcome = _pair_partners(outcome_name)
+    side = _pair_partners(side_name)
+    if outcome is None or side is None:
+        return False
+    (a, b), (x, y) = outcome, side
+    return bool(
+        (_fuzzy_team_match(a, x) and _fuzzy_team_match(b, y))
+        or (_fuzzy_team_match(a, y) and _fuzzy_team_match(b, x))
+    )
+
+
 def _names_a_participant(
     outcome_name: Optional[str],
     home_team_name: Optional[str],
@@ -366,8 +405,12 @@ def _names_a_participant(
         return None
     home = (home_team_name or "").strip()
     away = (away_team_name or "").strip()
-    matches_home = bool(home) and _fuzzy_team_match(name, home)
-    matches_away = bool(away) and _fuzzy_team_match(name, away)
+    matches_home = bool(home) and (
+        _fuzzy_team_match(name, home) or _pair_names_side(name, home)
+    )
+    matches_away = bool(away) and (
+        _fuzzy_team_match(name, away) or _pair_names_side(name, away)
+    )
     if matches_home and matches_away:
         return None
     if matches_home:
