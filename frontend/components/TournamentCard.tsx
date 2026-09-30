@@ -80,8 +80,9 @@ export default function TournamentCard({ tournament, leaderboard, href: hrefOver
   // Build leader + chasers from leaderboard (preferred) or golfers (fallback)
   const leader = _buildLeader(tournament, leaderboard);
   const chasers = _buildChasers(tournament, leaderboard);
-  // #9750 — surnames, unless two chasers share one ("A. Kim" / "H. Kim").
-  const chaserLabels = golfChaserLabels(chasers.map((c) => c.name));
+  // #9750 — surnames, unless two chasers share one ("A. Kim" / "H. Kim"), or a
+  // chaser shares the hero's ("Matt Fitzpatrick" above "A. Fitzpatrick").
+  const chaserLabels = golfChaserLabels(chasers.map((c) => c.name), leader?.name);
 
   return (
     <Link href={href} className="block">

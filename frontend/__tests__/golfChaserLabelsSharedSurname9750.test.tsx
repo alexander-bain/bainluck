@@ -101,6 +101,49 @@ describe("#9750 the rendered card", () => {
   });
 });
 
+/**
+ * The hero counts too. `/sports` at 390px, 2026-09-30 ~07:40Z: the Alfred
+ * Dunhill Links card led with "Matt Fitzpatrick 10.4%" and its strip printed
+ * "Fitzpatrick 3.5%" — Alex Fitzpatrick, as served (fixture below).
+ */
+const DUNHILL: Array<[string, number]> = [
+  ["Matt Fitzpatrick", 0.104],
+  ["Tommy Fleetwood", 0.083],
+  ["Robert MacIntyre", 0.067],
+  ["Tyrrell Hatton", 0.048],
+  ["Alex Fitzpatrick", 0.035],
+];
+
+describe("#9750 a chaser who shares the hero's surname", () => {
+  it("names Alex Fitzpatrick apart from the Matt Fitzpatrick hero on the served field", () => {
+    const html = render(lotte(DUNHILL));
+    expect(html).toContain("Matt Fitzpatrick");
+    expect(stripLabels(html)).toEqual(["Fleetwood", "MacIntyre", "Hatton", "A. Fitzpatrick"]);
+  });
+
+  it("control: the same strip under a hero with a different surname is unchanged", () => {
+    const labels = stripLabels(
+      render(lotte([["Rory McIlroy", 0.2], ...DUNHILL.slice(1)])),
+    );
+    expect(labels).toEqual(["Fleetwood", "MacIntyre", "Hatton", "Fitzpatrick"]);
+  });
+
+  it("a chaser whose initial also matches the hero's gets the full name", () => {
+    expect(golfChaserLabels(["Adam Fitzpatrick", "Tommy Fleetwood"], "Alex Fitzpatrick")).toEqual([
+      "Adam Fitzpatrick",
+      "Fleetwood",
+    ]);
+  });
+
+  it("no hero, a blank hero and a one-word hero change nothing", () => {
+    const strip = ["Tommy Fleetwood", "Alex Fitzpatrick"];
+    expect(golfChaserLabels(strip)).toEqual(["Fleetwood", "Fitzpatrick"]);
+    expect(golfChaserLabels(strip, null)).toEqual(["Fleetwood", "Fitzpatrick"]);
+    expect(golfChaserLabels(strip, "  ")).toEqual(["Fleetwood", "Fitzpatrick"]);
+    expect(golfChaserLabels(strip, "Tiger")).toEqual(["Fleetwood", "Fitzpatrick"]);
+  });
+});
+
 describe("#9750 golfChaserLabels", () => {
   it("initials only the golfers whose surname is shared", () => {
     expect(golfChaserLabels(["Miyu Yamashita", "A Lim Kim", "Hyo Joo Kim"])).toEqual([

@@ -13,6 +13,12 @@
  * Kim" / "Auston Kim") the full name is printed — the tile truncates, but a
  * truncated full name still starts on the part that differs.
  *
+ * The hero golfer counts too: the Alfred Dunhill Links card (2026-09-30) led
+ * with "Matt Fitzpatrick 10.4%" and its strip printed "Fitzpatrick 3.5%" — his
+ * brother Alex, read as one golfer with two numbers. Pass the hero's name and a
+ * chaser who shares its surname (or its initial) is named apart from it; the
+ * hero's own full-name label is not ours to change.
+ *
  * Compared case-blind; the labels keep the served spelling.
  */
 
@@ -40,16 +46,17 @@ function counts(labels: string[]): Map<string, number> {
   return seen;
 }
 
-export function golfChaserLabels(names: string[]): string[] {
+export function golfChaserLabels(names: string[], heroName?: string | null): string[] {
+  const hero = heroName?.trim() ? [heroName] : [];
   const surnames = names.map(surname);
-  const surnameCounts = counts(surnames);
+  const surnameCounts = counts([...surnames, ...hero.map(surname)]);
   const shared = (label: string, seen: Map<string, number>) =>
     (seen.get(label.toLowerCase()) ?? 0) > 1;
 
   const initials = names.map((name, i) =>
     shared(surnames[i], surnameCounts) ? initialled(name) : surnames[i],
   );
-  const initialCounts = counts(initials);
+  const initialCounts = counts([...initials, ...hero.map(initialled)]);
   return names.map((name, i) =>
     shared(surnames[i], surnameCounts) && shared(initials[i], initialCounts)
       ? name.trim()
