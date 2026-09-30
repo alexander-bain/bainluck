@@ -91,6 +91,14 @@ def _make_engine():
     @event.listens_for(engine, "connect")
     def _register(dbapi_conn, _record):  # pragma: no cover - connection hook
         dbapi_conn.create_function("regexp", 2, _regexp)
+        # SQLAlchemy's pysqlite SAVEPOINT recipe: pysqlite's own transaction
+        # handling breaks ``begin_nested`` (#9790's savepoints), so the driver
+        # stays out of it and the ``begin`` hook below emits BEGIN.
+        dbapi_conn.isolation_level = None
+
+    @event.listens_for(engine, "begin")
+    def _begin(conn):  # pragma: no cover - transaction hook
+        conn.exec_driver_sql("BEGIN")
 
     @event.listens_for(engine, "before_cursor_execute", retval=True)
     def _pg_regex_to_sqlite(conn, cursor, statement, params, context, executemany):
@@ -111,6 +119,11 @@ class _AsyncShim:
 
     async def get(self, entity, ident):
         return self._s.get(entity, ident)
+
+    @asynccontextmanager
+    async def begin_nested(self):
+        with self._s.begin_nested():
+            yield
 
     async def commit(self):
         self._s.commit()

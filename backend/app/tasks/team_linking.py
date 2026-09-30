@@ -6,9 +6,11 @@ Runs as a backfill task and is also called inline during futures polling.
 """
 
 import logging
+from contextlib import asynccontextmanager
 from typing import Optional
 
 from sqlalchemy import select, func, or_, and_
+from sqlalchemy.exc import DBAPIError, PendingRollbackError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -641,6 +643,28 @@ async def link_outcome_to_team(
     return None
 
 
+@asynccontextmanager
+async def _unit(session: AsyncSession, stats: dict, label: str):
+    """Run one unit of the drain in its own SAVEPOINT (#9790).
+
+    The drain is one transaction and a deadlock aborts all of it: measured
+    09:50Z 9/30, the hockey category's autoflush hit ``deadlock detected``, every
+    later category and phase raised ``PendingRollbackError``, and the commit
+    threw away the whole batch while the task logged ``outcomes_linked: 1206``.
+    Rolled back to here, a failure costs its own unit. Its counts go back to
+    what they were before it, so the result reports only what landed, and
+    ``units_rolled_back`` names it.
+    """
+    counts = {k: v for k, v in stats.items() if type(v) is int}
+    try:
+        async with session.begin_nested():
+            yield
+    except Exception as e:
+        stats.update(counts)
+        stats["units_rolled_back"].append(label)
+        stats["errors"].append(f"{label}: {str(e)}")
+
+
 async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
     """
     Backfill team_id on FuturesOutcome records and market_tier on FuturesMarket records.
@@ -667,6 +691,7 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
         "outcomes_unlinked_outside_market_conference": 0,
         "outcomes_unlinked_given_name_city_alias": 0,
         "markets_tiered": 0,
+        "units_rolled_back": [],
         "errors": [],
     }
 
@@ -680,26 +705,27 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
             # now checks name patterns before category, so "game_prop" markets
             # whose names match division/conference/championship patterns get
             # promoted to their correct tier.
-            tier_result = await session.execute(
-                select(FuturesMarket)
-                .where(
-                    or_(
-                        FuturesMarket.market_tier.is_(None),
-                        FuturesMarket.market_tier == 5,
+            async with _unit(session, stats, "Market tiers"):
+                tier_result = await session.execute(
+                    select(FuturesMarket)
+                    .where(
+                        or_(
+                            FuturesMarket.market_tier.is_(None),
+                            FuturesMarket.market_tier == 5,
+                        )
                     )
+                    .limit(limit * 5)
                 )
-                .limit(limit * 5)
-            )
-            markets_to_tier = tier_result.scalars().all()
+                markets_to_tier = tier_result.scalars().all()
 
-            for market in markets_to_tier:
-                new_tier = compute_market_tier(
-                    market.name, market.category,
-                    sport_category=market.llm_sport_category,
-                )
-                if market.market_tier != new_tier:
-                    market.market_tier = new_tier
-                    stats["markets_tiered"] += 1
+                for market in markets_to_tier:
+                    new_tier = compute_market_tier(
+                        market.name, market.category,
+                        sport_category=market.llm_sport_category,
+                    )
+                    if market.market_tier != new_tier:
+                        market.market_tier = new_tier
+                        stats["markets_tiered"] += 1
 
             # --- Phase 2: Link outcomes to teams ---
             # Two passes, each resuming from its own persisted id cursor (#7307).
@@ -787,61 +813,62 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
                             rosters[tr.id] = players
                 return rosters
 
-            for outcome in outcomes:
-                market = outcome.market
-                if not market.event_id:
-                    remaining_outcomes.append(outcome)
-                    continue
-
-                stats["outcomes_processed"] += 1
-
-                # Load event teams (cached per event_id)
-                if market.event_id not in event_cache:
-                    ev = await session.get(Event, market.event_id)
-                    event_rosters: dict[int, list[str]] = {}
-                    if ev:
-                        if ev.home_team_id or ev.away_team_id:
-                            # Fast path: FK team IDs exist
-                            team_ids = [t for t in [ev.home_team_id, ev.away_team_id] if t]
-                            team_rows = (await session.execute(
-                                select(TeamModel.id, TeamModel.name, TeamModel.roster_players)
-                                .where(TeamModel.id.in_(team_ids))
-                            )).all()
-                            event_rosters = _extract_rosters(team_rows)
-                        elif ev.home_team_name and ev.away_team_name:
-                            # Fallback: team IDs not set, look up by name + sport
-                            name_filters = [
-                                or_(
-                                    TeamModel.name == ev.home_team_name,
-                                    TeamModel.name == ev.away_team_name,
-                                )
-                            ]
-                            if ev.sport_id:
-                                name_filters.append(TeamModel.sport_id == ev.sport_id)
-                            team_rows = (await session.execute(
-                                select(TeamModel.id, TeamModel.name, TeamModel.roster_players)
-                                .where(*name_filters)
-                            )).all()
-                            event_rosters = _extract_rosters(team_rows)
-                    event_cache[market.event_id] = event_rosters
-                    if not event_rosters and ev:
-                        logger.info(
-                            "Event %s (%s vs %s): no rosters found (team_ids=%s/%s, sport_id=%s)",
-                            market.event_id, ev.home_team_name, ev.away_team_name,
-                            ev.home_team_id, ev.away_team_id, ev.sport_id,
-                        )
-
-                event_rosters = event_cache[market.event_id]
-                if event_rosters:
-                    team_id = match_outcome_to_roster(outcome.name, event_rosters)
-                    if _admit(outcome, team_id):
-                        outcome.team_id = team_id
-                        stats["outcomes_linked"] += 1
-                        stats["outcomes_linked_by_roster"] += 1
+            async with _unit(session, stats, "Event rosters"):
+                for outcome in outcomes:
+                    market = outcome.market
+                    if not market.event_id:
+                        remaining_outcomes.append(outcome)
                         continue
 
-                # Event-linked but no roster match — fall through to category matching
-                remaining_outcomes.append(outcome)
+                    stats["outcomes_processed"] += 1
+
+                    # Load event teams (cached per event_id)
+                    if market.event_id not in event_cache:
+                        ev = await session.get(Event, market.event_id)
+                        event_rosters: dict[int, list[str]] = {}
+                        if ev:
+                            if ev.home_team_id or ev.away_team_id:
+                                # Fast path: FK team IDs exist
+                                team_ids = [t for t in [ev.home_team_id, ev.away_team_id] if t]
+                                team_rows = (await session.execute(
+                                    select(TeamModel.id, TeamModel.name, TeamModel.roster_players)
+                                    .where(TeamModel.id.in_(team_ids))
+                                )).all()
+                                event_rosters = _extract_rosters(team_rows)
+                            elif ev.home_team_name and ev.away_team_name:
+                                # Fallback: team IDs not set, look up by name + sport
+                                name_filters = [
+                                    or_(
+                                        TeamModel.name == ev.home_team_name,
+                                        TeamModel.name == ev.away_team_name,
+                                    )
+                                ]
+                                if ev.sport_id:
+                                    name_filters.append(TeamModel.sport_id == ev.sport_id)
+                                team_rows = (await session.execute(
+                                    select(TeamModel.id, TeamModel.name, TeamModel.roster_players)
+                                    .where(*name_filters)
+                                )).all()
+                                event_rosters = _extract_rosters(team_rows)
+                        event_cache[market.event_id] = event_rosters
+                        if not event_rosters and ev:
+                            logger.info(
+                                "Event %s (%s vs %s): no rosters found (team_ids=%s/%s, sport_id=%s)",
+                                market.event_id, ev.home_team_name, ev.away_team_name,
+                                ev.home_team_id, ev.away_team_id, ev.sport_id,
+                            )
+
+                    event_rosters = event_cache[market.event_id]
+                    if event_rosters:
+                        team_id = match_outcome_to_roster(outcome.name, event_rosters)
+                        if _admit(outcome, team_id):
+                            outcome.team_id = team_id
+                            stats["outcomes_linked"] += 1
+                            stats["outcomes_linked_by_roster"] += 1
+                            continue
+
+                    # Event-linked but no roster match — fall through to category matching
+                    remaining_outcomes.append(outcome)
 
             # --- Phase 2b: Category-based matching for non-event-linked markets ---
             # Group outcomes by sport category to batch team loading
@@ -858,7 +885,7 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
             # Process each category
             ticker_league_cache: dict[str, list[dict]] = {}
             for category, cat_outcomes in category_outcomes.items():
-                try:
+                async with _unit(session, stats, f"Category '{category}'"):
                     # Load teams for this sport category
                     sport_keys = get_sport_keys_for_category(category)
                     teams = await _load_teams_by_sport(session, sport_keys)
@@ -947,38 +974,43 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
                                     stats["outcomes_linked_by_llm"] += 1
 
                         except Exception as e:
+                            # A statement that failed aborted the savepoint: every
+                            # later outcome would fail on it too (#9790).
+                            if isinstance(e, (DBAPIError, PendingRollbackError)):
+                                raise
                             stats["errors"].append(
                                 f"Outcome {outcome.id} '{outcome.name}': {str(e)}"
                             )
 
-                except Exception as e:
-                    stats["errors"].append(f"Category '{category}': {str(e)}")
-
             # --- Phase 3: stored links outside their market's league (#5119) ---
-            try:
+            async with _unit(session, stats, "Market-league relink"):
                 await _relink_outside_market_league(session, stats, limit)
-            except Exception as e:
-                stats["errors"].append(f"Market-league relink: {str(e)}")
 
             # --- Phase 3b: stored links in the other conference (#8072) ---
-            try:
+            async with _unit(session, stats, "Market-conference relink"):
                 await _relink_outside_market_conference(session, stats, limit)
-            except Exception as e:
-                stats["errors"].append(f"Market-conference relink: {str(e)}")
 
             # --- Phase 3c: stored links on a surname that is a city (#9726) ---
-            try:
+            async with _unit(session, stats, "Given-name city unlink"):
                 await _unlink_given_name_city_alias(session, stats, limit)
-            except Exception as e:
-                stats["errors"].append(f"Given-name city unlink: {str(e)}")
 
         # Outside the session:``get_task_session`` commits on the way out and
         # rolls back on an exception, so reaching here is the proof the batch
-        # landed. Only now may the window move (#7307).
+        # landed. Only now may the window move (#7307). It moves past a unit
+        # that rolled back too (#9790): those rows come round again at the next
+        # wrap, where holding the window would re-run a unit that deadlocks
+        # every hour and strand everything behind it.
         _apply_cursor_writes(rc, cursor_writes)
 
     except Exception as e:
         stats["errors"].append(f"Top-level error: {str(e)}")
+
+    if stats["units_rolled_back"]:
+        logger.warning(
+            "team-link drain: %d unit(s) rolled back, their links did not land: %s",
+            len(stats["units_rolled_back"]),
+            stats["units_rolled_back"],
+        )
 
     logger.info(
         "team-link drain: open=%s resolved=%s processed=%d linked=%d "
