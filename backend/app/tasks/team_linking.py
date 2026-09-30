@@ -37,6 +37,18 @@ _SKIP_PATTERNS = (
 )
 SKIP_REGEX = "|".join(f"({p})" for p in _SKIP_PATTERNS)
 
+# A name this short is a generic word ("Yes", "Tie", "AFC") far more often than
+# a team, so only a Kalshi leg is selected with one, and only the ticker's own
+# league may bind it (Step 0): "USC" on Kalshi's college board is USC, "LSU" is
+# LSU, "VMI" is VMI (#9687). No category-wide or LLM step reads it, and the
+# roster matcher refuses it itself.
+_MIN_NAME_CHARS = 4
+
+
+def _short_name(name: str | None) -> bool:
+    return len(name or "") < _MIN_NAME_CHARS
+
+
 # Prioritize US major sports where we have roster data.
 # Skip golf — individual sport, no team rosters to match against.
 _US_SPORTS = ("basketball", "baseball", "football", "hockey")
@@ -160,7 +172,10 @@ def unlinked_outcomes_query(*, open_markets: bool, cursor: int, batch: int):
         .where(
             FuturesOutcome.team_id.is_(None),
             ~FuturesOutcome.name.op("~*")(SKIP_REGEX),
-            func.length(FuturesOutcome.name) >= 4,
+            or_(
+                func.length(FuturesOutcome.name) >= _MIN_NAME_CHARS,
+                FuturesMarket.source == "kalshi",
+            ),
             FuturesMarket.llm_sport_category.in_(_US_SPORTS),  # US sports only
             status_clause,
             FuturesOutcome.id > cursor,
@@ -206,20 +221,49 @@ def _match_in_ticker_league(outcome, teams: list[dict]) -> Optional[int]:
     ``teams`` is the category's team list; only the rows whose sport key is the
     ticker's league are consulted. No league, or no team rows for it, leaves the
     outcome to the category-wide matcher exactly as before.
+
+    The league is the same read Phase 3 rebinds into and the league check refuses
+    on (#9663): read off the bare ticker map, the FCS title board is FBS, so this
+    bound "San Diego" to San Diego State and Phase 3 cleared it again every run.
     """
-    from app.utils.sport_keys import get_sport_key_from_ticker
+    from app.utils.market_team_sport import market_league_sport_key
     from app.utils.team_linking import match_outcome_to_league_team
 
     market = outcome.market
     if market is None or market.source != "kalshi":
         return None
-    league = get_sport_key_from_ticker(market.external_id)
+    league = market_league_sport_key(market.source, market.external_id)
     if not league:
         return None
     league_teams = [t for t in teams if t.get("sport_key") == league]
     if not league_teams:
         return None
     return match_outcome_to_league_team(outcome.name, league_teams)
+
+
+async def _ticker_league_teams(
+    session: AsyncSession, outcome, teams: list[dict], cache: dict
+) -> list[dict]:
+    """The teams Step 0 reads: the category's, or its ticker league's when those are missing (#9663).
+
+    ``get_sport_keys_for_category("football")`` is NFL + FBS, so the FCS title
+    board's league had no rows in ``teams`` and Step 0 could never bind inside it.
+    The league's rows are loaded once per run, whatever the market's category,
+    as Phase 3 already does when it rebinds a stored link into that league.
+    """
+    from app.utils.market_team_sport import market_league_sport_key
+
+    market = outcome.market
+    if market is None or market.source != "kalshi":
+        return teams
+    league = market_league_sport_key(market.source, market.external_id)
+    if not league:
+        return teams
+    if any(t.get("sport_key") == league for t in teams):
+        return teams
+    if league not in cache:
+        cache[league] = await _load_teams_by_sport(session, [league])
+    return cache[league]
 
 
 async def _load_team_sport_keys(session: AsyncSession) -> dict[int, str]:
@@ -706,6 +750,7 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
                 category_outcomes.setdefault(category, []).append(outcome)
 
             # Process each category
+            ticker_league_cache: dict[str, list[dict]] = {}
             for category, cat_outcomes in category_outcomes.items():
                 try:
                     # Load teams for this sport category
@@ -742,7 +787,12 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
                             # Step 0: the Kalshi ticker names the league (#9617).
                             # A city-only name is ambiguous across the category
                             # (Knicks + Liberty) and unique inside one league.
-                            team_id = _match_in_ticker_league(outcome, teams)
+                            team_id = _match_in_ticker_league(
+                                outcome,
+                                await _ticker_league_teams(
+                                    session, outcome, teams, ticker_league_cache
+                                ),
+                            )
                             # ...and inside the conference the ticker names (#8072,
                             # CERT-3801's follow-up): "Los Angeles D" on the AL
                             # champion board is the Dodgers by city and an NL club.
@@ -750,6 +800,9 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
                                 outcome.team_id = team_id
                                 stats["outcomes_linked"] += 1
                                 stats["outcomes_linked_by_league"] += 1
+                                continue
+                            if _short_name(outcome.name):
+                                # #9687: Step 0 is the only reader of a short name.
                                 continue
 
                             # Step 1: Try name matching first (no LLM)
