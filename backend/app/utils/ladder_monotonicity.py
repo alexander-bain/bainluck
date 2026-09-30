@@ -1365,6 +1365,43 @@ def cumulative_outcome_ladder(
     return sorted(out), directions.pop()
 
 
+def cumulative_ladder_is_dated(
+    outcomes: Sequence[Mapping[str, object]],
+    *,
+    name_key: str = "name",
+    question: str | None = None,
+) -> bool:
+    """Is this outcome list ONE cumulative ladder whose rungs are DEADLINES? (#9782)
+
+    A date ladder is the one field where each rung carries its own deadline, so
+    a market's single ``resolution_date`` can describe at most one of them — on
+    Polymarket's grouped ladders it is the EARLIEST rung's, while the card leads
+    with the loosest (latest) rung, which nesting makes the dearest. A magnitude
+    ladder's rungs all settle on one date, so the stored date is every rung's.
+
+    Read off the affix namespace :func:`_date_parts_under_word` stamps
+    (``date:`` for a leg carrying its own word, ``qdate:`` for a bare leg read
+    under the question's), never re-parsed here: the one-affix rule in
+    :func:`cumulative_outcome_ladder` already guarantees a qualifying family
+    carries exactly one, so this asks only which grammar it was.
+    """
+    if cumulative_outcome_ladder(
+        outcomes, name_key=name_key, dates=True, question=question
+    ) is None:
+        return False
+    question_direction = question_ladder_direction(question)
+    question_date_word = question_ladder_date_word(question)
+    for row in outcomes:
+        name = row.get(name_key)
+        parsed = _cumulative_leg_parts(
+            name if isinstance(name, str) else None, dates=True,
+            question_direction=question_direction,
+            question_date_word=question_date_word)
+        if parsed is None or not parsed[2].startswith(("date:", "qdate:")):
+            return False
+    return True
+
+
 def truth_reversals(
     ordered: Sequence[tuple[float, bool]], direction: str,
 ) -> list[tuple[float, float]]:

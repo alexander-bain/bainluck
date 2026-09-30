@@ -12,7 +12,10 @@ from functools import lru_cache
 from typing import NamedTuple, Optional
 
 from app.utils.feed_reasons import RESOLVING_WITHIN_MONTH_HEADLINE
-from app.utils.ladder_monotonicity import cumulative_outcome_ladder
+from app.utils.ladder_monotonicity import (
+    cumulative_ladder_is_dated,
+    cumulative_outcome_ladder,
+)
 from app.utils.outcome_display import drop_incoherent_ladder_outcomes
 
 # Market tier weights (lower tier number = more important)
@@ -1003,7 +1006,23 @@ def compute_futures_highlight(
             #
             # `flags.is_resolving_soon` and the `resolution_proximity` blend are
             # NOT touched: they are ranking, and a micro-bet is still suppressed.
-            if days_until_exact is not None and days_until_exact >= 0.0:
+            #
+            # #9782 — NOT ON A DATE LADDER. There the stored date is ONE rung's
+            # deadline (Polymarket's grouped ladders store the earliest) and the
+            # card leads with the latest. Production 2026-09-30, Discover page
+            # one: "Will Russia capture Dovha Balka? · December 31 · Resolves
+            # within a day" — the clause was the 1% September 30 rung's, printed
+            # under the 37% December 31 rung, which resolves in three months.
+            # Silence, not a re-keyed window: a bare leg's year is inferred, so
+            # the shown rung's own deadline cannot be computed honestly here.
+            # These two codes are captions only (no headline rung, no primary
+            # label), so dropping them moves no card's order.
+            if (
+                days_until_exact is not None
+                and days_until_exact >= 0.0
+                and not cumulative_ladder_is_dated(
+                    outcomes or [], name_key="name", question=market_name)
+            ):
                 result.reasons.append(
                     "resolving_soon_1d"
                     if days_until_exact <= 1.0
